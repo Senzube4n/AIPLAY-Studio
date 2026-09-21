@@ -345,6 +345,24 @@ node server/daw/ear_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1
+# FIVE IMAGE DOORS THAT WERE BUILT, WORKING AND UNREACHABLE until
+# 2026-09-21: the baked selection matte, the frame a selection's coordinates
+# are written in (frame_stages, lifted out of apply_edit so describe and bake
+# resolve in the SAME one), the type tool's notes channel (draw_text was
+# called without it, so every substituted font was silent), imgtext's
+# `measure` and imgpath's `check`, and imgdoc's document shelf. What it holds
+# is the SEAM rather than the engine - module CLI mode, route, MCP tool, page
+# control - because each of those links has shipped missing before and every
+# one of them answers 200 from the caller's side. EVERY source pin runs a
+# SECOND time against a copy of the same text with its subject removed or
+# moved on purpose and must report the damage; that rule caught six of this
+# suite's own pins passing on a broken tree, on its first run. Its last
+# section RUNS imgpath check on a figure that is wrong beside one that is
+# right, and imgtext measure on a font that is not on this rig beside one
+# that is, because no regular expression can tell a diagnosis from a
+# constant. ~3 s with the rig's python, and it SKIPS that section loudly
+# (naming the interpreter) without it. No GPU, no server, no ComfyUI.
+node server/imgdoors_test.js || exit 1
 # The provenance ledger: chain integrity, ACTOR HONESTY (an MCP-driven action
 # can never record as a human one — the invariant every dossier stands on),
 # the origin fold, and the source pins that keep the Tier-1 AI marker

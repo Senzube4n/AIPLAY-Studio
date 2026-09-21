@@ -7429,9 +7429,20 @@ const server = http.createServer(async (req, res) => {
       if (!name || !imageMeta.get(name)) {
         return json(res, 404, { error: `${name || "(no name)"} is not in the image library.`, reason: "name" });
       }
+      /* \u26a0 THE FRAME THE SHAPES WERE WRITTEN IN. A selection is resolved at
+       * stage 4, after canvas/crop/geometry, and the editor writes its shapes
+       * in exactly those coordinates \u2014 so describing one against the raw
+       * source while a crop is pending measures a DIFFERENT PICTURE and
+       * reports the coverage of it, confidently. Only the stages that move a
+       * coordinate travel: the adjustments and effects cannot, and running
+       * them here would spend real time to change nothing. */
+      const dframe = {};
+      for (const k of ["canvas", "crop", "geometry", "rotate", "flipH", "flipV"]) {
+        if ((b.frame || {})[k] !== undefined && (b.frame || {})[k] !== null) dframe[k] = b.frame[k];
+      }
       const jobPath = path.join(IMAGE_DIR, `.describe_${Date.now().toString(36)}.json`);
       await writeFile(jobPath, JSON.stringify({
-        src: path.join(IMAGE_DIR, name), selection: b.selection || {},
+        src: path.join(IMAGE_DIR, name), selection: b.selection || {}, frame: dframe,
       }), "utf8");
       try {
         const line = await new Promise((resolve, reject) => {
@@ -7463,6 +7474,283 @@ const server = http.createServer(async (req, res) => {
         await unlink(jobPath).catch(() => {});
       }
     }
+    /* WHERE THE TYPE WILL LAND, BEFORE THERE IS A PICTURE TO LAND ON.
+     *
+     * A layout has to commit to a size and a box before it renders, and
+     * everything else in this editor answers that question by rendering and
+     * looking. imgtext.measure_text() returns the ink box, the line count, the
+     * baseline step and whether the text overflowed — and its own CLI
+     * docstring says it was shaped for the {mode, jobPath} spawn this file was
+     * already doing everywhere. This file had never mentioned imgtext.py. */
+    if (p === "/api/images/measure-text" && req.method === "POST") {
+      const b = await readBody(req);
+      const spec = b.text && typeof b.text === "object" ? b.text : b.spec;
+      if (!spec || typeof spec !== "object") return json(res, 400, { error: "give a `text` spec." });
+      const jobPath = path.join(IMAGE_DIR, `.mtext_${Date.now().toString(36)}.json`);
+      await mkdir(IMAGE_DIR, { recursive: true });
+      await writeFile(jobPath, JSON.stringify({ text: spec }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgtext.py"), "measure", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the type could not be measured" });
+        return json(res, 200, { ok: true, ...r });
+      } catch (err) {
+        return json(res, 400, { error: `measure failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* WHY A LETTER FILLED SOLID.
+     *
+     * ⚠ BOTH WAYS TO GET A FIGURE WITH HOLES WRONG ARE SILENT. An open
+     * contour fills identically to a closed one and strokes with a seam where
+     * it starts; a counter wound the same way as the contour around it is
+     * simply not a hole under nonzero, and the 'o' comes back a solid blob.
+     * Neither can raise — both are legal figures somebody might mean — so
+     * imgpath.check_figure() says it out loud instead, naming the contour and
+     * what to do to it. It had a catalog entry and a test suite and no door.
+     *
+     * The report's own `ok` means "no problems with the figure" and the
+     * envelope's means "the call worked": a figure with a backwards hole is a
+     * successful diagnosis, not a failed request, and collapsing the two would
+     * make the tool refuse exactly the case it exists for. */
+    if (p === "/api/images/check-figure" && req.method === "POST") {
+      const b = await readBody(req);
+      const figure = b.figure ?? b.paths ?? null;
+      if (figure === null || typeof figure !== "object") {
+        return json(res, 400, { error: "give a `figure`: the {paths: [...]} spec you were about to draw." });
+      }
+      const jobPath = path.join(IMAGE_DIR, `.figure_${Date.now().toString(36)}.json`);
+      await mkdir(IMAGE_DIR, { recursive: true });
+      await writeFile(jobPath, JSON.stringify({
+        figure: b.figure ? b.figure : { paths: b.paths },
+        rule: b.rule || null,
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgpath.py"), "check", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the figure could not be checked" });
+        const rep = r.report || {};
+        /* The reading of the numbers, composed once here so the panel and an
+         * agent get the same words. A report with an empty `problems` list is
+         * the only good case; everything else names a contour. */
+        const says = rep.ok
+          ? `${rep.contours} contour${rep.contours === 1 ? "" : "s"}, ${rep.holes?.length || 0} of them holes — this figure will fill the way you drew it.`
+          : (rep.problems || []).join(" ");
+        /* ⚠ `ok` MEANT TWO THINGS AND THE SPREAD PICKED THE WRONG ONE. The
+         * report carries its own `ok` — "this figure has no problems" — and
+         * spreading it after the envelope's overwrote it, so a figure with a
+         * backwards counter answered {ok:false} and every caller here reads a
+         * top-level ok:false as a failed request. That is the exact confusion
+         * the comment above warns about, written into the line below it.
+         * The verdict gets its own word instead. */
+        return json(res, 200, { ...rep, ok: true, clean: rep.ok === true,
+                                says, notes: r.notes || undefined });
+      } catch (err) {
+        return json(res, 400, { error: `check failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* THE DOCUMENT SHELF — the file this editor never had.
+     *
+     * A layered document has been renderable since imgdoc.py was written, and
+     * it lived for exactly one POST: build a twelve-layer comp, render it, and
+     * nothing on disk was the COMP. Every program that does this has a file
+     * for it. `save` mints an id and a slug when the document has none, so
+     * "save a new one" and "save the one I have open" are one call and a
+     * caller never has to decide which it is doing.
+     *
+     * ⚠ A DOCUMENT OFF DISK IS AS UNTRUSTED AS ONE OFF THE WIRE. The shelf is
+     * a plain JSON file any process on this machine can write, so `open` runs
+     * what it read through the same normalize() a posted document goes
+     * through, and hands back the warnings. "We wrote it, therefore it is well
+     * formed" is an assumption about every other program on the box. */
+    if (p === "/api/images/documents" && req.method === "POST") {
+      const b = await readBody(req);
+      const action = String(b.action || "").trim();
+      if (!["save", "open", "list", "delete"].includes(action)) {
+        return json(res, 400, { error: `action must be save, open, list or delete — got "${action}".` });
+      }
+      const jobPath = path.join(IMAGE_DIR, `.shelf_${Date.now().toString(36)}.json`);
+      await mkdir(IMAGE_DIR, { recursive: true });
+      await writeFile(jobPath, JSON.stringify({
+        /* forward slashes: python reads this path back */
+        dir: IMAGE_DIR.replace(/\\/g, "/"), action,
+        doc: b.doc || null, id: b.id ? String(b.id) : null,
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgdoc.py"), "store", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the shelf refused that" });
+        /* ⚠ THE SHELF PATH IS A PATH ON THIS MACHINE. It is useful to the
+         * engine and to nobody on the other end of an HTTP reply, and shipping
+         * absolute paths to a browser is how a directory layout leaks. */
+        delete r.shelf;
+        /* A saved or deleted document is a change to the record of the work,
+         * so it is a ledger event like every other edit. `open` and `list`
+         * read and are not. */
+        if (action === "save" || action === "delete") {
+          provNote("library", {
+            actor: prov.actorFrom(req), type: "edit",
+            asset: `documents/${r.id || r.deleted?.id || "?"}`,
+            data: { op: `document.${action}`, name: r.name || r.deleted?.name || null,
+                    layers: r.layers ?? r.deleted?.layers ?? null },
+          });
+        }
+        return json(res, 200, r);
+      } catch (err) {
+        return json(res, 400, { error: `the document shelf failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* LAYER EDITS ON A SHELVED DOCUMENT, applied ALL OR NONE.
+     *
+     * The alternative to one call is read-modify-write from the client, and
+     * that loses every edit anyone else made in between — which is exactly
+     * what a shelf is for. Each op returns a new document, so apply_edits
+     * keeps the half-applied case from existing at all: a shelf holding a
+     * document that is neither what it was nor what was asked for has no way
+     * back, because the undo buffer is in the browser that is now wrong. */
+    if (p === "/api/images/document-edit" && req.method === "POST") {
+      const b = await readBody(req);
+      const id = String(b.id || "").trim();
+      if (!id) return json(res, 400, { error: "which document? Pass the `id` or the slug from /api/images/documents." });
+      if (!Array.isArray(b.ops) || !b.ops.length) return json(res, 400, { error: "give at least one op." });
+      const jobPath = path.join(IMAGE_DIR, `.docedit_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        dir: IMAGE_DIR.replace(/\\/g, "/"), id, ops: b.ops, doc: b.doc === true,
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgdoc.py"), "edit", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the edit was refused" });
+        delete r.shelf;
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `documents/${r.id || id}`,
+          data: { op: "document.edit", applied: r.applied || [], layers: r.layers ?? null },
+        });
+        return json(res, 200, r);
+      } catch (err) {
+        return json(res, 400, { error: `the document edit failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* THE MATTE ON ITS OWN, with no edit attached.
+     *
+     * A baked matte is an INPUT elsewhere in this repo — vfx `setMatte` reads a
+     * matte layer's luminance, gradientWipe and displacementMap take maps, and
+     * imgdoc's `mask.src` takes a library name. Key a neon sign on one cover
+     * frame, bake it, and drive the chorus cut's luma wipe with it.
+     *
+     * ⚠ apply_edit ALWAYS WRITES `out`. There is no matte-only path through
+     * it and inventing one would mean a second code path resolving selections,
+     * which is how two answers to "what did the wand catch" start. So `out`
+     * goes to a dot-prefixed temp beside the other job files and is unlinked:
+     * asking for a matte must not quietly leave an untouched duplicate of the
+     * picture in the gallery. */
+    if (p === "/api/images/bake-selection" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const stem = name.replace(/\.[^.]+$/, "");
+      const tag = Date.now().toString(36);
+      const outName = `${stem}_m${tag}.png`;
+      const scratch = path.join(IMAGE_DIR, `.bake_${tag}.png`);
+      const jobPath = path.join(IMAGE_DIR, `.bake_${tag}.json`);
+      /* \u26a0 ONLY THE STAGES THAT MOVE A COORDINATE. The selection is resolved
+       * at stage 4 \u2014 after canvas, crop and geometry \u2014 so a bake sent without
+       * them resolves the editor's shapes against a frame they were never
+       * written in: right numbers, wrong picture, and no error anywhere.
+       * Whitelisted by name because `ops` also carries the adjustments and the
+       * 88 effects, and none of those move a coordinate: running them would
+       * cost real time on a file this route unlinks, and an alpha-changing
+       * effect would quietly change what a `channel` selection catches. */
+      const frame = {};
+      for (const k of ["canvas", "crop", "geometry", "rotate", "flipH", "flipV"]) {
+        if ((b.frame || {})[k] !== undefined && (b.frame || {})[k] !== null) frame[k] = b.frame[k];
+      }
+      await writeFile(jobPath, JSON.stringify({
+        in: src, out: scratch, thumbOut: null,
+        maskOut: path.join(IMAGE_DIR, outName),
+        ops: { ...frame, selection: b.selection || {} },
+      }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "edit", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        const r = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok || !r.maskOut) throw new Error(r.error || "the selection could not be baked");
+        /* The frame is recorded beside the selection: a matte is only meaningful
+         * against the frame it was cut in, and `${r.width}\u00d7${r.height}` on a
+         * crop is NOT the source picture's size. */
+        imageMeta.set(outName, { maskOf: name, prompt: `selection matte of ${name}`,
+          selection: b.selection || null, maskFrame: Object.keys(frame).length ? frame : null,
+          coverage: r.coverage, width: r.width, height: r.height,
+          everything: r.everything === true, at: Date.now(), durationMs: null });
+        saveImageStore();
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: { op: "bakeSelection", derivedFrom: `images/${name}` },
+        });
+        /* The same reading describe-selection gives, because a matte that
+         * caught nothing is a black PNG and looks like a working file. */
+        const pct = (Number(r.coverage) || 0) * 100;
+        return json(res, 200, { ok: true, name: outName, coverage: r.coverage,
+          everything: r.everything === true,
+          says: r.everything
+            ? "No selection was given, so this matte is solid white \u2014 the whole picture."
+            : pct < 0.01
+              ? "This selection caught NOTHING: the matte is solid black, and anything you drive with it will do nothing."
+              : `${pct.toFixed(1)}% of the picture is in this matte.` });
+      } catch (err) {
+        return json(res, 400, { error: `bake failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+        unlink(scratch).catch(() => {});
+      }
+    }
+
     if (p === "/api/images/edit" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
@@ -7472,10 +7760,20 @@ const server = http.createServer(async (req, res) => {
       const stem = name.replace(/\.[^.]+$/, "");
       const outName = `${stem}_e${Date.now().toString(36)}.png`;
       const jobPath = path.join(IMAGE_DIR, `.edit_${Date.now().toString(36)}.json`);
+      /* ⚠ THE STEP imgdoc.py TELLS YOU TO TAKE AND COULD NOT PROVIDE. Refusing
+       * a wand inside a document mask it says, in its own words, to "bake the
+       * result into a library image and use mask.src" — and nothing baked. The
+       * kinds worth baking are exactly the ones that cannot be written down:
+       * a rect can be re-sent as JSON, but `wand` and `colorRange` are computed
+       * FROM PIXELS with a tolerance you tuned blind, and that result lived for
+       * one call and was dropped. */
+      const bakeName = b.saveSelection === true
+        ? `${stem}_m${Date.now().toString(36)}.png` : null;
       await writeFile(jobPath, JSON.stringify({
         in: src, out: path.join(IMAGE_DIR, outName),
         thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/, "")}_t.png`),
         thumbSize: config.art.thumbSize, ops: b.ops || {},
+        maskOut: bakeName ? path.join(IMAGE_DIR, bakeName) : null,
       }));
       try {
         const out = await new Promise((resolve, reject) => {
@@ -7508,7 +7806,23 @@ const server = http.createServer(async (req, res) => {
         // `fxSkipped` the timeline effects that did nothing on a still. The
         // route knowing and not saying is the silence IMAGE_SPEC is written
         // against.
+        /* The plate is a PICTURE, filed like one: a `mask.src` takes a library
+         * name, and a file the library has never heard of is not addressable
+         * by the very thing that asked for it. */
+        if (bakeName && r.maskOut) {
+          imageMeta.set(bakeName, { maskOf: name, prompt: `selection matte of ${name}`,
+            selection: b.ops?.selection || null, coverage: r.coverage,
+            everything: r.everything === true, at: Date.now(), durationMs: null });
+          saveImageStore();
+          provNote("library", {
+            actor: prov.actorFrom(req), type: "edit", asset: `images/${bakeName}`,
+            data: { op: "bakeSelection", derivedFrom: `images/${name}` },
+          });
+        }
         return json(res, 200, { ok: true, name: outName,
+          mask: bakeName && r.maskOut
+            ? { name: bakeName, coverage: r.coverage, everything: r.everything === true }
+            : undefined,
           notes: r.notes?.length ? r.notes : undefined,
           fxSkipped: r.fxSkipped?.length ? r.fxSkipped : undefined });
       } catch (err) {
@@ -8005,10 +8319,11 @@ const server = http.createServer(async (req, res) => {
         seen.add(cur);
         const m = imageMeta.get(cur) || {};
         const via = m.editedFrom ? "edit" : m.compositeOf ? "composite" : m.cutoutFrom ? "cutout"
-          : m.upscaledFrom ? "upscale" : m.vectorFrom ? "vectorize" : m.sheetOf ? "collage" : null;
+          : m.upscaledFrom ? "upscale" : m.vectorFrom ? "vectorize" : m.sheetOf ? "collage"
+          : m.maskOf ? "selection" : null;
         chain.push({ name: cur, via, ops: m.ops || null, at: m.at || null,
                      exists: !!(await stat(path.join(IMAGE_DIR, cur)).catch(() => null)) });
-        cur = m.editedFrom || m.compositeOf || m.cutoutFrom || m.upscaledFrom || m.vectorFrom || null;
+        cur = m.editedFrom || m.compositeOf || m.cutoutFrom || m.upscaledFrom || m.vectorFrom || m.maskOf || null;
       }
       return json(res, 200, { chain });
     }

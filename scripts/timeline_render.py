@@ -286,7 +286,26 @@ def build(doc, clips_dir, audio_dir, out_path, fps=None, crf=18, encoder="h264_n
         mid_out = 0.5 + (c - 1.0) * 0.0556
         curve = (f"0/0 {toe_in:.3f}/{toe_out:.4f} 0.5/{mid_out:.4f} "
                  f"{sh_in:.3f}/{sh_out:.4f} 1/1")
-        chains.append(f"[vout]curves=all='{curve}',eq=saturation={sat}:gamma={gam}[vgraded]")
+        # ⚠ AND IT RUNS AT SIXTEEN BITS, WHICH IS THE OTHER HALF OF THIS FIX.
+        # `curves` is a 256-entry LUT and `eq` is a gamma pass; handed 8-bit
+        # frames they merge neighbouring codes, and in a candle-lit shadow the
+        # whole signal IS a handful of neighbouring codes. The result is not
+        # clipped, it is flattened — which looks the same on screen and is
+        # invisible to a test that counts zeros, so the previous repair passed.
+        #
+        # Measured across five flagged clips at three moments each: NINE curve
+        # shapes (toe slopes 0.96 through 1.20, plus two pinned to the identity
+        # in the shadows) all scored 3.67% dead. A curve that is the identity
+        # function below 0.25 cannot flatten a shadow, so the shape was never
+        # the mechanism. The same grade at 16-bit scores 0.62% — better than
+        # not grading at all.
+        #
+        # It costs nothing downstream: `-pix_fmt yuv420p` still tells the
+        # encoder what to write, so the depth lives only inside the graph. And
+        # it sits HERE rather than at the top, so decode, scale and concat stay
+        # 8-bit — they are 8-bit sources and no arithmetic there needs the room.
+        chains.append(f"[vout]format=yuv444p16le,curves=all='{curve}',"
+                      f"eq=saturation={sat}:gamma={gam}[vgraded]")
         vmap = "[vgraded]"
     else:
         vmap = "[vout]"

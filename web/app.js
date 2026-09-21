@@ -9401,6 +9401,686 @@ $("iedCompose").onclick = async () => {
   } finally { btn.disabled = false; btn.textContent = "Composite \u2192 new image"; }
 };
 
+/* ── the Documents dock ────────────────────────────────────────────────────
+ *
+ * ⚠ WHAT THIS DOCK EXISTS TO FIX. Layer → New layer, Duplicate the layer,
+ * Group the layers, Add a layer mask and New adjustment layer were five rows
+ * whose `run` was `() => {}`. They went live the moment the layerdoc probe came
+ * back and they did NOTHING AT ALL when clicked — a control that appears to
+ * work, which is the exact failure this console is written against. They were
+ * not wrong about the capability: imgdoc.py has had add_layer, duplicate_layer,
+ * group_layers, set_clipped, reorder_layer, ungroup_layer and update_layer for
+ * as long as it has existed. What they had was nothing to act ON.
+ *
+ * TWO LISTS THAT LOOK ALIKE AND ARE NOT. `iedLayers` above is a composite
+ * recipe for one call — pictures over this picture, flattened on Composite and
+ * gone. A DOCUMENT is a tree that lives on a server-side shelf between
+ * sessions: groups, masks, adjustment layers, re-editable type, renderable on
+ * its own. Nothing turns one into the other silently; "save this composite"
+ * below is the single crossing, and it says in words what it had to leave
+ * behind rather than inventing fields imgdoc would discard.
+ *
+ * ⚠ EVERY EDIT HERE IS WRITTEN THE INSTANT IT IS SENT, and the shelf has no
+ * undo — imgdoc.py says so in its own comment: the undo buffer its edit
+ * functions were written for lives in the caller and nobody has built one. So
+ * the two destructive gestures (delete a document, remove a layer) ask first,
+ * and nothing else pretends to be reversible. */
+
+let iedDocRows = null;          // the shelf listing; null until it has been read
+let iedDoc = null;              // the OPEN document's tree, refreshed by every edit
+let iedDocLines = [];           // the flat outline the shelf answers with
+let iedDocPick = [];            // picked layer ids, in the order they were clicked
+let iedDocCat = null, iedDocCatErr = null;
+/* ⚠ A FAILED READ IS NOT AN EMPTY SHELF. Both leave the row list empty, and
+ * rendering them the same way tells somebody their documents are gone when the
+ * route was simply unreachable. The last failure is kept so the list can say
+ * which of the two happened. */
+let iedDocErr = null;
+let iedDocBusy = false, iedDocListing = false;
+
+/* ⚠ THE SHELF STAMPS SECONDS and when() reads milliseconds. python's
+ * time.time() through when() untouched dates every document to 1970, and a
+ * shelf that says "01/01/1970" reads as one that has never been written to. */
+const iedDocWhen = (t) => (t ? when(t * 1000) : "");
+
+const iedDocRef = () => iedDocPick[iedDocPick.length - 1] || null;
+
+const iedDocNeed = (what) => (what
+  ? `Pick ${what} in the Documents dock — this op has to name the layer it acts on.`
+  : "Open a document in the Documents dock first — these five act on a shelved layer "
+    + "document (groups, masks, adjustment layers), not on the flat stack in the Layers dock.");
+
+/* ⚠ THE WARNINGS ARE THE POINT, NOT DECORATION. The shelf is a plain JSON file
+ * any process on this machine can write, so `open` runs what it read through
+ * the same normalize() a posted document goes through and hands back what it
+ * had to repair. A repaired layer does not look like it did when it was saved,
+ * and swallowing the sentence that says so is how a document quietly becomes a
+ * different document. */
+function iedDocSay(text, warnings) {
+  const w = (warnings || []).filter(Boolean);
+  const el = $("iedDocSays");
+  if (el) el.textContent = w.length ? `${text}  ⚠ ${w.join(" · ")}` : text;
+}
+
+async function iedDocPost(body) {
+  try {
+    const r = await (await fetch("/api/images/documents", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) })).json();
+    return r || { error: "the shelf answered with nothing" };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+/* The same flat tree imgdoc.py's _outline() builds — id, name, type, depth,
+ * enabled, clipped — computed here for the one reply that does not carry one:
+ * `open` hands back the document itself. Mirrored rather than invented, so the
+ * rows do not change shape depending on which call last spoke. */
+function iedDocFlat(layers, depth) {
+  const rows = [];
+  for (const l of layers || []) {
+    if (!l || typeof l !== "object") continue;
+    const row = { id: l.id, name: l.name, type: l.type, depth, enabled: l.enabled !== false };
+    if (l.clipped) row.clipped = true;
+    rows.push(row);
+    if (l.type === "group") rows.push(...iedDocFlat(l.layers, depth + 1));
+  }
+  return rows;
+}
+
+/* The layer, the list it sits in, and its index in that list. reorder_layer's
+ * index is inside a layer's OWN container, and grouping is only legal between
+ * layers that already share one, so both questions need the siblings and not
+ * just the row. */
+function iedDocFind(id, layers) {
+  const box = layers || iedDoc?.layers || [];
+  for (let i = 0; i < box.length; i++) {
+    const l = box[i];
+    if (!l || typeof l !== "object") continue;
+    if (l.id === id) return { layer: l, siblings: box, index: i };
+    if (l.type === "group") {
+      const hit = iedDocFind(id, l.layers || []);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/* ⚠ ALL OF THEM OR NONE OF THEM, and `doc: true` ON PURPOSE. The edit route
+ * answers with the flat outline, which is everything this panel needs to DRAW
+ * and not enough to RENDER — and the render button posts the tree. Asking for
+ * the document back on every edit is what stops the copy in this browser being
+ * a version behind the shelf, which is the whole reason a shelf exists rather
+ * than a variable. */
+async function iedDocEdit(ops, what) {
+  if (!iedDoc) { iedToast(iedDocNeed()); return null; }
+  if (iedDocBusy) return null;
+  iedDocBusy = true; iedDocPaint();
+  try {
+    const r = await (await fetch("/api/images/document-edit", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: iedDoc.id, ops, doc: true }) })).json();
+    if (r.error) {
+      /* A refusal anywhere in the list leaves the shelf exactly as it was, so
+       * the local tree is still right and must not be thrown away. */
+      iedDocSay(`${what} was refused — nothing was saved: ${r.error}`);
+      iedToast(r.error);
+      return null;
+    }
+    if (r.doc) iedDoc = r.doc;
+    if (r.id && iedDoc) iedDoc.id = r.id;
+    iedDocLines = r.outline || iedDocFlat(iedDoc?.layers, 0);
+    // A picked row that the edit removed must stop being picked, or the next op
+    // names a layer the document no longer has.
+    const live = new Set(iedDocLines.map((x) => x.id));
+    iedDocPick = iedDocPick.filter((id) => live.has(id));
+    iedDocSay(`${what} — ${(r.applied || []).join(", ")} · ${r.layers} layer${r.layers === 1 ? "" : "s"}.`,
+      r.warnings);
+    return r;
+  } catch (e) {
+    iedDocSay(`${what} failed: ${e.message}`);
+    return null;
+  } finally { iedDocBusy = false; iedDocPaint(); }
+}
+
+async function iedDocList() {
+  if (iedDocListing) return;
+  iedDocListing = true;
+  try {
+    const r = await iedDocPost({ action: "list" });
+    if (r.error) {
+      /* Rows stay [] rather than null so iedDocMaybeList() does not read the
+       * shelf again on every repaint — a failing route would become a retry
+       * loop nobody asked for. iedDocErr is what keeps that from reading as
+       * "there is nothing on the shelf". */
+      iedDocRows = []; iedDocErr = r.error;
+      iedDocSay(`The shelf did not answer: ${r.error}`);
+      return;
+    }
+    iedDocRows = r.documents || []; iedDocErr = null;
+    iedDocSay(`${iedDocRows.length} document${iedDocRows.length === 1 ? "" : "s"} on the shelf.`, r.warnings);
+  } finally { iedDocListing = false; iedDocPaint(); }
+}
+
+/* Read once, when the dock is actually opened. The shelf costs a python spawn,
+ * and paying it for somebody who never opens this dock is a cost with no reader. */
+function iedDocMaybeList() {
+  if (iedDocRows !== null || iedDocListing) return;
+  if (!iedCapLive("layerdoc")) return;
+  if (!$("iedDockDocs")?.open) return;
+  iedDocList();
+}
+
+async function iedDocOpenId(id) {
+  const r = await iedDocPost({ action: "open", id });
+  if (r.error) { iedDocSay(`That document did not open: ${r.error}`); iedToast(r.error); return; }
+  iedDoc = r.doc || null;
+  iedDocLines = iedDocFlat(iedDoc?.layers, 0);
+  iedDocPick = [];
+  iedDocSay(`${iedDoc?.name || id} is open — ${iedDocLines.length} layer${iedDocLines.length === 1 ? "" : "s"}, `
+    + `${iedDoc?.width}×${iedDoc?.height}.`, r.warnings);
+  $("iedDockDocs").open = true;
+  iedDocPaint();
+}
+
+async function iedDocDelete(id) {
+  const row = (iedDocRows || []).find((d) => d.id === id);
+  /* ⚠ PERMANENT. imgdoc.py says it in its own comment: there is no trash behind
+   * this shelf, and inventing one here would be a second place documents live
+   * that nothing else knows about. */
+  if (!(await appConfirm(`Delete “${row?.name || id}” from the shelf? This is permanent — `
+    + `there is no trash behind this shelf and nothing else holds a copy.`))) return;
+  const r = await iedDocPost({ action: "delete", id });
+  if (r.error) { iedDocSay(`It was not deleted: ${r.error}`); iedToast(r.error); return; }
+  if (iedDoc && iedDoc.id === id) { iedDoc = null; iedDocLines = []; iedDocPick = []; }
+  iedDocSay(`Deleted ${r.deleted?.name || id}.`, r.warnings);
+  await iedDocList();
+}
+
+/* ⚠ WHAT A DOCUMENT HAS NO PLACE FOR. Everything queued on this console is a
+ * PIPELINE op — one list applied to one picture on Apply — and a document is a
+ * tree of layers. There is no field on a layer for a wand selection or a queued
+ * brush stroke, so carrying them across would mean posting keys imgdoc discards
+ * without a word. They are listed instead, in the hint, so "my curve did not
+ * come across" is answered before it is asked.
+ *
+ * TYPE IS ON THIS LIST FOR THE SHARPER REASON. A document text layer IS a real
+ * thing — but it is drawn by vfx/engine.py:_render_text and the options bar's
+ * type by imgtext.py, two rasterisers reading the same key names in DIFFERENT
+ * UNITS. imgtext.py measures it: tracking 20 is 20 pixels per gap in one and
+ * 1/1000 em in the other, thirteen times apart on one number. Copying the
+ * numbers across would look like it worked and would not be the same type. */
+function iedDocLeftOut() {
+  const out = [];
+  const fx = ied.fx.filter((e) => e.on).length;
+  if (fx) out.push(`${fx} queued effect${fx === 1 ? "" : "s"}`);
+  if (ied.sel.length) out.push("the selection");
+  if (ied.strokes.length) out.push(`${ied.strokes.length} queued stroke${ied.strokes.length === 1 ? "" : "s"}`);
+  if (ied.shapes.length) out.push(`${ied.shapes.length} queued shape${ied.shapes.length === 1 ? "" : "s"}`);
+  if (ied.pathDraws.length) out.push("the queued path fills");
+  if (ied.crop) out.push("the crop");
+  if (ied.levels) out.push("the levels");
+  if (["master", "r", "g", "b"].some((c) => (ied.curves?.[c] || []).length)) out.push("the curve");
+  if (ied.rotate || ied.flipH || ied.flipV || ied.geom || ied.canvas) out.push("the geometry");
+  if (ied.key) out.push("the chroma key");
+  if (ied.text2?.content || ied.text?.content) {
+    out.push("the type (a document text layer is a different rasteriser — its tracking "
+      + "and lineHeight are different units, so the numbers would not mean the same thing)");
+  }
+  /* The sliders are one object with a dozen numbers; naming each would bury the
+   * list. "Any adjustment at all" is the honest summary. */
+  const o = iedOps();
+  if (o.brightness || o.contrast || o.saturation || o.temperature || o.sharpen || o.blur
+    || o.vignette || o.shadows || o.highlights || o.gamma !== 1 || o.autoLevels
+    || o.grayscale || o.sepia || o.invert || o.posterize || o.denoise || o.grain || o.hsl) {
+    out.push("the adjustment sliders");
+  }
+  return out;
+}
+
+async function iedDocSaveComposite() {
+  if (!iedHasPixels()) {
+    iedToast("A document is written out of a picture with pixels — open a png, jpg or webp first.");
+    return;
+  }
+  const W = $("iedImg").naturalWidth, H = $("iedImg").naturalHeight;
+  if (!W || !H) {
+    iedToast("The picture has not finished decoding, so there is no canvas size to give the document.");
+    return;
+  }
+  const name = await appPrompt("Name this document:", ied.name.replace(/\.[^.]+$/, ""));
+  if (!name) return;
+  /* THE SAME PLACEMENT /api/images/composite IS SENT, said the document's way.
+   * The composite route takes x/y in BASE pixels with anchor "center"; a
+   * document layer's transform.position is in CANVAS pixels and an ABSENT
+   * anchor means the layer's own centre, resolved at render time when the
+   * source size is finally known. Writing a guessed anchor in would freeze a
+   * centre that render() is the only thing qualified to work out.
+   *
+   * LAYER ORDER IS BOTTOM-UP in a document, and the composite stack paints
+   * bottom-up over the base too, so the base goes first and iedLayers follow in
+   * their own order. Reversing either would put the stack under the picture. */
+  const layers = [
+    { type: "image", name: ied.name, src: ied.name },
+    ...iedLayers.map((l) => ({
+      type: "image", name: l.src, src: l.src, blend: l.mode,
+      ...(l.clipped ? { clipped: true } : {}),
+      transform: {
+        position: [Math.round((l.xPct / 100) * W), Math.round((l.yPct / 100) * H)],
+        scale: [l.scale * 100, l.scale * 100],
+        opacity: Math.round(l.opacity * 100),
+      },
+    })),
+  ];
+  // No `id`: omitting it mints a new document. Including one updates that one,
+  // which is what the open document's own edits already do, op by op.
+  const r = await iedDocPost({ action: "save", doc: { name, width: W, height: H, layers } });
+  if (r.error) { iedDocSay(`It was not saved: ${r.error}`); iedToast(r.error); return; }
+  const left = iedDocLeftOut();
+  await iedDocList();
+  await iedDocOpenId(r.id);
+  /* ⚠ SAID LAST ON PURPOSE. iedDocOpenId() writes its own line into the same
+   * slot, so saying this first meant the sentence naming what could NOT come
+   * across was on screen for one frame and then replaced by "it is open" —
+   * which is the whole message, silently dropped. */
+  iedDocSay(`Saved “${r.name}” — ${r.layers} layer${r.layers === 1 ? "" : "s"}, `
+    + `${r.width}×${r.height}, and opened it.`
+    + (left.length
+      ? `  LEFT OUT, because a document has no place for it: ${left.join("; ")}. `
+        + `Apply those first if the document should carry them — the base layer names the `
+        + `library picture as it is on disk, not as this console is previewing it.`
+      : "  Nothing was queued on this console, so nothing had to be left behind."),
+    r.warnings);
+}
+
+async function iedDocCatLoad(force) {
+  if (iedDocCat && !force) return iedDocCat;
+  try {
+    const d = await (await fetch("/api/images/document")).json();
+    if (d.error) throw new Error(d.error);
+    iedDocCat = d; iedDocCatErr = null;
+  } catch (e) { iedDocCat = null; iedDocCatErr = String(e.message || e); }
+  return iedDocCat;
+}
+
+/* Generated from the server's own catalog, never listed here — the same rule
+ * the Character dock and the effect stack follow. A hard-coded list of layer
+ * kinds is this codebase's recurring silent-drift bug: the schema grows a kind,
+ * the panel doesn't, and nobody is told. */
+async function iedDocNewDlg() {
+  if (!iedDoc) { iedToast(iedDocNeed()); return; }
+  await iedDocCatLoad();
+  if (!iedDocCat) {
+    iedToast(`The layer catalog did not load, so the kinds cannot be listed: ${iedDocCatErr}`);
+    return;
+  }
+  const pick = iedDocRef();
+  const host = pick ? iedDocFind(pick) : null;
+  const into = host && host.layer.type === "group" ? host.layer : null;
+  const kinds = (iedDocCat.names || []).map((k) => {
+    const e = (iedDocCat.layers || {})[k] || {};
+    return `<option value="${esc(k)}" title="${esc((e.why || "").slice(0, 240))}">${esc(e.label || k)}${
+      e.group ? ` — ${esc(e.group)}` : ""}</option>`;
+  }).join("");
+  const imgs = (state.images || []).slice(0, 80).filter((im) => !im.name.endsWith(".svg"))
+    .map((im) => `<option value="${esc(im.name)}">${esc(im.name)}</option>`).join("");
+  iedDlgOpen("New layer",
+    `<p class="hint">Every kind here came out of <code>GET /api/images/document</code> —
+      the same catalog imgdoc.py generates its MCP schema from, so a kind the server
+      grows appears here without anyone editing this page.</p>
+     <div class="wrow">
+       <label class="hint">kind <select class="sel2 sm" id="iedDocNewKind">${kinds}</select></label>
+       <label class="hint">name <input type="text" class="sel2 sm" id="iedDocNewName" placeholder="optional"></label>
+     </div>
+     <div class="wrow" id="iedDocNewSrcRow">
+       <label class="hint">picture <select class="sel2 sm" id="iedDocNewSrc">${imgs}</select></label>
+     </div>
+     <p class="hint">${into ? `It goes inside “${esc(into.name)}”, at the top of that group.`
+      : "It goes at the top of the document."} A document holds library NAMES and never
+      paths, which is what makes it safe to store and hand around. The server seeds the
+      kind's own content block, so a text layer arrives with type in it rather than
+      rendering zero pixels.</p>`,
+    `<button class="btn primary sm" id="iedDocNewOk">add the layer</button>`);
+  /* ⚠ NOT el.hidden. `.ieddlgbody .wrow` sets display:flex, and an AUTHOR rule
+   * beats the user agent's [hidden]{display:none} — so the attribute is set,
+   * the row stays on screen, and the picture picker sits under a solid layer
+   * looking like it applies to it. */
+  const srcRow = () => {
+    $("iedDocNewSrcRow").style.display = $("iedDocNewKind").value === "image" ? "" : "none";
+  };
+  $("iedDocNewKind").onchange = srcRow;
+  srcRow();
+  $("iedDocNewOk").onclick = async () => {
+    const kind = $("iedDocNewKind").value;
+    const nm = $("iedDocNewName").value.trim();
+    const layer = { type: kind, ...(nm ? { name: nm } : {}) };
+    if (kind === "image") {
+      const s = $("iedDocNewSrc").value;
+      /* An image layer with no src renders NOTHING and comes back as a missing
+       * source — a layer that reads as failed rather than as empty. */
+      if (!s) { iedToast("An image layer needs a picture, and the library has none to offer here."); return; }
+      layer.src = s;
+    }
+    iedDlgClose();
+    await iedDocEdit([{ op: "add_layer", layer, ...(into ? { parent: into.id } : {}) }],
+      `new ${kind} layer`);
+  };
+}
+
+/* An adjustment layer is an effect stack applied to everything beneath it,
+ * re-editable instead of baked — which is the whole argument for layers. One
+ * with an EMPTY stack renders nothing and says nothing, so this asks which
+ * effect before it makes one rather than adding a layer that does not work.
+ *
+ * No `blend` goes on it: an adjustment layer is never painted, so a blend mode
+ * on one is a switch with no wire behind it, and imgdoc warns when it sees one. */
+async function iedDocAdjDlg() {
+  if (!iedDoc) { iedToast(iedDocNeed()); return; }
+  await iedFxLoad();
+  if (!iedFxCat || !iedFxOrder.length) {
+    iedToast(`The effect catalog has not loaded, so there is nothing to put on an `
+      + `adjustment layer: ${iedFxErr || "it was never fetched"}`);
+    return;
+  }
+  const stack = ied.fx.filter((e) => e.on);
+  const pick = iedDocRef();
+  const host = pick ? iedDocFind(pick) : null;
+  const into = host && host.layer.type === "group" ? host.layer : null;
+  const opts = (stack.length
+    ? `<option value="__stack__">— the ${stack.length} effect${stack.length === 1 ? "" : "s"} queued on this console —</option>`
+    : "")
+    + iedFxOrder.map(([g, names]) => `<optgroup label="${esc(g)}">`
+      + names.map((n) => `<option value="${esc(n)}">${esc(iedFxCat[n].label || n)}${
+        iedFxCat[n].needsTimeline ? " (still: no-op)" : ""}</option>`).join("")
+      + `</optgroup>`).join("");
+  iedDlgOpen("New adjustment layer",
+    `<p class="hint">An adjustment layer applies its effects to everything beneath it in
+      its own group, over the region its alpha covers — the shared effect registry, made
+      re-editable instead of baked into the pixels.</p>
+     <div class="wrow">
+       <label class="hint">effect <select class="sel2 sm" id="iedDocAdjFx">${opts}</select></label>
+       <label class="hint">name <input type="text" class="sel2 sm" id="iedDocAdjName" placeholder="adjustment"></label>
+     </div>
+     <p class="hint">${into ? `It goes inside “${esc(into.name)}”.` : "It goes at the top of the document."}
+       An effect marked <i>still: no-op</i> needs a timeline and a document has no time
+       axis, so it would sit there doing nothing. A layer with no effects at all is not
+       offered — that is a layer that looks added and changes no pixel.</p>`,
+    `<button class="btn primary sm" id="iedDocAdjOk">add the layer</button>`);
+  $("iedDocAdjOk").onclick = async () => {
+    const v = $("iedDocAdjFx").value;
+    const nm = $("iedDocAdjName").value.trim();
+    if (!v) { iedToast("Choose an effect — an adjustment layer with an empty stack renders nothing."); return; }
+    const effects = v === "__stack__"
+      ? stack.map((e) => ({ type: e.type, params: { ...e.params }, enabled: true }))
+      // No params: the server fills each one from effects.py's own catalog
+      // defaults, which is one list of defaults rather than a second copy here.
+      : [{ type: v, params: {}, enabled: true }];
+    iedDlgClose();
+    await iedDocEdit([{ op: "add_layer",
+      layer: { type: "adjustment", name: nm || (v === "__stack__" ? "adjustment" : v), effects },
+      ...(into ? { parent: into.id } : {}) }], "new adjustment layer");
+  };
+}
+
+async function iedDocDuplicate() {
+  const pick = iedDocRef();
+  const hit = pick && iedDocFind(pick);
+  if (!hit) { iedToast(iedDocNeed("a row")); return; }
+  await iedDocEdit([{ op: "duplicate_layer", ref: pick }], `duplicate ${hit.layer.name}`);
+}
+
+async function iedDocGroupPicked() {
+  if (!iedDoc) { iedToast(iedDocNeed()); return; }
+  if (iedDocPick.length < 2) {
+    iedToast("Pick two or more rows — wrapping one layer in a group is what a group already is.");
+    return;
+  }
+  /* group_layers only groups layers that ALREADY SHARE A CONTAINER and refuses
+   * when they do not. Asking first costs one lookup and turns a refusal into a
+   * sentence about the rows that are actually on screen. */
+  const boxes = new Set(iedDocPick.map((id) => iedDocFind(id)?.siblings || null));
+  if (boxes.size !== 1 || boxes.has(null)) {
+    iedToast("Those rows are not in the same container — a group is made out of layers "
+      + "that already sit side by side, not out of rows picked across the tree.");
+    return;
+  }
+  const nm = await appPrompt("Name the group:", "group");
+  if (!nm) return;
+  // The order picked is the order given, which is the order they end up in.
+  await iedDocEdit([{ op: "group_layers", refs: [...iedDocPick], name: nm }],
+    `group ${iedDocPick.length} layers`);
+}
+
+async function iedDocMaskAdd() {
+  const pick = iedDocRef();
+  const hit = pick && iedDocFind(pick);
+  if (!hit) { iedToast(iedDocNeed("a row")); return; }
+  if (hit.layer.mask && typeof hit.layer.mask === "object") {
+    /* update_layer MERGES a dict-valued key one level down, so a fresh mask sent
+     * over an existing one keeps whatever keys it does not mention — a silent
+     * edit of somebody's mask rather than a new one. Refusing is the honest half. */
+    iedToast(`“${hit.layer.name}” already has a mask. A patch would MERGE into that one `
+      + `rather than replace it, so this will not lay a second over it.`);
+    return;
+  }
+  /* ⚠ A MASK WITH NEITHER src NOR shapes IS NOT A MASK. imgdoc's _layer_mask()
+   * returns None when it has nothing to build from, so an "empty" mask renders
+   * exactly as if it were absent — added, visible in the tree, and doing
+   * nothing. This is Photoshop's reveal-all: one canvas-sized rectangle that
+   * hides no pixel and is there to be edited. */
+  await iedDocEdit([{ op: "update_layer", ref: pick, patch: { mask: {
+    enabled: true, channel: "alpha",
+    shapes: [{ kind: "rect", x: 0, y: 0, w: iedDoc.width, h: iedDoc.height, mode: "add" }],
+    feather: 0, expand: 0, invert: false, density: 100,
+  } } }], `layer mask on ${hit.layer.name}`);
+}
+
+async function iedDocMove(delta) {
+  const pick = iedDocRef();
+  const hit = pick && iedDocFind(pick);
+  if (!hit) { iedToast(iedDocNeed("a row")); return; }
+  /* reorder_layer's index is inside the layer's OWN container and counts from
+   * the BOTTOM — 0 is the bottom of that list. +1 is one place up the stack,
+   * which is one row DOWN this panel, because the rows read bottom-up. */
+  const at = hit.index + delta;
+  if (at < 0 || at >= hit.siblings.length) {
+    iedToast(`“${hit.layer.name}” is already at the ${delta > 0 ? "top" : "bottom"} of its container.`);
+    return;
+  }
+  await iedDocEdit([{ op: "reorder_layer", ref: pick, index: at }],
+    `${delta > 0 ? "raise" : "lower"} ${hit.layer.name}`);
+}
+
+async function iedDocClipToggle() {
+  const pick = iedDocRef();
+  const hit = pick && iedDocFind(pick);
+  if (!hit) { iedToast(iedDocNeed("a row")); return; }
+  const on = !hit.layer.clipped;
+  await iedDocEdit([{ op: "set_clipped", ref: pick, clipped: on }],
+    on ? `clip ${hit.layer.name} to the layer below` : `release ${hit.layer.name}`);
+}
+
+async function iedDocUngroup() {
+  const pick = iedDocRef();
+  const hit = pick && iedDocFind(pick);
+  if (!hit) { iedToast(iedDocNeed("a row")); return; }
+  if (hit.layer.type !== "group") {
+    iedToast(`“${hit.layer.name}” is a ${hit.layer.type}, not a group — there is nothing to unwrap.`);
+    return;
+  }
+  await iedDocEdit([{ op: "ungroup_layer", ref: pick }], `ungroup ${hit.layer.name}`);
+}
+
+async function iedDocRemove(id) {
+  const hit = iedDocFind(id);
+  if (!hit) return;
+  // The shelf has no undo; this is written the moment it is sent.
+  if (!(await appConfirm(`Remove “${hit.layer.name}” from this document? The shelf has no `
+    + `undo — it is written the moment you say yes.`))) return;
+  await iedDocEdit([{ op: "remove_layer", ref: id }], `remove ${hit.layer.name}`);
+}
+
+function iedDocPaint() {
+  const shelf = $("iedDocShelf");
+  if (!shelf) return;                              // the console's markup is not on this page
+  const live = iedCapLive("layerdoc");
+
+  shelf.innerHTML = !live ? "" : (iedDocRows === null
+    ? `<p class="hint">The shelf has not been read yet.</p>`
+    : (iedDocErr
+      ? `<p class="hint iedcapwarn">The shelf could not be read, so this list is empty
+          because nothing answered — not because there is nothing on it:
+          ${esc(iedDocErr)}</p>`
+      : iedDocRows.length
+      ? iedDocRows.map((d) => `<div class="iedfxrow${iedDoc && iedDoc.id === d.id ? " on" : ""}">
+          <span class="iedfxname" title="${esc(`${d.name || d.id} · ${d.slug || ""} · saved ${stamp((d.updatedAt || 0) * 1000)}`)}">${esc(d.name || d.id)}</span>
+          <span class="iedfxbadge">${d.width}×${d.height} · ${d.layers}L · ${esc(iedDocWhen(d.updatedAt))}</span>
+          <button class="edtool sm" data-docopen="${esc(d.id)}" title="open it here">open</button>
+          <button class="edtool sm warn" data-docdel="${esc(d.id)}" title="Delete it from the shelf. Permanent — there is no trash behind this shelf.">✕</button>
+        </div>`).join("")
+      : `<p class="hint">The shelf is empty — nothing has been saved as a document yet.</p>`));
+
+  const out = $("iedDocOutline");
+  if (out) {
+    out.innerHTML = iedDoc
+      ? (iedDocLines.length
+        ? iedDocLines.map((r) => `<div class="wrow layerrow${iedDocPick.includes(r.id) ? " on" : ""}"
+            data-docly="${esc(r.id)}" style="margin-left:${r.depth * 12}px"
+            title="${esc(`${r.id} · ${r.type}${r.clipped ? " · clipped to the layer below" : ""}`)}">
+            <span>${r.clipped ? `<b class="clipmark">↴</b>` : ""}${esc(String(r.name || r.id).slice(0, 22))}
+              <i class="dim">${esc(r.type)}</i>${r.enabled ? "" : ` <i class="dim">hidden</i>`}</span>
+            <span>
+              <button class="edtool sm" data-doceye="${esc(r.id)}" title="the eyeball — update_layer enabled. A hidden layer costs nothing to render.">${r.enabled ? "◉" : "○"}</button>
+              <button class="edtool sm warn" data-docrm="${esc(r.id)}" title="remove_layer — the shelf has no undo">✕</button>
+            </span></div>`).join("")
+        : `<p class="hint">This document has no layers yet.</p>`)
+      : "";
+  }
+
+  const panel = $("iedDocPanel");
+  if (panel) panel.hidden = !iedDoc;
+  if ($("iedDocTitle")) $("iedDocTitle").textContent = iedDoc ? (iedDoc.name || iedDoc.id) : "—";
+  if ($("iedDocMeta")) {
+    $("iedDocMeta").textContent = iedDoc
+      ? `${iedDoc.width}×${iedDoc.height} · ${iedDocLines.length} layer${iedDocLines.length === 1 ? "" : "s"} · ${iedDoc.id}`
+      : "";
+  }
+
+  const pick = iedDocRef();
+  const hit = pick ? iedDocFind(pick) : null;
+  /* ⚠ ONE WRITER PER BUTTON. iedCapNotes() owns the disabled flag for the docks
+   * whose controls are gated on a capability ALONE; these are gated on the
+   * capability AND on what is open and picked, so the capability is folded in
+   * here and this is the only place that writes them. Two writers is how a
+   * button ends up live because whichever ran last thought so. */
+  const gate = (id, ok, why) => {
+    const el = $(id);
+    if (!el) return;
+    el.disabled = !live || !ok || iedDocBusy;
+    if (el.dataset.ownTitle === undefined) el.dataset.ownTitle = el.title || "";
+    el.title = !live ? iedCapWhy("layerdoc")
+      : (iedDocBusy ? "The shelf is mid-edit — one op at a time, so a refusal cannot land on a tree that already moved."
+        : (ok ? el.dataset.ownTitle : why));
+  };
+  gate("iedDocRefresh", true, "");
+  gate("iedDocSave", iedHasPixels(),
+    "A document is written out of a picture with pixels — open a png, jpg or webp first.");
+  gate("iedDocNew", !!iedDoc, iedDocNeed());
+  gate("iedDocDup", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
+  gate("iedDocGroup", iedDocPick.length >= 2,
+    iedDoc ? "Pick two or more rows — wrapping one layer in a group is what a group already is."
+      : iedDocNeed());
+  gate("iedDocMask", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
+  gate("iedDocAdj", !!iedDoc, iedDocNeed());
+  gate("iedDocUp", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
+  gate("iedDocDown", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
+  gate("iedDocClip", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
+  gate("iedDocUngroup", !!hit && hit.layer.type === "group",
+    iedDoc ? "Pick a group row — ungroup is the one op that needs one." : iedDocNeed());
+  gate("iedDocRender", !!iedDoc, iedDocNeed());
+  gate("iedDocClose", !!iedDoc, iedDocNeed());
+
+  for (const b of shelf.querySelectorAll("[data-docopen]")) {
+    b.onclick = () => iedDocOpenId(b.dataset.docopen);
+  }
+  for (const b of shelf.querySelectorAll("[data-docdel]")) {
+    b.onclick = () => iedDocDelete(b.dataset.docdel);
+  }
+  if (out) {
+    for (const el of out.querySelectorAll("[data-docly]")) {
+      el.onclick = (e) => {
+        if (e.target.closest("[data-doceye]") || e.target.closest("[data-docrm]")) return;
+        const id = el.dataset.docly;
+        /* Click toggles membership, and the LAST one picked is the one the
+         * single-layer ops act on — group_layers is the reason this is a list
+         * and not one id, and it takes its refs in the order they were picked. */
+        const at = iedDocPick.indexOf(id);
+        if (at >= 0) iedDocPick.splice(at, 1); else iedDocPick.push(id);
+        iedDocPaint();
+      };
+    }
+    for (const b of out.querySelectorAll("[data-doceye]")) {
+      b.onclick = () => {
+        const row = iedDocLines.find((r) => r.id === b.dataset.doceye);
+        if (!row) return;
+        iedDocEdit([{ op: "update_layer", ref: row.id, patch: { enabled: !row.enabled } }],
+          `${row.enabled ? "hide" : "show"} ${row.name}`);
+      };
+    }
+    for (const b of out.querySelectorAll("[data-docrm]")) {
+      b.onclick = () => iedDocRemove(b.dataset.docrm);
+    }
+  }
+  iedDocMaybeList();
+}
+
+$("iedDocRefresh").onclick = () => iedDocList();
+$("iedDocSave").onclick = () => iedDocSaveComposite();
+$("iedDocNew").onclick = () => iedDocNewDlg();
+$("iedDocDup").onclick = () => iedDocDuplicate();
+$("iedDocGroup").onclick = () => iedDocGroupPicked();
+$("iedDocMask").onclick = () => iedDocMaskAdd();
+$("iedDocAdj").onclick = () => iedDocAdjDlg();
+$("iedDocUp").onclick = () => iedDocMove(1);
+$("iedDocDown").onclick = () => iedDocMove(-1);
+$("iedDocClip").onclick = () => iedDocClipToggle();
+$("iedDocUngroup").onclick = () => iedDocUngroup();
+$("iedDocClose").onclick = () => {
+  iedDoc = null; iedDocLines = []; iedDocPick = [];
+  iedDocSay("Closed here — it is still on the shelf.");
+  iedDocPaint();
+};
+$("iedDockDocs").addEventListener("toggle", iedDocMaybeList);
+
+$("iedDocRender").onclick = async () => {
+  if (!iedDoc) { iedToast(iedDocNeed()); return; }
+  const btn = $("iedDocRender");
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = "rendering…";
+  try {
+    /* The TREE is what renders, and this copy of it is the one the last edit
+     * handed back — which is why every edit asks for `doc: true`. Posting an
+     * outline would post a description of the document instead of the document. */
+    const r = await (await fetch("/api/images/document", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doc: iedDoc }) })).json();
+    if (r.error) { iedDocSay(`It did not render: ${r.error}`); iedToast(r.error); return; }
+    /* The gallery is a directory listing refreshed on demand, so a picture it
+     * was never told about is invisible until something asks again. */
+    await loadImages();
+    iedDocSay(`Rendered ${r.name} — ${r.width}×${r.height}, ${r.painted} layer${r.painted === 1 ? "" : "s"} painted.`,
+      [...(r.warnings || []),
+        /* A layer the renderer SKIPPED is the thing a person most needs told
+         * about, and it has never been an error on this route. */
+        ...(r.missingSources || []).map((n) => `“${n}” is not in the library, so the layer using it was skipped`),
+        ...(r.missing || []).map((n) => `the renderer could not resolve “${n}”`)]);
+    iedToast(`${r.name} is in the library.`);
+  } catch (e) {
+    iedDocSay(`It did not render: ${e.message}`);
+  } finally {
+    btn.disabled = false; btn.textContent = was; iedDocPaint();
+  }
+};
+
 async function iedPresetsLoad() {
   try {
     const d = await (await fetch("/api/images/presets")).json();
@@ -9548,7 +10228,7 @@ async function iedProbeCaps(force) {
  * once, instead of every row carrying the same sentence. */
 function iedCapNotes() {
   for (const [id, k] of [["iedSelCap", "selection"], ["iedPaintCap", "strokes"],
-    ["iedPathCap", "paths"], ["iedCharCap", "text"]]) {
+    ["iedPathCap", "paths"], ["iedCharCap", "text"], ["iedDocCap", "layerdoc"]]) {
     const el = $(id); if (!el) continue;
     el.hidden = iedCapLive(k);
     el.textContent = iedCapWhy(k);
@@ -9557,9 +10237,11 @@ function iedCapNotes() {
   // two staying live would be a control that appears to work.
   for (const [id, k] of [["iedSelAll", "selection"], ["iedSelNone", "selection"],
     ["iedSelInv", "selection"], ["iedSelFromCrop", "selection"], ["iedSelClear", "selection"],
+    ["iedSelWhat", "selection"], ["iedSelBake", "selection"],
     ["iedStrokeUndo", "strokes"], ["iedPaintClear", "strokes"],
     ["iedPathFromSel", "paths"], ["iedPathSvg", "paths"], ["iedPathToSel", "paths"],
-    ["iedPathStroke", "paths"], ["iedPathFill", "paths"]]) {
+    ["iedPathStroke", "paths"], ["iedPathFill", "paths"], ["iedPathCheck", "paths"],
+    ["iedCharMeasure", "text"]]) {
     const el = $(id); if (!el) continue;
     el.disabled = !iedCapLive(k);
     // The markup's own tooltip survives a disable/enable round trip.
@@ -9569,6 +10251,11 @@ function iedCapNotes() {
   for (const id of ["iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA"]) {
     $(id).disabled = !iedCapLive("selection");
   }
+  /* The Documents dock's buttons are NOT in the list above on purpose: they are
+   * gated on the capability AND on what is open and picked, so iedDocPaint()
+   * folds the capability in and owns them alone. Two writers for one disabled
+   * flag is how a dead button ends up live because whichever ran last thought so. */
+  iedDocPaint();
 }
 
 /* ── the overlay: ants, paths and rubber bands, in viewport pixels ─────── */
@@ -9876,6 +10563,74 @@ $("iedSelNone").onclick = () => iedCmdRun("select.none");
 $("iedSelAll").onclick = () => iedCmdRun("select.all");
 $("iedSelInv").onclick = () => iedCmdRun("select.invert");
 $("iedSelFromCrop").onclick = () => iedCmdRun("select.fromcrop");
+
+/* \u26a0 THE FRAME THE SHAPES ARE WRITTEN IN. ied.sel holds STAGE coordinates \u2014
+ * iedSrcToStage() puts them after the crop and the rotation \u2014 and the server
+ * resolves a selection at stage 4, which is the same place. Send the shapes
+ * without the crop that defines them and the server resolves them against the
+ * uncropped picture: the numbers are right, the region is in the wrong place,
+ * and neither side has anything to complain about. */
+function iedSelFrame() {
+  const all = iedOps();
+  const frame = {};
+  for (const k of ["canvas", "crop", "geometry", "rotate", "flipH", "flipV"]) {
+    if (all[k]) frame[k] = all[k];
+  }
+  return frame;
+}
+const iedSelPayload = () => ({
+  name: ied.name,
+  selection: (ied.sel.length || $("iedSelInvert").checked) ? iedSelectionOp() : {},
+  frame: iedSelFrame(),
+});
+
+/* WHAT THE SELECTION ACTUALLY CAUGHT, before an edit is spent on it. The route
+ * has existed since this morning and nothing on this page could call it. */
+$("iedSelWhat").onclick = async () => {
+  if (!ied.name) return;
+  const say = $("iedSelSays");
+  say.textContent = "resolving\u2026";
+  try {
+    const r = await (await fetch("/api/images/describe-selection", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(iedSelPayload()) })).json();
+    /* The server composes the sentence once so the page and an agent read the
+     * same words \u2014 but the NUMBER is shown too, because the rule is the plain
+     * control and the number behind it. */
+    say.textContent = r.error
+      ? r.error
+      : `${r.says}${r.coverage === undefined ? "" : `  (coverage ${(r.coverage * 100).toFixed(2)}%)`}`;
+  } catch (e) {
+    say.textContent = `The selection could not be described: ${e.message}`;
+  }
+};
+
+/* THE MATTE, KEPT. imgdoc.py's own refusal tells you to "bake the result into a
+ * library image and use mask.src"; this is that step. Worth it for wand and
+ * colour range especially \u2014 those are computed from pixels with a tolerance
+ * you tuned blind, and until this button the result lived for one Apply. */
+$("iedSelBake").onclick = async () => {
+  if (!ied.name) return;
+  const say = $("iedSelSays");
+  const btn = $("iedSelBake");
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = "baking\u2026";
+  try {
+    const r = await (await fetch("/api/images/bake-selection", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(iedSelPayload()) })).json();
+    if (r.error) { say.textContent = r.error; iedToast(r.error); return; }
+    say.textContent = `${r.name} \u2014 ${r.says}`;
+    iedToast(`Saved ${r.name} into the library.`);
+    /* The gallery is a directory listing refreshed on demand, so a new picture
+     * it was never told about is invisible until something asks again. */
+    await loadImages();
+  } catch (e) {
+    say.textContent = `The matte could not be written: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = was;
+  }
+};
 for (const id of ["iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
   $(id).onchange = () => { iedOverlayPaint(); iedStatus(); iedPush("selection settings"); };
 }
@@ -10376,6 +11131,54 @@ $("iedPathFill").onclick = () => {
   iedPush(`fill ${p.name}`);
 };
 
+/* WHY IT WILL FILL SOLID — the one door in this module that can say an
+ * “o” is about to come back as a blob.
+ *
+ * ⚠ BOTH WAYS TO GET A MULTI-CONTOUR FIGURE WRONG ARE SILENT. An open
+ * contour fills identically to a closed one and strokes with a seam where it
+ * starts. A counter wound the SAME way as the contour around it is simply not
+ * a hole under nonzero, and the letter comes back solid. Neither can be
+ * refused — both are legal figures somebody might mean — so imgpath reports
+ * instead, naming the contour and what to do to it.
+ *
+ * ⚠ TWO DIFFERENT `ok`s, AND COLLAPSING THEM WOULD REFUSE THE CASE THIS
+ * EXISTS FOR. The envelope’s `ok` means the CALL worked; the report’s means
+ * the figure has no problems. A figure with a backwards hole is a successful
+ * diagnosis, not a failed request, so only `r.error` reads as a failure here. */
+$("iedPathCheck").onclick = async () => {
+  if (!iedCapLive("paths")) { iedToast(iedCapWhy("paths")); return; }
+  const p = iedPathCur();
+  if (!p) return;
+  const say = $("iedPathSays");
+  const btn = $("iedPathCheck");
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = "checking\u2026";
+  say.textContent = "checking\u2026";
+  try {
+    /* The figure is the path’s CONTOUR LIST — `subs` — under `paths`, which is
+     * the same {paths: [...]} the fill gesture queues. Checking anything else
+     * would be checking a figure nobody is about to draw. */
+    const r = await (await fetch("/api/images/check-figure", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ figure: { paths: JSON.parse(JSON.stringify(p.subs)) } }) })).json();
+    if (r.error) { say.textContent = r.error; iedToast(r.error); return; }
+    /* The server composes the sentence once so this panel and an agent read the
+     * same words — and the NUMBERS are shown beside it, because the rule here
+     * is the plain control AND the number behind it. */
+    const n = (a) => (Array.isArray(a) ? a.length : 0);
+    say.textContent = `${p.name}: ${r.says}  (${r.contours} contour${r.contours === 1 ? "" : "s"}`
+      + ` · ${n(r.holes)} hole${n(r.holes) === 1 ? "" : "s"} · ${n(r.solid)} enclosed but not a hole`
+      + ` · ${n(r.open)} not closed · fill rule ${r.rule})`;
+    /* A figure that will draw wrong is worth the status bar too — the eye is
+     * on the canvas at this point, not on a hint line inside a dock. */
+    if (n(r.solid) || n(r.open)) iedToast(`${p.name} — ${r.says}`);
+  } catch (e) {
+    say.textContent = `The figure could not be checked: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = was;
+  }
+};
+
 /* ── the Character / Paragraph dock ────────────────────────────────────────
  * Generated, never listed: every row comes out of /api/images/tools
  * module=text, the way the effect stack comes out of /api/images/effects. A
@@ -10572,6 +11375,79 @@ function iedCharPaint() {
     el.onchange = () => { write(); iedPush(`type · ${path}`); };
   }
 }
+
+/* TYPE METRICS — the numbers, before a render is spent finding them out.
+ *
+ * A layout has to commit to a size and a box BEFORE anything draws, and every
+ * other way to learn what the type did costs a render and a look. Two of these
+ * answers are the ones that quietly cost a whole layout:
+ *
+ *   font.fallback  the face you asked for was not on this machine and another
+ *                  one drew. A layout measured against the wrong face is wrong
+ *                  in every dimension and looks fine in the panel.
+ *   shrunk         shrink-to-fit moved the size, so the number in the options
+ *                  bar is not the number that drew; sizeAsked says from where.
+ *
+ * ⚠ THIS MEASURES THE RASTERISER THAT DRAWS THIS TYPE AND NOT THE OTHER ONE.
+ * There are two in the tree: `ops.text` — what this console sends on Apply —
+ * goes to imgtext.py, and a DOCUMENT text layer goes to vfx/engine.py, which
+ * reads the same key names in different units (imgtext.py measures tracking 20
+ * at 13x apart between them). So this button measures the options bar’s spec
+ * and nothing else; a document text layer must not be sent through it. */
+$("iedCharMeasure").onclick = async () => {
+  if (!iedCapLive("text")) { iedToast(iedCapWhy("text")); return; }
+  const say = $("iedCharSays");
+  /* Built the way iedTextOp() builds it for Apply — the v2 spec when the
+   * Character dock is live and has content, else the legacy one-liner. Two
+   * spellings of one thing, and measuring a third would be measuring something
+   * that never renders. */
+  const op = iedTextOp();
+  if (!op.text) {
+    say.textContent = "There is no type yet — the text tool’s box is empty, so there is "
+      + "nothing to lay out. Posting an empty spec would measure a blank.";
+    return;
+  }
+  const btn = $("iedCharMeasure");
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = "measuring\u2026";
+  say.textContent = "measuring\u2026";
+  try {
+    const r = await (await fetch("/api/images/measure-text", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: op.text }) })).json();
+    if (r.error) { say.textContent = r.error; iedToast(r.error); return; }
+    const num = (v) => (v === undefined || v === null ? "?" : Math.round(+v * 100) / 100);
+    const bits = [];
+    /* ⚠ inkBox IS A NAMED RECTANGLE OBJECT AND IT CAN BE null. imgtext says why
+     * in `inkBoxWhy` when it is, and reading .w off null is how this line would
+     * have thrown on exactly the specs worth measuring. */
+    if (r.inkBox) bits.push(`ink ${num(r.inkBox.w)}×${num(r.inkBox.h)} at ${num(r.inkBox.x)},${num(r.inkBox.y)}`);
+    else bits.push(`no ink box${r.inkBoxWhy ? ` — ${r.inkBoxWhy}` : ""}`);
+    bits.push(`block ${num(r.blockW)}×${num(r.blockH)}`);
+    bits.push(`${r.lineCount} line${r.lineCount === 1 ? "" : "s"}`);
+    bits.push(`baseline step ${num(r.lineStep)}`);
+    // The size that DREW, and where it came from when it is not the one asked for.
+    bits.push(r.shrunk
+      ? `size ${num(r.size)} — SHRUNK to fit from ${num(r.sizeAsked)} (floor ${num(r.minSize)})`
+      : `size ${num(r.size)}`);
+    // The substitution, said plainly. A silently substituted face is a layout
+    // measured against a font that is not the one in the picture.
+    bits.push(r.font?.fallback
+      ? `FONT SUBSTITUTED — "${r.font.asked}" is not on this machine, so another face drew and every number above is that face’s`
+      : `font ${r.font?.asked || "?"}`);
+    const warn = (r.warnings || []).filter(Boolean);
+    say.textContent = bits.join(" · ") + (warn.length ? `  ⚠ ${warn.join(" · ")}` : "");
+    if (r.font?.fallback || r.shrunk) {
+      iedToast(r.font?.fallback
+        ? `"${r.font.asked}" was substituted — the type in the picture is a different face.`
+        : `The type was shrunk to fit: ${num(r.sizeAsked)} → ${num(r.size)}.`);
+    }
+  } catch (e) {
+    say.textContent = `The type could not be measured: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = was;
+  }
+};
 
 /* ── the Swatches dock ─────────────────────────────────────────────────────
  * The shelf itself lives server-side (see the route for the persistence
@@ -11435,11 +12311,38 @@ const IED_CMDS = [
     },
     why: () => "Select a layer row first — or Alt-click the border between two rows." },
   { ...SEP, menu: "Layer" },
-  { id: "layer.new", menu: "Layer", label: "New layer", need: "layerdoc", run: () => {} },
-  { id: "layer.dup", menu: "Layer", label: "Duplicate the layer", need: "layerdoc", run: () => {} },
-  { id: "layer.group", menu: "Layer", label: "Group the layers", need: "layerdoc", run: () => {} },
-  { id: "layer.mask", menu: "Layer", label: "Add a layer mask", need: "layerdoc", run: () => {} },
-  { id: "layer.adjlayer", menu: "Layer", label: "New adjustment layer", need: "layerdoc", run: () => {} },
+  /* ⚠ THESE FIVE USED TO BE `run: () => {}`. They went live the moment the
+   * layerdoc probe came back and they did NOTHING when clicked — the exact
+   * failure this console is written against. They now act on the OPEN DOCUMENT
+   * in the Documents dock, and when there is none, or no row picked, the row is
+   * dark with a `why` that says which — because a command that explains itself
+   * beats a command that silently does nothing. */
+  { id: "layer.new", menu: "Layer", label: "New layer…", need: "layerdoc",
+    enabled: () => !!iedDoc, why: () => iedDocNeed(),
+    run: () => { iedFocus("iedDockDocs", "iedDocNew"); iedDocNewDlg(); } },
+  { id: "layer.dup", menu: "Layer", label: "Duplicate the layer", need: "layerdoc",
+    enabled: () => !!iedDoc && !!iedDocRef(),
+    why: () => (iedDoc ? iedDocNeed("a row") : iedDocNeed()),
+    run: () => { iedFocus("iedDockDocs", "iedDocDup"); iedDocDuplicate(); } },
+  { id: "layer.group", menu: "Layer", label: "Group the layers", need: "layerdoc",
+    enabled: () => !!iedDoc && iedDocPick.length >= 2,
+    why: () => (iedDoc
+      ? "Pick two or more rows in the Documents dock — wrapping one layer in a group is what a group already is."
+      : iedDocNeed()),
+    run: () => { iedFocus("iedDockDocs", "iedDocGroup"); iedDocGroupPicked(); } },
+  { id: "layer.mask", menu: "Layer", label: "Add a layer mask", need: "layerdoc",
+    enabled: () => !!iedDoc && !!iedDocRef(),
+    why: () => (iedDoc ? iedDocNeed("a row") : iedDocNeed()),
+    run: () => { iedFocus("iedDockDocs", "iedDocMask"); iedDocMaskAdd(); } },
+  { id: "layer.adjlayer", menu: "Layer", label: "New adjustment layer…", need: "layerdoc",
+    enabled: () => !!iedDoc, why: () => iedDocNeed(),
+    run: () => { iedFocus("iedDockDocs", "iedDocAdj"); iedDocAdjDlg(); } },
+  { ...SEP, menu: "Layer" },
+  { id: "layer.docs", menu: "Layer", label: "Documents…", need: "layerdoc",
+    run: () => { iedFocus("iedDockDocs", "iedDocRefresh"); iedDocMaybeList(); } },
+  { id: "layer.docrender", menu: "Layer", label: "Render the document → new image", need: "layerdoc",
+    enabled: () => !!iedDoc, why: () => iedDocNeed(),
+    run: () => $("iedDocRender").click() },
 
   { id: "select.all", menu: "Select", label: "All", key: "Ctrl+A", need: "selection",
     run: () => {

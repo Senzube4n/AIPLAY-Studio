@@ -24,7 +24,10 @@ Three kinds of case, the split effects_test and shapes_test both use.
 
     D:/AI/aiplay-studio-bench/venv/Scripts/python.exe server/imgpath_test.py
 
-numpy / cv2, plus imgshape for the cross-column compositing case.
+numpy / cv2, plus imgshape for the cross-column compositing case, and Pillow +
+fontTools for the type-as-paths block - which reads a real face off this
+machine rather than writing a letter down, because the one input the pen tool
+can never be handed by a test author is letterform geometry.
 """
 import math
 import os
@@ -32,6 +35,11 @@ import sys
 
 import cv2
 import numpy as np
+from PIL import ImageFont
+from fontTools.pens.areaPen import AreaPen
+from fontTools.pens.basePen import decomposeQuadraticSegment
+from fontTools.pens.recordingPen import DecomposingRecordingPen
+from fontTools.ttLib import TTFont
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import imgpath as P                                        # noqa: E402
@@ -841,6 +849,375 @@ eq("...which is exactly what warp does NOT do",
    float(P.liquify(half, job)[120, 120, 0]), 1.0)
 
 
+print("\n  -- type as paths: a real letterform, end to end --")
+
+# ⚠ THE POINT OF THIS BLOCK IS THAT NONE OF THE GEOMETRY BELOW IS WRITTEN HERE.
+# Every number is read out of a font file on this machine and measured against
+# Pillow's own FreeType raster of the same face at the same size - the other
+# side's source, not this author's idea of what a letter looks like. imgpath
+# does not read fonts and is not going to; server/imgtext.py owns that half.
+# This is the receiving half proving it can take what that half will send, and
+# `imgpath.TYPE_CONTRACT` is the list of rules the extraction below obeys.
+
+FONT_DIR = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
+GLYPH_FONT = next((os.path.join(FONT_DIR, n)
+                   for n in ("arial.ttf", "segoeui.ttf", "times.ttf", "verdana.ttf")
+                   if os.path.exists(os.path.join(FONT_DIR, n))), None)
+
+
+def glyph_contours(font_path, ch, size, origin):
+    """One character -> the list of contours imgpath's grammar takes.
+
+    This is exactly `TYPE_CONTRACT`, executed: DecomposingRecordingPen so a
+    composite arrives as outlines with its component transforms applied,
+    quadratics lifted to cubics EXACTLY (c1 = p0 + 2/3(q - p0)), implied
+    on-curve points restored at the midpoints, and the whole figure scaled and
+    flipped ONCE - font units are y up, image pixels are y down, and flipping
+    together is what leaves the opposition of the windings intact.
+    """
+    tt = TTFont(font_path, fontNumber=0)
+    upem = tt["head"].unitsPerEm
+    gs = tt.getGlyphSet()
+    pen = DecomposingRecordingPen(gs)
+    gs[tt.getBestCmap()[ord(ch)]].draw(pen)
+    s = float(size) / upem
+    ox, oy = origin
+
+    def T(pt):
+        return (ox + pt[0] * s, oy - pt[1] * s)
+
+    figure, segs, cur, start = [], [], None, None
+    for op_, args in pen.value:
+        if op_ == "moveTo":
+            if segs:
+                figure.append(segs)
+            segs = []
+            cur = start = T(args[0])
+        elif op_ == "lineTo":
+            p = T(args[0])
+            segs.append((cur, cur, p, p))            # a line IS a cubic, exactly
+            cur = p
+        elif op_ == "curveTo":
+            pp = [T(a) for a in args]
+            for i in range(0, len(pp) - 2, 2):
+                segs.append((cur, pp[i], pp[i + 1], pp[i + 2]))
+                cur = pp[i + 2]
+        elif op_ == "qCurveTo":
+            raw = list(args)
+            if raw[-1] is None:
+                # A contour of nothing but control points - a perfect TrueType
+                # circle is drawn this way - starts at the midpoint of the last
+                # and the first, which is the on-curve point the format leaves
+                # implied.
+                off = [T(a) for a in raw[:-1]]
+                cur = start = ((off[-1][0] + off[0][0]) / 2.0,
+                               (off[-1][1] + off[0][1]) / 2.0)
+                pp = off + [cur]
+            else:
+                pp = [T(a) for a in raw]
+            for q, on in decomposeQuadraticSegment(tuple(pp)):
+                segs.append((cur,
+                             (cur[0] + 2.0 / 3.0 * (q[0] - cur[0]),
+                              cur[1] + 2.0 / 3.0 * (q[1] - cur[1])),
+                             (on[0] + 2.0 / 3.0 * (q[0] - on[0]),
+                              on[1] + 2.0 / 3.0 * (q[1] - on[1])), on))
+                cur = on
+        elif op_ in ("closePath", "endPath"):
+            if segs and math.dist(cur, start) > 1e-9:
+                segs.append((cur, cur, start, start))
+            if segs:
+                figure.append(segs)
+            segs = []
+    if segs:
+        figure.append(segs)
+    out = []
+    for segs in figure:
+        anchors = [{"p": [p0[0], p0[1]],
+                    "in": [segs[i - 1][2][0] - p0[0], segs[i - 1][2][1] - p0[1]],
+                    "out": [c1[0] - p0[0], c1[1] - p0[1]]}
+                   for i, (p0, c1, _, _) in enumerate(segs)]
+        out.append({"anchors": anchors, "closed": True})
+    return out
+
+
+def glyph_area(font_path, ch, size):
+    """The same glyph's area, computed by fontTools' OWN pen, in image pixels.
+
+    ⚠ THIS IS THE ONLY EXACT CHECK ON THE EXTRACTION. Everything else in this
+    block compares rasters, and a raster comparison at a sane tolerance cannot
+    see a small error in a control point - writing 0.66 instead of 2/3 in the
+    quadratic lift above moves the outline by about a sixth of a pixel at
+    200 px and passes every IoU and ink case here. The area does see it: it is
+    closed-form on both sides. The y flip reverses the sign, and the scale
+    squares."""
+    tt = TTFont(font_path, fontNumber=0)
+    gs = tt.getGlyphSet()
+    pen = AreaPen(gs)
+    gs[tt.getBestCmap()[ord(ch)]].draw(pen)
+    return -pen.value * (float(size) / tt["head"].unitsPerEm) ** 2
+
+
+def pil_glyph(font_path, ch, size, origin, h, w):
+    """The same glyph, rasterised by Pillow's FreeType at the same pen point.
+
+    `getmask2(ch, mode="L", anchor="ls")` is the call server/imgtext.py's own
+    `_glyph` makes, so this is the raster the type tool ships, not a second
+    opinion invented for the test."""
+    f = ImageFont.truetype(font_path, size)
+    mask, off = f.getmask2(ch, mode="L", anchor="ls", start=(0.0, 0.0))
+    gw, gh = mask.size
+    tile = np.asarray(mask, np.uint8).reshape(gh, gw).astype(np.float32) / 255.0
+    out = np.zeros((h, w), np.float32)
+    x0, y0 = int(origin[0]) + int(off[0]), int(origin[1]) + int(off[1])
+    out[y0:y0 + gh, x0:x0 + gw] = tile
+    return out
+
+
+def unhinted(font_path, ch, size, origin, h, w, k=8):
+    """Pillow's own raster at k times the size, box-downsampled - grid-fitting
+    has nowhere left to move an edge at 1600 px, so what comes back is the
+    OUTLINE, sampled. The reference both rasterisers get measured against.
+
+    ⚠ k=8 IS MEASURED, NOT PICKED. The reference keeps moving below it: imgpath
+    against 'e' at 64 px scores 0.9615 at k=4, 0.9712 at k=6, 0.9846 at k=8,
+    0.9856 at k=12 and 0.9868 at k=16 (arial, 2026-09-21), because a 4x raster
+    is still hinted enough to be a different picture rather than a finer one.
+    At k=4 Pillow even scores 0.9990 against it on 'A', which is not a result
+    about letterforms - it is a rasteriser agreeing with itself. k=12 costs
+    2.25x the memory of k=8 for four ten-thousandths."""
+    big = pil_glyph(font_path, ch, size * k, (origin[0] * k, origin[1] * k), h * k, w * k)
+    return big.reshape(h, k, w, k).mean(axis=(1, 3))
+
+
+def iou(a, b):
+    """Coverage in common over coverage in either. On an antialiased letter
+    this is an EDGE measure: the interior agrees trivially, so every point of
+    the difference is a fraction of a pixel along the outline."""
+    u = float(np.maximum(a, b).sum())
+    return float(np.minimum(a, b).sum()) / u if u else 0.0
+
+
+NOTES = []
+if GLYPH_FONT is None:
+    NOTES.append("no TrueType face on this shelf, so the type-as-paths block "
+                 "proved nothing at all - imgpath's side of the seam went "
+                 "unmeasured on this run")
+    eq("a font to read letterforms out of", GLYPH_FONT is not None, True)
+else:
+    FACE = os.path.basename(GLYPH_FONT)
+    SIZE, ORIGIN = 200, (100, 260)
+    CANVAS = (480, 420)
+    A_PATHS = glyph_contours(GLYPH_FONT, "A", SIZE, ORIGIN)
+    # Closed form against closed form, before a single pixel exists. If the
+    # quadratic lift, the implied on-curve points, a component transform or
+    # the flip were off by anything at all, these two numbers would part.
+    for ch in ("A", "o", "Ä"):
+        near(f"{FACE} {ch!r} encloses the area fontTools' own pen computes",
+             P.path_area(glyph_contours(GLYPH_FONT, ch, SIZE, ORIGIN))
+             / glyph_area(GLYPH_FONT, ch, SIZE), 1.0, 1e-12)
+    rep = P.check_figure({"paths": A_PATHS}, notes=[])
+    eq(f"{FACE} 'A' arrives as two contours, the letter and its counter",
+       rep["contours"], 2)
+    eq("...wound against each other, so nonzero cuts the counter out",
+       (rep["ok"], rep["holes"], rep["solid"]), (True, [1], []))
+
+    mask = P.path_mask({"paths": A_PATHS}, *CANVAS)
+    ref = pil_glyph(GLYPH_FONT, "A", SIZE, ORIGIN, *CANVAS)
+    near(f"{FACE} 'A' at {SIZE}px lays down the ink Pillow's own raster does",
+         mask.sum() / ref.sum(), 1.0, 0.002)
+    hinted_iou = iou(mask, ref)
+    eq(f"...and covers the same pixels: IoU over 0.99 (got {hinted_iou:.4f})",
+       hinted_iou > 0.99, True)
+
+    # ⚠ THE REMAINING DISAGREEMENT IS FREETYPE'S HINTING, NOT THIS MODULE'S
+    # FLATTENING, and the only way to show that is to measure both against a
+    # raster where hinting cannot reach. Against the outline itself, imgpath is
+    # the CLOSER of the two - so a test that only compared against the hinted
+    # raster would be blaming the wrong side for the gap.
+    beaten = []
+    for ch, size in (("A", 200), ("o", 64), ("e", 64)):
+        org = (int(size * 0.5), int(size * 1.3))
+        hw = (int(size * 2.4), int(size * 2.1))
+        paths = glyph_contours(GLYPH_FONT, ch, size, org)
+        ours = iou(P.path_mask({"paths": paths}, *hw), unhinted(GLYPH_FONT, ch, size, org, *hw))
+        theirs = iou(pil_glyph(GLYPH_FONT, ch, size, org, *hw),
+                     unhinted(GLYPH_FONT, ch, size, org, *hw))
+        NOTES.append(f"{FACE} {ch!r} at {size}px against an unhinted raster of "
+                     f"itself: imgpath {ours:.4f}, Pillow {theirs:.4f}")
+        # The floor is a regression guard - the measured worst of the three is
+        # 0.9846 - but the CLAIM is the comparison next to it, which is what
+        # says where the missing half percent actually lives.
+        if ours < 0.97 or ours <= theirs:
+            beaten.append(f"{ch}@{size} ours {ours:.4f} vs Pillow {theirs:.4f}")
+    eq("against the true outline imgpath beats the hinted raster, every glyph",
+       beaten, [])
+    NOTES.append(f"{FACE} 'A' at {SIZE}px against Pillow's hinted raster: "
+                 f"IoU {hinted_iou:.4f}, ink ratio {mask.sum() / ref.sum():.5f} - "
+                 f"and IoU against a HINTED raster is a number about the size, "
+                 f"not about this module")
+
+    # The hole, and the thing that proves check_figure is diagnosing something
+    # real rather than reciting a rule: reverse the counter and the letter
+    # fills solid, exactly where it said it would.
+    o_paths = glyph_contours(GLYPH_FONT, "o", SIZE, ORIGIN)
+    o_mask = P.path_mask({"paths": o_paths}, *CANVAS)
+    counter = P._flatten_one(P._paths_of(o_paths)[1], 0.25, True)[0]
+    cx, cy = counter.mean(axis=0)
+    eq("the counter of an 'o' is a HOLE, not ink", float(o_mask[int(cy), int(cx)]), 0.0)
+    flipped = dict(o_paths[1])
+    flipped["anchors"] = [{"p": a["p"], "in": a["out"], "out": a["in"]}
+                          for a in reversed(o_paths[1]["anchors"])]
+    bad_rep = P.check_figure({"paths": [o_paths[0], flipped]}, notes=[])
+    eq("...and reversing it is the failure check_figure names",
+       (bad_rep["ok"], bad_rep["solid"]), (False, [1]))
+    # Joined rather than indexed: a pin that raises IndexError when the thing
+    # it guards is removed takes every case after it down with it, and reports
+    # a crash where it should report one named line. Caught by breaking it.
+    said = " ".join(bad_rep["problems"])
+    eq("...in a sentence that says which contour and what to do about it",
+       ("contour 1" in said and "evenodd" in said), True)
+    solid = P.path_mask({"paths": [o_paths[0], flipped]}, *CANVAS)
+    eq("...and the letter really does come back solid, which is the whole bug",
+       float(solid[int(cy), int(cx)]), 1.0)
+    near("...while evenodd holes it whichever way the counter is wound",
+         float(P.path_mask({"paths": [o_paths[0], flipped],
+                            "fillRule": "evenodd"}, *CANVAS).sum()),
+         float(o_mask.sum()), 0.01)
+
+    # A COMPOSITE: the accented glyph is built out of references to 'A' and to a
+    # dieresis, with a transform on each. A pen that does not decompose returns
+    # NOTHING for it, which is why the count is the assertion.
+    ae_paths = glyph_contours(GLYPH_FONT, "\u00c4", SIZE, ORIGIN)
+    eq(f"{FACE} 'A-dieresis' decomposes to the letter, its counter and two dots",
+       len(ae_paths), 4)
+    ae_mask = P.path_mask({"paths": ae_paths}, *CANVAS)
+    dots = P.path_mask({"paths": ae_paths[2:]}, *CANVAS)
+    near("...and its ink is the 'A' plus exactly those two dots",
+         float(ae_mask.sum()), float(mask.sum() + dots.sum()), 0.01)
+    ae_ref = pil_glyph(GLYPH_FONT, "\u00c4", SIZE, ORIGIN, *CANVAS)
+    near("...to the same ink Pillow's raster of the composite lays down",
+         float(ae_mask.sum()) / float(ae_ref.sum()), 1.0, 0.002)
+    rep = P.check_figure({"paths": ae_paths}, notes=[])
+    eq("...with one hole and two islands, and nothing to complain about",
+       (rep["ok"], rep["holes"], rep["inside"]), (True, [1], [-1, 0, -1, -1]))
+
+    # ⚠ A CONTOUR THAT VANISHES OUT OF A LIST USED TO TAKE NOTHING WITH IT.
+    # Before 2026-09-21 this drew three of the four contours and left `notes`
+    # empty - an umlaut with one dot and no line anywhere to explain it. Real
+    # fonts ship the input that triggers it: glyph u1FAA2 of seguiemj.ttf has
+    # 48 contours and its 46th is a single point stated twice, so that letter
+    # arrived here 47 contours strong and silent.
+    notes = []
+    lost = P.path_mask({"paths": ae_paths[:3] + [{"anchors": [{"p": [5, 5]}],
+                                                  "closed": True}]}, *CANVAS, notes=notes)
+    eq("a contour the grammar cannot read is REPORTED, not quietly dropped",
+       any("gave no contour" in n for n in notes), True)
+    eq("...naming which item of the list it was", any("item 3" in n for n in notes), True)
+    eq("...while the contours around it still draw",
+       float(lost.sum()) > float(mask.sum()), True)
+    # An open contour WARNS and does not set ok: it is a mistake in a letter
+    # and perfectly ordinary in a swash, and nothing in the geometry says
+    # which one arrived.
+    rep = P.check_figure({"paths": [dict(o_paths[0], closed=False), o_paths[1]]},
+                         notes=[])
+    eq("an open contour is a warning, not a problem - a swash is open on purpose",
+       (rep["ok"], rep["open"], rep["problems"]), (True, [0], []))
+    eq("...and the warning says what a stroke will do at its start point",
+       "break at its start" in " ".join(rep.get("warnings", [])), True)
+    # `boolean` is the one draw parameter the check cannot shrug off: it
+    # decides whether the list is one figure or four separate operands, and a
+    # confident report about the wrong one of those is worse than no report.
+    rep = P.check_figure({"paths": o_paths, "boolean": "union"}, notes=[])
+    eq("a job whose boolean is not 'none' is checking a different figure, and "
+       "is told so", "boolean 'union'" in " ".join(rep.get("warnings", [])), True)
+    # ⚠ AND THE ASSERTION IS THE NOTES, NOT THE REPORT. The first version of
+    # this case compared two reports for equality, which are equal whether the
+    # paint keys are filtered out or reported as unknown - a case that could
+    # not fail. Caught by breaking it.
+    quiet = []
+    P.check_figure({"paths": o_paths, "fill": [255, 0, 0, 255], "strokeWidth": 9,
+                    "blend": "multiply"}, notes=quiet)
+    eq("...while the paint keys of the same job are not reported as typos",
+       quiet, [])
+    loud = []
+    P.check_figure({"paths": o_paths, "wobble": 3}, notes=loud)
+    eq("...though a key that is nobody's parameter still is",
+       any("wobble" in s for s in loud), True)
+
+    # ⚠ THE WHOLE REASON THE LOOK EXISTS: a brush WALKING the letters. The
+    # stroke has to measure on real letterform geometry the way it does on a
+    # straight line - a butt stroke of width w over length L is w*L of ink -
+    # or the neon tube around a word is a picture nobody can predict the cost
+    # of. A closed smooth contour has no caps and no corners to add anything.
+    o_len = P.path_length(o_paths)
+    walked = []
+    for w in (2, 6, 12):
+        got = ink(P.draw_path(blank(*CANVAS),
+                              {"paths": o_paths, "stroke": [0, 0, 255, 255],
+                               "strokeWidth": w, "join": "round"}))
+        walked.append(f"w={w}: {got:.1f} vs {w * o_len:.1f}")
+        near(f"a brush walking both contours of an 'o' at width {w} lays down w*L",
+             got, w * o_len, w * o_len * 0.005)
+    NOTES.append(f"{FACE} 'o' is {o_len:.1f}px of contour, and a brush walking "
+                 f"it lays down " + ", ".join(walked))
+
+    # A hole inside a hole is INK, and that is the case that says `inside` has
+    # to be the IMMEDIATE container. Four concentric rings, alternating, which
+    # is the shape of a circled letter (U+2460 and its neighbours).
+    def backwards(bez):
+        a = bez.a[::-1].copy()
+        a[:, 2:4], a[:, 4:6] = bez.a[::-1, 4:6], bez.a[::-1, 2:4]
+        return P.Bez(a, True)
+
+    NEST = [P.circle_path(200, 200, 120), backwards(P.circle_path(200, 200, 90)),
+            P.circle_path(200, 200, 60), backwards(P.circle_path(200, 200, 30))]
+    rep = P.check_figure({"paths": NEST}, notes=[])
+    eq("each ring of a four-deep nest is read against its IMMEDIATE container",
+       (rep["inside"], rep["depth"]), ([-1, 0, 1, 2], [0, 1, 2, 3]))
+    eq("...so a hole inside a hole is ink again, and only two of them are holes",
+       (rep["ok"], rep["holes"], rep["solid"]), (True, [1, 3], []))
+    # ⚠ AND IT CANNOT DEPEND ON THE ORDER THEY ARRIVE IN. A font lists a
+    # glyph's contours in whatever order the designer drew them, so a reading
+    # that happens to be right because the outermost came first is not a
+    # reading. Same four rings, shuffled: every answer moves with the indices
+    # and nothing else changes. Caught by breaking it - the first version of
+    # this case used the ordered nest alone, and a container search that kept
+    # the FIRST match instead of the smallest passed it.
+    shuffled = [NEST[2], NEST[0], NEST[3], NEST[1]]
+    rep = P.check_figure({"paths": shuffled}, notes=[])
+    eq("...and the nesting is read the same way whatever order they arrive in",
+       (rep["ok"], rep["inside"], rep["depth"], rep["holes"]),
+       (True, [3, -1, 0, 1], [2, 0, 3, 1], [2, 3]))
+    nested_ink = ink(fill_of(NEST, 400, 400))
+    want = sum(abs(P.path_area(c)) * (1 if i % 2 == 0 else -1)
+               for i, c in enumerate(NEST))
+    near("...which is what the rasteriser does with it, to a part in a thousand",
+         nested_ink, want, abs(want) * 1e-3)
+
+    # §9 again, on the one op added here: every knob it advertises has to move
+    # the report. `tolerance` is NOT advertised, and the case below is why -
+    # the flattening is area-corrected, so the report is the same report at
+    # forty times the chord error.
+    CHECK_CASES = {"fillRule": ({"paths": [o_paths[0], flipped]},
+                                {"fillRule": "evenodd"})}
+    eq("every check parameter has a case below",
+       sorted(set(P.CATALOG["check"]["params"]) - set(CHECK_CASES) - {"paths"}), [])
+    eq("...and turning it changes the report",
+       [k for k, (job, ch) in CHECK_CASES.items()
+        if P.check_figure(job, notes=[]) == P.check_figure(dict(job, **ch), notes=[])],
+       [])
+    fine = [P._poly_area(P._flatten_one(b, 0.25, True)[0]) for b in P._paths_of(o_paths)]
+    coarse = [P._poly_area(P._flatten_one(b, 10.0, True)[0]) for b in P._paths_of(o_paths)]
+    near("a letter's contours measure the same area at 40x the chord error",
+         max(abs(a - b) / abs(a) for a, b in zip(fine, coarse)), 0.0, 1e-5)
+
+    eq("every rule of the contract is a sentence, not a code",
+       [i for i, s in enumerate(P.TYPE_CONTRACT)
+        if not s.strip().endswith(".") or len(s) < 40], [])
+    eq("...and the catalog serves it beside the ops",
+       P.catalog().get("typeContract"), list(P.TYPE_CONTRACT))
+
+
 print("\n  -- cost at 2048 square --")
 
 TIMES = P._bench(2048)
@@ -855,6 +1232,11 @@ eq("a 2048-square liquify stroke is under a second", TIMES["liquify push"] < 100
 eq("eight strokes cost well under eight times one",
    TIMES["liquify push x8"] < 4 * TIMES["liquify push"], True)
 
+
+if NOTES:
+    print("\n  -- measured --")
+    for n in NOTES:
+        print(f"     {n}")
 
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

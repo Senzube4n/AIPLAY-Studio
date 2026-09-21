@@ -64,7 +64,14 @@ ADJUSTMENT LAYERS REACH DOWN, NOT SIDEWAYS AND NOT UP
     accepted and ignored.
 
     python imgdoc.py render <job.json>     one JSON line back
+    python imgdoc.py store  <job.json>     save / open / list / delete
+    python imgdoc.py edit   <job.json>     a list of mutations, applied and saved
     python imgdoc.py catalog               the vocabulary, for UI and MCP
+
+`store` and `edit` are what make the pure edits below reachable by anything but
+a test — see THE SHELF. Neither picks a directory: `dir` is a job field,
+because server/config.js owns where this app writes and this module has never
+imported it and must not start.
 
 MISSING FROM THE OTHER COLUMNS — read this before extending anything here
   * `imagetools.py` exposes exactly one reusable symbol, `_blend`. Its 25
@@ -200,6 +207,12 @@ LIMITS = {
     "maxDepth": 16,            # nested groups; a cycle is caught separately
     "effectsPerLayer": 24,     # store.js's number, same reason
     "maskShapes": 64,
+    # The shelf's two. 200 documents is store.js's FX_PRESET_LIMITS.presets
+    # number, taken rather than invented. The byte cap is a REFUSAL TO READ, not
+    # a cap on what may be written: a shelf past it is a shelf something else
+    # corrupted, and reading it costs the RAM before anything can say so.
+    "shelfDocs": 200,
+    "shelfBytes": 64 * 1024 * 1024,
 }
 
 MASK_SHAPE_KINDS = ("rect", "ellipse", "polygon")
@@ -586,6 +599,18 @@ def slugify(title):
     return base.strip("-")[:48] or "untitled"
 
 
+def _handle(value):
+    """`value` if it is a safe handle — what new_id mints — else "".
+
+    Not slugify: a slug REPAIRS anything into something, and an id must not be
+    quietly repaired into a different document's name. An id either is a handle
+    or is replaced with a fresh one and said so.
+    """
+    s = str(value if value is not None else "")[:64]
+    ok = s and all((c.isascii() and c.isalnum()) or c in "_-" for c in s)
+    return s if ok else ""
+
+
 def blank_doc(name="Untitled", width=1920, height=1080, bg=(0, 0, 0, 0)):
     now = time.time()
     title = str(name or "Untitled")[:80]
@@ -671,11 +696,30 @@ def normalize(doc, warn=None):
                          f"{type(doc).__name__}")
     out = copy.deepcopy(doc)
     out["v"] = DOC_VERSION
-    if not out.get("id"):
-        out["id"] = new_id("img", 6)
     out["name"] = str(out.get("name") or "Untitled")[:80]
-    if not out.get("slug"):
-        out["slug"] = slugify(out["name"])
+
+    # ⚠ THE HANDLES ARE A TRUST BOUNDARY, AND THIS USED TO PASS THEM THROUGH.
+    # The old code only filled a slug in when it was MISSING, so a document
+    # carrying {"slug": "../../etc/passwd"} kept it, byte for byte, through
+    # every round trip. That was harmless while nothing stored a document and
+    # stops being harmless the moment one does: `id` is the shelf's key and
+    # `slug` is what slugify's own comment calls it — "a path segment and a
+    # URL". Repairing them HERE rather than in the shelf is deliberate: this is
+    # the one validator, so a document off disk and a document off the wire get
+    # the same treatment, and a route that builds `<dir>/<slug>.png` later
+    # inherits the guarantee instead of having to remember it.
+    ident = _handle(out.get("id"))
+    if not ident:
+        if out.get("id"):
+            w.append(f"doc.id {out['id']!r} is not a handle — letters, digits, "
+                     "underscore and hyphen only, so a fresh one was minted")
+        ident = new_id("img", 6)
+    out["id"] = ident
+    slug = slugify(out.get("slug") or out["name"])
+    if out.get("slug") and slug != out["slug"]:
+        w.append(f"doc.slug {out['slug']!r} is not a slug — a slug is a path "
+                 f"segment and a URL, so it was read as \"{slug}\"")
+    out["slug"] = slug
     out["width"] = _int_in(out.get("width"), LIMITS["minSize"], LIMITS["maxSize"], 1920)
     out["height"] = _int_in(out.get("height"), LIMITS["minSize"], LIMITS["maxSize"], 1080)
     if not isinstance(out.get("bg"), (list, tuple)):
@@ -830,7 +874,11 @@ def _normalize_layer(layer, w, seen, depth):
 
 def walk(doc_or_layers):
     """Every layer in the tree, depth-first, bottom-up, groups before children."""
-    layers = doc_or_layers["layers"] if isinstance(doc_or_layers, dict) else doc_or_layers
+    # .get, not ["layers"]: a document with no layers key is an EMPTY document,
+    # and KeyError("layers") on the way into a layer count names nothing a
+    # caller can act on. normalize() guarantees the key; these edits are also
+    # called straight from python on a dict somebody built by hand.
+    layers = doc_or_layers.get("layers") if isinstance(doc_or_layers, dict) else doc_or_layers
     for layer in layers or []:
         if not isinstance(layer, dict):
             continue
@@ -871,10 +919,29 @@ def find_layer(doc, ref):
     raise ValueError(f"No such layer: {want}. This document has {have}.")
 
 
+def _whole(value, what):
+    """An index, or a refusal that names the argument and what a good one is.
+
+    `int(None)` is a TypeError reading "int() argument must be a string, a
+    bytes-like object or a real number" — true, and useless to somebody who sent
+    an ops list with a field spelled wrong. Every index that crosses the JSON
+    seam comes through here.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{what} must be a whole number: 0 is the BOTTOM of the container "
+            f"and layers count up from there. Got {value!r}.") from None
+
+
 def _container(doc, parent):
     """The list a layer should go into: the document's, or a group's."""
     if parent in (None, ""):
-        return doc["layers"]
+        # setdefault, not doc["layers"]: normalize() guarantees the key, but
+        # these edits are also called straight from python on a dict somebody
+        # built by hand, and a bare KeyError("layers") names nothing.
+        return doc.setdefault("layers", [])
     group, _sib, _i = find_layer(doc, parent)
     if group.get("type") != "group":
         raise ValueError(f"{group.get('id')} ({group.get('name')}) is a "
@@ -893,17 +960,49 @@ def _count(doc):
     return sum(1 for _ in walk(doc))
 
 
+def _seeded_layer(layer):
+    """blank_layer's defaults for the kind, with the caller's fields merged over.
+
+    ⚠ WITHOUT THE SEEDING A TEXT LAYER ADDED OVER A JSON SEAM DRAWS NOTHING.
+    `{"type": "text", "name": "title"}` is what every caller that is not python
+    sends, because blank_layer() is a python function and a route is not — and
+    that layer has no `text` block at all. It normalises clean, renders zero
+    pixels, and reads as a layer that failed rather than a layer that was never
+    given any content. Seeding costs one dict merge and removes the whole class.
+
+    Merged one level down, update_layer's rule, so `{"text": {"size": 140}}`
+    changes the size and keeps the font, the colour and the alignment.
+    """
+    if not isinstance(layer, dict):
+        raise ValueError(
+            "a layer is an object like {\"type\": \"text\", \"name\": \"title\"}; "
+            f"got {type(layer).__name__}.")
+    if not layer.get("type"):
+        raise ValueError(
+            "that layer has no `type`, so there is no telling what to draw. The "
+            f"{len(LAYER_TYPES)} kinds are: {', '.join(LAYER_TYPES)}.")
+    seed = blank_layer(layer["type"])      # refuses a kind that does not exist
+    out = dict(seed)
+    for key, value in layer.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = {**out[key], **value}
+        else:
+            out[key] = copy.deepcopy(value)
+    out["id"] = _handle(layer.get("id")) or seed["id"]
+    return out
+
+
 def add_layer(doc, layer, parent=None, index=None):
     """`layer` inserted at `index` (default: the top of that container)."""
     out = copy.deepcopy(doc)
     if _count(out) >= LIMITS["maxLayers"]:
         raise ValueError(f"this document already holds {LIMITS['maxLayers']} layers")
+    at = None if index is None else _whole(index, "add_layer's `index`")
     box = _container(out, parent)
-    lay = copy.deepcopy(layer)
-    lay.setdefault("id", new_id("ly"))
+    lay = _seeded_layer(layer)
     if any(l.get("id") == lay["id"] for l in walk(out)):
         lay["id"] = new_id("ly")           # never two of the same handle
-    box.insert(len(box) if index is None else max(0, min(len(box), int(index))), lay)
+    box.insert(len(box) if at is None else max(0, min(len(box), at)), lay)
     return _touch(out)
 
 
@@ -917,9 +1016,10 @@ def remove_layer(doc, ref):
 def reorder_layer(doc, ref, index):
     """Move a layer within its own container. `index` is bottom-up, 0 = bottom."""
     out = copy.deepcopy(doc)
+    at = _whole(index, "reorder_layer's `index`")
     layer, siblings, i = find_layer(out, ref)
     siblings.pop(i)
-    siblings.insert(max(0, min(len(siblings), int(index))), layer)
+    siblings.insert(max(0, min(len(siblings), at)), layer)
     return _touch(out)
 
 
@@ -931,6 +1031,7 @@ def move_layer(doc, ref, parent=None, index=None):
     returns.
     """
     out = copy.deepcopy(doc)
+    at = None if index is None else _whole(index, "move_layer's `index`")
     layer, siblings, i = find_layer(out, ref)
     if layer.get("type") == "group" and parent not in (None, ""):
         target, _s, _i = find_layer(out, parent)
@@ -939,7 +1040,7 @@ def move_layer(doc, ref, parent=None, index=None):
                              "itself or one of its own children")
     siblings.pop(i)
     box = _container(out, parent)
-    box.insert(len(box) if index is None else max(0, min(len(box), int(index))), layer)
+    box.insert(len(box) if at is None else max(0, min(len(box), at)), layer)
     return _touch(out)
 
 
@@ -963,17 +1064,37 @@ def duplicate_layer(doc, ref, name=None):
     return _touch(out)
 
 
-def group_layers(doc, refs, name="group", parent=None):
+def group_layers(doc, refs, name="group"):
     """Wrap existing layers in a new group, in the order given.
 
     Only layers that already share a container can be grouped — grouping across
     two different parents means silently moving one of them somewhere it was not,
     and a Layers panel that does that loses work.
+
+    ⚠ THERE IS NO `parent` HERE, AND THE ONE THERE USED TO BE DID NOTHING.
+    The old signature took `parent=None` and never read it: pass a group's name
+    and the new group still appeared beside the layers it wrapped, silently.
+    Nor could it ever mean anything — the picked layers go INSIDE the new group,
+    so the group has to appear where they were, which is the paragraph above.
+    A caller who wants it elsewhere calls move_layer on it afterwards, which is
+    a gesture somebody chose rather than an argument that quietly lied.
     """
     out = copy.deepcopy(doc)
-    picked = [find_layer(out, r) for r in (refs or [])]
+    wanted = list(refs or [])
+    picked = [find_layer(out, r) for r in wanted]
     if not picked:
         raise ValueError("group_layers needs at least one layer")
+    # The same layer twice used to reach `sib.remove()` twice and come back as
+    # "list.remove(x): x not in list" — a python message about a list the caller
+    # has never seen, for a mistake that is one word long.
+    named_by = {}
+    for ref, (layer, _s, _i) in zip(wanted, picked):
+        if id(layer) in named_by:
+            raise ValueError(
+                f"{layer.get('id')} ({layer.get('name')}) is in that list twice, "
+                f"as \"{named_by[id(layer)]}\" and \"{ref}\" — name each layer "
+                "once. The order you name them in is the order they end up in.")
+        named_by[id(layer)] = ref
     boxes = {id(sib) for _l, sib, _i in picked}
     if len(boxes) > 1:
         raise ValueError("those layers are in different groups — move them into "
@@ -1062,6 +1183,278 @@ def update_layer(doc, ref, patch):
         else:
             layer[key] = copy.deepcopy(value)
     return _touch(out)
+
+
+# ── the shelf: where a document lives between sessions ───────────────────────
+#
+# ⚠ WITHOUT THIS, EVERY EDIT ABOVE IS UNREACHABLE. Before the shelf,
+# find_layer, add_layer, remove_layer, reorder_layer, move_layer,
+# duplicate_layer, group_layers, ungroup_layer, set_clipped and update_layer had
+# exactly one caller between them and it was imgdoc_test.py — grep any of the
+# ten across .py and .js and every other hit belongs to the COMP document in
+# server/vfx/, which is a different document with the same verbs. Ten editing
+# functions nobody can call is IMAGE_SPEC §9's first bullet, "a module nobody
+# calls", and the user-visible half of it is worse: with nowhere to put a
+# document, "make the title bigger" means re-sending forty layers of JSON to
+# change one number, and a cover, a poster, a lyric card and a character sheet
+# are all iterated over days.
+#
+# ONE JSON FILE, not a folder of them: `_documents.json` in whatever directory
+# the job names, the same decision server/index.js made for `_presets.json` and
+# `_swatches.json` and server/vfx/store.js made for `_fx_presets.json`, for the
+# same stated reason — server-side and in one place is what lets MCP and the UI
+# see the SAME shelf.
+#
+# The cost of one file is measured, not guessed. A shelf at BOTH caps — 200
+# documents of 256 text layers, the heaviest per-layer JSON this document has —
+# is 16.7 MB, and 1.0-1.2 s to read back against 2.0-2.4 s to write over four
+# runs on this rig (imgdoc_test.py's bench_shelf builds exactly that and prints
+# all three every lane). A realistic shelf, 200 covers of a dozen layers each,
+# is 0.44 MB. So the whole-file rewrite every save does is affordable today,
+# and what it buys is that a save is one os.replace and can never leave half a
+# shelf behind.
+# Splitting into a file per document is a change to the four functions below
+# and to nothing else in this module.
+
+SHELF_FILE = "_documents.json"
+SHELF_VERSION = 1
+
+
+def _shelf_path(job):
+    """<dir>/_documents.json, absolute.
+
+    `dir` is a JOB FIELD with no default on purpose. server/config.js owns
+    every directory this app writes to; this module has never imported it and
+    a hardcoded path here would be a second opinion about where the images live.
+    """
+    raw = job.get("dir")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(
+            "this job needs a `dir`: the folder the document shelf lives in. "
+            "imgdoc.py never picks one, because server/config.js owns where "
+            "this app writes and there must not be a second answer.")
+    return os.path.join(os.path.abspath(os.path.expanduser(raw.strip())), SHELF_FILE)
+
+
+def _read_shelf(path):
+    """The shelf document, or an empty one when the file is not there yet.
+
+    ⚠ A FILE THAT EXISTS AND DOES NOT PARSE IS AN ERROR, NEVER A RESEED.
+    store.js's rule, and the reason is that reseeding answers a trailing comma
+    by deleting somebody's work. Missing is fine; unreadable is not.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return {"v": SHELF_VERSION, "documents": {}}
+    if size > LIMITS["shelfBytes"]:
+        raise ValueError(
+            f"the document shelf ({path}) is {size / (1024 * 1024):.0f} MB, past "
+            f"the {LIMITS['shelfBytes'] // (1024 * 1024)} MB this will read in one "
+            "bite. Move that file aside before saving another document.")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            shelf = json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"the document shelf ({path}) is not valid JSON: {exc}. "
+                         "Nothing was written — fix or move that file.") from None
+    if not isinstance(shelf, dict) or not isinstance(shelf.get("documents"), dict):
+        raise ValueError(f"the document shelf ({path}) does not hold a "
+                         "{\"documents\": {...}} object.")
+    return shelf
+
+
+def _write_shelf(path, shelf):
+    """Write a temp file, then rename over the shelf — never half a file.
+
+    ⚠ os.replace, not os.rename: on Windows renaming onto a file that exists
+    raises FileExistsError, so every save after the first would fail, and this
+    app's rig is Windows.
+    """
+    shelf["v"] = SHELF_VERSION
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(shelf, fh, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _handles_of(did, doc):
+    """(id, slug) for a stored document, repaired — normalize()'s two lines.
+
+    ⚠ A SUMMARY ROW IS NOT A DOCUMENT AND MUST NOT BE TRUSTED LIKE ONE.
+    `list` deliberately does not normalize: repairing 200 documents to draw a
+    picker means deep-copying every layer of every one of them, 16.7 MB of it
+    at the caps. But reading the stored `slug` straight out of the file and
+    handing it to a caller is how the trust boundary leaks anyway — the first
+    version of this did exactly that, and a shelf edited by hand to hold
+    "../../etc/passwd" listed it back verbatim, ready for whatever builds a
+    path or a URL out of a picker row. So the row repairs the two fields that
+    ARE handles, with normalize()'s own functions rather than a second opinion
+    about what a handle is. Everything else in a row is display text.
+    """
+    return _handle(doc.get("id")) or did, slugify(doc.get("slug") or doc.get("name"))
+
+
+def _pick(shelf, ref):
+    """(id, stored document) for an id or a slug — find_layer's rule, one level up.
+
+    A slug is what a person and an agent actually have in hand, the same
+    argument find_layer makes about a layer name. Neither handle can be
+    ambiguous: ids are minted unique and _free_slug keeps slugs unique too.
+    The slug is matched REPAIRED, so a caller who saw a row in `list` can ask
+    for the document by the slug that row showed them.
+    """
+    docs = shelf["documents"]
+    want = str(ref if ref is not None else "").strip()
+    if want and want in docs:
+        return want, docs[want]
+    for did, d in docs.items():
+        if want and isinstance(d, dict) and _handles_of(did, d)[1] == want:
+            return did, d
+    have = ", ".join(f"{k} ({_handles_of(k, v)[1]})" for k, v in docs.items()
+                     if isinstance(v, dict)) or "nothing yet"
+    raise ValueError(f"No document called \"{want}\" on that shelf. It holds: {have}.")
+
+
+def _free_slug(docs, slug, own_id):
+    """`slug`, or the first "-2", "-3"... no OTHER document on the shelf is using.
+
+    Unique because _pick() takes a slug as a handle: two documents called
+    "cover" and the handle has stopped naming one of them.
+    """
+    taken = {d.get("slug") for k, d in docs.items()
+             if isinstance(d, dict) and k != own_id}
+    if slug not in taken:
+        return slug
+    stem = slug[:44]
+    for n in range(2, LIMITS["shelfDocs"] + 2):
+        if f"{stem}-{n}" not in taken:
+            return f"{stem}-{n}"
+    return f"{stem}-{own_id}"                  # an id is unique by construction
+
+
+def _summary(did, doc):
+    """A shelf row: what a picker shows, without the tree behind it."""
+    ident, slug = _handles_of(did, doc)
+    return {"id": ident, "slug": slug, "name": str(doc.get("name") or "Untitled")[:80],
+            "width": doc.get("width"), "height": doc.get("height"),
+            # walk() indexes "layers" and a hand-written shelf entry need not
+            # have one; a picker must not die counting somebody else's typo.
+            "layers": _count(doc) if isinstance(doc.get("layers"), list) else 0,
+            "createdAt": doc.get("createdAt"), "updatedAt": doc.get("updatedAt")}
+
+
+def _outline(layers, depth=0):
+    """One flat row per layer, groups descended, `depth` for the indent.
+
+    What an edit answers with instead of the document. The whole point of a
+    stored document is that a caller stops shipping the tree in both
+    directions; shipping it back on every edit would give half of that up. Ask
+    for the tree with `"doc": true` when it is actually wanted.
+    """
+    rows = []
+    for layer in layers or []:
+        if not isinstance(layer, dict):
+            continue
+        row = {"id": layer.get("id"), "name": layer.get("name"),
+               "type": layer.get("type"), "depth": depth,
+               "enabled": layer.get("enabled") is not False}
+        if layer.get("clipped"):
+            row["clipped"] = True
+        rows.append(row)
+        if layer.get("type") == "group":
+            rows += _outline(layer.get("layers"), depth + 1)
+    return rows
+
+
+# ── edit: a list of mutations, applied to a stored document ──────────────────
+#
+# The ops are named after the functions they call, so a refusal from one of them
+# reads as a refusal from the op and there is no second vocabulary to learn.
+# find_layer and walk are not here: they change nothing, and `store open`
+# already hands back the tree.
+
+def _ref(spec, op=""):
+    """The layer an op names: `ref`, or `id`, or `name`.
+
+    Three spellings of ONE thing, because find_layer already resolves an id or a
+    name and a caller reaches for whichever it is holding. `index` is not among
+    them and must not be: on add_layer, reorder_layer and move_layer an `index`
+    is already the DESTINATION, and a field meaning "which layer" on some ops and
+    "put it here" on others is a wrong layer moved silently.
+
+    ⚠ `name` IS NOT A HANDLE ON duplicate_layer, WHERE IT IS THE COPY'S NAME.
+    One field cannot mean both "which layer" and "call it this", so that one op
+    refuses rather than guessing — a duplicate that lands on the wrong layer
+    looks like nothing happened, and is found much later.
+    """
+    for key in ("ref", "id"):
+        if spec.get(key) not in (None, ""):
+            return spec[key]
+    if spec.get("name") not in (None, ""):
+        if op == "duplicate_layer":
+            raise ValueError(
+                "duplicate_layer's `name` is what to CALL the copy, not which "
+                "layer to copy. Say which with `ref` — an id, or a layer name "
+                "if only one layer has it.")
+        return spec["name"]
+    raise ValueError("this op needs a `ref`: a layer id, or a layer name if "
+                     "only one layer is called that.")
+
+
+EDIT_OPS = {
+    "add_layer":       lambda d, s: add_layer(d, s.get("layer"), s.get("parent"),
+                                              s.get("index")),
+    "remove_layer":    lambda d, s: remove_layer(d, _ref(s)),
+    "reorder_layer":   lambda d, s: reorder_layer(d, _ref(s), s.get("index")),
+    "move_layer":      lambda d, s: move_layer(d, _ref(s), s.get("parent"),
+                                               s.get("index")),
+    "duplicate_layer": lambda d, s: duplicate_layer(d, _ref(s, "duplicate_layer"),
+                                                    s.get("name")),
+    "group_layers":    lambda d, s: group_layers(d, s.get("refs"),
+                                                 s.get("name") or "group"),
+    "ungroup_layer":   lambda d, s: ungroup_layer(d, _ref(s)),
+    "set_clipped":     lambda d, s: set_clipped(d, _ref(s),
+                                                s.get("clipped") is not False),
+    "update_layer":    lambda d, s: update_layer(d, _ref(s), s.get("patch")),
+}
+
+
+def apply_edits(doc, ops):
+    """(`doc` with every op applied in order, the names applied) — or nothing.
+
+    ⚠ ALL OF THEM OR NONE OF THEM. Every op returns a NEW document, so the
+    half-applied case costs one local variable to avoid, and the alternative is
+    a shelf holding a document that is neither what it was nor what was asked
+    for — with no way back, because the undo buffer the edits above were written
+    for lives in the caller and nobody has built one yet.
+    """
+    if not isinstance(ops, list) or not ops:
+        raise ValueError(
+            "an edit needs a non-empty `ops` list, like [{\"op\": "
+            "\"update_layer\", \"ref\": \"title\", \"patch\": {\"text\": "
+            f"{{\"size\": 140}}}}]. The {len(EDIT_OPS)} ops are: "
+            f"{', '.join(sorted(EDIT_OPS))}.")
+    out = doc
+    applied = []
+    for n, spec in enumerate(ops, 1):
+        if not isinstance(spec, dict):
+            raise ValueError(f"op #{n} is a {type(spec).__name__}, not an object "
+                             "like {\"op\": \"remove_layer\", \"ref\": \"title\"}.")
+        name = str(spec.get("op") or "")
+        fn = EDIT_OPS.get(name)
+        if fn is None:
+            raise ValueError(f"op #{n}: there is no edit called \"{name}\". The "
+                             f"{len(EDIT_OPS)} there are: "
+                             f"{', '.join(sorted(EDIT_OPS))}.")
+        try:
+            out = fn(out, spec)
+        except ValueError as exc:
+            raise ValueError(f"op #{n} ({name}) was refused: {exc} Nothing was "
+                             "saved — the whole list is one edit.") from None
+        applied.append(name)
+    return out, applied
 
 
 # ── sources ──────────────────────────────────────────────────────────────────
@@ -1734,6 +2127,98 @@ def render_job(job):
             "warnings": rep["warnings"]}
 
 
+def store_job(job):
+    """job: { dir, action: "save" | "open" | "list" | "delete", doc?, id? }
+
+    `id` takes an id or a slug, either way. `save` mints an id and a slug when
+    the document has none, so "save something new" and "save the one I have
+    open" are the same call and a caller never has to decide which it is doing.
+
+    ⚠ A DOCUMENT OFF DISK IS AS UNTRUSTED AS ONE OFF THE WIRE, so both go
+    through normalize() — the same and only validator render() uses, warnings
+    and all. That is not a courtesy: the shelf is a file any process on the
+    machine can write, so "we wrote it, therefore it is well formed" is an
+    assumption about every other program on the box. What `open` hands back has
+    been repaired, and says what it repaired.
+    """
+    action = str(job.get("action") or "").strip()
+    path = _shelf_path(job)
+
+    if action == "list":
+        shelf = _read_shelf(path)
+        rows = [_summary(k, v) for k, v in shelf["documents"].items()
+                if isinstance(v, dict)]
+        rows.sort(key=lambda r: _f(r.get("updatedAt"), 0.0), reverse=True)
+        return {"ok": True, "shelf": path, "documents": rows}
+
+    if action == "save":
+        warn = []
+        doc = normalize(job.get("doc"), warn)
+        shelf = _read_shelf(path)
+        docs = shelf["documents"]
+        old = docs.get(doc["id"])
+        if not isinstance(old, dict) and len(docs) >= LIMITS["shelfDocs"]:
+            raise ValueError(
+                f"that shelf already holds {LIMITS['shelfDocs']} documents, which "
+                "is all one JSON file is meant to carry. Delete one, or point "
+                "`dir` at another folder.")
+        if isinstance(old, dict) and old.get("createdAt"):
+            doc["createdAt"] = old["createdAt"]     # a save is not a birth
+        doc.setdefault("createdAt", time.time())
+        doc["slug"] = _free_slug(docs, doc["slug"], doc["id"])
+        doc["updatedAt"] = time.time()
+        docs[doc["id"]] = doc
+        _write_shelf(path, shelf)
+        return {"ok": True, "shelf": path, **_summary(doc["id"], doc),
+                "warnings": warn}
+
+    if action == "open":
+        shelf = _read_shelf(path)
+        did, stored = _pick(shelf, job.get("id"))
+        warn = []
+        doc = normalize(stored, warn)
+        doc["id"] = did                             # the shelf key is the handle
+        return {"ok": True, "doc": doc, "warnings": warn}
+
+    if action == "delete":
+        shelf = _read_shelf(path)
+        did, stored = _pick(shelf, job.get("id"))
+        # Permanent. There is no trash behind this shelf, and inventing one here
+        # would be a second place documents live that nothing else knows about.
+        gone = _summary(did, stored) if isinstance(stored, dict) else {"id": did}
+        del shelf["documents"][did]
+        _write_shelf(path, shelf)
+        return {"ok": True, "shelf": path, "deleted": gone}
+
+    raise ValueError("store takes an `action`: save, open, list or delete. Got "
+                     f"\"{action}\".")
+
+
+def edit_job(job):
+    """job: { dir, id, ops: [ {op, ...}, ... ], doc?: bool }
+
+    One call moves a layer and renames it and clips it, with the tree crossing
+    the seam in neither direction. The reply is the shelf row plus a flat
+    `outline`; pass `"doc": true` for the document itself.
+    """
+    path = _shelf_path(job)
+    shelf = _read_shelf(path)
+    did, stored = _pick(shelf, job.get("id"))
+    warn = []
+    doc = normalize(stored, warn)
+    doc["id"] = did
+    doc, applied = apply_edits(doc, job.get("ops"))
+    doc["slug"] = _free_slug(shelf["documents"], doc["slug"], did)
+    doc["updatedAt"] = time.time()
+    shelf["documents"][did] = doc
+    _write_shelf(path, shelf)
+    out = {"ok": True, "shelf": path, **_summary(did, doc), "applied": applied,
+           "outline": _outline(doc.get("layers")), "warnings": warn}
+    if job.get("doc") is True:
+        out["doc"] = doc
+    return out
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "catalog"
     try:
@@ -1744,6 +2229,12 @@ def main():
             job = json.load(fh)
         if mode == "render":
             print(json.dumps(render_job(job)))
+            return
+        if mode == "store":
+            print(json.dumps(store_job(job)))
+            return
+        if mode == "edit":
+            print(json.dumps(edit_job(job)))
             return
         raise ValueError(f"unknown mode {mode}")
     except Exception as exc:                             # noqa: BLE001

@@ -805,6 +805,74 @@ except ValueError as exc:
     eq("an ambiguous name is refused with the ids listed", "use the id" in str(exc), True)
 
 
+# What a store exposed in the edits above. Every case here was a traceback or a
+# silence before the shelf existed, because the only caller was this file and
+# this file passed well-formed python. An ops list off a JSON seam does not.
+
+# A text layer sent as {"type": "text", "name": "title"} — which is every caller
+# that cannot reach blank_layer, i.e. every caller that is not python — used to
+# land with no `text` block and draw nothing at all.
+typed = D.add_layer(doc(128, 64), {"type": "text", "name": "title",
+                                   "text": {"size": 40}})
+eq("add_layer seeds a layer through blank_layer, so the kind's own keys are there",
+   (typed["layers"][0].get("text", {}).get("font"),
+    typed["layers"][0].get("text", {}).get("size")),
+   ("arial.ttf", 40))
+eq("...and that layer actually draws, which is the whole point of the seeding",
+   bool(render(typed)[..., 3].sum() > 50), True)
+
+try:
+    D.add_layer(base, "a solid please")
+    eq("add_layer refuses something that is not a layer, in a sentence", False, True)
+except ValueError as exc:
+    eq("add_layer refuses something that is not a layer, in a sentence",
+       "got str" in str(exc), True)
+
+try:
+    D.add_layer(base, {"name": "mystery"})
+    eq("...and refuses a layer with no kind, listing the kinds", False, True)
+except ValueError as exc:
+    eq("...and refuses a layer with no kind, listing the kinds",
+       "no `type`" in str(exc) and "gradient" in str(exc), True)
+except KeyError as exc:
+    eq(f"...and refuses a layer with no kind, listing the kinds — got a bare "
+       f"KeyError({exc}) instead", False, True)
+
+try:
+    eq("add_layer works on a dict with no layers key at all, rather than KeyError",
+       [l["name"] for l in
+        D.add_layer({"id": "img_x"}, solid(BACK_255, name="only"))["layers"]],
+       ["only"])
+except KeyError as exc:
+    eq(f"add_layer works on a dict with no layers key at all, rather than "
+       f"KeyError({exc})", False, True)
+
+try:
+    D.reorder_layer(base, "sky", None)
+    eq("reorder_layer names the argument instead of int()'s own message", False, True)
+except ValueError as exc:
+    eq("reorder_layer names the argument instead of int()'s own message",
+       "`index`" in str(exc) and "whole number" in str(exc), True)
+
+try:
+    D.group_layers(base, ["floor", "floor"])
+    eq("group_layers refuses the same layer twice, naming it", False, True)
+except ValueError as exc:
+    eq("group_layers refuses the same layer twice, naming it",
+       "twice" in str(exc) and "floor" in str(exc), True)
+
+# The parameter that did nothing: group_layers(doc, refs, name, parent=None)
+# accepted a parent and never read it, so the group appeared beside the layers
+# it wrapped whatever was passed. It is gone, and a caller that still passes one
+# finds out at the call instead of by looking at the picture.
+try:
+    D.group_layers(base, ["floor"], "both", "box")
+    eq("group_layers no longer takes the parent it used to ignore", False, True)
+except TypeError as exc:
+    eq("group_layers no longer takes the parent it used to ignore",
+       "positional argument" in str(exc), True)
+
+
 print("\n  -- hostile input --")
 
 warn = []
@@ -961,6 +1029,229 @@ eq("scale 0.5 renders half a canvas", _half.shape, (8, 8, 4))
 rgb_is("...and the same picture", _half[4, 4], BACK)
 
 
+print("\n  -- the shelf --")
+
+# IMAGE_SPEC section 9's first bullet from the other end. Before `store` and
+# `edit`, the ten editing functions above had exactly one caller between them
+# and it was this file — grep any of them across .py and .js and every other hit
+# belongs to the COMP document in server/vfx/, which is a different document
+# with the same verbs. The cases below drive them the way a route will: through
+# a job, by id or slug, one ops list at a time, with the document living on disk
+# in between and this process forgetting it exists.
+
+_shelf_dir = tempfile.mkdtemp(prefix="imgdoc_shelf_")
+_shelf_file = os.path.join(_shelf_dir, D.SHELF_FILE)
+
+
+def store(**job):
+    return D.store_job(dict(dir=_shelf_dir, **job))
+
+
+def edit(**job):
+    return D.edit_job(dict(dir=_shelf_dir, **job))
+
+
+eq("a directory with no shelf in it lists nothing, rather than refusing",
+   store(action="list")["documents"], [])
+
+_cover = D.blank_doc("Hex Appeal Cover", 64, 64)
+_cover["layers"] = [solid(BACK_255, name="plate")]
+_saved = store(action="save", doc=_cover)
+eq("save answers with an id, a slug off the name, and a layer count",
+   (_saved["ok"], _saved["slug"], _saved["layers"]), (True, "hex-appeal-cover", 1))
+
+_back = store(action="open", id=_saved["id"])["doc"]
+eq("...and open by id gives back the document that went in",
+   (_back["name"], _back["width"], [l["name"] for l in D.walk(_back)]),
+   ("Hex Appeal Cover", 64, ["plate"]))
+eq("...and by slug too, because a slug is what a person has in hand",
+   store(action="open", id="hex-appeal-cover")["doc"]["id"], _saved["id"])
+eq("...and it renders the same pixels it rendered before it was ever stored",
+   np.array_equal(D.to_uint8(render(_cover)), D.to_uint8(render(_back))), True)
+
+_again = store(action="save", doc=_back)
+eq("saving an open document keeps its birthday and moves its clock",
+   (_again["createdAt"] == _saved["createdAt"],
+    _again["updatedAt"] > _saved["updatedAt"]), (True, True))
+
+_second = store(action="save", doc=D.blank_doc("Hex Appeal Cover", 64, 64))
+eq("a second document of the same name gets a slug of its own — _pick takes a "
+   "slug as a handle, and two documents called \"cover\" is a handle that has "
+   "stopped naming one of them", _second["slug"], "hex-appeal-cover-2")
+
+_rows = store(action="list")["documents"]
+eq("list is rows, newest first, carrying a layer COUNT and not a layer tree",
+   ([r["slug"] for r in _rows], isinstance(_rows[0]["layers"], int),
+    any("layers" in r and isinstance(r["layers"], list) for r in _rows)),
+   (["hex-appeal-cover-2", "hex-appeal-cover"], True, False))
+
+_ed = edit(id="hex-appeal-cover", ops=[
+    {"op": "add_layer", "layer": {"type": "text", "name": "title",
+                                  "text": {"size": 24}}},
+    {"op": "update_layer", "ref": "title", "patch": {"text": {"content": "HEX"}}},
+    {"op": "reorder_layer", "ref": "title", "index": 0},
+])
+eq("one edit call adds a layer, renames its content and moves it, in order",
+   (_ed["applied"], [r["name"] for r in _ed["outline"]]),
+   (["add_layer", "update_layer", "reorder_layer"], ["title", "plate"]))
+eq("...and it landed on DISK, which is the entire point of the shelf",
+   [(l["name"], l["text"]["content"], l["text"]["size"])
+    for l in D.walk(store(action="open", id="hex-appeal-cover")["doc"])
+    if l["type"] == "text"],
+   [("title", "HEX", 24)])
+eq("...and the reply is an outline, never the tree unless the tree is asked for",
+   ("doc" in _ed,
+    "doc" in edit(id="hex-appeal-cover", doc=True,
+                  ops=[{"op": "update_layer", "ref": "title",
+                        "patch": {"locked": True}}])),
+   (False, True))
+
+# All of them or none of them. A half-applied ops list leaves a document that is
+# neither what it was nor what was asked for, and there is no undo buffer here.
+_bytes_before = open(_shelf_file, "rb").read()
+try:
+    edit(id="hex-appeal-cover",
+         ops=[{"op": "remove_layer", "ref": "plate"},
+              {"op": "remove_layer", "ref": "ghost"}])
+    eq("an ops list is ONE edit: a refusal on op #2 saves nothing", False, True)
+except ValueError as exc:
+    eq("an ops list is ONE edit: a refusal on op #2 saves nothing",
+       (open(_shelf_file, "rb").read() == _bytes_before, "op #2" in str(exc)),
+       (True, True))
+
+try:
+    edit(id="hex-appeal-cover", ops=[{"op": "delete_everything"}])
+    eq("an op that does not exist is refused by name, with the nine listed",
+       False, True)
+except ValueError as exc:
+    eq("an op that does not exist is refused by name, with the nine listed",
+       "delete_everything" in str(exc) and "ungroup_layer" in str(exc), True)
+
+try:
+    edit(id="hex-appeal-cover", ops=[{"op": "set_clipped"}])
+    eq("...and an op with no `ref` says which field is missing, not \"No such "
+       "layer: \"", False, True)
+except ValueError as exc:
+    eq("...and an op with no `ref` says which field is missing, not \"No such "
+       "layer: \"", "needs a `ref`" in str(exc), True)
+
+# An op may name its layer `ref`, `id` or `name` — one thing, three spellings,
+# because find_layer takes an id or a name and a caller reaches for the one it
+# is holding. `index` is deliberately NOT one: on three of the nine ops an index
+# is already the destination.
+try:
+    eq("an op names its layer by `ref`, by `id` or by `name`, all three",
+       [edit(id="hex-appeal-cover", doc=True,
+             ops=[{"op": "update_layer", k: "title", "patch": {"locked": True}}]
+             )["doc"]["layers"][0]["locked"] for k in ("ref", "id", "name")],
+       [True, True, True])
+except ValueError as exc:
+    eq(f"an op names its layer by `ref`, by `id` or by `name`, all three "
+       f"(one of them was refused: {exc})", False, True)
+
+try:
+    edit(id="hex-appeal-cover", ops=[{"op": "duplicate_layer", "name": "title"}])
+    eq("...except on duplicate_layer, where `name` is already the COPY's name "
+       "and guessing would duplicate the wrong layer", False, True)
+except ValueError as exc:
+    eq("...except on duplicate_layer, where `name` is already the COPY's name "
+       "and guessing would duplicate the wrong layer",
+       "CALL the copy" in str(exc), True)
+
+# A DOCUMENT OFF DISK IS AS UNTRUSTED AS ONE OFF THE WIRE. The shelf is a file,
+# and a file holds whatever the last program to touch it left behind — so the
+# cases below hand-edit it into the two shapes that matter: a handle that is a
+# path, and a field render() itself would refuse.
+_raw = _json.loads(open(_shelf_file, encoding="utf-8").read())
+_raw["documents"][_saved["id"]]["slug"] = "../../etc/passwd"
+_raw["documents"][_saved["id"]]["layers"][0]["blend"] = "quantum"
+with open(_shelf_file, "w", encoding="utf-8") as fh:
+    _json.dump(_raw, fh)
+
+_opened = store(action="open", id=_saved["id"])
+eq("a slug off disk that is a path is repaired before anything can build one",
+   _opened["doc"]["slug"], "etc-passwd")
+eq("...and says it was", any("not a slug" in w for w in _opened["warnings"]), True)
+eq("...and the repair is normalize()'s, the SAME validator render() runs: a "
+   "blend mode that does not exist comes back with render's own warning",
+   any("quantum" in w for w in _opened["warnings"]), True)
+eq("...and a `list` row is repaired too, because a picker row becomes a URL",
+   sorted(r["slug"] for r in store(action="list")["documents"]),
+   ["etc-passwd", "hex-appeal-cover-2"])
+
+_gone = store(action="delete", id="hex-appeal-cover-2")
+eq("delete takes it off the shelf and says which one went",
+   (_gone["deleted"]["slug"],
+    [r["slug"] for r in store(action="list")["documents"]]),
+   ("hex-appeal-cover-2", ["etc-passwd"]))
+try:
+    store(action="open", id="hex-appeal-cover-2")
+    eq("...and opening it afterwards is refused, naming what IS there", False, True)
+except ValueError as exc:
+    eq("...and opening it afterwards is refused, naming what IS there",
+       "etc-passwd" in str(exc), True)
+
+try:
+    D.store_job({"action": "list"})
+    eq("a job with no `dir` is refused, and no directory is guessed", False, True)
+except ValueError as exc:
+    eq("a job with no `dir` is refused, and no directory is guessed",
+       "`dir`" in str(exc), True)
+eq("...and this module still imports nothing that could guess one",
+   "import config" in open(_MOD, encoding="utf-8").read(), False)
+
+# store.js's rule, taken whole: a shelf that EXISTS and does not parse is an
+# error. Reseeding it would answer a trailing comma by deleting somebody's work.
+_bad_dir = tempfile.mkdtemp(prefix="imgdoc_badshelf_")
+_bad_file = os.path.join(_bad_dir, D.SHELF_FILE)
+with open(_bad_file, "w", encoding="utf-8") as fh:
+    fh.write("{\"documents\": {,}")
+try:
+    D.store_job({"dir": _bad_dir, "action": "save", "doc": D.blank_doc("x")})
+    eq("a shelf that exists and does not parse is an error, never a reseed",
+       False, True)
+except ValueError as exc:
+    eq("a shelf that exists and does not parse is an error, never a reseed",
+       ("not valid JSON" in str(exc),
+        open(_bad_file, encoding="utf-8").read()), (True, "{\"documents\": {,}"))
+
+_cap = D.LIMITS["shelfBytes"]
+D.LIMITS["shelfBytes"] = 10
+try:
+    store(action="list")
+    eq("a shelf past the byte cap refuses to be read rather than read anyway",
+       False, True)
+except ValueError as exc:
+    eq("a shelf past the byte cap refuses to be read rather than read anyway",
+       "past the" in str(exc), True)
+finally:
+    D.LIMITS["shelfBytes"] = _cap
+
+# The seam a route will actually drive, exercised the way render's is above.
+_sjob = os.path.join(_shelf_dir, "store_job.json")
+with open(_sjob, "w", encoding="utf-8") as fh:
+    _json.dump({"dir": _shelf_dir, "action": "list"}, fh)
+_r, _line = cli("store", _sjob)
+eq("store rides the CLI seam: a job file in, one JSON line out, exit 0",
+   (_r.returncode, _line.get("ok"), len(_line.get("documents", []))), (0, True, 1))
+
+_ejob = os.path.join(_shelf_dir, "edit_job.json")
+with open(_ejob, "w", encoding="utf-8") as fh:
+    _json.dump({"dir": _shelf_dir, "id": "etc-passwd",
+                "ops": [{"op": "duplicate_layer", "ref": "title"}]}, fh)
+_r, _line = cli("edit", _ejob)
+eq("edit rides it too, addressed by the slug `list` just handed back",
+   (_r.returncode, _line.get("applied"), len(_line.get("outline", []))),
+   (0, ["duplicate_layer"], 3))
+
+with open(_ejob, "w", encoding="utf-8") as fh:
+    _json.dump({"dir": _shelf_dir, "id": "nobody"}, fh)
+_r, _line = cli("edit", _ejob)
+eq("...and a refusal is {ok:false} and exit 1, the protocol render already speaks",
+   (_r.returncode, _line.get("ok"), "nobody" in _line.get("error", "")),
+   (1, False, True))
+
+
 print("\n  -- what it costs --")
 
 
@@ -980,6 +1271,36 @@ def bench(label, n, size, alpha, opacity, modes):
     print(f"  ..    {label:<52s} {ms:8.0f} ms")
     return ms
 
+
+def bench_shelf():
+    """The shelf at BOTH its caps, which is the number imgdoc.py's ONE JSON FILE
+    paragraph cites. 200 documents of 256 text layers: a text layer is the
+    heaviest per-layer JSON this document has, so this is the worst shelf the
+    limits allow rather than a typical one."""
+    bulk = tempfile.mkdtemp(prefix="imgdoc_shelfbench_")
+    docs = {}
+    for n in range(D.LIMITS["shelfDocs"]):
+        d = D.blank_doc(f"doc {n}", 1920, 1080)
+        d["layers"] = [D.blank_layer("text", name=f"t{i}")
+                       for i in range(D.LIMITS["maxLayers"])]
+        docs[d["id"]] = d
+    path = os.path.join(bulk, D.SHELF_FILE)
+    t0 = time.perf_counter()
+    D._write_shelf(path, {"documents": docs})
+    wr = time.perf_counter() - t0
+    mb = os.path.getsize(path) / 1e6
+    t0 = time.perf_counter()
+    got = D._read_shelf(path)
+    rd = time.perf_counter() - t0
+    print(f"  ..    {'a full shelf: 200 docs x 256 text layers':<52s} "
+          f"{mb:7.1f} MB   write {wr:5.2f} s   read {rd:5.2f} s")
+    return mb, rd, len(got["documents"])
+
+
+_mb, _rd, _n = bench_shelf()
+eq("a shelf at both caps reads back whole, and stays well under the byte cap "
+   "that would refuse it",
+   (_n, _mb * 1e6 < D.LIMITS["shelfBytes"]), (D.LIMITS["shelfDocs"], True))
 
 ms = bench("20 layers, 2048x2048, opaque, normal", 20, 2048, 1.0, 100, ["normal"])
 eq("20 opaque 2048x2048 layers composite in under 5 s", ms < 5000, True)

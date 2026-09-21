@@ -34,9 +34,11 @@ against a remembered rule, and the legacy-adapter case reads the key list out
 of imagetools.py's text stage the same way, because §9's last line says a test
 that only locks in what its author already believed is worth nothing.
 """
+import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -118,6 +120,22 @@ def extents(a, rows=None, thresh=0.02):
     if not cols.any():
         return None
     return int(np.argmax(cols)), int(len(cols) - np.argmax(cols[::-1]))
+
+
+def ink_bbox(a, thresh=0.004):
+    """(x0, y0, x1, y1) of the ink in IMAGE pixels, x1 and y1 exclusive, or
+    None for an empty frame.
+
+    ⚠ WRITTEN HERE RATHER THAN IMPORTED. The whole point of the cross-check
+    below is that `measure_text` says where the ink will be without a canvas
+    and the renderer then puts it there; asking the module's own `_ink_box`
+    both times would pass just as happily with both of them wrong."""
+    rows = np.any(a > thresh, axis=1)
+    cols = np.any(a > thresh, axis=0)
+    if not rows.any() or not cols.any():
+        return None
+    return (int(np.argmax(cols)), int(np.argmax(rows)),
+            int(len(cols) - np.argmax(cols[::-1])), int(len(rows) - np.argmax(rows[::-1])))
 
 
 def row_center(a, band):
@@ -1301,6 +1319,289 @@ eq("...and the layout it reports is the layout that was drawn",
    len(dbg["layout"]["lines"]), 1)
 eq("render_debug on an empty string is still well-formed",
    T.render_debug({"content": ""}, 40, 20)["rgba"].shape, (20, 40, 4))
+
+
+print("\n  -- the fallback face: plausible, wrong, and no longer silent --")
+
+# ⚠ THIS IS THE PREMISE EVERY WARNING BELOW RESTS ON, MEASURED RATHER THAN
+# ASSUMED. If Pillow's bundled default were still the old 11px bitmap, a
+# missing font would be a visible break and nobody would need telling. Here it
+# is not: it is a real scaled face, so a 768px review thumbnail of the wrong
+# typeface reads as a judgement call. Pinned so that a Pillow upgrade which
+# changes it cannot leave the module's explanation of itself quietly wrong.
+FB = T.load_face("no-such-face-anywhere.ttf", 120)
+RL = T.load_face("arial.ttf", 120)
+eq("Pillow's fallback here is a real scaled face, not a bitmap stub",
+   (bool(getattr(FB.font, "size", 0)), FB.path), (True, None))
+fb_w, rl_w = FB.length("Headline"), RL.length("Headline")
+near("...whose advance is within a few percent of the face it replaced, which is why "
+     "nothing downstream flags it", abs(fb_w - rl_w) / rl_w, 0.0, 0.05)
+NOTES.append(f"the fallback face at 120px: 'Headline' measures {fb_w:.2f}px against "
+             f"arial's {rl_w:.2f}px ({abs(fb_w - rl_w) / rl_w * 100:.1f}%), "
+             f"ascent/descent {FB.ascent}/{FB.descent} against {RL.ascent}/{RL.descent}")
+
+warn = []
+T.load_face("no-such-face-anywhere.ttf", 121, warn)    # a fresh size, so: a cache MISS
+eq("the warning names the consequence and not only the cause",
+   any("wrong typeface" in w for w in warn), True)
+eq("...and names the one thing a caller can go and check",
+   any("/api/fonts" in w for w in warn), True)
+
+# ⚠ THIS IS THE CALL imagetools.py:600 MAKES - three positional arguments, no
+# notes list, and another column's file. If the only way to hear about a
+# fallback were an argument that caller does not pass, a 44-scene music video
+# would carry the wrong typeface on every lyric card while every reply said ok.
+LYRIC = {"content": "every lyric card", "font": "missing-lyric-face.ttf", "size": 24}
+CANVAS = np.zeros((40, 300, 4), np.float32)
+T.draw_text(CANVAS, LYRIC)
+heard = T.last_warnings()
+eq("draw_text(rgba, spec) leaves what it had to say in last_warnings()",
+   any("missing-lyric-face.ttf" in w for w in heard), True)
+T.draw_text(CANVAS, dict(LYRIC, content="and the next card"))
+eq("...on the second card too, with the face cache warm", T.last_warnings(), heard)
+
+notes = []
+T.draw_text(CANVAS, LYRIC, None, notes)
+# Against the LAYOUT's own warnings, not against last_warnings(). Comparing the
+# two channels to each other would agree beautifully with both of them empty.
+eq("a caller that CAN hold a list gets the same lines, prefixed like every other stage",
+   notes, [f"text: {w}" for w in T.layout_text(LYRIC)["warnings"]])
+eq("...and there were lines to get", len(notes) >= 2, True)
+
+clean = []
+T.draw_text(CANVAS, dict(LYRIC, font="arial.ttf"), None, clean)
+eq("a font that is on the shelf says nothing at all - the channel does not cry wolf",
+   (clean, T.last_warnings()), ([], []))
+
+SHRINKY = {"content": "HEADLINE WORD", "font": "gone-from-the-shelf.ttf", "size": 120,
+           "box": [0, 0, 300, 120], "overflow": "shrink"}
+warn = []
+lay = T.layout_text(SHRINKY, warn)
+eq("the shrink-to-fit bisect really ran", lay.get("shrunk", False), True)
+eq("...and each sentence is said once, not once per bisect trial",
+   len(warn), len(set(warn)))
+eq("...with the sentences still there to be said", len(warn) >= 2, True)
+
+# Deduping is per CALL. A list threaded through several ops must still hear the
+# second op's font warning even when the first op said the identical sentence.
+shared = ["shape: a corner radius bigger than the box was clamped"]
+T.layout_text(SHRINKY, shared)
+grew = len(shared)
+T.layout_text(SHRINKY, shared)
+eq("a shared notes list does not swallow the next op's warning",
+   len(shared) - grew, grew - 1)
+
+
+print("\n  -- measure_text: type that has no picture yet --")
+
+# Everything in this section is answered from a SPEC. No canvas is allocated,
+# no file is read and nothing is rendered until the cross-check below goes and
+# renders it on purpose.
+MEA = T.measure_text({"content": "HEADLINE", "font": "arial.ttf", "size": 120,
+                      "box": [40, 40, 0, 0]})
+eq("measure_text reports the whole shape a route needs",
+   sorted(MEA), ["blockH", "blockW", "box", "font", "ink", "inkBox", "inkBoxWhy",
+                 "lineCount", "lineStep", "lines", "minSize", "ok", "onPath", "shrunk",
+                 "size", "sizeAsked", "transformed", "warnings"])
+eq("every box has named edges, so nothing downstream has to guess x1 from w",
+   [sorted(MEA[k]) for k in ("box", "ink", "inkBox")],
+   [["bottom", "h", "right", "w", "x", "y"]] * 3)
+eq("the reply survives json.dumps, so no numpy leaks out of a route",
+   json.loads(json.dumps(MEA)) == MEA, True)
+
+gap = MEA["ink"]["bottom"] - MEA["inkBox"]["bottom"]
+eq("the metric box hangs empty pixels under a line with no descender, which is the "
+   "whole reason both boxes are reported", gap > 10.0, True)
+NOTES.append(f"'HEADLINE' at 120px: the metric box ends at y={MEA['ink']['bottom']:.0f} "
+             f"and the ink at y={MEA['inkBox']['bottom']:.0f} - {gap:.0f}px of nothing a "
+             f"subtitle would have been placed under")
+DESC = T.measure_text({"content": "headline gjpqy", "font": "arial.ttf", "size": 120,
+                       "box": [40, 40, 0, 0]})
+eq("...and a line WITH descenders closes most of that gap",
+   (DESC["ink"]["bottom"] - DESC["inkBox"]["bottom"]) < gap / 2.0, True)
+
+# ⚠ THE CHECK THAT MAKES THE MEASUREMENT REAL. A box computed by different
+# arithmetic than the renderer draws with is a wrong number wearing three
+# decimal places. Each spec is measured with no canvas at all and then
+# rendered, and the rendered ink's own bounding box has to agree to the pixel.
+CROSS = (
+    ("a plain line", {"content": "Measure me", "font": "arial.ttf", "size": 64,
+                      "box": [30, 40, 0, 0]}),
+    ("descenders", {"content": "jaggy pgq", "font": "arial.ttf", "size": 72,
+                    "box": [20, 60, 0, 0]}),
+    ("three lines", {"content": "one\ntwo\nthree", "font": "arial.ttf", "size": 48,
+                     "box": [25, 20, 0, 0]}),
+    ("wrapped and justified", {"content": PROSE, "font": "arial.ttf", "size": 22,
+                               "box": [20, 20, 400, 0], "align": "justify"}),
+    ("tracked", {"content": "spaced out", "font": "arial.ttf", "size": 54,
+                 "box": [30, 40, 0, 0], "tracking": 9.5}),
+    ("a fractional pen", {"content": "Sub pixel", "font": "arial.ttf", "size": 41,
+                          "box": [30.37, 40.62, 0, 0]}),
+    ("shrink-to-fit", {"content": "TOO BIG FOR THIS", "font": "arial.ttf", "size": 140,
+                       "box": [20, 20, 360, 150], "overflow": "shrink"}),
+    ("clipped at the box", {"content": PROSE, "font": "arial.ttf", "size": 26,
+                            "box": [20, 20, 360, 90], "overflow": "clip"}),
+    ("centred on a point", {"content": "middle", "font": "arial.ttf", "size": 60,
+                            "box": [250, 200, 0, 0], "anchor": "center"}),
+    ("the fallback face", {"content": "wrong face", "font": "not-here-either.ttf",
+                           "size": 60, "box": [30, 40, 0, 0]}),
+)
+for label, spec in CROSS:
+    b = T.measure_text(spec)["inkBox"]
+    eq(f"{label}: the box measured with no canvas IS the box that got drawn",
+       None if b is None else (b["x"], b["y"], b["right"], b["bottom"]),
+       ink_bbox(alpha(R(spec, 500, 400))))
+
+SH = T.measure_text({"content": "BAND NAME", "font": "arial.ttf", "size": 120,
+                     "box": [0, 0, 300, 120], "overflow": "shrink"})
+eq("shrink-to-fit stops being invisible: what it landed on and what was asked for",
+   (SH["shrunk"], SH["sizeAsked"], SH["size"] < 120.0), (True, 120.0, True))
+eq("...and it landed on a real quarter-pixel size, not a float nobody can act on",
+   abs(SH["size"] * 4.0 - round(SH["size"] * 4.0)) < 1e-9, True)
+NOTES.append(f"'BAND NAME' at 120px into a 300x120 box: shrink-to-fit landed on "
+             f"{SH['size']}px, and nothing said so before this")
+eq("a block that fits is not reported as shrunk",
+   T.measure_text({"content": "fits", "font": "arial.ttf", "size": 20,
+                   "box": [0, 0, 300, 120], "overflow": "shrink"})["shrunk"], False)
+
+for label, spec, word in (
+        ("on a path", {"content": "badge", "size": 40,
+                       "path": {"kind": "arc", "center": [200, 150], "radius": 90}},
+         "path"),
+        ("rotated", {"content": "tilted", "size": 60, "rotate": 12.0}, "rotate"),
+        ("skewed", {"content": "leaning", "size": 60, "skewX": 15.0}, "skew"),
+        ("all spaces", {"content": "    "}, "no ink")):
+    m = T.measure_text(spec)
+    eq(f"{label}: no ink box at all rather than one measured where the ink is not",
+       m["inkBox"], None)
+    eq(f"...and a sentence saying why, naming {word}", word in (m["inkBoxWhy"] or ""), True)
+eq("a straight layout gets a box and no excuse",
+   T.measure_text({"content": "plain", "font": "arial.ttf", "size": 40})["inkBoxWhy"], None)
+# A moved block still reports box/ink/lines, and they are the layout BEFORE the
+# move. Two flags say so, because a number with no warning on it gets used.
+eq("a transformed spec says so, so a caller knows what the other boxes are measured "
+   "before", (T.measure_text({"content": "x", "rotate": 12.0})["transformed"],
+              T.measure_text({"content": "x"})["transformed"]), (True, False))
+eq("and a run on a path says so too",
+   (T.measure_text({"content": "badge", "size": 40,
+                    "path": {"kind": "arc", "center": [200, 150],
+                             "radius": 90}})["onPath"],
+    T.measure_text({"content": "badge", "size": 40})["onPath"]), (True, False))
+
+mf = T.measure_text({"content": "x", "font": "not-on-this-rig.ttf", "size": 40})
+eq("the fallback is named in the reply itself, not only in the warnings",
+   (mf["font"]["fallback"], mf["font"]["path"],
+    any("not-on-this-rig.ttf" in w for w in mf["warnings"])), (True, None, True))
+mr = T.measure_text({"content": "x", "font": "arial.ttf", "size": 40})
+eq("a face that resolved reports its path and says nothing",
+   (mr["font"]["fallback"], bool(mr["font"]["path"]), mr["warnings"]), (False, True, []))
+
+MM = T.measure_text({"content": "one\ntwo", "font": "arial.ttf", "size": 60,
+                     "box": [30, 30, 0, 0], "lineHeight": 1.2})
+eq("every line is reported on its own", len(MM["lines"]), MM["lineCount"])
+near("the reported baseline gap IS the reported lineStep",
+     MM["lines"][1]["baseline"] - MM["lines"][0]["baseline"], MM["lineStep"], 1e-6)
+near("...and lineStep is ascent+descent times lineHeight, the module's own rule",
+     MM["lineStep"], (MM["font"]["ascent"] + MM["font"]["descent"]) * 1.2, 1e-6)
+
+BIG = {"content": (PROSE + " ") * 6, "font": "arial.ttf", "size": 28,
+       "box": [20, 20, 900, 0]}
+t0 = time.perf_counter()
+big = T.measure_text(BIG)
+eq("a whole paragraph measures with no canvas anywhere", big["inkBox"] is not None, True)
+NOTES.append(f"measure_text on {big['lineCount']} wrapped lines "
+             f"({len(BIG['content'])} characters): "
+             f"{(time.perf_counter() - t0) * 1000.0:.1f} ms, nothing allocated")
+
+# The door a route spawns. Proven by actually spawning it, because "it works
+# in-process" is not the same claim as "server/index.js can reach it".
+DOOR_SPEC = {"content": "door", "font": "arial.ttf", "size": 50, "box": [10, 10, 0, 0]}
+DOOR_JOB = os.path.join(TMP.name, "measure_job.json")
+with open(DOOR_JOB, "w", encoding="utf-8") as fh:
+    fh.write(json.dumps({"text": DOOR_SPEC}))
+done = subprocess.run([sys.executable, os.path.join(HERE, "imgtext.py"), "measure",
+                       DOOR_JOB], capture_output=True, text=True, timeout=180)
+eq("the measure door answers JSON on stdout, so the route is one spawn",
+   json.loads(done.stdout or "{}").get("inkBox"), T.measure_text(DOOR_SPEC)["inkBox"])
+LEG_JOB = os.path.join(TMP.name, "measure_legacy.json")
+with open(LEG_JOB, "w", encoding="utf-8") as fh:
+    fh.write(json.dumps({"legacy": True, "text": {"content": "old shape", "size": 40,
+                                                  "x": 30, "y": 50, "align": "center"}}))
+leg = subprocess.run([sys.executable, os.path.join(HERE, "imgtext.py"), "measure",
+                      LEG_JOB], capture_output=True, text=True, timeout=180)
+eq("...and the OLD op shape measures too, through the same adapter stage 9 uses",
+   json.loads(leg.stdout or "{}").get("inkBox"),
+   T.measure_text(T.from_legacy({"content": "old shape", "size": 40, "x": 30, "y": 50,
+                                 "align": "center"}))["inkBox"])
+eq("...which is not what it would have measured read as a v2 spec",
+   json.loads(leg.stdout)["inkBox"] == T.measure_text({"content": "old shape", "size": 40,
+                                                       "x": 30, "y": 50,
+                                                       "align": "center"})["inkBox"],
+   False)
+
+nojob = subprocess.run([sys.executable, os.path.join(HERE, "imgtext.py"), "measure"],
+                       capture_output=True, text=True, timeout=180)
+eq("...and with no job file it refuses in a sentence rather than a stack trace",
+   ("job file" in json.loads(nojob.stdout or "{}").get("error", ""), nojob.returncode),
+   (True, 1))
+
+
+print("\n  -- two rasterisers, and which one this one measures --")
+
+# ⚠ ops.text COMES HERE; A DOCUMENT TEXT LAYER DOES NOT. imgdoc sends text
+# layers to vfx/engine.py:_render_text, which reads the same key names in
+# different units. Reporting one while the other draws is worse than reporting
+# nothing, so the disagreement is MEASURED on both sides here rather than
+# described, and measure_text is checked against THIS module's render.
+sys.path.insert(0, os.path.join(HERE, "vfx"))
+try:
+    import engine as DOC                                  # noqa: E402
+except Exception as exc:                                  # noqa: BLE001
+    DOC, DOC_WHY = None, exc
+sys.path.pop(0)
+eq("the other rasteriser is here to be compared against", DOC is not None, True)
+
+if DOC is not None:
+    def doc_ink(spec, w=600, h=400):
+        """The document renderer's ink, measured the same way as ours."""
+        return ink_bbox(alpha(DOC._render_text({"text": dict(spec, color=[255, 255, 255,
+                                                                          255])},
+                                               w, h, 1.0)))
+
+    BASE = {"content": "Hello", "font": "arial.ttf", "size": 64}
+    d_plain, d_track = doc_ink(BASE), doc_ink(dict(BASE, tracking=20))
+    m_plain = T.measure_text(dict(BASE, box=[50, 50, 0, 0]))
+    m_track = T.measure_text(dict(BASE, box=[50, 50, 0, 0], tracking=20))
+    here = m_track["inkBox"]["w"] - m_plain["inkBox"]["w"]
+    there = (d_track[2] - d_track[0]) - (d_plain[2] - d_plain[0])
+    near("tracking 20 on five glyphs is four gaps of twenty PIXELS in this module",
+         here, 80.0, 1.0)
+    eq("...and a quarter of that or less in the document renderer, where the same "
+       "number means em thousandths", there < here / 4.0, True)
+    NOTES.append(f"the same spec through both rasterisers: tracking 20 widens 'Hello' "
+                 f"by {here:.0f}px here and {there:.0f}px in vfx/engine.py")
+
+    SAME = {"content": "Hello\nHello", "font": "arial.ttf", "size": 64, "lineHeight": 1.2}
+    d_alpha = alpha(DOC._render_text({"text": dict(SAME, color=[255, 255, 255, 255])},
+                                     600, 400, 1.0))
+    d_rows = bands(d_alpha)
+    h_alpha = alpha(R(dict(SAME, box=[40, 40, 0, 0]), 600, 400))
+    h_rows = bands(h_alpha)
+    eq("both renderers drew two lines to measure", (len(d_rows), len(h_rows)), (2, 2))
+    d_step = row_center(d_alpha, d_rows[1]) - row_center(d_alpha, d_rows[0])
+    h_step = row_center(h_alpha, h_rows[1]) - row_center(h_alpha, h_rows[0])
+    near("the baseline gap measure_text reports is the one this module DRAWS",
+         h_step, T.measure_text(dict(SAME, box=[40, 40, 0, 0]))["lineStep"], 0.5)
+    eq("...and the document renderer draws a different gap from the same lineHeight",
+       abs(d_step - h_step) > 5.0, True)
+    NOTES.append(f"lineHeight 1.2 at 64px: {h_step:.1f}px baseline to baseline here, "
+                 f"{d_step:.1f}px in vfx/engine.py")
+
+eq("measure_text's docstring names the other rasteriser rather than leaving the reader "
+   "to find it", all(s in T.measure_text.__doc__
+                     for s in ("vfx/engine.py", "1/1000 em")), True)
+eq("...and so does the catalog note a tool schema carries",
+   "vfx/engine.py" in T.catalog()["notes"]["measure"], True)
 
 
 print("\n  -- hostile input --")

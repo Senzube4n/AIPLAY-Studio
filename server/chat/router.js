@@ -115,6 +115,14 @@ export const ROUTABLE = {
   /* pictures — reading */
   list_images: null,
   image_measure: null,
+  /* Both ask a question and write nothing. measure_text lays the type out in
+   * memory and reports where the ink would land — the answer a layout needs
+   * BEFORE it commits to a size, and the only way to get it that does not cost
+   * a render and a look. check_figure reads a list of contours and says which
+   * way each winds, which is the only thing in this system that can tell you
+   * why a letter is about to fill solid. */
+  measure_text: null,
+  check_figure: null,
   image_review: null,
   image_reviews: null,
   image_lineage: null,
@@ -138,7 +146,23 @@ export const ROUTABLE = {
 
   /* pictures — spending */
   image_adjust: "gpu",
+  /* ⚠ THE SAME ENGINE PASS AS image_adjust, so the same gate. bake_selection
+   * runs apply_edit and writes a new picture into the library; the note at the
+   * top of this file says an ambiguous tool is gated so the mistake is a
+   * needless confirmation rather than a silent spend, and a tool sharing a
+   * gated sibling's code path is not where to start making exceptions. */
+  bake_selection: "gpu",
   image_document: "gpu",
+  /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
+   * mostly harmless — list, open, save, rename, reorder — but image_documents
+   * takes action:"delete", and imgdoc.py says in its own words that there is no
+   * trash behind that shelf and that inventing one would be a second place
+   * documents live. document_edit carries remove_layer and ungroup_layer
+   * against a saved document with no undo buffer on this side of the wire. A
+   * gate that reads the action parameter would be a gate that can be argued
+   * with by the thing being gated. */
+  image_documents: "destroys",
+  document_edit: "destroys",
   image_composite: "gpu",
   image_sheet: "gpu",
   image_batch: "gpu",

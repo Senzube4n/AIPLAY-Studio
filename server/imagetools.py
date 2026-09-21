@@ -6,6 +6,7 @@ produce identical pixels.
 Usage:
   python imagetools.py edit <job.json>
       job: { "in": path, "out": path, "thumbOut": path|null, "thumbSize": 256,
+             "maskOut": path|null,   # the resolved selection, as a grayscale plate
              "ops": { brightness, contrast, saturation, gamma, temperature,
                       sharpen, blur, vignette, rotate, flipH, flipV } }
       All ops optional. brightness/contrast/saturation: 100 = unchanged
@@ -435,17 +436,24 @@ def apply_ops(rgba, ops):
     return np.asarray(adjust(im, ops or {})).astype(np.float32) / 255.0
 
 
-def apply_edit(job):
-    ops = job.get("ops") or {}
-    # RGBA throughout: cutouts and chroma keys carry transparency, and an edit
-    # pass must not flatten it
-    im = Image.open(job["in"]).convert("RGBA")
+def frame_stages(im, ops, notes):
+    """Stages 1-3 — canvas, crop, geometry. THE COORDINATE SYSTEM ITSELF.
 
+    ⚠ EVERY SELECTION IN THIS SYSTEM IS WRITTEN IN THE FRAME THESE PRODUCE.
+    imagetools resolves one at stage 4, web/app.js's iedSrcToStage() writes its
+    shapes post-crop and post-rotate, and IMAGE_SPEC §3 says "pixels AFTER any
+    crop/rotate/flip in the same call". So a caller that resolves a selection
+    against the RAW source is not slightly off — it is answering about a
+    different picture, with the right numbers and no error on either side.
+
+    describe_selection() did exactly that until this was lifted out of
+    apply_edit. It lives here, in one place, rather than being copied: a second
+    copy of a coordinate system is the same bug with a delay on it.
+    """
     # ── stage 1: the canvas — the FRAME changes, not the content ──
-    _notes = []
     if ops.get("canvas"):
         import imgshape                                 # noqa: PLC0415
-        im = _from_rgba(imgshape.apply_canvas(_to_rgba(im), ops["canvas"], _notes))
+        im = _from_rgba(imgshape.apply_canvas(_to_rgba(im), ops["canvas"], notes))
 
     crop = ops.get("crop")
     if crop:
@@ -471,7 +479,20 @@ def apply_edit(job):
             _geo[_new] = ops[_old]
     if _geo:
         import imgshape                                 # noqa: PLC0415
-        im = _from_rgba(imgshape.apply_geometry(_to_rgba(im), _geo, _notes))
+        im = _from_rgba(imgshape.apply_geometry(_to_rgba(im), _geo, notes))
+    return im
+
+
+def apply_edit(job):
+    ops = job.get("ops") or {}
+    # RGBA throughout: cutouts and chroma keys carry transparency, and an edit
+    # pass must not flatten it
+    im = Image.open(job["in"]).convert("RGBA")
+
+    # ── stages 1-3: the frame. Shared with describe_selection so that what a
+    # selection is measured against and what it is applied to cannot drift.
+    _notes = []
+    im = frame_stages(im, ops, _notes)
 
     # ── stage 4: the selection, resolved in post-geometry coordinates ──
     _mask, _sel_err = _selection_mask(ops, im)
@@ -597,7 +618,12 @@ def apply_edit(job):
             raise ValueError(f"the type tool is unavailable: {exc}")
         spec = txt if txt.get("_v2") else imgtext.from_legacy(txt)
         rgba = np.asarray(im).astype(np.float32) / 255.0
-        rgba = imgtext.draw_text(rgba, spec)
+        # ⚠ `_notes` IS NOT OPTIONAL HERE. draw_text folds its telemetry into
+        # this list — a substituted font, a clamped variation axis, a line that
+        # overflowed its box — and the reply already carries `notes` to the
+        # caller. Called without it the whole channel is silent and the picture
+        # comes back looking almost right.
+        rgba = imgtext.draw_text(rgba, spec, notes=_notes)
         im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
     # ── channel matte: one plane of the RESULT as grayscale ──
@@ -632,6 +658,35 @@ def apply_edit(job):
         im = im.resize((min(8192, int(rs["w"])), min(8192, int(rs["h"]))), Image.LANCZOS)
 
     im.save(job["out"])
+
+    # ── THE SELECTION, AS A PICTURE ────────────────────────────────────────
+    #
+    # imgdoc.py tells a caller to "bake the result into a library image and use
+    # mask.src" for the kinds a document mask cannot rasterise — wand,
+    # colorRange, path. This is that step. Written after `out` so it lands in
+    # the same coordinates, and only when asked: a plate nobody wanted is a file
+    # nobody deletes.
+    if job.get("maskOut"):
+        # ⚠ NO SELECTION IS EVERYTHING, NOT NOTHING. `_mask` is None when the
+        # job carried none, and the rest of this function branches on that.
+        # Skipping the write here would make "no selection" produce no file,
+        # which reads as a failure rather than as the whole frame it means.
+        _plate = np.ones((im.height, im.width), np.float32) if _mask is None else _mask
+        _img = Image.fromarray(
+            (np.clip(_plate, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "L")
+        # ⚠ AND THE MASK IS IN PRE-RESIZE COORDINATES. Stage 4 resolves it
+        # against the post-geometry image and the resize above happens later, so
+        # a plate at the source size does not register against `out` — and
+        # nothing downstream would say so: it would simply mask the wrong pixels.
+        if _img.size != (im.width, im.height):
+            _img = _img.resize((im.width, im.height), Image.LANCZOS)
+        _img.convert("RGBA").save(job["maskOut"])
+        _reply_mask = {"maskOut": job["maskOut"],
+                       "coverage": float(np.clip(_plate, 0.0, 1.0).mean()),
+                       "everything": _mask is None}
+    else:
+        _reply_mask = None
+
     if job.get("thumbOut"):
         th = im.copy()
         size = int(job.get("thumbSize") or 256)
@@ -641,6 +696,8 @@ def apply_edit(job):
     # maxCarve genuinely becomes a plain resize, and says so. Dropping them
     # would turn an honest degradation into a silent one.
     _reply = {"ok": True, "out": job["out"], "width": im.width, "height": im.height}
+    if _reply_mask:
+        _reply.update(_reply_mask)
     if _notes:
         _reply["notes"] = _notes
     # An effect that needs a timeline does nothing to a still. apply_effects
@@ -993,10 +1050,19 @@ def describe_selection(job):
         print(json.dumps({"ok": False, "error": "describe needs a src image"}))
         return
     import imgselect                                    # noqa: PLC0415
-    im = Image.open(src)
+    im = Image.open(src).convert("RGBA")
+    # ⚠ IN THE FRAME THE SHAPES WERE WRITTEN IN, NOT THE RAW SOURCE. This used
+    # to open the file and resolve against it, so with a crop pending it
+    # measured a selection in one picture that the edit would then apply to
+    # another — right numbers, wrong frame, and the whole point of this route
+    # is that the numbers can be trusted. `frame` carries only stages 1-3; the
+    # adjustments cannot move a coordinate and are not run.
+    _notes = []
+    im = frame_stages(im, job.get("frame") or {}, _notes)
     rgba = _to_rgba(im)
     out = imgselect.describe(job.get("selection") or {}, rgba)
-    print(json.dumps({"ok": True, **out}))
+    print(json.dumps({"ok": True, "width": im.width, "height": im.height,
+                      "notes": _notes or None, **out}))
 
 
 def main():

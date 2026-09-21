@@ -3452,6 +3452,16 @@
                 <button class="edtool sm" id="iedSelInv">invert</button>
                 <button class="edtool sm" id="iedSelFromCrop" title="Turn the crop rectangle into a selection instead of a crop">from crop</button>
               </span></div>
+              <!-- The two doors that had a tool and no control. `what did it
+                   catch?` is the only thing in the system that can say a wand
+                   tolerance caught NOTHING \u2014 and an empty selection is silent
+                   everywhere else: every op through it becomes a no-op, the
+                   file comes back identical, and the reply still says ok. -->
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedSelWhat" title="Resolve this selection on the server and say what it actually caught. An empty selection is silent everywhere else \u2014 every op through it does nothing and still reports success.">what did it catch?</button>
+                <button class="edtool sm" id="iedSelBake" title="Write this selection into the image library as a grayscale matte picture \u2014 usable as mask.src on a document layer, as a matte or map in the compositor, or as the base of another selection. The only way to keep what a wand or colour range caught.">save as matte</button>
+              </span></div>
+              <p class="hint" id="iedSelSays"></p>
               <p class="hint">Shapes combine in the order listed. Wand and colour
                 range sample the picture as it is after geometry and before any
                 adjustment &mdash; &sect;3.</p>
@@ -3503,6 +3513,62 @@
             </div>
           </details>
 
+          <!-- THE DOCUMENT SHELF, and the thing five Layer-menu rows were
+               missing. New layer / Duplicate / Group / Add a layer mask / New
+               adjustment layer went live the moment the layerdoc probe came
+               back and did NOTHING when clicked, because a layer DOCUMENT is
+               not the flat stack above it: it is a tree that lives on the
+               server, edited one op at a time, all of them or none. This is
+               that tree, and those five rows now act on it.
+
+               TWO LISTS THAT LOOK ALIKE AND ARE NOT. The Layers dock is a
+               composite recipe for one call &mdash; pictures over this picture,
+               flattened on Composite and gone. A document persists between
+               sessions, holds groups, masks and adjustment layers, and renders
+               on its own. &ldquo;Save this composite&rdquo; is the one crossing
+               between them, and it says in words what it had to leave behind. -->
+          <details class="ieddock" id="iedDockDocs" data-dock="docs">
+            <summary>Documents</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedDocCap" hidden></p>
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedDocRefresh" title="Read the shelf again. It is one JSON file on the server and anything else holding the route can write to it, so the listing here is a snapshot, not a subscription.">read the shelf</button>
+                <button class="edtool sm" id="iedDocSave" title="Write the base picture and the Layers dock&rsquo;s stack out as a layer document. What is QUEUED on this console is a pipeline op, not a layer, so it is left out &mdash; the line below names every piece.">save this composite</button>
+              </span></div>
+              <div id="iedDocShelf"></div>
+              <div class="iedgrp" id="iedDocPanel" hidden>
+                <div class="wrow"><b class="iedgrph" id="iedDocTitle">&mdash;</b><span class="hint" id="iedDocMeta"></span></div>
+                <div id="iedDocOutline"></div>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedDocNew" title="add_layer &mdash; the kinds come out of the server&rsquo;s own catalog, so one it grows appears here without anyone editing this page">new layer&hellip;</button>
+                  <button class="edtool sm" id="iedDocDup" title="duplicate_layer &mdash; a copy directly above the original, with fresh ids all the way down">duplicate</button>
+                  <button class="edtool sm" id="iedDocGroup" title="group_layers over every row you picked, in the order you picked them. They have to share a container already.">group</button>
+                </span></div>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedDocMask" title="update_layer with a reveal-all mask: one canvas-sized rectangle that hides nothing and is there to be edited. A mask with neither a source nor a shape is not a mask &mdash; it renders exactly as if it were absent.">add a layer mask</button>
+                  <button class="edtool sm" id="iedDocAdj" title="add_layer of an adjustment layer &mdash; an effect stack applied to everything beneath it, re-editable instead of baked">adjustment layer&hellip;</button>
+                </span></div>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedDocUp" title="reorder_layer one place UP THE STACK, inside this layer&rsquo;s own container. The rows read bottom-up, so it moves one row DOWN the list.">&uarr; raise</button>
+                  <button class="edtool sm" id="iedDocDown" title="reorder_layer one place DOWN THE STACK, inside this layer&rsquo;s own container. The rows read bottom-up, so it moves one row UP the list.">&darr; lower</button>
+                  <button class="edtool sm" id="iedDocClip" title="set_clipped &mdash; this layer keeps the alpha of the one below it as its matte">clip</button>
+                  <button class="edtool sm" id="iedDocUngroup" title="ungroup_layer &mdash; the children come back out where the group was">ungroup</button>
+                </span></div>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedDocRender">Render &rarr; new image</button>
+                  <button class="edtool sm warn" id="iedDocClose" title="Stop editing it here. It stays on the shelf.">close it</button>
+                </span></div>
+              </div>
+              <p class="hint" id="iedDocSays"></p>
+              <p class="hint">Rows read <b>bottom-up</b> &mdash; layer 0 is the bottom.
+                That is the order the document stores and the order the edit route
+                answers in, and borrowing the Layers dock&rsquo;s top-down order here
+                would be a second ordering for the same tree. Every button sends one
+                <code>document-edit</code> op and the shelf applies all of them or
+                none. Deleting is permanent: there is no trash behind this shelf.</p>
+            </div>
+          </details>
+
           <!-- Channels. Viewing is a VIEW (client canvas, nothing queued);
                loading is a real §3 selection shape the server resolves; and
                R/G/B point the Adjustments curve at their channel, because the
@@ -3536,6 +3602,19 @@
                 <button class="edtool sm" id="iedPathStroke" title="Queue a brush stroke along the path — the server stamps §5's brush along it">stroke (brush)</button>
                 <button class="edtool sm" id="iedPathFill" title="Queue a fill of the path, in the shape fill colour">fill</button>
               </span></div>
+              <!-- WHY IT FILLED SOLID. Both ways to get a multi-contour
+                   figure wrong are SILENT, which is why this needed a control
+                   rather than a refusal: an open contour fills identically to
+                   a closed one and strokes with a seam where it starts, and a
+                   counter wound the SAME way as the contour around it is not a
+                   hole under nonzero, so the &lsquo;o&rsquo; comes back a solid blob.
+                   Neither can be refused &mdash; both are legal figures somebody
+                   might mean &mdash; so imgpath says it out loud instead, naming
+                   the contour and what to do to it. -->
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedPathCheck" title="Ask the server what this figure will do when it is filled: how many contours, which are holes, which are enclosed but wound the wrong way to BE holes, and which are not closed. The only thing here that can tell you an &lsquo;o&rsquo; is about to come back solid.">why will it fill solid?</button>
+              </span></div>
+              <p class="hint" id="iedPathSays"></p>
               <div id="iedPathQueue"></div>
               <p class="hint">The pen (P) clicks anchors; double-click or Enter saves.
                 A path is geometry &mdash; nothing touches a pixel until a queued
@@ -3552,6 +3631,18 @@
             <div class="ieddockbody">
               <p class="hint iedcapwarn" id="iedCharCap" hidden></p>
               <div id="iedCharBody"></div>
+              <!-- TYPE METRICS. A layout has to commit to a size and a box
+                   BEFORE it renders, and every other way to find out what the
+                   type did costs a render and a look. Two of these numbers are
+                   the ones that cost a whole layout when they go unread: a
+                   SUBSTITUTED font means the box was measured against the
+                   wrong face, and a shrink-to-fit means the size on the panel
+                   is not the size that drew. Neither is visible in the
+                   picture until it is too late to change the design. -->
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedCharMeasure" title="Lay this type out on the server and answer with the numbers &mdash; ink box, line count, baseline step, the size it actually landed on, and whether the font you asked for was the font it used. No render, no picture.">measure</button>
+              </span></div>
+              <p class="hint" id="iedCharSays"></p>
             </div>
           </details>
 

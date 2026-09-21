@@ -229,6 +229,12 @@ MOD_ALT = {"mode": "subtract", "feather": 6, "invert": True, "expand": 7,
            # is the §9 claim being made here; the section further down is where
            # smooth is shown doing the job it exists for.
            "smooth": 4, "border": 9,
+           # `refine` on IMG - a flat grey frame - is the degenerate case of
+           # itself: a guide with no edges gives a flat fit, and the mask comes
+           # back box-blurred. That it moves at all is all §9 asks for here; the
+           # section further down is where it is shown doing the job it exists
+           # for, on a picture that HAS an edge to be pulled onto.
+           "refine": 6,
            "antialias": False}
 missing = sorted(set(sel.MODIFIERS) - set(MOD_ALT))
 eq("the probe table names every catalogued modifier", missing, [])
@@ -690,6 +696,182 @@ eq("border before feather, so a feathered band is softer than a hard one",
    partials(m(dict(box, border=8, feather=4))) > partials(b8) * 3, True)
 
 
+print("\n  -- refine: the mask pulled onto the picture's own edges --")
+
+# imgphoto's guided filter is the SINGLE-CHANNEL one, and the comparison below
+# is against that source rather than against a strawman written here - §9's rule
+# about asserting against the other side's code, applied to a claim about which
+# of two filters can see an edge.
+import imgphoto  # noqa: E402
+
+# A block with a comb of tapering strands: hair, fur, the fringe of a coat, and
+# what breaks a character cut out for a poster. The background colour is solved
+# so that Rec.601 luminance is EQUAL on both sides of every edge in the picture,
+# which makes the two materials differ in HUE ALONE - the case a luma-guided
+# refine is exactly blind to, and the case this studio's saturated art hands it
+# all day.
+HAIR = np.array([0.10, 0.60, 0.55], np.float32)
+BEHIND = np.array([0.85, 0.30,
+                   (float(HAIR @ sel._LUMA) - 0.299 * 0.85 - 0.587 * 0.30) / 0.114],
+                  np.float32)
+DARK = np.array([0.05, 0.06, 0.07], np.float32)     # the easy, luma-distinct case
+
+
+def fringe(behind):
+    """The picture, the true alpha, and the blunt mask a marquee hands back -
+    the block, with every strand cut off at its root."""
+    a = np.zeros((160, 160), np.float32)
+    a[20:140, 40:90] = 1.0
+    taper = np.clip(1.0 - (np.arange(90, 116) - 90) / 26.0, 0.0, 1.0).astype(np.float32)
+    for y in range(21, 139, 4):
+        a[y, 90:116] = taper
+    im = np.zeros((160, 160, 4), np.float32)
+    im[..., :3] = HAIR * a[..., None] + np.float32(behind) * (1.0 - a[..., None])
+    im[..., 3] = 1.0
+    blunt = np.zeros((160, 160), np.float32)
+    blunt[20:140, 40:90] = 1.0
+    return im, a, blunt
+
+
+# Strand rows against the rows BETWEEN them, same columns and the same distance
+# from the block. That is what makes the score a measurement of edge-finding
+# rather than of spreading: anything whose value depends only on distance from
+# the block - every feather, and every filter that cannot see the strands -
+# scores exactly zero here however far it spreads.
+ON = np.zeros((160, 160), bool)
+OFF = np.zeros((160, 160), bool)
+for y in range(41, 119, 4):
+    ON[y, 92:102] = True
+    OFF[y + 2, 92:102] = True
+
+EQ, TRUTH, BLUNT = fringe(BEHIND)
+LIT, _, _ = fringe(DARK)
+BLOCK = {"shapes": [{"kind": "rect", "x": 40, "y": 20, "w": 50, "h": 120}]}
+
+
+def sep(mask):
+    return float(mask[ON].mean()) - float(mask[OFF].mean())
+
+
+def miss(mask):
+    return float(np.abs(mask - TRUTH).mean())
+
+
+def luma_refine(img, r):
+    """What the cheap move would have been: imgphoto's guided filter on the
+    luminance plane."""
+    return np.clip(imgphoto._guided(np.ascontiguousarray(img[..., :3]) @ sel._LUMA,
+                                    BLUNT, r, 1e-4), 0.0, 1.0)
+
+
+eq("the scene really is equal-luminance: one luma value across the whole "
+   "picture, so the luma plane carries NO edge to be guided by",
+   float((EQ[..., :3] @ sel._LUMA).std()) < 1e-6, True)
+eq("...and the marquee over it is the blunt mask, strands cut off at the root",
+   np.array_equal(m(BLOCK, EQ), BLUNT), True)
+
+raw = m(BLOCK, EQ)
+r8 = m(dict(BLOCK, refine=8), EQ)
+one8 = luma_refine(EQ, 8)
+near(f"a symmetric feather cannot tell a strand from the gap beside it "
+     f"({sep(m(dict(BLOCK, feather=4), EQ)):+.3f})",
+     sep(m(dict(BLOCK, feather=4), EQ)), 0.0, 0.005)
+near(f"...and at equal luminance neither can the single-channel guided filter, "
+     f"because its guide is a CONSTANT ({sep(one8):+.3f})", sep(one8), 0.0, 0.005)
+eq(f"the three-channel refine can, at radius 8 ({sep(r8):+.3f})", sep(r8) > 0.25, True)
+eq(f"...and reaches further at radius 16 ({sep(m(dict(BLOCK, refine=16), EQ)):+.3f})",
+   sep(m(dict(BLOCK, refine=16), EQ)) > sep(r8) + 0.1, True)
+eq(f"the luma-guided refine is WORSE than leaving the mask alone - it spreads "
+   f"coverage over strand and gap alike, which is a feather with extra steps "
+   f"(MAE {miss(one8):.4f} against {miss(raw):.4f})", miss(one8) > miss(raw) * 3, True)
+eq(f"...where the three-channel one is better than leaving it alone "
+   f"({miss(r8):.4f})", miss(r8) < miss(raw), True)
+
+# The other direction, and the reason the extra work is worth defending rather
+# than just asserting: on the case the cheap filter CAN do, the two agree.
+eq(f"where the two materials differ in lightness the single-channel filter "
+   f"works too, and the third channel costs nothing: {sep(luma_refine(LIT, 8)):+.3f} "
+   f"against {sep(m(dict(BLOCK, refine=8), LIT)):+.3f}",
+   abs(sep(m(dict(BLOCK, refine=8), LIT)) - sep(luma_refine(LIT, 8))) < 0.01, True)
+
+FLAT = np.zeros((160, 160, 4), np.float32)
+FLAT[..., :3] = HAIR
+FLAT[..., 3] = 1.0
+K = (17, 17)
+twice = cv2.boxFilter(cv2.boxFilter(BLUNT, cv2.CV_32F, K, borderType=cv2.BORDER_REFLECT),
+                      cv2.CV_32F, K, borderType=cv2.BORDER_REFLECT)
+eq("it cannot invent an edge that is not in the picture: on a guide of one flat "
+   "colour the fit goes flat and the answer is the mask box-blurred twice",
+   float(np.abs(m(dict(BLOCK, refine=8), FLAT) - twice).max()) < 1e-6, True)
+
+eq("refine 0 is the identity", bool((m(dict(BLOCK, refine=0), EQ) == raw).all()), True)
+eq("...and so is a radius that rounds to no window at all",
+   bool((m(dict(BLOCK, refine=0.4), EQ) == raw).all()), True)
+eq("refine runs BEFORE feather, so the softness lands on the edge refine placed",
+   np.array_equal(m(dict(BLOCK, refine=8, feather=4), EQ),
+                  sel._feather(sel._refine(BLUNT, EQ, 8), 4.0)), True)
+eq("...and not the other way round, which would re-fit a 4px ramp to the colour "
+   "under it", np.array_equal(m(dict(BLOCK, refine=8, feather=4), EQ),
+                              sel._refine(sel._feather(BLUNT, 4.0), EQ, 8)), False)
+
+NOISE = np.zeros((160, 160, 4), np.float32)
+NOISE[..., :3] = np.random.default_rng(11).random((160, 160, 3), dtype=np.float32)
+NOISE[..., 3] = 1.0
+BOX = {"shapes": [{"kind": "rect", "x": 30, "y": 30, "w": 100, "h": 80}]}
+moved = np.abs(m(dict(BOX, refine=8), NOISE) - m(BOX, NOISE)) > 0.0
+ys, xs = np.nonzero(moved)
+# ...reported rather than indexed into, because a refine that did nothing at all
+# gives an EMPTY index array, and ys.min() on that raises instead of failing -
+# which would take the rest of this lane down with it.
+eq("refine is an edge operation: on a rect at (30,30)-(130,110) with radius 8 "
+   "nothing outside 2r of the boundary moves at all, and the interior is "
+   "bit-identical",
+   (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())) if ys.size
+   else "nothing moved at all", (14, 125, 14, 145))
+
+# ⚠ THE FAST PATH HAS TO AGREE WITH THE SLOW ONE, AND THAT CLAIM ROTS SILENTLY.
+# A pixel reads `a` and `b` one window away and those were fit one more window
+# away, so a band needs 2r rows of halo and not one fewer.
+saved = sel._REFINE_BAND_BYTES
+sel._REFINE_BAND_BYTES = 1                      # the smallest band there is
+banded = sel._refine(BLUNT, EQ, 6)
+sel._REFINE_BAND_BYTES = 1 << 40                # the whole frame in one pass
+slab = sel._refine(BLUNT, EQ, 6)
+sel._REFINE_BAND_BYTES = saved
+eq("a banded refine is BIT-identical to one pass over the whole frame",
+   banded.tobytes() == slab.tobytes(), True)
+
+tiny3 = flat(3, 3, (0.2, 0.7, 0.4))
+tiny3[0, :, :3] = HAIR
+eq("a radius far bigger than the picture still resolves",
+   sel.resolve({"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 3, "h": 1}],
+                "refine": 40}, tiny3).shape, (3, 3))
+
+# ⚠ THE ONE PATH THIS MUST NEVER BE TURNED ON FOR. /api/images/cutout adopts
+# BiRefNet's trained soft matte RAW, and that matte is already right. A guided
+# refine on top re-fits it to LOCAL COLOUR, so wherever the subject wears a
+# colour that also appears in the background - shirt texture, the inside of hair
+# - it gets pulled open. The case below is a correct soft matte over a subject
+# striped between its own colour and the background's.
+YY, XX = np.mgrid[0:160, 0:160]
+MATTE = np.clip((40.0 - np.hypot(YY - 80, XX - 80)) / 2.0 + 0.5, 0.0, 1.0).astype(np.float32)
+SHIRT = np.zeros((160, 160, 4), np.float32)
+SHIRT[..., :3] = (np.where(((XX // 5) % 2 == 0)[..., None], BEHIND, HAIR)
+                  * MATTE[..., None] + BEHIND * (1.0 - MATTE[..., None]))
+SHIRT[..., 3] = 1.0
+INSIDE = np.hypot(YY - 80, XX - 80) < 34
+eq("a trained matte is a flat 1 inside the subject, texture or no texture",
+   float(MATTE[INSIDE].min()), 1.0)
+for r, floor in ((4, 0.95), (8, 0.80), (16, 0.60)):
+    got = float(sel._refine(MATTE, SHIRT, r)[INSIDE].min())
+    eq(f"...and refine {r} pulls it open where the shirt wears the background's "
+       f"own colour ({got:.3f} of 1.000)", got < floor, True)
+eq(f"...so refining a matte that was already right is a measurable regression, "
+   f"which is why refine defaults to 0 and why the cutout path must not turn it "
+   f"on (MAE {float(np.abs(sel._refine(MATTE, SHIRT, 8) - MATTE).mean()):.4f})",
+   float(np.abs(sel._refine(MATTE, SHIRT, 8) - MATTE).mean()) > 0.02, True)
+
+
 print("\n  -- invert and antialias --")
 
 tri = {"shapes": [{"kind": "polygon", "points": [[20, 20], [140, 40], [60, 130]]}]}
@@ -1058,7 +1240,7 @@ broke = []
 for kind, spec in BASE.items():
     try:
         mask = sel.resolve({"shapes": [dict(spec, x=0, y=0, cx=0, cy=0)],
-                            "feather": 3, "expand": 2}, tiny)
+                            "feather": 3, "expand": 2, "refine": 4}, tiny)
         if mask.shape != (1, 1) or not np.isfinite(mask).all():
             broke.append(kind)
     except Exception as exc:

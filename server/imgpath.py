@@ -14,6 +14,7 @@ either coverage or displacement.
         path_mask(spec, h, w)         -> float32 (H, W) 0..1 - a SELECTION
         draw_path / apply_paths       -> fill and/or stroke onto the image
         boolean_mask / boolean_paths  -> union, subtract, intersect, xor
+        check_figure(spec)            -> why a figure with holes did not hole
 
     LIQUIFY (spec 5's brush class - a stroke arrives as a path)
 
@@ -41,6 +42,47 @@ will guess one of them: a point list, bare `[[x, y], ...]` or as
 list of any of those. A path is OPEN unless it says otherwise; filling closes a
 contour whatever the flag says, so it only decides what a STROKE draws. One
 path is one contour, and a figure with holes is a LIST of paths under a rule.
+
+TYPE AS PATHS - THE SEAM AT server/imgtext.py
+
+A brush WALKING the contour of a word - a neon tube bent into the letters,
+chalk, spray, a stitched title, an eraser eating the edge - is a music video
+title look this editor cannot build, and the missing piece is not the brush.
+server/imgstroke.py:171 already walks any `path` by arc length with dash, cap,
+join and a real miter limit intact, and everything above turns a path into
+coverage. What is missing is letterform GEOMETRY, and getting that out of a
+font file is a font reader, which belongs in server/imgtext.py. This module's
+job is paths, so it does not grow a font reader; it states what it will take.
+
+`TYPE_CONTRACT` below is that statement, rule by rule, and `catalog()` serves
+it under `typeContract` so the other half can be written against a schema
+rather than against this paragraph. `check_figure` is the same contract as a
+CALL: hand it the contours and it names the one that will not behave, because
+both ways to get a letter wrong draw a picture rather than raising - a contour
+left open strokes with a seam at its start point, and a counter wound the same
+way as the letter around it fills SOLID under nonzero without a word.
+
+MEASURED, on this rig on 2026-09-21, against Pillow's own FreeType raster of
+the same face at the same size (imgpath_test's `type as paths` block runs all
+of this and prints the numbers again):
+
+    Arial 'A' at 200 px   path_mask vs Pillow     IoU 0.9939, ink ratio 0.9995
+    Arial 'A' at 200 px   path_mask vs UNHINTED   IoU 0.9969
+    Arial 'A' at 200 px   Pillow    vs UNHINTED   IoU 0.9928
+    Arial 'e' at  64 px   path_mask vs UNHINTED   IoU 0.9846
+    Arial 'e' at  64 px   Pillow    vs UNHINTED   IoU 0.8568
+
+The unhinted reference is Pillow's own raster at 8x, box-downsampled, where
+grid-fitting has nowhere left to move an edge. Read the last two rows twice:
+measured against the true outline, THIS module's fill is closer than
+FreeType's hinted raster is, so the gap in the first row is hinting and not
+flattening. An earlier probe on this rig quoted 0.981 for Arial 'A' with no
+size next to it; that number is not a property of anything. The first row's
+measurement - against the HINTED raster - gives 0.80 at 16 px, 0.978 at 64,
+0.994 at 200 and 0.992 at 400, because the disagreement is a fixed fraction of
+a pixel along an edge whose length grows with the size while the area it is
+divided by grows with the square. So the 0.981 is refuted as a constant and
+confirmed as a point in that band: quote a size, or quote nothing.
 
 FLATTENING, AND THE HALF PERCENT NOBODY NOTICED
 
@@ -175,6 +217,21 @@ arithmetic the compositor and the VFX effects use.
 #      0, a size under half a pixel) returns the input unchanged and says so in
 #      `notes`. Let PathError reach the caller as `{ ok: false, error }`, the
 #      same way imgshape.ShapeError already does.
+#
+#   8. Type as paths. `imgpath.check_figure(spec)` answers "why did my letter
+#      fill solid", and it needs no image, so it is a pure JSON call:
+#
+#          POST /api/image/path/check   { paths: [...], fillRule: "nonzero" }
+#              -> imgpath.check_figure(body, notes=notes)
+#
+#      plus one MCP tool beside the catalog one - `image_path_check`, the same
+#      two fields, and the `typeContract` array out of `catalog()` in its
+#      description. It hands back {contours, areas, closed, open, inside,
+#      depth, holes, solid, rule, ok, problems, warnings}; both lists are
+#      already full sentences, so a tool that returns them verbatim is a tool
+#      an agent can act on. `ok` follows `problems` alone - a warning is true
+#      and may well be intended. It never raises for a figure it dislikes,
+#      only for input it cannot read at all.
 # ---------------------------------------------------------------------------
 import json
 import math
@@ -232,6 +289,7 @@ ALIASES = {
     "pen": "draw", "bezier": "draw", "path": "draw", "fill": "draw",
     "stroke": "draw", "outline": "draw",
     "selection": "mask", "toMask": "mask", "tomask": "mask", "select": "mask",
+    "validate": "check", "lint": "check", "glyph": "check", "text": "check",
     "combine": "boolean", "merge": "boolean", "pathfinder": "boolean",
     "inset": "offset", "outset": "offset", "expand": "offset",
     "forward": "push", "warp": "push", "shift": "push", "smudgeMesh": "push",
@@ -308,17 +366,75 @@ PATH_DESC = (
     "pixels: pixel (row i, col j) is the square [j, j+1) x [i, i+1). A path "
     "is OPEN unless it says closed:true (an SVG Z closes one). Filling "
     "closes a contour whatever the flag says, so it only decides what a "
-    "stroke draws."
+    "stroke draws. ONE PATH IS ONE CONTOUR: a figure with holes - a letter, a "
+    "logo, an island with a lake in it - is the whole LIST in one call with "
+    "boolean left at 'none', and see `typeContract` for the rest of what a "
+    "glyph outline has to look like when it gets here."
 )
+
+# ⚠ THIS IS THE SEAM, AND IT IS THE WHOLE SEAM. server/imgtext.py owns the font
+# reader; this module owns what arrives. Every rule below was RUN - a real face
+# off this machine, through `path_mask`, measured against Pillow's own raster of
+# the same glyph (module docstring for the numbers, and imgpath_test's `type as
+# paths` block takes them again on every run) - rather than copied out of a
+# spec, because a contract nobody ran is a wish. The one exception is named
+# where it appears: a mirrored component is REASONED, not measured.
+TYPE_CONTRACT = [
+    "One contour per path, and a letter is the whole LIST of them in ONE call "
+    "with `boolean` left at 'none', so the list is one figure under the fill "
+    "rule. Two calls draw two figures and the counter of an 'o' fills solid.",
+
+    "closed:true on every contour. A glyph contour always is. Filling closes "
+    "one whatever the flag says, so this decides only what a STROKE draws - "
+    "which is the entire point of walking a brush around a word.",
+
+    "Image pixels, y DOWN. Font units are y UP, so the reader applies "
+    "x*s + ox, oy - y*s with s = size/unitsPerEm. That flip reverses every "
+    "contour's winding at once, and nonzero cares only about the OPPOSITION "
+    "of two windings, so it survives intact - as long as the whole figure is "
+    "flipped once, together.",
+
+    "A hole is its own contour in the same list, wound AGAINST the contour "
+    "that encloses it. TrueType and CFF both already do this, so a faithful "
+    "reader gets it for free; check_figure names the contour when something "
+    "does not.",
+
+    "Cubics. A TrueType quadratic lifts to a cubic EXACTLY - c1 = p0 + "
+    "(2/3)(q - p0), c2 = p3 + (2/3)(q - p3) - so there is no tolerance to "
+    "pick and nothing to approximate; qu2cu and friends are solving a problem "
+    "that is not here. {d: '...'} accepts Q and T and does that lift itself. "
+    "Implied on-curve points are the midpoints of consecutive control points, "
+    "and a contour of nothing but control points starts at the midpoint of "
+    "the last and the first.",
+
+    "Composites decompose, with the component transform applied (fontTools' "
+    "DecomposingRecordingPen does this), and an accented letter measures here "
+    "as the base letter plus its marks. REASONED, NOT MEASURED, because no "
+    "face on this rig does it: a component transform with a negative "
+    "determinant is a reflection, a reflection reverses orientation, so a "
+    "mirrored component arrives wound backwards and fills solid under "
+    "nonzero - the shape check_figure reports as `solid` and imgpath_test "
+    "pins by reversing a counter, which is the same reversal.",
+
+    "A contour that yields fewer than two anchors is dropped, and since "
+    "2026-09-21 it is reported in `notes` - before that a letter came back "
+    "missing a piece with no line anywhere to say so. Real fonts do ship "
+    "these: glyph u1FAA2 of seguiemj.ttf has 48 contours and one of them is a "
+    "single point stated twice.",
+]
 _TOL = num(FLATNESS, 0.005, 10.0,
            "chord error allowed when a curve is flattened, in px. The polygon "
            "is area-corrected afterwards, so this buys smoothness rather than "
            "area", unit="px")
 _RULE = pick(FILL_RULES, "nonzero",
-             "which side of a self-crossing is inside. They differ only where "
-             "a path crosses itself or another path in the same list: nonzero "
-             "fills a pentagram solid, evenodd leaves the pentagon in the "
-             "middle of it as a hole")
+             "which side of a boundary is inside. They part company wherever "
+             "windings meet, and that is TWO cases and not one. A path that "
+             "crosses itself: nonzero fills a pentagram solid where evenodd "
+             "leaves the pentagon in the middle of it as a hole. And a contour "
+             "INSIDE another one, crossing nothing: nonzero cuts a counter out "
+             "of a letter only if that counter is wound AGAINST the letter, "
+             "where evenodd cuts it out either way. `check` says which of "
+             "those a figure is in")
 _BOOL = pick(BOOLEANS, "none",
              "how the paths in the list combine. `none` treats them as one "
              "figure under the fill rule, which is how a letter O gets its "
@@ -370,6 +486,23 @@ op("mask", "Path to Selection", "Path",
     "tolerance": _TOL},
    "imgpath.path_mask(spec, height, width) - not a field of the job but a call "
    "the engine makes, to turn a path into the stage-4 selection")
+
+op("check", "Check a Figure", "Path",
+   "Why a letter filled solid. Both ways to hand over a figure with holes fail "
+   "QUIETLY - an open contour strokes with a seam at its start point, and a "
+   "counter wound the same way as the letter around it is simply not a hole "
+   "under nonzero - so neither can raise, and something has to say it out loud. "
+   "Reports rather than refuses: it names the contour and what to do to it.",
+   # ⚠ NO `tolerance` HERE, AND THAT IS THE ANSWER RATHER THAN AN OVERSIGHT.
+   # The flattening is area-corrected, so the report does not depend on it: on
+   # a 120 px ring, tolerance 0.25 and tolerance 10.0 report areas 45251.6016
+   # / -5027.9557 and 45251.6019 / -5027.9654 - seven and six figures the same,
+   # and every verdict identical. A knob whose turning a caller cannot see is
+   # the §9 failure whichever direction it fails in, so it is not advertised.
+   {"paths": geom(PATH_DESC), "fillRule": _RULE},
+   "imgpath.check_figure(spec) -> {contours, areas, closed, open, inside, "
+   "depth, holes, solid, rule, ok, problems, warnings} - a call, not a field "
+   "of the job, and it needs no image")
 
 op("offset", "Offset Path", "Path",
    "Push every point out along its corner bisector. Each vertex moves by "
@@ -491,6 +624,7 @@ def catalog():
         "names": sorted(CATALOG),
         "liquifyTools": list(LIQUIFY_TOOLS),
         "liquifyEnvelope": LIQUIFY_ENVELOPE,
+        "typeContract": list(TYPE_CONTRACT),
         "aliases": ALIASES,
         "notes": [
             "Colours are RGBA 0-255. A three-element colour gets alpha 255, "
@@ -520,6 +654,13 @@ def catalog():
             "Flattening is area-corrected: the polygon's area matches the "
             "curve's rather than sitting under it. Four cubics are still only "
             "a 2.8e-4 approximation of a circle, which no tolerance fixes.",
+            "A letter is a figure with holes, so it arrives as a LIST of "
+            "contours in ONE call with boolean 'none'. `typeContract` is the "
+            "whole list of rules a glyph outline has to meet to get here, and "
+            "`check` names the contour that does not - because an open contour "
+            "and a backwards counter both draw a picture rather than raising. "
+            "This module has no font reader in it and will not grow one; the "
+            "reader is server/imgtext.py's half of the seam.",
         ],
     }
 
@@ -1044,9 +1185,29 @@ def _paths_of(spec, notes=None, where=""):
             isinstance(spec[0], (dict, Bez))
             or (isinstance(spec[0], (list, tuple, np.ndarray))
                 and len(spec[0]) and isinstance(spec[0][0], (list, tuple, np.ndarray)))):
-        out = []
-        for s in spec:
-            out.extend(_one_path(s, notes, where))
+        out, empty = [], []
+        for i, s in enumerate(spec):
+            got = _one_path(s, notes, where)
+            if not got:
+                empty.append(i)
+            out.extend(got)
+        if empty:
+            # ⚠ A CONTOUR THAT VANISHES OUT OF A LIST TAKES NOTHING ELSE WITH
+            # IT, WHICH IS WHY NOBODY SAW IT. One unusable path on its own
+            # raises at draw_path, but one unusable contour among a letter's
+            # four drew the other three and said nothing: an 'A' with no
+            # crossbar, an umlaut with one dot, and no line anywhere to
+            # explain either. Measured before this note existed: four contours
+            # in, one out, len(notes) == 0. It is not hypothetical either -
+            # glyph u1FAA2 of seguiemj.ttf ships 48 contours and its 46th is a
+            # single point stated twice, so a caller handing over that letter
+            # got 47 back and was told nothing (62213 glyphs swept, 2026-09-21;
+            # arial, times, segoeui and cour lose none of their 18364).
+            _note(f"{where}{len(empty)} of {len(spec)} items gave no contour "
+                  f"(item {', '.join(str(i) for i in empty[:8])}"
+                  f"{', ...' if len(empty) > 8 else ''}); each one needs at "
+                  f"least two anchors, points or vertices, or a d string",
+                  notes)
         return out
     return _one_path(spec, notes, where)
 
@@ -1778,6 +1939,202 @@ def boolean_paths(spec, notes=None):
 
 
 # ---------------------------------------------------------------------------
+# the seam - is this figure what its author meant?
+# ---------------------------------------------------------------------------
+
+_MAX_NESTED = 2000      # contours the nesting pass reads. A line of type is a
+                        # few hundred, and the busiest glyph in arial.ttf is
+                        # `shade` at 60 contours (measured over all 4547 of
+                        # them, 2026-09-21).
+
+
+def _winding_at(poly, x, y):
+    """Winding number of one closed polygon about one point - the same count
+    the rasteriser makes along a scanline, done once. Zero is outside under
+    nonzero; even is outside under even-odd."""
+    y0 = poly[:, 1]
+    y1 = np.roll(y0, -1)
+    up = (y0 <= y) & (y1 > y)
+    dn = (y0 > y) & (y1 <= y)
+    hit = up | dn
+    if not hit.any():
+        return 0
+    # up demands y1 > y >= y0 and dn demands y1 <= y < y0, so the denominator
+    # here cannot be zero - a horizontal edge crosses no scanline at all.
+    xa = poly[:, 0][hit]
+    xb = np.roll(poly[:, 0], -1)[hit]
+    ya, yb = y0[hit], y1[hit]
+    right = xa + (y - ya) * (xb - xa) / (yb - ya) > x
+    return int(np.count_nonzero(up[hit] & right) - np.count_nonzero(dn[hit] & right))
+
+
+def _encloses(outer, inner):
+    """Is `inner` inside `outer`? Asked at five of the inner contour's own
+    vertices and answered by majority, not at one: a vertex that TOUCHES the
+    outer contour - the bar of an 'e' meeting its bowl, an inktrap, a join
+    left uncleaned by the type designer - sits exactly on the boundary, where
+    a single winding count is a coin toss."""
+    n = len(inner)
+    if n < 3 or len(outer) < 3:
+        return False
+    idx = np.unique(np.linspace(0, n - 1, min(5, n)).astype(np.int64))
+    votes = [abs(_winding_at(outer, float(inner[i, 0]), float(inner[i, 1]))) > 0
+             for i in idx]
+    return sum(votes) * 2 > len(votes)
+
+
+def check_figure(spec, rule=None, notes=None):
+    """Why a letter filled solid. -> a report, never a refusal.
+
+    A figure with holes - a letter, a logo, an island with a lake in it - is a
+    LIST of contours in one call, and BOTH ways to get it wrong are silent.
+    An open contour fills identically and strokes with a seam where it starts.
+    A counter wound the same way as the contour around it is simply not a hole
+    under nonzero, and the glyph comes back as a solid blob. Neither can raise
+    - both are legal figures that someone might mean - so this says it out
+    loud instead, naming the contour and what to do to it.
+
+    Takes the catalog's spelling, check_figure({"paths": .., "fillRule": ..}),
+    or the positional rule; extra keys from a `draw` job are ignored quietly,
+    because the figure a caller wants checked is the one they were about to
+    paint and a colour is not a typo. Returns:
+
+        contours  how many came back out of the grammar
+        areas     signed, image pixels, positive is clockwise on screen
+        closed    per contour
+        open      the indices that are not closed
+        inside    per contour, the index of the SMALLEST contour enclosing it,
+                  or -1
+        depth     how many contours enclose it; 0 is outermost
+        holes     the contours that really are holes - odd depth, wound
+                  against their container. A hole inside a hole is ink again
+                  and is not in this list.
+        solid     contours wound WITH the one enclosing them, which under
+                  nonzero is the bug that makes a letter a blob
+        ok        no problems; a warning neither sets it nor clears it
+        problems  full sentences: this figure draws the wrong picture
+        warnings  full sentences: true, and possibly meant
+
+    ⚠ THE TWO LISTS ARE NOT ONE LIST WITH A SEVERITY FIELD ON IT. An open
+    contour is a mistake in a letter and perfectly ordinary in a swash, and
+    there is nothing in the geometry that says which one arrived - so it
+    warns, every time, and never sets `ok`. A check that cries wolf on a
+    legitimate open path stops being read by the third time, and the one that
+    mattered goes past unread with it.
+    """
+    src = spec if isinstance(spec, dict) else {"paths": spec}
+    combine = src.get("boolean")
+    # A caller checks the job they were about to draw, paint and all. Those
+    # keys are not typos and reporting them as though they were teaches the
+    # wrong lesson - the check simply has no opinion about a colour. `boolean`
+    # is the exception and is answered below, because it changes what the
+    # figure IS rather than how it is painted.
+    src = {k: v for k, v in src.items()
+           if k in CATALOG["check"]["params"] or k not in CATALOG["draw"]["params"]}
+    p = _coerce(CATALOG["check"]["params"], src, "check: ", notes)
+    if rule is not None:
+        if rule not in FILL_RULES:
+            raise PathError(f"fill rule {rule!r} must be one of {FILL_RULES}")
+        p["fillRule"] = rule
+    paths = _paths_of(_geometry_of(src), notes, "check: ")
+    flat = [_flatten_one(b, FLATNESS, True) for b in paths]
+    polys = [q for q, _ in flat]
+    closed = [bool(c) for _, c in flat]
+    areas = [_poly_area(q) if len(q) >= 3 else 0.0 for q in polys]
+    n = len(paths)
+    out = {"contours": n, "areas": areas, "closed": closed,
+           "open": [i for i, c in enumerate(closed) if not c],
+           "inside": [-1] * n, "depth": [0] * n, "holes": [], "solid": [],
+           "rule": p["fillRule"], "ok": True, "problems": [], "warnings": []}
+    if n == 0:
+        out["ok"] = False
+        out["problems"].append(
+            "there is no usable contour here: a figure is one path or a list "
+            "of them, and each one needs at least two anchors, points or "
+            "vertices, or a d string.")
+        return out
+
+    if combine not in (None, "none"):
+        out["warnings"].append(
+            f"this is checked as ONE figure under the fill rule, which is how "
+            f"a letter gets its counter, but the job says boolean "
+            f"{combine!r} - that makes every contour its own operand and the "
+            f"holes come from the boolean instead, so the reading below is "
+            f"not the picture that job will draw.")
+
+    for i in range(n):
+        if not closed[i]:
+            out["warnings"].append(
+                f"contour {i} is not closed, so a stroke will break at its "
+                f"start point and cap both ends there; every contour of a "
+                f"letterform is closed. Set closed:true on it - the FILL will "
+                f"not change, because filling closes a contour whatever the "
+                f"flag says.")
+        if len(polys[i]) < 3 or abs(areas[i]) < 1e-9:
+            out["warnings"].append(
+                f"contour {i} flattened to {len(polys[i])} point(s) and "
+                f"encloses no area, so it fills nothing; drop it, or give it "
+                f"the anchors it is missing.")
+
+    if n > _MAX_NESTED:
+        _note(f"check: {n} contours is past the {_MAX_NESTED} this reads for "
+              f"nesting, so the winding of a hole went unchecked; check one "
+              f"letter at a time", notes)
+    else:
+        box = [None if len(q) < 3 else
+               (q[:, 0].min(), q[:, 1].min(), q[:, 0].max(), q[:, 1].max())
+               for q in polys]
+        for i in range(n):
+            if box[i] is None:
+                continue
+            for j in range(n):
+                # Only a BIGGER contour can enclose a smaller one, and the
+                # bbox test throws out every pair on a line of type before the
+                # winding count is worth doing.
+                if j == i or box[j] is None or abs(areas[j]) <= abs(areas[i]):
+                    continue
+                if not (box[j][0] <= box[i][0] and box[j][1] <= box[i][1]
+                        and box[j][2] >= box[i][2] and box[j][3] >= box[i][3]):
+                    continue
+                # ⚠ THE SMALLEST CONTAINER, NOT ANY CONTAINER. In a figure
+                # nested more than one deep - a letter inside a ring, the
+                # circled characters at U+2460 - a hole inside a hole is INK
+                # again, and only the IMMEDIATE parent says which. Take the
+                # outermost container instead and the innermost letter gets
+                # reported as a counter that will not cut, which is a refusal
+                # aimed at a figure that was correct.
+                if out["inside"][i] >= 0 and abs(areas[j]) >= abs(areas[out["inside"][i]]):
+                    continue
+                if _encloses(polys[j], polys[i]):
+                    out["inside"][i] = j
+
+        for i in range(n):
+            j = out["inside"][i]
+            if j < 0:
+                continue
+            # Depth by walking the chain, capped by n because a cycle is
+            # impossible here (a container is strictly larger) but a bug that
+            # made one would otherwise hang rather than report.
+            depth, k = 0, i
+            while out["inside"][k] >= 0 and depth <= n:
+                k = out["inside"][k]
+                depth += 1
+            out["depth"][i] = depth
+            if p["fillRule"] == "nonzero" and (areas[i] > 0) == (areas[j] > 0):
+                out["solid"].append(i)
+                out["problems"].append(
+                    f"contour {i} lies inside contour {j} and winds the same "
+                    f"way, so a nonzero fill will not cut it out and the figure "
+                    f"comes back solid there. Reverse contour {i}, or ask for "
+                    f"fillRule 'evenodd', which does not care which way a "
+                    f"contour is wound.")
+            elif depth % 2 == 1:
+                out["holes"].append(i)
+    out["ok"] = not out["problems"]
+    return out
+
+
+# ---------------------------------------------------------------------------
 # compositing - straight alpha, and the divide is the whole point
 # ---------------------------------------------------------------------------
 
@@ -2319,6 +2676,28 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "catalog"
     if mode == "catalog":
         print(json.dumps(catalog()))
+    elif mode == "check":
+        # The diagnosis door, in the {mode, jobPath} shape every other module
+        # here is spawned with. The job file holds the figure: either a bare
+        # {"paths": ...} spec or one under a "figure" key.
+        import json as _json
+        if len(sys.argv) < 3:
+            print(_json.dumps({"ok": False, "error": "check needs the path of a job file "
+                                                     "holding {\"figure\": <spec>}"}))
+            sys.exit(1)
+        _job = _json.loads(open(sys.argv[2], encoding="utf-8").read())
+        _spec = _job.get("figure") if isinstance(_job, dict) and _job.get("figure") is not None else _job
+        _notes = []
+        try:
+            _rep = check_figure(_spec, _job.get("rule") if isinstance(_job, dict) else None, _notes)
+        except Exception as _exc:                        # noqa: BLE001
+            print(_json.dumps({"ok": False, "error": str(_exc)}))
+            sys.exit(1)
+        # `ok` in the report means "no problems with the figure". The envelope
+        # needs its own word for "the call worked", or a figure with a hole
+        # wound the wrong way reads to a route as a failed request.
+        print(_json.dumps({"ok": True, "report": _rep,
+                           "notes": _notes or None}))
     elif mode == "bench":
         print(json.dumps({"ok": True, "ms": _bench(), "size": "2048x2048",
                           "stroke": "400 points, size 200, spacing 0.25"}, indent=2))

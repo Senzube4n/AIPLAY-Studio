@@ -886,19 +886,26 @@ export const TOOLS = [
           tolerance: { type: "number", description: "0-100, how far from the key color still counts (default 25)" },
           softness: { type: "number", description: "0-100, feather band width at the edge (default 10)" } },
           description: "Greenscreen keying: the key color becomes transparency, with despill on the edges. Output keeps alpha." },
+        save_selection: { type: "boolean",
+          description: "Also write the resolved `selection` out as a grayscale matte picture, filed in the library beside the edit \u2014 the step imgdoc's mask.src refusal tells you to take. Worth it for `wand` and `colorRange`, whose result is computed from pixels and cannot be written down: without this the matte you tuned lives for one call. The reply gains `mask: {name, coverage}`. With no selection the matte is solid white, which is the honest picture of \"the whole frame\"." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      const { name, flip_h, flip_v, chroma_key, auto_levels, grain_seed, ...ops } = a;
+      /* \u26a0 save_selection MUST COME OUT WITH THE OTHER RENAMED KEYS. Whatever
+       * is left after this destructure is spread into `ops`, and the pipeline
+       * drops keys it does not know \u2014 so a saveSelection riding inside ops
+       * would reach the engine, be ignored, and report success with no matte. */
+      const { name, flip_h, flip_v, chroma_key, auto_levels, grain_seed, save_selection, ...ops } = a;
       const r = await api("POST", "/api/images/edit", { name: safeName(name, "image"),
+        saveSelection: save_selection === true,
         ops: { ...ops, flipH: flip_h, flipV: flip_v, chromaKey: chroma_key,
                autoLevels: auto_levels, grainSeed: grain_seed } });
       if (r.error) throw new Error(r.error);
       // notes / fxSkipped are the engine's honesty channels — a compromise a
       // stage reported, and the timeline effects that did nothing on a still.
       return { image: r.name, url: `/api/image/${r.name}`,
-               notes: r.notes, fxSkipped: r.fxSkipped };
+               mask: r.mask, notes: r.notes, fxSkipped: r.fxSkipped };
     },
   },
   {
@@ -1261,13 +1268,180 @@ export const TOOLS = [
       properties: {
         name: { type: "string", description: "An image in the library (from list_images)." },
         selection: { type: "object", description: "The same shape image_adjust takes: {shapes:[...], mode, feather, expand, invert}. Call image_tools_catalog for the kinds and their ranges." },
+        frame: { type: "object", description: "The frame the selection's coordinates are written in — `crop`, `geometry`/`rotate`/`flipH`/`flipV`, `canvas`, exactly as image_adjust takes them. ⚠ PASS THIS WHENEVER THE SAME CALL WOULD CROP OR ROTATE: a selection is resolved AFTER those stages (IMAGE_SPEC §3, \"pixels AFTER any crop/rotate/flip in the same call\"), so without it the shapes are measured against the uncropped picture — right numbers, wrong frame, no error. Omit it when the call has no geometry." },
       },
       additionalProperties: false,
     },
     async run(a) {
       return await api("POST", "/api/images/describe-selection", {
-        name: safeName(a.name, "image"), selection: a.selection || {},
+        name: safeName(a.name, "image"), selection: a.selection || {}, frame: a.frame || {},
       });
+    },
+  },
+
+  {
+    name: "measure_text",
+    description:
+      "WHERE THE TYPE WILL LAND, before there is a picture to land on. Pass the same `text` spec "
+      + "image_adjust takes and get back the ink box, the line count, the baseline step, the "
+      + "advance width, and whether it overflowed its box \u2014 without rendering anything.\n\n"
+      + "\u26a0 THIS IS HOW YOU SIZE A CANVAS TO ITS TYPE rather than the other way round. Every other "
+      + "way to find out costs a render and a look: ask for a headline at size 120, measure it, and "
+      + "THEN make the frame \u2014 or discover the descenders were cut off after the fact, which the "
+      + "picture will not tell you because a cut descender looks like a design.\n"
+      + "`inkBoxWhy` says when the box is not the obvious one (a rotation, a stroke, a shadow all "
+      + "grow it), and a substituted font is reported rather than silently used.",
+    inputSchema: {
+      type: "object",
+      required: ["text"],
+      properties: {
+        text: { type: "object", additionalProperties: true,
+          description: "The type spec \u2014 {content, font, size, box, tracking, lineHeight, rotate, ...}, exactly as image_adjust's `text` takes it. Call image_tools_catalog module=text for every field." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/measure-text", { text: a.text });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "check_figure",
+    description:
+      "WHY A LETTER FILLED SOLID \u2014 a diagnosis of a multi-contour figure, before you spend a draw "
+      + "on it. Returns each contour's signed area, whether it is closed, which contour encloses it, "
+      + "which enclosed ones will actually be HOLES under the fill rule, which will not, and full "
+      + "sentences naming what to do.\n\n"
+      + "\u26a0 BOTH WAYS TO GET THIS WRONG ARE SILENT. A figure with holes \u2014 a letter, a logo, an "
+      + "island with a lake in it \u2014 is a LIST of contours in ONE call with `boolean` left at 'none'. "
+      + "An OPEN contour fills identically to a closed one and strokes with a seam where it starts. "
+      + "A counter wound the SAME WAY as the contour around it is not a hole under nonzero, and the "
+      + "'o' comes back a solid blob. Neither can be refused, because both are legal figures somebody "
+      + "might mean \u2014 so nothing will tell you except this.\n"
+      + "Run it on any glyph outline or traced logo before drawing it.",
+    inputSchema: {
+      type: "object",
+      required: ["figure"],
+      properties: {
+        figure: { type: "object", additionalProperties: true,
+          description: "The {paths: [...]} spec you were about to draw, with all its contours. Extra keys from a draw job (fill, stroke, colour) are ignored quietly \u2014 the figure to check is the one you were about to paint." },
+        rule: { type: "string", enum: ["nonzero", "evenodd"],
+          description: "The fill rule to judge against. Defaults to the figure's own `fillRule`, then to nonzero \u2014 which is the rule that cares about winding, and therefore the one that turns a wrongly-wound counter into a solid blob." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/check-figure", { figure: a.figure, rule: a.rule || null });
+      if (r.error) throw new Error(r.error);
+      /* ⚠ TWO VERDICTS, TWO WORDS. `ok` is the CALL; `clean` is the FIGURE.
+       * A figure with a backwards counter is a successful diagnosis — read
+       * `clean` and `problems`, never `ok`, to find out whether to fix it. */
+      return r;
+    },
+  },
+
+  {
+    name: "image_documents",
+    description:
+      "THE LAYERED DOCUMENT AS A FILE \u2014 save, open, list, delete. image_document renders a document; "
+      + "this is what keeps one. Until this existed a twelve-layer comp lived for the length of one "
+      + "render call and nothing on disk was the comp.\n\n"
+      + "`save` mints an id and a slug when the document has none, so \"save a new one\" and \"save the "
+      + "one I am working on\" are the same call \u2014 pass the doc back with its `id` to update it. "
+      + "`open` returns the document ready to hand to image_document.\n\n"
+      + "\u26a0 `open` RE-VALIDATES WHAT IT READ and returns `warnings`. The shelf is a plain JSON file "
+      + "any process on the machine can write, so a document off disk is exactly as untrusted as one "
+      + "off the wire; what you get back has been repaired, and the warnings say what was repaired. "
+      + "Read them before rendering \u2014 a silently repaired layer is a layer that will not look the way "
+      + "it did when it was saved.\n"
+      + "`delete` is permanent: there is no trash behind this shelf.",
+    inputSchema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["save", "open", "list", "delete"],
+          description: "list first if you do not know the id." },
+        doc: { type: "object", additionalProperties: true,
+          description: "SAVE only \u2014 the document, the same shape image_document takes: {name?, width, height, layers:[...]}. Include its `id` to update the one on the shelf; leave it out and a new one is minted. Call image_tools_catalog module=doc for the layer kinds." },
+        id: { type: "string", description: "OPEN and DELETE \u2014 the document's id or its slug; either works." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/documents", {
+        action: a.action, doc: a.doc || null, id: a.id || null,
+      });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "document_edit",
+    description:
+      "MOVE, RENAME, GROUP, CLIP AND DELETE LAYERS on a shelved document \u2014 the Layers panel's own "
+      + "verbs, applied server-side. Ops: add_layer, remove_layer, reorder_layer, move_layer, "
+      + "duplicate_layer, group_layers, ungroup_layer, set_clipped, update_layer.\n\n"
+      + "\u26a0 USE THIS RATHER THAN open \u2192 EDIT \u2192 save. That round trip rewrites the WHOLE document "
+      + "from a copy you took a moment ago, so it silently discards every change anyone or anything "
+      + "else made in between \u2014 which is the entire reason a shelf exists rather than a variable.\n\n"
+      + "All of the ops or none of them: a refusal anywhere leaves the shelf exactly as it was. Each "
+      + "op names its layer by `id`, by `name`, or by `index`. The reply carries a flat `outline` of "
+      + "the resulting tree, so you can see what you did without asking for the document back.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "ops"],
+      properties: {
+        id: { type: "string", description: "The document's id or slug, from image_documents action=list." },
+        ops: { type: "array", minItems: 1, items: { type: "object", additionalProperties: true },
+          description: "[{op, ...}] applied in order. e.g. {op:\"move_layer\", name:\"logo\", parent:\"titles\", index:0}, {op:\"set_clipped\", name:\"grade\", clipped:true}, {op:\"update_layer\", id:\"l3\", patch:{opacity:0.5}}, {op:\"group_layers\", refs:[\"sky\",\"clouds\"], name:\"background\"}." },
+        doc: { type: "boolean", description: "Return the full document too, not only the outline. Off by default \u2014 a big tree is a lot of tokens to move for an answer the outline already gives." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/document-edit", {
+        id: a.id, ops: a.ops, doc: a.doc === true,
+      });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "bake_selection",
+    description:
+      "TURN A SELECTION INTO A PICTURE \u2014 the resolved matte, written into the image library as a "
+      + "grayscale plate, with no edit attached. This is the step server/imgdoc.py names in its own "
+      + "refusal: a document mask cannot rasterise wand, colorRange or path, and it tells you to "
+      + "\"bake the result into a library image and use mask.src\". Until now nothing baked.\n\n"
+      + "\u26a0 THE KINDS WORTH BAKING ARE THE ONES THAT CANNOT BE WRITTEN DOWN. A rect you can re-send "
+      + "as JSON; a `wand` seed with a tolerance you tuned blind is computed FROM PIXELS, and that "
+      + "result used to live for exactly one call. Bake it and it is addressable: mask.src on a "
+      + "document layer, `setMatte` on a compositor layer (which reads a matte layer's luminance), the "
+      + "map for gradientWipe or displacementMap, or the base of another selection.\n\n"
+      + "Returns the new library name, its coverage, and a sentence reading it \u2014 because a matte "
+      + "that caught nothing is a solid black PNG and looks exactly like a working file. Call "
+      + "describe_selection first if you are still tuning; call this when you like what it caught.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "An image in the library (from list_images). The matte comes out at this picture's size." },
+        selection: { type: "object", description: "The same shape image_adjust takes: {shapes:[...], mode, feather, expand, invert, antialias}. Call image_tools_catalog module=selection for the kinds and their ranges. Omit it and the matte is solid white \u2014 the whole frame, which is what no selection means everywhere else in the pipeline." },
+        frame: { type: "object", description: "The frame the selection's coordinates are written in — `crop`, `geometry`/`rotate`/`flipH`/`flipV`, `canvas`, exactly as image_adjust takes them. ⚠ PASS THIS WHENEVER THE SAME CALL WOULD CROP OR ROTATE: a selection is resolved AFTER those stages (IMAGE_SPEC §3, \"pixels AFTER any crop/rotate/flip in the same call\"), so without it the shapes are measured against the uncropped picture — right numbers, wrong frame, no error. Omit it when the call has no geometry." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/bake-selection", {
+        name: safeName(a.name, "image"), selection: a.selection || {}, frame: a.frame || {},
+      });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}`,
+               coverage: r.coverage, everything: r.everything, says: r.says };
     },
   },
 

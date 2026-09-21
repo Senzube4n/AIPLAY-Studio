@@ -46,6 +46,7 @@ ORDER, and it matters:
     smooth      (morphological, closing then opening)
     expand      (morphological, +grows -contracts)
     border      (the boundary itself, as a band)
+    refine      (guided by the picture's own colour)
     feather     (gaussian)
     invert
 
@@ -62,6 +63,16 @@ expand runs first, and "feather 8, expand 5" means the boundary moves 5px and
 is then softened by 8, which is also the sentence a person means when they say
 it. Feathering an expanded mask and expanding a feathered one are different
 pictures; this file does the first.
+
+`refine` is the only modifier that READS THE PICTURE to place the edge, and it
+is off unless somebody asks for it. Every other one moves a boundary the shapes
+described; refine fits the mask to the colour that is actually under it, which
+is what recovers hair, fur, feathers, smoke and the fringe of a coat - the
+things that break a character cut out for a poster. It runs after the three
+offsets and before feather, because feather is the fallback for an edge nobody
+could place: once refine has placed it, feather is softness on top of an edge
+that is already right. See `_refine`, including the one path it must never be
+turned on for.
 
 `invert` is last, so it is the complement of exactly what you selected,
 softness included. It does not commute with expand: `expand 5, invert` is the
@@ -316,6 +327,16 @@ MODIFIERS = {
                               "image needs and a photograph does not - reach "
                               "for it before feather, which only softens the "
                               "edge that was already right", unit="px"),
+    "refine": num(0, 0, 200, "pull the edge onto the picture's OWN edges inside "
+                             "this radius, so hair, fur, feathers and smoke come "
+                             "back instead of being cut straight through. This is "
+                             "the only modifier that looks at the image; the "
+                             "radius is how far the pull REACHES, not how strong "
+                             "it is. 0 is off, and off is right for a matte that "
+                             "is already correct: a cutout from the background "
+                             "remover arrives with a trained soft edge, and "
+                             "refining it again pulls it onto shirt texture and "
+                             "the inside of hair", unit="px"),
     "border": num(0, 0, 1000, "replace the selection with a band this wide "
                               "straddling its own boundary, half outside and "
                               "half in - the edge itself as the selection. "
@@ -870,6 +891,215 @@ def _border(m, px):
     return np.clip(_expand(m, half) - _expand(m, -half), 0.0, 1.0)
 
 
+# ⚠ EPS IS THE RIDGE ON THE COLOUR COVARIANCE, AND IT IS A CONSTANT HERE
+# BECAUSE THE ANSWER IS FLAT ACROSS SIX DECADES OF IT - there is nothing for a
+# caller to tune, and a knob whose whole useful range is one value is a knob
+# that only sells wrong answers. It is added to the diagonal of the 3x3, in
+# squared 0..1 colour units, and it sets how small a colour difference still
+# counts as an edge - two colours in a window span a plane, not a volume, so the
+# covariance is singular in the third direction and this is what stands in for
+# the variance that is not there. Measured on the equal-luminance fringe scene
+# in imgselect_test at radius 8, scoring strand-minus-gap (see `_refine`): flat
+# at +0.303 from 1e-9 all the way to 1e-3, then 1e-2 +0.296, 3e-2 +0.270, 1e-1
+# +0.199, 1.0 +0.046 - past about 1e-2 the ridge outweighs the colour variance
+# it was meant to regularise and the fit flattens back toward a blur.
+#
+# The low end is flat because the 3x3 is ELIMINATED rather than inverted. The
+# same covariance through the obvious adjugate inverse, with the determinant
+# clamped, comes back INSIDE OUT below 1e-5: -1.000 at both 1e-6 and 1e-7 where
+# this returns +0.303. Measured, and it is the argument for `_refine_band`'s
+# LDL. The pivot floors in there are the tier below that again - strip them and
+# the same run is +0.303 down to 1e-7 and NaN at 1e-8, because a float32
+# covariance built out of E[c^2] - E[c]^2 carries about 1e-7 of cancellation and
+# that is enough to push a pivot through zero.
+#
+# 1e-4 therefore sits two decades clear of the soft end and three above the
+# float32 noise the floors exist for, which is the whole reason it is a constant
+# here instead of a parameter somebody has to guess at.
+_REFINE_EPS = np.float32(1e-4)
+
+# Row band for `_refine`, the same trade `_poly_mask` makes one screen up.
+# ~1000 rows of a 4096-wide frame: the filter holds twenty-two frame-sized
+# planes at its peak (1472 MiB at 4096x4096, tracemalloc), and banding brings
+# that to 444 MiB for 4096-wide rows while being BIT-IDENTICAL, because the
+# halo below is the filter's exact reach. Big bands rather than cache-sized
+# ones, and that is measured too - three sizes inside one run, so they can be
+# compared with each other and not with the bench: 1024-row bands 3.6 s at
+# 4096x4096, one whole slab 4.1 s, 256-row bands 10.7 s. The redundant
+# arithmetic at 1024 rows is 3%, so what the small bands cost is twenty-two
+# fresh frame-sized allocations apiece and not the overlap.
+_REFINE_BAND_BYTES = 384 << 20
+
+
+def _boxmean(p, k):
+    """Mean over a (2r+1)^2 window. BORDER_REFLECT, not the zero border feather
+    uses: a window hanging off the frame must average the pixels that are there
+    rather than average in black, which would invent an edge along every side
+    of the picture."""
+    return cv2.boxFilter(p, cv2.CV_32F, k, borderType=cv2.BORDER_REFLECT)
+
+
+def _refine_band(m, img, r):
+    """One band. `m` is (H, W) and `img` is a CONTIGUOUS (H, W, 3).
+
+    He, Sun & Tang's guided filter with three guide channels. Inside every
+    window the mask is fit as a linear function of the colour there,
+    p ~ a·I + b, by least squares:
+
+        a_k = (S_k + eps*U)^-1 cov_k(I, p)        S_k = cov_k(I, I), 3x3
+        b_k = mean_k(p) - a_k · mean_k(I)
+        q_i = mean(a)_i · I_i + mean(b)_i
+
+    and every term in it is a box mean, so the cost is FLAT in the radius rather
+    than growing with its square: measured at 4096x4096, radius 2 / 8 / 40 came
+    in at 2.9 / 4.2 / 3.0 s, an ordering that does not follow the radius at all
+    because the spread is what else the machine was doing.
+
+    The 3x3 is ELIMINATED, not inverted, and that is load-bearing rather than
+    tidy. S + eps*U is symmetric positive definite by construction - a
+    covariance plus a positive ridge - so LDL^T never needs to choose a pivot,
+    and all three pivots are >= eps on paper. They are floored anyway, because a
+    window holding one colour ramp makes the second and third a difference of
+    two nearly equal float32 numbers; without the floors the same measurement
+    runs clean to eps 1e-7 and hands back NaN at 1e-8 (the numbers are on
+    `_REFINE_EPS`), and a NaN here reaches `resolve`, which zeroes it - an
+    EMPTY selection, which is the one failure this module refuses to make
+    quietly. Eliminating rather than inverting is worth a decade more again, and
+    the two agree where both are sane: 1.4e-6 apart on a random plate, a grey
+    one and a blurred one, 3.6e-4 on the fringe scene, whose windows hold
+    exactly two colours and lean on the ridge for the third direction.
+    """
+    k = (r * 2 + 1, r * 2 + 1)
+    c0, c1, c2 = img[..., 0], img[..., 1], img[..., 2]
+    u0, u1, u2 = _boxmean(c0, k), _boxmean(c1, k), _boxmean(c2, k)
+    up = _boxmean(m, k)
+
+    # cov(I, p), which becomes `a` in place once the solve has run over it
+    a0 = _boxmean(c0 * m, k) - u0 * up
+    a1 = _boxmean(c1 * m, k) - u1 * up
+    a2 = _boxmean(c2 * m, k) - u2 * up
+    # the six unique entries of S + eps*U. srr is floored like the other two
+    # pivots, because E[c^2] - E[c]^2 on a flat window is a cancellation and
+    # this is the one variance that divides before anything has clamped it
+    srr = np.maximum(_boxmean(c0 * c0, k) - u0 * u0 + _REFINE_EPS, _REFINE_EPS)
+    srg = _boxmean(c0 * c1, k) - u0 * u1
+    srb = _boxmean(c0 * c2, k) - u0 * u2
+    sgg = _boxmean(c1 * c1, k) - u1 * u1 + _REFINE_EPS
+    sgb = _boxmean(c1 * c2, k) - u1 * u2
+    sbb = _boxmean(c2 * c2, k) - u2 * u2 + _REFINE_EPS
+
+    l10, l20 = srg / srr, srb / srr
+    d1 = np.maximum(sgg - l10 * srg, _REFINE_EPS)
+    l21 = (sgb - l20 * srg) / d1
+    d2 = np.maximum(sbb - l20 * srb - l21 * l21 * d1, _REFINE_EPS)
+    del sgg, sgb, sbb
+    a1 -= l10 * a0                       # forward substitution
+    a2 -= l20 * a0 + l21 * a1
+    a2 /= d2                             # then back, in place
+    a1 /= d1
+    a1 -= l21 * a2
+    a0 /= srr
+    a0 -= l10 * a1 + l20 * a2
+    del srr, srg, srb, d1, d2, l10, l20, l21
+
+    up -= a0 * u0 + a1 * u1 + a2 * u2    # b, in mean(p)'s buffer
+    del u0, u1, u2
+    q = _boxmean(a0, k) * c0
+    q += _boxmean(a1, k) * c1
+    q += _boxmean(a2, k) * c2
+    q += _boxmean(up, k)
+    return q
+
+
+def _refine(m, rgba, px):
+    """Pull the mask onto the picture's OWN edges, instead of leaving it as
+    blunt as the tool that drew it.
+
+    Everything above this line moves a boundary the SHAPES describe. `expand`
+    offsets it, `border` bands it, `feather` softens it symmetrically - and a
+    symmetric softening is an admission that nothing here knows where the edge
+    really is. The wand says so itself: its shoulder "is one distance unit wide"
+    and "exists to antialias the boundary where the image ramps". vfx/effects.py
+    goes further and ships a knob for it - `feather`'s `bias`, because "a
+    symmetric feather always eats into the subject". That is a fudge factor
+    handed to the user in place of the edge. `resolve` already receives `rgba`,
+    so the edge does not have to be guessed at all.
+
+    ⚠ THREE CHANNELS, NOT ONE, AND THAT IS THE ENTIRE ARGUMENT FOR THE EXTRA
+    WORK. imgphoto._guided is the single-channel guided filter, guided by one
+    plane; the obvious cheap move here would be to call it on luminance. This
+    studio's pictures are saturated stylised art where subject and background
+    routinely differ in HUE at the same LUMINANCE, and a luma-guided refine is
+    exactly blind there - the guide is CONSTANT, its variance is zero, and the
+    filter degenerates to a blur of the mask, which is the feather we already
+    had. Measured on the fringe scene in imgselect_test (a block with a comb of
+    tapering strands, composited over a background whose Rec.601 luminance
+    EQUALS the subject's, so the two differ in hue alone; the handed-in mask is
+    the block, which cuts every strand off at the root). The score is the mask's
+    mean on strand pixels minus its mean on the gaps between them, taken from
+    the same columns at the same distance from the block, so anything that
+    depends only on distance scores exactly zero:
+
+        the blunt mask, untouched          +0.000    whole-frame MAE 0.0158
+        feather 4                          +0.000                    0.0536
+        imgphoto._guided on luma, r=8      +0.000                    0.0820
+        this, r=8                          +0.303                    0.0151
+        this, r=16                         +0.467                    0.0139
+
+    The luma-guided row is not merely blind, it is WORSE than doing nothing: it
+    spreads coverage evenly over strand and gap alike, which is a feather with
+    extra steps. Where the two materials do differ in lightness the two agree to
+    three decimals (+0.303 against +0.303 at r=8), so the third channel costs
+    nothing on the case the cheap one can already do.
+
+    ⚠ NEVER TURN THIS ON FOR A MATTE THAT IS ALREADY RIGHT, AND
+    /api/images/cutout IS EXACTLY THAT. BiRefNet hands back a trained soft matte
+    and the cutout path adopts it raw. A guided refine on top re-fits it to
+    LOCAL COLOUR, so any part of the subject wearing a colour that also appears
+    in the background is pulled open - shirt texture, the inside of hair.
+    Measured on a correct soft matte over a subject striped between its own
+    colour and the background's, the interior should be a flat 1.000 and comes
+    back: 0.902 at refine 4, 0.670 at refine 8, 0.476 at refine 16, with MAE
+    against the matte rising 0.0170 / 0.0345 / 0.0674. It defaults to 0, and
+    nothing in the cutout path may turn it on.
+
+    It cannot invent an edge that is not in the picture either, which is the
+    other half of being honest about it: on a guide of one flat colour the fit
+    goes to a = 0, b = mean(p), and the result is the mask box-blurred twice -
+    measured equal to that to 6e-8. A greyscale plate arrives here as three
+    equal channels and degenerates the same way, to the single-channel filter.
+    """
+    lo, hi = float(m.min()), float(m.max())
+    if hi <= 0.0 or lo >= 1.0:
+        # Nothing, or everything: no edge to pull, the same short circuit
+        # `_expand` takes. This one is COST and not correctness, and the
+        # difference is worth being straight about: the arithmetic gets a flat
+        # mask right on its own - cov(I, p) is exactly zero, so `a` is exactly
+        # zero and the answer is the box mean of a constant, checked bit-exact
+        # for every radius from 1 to 40. What the branch saves is the whole
+        # `refine 8` row of `_bench` - seconds on a 4096x4096 plate - spent
+        # arriving at an answer that was already known.
+        return m
+    r = max(1, int(round(float(px))))
+    h, w = m.shape
+    img = np.ascontiguousarray(rgba[..., :3], np.float32)
+    p = np.ascontiguousarray(m, np.float32)
+    # A pixel's answer reads `a` and `b` one window away, and those were fit
+    # from pixels one more window away, so the reach is exactly 2r rows. Give a
+    # band that much halo and its interior rows are bit-identical to the whole
+    # frame in one pass - asserted in imgselect_test, because "the fast path
+    # agrees with the slow one" is the kind of claim that rots silently.
+    halo = 2 * r
+    rows = int(_REFINE_BAND_BYTES // max(1, w * 4 * 22))
+    band = max(1, min(h, max(rows, 2 * halo)))
+    out = np.empty((h, w), np.float32)
+    for top in range(0, h, band):
+        bot = min(h, top + band)
+        y0, y1 = max(0, top - halo), min(h, bot + halo)
+        out[top:bot] = _refine_band(p[y0:y1], img[y0:y1], r)[top - y0:bot - y0]
+    return np.clip(out, 0.0, 1.0, out=out)
+
+
 def _feather(m, sigma):
     if sigma <= 1e-4:
         return m
@@ -1032,10 +1262,16 @@ def resolve(selection, rgba, warn=None):
     m = _border(m, _num(spec.get("border"), 0.0, 0.0, 1e4))
     if not antialias:
         # smooth, expand and border all rebuilt the edge, so re-harden it.
-        # feather does not get this treatment: antialias is a claim about edge
-        # quality, feather is an explicit request for softness, and hardening
-        # it would ignore the ask.
+        # feather and refine do not get this treatment: antialias is a claim
+        # about edge quality, both of those are an explicit request to place or
+        # soften the edge, and hardening them would ignore the ask.
         m = _harden(m)
+    rf = _num(spec.get("refine"), 0.0, 0.0, 1e4)
+    if rf >= 0.5:
+        # Half a pixel is where the radius rounds to nothing, so below it the
+        # ask cannot be honoured and the mask is handed back untouched rather
+        # than run through a one-pixel window that would only blur it.
+        m = _refine(m, _as_rgba(rgba, h, w), rf)
     m = _feather(m, _num(spec.get("feather"), 0.0, 0.0, 1e4))
     if spec.get("invert"):
         m = np.float32(1.0) - m
@@ -1185,7 +1421,13 @@ def catalog():
                         "`shapes` list that is present but empty or degenerate is "
                         "a mask of zeros and every op becomes a no-op",
                 "order": "shapes in list order -> smooth -> expand -> border -> "
-                         "feather -> invert",
+                         "refine -> feather -> invert",
+                "refine": "the only modifier that reads the image: a guided "
+                          "filter over all three colour channels pulls the edge "
+                          "onto the picture's own, which is what recovers hair "
+                          "and smoke. Off by default, and it must stay off for "
+                          "a matte that is already soft and correct - a "
+                          "background-remover cutout is refined already",
                 "speckle": "a wand or colorRange on a GENERATED image comes back "
                            "pinholed and crumbed, because diffusion noise lives "
                            "at pixel scale; `smooth` is the cure and `feather` "
@@ -1244,6 +1486,13 @@ def _bench(size=4096, reps=3):
                                  "w": w * .8, "h": h * .8}], "smooth": 3},
         "border 8": {"shapes": [{"kind": "rect", "x": w * .1, "y": h * .1,
                                  "w": w * .8, "h": h * .8}], "border": 8},
+        # The one modifier whose cost is in the PICTURE rather than the mask:
+        # thirteen box means and a 3x3 solve per pixel, flat in the radius
+        # (2, 8 and 40 measured within 13% of each other at this size). It is
+        # here because it is the row a caller reaching for hair on a 4K poster
+        # needs to see before they reach.
+        "refine 8": {"shapes": [{"kind": "rect", "x": w * .1, "y": h * .1,
+                                 "w": w * .8, "h": h * .8}], "refine": 8},
     }
     out = {}
     for name, sel in cases.items():

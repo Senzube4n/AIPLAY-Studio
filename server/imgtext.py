@@ -647,14 +647,31 @@ def load_face(name, size, warnings=None, variation="", weight=0.0):
                 said.append(f"font {name!r} refused the variation settings ({exc}); "
                             f"it is drawn on its default instance")
     else:
-        said.append(f"font {name!r} refused or not on the font shelf; "
-                    f"falling back to the default face")
+        said.append(f"font {name!r} refused or not on the font shelf; check the name "
+                    f"against /api/fonts, which lists what is actually on this rig")
     if font is None:
         try:
             font = ImageFont.load_default(size)
         except TypeError:                       # Pillow < 10.1 has no sized default
             font = ImageFont.load_default()
         path = None
+        # ⚠ THE FALLBACK IS NOT A VISIBLE BREAK, WHICH IS THE WHOLE REASON THE
+        # WARNING HAS TO GET OUT. Measured on this rig's Pillow 12.3.0:
+        # `load_default(120)` hands back a REAL FreeTypeFont, ascent/descent
+        # 117/28 against arial.ttf's 109/26, and getlength("Headline") of
+        # 486.00px against arial's 476.00px - 2.1%, which in a 768px review
+        # thumbnail is under half a pixel a letter. The wrong typeface
+        # therefore arrives looking like a judgement call rather than a
+        # failure, and a 44-scene music video can carry it on every lyric card
+        # while every reply says ok. So the sentence names the consequence and
+        # not just the cause, and `layout_text` carries it out.
+        said.append(f"font {name!r} fell back to Pillow's bundled default face, drawn "
+                    f"at the size asked for, so the render looks plausible and is "
+                    f"still the wrong typeface"
+                    if getattr(font, "size", 0) else
+                    f"font {name!r} fell back to Pillow's bundled default face, which "
+                    f"on this build is a small bitmap face, so the render is visibly "
+                    f"wrong at any display size")
     face = _Face(font, key, path, size, tuple(said))
     if len(_FACES) > 256:
         _FACES.clear()
@@ -1152,11 +1169,60 @@ def _layout_at(p, size, warnings):
             "content": content}
 
 
+_LAST = {"warnings": ()}
+
+
+def last_warnings():
+    """What the most recent layout IN THIS PROCESS had to say, as a list.
+
+    ⚠ THIS EXISTS BECAUSE THE ONE CALLER THAT MATTERS CANNOT PASS A LIST.
+    `imagetools.py:600` is another column's file and calls
+    `imgtext.draw_text(rgba, spec)` with no notes argument, so a font that
+    fell back had nowhere to say so and the job's reply said `ok` anyway.
+    Rather than make a warning channel depend on somebody else editing their
+    file, the sentences are also left here: a route can call `draw_text` and
+    then `last_warnings()` and get the same lines `draw_text(..., notes=[])`
+    would have appended.
+
+    Process-wide and overwritten by the next layout, which is honest for the
+    one-job-per-process way `imagetools.py` is spawned and is the reason this
+    is a floor and `notes` is the ceiling: a caller that CAN pass a list
+    should, because that one cannot be raced by a second render."""
+    return list(_LAST["warnings"])
+
+
+def _dedupe(items, start):
+    """Collapse repeats in `items[start:]` in place, keeping the first of each.
+
+    ⚠ SHRINK-TO-FIT SAYS EVERYTHING ONCE PER BISECT TRIAL. The bisect below
+    runs a whole layout per trial and every trial loads the face again at a new
+    size, so one misspelt font on a shrinking block emitted the identical
+    sentence over and over: measured at 22 lines - the same 2 sentences 11
+    times - for "HEADLINE WORD" at 120px shrinking into a 300x120 box. A
+    warning list nobody will read to the end is the same as no warning.
+
+    Only the tail THIS call appended is touched. A caller threading one list
+    through several ops must still hear the second op's font warning even when
+    the first op happened to say the same sentence."""
+    seen, kept = set(), []
+    for w in items[start:]:
+        if w not in seen:
+            seen.add(w)
+            kept.append(w)
+    items[start:] = kept
+    return items
+
+
 def layout_text(spec, warnings=None):
     """Measure and place, with no pixels touched. Public because it is the
     honest way to test the arithmetic and the only way the UI can draw a
-    selection box around type it has not rendered yet."""
+    selection box around type it has not rendered yet.
+
+    Whatever this call had to say is deduped and left in `last_warnings()` as
+    well as on the returned layout, so a caller that cannot hold a list still
+    has somewhere to read it."""
     warnings = warnings if warnings is not None else []
+    said_from = len(warnings)
     p = coerce_spec(spec)
     lay = _layout_at(p, p["size"], warnings)
     bh = float(p["box"][3])
@@ -1180,7 +1246,9 @@ def layout_text(spec, warnings=None):
         lay = _layout_at(p, best, warnings)
         lay["shrunk"] = True
     lay["spec"] = p
+    _dedupe(warnings, said_from)
     lay["warnings"] = warnings
+    _LAST["warnings"] = tuple(warnings[said_from:])
     return lay
 
 
@@ -1244,6 +1312,24 @@ def _blit_max(dst, src, x0, y0):
     np.maximum(view, src[sy:sy + hh, sx:sx + ww], out=view)
 
 
+def _glyph_cell(face, ch, gx, ox):
+    """One glyph's coverage tile and where it lands: (tile, x, y), with x in
+    buffer pixels from `ox` and y in pixels from the row's BASELINE.
+
+    Split out of `_coverage` so that `_raster_ink` can say where the ink is
+    without allocating the buffer to look at. ⚠ THE TWO MUST NOT DRIFT: a
+    measurement computed with different rounding than the draw reports a box
+    the renderer does not fill, which is worse than reporting nothing. One
+    function, called by both, is the only version of this that stays true."""
+    lx = gx - ox
+    ix = int(math.floor(lx))
+    sub = int(round((lx - ix) * _SUBPX)) % _SUBPX
+    if sub == 0 and lx - ix > 0.5:
+        ix += 1
+    tile, off = _glyph(face, ch, sub)
+    return tile, ix + off[0], off[1]
+
+
 def _coverage(lay, size_wh, origin):
     """The glyph coverage of a straight (non-path) layout, in a buffer whose
     top-left is `origin` in image pixels."""
@@ -1257,14 +1343,72 @@ def _coverage(lay, size_wh, origin):
         for ch, gx in r["glyphs"]:
             if ch == " ":
                 continue
-            lx = gx - ox
-            ix = int(math.floor(lx))
-            sub = int(round((lx - ix) * _SUBPX)) % _SUBPX
-            if sub == 0 and lx - ix > 0.5:
-                ix += 1
-            tile, off = _glyph(face, ch, sub)
-            _blit_max(cov, tile, ix + off[0], iy + off[1])
+            tile, tx, ty = _glyph_cell(face, ch, gx, ox)
+            _blit_max(cov, tile, tx, iy + ty)
     return cov
+
+
+def _raster_ink(lay):
+    """The tight box of the ink a straight layout would actually DRAW, in image
+    pixels, as (x0, y0, x1, y1) - or None when it draws nothing. No buffer is
+    allocated and no canvas is needed, which is what makes it answerable before
+    the picture exists.
+
+    ⚠ THIS IS THE SAME ARITHMETIC `_coverage` DRAWS WITH, not a second opinion.
+    Both walk `_glyph_cell`, and the per-tile threshold here is the 0.004
+    `_ink_box` uses on the composite - which gives the identical box, because
+    the composite is a MAX of the tiles and a pixel clears the threshold in a
+    max exactly when it clears it in some tile. `imgtext_test.py` pins the two
+    against each other to the pixel on ten layouts rather than trusting that
+    paragraph.
+
+    The origin is (0, 0) rather than a buffer corner: `_bounds` floors its
+    origin to whole pixels, and floor(v - n) + n == floor(v) for integer n, so
+    a box measured here lands on the same pixel the buffer draws it on.
+
+    ⚠ A CLIP IS APPLIED TO EVERY GLYPH, NEVER TO THE FINISHED BOX. Intersecting
+    the union with the clip rect looks equivalent and is not: the line that
+    reached furthest right can be the line the bottom edge cut away entirely,
+    and the box then claims ink nothing drew. Measured on the test's clipped
+    paragraph - 378px against the 341px the renderer actually reached."""
+    face = lay["face"]
+    clip = None
+    if (lay.get("spec") or {}).get("overflow") == "clip":
+        # `_block` zeroes coverage outside the box on whole pixels, floor at the
+        # top-left and ceil at the bottom-right. The same two roundings here.
+        bx, by, bw, bh = lay["box"]
+        clip = (math.floor(bx), math.floor(by), math.ceil(bx + bw), math.ceil(by + bh))
+    x0 = y0 = math.inf
+    x1 = y1 = -math.inf
+    for r in lay["lines"]:
+        iy = int(math.floor(r["baseline"]))
+        for ch, gx in r["glyphs"]:
+            if ch == " ":
+                continue
+            tile, tx, ty = _glyph_cell(face, ch, gx, 0.0)
+            ty += iy
+            if tile.size == 0:
+                continue
+            if clip is not None:
+                cx0, cy0 = max(0, clip[0] - tx), max(0, clip[1] - ty)
+                cx1 = min(tile.shape[1], clip[2] - tx)
+                cy1 = min(tile.shape[0], clip[3] - ty)
+                if cx1 <= cx0 or cy1 <= cy0:
+                    continue                    # this glyph is cut away entirely
+                tile, tx, ty = tile[cy0:cy1, cx0:cx1], tx + cx0, ty + cy0
+            rows = np.any(tile > 0.004, axis=1)
+            if not rows.any():
+                continue                        # a whitespace glyph with a tile
+            cols = np.any(tile > 0.004, axis=0)
+            ry0 = int(np.argmax(rows))
+            ry1 = int(len(rows) - np.argmax(rows[::-1]))
+            rx0 = int(np.argmax(cols))
+            rx1 = int(len(cols) - np.argmax(cols[::-1]))
+            x0, x1 = min(x0, tx + rx0), max(x1, tx + rx1)
+            y0, y1 = min(y0, ty + ry0), max(y1, ty + ry1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return (float(x0), float(y0), float(x1), float(y1))
 
 
 # ---------------------------------------------------------------------------
@@ -1673,6 +1817,15 @@ def _over(dst, src):
 # the render
 # ---------------------------------------------------------------------------
 
+def _transformed(p):
+    """Does this spec move the finished block after it is laid out? One
+    predicate, because `_bounds` refuses to crop to the canvas when it is true
+    and `measure_text` refuses to report an untransformed ink box when it is
+    true, and two copies of the same three comparisons is how those two end up
+    disagreeing about one spec."""
+    return abs(p["rotate"]) > 1e-9 or abs(p["skewX"]) > 1e-9 or abs(p["skewY"]) > 1e-9
+
+
 def _bounds(lay, p, canvas_w, canvas_h):
     """The local buffer the block is drawn into: image-pixel rect, top-left
     inclusive. Big enough for the decoration; intersected with the canvas only
@@ -1712,8 +1865,7 @@ def _bounds(lay, p, canvas_w, canvas_h):
         x0, y0, x1, y1 = x0 - em, y0 - em * 0.4, x1 + em, y1 + em * 0.4
 
     x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
-    transformed = abs(p["rotate"]) > 1e-9 or abs(p["skewX"]) > 1e-9 or abs(p["skewY"]) > 1e-9
-    if not transformed:
+    if not _transformed(p):
         x0, y0 = max(x0, 0.0), max(y0, 0.0)
         x1, y1 = min(x1, float(canvas_w)), min(y1, float(canvas_h))
     ix0, iy0 = int(math.floor(x0)), int(math.floor(y0))
@@ -1904,19 +2056,32 @@ def render_text(spec, width, height, mask=None):
     return canvas
 
 
-def draw_text(rgba, spec, mask=None):
+def draw_text(rgba, spec, mask=None, notes=None):
     """Render onto a supplied buffer and hand back a new one - straight-alpha
     over, so an antialiased glyph edge at 50% coverage lands as half text and
     half background, not as half text over black.
 
     The §3 rule is applied to the COMPOSITE, not to the layer: the op computes
     its full result and then blends `result * m + original * (1 - m)`, which is
-    the one sentence that makes every op in stages 5-8 local."""
+    the one sentence that makes every op in stages 5-8 local.
+
+    `notes` is the honesty channel the rest of the pipeline already uses - the
+    same list `imgpath.apply_paths` and `imgshape.apply_canvas` are handed, so
+    a missing font lands in the job's reply beside a smartResize that became a
+    plain resize. Lines are prefixed `text:` the way imagetools prefixes
+    `freeze:`, because a reply listing ten stages has to say which one spoke.
+
+    ⚠ IT IS OPTIONAL AND IT IS THE FOURTH ARGUMENT ON PURPOSE. `imagetools.py`
+    calls `draw_text(rgba, spec)` and that file belongs to another column, so
+    this cannot require a caller to change: the same sentences are also left in
+    `last_warnings()`, which any caller can read straight after this returns."""
     base = np.asarray(rgba, np.float32)
     if base.ndim != 3 or base.shape[2] != 4:
         raise ValueError("draw_text needs float32 (H, W, 4) straight-alpha RGBA")
     h, w = base.shape[:2]
     layer = render_text(spec, w, h)
+    if isinstance(notes, list):
+        notes.extend(f"text: {said}" for said in last_warnings())
     out = _over(base, layer)
     if mask is not None:
         m = np.clip(np.asarray(mask, np.float32), 0.0, 1.0)
@@ -1949,6 +2114,155 @@ def render_debug(spec, width, height, mask=None):
     info["origin"] = (ox, oy)
     info["rgba"] = render_text(spec, width, height, mask)
     return info
+
+
+def _r3(v):
+    """A pixel to a thousandth. Type decisions are made in tenths of a pixel,
+    and `217.80000000000001` in a tool reply is noise a reader has to step
+    over. Quarter-pixel sizes - the only ones shrink-to-fit lands on - survive
+    this exactly."""
+    return round(float(v), 3)
+
+
+def _rect(x0, y0, x1, y1):
+    """A box as named edges rather than a four-list. `box` in a spec is
+    [x, y, w, h] and `ink` inside a layout is (x0, y0, x1, y1); a reply that
+    handed both out as bare arrays would be one subtraction away from a
+    subtitle 200px too low, in a place nothing can catch it."""
+    return {"x": _r3(x0), "y": _r3(y0), "w": _r3(x1 - x0), "h": _r3(y1 - y0),
+            "right": _r3(x1), "bottom": _r3(y1)}
+
+
+def measure_text(spec, warnings=None):
+    """Everything the layout worked out, as JSON, with no image anywhere.
+
+    Unmeasured type has no picture yet, so this takes a spec and nothing else -
+    no canvas, no file on disk, no render. It answers the two questions nothing
+    else in this module could be asked: "where does this headline's ink
+    actually stop, so the subtitle can sit 20px under it", and "does this band
+    name fit the cover box, or did shrink-to-fit quietly take 120px down to
+    84.75px".
+
+    ⚠ THIS DESCRIBES THE RASTERISER IN THIS FILE AND NOT THE OTHER ONE. There
+    are two in the tree: `ops.text` in imagetools.py comes here, and a
+    DOCUMENT text layer goes to `vfx/engine.py:_render_text`, which is a
+    different renderer reading the same key names in different units. Measured
+    on arial.ttf at size 64, the same spec through both: `tracking: 20` takes
+    "Hello" from 139px of ink to 219px here (four gaps of 20 PIXELS) and to
+    145px there (four gaps of 1.28px, because tracking is 1/1000 em in that
+    renderer) - 13x apart on one number. `lineHeight: 1.2` is 86.4px baseline
+    to baseline here (1.2 x ascent+descent) and 76.8px there (1.2 x the em
+    size). Measuring one while the other draws is worse than not measuring, so
+    a document text layer must NOT be sent through this function, and
+    `imgtext_test.py` re-measures both numbers rather than trusting this
+    paragraph.
+
+    The shape, every number in image pixels, rounded to a thousandth:
+
+        {"ok": True,
+         "size": 84.75,           # the em size the type LANDED on
+         "sizeAsked": 120.0,      # what the spec asked for
+         "shrunk": True,          # shrink-to-fit moved it; sizeAsked says from where
+         "minSize": 8.0,          # the floor it would not have gone below
+         "font": {"asked": "arial.ttf", "path": "C:\\Windows\\Fonts\\arial.ttf",
+                  "fallback": False, "ascent": 77, "descent": 18, "lineBox": 95.0},
+         "lineStep": 114.0,       # baseline to baseline, = lineBox x lineHeight
+         "lineCount": 2,
+         "blockW": 612.5, "blockH": 209.0,
+         "box":    {"x", "y", "w", "h", "right", "bottom"},
+         "ink":    {...}, "inkBox": {...} or None, "inkBoxWhy": None or a sentence,
+         "lines": [{"text", "advance", "x", "right", "baseline", "top", "bottom",
+                    "justified", "lastOfPara"}],
+         "transformed": False,     # rotate/skew move the block after layout
+         "onPath": False,          # the run is walked along a path after layout
+         "warnings": ["font 'Helvetica.ttf' refused or not on the font shelf; ..."]}
+
+    `box` is the paragraph box RESOLVED - an auto width or height has become
+    the block's own measurement and the anchor has been applied, so it is
+    where the box ended up rather than what was asked for.
+
+    `ink` is the METRIC box: pen start to pen end, a full ascent above the
+    first baseline and a full descent below the last. It is the space the type
+    OCCUPIES, and it is the right answer for "does this fit".
+
+    `inkBox` is where the ink actually IS. For "HEADLINE" the metric box hangs
+    a descender of empty pixels under the letters, so 20px below `ink.bottom`
+    is 20px plus 18px of nothing - which is why both are reported and neither
+    is called "the box". Under `overflow: clip` it measures what SURVIVES the
+    box, because ink the renderer cuts away is not ink. It is None, with a
+    plain sentence in `inkBoxWhy`, when the layout draws no ink at all, when
+    the run is walked along a path, or when rotate/skew move the block after
+    layout: a box measured before the transform that draws it somewhere else
+    is a wrong number, not a rough one.
+
+    ⚠ `transformed` AND `onPath` SAY THE REST OF THE REPLY IS PRE-MOVE. When
+    either is true, `box`, `ink` and `lines` describe the block as it was laid
+    out and not where it ends up on the canvas - which is still the right
+    answer for "how long is this run" (a path is fitted against `blockW`) and
+    the wrong one for "where is this glyph". Read the flag before the numbers.
+
+    `warnings` is `last_warnings()` for this spec - the font that fell back,
+    the variable axis that was not there. A caller may pass its own list in and
+    get the lines appended to it as well.
+
+    A legacy `ops.text` object (content/font/size/color/align/x/y/stroke) must
+    go through `from_legacy` first; this reads the v2 spec only."""
+    warnings = warnings if warnings is not None else []
+    said_from = len(warnings)
+    lay = layout_text(spec, warnings)
+    p, face = lay["spec"], lay["face"]
+    bx, by, bw, bh = lay["box"]
+    moved = _transformed(p)
+    pp = p["path"]
+    on_path = pp["kind"] != "none" and _build_path(pp) is not None
+
+    why = None
+    if on_path:
+        why = ("the run is walked along a path and every glyph is turned to its own "
+               "tangent, so the only honest ink box for it is one measured off a "
+               "render; set path.kind to none to measure the block instead")
+    elif moved:
+        why = (f"rotate {p['rotate']:g}, skewX {p['skewX']:g} and skewY {p['skewY']:g} "
+               f"move the finished block, and this measures the block before they are "
+               f"applied; clear the transform to measure where the ink lands")
+    box = None if why else _raster_ink(lay)
+    if box is None and why is None:
+        why = ("this layout draws no ink: the content is empty, every character in it "
+               "is a space, or overflow is clip and the box cut all of it away")
+
+    return {
+        "ok": True,
+        "size": _r3(lay["size"]),
+        "sizeAsked": _r3(p["size"]),
+        "shrunk": bool(lay.get("shrunk", False)),
+        "minSize": _r3(p["minSize"]),
+        "font": {"asked": p["font"], "path": face.path,
+                 # A None path IS the fallback: `load_face` clears it when it
+                 # could not open the face the spec asked for, and `_covered`
+                 # already reads it that way.
+                 "fallback": face.path is None,
+                 "ascent": int(face.ascent), "descent": int(face.descent),
+                 "lineBox": _r3(face.line_box)},
+        "lineStep": _r3(lay["lineStep"]),
+        "lineCount": len(lay["lines"]),
+        "blockW": _r3(lay["blockW"]),
+        "blockH": _r3(lay["blockH"]),
+        "box": _rect(bx, by, bx + bw, by + bh),
+        "ink": _rect(*lay["ink"]),
+        "inkBox": _rect(*box) if box else None,
+        "inkBoxWhy": why,
+        "lines": [{"text": r["text"], "advance": _r3(r["advance"]),
+                   "x": _r3(r["penStart"]), "right": _r3(r["penEnd"]),
+                   "baseline": _r3(r["baseline"]),
+                   "top": _r3(r["baseline"] - face.ascent),
+                   "bottom": _r3(r["baseline"] + face.descent),
+                   "justified": bool(r["justified"]),
+                   "lastOfPara": bool(r["lastOfPara"])}
+                  for r in lay["lines"]],
+        "transformed": moved,
+        "onPath": on_path,
+        "warnings": list(warnings[said_from:]),
+    }
 
 
 # Every key the old one-line text op in imagetools.py reads. The test asserts
@@ -2003,6 +2317,15 @@ def catalog():
                 "overflow": "default draws past the box rather than losing text",
                 "fonts": "basename only; a name with a separator, .., a colon or a "
                          "NUL is refused and the default face is used",
+                "warnings": "a font that fell back says so; the sentences ride on the "
+                            "layout, on draw_text's notes list, and in last_warnings() "
+                            "for a caller that cannot hold a list",
+                "measure": "measure_text(spec) answers where the type lands with no "
+                           "image at all - metric box, true ink box, the size "
+                           "shrink-to-fit landed on. It describes THIS rasteriser; a "
+                           "document text LAYER is drawn by vfx/engine.py instead, "
+                           "where tracking is 1/1000 em and line height multiplies the "
+                           "em size, not ascent+descent",
             }}
 
 
@@ -2017,6 +2340,30 @@ if __name__ == "__main__":
             if d and os.path.isdir(d):
                 seen += [f for f in os.listdir(d) if f.lower().endswith(FONT_EXT)]
         print(json.dumps({"fonts": sorted(set(seen))}))
+    elif mode == "measure":
+        # The measurement door, in the {mode, jobPath} shape `imagetools.py` is
+        # already spawned with, so server/index.js needs no new way to reach
+        # python: `spawn(config.python, [".../imgtext.py", "measure", jobPath])`
+        # where the job file holds {"text": <spec>} or the bare spec.
+        if len(sys.argv) < 3:
+            print(json.dumps({"ok": False, "error": "measure needs the path of a job "
+                                                    "file holding {\"text\": <spec>}"}))
+            sys.exit(1)
+        job = json.loads(open(sys.argv[2], encoding="utf-8").read())
+        under = job.get("text") if isinstance(job, dict) else None
+        spec = under if isinstance(under, dict) else job
+        if not isinstance(spec, dict):
+            print(json.dumps({"ok": False, "error": "the job file must hold a text spec "
+                                                    "object, either bare or under a "
+                                                    "\"text\" key"}))
+            sys.exit(1)
+        # The MCP text tool and the existing UI still send the OLD op shape, so
+        # the door translates on request rather than making the route decide -
+        # `{"legacy": true}` beside the spec, which is the same adapter
+        # imagetools.py runs at stage 9 and not a second guess at the shape.
+        if isinstance(job, dict) and job.get("legacy"):
+            spec = from_legacy(spec)
+        print(json.dumps(measure_text(spec)))
     else:
         print(json.dumps({"ok": False, "error": f"unknown mode {mode}"}))
         sys.exit(1)
