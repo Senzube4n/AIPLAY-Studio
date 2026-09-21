@@ -1,0 +1,31 @@
+.music-auditions { color: var(--ink); }
+.ma-intro { margin: 0 0 1.2rem; max-width: 75ch; color: var(--faint); }
+.ma-layout { display: grid; grid-template-columns: minmax(250px, .8fr) minmax(350px, 1.3fr); gap: 1.4rem; align-items: start; }
+.ma-form, .ma-review { min-width: 0; }
+.music-auditions label { display: grid; gap: .4rem; font-size: .88rem; margin-bottom: .9rem; }
+.music-auditions input, .music-auditions select, .music-auditions textarea { box-sizing: border-box; width: 100%; }
+.music-auditions textarea { resize: vertical; }
+.ma-range { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.ma-support, .ma-choice-note, .ma-session-title, .music-auditions small { font-size: .8rem; line-height: 1.5; color: var(--faint); }
+.ma-support { min-height: 2.4em; }
+.music-auditions small { display: block; margin: .7rem 0; overflow-wrap: anywhere; }
+.ma-form details { margin: .3rem 0 1rem; }
+.ma-form summary { cursor: pointer; margin-bottom: .9rem; }
+.ma-saved { display: flex; gap: .7rem; align-items: start; }
+.ma-saved label { flex: 1; }
+.ma-take { border: 1px solid var(--hair); border-radius: 10px; padding: .9rem; margin: .8rem 0; background: var(--panel); }
+.ma-take > div:first-child { display: flex; justify-content: space-between; gap: .7rem; align-items: baseline; }
+.ma-take span { font-size: .76rem; color: var(--faint); }
+.ma-take p { font-size: .85rem; margin: .6rem 0; }
+.ma-original { background: transparent; }
+.ma-chosen { border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
+.ma-listen { display: flex; flex-wrap: wrap; gap: .45rem; margin: .7rem 0; }
+.ma-listen button { font-size: .8rem; padding: .4rem .65rem; }
+.ma-warning { color: #f7c481; }
+.music-auditions .ma-ack { display: flex; align-items: start; font-size: .8rem; line-height: 1.5; }
+.ma-ack input { width: auto; margin-top: .25rem; }
+.ma-player { position: sticky; bottom: 0; padding: .8rem 0; background: var(--panel); }
+.ma-playing { display: block; font-size: .8rem; margin: 0 0 .4rem; }
+.ma-player audio { width: 100%; height: 36px; }
+.ma-message { min-height: 1.5em; font-size: .88rem; }
+@media (max-width: 800px) { .ma-layout { grid-template-columns: 1fr; } }

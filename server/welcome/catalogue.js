@@ -447,12 +447,12 @@ const TABS = [
   {
     id: "create", icon: "♪", name: "Music", group: "make",
     lead:
-      "Describe a song — the style it plays in and the words it sings — and a full track with vocals "
-      + "renders on your graphics card, typically four to five minutes for a three-minute song. Keep "
-      + "several takes, re-roll the mix, pull stems, and export FLAC, MP3 or Opus. A cover picture is "
-      + "painted for every finished track automatically.",
-    makes: ["Full songs with vocals", "Instrumentals", "Stems — vocals, drums, instruments as separate files", "Timed lyrics for karaoke"],
-    start: "Type a sentence about the song and press Create.",
+      "Describe a song's style and lyrics, then create a new performance with your selected model. "
+      + "Music workflows opens chorus auditions, reusable episode themes and local audio/video reference briefs. "
+      + "Compare alternatives before keeping one, review a reference's musical direction before generating, "
+      + "and export finished audio. Generation time and supported controls depend on the selected runtime.",
+    makes: ["Songs with vocals", "Instrumentals on supported backends", "Chorus alternatives with contextual playback", "Saved episode themes and cue variants", "Reviewed music briefs from audio or footage", "Stems and timed lyrics"],
+    start: "Write a style and lyrics, or open Music workflows to build on an existing idea, then use an explicit Create or Render action.",
     needs: [
       ...MUSIC_NEEDS,
       model("coverArt", "the cover picture painted for every finished track"),
@@ -461,8 +461,9 @@ const TABS = [
       model("audioRef", "starting a song from a piece of audio you already have"),
     ],
     cant:
-      "There is no piano roll here — you steer with words, not notes, and takes vary, which is why takes "
-      + "exist. Everything shares one graphics card, and music always goes first.",
+      "Reference media is analyzed into an editable brief or score; YuE2 does not natively watch footage. "
+      + "A saved score does not guarantee the same singer, waveform, duration or exact synchronization. "
+      + "Supplied-score themes currently require Python YuE2 or native GGUF. Everything shares the graphics card.",
   },
   {
     id: "images", icon: "▣", name: "Images", group: "make",

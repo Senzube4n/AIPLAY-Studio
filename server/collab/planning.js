@@ -71,7 +71,7 @@ export function allocatePlan({ shots, peers, segmentIds, peerIds, policy = "equa
     at: now, appliedAt: null, availability: "unknown", delivery: "not prepared", estimateSource: policy === "time" ? "user-entered estimates; no live queue or benchmark data" : null };
 }
 
-export function createCollabPlanning({ appData, readProject, readPeers, now = Date.now }) {
+export function createCollabPlanning({ appData, readProject, readPeers, resolveKitCue, now = Date.now }) {
   const locks = new Map(), directory = path.join(appData, "collab", "plans");
   const filename = (slug) => path.join(directory, `${slugOf(slug)}.json`);
   const peersNow = async () => { const result = await readPeers(); return Array.isArray(result) ? result : result.peers || []; };
@@ -88,7 +88,7 @@ export function createCollabPlanning({ appData, readProject, readPeers, now = Da
       segmentId: scene.id, title: scene.title || scene.name || scene.label || scene.id, seconds: secondsOf(scene) }));
     return { plan: { v: 1, slug, title: project.title || slug, revision: saved?.revision || 0,
       notes: saved?.notes || "", updatedAt: saved?.updatedAt || null, changedBy: saved?.changedBy || null,
-      shots, draft: saved?.draft || null, removedSceneCount: (saved?.shots || []).filter((shot) => !shots.some((s) => s.segmentId === shot.segmentId)).length }, peers: await peersNow() };
+      shots, draft: saved?.draft || null, musicCues: saved?.musicCues || [], removedSceneCount: (saved?.shots || []).filter((shot) => !shots.some((s) => s.segmentId === shot.segmentId)).length }, peers: await peersNow() };
   }
   async function get(slug) { return { ok: true, ...await context(slugOf(slug)) }; }
   async function mutate(body, actor = "system") {
@@ -97,6 +97,15 @@ export function createCollabPlanning({ appData, readProject, readPeers, now = Da
       const { plan, peers } = await context(slug);
       if (!Number.isInteger(body.expectedRevision) || body.expectedRevision !== plan.revision) refuse("This plan changed in another view. Reload it before saving your changes.", 409);
       if (body.action === "update_episode") plan.notes = text(body.notes, 8000, "Episode notes");
+      else if (body.action === "set_music_cue") {
+        if (!["opening", "tension", "closing"].includes(body.slot)) refuse("Choose an opening, tension or closing cue.");
+        const segmentId = body.segmentId ?? null;
+        if (segmentId !== null && !plan.shots.some(s => s.segmentId === segmentId)) refuse("The scene for this cue is no longer in the episode.", 409);
+        if (body.musicKit !== null && !resolveKitCue) refuse("Music kit linking is not available.", 503);
+        const link = body.musicKit === null ? null : await resolveKitCue(body.musicKit);
+        plan.musicCues = plan.musicCues.filter(cue => cue.slot !== body.slot || cue.segmentId !== segmentId);
+        if (link) plan.musicCues.push({ slot: body.slot, segmentId, ...link, updatedAt: now(), changedBy: actor });
+      }
       else if (body.action === "update_shot") {
         const shot = plan.shots.find((s) => s.segmentId === body.segmentId);
         if (!shot) refuse("Scene is no longer in this project.", 409);
@@ -151,8 +160,8 @@ export function createCollabPlanning({ appData, readProject, readPeers, now = Da
   return { get, mutate };
 }
 
-export function createCollabPlanningRoutes({ json, readBody, appData, readProject, readPeers, actorFrom = () => "user" }) {
-  const store = createCollabPlanning({ appData, readProject, readPeers });
+export function createCollabPlanningRoutes({ json, readBody, appData, readProject, readPeers, resolveKitCue, actorFrom = () => "system" }) {
+  const store = createCollabPlanning({ appData, readProject, readPeers, resolveKitCue });
   return async (req, res, url) => {
     if (url.pathname !== "/api/collab/plan") return false;
     try {

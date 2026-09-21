@@ -6,6 +6,10 @@
 <title>AIPLAY Studio</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="music-input.css">
+<link rel="stylesheet" href="music-workflows.css">
+<link rel="stylesheet" href="music-auditions.css">
+<link rel="stylesheet" href="music-kits.css">
+<link rel="stylesheet" href="music-references.css">
   <link rel="stylesheet" href="vfx.css">
   <!-- The welcome window. Its own sheet rather than lines in styles.css, and it
        spells no colour of its own — every value is a token from styles.css, the
@@ -145,6 +149,7 @@
 
   <!-- ───────────────── create ───────────────── -->
   <section class="create">
+    <button class="btn ghost" id="musicWorkflowsOpen" type="button" aria-haspopup="dialog">Music workflows · alternatives, themes & references</button>
     <!-- WHICH MODEL WRITES THE SONG. Painted from config.music.engines via
          /api/status rather than listed here, for the reason the video selector
          records: a screen that keeps its own copy of engine facts goes stale the
@@ -5049,6 +5054,20 @@
 <div class="rowmenu" id="rowMenu" role="menu" hidden></div>
 
 <script type="module" src="app.js"></script>
+<dialog id="musicWorkflows" aria-labelledby="musicWorkflowsTitle">
+  <header class="music-workflows-head">
+    <div><h2 id="musicWorkflowsTitle">Build on an idea</h2><p>Audition a new chorus, carry a theme through an episode, or turn a reference into a music brief.</p></div>
+    <button class="btn ghost sm" type="button" data-action="close" aria-label="Close music workflows">Close</button>
+  </header>
+  <div class="music-workflows-tabs" role="tablist" aria-label="Music workflows">
+    <button id="musicAuditionsTab" role="tab" aria-controls="musicAuditions" aria-selected="true" type="button"><b>Chorus alternatives</b><span>Compare takes in context</span></button>
+    <button id="musicKitsTab" role="tab" aria-controls="musicKits" aria-selected="false" tabindex="-1" type="button"><b>Episode themes</b><span>Reuse a score and create cues</span></button>
+    <button id="musicReferencesTab" role="tab" aria-controls="musicReferences" aria-selected="false" tabindex="-1" type="button"><b>Reference music</b><span>Audio or footage → reviewed brief</span></button>
+  </div>
+  <section id="musicAuditions" role="tabpanel" aria-labelledby="musicAuditionsTab"></section>
+  <section id="musicKits" role="tabpanel" aria-labelledby="musicKitsTab" hidden></section>
+  <section id="musicReferences" role="tabpanel" aria-labelledby="musicReferencesTab" hidden></section>
+</dialog>
 <script type="module" src="music-input-ui.js"></script>
 <!-- Loaded after app.js and independent of it: it reaches the Video panel
      through the DOM and posts its own route, so neither file has to know the

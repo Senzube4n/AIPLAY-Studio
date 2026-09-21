@@ -83,6 +83,7 @@ const MCP_FILES = [
   "server/mcp-avatars.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-music-input.js",
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
+  "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
   "server/daw/mcp-refprofile.js", "server/daw/mcp-voicelab.js",
@@ -96,6 +97,7 @@ const ROUTE_FILES = [
   "server/llm/routes.js", "server/mv/routes.js", "server/welcome/routes.js",
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",
   "server/music-plan.js", "server/mesh/avatar.js",
+  "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
 ];
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -380,6 +382,8 @@ for (const [f, src] of routeSource) {
 for (const [route, moduleFile, factory, method] of [
   ["/api/images/ai-edit", "server/image-editor.js", "createImageEditor", "imageEditor.request"],
   ["/api/collab/plan", "server/collab/planning.js", "createCollabPlanningRoutes", "collabPlanningRoutes(req"],
+  ["/api/music-kits", "server/music/identity-kits.js", "createMusicWorkflowRoutes", "musicWorkflowRoutes(req"],
+  ["/api/music-references", "server/music/references.js", "createMusicWorkflowRoutes", "musicWorkflowRoutes(req"],
 ]) {
   const indexSource = routeSource.get("server/index.js");
   const mounted = indexSource.includes(factory) && indexSource.includes(method) && exactPaths.has(route);
@@ -478,6 +482,9 @@ for (const f of MCP_FILES) {
   mcpSource.set(f, src);
   wrapperByFile.set(f, wrappersIn(src));
   for (const m of src.matchAll(/\bname\s*:\s*(["'])([a-z0-9_]+)\1/g)) if (!ownerOf.has(m[2])) ownerOf.set(m[2], f);
+  // Local typed-tool factories take the literal name as their first argument.
+  // Resolve ownership from that call so their HTTP wrappers remain censused.
+  for (const m of src.matchAll(/\btool\s*\(\s*(["'])([a-z0-9_]+)\1/g)) if (!ownerOf.has(m[2])) ownerOf.set(m[2], f);
 }
 
 /* A sub-module's tools are built by a factory that is HANDED the parent's

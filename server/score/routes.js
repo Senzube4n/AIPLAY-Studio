@@ -42,8 +42,9 @@
  * (server/score/store.js's banner, addition 3).
  */
 import path from "node:path";
-import { stat, mkdir, writeFile } from "node:fs/promises";
+import { stat, mkdir, writeFile, readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import {
   listScores, createScore, readScoreDoc, deleteScore,
@@ -133,12 +134,14 @@ async function versionView(doc, version, { withScore = true } = {}) {
     changed: changesBetween(parent, version),
   };
   if (!withScore) return row;
+  Object.assign(row, await scoreRequestView(doc.slug, version));
   try {
     const abc = await readScoreAbc(doc.slug, version.id);
     const read = readScore(abc, {
       slug: doc.slug, versionId: version.id, audioSeconds: version.audioSeconds,
     });
     row.score = {
+      text: abc,
       bytes: Buffer.byteLength(abc, "utf8"),
       headers: read.headers,
       contentQuartersPerBar: read.contentQuartersPerBar,
@@ -157,6 +160,39 @@ async function versionView(doc, version, { withScore = true } = {}) {
     row.score = { unavailable: err?.message || String(err) };
   }
   return row;
+}
+
+/** Read the request actually stored with this version. Drafts keep it in the
+ * document; completed runs keep request.json with a receipt hash. Missing or
+ * changed request metadata is reported instead of invented from a prompt. */
+async function scoreRequestView(slug, version) {
+  let request = version.request || null, requestVerified = false, requestWarning = null;
+  if (!request) {
+    try {
+      const file = path.join(versionDir(slug, version.id), "request.json");
+      if ((await stat(file)).size > 128 * 1024) throw new Error("request.json exceeds 128 KiB");
+      const bytes = await readFile(file), expected = version.artifacts?.["request.json"]?.sha256;
+      if (expected && createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("request.json differs from its receipt");
+      request = JSON.parse(bytes.toString("utf8")); requestVerified = !!expected;
+    } catch (error) { requestWarning = error.code === "ENOENT" ? "This version has no saved request metadata." : error.message; }
+  }
+  return { style: typeof request?.style === "string" ? request.style : null,
+    lyrics: typeof request?.lyrics === "string" ? request.lyrics : null,
+    cot: ["full", "melody", "off"].includes(request?.cot) ? request.cot : null,
+    seed: Number.isSafeInteger(request?.seed) ? request.seed : null,
+    request, requestVerified, requestWarning, weights: version.weights || null };
+}
+
+/** A bounded, source-preserving snapshot for reuse by music kits and API clients. */
+export async function readScoreVersionSnapshot({ slug, version }) {
+  if (!safeSeg(slug) || !safeSeg(version)) throw new Error("Choose an exact score and version.");
+  const doc = await readScoreDoc(slug), row = findVersion(doc, version);
+  if (!row) throw new Error("That score version does not exist.");
+  const abc = await readScoreAbc(slug, version);
+  if (Buffer.byteLength(abc) > 65536) throw new Error("This score exceeds 64 KiB.");
+  return { slug, version, title: doc.title, abc, sha256: createHash("sha256").update(abc).digest("hex"),
+    ...await scoreRequestView(slug, row), identity: row.identity, verified: row.verified,
+    audioSeconds: row.audioSeconds, drafted: !!row.drafted, by: row.by || null };
 }
 
 export function createScoreRoutes({ json, readBody, config: cfg = config, provenance = null }) {

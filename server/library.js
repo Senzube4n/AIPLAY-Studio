@@ -15,6 +15,7 @@
  */
 import { readdir, stat, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { config } from "./config.js";
 import { isNativeLibraryWav, readNativeWavTags, tagNativeWav } from "./library-wav.js";
@@ -34,10 +35,12 @@ const stemOf = (n) => n.replace(/\.(flac|mp3|opus|wav)$/i, "");
 const TRASH = path.join(config.outputDir, "trash");
 
 export class Library {
-  constructor() {
+  constructor({ saveMetadata = text => writeFile(SIDECAR, text, "utf8") } = {}) {
     this.meta = new Map();   // filename -> metadata
     this.playlists = [];     // { id, name, files[] }
     this.dirty = false;
+    this.saveMetadata = saveMetadata;
+    this.saveTail = Promise.resolve();
   }
 
   async load() {
@@ -54,12 +57,19 @@ export class Library {
   }
 
   async save() {
-    if (!this.dirty) return;
+    // remember() starts a background save. A subsequent explicit await must
+    // wait for that write too, and two snapshots must never overtake each other.
+    if (!this.dirty) return this.saveTail;
     this.dirty = false;
-    await writeFile(SIDECAR, JSON.stringify({
+    const snapshot = JSON.stringify({
       meta: Object.fromEntries(this.meta),
       playlists: this.playlists,
-    }, null, 2), "utf8");
+    }, null, 2);
+    this.saveTail = this.saveTail.catch(() => {}).then(() => this.saveMetadata(snapshot)).catch(error => {
+      this.dirty = true;
+      throw error;
+    });
+    return this.saveTail;
   }
 
   createPlaylist(name) {
@@ -196,8 +206,8 @@ export class Library {
    * the original on both sides. A third file, like joinExtension; the result
    * is a mix, not a take — it carries no trajectory and no run folder.
    */
-  async replaceSection(originalFile, newFile, atSeconds, toSeconds, { from = 0 } = {}) {
-    const out = `replace_${Date.now()}.flac`;
+  async replaceSection(originalFile, newFile, atSeconds, toSeconds, { from = 0, report = false } = {}) {
+    const out = `replace_${Date.now()}_${randomUUID().slice(0, 8)}.flac`;
     const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
     const ops = JSON.stringify([{
       op: "replace",
@@ -206,19 +216,30 @@ export class Library {
       ...(from > 0 ? { from } : {}),
       fade: 0.08,
     }]);
-    const code = await new Promise((resolve) => {
+    const result = await new Promise((resolve) => {
       const proc = spawn(config.python, [
         path.join(here, "edit_audio.py"),
         path.join(config.outputDir, originalFile),
         path.join(config.outputDir, out),
         ops,
       ]);
-      let err = "";
+      let err = "", stdout = "";
+      proc.stdout.on("data", d => { stdout += d; });
       proc.stderr.on("data", (d) => (err += d));
-      proc.on("exit", (c) => { if (c) console.error(`  replace: ${err.trim()}`); else if (err.trim()) console.log(`  replace: ${err.trim()}`); resolve(c); });
-      proc.on("error", () => resolve(1));
+      proc.on("close", (code) => {
+        let detail = null;
+        try { detail = JSON.parse(stdout.trim().split(/\r?\n/).pop()); } catch { /* reported below */ }
+        resolve({ code, detail, error: err.trim() });
+      });
+      proc.on("error", e => resolve({ code: 1, error: e.message }));
     });
-    return code === 0 ? out : null;
+    if (result.code !== 0 || !result.detail?.ok) {
+      if (report) throw new Error(result.error || "The replacement could not be composed.");
+      console.error(`  replace: ${result.error || "no completion report"}`); return null;
+    }
+    const detail = result.detail.reports?.find(r => r.op === "replace");
+    if (report && !detail) throw new Error("The replacement worker returned no measured seam report.");
+    return report ? { file: out, ...detail, warnings: result.error ? [result.error] : [] } : out;
   }
 
   /**

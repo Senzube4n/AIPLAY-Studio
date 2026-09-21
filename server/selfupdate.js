@@ -24,6 +24,8 @@
  * install-info.json (written by the installer), else package.json's lineage,
  * else the original, is still what updateSource() reports as the install's own.
  * A git clone is not redirected: it pulls its own tracking branch.
+ * A ZIP's selected build must also contain its installed commit. Missing
+ * comparison data or a diverged/older candidate never authorizes replacement.
  *
  * The caller (launcher/launcher.mjs) refuses while Studio runs: server files
  * would change under a live process.
@@ -216,9 +218,29 @@ export async function selfUpdate({ root = ROOT_DEFAULT, say = () => {}, command 
   catch (e) { return { ok: false, changed: false, line: e.name === "TimeoutError" ? "GitHub did not answer in time." : e.message }; }
   const { sha, date, repo, label, note } = pick;
   if (note) say(`${note}.`);
-  if (src.have && sha.startsWith(src.have)) {
-    const lock = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
-    return dependencies(lock, false, "Already up to date.");
+  if (src.have) {
+    if (!/^[0-9a-f]{7,40}$/i.test(src.have)) return { ok: false, changed: false,
+      line: "The installed commit is invalid, so a forward update cannot be verified. Nothing was downloaded or changed." };
+    let relation = sha.toLowerCase().startsWith(src.have.toLowerCase()) ? "identical" : null;
+    if (!relation) {
+      say(`Checking that ${sha.slice(0, 7)} contains installed ${src.have}…`);
+      try {
+        // Use the selected repository's fork network and immutable commit IDs,
+        // not moving branch names or whichever remote happened to answer first.
+        relation = (await gh(`https://api.github.com/repos/${repo}/compare/${src.have}...${sha}`))?.status;
+      } catch (e) {
+        return { ok: false, changed: false,
+          line: `Could not verify that ${label} contains installed ${src.have}: ${e.message} Nothing was downloaded or changed. Try Update again later.` };
+      }
+    }
+    if (relation === "identical") {
+      const lock = await readFile(path.join(root, "package-lock.json"), "utf8").catch(() => "");
+      return dependencies(lock, false, "Already up to date.");
+    }
+    if (relation !== "ahead") return { ok: false, changed: false,
+      line: relation === "behind" ? `${label} is older than installed ${src.have}. Update will not downgrade this install. Nothing was downloaded or changed.`
+        : relation === "diverged" ? `${label} has diverged from installed ${src.have}. Update will not discard this install's commits. Nothing was downloaded or changed.`
+          : `GitHub did not confirm that ${label} contains installed ${src.have}. Nothing was downloaded or changed. Try Update again later.` };
   }
 
   const work = await mkdtemp(path.join(tmpdir(), "aiplay-update-"));

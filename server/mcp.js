@@ -33,6 +33,8 @@ import { videoLabTools } from "./mcp-videolab.js";
 import { engineTools } from "./mcp-engine.js";
 import { musicInputTools } from "./mcp-music-input.js";
 import { musicPlanTools } from "./mcp-music-plan.js";
+import { musicKitTools } from "./mcp-music-kits.js";
+import { musicReferenceTools } from "./mcp-music-references.js";
 /* AUDIO FINISHING. Four routes that existed, worked, and that no tool posted
  * to — /api/edit, /api/merge, /api/export and /api/timeline/render. The header
  * of mcp-audio.js carries the audit that found them and the reason an agent
@@ -42,6 +44,7 @@ import { audioTools } from "./mcp-audio.js";
  * versions, and the engraver. Unregistered until 2026-09-11 — see the note at
  * the spread below. */
 import { scoreTools } from "./mcp-music-score.js";
+import { musicAuditionTools } from "./mcp-music-auditions.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { videoLoraInput } from "./video-lora-validation.js";
@@ -154,7 +157,10 @@ async function waitForSong(jobId, timeoutMs) {
   for (;;) {
     const st = await api("GET", "/api/status");
     const inHistory = (st.history || []).find((j) => j.id === jobId);
-    if (inHistory && inHistory.state === "done") return inHistory;
+    const replacement = (await api("GET", `/api/music-auditions?jobId=${encodeURIComponent(jobId)}`)).result;
+    if (replacement?.state === "ready") return { ...inHistory, ...replacement, audioSeconds: replacement.seconds, replacement };
+    if (replacement?.state === "failed" || replacement?.state === "cancelled") throw new Error(replacement.error || "The replacement was cancelled.");
+    if (inHistory && inHistory.state === "done" && !replacement) return inHistory;
     if (inHistory && inHistory.state === "failed") {
       throw new Error(inHistory.error || "the render failed");
     }
@@ -166,7 +172,7 @@ async function waitForSong(jobId, timeoutMs) {
      * exist. Not current, not queued, not in history = unknown; one repoll
      * rides out the instant a job moves between those lists. */
     const isMine = (j) => j && j.id === jobId;
-    if (!inHistory && !isMine(st.current) && !(st.queue || []).some(isMine)) {
+    if (!replacement && !inHistory && !isMine(st.current) && !(st.queue || []).some(isMine)) {
       if (++unseen >= 2) {
         throw new Error(
           `No job with id "${jobId}" — it is not running, not queued, and not in the server's `
@@ -185,6 +191,7 @@ async function waitForSong(jobId, timeoutMs) {
       throw new Error(
         `Wait timed out after ${Math.round(timeoutMs / 1000)}s`
         + (cur ? ` (${cur.title || jobId}: ${cur.stageLabel || cur.state || "working"}, ${estimate})`
+          : replacement?.state === "composing" ? ` (job ${jobId} is composing the full candidate; ETA unavailable)`
           : queued ? ` (job ${jobId} is still queued; ETA unavailable)`
           : ` (job ${jobId} status is not confirmed)`)
         + ". Nothing was cancelled — call wait_for_song again with the same job_id.",
@@ -407,6 +414,8 @@ export const TOOLS = [
   ...workspaceTools(api, safeName),
   ...musicInputTools(api),
   ...musicPlanTools(api),
+  ...musicKitTools(api),
+  ...musicReferenceTools(api),
   /* Beside the music family, because that is where they are reached FROM: the
    * take comes out of make_song and these are what happens to it next — trim
    * the silence off the front, merge the continuations, convert it, and render
@@ -421,6 +430,7 @@ export const TOOLS = [
    * neither hung — the test that would have caught it asks the running server
    * what it serves, not the module what it exports. */
   ...scoreTools(api),
+  ...musicAuditionTools(api),
   ...yueSetupTools(api),
   ...avatarTools(api),
   ...vfxTools(api, safeName),
@@ -518,6 +528,7 @@ export const TOOLS = [
         cot: { type: "string", enum: ["full", "melody", "off"], description: "YuE2 only. full = plan the whole score then sing (default); melody = plan the tune only; off = no plan. Ignored on MiniMax." },
         precision: { type: "string", enum: ["bf16", "fp8", "q4_0", "q8_0"], description: "Python YuE2: bf16 or experimental fp8 (RTX40+). Native yue2-gguf: q4_0 (default, smaller) or q8_0 (higher precision, optional download). Higher precision does not guarantee better audio. Does not switch engines; omit for that engine's default." },
         nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 synthesis steps: 32 default; 16 optional. The Python fixed-score comparison is not evidence of GGUF quality or speed." },
+        allow_section_labels: { type: "boolean", description: "Forward the reviewed lyric section-tag choice to the selected YuE2 runtime; model behavior depends on that backend." },
         cfg_scale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. Omit for the runtime default." },
         abc: { type: "string", maxLength: 65536, description: "Optional supplied YuE2 ABC score (at most64KiB UTF-8); needs cot full or melody. Conditions the tune, not guaranteed duration. Native GGUF does not export an editable generated score." },
         key: { type: "string", description: "YuE2 only, without abc: the song's key as an ABC key (Em, G, Bb, F#m). With bpm/meter it becomes an open seed score the planner continues, so the song is planned in it." },
@@ -556,6 +567,7 @@ export const TOOLS = [
          * MiniMax, so passing them unconditionally is safe. */
         cot: a.cot, quantization: a.precision === "bf16" ? "none" : a.precision,
         narSteps: a.nar_steps,
+        allowSectionLabels: a.allow_section_labels,
         cfgScale: a.cfg_scale,
         abc: a.abc,
         abcOpen: a.abc_open === true ? true : undefined,   // absent unless asked: the GGUF door refuses unknown fields
@@ -592,12 +604,8 @@ export const TOOLS = [
        * rather than answering "job_id: null" and leaving the agent to guess. */
       if (r?.error) throw new Error(r.error);
       const st = await api("GET", "/api/status");
-      /* ⚠ /api/generate answers with the CURRENT job, which on a busy queue is
-       * somebody else's song. The one we just enqueued is the last in the
-       * queue, or the current job if the queue was empty. */
-      const mine = r.engine === "yue2-gguf" ? r.job : (st.queue || []).length
-        ? st.queue[st.queue.length - 1]
-        : st.current;
+      const mine = r.job;
+      if (!mine?.id) throw new Error("Studio returned no exact song job id; check the queue before retrying.");
       return {
         job_id: mine?.id ?? r.job?.id ?? null,
         /* Which engine took the song, and — on YuE2 — the configuration the
@@ -606,7 +614,7 @@ export const TOOLS = [
         precision: mine?.quantization ?? r.job?.quantization ?? null,
         ...(r.rung ? { configuration: r.rung.label, ceiling: r.ceiling ?? null } : {}),
         title: mine?.title ?? null,
-        position_in_queue: (st.queue || []).length,
+        position_in_queue: st.current?.id === mine.id ? 0 : (st.queue || []).findIndex(j => j.id === mine.id) + 1 || null,
         note: "Rendering. Call wait_for_song with this job_id.",
       };
     },
@@ -637,7 +645,8 @@ export const TOOLS = [
         render_seconds: Number.isFinite(done.durationSeconds) && done.durationSeconds >= 0 ? done.durationSeconds : null,
         seed: done.seed,
         warnings: Array.isArray(done.warnings) ? done.warnings : [],
-        generation_limits: done.generationLimits ?? null };
+        generation_limits: done.generationLimits ?? null,
+        ...(done.replacement ? { raw_file: done.rawFile, replacement: done.replacement } : {}) };
     },
   },
 
@@ -947,11 +956,11 @@ export const TOOLS = [
       + "would, and the original comes back at to_seconds, crossfaded at both seams. Both engines — and, with "
       + "the YuE2 real-audio tokenizer installed and YuE2 3B as the music model, ANY RECORDING too, not only a "
       + "take: it is read into YuE2's own tokens first and those are what the model continues from. The "
-      + "result is a new library file (replace_<ms>.flac) — a mix, so it cannot itself be extended; the "
+      + "result is a new library file (replace_<ms>_<id>.flac) — a mix, so it cannot itself be extended; the "
       + "original is untouched. Give the WHOLE lyric sheet in `lyrics` if the new stretch should say "
-      + "something else (YuE2: no [section] labels). The new material is asked for at the length of the "
-      + "gap plus a little; if it comes back shorter the original returns early and the server log says "
-      + "by how much. Returns a job id; follow with wait_for_song.",
+      + "something else. The new material is asked for at the length of the "
+      + "gap plus a little; if it comes back shorter the original returns early. wait_for_song returns "
+      + "the composed filename, measured shortfall and effective seam. Returns a job id; follow with wait_for_song.",
     inputSchema: {
       type: "object",
       required: ["file", "from_seconds", "to_seconds"],
@@ -976,10 +985,9 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r?.error) throw new Error(r.error);
-      const st = await api("GET", "/api/status");
-      const mine = (st.queue || []).length ? st.queue[st.queue.length - 1] : st.current;
-      return { job_id: mine?.id ?? r?.job?.id ?? null, engine: r?.engine ?? "minimax-music3",
-               note: "When the job finishes, replace_<ms>.flac appears in the library with the original before and after the replaced stretch." };
+      if (!r?.job?.id) throw new Error("Studio returned no exact replacement job id; check the queue before retrying.");
+      return { job_id: r.job.id, engine: r?.engine ?? "minimax-music3",
+               note: "wait_for_song waits for composition and returns the actual candidate filename. The original remains. A short take moves the ending earlier; inspect its warnings and effectiveTo." };
     },
   },
 
@@ -1157,12 +1165,9 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r?.error) throw new Error(r.error);
-      /* /api/extend answers with the CURRENT job, which on a busy queue is
-       * somebody else's; ours is the last one queued — make_song's read. */
-      const st = await api("GET", "/api/status");
-      const mine = (st.queue || []).length ? st.queue[st.queue.length - 1] : st.current;
+      if (!r?.job?.id) throw new Error("Studio returned no exact extension job id; check the queue before retrying.");
       return {
-        job_id: mine?.id ?? r?.job?.id ?? null, engine: r?.engine ?? "minimax-music3",
+        job_id: r.job.id, engine: r?.engine ?? "minimax-music3",
         resumed_from_seconds: r?.resumedFromSeconds ?? null,
         note: "The original is kept. When the job finishes, a joined file extend_<ms>.flac appears in "
           + "the library with the first part bit-identical to the original and the new material "

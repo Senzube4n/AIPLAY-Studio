@@ -35,6 +35,7 @@ import { growHandle, growWrap } from "./grow.js";
 // boot and shows or hides it from the engine's `score` capability.
 import { mountScorePanel, scorePanelSelection } from "./score-panel.js";
 import { mountMusicPlan } from "./music-plan-ui.js";
+import { mountMusicWorkflows } from "./music-workflows.js";
 // The Models screen's "For this machine" block and the per-row fit badges. It
 // renders /api/models's `recommended` and `fit` and computes nothing itself —
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
@@ -993,7 +994,9 @@ function musicFitPaint() {
     try {
       const r = await fetch("/api/music", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "fit", seconds: +$("maxDur").value }),
+        body: JSON.stringify({ action: "fit", seconds: state.workflowDraft
+          && state.workflowDraft.engine === state.musicEngine && !state.workflowDurationEdited
+          && state.workflowDraft.maxDuration === undefined ? undefined : +$("maxDur").value }),
       });
       j = await r.json();
     } catch {
@@ -1685,7 +1688,15 @@ document.addEventListener("aiplay:simple-generate", async () => {
 /* The ceiling wants headroom above the target: intros, outros and the gaps
  * between sections all consume time, so a song whose words run ~60 s needs
  * ~90 s of ceiling or the ending gets clipped. Warn rather than silently clip. */
-$("maxDur").oninput = () => {
+$("maxDur").oninput = (event) => {
+  if (event) state.workflowDurationEdited = true;
+  if (state.workflowDraft && state.workflowDraft.engine === state.musicEngine && !state.workflowDurationEdited
+      && state.workflowDraft.maxDuration === undefined) {
+    $("maxDurV").textContent = "Automatic";
+    $("maxDurV").style.color = "";
+    $("maxDurV").title = "The reviewed request leaves duration to the model. Move this slider to request a length.";
+    return;
+  }
   const v = +$("maxDur").value;
   $("maxDurV").textContent = fmt(v);
   const need = state.mode === "instrumental"
@@ -2289,12 +2300,15 @@ function currentSpec(preview, mixSeed) {
       cfgScale: $("yCfg").value.trim() === "" ? undefined : Number($("yCfg").value),
       quantization: ggufPrecision(),
       abc: $("yAbcUse")?.checked ? $("yAbc")?.value.trim() : undefined,
+      ...(state.workflowDraft?.lyrics === $("lyrics").value && state.workflowDraft?.engine === state.musicEngine
+        ? { allowSectionLabels: state.workflowDraft.allowSectionLabels === true } : {}),
     };
   }
   return {
     // Title is metadata only — the model has no title input. It names the library
     // entry and goes into the exported file's tags, nothing more.
     title: ($("title").value.trim() || firstLine || (instrumental ? "Instrumental" : "Untitled")).slice(0, 60),
+    ...(state.musicEngine === "yue2" ? { engine: "yue2" } : {}),
     caption: captionValue(),
     // Instrumental sends the section scaffold on MiniMax, not an empty string
     // (see above) — and an empty string on YuE2, which sings brackets; the
@@ -2320,7 +2334,8 @@ function currentSpec(preview, mixSeed) {
     // The mix. Undefined means "same as seed" — a fresh value is what makes a
     // re-roll produce a different render of the same take.
     mixSeed,
-    maxDuration: +$("maxDur").value,
+    maxDuration: state.workflowDraft && state.workflowDraft.engine === state.musicEngine && !state.workflowDurationEdited
+      && state.workflowDraft.maxDuration === undefined ? undefined : +$("maxDur").value,
     /* Audio reference, when one has been encoded. The slider IS the denoise
      * value — left keeps more of the reference, right keeps less — so there is
      * no inversion to get wrong, and the words under it say what each end does. */
@@ -2702,6 +2717,12 @@ function yueSpec() {
   if (state.musicEngines?.[state.musicEngine]?.score && use?.checked && typeof scorePanelSelection === "function") {
     const sel = scorePanelSelection();
     if (sel?.abc?.trim()) Object.assign(out, { abc: sel.abc, scoreSlug: sel.slug || undefined, scoreVersion: sel.version || undefined });
+  }
+  const reviewed = state.workflowDraft;
+  if (reviewed?.engine === state.musicEngine) {
+    if (reviewed.lyrics === $("lyrics").value) out.allowSectionLabels = reviewed.allowSectionLabels === true;
+    if (out.abc && out.abc === reviewed.abc && reviewed.scoreSlug && reviewed.scoreVersion)
+      Object.assign(out, { scoreSlug: reviewed.scoreSlug, scoreVersion: reviewed.scoreVersion });
   }
   return out;
 }
@@ -18992,6 +19013,52 @@ mountAllInfo();
  * engine's `score` capability. */
 mountScorePanel();
 mountMusicPlan();
+mountMusicWorkflows({ onLoadRequest: async (prepared) => {
+  const request = prepared?.request || prepared;
+  if (!request || !["yue2", "yue2-gguf", "yue2-comfy"].includes(request.engine)) throw new Error("Choose a supported YuE2 engine first.");
+  if (request.abc && request.engine === "yue2-comfy") throw new Error("This ComfyUI workflow cannot accept a supplied score. Choose Python YuE2 or native GGUF.");
+  const precision = request.quantization || (request.engine === "yue2-gguf" ? "q4_0" : "none");
+  const durationMax = state.musicEngines?.[request.engine]?.maxDuration || 300;
+  if (request.maxDuration !== undefined && (!Number.isFinite(request.maxDuration)
+      || request.maxDuration < 1 || request.maxDuration > durationMax))
+    throw new Error(`The reviewed length must be between 1 and ${durationMax} seconds for this engine.`);
+  const choice = (state.musicModels || []).find(row => row.engine === request.engine
+    && (request.engine !== "yue2-gguf" || row.precision === precision));
+  if (state.musicEngine !== request.engine || request.engine === "yue2-gguf" && ggufPrecision() !== precision) {
+    if (!choice) throw new Error("This engine is not available in the model picker. Review Models before loading this request.");
+    await chooseMusicModel(choice.value);
+    if (state.musicEngine !== request.engine || request.engine === "yue2-gguf" && ggufPrecision() !== precision)
+      throw new Error("The requested engine and precision were not selected. Your draft has been kept.");
+  }
+  // Loading is an explicit edit of the composer. Generation stays on Create.
+  stopExtend(); setSimple(false); setGuided(false);
+  setMode(request.instrumental === true ? "instrumental" : "song");
+  $("caption").value = request.caption || request.style || "";
+  $("lyrics").value = request.lyrics || "";
+  $("title").value = request.title || "";
+  $("seed").value = request.seed ?? 0; state.seedLocked = true; paintSeed();
+  $("yCot").value = request.cot || (request.abc ? "full" : "off");
+  $("yAbc").value = request.abc || "";
+  $("yAbcUse").checked = !!request.abc; $("yAbcOpen").checked = false; $("scoreUse").checked = false;
+  $("yCfg").value = request.cfgScale ?? "";
+  $("ySteps").value = String(request.narSteps || 32);
+  state.workflowDraft = structuredClone(request);
+  state.workflowDurationEdited = false;
+  if ($("maxDur")) {
+    // Range inputs otherwise round short cues to their old 30s/10s grid.
+    $("maxDur").min = "1"; $("maxDur").step = "any"; $("maxDur").max = String(durationMax);
+    $("maxDur").value = String(request.maxDuration ?? Math.min(240, durationMax));
+    $("maxDur").oninput();
+  }
+  if (request.engine === "yue2") $("yPrecision").value = precision;
+  // Old cover settings and sampler overrides must not leak into a reviewed brief.
+  $("covPrime").value = 0; state.audioRef = null; paintAref();
+  for (const id of ["yKey", "yBpm", "yMeter", "yTemp", "yTopP", "yPlanTemp"]) if ($(id)) $(id).value = "";
+  state.takes = 1;
+  for (const button of document.querySelectorAll(".howmany [data-n]")) button.classList.toggle("on", button.dataset.n === "1");
+  countChars(); musicEnginePaint(); setView("create");
+  $("caption").focus();
+} });
 /* LAST, and asynchronous. One request answers both "what can this studio do"
  * and "has this person been shown around", so a fresh install opens the window
  * on the same round trip that fills it — and an older server with no

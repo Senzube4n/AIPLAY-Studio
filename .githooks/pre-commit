@@ -1087,4 +1087,7 @@ node --test server/image-job_test.js server/image-editor_test.js server/image-ed
 if [ -x "$PY" ]; then "$PY" server/image_editor_test.py || exit 1; fi
 # Fork integration: typed MCP controls, video LoRA validation and shared-card unloading.
 node --test server/bucky-integration_test.js || exit 1
+# Persistent YuE2 auditions/kits and bounded local reference preparation.
+# CPU media fixtures exercise ffmpeg/Pillow; model execution is injected.
+node --test server/music/auditions_test.js server/mcp-music-auditions_test.js server/music/identity-kits_test.js server/music/music-kits-ui_test.js server/music/references_test.js server/mcp-music-references_test.js server/music-references-ui_test.js || exit 1
 exit 0

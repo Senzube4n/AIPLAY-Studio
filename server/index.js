@@ -19,6 +19,7 @@ import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
+import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
  * self-explaining quality selector, and the turbo toggles. Additive — it owns
@@ -222,6 +223,7 @@ import { identity as collabIdentity, privateKeys as collabPrivateKeys, keyCard, 
 import { MAX_BUNDLE_BYTES, sealTo, openSealed } from "./collab/seal.js";
 import * as collabRoster from "./collab/roster.js";
 import { createCollabPlanningRoutes } from "./collab/planning.js";
+import { createMusicWorkflowRoutes } from "./music/workflows.js";
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
 import { createPreviewStore, assertPreviewFresh } from "./collab/preview.js";
 const collabPreviews = createPreviewStore();
@@ -1042,19 +1044,10 @@ jobs.on("update", async (snap) => {
        * original returns after it. The result is a mix — it carries no
        * trajectory and no run folder, so it is not offered for extension. */
       if (Number.isFinite(job.replaceTo)) {
-        const replaced = await library.replaceSection(job.extendedFrom, h.file, at, job.replaceTo, { from: isYueExt ? at : 0 });
-        if (replaced) {
-          library.remember(replaced, {
-            title: h.title.replace(/ · extended$/, " · replaced"), seed: h.seed, caption: job.caption, lyrics: job.lyrics,
-            model: job.model, steps: h.steps, engine: job.engine || "minimax-music3",
-            extendedFrom: job.extendedFrom, joinedAt: at, replacedTo: job.replaceTo,
-            ...(isYueExt ? { rights: "CC BY-NC 4.0 — not for sale" } : {}),
-            createdAt: Date.now(),
-          });
-          console.log(`  section replaced ${at.toFixed(1)}s–${job.replaceTo.toFixed(1)}s -> ${replaced}`);
-        } else {
-          console.warn(`  replace failed; the new render is kept as ${h.file}`);
-        }
+        const result = await finishReplacement({ job, receipt: h, library, store: auditions, modelName,
+          append: event => prov.append("library", event), hashFile: file => audioHash(path.join(config.outputDir, file)) });
+        if (result.state === "ready") console.log(`  section replaced ${at.toFixed(1)}s–${job.replaceTo.toFixed(1)}s -> ${result.file}`);
+        else console.warn(`  replace failed; the new render is kept as ${h.file}: ${result.error}`);
         return;
       }
       const joined = await library.joinExtension(job.extendedFrom, h.file, at, { from: isYueExt ? at : 0 });
@@ -2071,13 +2064,83 @@ const vfxRoutes = createVfxRoutes({
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
+// Workflow modules submit through the ordinary validated API. Keeping a
+// receipt for the exact id matters when another song is already rendering.
+function jobReceipt(job) { return exactJobReceipt(job, jobs.snapshot()); }
+function submitStudioJson(apiPath, body, actor = "system") {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body));
+    const call = http.request({ hostname: "127.0.0.1", port: config.uiPort, path: apiPath, method: "POST",
+      headers: { "content-type": "application/json", "content-length": payload.length,
+        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }) }, timeout: 900_000 }, answer => {
+      const chunks = []; answer.on("data", chunk => chunks.push(chunk));
+      answer.on("error", reject);
+      answer.on("end", () => {
+        try {
+          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (answer.statusCode >= 400) throw Object.assign(new Error(parsed.error || `HTTP ${answer.statusCode}`), {
+            status: answer.statusCode, definitelyNotQueued: answer.statusCode < 500 });
+          resolve(parsed);
+        } catch (e) { reject(e); }
+      });
+    });
+    call.on("timeout", () => call.destroy(new Error("Studio did not acknowledge this request. Check its queue before retrying.")));
+    call.on("error", reject); call.end(payload);
+  });
+}
+const inspectAuditionSource = createAuditionSourceInspector({ library, outputDir: config.outputDir,
+  yueReady: yueStatus, minimaxReady: async () => !!(await models.status()).find(c => c.id === "engine")?.ready,
+  apiEnabled: () => !!config.api.enabled });
+const auditions = createAuditions({
+  dir: path.join(config.paths.appData, "music-auditions"), inspectSource: inspectAuditionSource,
+  listSources: async () => Promise.all((await library.list()).map(row => inspectAuditionSource(row.file).catch(e => ({ file: row.file, title: row.title, available: false, reason: e.message })))),
+  enqueueReplacement: (body, actor) => submitStudioJson("/api/replace", body, actor),
+  cancelJob: id => jobs.cancelById(id),
+  verifyCandidate: async take => !!take.sha256 && await audioHash(path.join(config.outputDir, take.file)).catch(() => null) === take.sha256,
+  async recordChoice(choice, actor) {
+    await prov.append("library", { type: "choice", actor, asset: choice.candidate,
+      data: { op: "chorus-audition-keep", ...choice } });
+    library.remember(choice.candidate, { audition: { sessionId: choice.sessionId, takeId: choice.takeId, chosenAt: Date.now() } });
+    await library.save();
+  },
+});
+const auditionRoutes = createAuditionRoutes({ store: auditions, json, readBody, actorFrom: prov.actorFrom });
+jobs.on("update", snap => { auditions.observe(snap).catch(e => console.error(`  [auditions] ${e.message}`)); });
+async function trackReplacement(job, replacing) {
+  if (replacing) await auditions.result(job.id, { state: "queued", source: job.extendedFrom,
+    requestedFrom: job.fromSeconds ?? job.resumeFrames / 25, requestedTo: job.replaceTo,
+    seed: job.seed, engine: job.engine || "minimax-music3" });
+  if (replacing) await auditions.observe(jobs.snapshot());
+}
 const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance: prov });
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
+const musicWorkflowRoutes = createMusicWorkflowRoutes({
+  config, engine: engineDoor, songToScore, json, readBody, provenance: prov,
+  submitGenerate: ({ request, actor }) => submitStudioJson("/api/generate", request, actor),
+  readJob: async id => {
+    const job = [jobs.current, ...jobs.queue, ...jobs.history].find(row => row?.id === id);
+    if (!job) return null;
+    const meta = job.file ? library.meta.get(job.file) : null;
+    const present = job.file ? await stat(path.join(config.outputDir, job.file)).then(s => s.isFile() && s.size > 0, () => false) : false;
+    return { id: job.id, status: job.state === "done" && !present ? "composing" : job.state,
+      file: present ? job.file : null, error: job.error || null,
+      durationSeconds: meta?.durationSeconds ?? job.audioSeconds ?? job.durationSeconds ?? null,
+      score: meta?.score || null };
+  },
+  capabilities: async () => {
+    const [python, native] = await Promise.allSettled([yueStatus(), ggufSetup.status()]);
+    return [{ id: "yue2", suppliedAbc: true, ready: python.status === "fulfilled" && !!python.value.installed,
+      reason: python.status === "fulfilled" ? (python.value.why || []).join(" ") || null : python.reason.message },
+    { id: "yue2-gguf", suppliedAbc: true, ready: native.status === "fulfilled" && !!native.value.ready,
+      reason: native.status === "fulfilled" ? native.value.message || null : native.reason.message }];
+  },
+});
 const collabPlanningRoutes = createCollabPlanningRoutes({
   json, readBody, appData: config.paths.appData,
   readProject: readMvProject,
   readPeers: () => collabRoster.roster({ appData: config.paths.appData }),
   actorFrom: prov.actorFrom,
+  resolveKitCue: musicWorkflowRoutes.resolveKitCue,
 });
 const imageEditor = createImageEditor({
   imageDir: IMAGE_DIR, inputDir: config.inputDir, python: config.python,
@@ -2277,6 +2340,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/score" || p.startsWith("/api/score/")) {
       if (await scoreRoutes(req, res, url)) return;
     }
+    if (await auditionRoutes(req, res, url)) return;
+    if (await musicWorkflowRoutes(req, res, url)) return;
     if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
       if (await vfxRoutes(req, res, url)) return;
     }
@@ -3494,7 +3559,7 @@ const server = http.createServer(async (req, res) => {
           } : {}),
         });
         return json(res, 200, {
-          job: jobs.snapshot().current ?? job, engine: "yue2",
+          job: jobReceipt(job), engine: "yue2",
           rung: coverCodes ? { id: coverFit.rung.id, label: coverFit.rung.label } : rung,
           ceiling: (coverCodes ? coverFit : chosen).ceiling,
           promoted: (coverCodes ? coverFit : chosen).promoted,
@@ -3685,7 +3750,7 @@ const server = http.createServer(async (req, res) => {
           ? Math.min(Math.max(Number(body.audioRefDenoise), 0.05), 1)
           : config.audioRef.denoise,
       });
-      return json(res, 200, { job: jobs.snapshot().current ?? job, engine: musicEngine });
+      return json(res, 200, { job: jobReceipt(job), engine: musicEngine });
     }
 
     /**
@@ -4970,7 +5035,8 @@ const server = http.createServer(async (req, res) => {
           extendFrom: yueDir, fromSeconds: fromSec, extendedFrom: file,
           replaceTo,
         });
-        return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", resumedFromSeconds: Math.round(fromSec) });
+        await trackReplacement(job, replacing);
+        return json(res, 200, { job: jobReceipt(job), engine: "yue2", resumedFromSeconds: Math.round(fromSec) });
       }
       /* ANY OTHER RECORDING, through the real-audio tokenizer. A track with
        * no trajectory and no run folder — an import, a MiniMax take from
@@ -5050,8 +5116,9 @@ const server = http.createServer(async (req, res) => {
            * finish never hands the ending back. */
           ...(Number.isFinite(replaceTo) ? { replaceTo } : {}),
         });
+        await trackReplacement(job, replacing);
         return json(res, 200, {
-          job: jobs.snapshot().current ?? job, engine: "yue2", resumedFromSeconds: Math.round(fromSec),
+          job: jobReceipt(job), engine: "yue2", resumedFromSeconds: Math.round(fromSec),
           tokenized: { frames: tok2.frames, seconds: tok2.seconds, device: tok2.device, cached: !!tok2.cached, timing: tok2.timing ?? null, stem: tokStem },
         });
       }
@@ -5100,8 +5167,9 @@ const server = http.createServer(async (req, res) => {
         resumeFrames,
         replaceTo,
       });
+      await trackReplacement(job, replacing);
       return json(res, 200, {
-        job: jobs.snapshot().current ?? job,
+        job: jobReceipt(job),
         resumedFromSeconds: Math.round(fromSec),
       });
     }

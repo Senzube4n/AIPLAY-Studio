@@ -112,7 +112,7 @@ def _xfade(a: np.ndarray, b: np.ndarray, n: int) -> np.ndarray:
     return np.concatenate([a[:, :-n], mid, b[:, n:]], axis=1)
 
 
-def apply(data: np.ndarray, sr: int, op: dict) -> np.ndarray:
+def apply(data: np.ndarray, sr: int, op: dict, reports: list | None = None) -> np.ndarray:
     kind = op.get("op")
 
     if kind == "trim":
@@ -178,10 +178,19 @@ def apply(data: np.ndarray, sr: int, op: dict) -> np.ndarray:
         frm = int(max(0.0, float(op.get("from", 0.0))) * sr)
         want = to - at
         seg = other[:, min(frm, other.shape[1]):min(frm + want + n, other.shape[1])]
+        if seg.shape[1] == 0:
+            raise ValueError("The new take contains no material after the selected start; no replacement was written.")
         if seg.shape[1] < want + n:
             sys.stderr.write(f"replace: the new material is {(want + n - seg.shape[1]) / sr:.2f} s short of the gap; the original returns early\n")
         head = _xfade(data[:, :at], seg, n)
-        return _xfade(head, data[:, max(0, to - n):], n)
+        result = _xfade(head, data[:, max(0, to - n):], n)
+        if reports is not None:
+            shortfall = max(0, data.shape[1] - result.shape[1]) / sr
+            reports.append({"op": "replace", "requestedFrom": at / sr,
+                            "requestedTo": to / sr, "effectiveTo": to / sr - shortfall,
+                            "shortfallSeconds": shortfall, "seconds": result.shape[1] / sr,
+                            "sourceSeconds": data.shape[1] / sr, "fadeSeconds": n / sr})
+        return result
 
     if kind == "fade":
         out = data.copy()
@@ -213,12 +222,16 @@ def apply(data: np.ndarray, sr: int, op: dict) -> np.ndarray:
 
 
 def main() -> int:
+    global SOURCE_BITS
     src, dst, ops_json = sys.argv[1], sys.argv[2], sys.argv[3]
     data, sr = load(src)
+    source_bits = SOURCE_BITS
+    reports = []
     for op in json.loads(ops_json):
-        data = apply(data, sr, op)
+        data = apply(data, sr, op, reports)
+    SOURCE_BITS = source_bits
     save(dst, data, sr)
-    print(json.dumps({"ok": True, "seconds": round(data.shape[1] / sr, 2), "rate": sr}))
+    print(json.dumps({"ok": True, "seconds": round(data.shape[1] / sr, 2), "rate": sr, "reports": reports}))
     return 0
 
 

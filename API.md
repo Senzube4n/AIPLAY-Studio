@@ -683,6 +683,45 @@ non-browser caller must send `x-aiplay-actor`.
 
 ## The MCP server over this
 
+### Music workflows
+
+`GET /api/music-auditions` lists saved sessions and source eligibility. Use
+`?id=SESSION`, `?source=FILENAME`, or `?jobId=JOB` for one record. POST actions
+`create`, `status`, `keep`, `cancel`, `discard` use the same persistent store.
+Creation takes `source`, `fromSeconds`, `toSeconds`, `count` (2 or 3), optional
+distinct `seeds`, prompt/lyric/score overrides and `contextSeconds`. Keep requires
+`id`, current `revision`, `takeId`, and `acknowledgeShort:true` when measured
+generation is short. Ready means a composed file is on disk; raw completion is
+not ready. Cancellation affects only that session's exact job IDs.
+
+`GET /api/music-kits` lists kits; `?id=KIT` reads one. POST actions are `create`,
+`get`, `list`, `update`, `preview_variant`, `save_variant`, `prepare`, `render`,
+`refresh_job`. Create freezes either `abc` or `sourceScore:{slug,version}`, plus
+style/lyrics/seed/backend/precision. Variants have `keep_melody`, `keep_score` or
+`revise` mode and opening/tension/closing role. Prepare persists the exact render
+request without queueing it. Render requires `id`, `expectedRevision`,
+`preparedId` and `idempotencyKey`; repeated keys never resubmit. A lost queue
+acknowledgement is reported as uncertain rather than automatically retried.
+`collab_plan` action `set_music_cue` links `{kitId,variantId,variantHash}` to an
+episode or scene using the plan's `expectedRevision`. This is a local plan link.
+
+`POST /api/music-references` actions `capabilities`, `list`, `prepare`, `get`,
+`analyze_visual`, `transcribe`, `update_brief`, `update_score`, `prepare_request`
+produce a reviewed music draft. Prepare takes a local library `file`, `kind`
+(`audio` or `video`), `startSeconds`, `seconds` (up to 120), and `maxFrames`
+(up to six). Sources are bounded to 512 MiB; remote URLs are not accepted.
+Subsequent edits require `referenceId` and `expectedRevision`. Poll `get` after
+asynchronous preparation or model analysis. `preview:true` includes the contact
+sheet. `prepare_request` requires `reviewed:true`; returns an HTTP generation
+request and its equivalent typed `make_song` arguments, but submits neither.
+Vision analysis uses an installed Qwen3-VL through the engine door; transcription
+uses SheetSage2. A score requires Python YuE2 or native GGUF, while a brief-only
+request can also use ComfyUI. Native GGUF currently requires lyrics.
+
+Source evidence, suggestions and edited briefs remain separate. This is not
+native YuE2 multimodal input or guaranteed audiovisual synchronization. See
+[workflow status and limits](docs/YUE2_NEXT_WORKFLOWS.md).
+
 `server/mcp.js` exposes typed tools over these same handlers. See the
 [MCP workflow map](docs/MCP_WORKFLOWS.md) for editor candidate review, Qwen
 references/alpha, Reactive profiles and source timing, training regions, and

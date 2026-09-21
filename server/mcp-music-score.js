@@ -2119,6 +2119,7 @@ export function scoreTools(api) {
            * guarantees it is not empty. */
           caption: v.style,
           lyrics: v.lyrics || "",
+          cot: v.cot === "melody" ? "melody" : "full",
           abc: abcOf(v, a.score),
           /* The score is finished notation, so it is CLOSED: `abcOpen` is left
            * absent, which is what makes the planner sit out entirely rather

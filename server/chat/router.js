@@ -147,6 +147,23 @@ export const ROUTABLE = {
   replace_section: "gpu",
   get_beats: null,
   music_plan: null, // arithmetic/ABC validation only; never saves or generates audio
+  music_auditions: null,
+  music_audition_create: "gpu",
+  music_audition_status: null,
+  music_audition_keep: null,
+  music_audition_cancel: null,
+  music_audition_discard: null,
+  music_kit: null,
+  music_kit_render: "gpu",
+  music_reference_capabilities: null,
+  music_reference_list: null,
+  music_reference_prepare: "writes",
+  music_reference_status: null,
+  music_reference_analyze_visual: "gpu",
+  music_reference_transcribe: "gpu",
+  music_reference_update_brief: null,
+  music_reference_update_score: null,
+  music_reference_prepare_request: null,
 
   /* finishing a take that already exists — see server/mcp-audio.js
    *
@@ -582,6 +599,7 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 // silently dropped. External MCP clients still use the original typed schema.
 const JSON_ARGUMENT_TOOLS = new Set([
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
+  "music_kit", "music_audition_create", "music_reference_update_brief",
 ]);
 
 export function callableShape(schema) {

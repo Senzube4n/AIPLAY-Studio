@@ -72,7 +72,34 @@ order creates a proposed plan; plan approval and rendering remain separate.
 Packing and sending back create local sealed files and open no network connection.
 Adoption files an unselected take; it does not replace the current scene choice.
 
-## Boundaries
+## Music workflows
+
+- `music_auditions` lists eligible sources. `music_audition_create` queues two
+  or three replacements; poll `music_audition_status` until the composed take is
+  ready. Audition both seams before the user's explicit `music_audition_keep`.
+  A short take requires `acknowledge_short:true`. Cancel only this session with
+  `music_audition_cancel`; `music_audition_discard` dismisses review without
+  deleting audio. Saved Python YuE2 runs/local MiniMax trajectories are required.
+- `music_kit` saves a theme and immutable cue variants, compares notation and
+  prepares a request. `music_kit_render` alone submits that reviewed request;
+  use the returned exact job ID and `refresh_job` to follow it. Reuse an
+  idempotency key only for retrying the same request. `collab_plan` action
+  `set_music_cue` attaches a variant to an episode or scene locally.
+- `music_reference_prepare` makes bounded CPU evidence from a library recording
+  or clip. Poll `music_reference_status`; `music_reference_analyze_visual` and
+  `music_reference_transcribe` are separate optional GPU actions. Save reviewed
+  text with `music_reference_update_brief`, correct ABC with
+  `music_reference_update_score`, then call `music_reference_prepare_request`.
+  Use its `makeSongArguments` with `make_song` only when a music render is wanted.
+  `music_reference_list` and `music_reference_capabilities` discover saved work
+  and installed support. No automatic downloads or cloud calls occur.
+
+These typed tools share the browser's records and revision checks. In local
+chat, nested kit/source/brief arguments are JSON strings and render tools remain
+separate from planning. Reference evidence is guidance for a new performance;
+it does not establish singer identity, exact hit timing or waveform preservation.
+
+## General boundaries
 
 The general API fallback allows GET/POST/PUT/DELETE, JSON objects up to 2 MiB and
 local `/api/` paths only. It provides no custom headers or external URL requests.

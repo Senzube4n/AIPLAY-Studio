@@ -346,8 +346,12 @@ function collabControlTools(api, safeName) {
       name: "collab_plan",
       description: "Read or update the local episode collaboration plan. get returns the current revision, notes, shot stages/owners/reviews/pins/dependencies and peer resource snapshots. Every write needs that expectedRevision; stale writes fail. preview_allocation computes without saving; allocate saves draft equal, capability-aware or measured-time assignments, preserving pinned owners; apply_draft records planned owners locally. These are plans, not deliveries, peer acceptance, remote availability or render commands. Use collab_preview and collab_pack for reviewed bundles.",
       inputSchema: { type: "object", required: ["action", "slug"], properties: {
-        action: { type: "string", enum: ["get", "update_episode", "update_shot", "preview_allocation", "allocate", "apply_draft"] }, slug: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 },
-        notes: { type: "string", maxLength: 8000 }, segmentId: { type: "string" }, stage: { type: "string", enum: ["storyboard", "ready", "assigned", "review", "approved"] },
+        action: { type: "string", enum: ["get", "update_episode", "update_shot", "preview_allocation", "allocate", "apply_draft", "set_music_cue"] }, slug: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 },
+        slot: { type: "string", enum: ["opening", "tension", "closing"] },
+        musicKit: { type: ["object", "null"], additionalProperties: false, required: ["kitId", "variantId"], properties: {
+          kitId: { type: "string" }, variantId: { type: "string" }, variantHash: { type: "string" },
+        }, description: "set_music_cue: exact saved kit variant; null removes the local cue. Omit segmentId for the episode." },
+        notes: { type: "string", maxLength: 8000 }, segmentId: { type: ["string", "null"] }, stage: { type: "string", enum: ["storyboard", "ready", "assigned", "review", "approved"] },
         owner: { type: ["string", "null"], description: "self, a peer fingerprint, or null." }, reviewNote: { type: "string", maxLength: 4000 }, pinned: { type: "boolean" }, dependsOn: { type: ["string", "null"] },
         segmentIds: { type: "array", items: { type: "string" } }, peerIds: { type: "array", items: { type: "string" } }, policy: { type: "string", enum: ["equal", "capability", "time"] },
         capability: { type: "string" }, minVramMb: { type: "number", minimum: 0 }, minutesPerTenSeconds: { type: "object", additionalProperties: { type: "number", exclusiveMinimum: 0, maximum: 600 }, description: "Measured minutes per ten seconds of output, keyed by peer fingerprint. Required for time policy; estimates are only as sound as the supplied measurements." },
@@ -357,6 +361,7 @@ function collabControlTools(api, safeName) {
         if (a.action === "get") return await api("GET", `/api/collab/plan?slug=${encodeURIComponent(slug)}`);
         return await api("POST", "/api/collab/plan", { action: a.action, slug, expectedRevision: a.expectedRevision,
           notes: a.notes, segmentId: a.segmentId, stage: a.stage, owner: a.owner, reviewNote: a.reviewNote, pinned: a.pinned, dependsOn: a.dependsOn,
+          slot: a.slot, musicKit: a.musicKit,
           segmentIds: a.segmentIds, peerIds: a.peerIds, policy: a.policy, capability: a.capability, minVramMb: a.minVramMb, minutesPerTenSeconds: a.minutesPerTenSeconds,
         });
       },

@@ -265,7 +265,8 @@ await test("browser native spec excludes legacy duration/reference knobs; MCP us
   const mcp = text("./mcp.js"), makeSong = mcp.slice(mcp.indexOf('name: "make_song"'), mcp.indexOf('name: "wait_for_song"'));
   assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf", "ace-step15"\]/);
   assert.match(makeSong, /api\("POST", "\/api\/generate"/);
-  assert.match(makeSong, /const mine = r\.engine === "yue2-gguf" \? r\.job/);
+  assert.match(makeSong, /const mine = r\.job;/);
+  assert.doesNotMatch(makeSong, /st\.queue\[st\.queue\.length - 1\]/);
 });
 
 await test("actual browser currentSpec + generate send only helper-compatible native bodies", async () => {
@@ -378,7 +379,9 @@ await test("MCP polling timeout names only the requested job and never invents a
   const src = text("./mcp.js"), start = src.indexOf("async function waitForSong("), end = src.indexOf("async function waitForArt(", start);
   let status, reads = 0, now = 0;
   const wait = runInNewContext(`${src.slice(start, end)}; waitForSong`, {
-    api: async (method, endpoint) => { assert.equal(method, "GET"); assert.equal(endpoint, "/api/status"); reads++; return status; },
+    api: async (method, endpoint) => { assert.equal(method, "GET");
+      if (endpoint.startsWith("/api/music-auditions?jobId=")) return { result: null };
+      assert.equal(endpoint, "/api/status"); reads++; return status; },
     Date: { now: () => (now += 10) }, sleep: async () => {},
   }, { timeout: 1000 });
   for (const eta of [null, undefined, NaN, Infinity, -1, "10"]) {
