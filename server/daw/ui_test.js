@@ -743,9 +743,25 @@ console.log("\n  -- three keymap profiles over one action table --");
   ok(`${actions.length} gestures are bindable`, actions.length >= 12, actions.join(", "));
 
   const profiles = [...maps[1].matchAll(/^\s{2}([a-z]+):\s*\{/gm)].map((m) => m[1]);
-  ok("the three profiles are live, fl and cubase",
-    JSON.stringify(profiles) === JSON.stringify(["live", "fl", "cubase"]), profiles.join(", "));
+  /* ⚠ STILL AN ORDERED EQUALITY, NOT "any three". The point of this pin is that
+   * a profile cannot be silently added or dropped; loosening it while renaming
+   * would have quietly thrown that away. The names changed because the old ones
+   * were three other companies' products — see NOTICE, TRADEMARKS. */
+  ok("the three profiles are ctrl, fkeys and numeric",
+    JSON.stringify(profiles) === JSON.stringify(["ctrl", "fkeys", "numeric"]), profiles.join(", "));
 
+  /* One spot-check per profile, on the binding that most distinguishes it.
+   * Named by the GESTURE rather than by another company's product — see
+   * NOTICE, TRADEMARKS — which is also what the check is really about. */
+  const SPOT = {
+    ctrl: { says: "the Ctrl profile plays on Space and draws with B",
+            test: (k) => k.play_stop === "Space" && k.draw === "B" },
+    fkeys: { says: "the function-key profile records on R and draws with P",
+             test: (k) => k.record === "R" && k.draw === "P" },
+    numeric: { says: "the number-tool profile quantizes on Q and splits on 3",
+               test: (k) => k.quantize === "Q" && k.split === "3" },
+  };
+  const spotted = [];
   for (const p of profiles) {
     const block = maps[1].match(new RegExp(`${p}:\\s*\\{[\\s\\S]*?keys:\\s*\\{([\\s\\S]*?)\\},`));
     const keys = Object.fromEntries([...block[1].matchAll(/([a-z_]+):\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]));
@@ -758,10 +774,24 @@ console.log("\n  -- three keymap profiles over one action table --");
       seen.set(k, a);
     }
     ok(`the ${p} profile has no two gestures on one key`, clashes.length === 0, clashes.join("; "));
-    if (p === "live") ok("Live's play/stop is Space and draw is B", keys.play_stop === "Space" && keys.draw === "B");
-    if (p === "fl") ok("FL's record is R and draw is P", keys.record === "R" && keys.draw === "P");
-    if (p === "cubase") ok("Cubase's quantize is Q and split is 3", keys.quantize === "Q" && keys.split === "3");
+    /* ⚠ A TABLE, NOT THREE `if (p === "...")` GUARDS. Those were written
+     * against the old profile names, and when the names changed the guards
+     * simply stopped matching: no failure, no message, three assertions gone
+     * and a pass count three lower than the day before. A check that quietly
+     * stops checking is the exact thing this suite exists to prevent.
+     *
+     * Driven off the table below, and the pin after the loop asserts every
+     * profile in KEYMAPS has a row — so the next rename fails loudly, naming
+     * the profile nobody is spot-checking any more. */
+    const spot = SPOT[p];
+    if (spot) { spotted.push(p); ok(spot.says, spot.test(keys)); }
   }
+  /* ⚠ THE PIN THAT MAKES THE NEXT RENAME LOUD. Without it, a profile with no
+   * row in SPOT is simply not spot-checked and nothing says so — which is how
+   * three of these went missing in the first place. */
+  ok("every profile has a spot-check, so a rename cannot quietly drop one",
+    JSON.stringify(spotted) === JSON.stringify(profiles),
+    `checked ${spotted.join(", ") || "none"} of ${profiles.join(", ")}`);
 
   ok("the active binding is written into tooltips (a profile you can see)",
     /const TIP_BINDINGS = \[/.test(JS) && /el\.title = `\$\{base\} — \$\{binding\(act\)/.test(JS));

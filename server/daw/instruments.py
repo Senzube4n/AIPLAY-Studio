@@ -34,7 +34,12 @@ WHAT LIVES HERE
                 C++-only API. FluidSynth renders real notes here TODAY.
       sfz       an in-house SFZ-subset voice for the CC0/CC-BY packs that have
                 no SF2 edition (Karoryfer, VSCO2 CE, AVL). Opcode subset is
-                documented at parse_sfz(); unknown opcodes are ignored.
+                documented at parse_sfz(); unknown opcodes are ignored. A
+                region that names no pitch_keycenter is resolved against its
+                own SAMPLE FILE NAME and the format's default of 60, never
+                against the note being played -- _sfz_keycenter carries the
+                measurement that forced that, and keycenter_audit reports
+                every region we still cannot tune.
                 A `builtin` row whose name is a drums.py machine (tr808,
                 tr909, tr808_bass, hybrid_kick) or a synths.py synth
                 (bigroom_lead, sub_bass, riser, impact) is the fourth real
@@ -66,6 +71,7 @@ DETERMINISM (pinned by instruments_test.py)
 
 CLI (the test/bounce surface; engine.py serve stays the render path):
   python instruments.py probe                      what is installed
+  python instruments.py keycenters                 which sfz regions we can tune
   python instruments.py note   <job.json>          one voice → raw .f32
   python instruments.py encode <job.json>          region wavs → one FLAC
 """
@@ -75,6 +81,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 
 import numpy as np
@@ -536,9 +543,6 @@ def parse_sfz(path, _depth=0):
     return regions, control
 
 
-_NOTE_RE = None
-
-
 def _sfz_key(v):
     """An sfz key value: a MIDI number or a note name like c#4 / db3."""
     s = str(v).strip().lower()
@@ -555,6 +559,263 @@ def _sfz_key(v):
         semitone += 1 if rest[0] == "#" else -1
         rest = rest[1:]
     return (int(rest) + 1) * 12 + semitone           # c4 = 60 (sfz convention)
+
+
+# ── THE KEYCENTER OF A REGION THAT DECLARES NONE ──────────────────────────
+#
+# THE BUG THIS CLOSES (measured 2026-09-21 across every installed pack): the
+# keycenter used to fall back to `midi`, the note being PLAYED, so `semis`
+# came out 0 and the sample sounded UNTRANSPOSED at every key in its range.
+# The sfz format's default is 60, not the played note, so ours was simply
+# wrong against the format -- and wrong in silence, because at the one key
+# that happens to equal the true keycenter the render IS correct, and that is
+# exactly the key the 2026-08-27 in-tune test probed (growlybass 60: pass;
+# growlybass 59 and 61, the same region and the same sample: 100 cents out).
+#
+# 302 of the 9,248 regions across the twenty installed mappings declare no
+# keycenter, and every one of them spans more than one key. BUT CHANGING THE
+# DEFAULT TO 60 IS NOT THE FIX, because those 302 are two different mistakes:
+#
+#   meatbass + growlybass (286 regions). Every one points at a sample named
+#   c4_*, and 60 is exactly what the author meant. Three proofs, all inside
+#   the packs themselves: in arco_looped_three_map.sfz the declared groups
+#   come in triples at keycenter-9..-7, -5..-3 and -1..+1, and the only
+#   groups with no keycenter at all are 51-53, 55-57 and 59-61 -- precisely
+#   the triple a keycenter of 60 generates, sitting between the declared 57
+#   and 63; in arco_looped_six_map.sfz every other sample stem (a0, eb1,
+#   gb2 ...) declares its keycenter and the c4 ones alone omit it; and the
+#   file name says c4 = 60 as well. The author leaned on the format default.
+#
+#   epianos/Pianet T (16 regions). Their samples are named 29_F1_release,
+#   33_A1_release, 37_C#2_release ... and each region covers the keys around
+#   its OWN sample's pitch. A default of 60 would pitch the F1 release sample
+#   down 31 semitones. Here the FILE NAME is right and the default would be a
+#   catastrophe -- and the pack disagrees with itself in a way only the file
+#   name survives: the attack region over 51-54 declares keycenter 52 while
+#   the release sample stretched across those same keys is named 53.
+#
+# So the file name is consulted FIRST and 60 second, and NEITHER is trusted
+# without corroboration:
+#
+#   the file name's note, read with this FILE's own octave convention
+#     (measured, not assumed -- see _sfz_name_offset: the four VSCO2 CE packs
+#     really do name their samples an octave below the keycenter they
+#     declare), accepted when it lands inside the region's own [lokey, hikey]
+#     -- a region covering its own sample's pitch is the corroboration --
+#     or when it agrees with the format's default of 60, which is what the
+#     wide meatbass windows need (51-53 holding a c4 sample: the sample's own
+#     pitch is outside the keys it is stretched across, so the range cannot
+#     corroborate anything, but two independent sources both saying 60 can);
+#   then 60 alone, when 60 lands inside the region's own range;
+#   then NOTHING. The old untransposed behaviour is kept byte-for-byte and
+#     _keycenter_warn says so on stderr and through probe_extra, because a
+#     silent wrong pitch is the entire reason this block exists.
+
+_SFZ_DEFAULT_KEYCENTER = 60          # the FORMAT's default, not ours
+
+_NOTE_SEMIS = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
+# A note name inside a FILE name: c4, f#3, bb2, A#5, cs2. Bounded on the left
+# by a non-alphanumeric so `rr1`, `vl3` and `_v2` cannot look like notes, and
+# on the right so `c12` reads as one octave number rather than c1 then a 2.
+_SAMPLE_NOTE_RE = re.compile(r"(?<![a-z0-9])([a-g])(#|b|s)?(-?\d{1,2})(?![0-9])")
+
+
+def _sample_note(sample):
+    """The note a sample's FILE NAME claims, as a MIDI number under the sfz
+    note convention (c4 = 60), or None.
+
+    EXACTLY ONE note-looking token must be present. `c4_pp_rr1.wav` has one,
+    `a0_vl1_down.wav` has one, `..\\Samples\\arco\\c4_vl3_up.wav` has one --
+    and a name carrying two is ambiguous, which is worth nothing, so it is
+    refused rather than guessed at."""
+    base = os.path.basename(str(sample).replace("\\", "/")).lower()
+    base = os.path.splitext(base)[0]
+    found = _SAMPLE_NOTE_RE.findall(base)
+    if len(found) != 1:
+        return None
+    letter, accidental, octave = found[0]
+    semis = _NOTE_SEMIS[letter]
+    if accidental in ("#", "s"):
+        semis += 1
+    elif accidental == "b":
+        semis -= 1
+    return (int(octave) + 1) * 12 + semis
+
+
+def _declared_keycenter(r):
+    """The keycenter a region DECLARES -- pitch_keycenter, else key. None when
+    it declares neither, and also when it declares something unreadable,
+    because a keycenter we cannot parse is a keycenter we do not have."""
+    v = r.get("pitch_keycenter", r.get("key"))
+    if v is None:
+        return None
+    try:
+        return _sfz_key(v)
+    except ValueError:
+        return None
+
+
+_name_offset_cache = {}
+
+
+def _sfz_name_offset(path):
+    """→ (offset, votes, agreeing, calibrated): how far THIS FILE's sample
+    names sit from the sfz note convention, MEASURED against its own regions
+    that declare a keycenter rather than assumed. `calibrated` is False when
+    the file did not say enough for the offset to be a measurement -- the
+    offset is then 0, the note name read literally, and _sfz_keycenter asks
+    for more corroboration before it believes one.
+
+    Measured 2026-09-21 over the twenty installed mappings: every one votes
+    unanimously, sixteen of them for 0 and the four VSCO2 CE packs for +12 --
+    their samples really are named an octave below the keycenter they declare.
+    Hard-coding c4 = 60 for file names would have mistuned a VSCO2 pack by an
+    octave the day one of them shipped a region without a keycenter, and
+    nothing else here would have noticed.
+
+    The offset is adopted only when at least eight regions voted, at least two
+    thirds of them agree, and the winner is a whole number of octaves.
+    Anything else is a pack we have not understood, and reading the name
+    literally (0) behind the corroboration in _sfz_keycenter is safer than
+    adopting a number we cannot explain."""
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return 0, 0, 0, False
+    hit = _name_offset_cache.get(key)
+    if hit is not None:
+        return hit
+    try:
+        regions, _control = parse_sfz(path)
+    except (OSError, ValueError):
+        return 0, 0, 0, False
+    votes = {}
+    for r in regions:
+        kc = _declared_keycenter(r)
+        named = _sample_note(r.get("sample", ""))
+        if kc is None or named is None:
+            continue
+        votes[kc - named] = votes.get(kc - named, 0) + 1
+    total = sum(votes.values())
+    best, agree = 0, 0
+    if votes:
+        # Ties break on the SMALLEST offset, so the answer can never depend on
+        # dict order -- a split file falls back to reading the name literally.
+        best, agree = max(votes.items(), key=lambda kv: (kv[1], -abs(kv[0]), -kv[0]))
+    calibrated = bool(total >= 8 and agree * 3 >= total * 2 and best % 12 == 0)
+    if not calibrated:
+        best = 0
+    out = (best, total, agree, calibrated)
+    _name_offset_cache[key] = out
+    return out
+
+
+def _sfz_keycenter(r, lo, hi, sfz_path):
+    """→ (keycenter, source) for one region. A keycenter of None means
+    UNRESOLVED: the caller keeps the old untransposed behaviour and warns.
+    `source` is declared / filename / filename+default / default / unresolved,
+    and it is what keycenter_audit counts."""
+    kc = _declared_keycenter(r)
+    if kc is not None:
+        return kc, "declared"
+    offset, _votes, _agree, calibrated = _sfz_name_offset(sfz_path)
+    named = _sample_note(r.get("sample", ""))
+    if named is not None:
+        named += offset
+        if lo <= named <= hi:
+            # The region covering the pitch its own sample is named for IS the
+            # corroboration, and it holds whether or not the octave calibrated:
+            # a mis-read octave would have to land inside the range by accident.
+            return named, "filename"
+        if named == _SFZ_DEFAULT_KEYCENTER and calibrated:
+            # No range to lean on, so the second opinion has to be the format's
+            # default -- and that is only a SECOND opinion if this file voted on
+            # what octave its names are in. Uncalibrated, "the name says 60" and
+            # "the format says 60" are one opinion counted twice: a c4 sample in
+            # a pack that names an octave low is 72, not 60.
+            return named, "filename+default"
+    if lo <= _SFZ_DEFAULT_KEYCENTER <= hi:
+        return _SFZ_DEFAULT_KEYCENTER, "default"
+    return None, "unresolved"
+
+
+_keycenter_unresolved = {}
+
+
+def _keycenter_warn(sfz_path, r, lo, hi):
+    """Say it ONCE per region, on stderr and into a table probe_extra reports.
+    Neither touches the buffer: an unresolved region renders exactly the bytes
+    it rendered before this block existed, it just stops doing it silently."""
+    key = (sfz_path, str(r.get("sample", "")), int(lo), int(hi))
+    if key in _keycenter_unresolved:
+        return
+    msg = (f"{os.path.basename(sfz_path)}: region lokey={lo} hikey={hi} "
+           f"sample={r.get('sample')!r} declares no pitch_keycenter, its file "
+           f"name names no note inside that range, and the sfz default of 60 "
+           f"is outside it too -- playing it UNTRANSPOSED at every key. Its "
+           f"pitch is a guess; declare pitch_keycenter in the mapping.")
+    _keycenter_unresolved[key] = msg
+    print("instruments.py: " + msg, file=sys.stderr)
+
+
+def keycenter_audit(instruments_dir=None):
+    """Where every installed sfz mapping's keycenters come from, counted per
+    patch, plus the regions we cannot tune at all.
+
+    THE POINT IS VISIBILITY. A wrong pitch is inaudible to every other check
+    in this module -- it is a real sample at a real level and a legal length,
+    and only its FREQUENCY is wrong -- so the one number that matters, how
+    many regions have no defensible keycenter, is reported whether or not
+    anybody renders them. A patch whose regions ALL declare is left out
+    entirely, so an entry appearing here is itself the finding.
+
+    Cost, measured on this box: 0.178 s cold over all twenty installed
+    mappings and 9,248 regions (0.174 s of it parsing) and 0.037 s warm. It
+    takes `instruments.py probe` from 0.98-1.03 s to 1.16-1.24 s, on
+    a probe whose first 1.15 s is python and numpy starting. parse_sfz is
+    memoised per (path, mtime), so a serve process pays it once and the
+    renders that follow read that very same parse."""
+    instruments_dir = instruments_dir or default_instruments_dir()
+    totals = {"declared": 0, "filename": 0, "filename+default": 0,
+              "default": 0, "unresolved": 0}
+    patches = {}
+    for pid, row in sorted(manifest()["patches"].items()):
+        if row.get("kind") != "sfz" or not row.get("file"):
+            continue
+        path = os.path.join(instruments_dir, *row["file"].split("/"))
+        if not os.path.isfile(path):
+            continue
+        try:
+            regions, _control = parse_sfz(path)
+        except (OSError, ValueError) as exc:
+            patches[pid] = {"error": f"{type(exc).__name__}: {exc}"}
+            continue
+        counts = dict.fromkeys(totals, 0)
+        unresolved = []
+        for r in regions:
+            rk = r.get("key")
+            try:
+                lo = _sfz_key(r.get("lokey", rk if rk is not None else 0))
+                hi = _sfz_key(r.get("hikey", rk if rk is not None else 127))
+            except ValueError:
+                continue
+            kc, source = _sfz_keycenter(r, lo, hi, path)
+            counts[source] += 1
+            totals[source] += 1
+            if kc is None and len(unresolved) < 8:
+                unresolved.append({"lokey": lo, "hikey": hi,
+                                   "sample": r.get("sample"),
+                                   "trigger": r.get("trigger", "attack")})
+        if counts["declared"] == sum(counts.values()):
+            continue                   # a clean mapping has nothing to report
+        offset, votes, agree, calibrated = _sfz_name_offset(path)
+        entry = {"file": row["file"], "regions": len(regions), "sources": counts,
+                 "name_octave_offset": offset, "offset_votes": [agree, votes],
+                 "offset_calibrated": calibrated}
+        if unresolved:
+            entry["unresolved"] = unresolved
+        patches[pid] = entry
+    return {"totals": totals, "patches": patches}
 
 
 def _load_sample(path, sr):
@@ -695,7 +956,19 @@ def _sfz_voice(row, midi, vel, dur, sr, params, instruments_dir, rng):
             # LOUD, not mute: a region that cannot load is a broken install,
             # and a silently-thinner mix is the worst way to learn that.
             raise RuntimeError(f"{row['id']}: sample failed to load: {spath} ({exc})") from exc
-        keycenter = _sfz_key(r.get("pitch_keycenter", r.get("key", midi)))
+        # The region's OWN range is what corroborates a keycenter read off
+        # the sample's file name, so it is recomputed here rather than
+        # carried down from the candidate loop above.
+        r_key = r.get("key")
+        r_lo = _sfz_key(r.get("lokey", r_key if r_key is not None else 0))
+        r_hi = _sfz_key(r.get("hikey", r_key if r_key is not None else 127))
+        keycenter, _source = _sfz_keycenter(r, r_lo, r_hi, sfz_path)
+        if keycenter is None:
+            # Nothing corroborated it: keep the OLD behaviour exactly (semis 0
+            # before transpose and tune) and make the guess audible in the log
+            # and in probe_extra instead of letting it pass for a choice.
+            _keycenter_warn(sfz_path, r, r_lo, r_hi)
+            keycenter = midi
         semis = (midi - keycenter) + float(r.get("transpose", 0)) + float(r.get("tune", 0)) / 100.0
         ratio = 2.0 ** (semis / 12.0)
         offset = int(float(r.get("offset", 0)))
@@ -896,6 +1169,9 @@ def probe_extra(job=None):
         "patches_installed": installed_state(instruments_dir),
         "instruments_dir": instruments_dir,
         "sampler_backend": "fluidsynth+sfz-subset",
+        # Only the mappings with something to answer for appear here (see
+        # keycenter_audit): an entry IS the finding.
+        "sfz_keycenters": keycenter_audit(instruments_dir),
     }
 
 
@@ -996,10 +1272,14 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         if not argv:
-            raise ValueError("usage: instruments.py <probe|note|encode> [job.json]")
+            raise ValueError("usage: instruments.py "
+                             "<probe|keycenters|note|encode> [job.json]")
         mode = argv[0]
         if mode == "probe":
             print(json.dumps({"ok": True, **probe_extra()}))
+            return 0
+        if mode == "keycenters":
+            print(json.dumps({"ok": True, **keycenter_audit()}, indent=1))
             return 0
         with open(argv[1], encoding="utf-8") as fh:
             job = json.load(fh)

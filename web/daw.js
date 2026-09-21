@@ -129,6 +129,11 @@ const S = {
    * lastPitch gates a drag to real pitch changes, cache holds decoded wavs. */
   aud: { on: true, seq: 0, node: null, at: 0, lastPitch: null, cache: new Map() },
   mixNarrow: false,              // compact mixer strips
+  /* WHERE THE PANELS ARE — the project's own `view`, exactly as the server
+   * normalised it. Not a browser preference: it arrives with the document and
+   * an agent can move it (daw_layout), so this mirrors the server rather than
+   * deciding anything. `viewApplied` below is what is on screen. */
+  view: null,
   // playback
   ctx: null, master: null, analyser: null, anaBuf: null,
   playing: false,
@@ -153,7 +158,7 @@ const S = {
   // undo/redo: inverse operations through the SAME actions, both ways
   undo: [],
   redo: [],
-  keymap: "live",
+  keymap: "ctrl",
   ws: null,
   // the analysis pane's own state (see THE ANALYSIS DISPLAYS below)
   ana: { tab: "chain", live: true, spec: null, hold: null, loud: null,
@@ -452,9 +457,27 @@ const KM_ACTIONS = {
   render:     { label: "Render dirty regions",   run: () => renderAndSwap() },
 };
 
+/* ⚠ BOTH THE KEYS AND THE LABELS WERE THREE OTHER COMPANIES' PRODUCTS.
+ *
+ * A mark used as the NAME OF A THING WE SHIP is a different matter from the
+ * nominative "Photoshop's ctrl-click" in a tooltip: that one describes a gesture
+ * so a reader recognises ours, and it stays (see NOTICE, TRADEMARKS). These were
+ * the first kind, in both the label a person reads and the identifier in the
+ * source, so both changed.
+ *
+ * Each name now says what actually DIFFERS between the profiles, which turns out
+ * to be more useful than a brand was — somebody hunting for the idiom their
+ * fingers know can still press the ⌨ button beside the picker, which has always
+ * shown the whole map.
+ *
+ * ⚠ THE RENAME IS ONLY FREE BECAUSE OF THE MIGRATION. The choice lives in
+ * localStorage and nowhere else — no saved project carries it — but applyKeymap()
+ * falls back to the default for a name it does not know, so without the KM_RENAMED
+ * map at the read site anybody who had chosen a profile would be moved quietly
+ * back to the first one. */
 const KEYMAPS = {
-  live: {
-    label: "Ableton Live",
+  ctrl: {
+    label: "Ctrl edits",                    // Ctrl+D duplicate, Ctrl+E split
     keys: {
       play_stop: "Space", stop: "Shift+Space", record: "F9", loop: "Ctrl+L",
       duplicate: "Ctrl+D", del: "Delete", quantize: "Ctrl+U", undo: "Ctrl+Z",
@@ -465,8 +488,8 @@ const KEYMAPS = {
       loop_sel: "Ctrl+Shift+L",
     },
   },
-  fl: {
-    label: "FL Studio",
+  fkeys: {
+    label: "Function keys",                 // F9 mixer, F8 browser, R record
     keys: {
       play_stop: "Space", stop: "Shift+Space", record: "R", loop: "L",
       duplicate: "Ctrl+B", del: "Delete", quantize: "Alt+Q", undo: "Ctrl+Z",
@@ -477,8 +500,8 @@ const KEYMAPS = {
       loop_sel: "Ctrl+Shift+L",
     },
   },
-  cubase: {
-    label: "Cubase",
+  numeric: {
+    label: "Number tools",                  // 8 draw, 1 select, 5 erase, 3 split
     keys: {
       play_stop: "Space", stop: "Shift+Space", record: "*", loop: "/",
       duplicate: "Ctrl+D", del: "Delete", quantize: "Q", undo: "Ctrl+Z",
@@ -531,7 +554,7 @@ const TIP_BINDINGS = [
   ["azFit", "zoom_fit", "fit the whole song to the window"],
 ];
 function applyKeymap(name) {
-  S.keymap = KEYMAPS[name] ? name : "live";
+  S.keymap = KEYMAPS[name] ? name : "ctrl";
   try { localStorage.setItem("daw.keymap", S.keymap); } catch { /* private mode */ }
   $("kmSel").value = S.keymap;
   for (const [id, act, base] of TIP_BINDINGS) {
@@ -614,8 +637,17 @@ function onRemoteChange(m) {
     try {
       await refreshDoc(session);
       if (!sessionCurrent(session)) return;
-      await renderAndSwap(undefined, undefined, undefined, session);
-      if (!sessionCurrent(session)) return;
+      /* ⚠ A MOVED PANEL IS NOT A RENDER. set_view dirties no region, so this
+       * render would be a total cache hit — no wav fetched, no DSP — but it
+       * still costs a round trip and still flashes "re-rendering…" in the CPU
+       * readout, which is a lie about what the other window just did. The
+       * re-read above is the whole of the work: refreshDoc() applies the view.
+       * Every other action falls through to the render as before, because any
+       * of them CAN have dirtied something. */
+      if (m.action !== "set_view") {
+        await renderAndSwap(undefined, undefined, undefined, session);
+        if (!sessionCurrent(session)) return;
+      }
       if (m.by === "agent") {
         status(`agent edit applied live: ${m.action}${m.detail ? ` — ${m.detail}` : ""}`);
       }
@@ -3313,6 +3345,39 @@ function drawMixer() {
   for (const r of S.proj.returns || []) box.appendChild(strip("return", r));
   pin.appendChild(strip("master", { ...S.proj.master, id: "master", name: "Master" }));
   layoutMixer();
+  /* The readout counts strips and measures a fader, so it can only be true once
+   * both exist: applyViewFromDoc() runs while the mixer is still empty (it has
+   * to — the boxes it sizes are what the strips are then drawn into), and on its
+   * own it would leave the strip count permanently blank on a fresh load. */
+  paintViewNum();
+}
+
+/**
+ * The tallest fader every strip's own container can hold, or Infinity when
+ * there is nothing measurable to hold it.
+ *
+ * A strip is its content: chrome (name, patch line, pan, sends, the three
+ * buttons) plus the fader row. Subtract the chrome from the room the container
+ * gives, and that is what the fader may have. The container is .d-strips for a
+ * track and .d-mixpin for the master, and each has its own padding — read, not
+ * assumed, because the two differ and a wrong constant here is a strip clipped
+ * by a few pixels, which reads as a rendering bug rather than as a bound.
+ *
+ * clientHeight already excludes the horizontal scrollbar, so the deck's own
+ * scroller is paid for without a second measurement.
+ */
+function fadRoom(rows) {
+  let room = Infinity;
+  for (const [strip, row] of rows) {
+    const host = strip.parentElement;
+    if (!host) continue;
+    const cs = getComputedStyle(host);
+    const inner = host.clientHeight
+      - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+    if (!(inner > 0)) continue;          // cannot see the box: no measurement
+    room = Math.min(room, inner - (strip.offsetHeight - row.offsetHeight));
+  }
+  return room;
 }
 
 /* ── the mixer's geometry ────────────────────────────────────────────────
@@ -3370,10 +3435,29 @@ function layoutMixer() {
    * fader than a side column does. 180 is Ableton's, chosen out of the bracket
    * (Reaper ~160, Ableton ~180, Logic ~200); it is a taste choice and it is
    * meant to be easy to change. */
-  const capRaw = parseFloat(getComputedStyle(document.documentElement)
-    .getPropertyValue("--d-fader-h"));
+  /* ⚠ READ THE TOKEN OFF THE ELEMENT THAT DECLARES IT. This asked
+   * document.documentElement for `--d-fader-h`, and daw.css declares it on
+   * .d-shell: custom properties inherit DOWNWARD, so <html> never had one, the
+   * parse was NaN and the fallback 180 was the only ceiling this function ever
+   * used. Nothing looked wrong because 180 is also the default — but it made
+   * the token a control that appeared to work and did nothing, which is exactly
+   * what a preset needs it for (the deck's fader is 132). */
+  const capRaw = parseFloat(getComputedStyle($("shell")).getPropertyValue("--d-fader-h"));
   const cap = Number.isFinite(capRaw) && capRaw >= 108 ? capRaw : 180;
-  fadH = Math.min(cap, Math.max(108, Math.round(fadH)));
+  /* ⚠ AND A TOKEN IS NOT THE ONLY CEILING: THE BOX IS ONE TOO. A strip is
+   * content-height (.d-strips is align-items:flex-start), so a 320px fader makes
+   * a 410px strip whatever the mixer's box measures — and .d-strip is
+   * overflow:hidden, so in a 300px deck the solo/mute/arm row lands below the
+   * visible edge where it cannot be clicked. Not ugly: unusable. So the fader is
+   * also capped by the room the strip's own container actually has.
+   *
+   * ⚠ AND "NO ROOM" MUST NOT MEAN "A TINY BOX". A hidden or not-yet-laid-out
+   * container measures zero, and a zero here would clamp every fader to the
+   * 108px floor and PIN it — the same failure the offsetParent guard at the top
+   * of this function was written for, arriving by a different door. fadRoom()
+   * returns Infinity for a box it cannot see, which is the honest answer:
+   * "no measurement", not "no space". */
+  fadH = Math.max(108, Math.round(Math.min(cap, fadRoom(rows), fadH)));
   for (const [, row] of rows) row.style.flex = `0 0 ${fadH}px`;
 
   for (const [, row] of rows) {
@@ -3884,8 +3968,14 @@ const deferredNote = (name) =>
 
 function showDock(tab) {
   S.ana.tab = tab;
+  /* Opening a tab UNFOLDS the dock, so the project has to hear about it —
+   * otherwise a reload folds away the pane that was just asked for. Only on the
+   * transition, and only with a project open: this function is also called by
+   * boot() and by every click on a strip's name. */
+  const wasFolded = $("centre").classList.contains("d-nodock");
   $("centre").classList.remove("d-nodock");
   $("dockBtn").classList.add("d-on");
+  if (wasFolded && viewOf()?.dock?.folded) saveView({ dock: { folded: false } });
   for (const [id, pane, t] of [["tabChain", "paneChain", "chain"],
                                ["tabAnalysis", "paneAnalysis", "analysis"],
                                ["tabEar", "paneEar", "ear"]]) {
@@ -3917,6 +4007,7 @@ $("dockBtn").addEventListener("click", () => {
   $("dockBtn").classList.toggle("d-on", !off);
   drawArr();
   if (!off) { sizeAnalysis(); drawAnalysis(); }
+  if (viewOf()) saveView({ dock: { folded: off } }, `dock ${off ? "folded" : "open"}`);
 });
 
 /* ── canvas sizing: one device-pixel per CSS pixel, whatever the DPR ─── */
@@ -5631,6 +5722,12 @@ async function refreshDoc(session = captureSession()) {
   S.proj = r.project;
   S.timeline = r.timeline;
   S.totalSeconds = r.totalSeconds;
+  /* WHERE THE PANELS ARE, RESTORED — and followed. This is the only place the
+   * page reads the view, which is what makes opening a project, an agent's
+   * daw_layout and this page's own echo one code path instead of three.
+   * repaint:false because every canvas it would re-fit is redrawn below. */
+  S.view = S.proj.view || null;
+  applyViewFromDoc();
   if (!S.proj.tracks.some((t) => t.id === S.trackId)) S.trackId = S.proj.tracks[0]?.id ?? null;
   if (!S.devTarget) S.devTarget = S.trackId ? { kind: "track", id: S.trackId } : { kind: "master", id: "master" };
   S.lanes = S.lanes.filter((k) => laneRef(k));
@@ -6077,6 +6174,15 @@ function toggleDock(which) {
   drawArr();
   /* unfolding gives the mixer a box again — re-fit it to the one it got */
   if (which === "mixer" && on) layoutMixer();
+  paintViewNum();                // also covers the no-project case, where saveView cannot
+  /* … and the project remembers it. The class above has already moved the
+   * panel, so the button answers the click rather than the round trip; the
+   * server's reply re-applies the same view and nothing moves twice. A fold
+   * with no project open is still a fold — it simply has nowhere to be kept. */
+  if (viewOf()) {
+    saveView(which === "mixer" ? { mixer: { folded: !on } } : { browser: { folded: !on } },
+      `${which} ${on ? "open" : "folded"}`);
+  }
 }
 $("mixerBtn").addEventListener("click", () => toggleDock("mixer"));
 $("browserBtn").addEventListener("click", () => toggleDock("browser"));
@@ -6086,14 +6192,290 @@ $("browserBtn").addEventListener("click", () => toggleDock("browser"));
  * them roughly doubles how many channels fit in the same column, which is
  * the cheapest answer to "the mixer takes too much of the window" that does
  * not hide the mixer outright (that is the fold, next to it). */
-function setMixNarrow(on) {
+function setMixNarrow(on, save = true) {
   S.mixNarrow = !!on;
   $("shell").classList.toggle("d-mixnarrow", S.mixNarrow);
   $("mixNarrowBtn").classList.toggle("d-on", S.mixNarrow);
-  try { localStorage.setItem("daw.mixNarrow", S.mixNarrow ? "1" : "0"); } catch { /* private mode */ }
+  /* `save` is false when a project's own view is being applied: that is the
+   * document speaking, not a choice, and it must not overwrite the taste this
+   * browser falls back to before any project is open. */
+  if (save) { try { localStorage.setItem("daw.mixNarrow", S.mixNarrow ? "1" : "0"); } catch { /* private mode */ } }
   layoutMixer();
 }
-$("mixNarrowBtn").addEventListener("click", () => setMixNarrow(!S.mixNarrow));
+$("mixNarrowBtn").addEventListener("click", () => {
+  const on = !S.mixNarrow;
+  setMixNarrow(on);
+  if (viewOf()) saveView({ mixer: { compact: on } }, `strips ${on ? "compact" : "full"}`);
+});
+
+/* ═══════════════════════════════════ WHERE THE PANELS ARE ══════════════
+ * A layout is part of the project, not something this browser happens to
+ * remember: `doc.view` is normalised and persisted by server/daw/store.js, the
+ * one write is POST /api/daw {action:"set_view"}, and daw_layout is the same
+ * edit over MCP. This page is a VIEW of that document — it reads the view on
+ * load, follows it when somebody else changes it, and writes it back on commit.
+ *
+ * WHAT THE WHOLE THING IS FOR, measured in the owner's own window: 1920x889,
+ * nine tracks, the mixer a 268px column — three strips on screen and six off
+ * the edge. A column is the wrong axis for a list that grows with every track.
+ * The deck preset lays the same mixer across the bottom instead, where the same
+ * nine fit at once.
+ *
+ * ⚠ EVERY CONTROL FOR CHANGING THE LAYOUT MUST LIVE OUTSIDE THE LAYOUT. The
+ * `wide` preset folds the browser, the mixer and the dock, the view is restored
+ * on load, and an agent can send one over MCP — so a picker that lived in the
+ * mixer would be a picker somebody could save their way out of reaching. The
+ * three chips, the readout and the three fold buttons are all in the transport
+ * bar, which is a row of the shell's grid and is not foldable by anything here.
+ */
+
+const VIEW_CHIPS = [["vpDefault", "default"], ["vpDeck", "deck"], ["vpWide", "wide"]];
+
+/* The bounds are server/daw/store.js's, mirrored, because a drag has to clamp
+ * between frames and there is no round trip inside a drag. They are a PREVIEW
+ * of the server's answer and never the answer itself: every commit applies the
+ * view that comes BACK, so if these ever drift from the store's the release
+ * snaps to the true value in front of you instead of leaving a lie on screen. */
+const VIEW_BOUNDS = { browserW: [160, 480], mixerW: [180, 640], deckH: [260, 520] };
+const clampTo = ([lo, hi], n) => Math.max(lo, Math.min(hi, Math.round(n)));
+
+/** The view this page is showing — the document's, once one is open. */
+const viewOf = () => S.view;
+
+let viewApplied = "";    // JSON of the view last put on screen
+let viewDrag = null;     // a resize handle is under the pointer
+
+/**
+ * Put a view on screen. Classes and custom properties only — the numbers are
+ * already clamped by whoever produced them (the server, or clampTo in a drag).
+ *
+ * ⚠ THE WIDTHS GO TO THE `-pref` VARIABLES, NOT TO `--d-mixer-w`. Writing
+ * --d-mixer-w inline beats every rule in daw.css, including .d-nomixer's, so a
+ * folded mixer left its 420px column standing empty. See the comment on
+ * .d-shell in daw.css: the fold has to be able to overrule the width.
+ */
+function applyView(v, repaint = true) {
+  if (!v) return;
+  const shell = $("shell");
+  shell.classList.toggle("d-deck", v.mixer.mode === "deck");
+  shell.classList.toggle("d-nomixer", v.mixer.folded);
+  shell.classList.toggle("d-nobrowser", v.browser.folded);
+  $("centre").classList.toggle("d-nodock", v.dock.folded);
+  shell.style.setProperty("--d-browser-pref", `${v.browser.width}px`);
+  shell.style.setProperty("--d-mixer-pref", `${v.mixer.width}px`);
+  shell.style.setProperty("--d-deck-pref", `${v.mixer.height}px`);
+  /* read by layoutMixer(), which caps the fader, the meter canvases and the one
+   * shared dB scale together — a deck cannot afford the column's 180px fader */
+  shell.style.setProperty("--d-fader-h", `${v.faderH}px`);
+  $("mixerBtn").classList.toggle("d-on", !v.mixer.folded);
+  $("browserBtn").classList.toggle("d-on", !v.browser.folded);
+  $("dockBtn").classList.toggle("d-on", !v.dock.folded);
+  for (const [id, name] of VIEW_CHIPS) $(id).classList.toggle("d-on", v.preset === name);
+  setMixNarrow(v.mixer.compact, false);
+  viewApplied = JSON.stringify(v);
+  if (repaint) viewRepaint();
+  paintViewNum();
+}
+
+/* The three canvases that are sized from the boxes this just moved. Skipped
+ * when refreshDoc() is about to redraw all of them anyway. */
+function viewRepaint() {
+  drawArr();
+  layoutMixer();
+  if (S.rollFit) fitRoll();
+  if (S.ana.tab === "analysis" && !$("centre").classList.contains("d-nodock")) {
+    sizeAnalysis(); drawAnalysis();
+  }
+}
+
+/**
+ * Follow the document. Called from refreshDoc(), so it covers three arrivals
+ * with one path: opening a project, an agent's daw_layout over MCP, and the
+ * echo of this page's own write.
+ *
+ * ⚠ NOT WHILE A HANDLE IS UNDER THE POINTER. A remote view landing mid-drag
+ * would snap the panel out from under the pointer and then be overwritten by
+ * the commit anyway. The drag's own release re-reads and re-applies.
+ */
+function applyViewFromDoc() {
+  const v = viewOf();
+  if (!v || viewDrag) return;
+  if (JSON.stringify(v) === viewApplied) return;   // already on screen
+  applyView(v, false);
+}
+
+/**
+ * How many strips are FULLY visible — the measurement the deck exists for.
+ * Counts only the scroller's children: the master is pinned beside them and is
+ * never the one off the edge. A strip clipped at the bottom of a short deck is
+ * not visible either, which is why both axes are tested.
+ */
+function stripsVisible() {
+  const box = $("mixStrips");
+  if (!box || !box.offsetParent) return null;
+  const kids = [...box.children];
+  if (!kids.length) return null;
+  const view = box.getBoundingClientRect();
+  let n = 0;
+  for (const k of kids) {
+    const r = k.getBoundingClientRect();
+    if (r.left >= view.left - 0.5 && r.right <= view.right + 0.5
+      && r.top >= view.top - 0.5 && r.bottom <= view.bottom + 0.5) n++;
+  }
+  return { n, total: kids.length };
+}
+
+/**
+ * THE NUMBER BEHIND THE CHIPS, and it is MEASURED rather than reported. Every
+ * value here is read back off the laid-out page, so it cannot claim a width the
+ * grid did not give — which is the failure mode this whole panel is guarding
+ * against (a media query out-ranked the width for months without anyone being
+ * able to see it from the UI).
+ */
+function paintViewNum() {
+  const el = $("viewNum");
+  if (!el) return;
+  const shell = $("shell");
+  const deck = shell.classList.contains("d-deck");
+  const bits = [];
+  if (shell.classList.contains("d-nomixer")) bits.push("mixer folded");
+  else {
+    const box = $("mixer").getBoundingClientRect();
+    bits.push(deck ? `deck ${Math.round(box.height)}px` : `mixer ${Math.round(box.width)}px`);
+    const vis = stripsVisible();
+    if (vis) bits.push(`${vis.n}/${vis.total} strips`);
+  }
+  bits.push(shell.classList.contains("d-nobrowser")
+    ? "browser folded"
+    : `browser ${Math.round($("browser").getBoundingClientRect().width)}px`);
+  /* A FOLDED MIXER HAS NO FADER, AND "fader 0px" IS NOT A MEASUREMENT OF ONE.
+   * display:none measures zero for everything, so the term is only true while
+   * there is a mixer on screen to measure — which is the same reason the strip
+   * count above is inside the same branch. */
+  if (!shell.classList.contains("d-nomixer")) {
+    const fad = $("mixStrips").querySelector(".d-fadrow") || $("mixMaster").querySelector(".d-fadrow");
+    if (fad) bits.push(`fader ${Math.round(fad.getBoundingClientRect().height)}px`);
+  }
+  el.textContent = bits.join(" · ");
+}
+
+/**
+ * The one write. Not through act(): moving a panel dirties no region, renders
+ * nothing and has no business on the undo stack beside a note edit.
+ *
+ * ⚠ THE REPLY'S `updatedAt` IS TAKEN. Our own write comes back over the live
+ * socket like anybody else's, and onRemoteChange() drops a frame whose revision
+ * we already hold — so recording it here is what stops a drag from costing a
+ * re-read per release.
+ */
+async function saveView(patch, label) {
+  const session = captureSession();
+  if (!session.slug) { status("no project open — this layout is not saved"); return null; }
+  try {
+    const r = await api({ action: "set_view", slug: session.slug, view: patch });
+    if (!sessionCurrent(session)) return null;
+    S.view = r.view;
+    if (S.proj) { S.proj.view = r.view; S.proj.updatedAt = r.updatedAt ?? S.proj.updatedAt; }
+    applyView(r.view);
+    if (label) status(`${label} — ${$("viewNum").textContent}`);
+    return r.view;
+  } catch (err) {
+    if (sessionCurrent(session)) status(`set_view: ${err.message}`);
+    return null;
+  }
+}
+
+/* THE PRESET CHIPS. Clicking the chip you are already on re-applies that
+ * preset's own numbers — which is the way back from a layout you have dragged
+ * somewhere unhelpful, and the reason these are buttons rather than a <select>
+ * (a select fires nothing when you pick the value it is already showing). */
+for (const [id, name] of VIEW_CHIPS) {
+  $(id).addEventListener("click", () => saveView({ preset: name }, `layout: ${name}`));
+}
+
+/* ── the resize handles ──────────────────────────────────────────────────
+ * One gesture, three meanings, decided by which handle and which mode: the
+ * browser's width, the mixer column's width, or the deck's height.
+ *
+ * ⚠ THE SERVER HEARS ABOUT IT ON RELEASE, NOT PER FRAME. A drag is sixty
+ * pointermoves a second and set_view goes through mutate() — file lock, ledger
+ * entry, a live frame to every other window. The pixels move locally on every
+ * frame (a custom property, no round trip); the document hears one sentence.
+ */
+function viewDragBegin(el, e, kind) {
+  const mixBox = $("mixer").getBoundingClientRect();
+  viewDrag = {
+    el, kind, id: e.pointerId,
+    x: e.clientX, y: e.clientY,
+    deck: $("shell").classList.contains("d-deck"),
+    browserW: $("browser").getBoundingClientRect().width,
+    mixerW: mixBox.width,
+    deckH: mixBox.height,
+    value: null, raf: 0,
+  };
+  el.classList.add("d-drag");
+  capturePointer(el, e.pointerId);
+}
+
+function viewDragMove(e) {
+  if (!viewDrag) return;
+  const shell = $("shell");
+  if (viewDrag.kind === "browser") {
+    const w = clampTo(VIEW_BOUNDS.browserW, viewDrag.browserW + (e.clientX - viewDrag.x));
+    shell.style.setProperty("--d-browser-pref", `${w}px`);
+    viewDrag.value = w;
+  } else if (viewDrag.deck) {
+    /* the handle is the deck's TOP edge: dragging up makes the deck taller */
+    const h = clampTo(VIEW_BOUNDS.deckH, viewDrag.deckH - (e.clientY - viewDrag.y));
+    shell.style.setProperty("--d-deck-pref", `${h}px`);
+    viewDrag.value = h;
+    /* the deck's height is the faders' and the meters' height, and layoutMixer
+     * is the only thing that knows that — one call per FRAME, not per event */
+    if (!viewDrag.raf) {
+      viewDrag.raf = requestAnimationFrame(() => { viewDrag && (viewDrag.raf = 0); layoutMixer(); paintViewNum(); });
+    }
+  } else {
+    const w = clampTo(VIEW_BOUNDS.mixerW, viewDrag.mixerW - (e.clientX - viewDrag.x));
+    shell.style.setProperty("--d-mixer-pref", `${w}px`);
+    viewDrag.value = w;
+  }
+  paintViewNum();
+}
+
+function viewDragEnd(e) {
+  if (!viewDrag) return;
+  const { el, kind, deck, value, id, raf } = viewDrag;
+  if (raf) cancelAnimationFrame(raf);
+  viewDrag = null;
+  el.classList.remove("d-drag");
+  releasePointer(el, id ?? e.pointerId);
+  viewRepaint();
+  paintViewNum();
+  if (value == null) return;             // a click, not a drag: nothing to save
+  const patch = kind === "browser" ? { browser: { width: value } }
+    : deck ? { mixer: { height: value } } : { mixer: { width: value } };
+  const what = kind === "browser" ? "browser" : deck ? "deck height" : "mixer width";
+  saveView(patch, `${what} ${value}px`);
+}
+
+for (const [id, kind] of [["splitB", "browser"], ["splitM", "mixer"]]) {
+  const el = $(id);
+  el.addEventListener("pointerdown", (e) => { e.preventDefault(); viewDragBegin(el, e, kind); });
+  el.addEventListener("pointermove", viewDragMove);
+  el.addEventListener("pointerup", viewDragEnd);
+  el.addEventListener("pointercancel", viewDragEnd);
+  /* Double-click resets that edge to the preset's own number — the same way
+   * back the chips give, without leaving the handle. */
+  el.addEventListener("dblclick", () => {
+    const v = viewOf();
+    if (v) saveView({ preset: v.preset }, `layout: ${v.preset}`);
+  });
+}
+
+/* The readout is measured, so anything that changes a box has to re-read it.
+ * refitAll() already runs on resize and on a DPR change; this is the same
+ * event reaching the same number. */
+addEventListener("resize", paintViewNum);
 
 let splitDrag = null;
 $("splitH").addEventListener("pointerdown", (e) => {
@@ -6730,6 +7112,7 @@ async function loadProject(slug) {
   liveChain = Promise.resolve();
   ++S.docRead; ++S.renderRequest;
   S.proj = null; S.timeline = []; S.totalSeconds = 0;
+  S.view = null;                 // the outgoing project's layout is not the incoming one's
   S.trackId = null; S.devTarget = null; S.devInsert = null;
   S.drag = null; S.dragging = false; S.velStrategy = null;
   S.pending = []; S.rendering = false;
@@ -6803,7 +7186,18 @@ async function boot() {
    * the same number, set here so they cannot drift apart. */
   $("arrHeads").style.setProperty("--d-head-w", `${HEAD_W}px`);
   $("arrHeads").style.flexBasis = `${HEAD_W}px`;
-  try { applyKeymap(localStorage.getItem("daw.keymap") || "live"); } catch { applyKeymap("live"); }
+  /* ⚠ A RENAME WITHOUT THIS IS A SMALL THEFT. applyKeymap() falls back to
+   * the default for a name it does not know, so anybody who had chosen a
+   * profile would be moved quietly back to the first one and would have to
+   * notice and re-pick. The old names were three other companies' products
+   * (see NOTICE, TRADEMARKS); these lines are what makes changing them free
+   * for the person using it. The map can go once nobody's browser still
+   * holds an old value, which is a thing nobody can know — so it stays. */
+  const KM_RENAMED = { live: "ctrl", fl: "fkeys", cubase: "numeric" };
+  try {
+    const saved = localStorage.getItem("daw.keymap") || "ctrl";
+    applyKeymap(KM_RENAMED[saved] || saved);
+  } catch { applyKeymap("ctrl"); }
   /* remembered tastes: auditioning and the compact mixer */
   try { S.aud.on = localStorage.getItem("daw.audition") !== "0"; } catch { /* private mode */ }
   $("audChk").checked = S.aud.on;

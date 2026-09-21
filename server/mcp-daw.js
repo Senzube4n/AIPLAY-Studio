@@ -123,6 +123,13 @@ export function dawTools(api, safeName) {
     total_seconds: Number(full.totalSeconds.toFixed(3)),
     meter_map: full.project.meterMap,
     tempo_map: full.project.tempoMap,
+    /* WHERE THE PANELS ARE. Small, and part of the project rather than of one
+     * browser -- so an agent asked "what does this look like" can answer, and
+     * one asked to restore a window somebody folded into nothing can see what
+     * it is restoring FROM. It was dropped here while being persisted and
+     * served everywhere else, which is the quiet half of a feature that looks
+     * finished. */
+    view: full.project.view,
     tracks: full.project.tracks.map((t) => ({
       id: t.id, name: t.name, instrument: t.instrument,
       gain_db: t.gainDb, mute: t.mute,
@@ -174,6 +181,15 @@ export function dawTools(api, safeName) {
             patches_total: Object.keys(installed).length,
             patch_tables_agree:
               JSON.stringify(probe.patch_tails) === JSON.stringify(probe.storePatchTails),
+            /* ⚠ REGIONS WHOSE PITCH COULD NOT BE ESTABLISHED, and therefore play
+             * a sample untransposed across a range of keys -- the defect that
+             * made a shipped bass a semitone out on two keys, in 302 regions
+             * across the installed packs. The audit reaches the raw probe
+             * reply; without this line it stopped there and never reached an
+             * agent, which is the quiet half of a fix that looks finished.
+             * Zero is the expected answer; anything else names packs to look at
+             * with `python instruments.py keycenters`. */
+            keycenters_unresolved: probe.sfz_keycenters?.totals?.unresolved ?? null,
           },
         };
       },
@@ -246,6 +262,69 @@ export function dawTools(api, safeName) {
       },
     },
 
+    {
+      name: "daw_layout",
+      description:
+        "WHERE THE PANELS ARE \u2014 the browser, the mixer and the bottom dock \u2014 carried by the "
+        + "project, so a layout is part of the work rather than something one browser happens to "
+        + "remember.\n\n"
+        + "Three presets, named for what they do:\n"
+        + "  \u00b7 default \u2014 browser left, mixer as a right column, dock along the bottom. "
+        + "Everything reachable; past about four tracks the mixer column scrolls.\n"
+        + "  \u00b7 deck \u2014 the mixer moves ACROSS THE BOTTOM and the browser folds. This is the "
+        + "shape that fits a whole song's channels at once: measured, a 1920 window holds "
+        + "fourteen compact strips in a deck against three in a 268px column. It costs the "
+        + "browser and the dock, and 300px of arrangement.\n"
+        + "  \u00b7 wide \u2014 everything folded but the arrangement and the piano roll. For writing "
+        + "notes, not for mixing.\n\n"
+        + "\u26a0 A PRESET AND A MEASUREMENT IN THE SAME CALL BOTH APPLY. The preset lands first and "
+        + "anything explicit lands on top, so \"deck, and make it 420 tall\" does both.\n\n"
+        + "\u26a0 AND THIS IS THE WAY OUT OF A LAYOUT. Every control for changing the layout lives "
+        + "IN it, so a window folded down to nothing has its own fix off screen. Setting "
+        + "preset \"default\" restores a working window from here.\n\n"
+        + "Changes no audio and dirties no render region.",
+      inputSchema: {
+        type: "object",
+        required: ["slug"],
+        properties: {
+          slug: { type: "string" },
+          preset: { type: "string", enum: ["default", "deck", "wide"],
+            description: "Applied first; anything else you pass lands on top of it." },
+          mixer_mode: { type: "string", enum: ["side", "deck"],
+            description: "side = a column on the right; deck = across the bottom, which is what fits a whole song's strips." },
+          mixer_width: { type: "integer", description: "180-640 px, the side column. Below 180 the gutter and two compact strips no longer fit; above 640 the mixer is wider than the arrangement." },
+          mixer_height: { type: "integer", description: "260-520 px, the deck. 260 is the shortest deck in which a strip does not overflow its own box \u2014 at 200 the solo/mute/arm row lands where it cannot be clicked." },
+          mixer_folded: { type: "boolean" },
+          mixer_compact: { type: "boolean", description: "Narrow strips: the fader and the meter, without the patch line, the sends and the pan readout. Roughly twice the channels in the same width." },
+          browser_width: { type: "integer", description: "160-480 px." },
+          browser_folded: { type: "boolean" },
+          dock_folded: { type: "boolean", description: "The bottom dock \u2014 chain, analysis, the Ear, voice." },
+          fader_height: { type: "integer", description: "108-320 px. 108 is where the nine dB labels collide; for scale a channel fader is ~160 in Reaper, ~180 in Ableton, ~200 in Logic. A deck wants ~132." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        /* Only what was actually asked for: an undefined field must not be sent
+         * as a null and overwrite what the project already had. */
+        const mixer = {};
+        if (a.mixer_mode !== undefined) mixer.mode = a.mixer_mode;
+        if (a.mixer_width !== undefined) mixer.width = a.mixer_width;
+        if (a.mixer_height !== undefined) mixer.height = a.mixer_height;
+        if (a.mixer_folded !== undefined) mixer.folded = a.mixer_folded;
+        if (a.mixer_compact !== undefined) mixer.compact = a.mixer_compact;
+        const browser = {};
+        if (a.browser_width !== undefined) browser.width = a.browser_width;
+        if (a.browser_folded !== undefined) browser.folded = a.browser_folded;
+        const view = {};
+        if (a.preset !== undefined) view.preset = a.preset;
+        if (a.fader_height !== undefined) view.faderH = a.fader_height;
+        if (Object.keys(mixer).length) view.mixer = mixer;
+        if (Object.keys(browser).length) view.browser = browser;
+        if (a.dock_folded !== undefined) view.dock = { folded: a.dock_folded };
+        const r = await daw({ action: "set_view", slug: slugOf(a.slug), view });
+        return r.view ? { view: r.view } : r;
+      },
+    },
     {
       name: "daw_set_length",
       description:

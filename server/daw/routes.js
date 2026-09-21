@@ -53,6 +53,7 @@ import {
   /* [DAWREC] the capture surface */
   audioDir, projectDir, blankAudioClip, blankTake, findAudioClip, findTake,
   audioStartSample, audioEvents, audioJobClips, noteSeed,
+  normalizeView, VIEW_PRESETS, VIEW_PRESET_VALUES,
 } from "./store.js";
 /* [DAWREC] the capture path's own module — sessions, comping, the click,
  * latency settings, and the actor-honest provenance event chooser. */
@@ -1676,6 +1677,39 @@ export function createDawRoutes(deps) {
           return mutReply(res, m), true;
         }
 
+        /* WHERE THE PANELS ARE — carried by the project, so a layout is part
+         * of the work rather than something this browser happens to remember.
+         *
+         * ⚠ THE PRESET IS APPLIED FIRST AND THE EXPLICIT FIELDS LAND ON TOP.
+         * "Use the deck preset, and make the deck 420 tall" is one sentence and
+         * has to behave like one; the other order discards the 420 in silence.
+         *
+         * ⚠ AND THIS IS NOT AN AUDIO EDIT. Moving a panel dirties no region and
+         * changes no sample — but it goes through mutate() anyway, for the
+         * locking and the save, because a silent write to a document an agent
+         * and a page both hold is worse than a noisy one. */
+        case "set_view": {
+          const slug = safe(b.slug);
+          const m = await mutate(slug, b, "set_view", (d) => {
+            const base = normalizeView(d.view);
+            const want = (b.view && typeof b.view === "object") ? b.view : {};
+            const preset = VIEW_PRESETS.includes(want.preset) ? want.preset : null;
+            const under = preset ? normalizeView({ ...VIEW_PRESET_VALUES[preset], preset }) : base;
+            d.view = normalizeView({
+              ...under,
+              ...want,
+              mixer: { ...under.mixer, ...(want.mixer || {}) },
+              browser: { ...under.browser, ...(want.browser || {}) },
+              dock: { ...under.dock, ...(want.dock || {}) },
+            });
+            return {
+              view: d.view,
+              ledger: { detail: `${d.view.preset} · mixer ${d.view.mixer.mode}` },
+            };
+          });
+          return mutReply(res, m), true;
+        }
+
         /* ── meter and tempo — the §12 event lists, edited as events ──── */
 
         case "set_meter": {
@@ -2876,6 +2910,11 @@ export function createDawRoutes(deps) {
               + "record_arm, record_start, record_chunk_b64, record_stop, "
               + "record_status, take_delete, take_comp, import_audio, set_audio_clip, "
               + "remove_audio_clip, record_notes, calibrate_b64, set_latency, preview_note, "
+              /* set_view is the one action here that moves no sample. It is in
+               * the list anyway: this sentence is the only map of this door
+               * there is, and a caller who mistypes it deserves to be told the
+               * real name rather than that the DAW has no such thing. */
+              + "set_view, "
               + `${MIXER_ACTIONS.join(", ")}`
               /* The optional mounts, listed from the modules themselves and
                * only when they are on this tree. Both were missing here, so

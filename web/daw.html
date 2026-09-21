@@ -10,9 +10,9 @@
   primitives the suite genuinely lacked (dB-law fader, ballistic meter,
   automation lane, catalog-driven device panels, analysis displays).
 
-  METAPHOR (report §13b): Ableton Live's arrangement-centric single window —
+  METAPHOR (report §13b): the arrangement-centric single window —
   browser left, arrangement centre, the selected chain as a device strip along
-  the bottom, the mixer as a right dock you can fold away. FL and Cubase
+  the bottom, the mixer as a right dock you can fold away. Other DAWs
   refugees get their muscle memory through the keymap profiles (⌨ in the bar).
 
   THE 2026-08-26 CRAFT PASS. Four structural changes, each answering a thing
@@ -146,11 +146,27 @@
 
     <span class="d-group">
       <select id="kmSel" class="d-sel" title="keymap profile — the core gestures in the idiom you already have in your fingers">
-        <option value="live">Live keys</option>
-        <option value="fl">FL keys</option>
-        <option value="cubase">Cubase keys</option>
+        <!-- The VALUES are the contract (server/daw/ui_test.js pins them and a
+             saved project carries them); the text is what a person reads, and
+             it names the gesture that differs rather than another company's
+             product. The keyboard button beside this shows the whole map. -->
+        <option value="ctrl">Ctrl edits</option>
+        <option value="fkeys">Function keys</option>
+        <option value="numeric">Number tools</option>
       </select>
       <button id="kmHelp" class="d-btn d-sm" title="show the whole keymap">⌨</button>
+      <!-- WHERE THE PANELS ARE. Three chips, and the px behind them.
+           ⚠ THESE LIVE IN THE TRANSPORT BAR ON PURPOSE, AND IT IS NOT A
+           layout preference. Every other control for the layout is inside a
+           panel the layout can fold; the `wide` preset folds all three at once,
+           and a saved view is restored on load, so a picker that lived in the
+           mixer would be a picker you could save your way out of reaching. The
+           bar is the one region no preset can fold — which is what makes
+           clicking the chip you are already on meaningful too: it re-applies
+           the preset's own numbers, so there is always a way back. -->
+      <button id="vpDefault" class="d-btn d-sm" title="Side mixer — the mixer as a column on the right, browser and dock open. Everything reachable; with more than about four tracks the column shows a few strips and scrolls for the rest.">Side</button>
+      <button id="vpDeck" class="d-btn d-sm" title="Mixer deck — the mixer moves to a deck across the bottom and the browser and dock fold. The shape that fits a whole song's channels at once. Costs: the instrument browser and the chain / analysis / Ear dock are a click away rather than on screen, and the deck takes its height off the arrangement.">Deck</button>
+      <button id="vpWide" class="d-btn d-sm" title="Wide — both side panels, the mixer and the dock folded. Nothing but the arrangement and the piano roll. Costs everything else, and it is meant to.">Wide</button>
       <button id="browserBtn" class="d-btn d-sm d-on" title="fold the browser">◧</button>
       <button id="mixerBtn" class="d-btn d-sm d-on" title="fold the mixer">◨</button>
       <button id="dockBtn" class="d-btn d-sm d-on" title="fold the bottom dock (chain / analysis / the Ear)">▤</button>
@@ -435,11 +451,32 @@
     <div class="d-note" id="meterNote" style="padding:5px 8px"></div>
   </aside>
 
+  <!-- ══════════════════════ RESIZE HANDLES ════════════════
+       Siblings of the three panels rather than children of any of them: the
+       browser scrolls, and a handle inside it would scroll away with the
+       instrument list. Each is placed in its panel's own grid area and pushed
+       to the edge it governs, so the grid does the aligning and daw.js only has
+       to turn a pointer's travel into a number.
+
+       The mixer's handle is ONE element in both modes: down the column's left
+       edge in side mode, along the deck's top edge in deck mode, because it is
+       the same gesture — "give the mixer more room" — either way. -->
+  <div class="d-hsplit d-hsplit-b" id="splitB" title="drag to set how wide the instrument browser is (160–480 px) — written to the project when you let go"></div>
+  <div class="d-hsplit d-hsplit-m" id="splitM" title="drag to set the mixer's size — the column's width (180–640 px), or the deck's height (260–520 px) when the mixer is a deck. Written to the project when you let go."></div>
+
   <!-- ══════════════════════════ STATUS ════════════════════════════ -->
   <footer class="d-status">
     <span class="d-live" id="liveDot" title="live sync: the /live websocket. When an agent edits this project, the page follows without a refresh."><i></i><span id="liveTxt">ws…</span></span>
     <span id="status">loading…</span>
     <span class="d-selinfo" id="selInfo"></span>
+    <!-- THE LAYOUT, IN PIXELS. It belongs down here for the reason the CPU
+         readout below belongs here: it is a readout, not a control, and it is
+         285px of monospace — measured, it wrapped the transport bar onto a
+         second row and took 36px off the arrangement to say so. The controls it
+         describes (Side / Deck / Wide and the three fold buttons) stay up in the
+         bar; this is what they did. Every number in it is read back off the
+         laid-out page, so it cannot claim a width the grid did not give. -->
+    <span class="d-viewnum" id="viewNum" title="the layout in pixels: what the grid is actually using, measured. Drag the handle at a panel's edge to change one — the number counts while you drag and is written to the project when you let go (set_view / daw_layout). Double-click a handle, or press the chip you are already on, to put that preset's own numbers back.">—</span>
     <!-- §1 THE READINESS BADGE. A chained project renders from absolute
          sample 0 every time, so a region costs more the deeper into the song
          it is: measured on this repo's own reference project, 305 ms for

@@ -457,9 +457,112 @@ export function migrate(doc) {
 
   migrateDocMixer(doc);                     // CHAIN STAGE: returns + master
 
+  doc.view = normalizeView(doc.view);       // where the panels are, per project
+
   doc.createdAt = num(doc.createdAt, Date.now());
   doc.updatedAt = num(doc.updatedAt, doc.createdAt);
   return doc;
+}
+
+/* WHERE THE PANELS ARE — carried by the project, not by the browser.
+ *
+ * ⚠ migrate() PRESERVES KEYS IT DOES NOT KNOW, so `doc.view` would round-trip
+ * with no code here at all. That is exactly why this exists: an unvalidated
+ * pocket in a document that both an agent and a page write is a pocket that
+ * eventually holds nonsense, and the first symptom is a layout the person
+ * cannot get back out of because the control that would fix it is off-screen.
+ *
+ * Every bound below is a measurement, and one of them was measured twice.
+ *
+ * ⚠ 280 IS THE DECK FLOOR BECAUSE OF THE FULL STRIP, NOT THE COMPACT ONE. The
+ * first number here was 260, taken with compact strips — and compact is the
+ * SHORT variant: it drops the patch line, the sends and the pan readout. Turn it
+ * off, which is one click, and at 260 the strip overruns its scroller by 14px
+ * with .d-strip set to overflow:hidden, so every strip is quietly cut off at the
+ * bottom. A bound that only holds in one of two modes is not a bound. Measured
+ * on the full strip: fixed rows 89 + padding 11 + gaps 24 + the fader's own
+ * floor 108 = 232, plus 31 of deck chrome = 263; 280 is where walking it up
+ * actually cleared, at -6px overrun with 25 of 25 solo/mute/arm buttons
+ * hit-testing to themselves. It costs a compact deck 51px it could have used,
+ * which is the right trade against a mode that silently clips every strip.
+ *
+ * 108 is where the nine dB labels at 9px start to collide. 640 is where the
+ * mixer becomes wider than the arrangement, which is not a mixing layout, it is
+ * a mistake somebody can save and then live with.
+ *
+ * The presets are named for WHAT THEY DO, not for whose product they resemble —
+ * same reason the keymap profiles are `ctrl` / `fkeys` / `numeric`. */
+export const VIEW_PRESETS = ["default", "deck", "wide"];
+
+/* WHAT EACH PRESET IS, AND WHAT IT COSTS.
+ *
+ * `default`  browser left, mixer as a right column, dock along the bottom.
+ *            Everything reachable, and with more than about four tracks the
+ *            mixer column shows a few strips and scrolls for the rest.
+ *
+ * `deck`     the mixer moves to a deck ACROSS THE BOTTOM and the browser folds.
+ *            This is the shape that fits a whole song's channels at once —
+ *            measured: a 1920 window holds fourteen compact strips in a deck
+ *            against three in a 268px column. COSTS: the instrument browser and
+ *            the bottom dock (chain, analysis, the Ear) are a click away rather
+ *            than on screen, and the deck takes 300px off the arrangement.
+ *
+ * `wide`     both side panels folded, mixer folded, dock folded. Nothing but
+ *            the arrangement and the piano roll. COSTS: everything else, and it
+ *            is meant to — it is the layout for writing notes, not for mixing.
+ *
+ * ⚠ faderH MOVES WITH THE MODE. A deck is 300px tall and a 180px fader inside
+ * one leaves 120px for the name, the meter numbers, the pan and the buttons,
+ * which does not fit — measured, the solo/mute/arm row lands below the visible
+ * area and .d-strip is overflow:hidden, so it is not merely ugly, it is not
+ * clickable. 132 is what a 300px deck can actually afford. */
+export const VIEW_PRESET_VALUES = {
+  default: {
+    mixer: { mode: "side", width: 268, height: 300, folded: false, compact: false },
+    browser: { width: 236, folded: false },
+    dock: { folded: false },
+    faderH: 180,
+  },
+  deck: {
+    /* Wider than the default column on purpose: in deck mode this is the width
+     * the column REVERTS to when somebody switches back, and 268 was measured
+     * as the value that shows three of nine. */
+    mixer: { mode: "deck", width: 420, height: 300, folded: false, compact: true },
+    browser: { width: 236, folded: true },
+    dock: { folded: true },
+    faderH: 132,
+  },
+  wide: {
+    mixer: { mode: "side", width: 268, height: 300, folded: true, compact: false },
+    browser: { width: 236, folded: true },
+    dock: { folded: true },
+    faderH: 180,
+  },
+};
+
+export function normalizeView(v) {
+  const o = (v && typeof v === "object") ? v : {};
+  const mx = (o.mixer && typeof o.mixer === "object") ? o.mixer : {};
+  const br = (o.browser && typeof o.browser === "object") ? o.browser : {};
+  const dk = (o.dock && typeof o.dock === "object") ? o.dock : {};
+  return {
+    preset: VIEW_PRESETS.includes(o.preset) ? o.preset : "default",
+    mixer: {
+      /* side = a column on the right, deck = across the bottom. The deck is
+       * what fits fourteen strips where the column fits three. */
+      mode: mx.mode === "deck" ? "deck" : "side",
+      width: clampInt(num(mx.width, 268), 180, 640),
+      height: clampInt(num(mx.height, 300), 280, 520),
+      folded: mx.folded === true,
+      compact: mx.compact === true,
+    },
+    browser: {
+      width: clampInt(num(br.width, 236), 160, 480),
+      folded: br.folded === true,
+    },
+    dock: { folded: dk.folded === true },
+    faderH: clampInt(num(o.faderH, 180), 108, 320),
+  };
 }
 
 export function normalizeMeterMap(list) {

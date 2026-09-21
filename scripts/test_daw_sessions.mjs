@@ -51,7 +51,15 @@ function make(names,overrides={}){
   for(const name of ['drawSide','drawArr','draw','drawMixer','drawDevices','drawLog','drawHistory','drawKnobs',
     'drawAutoPane','drawCredits','paintClock','paintSelInfo','fitRoll','fitArr','setLoopSilent','paintAhead',
     'paintBadge','cpu','updateHud','hotSwap','refreshWaveLanes','fetchWavePeaks','drawReturnStems','stop','auditionStop',
-    'loadColours','paintLoopLabel','automatables'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
+    'loadColours','paintLoopLabel','automatables',
+    /* applyViewFromDoc paints the saved layout -- where the browser, the mixer and the
+     * dock are -- onto the shell. refreshDoc calls it, and this harness lifts refreshDoc
+     * out of daw.js and runs it with ONLY the names listed here, so a new call inside a
+     * lifted function arrives as a bare ReferenceError with no hint that a stub is all it
+     * wants. The list stays explicit rather than auto-stubbing every unknown identifier:
+     * auto-stubbing would also swallow a genuinely missing dependency, which is the one
+     * thing this suite exists to catch. */
+    'applyViewFromDoc'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
   const context=vm.createContext(ctx);
   vm.runInContext('var renderChain=Promise.resolve();var liveChain=Promise.resolve();var peakJobs=new Set();\n'
     +['captureSession','sessionCurrent',...names].map(extract).join('\n'),context);

@@ -15,6 +15,7 @@ import {
   buildTimeline, posToSeconds, durationSeconds, projectSeconds, normPos,
   regionsOf, noteEvents, regionHashes, dirtyBetween,
   normalizeMeterMap, normalizeTempoMap,
+  normalizeView, VIEW_PRESETS, VIEW_PRESET_VALUES,
   noteInClip, notesOutsideClip, shiftClipNotes,
   TICKS_PER_BEAT, REGION_BARS, SR, TAILS, INSTRUMENTS,
   PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
@@ -534,6 +535,80 @@ console.log("\n  -- clip bounds round-trip through a save and load --");
     clips: [{ id: "clp_bad", fromBar: 9, toBar: 3, notes: [] }] }] })));
   ok("a clip whose end is before its start is REPAIRED, not rejected",
     bad.tracks[0].clips[0].toBar === 9 && bad.tracks[0].clips[0].fromBar === 9);
+}
+
+/* ───────────────────── where the panels are ─────────────────────────────
+ *
+ * migrate() PRESERVES KEYS IT DOES NOT KNOW, so `doc.view` would round-trip
+ * with no normaliser at all. That is exactly why there is one: an unvalidated
+ * pocket in a document that an agent and a page both write eventually holds
+ * nonsense, and the first symptom is a layout somebody cannot get back out of,
+ * because every control for changing it lives inside it. */
+{
+  const v = normalizeView(undefined);
+  ok("a project with no view gets a whole one, not an empty object",
+    v.preset === "default" && v.mixer.mode === "side" && v.faderH === 180,
+    JSON.stringify(v));
+
+  /* ⚠ THE BOUNDS ARE MEASUREMENTS, AND THE DECK FLOOR WAS MEASURED TWICE. 280
+   * is the shortest deck in which a FULL strip does not overflow its own box;
+   * the first answer was 260 and it came from the COMPACT strip, which is the
+   * short variant — turn compact off, one click, and at 260 every strip is cut
+   * off 14px from its bottom with no error anywhere, because .d-strip is
+   * overflow:hidden. 108 is where the nine dB labels at 9px collide. Anybody
+   * widening either is trading against a measurement, not a preference. */
+  const low = normalizeView({ mixer: { width: 1, height: 1 }, browser: { width: 1 }, faderH: 1 });
+  ok("a deck cannot be shorter than a FULL strip needs (280)",
+    low.mixer.height === 280, String(low.mixer.height));
+  ok("a fader cannot be shorter than its own dB labels (108)", low.faderH === 108, String(low.faderH));
+  ok("...and the side column keeps room for the gutter and two strips (180)",
+    low.mixer.width === 180, String(low.mixer.width));
+
+  const high = normalizeView({ mixer: { width: 9e9, height: 9e9 }, browser: { width: 9e9 }, faderH: 9e9 });
+  ok("a mixer cannot grow wider than the arrangement it serves (640)",
+    high.mixer.width === 640 && high.mixer.height === 520 && high.faderH === 320,
+    JSON.stringify(high));
+
+  ok("a preset nobody defined falls back rather than being stored",
+    normalizeView({ preset: "ableton" }).preset === "default");
+  ok("a mixer mode nobody defined falls back to the side column",
+    normalizeView({ mixer: { mode: "floating" } }).mixer.mode === "side");
+
+  /* Every preset has to survive its own normaliser. A preset whose values are
+   * clamped on the way in is a preset that does not do what its table says. */
+  for (const name of VIEW_PRESETS) {
+    const raw = VIEW_PRESET_VALUES[name];
+    ok(`the ${name} preset has a row in the table`, !!raw);
+    const n = normalizeView({ ...raw, preset: name });
+    ok(`...and survives normalisation unchanged`,
+      JSON.stringify({ ...n, preset: undefined }) === JSON.stringify({ ...normalizeView({ ...n }), preset: undefined }),
+      JSON.stringify(n));
+  }
+
+  /* ⚠ THE DECK'S FADER IS SHORTER THAN THE COLUMN'S, AND THAT IS THE POINT. A
+   * 180px fader inside a 300px deck leaves 120px for the name, the meter
+   * numbers, the pan and the buttons, which does not fit. A future edit that
+   * "tidies" the two presets to one number breaks the deck. */
+  ok("the deck preset asks for a shorter fader than the side column",
+    VIEW_PRESET_VALUES.deck.faderH < VIEW_PRESET_VALUES.default.faderH,
+    `deck ${VIEW_PRESET_VALUES.deck.faderH} vs default ${VIEW_PRESET_VALUES.default.faderH}`);
+
+  /* ⚠ A PRESET AND A MEASUREMENT IN ONE CALL MUST BOTH APPLY. This is the merge
+   * the route performs. Applied the other way round the explicit number is
+   * silently discarded and the only symptom is a value that did not take. */
+  const merged = normalizeView({
+    ...VIEW_PRESET_VALUES.deck, preset: "deck",
+    mixer: { ...VIEW_PRESET_VALUES.deck.mixer, height: 420 },
+  });
+  ok("a preset and an explicit field in one call both land",
+    merged.preset === "deck" && merged.mixer.mode === "deck" && merged.mixer.height === 420,
+    JSON.stringify(merged.mixer));
+
+  /* And migrate() actually calls it — without this, everything above is a test
+   * of a function nothing reaches. */
+  const doc = migrate({ name: "view probe", view: { mixer: { width: 9999 } } });
+  ok("migrate() normalises the view rather than passing it through",
+    doc.view && doc.view.mixer.width === 640, JSON.stringify(doc.view && doc.view.mixer));
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

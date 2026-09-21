@@ -472,3 +472,40 @@ RUNTIME DEPENDENCIES (separate installations)
                            where one of the two is recorded as unverified.
                            Optional: without it pose extraction has no node to
                            run and the rest of the app is unaffected.
+
+────────────────────────────────────────────────────────────────────────────────
+TRADEMARKS
+────────────────────────────────────────────────────────────────────────────────
+
+AIPLAY Studio is not affiliated with, endorsed by, or sponsored by any of the
+companies named below. Their marks are the property of their respective owners
+and are used here only to describe what a feature of this software does.
+
+Where this app says "Photoshop's ctrl-click on a channel" or "the way After
+Effects decides it", it is naming a gesture or a convention a reader may
+already know, so that they can recognise ours. That is the only use made of
+them: no mark is the name of a feature of this software, none appears in a
+logo, an icon or any other distinctive visual element, and none is presented
+more prominently than the name of this product.
+
+Named in that way, in the interface or its documentation:
+
+    Adobe, Photoshop, Illustrator, After Effects and Premiere Pro are
+        trademarks of Adobe Inc.
+    Ableton and Live are trademarks of Ableton AG.
+    FL Studio and Image-Line are trademarks of Image Line Software BVBA.
+    Cubase, Nuendo and VST are trademarks of Steinberg Media Technologies GmbH.
+    Mixcraft and Acoustica are trademarks of Acoustica, Inc.
+    VEGAS Pro is a trademark of MAGIX Software GmbH.
+    REAPER is a trademark of Cockos Incorporated.
+    Logic Pro is a trademark of Apple Inc.
+    Video Copilot is a trademark of Video Copilot LLC.
+
+⚠ THE KEYMAP PROFILES DELIBERATELY DO NOT CARRY PRODUCT NAMES. They are
+labelled by the gesture that distinguishes them — "Ctrl edits", "Function
+keys", "Number tools" — because a mark used as the name of a feature WE ship
+is a different thing from one used to describe a convention, and only the
+second is what this section covers.
+
+If you own one of these marks and consider any use here improper, the fastest
+route to a fix is an issue on the repository.

@@ -83,6 +83,12 @@ const EXPECTED = [
   "probe",
   // the arranger: a whole big-room song, fed back through this same switch
   "arrange_bigroom",
+  /* WHERE THE PANELS ARE -- the browser, the mixer and the bottom dock, carried
+   * by the project rather than by one browser's storage. The only action here
+   * that moves no sample and dirties no render region; it goes through the same
+   * mutate() as the rest for the locking and the save, because a silent write
+   * to a document an agent and a page both hold is worse than a noisy one. */
+  "set_view",
 ];
 
 for (const a of EXPECTED) {

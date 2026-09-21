@@ -39,9 +39,27 @@ body.d-body {
 .d-shell {
   height: 100vh;
   display: grid;
+  /* ⚠ TWO VARIABLES PER SIDE, AND THE INDIRECTION IS THE WHOLE POINT. The
+   * `-pref` one is what a person's drag and a saved view write; the `-w` one is
+   * what the grid reads. Writing the width straight onto the element as
+   * `--d-mixer-w` looked identical and defeated .d-nomixer in silence: an
+   * inline custom property beats any rule in this sheet, so folding the mixer
+   * hid the panel and left its 420px column standing empty. A fold has to be
+   * able to overrule a width, and only a second variable lets it. */
+  --d-browser-w: var(--d-browser-pref, 236px);
+  --d-mixer-w: var(--d-mixer-pref, 268px);
   /* the mixer column was 336px and showed 1.7 overflowing strips; with the
-   * per-strip dB scale folded into one shared gutter it shows more in less. */
-  grid-template-columns: var(--d-browser-w, 236px) minmax(0, 1fr) var(--d-mixer-w, 268px);
+   * per-strip dB scale folded into one shared gutter it shows more in less.
+   *
+   * ⚠ minmax(0, …) ON THE SIDES AND A FLOOR UNDER THE CENTRE. A plain fixed
+   * track cannot give anything back, so a 480px browser beside a 640px mixer on
+   * a half-screen window drove the arrangement to nothing — the thing the other
+   * two panels exist to serve. With a 0 minimum the two side tracks share what
+   * is left AFTER the centre has its 360px, equally and only when the window is
+   * too small to honour both preferences; at any ordinary width they get the
+   * width that was asked for and this reads as the old line. */
+  grid-template-columns:
+    minmax(0, var(--d-browser-w, 236px)) minmax(360px, 1fr) minmax(0, var(--d-mixer-w, 268px));
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "bar     bar     bar"
@@ -52,6 +70,7 @@ body.d-body {
 .d-shell.d-nomixer .d-mixer { display: none; }
 .d-shell.d-nobrowser { --d-browser-w: 0px; }
 .d-shell.d-nobrowser .d-browser { display: none; }
+
 /* ⚠ READ BY layoutMixer() IN JS, NOT APPLIED BY ANY RULE HERE. The fader's
  * height has to be pinned in script because the meter canvases and the shared
  * dB scale are sized from the same number, so a purely declarative cap would
@@ -59,6 +78,78 @@ body.d-body {
  * layout preset moves it: a deck mixer across the bottom wants a shorter fader
  * than a side column does. */
 .d-shell { --d-fader-h: 180px; }
+
+/* ── THE DECK ────────────────────────────────────────────────────────────
+ * The same mixer, laid across the bottom instead of down the right-hand side.
+ *
+ * WHY IT EXISTS, MEASURED in a 1920x889 window on an eight-track project: the
+ * 268px column shows TWO strips whole and slices a third, and the other six are
+ * off its edge. Nothing about the strips is wrong — a column is simply the
+ * wrong axis for a list that grows with every track, which is why Ableton, FL
+ * and Mixcraft all put the mixer along the bottom. The same mixer as a
+ * full-width deck shows all eight, and has room for twenty-six at that width
+ * (forty with compact strips) before anything scrolls at all.
+ *
+ * It is a SECOND grid-template-areas and nothing else: the mixer moves from the
+ * right-hand cell of the middle row to a row of its own between the centre and
+ * the status bar, and the third column collapses to zero because there is now
+ * nothing in it. The mixer's own insides do not change at all — .d-mixwrap was
+ * already a horizontal run of strips beside a pinned master, so a wider box is
+ * simply more of them on screen. */
+.d-shell.d-deck {
+  --d-mixer-w: 0px;
+  /* ⚠ THE HEIGHT NEEDS THE SAME INDIRECTION THE WIDTHS NEEDED, and it was
+   * written without it first: a saved height goes on the element as
+   * --d-deck-pref, an inline custom property outranks every rule in this sheet,
+   * and the rule below that zeroes the row for a folded deck could not win.
+   * Measured before the fix: the mixer disappeared and its 300px row stayed —
+   * a band of empty background above the status bar. */
+  --d-deck-h: var(--d-deck-pref, 300px);
+  grid-template-rows: auto minmax(0, 1fr) var(--d-deck-h, 300px) auto;
+  grid-template-areas:
+    "bar     bar     bar"
+    "browser centre  centre"
+    "mixer   mixer   mixer"
+    "status  status  status";
+}
+/* Folded, the deck's ROW has to go too. .d-nomixer hides the panel, and on its
+ * own that would leave a 300px band of background where the deck was. */
+.d-shell.d-deck.d-nomixer { --d-deck-h: 0px; }
+/* the edge that separates it from the arrangement moves with it */
+.d-shell.d-deck .d-mixer { border-left: 0; border-top: 1px solid var(--edge); }
+/* An empty readout is 10px of padding, and in a deck those 10px come out of the
+ * strips. It says nothing until `measure` has been pressed, so until then it
+ * takes no room either. */
+.d-shell.d-deck .d-mixer .d-note:empty { display: none; }
+
+/* ── THE DRAG HANDLES ────────────────────────────────────────────────────
+ * Siblings of the panels, not children of them: .d-browser scrolls, and a
+ * handle inside it would scroll away with the instrument list.
+ *
+ * Each one is placed in its panel's own grid area and pushed to the edge it
+ * governs, so the grid keeps them aligned with no measuring in script. The
+ * -3px margin straddles the boundary rather than sitting inside the panel,
+ * which leaves most of the browser's scrollbar still hittable. */
+.d-hsplit {
+  position: relative; z-index: 6; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.d-hsplit::after { content: ""; background: var(--hair); border-radius: 2px; }
+.d-hsplit:hover::after, .d-hsplit.d-drag::after { background: var(--primary); }
+.d-hsplit-b { grid-area: browser; justify-self: end; margin-right: -3px; }
+.d-hsplit-m { grid-area: mixer; justify-self: start; margin-left: -3px; }
+.d-hsplit-b, .d-shell:not(.d-deck) .d-hsplit-m { width: 6px; height: 100%; cursor: col-resize; }
+.d-hsplit-b::after, .d-shell:not(.d-deck) .d-hsplit-m::after { width: 2px; height: 42px; }
+/* In deck mode the same element governs the deck's HEIGHT, so it lies along the
+ * top edge of the deck instead of down the side of a column. */
+.d-shell.d-deck .d-hsplit-m {
+  justify-self: stretch; align-self: start;
+  margin: -3px 0 0; width: auto; height: 6px; cursor: row-resize;
+}
+.d-shell.d-deck .d-hsplit-m::after { width: 42px; height: 2px; }
+/* ⚠ A HANDLE FOR A PANEL THAT IS NOT THERE IS THE WORST KIND OF CONTROL: it
+ * drags, it writes a width, and nothing moves. Folded means gone. */
+.d-shell.d-nobrowser .d-hsplit-b, .d-shell.d-nomixer .d-hsplit-m { display: none; }
 
 /* ── transport bar ──────────────────────────────────────────────────── */
 
@@ -95,6 +186,19 @@ body.d-body {
 }
 .d-zlab { font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
           text-transform: uppercase; color: var(--ghost); }
+/* THE NUMBER BEHIND THE LAYOUT CHIPS. The house rule is a plain control, the
+ * number behind it and a tool; the chips are the control, daw_layout is the
+ * tool, and this is the number — the px the grid is actually using, updated on
+ * every frame of a drag so the handle is a measurement and not a feeling.
+ *
+ * It lives in the STATUS bar, not beside the chips: at 285px it wrapped the
+ * transport onto a second row and cost the arrangement 36px, which is the same
+ * thing that happened to the CPU readout and had the same fix. It inherits the
+ * status bar's own font, so only the parts that differ are set here. */
+.d-viewnum {
+  flex: 0 0 auto; color: var(--ghost);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
 
 /* a disclosure inside the bar: the group opens as a strip under the button
  * rather than pushing the whole transport onto another row */
@@ -914,7 +1018,15 @@ dialog .d-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; 
 #newProjectForm > label { display: grid; gap: 8px; }
 #newProjectError { color: var(--err); }
 @media (max-width: 1100px) {
-  .d-shell { --d-browser-w: 190px; --d-mixer-w: 210px; }
+  /* ⚠ THIS BLOCK IS WHERE A DRAGGED WIDTH WENT TO DIE. It has the same
+   * specificity as the .d-shell rule at the top of the file and it sits later
+   * in the sheet, so below 1100px it won the cascade and pinned both sides to
+   * these numbers — the handles moved, the readout counted, and the grid did
+   * not. The narrow defaults are still here; they are now the FALLBACK of the
+   * same preference variable, so they apply until somebody sets a width and
+   * step aside the moment one exists. Both blocks have to say it. */
+  .d-shell { --d-browser-w: var(--d-browser-pref, 190px); --d-mixer-w: var(--d-mixer-pref, 210px); }
+  .d-shell.d-deck { --d-mixer-w: 0px; }
   .d-shell.d-nomixer { --d-mixer-w: 0px; }
   .d-shell.d-nobrowser { --d-browser-w: 0px; }
   .d-edinfo { display: none; }

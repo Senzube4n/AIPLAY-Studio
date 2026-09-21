@@ -19,6 +19,16 @@ What this suite exists to prove, in the order it matters:
             that forced fresh-synth-per-note is re-proven here, not trusted.
   MANIFEST  patches.json is well formed and every renderable patch's file
             resolves -- the one table both sides read.
+  KEYCENTER an sfz region that declares no pitch_keycenter is tuned from its
+            SAMPLE FILE NAME (in that file's own octave convention, measured
+            against its declared regions) and from the format's default of
+            60 -- never from the note being played, which is what it used to
+            do. Proven in AUDIO: inside one region every key is the same
+            sample resampled, so the render at key k must be the render at
+            the region's bottom key shifted by exactly (k - bottom)
+            semitones, and that is read by cross-correlating their
+            log-frequency spectra. The regions nothing corroborates keep the
+            old bytes and stop being silent about it.
   CIRCUITS  the drum machines (drums.py) and the big-room synths (synths.py)
             are claims about sound, so they are MEASURED: fundamentals, decay
             times, the 909's pitch envelope against the 808's, the lead's
@@ -1585,7 +1595,12 @@ cold()
 NEW_PITCHED = [
     ("eguitar_clean", [40, 47, 52, 59, 64]),      # E2 B2 E3 B3 E4 -- guitar strings
     ("eguitar_jazz", [40, 52, 64]),
-    ("growlybass", [33, 40, 45, 52, 60, 72]),     # A1 up: the mapped range
+    # 59 and 61 are the NEIGHBOURS of 60 inside growlybass_clean's one
+    # keycenter-less group (lokey=59 hikey=61, sample sustain/c4_*.wav).
+    # Probing only 60 was probing the one key the old fallback got right:
+    # on the pre-change tree 59 and 61 score a comb ratio of 0.00 against the
+    # 3.0 this demands, while 60 scores 11404. A check that cannot fail.
+    ("growlybass", [33, 40, 45, 52, 59, 60, 61, 72]),  # A1 up: the mapped range
     ("epiano_wurlitzer", [48, 60, 72]),
     ("epiano_pianet", [48, 60, 72]),
     ("epiano_cp80", [36, 60, 84]),
@@ -1641,6 +1656,338 @@ for pid, keys in NEW_PITCHED:
     ok(f"{pid}: ...and it is stereo, non-silent and float32-exact",
        y.shape[0] == 2 and float(np.max(np.abs(y))) > 1e-3
        and np.array_equal(y, np.asarray(y, dtype=np.float32).astype(np.float64)))
+
+
+# === THE KEYCENTER A REGION DOES NOT DECLARE (2026-09-21) =================
+#
+# instruments.py used to fall back to the note being PLAYED, so a region with
+# no pitch_keycenter sounded its sample UNTRANSPOSED at every key it covers.
+# The sfz format's default is 60; ours was not the format's, and it was wrong
+# in a way nothing here could see -- the section above probes growlybass at
+# 60, which IS that region's keycenter, so the one key it looked at was the
+# one key that was right.
+#
+# Measured on the pre-change tree over all twenty installed mappings: 302 of
+# 9,248 regions declare no keycenter and every one spans more than one key.
+# They are NOT one mistake. meatbass and growlybass (286 of them) all point
+# at a sample named c4_* and mean the format's 60; epianos/Pianet T (16) name
+# their samples 29_F1_release, 33_A1_release ... and mean THOSE, so a blanket
+# 60 would pitch an F1 sample down 31 semitones. Both cases are proven below.
+
+print("\n  -- a region that declares NO keycenter is tuned from its SAMPLE'S "
+      "NAME, not from the key you pressed --")
+
+# What the packs on this box actually ship, plus the names that must be
+# REFUSED: two note tokens is ambiguous, and a drum name is not a pitch.
+for _name, _want in [
+        (r"sustain\c4_pp_rr1.wav", 60),            # growlybass
+        (r"..\Samples\arco\c4_vl3_up.wav", 60),    # meatbass, a relative path
+        ("a0_vl1_down.wav", 21), ("eb1_vl1_down.wav", 27),
+        ("gb2_vl1_up.wav", 42),                    # the pack declares 42 for it
+        ("29_F1_release.flac", 29), ("37_C#2_release.flac", 37),
+        ("52_E3_P.flac", 52), ("bb2.wav", 46), ("B2.WAV", 47),
+        ("cs2_x.wav", 37), ("c-1.wav", 0),
+        ("kick_1.wav", None), ("snare.wav", None), ("Tom1_4.wav", None),
+        ("hat_closed_3.wav", None),
+        ("e2_f2.wav", None),                       # two notes: ambiguous
+        ("abc4.wav", None)]:                       # not a note name at all
+    _got = I._sample_note(_name)
+    ok(f"a sample called {_name!r} names midi {_want}", _got == _want, f"got {_got}")
+
+print("\n  -- ...and the OCTAVE that name is in is measured against the file's "
+      "own declared regions, never assumed --")
+
+for _pid, _want in (("growlybass", 0), ("meatbass_pizz", 0), ("meatbass_arco", 0),
+                    ("epiano_pianet", 0), ("eguitar_clean", 0), ("harp", 0),
+                    ("vsco2_strings", 12), ("vsco2_marimba", 12),
+                    ("vsco2_strings_pizz", 12)):
+    if not have(_pid):
+        skip(f"{_pid}: octave convention", "not installed")
+        continue
+    _path = os.path.join(I.default_instruments_dir(),
+                         *MAN["patches"][_pid]["file"].split("/"))
+    _off, _votes, _agree, _cal = I._sfz_name_offset(_path)
+    ok(f"{_pid}: its sample names sit {_off:+d} semitones from the sfz note "
+       f"convention, on {_agree} of {_votes} unanimous votes",
+       _off == _want and _cal and _agree == _votes and _votes >= 8,
+       f"offset {_off} {_agree}/{_votes} calibrated={_cal}")
+ok("...so the VSCO2 packs are NOT read on c4 = 60 like the other sixteen, "
+   "which is the whole reason the convention is measured per file",
+   all(I._sfz_name_offset(os.path.join(I.default_instruments_dir(),
+                                       *MAN["patches"][p]["file"].split("/")))[0] == 12
+       for p in ("vsco2_strings", "vsco2_marimba", "vsco2_strings_pizz") if have(p)))
+
+print("\n  -- a file name is only believed when something CORROBORATES it --")
+
+
+def _write_fixture(td, declared, cases):
+    """A .sfz plus the one-cycle wavs it names. `declared` are (name, keycenter)
+    regions on their own single key -- what the octave calibration votes on --
+    and `cases` are (name, lokey, hikey) regions that declare nothing."""
+    import soundfile as _sf
+    lines = [f"<region> sample={_n} lokey={_kc} hikey={_kc} pitch_keycenter={_kc}"
+             for _n, _kc in declared]
+    lines += [f"<region> sample={_n} lokey={_lo} hikey={_hi}" for _n, _lo, _hi in cases]
+    path = os.path.join(td, "fixture.sfz")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    t = np.arange(SR) / SR
+    for _n in sorted({n for n, _ in declared} | {n for n, _, _ in cases}):
+        _sf.write(os.path.join(td, _n), np.sin(2 * np.pi * 220.0 * t), SR, subtype="FLOAT")
+    return path
+
+
+# Eight declared regions down at C1-C2, so they calibrate the octave without
+# overlapping any of the cases; the four undeclared ones are the branches.
+_DECL = [("c1.wav", 24), ("d1.wav", 26), ("e1.wav", 28), ("f1.wav", 29),
+         ("g1.wav", 31), ("a1.wav", 33), ("b1.wav", 35), ("c2.wav", 36)]
+
+with tempfile.TemporaryDirectory() as _td:
+    _cases = [("e4.wav", 62, 66),      # 64 is INSIDE  -> filename
+              ("c4.wav", 51, 53),      # 60 is outside -> filename+default
+              ("kick.wav", 55, 65),    # no note name  -> default (60 inside)
+              ("a4.wav", 47, 50)]      # 69 outside, 60 outside -> unresolved
+    _fx = _write_fixture(_td, _DECL, _cases)
+    _got = {}
+    for _r in I.parse_sfz(_fx)[0]:
+        if I._declared_keycenter(_r) is not None:
+            continue
+        _got[_r["sample"]] = I._sfz_keycenter(_r, I._sfz_key(_r["lokey"]),
+                                              I._sfz_key(_r["hikey"]), _fx)
+    ok("a name whose note lands INSIDE the region's own range is the keycenter "
+       "(e4 over 62-66 -> 64)", _got.get("e4.wav") == (64, "filename"),
+       str(_got.get("e4.wav")))
+    ok("a name that agrees with the format's default is the keycenter even when "
+       "the region is stretched away from it (c4 over 51-53 -> 60: the meatbass "
+       "case, two independent sources naming one number)",
+       _got.get("c4.wav") == (60, "filename+default"), str(_got.get("c4.wav")))
+    ok("no name at all, but 60 inside the range, is the format's default "
+       "(kick over 55-65 -> 60)", _got.get("kick.wav") == (60, "default"),
+       str(_got.get("kick.wav")))
+    ok("A NAME NOTHING CORROBORATES IS REFUSED: a4 over 47-50 names 69, outside "
+       "that range, and 60 is outside it too -- so the answer is None and the "
+       "old behaviour stands", _got.get("a4.wav") == (None, "unresolved"),
+       str(_got.get("a4.wav")))
+
+    # ...and an unresolved region really does render the OLD bytes, and says so.
+    # 47-50 is the one region covering keys 47 and 49, so the two renders are
+    # the same sample and nothing else.
+    _row = {"id": "fixture", "kind": "sfz", "file": "fixture.sfz", "tail": 0.2}
+    I._keycenter_unresolved.clear()
+    _u1 = I._sfz_voice(_row, 47, 100, SR // 4, SR, {}, _td, np.random.default_rng(1))
+    _u2 = I._sfz_voice(_row, 49, 100, SR // 4, SR, {}, _td, np.random.default_rng(1))
+    ok("an UNRESOLVED region still plays untransposed at every key it covers -- "
+       "byte-identical at 47 and 49, exactly what it did before this fix",
+       np.array_equal(_u1, _u2) and float(np.max(np.abs(_u1))) > 1e-3)
+    _warned = list(I._keycenter_unresolved.values())
+    ok("...but it is no longer SILENT about it: the region is named once, with "
+       "its range and its sample",
+       len(_warned) == 1 and "a4.wav" in _warned[0]
+       and "lokey=47 hikey=50" in _warned[0], str(_warned)[:220])
+    # and a CORROBORATED region in the same file steps properly
+    _c1 = I._sfz_voice(_row, 62, 100, SR // 4, SR, {}, _td, np.random.default_rng(1))
+    _c2 = I._sfz_voice(_row, 64, 100, SR // 4, SR, {}, _td, np.random.default_rng(1))
+    ok("...while the corroborated region next to it does NOT play untransposed: "
+       "62 and 64 differ, and 64 (its keycenter) is the sample at rate",
+       not np.array_equal(_c1, _c2))
+
+_HI_DECL = [(_n, _kc + 12) for _n, _kc in _DECL]
+with tempfile.TemporaryDirectory() as _td2:
+    _fx2 = _write_fixture(_td2, _HI_DECL, [("c4.wav", 70, 74)])
+    ok("a mapping whose sample names sit an octave BELOW its keycenters "
+       "calibrates to +12 off its own regions, so its undeclared c4 region "
+       "resolves to 72 and not to 60",
+       I._sfz_name_offset(_fx2)[0] == 12 and I._sfz_name_offset(_fx2)[3] is True
+       and I._sfz_keycenter({"sample": "c4.wav"}, 70, 74, _fx2) == (72, "filename"),
+       str(I._sfz_name_offset(_fx2)))
+with tempfile.TemporaryDirectory() as _td3:
+    _fx3 = _write_fixture(_td3, _HI_DECL[:4], [("c4.wav", 70, 74)])
+    ok("...but FOUR votes is not a measurement: the offset falls back to 0, and "
+       "because the octave is then unmeasured the c4 name is NOT allowed to "
+       "borrow the format's default either -- 'the name says 60' and 'the "
+       "format says 60' would be one opinion counted twice",
+       I._sfz_name_offset(_fx3)[0] == 0 and I._sfz_name_offset(_fx3)[3] is False
+       and I._sfz_keycenter({"sample": "c4.wav"}, 70, 74, _fx3)[1] == "unresolved",
+       str(I._sfz_name_offset(_fx3)) + " " +
+       str(I._sfz_keycenter({"sample": "c4.wav"}, 70, 74, _fx3)))
+
+print("\n  -- the AUDIT counts every region, and probe_extra carries it --")
+
+_audit = I.keycenter_audit()
+_tot = _audit["totals"]
+ok(f"all {sum(_tot.values())} regions across the installed mappings are "
+   f"accounted for and NONE is unresolved (declared {_tot['declared']}, "
+   f"filename {_tot['filename']}, filename+default {_tot['filename+default']}, "
+   f"default {_tot['default']})",
+   _tot["unresolved"] == 0 and sum(_tot.values()) > 0, json.dumps(_tot))
+ok("a mapping whose regions ALL declare is left out entirely, so an entry "
+   "appearing here IS the finding",
+   all(sum(e["sources"].values()) != e["sources"]["declared"]
+       for e in _audit["patches"].values() if "sources" in e),
+   str(sorted(_audit["patches"])))
+ok("probe_extra reports it, so the fact reaches a caller without anybody "
+   "remembering to ask", I.probe_extra().get("sfz_keycenters") == _audit)
+
+if have("epiano_pianet"):
+    _pp = os.path.join(I.default_instruments_dir(),
+                       *MAN["patches"]["epiano_pianet"]["file"].split("/"))
+    _res = [I._sfz_keycenter(_r, I._sfz_key(_r["lokey"]), I._sfz_key(_r["hikey"]), _pp)
+            for _r in I.parse_sfz(_pp)[0] if I._declared_keycenter(_r) is None]
+    ok(f"Pianet T's {len(_res)} keycenter-less regions resolve to their OWN "
+       f"sample's pitch ({', '.join(str(k) for k, _ in _res[:5])} ...) and "
+       f"never to 60 -- a blanket default would have pitched its F1 release "
+       f"sample down 31 semitones",
+       len(_res) == 16 and all(s == "filename" for _, s in _res)
+       and [k for k, _ in _res][:5] == [29, 33, 37, 41, 45]
+       and not any(k == 60 for k, _ in _res), str(_res[:6]))
+
+print("\n  -- AND IN AUDIO: inside one region every key is the same sample "
+      "resampled, so the pitches must step exactly --")
+
+
+def _logshift(y_ref, y, lo_hz=50.0, hi_hz=8000.0, per_semi=20):
+    """How far `y` sits above `y_ref` on a LOG-FREQUENCY axis, in semitones.
+
+    Two renders from one region are the same sample read at different rates,
+    so their spectra are translates of one another on a log axis and the
+    translation IS the answer -- no pitch tracker, no assumption about which
+    partial is the fundamental. That matters here: the meatbass pizz sample
+    has a body thump under 80 Hz that sends an autocorrelation tracker to
+    1627 Hz, and growlybass sounds an octave below the key you press (it is a
+    bass). Neither can confuse a translation."""
+    def _grid(y_):
+        m = (y_[0] + y_[1]) * 0.5
+        seg = m[int(0.05 * SR):int(0.45 * SR)]
+        seg = seg - seg.mean()
+        sp = np.abs(np.fft.rfft(seg * np.hanning(len(seg)), 1 << 17))
+        fr = np.fft.rfftfreq(1 << 17, 1.0 / SR)
+        g = lo_hz * 2 ** (np.arange(int(12 * np.log2(hi_hz / lo_hz) * per_semi))
+                          / (12.0 * per_semi))
+        v = np.log10(np.interp(g, fr, sp) + 1e-9)
+        return v - v.mean()
+    a, b = _grid(y_ref), _grid(y)
+    ca = np.correlate(b, a, mode="full")
+    lags = np.arange(-len(a) + 1, len(a))
+    sel = np.abs(lags) <= 14 * per_semi
+    seg, lseg = ca[sel], lags[sel]
+    k = int(np.argmax(seg))
+    d = 0.0
+    if 0 < k < len(seg) - 1:
+        den = seg[k - 1] - 2 * seg[k] + seg[k + 1]
+        if den:
+            d = max(-0.5, min(0.5, float(0.5 * (seg[k - 1] - seg[k + 1]) / den)))
+    return (lseg[k] + d) / per_semi
+
+
+# Each run is ONE keycenter-less region and the keys it covers:
+#   growlybass_clean.sfz  lokey=59 hikey=61  sustain/c4_*.wav
+#   04_pizz.sfz           lokey=59 hikey=65  ../Samples/pizz/c4_*.wav
+#   02_arco_3vel.sfz      lokey=59 hikey=61  ../Samples/arco_looped/c4_*.wav
+for _pid, _keys, _dur in (("growlybass", [59, 60, 61], SR),
+                          ("meatbass_pizz", [59, 60, 61, 62, 63, 64, 65], int(0.8 * SR)),
+                          ("meatbass_arco", [59, 60, 61], SR)):
+    if not have(_pid):
+        skip(f"{_pid}: region step", "not installed")
+        continue
+    _ref = I.note_voice(_pid, _keys[0], _dur, 100, SR, 12345)
+    _errs, _worst = [], 0.0
+    for _k in _keys[1:]:
+        _sh = _logshift(_ref, I.note_voice(_pid, _k, _dur, 100, SR, 12345))
+        _cents = (_sh - (_k - _keys[0])) * 100.0
+        _worst = max(_worst, abs(_cents))
+        if abs(_cents) > 12.0:
+            _errs.append(f"key {_k}: {_sh:+.3f} semitones, wanted {_k - _keys[0]:+d}")
+    ok(f"{_pid}: keys {_keys[0]}-{_keys[-1]} are one region and one sample, and "
+       f"they step by exactly a semitone each (worst {_worst:.1f} cents). Before "
+       f"this fix every one of them read 0.000 -- "
+       f"{(_keys[-1] - _keys[0]) * 100} cents out at the top",
+       not _errs, "; ".join(_errs))
+
+print("\n  -- ...and NOTHING that was already right has moved --")
+
+# Recorded by rendering this exact battery on the PRE-change tree, with the
+# untransposed fallback still in place (instruments_test 504/0). Every third
+# key from 24 to 96 on all twenty installed mappings, MINUS the keys the three
+# reachable keycenter-less regions cover -- those are the renders that are
+# supposed to move, and they are measured a few lines up. Keys outside a
+# pack's mapped range render silence and are kept in the hash on purpose: a
+# key that stopped sounding flips the line just as loudly as one that changed
+# pitch. epiano_pianet is in this list on purpose too: its sixteen
+# keycenter-less regions are all trigger=release, which _sfz_voice never
+# selects, so the pack's AUDIO is untouched even though the audit above
+# resolves every one of them.
+#
+# WHAT IT CATCHES, measured by breaking things on purpose. An off-by-one
+# semitone in _sfz_voice moves all twenty lines (and ten of the harmonic-comb
+# checks above), so the battery reaches. Letting a file name OVERRIDE a
+# declared keycenter -- which re-resolves 3,742 of the 9,248 regions -- moves
+# exactly one, vsco2_glock, and that is not the battery being thin: in
+# nineteen of the twenty mappings the file names already agree with the
+# keycenters the pack declares, so overriding one with the other is a no-op
+# in audio. vsco2_glock is the exception because it has only six declared
+# regions with a readable name, which is under _sfz_name_offset's floor of
+# eight, so its +12 convention never calibrates and the name reads an octave
+# low. The check that catches that break loudly is the AUDIT above (declared
+# 8,946 -> 1,120), not these bytes -- which is the point of having both.
+PIN_SFZ_UNMOVED = {
+    "avl_black_pearl": "1c522b5278d43a5af0726c7e97c500441031a8de",       # 25 keys, 10 of them sound
+    "avl_red_zeppelin": "14004f1e9b353688a659641d30a7cd9ca5e46a49",      # 25 keys, 10 of them sound
+    "eguitar_clean": "204b98bbeabd880f3e8a768818996cae0d9f485c",         # 25 keys, 17 of them sound
+    "eguitar_jazz": "8e1abc10c1a23140c5be07182f2ff7ee14104884",          # 25 keys, 17 of them sound
+    "epiano_cp80": "b36c099cb222037751ed73a5b7e04119c7c71298",           # 25 keys, 25 of them sound
+    "epiano_pianet": "90ddbf670fa1d468a5b6eac38250dcb5f8549043",         # 25 keys, 20 of them sound
+    "epiano_wurlitzer": "56114651759b036e354e88afa50e095dea0abd66",      # 25 keys, 22 of them sound
+    "growlybass": "eb021157a92bd964bfa09105abb9f9f8a7bc8804",            # 24 keys, 17 of them sound
+    "harp": "80f2e14fb0bc9e75562f3e697ead262aba763898",                  # 25 keys, 23 of them sound
+    "meatbass_arco": "9847d0fcf7ed1b5b998ed89696e6b9a3695dd4d2",         # 24 keys, 16 of them sound
+    "meatbass_pizz": "0962b9a312502ac49c3bb0dd6bd26bad2f5dbcf5",         # 23 keys, 15 of them sound
+    "muldjord": "17681e3b722ae7366c171104deef28ca98a8f8ba",              # 25 keys, 11 of them sound
+    "organ_drawbar": "b0506d6da0217b186fd49df0e319e584b7a7c02d",         # 25 keys, 22 of them sound
+    "organ_percussive": "872abcfb3be9d18a36f29378f07f44a42e4e5ddb",      # 25 keys, 22 of them sound
+    "organ_rock": "b25da952b75728e4e5a0d4a35ac0f6078879eca0",            # 25 keys, 22 of them sound
+    "vsco2_flute": "32aa2d0632b4d09a8d05d36ac5f32d0a0d29eaf5",           # 25 keys, 25 of them sound
+    "vsco2_glock": "7adec43fe8848bc8bff878a021a0a51058567303",           # 25 keys, 25 of them sound
+    "vsco2_marimba": "ee114ea00ade1ea4322a74e6730572a3aba5bcb4",         # 25 keys, 25 of them sound
+    "vsco2_strings": "450ec17c63fafdc4b4310fe3986f6c40325b5587",         # 25 keys, 25 of them sound
+    "vsco2_strings_pizz": "efd6b1943ce3b51b99b82658101048b7ce275512",    # 25 keys, 25 of them sound
+}
+PIN_SFZ_SKIP = {"growlybass": set(range(59, 62)),        # lokey=59 hikey=61
+                "meatbass_arco": set(range(59, 62)),     # lokey=59 hikey=61
+                "meatbass_pizz": set(range(59, 66))}     # lokey=59 hikey=65
+for _pid in sorted(PIN_SFZ_UNMOVED):
+    if not have(_pid):
+        skip(f"{_pid}: pre-change pin", "not installed")
+        continue
+    _keys = [_k for _k in range(24, 97, 3) if _k not in PIN_SFZ_SKIP.get(_pid, ())]
+    _h = _hl.sha1()
+    for _k in _keys:
+        _h.update(np.ascontiguousarray(
+            I.note_voice(_pid, _k, SR // 4, 100, SR, 1), dtype=np.float32).tobytes())
+    ok(f"{_pid}: {len(_keys)} keys across its whole range, none of them inside a "
+       f"keycenter-less region, still render the pre-change sha1 "
+       f"{PIN_SFZ_UNMOVED[_pid][:12]}",
+       _h.hexdigest() == PIN_SFZ_UNMOVED[_pid], _h.hexdigest())
+
+# THE CACHE. This change alters rendered audio while every .sfz byte on disk
+# stays the same, so the pack fingerprint in _cache_key is unchanged and
+# nothing else in that key stands for this module's own source. The manifest
+# rev is the only term that does -- bump it or every note already on disk
+# replays the untransposed render forever.
+ok("patches.json's rev was bumped past the 1 that cached the untransposed "
+   "renders", MAN.get("rev") >= 2, str(MAN.get("rev")))
+_ik = I.default_instruments_dir()
+_k_now = I._cache_key("growlybass", 60, 100, SR, SR, 1, None, _ik)
+_saved_rev = I._manifest["rev"]
+try:
+    I._manifest["rev"] = 1
+    _k_old = I._cache_key("growlybass", 60, 100, SR, SR, 1, None, _ik)
+finally:
+    I._manifest["rev"] = _saved_rev
+ok("...and the rev really is in the cache key, so every note cached under "
+   "rev 1 is unreachable rather than stale", _k_now != _k_old,
+   f"{_k_old[:12]} vs {_k_now[:12]}")
+
+# === end THE KEYCENTER ====================================================
 
 print("\n  -- ROUND ROBINS VARY AGAIN (the note cache used to freeze them) --")
 

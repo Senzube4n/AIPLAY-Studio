@@ -1,6 +1,6 @@
 {
- "rev": 1,
- "note": "ONE table for the instrument palette: registry rows AND engine facts. server/daw/instruments.py, store.js and routes.js all read THIS file; a patch added on one side only cannot exist. Samples live OUTSIDE the repo under <appData>/daw/instruments (AIPLAY_DAW_INSTRUMENTS overrides); the downloader in patches.js fetches packs on demand, licence first.",
+ "rev": 2,
+ "note": "ONE table for the instrument palette: registry rows AND engine facts. server/daw/instruments.py, store.js and routes.js all read THIS file; a patch added on one side only cannot exist. Samples live OUTSIDE the repo under <appData>/daw/instruments (AIPLAY_DAW_INSTRUMENTS overrides); the downloader in patches.js fetches packs on demand, licence first. `rev` is the note cache's global invalidator: every cached note is keyed on it, so it is bumped whenever the RENDER of an unchanged patch changes (rev 2, 2026-09-21: an sfz region that declares no pitch_keycenter is no longer played untransposed at every key -- see _sfz_keycenter).",
  "packs": {
   "fluidsynth": {
    "label": "FluidSynth runtime (SF2 sampler engine)",
