@@ -52,6 +52,13 @@ body.d-body {
 .d-shell.d-nomixer .d-mixer { display: none; }
 .d-shell.d-nobrowser { --d-browser-w: 0px; }
 .d-shell.d-nobrowser .d-browser { display: none; }
+/* ⚠ READ BY layoutMixer() IN JS, NOT APPLIED BY ANY RULE HERE. The fader's
+ * height has to be pinned in script because the meter canvases and the shared
+ * dB scale are sized from the same number, so a purely declarative cap would
+ * leave both drawn for a fader that is no longer that tall. This token is how a
+ * layout preset moves it: a deck mixer across the bottom wants a shorter fader
+ * than a side column does. */
+.d-shell { --d-fader-h: 180px; }
 
 /* ── transport bar ──────────────────────────────────────────────────── */
 
@@ -413,8 +420,30 @@ body.d-body {
  * bidding for its content width. That is what makes the shrink order right
  * — a flex deficit is shared out in proportion to basis, so an `auto` basis
  * here dragged the 26px gutter down to 9px at the ordinary column width. */
+/* ⚠ align-items: flex-start, OR THE CARD KEEPS THE HEIGHT THE FADER GAVE UP.
+ * Capping the fader in layoutMixer() shortens the fader; without this the strip
+ * card still stretches to the column and you get 180px of controls followed by
+ * 430px of empty bordered box. The two changes are one fix. */
 .d-strips { flex: 1 1 0%; display: flex; gap: 5px; overflow-x: auto; overflow-y: hidden;
+            align-items: flex-start;
             padding: 7px 4px 7px 7px; min-width: 0; }
+.d-mixpin { align-items: flex-start; }
+
+/* ⚠ THE SCROLLBAR IS THE ONLY CUE THAT THERE IS MORE MIXER, AND IT IS 7px AT
+ * 22% ON A TRANSPARENT TRACK. styles.css quietens every scroller in the app to
+ * match the palette, which is right nearly everywhere and wrong here: with nine
+ * tracks in a 154px column a strip is SLICED through its middle at the gutter's
+ * edge, and the comment above about the gutter keeping a half-scrolled strip
+ * from reading as "sliding under the master" was written for exactly this case
+ * and did not hold — it was reported anyway. So this scroller, and only this
+ * one, gets a bar you can see. Palette tokens only (ui_test.js fails the commit
+ * on a raw colour), and the global rule is left alone because it governs every
+ * other scroller in the app. */
+.d-strips::-webkit-scrollbar { height: 10px; }
+.d-strips::-webkit-scrollbar-track { background: var(--panel); border-radius: 99px; }
+.d-strips::-webkit-scrollbar-thumb { background: var(--edge-s); border-radius: 99px; }
+.d-strips::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+.d-strips { scrollbar-color: var(--edge-s) var(--panel); }
 /* shrinkable as a LAST resort: the scroller (a far bigger basis) gives up
  * its width first, so the gutter only narrows once there is nothing else
  * left — which keeps the pinned master inside the column at any width
@@ -460,8 +489,21 @@ body.d-body {
 }
 .d-strip .d-sub { font-family: var(--mono); font-size: 8.5px; color: var(--ghost); text-align: center;
                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.d-fadrow { flex: 1 1 auto; display: flex; gap: 3px; min-height: 108px; align-items: stretch;
-            justify-content: center; }
+/* ⚠ A BASIS, NOT A SHARE OF THE LEFTOVERS. `flex: 1 1 auto` meant this row
+ * absorbed every spare pixel in a strip that the column stretched to full
+ * height — which is how the fader reached 600px, 67% of a 889px window, with
+ * nothing in this file ever asking for it.
+ *
+ * It cannot simply be `0 0 <height>` either: layoutMixer() finds the smallest
+ * height EVERY strip can afford (a strip with sends is deeper than the master,
+ * and one shared dB scale is only honest if every fader is the same height), so
+ * shrinking has to stay possible. Basis is the token, shrink stays 1, and the
+ * floor is min-height.
+ *
+ * Grow stays 1 as well so that any caller still holding slack behaves as it did;
+ * layoutMixer()'s clamp is the ceiling for that path. */
+.d-fadrow { flex: 1 1 var(--d-fader-h, 180px); display: flex; gap: 3px;
+            min-height: 108px; align-items: stretch; justify-content: center; }
 .d-sbtns { display: flex; gap: 2px; justify-content: center; }
 .d-sends { display: flex; flex-direction: column; gap: 2px; }
 .d-send { display: flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 8.5px; color: var(--ghost); }

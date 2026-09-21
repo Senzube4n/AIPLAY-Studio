@@ -3353,7 +3353,27 @@ function layoutMixer() {
    * makes one shared scale true for all of them. */
   let fadH = Infinity;
   for (const [, row] of rows) fadH = Math.min(fadH, row.offsetHeight);
-  fadH = Math.max(90, Math.round(fadH));
+  /* ⚠ A FLOOR AND NO CEILING IS WHAT MADE THE FADER 600px. `.d-fadrow` is
+   * flex:1 1 auto inside a strip that `.d-strips` stretches to the column's
+   * full height, so it absorbs every spare pixel and this line pinned the
+   * result. Nothing asked for it; it was residue. Measured in a 1920x889
+   * window with nine tracks: 600px, 67% of the window.
+   *
+   * ⚠ AND THE CEILING HAS TO BE HERE, NOT IN THE STYLESHEET. The loop below
+   * fits every meter canvas to fadH and paintScale() draws the shared dB
+   * gutter for it; a CSS-only cap would leave oversized canvases in a short
+   * box and a scale whose numbers no longer land on the fader they describe.
+   *
+   * The floor rises 90 -> 108 to agree with .d-fadrow's own min-height: below
+   * about 110px the nine dB labels at 9px collide. The ceiling is a TOKEN so a
+   * layout preset can change it in one place — a deck mixer wants a shorter
+   * fader than a side column does. 180 is Ableton's, chosen out of the bracket
+   * (Reaper ~160, Ableton ~180, Logic ~200); it is a taste choice and it is
+   * meant to be easy to change. */
+  const capRaw = parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--d-fader-h"));
+  const cap = Number.isFinite(capRaw) && capRaw >= 108 ? capRaw : 180;
+  fadH = Math.min(cap, Math.max(108, Math.round(fadH)));
   for (const [, row] of rows) row.style.flex = `0 0 ${fadH}px`;
 
   for (const [, row] of rows) {
