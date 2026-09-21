@@ -178,9 +178,9 @@ export class ComfySupervisor extends EventEmitter {
       console.error(`[comfy] could not deploy the studio nodes: ${err.message}`);
     }
     const modelArgs = [];
-    if (!samePath(config.modelsDir, path.join(config.comfyDir, "models"))) {
+    if (!samePath(config.modelsDir, path.join(config.comfyDir, "models")) || config.modelsAlso?.length) {
       try {
-        modelArgs.push("--extra-model-paths-config", await writeModelPathsYaml(config.modelsDir, config.paths.appData));
+        modelArgs.push("--extra-model-paths-config", await writeModelPathsYaml(config.modelsDir, config.paths.appData, config.modelsAlso || []));
       } catch (err) {
         console.error(`[comfy] could not write the models-folder config: ${err.message}`);
       }

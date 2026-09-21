@@ -538,13 +538,21 @@ async function chooseFolder(what) {
     const files = await scanBases([r.path]);
     /* PINNED. setup.mjs adopts the rig's own models folder on every run, and a
      * folder somebody chose by hand must survive that. */
-    await saveSettings({ modelsDir: r.path, modelsDirPinned: true });
+    /* The folder being left keeps working, exactly as on the Models screen:
+     * remembered in `modelsAlso`, still checked and still loaded from, so a
+     * new folder for downloads never makes what is already there look missing. */
+    const key = (d) => path.resolve(String(d)).replace(/[\\/]+$/, "").toLowerCase();
+    const prev = settings.modelsDir || (settings.rig ? path.join(settings.rig, "ComfyUI", "models") : null);
+    const also = [...(Array.isArray(settings.modelsAlso) ? settings.modelsAlso : []),
+      ...(prev && existsSync(prev) ? [prev] : [])]
+      .filter((d, i, all) => key(d) !== key(r.path) && all.findIndex((x) => key(x) === key(d)) === i);
+    await saveSettings({ modelsDir: r.path, modelsDirPinned: true, modelsAlso: also });
     checkCache = null;
     return {
       path: r.path, files: files.length, folders: Object.keys(countByFolder(files)).length,
       note: files.length
         ? `${files.length} model file${files.length === 1 ? "" : "s"} found. Studio will load from here.`
-        : "No model files found in that folder yet — check it holds the subfolders (checkpoints, vae, …).",
+        : "No models there yet: new downloads will go to this folder, and the models you already have keep working from where they are.",
     };
   }
 

@@ -153,7 +153,7 @@ function missingSupport(cap, ownDit, own = {}) {
     + `already have in the rows under the model file.`;
 }
 import {
-  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog,
+  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES } from "./fit.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
@@ -1328,6 +1328,7 @@ jobs.on("update", async (snap) => {
 async function modelBases() {
   return uniqueDirs([
     config.modelsDir,
+    ...(config.modelsAlso || []),
     ...(await extraBases(config.comfy.extraArgs)),
     path.join(config.comfyDir, "models"),
   ]);
@@ -1362,7 +1363,7 @@ async function localModelsPayload(cat) {
       family, variant, known: known.has(f.name), standsInFor: standsIn[f.name] || null,
     });
   }
-  return { modelsDir: config.modelsDir, bases, files: rows };
+  return { modelsDir: config.modelsDir, also: config.modelsAlso || [], bases, files: rows };
 }
 
 /* ── the music model picker (Models screen and Music tab) ───────────────────
@@ -2499,10 +2500,24 @@ const server = http.createServer(async (req, res) => {
         /* Preview a folder (scanFolder), or adopt it as the models folder
          * (setModelsDir). Adopting needs a restart: the catalogue's download
          * paths and the engine's model paths are both fixed at start. */
+        /* Stop loading from an earlier models folder (it stays on disk). */
+        if (b.action === "dropAlso") {
+          const drop = path.resolve(String(b.dir || ""));
+          const next = (config.modelsAlso || []).filter((d) => !samePath(d, drop));
+          await mergeSettings({ modelsAlso: next });
+          return json(res, 200, { ok: true, also: next, needsRestart: true,
+            note: "Saved. Restart AIPLAY Studio to stop loading from that folder. Nothing in it was deleted." });
+        }
         if (b.action === "scanFolder" || b.action === "setModelsDir") {
           const raw = String(b.dir || "").trim();
           if (!raw) return json(res, 400, { error: "Give a folder." });
           const dir = path.resolve(raw);
+          /* A new folder for downloads may not exist yet: made when asked to,
+           * and only when its parent does (a mistyped drive is still an error). */
+          if (b.action === "setModelsDir" && b.force && b.create && !(await stat(dir).catch(() => null))
+              && (await stat(path.dirname(dir)).catch(() => null))?.isDirectory()) {
+            await mkdir(dir, { recursive: true });
+          }
           const st = await stat(dir).catch(() => null);
           if (!st?.isDirectory()) return json(res, 400, { error: `Not a folder: ${dir}` });
           const files = await scanBases([dir]);
@@ -2516,10 +2531,17 @@ const server = http.createServer(async (req, res) => {
               dir, folders, empty: true,
             });
           }
-          await mergeSettings({ modelsDir: dir, modelsDirPinned: true });
+          /* The folder being left keeps working: remembered as "also load
+           * from", so its weights still count as installed and the engine still
+           * finds them. Only new downloads go to the new folder. */
+          const prev = config.modelsDir;
+          const also = uniqueDirs([...(config.modelsAlso || []), ...(samePath(prev, dir) ? [] : [prev])])
+            .filter((d) => !samePath(d, dir));
+          await mergeSettings({ modelsDir: dir, modelsDirPinned: true, modelsAlso: also });
           return json(res, 200, {
-            ok: true, dir, files: files.length, bytes, folders, needsRestart: true,
-            note: "Saved. Restart AIPLAY Studio to use this folder — downloads, presence checks and the engine all read it at start.",
+            ok: true, dir, files: files.length, bytes, folders, also, needsRestart: true,
+            note: "Saved. Restart AIPLAY Studio to use this folder: new downloads go there, and the models you already have "
+              + "keep working from where they are.",
           });
         }
         /* A local file standing in for a catalogue file, or `use: null` to undo.

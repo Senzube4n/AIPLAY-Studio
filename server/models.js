@@ -2895,6 +2895,22 @@ async function filePresent(f) {
       if ((await stat(path.join(path.dirname(f.dest), name))).size > 0) return true;
     } catch { /* keep looking */ }
   }
+  /* The same file under an EARLIER models folder (config.modelsAlso): the
+   * engine still loads from there, so it is installed, not missing. Without
+   * this a change of folder offered every model again, hundreds of GB. */
+  const rel = path.relative(config.modelsDir, f.dest);
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    for (const base of config.modelsAlso || []) {
+      try {
+        if ((await stat(path.join(base, rel))).size === f.bytes) return true;
+      } catch { /* not there either */ }
+      for (const name of f.alt || []) {
+        try {
+          if ((await stat(path.join(base, path.dirname(rel), name))).size > 0) return true;
+        } catch { /* keep looking */ }
+      }
+    }
+  }
   return false;
 }
 

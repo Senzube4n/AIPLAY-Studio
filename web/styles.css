@@ -5780,3 +5780,6 @@ button, input, select, textarea { font-family: inherit; }
 .mpick .mp-how a { color: var(--primary); display: inline-block; margin-top: 4px; }
 .mpick .mp-region { font-size: 12px; color: var(--dim); line-height: 1.45; display: flex; gap: 6px; align-items: flex-start; }
 .mpick .mp-region a { color: var(--primary); }
+.mfalso { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--faint); }
+.mfalso code { color: var(--dim); }
+.mfalso .btn.sm { margin: 0; flex: 0 0 auto; }
