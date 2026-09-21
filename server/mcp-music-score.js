@@ -2017,8 +2017,10 @@ export function scoreTools(api) {
     {
       name: "score_render",
       description:
-        "SPEND THE GPU: render one version to audio. Returns a job id IMMEDIATELY — poll score_get on that "
-        + "version, whose `renders` array fills in with the stage, the wall time and the finished file.\n\n"
+        "SPEND THE GPU: render one version to audio on YuE2. Returns a job id IMMEDIATELY — poll it with "
+        + "wait_for_song, or poll score_get with the score's SLUG: the finished render arrives as a NEW "
+        + "version of this score whose parent is the one you rendered, carrying the vendor's own receipt. "
+        + "It does not fill anything in on the version you passed.\n\n"
         + "WHAT IT COSTS, MEASURED on this rig for one " + MEASURED.audio_seconds + " s song: "
         + MEASURED.e2e_seconds + " s end to end (" + MEASURED.realtime_factor + "x realtime), holding the card "
         + "throughout. Semantic generation is " + MEASURED.semantic_seconds + " s of it ("
@@ -2043,8 +2045,10 @@ export function scoreTools(api) {
         + FREE_VS_PAID + "\n\n"
         + "CANNOT: it cannot render a slice, an interval, or one section — there is no edit-interval input, so "
         + "every change is a whole-song re-render. It cannot continue an existing recording. It cannot be told "
-        + "to match a reference mix. It does not choose a seed for you unless you omit one, and the same seed "
-        + "with the same score and the same words is the only way to make two renders comparable.",
+        + "to match a reference mix. It cannot render on any other engine: a score only conditions YuE2, and "
+        + "MiniMax or ACE-Step would ignore it and hand you a song that is not this score. It does not choose "
+        + "a seed for you unless you omit one, and the same seed with the same score and the same words is the "
+        + "only way to make two renders comparable.",
       inputSchema: {
         type: "object",
         required: ["score"],
@@ -2080,19 +2084,74 @@ export function scoreTools(api) {
             + "that can. Set it with score_edit's `style`.");
         }
 
-        /* THE RENDER IS A RUN ON THIS SCORE, not a free-floating job: their doc
-         * already carries a `runs` array (routes.js read: `runs:
-         * doc.runs.slice(0, 20)`), and their `adopt` already ingests a finished
-         * vendor folder with `parent`. So the finished render lands as a child
-         * of the version it was made from, and the lineage joins by itself. */
-        const r = await score({
-          action: "render", slug: a.score, version: v.id,
+        /* ⚠ THE DOOR IS /api/generate, NOT /api/score.
+         *
+         * This posted `{ action: "render" }` to /api/score from the day it
+         * shipped. That route has never had a `render` case — not in either
+         * commit the file has — so every call this tool ever took answered
+         * "Unknown action. Try: list, create, read, adopt, draft, note,
+         * author, current, map, invariants, lineage, sheet, capability,
+         * delete, to_daw, export_midi." It is the same failure
+         * server/score/routes.js:451 records for `draft`: this file and
+         * server/score/ were written the same night by two hands, and this
+         * half was written against a route contract the other half never
+         * built. server/mcp-routes_test.js is the lane that now refuses it.
+         *
+         * Nothing new is being wired here. The capability was always at the
+         * render door: /api/generate takes `abc` (honoured verbatim for zero
+         * planning tokens, server/index.js:3254) together with `scoreSlug` and
+         * `scoreVersion`, and on completion server/index.js:948-968 calls
+         * adoptVersion() with `parent: job.scoreVersion` — so the finished run
+         * folder lands as a CHILD of the version it was made from and the
+         * lineage joins by itself, which is exactly what the comment that
+         * stood here promised and posted to the wrong place. It is the same
+         * door the Create page and make_song use.
+         *
+         * `engine: "yue2"` is named rather than left to the Music page's
+         * choice: a score conditions YuE2 and nothing else, and MiniMax would
+         * accept the call, ignore the `abc` and hand back a song that is not
+         * this score. A render that silently drops the thing you are steering
+         * with is worse than a refusal, and the door's own refusal (a missing
+         * kit, an unreachable engine) arrives as a sentence we relay whole. */
+        const r = await api("POST", "/api/generate", {
+          engine: "yue2",
+          /* The style prompt IS the caption on this door; the refusal above
+           * guarantees it is not empty. */
+          caption: v.style,
+          lyrics: v.lyrics || "",
+          abc: abcOf(v, a.score),
+          /* The score is finished notation, so it is CLOSED: `abcOpen` is left
+           * absent, which is what makes the planner sit out entirely rather
+           * than continue what we sent. Absent and not `false`, because the
+           * GGUF door refuses unknown fields. */
+          scoreSlug: a.score,
+          scoreVersion: v.id,
+          /* The score's own nominal length, so the memory rung and the
+           * sampler's stop are fitted to the song being rendered — without it
+           * the door fits nothing and the vendor's 360 s default stop would
+           * cut a longer score off mid-bar. Same number the estimate below
+           * quotes. */
+          maxDuration: Number.isFinite(check.facts.nominal_seconds) && check.facts.nominal_seconds > 0
+            ? Math.round(check.facts.nominal_seconds) : undefined,
           seed: Number.isFinite(a.seed) ? a.seed : undefined,
           cfgScale: Number.isFinite(a.cfg_scale) ? a.cfg_scale : undefined,
-          title: a.title || undefined,
+          title: a.title || v.id,
         });
+        /* The door refuses with its own sentence — an absent kit, a precision
+         * this card has not got. Relay it whole rather than returning a null
+         * job id and leaving the caller to guess. */
+        if (r?.error) throw new Error(r.error);
+        /* ⚠ /api/generate answers with the CURRENT job, which on a busy queue
+         * is somebody else's song. The one just enqueued is the last in the
+         * queue, or the current job when the queue was empty — the same read
+         * make_song does (server/mcp.js:594). */
+        const st = await api("GET", "/api/status");
+        const mine = (st.queue || []).length ? st.queue[st.queue.length - 1] : st.current;
         return {
-          run: r.run ?? r.job ?? null, score: a.score, version: v.id, seed: r.seed ?? null,
+          job_id: mine?.id ?? r.job?.id ?? null,
+          engine: r.engine ?? mine?.engine ?? null,
+          ...(r.rung ? { configuration: r.rung.label, ceiling: r.ceiling ?? null } : {}),
+          score: a.score, version: v.id, seed: mine?.seed ?? null,
           cost: {
             abc_planning: `ZERO. MEASURED: abc {seconds: ${MEASURED.abc_seconds}, output_tokens: `
               + `${MEASURED.abc_output_tokens}, external_prefix_tokens: ${MEASURED.abc_external_prefix_tokens}}. `
@@ -2105,9 +2164,16 @@ export function scoreTools(api) {
               + `${MEASURED.realtime_factor}x, plus ${MEASURED.load_warm_seconds} s warm load.`,
           },
           nominal_seconds: check.facts.nominal_seconds,
-          note: `Started. Poll score_get with score "${a.score}" — the render takes minutes, the score's `
-            + "`recent_runs` carries its stage, and the finished render arrives as a NEW version whose parent "
-            + `is ${v.id}, carrying the vendor's own receipt in \`rendered.timing\`.`,
+          /* What was actually ASKED of the door, which is not the same as what
+           * comes back: on YuE2 a duration is a wish that picks the memory
+           * configuration and lifts the sampler's stop, and the length still
+           * follows the lyrics and the score. Said here so the number in the
+           * request is visible rather than inferred. */
+          asked_seconds: Number.isFinite(check.facts.nominal_seconds) && check.facts.nominal_seconds > 0
+            ? Math.round(check.facts.nominal_seconds) : null,
+          note: `Started. Poll the job with wait_for_song, or score_get with score "${a.score}" — the render `
+            + "takes minutes, and the finished render arrives as a NEW version whose parent is "
+            + `${v.id}, carrying the vendor's own receipt in \`rendered.timing\`.`,
           adherence_warning: NOT_ENFORCED,
         };
       },

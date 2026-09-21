@@ -752,7 +752,26 @@ BLEND_MODES = ("normal", "multiply", "screen", "overlay", "softlight", "add",
                # that already had an index.
                "dissolve", "linearBurn", "darkerColor", "linearDodge",
                "lighterColor", "vividLight", "linearLight", "pinLight",
-               "hardMix", "exclusion", "divide")
+               "hardMix", "exclusion", "divide",
+               # The last seven lived in server/vfx/engine.py's `_EXTRA_MODES`
+               # until 2026-09-21 and were implemented ONLY there, which meant
+               # `_blend` fell off the end of its own if-chain and handed `top`
+               # back for all seven: a shape, a brush stroke or a flat layer
+               # composite set to "hard light" or "color dodge" rendered
+               # BIT-IDENTICAL to normal and nothing said so. They are here now
+               # because this is the tuple every caller of `_blend` reads, and a
+               # list that offers a name the function cannot answer is a picker
+               # row that does nothing.
+               #
+               # STILL AT THE TAIL, and in `_EXTRA_MODES`' own order, because
+               # engine.py used to build its tuple as this one PLUS these seven
+               # in exactly this sequence. Appending them here in that order
+               # leaves engine.BLEND_MODES and imgdoc.BLEND_MODES the same
+               # tuples they already were, position for position, so the two
+               # suites that index them and the hand-kept list in
+               # server/vfx/store.js all stay true without being touched.
+               "hardlight", "colordodge", "colorburn",
+               "hue", "saturation", "color", "luminosity")
 
 # ⚠ NOT EVERY NAME ABOVE IS A FUNCTION OF TWO COLOURS, and a sweep that assumes
 # so crashes on the two that are not — which is exactly what four suites did the
@@ -762,17 +781,31 @@ BLEND_MODES = ("normal", "multiply", "screen", "overlay", "softlight", "add",
 # so they need all three channels at once: `_blend_whole_pixel` refuses them on
 # a single plane rather than quietly becoming darken/lighten.
 #
+# NON_SEPARABLE_MODES are the spec's component family. They take the Lum or the
+# Sat of one layer and graft it onto the other, and both of those are reductions
+# ACROSS the three channels, so they need an image for the same reason the two
+# above do and refuse a plane the same way. Separate from WHOLE_PIXEL_MODES
+# because the two groups fail differently and say so differently: those degrade
+# into darken/lighten, these would degrade into a per-channel nonsense that has
+# no name at all.
+#
 # ALPHA_MODES are not colour maths at all. `dissolve` is a coin toss against the
 # top layer's alpha and belongs ABOVE a composite's lerp — see dissolve_mask().
+#
+# IMAGE_ONLY_MODES is the union a caller actually branches on: everything
+# `_blend` will refuse when handed one colour plane. It exists so a plane-at-a-
+# time caller has ONE name to subtract rather than two it can get half right.
 #
 # PLANE_BLEND_MODES is what is left: elementwise, safe on one plane, and the set
 # any "for every mode" test may iterate. Derived by SUBTRACTION on purpose — a
 # hand-written twin would still read 26 after a 27th elementwise mode was added,
 # and that mode would then be swept by nothing.
 WHOLE_PIXEL_MODES = ("darkerColor", "lighterColor")
+NON_SEPARABLE_MODES = ("hue", "saturation", "color", "luminosity")
 ALPHA_MODES = ("dissolve",)
+IMAGE_ONLY_MODES = WHOLE_PIXEL_MODES + NON_SEPARABLE_MODES
 PLANE_BLEND_MODES = tuple(m for m in BLEND_MODES
-                          if m not in WHOLE_PIXEL_MODES and m not in ALPHA_MODES)
+                          if m not in IMAGE_ONLY_MODES and m not in ALPHA_MODES)
 
 
 def dissolve_mask(alpha, seed=7, index=0, shape=None, at=(0, 0)):
@@ -835,9 +868,10 @@ def _blend_whole_pixel(base, top, mode):
     (composite() below, imgshape._over, imgpath._over) hands over and no
     plane-at-a-time caller ever can.
 
-    engine.py's own fix is one line: these two belong in its `_EXTRA_MODES`
-    tuple beside hue/saturation/color/luminosity, the branch it already keeps
-    for exactly this class of mode.
+    engine.py answers these from all three of its planes at once, in the branch
+    it keeps directly above its non-separable one — see `_blend_rgb` there. It
+    is the same shape of fix `_blend_non_separable` below needs from any
+    plane-at-a-time caller, and the reason both refusals name IMAGE_ONLY_MODES.
     """
     b = np.asarray(base)
     if b.ndim < 3 or b.shape[-1] != 3:
@@ -861,13 +895,152 @@ def _blend_whole_pixel(base, top, mode):
     return np.where(keep_base[..., None], b, t)
 
 
+# ── the component family: Lum and Sat grafted from one layer onto the other ──
+#
+# W3C compositing-1 §12, and the four helpers below are its four: Lum, Sat,
+# ClipColor, SetLum/SetSat. They are written on CHANNEL-LAST arrays because that
+# is what every caller of `_blend` in this file's column holds, and they are
+# written as the same sequence of operations, in the same order, as the plane
+# form in server/vfx/engine.py — which is not a coincidence and not a coding
+# style. That engine keeps its own plane-native copy for a measured reason (see
+# `_blend_rgb` there), so these two are twins that can drift, and the only thing
+# stopping them is that engine_test sweeps both and demands they agree BIT FOR
+# BIT. Reordering an expression here for tidiness breaks that pin on purpose;
+# if you do it, do it in both houses in the same commit.
+
+
+def _ns_lum(c):
+    """Lum(C), keeping the trailing axis so it broadcasts back over the three.
+
+    Written out rather than as `c @ _LUMA_W` because a dot product is free to
+    sum in whatever order its kernel likes, and this value has to match the
+    plane form's `c0*w0 + c1*w1 + c2*w2` to the last bit.
+    """
+    return (c[..., 0:1] * _LUMA_W[0] + c[..., 1:2] * _LUMA_W[1]
+            + c[..., 2:3] * _LUMA_W[2])
+
+
+def _ns_sat(c):
+    """Sat(C) — the spread of the three channels, which is the spec's whole
+    definition of saturation here. NOT HSL's S: there is no division by the
+    lightness, so a colour's Sat falls to zero as it approaches white as well as
+    black, and `saturation` blending a near-white layer therefore flattens
+    rather than blows out."""
+    return c.max(axis=-1, keepdims=True) - c.min(axis=-1, keepdims=True)
+
+
+def _ns_set_sat(c, s):
+    """The spec's SetSat, vectorised: min -> 0, max -> s, mid -> proportional.
+
+    Writing it as `(C - Cmin) * s / (Cmax - Cmin)` for all three channels at
+    once gives exactly those three answers and avoids sorting the channels to
+    find which is the middle one — a sort that would have to be done per pixel.
+
+    ⚠ THE FLAT CASE IS THE DIVISION BY ZERO. A grey pixel has Cmax == Cmin, and
+    the spec's answer for it is all three channels at 0 (a colour with no spread
+    to rescale). The maximum() keeps the divide finite so no NaN is ever born —
+    np.where would evaluate the dividing branch anyway — and the mask then
+    replaces whatever that guard computed with the defined answer.
+    """
+    mn = c.min(axis=-1, keepdims=True)
+    rng = c.max(axis=-1, keepdims=True) - mn
+    flat = np.logical_not(rng > _EPS)
+    out = (c - mn) * s / np.maximum(rng, _EPS)
+    return np.where(flat, np.float32(0.0), out)
+
+
+def _ns_clip_color(c):
+    """Pull a colour back inside the cube WITHOUT moving its luminance.
+
+    SetLum below adds a constant to all three channels, which walks a saturated
+    colour straight out of 0..1; clamping the result there would change the
+    luminance it was just asked to set, and the whole point of `luminosity` is
+    that the tone is the one it was given. So the colour is scaled TOWARD its
+    own luma grey instead, which leaves Lum exactly where it is.
+
+    ⚠ maximum(), NOT minimum(), ON BOTH DIVISORS. `l` is a weighted mean of the
+    three channels, so `l - n` and `x - l` are both non-negative; a minimum()
+    against a positive epsilon would therefore be the epsilon EVERY time, and
+    every out-of-gamut pixel would be divided by 1e-6. engine.py shipped exactly
+    that slip once — [-0.058, 0.542, 0.242] came back as [127323, -70077,
+    28623] — and the note on its `_clip_color` is the record of it.
+    """
+    l = _ns_lum(c)
+    n = c.min(axis=-1, keepdims=True)
+    x = c.max(axis=-1, keepdims=True)
+    # The complement of the predicate rather than the predicate: a NaN channel
+    # then falls on the "leave it alone" side of both halves instead of being
+    # scaled by a comparison that is False for every operator.
+    keep_lo = np.logical_not(n < 0)
+    keep_hi = np.logical_not(x > 1)
+    n = np.maximum(l - n, _EPS)
+    x = np.maximum(x - l, _EPS)
+    p = np.where(keep_lo, c, l + (c - l) * l / n)
+    return np.where(keep_hi, p, l + (p - l) * (1 - l) / x)
+
+
+def _ns_set_lum(c, l):
+    """SetLum(C, l): shift all three channels by one number, then re-gamut."""
+    return _ns_clip_color(c + (l - _ns_lum(c)))
+
+
+def _blend_non_separable(base, top, mode):
+    """hue / saturation / color / luminosity — the four that mix components.
+
+    Each one takes two of {Hue, Sat, Lum} from one layer and the third from the
+    other. `color` and `luminosity` are the pair people actually reach for: a
+    colour layer over a photograph, and a photograph's tone under a flat colour.
+
+    ⚠ NONE OF THEM IS A FUNCTION OF ONE CHANNEL, which is why this refuses a
+    plane rather than answering. Lum is a weighted sum across the three and Sat
+    is max minus min across the three, so handed a single plane both reductions
+    collapse to the plane itself: Lum(r) == r, Sat(r) == 0. `luminosity` would
+    become `normal`, `color` would become `normal`, and `hue` and `saturation`
+    would both become a flat grey — four modes silently wrong in three
+    different ways, which is worse than the one they were in before this
+    function existed. `_blend_whole_pixel` above refuses for the same reason and
+    with the same guard; see its note for why a shape test on the last axis
+    alone is not enough.
+    """
+    b = np.asarray(base)
+    if b.ndim < 3 or b.shape[-1] != 3:
+        raise ValueError(
+            f'"{mode}" mixes the Lum and Sat of whole pixels, so it needs an '
+            f'RGB image — an array shaped (..., h, w, 3) — and it was handed '
+            f'{b.shape}. Lum and Sat are both reductions ACROSS the three '
+            f'channels, so one colour plane cannot supply either, and '
+            f'answering anyway would turn this mode into normal or into a flat '
+            f'grey depending on which one it is. A caller that works plane by '
+            f'plane (server/vfx/engine.py) has to route every name in '
+            f'imagetools.IMAGE_ONLY_MODES through its own branch instead.')
+    b = b[..., :3]
+    t = np.asarray(top)[..., :3]
+    if mode == "hue":
+        # The source's hue, worn at the backdrop's saturation and tone. SetSat
+        # first and SetLum second, and NOT the other way round: SetSat rescales
+        # the channels about zero and would drag any luminance set before it.
+        return _ns_set_lum(_ns_set_sat(t, _ns_sat(b)), _ns_lum(b))
+    if mode == "saturation":
+        # The source's SATURATION applied to the backdrop's own hue and tone —
+        # the backdrop is the colour being moved, which is why `b` is the
+        # argument to SetSat here and `t` was above. Swapping those two lines
+        # gives a mode that looks plausible and is `hue` with the layers
+        # exchanged.
+        return _ns_set_lum(_ns_set_sat(b, _ns_sat(t)), _ns_lum(b))
+    if mode == "color":
+        return _ns_set_lum(t, _ns_lum(b))
+    # luminosity: `color` with the layers the other way round, and the only one
+    # of the four that keeps the BACKDROP's colour.
+    return _ns_set_lum(b, _ns_lum(t))
+
+
 def _blend(base, top, mode):
     """Photoshop's blend maths on float 0..1 arrays, RGB only.
 
     `base` is the backdrop (the spec's Cb), `top` the source (Cs). Every mode
-    here but darkerColor/lighterColor is ELEMENTWISE, which is the property
+    here but the six in IMAGE_ONLY_MODES is ELEMENTWISE, which is the property
     that lets engine.py hand this one colour plane at a time and get the same
-    arithmetic out; those two, and dissolve, say so themselves rather than
+    arithmetic out; those six, and dissolve, say so themselves rather than
     returning a plausible wrong colour.
 
     RANGE: the modes whose own definition ends in a clamp are clamped here; add
@@ -981,8 +1154,43 @@ def _blend(base, top, mode):
         # with b falling to zero. 0/0 has no right answer; this is at least the
         # same answer every time.
         return np.minimum(1.0, base / np.maximum(top, _EPS))
+    if mode == "hardlight":
+        # Overlay with the layers exchanged: the SOURCE decides which branch
+        # each pixel takes, so a hard-light layer is a contrast mask you paint,
+        # where an overlay is one you pass a picture through. Both halves are
+        # written out rather than delegated to overlay's own branch, because
+        # calling overlay(top, base) would read as if the two modes were the
+        # same function and the argument order were a detail.
+        return np.where(top <= 0.5, 2 * base * top,
+                        1 - 2 * (1 - base) * (1 - top))
+    if mode == "colordodge":
+        # b / (1 - t): the backdrop brightened until the source's complement
+        # runs out. vividLight above is this same expression against a doubled
+        # source, and the guards are identical for the identical reason —
+        # np.where EVALUATES BOTH BRANCHES, so the divide has to be finite
+        # before the selection happens or a NaN is born in the branch that gets
+        # thrown away and left behind as a RuntimeWarning.
+        #
+        # The two corner tests are in the spec's own order and that order
+        # DECIDES a pixel: at b = 0 and t = 1 both fire, and W3C compositing-1
+        # asks the Cb == 0 one first, so a black backdrop under a white source
+        # stays black instead of going white.
+        return np.where(base <= _EPS, 0.0,
+                        np.where(top >= 1 - _EPS, 1.0,
+                                 np.minimum(1.0, base
+                                            / np.maximum(1 - top, _EPS))))
+    if mode == "colorburn":
+        # The mirror of colordodge through 1 - x, with its corners in the
+        # spec's order too: Cb == 1 is asked before Cs == 0, so a white backdrop
+        # under a black source stays white.
+        return np.where(base >= 1 - _EPS, 1.0,
+                        np.where(top <= _EPS, 0.0,
+                                 1 - np.minimum(1.0, (1 - base)
+                                                / np.maximum(top, _EPS))))
     if mode in ("darkerColor", "lighterColor"):
         return _blend_whole_pixel(base, top, mode)
+    if mode in NON_SEPARABLE_MODES:
+        return _blend_non_separable(base, top, mode)
     if mode == "dissolve":
         # ⚠ NOT A PIXEL FUNCTION, so there is no colour to return here. It is a
         # per-pixel coin toss against the top layer's ALPHA, which this
@@ -1001,7 +1209,33 @@ def _blend(base, top, mode):
             "handed neither an alpha nor a seed. Use imagetools.dissolve_mask("
             "alpha, seed, index) above the composite's own lerp, the way "
             "imagetools.composite() does.")
-    return top                                    # normal
+    if mode == "normal":
+        return top
+
+    # ⚠ THIS USED TO BE A BARE `return top`, AND THAT LINE HID A REAL BUG FOR AS
+    # LONG AS IT EXISTED. Seven modes were listed in BLEND_MODES and implemented
+    # only over in server/vfx/engine.py, so every one of them fell off the end
+    # of the chain above and came back as the source untouched: hard light,
+    # color dodge, color burn, hue, saturation, color and luminosity all
+    # rendered BIT-IDENTICAL to normal through composite(), imgshape._over and
+    # imgpath._over, and no test, no log line and no pixel said otherwise. A
+    # blend mode that renders as normal looks like a plausible picture, which is
+    # the only reason it survived.
+    #
+    # `normal` is answered by NAME above instead, so the two cases can no longer
+    # share an exit. A caller that genuinely wants "paint it as normal when the
+    # name is a stranger" — engine.py's `_over` does, because a comp document is
+    # free to carry any string and an exception inside a render loop is worse
+    # than a wrong-looking layer — has to make that decision itself, in its own
+    # file, where it is visible. imgdoc.normalize() already did exactly that at
+    # the document level and kept its warning.
+    raise ValueError(
+        f'no blend mode called "{mode}". The {len(BLEND_MODES)} this function '
+        f'implements are imagetools.BLEND_MODES; the six in IMAGE_ONLY_MODES '
+        f'additionally need an RGB image rather than a single colour plane. If '
+        f'you meant to paint an unrecognised name as normal, coerce it against '
+        f'BLEND_MODES where the name arrives — do not ask for a colour and get '
+        f'the source back.')
 
 
 def analyze(job):
@@ -1071,7 +1305,18 @@ def composite(job):
     transparency, say) multiplies its opacity, so a PNG with holes composites
     the way it looks. Blend maths runs on the OVERLAP only — a 200px logo on a
     4K plate costs 200px of work, not 4K.
+
+    A layer's `mode` is a free string off a job file, so a name nothing
+    implements is REPAIRED here rather than raised, and the repair is REPORTED
+    in the status line's `warnings`. That is imgdoc.normalize()'s rule, applied
+    at the only other place a document-shaped thing meets this compositor: a
+    stack is usually somebody's saved work and losing all of it over one
+    layer's spelling is the worse of the two failures. What is not acceptable is
+    what this used to do — `_blend` ended in `return top`, so the layer painted
+    as normal and nothing anywhere said so, and seven modes that were genuinely
+    missing hid behind that for as long as it lasted.
     """
+    warnings = []
     base = Image.open(job["base"]).convert("RGBA")
     canvas = job.get("canvas") or {}
     if int(canvas.get("w") or 0) > 0 and int(canvas.get("h") or 0) > 0:
@@ -1161,6 +1406,12 @@ def composite(job):
         dst = out[y0:y1, x0:x1]
         a = crop[..., 3:4] * float(layer.get("opacity", 1.0))
         mode = str(layer.get("mode") or "normal")
+        if mode not in BLEND_MODES:
+            warnings.append(
+                f"layer {li}: no blend mode called \"{mode}\" — painted as "
+                f"normal. The {len(BLEND_MODES)} real ones are "
+                f"imagetools.BLEND_MODES.")
+            mode = "normal"
         if mode == "dissolve":
             # ⚠ ABOVE THE LERP, NOT INSIDE IT. The two lines below are the
             # whole of compositing for every other mode — blend, then weight by
@@ -1185,8 +1436,13 @@ def composite(job):
         th = im.copy()
         th.thumbnail((int(job.get("thumbSize") or 256),) * 2, Image.LANCZOS)
         th.save(job["thumbOut"])
+    # `warnings` is omitted when empty rather than sent as []: the route that
+    # reads this line parses the last line of stdout and looks at two keys, and
+    # a key that is present on every run is a key nobody notices on the one run
+    # that matters.
     print(json.dumps({"ok": True, "out": job["out"], "width": im.width, "height": im.height,
-                      "layers": len(job.get("layers") or [])}))
+                      "layers": len(job.get("layers") or []),
+                      **({"warnings": warnings} if warnings else {})}))
 
 
 def sheet(job):

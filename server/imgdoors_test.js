@@ -599,5 +599,81 @@ if (!PY) {
   }
 }
 
+/* ─────────── THE PAGE'S PATH INTO THE TYPE CATALOG, RESOLVED ───────────
+ *
+ * ⚠ THREE LEVELS OF "text" AND THEY ARE THREE DIFFERENT THINGS: the MODULE
+ * (imgtext), the CATALOG it publishes under the key "text", and the OP named
+ * "text" inside that catalog. A reader that stops one level early gets a
+ * perfectly good object rather than an error — which is how the ENTIRE
+ * Character / Paragraph dock came to render nothing, with no console error,
+ * for as long as it did. 56 parameter rows in six groups, all absent.
+ *
+ * ⚠ AND A SOURCE-TEXT PIN ALONE CANNOT CATCH IT. "app.js mentions
+ * iedToolsCat.text" was true the whole time it was broken. So this takes the
+ * depth the page encodes and RESOLVES it against the catalog imgtext actually
+ * publishes. Move either side and the path stops resolving. */
+{
+  const app = src("../web/app.js");
+  const m = app.match(/const iedTypeCat = \(\) => iedToolsCat\?\.([A-Za-z?.]+) \|\|/);
+  ok("web/app.js names the type catalog's depth in ONE place",
+    !!m,
+    "iedTypeCat() is the single home for a chain where every level is spelled "
+    + "`text`; without it, three readers each guess the depth separately and two "
+    + "of them guessed wrong");
+
+  /* The two spellings that were wrong. Pinned by name because each was a
+   * DIFFERENT wrong depth, and fixing one taught nothing about the other. */
+  ok("...and no reader reaches for the module's reply as if it were the catalog",
+    !/const cat = iedToolsCat\?\.text;/.test(app),
+    "`iedToolsCat.text` is {text, groups, names, notes} — it has no `params`, so "
+    + "`cat.text.params` is undefined and Object.entries() throws");
+  ok("...and the capability gate does not test the catalog for a params it cannot have",
+    !/iedToolsCat\?\.text\?\.text\?\.params/.test(app),
+    "`iedToolsCat.text.text` is the catalog keyed by OP NAME; asking it for "
+    + ".params is always undefined, so the type capability read as dark forever");
+
+  if (PY) {
+    /* ⚠ THE FIRST SEGMENT NAMES THE MODULE, NOT A KEY INSIDE IT.
+     * `iedToolsCat.text` IS imgtext.catalog() — the tools route keys the reply
+     * by module name. So only what follows applies inside the catalog, and a
+     * walk that starts at the top over-shoots by exactly one level: the same
+     * off-by-one, in the pin written to catch it. */
+    const depth = (m ? m[1].replace(/\?/g, "").split(".").filter(Boolean) : []).slice(1);
+    const r = spawnSync(PY, ["-c",
+      "import sys, json; sys.path.insert(0, 'server'); import imgtext; "
+      + "print(json.dumps(imgtext.catalog()))"],
+      { encoding: "utf8", cwd: join(HERE, "..") });
+    let cat = null;
+    try { cat = JSON.parse((r.stdout || "").trim().split("\n").pop()); } catch { /* reported below */ }
+    ok("imgtext publishes a catalog this test can read",
+      !!cat, (r.stderr || "").slice(-200));
+    if (cat) {
+      /* Walk the page's own path, then ask for the `text` op's params the way
+       * iedCharPaint does. Both halves have to be right for the dock to draw. */
+      let node = cat;
+      for (const k of depth) node = node && node[k];
+      ok(`the page's path (iedToolsCat.text.${depth.join(".")}) resolves against the real catalog`,
+        !!node && typeof node === "object",
+        `walked ${depth.join(" -> ")} and got ${node === undefined ? "undefined" : typeof node}`);
+      ok("...and the `text` op it then reads has the parameters the dock draws",
+        !!(node && node.text && node.text.params
+           && Object.keys(node.text.params).length > 10),
+        `the dock renders one row per parameter; got ${
+          node && node.text && node.text.params
+            ? Object.keys(node.text.params).length : "nothing"}`);
+      ok("...and the nested groups it expands resolve too",
+        !!(node && node.text && node.text.params
+           && Object.entries(node.text.params)
+             .filter(([, d]) => d && d.type === "object")
+             .every(([, d]) => node[d.of] && node[d.of].params)),
+        "iedCharPaint expands an object-typed parameter by looking its `of` up in "
+        + "the same catalog; an `of` with no entry is a group that silently vanishes");
+    }
+  } else {
+    skipped++;
+    console.log("  skip  the type catalog's depth (no python — A SKIP IS UNRUN, NEVER A PASS)");
+  }
+}
+
 console.log(`\n  ${passed} passed, ${failed} failed, ${skipped} skipped`);
 assert.equal(failed, 0, `${failed} image-door pins failed`);

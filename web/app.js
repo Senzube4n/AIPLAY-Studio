@@ -7861,6 +7861,14 @@ const ied = { name: null, rotate: 0, flipH: false, flipV: false,
    * capability is live — the Character/Paragraph dock edits this; the legacy
    * `text` object above stays as the fallback for a server without imgtext. */
   text2: null,
+  /* Stage 9b. Entries are {style, params, on} and they are kept in the SERVER's
+   * painting order at all times — see iedStylesAdd(). `styleAlpha` is the shape
+   * source as a single boolean rather than two flags, because `selection` and
+   * `useAlpha` together are refused by imgstyles on purpose: a style has one
+   * shape, and silently preferring either is how a styled cutout comes back
+   * styled against the wrong edge. Two checkboxes could express the refused
+   * state; one boolean cannot. */
+  styles: [], styleSel: -1, styleAlpha: false,
   chanView: null,                        // which plane the Channels dock shows — a view, never sent
   ptr: null };                           // last pointer position, for the status bar
 
@@ -7933,6 +7941,16 @@ function iedStageOps() {
   if (iedCapLive("shapes") && ied.shapes.length) o.shapes = ied.shapes.map((s) => ({ ...s }));
   if (iedCapLive("paths") && ied.pathDraws.length) o.paths = ied.pathDraws.map((d) => JSON.parse(JSON.stringify(d)));
   if (iedCapLive("geometry") && ied.canvas) o.canvas = { ...ied.canvas };
+  /* Stage 9b, the layer styles. In HERE rather than in the Apply handler so
+   * that Apply, the preset writer and the history snapshot send one object —
+   * which is the entire reason this function exists. iedStylesOp() returns null
+   * when nothing is enabled, so an empty dock adds no key at all: `styles: {}`
+   * would make imgstyles resolve a matte and then refuse, on a picture nobody
+   * asked it to touch. */
+  if (iedCapLive("styles")) {
+    const st = iedStylesOp();
+    if (st) o.styles = st;
+  }
   /* §2 stage 3 is `geometry`, and §7 gives it rotate / flipH / flipV — which is
    * the SAME stage the engine's top-level `rotate` / `flipH` / `flipV` are
    * today. So exactly one of the two forms is ever sent: the legacy keys while
@@ -8318,6 +8336,32 @@ const IED_CAPS = {
    * claim to. */
   layerdoc:  { spec: null, label: "Layer document", probe: "/api/images/document",
     needs: "a layer document — masks, groups, adjustment layers. No route, and no section of IMAGE_SPEC defines one", live: false },
+  /* THREE CAPABILITIES /api/images/capabilities DOES NOT LIST, and that gap is
+   * the reason they carry `fromTools` instead of a plain probe. That route's
+   * table names ten modules and stops; styles, svg and lut are not in it, so
+   * asking it about them returns nothing rather than "no" — and a missing key
+   * falls through to fetching `probe`, which for a POST-only route is a 404 and
+   * would report a working module as dead.
+   *
+   * So they are read from GET /api/images/tools, exactly the way `effects` is
+   * read from the effect registry rather than probed: the catalog is the
+   * module's own answer about itself, and a module that would not import comes
+   * back as `_unavailable` with the import error in it. */
+  styles:    { spec: null, label: "Layer styles", probe: "/api/images/tools", fromTools: "styles",
+    /* The catalog's `available` is `engine is not None and bool(drawable)`, so a
+     * true here means imgstyles imported AND server/vfx/engine.py imported (it
+     * needs cv2) AND the ten styles are present. What it does NOT prove is the
+     * far end of the wire — that imagetools.apply_edit reads ops.styles — and
+     * nothing reachable from a browser does: that is the half
+     * /api/images/capabilities checks by reading imagetools.py's source, and it
+     * has no styles row to check it in. Verified by hand against
+     * imagetools.py stage 9b and by a real render; said here rather than
+     * implied, because an unstated assumption is how a dead control ships. */
+    needs: "server/imgstyles.py + server/vfx/engine.py (it needs cv2), and ops.styles in /api/images/edit", live: false },
+  svg:       { spec: null, label: "SVG export", probe: "/api/images/tools", fromTools: "svg",
+    needs: "server/imgsvg.py + POST /api/images/svg — read from the tool catalog because that route is POST-only and has no GET to probe", live: false },
+  lut:       { spec: null, label: "LUT", probe: "/api/images/luts", fromTools: "lut",
+    needs: "server/imglut.py + /api/images/luts, /api/images/lut-info and /api/images/lut", live: false },
 };
 const iedCapLive = (k) => !k || !!IED_CAPS[k]?.live;
 const iedCapSpec = (k) => IED_CAPS[k]?.spec || "unspecced";
@@ -8767,6 +8811,14 @@ function openImageEditor(name) {
   ied.canvas = null; ied.geom = null; ied.levels = null; ied.ptr = null;
   ied.paths = []; ied.pathSel = -1; ied.pathDraft = null; ied.pathDraws = [];
   ied.text2 = null; ied.chanView = null;
+  /* Stage 9b. Left off this list at first, and the picture-chaining Apply does
+   * is what showed it: the styles stayed staged over the NEW file while the
+   * selection that shaped them was cleared with everything else — a stack
+   * pointing at a shape that no longer existed. The shape verdict goes with
+   * them, because it was an answer about a different picture. */
+  ied.styles = []; ied.styleSel = -1; ied.styleAlpha = false;
+  iedStyleShape = { key: null, shaped: false, why: "", source: "", coverage: null,
+    touchesEdge: false, pending: false, err: "" };
   const chanCv = $("iedChanCanvas");
   if (chanCv) { chanCv.hidden = true; chanCv.width = chanCv.height = 0; }
   if ($("iedSelInvert")) { $("iedSelInvert").checked = false; $("iedSelAA").checked = true; }
@@ -8819,6 +8871,11 @@ function openImageEditor(name) {
   for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
     "iedApply", "iedDockAdjust", "iedDockEffects", "iedDockLayers", "iedDockPresets",
     "iedDockFx", "iedDockSel", "iedDockPaint",
+    /* Styles decorate pixels and a LUT grades them, so both go with the rest of
+     * the pixel surfaces for an .svg. The two export buttons need no row here:
+     * they live inside the Paths and Character docks, which are already on this
+     * list. */
+    "iedDockStyles", "iedDockLut",
     "iedDockChannels", "iedDockPaths", "iedDockChar"]) {
     $(id).hidden = isFinal;
   }
@@ -8826,7 +8883,7 @@ function openImageEditor(name) {
   iedRailEnable();
   iedSetTool("move");
   iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedCapNotes();
-  iedPathsPaint(); iedCharPaint(); iedChanPaint(); iedSwLoad();
+  iedPathsPaint(); iedCharPaint(); iedChanPaint(); iedSwLoad(); iedStylesPaint();
   iedUndoReset();
   /* Ask the server what it can do, once per session. Everything above has
    * already rendered in its OFF state, so a slow or failed probe leaves an
@@ -8967,7 +9024,7 @@ function iedTextUpdate() {
   /* With the text capability live and the catalog fetched, the options bar
    * writes into the FULL spec the Character dock also edits — one object, two
    * views of it. Without them, the legacy path below runs byte for byte. */
-  if (iedCapLive("text") && iedToolsCat?.text?.text?.params) {
+  if (iedCapLive("text") && iedTypeCat()?.text?.params) {
     if (!content) { ied.text2 = null; ied.text = null; iedTextSync(); iedCharPaint(); return; }
     iedText2Ensure();
     const t = ied.text2;
@@ -9034,15 +9091,32 @@ $("iedClose").onclick = () => { $("imgEd").hidden = true; };
  * away. Escape and ✕ close it. */
 
 $("iedApply").onclick = async () => {
-  const btn = $("iedApply"); btn.disabled = true; btn.textContent = "Rendering…";
+  const btn = $("iedApply");
+  /* The flag itself goes through iedApplyEnable(), which is the only writer —
+   * setting `disabled = false` here in the finally is what would switch the
+   * layer-style gate back on at the end of every render. */
+  iedApplyBusy = true; iedApplyEnable(); btn.textContent = "Rendering…";
   try {
     const r = await (await fetch("/api/images/edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name, ops: iedOps() }) })).json();
     if (r.error) { alert(r.error); return; }
+    /* ⚠ THE ROUTE HAS ALWAYS ANSWERED WITH `notes` AND `fxSkipped`, AND THIS
+     * HANDLER THREW THEM AWAY. They are the engine's honesty channel: where a
+     * layer style's shape came from and how much of the frame it covered, a
+     * glow clipped by the frame edge, a style skipped, a smartResize that gave
+     * up and became a plain resize, timeline effects that are a no-op on a
+     * still. Every one of them is a compromise a stage MADE and reported, and a
+     * page that drops them turns a reported compromise into a silent one —
+     * which is the whole failure this console is written against. They are
+     * shown after the editor reopens, because opening it repaints the status
+     * bar. */
+    const said = [...(r.notes || []), ...(r.fxSkipped || []).map((f) =>
+      `${typeof f === "string" ? f : f.type || "an effect"} did nothing on a still`)];
     await loadImages();
     openImageEditor(r.name);           // chain further edits on the result
-  } finally { btn.disabled = false; btn.textContent = "Apply → new image"; }
+    if (said.length) iedToast(said.join("  ·  "));
+  } finally { iedApplyBusy = false; iedApplyEnable(); btn.textContent = "Apply → new image"; }
 };
 
 $("iedVecGo").onclick = async () => {
@@ -10141,6 +10215,22 @@ $("iedPresetApply").onclick = () => {
   ied.strokes = iedClone(ops.strokes) || [];
   ied.shapes = iedClone(ops.shapes) || [];
   ied.pathDraws = iedClone(ops.paths) || [];
+  /* iedStageOps() writes ops.styles, so this reader has to read it back — the
+   * "rebuilt from a key list" failure the comment above names. The wire form is
+   * a LIST of {style, ...params}, so the style name comes back out of the object
+   * and the rest is the parameters; the dock then re-sorts into painting order,
+   * because a preset's key order is not an order the server honours either. */
+  const stOps = ops.styles?.styles;
+  ied.styles = (Array.isArray(stOps) ? stOps : Object.entries(stOps || {})
+    .map(([style, p]) => ({ style, ...(p || {}) })))
+    .map(({ style, name, kind, ...params }) => ({ style: style || name || kind, params, on: true }))
+    .filter((e) => iedStyleEntry(e.style));
+  const stOrd = iedStyleOrder();
+  ied.styles.sort((a, b) => stOrd.indexOf(a.style) - stOrd.indexOf(b.style));
+  ied.styleSel = ied.styles.length ? 0 : -1;
+  ied.styleAlpha = ops.styles?.useAlpha === true;
+  $("iedStyleLightOn").checked = ops.styles?.globalLight != null;
+  if (ops.styles?.globalLight != null) $("iedStyleLight").value = ops.styles.globalLight;
   if (ops.text?._v2) {
     ied.text2 = iedClone(ops.text);
     delete ied.text2._v2;                          // iedTextOp() re-stamps it
@@ -10153,6 +10243,7 @@ $("iedPresetApply").onclick = () => {
   $("iedCropLbl").textContent = ied.crop
     ? `${ied.crop.w}×${ied.crop.h} @ ${ied.crop.x},${ied.crop.y}` : "drag on the image";
   iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedPathQueuePaint(); iedCharPaint();
+  iedStylesPaint();
   iedHslLoad(); iedDrawCurve(); iedPreview();
   iedPush(`preset · ${$("iedPreset").value}`);
   /* A preset written where the modules exist can carry stages this server
@@ -10161,7 +10252,8 @@ $("iedPresetApply").onclick = () => {
    * picture it was named after. */
   const dark = [["selection", ops.selection], ["strokes", ops.strokes?.length],
     ["shapes", ops.shapes?.length], ["geometry", ops.canvas || ops.geometry],
-    ["paths", ops.paths?.length], ["text", ops.text?._v2]]
+    ["paths", ops.paths?.length], ["text", ops.text?._v2],
+    ["styles", ops.styles?.styles]]
     .filter(([k, v]) => v && !iedCapLive(k)).map(([k]) => IED_CAPS[k].label);
   if (dark.length) iedToast(`This preset also carries ${dark.join(" and ")} — loaded, but this server has no stage for it yet, so Apply will leave it out.`);
 };
@@ -10191,6 +10283,11 @@ async function iedProbeCaps(force) {
   if (iedCapLog && !force) return iedCapLog;
   const log = [];
   let explicit = null;
+  /* Help -> "probe again" passes force, and it has to reach the TOOL CATALOG
+   * too: styles, svg and lut are answered out of that one fetch, and answering
+   * a re-probe from a cached reply is a refresh button that refreshes nothing.
+   * Once, not once per capability — three keys read the same document. */
+  let toolsRead = false;
   try {
     const r = await fetch("/api/images/capabilities");
     log.push({ url: "/api/images/capabilities", status: String(r.status) });
@@ -10203,6 +10300,21 @@ async function iedProbeCaps(force) {
       c.live = !!iedFxCat && Object.keys(iedFxCat).length > 0;
       log.push({ key: k, url: c.probe,
         status: c.live ? `200 · ${Object.keys(iedFxCat).length} effects` : (iedFxErr || "failed") });
+      continue;
+    }
+    /* A catalog-backed capability. `_unavailable` is what /api/images/tools puts
+     * in a module's slot when importing it raised, and it carries the exception
+     * text — so a dark dock can name the missing package instead of shrugging.
+     * `available: false` is imgstyles saying so about itself. */
+    if (c.fromTools) {
+      await iedToolsLoad(force && !toolsRead);
+      toolsRead = true;
+      const cat = iedToolsCat?.[c.fromTools];
+      c.live = !!cat && !cat._unavailable && cat.available !== false;
+      log.push({ key: k, url: `/api/images/tools · tools.${c.fromTools}`,
+        status: c.live ? "yes"
+          : (cat?._unavailable || (cat ? "the module reports itself unavailable"
+            : (iedToolsErr || "no such module in the catalog"))) });
       continue;
     }
     if (explicit && typeof explicit === "object" && k in explicit) {
@@ -10220,6 +10332,10 @@ async function iedProbeCaps(force) {
     }
   }
   iedCapLog = log;
+  /* The catalog is in by now — every fromTools capability above awaited it — so
+   * this is the first moment the two blend pickers can hold the real list. */
+  iedBlendPickers();
+  iedStylesBuild(); iedLutBuild();
   iedRailEnable(); iedMenuBuild(); iedCapNotes();
   return log;
 }
@@ -10228,7 +10344,8 @@ async function iedProbeCaps(force) {
  * once, instead of every row carrying the same sentence. */
 function iedCapNotes() {
   for (const [id, k] of [["iedSelCap", "selection"], ["iedPaintCap", "strokes"],
-    ["iedPathCap", "paths"], ["iedCharCap", "text"], ["iedDocCap", "layerdoc"]]) {
+    ["iedPathCap", "paths"], ["iedCharCap", "text"], ["iedDocCap", "layerdoc"],
+    ["iedStylesCap", "styles"], ["iedLutCap", "lut"]]) {
     const el = $(id); if (!el) continue;
     el.hidden = iedCapLive(k);
     el.textContent = iedCapWhy(k);
@@ -10241,7 +10358,21 @@ function iedCapNotes() {
     ["iedStrokeUndo", "strokes"], ["iedPaintClear", "strokes"],
     ["iedPathFromSel", "paths"], ["iedPathSvg", "paths"], ["iedPathToSel", "paths"],
     ["iedPathStroke", "paths"], ["iedPathFill", "paths"], ["iedPathCheck", "paths"],
-    ["iedCharMeasure", "text"]]) {
+    ["iedCharMeasure", "text"],
+    /* Every control the three new docks own, on the same one-writer rule as the
+     * rows above it: a control that is lit is a control that works, and one that
+     * is dark says which file and which route it is waiting for. The two export
+     * buttons are gated on `svg` rather than on `paths` / `text`, because the
+     * pen and the type dock can be perfectly alive while imgsvg is the module
+     * that would not import — gating them on their own dock's capability would
+     * be a button that looks live and answers 404. */
+    ["iedStylePick", "styles"], ["iedStyleClear", "styles"], ["iedStyleCheck", "styles"],
+    ["iedStyleShapeSel", "styles"], ["iedStyleShapeAlpha", "styles"],
+    ["iedStyleLightOn", "styles"], ["iedStyleLight", "styles"],
+    ["iedPathSvgOut", "svg"], ["iedCharSvgOut", "svg"],
+    ["iedLutPick", "lut"], ["iedLutRefresh", "lut"], ["iedLutFile", "lut"],
+    ["iedLutInfo", "lut"], ["iedLutStrength", "lut"], ["iedLutInterp", "lut"],
+    ["iedLutGo", "lut"]]) {
     const el = $(id); if (!el) continue;
     el.disabled = !iedCapLive(k);
     // The markup's own tooltip survives a disable/enable round trip.
@@ -10250,6 +10381,20 @@ function iedCapNotes() {
   }
   for (const id of ["iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA"]) {
     $(id).disabled = !iedCapLive("selection");
+  }
+  /* `iedLutFile` is an <input type=file> hidden inside a <label> that is styled
+   * as the button. Disabling the input stops the click from opening a picker but
+   * leaves the label looking live, so the label is dimmed with it — otherwise
+   * the one control here that LOOKS most like a button would be the one that
+   * silently does nothing. */
+  const lutUp = $("iedLutUpload");
+  if (lutUp) {
+    const live = iedCapLive("lut");
+    // Stashed before the first overwrite, the same round-trip the loop above does.
+    if (lutUp.dataset.ownTitle === undefined) lutUp.dataset.ownTitle = lutUp.title || "";
+    lutUp.style.opacity = live ? "" : ".45";
+    lutUp.style.pointerEvents = live ? "" : "none";
+    lutUp.title = live ? lutUp.dataset.ownTitle : iedCapWhy("lut");
   }
   /* The Documents dock's buttons are NOT in the list above on purpose: they are
    * gated on the capability AND on what is open and picked, so iedDocPaint()
@@ -10550,6 +10695,11 @@ function iedSelPaint() {
   for (const b of list.querySelectorAll("[data-seldel]")) {
     b.onclick = () => { ied.sel.splice(+b.dataset.seldel, 1); iedSelPaint(); iedOverlayPaint(); iedStatus(); iedPush("drop selection shape"); };
   }
+  /* The selection IS the layer styles' shape, so every path that repaints this
+   * list has just changed the question the shape check answered. Hooking it
+   * here rather than at each of the callers is what stops one of them being
+   * forgotten and leaving Apply lit on a stale yes. */
+  iedStylesGate();
   iedStatus();
 }
 
@@ -11179,12 +11329,303 @@ $("iedPathCheck").onclick = async () => {
   }
 };
 
+/* ══ SVG export ═════════════════════════════════════════════════════════════
+ *
+ * The vector side had a full pen and no way out. imgpath does beziers,
+ * booleans, offsets and fill rules; imgtext turns type into outlines; and
+ * everything either of them made could only ever leave this console as PIXELS —
+ * while `vectorize` had, all along, been able to turn a photograph into
+ * vectors. POST /api/images/svg is the missing door and this is the button.
+ *
+ * ⚠ READ figureOk, NOT ok, AND NEVER COLLAPSE THEM. `ok` says a file was
+ * written. `figureOk` says the figure is what its author meant. A counter wound
+ * the same way as the letter around it exports perfectly — valid SVG, correct
+ * byte count, opens everywhere — and fills SOLID in every renderer on earth,
+ * because `fill-rule: nonzero` just counts crossings and nothing in the file
+ * records which way round a hole is supposed to go. That is a successful export
+ * carrying a warning, so it is shown beside the file's name and never as an
+ * error: refusing it would refuse the only case this check exists for.
+ *
+ * The problems are the SERVER's sentences, printed verbatim. They name the
+ * contour by number and say what to do to it — reverse it, or ask for fillRule
+ * evenodd, which does not care which way a contour is wound — and rewording
+ * them here would give the page and an agent two different vocabularies for one
+ * defect.
+ */
+async function iedSvgExport(payload, sayId, btnId, what) {
+  const say = $(sayId), btn = $(btnId);
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = "writing\u2026";
+  say.textContent = "writing\u2026"; say.classList.remove("iedcapwarn");
+  try {
+    const r = await (await fetch("/api/images/svg", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload) })).json();
+    if (r.error) { say.textContent = r.error; say.classList.add("iedcapwarn"); iedToast(r.error); return; }
+    /* `contours` is the top-level count on a type export and `subpaths` on a
+     * figure export — the server's own meta line reads them in this order for
+     * the same reason, and picking only one would print "undefined contours" on
+     * whichever export it was not written for. */
+    const n = r.contours ?? r.subpaths ?? 0;
+    const bits = [`${r.name} \u2014 ${n} contour${n === 1 ? "" : "s"}`,
+      `${r.elements ?? 1} element${(r.elements ?? 1) === 1 ? "" : "s"}`,
+      r.bytes ? `${r.bytes} bytes` : null,
+      r.glyphs ? `${r.glyphs.length} glyph${r.glyphs.length === 1 ? "" : "s"}` : null,
+      r.missing?.length ? `no glyph for ${r.missing.map((m) => (m.char ?? m)).join(" ")}` : null];
+    const problems = (r.reports || []).flatMap((rep) => rep.problems || []);
+    const warnings = [...(r.warnings || []), ...(r.notes || [])];
+    say.textContent = bits.filter(Boolean).join(" \u00b7 ")
+      + (r.figureOk === false ? `  \u26a0 ${problems.join("  ")}` : "")
+      + (warnings.length ? `  (${warnings.join("  ")})` : "");
+    say.classList.toggle("iedcapwarn", r.figureOk === false);
+    /* Written, and wrong in a way that will not show until somebody opens it —
+     * so it goes to the status bar too, where the eye already is. */
+    if (r.figureOk === false) iedToast(`${r.name} was written, and it will fill solid: ${problems[0] || "see the Paths dock"}`);
+    // .svg is already a listed format, so the gallery just needs re-reading.
+    await loadImages();
+  } catch (e) {
+    say.textContent = `The ${what} could not be exported: ${e.message}`;
+    say.classList.add("iedcapwarn");
+  } finally {
+    btn.disabled = false; btn.textContent = was;
+  }
+}
+
+$("iedPathSvgOut").onclick = () => {
+  if (!iedCapLive("svg")) { iedToast(iedCapWhy("svg")); return; }
+  const p = iedPathCur();
+  if (!p) return;
+  /* The figure is the path's CONTOUR LIST — `subs` — under `paths`, the same
+   * {paths: [...]} the fill gesture queues and the figure check checks.
+   * Exporting anything else would export a figure nobody drew. */
+  const figure = { paths: iedClone(p.subs), fill: [...hex2rgb($("iedShFill").value), 255] };
+  if ($("iedShStrokeOn").checked) {
+    figure.stroke = [...hex2rgb($("iedShStroke").value), 255];
+    figure.strokeWidth = +$("iedShWidth").value;
+  }
+  iedSvgExport({ name: p.name.replace(/[^A-Za-z0-9_-]/g, "") || "path", figure, title: p.name },
+    "iedPathSvgSays", "iedPathSvgOut", "figure");
+};
+
+$("iedCharSvgOut").onclick = () => {
+  if (!iedCapLive("svg")) { iedToast(iedCapWhy("svg")); return; }
+  const spec = iedTextOp().text;
+  if (!spec || !String(spec.content || "").trim()) {
+    iedToast("Type something first \u2014 an empty string has no outlines to export.");
+    return;
+  }
+  /* `_v2` is this console's own flag for telling imagetools which of the two
+   * text forms it is holding; imgsvg has no use for it and no reason to be
+   * handed it. Stripped rather than trusted-to-be-ignored. */
+  const { _v2, ...text } = iedClone(spec);
+  iedSvgExport({ name: "type", text }, "iedCharSvgSays", "iedCharSvgOut", "type");
+};
+
+
+/* ══ the LUT shelf ══════════════════════════════════════════════════════════
+ *
+ * Four routes and, until now, no control: a list, an upload, a report and the
+ * grade itself. Nothing here rides Apply — /api/images/lut mints its own
+ * library image the way Vectorize and the model tools do.
+ *
+ * ⚠ THE MOST USEFUL THING THIS PANEL SAYS IS WHAT A LUT CANNOT TELL IT.
+ * Nothing in a .cube records the colour space it expects its input in, and no
+ * measurement of the table recovers it. A film LUT built for LOG footage,
+ * applied to an ordinary sRGB picture, does not come back looking broken — it
+ * comes back milky and low-contrast and looks like a choice somebody made. That
+ * is why `cannotKnow` is printed BEFORE anything is applied, from the info
+ * report and from the upload's own reply, rather than kept in a tooltip for
+ * afterwards. */
+function iedLutBuild() {
+  const sel = $("iedLutInterp");
+  if (!sel) return;
+  const cat = iedToolsCat?.lut;
+  const modes = cat?.interpolations || [];
+  if (modes.length) {
+    sel.innerHTML = modes.map((m) => `<option value="${esc(m)}"${m === "tetrahedral" ? " selected" : ""}>${esc(m)}${
+      /* Named as a thing to compare against rather than a thing to use: nearest
+       * snaps every pixel to a grid point, so a coarse LUT posterises visibly.
+       * It is on the list because seeing that is how you tell a coarse LUT from
+       * a bad one. */
+      m === "nearest" ? " \u2014 to compare against" : ""}</option>`).join("");
+  } else {
+    sel.innerHTML = `<option value="tetrahedral">tetrahedral</option>`;
+  }
+  iedLutList();
+}
+
+/** The shelf, re-read. It is a folder on the server, so this is a snapshot. */
+async function iedLutList(pick) {
+  const sel = $("iedLutPick"), say = $("iedLutSays");
+  if (!sel) return;
+  if (!iedCapLive("lut")) { sel.innerHTML = `<option value="">\u2014</option>`; return; }
+  try {
+    const r = await (await fetch("/api/images/luts")).json();
+    if (r.error) throw new Error(r.error);
+    const luts = r.luts || [];
+    const want = pick || sel.value;
+    sel.innerHTML = luts.length
+      /* iedBytes() rounds to kB, which is what the gallery wants and this list
+       * does not: a small .cube is a few hundred bytes and came out as "0 kB",
+       * a number that reads as a broken file rather than as a small one. */
+      ? luts.map((l) => `<option value="${esc(l.name)}">${esc(l.name)} \u00b7 ${
+        l.bytes < 1000 ? `${l.bytes} B` : iedBytes(l.bytes)}</option>`).join("")
+      : `<option value="">the shelf is empty \u2014 add a .cube</option>`;
+    if (want && [...sel.options].some((o) => o.value === want)) sel.value = want;
+    if (!luts.length && say && !say.textContent) {
+      say.textContent = "No LUT on the shelf yet. Add a .cube and this list stops being empty \u2014 "
+        + "the server parses it before it answers, so a file that is not a LUT is refused and not kept.";
+    }
+  } catch (e) {
+    sel.innerHTML = `<option value="">the shelf could not be read</option>`;
+    if (say) { say.textContent = `The LUT shelf could not be read: ${e.message}`; say.classList.add("iedcapwarn"); }
+  }
+}
+
+/** One report, printed the same way whichever route produced it. */
+function iedLutReport(rep, lead) {
+  const say = $("iedLutSays");
+  if (!say || !rep) return;
+  const d = rep.domain || {};
+  const head = [lead, rep.title ? `\u201c${rep.title}\u201d` : "untitled",
+    `${rep.kind || "?"} \u00b7 size ${rep.size ?? "?"}`,
+    d.min ? `domain ${d.min.join("/")} \u2192 ${(d.max || []).join("/")}` : null,
+    rep.identity?.isIdentity ? "this LUT is the identity \u2014 it changes nothing" : null]
+    .filter(Boolean).join(" \u00b7 ");
+  const marks = (rep.landmarks || [])
+    .map((l) => `${l.name} ${Number(l.in).toFixed(2)} \u2192 ${(l.out || []).map((v) => Number(v).toFixed(3)).join("/")}`)
+    .join("   ");
+  say.textContent = [head, marks,
+    ...(rep.warnings || []), ...(rep.problems || []),
+    /* Last, and always — it is the sentence that decides whether the grade is
+     * going to be a look or a mistake. */
+    rep.cannotKnow].filter(Boolean).join("\n");
+  say.style.whiteSpace = "pre-line";
+  say.classList.toggle("iedcapwarn", !!(rep.problems || []).length);
+}
+
+$("iedLutRefresh").onclick = () => iedLutList();
+
+$("iedLutFile").onchange = async () => {
+  const input = $("iedLutFile");
+  const f = input.files && input.files[0];
+  // Re-picking the SAME file has to fire again, and it will not unless this clears.
+  input.value = "";
+  if (!f) return;
+  const say = $("iedLutSays");
+  /* A soft check only. The ROUTE owns the real cap and is the authority — it
+   * measures the encoded string before decoding anything, because base64 is 4/3
+   * of the bytes it carries. This one exists so a 200 MB mistake is refused in
+   * the page instead of being read into memory, encoded, and posted to be told
+   * no. */
+  const cap = iedToolsCat?.lut?.limits?.maxBytes || 64 * 1024 * 1024;
+  if (f.size > cap) {
+    say.textContent = `${f.name} is ${iedBytes(f.size)}, past the ${iedBytes(cap)} this reads. Nothing was sent.`;
+    say.classList.add("iedcapwarn");
+    return;
+  }
+  say.textContent = `reading ${f.name}\u2026`; say.classList.remove("iedcapwarn");
+  /* A data: URL rather than readAsText, and that is a correctness choice: the
+   * route base64-decodes a data URL to the ORIGINAL BYTES, where a text read
+   * would have already guessed an encoding and re-encoded the result as UTF-8.
+   * A .cube is ASCII in practice, and "in practice" is not a reason to put a
+   * lossy step in front of a parser. */
+  const data = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = () => rej(fr.error || new Error("the file could not be read"));
+    fr.readAsDataURL(f);
+  }).catch((e) => { say.textContent = String(e.message || e); say.classList.add("iedcapwarn"); return null; });
+  if (data == null) return;
+  try {
+    const r = await (await fetch("/api/images/luts", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: f.name, data }) })).json();
+    /* ⚠ THE REFUSAL IS THE USEFUL PART AND IT IS SHOWN IN FULL. The server
+     * PARSES before it answers, so a file that is not a LUT is refused and not
+     * kept — and its reason names the exact line that was missing. Swallowing
+     * that and printing "upload failed" would leave a person with a file that
+     * works everywhere else and no idea what this wanted. */
+    if (r.error) { say.textContent = r.error; say.classList.add("iedcapwarn"); iedToast(r.error); return; }
+    await iedLutList(r.name);
+    iedLutReport(r.report, `${r.name} is on the shelf`);
+  } catch (e) {
+    say.textContent = `The LUT could not be uploaded: ${e.message}`;
+    say.classList.add("iedcapwarn");
+  }
+};
+
+$("iedLutInfo").onclick = async () => {
+  if (!iedCapLive("lut")) { iedToast(iedCapWhy("lut")); return; }
+  const lut = $("iedLutPick").value;
+  if (!lut) { iedToast("Pick a LUT first \u2014 the shelf is empty until you add a .cube."); return; }
+  const say = $("iedLutSays");
+  say.textContent = "reading\u2026"; say.classList.remove("iedcapwarn");
+  try {
+    const r = await (await fetch("/api/images/lut-info", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lut }) })).json();
+    if (r.error) { say.textContent = r.error; say.classList.add("iedcapwarn"); return; }
+    iedLutReport(r.report, lut);
+  } catch (e) {
+    say.textContent = `That LUT could not be read: ${e.message}`;
+    say.classList.add("iedcapwarn");
+  }
+};
+
+$("iedLutStrength").oninput = () => { $("iedLutStrengthV").textContent = $("iedLutStrength").value; };
+$("iedLutStrength").onchange = () => iedPush(`LUT strength ${$("iedLutStrength").value}`);
+
+$("iedLutGo").onclick = async () => {
+  if (!iedCapLive("lut")) { iedToast(iedCapWhy("lut")); return; }
+  const lut = $("iedLutPick").value;
+  if (!lut) { iedToast("Pick a LUT first \u2014 the shelf is empty until you add a .cube."); return; }
+  const btn = $("iedLutGo"), say = $("iedLutSays"), was = btn.textContent;
+  btn.disabled = true; btn.textContent = "grading\u2026";
+  try {
+    const r = await (await fetch("/api/images/lut", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ied.name, lut, strength: +$("iedLutStrength").value,
+        interpolation: $("iedLutInterp").value }) })).json();
+    if (r.error) { say.textContent = r.error; say.classList.add("iedcapwarn"); alert(r.error); return; }
+    await loadImages();
+    /* A new library file, like every other edit here, and the console follows it
+     * so the next thing you do is done to what you just made. */
+    openImageEditor(r.name);
+    const t = r.lut || {};
+    iedToast(`${t.title || lut} at ${$("iedLutStrength").value}% \u00b7 ${Math.round(r.ms)} ms`
+      + `${r.notes?.length ? `  \u00b7  ${r.notes.join("  ")}` : ""}`);
+  } catch (e) {
+    say.textContent = `The LUT could not be applied: ${e.message}`;
+    say.classList.add("iedcapwarn");
+  } finally {
+    btn.disabled = false; btn.textContent = was;
+  }
+};
+
 /* ── the Character / Paragraph dock ────────────────────────────────────────
  * Generated, never listed: every row comes out of /api/images/tools
  * module=text, the way the effect stack comes out of /api/images/effects. A
  * hard-coded parameter list is this codebase's recurring silent-drift bug —
  * the schema grows a control, the panel doesn't, and nobody is told. */
 let iedToolsCat = null, iedToolsErr = null;
+
+/* THE TYPE CATALOG, AT THE LEVEL EVERY READER HERE WANTS.
+ *
+ * ⚠ THREE LEVELS OF "text" AND THEY ARE THREE DIFFERENT THINGS: the MODULE
+ * (imgtext), the CATALOG it publishes under the key "text", and the OP named
+ * "text" inside that catalog. All three are spelled the same, so a reader that
+ * stops one level early gets a perfectly good object rather than an error —
+ * which is exactly how the entire Character / Paragraph dock came to render
+ * nothing at all without anybody noticing. `iedTextDefaults` was returning {}
+ * and `iedCharPaint` was throwing on Object.entries(undefined).
+ *
+ *   iedToolsCat.text                  the module's reply: {text, groups, names, notes}
+ *   iedToolsCat.text.text             THIS — the catalog, keyed by op name
+ *   iedToolsCat.text.text.text.params the `text` op's parameters
+ *
+ * Named once so the ambiguity has one home. Every other site asks for this. */
+const iedTypeCat = () => iedToolsCat?.text?.text || null;
 
 async function iedToolsLoad(force) {
   if (iedToolsCat && !force) return iedToolsCat;
@@ -11199,10 +11640,159 @@ async function iedToolsLoad(force) {
   return iedToolsCat;
 }
 
+/* ══ the blend pickers ══════════════════════════════════════════════════════
+ *
+ * Two <select>s carried nine hand-typed options each while the engine grew to
+ * twenty paintable modes, and nothing anywhere noticed: a picker cannot fail a
+ * test by being short. So neither list is written here. Both are filled from
+ * the server's own catalogs, and the only thing this file owns is the ORDER
+ * they are read in, which is a property of a picker and not of an engine.
+ *
+ * WHAT IS OWNED HERE AND WHY. server/vfx/store.js says it in its own comment:
+ * its BLEND_MODES is "the shape of a PICKER and a picker has an order a person
+ * reads" — Photoshop's dropdown, grouped normal / darken / lighten / contrast /
+ * comparative / component. Copying that ORDER is safe in a way copying the LIST
+ * is not: a mode this table has never heard of still appears, under "other", so
+ * the table can lose an entry's placement but can never drop the entry. That is
+ * the whole difference between this and what it replaces. */
+const IED_BLEND_GROUPS = [
+  ["", ["normal", "dissolve"]],
+  ["darken", ["darken", "multiply", "colorburn", "linearBurn", "darkerColor"]],
+  ["lighten", ["lighten", "screen", "colordodge", "linearDodge", "lighterColor", "add"]],
+  ["contrast", ["overlay", "softlight", "hardlight", "vividLight", "linearLight",
+    "pinLight", "hardMix"]],
+  ["comparative", ["difference", "exclusion", "subtract", "divide"]],
+  ["component", ["hue", "saturation", "color", "luminosity"]],
+  ["stencil & silhouette", ["stencilAlpha", "stencilLuma", "silhouetteAlpha", "silhouetteLuma"]],
+];
+
+/* The four modes whose API name is two words jammed together; everything else
+ * is camelCase and splits on its own. Derived rather than listed so a mode
+ * added upstream gets a readable label without anyone editing this file, and
+ * the label stays close enough to the VALUE that a person reading it can type
+ * the same word into a tool call. */
+const IED_BLEND_SPELT = { softlight: "soft light", hardlight: "hard light",
+  colordodge: "color dodge", colorburn: "color burn" };
+const iedBlendLabel = (m) => IED_BLEND_SPELT[m]
+  || String(m).replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+
+/**
+ * Fill one picker from a list of mode names, grouped, keeping what was chosen.
+ *
+ * ⚠ THE FALLBACK IS THE MARKUP AND IT IS NOT SILENT. With no list — the catalog
+ * fetch failed, or the module is dark — the nine options in index.html stay
+ * exactly where they are, because a picker that empties is worse than a picker
+ * that is short. The difference from what this replaces is `say`: the panel
+ * states that it is showing nine of twenty and why, instead of looking complete.
+ *
+ * @param {string} id      the <select>
+ * @param {string[]|null} modes  the paintable list, from the server
+ * @param {string} sayId   where a short list explains itself
+ * @param {string} source  what the list came from, for the tooltip and the note
+ */
+function iedBlendFill(id, modes, sayId, source) {
+  const sel = $(id), say = $(sayId);
+  if (!sel) return 0;
+  if (!Array.isArray(modes) || !modes.length) {
+    const n = sel.options.length;
+    /* ⚠ TWO DIFFERENT SHORT LISTS, AND NAMING THE WRONG ONE IS THE SAME BUG
+     * AS SHOWING THE WRONG ONE. A catalog that never arrived leaves the nine
+     * from the markup. A catalog that arrived and then stopped answering — a
+     * re-probe after the module fell over — leaves the twenty it gave last
+     * time, which are not short at all. Saying "showing the nine written into
+     * this page" over a list of twenty is a sentence about a list that is not
+     * on screen, and it is exactly what this said before anyone made the fetch
+     * fail on a page that had already succeeded. `blendfrom` is stamped when a
+     * catalog list lands, so the two cases can tell themselves apart. */
+    const why = iedToolsErr ? `/api/images/tools said "${iedToolsErr}"`
+      : `${source} is not in the catalog`;
+    if (say) {
+      say.hidden = false;
+      say.textContent = sel.dataset.blendfrom
+        ? `blend: the server's list could not be read again — ${why}. These ${n} are the ones it gave last, so they still work; a mode added since would not be among them.`
+        : `blend: showing the ${n} written into this page, not the server's list — ${why}.`
+          + " Every mode the engine has grown since is missing from the menu, so it cannot be picked here.";
+    }
+    return n;
+  }
+  const want = sel.value;
+  const left = new Set(modes);
+  const opt = (m) => `<option value="${esc(m)}">${esc(iedBlendLabel(m))}</option>`;
+  let html = "";
+  for (const [label, names] of IED_BLEND_GROUPS) {
+    const mine = names.filter((m) => left.has(m));
+    if (!mine.length) continue;
+    for (const m of mine) left.delete(m);
+    html += label ? `<optgroup label="${esc(label)}">${mine.map(opt).join("")}</optgroup>`
+      : mine.map(opt).join("");
+  }
+  /* Anything the group table above has never seen. It is grouped rather than
+   * dropped on purpose: this is the one line that makes the table unable to
+   * repeat the bug it exists to fix. */
+  if (left.size) {
+    html += `<optgroup label="other">${[...left].map(opt).join("")}</optgroup>`;
+  }
+  sel.innerHTML = html;
+  // Only to an option it actually has — the same rule iedRestore() follows.
+  if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+  sel.title = `${modes.length} blend modes, from ${source}`;
+  // The stamp the fallback branch above reads: this list came from the server.
+  sel.dataset.blendfrom = String(modes.length);
+  if (say) { say.hidden = true; say.textContent = ""; }
+  return modes.length;
+}
+
+/**
+ * Both pickers, from the two catalogs that own them.
+ *
+ * ⚠ THE TWO LISTS ARE NOT THE SAME LIST AND MUST NOT BE. imgshape publishes
+ * exactly what it can paint — `_PICKABLE_BLENDS`, derived by subtracting the
+ * modes that are not functions of two colours — so its picker is a straight
+ * copy of `tools.shapes.ops.rect.params.blend.options`.
+ *
+ * The Layers dock is harder, and taking the obvious list would have shipped
+ * eleven dead options. /api/images/composite has TWO back ends: a stack with a
+ * clipped row is translated into a layer document and rendered by imgdoc, which
+ * knows thirty-two modes; a stack with no clipped row goes to
+ * imagetools.composite, whose _blend() ends in `return top` — normal — for any
+ * name it does not have. So a mode only the document knows renders as `normal`
+ * on an unclipped stack and nothing says so.
+ *
+ * MEASURED, not reasoned: composited one layer over a plate at hue, colordodge,
+ * hardlight, luminosity and stencilAlpha, and every one came back BIT-IDENTICAL
+ * to normal (sha1 cfb12f22…). multiply differed. So the offer is the
+ * INTERSECTION of the two catalogs — every name both back ends paint.
+ *
+ * `dissolve` is the one exception, and it is here because it was measured too.
+ * It is absent from imgshape's list for a reason that is imgshape's alone — it
+ * paints a flat colour and dissolve is a coin toss against an ALPHA there is
+ * none of — while imagetools.composite has an explicit branch for it above the
+ * lerp. At full opacity it is identical to normal (every pixel wins the toss),
+ * which is correct and is why a careless test would call it dead; at opacity
+ * 0.5 it renders differently from normal, which is the measurement that puts it
+ * on the list. It is conditioned on the layer module still publishing it, so if
+ * it ever leaves that catalog it leaves this picker with it. */
+function iedBlendPickers() {
+  const shape = iedToolsCat?.shapes?.ops?.rect?.params?.blend?.options || null;
+  const nShape = iedBlendFill("iedShBlend", shape, "iedShBlendSays",
+    "the shape tool's own catalog");
+
+  const docModes = iedToolsCat?.doc?.blendModes || null;
+  let layer = null;
+  if (Array.isArray(shape) && Array.isArray(docModes)) {
+    const doc = new Set(docModes);
+    layer = shape.filter((m) => doc.has(m));
+    if (doc.has("dissolve")) layer.push("dissolve");
+  }
+  const nLayer = iedBlendFill("iedLayerMode", layer, "iedLayerModeSays",
+    "what both halves of /api/images/composite can paint");
+  return { shape: nShape, layer: nLayer };
+}
+
 /* Every parameter at the catalog's default, objects expanded through their
  * `of` reference — never a hand-picked subset (the fx dock's rule). */
 function iedTextDefaults() {
-  const cat = iedToolsCat?.text;
+  const cat = iedTypeCat();
   if (!cat?.text?.params) return null;
   const build = (entry) => {
     const out = {};
@@ -11262,7 +11852,7 @@ function iedCharPaint() {
     host.innerHTML = `<p class="hint iedcapwarn">The tool catalog did not load: ${esc(iedToolsErr)}</p>`;
     return;
   }
-  const cat = iedToolsCat?.text;
+  const cat = iedTypeCat();
   if (!cat?.text?.params) { host.innerHTML = `<p class="hint">Waiting for the tool catalog…</p>`; return; }
   const spec = ied.text2 || iedTextDefaults();
   if (!spec) { host.innerHTML = ""; return; }
@@ -11638,6 +12228,395 @@ function iedFxMove(i, d) {
   ied.fxSel = j; iedFxPaint(); iedPush("reorder effects");
 }
 
+/* ══ the Layer Styles dock ══════════════════════════════════════════════════
+ *
+ * Ten styles that have been renderable since imgstyles.py was written and had
+ * no control of any kind. Everything below — which styles exist, what order
+ * they paint in, every parameter, its type, its range, its default and the line
+ * of prose beside it — is read from GET /api/images/tools module=styles. There
+ * is no list in this file, the effect stack's rule.
+ *
+ * ⚠ `order` IS PHOTOSHOP'S PAINTING ORDER AND IT IS NOT ALPHABETICAL. The
+ * server's is patternOverlay, gradientOverlay, colorOverlay, satin, innerGlow,
+ * innerShadow, stroke, outerGlow, dropShadow, bevelEmboss, and
+ * normalise_styles() DISCARDS whatever order the caller wrote so that two
+ * people asking for the same styles get the same pixels. A panel that sorted
+ * them — alphabetically, or by when you clicked them — would be showing a stack
+ * that is not the stack that renders: a drop shadow under a stroke is a
+ * different picture from a stroke under a drop shadow, measured at 1.0 of the
+ * whole range. So the list is built in `order` and the numbers down the left
+ * ARE that order.
+ *
+ * ⚠ A STYLE NEEDS A SHAPE AND A PHOTOGRAPH HAS NONE, which is why this dock
+ * gates the console's Apply rather than merely explaining itself. Measured
+ * server-side on a flat plate: three of the ten change nothing at all and the
+ * other seven repaint every pixel. imgstyles refuses that case — and the
+ * refusal is a 400 from /api/images/edit, which takes the whole render with it:
+ * the adjustments, the effect stack and every queued stroke in the same Apply
+ * are lost together. Letting somebody press Apply and collect that is the worst
+ * available outcome, so Apply goes dark, with the server's own sentence in its
+ * tooltip, for as long as styles are staged without a shape. */
+
+/** The parameters of one style, every one at the catalog's default.
+ *
+ * `enabled` is deliberately dropped. It is a real parameter and the server
+ * honours it, but the row's own ●/○ toggle IS that parameter — offering both
+ * would be two controls for one fact, and the pair disagreeing is a style that
+ * looks on and does not paint. */
+function iedStyleDefaults(name) {
+  const e = iedToolsCat?.styles?.styles?.[name];
+  const out = {};
+  for (const [k, d] of Object.entries(e?.params || {})) {
+    if (k === "enabled") continue;
+    out[k] = iedClone(d.default);
+  }
+  return out;
+}
+
+const iedStyleOrder = () => iedToolsCat?.styles?.order || [];
+const iedStyleEntry = (n) => iedToolsCat?.styles?.styles?.[n];
+
+/** Add a style, keeping the list in the server's painting order. */
+function iedStylesAdd(name) {
+  if (!iedStyleEntry(name) || ied.styles.some((e) => e.style === name)) return;
+  ied.styles.push({ style: name, params: iedStyleDefaults(name), on: true });
+  const ord = iedStyleOrder();
+  // Never a sort by name and never by when it was clicked — see the note above.
+  ied.styles.sort((a, b) => ord.indexOf(a.style) - ord.indexOf(b.style));
+  ied.styleSel = ied.styles.findIndex((e) => e.style === name);
+  iedStylesPaint(); iedPush(`style · ${name}`);
+}
+
+/**
+ * ops.styles, or null when there is nothing to paint.
+ *
+ * ⚠ ONE SHAPE, ONE KEY. `selection` and `useAlpha` in the same object is a
+ * refusal, not a preference, so exactly one branch below can ever write one.
+ */
+function iedStylesOp() {
+  const on = ied.styles.filter((e) => e.on);
+  if (!on.length) return null;
+  const o = { styles: on.map((e) => ({ style: e.style, ...iedClone(e.params) })) };
+  if (ied.styleAlpha) {
+    o.useAlpha = true;
+  } else if (iedCapLive("selection") && (ied.sel.length || $("iedSelInvert").checked)) {
+    o.selection = iedSelectionOp();
+  }
+  /* Absent unless it is switched on. There is no global light in the renderer
+   * and the three styles that read an angle disagree by default — dropShadow
+   * 45, innerShadow 45, bevelEmboss 120, and the bevel's angle runs the other
+   * way round the compass — so this one number is the fix, not a duplicate of
+   * the per-style angles it overrides. */
+  if ($("iedStyleLightOn")?.checked) o.globalLight = +$("iedStyleLight").value;
+  return o;
+}
+
+/* What the shape question was ASKED ABOUT. The verdict is only about this
+ * picture, this shape source and this selection; change any of them and the
+ * cached answer is about a question nobody is asking any more. Keying on it is
+ * what stops a stale "yes, it has a shape" from unlocking Apply after the
+ * selection was cleared. */
+function iedStylesKey() {
+  const op = iedStylesOp();
+  return JSON.stringify({ name: ied.name, selection: op?.selection ?? null,
+    useAlpha: op?.useAlpha === true });
+}
+
+let iedStyleShape = { key: null, shaped: false, why: "", source: "", coverage: null,
+  touchesEdge: false, pending: false, err: "" };
+let iedStyleReq = 0, iedStyleT = 0;
+
+/** Ask the server whether this picture has a shape to style — without painting. */
+async function iedStylesDescribe() {
+  if (!iedCapLive("styles")) { iedToast(iedCapWhy("styles")); return; }
+  const my = ++iedStyleReq;
+  const key = iedStylesKey();
+  const op = iedStylesOp();
+  iedStyleShape = { ...iedStyleShape, pending: true, err: "" };
+  iedApplyEnable(); iedStylesSays();
+  const body = { name: ied.name };
+  if (op?.useAlpha) body.useAlpha = true;
+  else if (op?.selection) body.selection = op.selection;
+  try {
+    const r = await (await fetch("/api/images/describe-styles", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) })).json();
+    /* A newer question is already in flight — its answer is the one that counts,
+     * and writing this one would be the older answer winning the race. */
+    if (my !== iedStyleReq) return;
+    if (r.error) {
+      iedStyleShape = { key: null, shaped: false, why: "", source: "", coverage: null,
+        touchesEdge: false, pending: false, err: r.error };
+    } else {
+      /* ⚠ TWO DIFFERENT `ok`s, the same pair the figure check keeps apart:
+       * `r.ok` means the CALL worked, `report.shaped` is the answer about the
+       * picture. "The picture has no shape" is a successful diagnosis. */
+      const rep = r.report || {};
+      iedStyleShape = { key, shaped: rep.shaped === true, why: rep.why || "",
+        source: rep.source || "", coverage: rep.coverage ?? null,
+        touchesEdge: !!rep.touchesEdge, pending: false, err: "" };
+    }
+  } catch (e) {
+    if (my !== iedStyleReq) return;
+    iedStyleShape = { key: null, shaped: false, why: "", source: "", coverage: null,
+      touchesEdge: false, pending: false, err: e.message || String(e) };
+  } finally {
+    /* ⚠ THE GATE, NOT JUST THE TWO PAINTERS. A check takes a moment, and the
+     * selection can move while it is in flight — which is the ordinary case, not
+     * a rare one: dragging a marquee fires this, and the drag that follows fires
+     * it again. While one is pending the gate deliberately does NOT schedule a
+     * second, so unless the answer lands back in the gate, the last question
+     * asked is one nobody is asking any more: the panel says "the shape changed,
+     * ask again" and then never asks. Apply stays dark, so it was never unsafe —
+     * it just quietly stopped being automatic, which is a control that appears to
+     * work. Running the gate here re-checks the key and schedules one more pass
+     * when it moved; it converges because each pass reads the key it is about to
+     * answer for. */
+    if (my === iedStyleReq) iedStylesGate();
+  }
+}
+
+/**
+ * Why Apply cannot run, as a sentence — or "" when it can.
+ *
+ * Only ever about the styles. Everything else on this console either sends
+ * nothing when it is empty or is dark already.
+ */
+function iedStylesBlock() {
+  if (!iedCapLive("styles") || !iedStylesOp()) return "";
+  if (iedStyleShape.err) {
+    return `The layer styles' shape could not be checked: ${iedStyleShape.err}`;
+  }
+  if (iedStyleShape.pending) return "Checking whether this picture has a shape for the layer styles\u2026";
+  if (iedStyleShape.key !== iedStylesKey()) {
+    return "The layer styles' shape changed since it was last checked \u2014 press \u201cdoes this have a shape?\u201d in Layer styles.";
+  }
+  if (!iedStyleShape.shaped) {
+    return `Apply would be refused, and the refusal takes the whole render with it \u2014 ${iedStyleShape.why}`;
+  }
+  return "";
+}
+
+/* ⚠ ONE WRITER FOR Apply's disabled FLAG. The render handler used to own it
+ * outright (true on click, false in its finally), so a gate added beside it
+ * would have been silently switched back on at the end of every render. Both
+ * reasons now go through here: a render in flight, and styles staged without a
+ * shape. */
+let iedApplyBusy = false;
+function iedApplyEnable() {
+  const b = $("iedApply");
+  if (!b) return;
+  if (b.dataset.ownTitle === undefined) b.dataset.ownTitle = b.title || "";
+  const block = iedApplyBusy ? "" : iedStylesBlock();
+  b.disabled = iedApplyBusy || !!block;
+  b.title = block || b.dataset.ownTitle;
+}
+
+/** The verdict line, with the numbers behind it. */
+function iedStylesSays() {
+  const say = $("iedStyleSays");
+  if (!say) return;
+  const staged = ied.styles.filter((e) => e.on).length;
+  const sh = iedStyleShape;
+  let txt = "";
+  if (sh.err) txt = `The shape could not be checked: ${sh.err}`;
+  else if (sh.pending) txt = "checking\u2026";
+  else if (sh.key === null) {
+    txt = staged
+      ? "Not checked yet. A flat photograph has no shape for a style to decorate, so press the button before Apply."
+      : "Nothing staged. A style needs a shape: draw a selection, or use a cutout and take the shape from its alpha.";
+  } else if (sh.key !== iedStylesKey()) {
+    txt = "The shape changed since this was checked \u2014 ask again.";
+  } else if (!sh.shaped) {
+    txt = sh.why;
+  } else {
+    const pct = sh.coverage == null ? "?" : (sh.coverage * 100).toFixed(1);
+    txt = `Shaped \u2014 from the ${sh.source}, covering ${pct}% of the frame.`
+      + (sh.touchesEdge
+        ? " It touches the frame edge, so an outer glow, an outside stroke or a shadow will lose the half that had nowhere to go \u2014 add canvas first."
+        : "");
+  }
+  say.textContent = txt;
+  say.classList.toggle("iedcapwarn",
+    !!sh.err || (sh.key !== null && !sh.pending && (!sh.shaped || sh.key !== iedStylesKey())));
+}
+
+/**
+ * The gate, run whenever anything it depends on moves.
+ *
+ * It fires the describe itself, debounced, so that in ordinary use the button
+ * is a way to ask again rather than a toll gate — but the CACHE is keyed, so
+ * while the answer is in flight or stale, Apply is dark and says which.
+ */
+function iedStylesGate() {
+  if (iedCapLive("styles") && iedStylesOp() && !iedStyleShape.pending
+      && iedStyleShape.key !== iedStylesKey() && !iedStyleShape.err) {
+    clearTimeout(iedStyleT);
+    iedStyleT = setTimeout(() => iedStylesDescribe(), 300);
+  }
+  iedApplyEnable(); iedStylesSays();
+}
+
+/** The picker, once, from the catalog. */
+function iedStylesBuild() {
+  const pick = $("iedStylePick");
+  if (!pick) return;
+  const order = iedStyleOrder();
+  pick.innerHTML = `<option value="">+ add style\u2026</option>`
+    + order.map((n, i) => {
+      const e = iedStyleEntry(n) || {};
+      return `<option value="${esc(n)}" title="${esc(e.why || "")}">${String(i + 1).padStart(2, "0")} \u00b7 ${esc(e.label || n)}</option>`;
+    }).join("");
+  pick.onchange = () => { const v = pick.value; pick.value = ""; if (v) iedStylesAdd(v); };
+  const interp = $("iedStyleLightOn");
+  if (interp && !interp.dataset.wired) {
+    interp.dataset.wired = "1";
+    for (const id of ["iedStyleLightOn", "iedStyleLight"]) {
+      /* A full repaint, not just the gate. The rows carry a "one light" badge
+       * naming the three styles whose own angle this overrides, and the gate
+       * does not draw rows — so ticking the box changed what Apply would
+       * send and changed nothing a person could see. iedStylesPaint() ends by
+       * running the gate, so the payload check still happens. */
+      $(id).onchange = () => { iedStylesPaint(); iedPush("styles · one light"); };
+    }
+  }
+  iedStylesPaint();
+}
+
+function iedStylesPaint() {
+  const list = $("iedStyleList");
+  if (!list) return;
+  const cat = iedToolsCat?.styles;
+  /* Not yet asked is not the same as asked and refused. This dock repaints when
+   * a picture opens, which happens before the capability probe has fetched the
+   * catalog, so treating "no catalog" as a failure put a red line in the panel
+   * on every single open — an error about a request that had not been made. */
+  if (!iedToolsCat && !iedToolsErr) {
+    list.innerHTML = `<p class="hint">reading the tool catalog\u2026</p>`;
+    $("iedStyleParams").innerHTML = "";
+    return;
+  }
+  if (!cat || cat._unavailable) {
+    list.innerHTML = `<p class="hint iedcapwarn">The layer-style catalog did not load: ${esc(cat?._unavailable || iedToolsErr || "no styles module in /api/images/tools")}</p>`;
+    $("iedStyleParams").innerHTML = "";
+    iedStylesGate();
+    return;
+  }
+  const ord = iedStyleOrder();
+  const grows = new Set(cat.growsAlpha || []);
+  const lit = new Set(cat.globalLightStyles || []);
+  list.innerHTML = ied.styles.length ? ied.styles.map((e, i) => {
+    const c = iedStyleEntry(e.style) || { label: e.style };
+    return `<div class="iedfxrow${i === ied.styleSel ? " on" : ""}${e.on ? "" : " off"}" data-styrow="${i}">
+      <span class="iedfxname" title="${esc(c.why || "")}">${String(ord.indexOf(e.style) + 1).padStart(2, "0")}. ${esc(c.label || e.style)}</span>
+      ${grows.has(e.style) ? `<span class="iedfxbadge" title="This one paints OUTSIDE the shape and the buffer never grows, so the part of it that falls off the frame is simply lost. Add canvas first if the shape is near an edge.">paints outside</span>` : ""}
+      ${lit.has(e.style) && $("iedStyleLightOn")?.checked ? `<span class="iedfxbadge" title="Its angle is being overridden by the one light above.">one light</span>` : ""}
+      <button class="edtool sm" data-styon="${i}" title="${e.on ? "skip this one" : "include it again"}">${e.on ? "\u25cf" : "\u25cb"}</button>
+      <button class="edtool sm" data-stydel="${i}" title="remove">\u2715</button></div>`;
+  }).join("") : `<p class="hint">Nothing staged. The picker above lists all ten, numbered in the order they paint.</p>`;
+
+  for (const b of list.querySelectorAll("[data-styrow]")) {
+    b.onclick = (ev) => { if (ev.target.closest("button")) return; ied.styleSel = +b.dataset.styrow; iedStylesPaint(); };
+  }
+  for (const b of list.querySelectorAll("[data-styon]")) {
+    b.onclick = () => { const i = +b.dataset.styon; ied.styles[i].on = !ied.styles[i].on; iedStylesPaint(); iedPush("style on/off"); };
+  }
+  for (const b of list.querySelectorAll("[data-stydel]")) {
+    b.onclick = () => {
+      const i = +b.dataset.stydel;
+      ied.styles.splice(i, 1);
+      if (ied.styleSel >= ied.styles.length) ied.styleSel = ied.styles.length - 1;
+      iedStylesPaint(); iedPush("remove style");
+    };
+  }
+  $("iedStyleShapeSel").checked = !ied.styleAlpha;
+  $("iedStyleShapeAlpha").checked = ied.styleAlpha;
+  iedStyleParams();
+  iedStylesGate();
+}
+
+/* The parameter panel, generated from the catalog entry.
+ *
+ * ⚠ THE CATALOG SPELLS BOOLEAN TWO WAYS. Eight parameters say `bool` and two —
+ * gradientOverlay.reverse and satin.invert — say `boolean`. A reader that knows
+ * only the first renders those two as a SLIDER over an undefined range, which
+ * looks like a working control and writes a number into a flag. Both spellings
+ * are accepted here rather than one being treated as the typo, because this
+ * panel does not get to decide which of the server's two words is correct. */
+function iedStyleParams() {
+  const host = $("iedStyleParams");
+  if (!host) return;
+  const f = ied.styles[ied.styleSel];
+  const e = f && iedStyleEntry(f.style);
+  if (!f || !e) { host.innerHTML = ""; return; }
+  const isBool = (d) => d.type === "bool" || d.type === "boolean";
+  const rows = Object.entries(e.params || {}).filter(([k]) => k !== "enabled").map(([k, d]) => {
+    const v = f.params[k];
+    const id = `iedStyP_${k}`;
+    if (isBool(d)) {
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <input type="checkbox" id="${id}" data-styp="${esc(k)}"${v ? " checked" : ""}><b></b>
+        <span class="iedparamwhy">${esc(d.desc || "")}</span></div>`;
+    }
+    if (d.type === "enum") {
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <select class="sel2 sm" id="${id}" data-styp="${esc(k)}">${(d.options || []).map((o) =>
+          `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>
+        <span class="iedparamwhy">${esc(d.desc || "")}</span></div>`;
+    }
+    if (d.type === "color") {
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <input type="color" id="${id}" data-styp="${esc(k)}" value="${iedHex(v || d.default || [0, 0, 0])}">
+        <span class="iedparamwhy">${esc(d.desc || "")} \u2014 0-255 RGB</span></div>`;
+    }
+    const min = d.min ?? 0, max = d.max ?? 100;
+    return `<div class="iedparam"><span>${esc(k)}</span>
+      <input type="range" id="${id}" data-styp="${esc(k)}" min="${min}" max="${max}"
+        step="${d.integer ? 1 : "any"}" value="${v}">
+      <b id="${id}_v">${d.integer ? Math.round(v) : (+v).toFixed(2)}</b>
+      <span class="iedparamwhy">${esc(d.desc || "")}${d.unit ? ` (${esc(d.unit)})` : ""}</span></div>`;
+  });
+  host.innerHTML = `<div class="iedgrp"><b class="iedgrph">${esc(e.label || f.style)} \u00b7 ${esc(e.group || "Layer style")}</b>
+    <p class="hint">${esc((e.why || "").split(". ")[0])}.</p>${rows.join("")}</div>`;
+
+  for (const el of host.querySelectorAll("[data-styp]")) {
+    const k = el.dataset.styp;
+    const d = e.params[k];
+    const write = () => {
+      if (isBool(d)) f.params[k] = el.checked;
+      else if (d.type === "enum") f.params[k] = el.value;
+      else if (d.type === "color") {
+        /* A three-element colour gets alpha 255 server-side, so a 3-list stays a
+         * 3-list; a default that carried its own alpha keeps it, because losing
+         * it here would silently make a half-transparent overlay opaque. */
+        const prev = Array.isArray(f.params[k]) ? f.params[k] : [];
+        f.params[k] = prev.length > 3 ? [...hex2rgb(el.value), prev[3]] : hex2rgb(el.value);
+      } else {
+        f.params[k] = d.integer ? Math.round(+el.value) : +el.value;
+        const out = $(`iedStyP_${k}_v`);
+        if (out) out.textContent = d.integer ? Math.round(+el.value) : (+el.value).toFixed(2);
+      }
+    };
+    el.oninput = write;
+    el.onchange = () => { write(); iedPush(`${e.label || f.style} \u00b7 ${k}`); };
+  }
+}
+
+$("iedStyleClear").onclick = () => {
+  ied.styles.length = 0; ied.styleSel = -1;
+  iedStylesPaint(); iedStatus(); iedPush("clear styles");
+};
+$("iedStyleCheck").onclick = () => iedStylesDescribe();
+for (const [id, alpha] of [["iedStyleShapeSel", false], ["iedStyleShapeAlpha", true]]) {
+  $(id).onchange = () => {
+    ied.styleAlpha = alpha;
+    /* The verdict was about the OTHER shape source, so it is dropped rather than
+     * kept and hoped about — iedStylesGate() asks again straight away. */
+    iedStyleShape = { ...iedStyleShape, key: null, err: "" };
+    iedStylesPaint(); iedPush(`styles \u00b7 shape from the ${alpha ? "alpha" : "selection"}`);
+  };
+}
+
 /* The parameter panel is generated from the catalog entry — type, range,
  * default and the one line of prose the registry carries about each. */
 function iedFxParams() {
@@ -11803,7 +12782,10 @@ const IED_SNAPCTL = ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "
   "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors",
   "iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA",
   "iedStSize2", "iedStHard", "iedStOpacity", "iedStFlow", "iedStAmount", "iedStColor", "iedStSpacing",
-  "iedShFillOn", "iedShFill", "iedShStrokeOn", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend"];
+  "iedShFillOn", "iedShFill", "iedShStrokeOn", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend",
+  // The one light, and the LUT's two knobs. A control that is not in here is a
+  // control undo cannot reach, which the note above this list is about.
+  "iedStyleLightOn", "iedStyleLight", "iedLutStrength", "iedLutInterp"];
 const IED_SNAPTOG = ["iedGray", "iedSepia", "iedInv"];
 const iedClone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
 
@@ -11823,6 +12805,7 @@ function iedSnap() {
     strokes: iedClone(ied.strokes), shapes: iedClone(ied.shapes),
     paths: iedClone(ied.paths), pathSel: ied.pathSel, pathDraws: iedClone(ied.pathDraws),
     text2: iedClone(ied.text2),
+    styles: iedClone(ied.styles), styleSel: ied.styleSel, styleAlpha: ied.styleAlpha,
     // The staging layer list — it holds OBJECTS (src, clipped, transform), so
     // it is deep-cloned like every other structured field here. It sat outside
     // the snapshot for as long as the file's own warning above described:
@@ -11858,6 +12841,13 @@ function iedRestore(s) {
   ied.paths = iedClone(s.paths) || []; ied.pathSel = s.pathSel ?? -1;
   ied.pathDraws = iedClone(s.pathDraws) || [];
   ied.text2 = iedClone(s.text2) ?? null;
+  ied.styles = iedClone(s.styles) || []; ied.styleSel = s.styleSel ?? -1;
+  ied.styleAlpha = !!s.styleAlpha;
+  /* The shape verdict is NOT in the snapshot and is dropped on every restore:
+   * it is an answer the server gave about a selection, and undoing back past
+   * that selection makes it an answer to a question nobody asked. iedStylesGate()
+   * asks again. */
+  iedStyleShape = { ...iedStyleShape, key: null, err: "" };
   ied.cloneSrc = iedClone(s.cloneSrc);
   // In place: iedLayers is a shared const binding.
   iedLayers.length = 0;
@@ -11880,7 +12870,7 @@ function iedRestore(s) {
   iedKeyPreview();
   iedHslLoad(); iedDrawCurve();
   iedFxPaint(); iedSelPaint(); iedPaintQueuePaint();
-  iedPathsPaint(); iedCharPaint(); iedLayersPaint();
+  iedPathsPaint(); iedCharPaint(); iedLayersPaint(); iedStylesPaint();
   if (s.tool && s.tool !== ied.tool) iedSetTool(s.tool);
   iedStrokeOpts(); iedShapeOpts();
   iedPreview(); iedTextSync();
@@ -12253,7 +13243,10 @@ const IED_CMDS = [
     run: () => {
       ied.fx.length = 0; ied.fxSel = -1; ied.sel.length = 0;
       ied.strokes.length = 0; ied.shapes.length = 0;
-      iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedOverlayPaint(); iedStatus();
+      // Queued like everything else on this line, and cleared with it.
+      ied.styles.length = 0; ied.styleSel = -1;
+      iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedOverlayPaint();
+      iedStylesPaint(); iedStatus();
       iedPush("clear the queue");
     } },
   { ...SEP, menu: "Edit" },
@@ -12416,6 +13409,7 @@ const IED_CMDS = [
 for (const [dock, label] of [["iedDockNav", "Navigator"], ["iedDockAdjust", "Adjustments"],
   ["iedDockEffects", "Effects · quick"], ["iedDockFx", "Effect stack"], ["iedDockSel", "Selection"],
   ["iedDockPaint", "Paint & shapes"], ["iedDockLayers", "Layers"],
+  ["iedDockStyles", "Layer styles"], ["iedDockLut", "LUT"],
   ["iedDockChannels", "Channels"], ["iedDockPaths", "Paths"],
   ["iedDockChar", "Character / Paragraph"], ["iedDockSwatches", "Swatches"],
   ["iedDockProps", "Properties"],

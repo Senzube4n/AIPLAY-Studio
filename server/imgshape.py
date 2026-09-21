@@ -110,6 +110,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from imagetools import (BLEND_MODES, ALPHA_MODES,          # noqa: E402
                         PLANE_BLEND_MODES, WHOLE_PIXEL_MODES,
+                        IMAGE_ONLY_MODES,
                         _blend as _blend_rgb)
 
 # ⚠ EVERYTHING IN BLEND_MODES THIS MODULE CAN ACTUALLY PAINT. `dissolve`
@@ -937,8 +938,19 @@ def _paint(img, cov, rx, ry, color, blend, mask):
     if n == 0:
         return img
     if n * 3 < cov.size:
+        # ⚠ A LENGTH-1 SPATIAL AXIS, AND IT IS NOT DECORATION. This gather is
+        # the only place in the codebase that hands `_over` a flat run of
+        # pixels, and six modes refuse that shape on purpose: darkerColor and
+        # lighterColor compare the whole PIXEL's luminance, hue/saturation/
+        # color/luminosity need all three channels at once, and a bare (N, 3)
+        # cannot prove its trailing three are channels rather than three
+        # pixels. Without the axis, a thin stroke on a large canvas — exactly
+        # what this fast path exists for — raises and fails the whole edit.
+        # Nothing else changes: (N, 1, 3) is the same N pixels in the same
+        # order, and every elementwise mode is blind to the shape it walks.
         base = region[hit]
-        drawn = _over(base, np.broadcast_to(rgb, (n, 3)), cov[hit] * float(color[3]), blend)
+        drawn = _over(base[:, None, :], np.broadcast_to(rgb, (n, 1, 3)),
+                      (cov[hit] * float(color[3]))[:, None], blend)[:, 0, :]
         region[hit] = drawn if sub is None else _mask_lerp(base, drawn, sub[hit])
         return img
     drawn = _over(region, np.broadcast_to(rgb, (rh, rw, 3)), cov * float(color[3]), blend)

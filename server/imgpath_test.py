@@ -537,8 +537,11 @@ eq("_over agrees with imgshape's, pixel for pixel, on every colour blend mode",
 _img = rng.random((8, 8, 4)).astype(np.float32)
 _isr = rng.random((8, 8, 3)).astype(np.float32)
 _isa = rng.random((8, 8)).astype(np.float32)
-eq("...and the whole-pixel modes agree too, once given a shape that has pixels in it",
-   [m for m in imgshape.WHOLE_PIXEL_MODES
+# IMAGE_ONLY_MODES, not WHOLE_PIXEL_MODES: the four non-separable modes joined
+# the same class when they moved into imagetools, and a sweep still naming the
+# narrower tuple would leave them covered by nothing at all.
+eq("...and the image-only modes agree too, once given a shape that has pixels in it",
+   [m for m in imgshape.IMAGE_ONLY_MODES
     if not np.allclose(P._over(_img, _isr, _isa, m), imgshape._over(_img, _isr, _isa, m),
                        atol=1e-6)], [])
 _refused = []

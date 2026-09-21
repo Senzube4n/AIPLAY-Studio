@@ -73,12 +73,27 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 const num = (v, d = 0) => (Number.isFinite(+v) ? +v : d);
 
-/** §2. The order is the server's order — the select must not re-sort it. */
-const BLEND_MODES = [
+/** §2. The order is the server's order — the select must not re-sort it.
+ *
+ * ⚠ THE COLD-START ANSWER, NOT THE ANSWER. These seventeen were the whole list
+ * once and had gone stale by eleven modes and four stencil modes by the time
+ * anybody looked: store.js — the schema the server VALIDATES against — held
+ * thirty-two, so this panel could not offer modes the engine renders, and a
+ * comp that already used one showed the wrong row selected in its own picker.
+ *
+ * `blendModes` now comes down with /api/vfx/catalog, off that same constant, so
+ * the picker and the thing that refuses a bad value cannot disagree. This list
+ * survives as the fallback, because a dropdown rendered EMPTY by one failed
+ * fetch is worse than a short one: a short list still composites. */
+const BLEND_MODES_FALLBACK = [
   "normal", "multiply", "screen", "overlay", "softlight", "hardlight", "add",
   "subtract", "difference", "darken", "lighten", "colordodge", "colorburn",
   "hue", "saturation", "color", "luminosity",
 ];
+let BLEND_MODES = BLEND_MODES_FALLBACK.slice();
+/** Whether the list above came off the wire — the panel says so rather than
+ * letting seventeen look like all of them. */
+let blendModesFromServer = false;
 
 const LAYER_KINDS = [
   ["image", "▣", "Image", "A still from the images library."],
@@ -688,6 +703,14 @@ export async function vfxOpen() {
   if (!V.catalog) {
     try {
       const cat = await getJson("/api/vfx/catalog");
+      /* ⚠ ONLY IF IT IS A NON-EMPTY ARRAY. An older server has no blendModes
+       * and a broken one could send null; either would empty the picker, and an
+       * empty picker is a control that cannot be used at all, where a stale one
+       * can still composite. */
+      if (Array.isArray(cat?.blendModes) && cat.blendModes.length) {
+        BLEND_MODES = cat.blendModes.slice();
+        blendModesFromServer = true;
+      }
       V.catalog = cat.effects || {};
       /* The comp-level switches come off the same shelf, so the tooltip a
        * person reads IS the description an agent reads — one wording, defined
@@ -2032,7 +2055,7 @@ function layerSection(l) {
          <input type="checkbox" id="vfxThreeD"${three ? " checked" : ""}>3D</label>`;
   return section("Compositing", `
     <div class="vfxrow static"><span class="vfxgutter"></span>
-      <span class="vfxlab" title="How this layer combines with everything under it">Blend</span>
+      <span class="vfxlab" title="How this layer combines with everything under it${blendModesFromServer ? "" : ` — showing the ${BLEND_MODES.length} modes written into this page, because the catalog could not be read. The engine may render more than these.`}">Blend${blendModesFromServer ? "" : " *"}</span>
       <span class="vfxvals"><select class="sel2 sm" data-blend="${esc(l.id)}">
         ${BLEND_MODES.map((b) => `<option value="${b}"${(l.blend || "normal") === b ? " selected" : ""}>${b}</option>`).join("")}
       </select></span></div>

@@ -275,14 +275,39 @@ function makeApi() {
     },
   ];
   const doc = { slug: "rain", id: "sc_rain", title: "Rain", author: null, current: "v2", runs: [] };
+  /* The last body /api/generate was handed, so /api/status can answer with the
+   * job that body describes — the render door answers with the CURRENT job and
+   * the tool has to go and find its own. */
+  let lastGenerate = null;
   const api = async (method, route, body) => {
     calls.push({ method, route, action: body?.action, body });
+    /* ⚠ THE RENDER DOOR IS /api/generate. Modelled here because the previous
+     * version of this stub answered `{ action: "render" }` on /api/score with
+     * `{ ok: true, run: "run-1" }` — a route behaviour that has never existed.
+     * The suite passed for the life of the tool while every real call answered
+     * "Unknown action", which is the failure server/mcp-routes_test.js was
+     * written for. A stub that invents a contract is worse than no stub. */
+    if (route === "/api/generate") {
+      lastGenerate = body || {};
+      return {
+        ok: true, engine: "yue2",
+        rung: { id: "yue2-standard", label: "Standard" }, ceiling: null,
+        job: { id: "job-1", title: lastGenerate.title ?? null, engine: "yue2" },
+      };
+    }
+    if (route === "/api/status") {
+      return {
+        current: { id: "job-1", engine: "yue2", title: lastGenerate?.title ?? null,
+                   seed: Number.isFinite(lastGenerate?.seed) ? lastGenerate.seed : 777 },
+        queue: [],
+      };
+    }
     if (method === "GET") return { ok: true, scores: [{ slug: doc.slug, title: doc.title }] };
     const b = body || {};
     /* Their load() throws for every action when `slug` is missing. Modelled,
      * because a tool that forgets the slug must fail here and not silently
      * read somebody else's song. */
-    const needsSlug = ["read", "draft", "render", "note", "map", "invariants", "lineage", "sheet"];
+    const needsSlug = ["read", "draft", "note", "map", "invariants", "lineage", "sheet"];
     if (needsSlug.includes(b.action) && !b.slug) return { error: "Which score? Pass `slug`." };
     if (b.action === "list") return { ok: true, scores: [{ slug: doc.slug, title: doc.title, versions: versions.length }], capability: { pdf: true } };
     if (b.action === "read") {
@@ -313,10 +338,16 @@ function makeApi() {
       versions.push(v);
       return { ok: true, version: { id: v.id } };
     }
-    if (b.action === "render") return { ok: true, run: "run-1", seed: b.seed ?? 777 };
-    return { error: `stub has no action ${b.action}` };
+    /* THE REAL REFUSAL, word for word from server/score/routes.js:667. A stub
+     * that answers a made-up error for a made-up action lets a tool posting a
+     * phantom one look like a tool with a stub gap; this one refuses exactly as
+     * the door refuses, so the suite fails the same way a caller would. */
+    return {
+      error: "Unknown action. Try: list, create, read, adopt, draft, note, author, current, "
+        + "map, invariants, lineage, sheet, capability, delete, to_daw, export_midi.",
+    };
   };
-  return { api, calls, versions, doc };
+  return { api, calls, versions, doc, generated: () => lastGenerate };
 }
 
 const tools = scoreTools(makeApi().api);
@@ -663,8 +694,8 @@ async function main() {
     const { api, calls } = makeApi();
     const r = await call("score_render", { score: "rain", version: "v1" }, api);
     ok("rendering the as-shipped score is refused", !!r.error && /^Refusing to render v1/.test(r.error), r.error);
-    ok("...no render action was posted", !calls.some((c) => c.action === "render"),
-      JSON.stringify(calls.map((c) => c.action)));
+    ok("...nothing was sent to the render door", !calls.some((c) => c.route === "/api/generate"),
+      JSON.stringify(calls.map((c) => c.route)));
     ok("...the refusal says the generator will NOT repair it",
       /bypasses the planner rather than being fixed by it/.test(r.error || ""));
     ok("...and prices the refusal it just saved",
@@ -675,9 +706,34 @@ async function main() {
   {
     const { api, calls } = makeApi();
     const r = await call("score_render", { score: "rain", version: "v2", seed: 424242, title: "Rain, re-barred" }, api);
-    ok("a valid version renders", !!r.result?.run, JSON.stringify(r.error || ""));
-    ok("...returning a run id immediately and naming the poller",
-      /Poll score_get with score "rain"/.test(r.result.note || ""), r.result.note);
+    ok("a valid version renders", !!r.result?.job_id, JSON.stringify(r.error || ""));
+
+    /* ── THE DOOR, asserted by name. ────────────────────────────────────────
+     * This is the pin that was missing for the life of the tool: it posted
+     * `{ action: "render" }` to /api/score, a route that dispatches sixteen
+     * actions and has never had that one, and the old stub answered it anyway.
+     * The render door is /api/generate, and a score reaches it as `abc` with
+     * `scoreSlug`/`scoreVersion` so the finished run is adopted back as a child
+     * of the version it came from (server/index.js:948-968). */
+    const gen = calls.find((c) => c.route === "/api/generate");
+    ok("...through the RENDER door, /api/generate", !!gen,
+      `routes posted: ${JSON.stringify(calls.map((c) => c.route))}`);
+    ok("...and NOT to /api/score, which has no render action",
+      !calls.some((c) => c.route === "/api/score" && c.action === "render"));
+    ok("...naming YuE2, the only engine a score conditions", gen?.body?.engine === "yue2", gen?.body?.engine);
+    ok("...carrying the version's own notation, style and words",
+      gen?.body?.abc === FIXED && gen?.body?.caption === STYLE && gen?.body?.lyrics === LYRICS,
+      JSON.stringify({ abc: gen?.body?.abc?.slice(0, 20), caption: gen?.body?.caption }));
+    ok("...with the score and version, which is what parents the finished render",
+      gen?.body?.scoreSlug === "rain" && gen?.body?.scoreVersion === "v2",
+      JSON.stringify({ slug: gen?.body?.scoreSlug, version: gen?.body?.scoreVersion }));
+    ok("...leaving abcOpen ABSENT, so the planner sits out rather than continuing what we sent",
+      gen !== undefined && !("abcOpen" in gen.body));
+    ok("...and fitting the run to the score's own nominal length",
+      Number.isFinite(gen?.body?.maxDuration) && gen.body.maxDuration > 0, String(gen?.body?.maxDuration));
+
+    ok("...returning a job id immediately and naming the poller",
+      /Poll the job with wait_for_song, or score_get with score "rain"/.test(r.result.note || ""), r.result.note);
     ok("...and saying where the finished render will LAND: a new version parented on this one",
       /arrives as a NEW version whose parent is v2/.test(r.result.note || ""), r.result.note);
     ok("...reporting the MEASURED zero cost of a supplied score",
@@ -693,8 +749,8 @@ async function main() {
     ok("...and the adherence warning travels with the job, not just the docs",
       r.result.adherence_warning === NOT_ENFORCED);
     ok("...the seed and title reached the route",
-      calls.some((c) => c.action === "render" && c.body.seed === 424242 && c.body.title === "Rain, re-barred"),
-      JSON.stringify(calls.find((c) => c.action === "render")?.body));
+      gen?.body?.seed === 424242 && gen?.body?.title === "Rain, re-barred",
+      JSON.stringify(gen?.body));
   }
 
   {
@@ -705,7 +761,7 @@ async function main() {
     const posted = [];
     const noStyle = { ...makeApi().versions[1], style: "  " };
     const stub = async (method, route, b) => {
-      posted.push(b?.action);
+      posted.push(route);
       return b?.action === "read"
         ? { ok: true, score: { slug: "rain" }, versions: [noStyle] }
         : { error: "the stub should not have been asked" };
@@ -714,7 +770,7 @@ async function main() {
     ok("a version with no style prompt is refused — the score fixes notes, not sound",
       !!r.error && /has no style prompt/.test(r.error), r.error);
     ok("...saying there is no other input that could", /there is no other input that can/.test(r.error || ""));
-    ok("...and no render was posted", !posted.includes("render"), JSON.stringify(posted));
+    ok("...and nothing reached the render door", !posted.includes("/api/generate"), JSON.stringify(posted));
   }
 
   console.log("\n  -- score_get reports that the version you inherited is itself broken --");

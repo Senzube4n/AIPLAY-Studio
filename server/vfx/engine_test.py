@@ -326,8 +326,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # names and went stale the moment eleven more landed, while still reading
     # like an assertion about behaviour. What matters is that the spec's set is
     # PRESENT (a mode quietly dropped is a picker row that stops working) and
-    # that nothing is listed twice — BLEND_MODES is built by concatenating two
-    # tuples, so a name added to both shows a duplicate row in every dropdown.
+    # that nothing is listed twice.
     _spec = set("normal multiply screen overlay softlight hardlight add subtract "
                 "difference darken lighten colordodge colorburn hue saturation "
                 "color luminosity".split())
@@ -336,9 +335,22 @@ with tempfile.TemporaryDirectory() as tmp:
     eq("...and no mode is listed twice, which concatenating two tuples invites",
        [m for m in set(engine.BLEND_MODES)
         if list(engine.BLEND_MODES).count(m) > 1], [])
-    eq("...and the list is exactly imagetools' plus this file's, nothing invented",
-       sorted(set(engine.BLEND_MODES)),
-       sorted(set(imagetools.BLEND_MODES) | set(engine._EXTRA_MODES)))
+    # ⚠ IDENTICAL, NOT MERELY EQUAL AS A SET. This file used to publish seven
+    # names of its own — `_EXTRA_MODES`, concatenated onto imagetools' list —
+    # and that concatenation was the defect: the NAME reached every caller of
+    # imagetools._blend while the MATHS stayed here, so a shape or a layer
+    # composite set to one of the seven rendered as `normal` and said nothing.
+    # The seven were moved on 2026-09-21 and this tuple is now imagetools' own,
+    # position for position. What this can catch is THIS FILE growing a list of
+    # its own again - an appended name, a reordering, a slice - which is the
+    # thing that went wrong. It cannot catch a reorder made over in imagetools,
+    # because both sides of it are that same tuple; imagetools_test pins the
+    # order against a literal, which is where a pin on imagetools' own decisions
+    # belongs.
+    eq("BLEND_MODES is imagetools' tuple whole, not this file's plus anything",
+       list(engine.BLEND_MODES), list(imagetools.BLEND_MODES))
+    eq("...and this file no longer holds a list or an implementation of its own",
+       [a for a in ("_EXTRA_MODES", "_blend_extra") if hasattr(engine, a)], [])
 
     # -- track mattes ---------------------------------------------------------
     # A white solid covering only the left half is used as the alpha matte for a
@@ -1531,20 +1543,235 @@ engine._over(_acc, engine.Tile(_SRC, 0, 0), "overlay")
 eq("a blend mode leaves the source-over alpha law alone",
    round(float(_acc[0, 0, 3]), 6), round(0.5 + 0.25 * 0.5, 6))
 
-# A document is free to carry any string in `blend`, and imagetools._blend hands
-# `top` straight back for one it does not recognise — so an unknown mode has to
-# land on plain source-over. That is worth an assertion twice over, because
-# "normal" now takes a SHORTER path than the blend dispatch does (it never
-# de-interleaves the backdrop) and this is the one case where the two paths
-# composite the same pixels and can be compared for it.
+# A document is free to carry any string in `blend` — hand-edited, written by an
+# older build, or arrived from a store whose own list is behind — so an unknown
+# mode has to land on plain source-over rather than lose the frame.
+#
+# ⚠ THAT USED TO HAPPEN BY ACCIDENT AND IS NOW A DECISION IN THIS FILE.
+# imagetools._blend ended in `return top` for any name it did not have, so a
+# stray string fell through the whole dispatch and came back as the source. That
+# forgiving exit was hiding seven modes that were never implemented here at all,
+# and it is gone: `_blend` raises now, and `_plain_blend` coerces the name
+# before it can reach it. Delete that coercion and these four lines do not
+# quietly return a different picture — they raise a ValueError out of a render.
+def _composited(fn, acc, mode):
+    """Run one composite and report a raise as a value.
+
+    ⚠ THE CATCH IS THE POINT. Without it, taking the coercion out of
+    `_plain_blend` does not FAIL the four pins below - imagetools._blend raises,
+    the exception leaves the render, and the whole file stops at this line
+    without naming anything. A pin that can only announce itself by killing the
+    suite is a pin nobody can read.
+    """
+    try:
+        fn(acc, engine.Tile(_SRC, 0, 0), mode)
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return acc
+
+
 for _bg_a in (1.0, 0.3):
     _base = np.zeros((4, 4, 4), np.float32)
     _base[...] = (0.1, 0.6, 0.3, _bg_a)
-    _plain, _weird = _base.copy(), _base.copy()
-    engine._over(_plain, engine.Tile(_SRC, 0, 0), "normal")
-    engine._over(_weird, engine.Tile(_SRC, 0, 0), "no-such-mode")
+    _plain = _composited(engine._over, _base.copy(), "normal")
+    _weird = _composited(engine._over, _base.copy(), "no-such-mode")
     eq(f"an unrecognised blend mode is plain source-over (backdrop a={_bg_a})",
-       bool(np.array_equal(_plain, _weird)), True)
+       _weird if isinstance(_weird, str) else bool(np.array_equal(_plain, _weird)),
+       True)
+# The T-switch composite has its own copy of that test and had its own copy of
+# the old `mode and mode != "normal"`, so it gets its own assertion.
+_pre_n = _composited(engine._over_preserve, _base.copy(), "normal")
+_pre_w = _composited(engine._over_preserve, _base.copy(), "no-such-mode")
+eq("...and so is one handed to the preserve-transparency composite",
+   _pre_w if isinstance(_pre_w, str) else bool(np.array_equal(_pre_n, _pre_w)), True)
+# A stencil name reaches `_over` the same way and must survive it too - imgdoc
+# lists four of them in the same `blend` field this dispatch reads, and they are
+# deliberately NOT in BLEND_MODES, so they are "unrecognised" to this dispatch
+# exactly the way a typo is.
+_ov_n = _composited(engine._over, _base.copy(), "normal")
+_sten = _composited(engine._over, _base.copy(), "stencilAlpha")
+eq("...and a stencil name, which imgdoc offers in the same field",
+   _sten if isinstance(_sten, str) else bool(np.array_equal(_ov_n, _sten)), True)
+# A stencil name is not a colour blend and never reaches the blend dispatch, but
+# it IS a string a document can carry in `blend`, and it is in imgdoc's list.
+eq("...and a stencil mode's name, which imgdoc offers and this dispatch does not",
+   engine._plain_blend("stencilAlpha"), True)
+eq("...while a real mode is not plain", engine._plain_blend("hue"), False)
+
+
+# ── the still and the frame must be the same picture ─────────────────────────
+#
+# ⚠ THIS IS THE PIN THAT LETS THIS FILE KEEP A SECOND COPY OF ANYTHING.
+# imagetools owns hue, saturation, color and luminosity on channel-last images;
+# `_blend_rgb` above answers those four from three separate planes instead, and
+# that is a genuine second implementation of genuine arithmetic — SetLum,
+# SetSat and ClipColor, written twice. It was kept because delegating them costs
+# 5.8x to 10.1x at 1280x720 (the figures are in engine.py, beside the branch).
+#
+# Two copies with nothing tying them together is how they drift, and a drift
+# here has a specific and very unpleasant symptom: the SAME comp renders one way
+# as a still through the Images column and another way as a frame through this
+# engine, with no error and nothing to compare against but two files. So the two
+# are swept against each other on every run and demanded IDENTICAL — not close,
+# BIT FOR BIT, which they are because both are written as the same float32
+# operations in the same order. A tidier expression on either side that changes
+# nothing mathematically still breaks this, and it is meant to: the next person
+# to touch either one has to touch both.
+
+_g = np.linspace(0.0, 1.0, 65, dtype=np.float32)
+_gb, _gt = np.meshgrid(_g, _g, indexing="ij")
+# Three DIFFERENT ramps per pixel. A grey field would let every component mode
+# collapse to the backdrop and pass while doing nothing at all.
+_GRID_B = np.stack([_gb, _gt, 1.0 - _gb], axis=-1).astype(np.float32)
+_GRID_T = np.stack([_gt, 1.0 - _gt, _gb], axis=-1).astype(np.float32)
+
+# ...and the ends, which a ramp grid only visits at its corners: a fully
+# desaturated layer is SetSat's division by zero, a fully saturated one is
+# ClipColor's, and black and white are where SetLum walks the colour out of the
+# cube in both directions. One row of hand-picked pairs, swept the same way.
+#
+# ⚠ THE NEARLY-GREY PAIR AT THE END IS NOT A ROUNDING CASE, it is the only one
+# that can catch a missing flat-pixel mask. At an EXACTLY grey backdrop SetSat's
+# numerator `C - Cmin` is zero, so the epsilon divide gives the same zero the
+# mask does and deleting the mask changes nothing anywhere. A backdrop 5e-7 off
+# neutral has a range BELOW the epsilon: the mask calls it flat, the bare divide
+# computes 5e-7 * s / 1e-6 and turns a rounding-sized difference into a fifth of
+# a channel. Drop the mask on either side of this sweep and only this column
+# says so.
+_ENDS_B = np.array([[[0.5, 0.5, 0.5], [0.6, 0.2, 0.8], [1.0, 0.0, 0.0],
+                     [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.6, 0.2, 0.8],
+                     [0.6, 0.2, 0.8], [0.0, 1.0, 0.0],
+                     [0.5, 0.5, 0.5000005], [0.4, 0.6, 0.8]]], np.float32)
+_ENDS_T = np.array([[[0.4, 0.6, 0.8], [0.5, 0.5, 0.5], [0.4, 0.6, 0.8],
+                     [0.4, 0.6, 0.8], [0.4, 0.6, 0.8], [0.0, 0.0, 0.0],
+                     [1.0, 1.0, 1.0], [0.0, 1.0, 0.0],
+                     [0.4, 0.6, 0.8], [0.5, 0.5, 0.5000005]]], np.float32)
+
+
+def _planes(img):
+    return [np.ascontiguousarray(img[..., k]) for k in range(3)]
+
+
+_drift = []
+for _name, _bi, _ti in (("the ramp grid", _GRID_B, _GRID_T),
+                        ("the degenerate ends", _ENDS_B, _ENDS_T)):
+    _bp, _tp = _planes(_bi), _planes(_ti)
+    for _m in engine.BLEND_MODES:
+        if _m in imagetools.ALPHA_MODES:
+            continue                      # not a function of two colours
+        with engine._Planes() as _sc:
+            _as_frame = np.stack(
+                [np.asarray(p) for p in engine._blend_rgb(_bp, _tp, _m, _sc)],
+                axis=-1)
+        _as_still = np.asarray(imagetools._blend(_bi, _ti, _m))
+        if not np.array_equal(_as_frame, _as_still):
+            _drift.append("%s on %s: max %g"
+                          % (_m, _name, float(np.abs(_as_frame - _as_still).max())))
+eq("every blend mode renders the same as a frame and as a still, bit for bit",
+   _drift, [])
+# The first thing this sweep caught, kept as its own pin so the reason survives
+# the fix. darkerColor and lighterColor decide by comparing the two pixels'
+# luminance, and two DIFFERENT colours can weigh exactly the same in float32:
+# 0.59 red and 0.30 green both come to 0.177. Which layer survives that is
+# visible, imagetools gives it to the SOURCE in both directions, and this file
+# used a strict comparison and gave it to the backdrop — so a tone-matched layer
+# painted in the Images column and vanished in a render.
+_TIE_B = np.array([[[0.59, 0.0, 0.0]]], np.float32)
+_TIE_T = np.array([[[0.0, 0.30, 0.0]]], np.float32)
+eq("the two colours really do tie, which is what makes this a case and not a "
+   "rounding story",
+   float((_TIE_B @ imagetools._LUMA_W).ravel()[0])
+   == float((_TIE_T @ imagetools._LUMA_W).ravel()[0]), True)
+_tie_out = []
+for _m in ("darkerColor", "lighterColor"):
+    with engine._Planes() as _sc:
+        _r = engine._blend_rgb(_planes(_TIE_B), _planes(_TIE_T), _m, _sc)
+    _tie_out.append([round(float(np.asarray(p).ravel()[0]), 4) for p in _r])
+eq("a luminance tie goes to the SOURCE in a frame too, both directions",
+   _tie_out, [[0.0, 0.3, 0.0], [0.0, 0.3, 0.0]])
+# ...and the sweep really did cover all of them, rather than skipping the ones
+# that matter through a name that no longer exists.
+eq("...across every mode in the list, not a hand-kept subset of it",
+   len([m for m in engine.BLEND_MODES if m not in imagetools.ALPHA_MODES]), 27)
+
+# ── which half answers which mode ────────────────────────────────────────────
+#
+# The pin above is blind to WHERE the answer came from: if this file grew a
+# second copy of multiply, or lost its plane-native component modes to a
+# stack-call-split delegation, both would still agree bit for bit and both would
+# be wrong — one is a duplicate waiting to drift, the other is the 4x.
+#
+# So: count the calls. Three modes were deleted from this file entirely when
+# they moved (hardlight, colordodge, colorburn) and must now reach imagetools
+# once per plane; four are answered here and must not reach it at all.
+_seen = []
+_real_blend = imagetools._blend
+
+
+def _counting(base, top, mode):
+    _seen.append(mode)
+    return _real_blend(base, top, mode)
+
+
+_routing = []
+try:
+    imagetools._blend = _counting
+    _bp, _tp = _planes(_ENDS_B), _planes(_ENDS_T)
+    for _m, _want in (("multiply", 3), ("overlay", 3), ("divide", 3),
+                      ("hardlight", 3), ("colordodge", 3), ("colorburn", 3),
+                      ("darkerColor", 0), ("lighterColor", 0),
+                      ("hue", 0), ("saturation", 0),
+                      ("color", 0), ("luminosity", 0)):
+        del _seen[:]
+        with engine._Planes() as _sc:
+            engine._blend_rgb(_bp, _tp, _m, _sc)
+        if len(_seen) != _want:
+            _routing.append(f"{_m}: {len(_seen)} calls into imagetools, wanted {_want}")
+finally:
+    imagetools._blend = _real_blend
+eq("the three separable modes that moved are DELEGATED, one call per plane, "
+   "and the six that need a whole pixel are answered here", _routing, [])
+
+# The measurement that bought the second copy, re-run small. Timed rather than
+# asserted to a number — a machine under load can say anything — but the
+# ORDERING is asserted, because the whole justification for keeping two
+# implementations is that the plane-native one is faster. If it ever stops
+# being faster, delete it and delegate.
+_BW = np.ascontiguousarray(np.resize(_GRID_B, (384, 384, 3)).astype(np.float32))
+_TW = np.ascontiguousarray(np.resize(_GRID_T, (384, 384, 3)).astype(np.float32))
+_wbp, _wtp = _planes(_BW), _planes(_TW)
+
+
+def _native():
+    with engine._Planes() as sc:
+        return engine._blend_rgb(_wbp, _wtp, "hue", sc)
+
+
+def _delegated():
+    # What delegation would have to look like from three planes: interleave,
+    # call the one implementation, split the answer back.
+    out = np.asarray(imagetools._blend(np.stack(_wbp, axis=-1),
+                                       np.stack(_wtp, axis=-1), "hue"))
+    return [np.ascontiguousarray(out[..., k]) for k in range(3)]
+
+
+def _ms3(fn, n=3):
+    # A private twin of the `_ms` further down this file, which is defined after
+    # this point and so cannot be called from here.
+    fn()
+    best = 1e9
+    for _ in range(n):
+        _t0 = time.perf_counter()
+        fn()
+        best = min(best, (time.perf_counter() - _t0) * 1000.0)
+    return best
+
+
+_t_native, _t_deleg = _ms3(_native), _ms3(_delegated)
+print("        hue on 384x384: %.1f ms plane-native, %.1f ms via an image (%.2fx)"
+      % (_t_native, _t_deleg, _t_deleg / max(_t_native, 1e-9)))
+eq("...and the plane-native copy is faster, which is the only thing paying for it",
+   _t_native < _t_deleg, True)
 # And nothing composited may write into the tile it was handed.
 _keep = _SRC.copy()
 engine._over(np.full((4, 4, 4), 0.5, np.float32), engine.Tile(_SRC, 0, 0), "hue")

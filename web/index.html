@@ -3270,12 +3270,24 @@
           <label class="hint"><input type="checkbox" id="iedShStrokeOn"> line <input type="color" id="iedShStroke" value="#0a0a0e"></label>
           <label class="hint">width <input type="number" id="iedShWidth" class="sel2 sm" value="2" min="1" max="200" style="width:52px"></label>
           <label class="hint" data-shapefor="shapeRect">radius <input type="number" id="iedShRadius" class="sel2 sm" value="0" min="0" max="400" style="width:52px"></label>
+          <!-- THESE NINE ARE A FALLBACK, NOT THE LIST. iedBlendPickers()
+               refills this select from GET /api/images/tools —
+               tools.shapes.ops.rect.params.blend.options, which imgshape.py
+               derives BY SUBTRACTION from imagetools.BLEND_MODES, so a mode it
+               would raise on cannot appear here. The nine below are what a
+               hand-written list decays into: eleven modes landed in the engine
+               and this markup went on offering nine for as long as nobody
+               counted. They stay only so a console whose catalog fetch failed
+               still has a working picker, and iedShBlendSays then says the list
+               is short and why — showing nine in silence is the failure this
+               whole change is about. -->
           <label class="hint">blend <select id="iedShBlend" class="sel2 sm">
             <option value="normal">normal</option><option value="multiply">multiply</option>
             <option value="screen">screen</option><option value="overlay">overlay</option>
             <option value="softlight">soft light</option><option value="add">add</option>
             <option value="difference">difference</option><option value="darken">darken</option>
             <option value="lighten">lighten</option></select></label>
+          <span class="hint iedcapwarn" id="iedShBlendSays" hidden></span>
           <span class="hint" id="iedShHint">drag on the image</span>
         </div>
 
@@ -3438,6 +3450,71 @@
             </div>
           </details>
 
+          <!-- LAYER STYLES — Photoshop's ten, on a still.
+               Generated from GET /api/images/tools module=styles: the list, the
+               order, every parameter, its range, its default and the sentence
+               beside it. This dock owns no list of its own, the same rule the
+               effect stack above follows.
+
+               ⚠ THE ORDER IS PAINTING ORDER AND IT IS NOT ALPHABETICAL.
+               imgstyles publishes `order` — patternOverlay, gradientOverlay,
+               colorOverlay, satin, innerGlow, innerShadow, stroke, outerGlow,
+               dropShadow, bevelEmboss — and normalise_styles DISCARDS the
+               caller's order so two people writing the same styles get the same
+               pixels. A drop shadow under a stroke is a different picture from a
+               stroke under a drop shadow, so this panel lists them in `order`
+               and never sorts them; the numbers down the left are that order.
+
+               ⚠ A STYLE NEEDS A SHAPE AND A PHOTOGRAPH HAS NONE. A flat frame
+               is opaque in every pixel, so measured at defaults three of the ten
+               (stroke, outerGlow, dropShadow) change nothing at all and the other
+               seven repaint every pixel. The shape comes from the SELECTION or
+               from the picture's own alpha on a cutout — one or the other, never
+               both, because imgstyles refuses two shapes rather than silently
+               preferring one. That is why the two sources below are radios.
+
+               ⚠ AND THE REFUSAL COSTS THE WHOLE RENDER, not just this stage.
+               ops.styles with no shape makes /api/images/edit answer 400, so the
+               adjustments, the effect stack and every queued stroke in the same
+               Apply are lost with it. That is why the console's Apply itself goes
+               dark while styles are staged without a shape, rather than this dock
+               keeping a private Apply of its own — and why this dock has no Apply
+               button: a second sender would be a second ops builder, and
+               iedStageOps() exists so there is exactly one. -->
+          <details class="ieddock" id="iedDockStyles" data-dock="styles">
+            <summary>Layer styles</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedStylesCap" hidden></p>
+              <div class="wrow">
+                <select id="iedStylePick" class="sel2 sm"><option value="">+ add style&hellip;</option></select>
+                <button class="edtool sm warn" id="iedStyleClear">clear</button>
+              </div>
+              <div id="iedStyleList"></div>
+              <div id="iedStyleParams"></div>
+              <div class="iedgrp">
+                <b class="iedgrph">The shape they decorate</b>
+                <div class="wrow"><span>
+                  <label class="hint"><input type="radio" name="iedStyleShape" id="iedStyleShapeSel" checked> the current selection</label>
+                  <label class="hint"><input type="radio" name="iedStyleShape" id="iedStyleShapeAlpha"> the picture&rsquo;s own alpha</label>
+                </span></div>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedStyleCheck" title="Ask the server whether this picture has a shape to style, without painting anything: POST /api/images/describe-styles. It answers with the shape&rsquo;s source, how much of the frame it covers, and — when there is none — the sentence saying why every style would be a no-op or repaint the whole frame.">does this have a shape?</button>
+                  <label class="hint" title="One sun for the three styles that read an angle. There is no global light in the renderer and their defaults disagree — dropShadow 45, innerShadow 45, bevelEmboss 120 — and the bevel&rsquo;s angle runs the opposite way round the compass, so they agree only at 0 and 180. This one number is negated for the bevel on the way through.">
+                    <input type="checkbox" id="iedStyleLightOn"> one light at
+                    <input type="number" id="iedStyleLight" class="sel2 sm" value="120" min="-360" max="360" style="width:62px">&deg;</label>
+                </span></div>
+                <p class="hint" id="iedStyleSays"></p>
+              </div>
+              <p class="hint" id="iedStyleNote">Painted after the selection blend &mdash;
+                a shadow, a glow and an outside stroke land OUTSIDE the shape, and
+                running them earlier would let the selection clip them away with both
+                halves behaving correctly. stroke, outerGlow and dropShadow paint
+                outside the shape and the buffer never grows: a big glow on a shape
+                flush to the frame edge loses the half that had nowhere to go, so add
+                canvas first.</p>
+            </div>
+          </details>
+
           <!-- §3. The multiplier: with a mask, every adjustment above and the
                whole effect registry apply to part of the picture. Disabled until the route
                that resolves one exists — see IED_CAPS. -->
@@ -3491,12 +3568,22 @@
             <summary>Layers</summary>
             <div class="ieddockbody">
               <div class="wrow"><select id="iedLayerPick" class="sel2 sm"><option value="">+ add image&hellip;</option></select>
+                <!-- Same nine, same fallback rule as the shape tool's picker, and
+                     the same refill from the server's catalog — see
+                     iedBlendPickers(). The modes offered here are deliberately
+                     the ones BOTH halves of /api/images/composite can paint, not
+                     the thirty-two a layer DOCUMENT knows: a stack with no
+                     clipped row is composited by imagetools.composite, whose
+                     _blend() returns the top colour unchanged for a name it does
+                     not have, so `hue` on an unclipped layer would render as
+                     `normal` and nothing anywhere would say so. -->
                 <select id="iedLayerMode" class="sel2 sm" title="blend mode">
                   <option value="normal">normal</option><option value="multiply">multiply</option>
                   <option value="screen">screen</option><option value="overlay">overlay</option>
                   <option value="softlight">soft light</option><option value="add">add</option>
                   <option value="difference">difference</option><option value="darken">darken</option>
                   <option value="lighten">lighten</option></select></div>
+              <p class="hint iedcapwarn" id="iedLayerModeSays" hidden></p>
               <div id="iedLayerList"></div>
               <div class="iedsliders" id="iedLayerCtl" hidden>
                 <label>x <input type="range" id="iedLx" min="0" max="100" value="50"><b>50%</b></label>
@@ -3613,8 +3700,23 @@
                    the contour and what to do to it. -->
               <div class="wrow"><span>
                 <button class="edtool sm" id="iedPathCheck" title="Ask the server what this figure will do when it is filled: how many contours, which are holes, which are enclosed but wound the wrong way to BE holes, and which are not closed. The only thing here that can tell you an &lsquo;o&rsquo; is about to come back solid.">why will it fill solid?</button>
+                <!-- THE WAY OUT. Everything the pen makes could only ever leave
+                     as PIXELS: imgpath is a full vector tool — beziers, booleans,
+                     offsets, fill rules — and `vectorize` could turn a PHOTOGRAPH
+                     into vectors while the app&rsquo;s own pen could not export one.
+                     POST /api/images/svg writes the file.
+
+                     ⚠ READ figureOk, NOT ok. They are two different verdicts and
+                     collapsing them would refuse the case this exists for: `ok`
+                     says the file was written, `figureOk` says the figure is what
+                     its author meant. A counter wound the same way as the letter
+                     around it exports perfectly and fills SOLID in every renderer
+                     on earth, so that export is a success carrying a warning —
+                     never an error. -->
+                <button class="edtool sm" id="iedPathSvgOut" title="Write the current path out as an .svg in the library — one &lt;path&gt; element with one subpath per contour, which is the only shape of file whose holes stay holes. The reply is checked on the way out: a figure that will draw wrong comes back as a warning beside a successful export, naming the contour and what to do to it.">export .svg</button>
               </span></div>
               <p class="hint" id="iedPathSays"></p>
+              <p class="hint" id="iedPathSvgSays"></p>
               <div id="iedPathQueue"></div>
               <p class="hint">The pen (P) clicks anchors; double-click or Enter saves.
                 A path is geometry &mdash; nothing touches a pixel until a queued
@@ -3641,8 +3743,67 @@
                    picture until it is too late to change the design. -->
               <div class="wrow"><span>
                 <button class="edtool sm" id="iedCharMeasure" title="Lay this type out on the server and answer with the numbers &mdash; ink box, line count, baseline step, the size it actually landed on, and whether the font you asked for was the font it used. No render, no picture.">measure</button>
+                <!-- Type as OUTLINES, through the same door the pen uses. The
+                     contours come out of the font file, so the .svg has no parent
+                     picture and the server files no `vectorFrom` lineage for it —
+                     an invented parent would be an invented contributor in the
+                     credit list. Counters are the whole risk here and the reply
+                     reports on them: an &lsquo;o&rsquo; is two contours wound against each
+                     other, and figureOk is what says they were. -->
+                <button class="edtool sm" id="iedCharSvgOut" title="Write this type out as an .svg of OUTLINES — no font is embedded and none is needed to open it. The reply says how many glyphs and contours it made, which characters the font had no glyph for, and whether the counters will actually read as holes.">export .svg</button>
               </span></div>
               <p class="hint" id="iedCharSays"></p>
+              <p class="hint" id="iedCharSvgSays"></p>
+            </div>
+          </details>
+
+          <!-- THE LUT SHELF — and it is a DOCK rather than a group inside
+               Properties for one reason worth writing down: nothing here rides
+               Apply. /api/images/lut is its own route and mints its own library
+               image, exactly like Vectorize and the model tools do, and a
+               strength slider sitting among the Properties controls would read as
+               one more knob that Apply collects. It also carries a shelf — a list
+               of files that have to be uploaded, re-read and inspected — and a
+               report several sentences long, which is dock-shaped and not
+               group-shaped.
+
+               ⚠ THE MOST USEFUL SENTENCE IN THIS PANEL IS THE ONE ABOUT WHAT A
+               LUT CANNOT SAY. Nothing in a .cube records the colour space it
+               expects, and no measurement of the table recovers it. A film LUT
+               built for LOG footage, applied to an ordinary sRGB picture, does not
+               come back looking broken — it comes back milky and low-contrast and
+               looks like a choice somebody made. So `cannotKnow` is shown BEFORE
+               anything is applied, not in a tooltip afterwards.
+
+               ⚠ .3dl IS WHITELISTED BY THE ROUTE AND REFUSED BY THE PARSER.
+               The upload door accepts the extension, then imglut.py declines to
+               read it — two incompatible conventions are in circulation, they
+               disagree about which component varies fastest down the rows, and a
+               wrong guess still looks like a grade. The file is deleted again and
+               the reason comes back as a sentence, which is why this panel shows
+               the refusal instead of swallowing it. -->
+          <details class="ieddock" id="iedDockLut" data-dock="lut">
+            <summary>LUT</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedLutCap" hidden></p>
+              <div class="wrow">
+                <select id="iedLutPick" class="sel2 sm"><option value="">no LUT loaded&hellip;</option></select>
+                <button class="edtool sm" id="iedLutRefresh" title="Read the shelf again — GET /api/images/luts. It is a folder on the server, so this listing is a snapshot and not a subscription.">re-read</button>
+              </div>
+              <div class="wrow"><span>
+                <label class="edtool sm" id="iedLutUpload" title="Add a .cube to the shelf. The server caps the size, checks the extension and PARSES the file before it answers, so a file that turns out not to be a LUT is refused and not kept — and the reason is printed below.">add a .cube&hellip;
+                  <input type="file" id="iedLutFile" accept=".cube,.3dl" hidden></label>
+                <button class="edtool sm" id="iedLutInfo" title="What this LUT is, without applying it: title, kind, grid size, domain, the landmarks black / 18% grey / mid / white, and the one thing it cannot know.">what is it?</button>
+              </span></div>
+              <div class="iedsliders">
+                <label title="A straight mix between the graded picture and the original. 100 is the LUT as its author built it.">strength
+                  <input type="range" id="iedLutStrength" min="0" max="100" value="100"><b id="iedLutStrengthV">100</b></label>
+              </div>
+              <div class="wrow">
+                <label class="hint">interpolation <select id="iedLutInterp" class="sel2 sm"></select></label>
+                <button class="edtool" id="iedLutGo">Apply LUT &rarr; new image</button>
+              </div>
+              <p class="hint" id="iedLutSays"></p>
             </div>
           </details>
 

@@ -552,12 +552,23 @@ LINEAR_BLENDS = frozenset({"add", "screen"})
 
 # ── blending ──────────────────────────────────────────────────────────────────
 
-# imagetools._blend owns normal/multiply/screen/overlay/softlight/add/subtract/
-# difference/darken/lighten. The rest of the spec's list is not there and adding
-# it would mean editing a file this engine does not own, so the remainder lives
-# here — same maths, W3C compositing-1, just a different house.
-_EXTRA_MODES = ("hardlight", "colordodge", "colorburn",
-                "hue", "saturation", "color", "luminosity")
+# imagetools._blend owns EVERY name in imagetools.BLEND_MODES, all 28 of them,
+# and this file no longer adds any. It used to: seven modes lived here in an
+# `_EXTRA_MODES` tuple that was concatenated onto imagetools' list, which meant
+# the NAME was published to every caller of `_blend` while the MATHS stayed in
+# this one file. imagetools._blend ended in a bare `return top`, so all seven
+# rendered as `normal` through the still compositor — a shape set to hard light,
+# a brush stroke set to color dodge, a flat layer composite set to luminosity —
+# and nothing reported it. They were moved on 2026-09-21.
+#
+# ⚠ WHAT IS LEFT HERE IS FOUR IMPLEMENTATIONS, NOT FOUR NAMES. hue, saturation,
+# color and luminosity still have a plane-native copy below, and it is a real
+# second copy of real arithmetic, kept because delegating them costs 5.8x to
+# 10.1x — see `_blend_rgb`. engine_test sweeps the two against each other and
+# demands they agree BIT FOR BIT; that pin is the only thing standing between
+# this arrangement and a comp that renders one way as a still and another way as
+# a frame. The three separable ones (hardlight, colordodge, colorburn) kept no
+# copy at all: they fall through to imagetools like multiply and screen do.
 
 _LUMA_W = np.array([0.30, 0.59, 0.11], dtype=np.float32)
 
@@ -768,19 +779,6 @@ def _sat(c, sc):
     return np.subtract(out, _cmin(c, sc), out=out)
 
 
-def _blend_extra(base, top, mode):
-    """The three per-channel modes imagetools does not own."""
-    if mode == "hardlight":
-        return np.where(top <= 0.5, 2 * base * top, 1 - 2 * (1 - base) * (1 - top))
-    if mode == "colordodge":
-        return np.where(base <= EPS, 0.0,
-                        np.where(top >= 1 - EPS, 1.0,
-                                 np.minimum(1.0, base / np.maximum(1 - top, EPS))))
-    return np.where(base >= 1 - EPS, 1.0,                        # colorburn
-                    np.where(top <= EPS, 0.0,
-                             1 - np.minimum(1.0, (1 - base) / np.maximum(top, EPS))))
-
-
 def _blend_rgb(base, top, mode, sc, linear=False):
     """B(Cb, Cs) for every mode in the spec, on three float 0..1 planes.
 
@@ -830,32 +828,106 @@ def _blend_rgb(base, top, mode, sc, linear=False):
     # into darken/lighten, so they arrive here unanswered and must be answered
     # from all three planes at once.
     #
-    # ⚠ AND THEY ARE NOT IN `_EXTRA_MODES`: that tuple is concatenated with
-    # imagetools' list to build BLEND_MODES, and these two are already in
-    # imagetools'. Putting them in both would list every name twice in the UI.
+    # ⚠ AND THEY ARE NOT ADDED TO BLEND_MODES HERE: that tuple IS imagetools'
+    # now, and these two have always been in it. A name answered in this file
+    # and listed in both would show every mode twice in every dropdown.
     if mode in ("darkerColor", "lighterColor"):
         lb = base[0] * _LUMA_W[0] + base[1] * _LUMA_W[1] + base[2] * _LUMA_W[2]
         lt = top[0] * _LUMA_W[0] + top[1] * _LUMA_W[1] + top[2] * _LUMA_W[2]
         # One predicate for all three channels — that IS the mode. Computing it
         # per channel would be darken again, wearing a different name.
-        take_top = (lt < lb) if mode == "darkerColor" else (lt > lb)
+        #
+        # ⚠ `<=`, NOT `<`, AND THE EQUALS IS THE WHOLE POINT. A tie is a real
+        # case rather than a rounding artefact: a dark red and a dark green of
+        # equal weight tie EXACTLY in float32, and which layer survives one is
+        # visible. imagetools._blend_whole_pixel gives a tie to the SOURCE in
+        # both directions — a tone-matched layer paints instead of vanishing,
+        # which is what `normal` would have done and the less surprising of the
+        # two answers — and this was written with a strict comparison, so it
+        # gave the tie to the BACKDROP and the same layer rendered one way as a
+        # still and the other way as a frame. Three pixels in 4225 on a ramp
+        # grid; a tone-matched layer is all of them. The luma arithmetic was
+        # never the problem and is bit-identical on both sides; only the
+        # boundary was. Found by the still-vs-frame sweep in engine_test, which
+        # is what that sweep is for.
+        take_top = (lt <= lb) if mode == "darkerColor" else (lt >= lb)
         return [np.where(take_top, top[k], base[k]) for k in range(3)]
-    if mode in _EXTRA_MODES:
+    # ⚠ THE SECOND COPY, AND THE MEASUREMENT THAT BOUGHT IT. imagetools owns
+    # these four as well now, on channel-last images, and the obvious thing
+    # would be to delegate: stack the planes, call it, split the answer back.
+    # Measured at 1280x720 float32, median of eleven, against the code that
+    # actually shipped:
+    #
+    #     hue         41.3 ms plane-native   375.6 ms via an image    9.09x
+    #     saturation  38.5 ms                387.6 ms                10.07x
+    #     color       35.6 ms                207.0 ms                 5.82x
+    #     luminosity  31.3 ms                201.6 ms                 6.44x
+    #
+    # THE STACK AND THE SPLIT ARE NOT WHERE THAT GOES, and the header at the top
+    # of this section already explains where it does: an (H, W, 3) walked one
+    # channel at a time is a three-element inner loop with stride 3, and numpy
+    # cannot collapse it, so every term of a formula with thirty of them walks
+    # the frame one scalar at a time. It is the same 15.8 ms against 0.07 ms
+    # that put this whole file on planes. A first estimate of this cost came out
+    # at 2.5x-4.1x by timing a channel-LIST twin instead of the interleaved
+    # function that would really be called — which measured the scratch pool and
+    # missed the strides, and is worth saying because it is the easy mistake to
+    # make when re-checking this.
+    #
+    # 334 ms a frame on `hue` is eight seconds of extra compute per second of
+    # 24 fps footage.
+    #
+    # So this file keeps its copy, and engine_test pins the two implementations
+    # BIT FOR BIT on a swept grid. They are written as the same operations in
+    # the same order for that reason — a tidier expression here that changes
+    # nothing mathematically still breaks the pin, and it is meant to.
+    if mode in imagetools.NON_SEPARABLE_MODES:
         if mode == "hue":
             return _set_lum(_set_sat(top, _sat(base, sc), sc), _lum(base, sc), sc)
         if mode == "saturation":
             return _set_lum(_set_sat(base, _sat(top, sc), sc), _lum(base, sc), sc)
         if mode == "color":
             return _set_lum(top, _lum(base, sc), sc)
-        if mode == "luminosity":
-            return _set_lum(base, _lum(top, sc), sc)
-        return [_blend_extra(base[k], top[k], mode) for k in range(3)]
-    # imagetools._blend is elementwise in every mode it owns, so handing it one
-    # plane at a time is the same arithmetic on a shape numpy can vectorise.
+        return _set_lum(base, _lum(top, sc), sc)                 # luminosity
+    # imagetools._blend is elementwise in every mode it owns but the six in
+    # IMAGE_ONLY_MODES, and those six are all intercepted above, so handing it
+    # one plane at a time is the same arithmetic on a shape numpy can vectorise.
+    # hardlight, colordodge and colorburn come down this line — they used to be
+    # answered in this file and now are not, which is three implementations
+    # deleted rather than three pinned.
     return [imagetools._blend(base[k], top[k], mode) for k in range(3)]
 
 
-BLEND_MODES = tuple(imagetools.BLEND_MODES) + _EXTRA_MODES
+# NOT A CONCATENATION ANY MORE, and nothing here may make it one again. Whatever
+# imagetools publishes is what this engine paints; a name this file answered but
+# that file did not list would be a mode the Images column offers and cannot
+# render, which is the defect this whole section exists to have ended.
+BLEND_MODES = tuple(imagetools.BLEND_MODES)
+
+
+def _plain_blend(mode):
+    """Whether this name should take plain source-over rather than the blend.
+
+    Three cases collapse to one answer: no mode at all, `normal`, and a name
+    nothing implements.
+
+    ⚠ THE THIRD ONE USED TO HAPPEN BY ACCIDENT, AND NOW HAS TO BE DECIDED HERE.
+    imagetools._blend ended in `return top` for any name it did not have, so an
+    unknown mode reached the bottom of the dispatch, came back as the source,
+    and composited as normal. That forgiving exit is gone — it was hiding seven
+    modes that were never implemented — and `_blend` raises instead.
+
+    Raising is right for a pixel kernel and wrong here. A comp document is free
+    to carry any string in `blend`: it may have been hand-edited, written by an
+    older build, or arrived from a store whose own list is behind. An exception
+    thrown from inside a render loop loses the whole frame over one layer's
+    spelling, where painting it as normal loses one layer's look and finishes
+    the render. server/imgdoc.py made the same call at the document level and
+    keeps a warning with it; this level has no warning channel, which is why
+    that one matters and is checked by its own suite.
+    """
+    return (not mode) or mode == "normal" or mode not in BLEND_MODES
+
 
 # Deliberately NOT folded into BLEND_MODES. AE lists these in the same dropdown,
 # but they mix no colour at all — they re-shape the alpha of everything already
@@ -886,8 +958,15 @@ def _mix_blend(cs, cb, ab, mode, sc, linear=False):
     A blend mode only applies where there IS something under it, which is the
     whole reason a comp's transparent background does not turn every multiply
     layer black. Written into fresh planes rather than over the blend's own,
-    because an unrecognised mode name makes imagetools._blend hand `top` STRAIGHT
-    back and clipping in place would then quietly rewrite the source.
+    because `_blend_rgb` is free to hand back an array it did not allocate —
+    imagetools._blend returns one of its arguments for several modes, and the
+    plane-native branches return scratch borrowed from the pool — so clipping in
+    place could rewrite the source or a buffer somebody else is still holding.
+    (This used to say "an unrecognised mode name makes imagetools._blend hand
+    `top` straight back". It no longer can: `_blend` refuses a name it does not
+    implement, and `_plain_blend` turns one into plain source-over before it can
+    reach here. The reason to copy is the aliasing above, which was always the
+    real one.)
 
     THE LERP STAYS IN GAMMA even when `linear` is on, and that is a limitation
     rather than an oversight. `ab` weights how much of the blend applies, and
@@ -937,7 +1016,7 @@ def _over(acc, tile, mode="normal", linear=False):
     h, w = tile.rgba.shape[:2]
     src = tile.rgba
     dst = acc[tile.y:tile.y + h, tile.x:tile.x + w]
-    plain = (not mode) or mode == "normal"
+    plain = _plain_blend(mode)
 
     if plain and _is_opaque(src):
         dst[...] = src                       # nothing of the backdrop survives
@@ -3027,7 +3106,7 @@ def _over_preserve(acc, tile, mode="normal", linear=False):
         sp = sc.split(tile.rgba)
         a_s, cs = sp[3], sp[:3]
         cb = sc.split(dst, 3)
-        if mode and mode != "normal":
+        if not _plain_blend(mode):
             bl = _blend_rgb(cb, cs, mode, sc, linear)
             cs = [np.clip(bl[k], 0.0, 1.0, out=sc.like(a_s)) for k in range(3)]
         for k in range(3):

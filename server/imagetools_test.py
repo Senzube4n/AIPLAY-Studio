@@ -459,13 +459,19 @@ with tempfile.TemporaryDirectory() as ktmp:
 # blend modes - IMAGE_SPEC's transfer modes, the twenty-one of them
 # ---------------------------------------------------------------------------
 #
-# BLEND_MODES is the BASE list: engine.py appends its seven to it, imgdoc.py
-# appends four stencil modes to that, and imgshape/imgpath import this tuple
-# straight. A mode whose name is misspelt in the `if mode ==` chain does not
-# error - _blend falls through to `return top` and renders as `normal`, which
-# is a picture that looks plausible and is wrong. Every pin below is aimed at
-# that failure, and the expectations are derived from the formulas rather than
-# read off the implementation.
+# BLEND_MODES is THE list: engine.py takes it whole, imgdoc.py appends four
+# stencil modes to that, and imgshape/imgpath import this tuple straight. A mode
+# whose name is misspelt in the `if mode ==` chain used not to error - _blend
+# fell off the end and returned `top`, which renders as `normal`: a picture that
+# looks plausible and is wrong. Every pin below is aimed at that failure, and
+# the expectations are derived from the formulas rather than read off the
+# implementation.
+#
+# IT WAS NOT A HYPOTHETICAL. Seven names sat in this tuple implemented only in
+# server/vfx/engine.py - hardlight, colordodge, colorburn, hue, saturation,
+# color and luminosity - and every one of them rendered bit-identical to normal
+# through composite(), imgshape._over and imgpath._over until 2026-09-21. The
+# fallthrough is gone: `normal` is answered by name and anything else raises.
 
 print("\n  -- blend modes --")
 
@@ -491,12 +497,26 @@ NEW = ["dissolve", "linearBurn", "darkerColor", "linearDodge", "lighterColor",
        "vividLight", "linearLight", "pinLight", "hardMix", "exclusion", "divide"]
 eq("the eleven Photoshop modes that were missing are all in BLEND_MODES",
    [m for m in NEW if m not in imagetools.BLEND_MODES], [])
-eq("...which makes twenty-one, and no name appears twice",
-   (len(imagetools.BLEND_MODES), len(set(imagetools.BLEND_MODES))), (21, 21))
+MOVED = ["hardlight", "colordodge", "colorburn",
+         "hue", "saturation", "color", "luminosity"]
+eq("...and so are the seven that used to live in engine.py",
+   [m for m in MOVED if m not in imagetools.BLEND_MODES], [])
+eq("...which makes twenty-eight, and no name appears twice",
+   (len(imagetools.BLEND_MODES), len(set(imagetools.BLEND_MODES))), (28, 28))
 eq("...and the original ten still open the tuple, in their original order",
    list(imagetools.BLEND_MODES[:10]),
    ["normal", "multiply", "screen", "overlay", "softlight", "add",
     "subtract", "difference", "darken", "lighten"])
+# ⚠ POSITION, NOT MEMBERSHIP. engine.BLEND_MODES used to be this tuple PLUS
+# those seven in that order, imgdoc.BLEND_MODES is built on engine's, and
+# server/vfx/store.js keeps a hand-written copy that a lane checks by name. The
+# seven were appended to the TAIL, in the order they had over there, so all
+# three of those lists are the same sequences they already were and none of them
+# had to be touched. Slot one of these names into Photoshop's dropdown position
+# instead and every index after it moves.
+eq("the twenty-one that were here keep their indices, and the seven are the tail",
+   (list(imagetools.BLEND_MODES[:21])[-1], list(imagetools.BLEND_MODES[21:])),
+   ("divide", MOVED))
 
 # -- the arithmetic, hand-derived -------------------------------------------
 #
@@ -507,8 +527,17 @@ eq("...and the original ten still open the tuple, in their original order",
 #   linearLight  b + 2t - 1, clamped       pinLight     t<=.5 min(b,2t) else max(b,2t-1)
 #   hardMix      1 if b + t >= 1 else 0    exclusion    b + t - 2bt
 #   divide       min(1, b / t)
+#   hardlight    t<=.5 mult(b,2t)          else screen(b, 2t-1)
+#   colordodge   b=0?0 : t=1?1 : min(1, b/(1-t))
+#   colorburn    b=1?1 : t=0?0 : 1 - min(1, (1-b)/t)
 TABLE = {
     #                      b=.6 t=.3      b=.3 t=.8       b=.8 t=.25
+    "hardlight":   (0.36,           0.72,           0.4),
+    # Two of these three saturate, which is honest for a dodge and a burn but
+    # proves only that min() runs. The unsaturated cases are pinned separately
+    # below, where the division is the thing being read.
+    "colordodge":  (6.0 / 7.0,      1.0,            1.0),
+    "colorburn":   (0.0,            0.125,          0.2),
     "linearBurn":  (0.0,            0.1,            0.05),
     "linearDodge": (0.9,            1.1,            1.05),
     "vividLight":  (1.0 - 2.0 / 3.0, 0.75,          0.6),
@@ -529,6 +558,9 @@ for _m, _want in TABLE.items():
 # the division by zero itself, and divide's is t=0. A NaN there becomes a black
 # or a white pixel with nothing reporting it.
 CORNERS = {
+    "hardlight":   {(0, 0): 0, (0, 1): 1, (1, 0): 0, (1, 1): 1},
+    "colordodge":  {(0, 0): 0, (0, 1): 0, (1, 0): 1, (1, 1): 1},
+    "colorburn":   {(0, 0): 0, (0, 1): 0, (1, 0): 1, (1, 1): 1},
     "linearBurn":  {(0, 0): 0, (0, 1): 0, (1, 0): 0, (1, 1): 1},
     "linearDodge": {(0, 0): 0, (0, 1): 1, (1, 0): 1, (1, 1): 2},
     "vividLight":  {(0, 0): 0, (0, 1): 0, (1, 0): 1, (1, 1): 1},
@@ -557,6 +589,37 @@ near("divide(0.5, 0) overflows to white, not to inf", bl("divide", 0.5, 0.0), 1.
 near("divide(0, 0) is black - the only value continuous with b falling to zero",
      bl("divide", 0.0, 0.0), 0.0)
 
+# colordodge and colorburn away from their ends, where the division is actually
+# a division and not a guard: 0.2/(1-0.5) and 1 - 0.5/0.8.
+near("colordodge(0.2, 0.5) is b/(1-t), not a saturated 1", bl("colordodge", 0.2, 0.5), 0.4)
+near("colordodge(0.3, 0.4) too", bl("colordodge", 0.3, 0.4), 0.5)
+near("colorburn(0.5, 0.8) is 1 - (1-b)/t", bl("colorburn", 0.5, 0.8), 0.375)
+near("colorburn(0.9, 0.5) too", bl("colorburn", 0.9, 0.5), 0.8)
+# ⚠ THE ORDER OF THE TWO GUARDS DECIDES A PIXEL, and W3C compositing-1 asks the
+# BACKDROP's corner first in both. At b = 0 with t = 1 both of colordodge's
+# conditions fire; the spec's answer is black, because a backdrop with no light
+# in it has nothing to dodge. Swap the two np.where clauses and this returns
+# white instead - a pinhole of white where a black pixel met a white layer,
+# which is exactly the kind of thing nobody notices until it is on a face.
+near("colordodge(0, 1): the Cb=0 corner is asked first, so black stays black",
+     bl("colordodge", 0.0, 1.0), 0.0)
+near("colorburn(1, 0): the Cb=1 corner is asked first, so white stays white",
+     bl("colorburn", 1.0, 0.0), 1.0)
+near("colordodge(0.5, 1) is the 1-t = 0 divide, answered as white",
+     bl("colordodge", 0.5, 1.0), 1.0)
+near("colorburn(0.5, 0) is the t = 0 divide, answered as black",
+     bl("colorburn", 0.5, 0.0), 0.0)
+# hardlight is overlay with the layers swapped, and that is a claim worth
+# checking rather than restating: if the two were written as the same branch by
+# accident, a hard-light layer would read the BACKDROP to choose its branch and
+# the mode would quietly become overlay.
+_hl_swapped = [(round(bl("hardlight", _b, _t), 6), round(bl("overlay", _t, _b), 6))
+               for _b, _t in ((0.6, 0.3), (0.3, 0.8), (0.2, 0.9), (0.9, 0.1))]
+eq("hardlight(b, t) is overlay(t, b)", [p for p in _hl_swapped if p[0] != p[1]], [])
+eq("...and is NOT overlay(b, t), which is what writing one branch twice gives",
+   [(_b, _t) for _b, _t in ((0.6, 0.3), (0.3, 0.8), (0.2, 0.9), (0.9, 0.1))
+    if abs(bl("hardlight", _b, _t) - bl("overlay", _b, _t)) < 1e-6], [])
+
 # -- linearDodge IS add, and must stay bit-identical to it ------------------
 #
 # Photoshop calls one mode "Linear Dodge (Add)" and people look for both
@@ -569,17 +632,45 @@ eq("linearDodge and add are the same function, bit for bit, over the whole grid"
                        imagetools._blend(_B, _T, "add"))), True)
 
 # -- no NaN, no Inf, anywhere on the grid -----------------------------------
+#
+# ⚠ DERIVED FROM THE MODULE'S OWN SETS, NOT HAND-LISTED. This used to spell out
+# ("dissolve", "darkerColor", "lighterColor") and would have kept passing while
+# silently skipping the four component modes the day they landed - the exact
+# shape of hole that let seven modes render as normal for as long as they did.
 _SEP = [m for m in imagetools.BLEND_MODES
-        if m not in ("dissolve", "darkerColor", "lighterColor")]
+        if m not in imagetools.IMAGE_ONLY_MODES
+        and m not in imagetools.ALPHA_MODES]
 _nan = [m for m in _SEP
         if not bool(np.isfinite(np.asarray(imagetools._blend(_B, _T, m))).all())]
 eq("no separable mode produces a NaN or an Inf anywhere on a 129x129 grid", _nan, [])
-# The whole-pixel two, on an RGB grid built from three DIFFERENT channel ramps -
-# a grey grid would let darkerColor pass while doing darken's job.
+eq("...and `separable` is every mode but the six that need an image and dissolve",
+   len(_SEP), len(imagetools.BLEND_MODES) - 7)
+# ⚠ PLANE_BLEND_MODES IS A PROMISE TO ANOTHER COLUMN AND IS PINNED HERE, where
+# it is defined. imgpath_test sweeps it over a flat (64, 4) run of pixels on the
+# strength of that promise, and imgshape/imgpath both import it; a mode that
+# leaked into it would not fail a count anywhere - it would raise out of the
+# middle of somebody else's suite with no line saying why. This is the promise
+# itself: hand every name in it a single colour plane and none may refuse.
+_not_planar = []
+for _m in imagetools.PLANE_BLEND_MODES:
+    try:
+        imagetools._blend(_B, _T, _m)
+    except ValueError as _exc:
+        _not_planar.append(f"{_m}: {_exc}")
+eq("every mode in PLANE_BLEND_MODES really does answer a single colour plane",
+   _not_planar, [])
+eq("...and the six that do not are exactly the ones it leaves out",
+   sorted(set(imagetools.BLEND_MODES) - set(imagetools.PLANE_BLEND_MODES)
+          - set(imagetools.ALPHA_MODES)),
+   sorted(imagetools.IMAGE_ONLY_MODES))
+# The six image-only ones, on an RGB grid built from three DIFFERENT channel
+# ramps - a grey grid would let darkerColor pass while doing darken's job, and
+# would collapse hue and saturation to the backdrop, which is their answer for a
+# grey and proves nothing about a colour.
 _R = np.stack([_B, _T, 1.0 - _B], axis=-1).astype(np.float32)
 _S = np.stack([_T, 1.0 - _T, _B], axis=-1).astype(np.float32)
-eq("...nor do darkerColor and lighterColor",
-   [m for m in ("darkerColor", "lighterColor")
+eq("...nor does any of the six that take a whole pixel",
+   [m for m in imagetools.IMAGE_ONLY_MODES
     if not bool(np.isfinite(np.asarray(imagetools._blend(_R, _S, m))).all())], [])
 
 # ...and none of them DIVIDES by zero, which is a stricter thing than not
@@ -591,8 +682,8 @@ eq("...nor do darkerColor and lighterColor",
 # np.where clauses away from a live NaN. errstate is what makes the guards
 # checkable rather than decorative.
 _raised = []
-for _m in _SEP + ["darkerColor", "lighterColor"]:
-    _x, _y = ((_R, _S) if _m in ("darkerColor", "lighterColor") else (_B, _T))
+for _m in _SEP + list(imagetools.IMAGE_ONLY_MODES):
+    _x, _y = ((_R, _S) if _m in imagetools.IMAGE_ONLY_MODES else (_B, _T))
     try:
         with np.errstate(divide="raise", invalid="raise"):
             imagetools._blend(_x, _y, _m)
@@ -636,6 +727,23 @@ for _i, _a in enumerate(_SEP):
             _same.append((_a, _b2))
 eq("no two modes compute the same function, except the pair that is meant to",
    _same, [("add", "linearDodge")])
+
+# THE SAME TWO PINS FOR THE SIX THAT NEED AN IMAGE, on the RGB grid, because the
+# plane grid above cannot evaluate them at all - and it was their absence from
+# this exact sweep that let hue, saturation, color and luminosity ship as
+# `normal`. `color` and `luminosity` are the pair most at risk of collapsing
+# into each other: they are the same function with the layers exchanged.
+eq("every image-only mode differs from `normal` somewhere on the RGB grid",
+   [m for m in imagetools.IMAGE_ONLY_MODES
+    if bool(np.allclose(np.asarray(imagetools._blend(_R, _S, m)), _S, atol=1e-7))], [])
+_same_img = []
+_IMG = list(imagetools.IMAGE_ONLY_MODES)
+for _i, _a in enumerate(_IMG):
+    for _b2 in _IMG[_i + 1:]:
+        if np.allclose(np.asarray(imagetools._blend(_R, _S, _a)),
+                       np.asarray(imagetools._blend(_R, _S, _b2)), atol=1e-7):
+            _same_img.append((_a, _b2))
+eq("...and no two of them are the same function either", _same_img, [])
 
 # -- the two whole-pixel modes ----------------------------------------------
 #
@@ -686,6 +794,236 @@ eq("darkerColor refuses a single colour plane, naming what it would degrade into
    raised(lambda: imagetools._blend(_B, _T, "darkerColor"), "whole pixels", "darken"), True)
 eq("lighterColor refuses one too", raised(
     lambda: imagetools._blend(_B, _T, "lighterColor"), "whole pixels", "lighten"), True)
+
+
+# -- the four component modes -----------------------------------------------
+#
+# hue, saturation, color and luminosity take two of {Hue, Sat, Lum} from one
+# layer and the third from the other. Lum is 0.30R + 0.59G + 0.11B and Sat is
+# max - min across the three channels, so every one of these is a reduction
+# ACROSS the channels and none of them can be computed one plane at a time.
+# THEY SPENT THEIR WHOLE LIFE IN THIS LIST RENDERING AS `normal` - implemented
+# only in server/vfx/engine.py, so `_blend` fell off the end of its chain and
+# returned the source - and every number below is worked out from the spec's
+# definition on paper, never read back off the implementation.
+#
+#   Lum(C)        = .30R + .59G + .11B
+#   Sat(C)        = max(R,G,B) - min(R,G,B)
+#   SetSat(C, s)  = (C - Cmin) * s / (Cmax - Cmin), all three at once
+#   SetLum(C, l)  = ClipColor(C + (l - Lum(C)))
+#   hue           = SetLum(SetSat(Cs, Sat(Cb)), Lum(Cb))
+#   saturation    = SetLum(SetSat(Cb, Sat(Cs)), Lum(Cb))
+#   color         = SetLum(Cs, Lum(Cb))
+#   luminosity    = SetLum(Cb, Lum(Cs))
+
+print("\n  -- the component modes --")
+
+
+def bl3(mode, b, t):
+    """_blend on a 1x1 RGB pixel pair, as three rounded floats."""
+    B = np.array([[b]], np.float32)
+    T = np.array([[t]], np.float32)
+    return [round(float(v), 6) for v in np.asarray(imagetools._blend(B, T, mode)).ravel()]
+
+
+def near3(name, got, want, tol=2e-6):
+    global PASS, FAIL
+    if len(got) == len(want) and all(abs(g - w) <= tol for g, w in zip(got, want)):
+        PASS += 1
+        print(f"  ok    {name}")
+    else:
+        FAIL += 1
+        print(f"  FAIL  {name}\n          got {got!r}, wanted {want!r}")
+
+
+# ONE PAIR, FOUR ANSWERS, ALL FOUR DERIVED BY HAND.
+#   Cb = (.6, .2, .8)   Lum = .18 + .118 + .088 = .386   Sat = .8 - .2 = .6
+#   Cs = (.4, .6, .8)   Lum = .12 + .354 + .088 = .562   Sat = .8 - .4 = .4
+_NB = [0.6, 0.2, 0.8]
+_NT = [0.4, 0.6, 0.8]
+
+# luminosity = SetLum(Cb, .562): d = .562 - .386 = .176, so Cb + .176 straight
+# across. Nothing leaves 0..1, so ClipColor does not fire.
+near3("luminosity(.6 .2 .8 | .4 .6 .8) = Cb + .176",
+      bl3("luminosity", _NB, _NT), [0.776, 0.376, 0.976])
+# color = SetLum(Cs, .386): d = .386 - .562 = -.176, so Cs - .176.
+near3("color(...) = Cs - .176, the mirror of it",
+      bl3("color", _NB, _NT), [0.224, 0.424, 0.624])
+# hue = SetLum(SetSat(Cs, .6), .386).
+#   SetSat((.4,.6,.8), .6): min .4, range .4 -> (0, .2*1.5, .4*1.5) = (0, .3, .6)
+#   Lum of that = 0 + .177 + .066 = .243, so d = .386 - .243 = .143
+near3("hue(...) = the source's hue at the backdrop's Sat and Lum",
+      bl3("hue", _NB, _NT), [0.143, 0.443, 0.743])
+# saturation = SetLum(SetSat(Cb, .4), .386).
+#   SetSat((.6,.2,.8), .4): min .2, range .6 -> (.16/.6, 0, .4) = (.2666667, 0, .4)
+#   Lum of that = .08 + 0 + .044 = .124, so d = .386 - .124 = .262
+near3("saturation(...) = the backdrop's colour at the source's Sat",
+      bl3("saturation", _NB, _NT), [0.16 / 0.6 + 0.262, 0.262, 0.662])
+
+# ⚠ ALL FOUR PRESERVE THE LUMINANCE THEY WERE ASKED TO SET, and that is the one
+# property a plausible wrong implementation loses. Three of them set Lum(Cb) and
+# luminosity sets Lum(Cs); if ClipColor clamped at the cube instead of scaling
+# toward the luma grey, every saturated result would come back a different tone.
+_LW = imagetools._LUMA_W
+for _m, _want in (("hue", 0.386), ("saturation", 0.386),
+                  ("color", 0.386), ("luminosity", 0.562)):
+    near(f"{_m} leaves Lum at {_want}",
+         float(np.dot(bl3(_m, _NB, _NT), _LW)), _want, 2e-6)
+
+# -- ClipColor, which only fires on a colour that has left the cube ---------
+#
+# Cb = pure red (1, 0, 0), Lum .30. Pushing it to Lum .8 gives (1.5, .5, .5),
+# whose max is 1.5, so the highlight branch runs:
+#   L = .8, x = 1.5, C' = L + (C - L)(1 - L)/(x - L) = .8 + (C - .8)(.2/.7)
+#   R: .8 + .7*.2/.7 = 1.0     G,B: .8 - .3*.2/.7 = .8 - .0857142857
+near3("luminosity pushes pure red to Lum .8 by scaling toward its own grey",
+      bl3("luminosity", [1.0, 0.0, 0.0], [0.8, 0.8, 0.8]),
+      [1.0, 0.8 - 0.3 * 0.2 / 0.7, 0.8 - 0.3 * 0.2 / 0.7])
+near("...and that result really does weigh .8",
+     float(np.dot(bl3("luminosity", [1.0, 0.0, 0.0], [0.8, 0.8, 0.8]), _LW)), 0.8, 2e-6)
+# The value a naive clamp would give, stated so the pin above is a comparison
+# rather than a transcript: np.clip((1.5,.5,.5), 0, 1) = (1, .5, .5), which
+# weighs .30 + .295 + .055 = .65. Wrong by 150 codes of luminance.
+near("a clamp at the cube would have given Lum .65, which is the bug this avoids",
+     float(np.dot([1.0, 0.5, 0.5], _LW)), 0.65, 2e-6)
+# And the shadow branch: pure red down to Lum .1 gives (.8, -.2, -.2), min < 0.
+#   L = .1, n = -.2, C' = L + (C - L)L/(L - n) = .1 + (C - .1)/3
+#   R: .1 + .7/3 = 1/3        G,B: .1 - .3/3 = 0
+near3("...and down to Lum .1 through the shadow branch",
+      bl3("luminosity", [1.0, 0.0, 0.0], [0.1, 0.1, 0.1]), [1.0 / 3.0, 0.0, 0.0])
+near("...which weighs .1, not the .24 a clamp at zero would have left",
+     float(np.dot(bl3("luminosity", [1.0, 0.0, 0.0], [0.1, 0.1, 0.1]), _LW)), 0.1, 2e-6)
+# hue reaches the shadow branch too, from the other direction: a fully saturated
+# backdrop hands SetSat a Sat of 1.
+#   SetSat((.4,.6,.8), 1) = (0, .5, 1), Lum .405; d = .30 - .405 = -.105
+#   C = (-.105, .395, .895), L = .30, n = -.105 -> C' = .3 + (C - .3)*.3/.405
+near3("hue over a fully saturated backdrop clips without moving its tone",
+      bl3("hue", [1.0, 0.0, 0.0], [0.4, 0.6, 0.8]),
+      [0.0, 0.3 + 0.095 * 0.3 / 0.405, 0.3 + 0.595 * 0.3 / 0.405])
+near("...still weighing Lum(Cb) = .30",
+     float(np.dot(bl3("hue", [1.0, 0.0, 0.0], [0.4, 0.6, 0.8]), _LW)), 0.30, 2e-6)
+
+# -- a fully desaturated layer, which is where SetSat divides by zero -------
+#
+# Sat = 0 on either side collapses three of the four, and each collapse is the
+# spec's answer rather than a degenerate case to be avoided.
+_GREY = [0.5, 0.5, 0.5]
+# Cb grey: Sat(Cb) = 0, so SetSat(Cs, 0) = (0,0,0) and SetLum puts .5 back.
+# A hue has nothing to colour when the backdrop holds no colour at all.
+near3("hue over a grey backdrop is the backdrop - no saturation to carry it",
+      bl3("hue", _GREY, _NT), _GREY)
+# Same pixel, `saturation`: SetSat(Cb, Sat(Cs)) is asked to rescale a range of
+# ZERO. This is the divide the _EPS guard exists for, and the answer is the
+# backdrop again.
+near3("saturation over a grey backdrop is the backdrop, not a NaN",
+      bl3("saturation", _GREY, _NT), _GREY)
+# ⚠ AN EXACTLY GREY PIXEL DOES NOT TEST THAT GUARD, which is worth a line
+# because the obvious test for it does not work. At Cmax == Cmin the numerator
+# `C - Cmin` is exactly zero, so `0 * s / max(0, eps)` is zero too and the mask
+# and the bare divide agree — delete the mask and every pin above still passes.
+# What separates them is a pixel that is nearly grey: a range of 5e-7 is below
+# the epsilon, so the mask calls it flat, while the bare divide computes
+# 5e-7 * s / 1e-6 and amplifies a rounding-sized difference into a fifth of a
+# channel. A backdrop one part in two million off neutral would come back
+# visibly blue.
+_NEARLY = [0.5, 0.5, 0.5000005]
+near3("a backdrop 5e-7 off neutral is treated as grey, not amplified into colour",
+      bl3("saturation", _NEARLY, _NT), [0.5, 0.5, 0.5], 1e-5)
+# Grey SOURCE instead: Sat(Cs) = 0 flattens a coloured backdrop to its own grey.
+near3("a grey source desaturates the backdrop to Lum(Cb) = .386",
+      bl3("saturation", _NB, _GREY), [0.386, 0.386, 0.386])
+# A fully saturated backdrop under a source of Sat .4:
+#   SetSat((1,0,0), .4) = (.4, 0, 0), Lum .12; d = .30 - .12 = .18
+near3("a fully saturated backdrop takes the source's Sat exactly",
+      bl3("saturation", [1.0, 0.0, 0.0], _NT), [0.58, 0.18, 0.18])
+
+# -- the degenerate ends ----------------------------------------------------
+#
+# On a pair of GREYS every component mode collapses: Sat is 0 on both sides, so
+# hue, saturation and color all return the backdrop and luminosity returns the
+# source. That is not a shortcut in the implementation - it is what the four
+# definitions reduce to - and it makes the four corners checkable by hand.
+_CORNERS_NS = {
+    #             (b, t):  hue/saturation/color -> b,  luminosity -> t
+    (0.0, 0.0): (0.0, 0.0),
+    (0.0, 1.0): (0.0, 1.0),
+    (1.0, 0.0): (1.0, 0.0),
+    (1.0, 1.0): (1.0, 1.0),
+}
+_wrong_ns = []
+for (_b, _t), (_keep_b, _keep_t) in _CORNERS_NS.items():
+    for _m in ("hue", "saturation", "color", "luminosity"):
+        _w = _keep_t if _m == "luminosity" else _keep_b
+        _got = bl3(_m, [_b] * 3, [_t] * 3)
+        if any(abs(v - _w) > 2e-6 for v in _got):
+            _wrong_ns.append(f"{_m}({_b},{_t})={_got} not {_w}")
+eq("every component mode's four degenerate corners are the defined value",
+   _wrong_ns, [])
+# A black and a white SOURCE against a colour, where the shift is large enough
+# that ClipColor has to pull the whole pixel back to an end.
+near3("luminosity with a black source is black", bl3("luminosity", _NB, [0.0] * 3),
+      [0.0, 0.0, 0.0])
+near3("luminosity with a white source is white", bl3("luminosity", _NB, [1.0] * 3),
+      [1.0, 1.0, 1.0])
+# ...and the backdrop at the ends, where SetSat is handed a range of zero from
+# the other side.
+near3("a black backdrop takes the source's colour and stays black",
+      bl3("color", [0.0] * 3, _NT), [0.0, 0.0, 0.0])
+near3("a white backdrop stays white", bl3("color", [1.0] * 3, _NT), [1.0, 1.0, 1.0])
+
+# -- and they refuse a plane, for the same reason the whole-pixel two do ----
+#
+# Lum(r) == r and Sat(r) == 0 for a single plane, so answering one would make
+# luminosity and color into `normal` and hue and saturation into a flat grey:
+# four modes wrong in three different ways, which is worse than the one wrong
+# way they were in before. engine.py blends plane by plane and is the caller
+# this guard is aimed at.
+_plane_ok = [m for m in ("hue", "saturation", "color", "luminosity")
+             if not raised(lambda m=m: imagetools._blend(_B, _T, m),
+                           "Lum and Sat", "IMAGE_ONLY_MODES")]
+eq("every component mode refuses a single colour plane", _plane_ok, [])
+# ⚠ AND A TILE THREE PIXELS WIDE IS NOT AN RGB IMAGE. (8, 3) passes a test on
+# the last axis alone and is eight rows of three PIXELS; weighing them as three
+# channels would composite a thin strip as nonsense and report nothing. The
+# guard demands a spatial axis IN FRONT of the three, which is what makes it
+# ndim >= 3 rather than a shape check.
+_narrow = np.full((8, 3), 0.5, np.float32)
+eq("...and so is a tile exactly three pixels wide, which a last-axis test admits",
+   raised(lambda: imagetools._blend(_narrow, _narrow, "color"), "Lum and Sat"), True)
+eq("...the whole-pixel two agree about that shape, which is the same guard",
+   raised(lambda: imagetools._blend(_narrow, _narrow, "darkerColor"), "whole pixels"),
+   True)
+
+# -- a name nothing implements ---------------------------------------------
+#
+# ⚠ THIS IS THE DEFECT ITSELF, WEARING ITS GENERAL FORM. `_blend` used to end in
+# a bare `return top`, so a name it did not have came back as the source and
+# composited as `normal`. That is what hid seven real modes: they were in
+# BLEND_MODES, offered by two pickers, and painted nothing. A misspelling in the
+# if-chain would have hidden the same way.
+eq("_blend refuses a name it does not implement instead of returning the source",
+   raised(lambda: imagetools._blend(_B, _T, "no-such-mode"),
+          "no blend mode called", "no-such-mode", "BLEND_MODES"), True)
+eq("...including one that is merely misspelt, which is how this class of bug "
+   "gets in",
+   raised(lambda: imagetools._blend(_B, _T, "hardLight"), "no blend mode called"), True)
+eq("...and `normal` is answered by NAME now, so the two no longer share an exit",
+   bool(np.array_equal(np.asarray(imagetools._blend(_B, _T, "normal")), _T)), True)
+# The complement of the pin above, and the one that would have caught the seven
+# on the day they were listed: every published name must ANSWER, on the shape it
+# is documented to want. A mode added to BLEND_MODES and to nothing else now
+# fails here instead of rendering as the source.
+_unanswered = []
+for _m in imagetools.BLEND_MODES:
+    if _m in imagetools.ALPHA_MODES:
+        continue
+    _x, _y = ((_R, _S) if _m in imagetools.IMAGE_ONLY_MODES else (_B, _T))
+    try:
+        imagetools._blend(_x, _y, _m)
+    except ValueError as _exc:
+        _unanswered.append(f"{_m}: {_exc}")
+eq("every name in BLEND_MODES is answered by _blend, on a shape that suits it",
+   _unanswered, [])
 
 # -- dissolve ---------------------------------------------------------------
 #
@@ -806,6 +1144,79 @@ with tempfile.TemporaryDirectory() as btmp:
     eq("darkerColor composites whole pixels through composite(), which hands "
        "_blend an image rather than a plane",
        (int(_dc[0]) < 60, int(_dc[1]) > 100, int(_dc[2]) < 60), (True, True, True))
+
+    # ── THE DEFECT, AT THE LAYER THE USER SEES ──────────────────────────────
+    #
+    # This is the pin that would have caught it. All seven were in BLEND_MODES
+    # and implemented only in server/vfx/engine.py, so composite() rendered
+    # every one of them BIT-IDENTICAL to `normal`: a stack set to hard light,
+    # color dodge or luminosity produced the source layer untouched and there
+    # was no error, no warning and no visible clue. The pair is a red base under
+    # a green layer, chosen because all seven move it somewhere `normal` does
+    # not - and comparing against `normal`'s own render rather than against a
+    # remembered number is what makes this survive a change to either.
+    _NORMAL = _comp([{"src": _GRN, "x": 0, "y": 0, "mode": "normal"}],
+                    "seven_normal", base=_RED)
+    _as_normal = []
+    for _m in ("hardlight", "colordodge", "colorburn",
+               "hue", "saturation", "color", "luminosity"):
+        _got = _comp([{"src": _GRN, "x": 0, "y": 0, "mode": _m}],
+                     f"seven_{_m}", base=_RED)
+        if np.array_equal(_got, _NORMAL):
+            _as_normal.append(_m)
+    eq("the seven modes that used to render as `normal` through composite() no "
+       "longer do", _as_normal, [])
+
+    # ...and one of them to a hand-derived number, because "differs from normal"
+    # would also pass for seven modes that were all quietly wrong in the same
+    # new way. `color` puts the SOURCE's colour at the BACKDROP's luminance, and
+    # a white source has no colour at all, so the answer is the backdrop's own
+    # grey in all three channels:
+    #   Lum(230, 26, 26)/255 = (.30*230 + .59*26 + .11*26)/255 = 87.2/255
+    #   SetLum(white, .341960) = (.341960,)*3 -> 87.2 -> 87 written as uint8
+    _col = _comp([{"src": WHITE, "x": 0, "y": 0, "mode": "color"}],
+                 "color_white", base=_RED)[4, 4]
+    eq("a white layer at `color` flattens the base to its own luminance grey",
+       [int(v) for v in _col], [87, 87, 87, 255])
+
+    # ── an unknown name is REPAIRED and SAID, never silently painted ────────
+    #
+    # `_blend` refuses a name it does not implement, which is right for a pixel
+    # kernel and wrong for a saved stack: losing somebody's whole composite over
+    # one layer's spelling is the worse of the two failures. composite() follows
+    # imgdoc.normalize()'s rule instead - paint it as normal, and SAY SO in the
+    # status line. Saying so is the whole point; painting it as normal in
+    # silence is what this file has spent two hundred lines being about.
+    def _comp_status(layers, tag):
+        # The ValueError is CAUGHT and reported as a result rather than left to
+        # propagate. Without the catch, removing composite()'s coercion does not
+        # fail this pin - it raises out of the job and takes every test after it
+        # down with it, which is a suite that stops rather than a suite that
+        # says what is wrong.
+        dst = os.path.join(btmp, f"st_{tag}.png")
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                imagetools.composite({"base": _RED, "out": dst, "layers": layers})
+        except Exception as exc:
+            return {"ok": False, "raised": f"{type(exc).__name__}: {exc}"}
+        return json.loads(buf.getvalue().strip().split("\n")[-1])
+
+    _st = _comp_status([{"src": _GRN, "x": 0, "y": 0, "mode": "hardLight"}], "bad")
+    eq("a composite carrying a mode nothing implements still finishes",
+       _st.get("ok"), True)
+    eq("...and names it in the status line rather than painting it in silence",
+       (len(_st.get("warnings") or []),
+        "hardLight" in (_st.get("warnings") or [""])[0],
+        "normal" in (_st.get("warnings") or [""])[0]), (1, True, True))
+    eq("...and a stack with nothing wrong carries no warnings key at all, so "
+       "the one that does is noticed",
+       "warnings" in _comp_status(
+           [{"src": _GRN, "x": 0, "y": 0, "mode": "multiply"}], "good"), False)
+    eq("...and the repaired layer really did paint as normal",
+       bool(np.array_equal(
+           _comp([{"src": _GRN, "x": 0, "y": 0, "mode": "hardLight"}], "bad2",
+                 base=_RED), _NORMAL)), True)
 
 
 print(f"\n{PASS} passed, {FAIL} failed\n")

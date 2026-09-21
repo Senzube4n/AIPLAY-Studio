@@ -2269,7 +2269,16 @@ export function createVfxRoutes(deps) {
             affects: Object.keys(effects).filter((k) => effects[k]?.linearLight).sort(),
           },
         };
-        json(res, 200, { effects, groups, compSettings });
+        /* ⚠ THE BLEND LIST IS SERVED, NOT RE-TYPED ON THE PAGE. web/vfx.js kept
+         * its own seventeen names while store.js — the schema THIS FILE
+         * validates against, three thousand lines below — held thirty-two. So
+         * the panel could not offer eleven modes the engine renders, nor the
+         * four stencil modes, and a comp that already used one showed the
+         * wrong row selected in its own picker. Four hand-kept copies of one
+         * list is four places to forget, and three of them had gone stale.
+         * Served from the validator's own constant, so the picker and the
+         * thing that refuses a bad value cannot disagree about what is legal. */
+        json(res, 200, { effects, groups, compSettings, blendModes: BLEND_MODES });
       } catch (err) {
         json(res, 503, { error: String(err.message || err) });
       }
