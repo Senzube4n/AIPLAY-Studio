@@ -16,7 +16,7 @@ import path from "node:path";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import vm from "node:vm";
-import { selfUpdate, updateSource } from "./selfupdate.js";
+import { selfUpdate, updateSource, forwardBuild } from "./selfupdate.js";
 
 const winTar = path.join(process.env.SystemRoot || "C:\Windows", "System32", "tar.exe");
 const canZip = process.platform === "win32" && existsSync(winTar);
@@ -59,7 +59,9 @@ test("a zip install updates in place and keeps what is the person's", { skip: !c
     try { r = await selfUpdate({ root: app }); } finally { globalThis.fetch = real; }
 
     assert.equal(r.ok, true, r.line);
-    assert.ok(asked[0].includes("/repos/someone/AIPLAY-Studio/commits/main"), "the repository install-info.json names");
+    assert.ok(asked.some((u) => u.includes("/repos/someone/AIPLAY-Studio/commits/main")), "the repository install-info.json names is asked too");
+    assert.ok(asked.some((u) => u.includes("/repos/Senzube4n/AIPLAY-Studio/commits/main")), "and both builds");
+    assert.ok(asked.some((u) => u.includes("codeload.github.com/Senzube4n/AIPLAY-Studio/zip/")), "level: Senzu's build, the main one");
     assert.equal(await readFile(path.join(app, "server/index.js"), "utf8"), "new");
     assert.equal(await readFile(path.join(app, "launcher/launcher.mjs"), "utf8"), "new");
     assert.ok(!existsSync(path.join(app, "server/dropped.js")), "a file the new build dropped is gone");
@@ -70,12 +72,16 @@ test("a zip install updates in place and keeps what is the person's", { skip: !c
     assert.equal(JSON.parse(await readFile(path.join(app, "server/version.gen.json"), "utf8")).commit, "abcdef0");
     assert.equal((await updateSource(app)).have, "abcdef0");
 
-    /* Already current: one question to GitHub, nothing downloaded. */
+    /* Already current: one question per build (all level, so no comparison),
+     * nothing downloaded. The update recorded the build it took as the
+     * install's own, so the third fork is no longer asked. */
+    assert.equal(JSON.parse(await readFile(path.join(app, "install-info.json"), "utf8")).repo, "Senzube4n/AIPLAY-Studio");
     globalThis.fetch = async (url) => { asked.push(String(url)); return { ok: true, status: 200, json: async () => ({ sha: "abcdef0123456789", commit: {} }) }; };
     const n = asked.length;
     try { r = await selfUpdate({ root: app }); } finally { globalThis.fetch = real; }
     assert.equal(r.line, "Already up to date.");
-    assert.equal(asked.length, n + 1);
+    assert.equal(asked.length, n + 2);
+    assert.ok(asked.slice(n).every((u) => u.includes("/commits/main")));
   } finally { await rm(base, { recursive: true, force: true }); }
 });
 
@@ -195,4 +201,47 @@ test("launch and engine install cannot start during an update or with pending np
   await assert.rejects(install("nvidia"), /Wait for the Studio update/);
   context.updating.state = "idle";
   await assert.rejects(launch("full"), /finish installing Studio's dependencies/);
+});
+
+test("an update takes whichever build is ahead; level or diverged goes to Senzu's", async () => {
+  const real = globalThis.fetch;
+  const heads = {}, compare = {};
+  globalThis.fetch = async (url) => {
+    url = String(url);
+    const m = url.match(/repos\/([^/]+\/[^/]+)\/commits\/main$/);
+    if (m) return heads[m[1]] ? { ok: true, status: 200, json: async () => ({ sha: heads[m[1]], commit: { committer: { date: "d" } } }) } : { ok: false, status: 404 };
+    const c = url.match(/compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)$/);
+    if (c) return { ok: true, status: 200, json: async () => compare[`${c[1]}...${c[2]}`] };
+    throw new Error(`unexpected ${url}`);
+  };
+  const S = "Senzube4n/AIPLAY-Studio", B = "bani4kaskashka/AIPLAY-Studio-Bucky-Fork";
+  try {
+    // Senzu ahead of Bucky: an install made from Bucky's build still takes Senzu's.
+    Object.assign(heads, { [S]: "aaaaaaa1", [B]: "bbbbbbb1" });
+    compare["aaaaaaa1...bbbbbbb1"] = { status: "behind", ahead_by: 0, behind_by: 5 };
+    let r = await forwardBuild(B);
+    assert.equal(r.repo, S);
+    // Bucky ahead: Bucky's.
+    compare["aaaaaaa1...bbbbbbb1"] = { status: "ahead", ahead_by: 3, behind_by: 0 };
+    r = await forwardBuild(S);
+    assert.equal(r.repo, B);
+    assert.match(r.note, /Bucky's build is 3 commits ahead of Senzu's build/);
+    // Diverged: Senzu's, and it says why.
+    compare["aaaaaaa1...bbbbbbb1"] = { status: "diverged", ahead_by: 2, behind_by: 4 };
+    r = await forwardBuild(B);
+    assert.equal(r.repo, S);
+    assert.match(r.note, /each moved on/);
+    // A third fork that is ahead of both wins.
+    heads["someone/fork"] = "ccccccc1";
+    compare["aaaaaaa1...ccccccc1"] = { status: "ahead", ahead_by: 1, behind_by: 0 };
+    r = await forwardBuild("someone/fork");
+    assert.equal(r.repo, "someone/fork");
+    // One build unreachable: the other one.
+    delete heads[S];
+    r = await forwardBuild(B);
+    assert.equal(r.repo, B);
+    // Nothing reachable: the error, not a guess.
+    for (const k of Object.keys(heads)) delete heads[k];
+    await assert.rejects(forwardBuild(B), /GitHub answered 404/);
+  } finally { globalThis.fetch = real; }
 });
