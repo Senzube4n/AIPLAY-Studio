@@ -52,7 +52,7 @@ await test('older availability response cannot overwrite newer availability and 
   const h = harness(); const newer = h.q('refresh').onclick();
   h.requests[1].respond(available([{ id: 'new', state: 'ready' }])); await newer;
   h.requests[0].respond({ available: false, reason: 'Old failure', jobs: [{ id: 'old', state: 'failed' }] }); await flush();
-  assert.match(h.q('capability').textContent, /is available/);
+  assert.match(h.q('capability').textContent, /^Ready.$/);
   assert(h.q('jobs').options.some((option) => option.value === 'new'));
   assert(!h.q('jobs').options.some((option) => option.value === 'old'));
 });

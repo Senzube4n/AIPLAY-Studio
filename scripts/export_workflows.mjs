@@ -29,6 +29,34 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../server/config.js";
 import { buildGraph, coverGraph, videoGraph, coverPrompt } from "../server/workflow.js";
+import { CATALOG } from "../server/models.js";
+
+/* H3'S TERRITORY, FROM THE CATALOGUE AND NOT A SECOND COPY OF IT.
+ *
+ * This file used to carry its own sentence, "excludes the European Union, the
+ * United Kingdom and South Korea", written before the licence's 2026-08-02
+ * text added the United States. The catalogue was corrected (server/models.js,
+ * the `video` row's region, read from the licence itself); this sentence was
+ * not, so re-running the exporter quietly took the USA back out of the README.
+ * It is built from `region.excluded` now, so there is one list to keep right. */
+function h3ExcludedPhrase() {
+  const names = CATALOG.find((c) => c.id === "video")?.region?.excluded;
+  if (!Array.isArray(names) || !names.length) throw new Error("the catalogue's H3 row has no region.excluded list");
+  const the = names.map((n) => `the ${n}`);
+  return the.length === 1 ? the[0] : `${the.slice(0, -1).join(", ")} and ${the[the.length - 1]}`;
+}
+
+/** Word-wrap one paragraph to the README's hand-wrapped width. */
+function wrap(text, width = 76) {
+  const out = [];
+  let line = "";
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    if (line && (line.length + 1 + w.length) > width) { out.push(line); line = w; }
+    else line = line ? `${line} ${w}` : w;
+  }
+  if (line) out.push(line);
+  return out;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -127,18 +155,26 @@ const WORKFLOWS = [
   {
     name: "04-video-clip",
     title: "AIPLAY · Video clip (MiniMax H3)",
-    graph: () => videoGraph({
-      prompt: "slow drifting neon cityscape at night, gentle camera push",
-      seed: 42, seconds: config.video.seconds, width: config.video.width,
-      height: config.video.height, steps: config.video.steps,
-    }),
+    /* H3's settings live under config.video.engines.h3 since the video
+     * engines became a map; config.video.seconds and friends no longer exist.
+     * Reading them gave undefined, and the graph fell back to the same engine
+     * defaults by accident: 20 steps, the quality path, no turbo LoRA node
+     * (15 nodes; the first commit's 4-step default added the LoRA, 16). Named
+     * explicitly now, so the example is the default on purpose. */
+    graph: () => {
+      const h3 = config.video.engines.h3;
+      return videoGraph({
+        engine: "h3",
+        prompt: "slow drifting neon cityscape at night, gentle camera push",
+        seed: 42, seconds: h3.seconds, width: h3.width, height: h3.height, steps: h3.steps,
+      });
+    },
     about: [
       "A short looping clip to sit under a finished song.",
       "",
-      "🔴 LICENCE. H3's Community Licence grants rights only inside its Applicable",
-      "Territory, which EXCLUDES the European Union, the United Kingdom and South",
-      "Korea. This workflow is included so the pipeline is legible; obtaining and",
-      "using the weights is between you and MiniMax.",
+      ...wrap(`🔴 LICENCE. H3's Community Licence grants rights only inside its Applicable `
+        + `Territory, which EXCLUDES ${h3ExcludedPhrase()}. This workflow is included so the `
+        + "pipeline is legible; obtaining and using the weights is between you and MiniMax."),
       "",
       "SHIFT_VIDEO 4.0, NOT THE 12.0 DEFAULT. ModelSamplingAV reduces the video and",
       "audio shifts to one ratio, and the node that sets it appears in NEITHER",

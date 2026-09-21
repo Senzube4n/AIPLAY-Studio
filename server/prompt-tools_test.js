@@ -132,3 +132,28 @@ test("the page: tool rows on Styles, Lyrics, Simple and Chat; Enhance in the sit
   assert.ok(setup > infoStart && setup < infoEnd, "the GGUF setup card sits inside the ⓘ panel");
   assert.match(css, /\.minfobtn\.needs::after/);
 });
+
+test("no chat model at all is said before anything runs, with the APIs that could answer instead", async () => {
+  let asked = 0;
+  const ask = async () => { asked++; return "x"; }; ask.usesCard = async () => true;
+  const models = {
+    list: async () => [],                                   // ComfyUI answered: no chat model on disk
+    resolve: async () => ({ file: "qwen_3_4b.safetensors" }),  // the default name, which does not exist
+    status: async () => ({ models: [{ file: "api:anthropic", label: "Anthropic · Claude" }] }),
+    choose: async () => {}, clear: async () => {},
+  };
+  await assert.rejects(createEnhancer({ models, ask }).enhance({ field: "style", text: "pop" }),
+    (e) => e.status === 424 && e.need === "chat" && e.apis[0].file === "api:anthropic" && /No chat model is installed/.test(e.message));
+  assert.equal(asked, 0, "ComfyUI is never handed a graph for a file it does not have");
+  /* A chosen API needs no local file at all. */
+  const api = { ...models, resolve: async () => ({ file: "api:anthropic", api: { provider: "anthropic", model: "m" }, label: "Claude" }) };
+  const cloudAsk = async () => "dream pop"; cloudAsk.usesCard = async () => false;
+  assert.equal((await createEnhancer({ models: api, ask: cloudAsk }).enhance({ field: "style", text: "pop" })).text, "dream pop");
+  /* ComfyUI unreachable (null) is not "nothing installed": that answer stays the engine's. */
+  const down = { ...models, list: async () => null };
+  await createEnhancer({ models: down, ask }).enhance({ field: "style", text: "pop" }).catch(() => {});
+  assert.equal(asked, 1);
+  /* The page opens the model window on `need`, and the route passes it through. */
+  assert.match(readFileSync(new URL("../web/prompt-tools.js", import.meta.url), "utf8"), /err\.need === "chat" && window\.aiplayNeedModel/);
+  assert.match(readFileSync(new URL("./prompt-tools.js", import.meta.url), "utf8"), /need: e\.need, apis: e\.apis/);
+});

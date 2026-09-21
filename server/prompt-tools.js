@@ -154,6 +154,21 @@ export function createEnhancer({ models, ask, cardBusy = async () => null, ownCh
     choose: (file) => (file ? models.choose(file) : models.clear()),
     async enhance({ field, text = "", style = "", lyrics = "", engine = "yue2" }) {
       const prompt = enhancePrompt(field, text, { style, lyrics, engine });
+      /* NO CHAT MODEL AT ALL is its own answer, said before anything runs.
+       * resolve() falls back to a default file name whether or not it exists,
+       * so this used to reach ComfyUI, which refused the graph ("clip_name not
+       * in [...]") and the refusal was all the person saw. `need` lets the page
+       * open the window that lists the models that would do it. */
+      const chosen = await models.resolve().catch(() => null);
+      if (!chosen?.api) {
+        const installed = typeof models.list === "function" ? await models.list().catch(() => null) : null;
+        if (installed && !installed.length) {
+          const e = new Error("No chat model is installed, so Enhance has nothing to write with.");
+          e.status = 424; e.need = "chat";
+          e.apis = ((await models.status().catch(() => null))?.models || []).filter((m) => /^api:/.test(m.file));
+          throw e;
+        }
+      }
       const local = await ask.usesCard();
       if (local) {
         const busy = await cardBusy();
@@ -193,7 +208,7 @@ export function createPromptToolRoutes({ json, readBody, gallery, enhancer }) {
         return json(res, 200, { ok: true, ...out }), true;
       }
     } catch (e) {
-      return json(res, e.status || 400, { error: String(e.message || e) }), true;
+      return json(res, e.status || 400, { error: String(e.message || e), ...(e.need ? { need: e.need, apis: e.apis || [] } : {}) }), true;
     }
     return false;
   };

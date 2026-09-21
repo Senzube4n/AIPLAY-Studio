@@ -55,7 +55,7 @@
  */
 import { createWriteStream } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -716,6 +716,7 @@ export const CATALOG = [
      * Both derive from H3 and say so: the H3 Community Licence and its
      * territory clause apply, so the H3 rights block is repeated here. */
     id: "bridgeBunny",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     label: "H3 conditioning bridge — BUNNY (action logic)",
     why: "Helps H3 keep who-does-what-to-whom straight in multi-character action shots: attacker and target, which hand holds what, identity after a pass behind something. Off by default; the Video panel's Conditioning bridge setting turns it on.",
     licence: "MiniMax H3 Community Licence (derived from H3)",
@@ -749,6 +750,7 @@ export const CATALOG = [
   },
   {
     id: "bridgeSemantic",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     label: "H3 conditioning bridge — Semantic Bridge v1",
     why: "The original bridge: composition, spatial relations, counting, materials and lighting, reflections, transparency, hand state. The one to try when a shot's layout or object count keeps drifting.",
     licence: "MiniMax H3 Community Licence (derived from H3)",
@@ -1280,6 +1282,33 @@ export const CATALOG = [
       { label: "Encoder Qwen3-4B fp16 (shipped)", bytes: 8044982048 },
       { label: "Encoder Qwen3-4B fp4", bytes: 3848213998, note: "Half the size, but fp4 tensor cores are Blackwell-only — emulated on this Ada card." },
     ],
+  },
+  {
+    id: "chatQwen3",
+    /* THE LANGUAGE MODEL, WHICH HAD NO ROW. Chat, Simple mode and every
+     * Enhance button run a text encoder that can also generate (ComfyUI's
+     * TextGenerate), found at run time by server/chat/models.js. So the one file
+     * they all default to was only ever downloaded as a side effect of an image
+     * model, the Models screen had no Chat section, and a machine without an
+     * image model had no way to get it: Enhance failed with ComfyUI's refusal. */
+    group: "chat",
+    label: "Chat — Qwen3 4B",
+    why: "Answers the Chat tab, runs Simple mode, and writes or polishes styles and lyrics when you press Enhance. Runs on this machine; nothing is sent anywhere.",
+    licence: "Apache-2.0",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE,
+    },
+    files: [ZIMAGE_ENCODER],
+    note: "The same file FLUX.2 klein and Z-Image use as their text encoder, so it is downloaded once whichever comes first. Any other Qwen3, Gemma or Llama file ComfyUI can load also appears in the chat model menus.",
+    requires: {
+      vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "The weights are 8.0 GB in bf16. On a smaller card ComfyUI streams them from system RAM, which works but is slower; not measured per card. An API key (Settings, Agent) needs no card at all.",
+    },
   },
   {
     id: "stems",
@@ -2055,6 +2084,7 @@ export const CATALOG = [
    * absent (util.py:297), so a pre-placed file is used as it stands. */
   {
     id: "depthPreprocess",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/DepthAnything/Depth-Anything-V2",
     label: "Depth extraction — Depth Anything V2 Small",
     why: "Reads a video as depth — where everything is and how far — which is what the control path steers a RESTYLE with: the person, the room and the move survive, the look is the prompt's. The third door beside the camera blockout and the DWPose skeleton, and the one the audio-reactive video-to-video recipe rests on.",
@@ -2081,6 +2111,7 @@ export const CATALOG = [
   },
   {
     id: "depthPreprocessLarge",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/DepthAnything/Depth-Anything-V2",
     label: "Depth extraction — Depth Anything V2 Large (non-commercial)",
     why: "The same estimator with a ViT-L backbone: finer edges in the depth video, at 1.3 GB and under a NON-COMMERCIAL licence. Offered as a named choice on the control card, never the default.",
@@ -2121,6 +2152,7 @@ export const CATALOG = [
    * licence text), the LiquidAF motion LoRA (no readable terms). */
   {
     id: "animateDiffV3",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/guoyww/AnimateDiff",
     label: "Motion module — AnimateDiff v3 (SD1.5)",
     why: "What turns SD1.5 into a video model: the motion module renders a whole piece as one batch through sliding 16-frame windows, so the frames agree with each other instead of flickering. The Reactive screen's Motion look runs on it, with depth and line art holding the figure and the look changing on the bars.",
@@ -2149,6 +2181,7 @@ export const CATALOG = [
   },
   {
     id: "animateDiffSparseCtrl",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/guoyww/AnimateDiff",
     label: "Source on the hits — SparseCtrl RGB (AnimateDiff v3)",
     why: "The reference audio-reactive workflow anchors its render to the SOURCE frame on every drum hit through SparseCtrl: the punch of its hits, and the dancer's own colours flickering through the paint. Reactive's Motion look does the same through our own node (server/comfy_nodes/aiplay_sparsectrl.py), keyframes per sliding window.",
@@ -2174,6 +2207,7 @@ export const CATALOG = [
   },
   {
     id: "sd15Dreamshaper8",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://civitai.com/models/4384/dreamshaper",
     label: "SD1.5 checkpoint — DreamShaper 8 (the Motion look's painter)",
     why: "The image model the motion module animates. DreamShaper 8 is the SD1.5 fine-tune the reference workflow paints with; any SD1.5 checkpoint would run, this one is what was measured.",
@@ -2203,6 +2237,7 @@ export const CATALOG = [
   },
   {
     id: "controlNetSd15",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://github.com/lllyasviel/ControlNet-v1-1-nightly",
     label: "ControlNet v1.1 — depth and line art (SD1.5, fp16)",
     why: "What holds the figure while the motion module repaints it: the depth video (from the control path's Depth Anything V2 Small) and a line-art reading of the clip, each pushing the render towards the source's structure at the strengths the reference workflow uses.",
@@ -2242,6 +2277,7 @@ export const CATALOG = [
    * it reads — both matched to h94's repository by sha256. */
   {
     id: "ipAdapterSd15",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://github.com/tencent-ailab/IP-Adapter",
     label: "Picture references — IP-Adapter Plus (SD1.5)",
     why: "Puts a picture's look into every cross-attention layer of SD1.5 as sixteen extra tokens, so the pictures you pick set the style of a Motion render and can switch on the drum hits with a short cross-fade — the reference audio-reactive workflow's way. Read by our own node (server/comfy_nodes/aiplay_ipadapter.py), written from the Apache-2.0 reference.",
@@ -2264,6 +2300,7 @@ export const CATALOG = [
   },
   {
     id: "clipVisionH",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
     label: "CLIP vision tower — ViT-H/14 (LAION-2B)",
     why: "The eyes of the picture references: IP-Adapter reads each picture through this tower's penultimate layer. The bytes are the copy h94/IP-Adapter ships as its image encoder, which is laion's OpenCLIP ViT-H — matched by sha256.",
@@ -2874,15 +2911,28 @@ export async function diskFree() {
  * which would be both wrong and expensive to believe.
  */
 /** The sha256 of a file on disk, streamed so a 7 GB checkpoint costs one read and no RAM. */
-function sha256Of(file) {
+/** `cancelled()` is asked as the file is read: a 40 GB check takes minutes,
+ *  and Cancel has to stop it too. */
+function sha256Of(file, cancelled = () => false) {
   return new Promise((resolve, reject) => {
     const h = createHash("sha256");
-    createReadStream(file)
-      .on("data", (d) => h.update(d))
+    const rs = createReadStream(file, { highWaterMark: 4 << 20 });
+    rs.on("data", (d) => {
+      if (cancelled()) {
+        rs.once("close", () => reject(new Error("cancelled")));
+        rs.destroy();
+        return;
+      }
+      h.update(d);
+    })
       .on("end", () => resolve(h.digest("hex")))
       .on("error", reject);
   });
 }
+
+/* No bytes from the server for this long and the download is given up as
+ * stalled. The .part stays, so pressing Download again resumes it. */
+const DOWNLOAD_STALL_MS = Number(process.env.AIPLAY_DOWNLOAD_STALL_MS) || 90_000;
 
 async function filePresent(f) {
   try {
@@ -2892,6 +2942,22 @@ async function filePresent(f) {
     try {
       if ((await stat(path.join(path.dirname(f.dest), name))).size > 0) return true;
     } catch { /* keep looking */ }
+  }
+  /* The same file under an EARLIER models folder (config.modelsAlso): the
+   * engine still loads from there, so it is installed, not missing. Without
+   * this a change of folder offered every model again, hundreds of GB. */
+  const rel = path.relative(config.modelsDir, f.dest);
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    for (const base of config.modelsAlso || []) {
+      try {
+        if ((await stat(path.join(base, rel))).size === f.bytes) return true;
+      } catch { /* not there either */ }
+      for (const name of f.alt || []) {
+        try {
+          if ((await stat(path.join(base, path.dirname(rel), name))).size > 0) return true;
+        } catch { /* keep looking */ }
+      }
+    }
   }
   return false;
 }
@@ -2947,6 +3013,7 @@ export class ModelManager extends EventEmitter {
       const haveBytes = files.reduce((s, f) => s + (f.present ? f.bytes : f.have), 0);
       out.push({
         id: cap.id,
+        group: cap.group || null,
         // Carried so isPictureModel() gives the same answer about a live status
         // row as it does about the catalogue row it came from. A predicate that
         // silently answers "no" on one of the two shapes it will be handed is
@@ -3003,8 +3070,22 @@ export class ModelManager extends EventEmitter {
     return out;
   }
 
+  /* The fetch of each running download, so Cancel can stop it mid-wait. */
+  #aborts = new Map();
+  #runs = new Map();
+  #pending = new Map();
+
+  /**
+   * Stop a download NOW. It used to set a flag the download read between
+   * chunks, so a connection that had stopped sending never saw it: the Cancel
+   * button stayed, the row stayed "downloading", and Download refused to start
+   * it again ("already running"). The fetch is aborted instead, and the row is
+   * cleared at once rather than shown as a failure for fifteen seconds.
+   */
   cancel(id) {
     this.cancelled.add(id);
+    this.#aborts.get(id)?.abort();
+    if (this.progress.has(id)) { this.progress.delete(id); this.emit("update"); }
   }
 
   /**
@@ -3045,10 +3126,36 @@ export class ModelManager extends EventEmitter {
       throw new Error(`${cap.label} cannot be downloaded yet: its file list is a placeholder `
         + `awaiting ${cap.awaiting}. Nothing was fetched.`);
     }
-    if (this.progress.has(id)) return { alreadyRunning: true };
+    /* A row showing its failure (kept 15 s so the reason can be read) is not a
+     * running download: Download again must start, not answer "already running". */
+    if (this.progress.has(id) && this.progress.get(id).state !== "failed") return { alreadyRunning: true };
     if (!cap.files.length) throw new Error(`${cap.label} is fetched by its python package, not by this downloader.`);
 
+    // Reserve the row before the first filesystem await. A cancelled run must
+    // close its writer/checksum reader before a retry can touch the same .part.
+    const previous = this.#pending.get(id);
+    if (previous) {
+      if (!this.cancelled.has(id)) return { alreadyRunning: true };
+      await previous;
+      return this.download(id, { acceptRegion });
+    }
+    let release;
+    this.#pending.set(id, new Promise((resolve) => { release = resolve; }));
+    try {
+      return await this.#download(id, cap);
+    } finally {
+      this.#pending.delete(id);
+      release();
+    }
+  }
+
+  async #download(id, cap) {
     this.cancelled.delete(id);
+    /* This run's token: a run that was cancelled and is still unwinding must
+     * not write "failed" over a new run of the same row started meanwhile. */
+    const run = Symbol(id);
+    this.#runs.set(id, run);
+    const mine = () => this.#runs.get(id) === run;
     const total = cap.files.reduce((s, f) => s + f.bytes, 0);
     let doneBytes = 0;
     for (const f of cap.files) if (await filePresent(f)) doneBytes += f.bytes;
@@ -3068,10 +3175,17 @@ export class ModelManager extends EventEmitter {
       this.emit("ready", id);
       return { ok: true };
     } catch (err) {
+      /* Cancelled: nothing failed. cancel() already cleared the row. */
+      if (!mine()) return { cancelled: true };
+      if (this.cancelled.has(id)) {
+        this.progress.delete(id);
+        this.emit("update");
+        return { cancelled: true };
+      }
       this.progress.set(id, { received: doneBytes, total, file: null, state: "failed", error: String(err.message || err) });
       this.emit("update");
       // Leave the .part behind on purpose: the next attempt resumes from it.
-      setTimeout(() => { if (this.progress.get(id)?.state === "failed") { this.progress.delete(id); this.emit("update"); } }, 15000);
+      setTimeout(() => { if (mine() && this.progress.get(id)?.state === "failed") { this.progress.delete(id); this.emit("update"); } }, 15000);
       throw err;
     }
   }
@@ -3083,28 +3197,62 @@ export class ModelManager extends EventEmitter {
     try { from = (await stat(part)).size; } catch { /* fresh */ }
     if (from > f.bytes) { await unlink(part).catch(() => {}); from = 0; }
 
-    const res = await fetch(f.url, from ? { headers: { Range: `bytes=${from}-` } } : undefined);
-    if (!res.ok && res.status !== 206) throw new Error(`${path.basename(f.dest)}: HTTP ${res.status}`);
-    // A server that ignores Range answers 200 with the whole file; restarting is
-    // then the only correct thing to do, rather than appending to a partial.
-    if (from && res.status !== 206) from = 0;
+    // A checksum cancellation can leave all bytes present. Verify them below;
+    // requesting bytes=<size>- from a real publisher would return HTTP 416.
+    if (from < f.bytes) {
+      /* ONE ABORT FOR THIS FILE: Cancel and the stall timer both pull it, and
+       * either one ends the wait for headers or for the next chunk at once. */
+      const ctl = new AbortController();
+      this.#aborts.set(id, ctl);
+      let stalled = false, timer = null;
+      const arm = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; ctl.abort(); }, DOWNLOAD_STALL_MS); };
+      const name = path.basename(f.dest);
+      let out = null;
+      try {
+        arm();
+        const res = await fetch(f.url, { signal: ctl.signal, ...(from ? { headers: { Range: `bytes=${from}-` } } : {}) });
+        if (!res.ok && res.status !== 206) throw new Error(`${name}: HTTP ${res.status}`);
+        // A server that ignores Range answers 200 with the whole file; restarting is
+        // then the only correct thing to do, rather than appending to a partial.
+        if (from && res.status !== 206) from = 0;
 
-    const out = createWriteStream(part, { flags: from ? "a" : "w" });
-    let received = from;
-    const base = getBase();
-    for await (const chunk of res.body) {
-      if (this.cancelled.has(id)) { out.close(); throw new Error("cancelled"); }
-      received += chunk.length;
-      out.write(chunk);
-      const p = this.progress.get(id);
-      if (p) {
-        p.received = base + received;
-        p.file = path.basename(f.dest);
-        p.state = "downloading";
+        out = createWriteStream(part, { flags: from ? "a" : "w" });
+        let received = from;
+        const base = getBase();
+        for await (const chunk of res.body) {
+          arm();
+          if (this.cancelled.has(id)) throw new Error("cancelled");
+          received += chunk.length;
+          /* ⚠ BACKPRESSURE. write() without waiting queued every chunk the
+           * network delivered faster than the disk took it, in this process's
+           * memory: on a 40 GB model that was gigabytes of RAM and a server too
+           * busy collecting garbage to answer the page. Wait for the disk. */
+          if (!out.write(chunk)) await once(out, "drain");
+          const p = this.progress.get(id);
+          if (p) {
+            p.received = base + received;
+            p.file = name;
+            p.state = "downloading";
+          }
+        }
+        await new Promise((resolve, reject) => out.end((e) => (e ? reject(e) : resolve())));
+        out = null;
+      } catch (err) {
+        if (this.cancelled.has(id)) throw new Error("cancelled");
+        if (stalled) {
+          throw new Error(`${name}: the server sent nothing for ${DOWNLOAD_STALL_MS / 1000} s, so the download was stopped. `
+            + "What arrived is kept: press Download again to continue from there.");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+        if (this.#aborts.get(id) === ctl) this.#aborts.delete(id);
+        // Release the .part before anything else touches it (Windows holds it open).
+        if (out && !out.destroyed) await new Promise((r) => { out.once("close", r); out.destroy(); });
       }
     }
-    await new Promise((resolve, reject) => out.end((e) => (e ? reject(e) : resolve())));
 
+    if (this.cancelled.has(id)) throw new Error("cancelled");
     const got = (await stat(part)).size;
     if (got !== f.bytes) {
       throw new Error(`${path.basename(f.dest)}: expected ${f.bytes} bytes, got ${got}`);
@@ -3129,7 +3277,7 @@ export class ModelManager extends EventEmitter {
     if (typeof f.sha256 === "string" && /^[0-9a-f]{64}$/.test(f.sha256)) {
       const p0 = this.progress.get(id);
       if (p0) { p0.state = "checking"; p0.file = path.basename(f.dest); this.emit("update"); }
-      const sum = await sha256Of(part);
+      const sum = await sha256Of(part, () => this.cancelled.has(id));
       if (sum !== f.sha256) {
         await unlink(part).catch(() => {});
         throw new Error(`${path.basename(f.dest)}: the file that arrived is not the one the catalogue names `
@@ -3137,6 +3285,7 @@ export class ModelManager extends EventEmitter {
       }
       if (p0) { p0.state = "downloading"; this.emit("update"); }
     }
+    if (this.cancelled.has(id)) throw new Error("cancelled");
     await rename(part, f.dest);
   }
 }

@@ -72,10 +72,12 @@ test("the tier owns the VRAM mode: an install's own is dropped, so ComfyUI gets 
   assert.deepEqual(chosen.filter((f) => /vram|gpu-only/.test(f)), ["--novram"], "a launcher choice replaces both");
 });
 
-test("Auto picks the VRAM mode from the card: <12 GB low, 12-16 normal, >16 high", () => {
+test("Auto picks the VRAM mode from the card: <12 GB low, 12 GB and up normal", () => {
   assert.ok(autoVramFlags(8192).includes("--lowvram"));
   assert.ok(!autoVramFlags(12282).some((f) => /vram/.test(f)), "a 12 GB card reads just under 12");
   assert.ok(!autoVramFlags(16304).some((f) => /vram/.test(f)), "a 16 GB card reads just under 16");
-  assert.ok(autoVramFlags(24576).includes("--highvram"));
+  /* No size gets --highvram: nothing could ever leave the card, and a 24 GB
+   * card filled and spilled into system memory (see autoVramFlags). */
+  for (const mb of [24576, 49152, 81920]) assert.ok(!autoVramFlags(mb).includes("--highvram"), `${mb} MB`);
   assert.ok(autoVramFlags(null).includes("--lowvram"), "unknown memory stays cautious");
 });

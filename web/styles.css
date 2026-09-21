@@ -4174,8 +4174,12 @@ details.adv[open] summary::before { content: "▾"; }
   text-transform: uppercase; color: var(--ghost); white-space: nowrap; height: 22px;
   transition: opacity .18s;
 }
-.navbottom { gap: 2px; border-top: 1px solid var(--hair); padding-top: 8px; }
-.navbottom a { font-size: 14px; padding: 7px 11px; }
+/* flex: 0 0 auto — the bottom four never give up height. They used to shrink
+ * with the window (flex-shrink 1, overflow hidden), so on a short screen
+ * Agent, Settings, About and Thanks were squeezed into 22px rows touching each
+ * other while the list above, which scrolls, kept all of its room. */
+.navbottom { flex: 0 0 auto; gap: 2px; border-top: 1px solid var(--hair); padding-top: 8px; }
+.navbottom a { flex: 0 0 auto; font-size: 14px; padding: 8px 11px; }
 .railfoot { margin-top: 0; }
 .gpu { font-size: 10px; }
 
@@ -4666,7 +4670,15 @@ button, input, select, textarea { font-family: inherit; }
   font-family: var(--sans); font-size: var(--fs-md); font-weight: 500;
 }
 .side .sideact .edtool:hover, .side .sidesec > .btn.sm:hover { background: var(--mfield-h); color: var(--ink); border-color: transparent; }
-.side .sidesec > .btn.sm { align-self: flex-start; margin: 0; }
+/* flex: `.btn.ghost` carries a 96px flex-basis for rows of buttons, and in the
+ * side panel's COLUMN that basis is height: Replace / Read / Sounds like this
+ * were 96px tall round blobs. */
+.side .sidesec > .btn.sm { align-self: flex-start; margin: 0; flex: 0 0 auto; }
+.art .artspin {
+  position: absolute; inset: 0; margin: auto; width: 22px; height: 22px; border-radius: 50%;
+  border: 2.5px solid hsla(0,0%,100%,.25); border-top-color: var(--primary);
+  animation: simpleSpin .8s linear infinite; box-shadow: 0 0 0 999px hsla(0,0%,0%,.35);
+}
 
 /* section labels: sentence case, one size */
 .side .sidelab {
@@ -5762,3 +5774,86 @@ button, input, select, textarea { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   #collab .cbpeer.justadded { animation: none; box-shadow: 0 0 0 2px hsla(195,100%,60%,.8); }
 }
+
+/* ── "this needs a model" (web/modelpick.js) ────────────────────────────────
+ * A floating window, not a modal: draggable by its bar, minimisable to it,
+ * closed only by its ×, so a download can run while the page stays usable. */
+.mpick {
+  position: fixed; right: 24px; bottom: 24px; z-index: 900;
+  width: min(440px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 48px));
+  display: flex; flex-direction: column;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 16px;
+  box-shadow: 0 18px 60px hsla(0,0%,0%,.55); color: var(--ink);
+}
+.mpick[hidden] { display: none; }
+.mpick .mp-bar {
+  display: flex; align-items: center; gap: 6px; padding: 10px 10px 10px 16px;
+  cursor: grab; user-select: none; border-bottom: 1px solid var(--hair); touch-action: none;
+}
+.mpick .mp-bar:active { cursor: grabbing; }
+.mpick .mp-title { flex: 1; font-weight: 600; font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mpick .mp-min, .mpick .mp-x {
+  width: 28px; height: 28px; border-radius: 8px; border: 0; background: transparent;
+  color: var(--faint); font-size: 18px; line-height: 1; cursor: pointer;
+}
+.mpick .mp-min:hover, .mpick .mp-x:hover { background: hsla(0,0%,100%,.08); color: var(--ink); }
+.mpick .mp-body { padding: 12px 16px; overflow: auto; }
+.mpick .mp-lead { margin: 0 0 10px; color: var(--dim); font-size: var(--fs-sm, 13px); }
+.mpick .mp-list { display: flex; flex-direction: column; gap: 8px; }
+.mpick .mp-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border-radius: 12px; background: hsla(0,0%,100%,.04); border: 1px solid transparent;
+}
+.mpick .mp-row.focus { border-color: var(--edge-s); }
+.mpick .mp-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mpick .mp-name b { font-weight: 600; }
+.mpick .mp-why { color: var(--ghost); font-size: 12px; }
+.mpick .mp-fit { align-self: flex-start; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: hsla(0,0%,100%,.06); color: var(--faint); }
+.mpick .mp-fit.ok { color: var(--ok); }
+.mpick .mp-fit.warn { color: var(--warn); }
+.mpick .mp-fit.bad { color: var(--err); }
+.mpick .mp-act { flex: 0 0 auto; }
+.mpick .mp-act .btn.sm { margin: 0; flex: 0 0 auto; white-space: nowrap; }
+.mpick .mp-ok { color: var(--ok); font-size: 12px; }
+.mpick .mp-pct { color: var(--primary); font-variant-numeric: tabular-nums; }
+.mpick .mp-bar2 { height: 4px; border-radius: 4px; background: hsla(0,0%,100%,.08); overflow: hidden; }
+.mpick .mp-bar2 i { display: block; height: 100%; background: var(--primary); }
+.mpick .mp-msg { margin: 10px 0 0; font-size: 12px; color: var(--faint); min-height: 1em; }
+.mpick .mp-msg.bad { color: var(--err); }
+.mpick .mp-empty { color: var(--faint); margin: 0; }
+.mpick .mp-foot { padding: 10px 16px 14px; border-top: 1px solid var(--hair); display: flex; justify-content: center; }
+.mpick .mp-foot .btn { margin: 0; flex: 0 0 auto; }
+.mpick.min .mp-body, .mpick.min .mp-foot { display: none; }
+.mpick.min .mp-bar { border-bottom: 0; }
+.mpick .mp-how { font-size: 12px; color: var(--dim); line-height: 1.45; padding-top: 4px; }
+.mpick .mp-how a { color: var(--primary); display: inline-block; margin-top: 4px; }
+.mpick .mp-region { font-size: 12px; color: var(--dim); line-height: 1.45; display: flex; gap: 6px; align-items: flex-start; }
+.mpick .mp-region a { color: var(--primary); }
+.mfalso { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--faint); }
+.mfalso code { color: var(--dim); }
+.mfalso .btn.sm { margin: 0; flex: 0 0 auto; }
+
+/* ── a drawer from the bottom (bottomDrawer in app.js) ──────────────────────── */
+.bdrawer-wrap {
+  position: fixed; inset: 0; z-index: 950; display: flex; align-items: flex-end; justify-content: center;
+  background: hsla(0,0%,0%,0); transition: background .28s ease;
+}
+.bdrawer-wrap.open { background: hsla(0,0%,0%,.45); }
+.bdrawer {
+  position: relative; width: min(560px, 100%); padding: 10px 24px 22px;
+  background: var(--raise); border: 1px solid var(--edge); border-bottom: 0;
+  border-radius: 18px 18px 0 0; box-shadow: 0 -18px 60px hsla(0,0%,0%,.5); color: var(--ink);
+  transform: translateY(110%); transition: transform .3s cubic-bezier(.2,.8,.2,1);
+}
+.bdrawer-wrap.open .bdrawer { transform: translateY(0); }
+.bdrawer .bd-grip { width: 40px; height: 4px; border-radius: 4px; background: hsla(0,0%,100%,.18); margin: 0 auto 12px; }
+.bdrawer .bd-x {
+  position: absolute; top: 10px; right: 12px; width: 30px; height: 30px; border-radius: 8px;
+  border: 0; background: transparent; color: var(--faint); font-size: 20px; cursor: pointer;
+}
+.bdrawer .bd-x:hover { background: hsla(0,0%,100%,.08); color: var(--ink); }
+.bdrawer h3 { margin: 0 0 8px; font-size: 17px; }
+.bdrawer p { margin: 0 0 18px; color: var(--dim); line-height: 1.5; }
+.bdrawer .bd-acts { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.bdrawer .bd-acts .btn { margin: 0; flex: 0 0 auto; }
+@media (prefers-reduced-motion: reduce) { .bdrawer, .bdrawer-wrap { transition: none; } }

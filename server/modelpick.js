@@ -105,6 +105,7 @@ async function probeCached(full, at) {
 export async function modelBases(config = defaultConfig) {
   return uniqueDirs([
     config.modelsDir,
+    ...(config.modelsAlso || []),
     ...(await extraBases(config.comfy?.extraArgs || [])),
     path.join(config.comfyDir, "models"),
   ]);

@@ -69,6 +69,9 @@ export function shiftSigmas(steps, shift) {
 export function buildGraph({
   caption,
   lyrics,
+  // Decode the song in overlapping chunks (VAEDecodeAudioTiled). The caller
+  // passes false only when the engine does not have that node.
+  tiledVae = true,
   seed,
   mixSeed,
   maxDuration = 240,
@@ -195,10 +198,26 @@ export function buildGraph({
 
     // --- decode + write ----------------------------------------------------
     // fp32 VAE by configuration; see config.js for why that is not negotiable.
-    8: { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["3", 0] } },
+    /* ⚠ TILED, BECAUSE THE WHOLE-SONG DECODE IS WHAT CRASHED MACHINES.
+     * ComfyUI sizes the DAV decode as (frames x 512 x 1400 + 800M) fp32
+     * elements (sd.py, MiniMax Music3 DAV): at ~86 latent frames a second a
+     * four-minute song asks for tens of GB in one go, and with offload disabled
+     * for this VAE that is where 16 and 24 GB cards (a Quadro RTX 6000 among
+     * them) spilled into system memory or fell over. The tiled node decodes
+     * 512 frames (~6 s) at a time with 64 frames (~0.7 s) of overlap that
+     * ComfyUI feathers together, so the peak is one tile's worth whatever the
+     * length. ComfyUI's own defaults; not measured here against the plain
+     * decode for exactness. */
+    8: tiledVae
+      ? { class_type: "VAEDecodeAudioTiled", inputs: { samples: ["7", 0], vae: ["3", 0], tile_size: MUSIC_VAE_TILE, overlap: MUSIC_VAE_OVERLAP } }
+      : { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["3", 0] } },
     9: saveAudioNode(prefix),
   };
 }
+
+/** VAEDecodeAudioTiled for MiniMax Music 3, in latent frames (512 audio samples each). */
+export const MUSIC_VAE_TILE = 512;
+export const MUSIC_VAE_OVERLAP = 64;
 
 /**
  * The writer for the configured output format.
@@ -1725,6 +1744,39 @@ export function videoSizeFor(engine, width, height) {
   return { width: w, height: h, quantised: false, grid: 1 };
 }
 
+/**
+ * YOUR OWN VIDEO LoRAs, the Video screen's stack. Cleaned the way the image
+ * route cleans its own: at most eight, a bare file name inside models/loras
+ * (never a path), a strength clamped to -4..4. Anything else is dropped.
+ */
+export function videoLoras(list) {
+  if (!Array.isArray(list)) return undefined;
+  const out = list.slice(0, 8)
+    .map((l) => ({
+      name: String(l?.name || "").split(/[\\/]/).pop(),
+      strength: Number.isFinite(Number(l?.strength)) && l?.strength !== null && l?.strength !== ""
+        ? Math.min(Math.max(Number(l.strength), -4), 4) : 1,
+    }))
+    .filter((l) => l.name && /\.safetensors$/i.test(l.name));
+  return out.length ? out : undefined;
+}
+
+/**
+ * Chains the stack onto a MODEL wire as LoraLoaderModelOnly nodes 90..97, each
+ * taking the previous one's model, and returns the wire the rest of the graph
+ * should read. Model-only because both video engines load a bare DiT: there is
+ * no checkpoint CLIP to patch. No LoRAs leaves the graph byte for byte.
+ */
+export function chainVideoLoras(g, from, loras) {
+  let wire = from;
+  (videoLoras(loras) || []).forEach((l, i) => {
+    const id = String(90 + i);
+    g[id] = { class_type: "LoraLoaderModelOnly", inputs: { model: wire, lora_name: l.name, strength_model: l.strength } };
+    wire = [id, 0];
+  });
+  return wire;
+}
+
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);
@@ -1824,6 +1876,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * rendering as if none had been asked for. */
                                controlVideo = null, controlPatch = null,
                                controlStrength = 1.0, controlStart = 0.0, controlEnd = 1.0,
+                               /* The person's own LoRAs, [{name, strength}]: after
+                                * the turbo LoRA, before the control patch. */
+                               loras = null,
                                /* Files the person named instead of this engine's own
                                 * ({dit, ditRef, textEncoder, videoVae, audioVae}). Merged
                                 * LAST so one named part replaces one part and the rest of
@@ -1998,7 +2053,11 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
           inputs: { image: ["31", 0], upscale_method: "bilinear", width: w, height: h, crop: "center" } },
     33: { class_type: "ModelPatchLoader", inputs: { name: String(controlPatch) } },
   } : {};
-  const BARE_MODEL = useTurbo ? ["18", 0] : ["1", 0];
+  /* Apply the person's LoRAs after turbo distillation (or the bare model on
+   * the quality path). Loading the stack at every step count does not prove
+   * that an arbitrary adapter is compatible with that sampling recipe. */
+  const userLoraNodes = {};
+  const BARE_MODEL = chainVideoLoras(userLoraNodes, useTurbo ? ["18", 0] : ["1", 0], loras);
   /* ⚠ THE PATCH GOES BETWEEN THE LoRA AND THE SHIFT. The shift feeds both the
    * guider AND the scheduler, so patching after it leaves the scheduler on an
    * unpatched model; patching before the LoRA puts the distillation on top of
@@ -2044,6 +2103,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // turbo distillation on the fast path. Both fall back to the fl2va set.
       1: unetNode(v.ditRef ?? v.dit),
       ...lora(h3TurboLoraFor(v, { steps: steps ?? v.steps, refs: true }).lora),
+      ...userLoraNodes,
       2: clipNode(v.textEncoder, "minimax"),
       3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
       4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
@@ -2134,6 +2194,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
      * measurably over-shoots (crunchy texture, 2-3x inter-frame churn) while
      * the bare model on shift 12 — the vendor's own flow — is the clean one. */
     ...lora(),
+    ...userLoraNodes,
     // `type: "minimax"` covers BOTH H3 and Music3 — comfy/sd.py auto-detects
     // which by looking for an audio-decoder projection in the checkpoint.
     2: clipNode(v.textEncoder, "minimax"),
@@ -2225,8 +2286,12 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
                                 firstFrame, lastFrame, midFrames, loop, keepAudio,
                                 audioTrack, guidance, guideStrength, baseScale, prefix = "clip",
                                 /* As videoGraphH3: the parts a person named. */
-                                models = null }) {
+                                models = null,
+                                /* The person's own LoRAs; both passes sample through them. */
+                                loras = null }) {
   const v = { ...config.video.engines.ltx, ...(models || {}) };
+  const userLoraNodes = {};
+  const MODEL = chainVideoLoras(userLoraNodes, ["1", 0], loras);
   const fps = v.fps;
   const frames = alignFrames(seconds ?? v.seconds, fps, "ltx");
 
@@ -2341,6 +2406,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
     ...img,
     ...(guided ? midImg : {}),
     1: unetNode(v.dit),
+    ...userLoraNodes,
     2: clipNode(v.textEncoder, "ltxv"),
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
@@ -2404,7 +2470,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
     12: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     13: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
     14: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasLow } },
-    15: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0],
+    15: { class_type: "LTXVDualCFGGuider", inputs: { model: MODEL,
       // Guided runs must use the conditioning the guides rewrote, not the raw pair.
       positive: guided ? ["37", 0] : ["8", 0],
       negative: guided ? ["37", 1] : ["8", 1],
@@ -2443,7 +2509,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
       20: { class_type: "RandomNoise", inputs: { noise_seed: (seed ?? 0) + 1 } },
       21: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
       22: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasHigh } },
-      23: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0], positive: ["8", 0], negative: ["8", 1], video_cfg: guidance ?? v.videoCfg, audio_cfg: guidance ?? v.audioCfg } },
+      23: { class_type: "LTXVDualCFGGuider", inputs: { model: MODEL, positive: ["8", 0], negative: ["8", 1], video_cfg: guidance ?? v.videoCfg, audio_cfg: guidance ?? v.audioCfg } },
       24: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["20", 0], guider: ["23", 0], sampler: ["21", 0], sigmas: ["22", 0], latent_image: ["19", 0] } },
       25: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["24", 0] } },
     }),
@@ -2673,6 +2739,59 @@ function titleCase(s) {
       : w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
+/* Words that repeat in every song and say nothing about this one. */
+const LYRIC_STOP = new Set(("i me my mine myself you your yours we us our they them their he him his she her it its "
+  + "a an the and or but so if of to in on at by for from with into over under up down out off as than then "
+  + "is am are was were be been being do does did have has had will would can could should shall may might must "
+  + "this that these those there here what when where why how who which all any some no not just only now too very "
+  + "oh ooh ah yeah yea hey la na da whoa uh huh mm hmm baby gonna wanna gotta got get let lets cause cos "
+  + "im youre were theyre dont cant wont aint thats its ive youve id youll ill").split(" "));
+
+/**
+ * THE SONG'S HOOK: the line it repeats most, else the word it repeats most.
+ *
+ * A cover drawn from the style caption says what the song SOUNDS like; the
+ * chorus says what it is ABOUT, and it is the line a listener remembers. So a
+ * song with lyrics is illustrated from the line it sings most often (two or
+ * more words, sung at least twice), and failing that from its most repeated
+ * word that means something (four letters or more, at least twice, not a
+ * pronoun or a filler). Section tags ([Chorus], (x2)) and blank lines are not
+ * lyrics. An instrumental, or lyrics that repeat nothing, return null and the
+ * caption decides as before.
+ */
+export function lyricHook(lyrics = "") {
+  const lines = String(lyrics || "").split(/\r?\n/)
+    .map((l) => l.replace(/\[[^\]]*\]|\((?:x\s*\d+|\d+\s*x|repeat[^)]*)\)/gi, "").trim())
+    .filter((l) => l && !/^\(?instrumental\)?$/i.test(l));
+  const key = (l) => l.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, "").replace(/'/g, "").replace(/\s+/g, " ").trim();
+
+  const lineCount = new Map();
+  const firstForm = new Map();
+  for (const l of lines) {
+    const k = key(l);
+    if (k.split(" ").length < 2) continue;
+    lineCount.set(k, (lineCount.get(k) || 0) + 1);
+    if (!firstForm.has(k)) firstForm.set(k, l.replace(/[.,;:!?…]+$/u, ""));
+  }
+  let best = null;
+  for (const [k, n] of lineCount) {
+    // Most repeats wins; a tie goes to the line sung first (Map keeps order).
+    if (n >= 2 && (!best || n > best.n)) best = { k, n };
+  }
+  if (best) return trimTo(firstForm.get(best.k), 80);
+
+  const wordCount = new Map();
+  for (const l of lines) {
+    for (const w of key(l).split(" ")) {
+      if (w.length < 4 || LYRIC_STOP.has(w) || /^\d+$/.test(w)) continue;
+      wordCount.set(w, (wordCount.get(w) || 0) + 1);
+    }
+  }
+  let word = null;
+  for (const [w, n] of wordCount) if (n >= 2 && (!word || n > word.n)) word = { w, n };
+  return word ? word.w : null;
+}
+
 /**
  * Turn a song's own style caption into a cover prompt.
  *
@@ -2682,7 +2801,7 @@ function titleCase(s) {
  * — past a couple of clauses it starts contributing instrument names that the
  * image model renders literally, and every cover grows a guitar.
  */
-export function coverPrompt({ caption = "", title = "", seed = 0 }) {
+export function coverPrompt({ caption = "", title = "", seed = 0, lyrics = "" }) {
   /* Drop MUSICAL NOTATION before anything else.
    *
    * Found by looking at the output: captions like "Piano Melody: E4 E4 G4 A4 G4
@@ -2754,7 +2873,10 @@ export function coverPrompt({ caption = "", title = "", seed = 0 }) {
     "a candle burned to the base",
   ];
   const pick = FALLBACK[Math.abs(Number(seed) || 0) % FALLBACK.length];
-  const mood = subject || usableTitle || pick;
+  /* The hook first: what the song keeps singing is what it is about. The
+   * style half stays config.art.style, whose "no text, no words" is what keeps
+   * the image model from lettering the line onto the picture. */
+  const mood = lyricHook(lyrics) || subject || usableTitle || pick;
   return `${config.art.style}, evoking ${mood}`;
 }
 

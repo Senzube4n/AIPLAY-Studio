@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MODELS_PROMPT } from "../server/localmodels.js";
 import { appVersion, versionLine } from "../server/version.js";
 import { checkUpdates, lastCheck, updateSentence } from "../server/updates.js";
+import { selfUpdate, updateSource } from "../server/selfupdate.js";
 import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf, autoVramFlags } from "../server/comfyargs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
@@ -116,6 +117,9 @@ function runNode(args, timeoutMs = 240_000) {
  * The launcher asks "What should Studio run on?" and runs
  * scripts/install-engine.mjs for the answer. The script cleans up after itself
  * on failure and prints the exact error; this keeps its state for the page. */
+/* The Update button (server/selfupdate.js): one at a time, never while Studio
+ * or an engine install runs, its sentences in the window's log. */
+const updating = { state: "idle", step: "", line: "", restart: false };
 const install = { state: "idle", backend: null, step: null, n: 0, of: 9, error: null, errorStep: null };
 let installChild = null;
 
@@ -125,12 +129,13 @@ function setInstall(patch) {
 }
 
 async function startInstall(backend) {
-  if (installChild) throw new Error("An install is already running.");
-  if (child) throw new Error("Stop Studio first.");
+  if (updating.state === "running") throw new Error("Wait for the Studio update to finish.");
+  if (installChild || install.state === "running") throw new Error("An install is already running.");
+  if (child || studio.state === "starting") throw new Error("Stop Studio first.");
   if (!["nvidia", "amd", "intel", "cpu"].includes(backend)) throw new Error("Choose NVIDIA, AMD, Intel or CPU.");
+  setInstall({ state: "running", backend, step: "Starting", n: 0, error: null, errorStep: null });
   const settings = (await readJson(SETTINGS)) || {};
   const gpuName = settings.gpu?.vendor === backend ? settings.gpu.name : "";
-  setInstall({ state: "running", backend, step: "Starting", n: 0, error: null, errorStep: null });
   addLog(`Installing Studio's own ComfyUI for ${backend.toUpperCase()}. This downloads several GB and can take a while.`, "sys");
   const args = [path.join(ROOT, "scripts", "install-engine.mjs"), "--backend", backend, ...(gpuName ? ["--gpu-name", gpuName] : [])];
   installChild = spawn(process.execPath, args, { cwd: ROOT, windowsHide: true, env: process.env });
@@ -360,10 +365,14 @@ function getCheck(redetect) {
 /* ── launch / wait / stop ──────────────────────────────────────────────── */
 
 async function launch(mode) {
+  if (updating.state === "running") throw new Error("Wait for the Studio update to finish.");
+  if (existsSync(path.join(ROOT, ".aiplay-update-npm-pending"))) throw new Error("Press Update again to finish installing Studio's dependencies before starting.");
+  if (studio.state === "starting") throw new Error("Studio is already starting.");
   if (child) throw new Error("Studio is already running from this launcher.");
-  if (installChild) throw new Error("Wait for the engine install to finish.");
+  if (installChild || install.state === "running") throw new Error("Wait for the engine install to finish.");
   if (!["full", "music"].includes(mode)) throw new Error("Unknown mode.");
 
+  setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
   const running = await probeStudio();
   if (running) {
     setState({ mode: running.musicOnly ? "music" : "full", state: "external", stage: null, error: null });
@@ -372,7 +381,6 @@ async function launch(mode) {
     return;
   }
 
-  setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
   if (mode === "full") {
     addLog("Checking the ComfyUI setup…", "sys");
     const r = await runNode([path.join(ROOT, "scripts", "setup.mjs"), "--quiet-if-ready"]);
@@ -534,13 +542,21 @@ async function chooseFolder(what) {
     const files = await scanBases([r.path]);
     /* PINNED. setup.mjs adopts the rig's own models folder on every run, and a
      * folder somebody chose by hand must survive that. */
-    await saveSettings({ modelsDir: r.path, modelsDirPinned: true });
+    /* The folder being left keeps working, exactly as on the Models screen:
+     * remembered in `modelsAlso`, still checked and still loaded from, so a
+     * new folder for downloads never makes what is already there look missing. */
+    const key = (d) => path.resolve(String(d)).replace(/[\\/]+$/, "").toLowerCase();
+    const prev = settings.modelsDir || (settings.rig ? path.join(settings.rig, "ComfyUI", "models") : null);
+    const also = [...(Array.isArray(settings.modelsAlso) ? settings.modelsAlso : []),
+      ...(prev && existsSync(prev) ? [prev] : [])]
+      .filter((d, i, all) => key(d) !== key(r.path) && all.findIndex((x) => key(x) === key(d)) === i);
+    await saveSettings({ modelsDir: r.path, modelsDirPinned: true, modelsAlso: also });
     checkCache = null;
     return {
       path: r.path, files: files.length, folders: Object.keys(countByFolder(files)).length,
       note: files.length
         ? `${files.length} model file${files.length === 1 ? "" : "s"} found. Studio will load from here.`
-        : "No model files found in that folder yet — check it holds the subfolders (checkpoints, vae, …).",
+        : "No models there yet: new downloads will go to this folder, and the models you already have keep working from where they are.",
     };
   }
 
@@ -650,6 +666,21 @@ function makeServer(portRef) {
         }
         const last = lastCheck();
         return send(res, 200, { version: appVersion(), line: versionLine(), update: last, says: last ? updateSentence(last) : "" });
+      }
+      if (url.pathname === "/api/update") {
+        if (req.method === "POST") {
+          if (child) return send(res, 200, { ...updating, error: "Stop Studio first: its files are about to be replaced." });
+          if (await probeStudio()) return send(res, 200, { ...updating, error: "Stop the Studio running outside this launcher before updating." });
+          if (child || studio.state === "starting") return send(res, 200, { ...updating, error: "Wait for Studio to finish starting, then stop it before updating." });
+          if (install.state === "running") return send(res, 200, { ...updating, error: "Wait for the engine install to finish." });
+          if (updating.state === "running") return send(res, 200, updating);
+          Object.assign(updating, { state: "running", step: "Starting…", line: "", restart: false });
+          selfUpdate({ root: ROOT, say: (t) => { updating.step = t; addLog(`update: ${t}`); } })
+            .then((r) => { Object.assign(updating, { state: r.ok ? "done" : "failed", step: "", line: r.line, restart: !!r.restart }); addLog(`update: ${r.line}`, r.ok ? "out" : "err"); })
+            .catch((e) => { Object.assign(updating, { state: "failed", step: "", line: `The update stopped: ${e.message}` }); addLog(updating.line, "err"); });
+          return send(res, 200, updating);
+        }
+        return send(res, 200, { ...updating, source: await updateSource(ROOT).catch(() => null) });
       }
       if (url.pathname === "/api/state") {
         const saved = (await readJson(SETTINGS)) || {};

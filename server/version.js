@@ -37,6 +37,15 @@ import { PACKET_V } from "./collab/packet.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const GEN = path.join(ROOT, "server", "version.gen.json");
+/* Filled in by `git archive` (a GitHub "Download ZIP") through export-subst in
+ * .gitattributes. In a clone it still holds the literal placeholders. */
+const ARCHIVE = path.join(ROOT, "server", "version.archive.json");
+
+function fromArchive() {
+  const a = readJson(ARCHIVE);
+  if (!a || typeof a.commit !== "string" || !a.commit || a.commit.includes("$Format")) return null;
+  return { commit: a.commit.slice(0, 7), date: String(a.date || ""), modified: false, source: "archive" };
+}
 
 /** `2026-09-20T12:40:11+02:00` -> `26.09.20`. The day is the version. */
 export function stamp(iso) {
@@ -106,7 +115,7 @@ export function appVersion({ fresh = false } = {}) {
   const git = fromGit();
   const gen = git ? null : readJson(GEN);
   const build = git || (gen && { commit: gen.commit, date: gen.date, modified: !!gen.modified, source: "packaged" })
-    || { commit: "", date: "", modified: false, source: "unknown" };
+    || fromArchive() || { commit: "", date: "", modified: false, source: "unknown" };
   const base = git ? upstreamBase(line) : (gen?.base || (line?.upstream?.commit ? { commit: line.upstream.commit.slice(0, 7), date: line.upstream.date, source: "stamped" } : null));
   const letter = line?.letter || "S";
   const day = stamp(build.date);

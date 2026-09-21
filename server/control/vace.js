@@ -412,7 +412,14 @@ export function vaceGraph({
      * the ONE node that removes the reference frame the encoder prepended. It
      * is wired unconditionally so that adding a reference cannot forget it. */
     9: { class_type: "TrimVideoLatent", inputs: { samples: ["8", 0], trim_amount: ["7", 3] } },
-    10: { class_type: "VAEDecode", inputs: { samples: ["9", 0], vae: ["3", 0] } },
+    /* TILED, the one change from W1. A whole-clip WAN VAE decode is sized for
+     * every frame at once; on a card that cannot hold it ComfyUI ran out of
+     * memory and retried in tiles (AMD), or, on NVIDIA under Windows, the
+     * driver spilled into system RAM and the decode crawled with no progress
+     * messages. The same failure MiniMax Music 3's whole-song decode had.
+     * ComfyUI's own tile defaults; the spatial overlap and the temporal overlap
+     * are blended by ComfyUI. vace_test.js allows exactly this difference. */
+    10: { class_type: "VAEDecodeTiled", inputs: { samples: ["9", 0], vae: ["3", 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 8 } },
     11: { class_type: "CreateVideo", inputs: { images: ["10", 0], fps: VACE_PRESET.fps } },
     12: { class_type: "SaveVideo",
           inputs: { video: ["11", 0], filename_prefix: savePrefix, format: "auto", codec: "auto" } },

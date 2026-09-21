@@ -629,6 +629,22 @@ node --test server/chat/form-tools_test.js || exit 1
 # Which build this is, whose lineage it belongs to, and the protocol Collab
 # compares — the gate exists to keep those two numbers from becoming one.
 node --test server/version_test.js || exit 1
+node --test server/installer_test.js || exit 1
+# The Models screen's sections and the "you need a model" window; a card handed
+# cleanly between music and pictures; the library player's "next".
+node --test server/models-screen_test.js || exit 1
+node --test server/card-handover_test.js || exit 1
+node --test server/player_test.js || exit 1
+# The launcher's Update button, run against a throwaway install.
+node --test server/selfupdate_test.js || exit 1
+# VRAM on AMD and Intel (display only; the render gates stay nvidia-smi).
+node --test server/gpu_test.js || exit 1
+# Model downloads: Cancel, stalls and resume, against a local server.
+node --test server/download_test.js || exit 1
+# Changing the models folder keeps what is already downloaded.
+node --test server/modelsdir_test.js || exit 1
+# Your own LoRAs on the Video screen reach both video graphs.
+node --test server/video_lora_test.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever
@@ -1069,4 +1085,6 @@ fi
 # persistent local collaboration planning and MCP parity use isolated fixtures.
 node --test server/image-job_test.js server/image-editor_test.js server/image-editor-ui_test.js server/collab/planning_test.js server/reactive-ui_test.js server/mcp-workspace_test.js server/qwen-cover_test.js || exit 1
 if [ -x "$PY" ]; then "$PY" server/image_editor_test.py || exit 1; fi
+# Fork integration: typed MCP controls, video LoRA validation and shared-card unloading.
+node --test server/bucky-integration_test.js || exit 1
 exit 0

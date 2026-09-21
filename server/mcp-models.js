@@ -68,12 +68,24 @@ export function modelTools(api) {
     },
     {
       name: "models_folder",
-      description: "Scan an existing local models folder or save it as the Studio models folder, using the Models page API. action scan reads only; action use saves the preference and requires a later Studio restart. force:true permits an empty existing folder. No move, download or restart occurs in this tool.",
-      inputSchema: { type: "object", required: ["action", "dir"], properties: { action: { type: "string", enum: ["scan", "use"] }, dir: { type: "string" }, force: { type: "boolean" } }, additionalProperties: false },
+      description: "Scan a local models folder, use it for future downloads, or stop using a previous folder. scan reads only. use saves the preference and keeps models from the previous folder available after restart; force:true permits an empty folder and create:true also creates a missing folder under an existing parent. drop stops searching a previous folder after restart, without deleting its files. No model move, download or restart occurs in this tool.",
+      inputSchema: { type: "object", required: ["action", "dir"], properties: { action: { type: "string", enum: ["scan", "use", "drop"] }, dir: { type: "string", minLength: 1 }, force: { type: "boolean" }, create: { type: "boolean", description: "With use and force:true, create a missing folder whose parent exists." } }, additionalProperties: false },
       async run(a) {
+        if (typeof a.dir !== "string" || !a.dir.trim()) throw new Error("Give a models folder.");
         if (a.action === "scan") return await api("POST", "/api/models", { action: "scanFolder", dir: a.dir });
-        if (a.action !== "use") throw new Error("Choose scan or use.");
-        return await api("POST", "/api/models", { action: "setModelsDir", dir: a.dir, force: a.force === true });
+        if (a.action === "drop") return await api("POST", "/api/models", { action: "dropAlso", dir: a.dir });
+        if (a.action !== "use") throw new Error("Choose scan, use or drop.");
+        if (a.create && !a.force) throw new Error("Creating a new models folder requires force:true as well as create:true.");
+        return await api("POST", "/api/models", { action: "setModelsDir", dir: a.dir, force: a.force === true, ...(a.create === true ? { create: true } : {}) });
+      },
+    },
+    {
+      name: "music_model_memory",
+      description: "Load the selected YuE2 or ACE-Step ComfyUI music model with a short warm-up, or unload ComfyUI models to release memory. Models otherwise load automatically with a song. Both actions require idle music, artwork and engine queues; unload does not cancel work, delete model files or stop Studio. This does not unload the separate native YuE2 GGUF runtime.",
+      inputSchema: { type: "object", required: ["action"], properties: { action: { type: "string", enum: ["load", "unload"] } }, additionalProperties: false },
+      async run(a) {
+        if (!["load", "unload"].includes(a.action)) throw new Error("Choose load or unload.");
+        return await api("POST", "/api/music", { action: a.action }, 900_000);
       },
     },
     {
@@ -86,7 +98,7 @@ export function modelTools(api) {
       name: "models_for_this_machine",
       description:
         "WHICH MODELS THIS COMPUTER CAN ACTUALLY RUN, and which to download first — the same answer "
-        + "the Models screen shows its owner, computed from nvidia-smi and os.totalmem against the "
+        + "the Models screen shows its owner, computed from local GPU and system-memory readings against the "
         + "requirements each publisher states.\n\n"
         + "Read this BEFORE recommending any model, any engine or any download. The catalogue holds "
         + "capabilities ranging from a 22 MB frame interpolator to a 43 GB video engine, and "
@@ -96,8 +108,8 @@ export function modelTools(api) {
         + "  • streams   above the minimum, under the recommendation. It RUNS — Studio's low-VRAM "
         + "tiers stream weights from system RAM — and it is slower. Not a refusal.\n"
         + "  • wont-run  below the publisher's stated floor.\n"
-        + "  • unknown   no NVIDIA card could be read (nvidia-smi is NVIDIA-only, so every Apple, AMD "
-        + "and Intel machine lands here). This is NOT 'no'. Do not turn it into one.\n\n"
+        + "  • unknown   the required hardware information could not be read. Windows AMD and Intel "
+        + "cards may be detected too; unreadable usage is not zero usage. This is NOT 'no'. Do not turn it into one.\n\n"
         + "`recommended` names one pick per slot with a reason: the required music engine, ONE video "
         + "engine, ONE image model, and the fit of the pip-installed extras. The video pick is always "
         + "one Studio can actually download — LTX 2.5 is faster and better and its repository is "

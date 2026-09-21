@@ -29,7 +29,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -40,6 +40,7 @@ import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
  * shadowed inside the very handlers that need the door. */
 import { engine as engineDoor } from "./engine/client.js";
 import { qwenImageGraph, QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
@@ -52,7 +53,7 @@ import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, h
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
-import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
+import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
@@ -107,6 +108,38 @@ async function videoModelPatch(b, engine) {
  * VAE are still required — a bare transformer cannot run without them.
  * Returns a sentence when something is missing, or null when it can go.
  */
+/**
+ * WHETHER AN AUTOMATIC COVER CAN BE DRAWN AT ALL.
+ *
+ * Every finished song queued a cover with FLUX.2 klein whether or not its files
+ * were on disk, so a machine with only a music model got ComfyUI's validation
+ * refusal ("vae_name 'flux2-vae.safetensors' not in [...]") in the log after
+ * every song, and a failed job in the queue. A cover is a nice-to-have: with
+ * its model missing it is simply not queued. A custom cover workflow or a
+ * checkpoint of the user's own is theirs to answer for, so those still go.
+ */
+let coverSkipSaid = false;
+async function checkedVideoLoras(value, engine) {
+  const e = videoEngine(engine);
+  return validateVideoLoras(value, {
+    engine, shelf: async () => scanBases(await modelBases()), probe: probeModel,
+    automatic: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4].filter(Boolean),
+  });
+}
+async function coverCanRun() {
+  if (assignedTo("cover") || (config.art.engine === "checkpoint" && config.art.checkpoint)) return true;
+  // Qwen's runner checks both native files and runtime nodes, and reports a
+  // normal failed job to Overnight/UI. A catalogue-only skip hides that result.
+  if (config.art.engine === QWEN_IMAGE_ENGINE) return true;
+  const capId = MODEL_TO_CAPABILITY[config.art.engine || "flux2"];
+  if (!capId) return true;
+  const row = (await models.status().catch(() => [])).find((c) => c.id === capId);
+  if (!row || row.ready) return true;
+  if (!coverSkipSaid) console.log(`  [cover] skipped: ${row.label} is not installed (Models screen, Images). Songs are unaffected.`);
+  coverSkipSaid = true;
+  return false;
+}
+
 function missingSupport(cap, ownDit, own = {}) {
   if (!cap) return null;
   if (!ownDit) return cap.ready ? null : `${cap.label} is not downloaded yet (${(((cap.totalBytes - cap.haveBytes) || 0) / 1e9).toFixed(1)} GB missing). Open the Models screen.`;
@@ -136,7 +169,7 @@ function missingSupport(cap, ownDit, own = {}) {
     + `already have in the rows under the model file.`;
 }
 import {
-  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog,
+  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES } from "./fit.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
@@ -1250,9 +1283,11 @@ jobs.on("update", async (snap) => {
     // The Overnight "Cover art" checkbox used to be decorative: this fired
     // unconditionally and never consulted it. Outside a run, art.enabled is
     // still the switch, which is what the Settings dropdown means.
-    if (live ? live.cover : true) {
+    if ((live ? live.cover : true) && await coverCanRun()) {
       art.request({
         file: h.file, title: h.title, caption: job.caption,
+        // The cover is drawn from the line the song repeats most (lyricHook).
+        lyrics: job.lyrics,
         // Same seed as the music, so a cover is reproducible from the song's own
         // provenance rather than being a second unrecorded random number.
         seed: h.seed,
@@ -1317,6 +1352,7 @@ jobs.on("update", async (snap) => {
 async function modelBases() {
   return uniqueDirs([
     config.modelsDir,
+    ...(config.modelsAlso || []),
     ...(await extraBases(config.comfy.extraArgs)),
     path.join(config.comfyDir, "models"),
   ]);
@@ -1351,7 +1387,7 @@ async function localModelsPayload(cat) {
       family, variant, known: known.has(f.name), standsInFor: standsIn[f.name] || null,
     });
   }
-  return { modelsDir: config.modelsDir, bases, files: rows };
+  return { modelsDir: config.modelsDir, also: config.modelsAlso || [], bases, files: rows };
 }
 
 /* ── the music model picker (Models screen and Music tab) ───────────────────
@@ -1522,8 +1558,14 @@ const MODEL_GROUPS = [
   { id: "images", label: "Images" },
   { id: "video", label: "Video" },
   { id: "3d", label: "3D" },
+  { id: "chat", label: "Chat & writing" },
 ];
 function modelGroupOf(c) {
+  /* A row can say where it belongs. The rules below guess from `makes` and the
+   * id, and the guess's last resort is "music": the Motion look's SD1.5
+   * checkpoint, ControlNets and IP-Adapter, the depth extractor and H3's
+   * bridges all landed under Music & audio because none of them matched. */
+  if (c.group) return c.group;
   if (c.makes === "mesh") return "3d";
   if (c.makes === "picture" || c.id === "imageCutout" || c.id === "upscale") return "images";
   if (/^(video|pose|interpolate)/.test(c.id)) return "video";
@@ -1921,6 +1963,12 @@ const MIME = {
 
 function json(res, code, body) {
   const s = JSON.stringify(body);
+  /* ⚠ `e.status || 400` IS ALL OVER THIS FILE, and an engine error carries its
+   * RUN status there ("rejected", when ComfyUI refuses a graph for a missing
+   * model file). writeHead threw on it, so the person got a stack trace in the
+   * log and a broken reply instead of the sentence explaining what is missing.
+   * Anything that is not an HTTP code is the engine refusing: 502. */
+  if (!(Number.isInteger(code) && code >= 100 && code <= 599)) code = 502;
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(s) });
   res.end(s);
 }
@@ -2421,6 +2469,11 @@ const server = http.createServer(async (req, res) => {
                * and a 4-step LoRA sampled at 3 is the wrong model. make_clip's
                * "fast" reads this to choose 3 or 8. */
               turbo3Ready: /taomate/i.test(String(e.turboLora3 || "")),
+              /* The distillations this engine loads by itself: the Video screen's
+               * LoRA picker leaves them out, because stacking one again would
+               * apply it twice. */
+              ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
+                .filter(Boolean).map((n) => path.basename(String(n))),
             }])),
             seconds: videoEngine().seconds,
             width: videoEngine().width, height: videoEngine().height },
@@ -2590,10 +2643,25 @@ const server = http.createServer(async (req, res) => {
         /* Preview a folder (scanFolder), or adopt it as the models folder
          * (setModelsDir). Adopting needs a restart: the catalogue's download
          * paths and the engine's model paths are both fixed at start. */
+        /* Stop loading from an earlier models folder (it stays on disk). */
+        if (b.action === "dropAlso") {
+          if (typeof b.dir !== "string" || !b.dir.trim()) return json(res, 400, { error: "Give the previous folder to stop using." });
+          const drop = path.resolve(b.dir.trim());
+          const next = (config.modelsAlso || []).filter((d) => !samePath(d, drop));
+          await mergeSettings({ modelsAlso: next });
+          return json(res, 200, { ok: true, also: next, needsRestart: true,
+            note: "Saved. Restart AIPLAY Studio to stop loading from that folder. Nothing in it was deleted." });
+        }
         if (b.action === "scanFolder" || b.action === "setModelsDir") {
           const raw = String(b.dir || "").trim();
           if (!raw) return json(res, 400, { error: "Give a folder." });
           const dir = path.resolve(raw);
+          /* A new folder for downloads may not exist yet: made when asked to,
+           * and only when its parent does (a mistyped drive is still an error). */
+          if (b.action === "setModelsDir" && b.force && b.create && !(await stat(dir).catch(() => null))
+              && (await stat(path.dirname(dir)).catch(() => null))?.isDirectory()) {
+            await mkdir(dir, { recursive: true });
+          }
           const st = await stat(dir).catch(() => null);
           if (!st?.isDirectory()) return json(res, 400, { error: `Not a folder: ${dir}` });
           const files = await scanBases([dir]);
@@ -2607,10 +2675,17 @@ const server = http.createServer(async (req, res) => {
               dir, folders, empty: true,
             });
           }
-          await mergeSettings({ modelsDir: dir, modelsDirPinned: true });
+          /* The folder being left keeps working: remembered as "also load
+           * from", so its weights still count as installed and the engine still
+           * finds them. Only new downloads go to the new folder. */
+          const prev = config.modelsDir;
+          const also = uniqueDirs([...(config.modelsAlso || []), ...(samePath(prev, dir) ? [] : [prev])])
+            .filter((d) => !samePath(d, dir));
+          await mergeSettings({ modelsDir: dir, modelsDirPinned: true, modelsAlso: also });
           return json(res, 200, {
-            ok: true, dir, files: files.length, bytes, folders, needsRestart: true,
-            note: "Saved. Restart AIPLAY Studio to use this folder — downloads, presence checks and the engine all read it at start.",
+            ok: true, dir, files: files.length, bytes, folders, also, needsRestart: true,
+            note: "Saved. Restart AIPLAY Studio to use this folder: new downloads go there, and the models you already have "
+              + "keep working from where they are.",
           });
         }
         /* A local file standing in for a catalogue file, or `use: null` to undo.
@@ -2629,10 +2704,10 @@ const server = http.createServer(async (req, res) => {
             if (!folder || folder.startsWith("..")) {
               return json(res, 400, { error: `${catName} does not live in the models folder, so it cannot be swapped here.` });
             }
-            const found = (await scanBases([config.modelsDir]))
+            const found = (await scanBases(await modelBases()))
               .find((f) => f.name === useName && f.shelf === shelfOf(folder));
             if (!found) {
-              return json(res, 400, { error: `${useName} is not in the ${shelfOf(folder)} folder of ${config.modelsDir}.` });
+              return json(res, 400, { error: `${useName} is not in a configured ${shelfOf(folder)} model folder.` });
             }
             next[catName] = useName;
           }
@@ -3133,7 +3208,7 @@ const server = http.createServer(async (req, res) => {
             error: cap.gated
               ? `${config.music.engines[musicEngine].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
               : `${config.music.engines[musicEngine].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
-            engine: musicEngine, needsModel: cap.gated ? null : capId, gated: cap.gated || null, reason: "weights-missing",
+            engine: musicEngine, needsModel: cap.gated ? null : capId, capability: capId, gated: cap.gated || null, reason: "weights-missing",
           });
         }
       }
@@ -5102,7 +5177,7 @@ const server = http.createServer(async (req, res) => {
       });
       // Give it a cover like anything else, rather than leaving one track in the
       // library conspicuously without art.
-      art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, seed: base.seed });
+      art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, lyrics: base.lyrics, seed: base.seed });
       return json(res, 200, { file: out, ...info, merged: files.length });
     }
 
@@ -5280,7 +5355,7 @@ const server = http.createServer(async (req, res) => {
           // `asked`: a person pressed Regenerate, so the automatic-cover switch
           // has no business refusing it — see request() in server/art.js.
           const redraw = art.request({
-            file, title: m.title, caption: m.caption, asked: true,
+            file, title: m.title, caption: m.caption, lyrics: m.lyrics, asked: true,
             seed: Math.floor(Math.random() * 4294967296), force: true,
           });
           if (!redraw) {
@@ -5446,6 +5521,8 @@ const server = http.createServer(async (req, res) => {
         if (!st?.isFile()) return json(res, 404, { error: `No clip called ${name}.` });
         const vr = videoReady("h3");
         if (!vr.ready) return json(res, 400, { error: `Continuing a clip needs MiniMax H3, which is not installed: ${vr.missing.join(", ")}` });
+        try { b.loras = await checkedVideoLoras(b.loras, "h3"); }
+        catch (err) { return json(res, 400, { error: err.message }); }
         const probe = await probeClip(src);
         if (probe.error) return json(res, 400, { error: `The clip could not be measured — ${probe.error}`, reason: "probe" });
         const overlap = overlapFor(probe.frames, Number(b.overlapFrames) || 22);
@@ -5481,6 +5558,8 @@ const server = http.createServer(async (req, res) => {
             bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
+            // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
+            loras: videoLoras(b.loras),
           },
         });
         return json(res, 200, {
@@ -5500,6 +5579,8 @@ const server = http.createServer(async (req, res) => {
         const gate = await videoWeightsGate();
         if (gate.error) return json(res, 400, gate.error);
         const eng = gate.engine;
+        try { b.loras = await checkedVideoLoras(b.loras, eng); }
+        catch (err) { return json(res, 400, { error: err.message }); }
         const prompt = String(b.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe the clip first." });
 
@@ -5755,6 +5836,8 @@ const server = http.createServer(async (req, res) => {
             bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
+            // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
+            loras: videoLoras(b.loras),
           },
         });
         return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
@@ -5782,6 +5865,7 @@ const server = http.createServer(async (req, res) => {
               ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
               : `${config.video.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
+            capability: capId,
             gated: cap.gated || null,
           });
         }
@@ -5923,6 +6007,11 @@ const server = http.createServer(async (req, res) => {
       if (b.action === "unload" || b.action === "load") {
         if (jobs.current || jobs.queue.length) return json(res, 409, { error: "Wait for the current song to finish first." });
         if (!comfy.ready) return json(res, 409, { error: "ComfyUI is not running yet." });
+        if (art.current || art.queue.length) return json(res, 409, { error: "Wait for the picture, clip or other queued artwork to finish first." });
+        const card = await engineDoor.status().catch(() => null);
+        if (!card?.ready || card.running?.length || Number(card.queue?.running || 0) || Number(card.queue?.pending || 0)) {
+          return json(res, 409, { error: "The engine is busy or unavailable. Load and Unload require an idle engine." });
+        }
         if (b.action === "unload") return json(res, 200, { ok: true, report: await jobs.unloadModels(), ...jobs.snapshot() });
         if (config.music.engine === "ace-step15") {
           /* One second, one step, no planner: the DiT, both encoders and the VAE
@@ -6081,6 +6170,7 @@ const server = http.createServer(async (req, res) => {
               ? `${config.music.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
               : `${config.music.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
+            capability: capId,
             gated: cap.gated || null,
           });
         }
@@ -6620,13 +6710,14 @@ const server = http.createServer(async (req, res) => {
           b.refSizing = b.refSizing ?? "reference"; b.refResolution = graph[4].inputs.resolution;
           b.transparent = b.transparent ?? false;
           const readiness = await qwenImageStatus({ options: { ...b, prompt: "readiness check", seed: b.seed ?? 0 } });
-          if (!readiness.ready) return json(res, 400, readiness);
+          if (!readiness.ready) return json(res, 400, { ...readiness, ...(readiness.missingFiles?.length ? { needsModel: QWEN_IMAGE_ENGINE } : {}) });
         } catch (err) { return json(res, 400, { error: err.message }); }
       }
       if (engine === "anima") {
         const cap = (await models.status()).find((c) => c.id === "imageAnima");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
         /* The DiT is named by the CALLER and must live in models/diffusion_models:
          * UNETLoader reads that folder, so an Anima file left in
          * models/checkpoints is invisible to it however the engine is picked.
@@ -6654,7 +6745,8 @@ const server = http.createServer(async (req, res) => {
         const capId = engine === "zimage" ? "imageZImage" : "imageZImageBase";
         const cap = (await models.status()).find((c) => c.id === capId);
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Reference images are FLUX's trick — no released Z-Image checkpoint takes them. ComfyUI has the node (TextEncodeZImageOmni, up to 3 images) but the weights it needs, Z-Image-Edit and Z-Image-Omni-Base, are both still unreleased. Switch the engine to FLUX.2 for refs." });
         }
@@ -6679,7 +6771,8 @@ const server = http.createServer(async (req, res) => {
       if (engine === "krea2") {
         const cap = (await models.status()).find((c) => c.id === "imageKrea2");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Krea 2 has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
         }
@@ -6697,7 +6790,8 @@ const server = http.createServer(async (req, res) => {
          * only what it genuinely cannot run without is required. */
         const cap = (await models.status()).find((c) => c.id === "coverArt");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
       }
       if (engine === "ideogram4") {
         const cap = (await models.status()).find((c) => c.id === "imageIdeogram");

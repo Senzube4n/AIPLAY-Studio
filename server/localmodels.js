@@ -95,15 +95,21 @@ export function countByFolder(files) {
 }
 
 /** Writes the YAML that makes ComfyUI load from `dir`, and returns its path. */
-export async function writeModelPathsYaml(dir, appData) {
+export async function writeModelPathsYaml(dir, appData, also = []) {
   const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+  /* `also`: earlier models folders, still loaded from so a change of folder
+   * never strands what was already downloaded (config.modelsAlso). */
+  const block = (name, base, isDefault) => [
+    `${name}:`,
+    `  base_path: ${q(base)}`,
+    ...(isDefault ? ["  is_default: true"] : []),
+    ...MODEL_FOLDERS.map((f) => `  ${f}: ${f}/`),
+  ];
   const body = [
     "# Written by AIPLAY Studio at every engine start — the models folder chosen",
     "# on the Models screen. Edits here are overwritten; change the folder there.",
-    "aiplay_models:",
-    `  base_path: ${q(dir)}`,
-    "  is_default: true",
-    ...MODEL_FOLDERS.map((f) => `  ${f}: ${f}/`),
+    ...block("aiplay_models", dir, true),
+    ...also.flatMap((d, i) => block(`aiplay_models_also_${i + 1}`, d, false)),
     "",
   ].join("\n");
   await mkdir(appData, { recursive: true });

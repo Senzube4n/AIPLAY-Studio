@@ -141,8 +141,11 @@ the owner of that card). Those two flags are now Studio's default launch options
 warnings below only appear when a launch lacks them.
 
 **Auto picks the VRAM mode from the card (since 2026-09-19):** under 12 GB it passes
-`--lowvram`, 12 to 16 GB runs ComfyUI's normal mode (no flag), over 16 GB passes
-`--highvram`, each with `--async-offload 4`. It replaces any VRAM mode the install's own
+`--lowvram`, 12 GB and up runs ComfyUI's normal mode (no flag), each with
+`--async-offload 4`. Cards over 16 GB used to get `--highvram`; since 2026-09-21 they
+don't, because it forbids moving any model off the card. A 24 GB Quadro RTX 6000 loading
+music, then image, then video models filled up and spilled into shared system memory:
+15-minute renders and a soft crash. It replaces any VRAM mode the install's own
 flags carry, so ComfyUI never gets two. The measurement below is why normal mode was
 safe to make the default on a 16 GB card: `--lowvram` bought no speed there and kept far
 more in system RAM.
@@ -168,8 +171,11 @@ What is different on AMD:
 - The engine's venv folder goes first on PATH at launch, as activation would
   put it. A TheRock ROCm torch runs `hipInfo.exe` from there to identify the
   card; without it ComfyUI logs *"Could not detect ROCm GPU architecture"*.
-- The VRAM readout is **total only**, taken from ComfyUI's startup log — there
-  is no `nvidia-smi` to read used memory from.
+- The VRAM readout (the rail meter) reads memory in use and load from Windows'
+  own GPU performance counters, the ones Task Manager shows, through
+  `server/gpu-win.ps1`; on Linux from amdgpu's sysfs files. It is display only:
+  the free-VRAM checks that can refuse a render still read `nvidia-smi` and so
+  skip themselves on AMD, exactly as before.
 - **Automatic cover art queues an image render straight after every song.** On
   a machine the music model already fills, switch it off
   (`POST /api/art {"action":"enable","value":false}`, remembered) and draw

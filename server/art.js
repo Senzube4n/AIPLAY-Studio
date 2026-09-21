@@ -783,6 +783,17 @@ export class ArtRunner extends EventEmitter {
       this.current = job;
       this.progress = 0;
       this.startedAt = Date.now();
+      /* THE MUSIC MODEL LEAVES BEFORE A PICTURE OR A CLIP ARRIVES. ComfyUI
+       * keeps MiniMax, ACE-Step or YuE2 loaded after a song, and would load the
+       * image or video model beside it: on a 16 or 24 GB card that is how a
+       * render ends up streaming from system RAM. The music runner's own
+       * switch (jobs.js) only ever compared music models with each other.
+       * `artResident` tells it the way back needs an unload too. */
+      if (this.jobs.loaded) {
+        console.log(`  [art] unloading ${this.jobs.loaded.key} before the ${job.kind || "image"} job`);
+        await this.jobs.unloadModels().catch(() => {});
+      }
+      this.jobs.artResident = true;
       job.startedAt = this.startedAt;
       this.#connect();
       this.emit("update");
@@ -836,6 +847,7 @@ export class ArtRunner extends EventEmitter {
               prompt: job.usedPrompt ?? null, seed: job.seed,
               width: job.width, height: job.height,
               clipSeconds: job.seconds, steps: job.steps,
+              loras: job.loras?.length ? job.loras : null,
               firstFrame: job.firstFrame || null, loop: !!job.loop,
               // What the prompt's <Picture n> / <Audio n> tags pointed at, so a
               // liked clip can be re-rolled with the same references.
@@ -992,7 +1004,7 @@ export class ArtRunner extends EventEmitter {
     // The Images screen owns its prompt; a cover has one derived for it.
     const prompt = standalone
       ? job.prompt
-      : coverPrompt({ caption: job.caption, title: job.title, seed: job.seed });
+      : coverPrompt({ caption: job.caption, title: job.title, seed: job.seed, lyrics: job.lyrics });
     /* A custom graph replaces the built-in one entirely.
      *
      * If it fails to load we fall back to the built-in rather than failing the
@@ -1433,6 +1445,8 @@ export class ArtRunner extends EventEmitter {
       /* Model files the person named instead of the engine’s own
        * (server/modelpick.js). Undefined leaves every part as it was. */
       models: job.models,
+      // The person's own LoRAs from the Video screen, on both engines.
+      loras: job.loras,
       // Waypoints. Without this line the route stages the pictures, the job
       // carries them, and the graph never sees one -- silently.
       midFrames: job.midFrames,
@@ -1864,7 +1878,7 @@ export class ArtRunner extends EventEmitter {
     for (const t of tracks) {
       const stem = t.file.replace(/\.(flac|mp3|opus|wav)$/i, "");
       if (have.has(`${stem}.png`)) continue;
-      if (this.request({ file: t.file, caption: t.caption, title: t.title, seed: t.seed })) n++;
+      if (this.request({ file: t.file, caption: t.caption, title: t.title, seed: t.seed, lyrics: t.lyrics })) n++;
     }
     return n;
   }

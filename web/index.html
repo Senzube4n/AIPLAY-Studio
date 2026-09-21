@@ -887,6 +887,17 @@
         Leave these on auto unless you have a model of your own.</p>
     </div>
 
+    <!-- YOUR OWN LoRAs for the video engine on the screen. Same stack as the
+         Images screen: pick from models/loras, they chain, a slider each. The
+         engine's own speed-up LoRAs load by themselves and are not listed.
+         web/app.js vidLoadLoras(). -->
+    <div class="field" id="vidLoraRow">
+      <label class="flabel" for="vidLoraPick">LoRAs</label>
+      <select id="vidLoraPick" class="sel2 sm"><option value="">add a LoRA…</option></select>
+      <div id="vidLoras" class="lorastack"></div>
+      <p class="hint" id="vidLoraNote"></p>
+    </div>
+
     <div class="field">
       <label class="flabel" for="vidPrompt">What should it show</label>
       <textarea id="vidPrompt" rows="4" spellcheck="false"

@@ -71,6 +71,10 @@ ok("a music model sharing the folder is not offered as an image model", !listed.
 const found = await resolvePick("some_dit.ckpt", cfg);
 ok("one picked file can be resolved by name from either shelf", found?.folder === "diffusion_models");
 ok("a name that is not there resolves to nothing", (await resolvePick("nope.safetensors", cfg)) === null);
+const movedCfg = { modelsDir: path.join(base, "new-downloads"), modelsAlso: [base], comfyDir: path.join(base, "separate-engine"), comfy: { extraArgs: [] } };
+ok("a model in a remembered folder still appears in the image picker", (await listPickable(movedCfg)).some((r) => r.name === "some_dit.ckpt"));
+ok("a remembered transformer is also offered to the video picker", (await listVideoPickable(movedCfg)).some((r) => r.name === "some_dit.ckpt"));
+ok("a remembered model can still be resolved when a render is requested", (await resolvePick("some_dit.ckpt", movedCfg))?.folder === "diffusion_models");
 await rm(base, { recursive: true, force: true });
 
 /* ══ 3. the graphs take the user's own file ══════════════════════════════ */

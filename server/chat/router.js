@@ -138,6 +138,8 @@ export const ROUTABLE = {
   model_inventory: null,
   models_folder: "writes",
   model_override: "writes",
+  music_model_memory: "gpu",
+  set_video_enabled: "writes",
   studio_api_reference: null,
   import_local_media: "writes",
   hum_to_score: null,

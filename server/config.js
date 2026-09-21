@@ -97,6 +97,12 @@ export const config = {
   tier: "auto",
   comfyDir: path.join(RIG, "ComfyUI"),
   get modelsDir() { return MODELS_DIR_PINNED || path.join(this.rig, "ComfyUI", "models"); },
+  /* Folders the models folder USED to be. Choosing a new folder on the Models
+   * screen (a bigger drive, say) sends new downloads there; the weights already
+   * downloaded stay where they are, so the old folder is remembered here and
+   * still searched, by Studio for "is it installed" and by the engine for
+   * loading (server/localmodels.js writes it into the same YAML). */
+  modelsAlso: Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d) => typeof d === "string" && d.trim()) : [],
   /* The card first-run setup found ({vendor, name, totalMb, source}). Only a
    * fallback for machines where nvidia-smi cannot be read — see gpu.js. */
   gpu: saved.gpu && typeof saved.gpu === "object" ? saved.gpu : null,

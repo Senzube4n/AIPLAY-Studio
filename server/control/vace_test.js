@@ -90,6 +90,11 @@ function diff(a, b) {
   return out;
 }
 
+/** A built graph with its tiled decode put back to W1's plain one, so every
+ *  other comparison below is still against W1 exactly (vace.js node 10). */
+const untile = (g) => (g["10"]?.class_type === "VAEDecodeTiled"
+  ? { ...g, 10: { class_type: "VAEDecode", inputs: { samples: g["10"].inputs.samples, vae: g["10"].inputs.vae } } } : g);
+
 /* ── the shape diff ──────────────────────────────────────────────────────── */
 {
   const built = vaceGraph({
@@ -98,7 +103,14 @@ function diff(a, b) {
     seed: 12345,
     prefix: "control/whatever",
   });
-  const d = diff(W1_GRAPH, built);
+  /* THE ONE PERMITTED DIFFERENCE: the decode is tiled (see vace.js node 10).
+   * Same inputs from the same nodes, and the graph is otherwise W1 exactly. */
+  ok("the decode is W1's, tiled: the same samples and VAE into VAEDecodeTiled",
+    built["10"]?.class_type === "VAEDecodeTiled"
+      && JSON.stringify(built["10"].inputs.samples) === JSON.stringify(W1_GRAPH["10"].inputs.samples)
+      && JSON.stringify(built["10"].inputs.vae) === JSON.stringify(W1_GRAPH["10"].inputs.vae),
+    JSON.stringify(built["10"]));
+  const d = diff(W1_GRAPH, untile(built));
   ok("the built graph IS W1, modulo prompt, seed, control filename and save prefix",
     d.length === 0, d.join("\n          "));
   ok("...and it is W1's node set exactly — no node added, none dropped",
@@ -148,9 +160,9 @@ function diff(a, b) {
     with_["23"]?.class_type === "LoadImage" && with_["23"].inputs.image === "face.png"
     && with_["7"].inputs.reference_image[0] === "23", JSON.stringify(with_["23"]));
   ok("...and node 23 is the ONLY thing a reference adds — the rest of W1 is untouched",
-    diff(W1_GRAPH, Object.fromEntries(Object.entries(with_).filter(([k]) => k !== "23")))
+    diff(W1_GRAPH, untile(Object.fromEntries(Object.entries(with_).filter(([k]) => k !== "23"))))
       .filter((l) => !/reference_image/.test(l)).length === 0,
-    diff(W1_GRAPH, Object.fromEntries(Object.entries(with_).filter(([k]) => k !== "23"))).join("; "));
+    diff(W1_GRAPH, untile(Object.fromEntries(Object.entries(with_).filter(([k]) => k !== "23")))).join("; "));
   ok("TrimVideoLatent takes trim_amount from the VACE node either way — a reference cannot forget it",
     JSON.stringify(without["9"].inputs.trim_amount) === JSON.stringify(["7", 3])
     && JSON.stringify(with_["9"].inputs.trim_amount) === JSON.stringify(["7", 3]));

@@ -1,6 +1,7 @@
 // AIPLAY Studio.exe — a small Windows front door for launcher\launcher.mjs.
 //
-// It does what AIPLAY Studio.cmd does (find Node.js 20+, fetch the three npm
+// It does what AIPLAY Studio.cmd does (find Node.js 20+, preferring the private
+// copy in .\node that AIPLAY Studio Setup.exe puts there, fetch the three npm
 // packages if missing, run the launcher) without a console window, and keeps a
 // tray icon while the launcher runs: click it to reopen the launcher window,
 // right-click to open Studio or to stop Studio and quit. The launcher's output
@@ -47,6 +48,11 @@ static class Program
         }
 
         string path = MergedPath();
+        // A private Node.js the installer put next to this exe comes first, so a
+        // PC with no Node at all needs nothing installed. It is only ever on the
+        // PATH of Studio's own processes, never the machine's.
+        string privateNode = Path.Combine(root, "node");
+        if (File.Exists(Path.Combine(privateNode, "node.exe"))) path = privateNode + ";" + path;
         string node = FindOnPath("node.exe", path);
         if (node == null)
         {

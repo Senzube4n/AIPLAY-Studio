@@ -43,7 +43,11 @@ async function api(method, url, body) {
   const d = await r.json().catch(() => ({}));
   // A page newer than its server: the buttons load from disk at once, their routes only after a restart.
   if (r.status === 404) throw new Error("This needs a Studio restart: the running server predates these buttons.");
-  if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+  if (!r.ok || d.error) {
+    const e = new Error(d.error || `HTTP ${r.status}`);
+    if (d.need) { e.need = d.need; e.apis = d.apis || []; }
+    throw e;
+  }
   return d;
 }
 
@@ -122,7 +126,13 @@ function mount(bar) {
         write(box, r.text);
         bar.querySelector('[data-act="undo"]').hidden = false;
         say(r.model ? `Enhanced · ${r.model}` : "Enhanced.");
-      } catch (err) { say(err.message, true); }
+      } catch (err) {
+        /* No chat model: the window that offers one, rather than a sentence. */
+        if (err.need === "chat" && window.aiplayNeedModel) {
+          say("Needs a chat model.", true);
+          window.aiplayNeedModel("chat", { apis: err.apis, after: paintEnhanceModel });
+        } else say(err.message, true);
+      }
       finally { btn.disabled = false; btn.classList.remove("busy"); }
     }
   });

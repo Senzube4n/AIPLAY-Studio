@@ -222,6 +222,11 @@ in the app.
                             Copyright License))
                             https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/blob/main/LICENSE.md
 
+    Qwen3 4B                Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE
+
     HTDemucs (fine-tuned)   MIT
                             Output rights: yours (MIT License, grant paragraph
                             (demucs LICENSE, Meta Platforms))

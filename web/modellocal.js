@@ -77,8 +77,12 @@ export function paintLocal(d, root = document) {
       <button class="btn sm ghost" type="button" data-mf="check">Check</button>
       <button class="btn sm" type="button" data-mf="use" disabled>Use this folder</button>
     </div>
-    <p class="hint" id="mfNote">Studio checks for, downloads into and loads from this folder.${
-      others.length ? ` The engine also loads from ${others.map(esc).join(" · ")}.` : ""}</p>`;
+    <p class="hint" id="mfNote">Studio checks for, downloads into and loads from this folder. To download
+      somewhere else (a bigger drive), pick or type a folder, even an empty or new one, and press Use this folder.${
+      others.length ? ` The engine also loads from ${others.map(esc).join(" · ")}.` : ""}</p>
+    ${(loc.also || []).length ? `<div class="mfalso">${(loc.also || []).map((d) => `
+      <span>Still loading the models already in <code>${esc(d)}</code></span>
+      <button class="btn sm ghost" type="button" data-mf-drop="${esc(d)}">Stop using</button>`).join("")}</div>` : ""}`;
   if (draft !== null) root.getElementById("mfPath").value = draft;
 
   /* ── stand-ins, on each card that has a missing or swapped file ────── */
@@ -162,18 +166,34 @@ export function initLocal(refresh, root = document) {
   };
   const useBtn = () => root.querySelector('[data-mf="use"]');
 
+  /* An empty or not-yet-made folder is a legitimate choice: it is where NEW
+   * downloads go. The folder being left is remembered by the server and still
+   * loaded from, so nothing already downloaded is lost or fetched again. */
+  let fresh = false;
   async function check(dir) {
     note("Looking…");
-    const r = await post({ action: "scanFolder", dir });
-    if (!r.ok) { note(r.error || "Could not read that folder.", true); return; }
-    const parts = Object.entries(r.folders || {}).map(([k, v]) => `${k} ${v.files}`);
+    fresh = false;
     const current = root.getElementById("mfPath")?.defaultValue;
+    const r = await post({ action: "scanFolder", dir });
+    const b = useBtn();
+    if (!r.ok) {
+      if (/^Not a folder/.test(r.error || "")) {
+        fresh = true;
+        note(`${dir} does not exist yet. Use this folder creates it and sends new downloads there; `
+          + "the models you already have keep working from where they are.");
+        if (b) b.disabled = false;
+        return;
+      }
+      note(r.error || "Could not read that folder.", true);
+      if (b) b.disabled = true;
+      return;
+    }
+    const parts = Object.entries(r.folders || {}).map(([k, v]) => `${k} ${v.files}`);
+    if (!r.files) fresh = true;
     note(r.files
       ? `${r.files} model files, ${gb(r.bytes)}: ${parts.join(" · ")}.${same(r.dir, current) ? " This is the current folder." : ""}`
-      : `No model files in the usual subfolders of ${r.dir} (checkpoints, diffusion_models, vae, …). Pick the folder that contains them.`,
-    !r.files);
-    const b = useBtn();
-    if (b) b.disabled = !r.files || same(r.dir, current);
+      : `${r.dir} has no models yet. Use this folder sends new downloads there; the models you already have keep working from where they are.`);
+    if (b) b.disabled = same(r.dir, current);
   }
 
   root.addEventListener("input", (e) => {
@@ -187,6 +207,13 @@ export function initLocal(refresh, root = document) {
   });
   root.addEventListener("click", async (e) => {
     const mf = e.target.closest?.("[data-mf]");
+    const drop = e.target.closest?.("[data-mf-drop]");
+    if (drop) {
+      drop.disabled = true;
+      const r = await post({ action: "dropAlso", dir: drop.dataset.mfDrop });
+      note(r.ok ? r.note : (r.error || "Not saved."), !r.ok);
+      return;
+    }
     const use = e.target.closest?.("[data-mo-use]");
     const undo = e.target.closest?.("[data-mo-undo]");
     if (!mf && !use && !undo) return;
@@ -203,7 +230,7 @@ export function initLocal(refresh, root = document) {
       } else if (mf?.dataset.mf === "check") {
         await check(root.getElementById("mfPath").value);
       } else if (mf?.dataset.mf === "use") {
-        const r = await post({ action: "setModelsDir", dir: root.getElementById("mfPath").value });
+        const r = await post({ action: "setModelsDir", dir: root.getElementById("mfPath").value, force: fresh, create: fresh });
         note(r.ok ? r.note : (r.error || "Not saved."), !r.ok);
         return;   // stays disabled: nothing changes until restart
       } else if (use) {

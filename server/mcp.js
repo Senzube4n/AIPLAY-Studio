@@ -44,6 +44,7 @@ import { audioTools } from "./mcp-audio.js";
 import { scoreTools } from "./mcp-music-score.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
+import { videoLoraInput } from "./video-lora-validation.js";
 
 /* The welcome window's catalogue (FORK): what the studio is and can make, in
  * the same words the app shows a new person. */
@@ -2692,6 +2693,15 @@ export const TOOLS = [
   },
 
   {
+    name: "set_video_enabled",
+    description: "Enable or disable video generation, matching the Video page's switch-on prompt. Enabling does not render or download anything. Disabling also clears automatic video generation for new songs.",
+    inputSchema: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } }, additionalProperties: false },
+    async run(a) {
+      if (typeof a.enabled !== "boolean") throw new Error("enabled must be true or false.");
+      return await api("POST", "/api/video", { action: "enable", value: a.enabled });
+    },
+  },
+  {
     /* The engine choice was previously reachable only from the GUI, which left
      * an agent dead-ended: references need H3, soundtracks need LTX, and the
      * create route refuses the mismatch. make_clip can switch inline, but a
@@ -2804,18 +2814,17 @@ export const TOOLS = [
         keep_audio: { type: "boolean", description: "Keep the engine's own rendered audio. Default true; a soundtrack clip always keeps it." },
         bridge: { type: "string", description: "H3 only: a conditioning-bridge adapter for THIS render (a file name from video_settings' bridge_adapter options, or \"off\"). Default: the Video panel's setting. A learned rewrite of the words toward action logic (BUNNY) or composition (Semantic Bridge); the authors report about 1 in 10 renders regress." },
         bridge_alpha: { type: "number", minimum: 0, maximum: 1, description: "H3 only: the bridge's blend strength for this render. Publishers recommend 0.10–0.15; 0 bypasses." },
+        loras: { type: "array", maxItems: 8, description: "Custom video LoRAs in order, from list_loras. Known wrong architectures and missing files are refused. Engine speed adapters load automatically and must not be listed again. Unrecognized bases remain unverified.", items: { type: "object", required: ["name"], properties: { name: { type: "string" }, strength: { type: "number", minimum: -4, maximum: 4, default: 1 } }, additionalProperties: false } },
         seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
         timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
       },
       additionalProperties: false,
     },
     async run(a) {
+      const loras = videoLoraInput(a.loras);
       let st = await api("GET", "/api/status");
       if (!st.config?.video?.enabled) {
-        throw new Error("Video is switched off in Settings. Turn it on, or the request is refused.");
-      }
-      if (st.config?.video?.ready === false) {
-        throw new Error(`Video models are not installed: ${(st.config.video.missing || []).join(", ")}`);
+        throw new Error("Video is switched off. Call set_video_enabled with enabled:true to enable it before rendering.");
       }
       /* ENGINE FIRST, because the engine decides which of the inputs below are
        * even legal. An explicit `engine` switches (the caller named it, so that
@@ -2826,6 +2835,9 @@ export const TOOLS = [
         const sw = await api("POST", "/api/video", { action: "engine", value: a.engine });
         if (sw.error) throw new Error(sw.error);
         st = await api("GET", "/api/status");
+      }
+      if (st.config?.video?.ready === false) {
+        throw new Error(`Video models are not installed: ${(st.config.video.missing || []).join(", ")}`);
       }
       const engine = st.config?.video?.engine;
       const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song;
@@ -2866,6 +2878,7 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
         bridge: typeof a.bridge === "string" && a.bridge ? a.bridge : undefined,
         bridgeAlpha: Number.isFinite(a.bridge_alpha) ? a.bridge_alpha : undefined,
+        loras,
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
        * stages covers AND standalone images). This tool sent `firstFrame` from
@@ -3007,6 +3020,7 @@ export const TOOLS = [
         overlap_frames: { type: "integer", description: "How much of the tail to hand the model as context, snapped down to 17k+5. Default 22." },
         bridge: { type: "string", description: "A conditioning-bridge adapter for this render, or \"off\" (see make_clip). Default: the Video panel's setting." },
         bridge_alpha: { type: "number", minimum: 0, maximum: 1, description: "The bridge's blend strength for this render." },
+        loras: { type: "array", maxItems: 8, description: "Custom H3 adapters for this continuation; list_loras supplies filenames. Engine speed adapters load automatically. This does not inherit the source clip's custom stack.", items: { type: "object", required: ["name"], properties: { name: { type: "string" }, strength: { type: "number", minimum: -4, maximum: 4, default: 1 } }, additionalProperties: false } },
         seed: { type: "integer" },
         timeout_seconds: { type: "integer", description: "Default 900." },
       },
@@ -3014,10 +3028,12 @@ export const TOOLS = [
     },
     async run(a) {
       const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
+      const loras = videoLoraInput(a.loras);
       const r = await api("POST", "/api/video", {
         action: "extend", clip: safeName(a.clip, "clip"),
         seconds: a.seconds, prompt: a.prompt, steps: a.steps,
         overlapFrames: a.overlap_frames,
+        loras,
         bridge: typeof a.bridge === "string" && a.bridge ? a.bridge : undefined,
         bridgeAlpha: Number.isFinite(a.bridge_alpha) ? a.bridge_alpha : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,

@@ -169,17 +169,24 @@ export const VRAM_MODES = new Set(["--gpu-only", "--highvram", "--normalvram", "
 
 /**
  * The Auto tier's flags, from the card's memory: under 12 GB streams weights
- * from system RAM (--lowvram); 12 to 16 GB runs ComfyUI's normal mode, which
- * keeps far less in system RAM than --lowvram did; more than 16 GB keeps
- * models on the card (--highvram). A 12 GB card reads a little under 12 and a
- * 16 GB card a little under 16 (16,304 MB on an RX 9060 XT), hence the half-GB
- * margins. Unknown memory keeps the old, cautious --lowvram.
+ * from system RAM (--lowvram); 12 GB and up runs ComfyUI's normal mode, which
+ * loads what fits and moves the rest out when the next model needs the room.
+ * A 12 GB card reads a little under 12 (hence the half-GB margin). Unknown
+ * memory keeps the old, cautious --lowvram.
+ *
+ * ⚠ NO --highvram, AT ANY SIZE. It used to be the answer above 16 GB, and it
+ * tells ComfyUI never to move a model off the card. Studio loads a music model,
+ * then an image model, then a video model: with nothing allowed to leave, a
+ * 24 GB Quadro RTX 6000 filled up, and on Windows the NVIDIA driver then spills
+ * into shared system memory instead of failing, which is the 15-minute render
+ * and the "soft crash". Normal mode keeps a model resident exactly as long as
+ * there is room for it, which is all --highvram was ever buying. It stays in
+ * Advanced for anyone who runs one model forever on a server card.
  */
 export function autoVramFlags(totalMb) {
   const gb = Number(totalMb) / 1024;
   if (!Number.isFinite(gb) || gb <= 0 || gb < 11.5) return ["--lowvram", "--async-offload", "4"];
-  if (gb <= 16.5) return ["--async-offload", "4"];
-  return ["--highvram", "--async-offload", "4"];
+  return ["--async-offload", "4"];
 }
 
 /** `args` without any flag in `families`, dropping each removed flag's values too. */

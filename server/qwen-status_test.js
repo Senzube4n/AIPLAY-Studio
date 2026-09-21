@@ -46,6 +46,25 @@ test("offline runtime fails closed; custom files replace stock requirements with
   assert.equal(hidden.ready, false); assert.deepEqual(hidden.missingFiles, [QWEN_IMAGE_FILES.dit]);
 });
 
+test("changing the download folder keeps Qwen files in remembered folders ready", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "qwen-old-shelf-"));
+  const previous = path.join(root, "previous");
+  const options = { dit: "custom-qwen.safetensors", encoder: "custom-encoder.safetensors", vae: "custom-vae.safetensors" };
+  const config = { modelsDir: path.join(root, "new"), modelsAlso: [previous], comfyDir: path.join(root, "comfy"), comfy: { extraArgs: [] } };
+  try {
+    for (const [folder, name] of [["diffusion_models", options.dit], ["text_encoders", options.encoder], ["vae", options.vae]]) {
+      await mkdir(path.join(previous, folder), { recursive: true });
+      await writeFile(path.join(previous, folder, name), "fixture");
+    }
+    const engine = { objectInfo: async () => info() };
+    const ready = await qwenImageStatus({ options, config, engine });
+    assert.equal(ready.ready, true, ready.error);
+    const forgotten = await qwenImageStatus({ options, config: { ...config, modelsAlso: [] }, engine });
+    assert.equal(forgotten.filesReady, false);
+    assert.deepEqual(forgotten.missingFiles, Object.values(options));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("reference staging validates the whole ordered set, including uploaded files and combined persona refs", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "qwen-stage-"));
   const dirs = { inputDir: path.join(root, "input"), coverDir: path.join(root, "covers"), imageDir: path.join(root, "images") };

@@ -47,6 +47,7 @@ import { paintLocal, initLocal } from "./modellocal.js";
 // welcome.js writes none, and it is the same object studio_screen_info returns.
 import { mountInfo } from "./info.js";
 import { appConfirm, appPrompt } from "./dialog.js";
+import { openModelPicker } from "./modelpick.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -546,14 +547,88 @@ function musicModelValue() {
   if (e === "ace-step15") return state.musicAceModel ? `${e}:${state.musicAceModel}` : e;
   return e || "";
 }
+/* Which Models-screen row installs each music engine. */
+const MUSIC_CAP = { "minimax-music3": "engine", "ace-step15": "musicAceStep15", "yue2-comfy": "musicYue2Comfy", "yue2-gguf": "musicYue2Gguf", yue2: "musicYue2" };
+
+/**
+ * The floating "this needs a model" window (web/modelpick.js), with this page's
+ * ways round it: the API screens, and native YuE2's own setup panel.
+ * `kind` "chat" or "music"; `o.apis` connected cloud chat models; `o.after`
+ * runs once an API was chosen.
+ */
+function needModel(kind, o = {}) {
+  if (kind === "chat") {
+    const api = (o.apis || [])[0];
+    openModelPicker({
+      kind: "chat",
+      title: o.title || "Enhance needs a chat model",
+      lead: "Download one that fits this machine, or let a cloud model write instead.",
+      apiLabel: api ? `Use ${api.label || "the connected API"} instead` : "Use an API instead",
+      onApi: async () => {
+        if (!api) { setView("mcp"); $("agCloudTitle")?.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+        await fetch("/api/enhance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "model", model: api.file }) });
+        o.after?.();
+        document.querySelector(".mpick .mp-msg").textContent = `Enhance now uses ${api.label || api.file}. Press Enhance again.`;
+      },
+    });
+    return;
+  }
+  openModelPicker({
+    kind: "music",
+    title: o.title || "That music model isn't installed",
+    lead: o.lead || "Download it here, or pick one that fits this machine.",
+    focus: o.focus,
+    apiLabel: "Use the MiniMax API instead",
+    onApi: () => { setView("settings"); $("apiEnabled")?.scrollIntoView({ block: "center", behavior: "smooth" }); },
+    onSetup: (id) => {
+      if (id !== "musicYue2Gguf") return false;
+      state.musicEngine = "yue2-gguf";
+      setView("create"); musicEnginePaint();
+      $("ggufSetup")?.scrollIntoView({ block: "center", behavior: "smooth" });
+      refreshGgufSetup();
+      return true;
+    },
+  });
+}
+globalThis.aiplayNeedModel = needModel;
+
+/**
+ * ONE ANSWER TO "THAT MODEL IS NOT INSTALLED", ON EVERY SCREEN.
+ *
+ * The server already names the missing row in its refusals (`needsModel`, or
+ * `capability` for a gated one such as LTX 2.5), and every screen turned that
+ * into an OK box saying "Open the Models screen". This opens the model window
+ * instead, on that row, with the others that do the same job beside it.
+ * Returns false when the reply is not about a missing model.
+ */
+function offerModel(r) {
+  const id = typeof r?.needsModel === "string" ? r.needsModel : r?.needsModel?.id || r?.capability || null;
+  if (!id) return false;
+  const title = String(r.error || "").split(/(?<=\.)\s/)[0] || "This needs a model";
+  if (id === "chatQwen3") { needModel("chat", { title }); return true; }
+  if (Object.values(MUSIC_CAP).includes(id)) { needModel("music", { title, focus: id }); return true; }
+  openModelPicker({
+    kind: "auto", focus: id, title,
+    lead: r.gated ? "Studio cannot download this one itself. Here is how to get it, and what else does the job."
+      : "Download it here, or pick one that fits this machine.",
+  });
+  return true;
+}
+/** The window for a missing model, else the server's own sentence. */
+function failSay(r) {
+  if (!offerModel(r)) alert(r?.error);
+}   // web/prompt-tools.js opens it on a "no chat model" refusal
+
 function paintMusicModelSelect(sel) {
   const choices = state.musicModels || [];
   if (!sel || !choices.length) return false;
   const sig = JSON.stringify(choices.map((c) => [c.value, c.available, c.note]));
   if (sel.dataset.sig !== sig && document.activeElement !== sel) {
     sel.innerHTML = choices.map((c) => {
-      // Native GGUF stays choosable when absent: choosing it opens its setup.
-      const off = !c.available && c.engine !== "yue2-gguf";
+      /* Everything stays choosable: choosing one that is not installed opens
+       * the window that installs it (needModel), rather than a greyed-out row
+       * that says nothing about how to get it. */
+      const off = false;
       const tail = c.available ? (c.note ? ` — ${c.note}` : "") : ` — ${c.note || "not installed"}`;
       return `<option value="${esc(c.value)}"${off ? " disabled" : ""}>${esc(c.label + tail)}</option>`;
     }).join("");
@@ -586,6 +661,14 @@ function paintModelMusicPanel() {
 async function chooseMusicModel(value) {
   const c = (state.musicModels || []).find((x) => x.value === value);
   if (!c) return;
+  if (!c.available && c.engine !== "yue2-gguf") {
+    /* Put every picker back on what is really selected, then offer the model. */
+    document.querySelectorAll("#musicEngine, #modelMusicPick").forEach((s) => { s.dataset.sig = ""; paintMusicModelSelect(s); s.value = musicModelValue(); });
+    needModel("music", c.api
+      ? { title: `${c.label} needs an API key`, lead: "Add a key in Settings, API mode, or pick a model that runs on this machine.", focus: null }
+      : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
+    return;
+  }
   const was = { engine: state.musicEngine, precision: $("qModel")?.value };
   const repaint = () => {
     setMode(state.mode === "instrumental" ? "instrumental" : "song");
@@ -609,7 +692,7 @@ async function chooseMusicModel(value) {
       body: JSON.stringify({ action: "model", value }),
     })).json();
     if (r.error) {
-      alert(r.error);
+      failSay(r);
       state.musicEngine = was.engine;
       state.musicYue2Checkpoint = wasCkpt;
       if ($("qModel") && was.precision) $("qModel").value = was.precision;
@@ -689,7 +772,7 @@ function musicEnginePaint() {
           /* Put the select back where it was, and say why — the same shape
            * setVideoEngine() uses below. A chooser that keeps a value the
            * server rejected is a chooser that lies about what will render. */
-          alert(r.error);
+          failSay(r);
           state.musicEngine = was;
           musicEnginePaint();
           setMode(state.mode === "instrumental" ? "instrumental" : "song");
@@ -1041,13 +1124,30 @@ function closeSongRefMenu() {
   $("srMenu").hidden = true;
   $("srMenuBtn").setAttribute("aria-expanded", "false");
 }
+/**
+ * The model a song was made with, as a person reads it.
+ *
+ * MiniMax Music 3 songs record only their precision ("int8", "fp16") as the
+ * model, while every other engine records its name ("YuE2 GGUF Q8"), so the
+ * library badge on a MiniMax song said "int8" and nothing else. Old rows from
+ * before the engine field existed are MiniMax too: it was the only engine.
+ */
+function songModelLabel(t) {
+  const m = String(t?.model || "").trim();
+  const precision = /^(int8|fp8|fp16|bf16|fp32)$/i.test(m);
+  if (t?.engine === "minimax-music3" || (!t?.engine && (!m || precision))) {
+    return precision ? `MiniMax Music 3 · ${m}` : (m || "MiniMax Music 3");
+  }
+  return m || t?.engine || "";
+}
+
 function openSongRefMenu() {
   const rows = songRefTracks().sort((a, b) => b.createdAt - a.createdAt);
   $("srMenu").innerHTML = rows.length
     ? rows.map((t) => `
       <div class="row${t.file === state.songRef ? " playing" : ""}" data-sr="${encodeURIComponent(t.file)}">
         <div class="art" style="background:${artBg(t)}"></div>
-        <div class="rmeta"><span class="rtitle">${esc(t.title || t.file)} <span class="ver">${esc(t.model || "")}</span></span>
+        <div class="rmeta"><span class="rtitle">${esc(t.title || t.file)} <span class="ver">${esc(songModelLabel(t))}</span></span>
           <span class="rsub">${esc(songRefSub(t))}</span></div>
         <div class="rside"><span>${t.durationSeconds ? fmt(t.durationSeconds) : ""}</span></div>
       </div>`).join("")
@@ -1080,7 +1180,7 @@ document.addEventListener("dragstart", (e) => {
   if (t) {
     const g = document.createElement("div");
     g.className = "srghost";
-    g.innerHTML = `<div class="art" style="background:${artBg(t)}"></div><div class="rmeta"><span class="rtitle">${esc(t.title || t.file)}</span><span class="rsub">${esc(t.model || "")}</span></div>`;
+    g.innerHTML = `<div class="art" style="background:${artBg(t)}"></div><div class="rmeta"><span class="rtitle">${esc(t.title || t.file)}</span><span class="rsub">${esc(songModelLabel(t))}</span></div>`;
     document.body.appendChild(g);
     e.dataTransfer.setDragImage(g, 20, 20);
     setTimeout(() => g.remove());
@@ -1287,7 +1387,7 @@ document.addEventListener("aiplay:simple-snapshot", (e) => {
   if (!d.remix && state.remixTranscribe && yueEngine()) d.remix = { song: state.remixTranscribe, engine: state.musicEngine || "yue2" };
   d.attached = (state.simpleAttached || []).map((file) => {
     const t = simpleSongRow(file) || { file };
-    return { file, title: t.title || file, model: t.model || t.engine || "", seed: t.seed, seconds: t.durationSeconds,
+    return { file, title: t.title || file, model: songModelLabel(t), seed: t.seed, seconds: t.durationSeconds,
       instrumental: !!t.instrumental, style: t.caption || "", lyrics: t.lyrics || "" };
   });
 });
@@ -2705,7 +2805,7 @@ async function generate(preview, mixSeed) {
       body: JSON.stringify(spec),
     });
     const j = await r.json();
-    if (j.error) { alert(j.error); return; }
+    if (j.error) { failSay(j); return; }
     else state.lastSpec = { ...spec };
 
     for (let i = 1; i < n; i++) {
@@ -3422,11 +3522,14 @@ function rowHtml(j) {
   return `
     <div class="row${playing ? " playing" : ""}${state.libSel?.has(j.file) ? " picked" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
       <label class="rsel" title="Select (shift-click for a range)"><input type="checkbox" data-sel="${f}"${state.libSel?.has(j.file) ? " checked" : ""} aria-label="Select ${esc(j.title)}"></label>
-      <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}</div>
+      <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}${
+        /* A cover being drawn is a spinner on the picture it will replace,
+           not a word in the title line. */
+        state.artNow?.file === j.file && state.artNow.kind === "cover" ? '<span class="artspin" title="Drawing the cover…" aria-label="Drawing the cover"></span>' : ""}</div>
       <div class="rmeta">
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
           <button class="rpen" data-rename="${f}" title="Edit title" aria-label="Edit title">✎</button>
-          <span class="ver">${esc(j.model || "int8")}</span>
+          <span class="ver">${esc(songModelLabel(j))}</span>
           ${/* What this file actually IS. Studio can write flac, mp3 or opus
                depending on a setting, so a library can hold all three and the
                rows looked identical -- you had to open the folder to find out. */
@@ -3450,7 +3553,7 @@ function rowHtml(j) {
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
                song was having its stems split or its clip rendered. */
-            state.artNow?.file === j.file
+            state.artNow?.file === j.file && state.artNow.kind !== "cover"
               ? `<span class="badge work" title="Running now">${esc(STAGE_WORD[state.artNow.kind] || "working")}…</span>`
               : ""}</span>
         <span class="rsub">${sub}</span>
@@ -4749,7 +4852,7 @@ $("edArtFile").onchange = async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "upload", file: state.editFile, data }),
   }).then((x) => x.json());
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   if (r.library) state.library = r.library;
   const t = state.library.find((x) => x.file === state.editFile);
   // Cache-bust: the filename is unchanged, so without this the browser keeps
@@ -6206,7 +6309,7 @@ $("qVideoWhen").onchange = async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "when", value: $("qVideoWhen").value }),
   })).json();
-  if (r.error) { alert(r.error); $("qVideoWhen").value = state.video?.when || "off"; return; }
+  if (r.error) { failSay(r); $("qVideoWhen").value = state.video?.when || "off"; return; }
   state.video = { ...(state.video || {}), ...(r.video || {}) };
 };
 /* Folders. The only two settings that persist to disk, and the only two that
@@ -6434,11 +6537,25 @@ async function loadModels() {
 let nativeModelsPoll = null;
 
 /* The catalogue in collapsible sections, labelled and ordered by the server.
- * Music & audio starts open; a section with a download running is always open;
- * otherwise each keeps whatever the user last did with it. */
+ * Music & audio starts open; after that each section is exactly what the
+ * person last left it, remembered across restarts.
+ *
+ * ⚠ A SECTION WITH A DOWNLOAD IN IT USED TO BE FORCED OPEN on every repaint.
+ * The native YuE2 setup's progress is never cleared after it finishes, and the
+ * screen repaints every 2 s while it runs, so Music reopened itself the moment
+ * it was closed, on every fresh install. A download shows its own progress bar;
+ * it does not need to overrule a closed section. */
+function modelGroupsOpen() {
+  if (!state.modelGroupsOpen) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem("aiplayModelGroups") || "null"); } catch { /* private window */ }
+    state.modelGroupsOpen = new Set(Array.isArray(saved) ? saved : ["music"]);
+  }
+  return state.modelGroupsOpen;
+}
 function groupModelCards(d, htmls) {
   if (state.musicOnly || !d.groups?.length) return htmls.join("");
-  state.modelGroupsOpen ||= new Set(["music"]);
+  modelGroupsOpen();
   const order = d.groups.map((g) => g.id);
   const labels = Object.fromEntries(d.groups.map((g) => [g.id, g.label]));
   const by = {};
@@ -6447,7 +6564,7 @@ function groupModelCards(d, htmls) {
   return Object.keys(by).sort((a, b) => rank(a) - rank(b)).map((g) => {
     const caps = by[g].map((i) => d.capabilities[i]);
     const ready = caps.filter((c) => c.ready).length;
-    const open = caps.some((c) => c.progress) || state.modelGroupsOpen.has(g);
+    const open = state.modelGroupsOpen.has(g);
     return `<details class="mgroup" data-mgroup="${esc(g)}"${open ? " open" : ""}>
       <summary>${esc(labels[g] || g)}<span class="mgcount">${ready} of ${caps.length} ready</span></summary>
       <div class="mgbody">${by[g].map((i) => htmls[i]).join("")}</div>
@@ -6458,9 +6575,10 @@ function groupModelCards(d, htmls) {
 $("modelList").addEventListener("toggle", (e) => {
   const g = e.target;
   if (!g?.matches?.("details.mgroup")) return;
-  state.modelGroupsOpen ||= new Set(["music"]);
-  if (g.open) state.modelGroupsOpen.add(g.dataset.mgroup);
-  else state.modelGroupsOpen.delete(g.dataset.mgroup);
+  const open = modelGroupsOpen();
+  if (g.open) open.add(g.dataset.mgroup);
+  else open.delete(g.dataset.mgroup);
+  try { localStorage.setItem("aiplayModelGroups", JSON.stringify([...open])); } catch { /* private window */ }
 }, true);
 // Delegated once, at load, so the "show me this row" buttons survive repaints.
 initFit();
@@ -6585,10 +6703,13 @@ function vidPaint() {
       + (nat && nat > 1.6 ? " · slow" : nat && nat < 0.5 ? " · noticeably softer" : "");
   }
 
-  $("vidCreate").disabled = !on;
+  /* Never greyed out for being switched off: a disabled button explains
+   * nothing, and the switch lived in Settings where nobody on this screen
+   * would look. Pressing it asks, in a drawer, and switches it on from there. */
+  $("vidCreate").disabled = false;
   $("vidIntro").textContent = on
     ? "Short clips with " + (eng.label || "the video engine") + "."
-    : "Video is switched off in Settings — switch it on there to render clips.";
+    : "Video is switched off. Press Render and Studio asks to switch it on.";
   $("vidEngineNote").textContent = cur === "ltx"
     ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
     : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references — pictures and sounds the description can call by name.";
@@ -6843,6 +6964,87 @@ async function vidModelShape() {
   $("vidAudioVae").innerHTML = shelfOpts(shelf.vaes || [], "audio VAE");
   /* LTX has no audio decoder in its graph, so there is nothing to replace. */
   for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng !== "h3"; }
+  vidLoadLoras();
+}
+
+/* YOUR OWN LoRAs FOR VIDEO. The same stack as the Images screen, judged
+ * against the engine on the screen: a LoRA whose keys read as another
+ * architecture is shown disabled with the reason, since it would render with
+ * no error and no effect. The engine's own turbo LoRAs load by themselves and
+ * are left out. The stack is kept across an engine switch; a row that no
+ * longer fits says so and is not sent. */
+let vidLoraStack = [];      // [{ name, strength }]
+let vidLoraShelf = [];
+let vidLoraRequest = 0;
+const VID_LORA_BASE = { h3: "MiniMax H3", ltx: "LTX" };
+function vidLoraFit(l, eng = $("vidEngine").value || state.video?.engine || "h3") {
+  const want = VID_LORA_BASE[eng];
+  if (!l?.base || !want) return "unknown";
+  return l.base === want ? "yes" : "no";
+}
+async function vidLoadLoras() {
+  if (!$("vidLoraPick")) return;
+  const request = ++vidLoraRequest;
+  const eng = $("vidEngine").value || state.video?.engine || "h3";
+  const own = new Set((state.video?.engines?.[eng]?.ownLoras) || []);
+  try {
+    const d = await (await fetch("/api/loras")).json();
+    if (request !== vidLoraRequest) return;
+    vidLoraShelf = (d.loras || []).filter((l) => l.isLora && !own.has(l.name));
+  } catch { if (request !== vidLoraRequest) return; vidLoraShelf = []; }
+  const label = VID_LORA_BASE[eng] || "this engine";
+  $("vidLoraPick").innerHTML = '<option value="">add a LoRA…</option>'
+    + vidLoraShelf.map((l) => {
+        const fit = vidLoraFit(l, eng);
+        const mark = fit === "yes" ? "" : fit === "no" ? " · ✗ " + (l.base || "?") : " · ? unverified";
+        const why = fit === "yes" ? "made for " + label : fit === "no" ? "made for " + l.base + ", not " + label : "its base could not be read; try it";
+        return `<option value="${esc(l.name)}"${fit === "no" ? " disabled" : ""} title="${esc(why)}">`
+          + `${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
+      }).join("");
+  const fitting = vidLoraShelf.filter((l) => vidLoraFit(l, eng) !== "no").length;
+  $("vidLoraNote").textContent = !vidLoraShelf.length
+    ? "Nothing in models/loras yet. Put a " + label + " LoRA there and it shows up here."
+    : fitting + " of " + vidLoraShelf.length + " in models/loras can go on " + label + ". They stack, up to eight. A LoRA carries its own licence.";
+  vidPaintLoras();
+}
+function vidPaintLoras() {
+  $("vidLoras").innerHTML = vidLoraStack.map((l, i) => {
+    const fit = vidLoraFit(vidLoraShelf.find((x) => x.name === l.name) || { base: l.base });
+    return `<div class="lorarow">
+      <span class="lname">${esc(l.name.replace(/\.safetensors$/i, ""))}</span>
+      <span class="lfit" data-fit="${fit}">${fit === "yes" ? "fits" : fit === "no" ? "wrong engine, skipped" : "unverified"}</span>
+      <input type="range" min="0" max="150" value="${Math.round((l.strength ?? 1) * 100)}" data-vlorastr="${i}">
+      <b>${(l.strength ?? 1).toFixed(2)}</b>
+      <button class="edtool sm" type="button" data-vlorax="${i}">✕</button>
+    </div>`;
+  }).join("");
+  // Only the number changes while dragging; a repaint would kill the drag.
+  for (const r of document.querySelectorAll("#vidLoras [data-vlorastr]")) {
+    r.oninput = () => {
+      const v = Number(r.value) / 100;
+      vidLoraStack[Number(r.dataset.vlorastr)].strength = v;
+      const b = r.parentElement.querySelector("b");
+      if (b) b.textContent = v.toFixed(2);
+    };
+  }
+  for (const b of document.querySelectorAll("#vidLoras [data-vlorax]")) {
+    b.onclick = () => { vidLoraStack.splice(Number(b.dataset.vlorax), 1); vidPaintLoras(); };
+  }
+}
+$("vidLoraPick").onchange = () => {
+  const name = $("vidLoraPick").value;
+  $("vidLoraPick").value = "";
+  if (!name || vidLoraStack.some((l) => l.name === name) || vidLoraStack.length >= 8) return;
+  vidLoraStack.push({ name, strength: 1, base: vidLoraShelf.find((x) => x.name === name)?.base || null });
+  vidPaintLoras();
+};
+/* Filled at once too, not only when the engine list arrives: a picker that
+ * waits on the status call looks empty to anyone who opens the screen first. */
+vidLoadLoras();
+/** The stack as the render sends it: only rows that can go on this engine. */
+function vidLoraChoice() {
+  const rows = vidLoraStack.filter((l) => vidLoraFit(vidLoraShelf.find((x) => x.name === l.name) || { base: l.base }) !== "no");
+  return rows.length ? { loras: rows.map((l) => ({ name: l.name, strength: l.strength })) } : {};
 }
 
 /** What the render should be pointed at, or nothing when it is all auto. */
@@ -6861,7 +7063,7 @@ async function setVideoEngine(v) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "engine", value: v }),
   })).json();
-  if (r.error) { alert(r.error); return false; }
+  if (r.error) { failSay(r); return false; }
   state.video = { ...(state.video || {}), engine: v };
   state.vidSizeFor = null;          // force the size list to rebuild
   vidPaint();
@@ -7333,7 +7535,68 @@ $("vidFrom").onchange = () => {
   }
   vidPaint();
 };
+/**
+ * A DRAWER FROM THE BOTTOM OF THE WINDOW, for a question that has to be
+ * answered before a press can go ahead. It slides up, dims the page behind it,
+ * and closes on its own buttons, its ×, a click on the dimmed page or Escape.
+ * Resolves true when the main button was pressed.
+ */
+function bottomDrawer({ title, body, yes = "Continue", no = "Not now" }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "bdrawer-wrap";
+    wrap.innerHTML = `<div class="bdrawer" role="dialog" aria-modal="true" aria-labelledby="bdTitle">
+        <div class="bd-grip" aria-hidden="true"></div>
+        <button class="bd-x" type="button" aria-label="Close">&times;</button>
+        <h3 id="bdTitle">${esc(title)}</h3>
+        <p>${esc(body)}</p>
+        <div class="bd-acts">
+          <button class="btn ghost" type="button" data-bd="no">${esc(no)}</button>
+          <button class="btn primary" type="button" data-bd="yes">${esc(yes)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("open"));
+    const done = (answer) => {
+      wrap.classList.remove("open");
+      document.removeEventListener("keydown", onKey);
+      setTimeout(() => wrap.remove(), 320);
+      resolve(answer);
+    };
+    const onKey = (e) => { if (e.key === "Escape") done(false); };
+    document.addEventListener("keydown", onKey);
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap || e.target.closest(".bd-x") || e.target.closest('[data-bd="no"]')) done(false);
+      else if (e.target.closest('[data-bd="yes"]')) done(true);
+    });
+    wrap.querySelector('[data-bd="yes"]').focus();
+  });
+}
+
+/** Switch the video engine on, the same call Settings makes. */
+async function enableVideo() {
+  const r = await (await fetch("/api/video", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "enable", value: true }),
+  })).json();
+  if (r.error) { failSay(r); return false; }
+  state.video = { ...(state.video || {}), ...(r.video || {}) };
+  if ($("qVideo")) $("qVideo").value = "1";
+  if ($("qVideoWhen")) $("qVideoWhen").disabled = false;
+  vidPaint();
+  return !!state.video.enabled;
+}
+
 $("vidCreate").onclick = async () => {
+  if (!state.video?.enabled) {
+    const go = await bottomDrawer({
+      title: "Video is switched off",
+      body: `Rendering a clip needs the video engine (${(state.video?.engines || {})[state.video?.engine || "ltx"]?.label || "the video model"}) switched on. `
+        + "It is off by default so finished songs never queue clips by themselves; switching it on here does not change that.",
+      yes: "Switch on and render",
+    });
+    if (!go || !(await enableVideo())) return;
+  }
   /* ⚠ THROUGH vidWH(), never by re-parsing the select. This line used to be
    * `$("vidSize").value.split("x").map(Number)`, which on the custom option
    * splits the literal string "custom" and yields [NaN] — so a custom size
@@ -7367,6 +7630,8 @@ $("vidCreate").onclick = async () => {
         midUploads: (state.midFrames || []).map((m) => m.name),
         /* Files named instead of the engine’s own; absent when all are auto. */
         ...vidModelChoice(),
+        /* Your own LoRAs; absent when the stack is empty. */
+        ...vidLoraChoice(),
         /* References, H3 only — kept client-side across an engine switch but
          * only SENT when H3 renders, so the server's refusal can never eat
          * work the user did under the other engine. Order matters: it is the
@@ -7388,7 +7653,7 @@ $("vidCreate").onclick = async () => {
         guideStrength: +$("vidPin").value / 100,
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     $("clipNote").textContent = "Queued. It renders once the engine is idle — music always goes first.";
   } finally {
     vidPaint();
@@ -7811,7 +8076,7 @@ $("enhGo").onclick = async () => {
         srcWidth: src.width, srcHeight: src.height, seconds: src.seconds,
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     $("enh").hidden = true;
     // It joins the same queue as everything else, so the existing job strip
     // reports it and the grid picks the result up on its next load.
@@ -7981,7 +8246,7 @@ $("clipGrid").addEventListener("click", async (e) => {
         srcWidth: src.width, srcHeight: src.height, seconds: src.seconds,
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     const said = { both: "smoother and bigger", bigger: "bigger", smooth: "smoother" }[r.mode] || r.mode;
     alert(`Queued: ${said}.${r.steppedDown ? "\n\nThe full boost needed more memory than this machine can give, so it did the most it could." : ""}`);
     loadClips();
@@ -8016,7 +8281,7 @@ $("clipGrid").addEventListener("click", async (e) => {
     const r = await (await fetch("/api/clips", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "trash", name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     loadClips();
   }
 });
@@ -8114,7 +8379,7 @@ mountPickBar({
       if (names.length < 2) { alert("A collage needs two or more PNG, JPG or WebP images."); return false; }
       const r = await (await fetch("/api/images/sheet", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ names, cols: +$("imgCollageCols").value || 0, cell: 420, gap: 6, fit: "cover", labels: $("imgCollageLab").checked }) })).json();
-      if (r.error) { alert(r.error); return false; }
+      if (r.error) { failSay(r); return false; }
       await loadImages();
       openImageEditor(r.name);
       return true;
@@ -8252,7 +8517,7 @@ async function imgCreate(body, label) {
   const r = await (await fetch("/api/images/create", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body) })).json();
-  if (r.error) { alert(r.error); return null; }
+  if (r.error) { failSay(r); return null; }
   await loadImages();
   openImageEditor(r.name);
   return r;
@@ -8316,7 +8581,7 @@ $("imgCollage").onclick = async () => {
         cell: 420, gap: 6, fit: "cover",
         labels: $("imgCollageLab").checked,
       }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await loadImages();
     openImageEditor(r.name);
   } finally { btn.disabled = false; btn.innerHTML = "\u25a6 collage these"; }
@@ -9599,7 +9864,7 @@ $("iedAuto").onclick = async () => {
     const r = await (await fetch("/api/images/analyze", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     const o = r.ops || {};
     if (o.saturation != null) $("iedS").value = o.saturation;
     if (o.shadows != null) $("iedShd").value = o.shadows;
@@ -9667,7 +9932,7 @@ $("iedApply").onclick = async () => {
     const r = await (await fetch("/api/images/edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name, ops: iedOps() }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     /* ⚠ THE ROUTE HAS ALWAYS ANSWERED WITH `notes` AND `fxSkipped`, AND THIS
      * HANDLER THREW THEM AWAY. They are the engine's honesty channel: where a
      * layer style's shape came from and how much of the frame it covered, a
@@ -9692,7 +9957,7 @@ $("iedVecGo").onclick = async () => {
     const r = await (await fetch("/api/images/vectorize", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name, colors: +$("iedVecColors").value }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await loadImages();
     openImageEditor(r.name);
   } finally { btn.disabled = false; btn.textContent = "Trace to SVG"; }
@@ -9709,7 +9974,7 @@ $("iedBlur").onclick = async () => {
   const r = await (await fetch("/api/images/flag", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: ied.name, blur: !m.blur }) })).json();
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   await loadImages();
   $("iedBlur").textContent = r.blur ? "unblur in gallery" : "blur in gallery";
 };
@@ -9947,7 +10212,7 @@ async function iedModelTool(url, btnId, busy) {
     const r = await (await fetch(url, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await loadImages();
     openImageEditor(r.name);
   } finally { btn.disabled = false; btn.textContent = was; }
@@ -10117,7 +10382,7 @@ $("iedCompose").onclick = async () => {
         scale: l.scale, opacity: l.opacity, mode: l.mode, anchor: "center",
         clipped: !!l.clipped,
       })) }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     iedLayers.length = 0; iedLayerSel = -1;
     await loadImages();
     openImageEditor(r.name);
@@ -11040,7 +11305,7 @@ $("iedPresetSave").onclick = async () => {
   const r = await (await fetch("/api/images/presets", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, ops: iedOps() }) })).json();
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   await iedPresetsLoad();
   $("iedPreset").value = name;
 };
@@ -14807,7 +15072,7 @@ $("iedTrash2").onclick = async () => {
   const r = await (await fetch("/api/images", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   $("imgEd").hidden = true;
   await loadImages();
 };
@@ -15439,7 +15704,7 @@ $("imgTplSave").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, template, tag }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await imgLoadTemplates();
     $("imgTplNote").textContent = `saved · ${r.template.combinations} variations`;
   } catch { alert("Could not save that template."); }
@@ -15483,7 +15748,7 @@ $("imgPersonaSave").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, fragment, refImages: imgRefs.map((m) => m.name), engine: imgEffectiveEngine() }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await imgLoadPersonas();
     $("imgPersona").value = r.persona.name;
     $("imgPersonaDel").hidden = false;
@@ -15532,6 +15797,22 @@ $("imgSize").onchange = () => {
   $("imgCustomW").hidden = !custom;
 };
 
+/* Picking a picture model that is not on disk opens the model window at the
+ * pick, not at the first Create. Only on a person's change (isTrusted): the
+ * handler below also runs once at load, and a window on page load for a model
+ * nobody chose would be noise. Anima and checkpoints run on files the person
+ * names, so they are left to the Create check. */
+const IMG_CAP = { flux2: "coverArt", ideogram4: "imageIdeogram", zimage: "imageZImage", "zimage-base": "imageZImageBase", krea2: "imageKrea2" };
+$("imgEngine").addEventListener("change", async (e) => {
+  if (!e.isTrusted) return;
+  const id = IMG_CAP[$("imgEngine").value];
+  if (!id) return;
+  try {
+    const d = await (await fetch("/api/models")).json();
+    const row = (d.capabilities || []).find((c) => c.id === id);
+    if (row && !row.ready) offerModel({ needsModel: row.gated ? null : id, capability: id, gated: row.gated || null, error: `${row.label} isn't installed.` });
+  } catch { /* offline: Create will say so */ }
+});
 $("imgEngine").onchange = async () => {
   const eng = $("imgEngine").value;
   /* A SPACE-SEPARATED LIST, not one name. cfg and the negative prompt are
@@ -15715,7 +15996,7 @@ $("imgGo").onclick = async () => {
         ...(seedRaw === "" ? {} : { seed: Number(seedRaw) }),
       }),
     })).json();
-    if (r.error) { imgWatch(null); await appAlert(r.error, "Nothing was queued"); return; }
+    if (r.error) { imgWatch(null); if (!offerModel(r)) await appAlert(r.error, "Nothing was queued"); return; }
     $("imgNote").textContent = "Queued. It renders when nothing else is using the GPU.";
     /* The job this screen is now watching — the strip above reads it, and the ✕
      * needs the file name to drop it while it is still only waiting. */
@@ -15956,7 +16237,7 @@ $("imgGrid").addEventListener("click", async (e) => {
     const r = await (await fetch("/api/images", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "trash", name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     loadImages();
   }
 });
@@ -16595,7 +16876,7 @@ async function loadWorkflows() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "assign", kind: sel.dataset.kind, workflow: sel.value || null }),
       })).json();
-      if (r.error) { alert(r.error); }
+      if (r.error) { failSay(r); }
       loadWorkflows();
     };
   }
@@ -17710,17 +17991,26 @@ $("pPlay").onclick = () => {
 /* Transport. The queue is whatever the library is currently showing, so a
    playlist filter also filters what next/previous walk through. */
 function visibleTracks() {
-  return [...document.querySelectorAll(".row[data-file]")].map((r) => ({
+  /* ⚠ ONLY THE LIBRARY LIST, AND EACH FILE ONCE. A pinned song is drawn twice
+   * (#pinRows and #rows), and "next" after the pinned copy was the same song
+   * again: with repeat off, a pinned song played forever. */
+  const seen = new Set();
+  return [...document.querySelectorAll("#rows .row[data-file]")].filter((r) => !seen.has(r.dataset.file) && seen.add(r.dataset.file)).map((r) => ({
     file: r.dataset.file, title: r.dataset.title, seed: r.dataset.seed,
   }));
 }
-function step(dir) {
+/** `auto` is the end of a song: it stops at the end of the list instead of
+ *  wrapping round to the top, which only repeat does. The buttons still wrap. */
+function step(dir, auto = false) {
   const list = visibleTracks();
   if (!list.length) return;
-  const cur = list.findIndex((t) => audio.src.includes(t.file));
+  const src = decodeURIComponent(audio.src);
+  const cur = list.findIndex((t) => src.endsWith(`/${t.file}`) || src.endsWith(`=${t.file}`));
   let next;
   if (state.shuffle) next = Math.floor(Math.random() * list.length);
+  else if (auto && (cur < 0 || cur + dir >= list.length || cur + dir < 0)) return;
   else next = cur < 0 ? 0 : (cur + dir + list.length) % list.length;
+  if (auto && list[next]?.file === list[cur]?.file) return;
   const t = list[next];
   play(t.file, t.title, t.seed);
 }
@@ -17759,7 +18049,7 @@ audio.onended = () => {
   $("pPlay").textContent = "▶";
   // Rolling on is the default, but it fights you when you are judging one take
   // against another — the next render starts before you have decided.
-  if (!state.loop && state.autoplay) step(1);
+  if (!state.loop && state.autoplay) step(1, true);
 };
 
 // Persisted, because it is a working preference rather than a per-session one.
@@ -17984,7 +18274,12 @@ function paintModelLoad(s) {
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
     : "Not loaded yet — the first song loads it.";
   $("btnModelLoad").hidden = !(e === "yue2-comfy" || e === "ace-step15") || loaded?.key === want;
-  $("btnModelUnload").hidden = !loaded;
+  /* Always offered while ComfyUI runs. It used to appear only while Studio's
+   * own record said a music model was loaded, and that record is cleared the
+   * moment a cover or a clip takes the card (it unloads the music model
+   * first), so after most MiniMax songs the button was simply not there.
+   * Unload frees whatever ComfyUI holds either way. */
+  $("btnModelUnload").hidden = false;
   $("btnModelLoad").disabled = $("btnModelUnload").disabled = busy;
 }
 async function modelLoadAction(action) {
@@ -18264,15 +18559,24 @@ function applyStatus(s) {
   const g = s.gpu;
   $("gpuBox").hidden = !g;
   if (g) {
-    const pct = Math.min(100, Math.round((g.usedMb / g.totalMb) * 100));
+    /* A card whose memory in use cannot be read (no nvidia-smi and no OS
+     * counter: Intel on Linux, an old Windows) says so. It used to draw an
+     * empty bar reading "0.0 / 16 GB VRAM" and "null% busy", which claims the
+     * card is idle. AMD and Intel on Windows now read like NVIDIA: server/gpu.js
+     * asks the same counters Task Manager does. */
+    const known = Number.isFinite(g.usedMb) && g.totalMb > 0;
+    const pct = known ? Math.min(100, Math.round((g.usedMb / g.totalMb) * 100)) : 0;
     $("gpuFill").style.width = `${pct}%`;
     $("gpuFill").style.background = pct > 92 ? "var(--warn)" : "var(--primary)";
     // Labelled now that a second meter sits under it — two bare "x / y GB" rows
     // would be ambiguous about which is the card.
-    $("gpuText").textContent = `${(g.usedMb / 1024).toFixed(1)} / ${(g.totalMb / 1024).toFixed(0)} GB VRAM`;
+    $("gpuText").textContent = known
+      ? `${(g.usedMb / 1024).toFixed(1)} / ${(g.totalMb / 1024).toFixed(0)} GB VRAM`
+      : `${(g.totalMb / 1024).toFixed(0)} GB VRAM · use not readable`;
     // The tooltip carries the caveat: driver-reported figures read high because
     // PyTorch keeps freed blocks in its allocator pool.
-    $("gpuBox").title = `${g.name}\n${g.utilPct}% busy\n${g.note}`;
+    $("gpuBox").title = [g.name, Number.isFinite(g.utilPct) ? `${g.utilPct}% busy` : null,
+      g.source ? `read from ${g.source}` : null, g.note].filter(Boolean).join("\n");
   }
 
   // System RAM, under the card. Shown because the low-VRAM tiers work by
