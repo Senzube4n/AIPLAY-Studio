@@ -23,5 +23,17 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Senzube4n/AIPLAY-Studio.git"
+  },
+  "aiplay": {
+    "lineage": {
+      "letter": "B",
+      "name": "Bucky",
+      "repo": "bani4kaskashka/AIPLAY-Studio-Bucky-Fork",
+      "upstream": {
+        "repo": "Senzube4n/AIPLAY-Studio",
+        "commit": "30f595c41bce24d616997a9e037f2eb25556398c",
+        "date": "2026-09-21T20:22:33+02:00"
+      }
+    }
   }
 }
