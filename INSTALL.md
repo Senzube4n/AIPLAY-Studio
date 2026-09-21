@@ -214,6 +214,34 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 
 ## 3. Get Studio and start it
 
+### The easy way: AIPLAY Studio Setup.exe
+
+Run **`AIPLAY Studio Setup.exe`**, pick Senzu's build (the original, and the
+default) or Bucky's, and press **Install**. It shows how far apart the two are
+(ahead / behind) before you choose. It then:
+
+- downloads that build's newest commit straight from GitHub, with no account;
+- unpacks only what the repository's `install.json` lists, so no docs or notes;
+- uses your Node.js 20+ if you have one. If you don't, it puts the official
+  portable Node.js from nodejs.org into the install folder, checked against
+  nodejs.org's SHA-256 list. There is no admin prompt, and nothing on the rest
+  of the PC changes;
+- fetches the three npm packages, adds Start menu and desktop shortcuts, and
+  adds an Installed apps entry whose uninstaller asks before touching your songs.
+
+It installs to `%LOCALAPPDATA%\Programs\AIPLAY Studio` by default and can delete
+itself when you close it. Running it again reinstalls in place and keeps your
+data, which lives in `%USERPROFILE%\.aiplay-studio`, never in the app folder.
+It never touches ComfyUI, drivers or models: engine setup is the launcher's
+system check, below.
+
+The installer is built from `installer/Setup.cs` by
+`node scripts/build-installer.mjs`. It knows two repository names and nothing
+else about Studio, so it is rebuilt only when that file changes, never for an
+app update.
+
+### By hand
+
 Download the repository from
 [github.com/Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
 — either the zip, or:

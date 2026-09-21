@@ -1,0 +1,18 @@
+{
+  "about": "What AIPLAY Studio Setup.exe unpacks from this repository's main branch. Everything else in the repository (docs, examples, the website's banners, notes) never reaches an install. Add a line here when a new top-level folder or file is needed at run time; the installer reads this file from the zip it downloads, so it never has to be rebuilt for it.",
+  "include": [
+    "server",
+    "web",
+    "workflows",
+    "launcher",
+    "scripts",
+    "package.json",
+    "package-lock.json",
+    "AIPLAY Studio.exe",
+    "AIPLAY Studio.cmd",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "exclude": ["*.md"],
+  "keep": ["LICENSE*", "NOTICE*"]
+}

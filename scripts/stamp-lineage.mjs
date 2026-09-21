@@ -12,6 +12,12 @@
  *
  * On the ORIGINAL repository there is no `aiplay.lineage` block and this script
  * says so and stops. See VERSIONING.md.
+ *
+ * THE BLOCK THAT KEEPS LEAVING. The original deletes the block whenever it
+ * merges a fork (it must: the original carries none), and the fork's next merge
+ * back brings that deletion with it. So a fork is named below, and a clone whose
+ * `origin` is that fork gets its block back before stamping. On the original's
+ * clone `origin` matches no fork and nothing changes. A new fork adds a line.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -22,7 +28,20 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PKG = path.join(ROOT, "package.json");
 const git = (...a) => execFileSync("git", a, { cwd: ROOT, encoding: "utf8" }).trim();
 
+const FORKS = [
+  { letter: "B", name: "Bucky", repo: "bani4kaskashka/AIPLAY-Studio-Bucky-Fork", upstream: "Senzube4n/AIPLAY-Studio" },
+];
+
 const pkg = JSON.parse(readFileSync(PKG, "utf8"));
+if (!pkg?.aiplay?.lineage) {
+  let origin = "";
+  try { origin = git("remote", "get-url", "origin").toLowerCase(); } catch { /* no origin: a zip or a bare clone */ }
+  const fork = FORKS.find((f) => origin.includes(f.repo.toLowerCase()));
+  if (fork) {
+    pkg.aiplay = { ...(pkg.aiplay || {}), lineage: { letter: fork.letter, name: fork.name, repo: fork.repo, upstream: { repo: fork.upstream, commit: "", date: "" } } };
+    console.log(`The lineage block was missing (a merge from the original removes it); restored ${fork.letter} for ${fork.repo}.`);
+  }
+}
 const line = pkg?.aiplay?.lineage;
 if (!line) {
   console.log("No aiplay.lineage in package.json — this is the original, not a fork. Nothing to stamp.");

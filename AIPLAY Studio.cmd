@@ -14,6 +14,9 @@ setlocal
 cd /d "%~dp0"
 title AIPLAY Studio launcher
 
+REM A private Node.js from AIPLAY Studio Setup.exe comes first, for this window only.
+if exist "%~dp0node\node.exe" set "PATH=%~dp0node;%PATH%"
+
 where node >nul 2>nul
 if errorlevel 1 (
   echo   Node.js is not installed, and Studio's server is written in it.

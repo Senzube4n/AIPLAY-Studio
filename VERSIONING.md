@@ -32,8 +32,10 @@ Nothing here is typed by hand. `server/version.js` derives all of it:
 
 1. **From git**, on a machine that has the clone. The build's commit and date
    come from `HEAD`; the base comes from `git merge-base HEAD upstream/main`.
-2. **From `server/version.gen.json`**, written into the zip by
-   `scripts/package.mjs`, for an install with no `.git`.
+2. **From `server/version.gen.json`**, for an install with no `.git`. Two things
+   write it: `scripts/package.mjs` into the zip, and `AIPLAY Studio Setup.exe`
+   from the commit it downloaded, alongside an `install-info.json` that names
+   the repository it came from.
 3. **From neither**: the build says "unknown" rather than inventing a number.
 
 Uncommitted edits show as **modified**, because a bug report that names a clean
@@ -68,9 +70,10 @@ A fork adds it:
 `git merge-base HEAD upstream/main`.
 
 > **A pull from upstream is not finished until this has run.** It is one command
-> and it is part of the merge, not a chore afterwards. `CLAUDE.md` says the same
-> thing in the place an assistant reads first, so it happens without anybody
-> remembering it.
+> and it is part of the merge, not a chore afterwards. `RELEASING.md` says the
+> same thing to an assistant (`CLAUDE.md` is git-ignored here, so it cannot).
+> If the merge removed the fork's block, as the original's merges of a fork do,
+> the script restores it for a clone whose `origin` is a fork it knows.
 >
 > ```bash
 > git merge upstream/main && node scripts/stamp-lineage.mjs

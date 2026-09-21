@@ -29,6 +29,8 @@ settings.json          # the per-machine config: absolute paths, possibly tokens
 
 # ---- Build output and dependencies ------------------------------------------
 node_modules/
+# A private Node.js that AIPLAY Studio Setup.exe puts beside the launcher.
+/node/
 dist/
 *.tgz
 
