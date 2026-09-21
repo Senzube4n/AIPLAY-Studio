@@ -317,6 +317,7 @@ export class JobRunner extends EventEmitter {
         loraClipStrength: job.loraClipStrength,
         prefix: "aiplay",
       }) : buildGraph({
+        tiledVae: await this.#hasTiledAudioDecode(),
         caption: job.caption,
         lyrics: job.lyrics,
         seed: job.seed,
@@ -966,6 +967,21 @@ export class JobRunner extends EventEmitter {
    * finished, cleared by Unload, by a different model starting, or by the
    * engine going down. */
   loaded = null;
+
+  /* Whether this ComfyUI has VAEDecodeAudioTiled (newer builds do; an older
+   * install would refuse a graph naming it). Asked of the engine itself; a yes
+   * is kept, a no or an unreachable engine is asked again next song, and until
+   * then the song decodes whole, as it always did. */
+  #tiledAudio = false;
+  async #hasTiledAudioDecode() {
+    if (this.#tiledAudio) return true;
+    if (config.music?.tiledVae === false) return false;
+    try {
+      const info = await engine.objectInfo("VAEDecodeAudioTiled");
+      this.#tiledAudio = !!info?.VAEDecodeAudioTiled;
+    } catch { this.#tiledAudio = false; }
+    return this.#tiledAudio;
+  }
   /* Set by the art runner when a picture, clip or stem job ran in ComfyUI
    * since the last unload: its model is resident and Studio cannot see which. */
   artResident = false;

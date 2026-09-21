@@ -13,14 +13,35 @@
  * Polled on a timer rather than per request — nvidia-smi costs ~40 ms and the
  * status endpoint is hit every four seconds by every open tab.
  *
- * NOT NVIDIA. nvidia-smi does not exist for AMD (ROCm) or Intel cards, so a
- * machine without it falls back to a TOTAL-only reading: first the engine's own
- * startup log ("Total VRAM … MB", which torch reports on CUDA and ROCm alike),
- * then the card that first-run setup recorded in settings.json. Used memory and
- * utilisation stay null there rather than being invented.
+ * NOT NVIDIA. nvidia-smi does not exist for AMD (ROCm) or Intel cards. Those
+ * are read from what the operating system itself keeps:
+ *
+ *   WINDOWS   server/gpu-win.ps1, one long-lived helper: DXGI names each
+ *             adapter and its memory, and the "GPU Adapter Memory" / "GPU
+ *             Engine" performance counters give memory in use and load, the
+ *             same counters Task Manager's GPU page shows. Any vendor.
+ *   LINUX     amdgpu's own files under /sys/class/drm (mem_info_vram_total,
+ *             mem_info_vram_used, gpu_busy_percent). Intel on Linux has no
+ *             such file and keeps the total-only reading below.
+ *
+ * Without either, the reading is TOTAL-only: the engine's own startup log
+ * ("Total VRAM … MB", which torch reports on CUDA and ROCm alike), then the card
+ * first-run setup recorded in settings.json. Used memory and utilisation stay
+ * null there rather than being invented.
+ *
+ * ⚠ DISPLAY ONLY, ON PURPOSE. The free-VRAM gates that refuse to start a render
+ * (YuE2's floor in music/yue.js, the 3D runner, native GGUF's settle) read
+ * nvidia-smi through mesh/runner.js freeVramMb() and are left exactly as they
+ * were: on AMD they have always answered "no reading, nothing to wait for", and
+ * turning a new counter into a refusal on a machine that renders today would be
+ * a regression. This module feeds the meter, the Models screen's machine line
+ * and Collab's resource card.
  */
 import { spawn } from "node:child_process";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 
 const QUERY = "name,memory.total,memory.used,utilization.gpu";
@@ -29,6 +50,9 @@ const MIN_GAP_MS = 3000;
 let cached = null;
 let lastAt = 0;
 let inflight = false;
+/* nvidia-smi is not on this machine (the spawn could not find it). Asked once:
+ * spawning a missing program every three seconds buys nothing. */
+let smiMissing = false;
 /** Set from the engine's startup log by comfy.js. */
 let engineReading = null;
 
@@ -51,21 +75,126 @@ function fallback() {
   };
 }
 
+/* ── AMD, Intel, anything: what the operating system keeps ────────────────── */
+
+const HELPER = path.join(path.dirname(fileURLToPath(import.meta.url)), "gpu-win.ps1");
+const HELPER_STALE_MS = 10_000;
+let helper = null;          // the running gpu-win.ps1
+let helperReading = null;   // { at, adapters: [...] }
+let helperStarts = 0;
+
+/* Off in unit tests (node --test marks its children) and on request, so a test
+ * that touches the status never leaves a PowerShell running behind it. */
+const helperAllowed = () => process.platform === "win32" && process.env.AIPLAY_GPU_HELPER !== "0"
+  && !process.env.NODE_TEST_CONTEXT;
+
+function startHelper() {
+  if (helper || helperStarts >= 3 || !helperAllowed() || !existsSync(HELPER)) return;
+  helperStarts++;
+  let proc;
+  try {
+    proc = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", HELPER,
+      "-IntervalMs", "2000", "-ParentPid", String(process.pid)], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+  } catch { return; }
+  helper = proc;
+  let buf = "";
+  proc.stdout.on("data", (d) => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line.startsWith("{")) continue;
+      try {
+        const j = JSON.parse(line);
+        if (Array.isArray(j.adapters)) helperReading = { at: Date.now(), adapters: j.adapters };
+      } catch { /* a torn line; the next one is two seconds away */ }
+    }
+  });
+  const gone = () => { if (helper === proc) helper = null; };
+  proc.on("error", gone);
+  proc.on("exit", gone);
+  /* Never what keeps Studio (or a test) alive. The helper also exits by itself
+   * once this process is gone (-ParentPid). */
+  proc.unref();
+  proc.stdout.unref?.();
+  process.once("exit", () => { try { proc.kill(); } catch { /* gone */ } });
+}
+
+/** The adapter Studio renders on: the one the engine or setup named, else the
+ *  card with the most dedicated memory (the discrete card beside an iGPU). */
+export function pickAdapter(adapters, wantName = "") {
+  const real = (adapters || []).filter((a) => a && Number(a.totalMb) > 0);
+  if (!real.length) return null;
+  const want = String(wantName || "").toLowerCase().trim();
+  if (want) {
+    const hit = real.find((a) => { const n = String(a.name).toLowerCase(); return n.includes(want) || want.includes(n); });
+    if (hit) return hit;
+  }
+  return real.slice().sort((a, b) => Number(b.totalMb) - Number(a.totalMb))[0];
+}
+
+/** A helper reading as a gpuStatus() row, or null when there is none or it is stale. */
+export function fromAdapters(reading, wantName = "", now = Date.now()) {
+  if (!reading || now - reading.at > HELPER_STALE_MS) return null;
+  const a = pickAdapter(reading.adapters, wantName);
+  if (!a) return null;
+  const n = (v) => (v !== null && v !== "" && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null);
+  return {
+    name: a.name,
+    totalMb: Number(a.totalMb),
+    usedMb: n(a.usedMb),
+    utilPct: n(a.utilPct),
+    vendor: a.vendor || null,
+    source: "Windows GPU counters",
+    note: "Driver-reported, the same counters Task Manager shows. PyTorch holds freed blocks, so this reads high.",
+  };
+}
+
+/** amdgpu on Linux keeps the numbers in plain files. */
+export function readAmdSysfs(root = "/sys/class/drm", name = "") {
+  if (process.platform !== "linux" && root === "/sys/class/drm") return null;
+  let cards = [];
+  try { cards = readdirSync(root).filter((c) => /^card\d+$/.test(c)); } catch { return null; }
+  let best = null;
+  for (const c of cards) {
+    const dev = path.join(root, c, "device");
+    const num = (f) => { try { return Number(readFileSync(path.join(dev, f), "utf8").trim()); } catch { return NaN; } };
+    const total = num("mem_info_vram_total");
+    if (!(total > 0)) continue;
+    const used = num("mem_info_vram_used"), busy = num("gpu_busy_percent");
+    const row = { totalMb: Math.round(total / 1048576), usedMb: used >= 0 ? Math.round(used / 1048576) : null,
+      utilPct: busy >= 0 ? busy : null };
+    if (!best || row.totalMb > best.totalMb) best = row;
+  }
+  if (!best) return null;
+  return { name: name || "AMD GPU", ...best, vendor: "amd", source: "amdgpu (sysfs)",
+    note: "Driver-reported. PyTorch holds freed blocks, so this reads high." };
+}
+
+/** The best reading without nvidia-smi: the OS's own, else total-only. */
+function noSmi() {
+  startHelper();
+  const want = (engineReading || config.gpu)?.name || "";
+  return fromAdapters(helperReading, want) || readAmdSysfs(undefined, want) || fallback();
+}
+
 function read() {
+  if (smiMissing) return Promise.resolve(noSmi());
   return new Promise((resolve) => {
     let out = "";
     let proc;
     try {
-      proc = spawn("nvidia-smi", [`--query-gpu=${QUERY}`, "--format=csv,noheader,nounits"]);
+      proc = spawn("nvidia-smi", [`--query-gpu=${QUERY}`, "--format=csv,noheader,nounits"], { windowsHide: true });
     } catch {
-      return resolve(fallback());
+      smiMissing = true;
+      return resolve(noSmi());
     }
     proc.stdout.on("data", (d) => (out += d));
-    proc.on("error", () => resolve(fallback()));
+    proc.on("error", (e) => { if (e?.code === "ENOENT") smiMissing = true; resolve(noSmi()); });
     proc.on("exit", (code) => {
-      if (code !== 0) return resolve(fallback());
+      if (code !== 0) return resolve(noSmi());
       const [name, total, used, util] = out.split("\n")[0].split(",").map((s) => s.trim());
-      if (!total) return resolve(fallback());
+      if (!total) return resolve(noSmi());
       resolve({
         name,
         totalMb: Number(total),

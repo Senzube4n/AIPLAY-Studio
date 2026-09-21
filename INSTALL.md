@@ -412,7 +412,8 @@ Some things worth knowing before you click:
   model" to switch to. Fitting a smaller card is done by streaming, not by
   shrinking — see section 6.
 - **You do not have to work out which rows apply to you.** The Models screen
-  reads your card with `nvidia-smi` and your system RAM, and puts one sentence at
+  reads your card (`nvidia-smi` on NVIDIA; on AMD and Intel what Windows or the
+  engine reports) and your system RAM, and puts one sentence at
   the top naming what to fetch for *that* machine, with the download size. On a
   16 GB card it says three models; on an 8 GB card it says two and explains, per
   row, why video is not among them. On a machine with no NVIDIA card it says so

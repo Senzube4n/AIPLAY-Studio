@@ -48,3 +48,18 @@ test("a run status is never an HTTP status: the reply carries the sentence inste
   json({ writeHead: (c) => calls.push(c), end() {} }, 404, {});
   assert.deepEqual(calls, [502, 404]);
 });
+
+test("MiniMax Music 3 decodes in tiles when the engine can, whole only when it cannot", async () => {
+  const { buildGraph, MUSIC_VAE_TILE, MUSIC_VAE_OVERLAP } = await import("./workflow.js");
+  const args = { caption: "indie pop", lyrics: "[Verse]\nla", seed: 1, maxDuration: 240, steps: 15 };
+  const tiled = buildGraph(args)["8"];
+  assert.equal(tiled.class_type, "VAEDecodeAudioTiled", "the default: ComfyUI sized the whole-song decode at tens of GB");
+  assert.deepEqual([tiled.inputs.tile_size, tiled.inputs.overlap], [MUSIC_VAE_TILE, MUSIC_VAE_OVERLAP]);
+  assert.deepEqual(tiled.inputs.samples, ["7", 0]);
+  assert.deepEqual(tiled.inputs.vae, ["3", 0]);
+  assert.equal(buildGraph({ ...args, tiledVae: false })["8"].class_type, "VAEDecodeAudio", "an engine without the node keeps the old decode");
+  const jobs = src("./jobs.js");
+  assert.match(jobs, /tiledVae: await this\.#hasTiledAudioDecode\(\),/);
+  assert.match(jobs, /engine\.objectInfo\("VAEDecodeAudioTiled"\)/, "asked of the engine, not assumed");
+  assert.match(jobs, /config\.music\?\.tiledVae === false/, "and it can be switched off");
+});

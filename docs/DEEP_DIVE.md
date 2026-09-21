@@ -171,8 +171,11 @@ What is different on AMD:
 - The engine's venv folder goes first on PATH at launch, as activation would
   put it. A TheRock ROCm torch runs `hipInfo.exe` from there to identify the
   card; without it ComfyUI logs *"Could not detect ROCm GPU architecture"*.
-- The VRAM readout is **total only**, taken from ComfyUI's startup log — there
-  is no `nvidia-smi` to read used memory from.
+- The VRAM readout (the rail meter) reads memory in use and load from Windows'
+  own GPU performance counters, the ones Task Manager shows, through
+  `server/gpu-win.ps1`; on Linux from amdgpu's sysfs files. It is display only:
+  the free-VRAM checks that can refuse a render still read `nvidia-smi` and so
+  skip themselves on AMD, exactly as before.
 - **Automatic cover art queues an image render straight after every song.** On
   a machine the music model already fills, switch it off
   (`POST /api/art {"action":"enable","value":false}`, remembered) and draw

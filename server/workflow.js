@@ -69,6 +69,9 @@ export function shiftSigmas(steps, shift) {
 export function buildGraph({
   caption,
   lyrics,
+  // Decode the song in overlapping chunks (VAEDecodeAudioTiled). The caller
+  // passes false only when the engine does not have that node.
+  tiledVae = true,
   seed,
   mixSeed,
   maxDuration = 240,
@@ -195,10 +198,26 @@ export function buildGraph({
 
     // --- decode + write ----------------------------------------------------
     // fp32 VAE by configuration; see config.js for why that is not negotiable.
-    8: { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["3", 0] } },
+    /* ⚠ TILED, BECAUSE THE WHOLE-SONG DECODE IS WHAT CRASHED MACHINES.
+     * ComfyUI sizes the DAV decode as (frames x 512 x 1400 + 800M) fp32
+     * elements (sd.py, MiniMax Music3 DAV): at ~86 latent frames a second a
+     * four-minute song asks for tens of GB in one go, and with offload disabled
+     * for this VAE that is where 16 and 24 GB cards (a Quadro RTX 6000 among
+     * them) spilled into system memory or fell over. The tiled node decodes
+     * 512 frames (~6 s) at a time with 64 frames (~0.7 s) of overlap that
+     * ComfyUI feathers together, so the peak is one tile's worth whatever the
+     * length. ComfyUI's own defaults; not measured here against the plain
+     * decode for exactness. */
+    8: tiledVae
+      ? { class_type: "VAEDecodeAudioTiled", inputs: { samples: ["7", 0], vae: ["3", 0], tile_size: MUSIC_VAE_TILE, overlap: MUSIC_VAE_OVERLAP } }
+      : { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["3", 0] } },
     9: saveAudioNode(prefix),
   };
 }
+
+/** VAEDecodeAudioTiled for MiniMax Music 3, in latent frames (512 audio samples each). */
+export const MUSIC_VAE_TILE = 512;
+export const MUSIC_VAE_OVERLAP = 64;
 
 /**
  * The writer for the configured output format.

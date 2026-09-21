@@ -118,7 +118,7 @@ export function readMachine(gpu, ram) {
           name: gpu.name,
           vramGb: gb(gpu.totalMb),
           vramExactGb: exactGb(gpu.totalMb),
-          usedGb: exactGb(gpu.usedMb),
+          usedGb: Number.isFinite(gpu.usedMb) ? exactGb(gpu.usedMb) : null,   // null: not readable, never "0 used"
           /* Carried because a recommendation that ignores it recommends an
            * engine that is broken on the card in front of it — see
            * AMD_MUSIC_WARNING below. gpu.js reads it from nvidia-smi or, on

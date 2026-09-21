@@ -16793,15 +16793,24 @@ function applyStatus(s) {
   const g = s.gpu;
   $("gpuBox").hidden = !g;
   if (g) {
-    const pct = Math.min(100, Math.round((g.usedMb / g.totalMb) * 100));
+    /* A card whose memory in use cannot be read (no nvidia-smi and no OS
+     * counter: Intel on Linux, an old Windows) says so. It used to draw an
+     * empty bar reading "0.0 / 16 GB VRAM" and "null% busy", which claims the
+     * card is idle. AMD and Intel on Windows now read like NVIDIA: server/gpu.js
+     * asks the same counters Task Manager does. */
+    const known = Number.isFinite(g.usedMb) && g.totalMb > 0;
+    const pct = known ? Math.min(100, Math.round((g.usedMb / g.totalMb) * 100)) : 0;
     $("gpuFill").style.width = `${pct}%`;
     $("gpuFill").style.background = pct > 92 ? "var(--warn)" : "var(--primary)";
     // Labelled now that a second meter sits under it — two bare "x / y GB" rows
     // would be ambiguous about which is the card.
-    $("gpuText").textContent = `${(g.usedMb / 1024).toFixed(1)} / ${(g.totalMb / 1024).toFixed(0)} GB VRAM`;
+    $("gpuText").textContent = known
+      ? `${(g.usedMb / 1024).toFixed(1)} / ${(g.totalMb / 1024).toFixed(0)} GB VRAM`
+      : `${(g.totalMb / 1024).toFixed(0)} GB VRAM · use not readable`;
     // The tooltip carries the caveat: driver-reported figures read high because
     // PyTorch keeps freed blocks in its allocator pool.
-    $("gpuBox").title = `${g.name}\n${g.utilPct}% busy\n${g.note}`;
+    $("gpuBox").title = [g.name, Number.isFinite(g.utilPct) ? `${g.utilPct}% busy` : null,
+      g.source ? `read from ${g.source}` : null, g.note].filter(Boolean).join("\n");
   }
 
   // System RAM, under the card. Shown because the low-VRAM tiers work by
