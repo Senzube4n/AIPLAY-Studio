@@ -1633,6 +1633,14 @@ export const config = {
     embedRecord: true,
   },
 
+  /* Battery Safe (server/power.js). On by default: when a generation runs on
+   * battery (a laptop unplugged, a desktop whose UPS took over) it is stopped
+   * after `graceMinutes` unless the person says to keep going. */
+  power: {
+    batterySafe: true,
+    graceMinutes: 5,
+  },
+
   paths: { appData: APPDATA },
 };
 
@@ -1707,6 +1715,8 @@ export const PREF_PATHS = [
   // no preference path ON PURPOSE — see the config block above.
   ["provenance", "showBadges", (v) => typeof v === "boolean"],
   ["provenance", "embedRecord", (v) => typeof v === "boolean"],
+  ["power", "batterySafe", (v) => typeof v === "boolean"],
+  ["power", "graceMinutes", (v) => Number.isInteger(v) && v >= 1 && v <= 60],
 ];
 
 /** Just the preference fields, ready to be merged into settings.json. */

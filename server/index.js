@@ -248,6 +248,7 @@ import { ensureVocalStem, ensureStem, STEMS } from "./music/stems.js";
 import { seedScore } from "./music/seed.js";
 import { appVersion, versionLine } from "./version.js";
 import { checkUpdates, lastCheck, updateSentence } from "./updates.js";
+import { BatteryGuard, watchPower } from "./power.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -2604,6 +2605,7 @@ const server = http.createServer(async (req, res) => {
           // no setting to report because it has no setting.
           provenance: { ...config.provenance },
         },
+        power: powerSnapshot(),
         gpu: gpuStatus(),
         ram: ramStatus(),
         ...art.status(),
@@ -2994,6 +2996,23 @@ const server = http.createServer(async (req, res) => {
      * (model licences + EU AI Act Art 50(2)), and a gap in the user's own
      * record only ever costs the user.
      */
+    /* Battery Safe: the switch, the countdown length, and the person's answer
+     * to "this is running on battery". `allow: true` keeps generating until the
+     * power comes back; `allow: false` withdraws that; `stopNow` stops at once. */
+    if (p === "/api/power") {
+      if (req.method === "POST") {
+        const b = await readBody(req);
+        let save = false;
+        if (typeof b.batterySafe === "boolean") { config.power.batterySafe = b.batterySafe; save = true; }
+        if (Number.isInteger(b.graceMinutes) && b.graceMinutes >= 1 && b.graceMinutes <= 60) { config.power.graceMinutes = b.graceMinutes; save = true; }
+        if (typeof b.allow === "boolean") batteryGuard.allow(b.allow);
+        if (b.stopNow === true) await stopForBattery("You pressed Stop");
+        if (save) savePrefs();
+        await powerTick();
+      }
+      return json(res, 200, powerSnapshot());
+    }
+
     if (p === "/api/provenance/settings" && req.method === "POST") {
       const b = await readBody(req);
       if (typeof b.showBadges === "boolean") config.provenance.showBadges = b.showBadges;
@@ -10577,6 +10596,67 @@ jobs.on("update", push);
 // last song -- so the runner gets its own push.
 batch.on("update", () => push(jobs.snapshot()));
 
+/* ── Battery Safe ─────────────────────────────────────────────────────────
+ * server/power.js reads the power state; this decides what to do with it. A
+ * generation running on battery gets a countdown, shown on screen, and is
+ * stopped when it runs out unless the person chose to keep going. */
+let powerNow = { known: false, onBattery: false, hasBattery: false, percent: null };
+const batteryGuard = new BatteryGuard();
+let powerBusy = false;
+
+function powerSnapshot() {
+  return {
+    batterySafe: config.power.batterySafe, graceMinutes: config.power.graceMinutes,
+    ...powerNow, busy: powerBusy, ...batteryGuard.snapshot(),
+  };
+}
+
+/** Anything using the graphics card: a song, a picture or clip, an overnight
+ *  run, or any other run on the engine (chat, training, video lab). */
+async function gpuWorkRunning() {
+  if (jobs.current || jobs.queue.length || art.current || art.queue.length) return true;
+  if (batch.run?.state === "running") return true;
+  const st = await engineDoor.status().catch(() => null);
+  return !!st && ((st.running || []).length > 0 || Number(st.queue?.running || 0) + Number(st.queue?.pending || 0) > 0);
+}
+
+/** Stop every generation, queued ones included, the way the Stop buttons do:
+ *  cancelled work is discarded cleanly rather than cut off mid-write. */
+async function stopForBattery(why) {
+  const what = [];
+  if (batch.run && ["running", "paused"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
+  if (jobs.current || jobs.queue.length) {
+    what.push(jobs.current?.title ? `"${jobs.current.title}"` : "a song");
+    for (const j of [...jobs.queue]) await jobs.cancelById(j.id).catch(() => {});
+    await jobs.cancel().catch(() => {});
+  }
+  if (art.current || art.queue.length) what.push("pictures and clips");
+  /* The engine-wide stop on purpose: on a draining battery a chat turn or a
+   * training run queued beside the rest must stop too. */
+  await art.stopAll().catch(() => {});
+  batteryGuard.noteStop(`${why}: stopped ${what.length ? what.join(", ") : "the engine's work"}.`);
+  console.log(`  [battery] ${batteryGuard.lastStop.what}`);
+}
+
+let powerTicking = false;
+async function powerTick() {
+  if (powerTicking) return;
+  powerTicking = true;
+  try {
+    /* Only ask the engine when the answer can matter: on mains, with Battery
+     * Safe off, or with the person's go-ahead, nothing will be stopped. */
+    const watch = powerNow.onBattery && config.power.batterySafe && !batteryGuard.consent;
+    powerBusy = watch ? await gpuWorkRunning() : false;
+    const r = batteryGuard.update({ power: powerNow, busy: powerBusy, enabled: config.power.batterySafe, graceMs: config.power.graceMinutes * 60_000 });
+    if (r.stop) {
+      await stopForBattery(`Running on battery for ${config.power.graceMinutes} minute${config.power.graceMinutes === 1 ? "" : "s"}`);
+      powerBusy = false;
+    }
+    const msg = JSON.stringify({ type: "power", ...powerSnapshot() });
+    for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
+  } finally { powerTicking = false; }
+}
+
 server.listen(config.uiPort, "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
 
@@ -10590,6 +10670,16 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
    * second". The launcher sets AIPLAY_OPEN=1; anything else driving this server
    * (tests, headless runs, a restart in place) leaves it unset and keeps its
    * browser to itself. */
+  /* Battery Safe: a reading every ten seconds, and a countdown check every
+   * five so the on-screen timer and the stop are never a reading late. */
+  watchPower((r) => {
+    const was = powerNow.onBattery;
+    powerNow = r;
+    if (r.onBattery !== was) console.log(r.onBattery ? `  [battery] running on battery${r.percent != null ? ` (${r.percent}%)` : ""}` : "  [battery] back on mains power");
+    powerTick().catch(() => {});
+  });
+  setInterval(() => { if (powerNow.onBattery) powerTick().catch(() => {}); }, 5000).unref();
+
   if (process.env.AIPLAY_OPEN === "1") {
     spawn("cmd", ["/c", "start", "", `http://127.0.0.1:${config.uiPort}`],
       { detached: true, stdio: "ignore", windowsHide: true }).unref();

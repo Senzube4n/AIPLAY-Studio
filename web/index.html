@@ -4727,6 +4727,31 @@
         machine if turned off. Hiding the badges changes only what is drawn on
         screen — never what is recorded or embedded.</p>
 
+      <!-- Battery Safe. Wired by web/battery.js; the logic is server/power.js. -->
+      <h4 class="seth">Battery Safe</h4>
+      <div class="setgrid">
+        <label for="qBatSafe">stop generating on battery</label>
+        <span class="pv"><select id="qBatSafe" class="sel2">
+          <option value="1">On (recommended)</option>
+          <option value="0">Off</option>
+        </select></span>
+
+        <label for="qBatGrace">stop after</label>
+        <span class="pv"><select id="qBatGrace" class="sel2">
+          <option value="1">1 minute on battery</option>
+          <option value="2">2 minutes on battery</option>
+          <option value="5">5 minutes on battery</option>
+          <option value="10">10 minutes on battery</option>
+          <option value="15">15 minutes on battery</option>
+          <option value="30">30 minutes on battery</option>
+        </select></span>
+      </div>
+      <p class="hint" id="batNote">If the power goes out while something is generating
+        (a laptop unplugged, or a desktop whose UPS took over), a countdown appears
+        on screen and the work is stopped cleanly when it runs out, before the
+        battery dies mid-write and corrupts files. You can keep generating on
+        battery from the warning; that choice lasts until the power comes back.</p>
+
       <!-- Folders. Separated from the toggles above because these two are the
            only settings that survive a restart — and the only ones that REQUIRE
            one, since the engine is launched with them as arguments. -->
@@ -5058,6 +5083,9 @@
      re-render mid-click. -->
 <div class="rowmenu" id="rowMenu" role="menu" hidden></div>
 
+<!-- Before app.js on purpose: its fetch wrapper must be in place before any
+     screen can start a generation. -->
+<script type="module" src="battery.js"></script>
 <script type="module" src="app.js"></script>
 <dialog id="musicWorkflows" aria-labelledby="musicWorkflowsTitle">
   <header class="music-workflows-head">
