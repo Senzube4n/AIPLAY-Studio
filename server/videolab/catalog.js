@@ -891,10 +891,10 @@ export const COMPARE_CONFIGS = [
     engine: "h3",
     steps: 20,
     why:
-      "The quality path: the bare model on its native schedule, exactly what the vendor's own "
-      + "flows run. Measured visibly the best of the H3 arms — face, knit and lamp all resolve — "
-      + "at 11 m 00 s for 124 frames at native size. Commits at sigma 0.387, so references "
-      + "condition rather than bleed.",
+      "The baseline: 20 steps without the turbo distillation. Compare the same prompt, seed, "
+      + "references and size across arms, then inspect detail and motion. The displayed shift "
+      + "and commit sigma come from the current settings; historical render times are not "
+      + "a prediction for this request.",
     cite: DOCS.directing,
   },
   {
@@ -903,10 +903,10 @@ export const COMPARE_CONFIGS = [
     engine: "h3",
     steps: 4,
     why:
-      "The fast path, with the 4-step distillation matched to a 4-step schedule. ~2 m 37 s for "
-      + "the same 124 frames. ⚠ At the default shift 12 this commits at sigma 0.800 — 80% of the "
-      + "picture invented in one jump — which is why a reference can occupy the opening frames. "
-      + "Turn the turbo sigma shift down to 3 and re-run this arm to see the difference.",
+      "Four steps with the configured 4-step distillation for this input path. Inspect the "
+      + "opening frames for reference carry-over and the later frames for detail and motion. "
+      + "Use the displayed shift and commit sigma: they follow the selected LoRA and any "
+      + "explicit overrides, rather than assuming a fixed shift of 12.",
     cite: DOCS.bleed,
   },
   {
@@ -915,10 +915,10 @@ export const COMPARE_CONFIGS = [
     engine: "h3",
     steps: 8,
     why:
-      "The middle build: clean but flat, 5 m 08 s. Included because it is the arm that shows "
-      + "what the distillation costs you when it is used correctly, rather than at the wrong "
-      + "step count. Commits at sigma 0.632. ⚠ Skip this arm when references are attached — "
-      + "there is no 8-step reference build, so it would run the 4-step file at 8 steps.",
+      "Eight steps with the configured turbo LoRA for this input path, including the "
+      + "reference path's configured LoRA when references are attached. Check the resolved "
+      + "LoRA and installed weights before rendering. Compare its detail, motion and measured "
+      + "time with the 4-step arm; this description does not establish a quality winner.",
     cite: DOCS.directing,
   },
   {

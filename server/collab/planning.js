@@ -71,7 +71,38 @@ export function allocatePlan({ shots, peers, segmentIds, peerIds, policy = "equa
     at: now, appliedAt: null, availability: "unknown", delivery: "not prepared", estimateSource: policy === "time" ? "user-entered estimates; no live queue or benchmark data" : null };
 }
 
-export function createCollabPlanning({ appData, readProject, readPeers, resolveKitCue, now = Date.now }) {
+/** Read-only projection of the owner's order book. A sealed file is not a delivery receipt. */
+export function projectOrderProgress({ slug, shots, orders, now = Date.now() }) {
+  const labels = {
+    prepared: ["Package prepared", "Transfer the reviewed file to your friend. Receipt and render progress are unknown."],
+    expired: ["Acceptance window expired", "Check with your friend before preparing a replacement. An accepted render may still be running."],
+    returned: ["Return passed checks", "Open Incoming to check whether the returned take still awaits review. It may already have been kept or discarded."],
+    adopted: ["Take adopted", "The take was adopted into the library. Check its scene attachment; adoption does not select it or approve the scene."],
+    refused: ["Return failed validation", "Inspect the return's validation results in Incoming."],
+    cancelled: ["Cancelled locally", "This local record does not stop a render on another machine."],
+    unknown: ["Order state unknown", "Inspect the order record before preparing more work."],
+  };
+  const time = (value) => Number.isFinite(value) && value >= 0 ? value : null;
+  const rows = orders.filter((row) => row?.slug === slug).map((row) => {
+    const expiresAt = time(row.expires);
+    const status = row.state === "sent" ? (expiresAt !== null && now > expiresAt ? "expired" : "prepared")
+      : ["returned", "adopted", "refused", "cancelled"].includes(row.state) ? row.state : "unknown";
+    return { id: row.id, segmentId: row.order?.segmentId ?? null,
+      to: { fp: row.to?.fp ?? null, nickname: row.to?.nickname ?? null },
+      status, label: labels[status][0], nextStep: labels[status][1],
+      preparedAt: time(row.sentAt ?? row.at), updatedAt: time(row.stateAt ?? row.sentAt ?? row.at), expiresAt,
+      // Copy only display facts, never paths, prompt bodies or quarantined file references.
+      returnCount: Array.isArray(row.returns) ? row.returns.length : 0,
+      note: typeof row.note === "string" ? row.note.slice(0, 400) : null };
+  }).sort((a, b) => (b.preparedAt ?? 0) - (a.preparedAt ?? 0) || String(a.id).localeCompare(String(b.id)));
+  const sceneIds = new Set(shots.map((shot) => shot.segmentId));
+  const counts = Object.fromEntries(Object.keys(labels).map((key) => [key, rows.filter((row) => row.status === key).length]));
+  return { observedAt: now, remoteAvailability: "unknown", counts,
+    scenes: shots.map((shot) => ({ segmentId: shot.segmentId, orders: rows.filter((row) => row.segmentId === shot.segmentId) })),
+    unmatchedOrders: rows.filter((row) => !sceneIds.has(row.segmentId)) };
+}
+
+export function createCollabPlanning({ appData, readProject, readPeers, readOrders = async () => [], resolveKitCue, now = Date.now }) {
   const locks = new Map(), directory = path.join(appData, "collab", "plans");
   const filename = (slug) => path.join(directory, `${slugOf(slug)}.json`);
   const peersNow = async () => { const result = await readPeers(); return Array.isArray(result) ? result : result.peers || []; };
@@ -88,13 +119,14 @@ export function createCollabPlanning({ appData, readProject, readPeers, resolveK
       segmentId: scene.id, title: scene.title || scene.name || scene.label || scene.id, seconds: secondsOf(scene) }));
     return { plan: { v: 1, slug, title: project.title || slug, revision: saved?.revision || 0,
       notes: saved?.notes || "", updatedAt: saved?.updatedAt || null, changedBy: saved?.changedBy || null,
-      shots, draft: saved?.draft || null, musicCues: saved?.musicCues || [], removedSceneCount: (saved?.shots || []).filter((shot) => !shots.some((s) => s.segmentId === shot.segmentId)).length }, peers: await peersNow() };
+      shots, draft: saved?.draft || null, musicCues: saved?.musicCues || [], removedSceneCount: (saved?.shots || []).filter((shot) => !shots.some((s) => s.segmentId === shot.segmentId)).length }, peers: await peersNow(),
+      delivery: projectOrderProgress({ slug, shots, orders: await readOrders(), now: now() }) };
   }
   async function get(slug) { return { ok: true, ...await context(slugOf(slug)) }; }
   async function mutate(body, actor = "system") {
     const slug = slugOf(body.slug), previous = locks.get(slug) || Promise.resolve();
     const work = previous.catch(() => {}).then(async () => {
-      const { plan, peers } = await context(slug);
+      const { plan, peers, delivery } = await context(slug);
       if (!Number.isInteger(body.expectedRevision) || body.expectedRevision !== plan.revision) refuse("This plan changed in another view. Reload it before saving your changes.", 409);
       if (body.action === "update_episode") plan.notes = text(body.notes, 8000, "Episode notes");
       else if (body.action === "set_music_cue") {
@@ -129,7 +161,7 @@ export function createCollabPlanning({ appData, readProject, readPeers, resolveK
       } else if (body.action === "allocate" || body.action === "preview_allocation") {
         plan.draft = allocatePlan({ shots: plan.shots, peers, segmentIds: body.segmentIds, peerIds: body.peerIds,
           policy: body.policy, capability: body.capability, minVramMb: body.minVramMb, minutesPerTenSeconds: body.minutesPerTenSeconds, now: now() });
-        if (body.action === "preview_allocation") return { ok: true, plan, peers, previewOnly: true };
+        if (body.action === "preview_allocation") return { ok: true, plan, peers, delivery, previewOnly: true };
       } else if (body.action === "apply_draft") {
         const draft = plan.draft;
         if (!draft || draft.stale) refuse("Create a current allocation draft before applying it.", 409);
@@ -151,7 +183,7 @@ export function createCollabPlanning({ appData, readProject, readPeers, resolveK
       const tmp = `${filename(slug)}.${randomUUID()}.tmp`;
       await writeFile(tmp, JSON.stringify(plan, null, 2), "utf8");
       await rename(tmp, filename(slug));
-      return { ok: true, plan, peers };
+      return { ok: true, plan, peers, delivery };
     });
     locks.set(slug, work);
     work.finally(() => { if (locks.get(slug) === work) locks.delete(slug); }).catch(() => {});
@@ -160,8 +192,8 @@ export function createCollabPlanning({ appData, readProject, readPeers, resolveK
   return { get, mutate };
 }
 
-export function createCollabPlanningRoutes({ json, readBody, appData, readProject, readPeers, resolveKitCue, actorFrom = () => "system" }) {
-  const store = createCollabPlanning({ appData, readProject, readPeers, resolveKitCue });
+export function createCollabPlanningRoutes({ json, readBody, appData, readProject, readPeers, readOrders, resolveKitCue, actorFrom = () => "system" }) {
+  const store = createCollabPlanning({ appData, readProject, readPeers, readOrders, resolveKitCue });
   return async (req, res, url) => {
     if (url.pathname !== "/api/collab/plan") return false;
     try {

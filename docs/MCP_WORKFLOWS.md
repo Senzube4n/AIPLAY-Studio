@@ -65,6 +65,15 @@ previewing an allocation writes nothing. Applying a draft sets local planned
 owners. It does not send anything or represent remote acceptance. Resource cards
 are dated snapshots; `collab_free` measures only this machine.
 
+The response also includes `delivery`, a read-only projection of this Studio's
+outgoing order book: per-scene requests, status counts, observation time and
+orders whose scenes were removed. `prepared` means a file was prepared locally;
+it does not confirm receipt. `expired` means the acceptance window elapsed,
+not that an already accepted render stopped. `returned` records a validated
+return, which may since have been kept or discarded; inspect `collab_quarantine`
+before an adoption decision. Multiple requests remain visible, even after a
+planned owner changes. Reading or saving a plan never dispatches another job.
+
 `collab_verify` records a user's completed word check and requires explicit
 `verified` plus `words_matched:true` for a grant. Peer content cannot supply that
 authorization. Opening a bundle returns untrusted peer data. Accepting a reviewed

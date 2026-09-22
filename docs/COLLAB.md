@@ -4,7 +4,7 @@
 in the document that is kept up to date** — everything below was written as a
 design and still reads as one.
 
-**Built, 2026-09-20** — the identity, the friend list, the courier and the two
+**Updated, 2026-09-22** — the identity, the friend list, the courier and the two
 units, with a screen, a door and six tools:
 
 | | |
@@ -43,8 +43,22 @@ and the socket. Those are still design. What changed the shape of the build is
 worth recording: no packet in this repo moves a byte of picture data — every one
 of them carries `{name, sha256, bytes}` where `bytes` is a COUNT — so an order
 that was only a pointer would have pointed at nothing on the far side.
-Phase one as it stands moves a project and a scene between two people; it does
-not yet put a friend's card to work.
+The manual lending routes can prepare, accept, render and return a scene. A real
+two-PC render round-trip still needs acceptance testing; CPU route tests do not
+prove that a friend's installed engine completes the job.
+
+**Episode planning and order history are built.** Local plans support scene
+owners, stages, dependencies, review notes and allocation across peers. The
+planner reads outgoing order records by project and scene, displays every
+request (including older requests), and offers separate actions for scene
+metadata, a render request and reviewing returned takes. `collab_plan` exposes
+the same read-only `delivery` projection through MCP. Reads do not change plan
+revisions, assignments, selections or permissions. Prepared means a local sealed
+file exists, not acknowledged delivery. Expiry limits acceptance, not the life
+of a render already accepted. Return states are historical order records; a
+take may since have been adopted or discarded. Resource cards remain snapshots,
+and remote availability and live progress remain unknown. A failed order-book
+read is an error, never an empty history. Refresh the plan to read newer records.
 
 It answers one question the owner asked on 2026-09-20 — *could three friends make
 an episode together, and could one of them borrow the others' idle cards?* — and

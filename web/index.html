@@ -1779,6 +1779,7 @@
         <div class="params"><label for="cbPlanProject">Project</label><span class="pv"><select id="cbPlanProject" class="sel2"></select></span></div>
         <div class="chips"><button type="button" class="btn sm ghost" id="cbPlanReload">Reload plan</button><button type="button" class="btn sm" id="cbPlanAllocate">Allocate scenes</button></div>
         <p class="hint" id="cbPlanStatus" role="status">Choose a project to open its local production plan.</p>
+        <p class="hint" id="cbPlanDelivery" role="status">Loading order records…</p>
         <details class="adv"><summary>Episode brief and decisions</summary>
           <label for="cbPlanNotes" class="hint">Story goals, continuity decisions and handoff notes</label>
           <textarea id="cbPlanNotes" rows="4" maxlength="8000" placeholder="What should this episode achieve? What must stay consistent between scenes?"></textarea>
@@ -1797,7 +1798,9 @@
           </div>
           <label for="cbShotReview" class="hint">Review notes · what is approved or needs another take</label>
           <textarea id="cbShotReview" rows="3" maxlength="4000" placeholder="Review the actual take before approving. Record a concrete correction or decision."></textarea>
-          <div class="chips"><button type="button" class="btn sm" id="cbShotSave">Save scene plan</button><button type="button" class="btn sm ghost" id="cbShotPreview">Review outgoing package</button></div>
+          <div class="chips"><button type="button" class="btn sm" id="cbShotSave">Save scene plan</button><button type="button" class="btn sm ghost" id="cbShotPreview">Review scene metadata</button><button type="button" class="btn sm ghost" id="cbShotOrder">Prepare render request</button><button type="button" class="btn sm ghost" id="cbShotReturns">Review returned takes</button></div>
+          <b class="subhead">Render request history</b>
+          <div id="cbShotOrders"></div>
         </section>
       </div>
 

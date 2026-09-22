@@ -32,6 +32,7 @@
  */
 
 import { excludedTerritoriesText } from "./models.js";
+import { COMPARE_CONFIGS } from "./videolab/catalog.js";
 const H3_EXCLUDED = excludedTerritoriesText();
 
 export function videoLabTools(api) {
@@ -50,15 +51,7 @@ export function videoLabTools(api) {
         + "returns immediately with a group id — the arms are minutes each — then poll "
         + "video_comparison for wall times and clip names.\n\n"
         + "THE CONFIGURATIONS (pass any subset in `configs`; default is all of them):\n"
-        + "  • h3_quality — H3 at 20 steps with NO LoRA, the bare model on its native schedule, "
-        + "which is what the vendor's own flows run. Measured visibly the best H3 arm: face, knit "
-        + "and lamp all resolve. ~11 min for 124 frames at native size.\n"
-        + "  • h3_turbo4 — H3 at 4 steps on the matched 4-step distillation. ~2 m 37 s. ⚠ At the "
-        + "default sigma shift this commits at sigma 0.800 — 80% of the picture invented in one "
-        + "jump — which is why a reference can occupy the opening frames.\n"
-        + "  • h3_turbo8 — H3 at 8 steps on the 8-step distillation. ~5 m. Clean but flat. ⚠ Skip "
-        + "it when references are attached: no 8-step reference build ships, so it would run the "
-        + "4-step file at 8 steps.\n"
+        + COMPARE_CONFIGS.filter(c => c.engine === "h3").map(c => `  • ${c.id} — ${c.why}\n`).join("")
         + "  • ltx — LTX 2.5, a different tool rather than a faster H3: 8 steps at half "
         + "resolution, a latent x2 upscale, 3 steps at full size. ~121 s for 5 s. ⚠ NO reference "
         + "input exists on LTX at all, so references are dropped for this arm and the result says "

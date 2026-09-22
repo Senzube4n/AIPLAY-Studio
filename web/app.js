@@ -5656,7 +5656,7 @@ $("cbProject")?.addEventListener("change", () => {
 });
 
 /* A revisioned LOCAL production board. Saving a planned owner never dispatches work. */
-let cbPlan = null, cbPlanRequest = 0, cbPlanBusy = false, cbPlanScene = "";
+let cbPlan = null, cbPlanDelivery = null, cbPlanRequest = 0, cbPlanBusy = false, cbPlanScene = "";
 const CB_STAGES = { storyboard: "Storyboard", ready: "Ready", assigned: "Assigned locally", review: "Review", approved: "Approved locally" };
 const cbOwnerName = (fp) => !fp ? "Unassigned" : fp === "self" ? "This Studio" : cbPeers.find((p) => p.fp === fp)?.nickname || fp.slice(0, 8);
 async function cbPlanRead(body) {
@@ -5675,7 +5675,7 @@ async function loadCollabPlan(restore = false) {
     const r = await cbPlanRead();
     if (request !== cbPlanRequest || slug !== $("cbProject").value) return;
     const changed = cbPlan?.slug !== slug;
-    cbPlan = r.plan;
+    cbPlan = r.plan; cbPlanDelivery = r.delivery || null;
     paintCollabPlan();
     if ((changed || restore === true) && cbPlan.draft) restoreCbDraft(cbPlan.draft);
     paintCbSavedDraft();
@@ -5697,7 +5697,7 @@ async function mutateCollabPlan(action, fields = {}) {
       const compared = action === "update_shot" ? fields : before;
       const preserveShot = compared && Object.keys(form).some((key) => form[key] !== (compared[key] ?? (key === "pinned" ? false : key === "reviewNote" ? "" : null)));
       const preserveNotes = $("cbPlanNotes").value !== (action === "update_episode" ? fields.notes : cbPlan.notes);
-      cbPlan = r.plan; paintCollabPlan({ preserveNotes, preserveShot }); paintCbSavedDraft();
+      cbPlan = r.plan; cbPlanDelivery = r.delivery || null; paintCollabPlan({ preserveNotes, preserveShot }); paintCbSavedDraft();
     }
     cbSay(r.previewOnly ? "Allocation preview only. Nothing saved, prepared or sent." : "Saved on this Studio. No work has been sent to a friend.");
     return r;
@@ -5711,12 +5711,24 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   if (!cbPlan) return;
   if (!preserveNotes) $("cbPlanNotes").value = cbPlan.notes;
   $("cbPlanStatus").textContent = `${cbPlan.shots.length} scenes · revision ${cbPlan.revision} · local plan${cbPlan.updatedAt ? ` · saved ${new Date(cbPlan.updatedAt).toLocaleString()}` : " · not saved yet"}${cbPlan.removedSceneCount ? ` · ${cbPlan.removedSceneCount} former scenes are no longer in the project` : ""}. Remote availability unknown.`;
+  const counts = cbPlanDelivery?.counts;
+  $("cbPlanDelivery").textContent = counts
+    ? `Order records checked ${new Date(cbPlanDelivery.observedAt).toLocaleTimeString()} · ${counts.prepared} prepared · ${counts.returned} returns recorded · ${counts.adopted} adopted · ${counts.refused + counts.expired + counts.unknown} need attention${cbPlanDelivery.unmatchedOrders.length ? ` · ${cbPlanDelivery.unmatchedOrders.length} refer to removed scenes` : ""}. File handoff: receipt and live progress are unknown. Refresh to read new returns.`
+    : "Order progress unavailable in this server version. Update and restart Studio.";
   $("cbPlanBoard").innerHTML = Object.entries(CB_STAGES).map(([stage, title]) => {
     const shots = cbPlan.shots.filter((s) => s.stage === stage);
-    return `<section class="cbcolumn"><b>${title} · ${shots.length}</b>${shots.map((s) => `<button type="button" class="cbshot${s.segmentId === cbPlanScene ? " on" : ""}" data-scene="${esc(s.segmentId)}"><b>${esc(cbSceneTitle(s))}</b><small>${esc(s.segmentId)} · ${s.seconds ? `${s.seconds.toFixed(1)}s` : "duration unknown"}</small><small>${esc(cbOwnerName(s.owner))}${s.pinned ? " · pinned" : ""}${s.dependsOn ? ` · after ${esc(s.dependsOn)}` : ""}</small>${s.reviewNote ? `<small>${esc(s.reviewNote.slice(0, 100))}</small>` : ""}</button>`).join("") || '<p class="hint">No scenes</p>'}</section>`;
+    return `<section class="cbcolumn"><b>${title} · ${shots.length}</b>${shots.map((s) => `<button type="button" class="cbshot${s.segmentId === cbPlanScene ? " on" : ""}" data-scene="${esc(s.segmentId)}"><b>${esc(cbSceneTitle(s))}</b><small>${esc(s.segmentId)} · ${s.seconds ? `${s.seconds.toFixed(1)}s` : "duration unknown"}</small><small>${esc(cbOwnerName(s.owner))}${s.pinned ? " · pinned" : ""}${s.dependsOn ? ` · after ${esc(s.dependsOn)}` : ""}</small><small>${esc(cbSceneOrderSummary(s.segmentId))}</small>${s.reviewNote ? `<small>${esc(s.reviewNote.slice(0, 100))}</small>` : ""}</button>`).join("") || '<p class="hint">No scenes</p>'}</section>`;
   }).join("");
   if (!cbPlan.shots.some((s) => s.segmentId === cbPlanScene)) cbPlanScene = cbPlan.shots[0]?.segmentId || "";
   if (!preserveShot) paintCbShotEditor();
+}
+function cbSceneOrders(segmentId) {
+  return cbPlanDelivery?.scenes?.find((scene) => scene.segmentId === segmentId)?.orders || [];
+}
+function cbSceneOrderSummary(segmentId) {
+  if (!cbPlanDelivery) return "Order progress unavailable";
+  const orders = cbSceneOrders(segmentId), review = orders.filter((order) => order.status === "returned").length;
+  return orders.length ? `${orders.length} request${orders.length === 1 ? "" : "s"} · latest: ${orders[0].label}${review ? ` · ${review} returns recorded` : ""}` : "No render request prepared";
 }
 function cbShotFields() {
   return { segmentId: cbPlanScene, stage: $("cbShotStage").value, owner: $("cbShotOwner").value || null,
@@ -5727,6 +5739,9 @@ function paintCbShotEditor() {
   $("cbShotEditor").hidden = !shot;
   if (!shot) return;
   $("cbShotTitle").textContent = `${shot.segmentId} · ${cbSceneTitle(shot)}`;
+  const orders = cbSceneOrders(shot.segmentId);
+  $("cbShotOrders").innerHTML = orders.length ? '<p class="hint">Existing requests are listed below. Preparing another creates a new request; it does not cancel or resend an earlier one.</p>' + orders.map((order) => `<article class="cbmanifestrow"><b>${esc(order.label)} · ${esc(order.to.nickname || order.to.fp || "Unknown recipient")}</b><code>${esc(order.id)}</code><span>${order.preparedAt === null ? "Preparation time unknown" : esc(new Date(order.preparedAt).toLocaleString())}</span><span>${esc(order.nextStep)}</span>${order.note ? `<span>${esc(order.note)}</span>` : ""}</article>`).join("")
+    : `<p class="hint">${cbPlanDelivery ? "No render request has been prepared for this scene. A planned owner is not a delivery." : "Order progress unavailable. Restart the updated Studio before preparing more work."}</p>`;
   $("cbShotStage").value = shot.stage;
   $("cbShotOwner").innerHTML = '<option value="">Unassigned</option><option value="self">This Studio</option>' + cbPeers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))}</option>`).join("")
     + (shot.owner && shot.owner !== "self" && !cbPeers.some((p) => p.fp === shot.owner) ? `<option value="${esc(shot.owner)}">Former friend · ${esc(shot.owner.slice(0, 8))}</option>` : "");
@@ -5750,12 +5765,16 @@ $("cbPlanReload")?.addEventListener("click", () => loadCollabPlan(true));
 $("cbPlanSaveNotes")?.addEventListener("click", () => mutateCollabPlan("update_episode", { notes: $("cbPlanNotes").value }));
 $("cbShotSave")?.addEventListener("click", () => mutateCollabPlan("update_shot", cbShotFields()));
 $("cbPlanAllocate")?.addEventListener("click", () => { setCbTab("Send"); $("cbDraftPlanner").open = true; $("cbDraftPlanner").scrollIntoView({ block: "start", behavior: "smooth" }); });
-$("cbShotPreview")?.addEventListener("click", () => {
+function cbPreviewPlannedScene(kind) {
   const shot = cbPlan?.shots.find((s) => s.segmentId === cbPlanScene); if (!shot) return;
-  setCbTab("Send"); $("cbKind").value = "shot"; paintCbKind(); $("cbSegment").value = shot.segmentId;
-  if (cbPeers.some((p) => p.fp === shot.owner && cbCanReceive(p, "shot"))) $("cbTo").value = shot.owner;
+  setCbTab("Send"); $("cbKind").value = kind; paintCbKind(); $("cbSegment").value = shot.segmentId;
+  // Never silently retain another friend's selection when the planned owner cannot receive this kind.
+  $("cbTo").value = cbPeers.some((p) => p.fp === shot.owner && cbCanReceive(p, kind)) ? shot.owner : "";
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
-});
+}
+$("cbShotPreview")?.addEventListener("click", () => cbPreviewPlannedScene("shot"));
+$("cbShotOrder")?.addEventListener("click", () => cbPreviewPlannedScene("order"));
+$("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return paintTakes(); });
 
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";

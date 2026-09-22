@@ -2192,6 +2192,7 @@ const collabPlanningRoutes = createCollabPlanningRoutes({
   json, readBody, appData: config.paths.appData,
   readProject: readMvProject,
   readPeers: () => collabRoster.roster({ appData: config.paths.appData }),
+  readOrders: () => book.listOrders({ outDir: path.join(config.outputDir, "collab"), side: "out" }),
   actorFrom: prov.actorFrom,
   resolveKitCue: musicWorkflowRoutes.resolveKitCue,
 });
