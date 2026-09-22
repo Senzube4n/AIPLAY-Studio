@@ -1,25 +1,17 @@
-#musicWorkflows {
-  width: min(1180px, calc(100vw - 40px)); max-height: calc(100dvh - 40px);
-  padding: 0; color: var(--ink); background: var(--panel); background-color: var(--on);
-  border: 1px solid var(--edge); border-radius: 18px; overflow: auto;
-}
-#musicWorkflows::backdrop { background: var(--rail); backdrop-filter: blur(5px); }
-.music-workflows-head { position: sticky; top: 0; z-index: 2; background: var(--on); display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 24px 28px 12px; }
-.music-workflows-head h2 { margin: 0 0 5px; font: 600 26px var(--disp); }
-.music-workflows-head p { margin: 0; color: var(--faint); max-width: 720px; }
-.music-workflows-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 12px 28px 20px; border-bottom: 1px solid var(--hair); }
+/* Music Lab: a page (web/ui.css), its five workflows as tabs, and the open
+ * tab's panel as one card below them. */
+#musicWorkflows { color: var(--ink); }
+.music-workflows-tabs { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 0 14px; background: linear-gradient(hsla(220,20%,5%,.97) 80%, hsla(220,20%,5%,0)); }
 .music-workflows-tabs button { flex: 1; min-width: 0; text-align: left; border: 1px solid var(--hair); border-radius: 10px; padding: 13px 16px; background: var(--panel); color: var(--dim); cursor: pointer; }
 .music-workflows-tabs button[aria-selected="true"] { border-color: var(--primary); background: var(--raise); color: var(--ink); }
 .music-workflows-tabs b, .music-workflows-tabs span { display: block; }
 .music-workflows-tabs b { font-size: 14px; }
 .music-workflows-tabs span { margin-top: 3px; font-size: 12px; color: var(--faint); }
-#musicWorkflows [role="tabpanel"] { padding: 24px 28px 32px; min-height: 300px; }
+#musicWorkflows [role="tabpanel"] { padding: 20px 22px 26px; min-height: 300px; background: var(--panel); border: 1px solid var(--hair); border-radius: 14px; }
 #musicWorkflows :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-#musicWorkflowsOpen { margin: 5px 0 15px; width: 100%; text-align: left; }
 @media (max-width: 650px) {
-  #musicWorkflows { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
-  .music-workflows-head, #musicWorkflows [role="tabpanel"] { padding: 18px; }
-  .music-workflows-tabs { padding: 8px 18px 16px; gap: 5px; }
+  #musicWorkflows [role="tabpanel"] { padding: 14px; }
+  .music-workflows-tabs { gap: 5px; }
   .music-workflows-tabs button { padding: 10px 8px; }
   .music-workflows-tabs span { display: none; }
 }

@@ -7,13 +7,13 @@ import { mountMusicListeningLab } from "./music-listening-lab.js";
 /** Lazy mounts keep ordinary Music startup independent of saved workflow data. */
 export function mountMusicWorkflows({ onLoadRequest } = {}) {
   const dialog = document.getElementById("musicWorkflows");
-  const opener = document.getElementById("musicWorkflowsOpen");
-  if (!dialog || !opener) return;
+  if (!dialog) return;
   const mounted = new Set();
   const tabs = [...dialog.querySelectorAll('[role="tab"]')];
   const loadRequest = async (request) => {
     await onLoadRequest(request);
-    dialog.close();
+    /* Loaded into the Music form: go there, where Create lives. */
+    document.querySelector('.nav a[data-view="create"]')?.click();
   };
   async function select(tab) {
     for (const item of tabs) {
@@ -46,9 +46,11 @@ export function mountMusicWorkflows({ onLoadRequest } = {}) {
       tabs[index].focus(); select(tabs[index]);
     });
   }
-  opener.addEventListener("click", () => {
-    dialog.showModal();
+  /* The page is shown by the rail (setView in app.js). The first time it
+   * appears, open the selected tab. */
+  const open = () => {
+    if (dialog.hidden || !tabs.length) return;
     select(tabs.find(tab => tab.getAttribute("aria-selected") === "true") || tabs[0]);
-  });
-  dialog.querySelector('[data-action="close"]').addEventListener("click", () => dialog.close());
+  };
+  if (typeof MutationObserver === "function") new MutationObserver(open).observe(dialog, { attributes: true, attributeFilter: ["hidden"] });
 }

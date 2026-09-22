@@ -34,17 +34,26 @@
   display: flex; flex-wrap: wrap; gap: 8px 14px;
   align-items: baseline; justify-content: space-between; margin-bottom: 8px;
 }
-.eng-actions { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.eng-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pcard > h3 .eng-actions { margin-left: auto; font: inherit; font-size: 12px; }
+.pcard > h3 .chip, .page-head h2 .chip { vertical-align: middle; margin-left: 8px; font-family: var(--sans, inherit); }
+.eng-filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 12px; }
+.eng-push { margin-left: auto; display: inline-flex; gap: 6px; }
+.btn2.go { color: var(--on); background: var(--primary); border-color: transparent; }
+.btn2.go:hover:not(:disabled) { color: var(--on); filter: brightness(1.08); }
 
 /* ── the facts grid ───────────────────────────────────────────────────────── */
 .eng-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px; margin-top: 14px;
 }
-.eng-fact { padding: 6px 0; }
-.eng-fact .k { display: block; font-size: .78em; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
-.eng-fact .v { font-weight: 600; }
-.eng-fact .why { display: block; font-size: .86em; opacity: .75; line-height: 1.45; margin-top: 2px; }
+.eng-fact {
+  padding: 10px 12px; border-radius: 10px;
+  background: hsla(0,0%,100%,.03); border: 1px solid rgba(128, 128, 128, .18);
+}
+.eng-fact[title] { cursor: help; }
+.eng-fact .k { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; opacity: .55; margin-bottom: 4px; }
+.eng-fact .v { font-weight: 600; font-size: 13px; }
 
 /* Three exposure states, told apart at a glance and only three. */
 .eng-badge {
@@ -57,17 +66,18 @@
 /* ── rows of controls ─────────────────────────────────────────────────────── */
 .eng-row {
   display: flex; flex-wrap: wrap; gap: 8px 14px;
-  align-items: baseline; margin: 10px 0;
+  align-items: center; margin: 10px 0;
 }
 .eng-row .hint { flex: 1 1 260px; margin: 0; }
-.eng-f { display: inline-flex; gap: 6px; align-items: baseline; font-size: .9em; opacity: .9; }
+.eng-f { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--faint); }
 .eng-f.eng-wide { flex: 1 1 100%; }
 .eng-f.eng-wide input { flex: 1; }
 .eng-f input.num { width: 5.5em; }
-.eng-check { display: inline-flex; gap: 6px; align-items: baseline; }
+.eng-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; }
 .eng-ta {
   width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: .85em; line-height: 1.45; resize: vertical;
+  color: var(--ink); background: var(--raise); border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px;
 }
 
 /* ── the activity table ───────────────────────────────────────────────────── */

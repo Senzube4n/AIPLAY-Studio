@@ -662,6 +662,11 @@ node --test server/download_test.js || exit 1
 node --test server/modelsdir_test.js || exit 1
 # Your own LoRAs on the Video screen reach both video graphs.
 node --test server/video_lora_test.js || exit 1
+node --test server/power_test.js || exit 1
+node --test server/ui-kit_test.js || exit 1
+node --check web/ui.js || exit 1
+node --check web/battery.js || exit 1
+node --check web/picdrop.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever

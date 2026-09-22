@@ -413,7 +413,11 @@ test("Video Advanced in order: settings, Frames, Sound, Fine tuning, Lab, then R
   for (let i = 1; i < order.length; i++) assert.ok(at(order[i - 1]) < at(order[i]), `${order[i - 1]} before ${order[i]}`);
   // A dropdown and its file button share one row.
   for (const [sel, btn] of [["vidFrom", "vidFromPick"], ["vidTo", "vidToPick"], ["vidSndSong", "vidSndPick"], ["vidRefSong", "vidRefAudPick"]])
-    assert.match(p, new RegExp(String.raw`<div class="pickrow">\s*<select id="${sel}"[\s\S]*?</select>\s*<button[^>]*id="${btn}"`), sel);
+    assert.match(p, new RegExp(String.raw`<div class="pickrow"( hidden)?>\s*<select id="${sel}"[\s\S]*?</select>\s*<button[^>]*id="${btn}"`), sel);
+  // The two frame slots are picture drop boxes now (web/picdrop.js); their
+  // dropdown row stays in the page, hidden, as the state it writes to.
+  for (const sel of ["vidFrom", "vidTo"])
+    assert.match(p, new RegExp(String.raw`<div id="${sel}Drop"></div>\s*<div class="pickrow" hidden>\s*<select id="${sel}"`), `${sel} drop box`);
   // The notes that floated between controls are "!" tips.
   for (const id of ["vidToNote", "vidLoopNote", "vidAdvNote", "vidQualityNote"]) {
     assert.match(p, new RegExp(`class="tipsrc" id="${id}"`), id);

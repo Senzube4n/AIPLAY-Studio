@@ -1195,18 +1195,14 @@ details.adv[open] summary::before { content: "▾"; }
 .vz.vztop::after { top: -1px; }
 .vz.vzbot::after { bottom: -1px; }
 
-/* Scrollbars, quietened and wired to the same signal.
-   The platform default is a heavy grey slab that fights the palette. Thin,
-   trackless, and tinted toward the primary — and since `--vz-all` carries the
-   overall level, the thumb brightens with the music like the divider rules do.
-   It falls back to a calm static tint whenever nothing is playing. */
+/* Scrollbars, quietened. The platform default is a heavy grey slab that fights
+   the palette: thin, trackless, tinted toward the primary. Static: they used
+   to brighten with the music, on every scroll area at once. */
 * { scrollbar-width: thin; scrollbar-color: var(--edge-s) transparent; }
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb,
-    var(--primary) calc(22% + var(--vz-all, 0) * 55%),
-    transparent);
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
@@ -2557,16 +2553,8 @@ details.adv[open] summary::before { content: "▾"; }
 /* The reference drop box. A dashed outline is the one shape everybody reads
    as "put something here", and it stays while the box has contents so the
    target does not disappear the moment you use it once. */
-.refdrop{min-height:64px;align-content:flex-start;padding:.45rem;
-  border:1px dashed var(--edge);border-radius:8px;
-  transition:border-color .12s ease,background-color .12s ease}
 /* The empty state is a ::before rather than a real row, so there is never a
    placeholder that could be mistaken for a chosen reference. */
-.refdrop.isempty::before{content:attr(data-empty);color:var(--ghost);
-  font-size:11.5px;line-height:1.35;padding:.35rem .2rem;max-width:34ch}
-.refdrop.dragover{border-color:var(--accent);border-style:solid;
-  background:hsla(190,100%,57%,.07)}
-.refdrop.dragover::before{color:var(--accent)}
 /* The thumbnails are draggable out of the library and into here, so the
    cursor should say so on the way past. */
 #imgGrid .imtile img{cursor:grab}
@@ -3957,8 +3945,17 @@ details.adv[open] summary::before { content: "▾"; }
    More Options as rounded collapsible cards, Title last. Layout only: every
    control keeps the id app.js paints. */
 .create .mtop { flex-direction: column; align-items: stretch; gap: 8px; }
-.create .mbar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.create .mload { display: inline-flex; gap: 4px; }
+/* The About button sits absolutely over this row's left edge (see
+   .infobtn.infoloose), so the row keeps that space free; the model name
+   shortens with an ellipsis instead of pushing Load under About. */
+.create .mbar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-left: 84px; min-width: 0; }
+.create:has(> #musicEngineRow[hidden]) .mbar { padding-left: 0; }
+.create .mload { display: inline-flex; gap: 4px; flex: none; }
+.create .mload .btn.sm { margin-left: 0; padding: 7px 14px; }
+.create .mload .btn:disabled { opacity: .4; }
+.create .mbar .mpill { min-width: 0; flex: 0 1 auto; }
+.create .mbar .mpill b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.create .mbar .minfobtn { flex: none; }
 .create .mpill {
   position: relative; display: inline-flex; align-items: center; gap: 6px;
   padding: 7px 14px; border-radius: 999px; background: var(--raise);
@@ -5330,7 +5327,7 @@ button, input, select, textarea { font-family: inherit; }
   background: linear-gradient(135deg, hsla(195,100%,60%,.22), hsla(320,100%,70%,.18));
 }
 /* Simple: the Advanced form steps aside; the Make button and its progress stay. */
-.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(.ctawrap):not(.infopanel) { display: none !important; }
+.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(.ctawrap):not(.infopanel) { display: none !important; }
 .assist {
   flex: none; display: flex; flex-direction: column; gap: 4px; padding: 3px; margin-bottom: 10px;
   background: var(--raise); border: 1px solid var(--hair); border-radius: 18px;

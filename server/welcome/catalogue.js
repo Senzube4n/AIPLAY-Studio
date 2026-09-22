@@ -402,7 +402,7 @@ const START = [
 /* ── one paragraph per tab ──────────────────────────────────────────────────
  *
  * Order is the rail's order, because that is the order a new user meets them
- * in. `group` is the only editorial judgement here: twenty-four paragraphs in a row
+ * in. `group` is the only editorial judgement here: twenty-five paragraphs in a row
  * is a wall, and three headings turn it into a shape.
  */
 const TABS = [
@@ -448,11 +448,10 @@ const TABS = [
     id: "create", icon: "♪", name: "Music", group: "make",
     lead:
       "Describe a song's style and lyrics, then create a new performance with your selected model. "
-      + "Music workflows opens chorus auditions, reusable episode themes and local audio/video reference briefs. "
-      + "Compare alternatives before keeping one, review a reference's musical direction before generating, "
-      + "and export finished audio. Generation time and supported controls depend on the selected runtime.",
-    makes: ["Songs with vocals", "Instrumentals on supported backends", "Chorus alternatives with contextual playback", "Saved episode themes and cue variants", "Reviewed music briefs from audio or footage", "Stems and timed lyrics"],
-    start: "Write a style and lyrics, or open Music workflows to build on an existing idea, then use an explicit Create or Render action.",
+      + "Keep several takes, pull stems and timed lyrics, and export finished audio. "
+      + "Generation time and supported controls depend on the selected runtime.",
+    makes: ["Songs with vocals", "Instrumentals on supported backends", "Stems and timed lyrics"],
+    start: "Write a style and lyrics, then press Create. To build on an existing idea, open Music Lab.",
     needs: [
       ...MUSIC_NEEDS,
       model("coverArt", "the cover picture painted for every finished track"),
@@ -461,9 +460,21 @@ const TABS = [
       model("audioRef", "starting a song from a piece of audio you already have"),
     ],
     cant:
+      "No piano roll: you steer with words, and takes vary. Everything shares the graphics card.",
+  },
+  {
+    id: "musiclab", icon: "♫", name: "Music Lab", group: "make",
+    lead:
+      "Build on songs you already have. Compare chorus alternatives in the context of the song, keep reusable "
+      + "episode themes and their cue variants, turn reference audio or footage into a reviewed music brief, "
+      + "replay a saved plan, tokens or sound, and blind-test a trained LoRA against the base model.",
+    makes: ["Chorus alternatives with contextual playback", "Saved episode themes and cue variants", "Reviewed music briefs from audio or footage", "Replayed stages", "Blind base-vs-LoRA comparisons"],
+    start: "Pick a tab at the top. Anything ready to render loads back into the Music form.",
+    needs: [...MUSIC_NEEDS],
+    cant:
       "Reference media is analyzed into an editable brief or score; YuE2 does not natively watch footage. "
       + "A saved score does not guarantee the same singer, waveform, duration or exact synchronization. "
-      + "Supplied-score themes currently require Python YuE2 or native GGUF. Everything shares the graphics card.",
+      + "Supplied-score themes currently require Python YuE2 or native GGUF.",
   },
   {
     id: "images", icon: "▣", name: "Images", group: "make",
