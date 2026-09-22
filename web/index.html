@@ -1366,7 +1366,14 @@
           <button class="edtool" type="button" id="imgRefClear" hidden>Clear</button>
           <input type="file" id="imgRefFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
         </div>
-        <div class="midprev imgrefs" id="imgRefPrev" hidden></div>
+        <!-- THE SAME BOX IS THE TARGET AND THE RESULT. It was hidden until the
+             first reference existed, so the only way to find out you could add
+             one was the dropdown above. Now it is always here, says what it
+             takes while it is empty, and the picture lands where the outline
+             was. Drops accept files from the desktop AND a picture dragged out
+             of the library on the right. -->
+        <div class="midprev imgrefs refdrop" id="imgRefPrev"
+          data-empty="Drop pictures here — from your desktop, or drag one out of the library"></div>
         <p class="hint" id="imgRefCostNote" hidden></p>
         <p class="hint warnhint" id="imgRefTagNote" hidden></p>
         <p class="hint warnhint" id="imgRefEngineNote" hidden></p>
@@ -2180,6 +2187,20 @@
             <span class="bcount"></span>
             <div class="bacts">
               <button class="bbtn" type="button" data-pick="collage" title="Tile the selected images into one picture">▦</button>
+              <!-- The ticked pictures as reference images. Two destinations,
+                   because they have different caps: 10 here, 9 on H3.
+
+                   ONE GLYPH EACH, like every other button on this bar. `.bbtn`
+                   is a fixed 30px circle, so a text label does not overflow
+                   gracefully - it escapes the button and lands on the toolbar
+                   above. The meaning lives in the tooltip, which is how the
+                   collage and trash buttons beside them already work. The
+                   second is the rail's own Video glyph, so it points at where
+                   it sends things. -->
+              <button class="bbtn" type="button" data-pick="refs"
+                title="Use as reference images for the next render &mdash; up to 10">&#9707;</button>
+              <button class="bbtn" type="button" data-pick="vidrefs"
+                title="Send to the Video page as H3 reference images and go there &mdash; up to 9">&#9655;</button>
               <button class="bbtn warn" type="button" data-pick="trash" title="Move to trash (reversible, kept in output/trash)">🗑</button>
               <button class="bbtn" type="button" data-pick="clear" title="Clear the selection">✕</button>
             </div>
@@ -5118,5 +5139,9 @@
 <script type="module" src="credits.js"></script>
 <script type="module" src="roulette.js"></script>
 <script type="module" src="prompt-tools.js"></script>
+  <!-- The full picture behind a reference thumbnail. At BODY level and fixed,
+       because the form column it belongs to is overflow-y:auto and would clip
+       anything bigger than the 88x50 thumb — which is the entire point. -->
+  <div id="imgRefHover" hidden><img alt=""><span></span></div>
 </body>
 </html>

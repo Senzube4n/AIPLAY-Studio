@@ -8424,6 +8424,79 @@ mountPickBar({
       openImageEditor(r.name);
       return true;
     },
+    /* \u26a0 A LIBRARY PICTURE IS A NAME, NOT BYTES. These are already on disk;
+     * uploading them would file a second copy and point the reference at the
+     * duplicate. Both actions below push the name straight in. */
+    refs: async (files) => {
+      const pics = files.filter((n) => /\.(png|jpe?g|webp)$/i.test(n));
+      if (!pics.length) { alert("References have to be PNG, JPG or WebP."); return false; }
+      const have = new Set(imgRefs.map((m) => m.name));
+      const fresh = pics.filter((n) => !have.has(n));
+      const room = IMG_REF_MAX - imgRefs.length;
+      if (room <= 0) { alert(`That is already all ${IMG_REF_MAX} references. Remove one first.`); return false; }
+      for (const n of fresh.slice(0, room)) {
+        imgRefs.push({ name: n, url: `/api/image/${encodeURIComponent(n)}` });
+      }
+      imgRefsPaint();
+      /* Named, not silently dropped: somebody who ticked twelve and got ten
+       * should know which two did not come. */
+      const left = fresh.slice(room);
+      if (left.length) {
+        alert(`Added ${Math.min(room, fresh.length)}. ${left.length} did not fit — `
+          + `images take ${IMG_REF_MAX} references at most:\n\n${left.join("\n")}`);
+      }
+      return true;
+    },
+
+    /* \u26a0 NINE, NOT TEN, AND THE ENGINE MOVES TOO. H3 takes REF_IMG_MAX
+     * references where an image takes IMG_REF_MAX, so a full image selection
+     * overflows video by one. And the Video page hides its reference section
+     * unless the engine is H3 — arriving with pictures attached, invisible and
+     * unsent would be worse than not moving them. */
+    vidrefs: async (files) => {
+      const pics = files.filter((n) => /\.(png|jpe?g|webp)$/i.test(n));
+      if (!pics.length) { alert("References have to be PNG, JPG or WebP."); return false; }
+      state.refImages = state.refImages || [];
+      const have = new Set(state.refImages.map((m) => m.name));
+      const fresh = pics.filter((n) => !have.has(n));
+      const room = REF_IMG_MAX - state.refImages.length;
+      if (room <= 0) { alert(`Video already has all ${REF_IMG_MAX} references. Remove one first.`); return false; }
+      for (const n of fresh.slice(0, room)) {
+        state.refImages.push({ name: n, url: `/api/image/${encodeURIComponent(n)}`, label: n });
+      }
+      /* ⚠ THROUGH setVideoEngine, NOT BY POKING THE SELECT. #vidEngine is filled
+       * when the Video page first paints, so from here it can still be EMPTY —
+       * and assigning a value a <select> has no option for leaves it "", which
+       * the change handler then posts, and the server answers "Unknown engine."
+       * Measured: exactly that alert, with the engine reading "" beforehand.
+       * setVideoEngine posts, checks the reply, updates state and repaints, and
+       * is the only place that knows what to do when the server says no. */
+      const wasEngine = state.video?.engine || $("vidEngine").value;
+      let switched = false;
+      if (wasEngine !== "h3") switched = await setVideoEngine("h3");
+
+      setView("video");
+      if (typeof paintRefs === "function") paintRefs();
+
+      const took = Math.min(room, fresh.length);
+      const left = fresh.slice(room);
+      const said = [`${took} reference${took === 1 ? "" : "s"} moved to Video.`];
+      if (switched) {
+        said.push("The engine was switched to H3, which is the one that reads reference images.");
+      } else if (wasEngine !== "h3") {
+        /* The pictures are attached to a page that hides them. Saying "moved"
+         * and stopping would leave somebody composing a shot around references
+         * that are never sent. */
+        said.push("The engine could not be switched, and Video only uses reference images on H3 — "
+          + `set the engine to H3 or these ${took} will not reach the render.`);
+      }
+      if (left.length) {
+        said.push(`${left.length} did not fit — H3 takes ${REF_IMG_MAX} at most, where an image takes ${IMG_REF_MAX}:\n${left.join("\n")}`);
+      }
+      alert(said.join("\n\n"));
+      return true;
+    },
+
     trash: async (files) => {
       if (!(await appConfirm(`Move ${files.length} image${files.length === 1 ? "" : "s"} to trash? They stay on disk in output/trash.`))) return false;
       const ok = await pickEach("/api/images", files, { action: "trash" });
@@ -15263,7 +15336,10 @@ function imgRefsPaint() {
   const n = imgRefs.length;
 
   const prev = $("imgRefPrev");
-  prev.hidden = !n;
+  /* Always on screen: a drop target you cannot see is one nobody finds. The
+   * empty state is a CSS ::before reading data-empty, so there is no placeholder
+   * row to mistake for a reference. */
+  prev.classList.toggle("isempty", !n);
   prev.innerHTML = imgRefs.map((m, i) => `<figure class="midthumb">
       <span class="refnum">${i + 1}</span>
       <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)} — click to say &quot;image ${i + 1}&quot;">
@@ -15374,6 +15450,112 @@ $("imgRefPick").onchange = () => {
   if (c) imgRefs.push({ name: c.name, url: c.url });
   imgRefsPaint();
 };
+/* ── dropping a reference in ───────────────────────────────────────────────
+ *
+ * \u26a0 A LIBRARY PICTURE IS A NAME, NOT BYTES. It is already on disk, so the
+ * library case is answered first and never touches the network: re-uploading it
+ * would file a second copy under a new name and point the reference at the
+ * duplicate. Only a file from outside has bytes nobody here has seen. */
+
+/* The name behind a drag, if this app already owns the picture. The explicit
+ * type is the contract; the URL is the fallback that makes a drag from the Video
+ * grid, or from a second window of this app, work too. */
+function imgRefNameFromDrag(dt) {
+  const own = dt.getData("application/x-aiplay-image");
+  if (own) return own;
+  const uri = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
+  const m = /\/api\/image\/([^/?#\s]+)/.exec(uri);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/* Delegated, so the gallery's own markup needs no changes and a grid rendered
+ * later is covered without re-binding. */
+document.addEventListener("dragstart", (e) => {
+  const tile = e.target.closest?.("[data-imgopen]");
+  if (!tile || !e.dataTransfer) return;
+  e.dataTransfer.setData("application/x-aiplay-image", tile.dataset.imgopen);
+  e.dataTransfer.effectAllowed = "copy";
+});
+
+{
+  const zone = $("imgRefPrev");
+  if (zone) {
+    /* dragenter and dragleave fire for every child the pointer crosses, so a
+     * naive pair flickers the highlight the whole way across the box. Counting
+     * depth is the usual fix and the only one that does not lie. */
+    let depth = 0;
+    const lit = (on) => zone.classList.toggle("dragover", on);
+
+    zone.addEventListener("dragenter", (e) => { e.preventDefault(); depth++; lit(true); });
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+    zone.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) lit(false); });
+
+    zone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      depth = 0; lit(false);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      if (imgRefs.length >= IMG_REF_MAX) {
+        alert(`That is all ${IMG_REF_MAX} references. Remove one first.`);
+        return;
+      }
+      const name = imgRefNameFromDrag(dt);
+      if (name) {
+        if (imgRefs.some((m) => m.name === name)) return;     // already chosen
+        imgRefs.push({ name, url: `/api/image/${encodeURIComponent(name)}` });
+        imgRefsPaint();
+        return;
+      }
+      const files = [...(dt.files || [])];
+      if (!files.length) return;
+      const added = await imgRefUploadFiles(files);
+      if (!added) alert("That did not look like a PNG, JPEG or WebP.");
+    });
+  }
+}
+
+/* ── the full picture, on hover ────────────────────────────────────────────
+ *
+ * The thumbnail is 88x50 and the point of a reference is what is IN it, which
+ * is not legible at that size. The panel is fixed and body-level because the
+ * form column is overflow-y:auto and would clip anything larger than the thumb
+ * it grew out of. */
+{
+  const panel = $("imgRefHover");
+  if (panel) {
+    const img = panel.querySelector("img");
+    const cap = panel.querySelector("span");
+    const hide = () => { panel.hidden = true; };
+
+    document.addEventListener("mouseover", (e) => {
+      const fig = e.target.closest?.("#imgRefPrev .midthumb");
+      if (!fig) return;
+      const thumb = fig.querySelector("img");
+      if (!thumb) return;
+      img.src = thumb.src;
+      cap.textContent = thumb.title ? thumb.title.split(" \u2014 ")[0] : "";
+      panel.hidden = false;
+      /* Placed against the THUMB's rect, not the pointer: a panel that chases
+       * the cursor is a panel you cannot look at. Flipped to the other side when
+       * it would run off the right edge. */
+      const r = fig.getBoundingClientRect();
+      const w = 320;
+      const left = r.right + 12 + w > innerWidth ? Math.max(8, r.left - w - 12) : r.right + 12;
+      panel.style.left = `${left}px`;
+      panel.style.top = `${Math.min(Math.max(8, r.top - 40), innerHeight - 280)}px`;
+    });
+    document.addEventListener("mouseout", (e) => {
+      if (e.target.closest?.("#imgRefPrev .midthumb")) hide();
+    });
+    /* A panel left over a picture that has gone is a ghost: the list repaints on
+     * every add, remove and reorder. */
+    addEventListener("scroll", hide, true);
+  }
+}
+
 $("imgRefClear").onclick = () => { imgRefs.length = 0; imgRefsPaint(); };
 
 /* A picture that is not in the library yet. Same endpoint the Video screen's
@@ -15382,8 +15564,15 @@ $("imgRefClear").onclick = () => { imgRefs.length = 0; imgRefsPaint(); };
  * that shape — the capability was there, nothing in the Images form reached
  * it. */
 $("imgRefUpload").onclick = () => $("imgRefFile").click();
-$("imgRefFile").onchange = async () => {
-  const files = [...($("imgRefFile").files || [])].slice(0, IMG_REF_MAX - imgRefs.length);
+
+/* The one upload path, so the button and the drop target cannot drift about the
+ * cap or the accepted formats. Files beyond the cap are dropped on the floor by
+ * the slice, which is what the button has always done. */
+async function imgRefUploadFiles(list) {
+  const files = [...(list || [])]
+    .filter((f) => /^image\/(png|jpe?g|webp)$/i.test(f.type))
+    .slice(0, IMG_REF_MAX - imgRefs.length);
+  if (!files.length) return 0;
   const btn = $("imgRefUpload");
   const was = btn.textContent;
   btn.disabled = true;
@@ -15396,6 +15585,23 @@ $("imgRefFile").onchange = async () => {
       if (r.error) throw new Error(r.error);
       imgRefs.push({ name: r.name, url: URL.createObjectURL(f) });
     }
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+  }
+  imgRefsPaint();
+  return files.length;
+}
+
+$("imgRefFile").onchange = async () => {
+  const files = [...($("imgRefFile").files || [])];
+  const btn = $("imgRefUpload");
+  const was = btn.textContent;
+  btn.disabled = true;
+  try {
+    await imgRefUploadFiles(files);
   } catch (e) {
     alert(e.message);
   } finally {

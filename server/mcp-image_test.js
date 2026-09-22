@@ -498,8 +498,17 @@ ok("the render cost is stated, from the same measurement the tool description qu
 ok("switching engine repaints the block",
   app.slice(app.indexOf('$("imgEngine").onchange'), app.indexOf('$("imgGo").onclick'))
     .includes("imgRefsPaint();"));
+/* The upload used to be inline in the onchange handler, so this read the two as
+ * NEIGHBOURS. It is a shared function now, because the drop target needs the
+ * same upload and two copies would drift about the cap and the accepted
+ * formats - so the pin follows the architecture and gets stronger: one named
+ * path, still /api/frame, and the handler delegating to it rather than rolling
+ * its own. */
 ok("uploads go through /api/frame — the endpoint the Video tab's references use",
-  /imgRefFile"\)\.onchange[\s\S]{0,700}\/api\/frame/.test(app));
+  /async function imgRefUploadFiles\([\s\S]{0,700}\/api\/frame/.test(app));
+ok("...through ONE function, so the button and the drop target cannot drift",
+  /imgRefFile"\)\.onchange[\s\S]{0,400}imgRefUploadFiles\(/.test(app)
+  && (app.match(/imgRefUploadFiles\(/g) || []).length >= 3);
 
 /* -- WHICH MODEL PAINTED IT -----------------------------------------------
  * The engine was recorded from the first day and shown nowhere, which is the
