@@ -83,14 +83,9 @@ const fail = (el, e) => show(el, `<b>That did not work.</b><p class="eng-prob">$
  * revealed is a dated event in the ledger.
  */
 const EXPOSURE = {
-  ephemeral: "The app chose an unpublished loopback port at start-up. Nothing on this "
-    + "machine can find this engine by guessing, so nothing can render through it without "
-    + "being recorded here.",
-  pinned: "AIPLAY_COMFY_PORT is set, so the engine is on a published port. Anything else on "
-    + "this machine can drive it directly, and those renders will not appear in this list, "
-    + "the clip library or any project.",
-  revealed: "The port was revealed during this session and the ledger says when. Renders "
-    + "posted straight at it from that moment on will not appear here.",
+  ephemeral: "Hidden port: nothing can render without being recorded here.",
+  pinned: "AIPLAY_COMFY_PORT is set, so other programs can render here without being recorded.",
+  revealed: "The port was revealed this session (logged). Renders sent straight to it are not recorded.",
 };
 
 async function loadStatus() {
@@ -103,8 +98,9 @@ function paintStatus() {
   if (!s) return;
   const mode = s.mode || "ephemeral";
   $("engHead").textContent = s.ready
-    ? `up${s.version ? ` — ComfyUI ${s.version}` : ""}`
-    : "not running";
+    ? `running${s.version ? ` · ComfyUI ${s.version}` : ""}`
+    : s.ours ? "starting" : "not running";
+  $("engHead").className = `chip ${s.ready ? "ok" : s.ours ? "busy" : "err"}`;
 
   /* The pinned strip, and ONLY in pinned mode. It is not a scolding: an
    * install that pinned the port did so because of a real collision. It says
@@ -112,12 +108,14 @@ function paintStatus() {
   const warn = $("engPinned");
   warn.hidden = mode !== "pinned";
   if (mode === "pinned") {
-    warn.innerHTML = `<b>This engine is pinned to a published port (${esc(String(s.port))}).</b>`
-      + `${esc(EXPOSURE.pinned)} Unset AIPLAY_COMFY_PORT to let the app pick an unpublished port at every start.`;
+    warn.innerHTML = `<b>Pinned to a published port (${esc(String(s.port))}).</b>`
+      + `${esc(EXPOSURE.pinned)} Unset it to hide the port again.`;
   }
 
-  const fact = (k, v, why) => `<div class="eng-fact"><span class="k">${esc(k)}</span>`
-    + `<span class="v">${v}</span>${why ? `<span class="why">${esc(why)}</span>` : ""}</div>`;
+  /* One tile per fact: a label and a value. The explanation is the tile's
+   * tooltip, not a paragraph under it. */
+  const fact = (k, v, why) => `<div class="eng-fact"${why ? ` title="${esc(why)}"` : ""}><span class="k">${esc(k)}${why ? " ⓘ" : ""}</span>`
+    + `<span class="v">${v}</span></div>`;
 
   const q = s.queue ? `${s.queue.running} running, ${s.queue.pending} waiting` : "—";
   const backend = s.backend
@@ -129,8 +127,7 @@ function paintStatus() {
     fact("exposure", `<span class="eng-badge ${esc(mode)}">${esc(mode)}</span>`
       + (s.port ? ` <span class="v">${esc(String(s.port))}</span>` : ""), EXPOSURE[mode]),
     fact("engine", s.ready ? "ready" : s.ours ? "starting" : "not running",
-      s.ours ? null : "This app's own ComfyUI child is not alive, so nothing will be submitted — "
-        + "whatever else might answer would render into another install's library."),
+      s.ours ? null : "This app's own ComfyUI is not running, so nothing will be sent to it."),
     fact("queue", esc(q), s.running?.length
       ? s.running.map((r) => `${r.via}: ${fmtSecs(r.elapsedSec)}`).join(", ") : null),
     fact("memory tier", esc(String(s.tier ?? "—")), null),
@@ -138,16 +135,16 @@ function paintStatus() {
       s.backend?.cudaFused === false ? "A non-fused torch build costs roughly 5x and everything still appears to work." : null),
     fact("uptime", s.uptimeSec == null ? "—" : fmtSecs(s.uptimeSec), null),
     fact("runs recorded", esc(String(s.ledgerEntries ?? "—")),
-      "Two events per run — the request before the GPU spends anything, the result after."),
-    fact("stored graphs", `${s.graphStore?.count ?? 0} <span class="why">${fmtBytes(s.graphStore?.bytes ?? 0)}</span>`,
-      "Content-addressed and never pruned: a ledger line naming a graph nothing can resolve would look like evidence."),
+      "Two events per run: the request, then the result."),
+    fact("stored graphs", `${s.graphStore?.count ?? 0} · ${fmtBytes(s.graphStore?.bytes ?? 0)}`,
+      "Every graph ever run, kept so any run can be repeated exactly."),
   ].join("");
 
   $("engHash").checked = s.hashModels === true;
   $("engReveal").disabled = mode !== "ephemeral";
   if (mode !== "ephemeral") {
     $("engRevealNote").textContent = mode === "pinned"
-      ? "Already published — see the strip above."
+      ? "Already published (see above)."
       : `Revealed this session: ${s.port}. The ledger has the line.`;
   }
 }
@@ -181,9 +178,7 @@ function paintRuns(total) {
      * door is the only way in, an empty list means nothing rendered — not that
      * something rendered unrecorded, which is what an empty list meant before
      * this subsystem existed. */
-    host.innerHTML = '<p class="eng-empty">Nothing here. Because this door is the only way to the '
-      + 'engine, that means nothing has rendered — not that something rendered without being '
-      + 'written down.</p>';
+    host.innerHTML = '<p class="eng-empty">Nothing has rendered yet.</p>';
     return;
   }
   host.innerHTML = RUNS.map((r) => {

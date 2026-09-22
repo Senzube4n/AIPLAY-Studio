@@ -1,0 +1,343 @@
+/* THE PAGE KIT. One look for every full page (Settings, About, Engine, Music
+ * Lab, and whatever comes next). The rules for using it are in docs/UI_GUIDE.md;
+ * web/ui.js builds the pill bar and shortens long hints.
+ *
+ *   <div id="x" class="page" hidden>
+ *     <header class="page-head"><h2>Title</h2><p>One short line.</p></header>
+ *     <nav class="pnav" aria-label="Sections"></nav>          (filled by ui.js)
+ *     <section class="pcard" id="x-one" data-nav="One">
+ *       <h3>One</h3><p class="pcard-sub">What this section is for.</p>
+ *       ...controls...
+ *       <details class="more"><summary>More</summary>...long text...</details>
+ *     </section>
+ *   </div>
+ */
+
+.page { width: 100%; max-width: 940px; margin: 0 auto; padding-bottom: 60px; box-sizing: border-box; }
+.page-head { margin: 0 0 12px; }
+.page-head h2 { margin: 0; font: 600 24px var(--disp); color: var(--ink); letter-spacing: .01em; }
+.page-head p { margin: 4px 0 0; font-size: 13px; color: var(--faint); max-width: 640px; }
+
+/* The pills: one per section, sticky at the top of the page while it scrolls. */
+.pnav {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 -4px 16px; padding: 10px 4px;
+  background: linear-gradient(hsla(220,20%,5%,.97) 75%, hsla(220,20%,5%,0));
+}
+.pnav:empty { display: none; }
+.pnav a {
+  font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap;
+  padding: 6px 13px; border-radius: 999px;
+  color: var(--dim); background: var(--panel); border: 1px solid var(--hair);
+  transition: color .12s, border-color .12s, background-color .12s;
+}
+.pnav a:hover { color: var(--primary); border-color: var(--edge-s); }
+.pnav a.on { color: var(--on); background: var(--primary); border-color: transparent; }
+.pnav a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* The sections: each one a card, clearly apart from the next. */
+.pcard {
+  margin: 0 0 16px; padding: 18px 20px;
+  background: var(--panel); border: 1px solid var(--hair); border-radius: 14px;
+  scroll-margin-top: 64px;
+}
+.pcard > h3 {
+  margin: 0; font: 600 16px var(--disp); color: var(--ink);
+  display: flex; align-items: center; gap: 10px;
+}
+.pcard > h3 .sp { margin-left: auto; font: 400 11px var(--sans, inherit); color: var(--ghost); }
+.pcard-sub { margin: 4px 0 14px; font-size: 12.5px; color: var(--faint); line-height: 1.5; }
+.pcard > :last-child { margin-bottom: 0; }
+.pcard .params, .pcard .setgrid { margin-bottom: 4px; }
+.pcard .hint { margin-top: 6px; }
+.pcard .cta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.pcard .cta .btn { flex: 0 0 auto; }
+.pcard .sub-rule { border: 0; border-top: 1px solid var(--hair); margin: 16px 0 14px; }
+.pcard h4 { margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: var(--dim); text-transform: none; }
+
+/* Long explanations live behind "More", never on the page by default. */
+details.more { margin-top: 10px; }
+details.more > summary {
+  cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--ghost);
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: "+"; font-weight: 700; }
+details.more[open] > summary::before { content: "\2212"; }
+details.more > summary:hover { color: var(--primary); }
+details.more > :not(summary) { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--faint); }
+
+/* Status in one line: a dot and a few words, instead of a paragraph. */
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
+  padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: hsla(0,0%,100%,.05); color: var(--dim); border: 1px solid var(--hair);
+}
+.chip::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ghost); }
+.chip.ok { color: var(--ok); border-color: hsla(142,76%,46%,.3); }
+.chip.ok::before { background: var(--ok); }
+.chip.warn { color: var(--warn); border-color: hsla(38,92%,55%,.35); }
+.chip.warn::before { background: var(--warn); }
+.chip.err { color: var(--err); border-color: hsla(0,85%,60%,.35); }
+.chip.err::before { background: var(--err); }
+.chip.busy::before { background: var(--primary); animation: chipPulse 1s ease-in-out infinite; }
+@keyframes chipPulse { 50% { opacity: .3; } }
+
+/* LONG HINTS, EVERYWHERE: two lines, then "more". ui.js marks the ones that
+ * are actually cut off (.clipped); clicking opens them. Warnings and live
+ * status lines are never cut. */
+p.hint.clipped, div.hint.clipped {
+  position: relative; cursor: pointer;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  padding-right: 42px;
+}
+p.hint.clipped::after, div.hint.clipped::after {
+  content: "more"; position: absolute; right: 0; bottom: 0;
+  font-weight: 600; color: var(--primary);
+}
+p.hint.open, div.hint.open { cursor: pointer; }
+
+@media (max-width: 700px) {
+  .pcard { padding: 14px; }
+  .pnav { flex-wrap: nowrap; overflow-x: auto; }
+}
+
+/* The secondary button and the small text field. Both were used (Engine,
+ * Settings) and never styled, so they fell back to the browser's own. */
+.btn2 {
+  font: inherit; font-size: 12px; font-weight: 600; line-height: 1;
+  padding: 8px 14px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  color: var(--dim); background: hsla(0,0%,100%,.05); border: 1px solid var(--edge);
+  transition: color .12s, border-color .12s;
+}
+.btn2:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.btn2:disabled { opacity: .45; cursor: not-allowed; }
+.btn2.danger:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
+.in2 {
+  font: inherit; font-size: 12px; color: var(--ink); background: var(--raise);
+  border: 1px solid var(--edge); border-radius: 7px; padding: 6px 9px; min-width: 0;
+}
+.in2:focus { outline: none; border-color: var(--primary); }
+.in2::placeholder { color: var(--ghost); }
+.in2.num { width: 72px; }
+
+/* About: prose inside cards, and the page and idea grids. */
+.about .pcard p { margin: 0 0 10px; font-size: 13px; line-height: 1.6; color: var(--dim); max-width: 70ch; }
+.about .pcard p.pcard-sub { color: var(--faint); font-size: 12.5px; }
+.about .pcard .hint { font-size: 11.5px; color: var(--ghost); }
+.about .verbox { margin: 10px 0 0; padding: 0; background: none; max-width: none; }
+.about ul.tight { margin: 0; padding-left: 1.2rem; font-size: 13px; line-height: 1.7; color: var(--dim); }
+.about-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 24px; }
+.about-two h4 { margin: 4px 0 4px; }
+.pagegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; margin: 0; }
+.pagegrid > div { padding: 12px 14px; border-radius: 10px; background: hsla(0,0%,100%,.03); border: 1px solid var(--hair); }
+.pagegrid dt { font-weight: 650; font-size: 13px; color: var(--ink); margin-bottom: 4px; }
+.pagegrid dd { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--faint); }
+.pagegrid dd.cant { margin-top: 6px; font-size: 12px; color: #ffb27d; opacity: .9; }
+.about .kofi { display: inline-block; margin: 4px 0 0; padding: 8px 18px; }
+.page .pcard a:not(.kofi):not(.btn):not(.btn2) { color: var(--primary); text-decoration: none; }
+.page .pcard a:not(.kofi):not(.btn):not(.btn2):hover { text-decoration: underline; }
+
+.page.page-wide { max-width: 1180px; }
+/* A small ghost button sizes to its label. `.btn.ghost` fixes 96px, which
+ * squeezed "Refresh hardware and library" into a four-line box. */
+.btn.sm.ghost { flex: 0 0 auto; }
+
+/* ── picture drop box (web/picdrop.js): the Music screen's song box, for
+ * pictures. Same dashed zone, same slide, same card, same measurements as
+ * .create .songref / .srempty / .srfull in styles.css. */
+.picdrop { position: relative; margin: 2px 0 6px; }
+
+/* The zone: hidden until a picture is dragged, then slides open. */
+.picdrop .pdslide {
+  display: grid; grid-template-rows: 0fr; opacity: 0; pointer-events: none;
+  transition: grid-template-rows .26s cubic-bezier(.4,0,.6,1), opacity .2s ease .04s, margin-bottom .26s;
+}
+.picdrop .pdwrap { min-height: 0; overflow: hidden; transform: translateY(-10px); transition: transform .32s cubic-bezier(.22,.8,.24,1); }
+.picdrop.dragging .pdslide, .picdrop.over .pdslide {
+  grid-template-rows: 1fr; opacity: 1; pointer-events: auto; margin-bottom: 8px;
+  transition: grid-template-rows .32s cubic-bezier(.22,.8,.24,1), opacity .24s ease, margin-bottom .32s;
+}
+.picdrop.dragging .pdwrap, .picdrop.over .pdwrap { transform: translateY(0); }
+.picdrop .pdzone {
+  width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 18px 12px; border: 1.5px dashed hsla(0,0%,100%,.22); border-radius: 18px;
+  color: var(--ghost); font-size: 13px; text-align: center;
+}
+.picdrop .pdicon { font-size: 18px; color: var(--faint); }
+.picdrop.over .pdzone { border-color: var(--primary); background: hsla(195,100%,60%,.08); color: var(--ink); }
+.picdrop.off .pdzone { opacity: .5; }
+@media (prefers-reduced-motion: reduce) {
+  .picdrop .pdslide, .picdrop .pdwrap { transition: none; }
+}
+
+/* The filled card: Music's .srfull. */
+.picdrop .pdfull {
+  display: grid; grid-template-columns: 44px minmax(0,1fr) auto auto; gap: 10px; align-items: center;
+  padding: 8px 8px 8px 10px; border: 1.5px dashed hsla(0,0%,100%,.22); border-radius: 18px;
+}
+.picdrop .pdfull[hidden] { display: none; }
+.picdrop.over .pdfull { border-color: var(--primary); background: hsla(195,100%,60%,.08); }
+.picdrop .pdart { width: 44px; height: 44px; border-radius: 8px; background: hsl(220,15%,12%); }
+.picdrop .rmeta { display: flex; flex-direction: column; min-width: 0; }
+.picdrop .rtitle { font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picdrop .rsub { font-size: 11.5px; color: var(--ghost); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picdrop .srbtn {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--hair);
+  background: var(--raise); color: var(--faint); cursor: pointer; font-size: 12px;
+}
+.picdrop .srbtn:hover, .picdrop .srbtn[aria-expanded="true"] { color: var(--primary); border-color: var(--primary); }
+.picdrop .srbtn[hidden] { display: none; }
+
+/* Library / Upload, always at hand. */
+.pdrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pdrow[hidden] { display: none; }
+.pdrow .edtool[aria-expanded="true"] { color: var(--primary); border-color: var(--primary); }
+.pdrow .edtool:disabled { opacity: .5; cursor: not-allowed; }
+.pdwhy { font-size: 11px; color: var(--ghost); }
+.picdrop.busy .pdfull, .picdrop.busy .pdrow { opacity: .6; }
+
+/* The library menu: Music's .srmenu, with a thumbnail grid. */
+.pdmenu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
+  max-height: 360px; overflow-y: auto; padding: 8px 10px 10px;
+  background: hsl(220,14%,8%); border: 1px solid var(--edge); border-radius: 14px;
+  box-shadow: 0 12px 32px hsla(0,0%,0%,.55);
+}
+.pdmenu.up { top: auto; bottom: calc(100% + 6px); }
+.pdup {
+  width: 100%; margin: 0 0 4px; padding: 8px 10px; border-radius: 10px; text-align: left; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--dim);
+  background: var(--raise); border: 1px solid var(--hair);
+}
+.pdup:hover { color: var(--primary); border-color: var(--primary); }
+.pdgroup { font-size: 11px; font-weight: 600; color: var(--faint); margin: 8px 2px 6px; }
+.pdgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+.pdtile {
+  padding: 0; border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; cursor: pointer;
+  aspect-ratio: 1; background: hsl(220,15%,12%);
+}
+.pdtile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pdtile:hover { border-color: var(--primary); }
+.pdempty { margin: 8px 4px; font-size: 12px; color: var(--ghost); }
+/* The drag card is Music's .srghost; a canvas stands in for the song art. */
+.srghost canvas.art { width: 40px; height: 40px; border-radius: 6px; display: block; }
+
+/* Simple mode hides the form, but the picture a person dropped must stay
+   visible: the Images reference field and Video's starting frame are
+   exceptions in the .assist-on rule in styles.css. */
+/* Video's frame slots show their picture on the drop box's card now. */
+#vidFromPrev, #vidToPrev { display: none !important; }
+
+/* Library / Upload living in another toolbar (the `bar` option). */
+.pdbar { position: relative; }
+.pdbar .pdrow { display: contents; }
+
+/* The Images reference toolbar: character, save, library, upload, one row. */
+.refbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 8px; }
+.refbar > .sel2, .refbar > .edtool, .refbar .pdrow > .edtool {
+  height: 30px; box-sizing: border-box; padding: 0 10px; border-radius: 9px;
+  font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--dim);
+  background: var(--raise); border: 1px solid var(--hair);
+}
+.refbar > .sel2 { max-width: 112px; padding-right: 20px; }
+.refbar > .edtool:hover, .refbar .pdrow > .edtool:hover:not(:disabled), .refbar > .sel2:hover { color: var(--primary); border-color: var(--primary); }
+.refbar .pdwhy:empty { display: none; }
+
+/* The zone holding the pictures (the `strip` option): always open while it
+   has any, a grid that fills across and then down, and it glows when more
+   are dragged over it. The drop words show only during a drag. */
+.picdrop.strip .pdslide { grid-template-rows: 1fr; opacity: 1; pointer-events: auto; margin-bottom: 8px; }
+.picdrop.strip .pdwrap { transform: none; }
+.picdrop.strip .pdzone { align-items: stretch; gap: 8px; padding: 10px; }
+.picdrop.strip:not(.dragging):not(.over) .pdicon,
+.picdrop.strip:not(.dragging):not(.over) .pdzonetext { display: none; }
+.picdrop.strip .pdicon { display: none; }
+.picdrop.strip .pdzonetext { text-align: center; font-size: 12px; }
+.picdrop .pdzone > .midprev {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin: 0; width: 100%;
+}
+.picdrop .pdzone > .midprev[hidden] { display: none; }
+.picdrop .pdzone .midthumb { width: auto; min-width: 0; }
+.picdrop .pdzone .midthumb img, .picdrop .pdzone .imgrefs .midthumb img {
+  width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 10px;
+  border: 1px solid var(--hair); display: block;
+}
+.picdrop .pdzone .midthumb figcaption { padding-top: 4px; font-size: 11px; }
+.picdrop .pdzone .imgrefs .refnum { left: 6px; top: 6px; font-size: 11px; padding: 2px 6px; border-radius: 6px; }
+.picdrop .pdzone .pdclearall { align-self: flex-end; font-size: 11.5px; }
+
+/* ── Qwen Image 2.1 readiness light (imgQwenPaint in app.js) ──────────────
+ * Sits exactly where the dropdown's arrow is (right 11px, see .sel2). The
+ * outer span is the hover and click target (a click opens the dropdown); the
+ * inner <i> is the light itself, so the spin never turns the pop-up. */
+.qwenpv { position: relative; }
+.qwenpv > .sel2 { width: 100%; }
+.qwenpv .qdot {
+  position: absolute; right: 8px; top: 50%; z-index: 2;
+  width: 18px; height: 18px; margin-top: -9px; display: grid; place-items: center;
+  cursor: pointer; transition: right .45s cubic-bezier(.22,.8,.24,1);
+}
+.qwenpv .qdot > i { display: block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+/* What it is doing, on hover. */
+.qwenpv .qdot::after {
+  content: attr(data-tip); position: absolute; right: -4px; bottom: calc(100% + 8px);
+  width: max-content; max-width: 240px; white-space: normal; text-align: left;
+  padding: 7px 10px; border-radius: 9px; font-size: 11.5px; line-height: 1.4; font-weight: 500;
+  color: var(--ink); background: hsl(220,14%,11%); border: 1px solid var(--edge);
+  box-shadow: 0 8px 22px hsla(0,0%,0%,.5);
+  opacity: 0; transform: translateY(3px); pointer-events: none;
+  transition: opacity .12s, transform .12s;
+}
+.qwenpv .qdot:hover::after { opacity: 1; transform: none; }
+.qwenpv .qdot[hidden] { display: none; }
+/* The arrow steps out while the light holds its place. */
+.qwenpv:is(.qbusy, .qok, .qerr):not(.qsettled) > .sel2 { background-image: none; }
+.qwenpv:is(.qbusy, .qok, .qerr, .qsettled) > .sel2 { padding-right: 44px; }
+/* Checking: an orange ring spinning. */
+.qwenpv.qbusy .qdot > i {
+  border: 2px solid hsla(30,95%,55%,.25); border-top-color: hsl(30,95%,55%);
+  animation: qspin .8s linear infinite;
+}
+@keyframes qspin { to { transform: rotate(360deg); } }
+/* Ready: a slow green pulse; after two seconds it moves left, arrow behind. */
+.qwenpv.qok .qdot > i { background: var(--ok); animation: qpulse 2.4s ease-in-out infinite; }
+.qwenpv.qok.qsettled .qdot { right: 26px; }
+@keyframes qpulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsla(142,76%,46%,.55); opacity: 1; }
+  50% { box-shadow: 0 0 0 5px hsla(142,76%,46%,0); opacity: .7; }
+}
+/* Not ready: red; a click reopens the details. */
+.qwenpv.qerr .qdot > i { background: var(--err); box-shadow: 0 0 0 3px hsla(0,85%,60%,.2); }
+@media (prefers-reduced-motion: reduce) { .qwenpv .qdot, .qwenpv .qdot > i { animation: none !important; transition: none; } }
+
+/* The details, popped out beside the engine field. */
+.qpop {
+  position: fixed; z-index: 60; box-sizing: border-box; padding: 12px 14px 12px;
+  background: hsl(220,14%,9%); border: 1px solid hsla(0,85%,60%,.45); border-radius: 12px;
+  box-shadow: 0 14px 36px hsla(0,0%,0%,.55); font-size: 12.5px; color: var(--dim);
+}
+.qpop[hidden] { display: none; }
+.qpop.qside::before {
+  content: ""; position: absolute; left: -6px; top: 16px; width: 10px; height: 10px;
+  background: inherit; border-left: 1px solid hsla(0,85%,60%,.45); border-bottom: 1px solid hsla(0,85%,60%,.45);
+  transform: rotate(45deg);
+}
+.qpop b { display: block; margin: 0 22px 4px 0; color: var(--err); font-size: 13px; }
+.qpop p { margin: 0 0 10px; line-height: 1.5; }
+.qpop p[hidden] { display: none; }
+.qpopacts { display: flex; flex-wrap: wrap; gap: 6px; }
+.qpopx { position: absolute; top: 8px; right: 8px; border: 0; background: none; color: var(--ghost); cursor: pointer; font-size: 12px; }
+.qpopx:hover { color: var(--ink); }
+
+/* Reference tiles: remove sits in the picture's top-right corner. */
+.picdrop .pdzone .midthumb { position: relative; }
+.picdrop .pdzone .midthumb .midx {
+  position: absolute; top: 6px; right: 6px; z-index: 1;
+  width: 22px; height: 22px; padding: 0; border-radius: 50%; line-height: 22px; text-align: center; font-size: 11px;
+  background: hsla(220,20%,6%,.75); color: var(--dim); border: 1px solid hsla(0,0%,100%,.18);
+  transition: background-color .12s, color .12s;
+}
+.picdrop .pdzone .midthumb .midx:hover { color: #fff; background: var(--err); border-color: transparent; }
+.picdrop .pdzone .midthumb figcaption { justify-content: center; }

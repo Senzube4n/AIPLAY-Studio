@@ -1,0 +1,83 @@
+/* THE THREE GALLERIES: songs (Library), pictures (Images) and clips (Video).
+ * One look for all three: rounded tiles on a quiet surface, a hover lift
+ * instead of a hard outline, and text kept to a title and one line. Loaded
+ * after styles.css, so these rules win over the older ones they replace. */
+
+/* ── songs ─────────────────────────────────────────────────────────────── */
+.rows { gap: 4px; }
+.row {
+  grid-template-columns: 48px minmax(0,1fr) auto; gap: 14px;
+  padding: 8px 10px 8px 8px; border-radius: 12px;
+  transition: background-color .12s, border-color .12s;
+}
+.row:hover { background: hsla(0,0%,100%,.035); border-color: var(--hair); }
+.row .art { width: 48px; height: 48px; border-radius: 9px; box-shadow: 0 2px 10px hsla(0,0%,0%,.35); }
+.rtitle { font-size: 13.5px; letter-spacing: .005em; }
+.rsub { font-size: 11.5px; }
+.row.playing { background: hsla(195,100%,60%,.07); border-color: hsla(195,100%,60%,.22); }
+
+/* Grid view: album cards. */
+.rows.grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.rows.grid .row { border-radius: 14px; padding: 8px; background: hsla(0,0%,100%,.02); border: 1px solid var(--hair); }
+.rows.grid .row:hover { background: hsla(0,0%,100%,.05); border-color: var(--edge); transform: translateY(-2px); transition: transform .15s, background-color .15s; }
+.rows.grid .art { width: 100%; height: auto; border-radius: 10px; }
+.rows.grid .rmeta { padding: 8px 2px 0; }
+.rows.grid .row.playing { border-color: hsla(195,100%,60%,.45); background: hsla(195,100%,60%,.06); }
+
+/* Session headings: quieter, and a clear gap above each group. */
+.grp + .grp { margin-top: 10px; }
+.grphead { border-radius: 8px; }
+
+/* ── pictures ─────────────────────────────────────────────────────────── */
+.masonry { gap: 8px; }
+.imtile {
+  flex: var(--ar) 1 calc(var(--ar) * 210px); min-width: 150px;
+  border-radius: 12px; border: 1px solid var(--hair);
+  box-shadow: 0 2px 12px hsla(0,0%,0%,.3);
+  transition: transform .15s, box-shadow .15s, border-color .15s;
+}
+.imtile:hover {
+  outline: none; transform: translateY(-2px);
+  border-color: var(--edge-s); box-shadow: 0 10px 28px hsla(0,0%,0%,.45);
+}
+.imtile figcaption { padding: 2.2rem .7rem .6rem; background: linear-gradient(transparent, hsla(220,30%,4%,.9)); }
+.imtile figcaption b { font-size: .74rem; }
+.imtile.picked { outline: 2px solid var(--primary); outline-offset: -2px; }
+/* A picture can be dragged onto a reference box. */
+.imtile img { -webkit-user-drag: element; }
+.imtile[draggable="true"] { cursor: grab; }
+
+/* ── clips ────────────────────────────────────────────────────────────── */
+.clipgridinner { gap: 14px; }
+.clipcard {
+  border-radius: 14px; background: var(--panel); border: 1px solid var(--hair);
+  box-shadow: 0 2px 12px hsla(0,0%,0%,.3);
+  transition: transform .15s, box-shadow .15s, border-color .15s;
+}
+.clipcard:hover { transform: translateY(-2px); border-color: var(--edge-s); box-shadow: 0 10px 28px hsla(0,0%,0%,.45); }
+.clipcard .cthumb, .clipcard video.chover { border-radius: 13px 13px 0 0; }
+/* Title and one line under the picture, always visible. */
+.clipcard .clipmeta {
+  position: static; opacity: 1; pointer-events: auto;
+  padding: 9px 12px 11px; background: none; display: block;
+}
+.clipcard .cmrow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.clipcard .cmrow b { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink); }
+.clipcard .cbadges { display: inline-flex; gap: 4px; flex: none; }
+.clipcard .clipmeta .cbadge { font-size: 9.5px; color: var(--faint); border-color: var(--hair); border-radius: 999px; padding: 1px 7px; }
+.clipcard .cmsub {
+  display: block; margin: 3px 0 0; font-family: var(--mono); font-size: 10.5px; color: var(--ghost);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The hover toolbar: one frosted strip across the top of the picture. */
+.clipacts { top: 8px; left: 8px; right: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.clipacts button {
+  border-radius: 999px; padding: 5px 9px; font-size: 11px;
+  background: hsla(220,20%,6%,.72); border-color: hsla(0,0%,100%,.14); color: var(--dim);
+}
+/* A poster that could not be made: a calm placeholder, never a broken icon. */
+.cthumb.cth-none {
+  display: grid; place-items: center; color: var(--ghost); font-size: 26px;
+  background: radial-gradient(circle at 50% 40%, hsla(195,100%,60%,.08), transparent 60%), hsl(220,15%,8%);
+}
+video.cthumb { object-fit: cover; }

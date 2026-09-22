@@ -309,6 +309,10 @@ Browser playback, OS dialogs and legacy canvas capture remain browser operations
 
 ## Working on this repository
 
+**Changing the interface? Read [docs/UI_GUIDE.md](docs/UI_GUIDE.md) first.**
+Short labels, one-sentence hints, status as chips, the shared page kit, and
+where new settings, tools and pages go. AI agents: [AGENTS.md](AGENTS.md).
+
 **Run the gate before you push.** `sh .githooks/pre-commit` runs every test lane
 in the repository (about six minutes). It is the same gate that guards a commit:
 it checks the licences, the docs against the catalogue, and that every screen,

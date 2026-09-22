@@ -36,6 +36,10 @@ import { growHandle, growWrap } from "./grow.js";
 import { mountScorePanel, scorePanelSelection } from "./score-panel.js";
 import { mountMusicPlan } from "./music-plan-ui.js";
 import { mountMusicWorkflows } from "./music-workflows.js";
+import { mountPicDrop, urlToFile, dropAnywhere } from "./picdrop.js";
+/* The picture drop boxes on Images and Video, by slot. Mounted at the end of
+ * this file; each paint function below repaints its own box. */
+const picDrops = {};
 // The Models screen's "For this machine" block and the per-row fit badges. It
 // renders /api/models's `recommended` and `fit` and computes nothing itself —
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
@@ -4312,7 +4316,7 @@ function paintBatchBar() {
   if (!state.libSel) state.libSel = new Set();
   const n = state.libSel.size, trash = $("libFilter").value === "trash", archived = $("libFilter").value === "archived";
   bar.classList.toggle("on", n > 0);
-  $("batchCount").textContent = n ? `${n} selected` : "Tick songs to act on several at once";
+  $("batchCount").textContent = n ? `${n} selected` : "";
   const lib = new Map((state.library || []).map((t) => [t.file, t]));
   const sel = [...state.libSel].map((f) => lib.get(f)).filter(Boolean);
   const every = (k) => sel.length > 0 && sel.every((t) => t[k]);
@@ -6290,12 +6294,9 @@ function extractSettings() {
  * job — so this is genuinely a per-song choice rather than a mode.
  */
 const FMT_NOTE = {
-  flac: "Lossless. Lyrics and style are readable back out of the file, which is "
-      + "how older takes recover their words.",
-  mp3:  "About a seventh of the size — fifty songs is roughly 200 MB instead of "
-      + "1.5 GB. Tags are copied without re-encoding, so nothing degrades.",
-  opus: "Smallest for the quality, and the best choice if you are keeping "
-      + "hundreds. Some older players do not read it.",
+  flac: "Lossless. Lyrics and style can be read back out of the file.",
+  mp3:  "About a seventh of the size of FLAC. Plays everywhere.",
+  opus: "Smallest for the quality. Some older players cannot read it.",
 };
 function paintFormat() {
   $("fmtNote").textContent = FMT_NOTE[$("qFormat").value] || "";
@@ -7155,6 +7156,7 @@ function paintFramePreviews() {
     probe.onload = () => {
       const ar = probe.naturalWidth / probe.naturalHeight;
       $(meta).textContent = `${probe.naturalWidth}x${probe.naturalHeight} · ${ar.toFixed(2)}:1`;
+      picDrops[sel === "vidFrom" ? "from" : "to"]?.paint();
       shapes.push(ar);
       checkShape(shapes);
     };
@@ -7164,6 +7166,8 @@ function paintFramePreviews() {
       && !state.frameUploads?.vidFrom && !state.frameUploads?.vidTo) {
     $("vidShapeNote").hidden = true;
   }
+  picDrops.from?.paint();
+  picDrops.to?.paint();
 }
 
 function checkShape(shapes) {
@@ -7309,7 +7313,7 @@ function paintMidFrames() {
   const box = $("vidMidPrev");
   box.hidden = !list.length;
   $("vidMidClear").hidden = !list.length;
-  $("vidMidPick").hidden = list.length >= MID_MAX;
+  picDrops.mid?.paint();
   /* Say WHERE each one lands, as a share of the clip. A frame number would mean
    * guessing the engine's frame rate here and would be wrong the moment that
    * changed; the spacing is (i+1)/(n+1) by construction, so a percentage is
@@ -7445,7 +7449,7 @@ function paintRefs() {
         value="${Number(a.start) || 0}" data-refaudstart="${i}"> s</label>
       <button class="midx" type="button" data-refaudx="${i}" title="Remove">✕</button>
     </div>`).join("");
-  $("vidRefImgPick").hidden = imgs.length >= REF_IMG_MAX;
+  picDrops.ref?.paint();
   $("vidRefAudPick").hidden = auds.length >= REF_AUD_MAX;
   $("vidRefSong").hidden = auds.length >= REF_AUD_MAX;
   $("vidRefClear").hidden = !(imgs.length || auds.length);
@@ -7882,9 +7886,9 @@ function clipCard(c) {
         <button class="warn" data-ctrash="${esc(c.name)}" title="Move to trash — reversible">✕</button>
       </div>
       <div class="clipmeta">
-        <b title="${esc(m.prompt || "")}">${esc(c.title || stem)}</b>
-        ${badges.map((b) => `<span class="cbadge">${esc(b)}</span>`).join("")}
-        <span>${c.at ? `${clipDate(c.at)} · ` : ""}${c.seconds ? `took ${fmt(c.seconds)} · ` : ""}${Math.round(c.bytes / 1024)} KB</span>
+        <div class="cmrow"><b title="${esc(m.prompt || "")}">${esc(c.title || stem)}</b>
+          <span class="cbadges">${badges.map((b) => `<span class="cbadge">${esc(b)}</span>`).join("")}</span></div>
+        <span class="cmsub">${c.at ? `${clipDate(c.at)} · ` : ""}${c.seconds ? `took ${fmt(c.seconds)} · ` : ""}${Math.round(c.bytes / 1024)} KB</span>
       </div>
     </div>`;
   }
@@ -8209,6 +8213,27 @@ function observeLazyVideos(root = document) {
  *
  * mouseover/mouseout rather than mouseenter/mouseleave: only the former bubble,
  * so this is one listener on the grid instead of one per card. */
+/* A POSTER THAT FAILS falls back to the browser's own frame of the clip, and
+ * a clip the browser cannot read either becomes a calm placeholder, never a
+ * broken-image icon. Posters are made by scripts/clipthumb.py through OpenCV,
+ * which a portable Python may not have, and which cannot read every codec.
+ * `error` does not bubble, hence the capture listener. */
+$("clipGrid").addEventListener("error", (e) => {
+  const el = e.target;
+  if (el?.tagName === "IMG" && el.classList.contains("cthumb") && el.dataset.vsrc) {
+    const v = document.createElement("video");
+    v.className = "cthumb";
+    v.muted = true; v.playsInline = true; v.preload = "metadata";
+    v.src = `${el.dataset.vsrc}#t=0.5`;
+    el.replaceWith(v);
+  } else if (el?.tagName === "VIDEO" && el.classList.contains("cthumb")) {
+    const d = document.createElement("div");
+    d.className = "cthumb cth-none";
+    d.textContent = "▷";
+    el.replaceWith(d);
+  }
+}, true);
+
 let hoverVid = null;
 let hoverTimer = null;
 function stopHoverPreview() {
@@ -8344,7 +8369,7 @@ function mountPickBar({ grid, bar, tile, nameOf, noun, actions }) {
     const n = sel.size;
     b.classList.toggle("on", n > 0);
     g.classList.toggle("picking", n > 0);
-    b.querySelector(".bcount").textContent = n ? `${n} selected` : `Tick ${noun}s to act on several at once`;
+    b.querySelector(".bcount").textContent = n ? `${n} selected` : "";
     for (const x of b.querySelectorAll("[data-pick]")) x.disabled = !n || (x.dataset.pick === "collage" && n < 2);
     const all = b.querySelector("[data-pickall]");
     all.disabled = !shown.length;
@@ -8477,7 +8502,7 @@ function imgCard(im) {
   const kind = ext === "svg" ? " · SVG"
     : ext && ext !== "png" ? ` · ${ext.toUpperCase()}`
     : m.editedFrom ? " · edit" : "";
-  return `<figure class="imtile${m.blur ? " blurred" : ""}" data-imgopen="${esc(im.name)}">
+  return `<figure class="imtile${m.blur ? " blurred" : ""}" data-imgopen="${esc(im.name)}" draggable="true" data-picdrag="${esc(JSON.stringify({ name: im.name, url: `/api/image/${encodeURIComponent(im.name)}` }))}">
     <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy">
     <figcaption>
       <b title="${esc(m.prompt || "")}">${esc((m.prompt || im.name).slice(0, 70))}</b>
@@ -15180,7 +15205,8 @@ function imgQueueGate() {
 }
 function imgQwenShape() {
   const qwen = imgEffectiveEngine() === "qwen-image-2.1";
-  for (const id of ["imgQwenStatus", "imgQwenOptions", "imgQwenOptionsNote"]) $(id).hidden = !qwen;
+  $("imgQwenOptions").hidden = !qwen;
+  if (!qwen) imgQwenPaint("off");
   if (qwen) {
     const hasRefs = imgRefs.length > 0 || !!$("imgPersona").value;
     $("imgRefSizing").disabled = !hasRefs;
@@ -15223,7 +15249,7 @@ async function imgQwenCheck() {
   const key = imgQwenQuery().toString();
   imgQwenRequestedKey = key;
   imgQwenChecking = true;
-  $("imgQwenStatusNote").textContent = "Checking model files and ComfyUI support…";
+  imgQwenPaint("busy", "Checking Qwen Image 2.1…");
   imgQueueGate();
   try {
     const response = await fetch(`/api/images/qwen-status?${key}`);
@@ -15231,26 +15257,94 @@ async function imgQwenCheck() {
     if (request !== imgQwenRequest) return false;
     imgQwenStatus = status;
     imgQwenStatusKey = key;
+    /* Ready is a green chip and nothing else. Otherwise the chip names the
+     * problem and the note says what to do about it. */
     const parts = [];
     if (status.error && !status.missingFiles?.length && !status.missingNodes?.length) parts.push(status.error);
-    if (status.filesReady) parts.push("Selected model files are installed.");
-    else parts.push(`Missing model files: ${(status.missingFiles || []).join(", ") || "readiness could not be confirmed"}. Open Models to choose the native INT8 download.`);
-    if (status.runtimeReady) parts.push("ComfyUI supports this Qwen workflow.");
-    else if (status.missingNodes?.length) parts.push(`ComfyUI update needed: ${status.missingNodes.join(", ")}. Update and restart ComfyUI, then check again.`);
-    else parts.push("ComfyUI support could not be confirmed. Start or restart ComfyUI, then check again.");
-    if (status.ready) parts.push("Ready to queue.");
-    $("imgQwenStatusNote").textContent = parts.join(" ");
+    if (!status.filesReady) parts.push(`Missing model files: ${(status.missingFiles || []).join(", ") || "could not be confirmed"}.`);
+    if (status.missingNodes?.length) parts.push(`ComfyUI needs an update (${status.missingNodes.join(", ")}). Update, restart, then check again.`);
+    else if (!status.runtimeReady) parts.push("ComfyUI could not be confirmed. Start or restart it, then check again.");
+    const chip = status.ready ? "Qwen Image 2.1 ready"
+      : !status.filesReady && !status.runtimeReady ? "Qwen Image 2.1 not ready"
+      : !status.filesReady ? "Model files missing" : "ComfyUI update needed";
+    imgQwenPaint(status.ready ? "ok" : "warn", chip, status.ready ? "" : parts.join(" "), !status.filesReady);
     return status.ready === true && key === imgQwenQuery().toString();
   } catch {
     if (request === imgQwenRequest) {
       imgQwenStatus = null;
-      $("imgQwenStatusNote").textContent = "Could not check Qwen Image 2.1 readiness. Check that Studio is running, then try again.";
+      imgQwenPaint("err", "Could not check Qwen Image 2.1", "Check that Studio is running, then try again.");
     }
     return false;
   } finally {
     if (request === imgQwenRequest) { imgQwenChecking = false; imgQueueGate(); }
   }
 }
+/* THE READINESS LIGHT, in the engine dropdown where its arrow is.
+ *   busy  an orange spinner; the arrow is hidden while it spins
+ *   ok    a slow green pulse; after two seconds it steps left and the arrow
+ *         comes back beside it
+ *   warn / err  a red light; the details pop out beside the field, with
+ *         "Check again" (and "Open Models" when files are missing)
+ * Hovering the light says what it is doing (data-tip, drawn by ui.css).
+ * Clicking it opens the dropdown, or the details when it is red, so the
+ * dropdown works whatever the light is doing. */
+var imgQwenSettle = null;   // var: imgQwenPaint can run before this line (imgQwenShape at boot)
+function imgQwenPaint(tone, chip = "", note = "", needsModels = false) {
+  const dot = $("imgQwenDot"), pv = dot.parentElement, pop = $("imgQwenStatus");
+  clearTimeout(imgQwenSettle);
+  pv.classList.remove("qbusy", "qok", "qerr", "qsettled");
+  dot.hidden = tone === "off";
+  if (tone === "off") { pop.hidden = true; return; }
+  const bad = tone === "warn" || tone === "err";
+  pv.classList.add(tone === "busy" ? "qbusy" : tone === "ok" ? "qok" : "qerr");
+  dot.dataset.tip = tone === "busy" ? "Checking Qwen Image 2.1: model files and ComfyUI support…"
+    : tone === "ok" ? "Qwen Image 2.1 is ready: model files installed, ComfyUI supports it"
+    : `${chip}. Click for details.`;
+  if (tone === "ok") imgQwenSettle = setTimeout(() => pv.classList.add("qsettled"), 2000);
+  $("imgQwenChip").textContent = chip;
+  $("imgQwenStatusNote").textContent = note;
+  $("imgQwenStatusNote").hidden = !note;
+  $("imgQwenModels").hidden = !needsModels;
+  pop.hidden = !bad;
+  if (bad) imgQwenFollow();
+}
+/* Beside the engine field, over the gallery; below it when there is no room.
+ * It FOLLOWS the field while it is open (one rAF per frame, writes only on a
+ * change): the field moves when the column scrolls, the screen is switched to,
+ * or the layout settles after load, and a position taken once goes stale. */
+let imgQwenPopRaf = null;
+function imgQwenPlacePop() {
+  const pop = $("imgQwenStatus");
+  if (pop.hidden) { imgQwenPopRaf = null; return; }
+  const r = $("imgEngine").getBoundingClientRect();
+  pop.style.visibility = r.width && r.bottom > 0 && r.top < window.innerHeight ? "" : "hidden";
+  if (r.width) {
+    const w = Math.min(300, window.innerWidth - 24);
+    const right = r.right + 14 + w < window.innerWidth - 8;
+    const left = `${Math.round(right ? r.right + 14 : Math.max(8, r.left))}px`;
+    const top = `${Math.round(right ? Math.max(8, r.top - 8) : r.bottom + 8)}px`;
+    if (pop.style.left !== left) pop.style.left = left;
+    if (pop.style.top !== top) pop.style.top = top;
+    pop.style.width = `${w}px`;
+    pop.classList.toggle("qside", right);
+  }
+  /* Another screen is showing: look again twice a second, not every frame. */
+  imgQwenPopRaf = r.width ? requestAnimationFrame(imgQwenPlacePop) : setTimeout(imgQwenPlacePop, 500);
+}
+function imgQwenFollow() { if (!imgQwenPopRaf) imgQwenPlacePop(); }
+$("imgQwenPopClose").onclick = () => { $("imgQwenStatus").hidden = true; };
+$("imgQwenDot").onclick = (e) => {
+  e.preventDefault();
+  if ($("imgQwenDot").parentElement.classList.contains("qerr")) {
+    $("imgQwenStatus").hidden = false;
+    imgQwenFollow();
+    return;
+  }
+  /* The light sits on the dropdown, so a click on it opens the dropdown. */
+  const sel = $("imgEngine");
+  sel.focus();
+  try { sel.showPicker(); } catch { /* older browsers: focused, arrow keys work */ }
+};
 $("imgQwenRefresh").onclick = imgQwenCheck;
 $("imgQwenModels").onclick = () => setView("models");
 $("imgRefSizing").onchange = imgQwenShape;
@@ -15269,8 +15363,8 @@ function imgRefsPaint() {
       <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)} — click to say &quot;image ${i + 1}&quot;">
       <figcaption><button class="refmove" type="button" data-refup="${i}" ${i === 0 ? "disabled" : ""} title="Earlier">&#9664;</button>
         <button class="reftag" type="button" data-refsay="${i + 1}" title="Insert into the description">image ${i + 1}</button>
-        <button class="refmove" type="button" data-refdown="${i}" ${i === n - 1 ? "disabled" : ""} title="Later">&#9654;</button>
-        <button class="midx" type="button" data-refx="${i}" title="Remove">&#10005;</button></figcaption>
+        <button class="refmove" type="button" data-refdown="${i}" ${i === n - 1 ? "disabled" : ""} title="Later">&#9654;</button></figcaption>
+      <button class="midx tilex" type="button" data-refx="${i}" title="Remove">&#10005;</button>
     </figure>`).join("");
 
   const chosen = new Set(imgRefs.map((m) => m.name));
@@ -15285,7 +15379,8 @@ function imgRefsPaint() {
   $("imgRefPick").disabled = full || fluxOnly;
   $("imgRefUpload").disabled = full || fluxOnly;
   $("imgRefClear").hidden = !n;
-  $("imgRefLimit").textContent = `${n ? `${n} of ${IMG_REF_MAX}` : `up to ${IMG_REF_MAX}`} · Qwen Image 2.1 / FLUX.2 · optional`;
+  $("imgRefLimit").textContent = n ? `${n} of ${IMG_REF_MAX}` : `optional, up to ${IMG_REF_MAX}`;
+  picDrops.img?.paint();
 
   /* The honest cost, from the same measurement the MCP tool description
    * quotes. References ride through every sampling step, so they are not
@@ -15382,8 +15477,9 @@ $("imgRefClear").onclick = () => { imgRefs.length = 0; imgRefsPaint(); };
  * that shape — the capability was there, nothing in the Images form reached
  * it. */
 $("imgRefUpload").onclick = () => $("imgRefFile").click();
-$("imgRefFile").onchange = async () => {
-  const files = [...($("imgRefFile").files || [])].slice(0, IMG_REF_MAX - imgRefs.length);
+$("imgRefFile").onchange = () => imgRefUploadFiles($("imgRefFile").files || []);
+async function imgRefUploadFiles(list) {
+  const files = [...list].slice(0, IMG_REF_MAX - imgRefs.length);
   const btn = $("imgRefUpload");
   const was = btn.textContent;
   btn.disabled = true;
@@ -15404,7 +15500,7 @@ $("imgRefFile").onchange = async () => {
     $("imgRefFile").value = "";
     imgRefsPaint();
   }
-};
+}
 $("imgPrompt").addEventListener("input", imgRefTagNote);
 
 /* One delegated listener for the strip, like vidRefWrap — the buttons are
@@ -15764,7 +15860,7 @@ async function imgLoadPersonas() {
     rows = d.personas || []; fits = d.fits || null;
   } catch { /* leave the picker empty */ }
   const cur = $("imgPersona").value;
-  $("imgPersona").innerHTML = '<option value="">No character…</option>'
+  $("imgPersona").innerHTML = '<option value="">Character…</option>'
     + rows.map((x) => `<option value="${esc(x.name)}"${x.name === cur ? " selected" : ""}>${esc(x.name)}</option>`).join("");
   const bad = fits && fits.fit !== "yes";
   $("imgPersona").disabled = !!bad;
@@ -16974,7 +17070,7 @@ async function loadApiMode() {
 
   $("apiEnabled").checked = !!d.enabled;
   $("apiBody").hidden = !d.enabled;
-  $("apiState").textContent = d.enabled ? "on — renders are billed to you" : "off — renders use your GPU";
+  $("apiState").textContent = d.enabled ? "On: billed to you" : "Off: uses your GPU";
 
   const sel = $("apiProvider");
   if (sel.options.length !== Object.keys(d.providers).length) {
@@ -17097,6 +17193,7 @@ $("apiKeyClear").onclick = () => apiPost({ action: "clearKey", provider: $("apiP
 const INFO_HOSTS = {
   chat: "#chat",
   create: ".create",
+  musiclab: "#musicWorkflows",
   images: "#imagesview .vidlib",   // on the gallery's heading, as Video's is on Clips
   video: "#videoclips",
   vfx: "#vfx",
@@ -17198,6 +17295,7 @@ function setView(name) {
   $("workflow").hidden = name !== "workflow";
   if (name === "workflow") wfOpen();
   $("settings").hidden = name !== "settings";
+  $("musicWorkflows").hidden = name !== "musiclab";
   $("models").hidden = name !== "models";
   $("engine").hidden = name !== "engine";
   /* ⚠ Visibility is set HERE, one explicit line per view — the map above is not
@@ -18143,9 +18241,10 @@ let scrubbing = false;
  * the live-rooms bar on the Music tab is the one way there now. */
 
 /* ── line visualisers ─────────────────────────────────── */
-/* The divider rules become level meters while audio plays, one frequency band
-   each: the rail foot takes the kick, Advanced the low-mids, the CTA the
-   presence, and the player rule across the bottom the whole spectrum.
+/* While audio plays, the player's rule across the bottom becomes a level meter,
+   and the playing song's row and the player's artwork move with the music
+   (CSS reading --vz-*). Nothing else: the rail foot, Advanced and the Create
+   bar used to pulse too, and so did every scrollbar, which was too much.
  *
  * Three rules keep this honest against the perf lesson from the site player:
  * the loop runs only while audio is actually playing, it stops dead when the
@@ -18159,9 +18258,6 @@ function visClaim() {
   if (vis.lines.length) return;
   // [from, to) over 128 bins at 44.1 kHz ⇒ ~172 Hz per bin.
   vis.lines = [
-    { el: document.querySelector(".railfoot"), from: 0, to: 4, gain: 1.0 },   // kick
-    { el: document.querySelector("details.adv"), from: 4, to: 20, gain: 1.3 }, // low-mid
-    { el: document.querySelector(".cta"), from: 20, to: 64, gain: 1.9 },       // presence
     { el: document.querySelector(".player"), from: 0, to: 128, gain: 1.2 },    // everything
   ].filter((l) => l.el);
   for (const l of vis.lines) l.el.classList.add("vz", "vztop");
@@ -18298,8 +18394,18 @@ function paintModelLoad(s) {
   const box = $("modelLoad");
   if (!box) return;
   const e = state.musicEngine;
-  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3" || e === "ace-step15") || !s.engine?.ready;
+  /* Every model that lives in ComfyUI shows both buttons, always: greyed out
+   * with the reason while ComfyUI starts, rather than vanishing. The native
+   * GGUF runtime has nothing to load or unload. */
+  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3" || e === "ace-step15");
   if (box.hidden) return;
+  if (!s.engine?.ready) {
+    $("btnModelLoad").hidden = $("btnModelUnload").hidden = false;
+    $("btnModelLoad").disabled = $("btnModelUnload").disabled = true;
+    $("btnModelLoad").title = $("btnModelUnload").title = "ComfyUI is starting";
+    $("modelLoadText").textContent = "ComfyUI is starting.";
+    return;
+  }
   const aceDit = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)?.dit
     || (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit)?.dit;
   const want = e === "ace-step15" ? `ace-step15:${aceDit}`
@@ -18313,14 +18419,20 @@ function paintModelLoad(s) {
     : loaded?.key === want ? "✓ Loaded in ComfyUI — songs start straight away."
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
     : "Not loaded yet — the first song loads it.";
-  $("btnModelLoad").hidden = !(e === "yue2-comfy" || e === "ace-step15") || loaded?.key === want;
+  /* MiniMax has no warm-up on the server: it loads with its first song. The
+   * button stays, greyed, so the bar looks the same for every model. */
+  const canLoad = e === "yue2-comfy" || e === "ace-step15";
+  $("btnModelLoad").hidden = loaded?.key === want;
+  $("btnModelLoad").title = canLoad ? "Load the model into ComfyUI now" : "MiniMax loads with its first song";
+  $("btnModelUnload").title = "Free the graphics card";
   /* Always offered while ComfyUI runs. It used to appear only while Studio's
    * own record said a music model was loaded, and that record is cleared the
    * moment a cover or a clip takes the card (it unloads the music model
    * first), so after most MiniMax songs the button was simply not there.
    * Unload frees whatever ComfyUI holds either way. */
   $("btnModelUnload").hidden = false;
-  $("btnModelLoad").disabled = $("btnModelUnload").disabled = busy;
+  $("btnModelLoad").disabled = busy || !canLoad;
+  $("btnModelUnload").disabled = busy;
 }
 async function modelLoadAction(action) {
   modelLoadBusy = action;
@@ -19032,6 +19144,89 @@ mountAllInfo();
  * engine's `score` capability. */
 mountScorePanel();
 mountMusicPlan();
+
+/* ── picture drop boxes (web/picdrop.js) ──────────────────────────────────
+ * The Music screen's drop-a-song box, for pictures: drag from the Images
+ * gallery or the desktop, pick from the library, or upload. Each slot keeps
+ * its existing upload and preview code; the box only hands pictures to it. */
+{
+  const loadGallery = async () => { if (!(state.images || []).length) await loadImages(); };
+  const asFile = (c) => urlToFile(c.url, c.name);
+  const frameSlot = (sel, file) => ({
+    zone: sel === "vidFrom" ? "Drop a picture here to start the clip from it" : "Drop a picture here to end the clip on it",
+    candidates: imgRefCandidates, beforeMenu: loadGallery,
+    /* The card shows the picture, its name, and its size and shape (from the
+     * preview's probe, which repaints this box when it lands). */
+    current: () => {
+      const up = state.frameUploads?.[sel];
+      const size = $(`${sel}Meta`)?.textContent || "";
+      if (up) return { label: up.label || "Your picture", sub: size || "Your picture", url: up.url };
+      const o = $(sel).selectedOptions[0];
+      return $(sel).value
+        ? { label: o?.textContent || "Song cover", sub: size ? `Song cover · ${size}` : "Song cover", url: `/api/cover/${encodeURIComponent($(sel).value)}` }
+        : null;
+    },
+    /* A song cover is already a choice in the dropdown; anything else is
+     * uploaded exactly as "Use a file…" did. */
+    onPick: async (c) => {
+      if (c.group === "Song covers" && [...$(sel).options].some((o) => o.value === c.name)) {
+        $(sel).value = c.name;
+        $(sel).dispatchEvent(new Event("change"));
+        return;
+      }
+      await frameSlotFiles(sel, file, [await asFile(c)]);
+    },
+    onFiles: (files) => frameSlotFiles(sel, file, files),
+    onClear: () => {
+      if (state.frameUploads?.[sel]) $(sel === "vidFrom" ? "vidFromPick" : "vidToPick").click();
+      $(sel).value = "";
+      $(sel).dispatchEvent(new Event("change"));
+    },
+  });
+  async function frameSlotFiles(sel, file, files) {
+    const dt = new DataTransfer();
+    dt.items.add(files[0]);
+    $(file).files = dt.files;
+    await pickFrame(sel, file);
+  }
+  picDrops.from = mountPicDrop($("vidFromDrop"), frameSlot("vidFrom", "vidFromFile"));
+  picDrops.to = mountPicDrop($("vidToDrop"), frameSlot("vidTo", "vidToFile"));
+  picDrops.mid = mountPicDrop($("vidMidDrop"), {
+    zone: "Drop pictures here for the clip to pass through", multiple: true,
+    strip: $("vidMidPrev"), clear: $("vidMidClear"),
+    candidates: imgRefCandidates, beforeMenu: loadGallery,
+    blocked: () => ((state.midFrames || []).length >= MID_MAX ? `That is all ${MID_MAX}` : ""),
+    onPick: async (c) => addMidFrames([await asFile(c)]),
+    onFiles: (files) => addMidFrames(files),
+  });
+  picDrops.ref = mountPicDrop($("vidRefDrop"), {
+    zone: "Drop pictures here to use them as references", multiple: true,
+    strip: $("vidRefImgPrev"),   // its Clear also clears the sounds, so it stays outside
+    candidates: imgRefCandidates, beforeMenu: loadGallery,
+    blocked: () => ((state.refImages || []).length >= REF_IMG_MAX ? `That is all ${REF_IMG_MAX}` : ""),
+    onPick: async (c) => addRefImages([await asFile(c)]),
+    onFiles: (files) => addRefImages(files),
+  });
+  picDrops.img = mountPicDrop($("imgRefDrop"), {
+    zone: "Drop a picture here to use it as a reference", multiple: true,
+    bar: $("imgRefBar"), strip: $("imgRefPrev"), clear: $("imgRefClear"),
+    candidates: imgRefCandidates,
+    /* The same gate the old controls had: full, or an engine without references. */
+    blocked: () => (imgRefs.length >= IMG_REF_MAX ? `That is all ${IMG_REF_MAX}`
+      : $("imgRefUpload").disabled ? "This engine takes no reference pictures" : ""),
+    onPick: (c) => {
+      if (imgRefs.length >= IMG_REF_MAX || imgRefs.some((m) => m.name === c.name)) return;
+      imgRefs.push({ name: c.name, url: c.url });
+      imgRefsPaint();
+    },
+    onFiles: (files) => imgRefUploadFiles(files),
+  });
+  /* The boxes sit low in a scrolling column, and Simple mode hides them, so a
+   * picture dropped ANYWHERE on the panel counts: Images takes it as a
+   * reference, Video as the starting frame (a box of its own still wins). */
+  dropAnywhere($("imgPanel"), () => picDrops.img);
+  dropAnywhere($("vidPanel"), () => picDrops.from);
+}
 mountMusicWorkflows({ onLoadRequest: async (prepared) => {
   const request = prepared?.request || prepared;
   if (!request || !["yue2", "yue2-gguf", "yue2-comfy"].includes(request.engine)) throw new Error("Choose a supported YuE2 engine first.");
