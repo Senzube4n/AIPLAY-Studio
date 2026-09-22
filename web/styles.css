@@ -5113,6 +5113,63 @@ button, input, select, textarea { font-family: inherit; }
 .rows.grid .row { position: relative; }
 .rows.grid .row > .rsel { position: absolute; top: 8px; left: 8px; z-index: 2; width: 22px; height: 22px;
   border-radius: 6px; background: rgba(0,0,0,.45); }
+/* ── the library heading, which stays while the library scrolls ──────────
+   Search, the toolbars and the tick bar are what you reach for WHILE looking
+   at the grid; in a library of a few hundred they were several screens behind
+   you the moment you started looking.
+
+   `.stage` is the scroller (overflow-y:auto) and has 16px of padding, so the
+   background is widened by that much on each side: without it the grid would
+   be visible sliding through the strip beside the heading.
+
+   NO `display` HERE ON PURPOSE. In Images and Video the wrapped children space
+   themselves with their own margins, and a flex column with a gap would add to
+   those rather than replace them. Only Music needs the gap back — see
+   `.libhead.spaced` — because its children were flex items of `.stage` and
+   wrapping three of them into one item loses the 12px between them.
+
+   ⚠ `background-attachment:fixed` IS NOT DECORATION. `--bg` is a gradient,
+   not a colour, so `background:var(--bg)` sets a background-IMAGE — and an
+   unpositioned gradient is sized to its own box, which would run the full
+   8,8,8 → 13,15,18 sweep across the header alone while the page runs it across
+   the viewport. body paints it fixed; so does this, and then it is the same
+   gradient rather than a second one that nearly matches. */
+.libhead{position:sticky;top:0;z-index:6;
+  background:var(--bg);background-attachment:fixed;
+  padding:8px 16px 2px;margin:-8px -16px 0}
+/* ⚠ AND `top:0` IS NOT THE TOP OF THE PANE. A sticky element is held inside
+   the scrollport, which is the scroll container's PADDING box — `.stage` has
+   16px of it, so a header stuck at `top:0` sits at y=16 and the grid scrolls
+   through the strip above it. Measured at headerTop-6 with the grid scrolled
+   1500px: DIV.masonry on Images, IMG.cthumb on Video. Same fixed gradient, so
+   it continues the page rather than patching over it — which is why it is
+   also invisible at rest. */
+.libhead::before{content:"";position:absolute;left:0;right:0;bottom:100%;height:16px;
+  background:var(--bg);background-attachment:fixed}
+/* Music only: its header elements were flex children of .stage (gap 12px), and
+   one wrapper is one flex item. */
+.libhead.spaced{display:flex;flex-direction:column;gap:12px}
+/* A hairline once it is actually stuck, so the heading reads as a surface the
+   grid passes under rather than as part of the grid. */
+.libhead::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:var(--edge);opacity:.55}
+/* ⚠ AND IT STOPS BEING STICKY WHEN THERE IS NO ROOM FOR IT. A heading that
+   fills the window is a wall — there is no library left to look at. What decides
+   that is its SHARE of the window, so the guard needs both dimensions, which one
+   measurement would not have shown. Measured:
+
+     1500×950   music 151px 16%   images 200px 21%   video 180px 19%
+      760×700   music 151px 22%   images 209px 30%   video 180px 26%
+      460×700   music 274px 39%   images 275px 39%   video 218px 31%
+      350×397   music 374px 94%   images 316px 79%   video 247px 62%
+
+   Narrow alone is survivable (39% is a big heading, not a wall) and so is short
+   (36% at 1500×560). It takes both — a plain `max-width: 900px` would have
+   switched the feature off on every half-screen window that was using it fine. */
+@media (max-width: 760px) and (max-height: 620px) {
+  .libhead { position: static; }
+  .libhead::before { content: none; }
+}
 .batchbar { display: flex; align-items: center; gap: 10px; margin: 8px 0 2px; padding: 5px 7px;
   border: 1px solid var(--edge); border-radius: 9px; min-height: 36px; }
 .batchbar.on { border-color: color-mix(in srgb, var(--primary) 45%, transparent); }

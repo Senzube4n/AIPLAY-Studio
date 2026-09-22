@@ -26,6 +26,7 @@ import path from "node:path";
 import { config as defaultConfig } from "./config.js";
 import { scanBases, extraBases, uniqueDirs } from "./localmodels.js";
 import { probeModel, loadableAs, presetFor } from "./detect.js";
+import { readPart, partFits } from "./partfit.js";
 import { ZIMAGE_PRESET, KREA2_PRESET, ANIMA_PRESET } from "./workflow.js";
 import { QWEN_IMAGE_PRESET } from "./qwen-image.js";
 
@@ -250,6 +251,69 @@ export async function listVideoPickable(config = defaultConfig) {
 }
 
 /**
+ * The Video screen's encoder and VAE shelves, each file said to fit an engine's
+ * slot or not.
+ *
+ * ⚠ THE ANCHOR IS THE ENGINE'S OWN FILE. config.js already names the
+ * `textEncoder`, `videoVae` and `audioVae` each engine came with; those are read
+ * from disk and everything built the same way is offered. There is no table of
+ * "h3 wants qwen3vl" anywhere — a fact like that would be a second copy of
+ * something config.js already holds, and the copy is what goes stale.
+ *
+ * ⚠ A VAE GETS TWO VERDICTS. One file, two rows: the video VAE and the audio
+ * VAE read the same folder, and on this shelf nothing is ever right for both.
+ * One list for both rows is exactly what made the old dropdown useless.
+ *
+ * Unknown is not "no". A file this cannot read — a .gguf encoder, a VAE with no
+ * embedding tensor — comes back "unknown" and the screen shows it.
+ */
+const partCache = new Map();                 // full+bytes+mtime -> print
+
+async function printOf(file) {
+  const key = `${file.full}|${file.bytes}|${Math.round(file.at)}`;
+  if (partCache.has(key)) return partCache.get(key);
+  let print = null;
+  try { print = await readPart(file.full); } catch { print = null; }
+  partCache.set(key, print);
+  return print;
+}
+
+export async function listVideoParts(config = defaultConfig) {
+  const [parts, shelf] = await Promise.all([listParts(config), scanBases(await modelBases(config))]);
+  const byName = new Map(shelf.map((f) => [f.name, f]));
+  const base = (n) => String(n || "").split(/[\\/]/).pop();
+  const engines = config.video?.engines || {};
+
+  /* Each engine's own file for each slot, as a structural print. A slot whose
+   * file is not on disk has no anchor, and with no anchor nothing is judged —
+   * every file stays listed, which is the right answer to "we cannot say". */
+  const anchors = {};
+  for (const [eng, cfg] of Object.entries(engines)) {
+    anchors[eng] = {};
+    for (const slot of ["textEncoder", "videoVae", "audioVae"]) {
+      const f = byName.get(base(cfg?.[slot]));
+      anchors[eng][slot] = f ? await printOf(f) : null;
+    }
+  }
+
+  const judge = async (row, slot) => {
+    const f = byName.get(row.name);
+    const print = f ? await printOf(f) : null;
+    const out = {};
+    for (const eng of Object.keys(engines)) out[eng] = partFits(print, anchors[eng][slot], slot);
+    return out;
+  };
+
+  const encoders = [];
+  for (const r of parts.encoders) encoders.push({ ...r, fit: await judge(r, "textEncoder") });
+  const vaes = [];
+  for (const r of parts.vaes) {
+    vaes.push({ ...r, fitVideo: await judge(r, "videoVae"), fitAudio: await judge(r, "audioVae") });
+  }
+  return { encoders, vaes };
+}
+
+/**
  * One picked file by name, from either shelf. Checkpoints win a tie, because
  * that is the folder the name came from before this existed.
  */
@@ -260,4 +324,4 @@ export async function resolvePick(name, config = defaultConfig) {
   return all.find((r) => r.name === want) || null;
 }
 
-export default { listPickable, listVideoPickable, listParts, resolvePick, classify, familyFromName, DIT_ENGINE, VIDEO_DIT_ENGINE, PICK_FOLDERS, isDitFolder, modelBases };
+export default { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, classify, familyFromName, DIT_ENGINE, VIDEO_DIT_ENGINE, PICK_FOLDERS, isDitFolder, modelBases };

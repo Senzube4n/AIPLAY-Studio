@@ -239,9 +239,79 @@ test("rework is the default; a failed separation ends the wait; the assistant se
   assert.match(app, /d\.music_models = /); assert.match(app, /FAILED — \$\{j\.error/);
 });
 
+/* Every `.libhead` in the file, located by DIV DEPTH rather than by a regex:
+ * walk from each opening tag counting `<div`/`</div>` until the count returns to
+ * zero, and that is its matching close. Positions, not slices — a wrapper's
+ * "everything after me" reaches the end of the document, so asking which wrapper
+ * some id follows by substring gives the FIRST wrapper every time. Comments are
+ * stripped first so a `<div` inside one cannot shift the count. */
+function libheads(html) {
+  const bare = html.replace(/<!--[\s\S]*?-->/g, "");
+  const out = [];
+  const open = /<div class="libhead[^"]*"[^>]*>/g;
+  let m;
+  while ((m = open.exec(bare))) {
+    const openEnd = m.index + m[0].length;
+    const tag = /<div\b[^>]*>|<\/div\s*>/g;
+    tag.lastIndex = openEnd;
+    let depth = 1, t = null;
+    while (depth > 0 && (t = tag.exec(bare))) depth += t[0].startsWith("</") ? -1 : 1;
+    assert.equal(depth, 0, "a .libhead that never closes");
+    out.push({ attrs: m[0], openAt: m.index, closeAt: t.index, inner: bare.slice(openEnd, t.index) });
+  }
+  return { bare, heads: out };
+}
+
+test("the library heading is one sticky block, and the gallery is not inside it", () => {
+  const html = src("../web/index.html"), css = src("../web/styles.css"), info = src("../web/info.js");
+  const { bare, heads } = libheads(html);
+  assert.equal(heads.length, 3, "one per gallery: Music, Images, Video");
+
+  /* ⚠ ONE WRAPPER, NOT FOUR STICKY SIBLINGS. Sticky elements do not stack:
+   * four of them at `top: 0` land on top of one another, and stacking them by
+   * hand hard-codes each one's height into the next one's `top` — heights that
+   * change the moment the tick bar wraps. */
+  for (const h of heads) assert.match(h.inner, /class="stagehead"/, "the heading is inside it");
+
+  /* ⚠ AND THE GRID IS OUTSIDE IT — a gallery inside the sticky wrapper is a
+   * header that never lets its own grid scroll. The wrapper that owns a grid is
+   * the LAST one opening before it, which is why this needs positions. */
+  for (const id of ["imgGrid", "clipGrid"]) {
+    const at = bare.indexOf(`id="${id}"`);
+    assert.ok(at > 0, `${id} is in the page`);
+    const owner = heads.filter((h) => h.openAt < at).pop();
+    assert.ok(owner, `${id} follows a .libhead`);
+    assert.ok(at > owner.closeAt, `${id} is NOT inside the sticky header above it`);
+  }
+
+  /* Music's wrapper is hidden as a unit. It sits directly in `.stage` — the
+   * scroller every view shares — so hiding only its children leaves its own
+   * padding and hairline as a bar across the top of every other screen.
+   * Measured at height 10 on Images before setView hid the wrapper. */
+  const music = heads.find((h) => h.attrs.includes("musicHead"));
+  assert.ok(music, "Music's wrapper is named, because it is hidden as a unit");
+  assert.match(music.inner, /id="batchBar"/, "the song bar is one of the three inside it");
+  assert.match(src("../web/app.js"), /\$\("musicHead"\)\.hidden = name !== "create";/,
+    "and the WRAPPER is what setView hides, not the three controls separately");
+
+  /* ⚠ THE WRAPPER IS A LEVEL, AND `:scope >` STOPS AT LEVELS. Without this,
+   * Images and Video fell into mountInfo's "no heading" branch and their circled-i
+   * floated above the page instead of sitting in the title. */
+  assert.match(info, /:scope > \.libhead > \$\{h\}/,
+    "mountInfo finds a heading one level down, inside the sticky wrapper");
+  assert.match(info, /classList\.contains\("libhead"\) \? header\.parentElement : header/,
+    "and the panel opens after the BLOCK, so a screenful of prose is not pinned to the window");
+
+  assert.match(css, /\.libhead\{position:sticky;top:0/, "it is actually sticky");
+  /* `top:0` is the scrollport's PADDING box, so it leaves `.stage`'s 16px above
+   * the header for the grid to scroll through. Measured at headerTop-6 with the
+   * grid scrolled 1500px: DIV.masonry on Images, IMG.cthumb on Video. */
+  assert.match(css, /\.libhead::before\{[^}]*bottom:100%/,
+    "and it covers the scroller's top padding, which `top:0` does not reach");
+});
+
 test("each gallery has its own selection bar: Music's only on Music, new ones on Images and Video", () => {
   const html = src("../web/index.html"), app = src("../web/app.js"), css = src("../web/styles.css");
-  assert.match(app, /\$\("batchBar"\)\.hidden = name !== "create";/, "the song bar is the Music page's");
   assert.match(css, /\.batchbar\[hidden\] \{ display: none !important; \}/, "and hidden really hides it");
   assert.match(html, /id="imgBatch"[\s\S]*?data-pick="collage"[\s\S]*?data-pick="trash"[\s\S]*?data-pick="clear"[\s\S]*?<div class="clipgrid" id="imgGrid">/, "Images: under its search row, above the gallery");
   assert.match(html, /id="clipBatch"[\s\S]*?data-pick="boost"[\s\S]*?data-pick="trash"[\s\S]*?<div class="clipgrid" id="clipGrid">/, "Video: under its search row, above the clips");

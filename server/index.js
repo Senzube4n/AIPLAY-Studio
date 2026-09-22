@@ -57,7 +57,7 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
-import { listPickable, listVideoPickable, listParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
+import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
 /**
  * The parts a VIDEO render may be pointed at instead of the engine's own.
@@ -75,7 +75,10 @@ async function videoModelPatch(b, engine) {
     audioVae: String(b.audioVae || "").trim(),
   };
   if (!Object.values(named).some((x) => x && x !== "auto")) return { models: null };
-  const [shelf, parts] = await Promise.all([listVideoPickable(config), listParts(config)]);
+  /* listVideoParts, because the three rows below are checked for FIT and not
+   * only for existence — the same verdict the Video screen filters its
+   * dropdowns with, so the door and the screen cannot drift apart. */
+  const [shelf, parts] = await Promise.all([listVideoPickable(config), listVideoParts(config)]);
   const patch = {};
   if (named.dit && named.dit !== "auto") {
     const row = shelf.find((r) => r.name === path.basename(named.dit));
@@ -89,11 +92,27 @@ async function videoModelPatch(b, engine) {
      * one the person wants used, so it stands in for both rather than half. */
     if (engine === "h3") patch.ditRef = row.name;
   }
-  for (const [key, list, folder] of [["textEncoder", parts.encoders, "text_encoders"],
-                                     ["videoVae", parts.vaes, "vae"], ["audioVae", parts.vaes, "vae"]]) {
+  for (const [key, list, folder, verdict] of [["textEncoder", parts.encoders, "text_encoders", "fit"],
+                                              ["videoVae", parts.vaes, "vae", "fitVideo"],
+                                              ["audioVae", parts.vaes, "vae", "fitAudio"]]) {
     const want = named[key] && named[key] !== "auto" ? path.basename(named[key]) : "";
     if (!want) continue;
-    if (!list.some((x) => x.name === want)) return { error: `No such file in models/${folder}: ${want}.` };
+    const row = list.find((x) => x.name === want);
+    if (!row) return { error: `No such file in models/${folder}: ${want}.` };
+    /* ⚠ THE DOOR, NOT ONLY THE DROPDOWN. The screen stopped offering parts that
+     * belong to another engine, but this route takes them by name from anything
+     * that can POST — the MCP tools, a script, a second window on the old page.
+     * Until this line a FLUX autoencoder named as H3's video VAE was accepted
+     * and failed three minutes later inside ComfyUI.
+     *
+     * Only a positive "no" is refused: "unknown" (a .gguf encoder, a file with
+     * no embedding tensor to measure) goes through, because turning "we could
+     * not tell" into "you may not" would block a working file at the door with
+     * no way around it. */
+    if (row[verdict]?.[engine] === "no") {
+      return { error: `${want} is not a ${key === "textEncoder" ? "text encoder" : key === "videoVae" ? "video VAE" : "audio VAE"} `
+        + `the ${engine.toUpperCase()} engine can load — it is built differently from the one it came with.` };
+    }
     patch[key] = want;
   }
   return { models: patch };
@@ -7420,7 +7439,12 @@ const server = http.createServer(async (req, res) => {
      * with the video engine each one can drive, plus the encoder and VAE
      * shelves. One request, because the screen shows all four together. */
     if (p === "/api/videomodels" && req.method === "GET") {
-      const [models, parts] = await Promise.all([listVideoPickable(config), listParts(config)]);
+      /* listVideoParts, not listParts: the encoder and VAE rows arrive with a
+       * per-engine verdict on them. It is decided from the safetensors headers
+       * on disk against the file each engine came with, which the browser
+       * cannot do — and it is 169 ms for the whole shelf, measured, because
+       * only headers are read and the prints are cached on path+size+mtime. */
+      const [models, parts] = await Promise.all([listVideoPickable(config), listVideoParts(config)]);
       return json(res, 200, { models, ...parts, engines: VIDEO_DIT_ENGINE });
     }
 

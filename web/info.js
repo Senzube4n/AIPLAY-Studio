@@ -222,7 +222,14 @@ export function mountInfo(view, selector) {
   const host = document.querySelector(selector);
   if (!host || host.querySelector(":scope > .infopanel")) return null;
 
-  const header = host.querySelector(HEADERS.map((h) => `:scope > ${h}`).join(", "));
+  /* ⚠ ONE LEVEL DOWN COUNTS. The library headings are wrapped in `.libhead`
+   * so they can be sticky (sticky siblings do not stack, so the four controls
+   * had to become one element), and `:scope >` does not follow that. Measured
+   * without this: Images and Video both fell into the `infoloose` branch below,
+   * with the ⓘ floating above the page instead of sitting in the title — and
+   * nothing failed, because "no header" is a case this function handles. */
+  const header = host.querySelector(
+    HEADERS.flatMap((h) => [`:scope > ${h}`, `:scope > .libhead > ${h}`]).join(", "));
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "infobtn";
@@ -260,7 +267,15 @@ export function mountInfo(view, selector) {
    * close. */
   if (header) {
     header.appendChild(btn);
-    header.after(panel);
+    /* ⚠ THE PANEL GOES AFTER THE BLOCK, THE BUTTON INSIDE THE HEADING. Where
+     * the heading sits in `.libhead`, "after the heading" is INSIDE the sticky
+     * wrapper — which would pin up to 1492px of prose to the top of the window
+     * and never let it scroll away. Going after the wrapper also keeps the
+     * panel a direct child of the host, which is what the `:scope > .infopanel`
+     * guard at the top of this function tests for. parentElement, not closest():
+     * the only case is one level, and closest() would walk past the host. */
+    const block = header.parentElement?.classList.contains("libhead") ? header.parentElement : header;
+    block.after(panel);
   } else {
     /* No header to sit in, so it sits above everything — and says so in a class
      * rather than being detected in CSS, because "the button whose parent is

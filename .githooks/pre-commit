@@ -403,6 +403,15 @@ node server/provenance_test.js || exit 1
 # actually broke: the route set `private`, every redaction below was correct,
 # and art.request() dropped the name without a word.
 node server/private_test.js || exit 1
+# WHICH FILES THE VIDEO ENGINE'S FOUR DROPDOWNS MAY OFFER. The verdict is read
+# out of tensor names, anchored on the file each engine came with rather than on
+# a table of engine facts - config.js already holds those, and a copy goes
+# stale. Two signals on purpose: containment for the VAEs (a quantised rebuild
+# has MORE modules than its original, so equality would hide the engine's own
+# file) and embedding width for the text encoder (containment scores 0.997 on a
+# 0.6B model against a 32B anchor, which is a yes on a file that does not fit).
+# Synthetic tensor trees - no shelf, no GPU, no server.
+node server/partfit_test.js || exit 1
 node server/wildcards_test.js || exit 1
 
 echo "  -- did the picture come back with what was asked for --"

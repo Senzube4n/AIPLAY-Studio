@@ -6980,28 +6980,57 @@ async function vidLoadModels() {
 async function vidModelShape() {
   const eng = $("vidEngine").value || state.video?.engine || "h3";
   const shelf = await vidLoadModels();
-  /* Files this engine can drive, plus the ones it cannot — those are shown
-   * greyed WITH THE REASON, so a misplaced or mis-detected file is visible
-   * rather than mysteriously absent. With nothing usable at all that list is
-   * every image model on the disk and no help, so it collapses to one line. */
-  const usable = (shelf.models || []).filter((m) => m.ok && m.engine === eng);
-  const mine = usable.length
-    ? [...usable, ...(shelf.models || []).filter((m) => !usable.includes(m))]
-    : [];
+  /* ⚠ ONLY WHAT FITS, AND THE REST COUNTED. These four lists used to carry the
+   * whole shelf with the unusable entries greyed — fourteen model files to find
+   * three, and for the encoder and the VAEs no judgement at all, so eleven
+   * encoders and fifteen VAEs were offered as if any would do.
+   *
+   * The reason the refused files were listed is kept: a misplaced or
+   * mis-detected file should not vanish without a word. It is a COUNT under the
+   * row now, which says the same thing in one line instead of eleven rows.
+   *
+   * ⚠ "unknown" IS NOT "no". The server answers yes/no/unknown per engine per
+   * slot (server/partfit.js), and only a positive "no" is dropped — a .gguf
+   * encoder it cannot read, or a file with no embedding tensor to measure, stays
+   * in the list. Hiding a file because we failed to read it is the exact failure
+   * the old show-everything behaviour existed to prevent. */
+  const fits = (v) => v !== "no";
+  const mine = (shelf.models || []).filter((m) => m.ok && m.engine === eng);
+  const hiddenModels = (shelf.models || []).length - mine.length;
   const box = $("vidModelRow");
   if (box) box.hidden = false;
   const label = (m) => m.name + (m.family ? "  ·  " + m.family : "")
     + (m.bytes ? "  ·  " + (m.bytes / 1e9).toFixed(1) + " GB" : "");
   $("vidModel").innerHTML = '<option value="auto">auto &middot; the files this engine came with</option>'
     + (mine.length ? "" : '<option value="" disabled>nothing of your own in models/diffusion_models that this engine can load</option>')
-    + mine.map((m) =>'<option value="' + esc(m.name) + '"' + (m.ok ? "" : " disabled")
-      + ' title="' + esc(m.why || m.family || "") + '">' + esc(label(m))
-      + (m.ok ? "" : "  —  cannot drive a video render") + "</option>").join("");
+    + mine.map((m) => '<option value="' + esc(m.name) + '" title="' + esc(m.family || "") + '">'
+      + esc(label(m)) + "</option>").join("");
+
   const shelfOpts = (rows, what) => '<option value="auto">auto &middot; the ' + what + " this engine came with</option>"
     + rows.map((r) => '<option value="' + esc(r.name) + '">' + esc(r.name) + "</option>").join("");
-  $("vidEncoder").innerHTML = shelfOpts(shelf.encoders || [], "text encoder");
-  $("vidVideoVae").innerHTML = shelfOpts(shelf.vaes || [], "video VAE");
-  $("vidAudioVae").innerHTML = shelfOpts(shelf.vaes || [], "audio VAE");
+  const encAll = shelf.encoders || [], vaeAll = shelf.vaes || [];
+  const enc = encAll.filter((r) => fits(r.fit?.[eng]));
+  const vVae = vaeAll.filter((r) => fits(r.fitVideo?.[eng]));
+  const aVae = vaeAll.filter((r) => fits(r.fitAudio?.[eng]));
+  $("vidEncoder").innerHTML = shelfOpts(enc, "text encoder");
+  $("vidVideoVae").innerHTML = shelfOpts(vVae, "video VAE");
+  $("vidAudioVae").innerHTML = shelfOpts(aVae, "audio VAE");
+  /* The silence, named. Without this a file somebody put in models/vae on
+   * purpose would simply not be there, with nothing to say why.
+   *
+   * DISTINCT FILES, NOT ROWS. Adding the four rows' hidden counts said "44
+   * other files" on a shelf holding 29 of them: one VAE that suits neither row
+   * was counted twice, once for video and once for audio. A number that large
+   * reads as a bug in the filter rather than a fact about the disk. */
+  const vaeUnused = vaeAll.filter((r) => !fits(r.fitVideo?.[eng]) && !fits(r.fitAudio?.[eng])).length;
+  const left = hiddenModels + (encAll.length - enc.length) + vaeUnused;
+  const note = $("vidShelfNote");
+  if (note) {
+    note.textContent = left
+      ? left + " other file" + (left === 1 ? "" : "s") + " on the shelf "
+        + (left === 1 ? "is" : "are") + " for other engines and " + (left === 1 ? "is" : "are") + " not listed."
+      : "";
+  }
   /* LTX has no audio decoder in its graph, so there is nothing to replace. */
   for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng !== "h3"; }
   vidLoadLoras();
@@ -7033,18 +7062,25 @@ async function vidLoadLoras() {
     vidLoraShelf = (d.loras || []).filter((l) => l.isLora && !own.has(l.name));
   } catch { if (request !== vidLoraRequest) return; vidLoraShelf = []; }
   const label = VID_LORA_BASE[eng] || "this engine";
+  /* ⚠ A LoRA FOR ANOTHER ENGINE IS NOT OFFERED. It used to be listed disabled
+   * with its base beside it, which is a row you can read and cannot use. An
+   * UNVERIFIED one still appears: its base could not be read, and that is not
+   * the same as knowing it does not fit. */
+  const shown = vidLoraShelf.filter((l) => vidLoraFit(l, eng) !== "no");
   $("vidLoraPick").innerHTML = '<option value="">add a LoRA…</option>'
-    + vidLoraShelf.map((l) => {
+    + shown.map((l) => {
         const fit = vidLoraFit(l, eng);
-        const mark = fit === "yes" ? "" : fit === "no" ? " · ✗ " + (l.base || "?") : " · ? unverified";
-        const why = fit === "yes" ? "made for " + label : fit === "no" ? "made for " + l.base + ", not " + label : "its base could not be read; try it";
-        return `<option value="${esc(l.name)}"${fit === "no" ? " disabled" : ""} title="${esc(why)}">`
+        const mark = fit === "yes" ? "" : " · ? unverified";
+        const why = fit === "yes" ? "made for " + label : "its base could not be read; try it";
+        return `<option value="${esc(l.name)}" title="${esc(why)}">`
           + `${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
       }).join("");
-  const fitting = vidLoraShelf.filter((l) => vidLoraFit(l, eng) !== "no").length;
+  const skipped = vidLoraShelf.length - shown.length;
   $("vidLoraNote").textContent = !vidLoraShelf.length
     ? "Nothing in models/loras yet. Put a " + label + " LoRA there and it shows up here."
-    : fitting + " of " + vidLoraShelf.length + " in models/loras can go on " + label + ". They stack, up to eight. A LoRA carries its own licence.";
+    : shown.length + " in models/loras can go on " + label
+      + (skipped ? "; " + skipped + " for other engines " + (skipped === 1 ? "is" : "are") + " not listed" : "")
+      + ". They stack, up to eight. A LoRA carries its own licence.";
   vidPaintLoras();
 }
 function vidPaintLoras() {
@@ -8424,7 +8460,7 @@ mountPickBar({
       openImageEditor(r.name);
       return true;
     },
-    /* \u26a0 A LIBRARY PICTURE IS A NAME, NOT BYTES. These are already on disk;
+    /* ⚠ A LIBRARY PICTURE IS A NAME, NOT BYTES. These are already on disk;
      * uploading them would file a second copy and point the reference at the
      * duplicate. Both actions below push the name straight in. */
     refs: async (files) => {
@@ -8448,7 +8484,7 @@ mountPickBar({
       return true;
     },
 
-    /* \u26a0 NINE, NOT TEN, AND THE ENGINE MOVES TOO. H3 takes REF_IMG_MAX
+    /* ⚠ NINE, NOT TEN, AND THE ENGINE MOVES TOO. H3 takes REF_IMG_MAX
      * references where an image takes IMG_REF_MAX, so a full image selection
      * overflows video by one. And the Video page hides its reference section
      * unless the engine is H3 — arriving with pictures attached, invisible and
@@ -15452,7 +15488,7 @@ $("imgRefPick").onchange = () => {
 };
 /* ── dropping a reference in ───────────────────────────────────────────────
  *
- * \u26a0 A LIBRARY PICTURE IS A NAME, NOT BYTES. It is already on disk, so the
+ * ⚠ A LIBRARY PICTURE IS A NAME, NOT BYTES. It is already on disk, so the
  * library case is answered first and never touches the network: re-uploading it
  * would file a second copy under a new name and point the reference at the
  * duplicate. Only a file from outside has bytes nobody here has seen. */
@@ -17392,12 +17428,14 @@ function setView(name) {
   // The stage header and the filter row are browsing controls. On Overnight you
   // are watching, not searching, and a duplicate "Library" heading directly
   // under "Overnight run" reads as a layout bug.
-  document.querySelector(".stagehead").hidden = name !== "create";
-  document.querySelector(".libbar").hidden = name !== "create";
-  /* The song-selection bar is the Music library's. It was added after this
-   * list was written and so showed on every page; Images and Video have their
-   * own (mountPickBar). */
-  $("batchBar").hidden = name !== "create";
+  /* ⚠ ONE LINE, AND IT IS THE WRAPPER. The heading, the filter row and the
+   * song-selection bar are one sticky element now (#musicHead), and hiding only
+   * the three of them would leave that element’s padding and hairline as a
+   * 10px bar on every other screen — they live directly in `.stage`, which is
+   * the scroller SHARED by every view, not inside a Music page. Measured at
+   * height 10 on Images before this line existed. The song-selection bar is in
+   * there too; Images and Video have their own (mountPickBar). */
+  $("musicHead").hidden = name !== "create";
   if (!lib) $("pinned").hidden = true;
   $("overnight").hidden = name !== "overnight";
   $("videoclips").hidden = name !== "video";

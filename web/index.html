@@ -876,11 +876,24 @@
       <p class="hint" id="vidEngineNote"></p>
     </div>
 
+    <!-- ENGINE SETTINGS — the files the engine loads, and COLLAPSED BY DEFAULT.
+         "auto" is the right answer until you have a model of your own, and four
+         dropdowns plus a LoRA stack held open above the prompt push the box you
+         came here to type in off the screen. -->
+    <details class="adv sbox" id="vidEngineBox">
+      <summary>Engine settings<span class="sp meta" id="vidEngineBoxNote"></span></summary>
+
     <!-- YOUR OWN VIDEO MODEL. The engine above normally loads the files the
          catalogue fetched for it; a community model of the same family is that
          architecture re-trained, so the same graph drives it with one name
          changed. Auto everywhere is the engine’s own — web/app.js
-         vidModelShape(). -->
+         vidModelShape().
+
+         ONLY WHAT FITS IS LISTED. What is left out is counted under the row
+         rather than shown greyed: the reason to list a refused file was that a
+         misplaced one should not vanish silently, and a number says that in one
+         line instead of eleven rows. Anything the server could not judge counts
+         as fitting and stays. -->
     <div class="field" id="vidModelRow" hidden>
       <label class="flabel" for="vidModel">Model file</label>
       <select id="vidModel" class="sel2"></select>
@@ -892,6 +905,7 @@
       <span id="vidAudioVaeW"><select id="vidAudioVae" class="sel2"></select></span>
       <p class="hint">Files from models/diffusion_models, models/text_encoders and models/vae.
         Leave these on auto unless you have a model of your own.</p>
+      <p class="hint" id="vidShelfNote"></p>
     </div>
 
     <!-- YOUR OWN LoRAs for the video engine on the screen. Same stack as the
@@ -904,6 +918,7 @@
       <div id="vidLoras" class="lorastack"></div>
       <p class="hint" id="vidLoraNote"></p>
     </div>
+    </details>
 
     <div class="field">
       <label class="flabel" for="vidPrompt">What should it show</label>
@@ -1434,6 +1449,18 @@
       </div>
     </div>
 
+    <!-- The controls you reach for WHILE looking at the grid. One wrapper
+         rather than four sticky siblings: sticky elements do not stack, so
+         stacking them by hand would hard-code each height into the next
+         one’s `top` — and those heights change when the tick bar wraps or
+         the window narrows. -->
+    <!-- ⚠ IT HAS AN ID BECAUSE IT IS HIDDEN AS A UNIT. These controls sit
+         directly in `.stage` — the scroller every view shares — as siblings
+         of #imagesview and #videoclips, not inside a Music page of their own,
+         and setView used to hide the three of them separately. Wrapping them
+         without moving that to the wrapper left the wrapper’s own padding and
+         hairline as a 10px bar across the top of every other screen. -->
+    <div class="libhead spaced" id="musicHead">
     <div class="stagehead">
       <h2 id="listTitle">Library</h2>
       <select id="plSelect" class="sel2 sm"><option value="">All tracks</option></select>
@@ -1496,6 +1523,7 @@
         <button class="bbtn" type="button" data-batch="clear" title="Clear the selection">✕</button>
       </div>
     </div>
+    </div><!-- /.libhead -->
 
     <div id="pinned" hidden>
       <div class="subhead">📌 Pinned</div>
@@ -2140,6 +2168,12 @@
     <div id="imagesview" hidden>
       <div class="vidwrap">
         <div class="vidlib">
+          <!-- The controls you reach for WHILE looking at the grid. One wrapper
+               rather than four sticky siblings: sticky elements do not stack, so
+               stacking them by hand would hard-code each height into the next
+               one’s `top` — and those heights change when the tick bar wraps or
+               the window narrows. -->
+          <div class="libhead">
           <div class="stagehead">
             <h2>Images</h2>
             <span class="count" id="imgCountLbl"></span>
@@ -2205,12 +2239,19 @@
               <button class="bbtn" type="button" data-pick="clear" title="Clear the selection">✕</button>
             </div>
           </div>
+          </div><!-- /.libhead -->
           <div class="clipgrid" id="imgGrid"></div>
         </div>
       </div>
     </div>
 
     <div id="videoclips" hidden>
+      <!-- The controls you reach for WHILE looking at the grid. One wrapper
+           rather than four sticky siblings: sticky elements do not stack, so
+           stacking them by hand would hard-code each height into the next
+           one’s `top` — and those heights change when the tick bar wraps or
+           the window narrows. -->
+      <div class="libhead">
       <div class="stagehead">
         <h2>Clips</h2>
         <span class="count" id="vidCount"></span>
@@ -2268,6 +2309,7 @@
           <button class="bbtn" type="button" data-pick="clear" title="Clear the selection">✕</button>
         </div>
       </div>
+      </div><!-- /.libhead -->
       <div class="clipgrid" id="clipGrid"></div>
 
       <!-- The big view. The grid shows a 25 KB poster per clip, which is right
