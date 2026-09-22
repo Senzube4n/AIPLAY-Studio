@@ -10,8 +10,10 @@ import { createListeningLab, listeningPairRequests } from "./listening-lab.js";
 import { createListeningLabRuntime } from "./lab-runtime.js";
 import { buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA } from "../workflow.js";
 
-const index = await readFile(new URL("../index.js", import.meta.url), "utf8");
-const runner = await readFile(new URL("../jobs.js", import.meta.url), "utf8");
+// Git may check these sources out as CRLF on Windows. Normalize only line endings
+// so executable-boundary markers behave identically in a checkout and a worktree.
+const index = (await readFile(new URL("../index.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+const runner = (await readFile(new URL("../jobs.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const sha = text => createHash("sha256").update(text).digest("hex");
 function between(source, start, end) {

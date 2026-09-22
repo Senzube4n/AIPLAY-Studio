@@ -246,3 +246,31 @@ test("untitled scenes use an existing storyboard action or lyric snippet, retain
   assert.match(f.node("cbSegment").innerHTML, /closing · A figure opens the red door/);
   assert.equal(f.plan.shots[1].title, "closing"); // Display fallback never changes the saved plan or project.
 });
+
+test("planning displays escaped request history separately from the saved stage and opens returns read-only", async () => {
+  const f = fixture();
+  const delivery = { observedAt: Date.now(), counts: { prepared: 1, returned: 0, adopted: 0, refused: 0, expired: 0, unknown: 0 }, unmatchedOrders: [],
+    scenes: [{ segmentId: "opening", orders: [{ id: "o_000000000001", to: { nickname: "<img src=x>" }, status: "prepared", label: "Package prepared", nextStep: "Transfer the file", preparedAt: Date.now(), note: "<script>bad()</script>" }] }] };
+  f.context.respond = (url, body) => url === "/api/collab/plan?slug=episode" ? { ok: true, plan: f.plan, delivery } : f.defaults(url, body);
+  await f.run("paintCollab()");
+  assert.match(f.node("cbPlanBoard").innerHTML, /1 request · latest: Package prepared/);
+  assert.match(f.node("cbShotOrders").innerHTML, /&lt;img/);
+  assert.doesNotMatch(f.node("cbShotOrders").innerHTML, /<script>|<img/);
+  assert.equal(f.node("cbShotStage").value, "storyboard");
+  await f.fire("cbShotReturns");
+  assert.equal(f.node("cbPaneIn").hidden, false);
+  assert.ok(f.calls.some((call) => call.body?.action === "quarantine"));
+  assert.ok(!f.calls.some((call) => ["pack", "adopt", "accept", "update_shot"].includes(call.body?.action)));
+});
+
+test("prepare render request uses the planned scene and eligible owner without packing or retaining another recipient", async () => {
+  const f = fixture(); f.plan.shots[0].owner = f.peer.fp;
+  await f.run("paintCollab()"); await f.fire("cbShotOrder");
+  assert.equal(f.node("cbKind").value, "order"); assert.equal(f.node("cbSegment").value, "opening");
+  assert.equal(f.node("cbTo").value, f.peer.fp);
+  f.plan.shots[0].owner = "removed-friend";
+  await f.fire("cbShotOrder");
+  assert.equal(f.node("cbTo").value, "");
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.ok(!f.calls.some((call) => ["pack", "accept"].includes(call.body?.action)));
+});

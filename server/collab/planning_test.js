@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { allocatePlan, createCollabPlanning, createCollabPlanningRoutes } from "./planning.js";
+import { allocatePlan, createCollabPlanning, createCollabPlanningRoutes, projectOrderProgress } from "./planning.js";
+import { listOrders, rememberOrder, setOrderState, noteReturn } from "./orderbook.js";
 
 const now = 10_000_000;
 const peers = (n = 10) => Array.from({ length: n }, (_, i) => ({ fp: String(i).padStart(32, "0"), nickname: `Peer ${i}`, verified: true, role: "lender", resources: { at: now, ready: ["videoH3"], gpu: { vramMb: 16384 } } }));
@@ -100,4 +101,59 @@ test("HTTP planning contract exposes read/write errors and records the caller ac
   await route({ method: "POST", body: { action: "update_episode", slug: "episode", expectedRevision: 0, notes: "Episode arc" } }, {}, new URL("http://local/api/collab/plan"));
   assert.equal(answer.data.plan.changedBy, "agent:test");
   await route({ method: "POST", body: { action: "update_episode", slug: "episode", expectedRevision: 0, notes: "Stale" } }, {}, new URL("http://local/api/collab/plan")); assert.equal(answer.status, 409);
+});
+
+test("order history isolates project and scene, retains every request, and never implies receipt or availability", () => {
+  const row = { id: "o_000000000001", slug: "episode", order: { segmentId: "s0" }, to: { fp: "friend", nickname: "Friend" }, state: "sent", at: now - 5, expires: now + 1, privatePath: "secret", returns: [{ file: "private" }] };
+  const result = projectOrderProgress({ slug: "episode", shots: shots(2), now, orders: [row,
+    { ...row, id: "o_000000000002", at: now, state: "returned" },
+    { ...row, id: "o_000000000003", slug: "other", state: "adopted" },
+    { ...row, id: "o_000000000004", order: { segmentId: "deleted" } }] });
+  assert.equal(result.scenes[0].orders.length, 2);
+  assert.equal(result.scenes[0].orders[0].status, "returned");
+  assert.equal(result.scenes[0].orders[1].label, "Package prepared");
+  assert.equal(result.scenes[1].orders.length, 0);
+  assert.equal(result.unmatchedOrders.length, 1);
+  assert.equal(result.counts.adopted, 0);
+  assert.equal(result.remoteAvailability, "unknown");
+  assert.doesNotMatch(JSON.stringify(result), /private|secret/);
+});
+
+test("expiry applies only to unanswered packages and does not infer cancellation or retry safety", () => {
+  const states = ["sent", "returned", "adopted", "refused", "cancelled", "invented"];
+  const result = projectOrderProgress({ slug: "episode", shots: shots(1), now,
+    orders: states.map((state, i) => ({ id: `order-${i}`, slug: "episode", state, order: { segmentId: "s0" }, at: now - 2, expires: now - 1 })) });
+  assert.deepEqual(result.scenes[0].orders.map((row) => row.status), ["expired", "returned", "adopted", "refused", "cancelled", "unknown"]);
+  assert.match(result.scenes[0].orders[0].nextStep, /still be running/);
+  assert.equal(result.counts.expired, 1);
+});
+
+test("real order-book transitions survive restart without modifying the plan or selecting a take", async (t) => {
+  const f = await fixture(t), outDir = path.join(f.dir, "output", "collab"), id = "o_000000000001";
+  const deps = { ...f.deps, readOrders: () => listOrders({ outDir }) }, store = createCollabPlanning(deps);
+  await store.mutate({ action: "update_shot", slug: "episode", expectedRevision: 0, segmentId: "s0", owner: f.roster[0].fp, stage: "assigned" });
+  const file = path.join(f.dir, "collab/plans/episode.json"), before = await readFile(file, "utf8");
+  await rememberOrder({ outDir, row: { id, slug: "episode", order: { segmentId: "s0" }, to: f.roster[0], at: now, expires: now + 1000 } });
+  assert.equal((await store.get("episode")).delivery.counts.prepared, 1);
+  await assert.rejects(rememberOrder({ outDir, row: { id } }), { reason: "order-exists" });
+  await noteReturn({ outDir, id, entry: { ok: true, file: "take.mp4" } });
+  await setOrderState({ outDir, id, state: "returned" });
+  const afterReturn = await createCollabPlanning(deps).get("episode");
+  assert.equal(afterReturn.delivery.counts.returned, 1);
+  assert.equal(afterReturn.delivery.scenes[0].orders[0].returnCount, 1);
+  assert.equal(afterReturn.plan.shots[0].stage, "assigned");
+  await setOrderState({ outDir, id, state: "adopted" });
+  assert.equal((await store.get("episode")).delivery.counts.adopted, 1);
+  assert.equal(await readFile(file, "utf8"), before);
+  await store.mutate({ action: "update_episode", slug: "episode", expectedRevision: 1, notes: "Saved later" });
+  assert.equal(JSON.parse(await readFile(file, "utf8")).delivery, undefined);
+  assert.equal(f.doc.clips, undefined);
+});
+
+test("an unreadable order book refuses the read and does not turn into an empty or saveable plan", async (t) => {
+  const f = await fixture(t), readOrders = async () => { throw Object.assign(new Error("Unreadable orders"), { status: 500 }); };
+  const store = createCollabPlanning({ ...f.deps, readOrders });
+  await assert.rejects(store.get("episode"), /Unreadable orders/);
+  await assert.rejects(store.mutate({ action: "update_episode", slug: "episode", expectedRevision: 0, notes: "Changed" }), /Unreadable orders/);
+  await assert.rejects(stat(path.join(f.dir, "collab")), { code: "ENOENT" });
 });
