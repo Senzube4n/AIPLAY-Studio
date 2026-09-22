@@ -546,6 +546,8 @@ export function createEngineClient(deps = {}) {
 
     const record = buildRecord(graph, {
       runId, via, actor,
+      /* A private run: the ledger line still happens, with no words in it. */
+      private: spec.private === true,
       label: spec.label ?? null, note: spec.note ?? null,
       project: spec.project ?? null, shot: spec.shot ?? null,
       enginePort: portMode(),
@@ -578,7 +580,15 @@ export function createEngineClient(deps = {}) {
         + "submit, because whatever else might answer would render into another install's library.");
     }
 
-    const stored = await store.putGraph(record.graphHash, graph);
+    /* ⚠ THE GRAPH IS NOT FILED FOR A PRIVATE RUN. It is the widest plaintext
+     * prompt store in the app — the text sits in the CLIPTextEncode node — and
+     * store.js's own header says this directory is never pruned and may not be
+     * given a prune setting. Redacting the text nodes instead would file a graph
+     * whose hash no longer matches its contents, which is a worse lie than an
+     * absent file. `graphStored: null` already means "not on the shelf". */
+    const stored = spec.private === true
+      ? { path: null, existed: false }
+      : await store.putGraph(record.graphHash, graph);
     record.graphStored = stored.path;
 
     const t0 = Date.now();

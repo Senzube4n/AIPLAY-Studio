@@ -2543,6 +2543,18 @@ export const TOOLS = [
       properties: {
         prompt: { type: "string",
           description: "Supports DYNAMIC PROMPTS: `{a|b|c}` picks one option per render and an empty option is legal, so `{, at night|}` adds a detail half the time. Groups nest. The reply carries the expansion it chose plus `prompt_choices`, and passing those back reproduces that exact prompt — which is what makes one picture out of an overnight run findable again." },
+        private: { type: "boolean",
+          description:
+            "PRIVATE: render this without recording what was typed. The prompt, the negative, every "
+            + "text node, the prompt HASH and the label are left out of the ledger; no graph is filed "
+            + "in the never-pruned graph store; the engine's metadata chunk is stripped from the PNG; "
+            + "and the gallery row keeps its seed, model and date but no prompt.\n\n"
+            + "\u26a0 THE RENDER IS STILL RECORDED. The ledger event is still written, with the same "
+            + "actor and the same chain \u2014 a hash-chained ledger cannot skip a line without breaking "
+            + "verification of every line after it \u2014 and it names what it dropped in `redacted`. The "
+            + "picture keeps its IPTC AI-generated disclosure. This hides the WORDS, never the fact "
+            + "that a machine made the picture.\n\n"
+            + "Not retroactive, and it cannot be added afterwards: the words are simply never written." },
         prompt_choices: { type: "array", items: { type: "integer" },
           description: "Replay a previous expansion exactly, from a earlier reply's prompt_choices." },
         dedupe: { type: "string", enum: ["reroll", "refuse", "off"],
@@ -2616,6 +2628,9 @@ export const TOOLS = [
       const before = new Set(((await api("GET", "/api/images")).images || []).map((i) => i.name));
       const r = await api("POST", "/api/image", {
         action: "create", prompt: a.prompt,
+        // Declared AND forwarded: a schema that names a field its run() drops is
+        // a feature that answers ok and does nothing.
+        private: a.private === true,
         engine: a.engine || "qwen-image-2.1", quality: a.quality, checkpoint: a.checkpoint,
         negative: a.negative, cfg: a.cfg,
         refSizing: a.ref_sizing, refResolution: a.ref_resolution, transparent: a.transparent,

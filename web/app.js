@@ -8540,8 +8540,8 @@ $("imgSearch").oninput = imgPaint;
  * sheet, no multi-select ceremony. */
 /* ── a blank page, and the clipboard ──────────────────────────────────────
  *
- * Both land in the same place \u2014 a picture in the library, opened in the
- * editor \u2014 because they are the same wish: something to paint on that did not
+ * Both land in the same place — a picture in the library, opened in the
+ * editor — because they are the same wish: something to paint on that did not
  * come out of the engine. */
 
 /* The preset writes the numbers rather than standing in for them: the rule in
@@ -8574,8 +8574,8 @@ $("imgNewPage").onclick = async () => {
   } finally { btn.disabled = false; btn.innerHTML = "\u25a1 new page"; }
 };
 
-/* \u26a0 A PASTE HANDLER MUST NOT EAT AN ORDINARY PASTE. This is on the document,
- * so it sees Ctrl+V everywhere \u2014 including inside the prompt box, the search
+/* ⚠ A PASTE HANDLER MUST NOT EAT AN ORDINARY PASTE. This is on the document,
+ * so it sees Ctrl+V everywhere — including inside the prompt box, the search
  * field and every other input in the studio. It takes the event only when the
  * clipboard actually carries an IMAGE and the caret is not in something that
  * takes text, which is why a pasted prompt still reaches the textarea. */
@@ -8746,13 +8746,13 @@ function iedStageOps({ quiet = false } = {}) {
    * stages is a server that would answer ok and hand back a byte-identical
    * file, which is the silent no-op every gate in this file exists to stop. */
   if (iedCapLive("strokes") && ied.clear) o.clear = true;
-  /* \u26a0 A LOCKED BACKGROUND REFUSES PAINT HERE, WHERE WHAT IS SENT IS DECIDED.
+  /* ⚠ A LOCKED BACKGROUND REFUSES PAINT HERE, WHERE WHAT IS SENT IS DECIDED.
    * Greying the tools out would leave the queue filling and Apply posting it;
    * this is the one gate every op passes through, so the lock belongs beside
    * the capability checks rather than in the rail.
    *
    * Only the RASTER-WRITING keys go. Adjustments, effects, geometry, LUTs and
-   * text are not paint \u2014 Photoshop adjusts a locked Background freely \u2014 and
+   * text are not paint — Photoshop adjusts a locked Background freely — and
    * refusing the whole call because one stroke was queued would be a bigger lie
    * than letting the rest through. */
   if (iedBgLocked) {
@@ -9708,8 +9708,8 @@ function openImageEditor(name) {
     "iedApply"]) {
     $(id).hidden = isFinal;
   }
-  /* \u26a0 THE DOCKS HAVE TWO REASONS TO BE HIDDEN, SO NEITHER WRITES THE FLAG.
-   * This line used to read `$(id).hidden = isFinal` across twelve docks \u2014 the
+  /* ⚠ THE DOCKS HAVE TWO REASONS TO BE HIDDEN, SO NEITHER WRITES THE FLAG.
+   * This line used to read `$(id).hidden = isFinal` across twelve docks — the
    * right rule (an .svg has no pixels, so every pixel surface goes away) writing
    * the wrong thing, because for an ordinary PNG `isFinal` is false and the line
    * therefore SHOWED all twelve, overwriting whichever four the panel-group tabs
@@ -9945,10 +9945,10 @@ $("iedApply").onclick = async () => {
    * layer-style gate back on at the end of every render. */
   iedApplyBusy = true; iedApplyEnable();
   try {
-    /* \u26a0 PAINT INTO THE PICKED LAYER, IF ONE IS PICKED AND THERE IS PAINT.
+    /* ⚠ PAINT INTO THE PICKED LAYER, IF ONE IS PICKED AND THERE IS PAINT.
      * Only the paint class travels: adjustments, geometry and the photo grade
      * are pipeline ops over a whole picture, and sending them to a layer would
-     * apply them to that layer's SOURCE \u2014 a different picture from the one on
+     * apply them to that layer's SOURCE — a different picture from the one on
      * screen. Those still make a new image, which is what this editor has
      * always done and what the button falls back to saying. */
     const target = iedPaintTarget();
@@ -10271,7 +10271,7 @@ let iedLayerSel = -1;
 let iedBgLocked = false;
 
 function iedLayersPaint() {
-  /* Each row is followed by a thin clip zone \u2014 the BORDER BENEATH it, between
+  /* Each row is followed by a thin clip zone — the BORDER BENEATH it, between
    * this layer and whatever is below (another layer, or the base image, which
    * counts as a base too). Alt-clicking it is Photoshop's clipping-mask
    * gesture: the layer above the border keeps the alpha of the layer below as
@@ -10289,10 +10289,10 @@ function iedLayersPaint() {
     <div class="layerclipzone${l.clipped ? " on" : ""}" data-clipzone="${i}"
       title="Alt-click: clip \u201c${esc(l.src.slice(0, 18))}\u201d to the layer below"></div>`).reverse().join("");
 
-  /* \u26a0 THE BACKGROUND IS A RENDERED ROW, NOT AN ENTRY IN iedLayers. Pushing
+  /* ⚠ THE BACKGROUND IS A RENDERED ROW, NOT AN ENTRY IN iedLayers. Pushing
    * the base picture into that array would make row 0 a thing every caller has
-   * to special-case \u2014 the composite payload, the picker's filter, the
-   * transform sliders, the clip zones, the undo snapshot \u2014 and one special
+   * to special-case — the composite payload, the picker's filter, the
+   * transform sliders, the clip zones, the undo snapshot — and one special
    * case in six places is how a list starts lying about what it holds.
    *
    * It carries no eyeball on purpose: hiding it means compositing onto nothing,
@@ -10412,7 +10412,7 @@ $("iedCompose").onclick = async () => {
     const W = $("iedImg").naturalWidth, H = $("iedImg").naturalHeight;
     const r = await (await fetch("/api/images/composite", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      /* \u26a0 A HIDDEN ROW IS FILTERED HERE, WHICH IS THE WHOLE POINT OF THE
+      /* ⚠ A HIDDEN ROW IS FILTERED HERE, WHICH IS THE WHOLE POINT OF THE
        * EYEBALL. Toggling a row and then compositing it anyway is a control
        * that appears to work. `enabled === false` rather than `!enabled`,
        * because every row created before this field existed has it undefined
@@ -10870,7 +10870,7 @@ async function iedDocSaveComposite() {
    * LAYER ORDER IS BOTTOM-UP in a document, and the composite stack paints
    * bottom-up over the base too, so the base goes first and iedLayers follow in
    * their own order. Reversing either would put the stack under the picture. */
-  /* \u26a0 QUEUED SHAPES COME ACROSS AS SHAPE LAYERS NOW. They could not before:
+  /* ⚠ QUEUED SHAPES COME ACROSS AS SHAPE LAYERS NOW. They could not before:
    * imgdoc had six layer kinds and its own docstring listed `shape` as unbuilt,
    * so a shape had nothing to become and this button said so. It is built, so
    * the caveat is lifted for shapes and kept for everything else.
@@ -11889,8 +11889,8 @@ $("iedSelAll").onclick = () => iedCmdRun("select.all");
 $("iedSelInv").onclick = () => iedCmdRun("select.invert");
 $("iedSelFromCrop").onclick = () => iedCmdRun("select.fromcrop");
 
-/* \u26a0 THE FRAME THE SHAPES ARE WRITTEN IN. ied.sel holds STAGE coordinates \u2014
- * iedSrcToStage() puts them after the crop and the rotation \u2014 and the server
+/* ⚠ THE FRAME THE SHAPES ARE WRITTEN IN. ied.sel holds STAGE coordinates —
+ * iedSrcToStage() puts them after the crop and the rotation — and the server
  * resolves a selection at stage 4, which is the same place. Send the shapes
  * without the crop that defines them and the server resolves them against the
  * uncropped picture: the numbers are right, the region is in the wrong place,
@@ -11920,7 +11920,7 @@ $("iedSelWhat").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(iedSelPayload()) })).json();
     /* The server composes the sentence once so the page and an agent read the
-     * same words \u2014 but the NUMBER is shown too, because the rule is the plain
+     * same words — but the NUMBER is shown too, because the rule is the plain
      * control and the number behind it. */
     say.textContent = r.error
       ? r.error
@@ -11932,7 +11932,7 @@ $("iedSelWhat").onclick = async () => {
 
 /* THE MATTE, KEPT. imgdoc.py's own refusal tells you to "bake the result into a
  * library image and use mask.src"; this is that step. Worth it for wand and
- * colour range especially \u2014 those are computed from pixels with a tolerance
+ * colour range especially — those are computed from pixels with a tolerance
  * you tuned blind, and until this button the result lived for one Apply. */
 $("iedSelBake").onclick = async () => {
   if (!ied.name) return;
@@ -12123,9 +12123,9 @@ function iedStrokeGhost(x, s, live) {
   const erasing = s.tool === "eraser";
   x.lineCap = "round"; x.lineJoin = "round";
   x.setLineDash([]);
-  /* \u26a0 AN ERASER DOES NOT ADD A COLOUR, SO ITS GHOST IS NOT ONE. This drew
+  /* ⚠ AN ERASER DOES NOT ADD A COLOUR, SO ITS GHOST IS NOT ONE. This drew
    * --accent first (an eraser that previewed as a cyan brush) and then a pale
-   * near-white band \u2014 which is worse than it sounds, because in Pixlr an
+   * near-white band — which is worse than it sounds, because in Pixlr an
    * eraser on a locked background really does paint white, so a white band is
    * us imitating a competitor's behaviour by accident. The ghost is the
    * transparency ground itself: what will actually be there. */
@@ -12140,7 +12140,7 @@ function iedStrokeGhost(x, s, live) {
   x.globalAlpha = 1;
   x.lineWidth = 1;
   /* No spine for the eraser. It existed to make a pale band legible, and a
-   * checkerboard is legible by itself \u2014 a dark dotted line down the middle of
+   * checkerboard is legible by itself — a dark dotted line down the middle of
    * an erase preview is exactly what the owner reported seeing and could not
    * read. A thin rim instead, so a short dab still has an edge. */
   if (erasing) {
@@ -12155,7 +12155,7 @@ function iedStrokeGhost(x, s, live) {
 
 /* The transparency ground, as a canvas pattern, so an erase ghost can be filled
  * with the thing it is about to expose. Same two colours as .iedframe img in
- * styles.css \u2014 if those ever change, this is the other half. */
+ * styles.css — if those ever change, this is the other half. */
 function iedCutPattern(x) {
   const t = document.createElement("canvas");
   t.width = 16; t.height = 16;
@@ -12168,11 +12168,11 @@ function iedCutPattern(x) {
 
 /* ── the rendered preview ──────────────────────────────────────────────────
  *
- * \u26a0 THE FRAME MUST BE UNCHANGED, OR THE PREVIEW IS THE WRONG SIZE. It is
+ * ⚠ THE FRAME MUST BE UNCHANGED, OR THE PREVIEW IS THE WRONG SIZE. It is
  * laid over the committed picture inside the same transformed frame (the
  * Channels view does this too), which only aligns while both are the same
  * shape. A staged crop or canvas resize changes the rendered size, and those
- * already preview themselves \u2014 the crop box, and the CSS transform \u2014 so
+ * already preview themselves — the crop box, and the CSS transform — so
  * this steps aside for them. */
 function iedPreviewable() {
   if (!ied.name || !$("iedImg").naturalWidth) return false;
@@ -12241,7 +12241,7 @@ async function iedPreviewRender() {
     pv.onload = () => { pv.hidden = false; iedApplyView(); };
     pv.src = url;
   } catch {
-    /* \u26a0 SILENT ON PURPOSE, and this is the one place in this editor that
+    /* ⚠ SILENT ON PURPOSE, and this is the one place in this editor that
      * should be. The work is already queued and Apply still commits it; the
      * ghost is still on screen. Interrupting somebody mid-stroke to say a
      * convenience did not render would be the worse failure. */
@@ -13763,7 +13763,7 @@ let iedApplyBusy = false;
 /* The layer Apply would paint into, or null for "a new picture", which is what
  * this editor has always done. Only an IMAGE layer is offered: every other kind
  * regenerates from its parameters on each render, so a stroke into one is
- * discarded the next time it draws \u2014 the route refuses that with a sentence,
+ * discarded the next time it draws — the route refuses that with a sentence,
  * and not offering it is the better half of the same rule. */
 function iedPaintTarget() {
   if (!iedDoc || !iedDoc.id) return null;
@@ -14401,17 +14401,17 @@ $("iedDlg").onclick = (e) => { if (e.target === $("iedDlg")) iedDlgClose(); };
 
 /* ── the dock groups ──────────────────────────────────────────────────────
  *
- * \u26a0 EIGHTEEN ACCORDIONS IN ONE COLUMN IS NOT A PANEL, IT IS A LIST. That is
+ * ⚠ EIGHTEEN ACCORDIONS IN ONE COLUMN IS NOT A PANEL, IT IS A LIST. That is
  * measured, not an impression: this dock holds 18 <details> and ten of them
  * were open at once. Photoshop carries about as many panels and never shows
- * eighteen title bars, because they are grouped and TABBED \u2014
+ * eighteen title bars, because they are grouped and TABBED —
  * Layers/Channels/Paths is one group with three tabs, not three stacked
  * accordions competing for one column.
  *
- * \u26a0 NOT ONE DOM NODE MOVES. Every panel keeps its id, its handlers and its
+ * ⚠ NOT ONE DOM NODE MOVES. Every panel keeps its id, its handlers and its
  * own open state; the tabs decide only which are `hidden`. Every dock already
- * carries a `data-dock` name, so rearranging the markup \u2014 and re-testing
- * eighteen panels' worth of wiring \u2014 would be a lot of risk taken on to fix a
+ * carries a `data-dock` name, so rearranging the markup — and re-testing
+ * eighteen panels' worth of wiring — would be a lot of risk taken on to fix a
  * layout complaint. */
 const IED_DOCK_GROUPS = [
   ["AI edit", ["ai", "docs", "sel"]],
@@ -14461,7 +14461,7 @@ function iedDockApply() {
   }
   /* A group can legitimately come out empty: open an .svg and every panel under
    * Adjust works on pixels, so the honest thing is to draw none of them. The
-   * honest thing is ALSO to say so \u2014 a tab with nothing under it and no
+   * honest thing is ALSO to say so — a tab with nothing under it and no
    * sentence beside it is indistinguishable from one that is broken. */
   const note = $("iedDockEmpty");
   if (note) {
@@ -14488,8 +14488,8 @@ function iedDockTabsBuild() {
 }
 iedDockTabsBuild();
 
-/* \u26a0 A PANEL IN A GROUP YOU ARE NOT LOOKING AT MUST STILL BE REACHABLE. About
- * a dozen menu items jump straight to a dock \u2014 "Add an image layer\u2026" opens
+/* ⚠ A PANEL IN A GROUP YOU ARE NOT LOOKING AT MUST STILL BE REACHABLE. About
+ * a dozen menu items jump straight to a dock — "Add an image layer\u2026" opens
  * iedDockLayers, the levels dialog opens iedDockAdjust. Without this, every one
  * of them would silently do nothing whenever the wrong tab happened to be
  * showing: a control that appears to work and does not, which is the single
@@ -14857,12 +14857,12 @@ const IED_CMDS = [
       ied.sel = [{ kind: "rect", x: 0, y: 0, w, h, mode: "add" }];
       iedSelPaint(); iedOverlayPaint(); iedPush("select all");
     } },
-  /* \u26a0 THE FIRST THING ANYBODY DOES TO SEE WHETHER TRANSPARENCY IS REAL, and
+  /* ⚠ THE FIRST THING ANYBODY DOES TO SEE WHETHER TRANSPARENCY IS REAL, and
    * for a long time it did nothing at all. Ctrl+A built a full-frame selection
    * and NOTHING consumed it destructively: no Delete binding on this side, and
    * no op on the server that could reduce alpha except the eraser, which needs
-   * a path to walk. So "select all, delete" \u2014 muscle memory from every paint
-   * program there is \u2014 was two controls that each worked and together did
+   * a path to walk. So "select all, delete" — muscle memory from every paint
+   * program there is — was two controls that each worked and together did
    * nothing.
    *
    * It stages rather than acting, like every other mark here, and it is in the
@@ -14871,7 +14871,7 @@ const IED_CMDS = [
     run: () => {
       ied.clear = true;
       /* The preview is scheduled by the queue painters, and a clear is not in a
-       * queue \u2014 it is a flag. Without this the most destructive mark in the
+       * queue — it is a flag. Without this the most destructive mark in the
        * editor was the only one that did not show itself. */
       iedStatus(); iedApplyEnable(); iedPreviewSchedule();
       iedPush(ied.sel.length ? "clear the selection" : "clear the frame");
@@ -15984,6 +15984,10 @@ $("imgGo").onclick = async () => {
       body: JSON.stringify({
         action: "create", prompt,
         engine: $("imgEngine").value,
+        /* Private: render without recording the words. Sent always rather than
+         * spread conditionally, because a privacy flag that is sometimes absent
+         * is a privacy flag somebody has to reason about. */
+        private: $("imgPrivate").checked,
         /* Sent WHATEVER the engine is, on purpose. Gating this on flux2 here
          * meant that picking Ideogram after choosing references dropped them
          * without a word — the user's own input, discarded by the client. The

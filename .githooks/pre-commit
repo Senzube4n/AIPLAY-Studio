@@ -395,6 +395,14 @@ node server/imgdoors_test.js || exit 1
 # the origin fold, and the source pins that keep the Tier-1 AI marker
 # unstrippable via any exposed option. Art-50 compliance layer; do not thin.
 node server/provenance_test.js || exit 1
+# PRIVATE MODE: the words are not written, and the event still is. It sits
+# beside the provenance lane because it is the same ledger, and because the
+# thing it guards is a SILENCE - a render that records nothing looks exactly
+# like a render that recorded everything until you go and read the file.
+# Its first section pins a DESTRUCTURED parameter list, which is how this
+# actually broke: the route set `private`, every redaction below was correct,
+# and art.request() dropped the name without a word.
+node server/private_test.js || exit 1
 node server/wildcards_test.js || exit 1
 
 echo "  -- did the picture come back with what was asked for --"

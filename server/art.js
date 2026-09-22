@@ -23,6 +23,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:fs/promises";
+import { stripPngText } from "./pngtext.js";
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
@@ -657,7 +658,14 @@ export class ArtRunner extends EventEmitter {
    * someone wait for music. One queue means one idleness rule and one place
    * where music preempts.
    */
-  request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, actor, asked = false }) {
+  /* ⚠ THIS LIST IS THE WHOLE CONTRACT. It is a DESTRUCTURED parameter list,
+   * so a field the caller sets and this line does not name is dropped in
+   * silence — the job is built from these names and nothing else. That has
+   * bitten before (engine, checkpoint and seed had to move inside `video`),
+   * and it bit `private` the same way: the route set it, the render ran, and
+   * the prompt went into the ledger verbatim because the flag never arrived.
+   * Anything new belongs here AND on the job below. */
+  request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, actor, asked = false, private: isPrivate = false }) {
     this.lastRefusal = null;
     if (!file) return this.#refuse("nothing to render — no file was named");
     /* `enabled` is the COVER ART setting, and it used to gate every kind.
@@ -698,6 +706,10 @@ export class ArtRunner extends EventEmitter {
        * line can say "your picture" and so a future reader can tell a render
        * that was asked for from one the app decided to make. */
       asked: !!asked,
+      /* Redact this render's words everywhere they would be written. Carried on
+       * the job because a render is asynchronous: the request that asked for it
+       * is long gone by the time the file lands and the ledger line is written. */
+      private: !!isPrivate,
       title: title || file,
       caption: caption || "",
       lyrics: lyrics || "",
@@ -1229,6 +1241,7 @@ export class ArtRunner extends EventEmitter {
      * failure bounds inside the client are stated as durations, so a fast
      * cadence buys latency without weakening them. */
     const done = await engineDoor.run({
+      private: job.private === true,
       graph, actor: job.actor, via: `art.${standalone ? "image" : "cover"}`,
       clientId: this.clientId, timeoutMs: budget, pollMs: 400,
       label: job.title || job.file, project: null,
@@ -1270,7 +1283,18 @@ export class ArtRunner extends EventEmitter {
           // fallback looked defensive but recorded a path that does not exist
           // once the file has been moved, which is exactly how the cache-hit
           // bug stayed invisible: 16 tracks "succeeded" and wrote nothing.
-          await rename(src, path.join(outDir, name));
+          const landed = path.join(outDir, name);
+          await rename(src, landed);
+          /* ⚠ THE ENGINE STAMPS THE GRAPH INTO THE PICTURE, so the prompt
+           * travels wherever the file goes — a post, a zip, a backup. Measured
+           * on one real library: 40 of 40 covers carried it. Stripped here,
+           * losslessly (the chunk list is rewritten; IDAT is untouched), and the
+           * app's own XMP disclosure is deliberately kept: this is privacy about
+           * the words somebody typed, never about hiding what made a picture. */
+          if (job.private) {
+            await stripPngText(landed).catch((err) =>
+              console.warn(`[art] private render: could not strip metadata from ${name} (${err.message})`));
+          }
           names.push(name);
         }
         return names;
@@ -1373,6 +1397,7 @@ export class ArtRunner extends EventEmitter {
     };
 
     const done = await engineDoor.run({
+      private: job.private === true,
       graph, actor: job.actor, via: "art.sfx",
       clientId: this.clientId, timeoutMs: 300_000, pollMs: 500,
       label: `sfx: ${String(job.prompt || job.caption || "").slice(0, 60)}`,
@@ -1514,6 +1539,7 @@ export class ArtRunner extends EventEmitter {
        * below changes the graph, so the two attempts are genuinely different
        * renders and recording one for both would be the lie. */
       const done = await engineDoor.run({
+      private: job.private === true,
         graph, actor: job.actor, via: "art.clip",
         clientId: this.clientId, timeoutMs: budgetMs, pollMs: 1000,
         label: job.title || job.file,
@@ -1639,6 +1665,7 @@ export class ArtRunner extends EventEmitter {
       const budgetMs = Math.max(900_000, (600 + load * 60) * 1000);
 
       const done = await engineDoor.run({
+      private: job.private === true,
         graph, actor: job.actor, via: "art.enhance",
         clientId: this.clientId, timeoutMs: budgetMs, pollMs: 1000,
         label: `enhance ${path.basename(job.file)}`,
@@ -1727,6 +1754,7 @@ export class ArtRunner extends EventEmitter {
       // generous for the same reason it is everywhere else here: killing a
       // nearly-finished render wastes all of it.
       const done = await engineDoor.run({
+      private: job.private === true,
         graph, actor: job.actor, via: "art.restyle",
         clientId: this.clientId, timeoutMs: 1_800_000, pollMs: 1000,
         label: `restyle ${path.basename(job.file)}`,

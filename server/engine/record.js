@@ -446,7 +446,9 @@ export function buildRecord(graph, ctx = {}) {
     runId: ctx.runId ?? null,
     via: ctx.via ?? null,
     actor_echo: ctx.actor ?? null,
-    label: ctx.label ?? null,
+    /* `label` is the first 48 characters of the prompt (index.js sets
+     * title: finalPrompt.slice(0, 48)), so it is content wearing a name. */
+    label: ctx.private === true ? null : (ctx.label ?? null),
     note: ctx.note ?? null,
     project: ctx.project ?? null,
     shot: ctx.shot ?? null,
@@ -455,14 +457,37 @@ export function buildRecord(graph, ctx = {}) {
     graphNodes: nodes.length,
     graphStored: ctx.graphStored ?? null,
 
-    prompt: cap(positive),
-    promptTruncated: typeof positive === "string" && positive.length > PROMPT_CAP,
-    promptHash: positive === null ? null : sha256(positive),
-    negative: cap(negative),
-    negativeHash: negative === null ? null : sha256(negative),
+    /* ⚠ PRIVATE RUNS KEEP THE SHAPE AND LOSE THE WORDS.
+     *
+     * Everything below this line is what somebody typed, and this record is the
+     * single largest store of it in the app: measured on one real ledger, 1132
+     * events carried the prompt verbatim, 1589 every text node, 332 a verbatim
+     * negative, and 3405 a `label` that is its first 48 characters.
+     *
+     * The HASHES go with them, which looks over-cautious and is not. A prompt is
+     * low-entropy text, so sha256 of one is a lookup key rather than an
+     * anonymisation — measured on the same ledger, 305 of 419 promptHash
+     * values were confirmed just by hashing candidates out of the picture
+     * sidecar. Keeping the hash would keep the leak and drop only the
+     * convenience.
+     *
+     * `promptResolved` and `promptFrom` stay: they say whether a prompt node was
+     * FOUND and where, which is structure, not content, and it is how a render
+     * that silently used no prompt at all is still diagnosable. */
+    ...(ctx.private === true ? {
+      prompt: null, promptTruncated: false, promptHash: null,
+      negative: null, negativeHash: null, texts: [],
+      redacted: ["prompt", "negative", "texts", "promptHash", "negativeHash", "label"],
+    } : {
+      prompt: cap(positive),
+      promptTruncated: typeof positive === "string" && positive.length > PROMPT_CAP,
+      promptHash: positive === null ? null : sha256(positive),
+      negative: cap(negative),
+      negativeHash: negative === null ? null : sha256(negative),
+      texts: texts.map((t) => ({ ...t, value: cap(t.value) })),
+    }),
     promptResolved: promptNode !== null,
     promptFrom,
-    texts: texts.map((t) => ({ ...t, value: cap(t.value) })),
 
     samplers,
     seed: soleValue(samplers, "seed"),

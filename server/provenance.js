@@ -316,6 +316,46 @@ function stampRights(type, data) {
 }
 
 /**
+ * THE FIELDS THAT CARRY WHAT SOMEBODY TYPED.
+ *
+ * Every one of these was measured in a real ledger before being listed: 1132
+ * events carried `prompt` verbatim, 1589 `texts`, 332 `negative`, 3405 `label`
+ * (which is the prompt's first 48 characters), and 1406 `promptHash` - of which
+ * 305 were confirmed by hashing candidate prompts out of the picture sidecar,
+ * which is why the hashes are on this list and not treated as anonymised.
+ *
+ * A DENYLIST is the wrong default in general and the right one here: an event's
+ * `data` is free-form, so an allowlist would silently drop the model, the seed
+ * and the runId that make a redacted line worth keeping at all.
+ * provenance_test.js pins this against what the ledger really contains, so a
+ * new prose field fails the gate rather than leaking.
+ */
+export const REDACTED_KEYS = Object.freeze([
+  "prompt", "promptTruncated", "promptHash",
+  "negative", "negativeHash",
+  "texts", "label", "caption", "lyrics", "note",
+]);
+
+/** Strip the words, keep the event. Returns [data, droppedKeys]. */
+function redactPrompts(data) {
+  const out = {};
+  const dropped = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (REDACTED_KEYS.includes(k)) {
+      /* Only count a key that HELD something. A null prompt was not redacted,
+       * it was absent, and saying otherwise would make every event look like it
+       * was hiding something. */
+      if (v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && !v.length)) dropped.push(k);
+      continue;
+    }
+    out[k] = v;
+  }
+  if (dropped.length) out.redacted = dropped;
+  else out.redacted = [];
+  return out;
+}
+
+/**
  * Append one event. Returns the event as written (with id/t/prev filled in).
  *
  * Callers at capture seams should `.catch()` — a ledger failure must never
@@ -337,7 +377,17 @@ export async function append(scope, evt) {
       actor: normalizeActor(evt.actor),
       type: evt.type,
       asset,
-      data: stampRights(evt.type, evt.data && typeof evt.data === "object" ? evt.data : {}),
+      /* ⚠ REDACTED BEFORE RIGHTS, NOT AFTER. stampRights reads `data.model`
+       * to decide output rights, and a private render's rights are exactly the
+       * same as a public one's — privacy is about the words, never about what
+       * the result may be used for. Redacting first also means the rights stamp
+       * is computed from a field this never touches. */
+      data: stampRights(
+        evt.type,
+        evt.private === true
+          ? redactPrompts(evt.data && typeof evt.data === "object" ? evt.data : {})
+          : (evt.data && typeof evt.data === "object" ? evt.data : {}),
+      ),
       prev: st.head || GENESIS,
     };
     const line = JSON.stringify(full);

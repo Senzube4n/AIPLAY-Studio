@@ -1343,6 +1343,23 @@
         </div>
         <p class="hint" id="imgPersonaNote" hidden></p>
 
+        <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
+             The label names what it drops and the hint names what it keeps,
+             because "private" on its own reads as "untraceable" and somebody
+             would rely on that. The picture still carries its AI disclosure. -->
+        <div class="framepick">
+          <label class="hint" title="The prompt, the negative, every text node, the prompt hash and the label are left out of the ledger; no graph is filed; the engine's metadata chunk is stripped from the PNG; the gallery row keeps its seed, model and date but no prompt.">
+            <input type="checkbox" id="imgPrivate"> Private &mdash; don&rsquo;t record the prompt
+          </label>
+        </div>
+        <!-- ALWAYS ON SCREEN, not revealed on tick. What this does NOT do is what
+             somebody needs before deciding to rely on it; a caveat shown only to
+             people who have already trusted the control is aimed at the wrong
+             audience. One dim line is the whole cost. -->
+        <p class="hint" id="imgPrivateNote">The picture is still recorded and still marked
+          AI-generated &mdash; only the words are dropped. It cannot be applied afterwards,
+          and it does not touch pictures already made.</p>
+
         <div class="framepick">
           <select id="imgRefPick" class="sel2"><option value="">Add a reference&hellip;</option></select>
           <button class="edtool" type="button" id="imgRefUpload">Use a file&hellip;</button>

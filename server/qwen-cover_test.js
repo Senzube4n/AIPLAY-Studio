@@ -191,6 +191,12 @@ test("API response, real queue, sampler and saved image provenance keep the same
     stageQwenReferences: async (names) => names,
     COVER_DIR: path.join(config.outputDir, "covers"), IMAGE_DIR: path.join(config.outputDir, "images"),
     pendingImagePrompt: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(),
+    /* The fourth side-map. This lane SLICES the cover handler out of index.js and
+     * evals it against exactly these names, so a module-scope name the handler
+     * starts using and this object does not list is a ReferenceError at render
+     * time - which is how `private` announced itself here rather than in the
+     * feature it belongs to. */
+    pendingImagePrivate: new Map(),
     prov: { actorFrom: () => "agent:seed-test", sha256hex: () => "fixture-prompt-hash" },
     resolveRepeat: () => ({}), imageDupGuard: { remember() {} }, combinations: () => 1,
     art: runner, imageMeta: new Map(), ledger: [],

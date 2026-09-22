@@ -465,8 +465,23 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
   const prompt = pendingImagePrompt.get(file) || "";
   const actor = pendingImageActor.get(file) || "system";
   const wildOf = pendingImageWild.get(file) || null;
+  /* ⚠ THE ROW SURVIVES, THE WORDS DO NOT. Dropping the whole row would make
+   * a private picture an orphan in the gallery — no seed, no engine, no date,
+   * and no way to tell it apart from a file somebody copied in by hand. Only
+   * the prompt goes, and it says so, so the Images screen can explain an empty
+   * prompt box rather than looking broken.
+   *
+   * The wildcard expansion goes with it: `template` and `promptChoices` are the
+   * prompt in two pieces, and keeping them would rebuild it. */
+  const isPrivate = pendingImagePrivate.get(file) === true;
+  /* ⚠ A PROMPT HASH IS NOT A REDACTION. Measured on this app's own ledger,
+   * 305 of 419 promptHash values were confirmed just by hashing candidate
+   * prompts out of the picture sidecar — a prompt is low-entropy text, so a
+   * bare sha256 of one is a lookup key. append() drops it for a private event
+   * as well; this is simply the site that would otherwise compute it. */
+  const ledgerPromptHash = prompt && !isPrivate ? `sha256:${prov.sha256hex(prompt)}` : null;
   for (const name of covers) {
-    imageMeta.set(name, { prompt, seed, at: Date.now(),
+    imageMeta.set(name, { ...(isPrivate ? { promptRedacted: true } : { prompt }), seed, at: Date.now(),
                           durationMs: durationMs ?? null, engine: engine || "flux2",
                           /* Which FILE, not just which engine. "checkpoint" names
                            * one of however many .safetensors the user has on the
@@ -474,11 +489,13 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
                            * is a category rather than a model. */
                           checkpoint: checkpoint ?? null,
                           ...(imageOptions || {}),
-                          ...(wildOf || {}) });
+                          ...(isPrivate ? {} : (wildOf || {})) });
     // Generated-media registration: the image entered the library here.
     provNote("library", {
-      actor, type: "generate", asset: `images/${name}`,
-      data: { model: engine || "flux2", promptHash: prompt ? `sha256:${prov.sha256hex(prompt)}` : null,
+      actor, type: "generate", asset: `images/${name}`, private: isPrivate,
+      /* ⚠ A PROMPT HASH IS NOT A REDACTION — measured, 305 of 419 were
+       * confirmed by hashing candidates out of the sidecar. */
+      data: { model: engine || "flux2", promptHash: ledgerPromptHash,
               /* ADDED beside `model`, never replacing it: existing ledger lines
                * and the provenance tests both read `model`, and a hash chain is
                * not a thing to rewrite the meaning of. For the checkpoint engine
@@ -489,6 +506,7 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
     });
   }
   pendingImagePrompt.delete(file);
+  pendingImagePrivate.delete(file);
   pendingImageActor.delete(file);
   pendingImageWild.delete(file);
   saveImageStore();
@@ -748,6 +766,10 @@ const pendingImageActor = new Map();
  * an overnight run can be admired and never made again — which is the whole
  * reason dynamic prompts record anything at all. */
 const pendingImageWild = new Map();
+/* Whether this render was asked for privately. Parked with the others for the
+ * same reason: the request is gone by the time the file lands, and the seam
+ * that writes the sidecar has no other way to know. */
+const pendingImagePrivate = new Map();
 const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
 async function saveImageStore() {
   try {
@@ -1989,8 +2011,8 @@ async function readBody(req, maxBytes = 0) {
   let n = 0, over = false;
   for await (const c of req) {
     n += c.length;
-    /* \u26a0 STOP ACCUMULATING, BUT KEEP DRAINING. Destroying the request here
-     * does bound the memory \u2014 and it also tears the socket down before the
+    /* ⚠ STOP ACCUMULATING, BUT KEEP DRAINING. Destroying the request here
+     * does bound the memory — and it also tears the socket down before the
      * route can write its 413, so the caller measured `HTTP 100` and an empty
      * body: indistinguishable from the studio having crashed, which is the very
      * thing this cap exists to prevent. Dropping the chunks keeps the memory
@@ -5421,9 +5443,9 @@ const server = http.createServer(async (req, res) => {
       if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
       const src = path.join(config.outputDir, name);
       const out = path.join(config.outputDir, `edit_${Date.now()}.flac`);
-      /* \u26a0 `file` WAS GUARDED AND `with` WAS NOT, AND THEY ARE THE SAME RULE.
-       * Two ops carry a second path \u2014 {"op":"join","with":\u2026} and
-       * {"op":"replace","with":\u2026} \u2014 and edit_audio.py opens it directly. The
+      /* ⚠ `file` WAS GUARDED AND `with` WAS NOT, AND THEY ARE THE SAME RULE.
+       * Two ops carry a second path — {"op":"join","with":\u2026} and
+       * {"op":"replace","with":\u2026} — and edit_audio.py opens it directly. The
        * check three lines above was simply never written for the other half of
        * the same request, so any caller could name any file this user can read.
        *
@@ -7056,6 +7078,7 @@ const server = http.createServer(async (req, res) => {
       const id = `i${Date.now().toString(36)}`;
       const file = `image:${id}`;
       pendingImagePrompt.set(file, finalPrompt);
+      if (b.private === true) pendingImagePrivate.set(file, true);
       pendingImageActor.set(file, prov.actorFrom(req));
       if (wild) pendingImageWild.set(file, { template, promptChoices: choices });
       /* Everything the render is, BEFORE it is queued — so the duplicate
@@ -7165,6 +7188,7 @@ const server = http.createServer(async (req, res) => {
       }
       imageDupGuard.remember(identityJob);
 
+      shot.private = b.private === true;
       const job = art.request(shot);
       /* NOTHING QUEUED IS NOT A SUCCESS. This answered `ok: true` with
        * `job: null` and the screen dutifully reported "Queued." for a render
@@ -7911,9 +7935,9 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    /* WHAT A SELECTION ACTUALLY CAUGHT \u2014 before an edit is spent on it.
+    /* WHAT A SELECTION ACTUALLY CAUGHT — before an edit is spent on it.
      *
-     * \u26a0 AN EMPTY SELECTION IS A SILENT NO-OP EVERYWHERE ELSE. imgselect's
+     * ⚠ AN EMPTY SELECTION IS A SILENT NO-OP EVERYWHERE ELSE. imgselect's
      * resolve() is explicit that an empty or degenerate shape list is a mask of
      * zeros and "every op becomes a no-op", so a wand tolerance that catches
      * nothing writes a file identical to its input and answers ok. This is the
@@ -7925,9 +7949,9 @@ const server = http.createServer(async (req, res) => {
       if (!name || !imageMeta.get(name)) {
         return json(res, 404, { error: `${name || "(no name)"} is not in the image library.`, reason: "name" });
       }
-      /* \u26a0 THE FRAME THE SHAPES WERE WRITTEN IN. A selection is resolved at
+      /* ⚠ THE FRAME THE SHAPES WERE WRITTEN IN. A selection is resolved at
        * stage 4, after canvas/crop/geometry, and the editor writes its shapes
-       * in exactly those coordinates \u2014 so describing one against the raw
+       * in exactly those coordinates — so describing one against the raw
        * source while a crop is pending measures a DIFFERENT PICTURE and
        * reports the coverage of it, confidently. Only the stages that move a
        * coordinate travel: the adjustments and effects cannot, and running
@@ -8390,22 +8414,22 @@ const server = http.createServer(async (req, res) => {
      * back, because the undo buffer is in the browser that is now wrong. */
     /* PAINT ONTO ONE LAYER OF A DOCUMENT.
      *
-     * \u26a0 THE RASTER LAYER ALREADY EXISTED. The standing conclusion was that
+     * ⚠ THE RASTER LAYER ALREADY EXISTED. The standing conclusion was that
      * imgdoc stores NAMES and never bytes, so a painted pixel had nowhere to
      * live and a new layer kind had to be built. A layer whose pixels are a
-     * library picture IS a raster layer \u2014 the `image` kind \u2014 and its bytes
+     * library picture IS a raster layer — the `image` kind — and its bytes
      * live where every picture's bytes live. What was missing was a door.
      *
-     * \u26a0 IT IS NOT AN EDIT_OP, and that is deliberate. Every entry in
+     * ⚠ IT IS NOT AN EDIT_OP, and that is deliberate. Every entry in
      * imgdoc's EDIT_OPS is a pure doc -> doc transform: apply_edits has no
      * resolver, no writer and no way to reach a pixel. Painting happens here,
      * where I/O lives, and the document only learns the new name.
      *
-     * \u26a0 AND IT GOES THROUGH apply_edit, the flat editor's own engine, so an
+     * ⚠ AND IT GOES THROUGH apply_edit, the flat editor's own engine, so an
      * agent painting a layer and a person dragging a brush commit the same
-     * bytes \u2014 which is what imgstroke's docstring asks for in as many words.
+     * bytes — which is what imgstroke's docstring asks for in as many words.
      *
-     * \u26a0 THE SOURCE IS NEVER OVERWRITTEN. One library picture can be the
+     * ⚠ THE SOURCE IS NEVER OVERWRITTEN. One library picture can be the
      * source of several layers in several documents; painting writes a new one
      * and repoints this layer, or it would edit pictures nobody asked about. */
     if (p === "/api/images/document-paint" && req.method === "POST") {
@@ -8530,8 +8554,8 @@ const server = http.createServer(async (req, res) => {
       const outName = `${stem}_m${tag}.png`;
       const scratch = path.join(IMAGE_DIR, `.bake_${tag}.png`);
       const jobPath = path.join(IMAGE_DIR, `.bake_${tag}.json`);
-      /* \u26a0 ONLY THE STAGES THAT MOVE A COORDINATE. The selection is resolved
-       * at stage 4 \u2014 after canvas, crop and geometry \u2014 so a bake sent without
+      /* ⚠ ONLY THE STAGES THAT MOVE A COORDINATE. The selection is resolved
+       * at stage 4 — after canvas, crop and geometry — so a bake sent without
        * them resolves the editor's shapes against a frame they were never
        * written in: right numbers, wrong picture, and no error anywhere.
        * Whitelisted by name because `ops` also carries the adjustments and the
@@ -8743,7 +8767,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    /* A layer by id, anywhere in the tree \u2014 groups nest, so this recurses.
+    /* A layer by id, anywhere in the tree — groups nest, so this recurses.
      * Returns the LAYER, not a path to it: the caller only wants to read it. */
     function findDocLayer(layers, ref) {
       for (const l of layers || []) {
@@ -8806,26 +8830,26 @@ const server = http.createServer(async (req, res) => {
 
     /* A NEW PAGE, OR WHATEVER IS ON THE CLIPBOARD.
      *
-     * Two ways in because they end in the same place \u2014 a picture in the
+     * Two ways in because they end in the same place — a picture in the
      * library, ready to open in the editor:
      *
      *   {width, height, background:[r,g,b,a]}   a blank page
      *   {data_url}                              a pasted image
      *
-     * \u26a0 THE DEFAULT BACKGROUND IS TRANSPARENT, NOT WHITE. A blank page is
+     * ⚠ THE DEFAULT BACKGROUND IS TRANSPARENT, NOT WHITE. A blank page is
      * usually the thing somebody is about to paste a cutout onto, and black at
-     * alpha 0 is not the same picture as opaque black \u2014 one composites away,
+     * alpha 0 is not the same picture as opaque black — one composites away,
      * the other has to be erased first.
      *
-     * \u26a0 EVERY PASTE LANDS AS A PNG, WHICHEVER MIME ARRIVED. The adopt pass
+     * ⚠ EVERY PASTE LANDS AS A PNG, WHICHEVER MIME ARRIVED. The adopt pass
      * reopens the file and re-saves it; PIL sniffs content rather than trusting
-     * the name, and takes its save format from the extension \u2014 so JPEG bytes
+     * the name, and takes its save format from the extension — so JPEG bytes
      * under a .png name come back a real PNG. Measured, not assumed: a JPEG
      * written to fake.png reopened as `PNG (64, 48) RGBA`.
      *
      * Keeping the source extension would cost a broken thumbnail for every
      * pasted photo, because adoptEngineImage builds the thumb name by stripping
-     * a trailing .png \u2014 a .jpg would become `paste_x.jpg_t.png`, which
+     * a trailing .png — a .jpg would become `paste_x.jpg_t.png`, which
      * nothing ever looks for. */
     if (p === "/api/images/create" && req.method === "POST") {
       let b;
@@ -8851,9 +8875,9 @@ const server = http.createServer(async (req, res) => {
           if (buf.length < 8) return json(res, 400, { error: "the pasted image decoded to nothing." });
           outName = `paste_${stamp}.png`;
           note = { op: "paste", bytes: buf.length, mime: `image/${m[1].toLowerCase()}` };
-          /* \u26a0 NOTHING IS DECLARED ABOUT WHERE THIS CAME FROM. foldOrigin reads
+          /* ⚠ NOTHING IS DECLARED ABOUT WHERE THIS CAME FROM. foldOrigin reads
            * an `import` with no `declared` as third-party-licensed, which is the
-           * honest standing for an image off the clipboard \u2014 we know it arrived,
+           * honest standing for an image off the clipboard — we know it arrived,
            * not who made it. Declaring human-recorded to get a friendlier label
            * would be the ledger asserting a provenance nobody established. */
           provType = "import";
@@ -8867,7 +8891,7 @@ const server = http.createServer(async (req, res) => {
           outName = `paint_${stamp}.png`;
           note = { op: "blank", width, height, background: bg };
           /* A person chose a size and a colour and now has a page. That is
-           * author_layer, which folds to human-authored \u2014 and it is the only
+           * author_layer, which folds to human-authored — and it is the only
            * picture in this library that is unambiguously theirs. */
           provType = "author_layer";
           const jobPath = path.join(IMAGE_DIR, `.new_${stamp}.json`);
@@ -8963,15 +8987,15 @@ const server = http.createServer(async (req, res) => {
      * library name — the engine never takes a path from the client. */
     /* A PREVIEW OF THE EDIT, WHICH IS NOT THE EDIT.
      *
-     * \u26a0 IT COMMITS NOTHING. /api/images/edit writes a library PNG, a
-     * thumbnail, an imageMeta row and a provenance event \u2014 right for a
+     * ⚠ IT COMMITS NOTHING. /api/images/edit writes a library PNG, a
+     * thumbnail, an imageMeta row and a provenance event — right for a
      * commit, ruinous for a preview, because a drag would file a picture and an
      * authorship claim per frame. This renders to a scratch file outside
      * IMAGE_DIR, streams it back and deletes it, so nothing outlives the call.
      *
-     * \u26a0 AND IT GOES THROUGH THE WARM WORKER, which is the only reason it is
+     * ⚠ AND IT GOES THROUGH THE WARM WORKER, which is the only reason it is
      * worth having: the spawning route costs 653 ms at 1024x1024 of which 596 ms
-     * is paid by an edit that does NOTHING \u2014 a fresh interpreter importing
+     * is paid by an edit that does NOTHING — a fresh interpreter importing
      * numpy, cv2 and PIL. The same work through a python that stays is 65-71 ms.
      * The rasterisation was 11 ms all along. */
     if (p === "/api/images/preview" && req.method === "POST") {
