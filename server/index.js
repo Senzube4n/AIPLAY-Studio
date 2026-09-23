@@ -2851,6 +2851,27 @@ const server = http.createServer(async (req, res) => {
         /* Preview a folder (scanFolder), or adopt it as the models folder
          * (setModelsDir). Adopting needs a restart: the catalogue's download
          * paths and the engine's model paths are both fixed at start. */
+        /* One more models folder to check and load from, beside the main one.
+         * Downloads still go to the main folder. Needs a restart: the engine's
+         * model paths are written when it starts. */
+        if (b.action === "addAlso") {
+          const raw = String(b.dir || "").trim();
+          if (!raw) return json(res, 400, { error: "Give a folder." });
+          const dir = path.resolve(raw);
+          if (!(await stat(dir).catch(() => null))?.isDirectory()) return json(res, 400, { error: `Not a folder: ${dir}` });
+          if (samePath(dir, config.modelsDir)) return json(res, 400, { error: "That is already the models folder." });
+          const files = await scanBases([dir]);
+          if (!files.length) {
+            return json(res, 400, {
+              error: `No model files in the usual subfolders of ${dir} (checkpoints, diffusion_models, vae, …). `
+                + "Pick the folder that CONTAINS those subfolders.",
+            });
+          }
+          const next = uniqueDirs([...(config.modelsAlso || []), dir]);
+          await mergeSettings({ modelsAlso: next });
+          return json(res, 200, { ok: true, also: next, needsRestart: true,
+            note: `Saved. Restart AIPLAY Studio to load the ${files.length} model files in ${dir}. Downloads still go to the models folder.` });
+        }
         /* Stop loading from an earlier models folder (it stays on disk). */
         if (b.action === "dropAlso") {
           if (typeof b.dir !== "string" || !b.dir.trim()) return json(res, 400, { error: "Give the previous folder to stop using." });

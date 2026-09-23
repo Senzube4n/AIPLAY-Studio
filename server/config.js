@@ -55,11 +55,18 @@ const MODELS_DIR = MODELS_DIR_PINNED || path.join(RIG, "ComfyUI", "models");
  *
  * Order is preference: measured build first, downloadable substitute last.
  */
+const MODELS_ALSO = Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d) => typeof d === "string" && d.trim()) : [];
+/* Every folder is searched, the extra models folders too (config.modelsAlso):
+ * the engine loads from all of them, so a file in any of them is on disk. */
 const pick = (sub, ...names) => {
-  const dir = path.join(MODELS_DIR, sub);
-  return names.find((n) => { try { return fs.statSync(path.join(dir, n)).size > 0; } catch { return false; } })
+  const bases = [MODELS_DIR, ...MODELS_ALSO];
+  return names.find((n) => bases.some((b) => { try { return fs.statSync(path.join(b, sub, n)).size > 0; } catch { return false; } }))
     ?? names[names.length - 1];
 };
+
+/* The card first-run setup saved. Same test as index.js onAmd() and
+ * models.js cardIsAmd(): ROCm has no kernel for NVIDIA's fp4 formats. */
+const AMD_CARD = saved.torchBackend === "rocm" || saved.gpu?.vendor === "amd";
 
 /** Find a python inside a ComfyUI rig, trying every layout in the wild.
  *
@@ -102,7 +109,7 @@ export const config = {
    * downloaded stay where they are, so the old folder is remembered here and
    * still searched, by Studio for "is it installed" and by the engine for
    * loading (server/localmodels.js writes it into the same YAML). */
-  modelsAlso: Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d) => typeof d === "string" && d.trim()) : [],
+  modelsAlso: MODELS_ALSO,
   /* The card first-run setup found ({vendor, name, totalMb, source}). Only a
    * fallback for machines where nvidia-smi cannot be read — see gpu.js. */
   gpu: saved.gpu && typeof saved.gpu === "object" ? saved.gpu : null,
@@ -1045,8 +1052,18 @@ export const config = {
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
       "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
-    textEncoder: pick("text_encoders",
-      "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
+    /* AMD gets the official int8 build (models.js downloads it there): ROCm
+     * has only a slow fallback for the int4 one. The int8 name is repeated
+     * last so a machine holding neither is told to fetch the int8. */
+    textEncoder: AMD_CARD
+      ? pick("text_encoders",
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors")
+      : pick("text_encoders",
+        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
     videoVae: pick("vae",
       "minimax_h3_video_vae_int8_convrot.safetensors",
       "minimax_h3_video_vae_fp16.safetensors"),

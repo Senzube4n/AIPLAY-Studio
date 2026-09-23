@@ -72,3 +72,45 @@ test("the launcher's Change… keeps the old folder the same way", () => {
   const l = readFileSync(new URL("../launcher/launcher.mjs", import.meta.url), "utf8");
   assert.match(l, /await saveSettings\(\{ modelsDir: r\.path, modelsDirPinned: true, modelsAlso: also \}\);/);
 });
+
+test("a second models folder can be added on purpose, beside the main one", () => {
+  const index = readFileSync(new URL("./index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(index, /if \(b\.action === "addAlso"\) \{/);
+  assert.match(index, /const next = uniqueDirs\(\[\.\.\.\(config\.modelsAlso \|\| \[\]\), dir\]\);\n\s+await mergeSettings\(\{ modelsAlso: next \}\);/,
+    "added to the extra folders, never made the download folder");
+  assert.match(index, /if \(samePath\(dir, config\.modelsDir\)\) return json\(res, 400/, "the main folder is not its own extra");
+  const page = readFileSync(new URL("../web/modellocal.js", import.meta.url), "utf8");
+  assert.match(page, /data-mf="also" disabled>Add as extra</);
+  assert.match(page, /action: "addAlso", dir: root\.getElementById\("mfPath"\)\.value/);
+  const conf = readFileSync(new URL("./config.js", import.meta.url), "utf8");
+  assert.match(conf, /const bases = \[MODELS_DIR, \.\.\.MODELS_ALSO\];/, "the engine's file choices look in the extra folders too");
+  const wf = readFileSync(new URL("./workflow.js", import.meta.url), "utf8");
+  assert.match(wf, /if \(onDisk\(sub, file\)\) continue;/, "so does the video ready check");
+});
+
+test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
+  const { cardIsAmd, fp4Blocked } = await import("./models.js");
+  const { ideogramGraph } = await import("./workflow.js");
+  const keep = { t: config.torchBackend, g: config.gpu };
+  const names = (id) => CATALOG.find((c) => c.id === id).files.map((f) => path.basename(f.dest));
+  try {
+    config.torchBackend = "rocm"; config.gpu = { vendor: "amd", totalMb: 16304 };
+    assert.equal(cardIsAmd(), true);
+    assert.ok(names("video").includes("qwen3vl_32b_minimax_h3_int8_convrot.safetensors"), "H3: the official int8 encoder");
+    assert.ok(!names("video").some((n) => /int4|fp4/i.test(n)), names("video").join(", "));
+    assert.ok(names("imageIdeogram").includes("qwen3vl_8b_fp8_scaled.safetensors"), "Ideogram: the fp8 encoder");
+    for (const c of CATALOG) for (const f of c.files || []) assert.equal(fp4Blocked(f), false, `${c.id} still offers ${f.dest}`);
+    assert.equal(fp4Blocked({ dest: "x/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors" }), true, "and the downloader refuses one");
+    assert.equal(ideogramGraph({ prompt: "p", seed: 1 })[3].inputs.clip_name, "qwen3vl_8b_fp8_scaled.safetensors");
+
+    config.torchBackend = "cuda"; config.gpu = { vendor: "nvidia", totalMb: 16376 };
+    assert.equal(cardIsAmd(), false);
+    assert.ok(names("video").includes("qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), "NVIDIA keeps the measured int4");
+    assert.ok(names("imageIdeogram").includes("qwen3vl_8b_nvfp4.safetensors"));
+    assert.equal(fp4Blocked({ dest: "x/qwen3vl_8b_nvfp4.safetensors" }), false);
+  } finally {
+    config.torchBackend = keep.t; config.gpu = keep.g;
+  }
+  const models = readFileSync(new URL("./models.js", import.meta.url), "utf8");
+  assert.match(models, /async #one\(id, f, getBase, _setBase\) \{\r?\n\s+if \(fp4Blocked\(f\)\) \{/, "checked before a byte is fetched");
+});

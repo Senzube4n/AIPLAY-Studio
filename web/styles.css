@@ -1437,6 +1437,8 @@ details.adv[open] summary::before { content: "▾"; }
 
 @media (max-width: 1000px) {
   .shell { grid-template-columns: 60px minmax(0,1fr); grid-template-areas: "rail create" "rail stage" "rail player"; }
+  /* .shell.solo outranks the line above, so it needs its own narrow rail. */
+  .shell.solo { grid-template-columns: 60px minmax(0,1fr); }
   .brand span, .nav a span { display: none; }
 }
 

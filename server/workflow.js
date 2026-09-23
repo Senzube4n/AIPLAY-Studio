@@ -27,7 +27,7 @@ import { config } from "./config.js";
 /* Data only — the catalogue's `gated` flag and the engine->capability map.
  * models.js imports config.js and nothing else from this tree, so there is
  * no cycle here. */
-import { CATALOG, MODEL_TO_CAPABILITY } from "./models.js";
+import { CATALOG, MODEL_TO_CAPABILITY, cardIsAmd } from "./models.js";
 
 /**
  * Flow-matching shifted sigma schedule: sigma(t) = shift*t / (1 + (shift-1)*t),
@@ -788,6 +788,20 @@ export function ideogramRefusalMessage(ladderLength, tried) {
     + `FLUX.2 / a checkpoint instead.`;
 }
 
+/* In the models folder or one of the extra ones (config.modelsAlso): the
+ * engine loads from all of them. */
+const onDisk = (sub, file) => [config.modelsDir, ...(config.modelsAlso || [])]
+  .some((b) => { try { return fs.statSync(path.join(b, sub, file)).size > 0; } catch { return false; } });
+
+/* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
+ * encoder (models.js downloads it there). Whichever is on disk wins. */
+function ideogramEncoder() {
+  const order = cardIsAmd()
+    ? ["qwen3vl_8b_fp8_scaled.safetensors", "qwen3vl_8b_nvfp4.safetensors"]
+    : ["qwen3vl_8b_nvfp4.safetensors", "qwen3vl_8b_fp8_scaled.safetensors"];
+  return order.find((n) => onDisk("text_encoders", n)) || order[0];
+}
+
 export function ideogramGraph({ prompt, seed, width, height, quality = "default", count = 1, prefix = "image" }) {
   const snap = (v, d) => Math.max(256, Math.floor(((v ?? d) + 15) / 16) * 16);
   const w = snap(width, 1024), h = snap(height, 1024);
@@ -798,7 +812,7 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
   return {
     1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_fp8_scaled.safetensors", weight_dtype: "default" } },
     2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_fp8_scaled.safetensors", weight_dtype: "default" } },
-    3: { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_nvfp4.safetensors", type: "ideogram4", device: "default" } },
+    3: { class_type: "CLIPLoader", inputs: { clip_name: ideogramEncoder(), type: "ideogram4", device: "default" } },
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["3", 0], text: prompt } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
     6: { class_type: "CFGOverride", inputs: { model: ["1", 0], cfg: 3, start_percent: 0.7, end_percent: 1 } },
@@ -1313,9 +1327,7 @@ export function videoReady(name) {
   for (const [key, sub] of Object.entries(VIDEO_MODEL_DIRS)) {
     const file = e[key];
     if (!file) continue;
-    try {
-      if (fs.statSync(path.join(config.modelsDir, sub, file)).size > 0) continue;
-    } catch { /* falls through to missing */ }
+    if (onDisk(sub, file)) continue;
     missing.push(file);
   }
   return { ready: missing.length === 0, missing };
