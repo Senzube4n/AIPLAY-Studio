@@ -45,8 +45,11 @@ are an explicit choice. Missing references are refused rather than silently omit
 
 Transparency is an RGBA generation request, not background removal. The graph
 preserves the dedicated VAE's RGBA output. Prompt adherence and edge quality
-still need inspection. Existing per-image privacy blur remains available in the
-library and through `image_set_blur`; it is independent of model selection.
+still need inspection. Unless Transparent is on, a reference with alpha is sent
+flattened onto white, as Qwen's vision tower sees it; its VAE would keep the alpha
+and hand back a transparent picture. With Transparent on, references keep their
+alpha. Existing per-image privacy blur remains available in the library and
+through `image_set_blur`; it is independent of model selection.
 
 ## Layered image editor
 

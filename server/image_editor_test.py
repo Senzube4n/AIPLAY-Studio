@@ -4,6 +4,9 @@ import multiprocessing
 import queue
 import contextlib
 import io
+import json
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -153,6 +156,28 @@ class EditorTests(unittest.TestCase):
         self.assertEqual(list(got[4, 4]), [127, 227, 127])
         np.testing.assert_array_equal(np.asarray(Image.open(self.file("cutout.png"))), cutout)
         self.assertEqual(editor.prepare(self.base)["references"], [])
+
+    def test_plain_generations_flatten_through_the_same_rule(self):
+        # stageQwenReferences runs this command for /api/image in the engine's python.
+        keyed = Image.new("P", (3, 1), 0)
+        keyed.putpalette([90, 30, 200, 10, 200, 10])
+        keyed.putpixel((1, 0), 1)
+        keyed.save(self.file("keyed.png"), transparency=0)
+        Image.new("RGBA", (3, 1), (10, 20, 30, 255)).save(self.file("solid.png"))
+        references = [{"name": name, "candidates": [self.file(name)], "out": self.file(f"flat-{name}")}
+                      for name in ("keyed.png", "solid.png")]
+        with open(self.file("job.json"), "w", encoding="utf-8") as handle:
+            json.dump({"dir": self.directory, "references": references}, handle)
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "image_editor.py")
+        done = subprocess.run([sys.executable, script, "flatten", self.file("job.json")],
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads(done.stdout.strip().splitlines()[-1]),
+                         {"ok": True, "references": ["flat-keyed.png", "solid.png"]})
+        with Image.open(self.file("flat-keyed.png")) as flat:
+            self.assertEqual(flat.mode, "RGB")
+            self.assertEqual([flat.getpixel((x, 0)) for x in range(3)], [(255, 255, 255), (10, 200, 10), (255, 255, 255)])
+        self.assertFalse(os.path.exists(self.file("flat-solid.png")))
 
     def test_empty_and_unknown_selections_refused(self):
         for selection in ({"shapes": []}, {"shapes": [{"kind": "not-a-tool"}]}):

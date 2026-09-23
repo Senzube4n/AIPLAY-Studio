@@ -197,5 +197,6 @@ export function createImageEditor({ imageDir, inputDir, coverDir, python, genera
       return { ...publicJob(job), doc: result.doc, revision: result.revision, layerId: result.layerId };
     } finally { job.mutating = false; }
   }
-  return { preview, request, paintTarget: body => run("paint-target", { doc: body.doc, ref: body.ref }) };
+  return { preview, request, paintTarget: body => run("paint-target", { doc: body.doc, ref: body.ref }),
+    flattenReferences: references => run("flatten", { references }).then(result => result.references) };
 }

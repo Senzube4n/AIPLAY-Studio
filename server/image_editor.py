@@ -149,6 +149,11 @@ def flatten_references(references):
     return names
 
 
+def flatten(job):
+    """The same rule for a plain Qwen generation (stageQwenReferences)."""
+    return {"references": flatten_references(job["references"])}
+
+
 def prepare(job):
     doc = open_doc(job) if job.get("documentId") else None
     if doc:
@@ -294,7 +299,7 @@ def main():
         job = json.load(handle)
     try:
         action = {"preview": preview, "paint-target": paint_target, "prepare": prepare, "finish": finish,
-                  "accept": accept, "undo": undo}[sys.argv[1]]
+                  "accept": accept, "undo": undo, "flatten": flatten}[sys.argv[1]]
         print(json.dumps({"ok": True, **action(job)}))
     except Exception as error:
         print(json.dumps({"ok": False, "error": str(error)}))
