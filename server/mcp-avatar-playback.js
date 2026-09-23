@@ -1,0 +1,10 @@
+/** Local preview playback uses the same desired-state endpoint as the browser. */
+const sid={type:'string',pattern:'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'};
+export function avatarPlaybackTools(api){
+  const post=body=>api('POST','/api/avatars/playback',body);
+  return [
+    {name:'avatar_playback_sessions',description:'List unexpired local browser/OBS avatar preview sessions, capabilities, requested state and applied revision. A command is not proof of playback; status reports autoplay blocked when the browser needs a user Play gesture.',inputSchema:{type:'object',properties:{},additionalProperties:false},run:()=>post({action:'sessions'})},
+    {name:'avatar_audio_upload',description:'Stage user-selected local audio bytes for avatar playback, up to 32 MiB. Takes base64 and an audio filename, never arbitrary paths or remote URLs. Stored locally for 24 hours; uploading does not play audio.',inputSchema:{type:'object',required:['name','data_base64'],additionalProperties:false,properties:{name:{type:'string',maxLength:160},data_base64:{type:'string',maxLength:44739244}}},run:a=>post({action:'upload',name:a.name,data_base64:a.data_base64})},
+    {name:'avatar_playback_command',description:'Set playback intent for one live local preview session: load an uploaded audio_id, play, pause, stop or seek. Loading never autoplays. Use a stable UUID command_id on retries; inspect sessions for applied_revision and blocked/error status. Browser autoplay policy still applies.',inputSchema:{type:'object',required:['session_id','op'],additionalProperties:false,properties:{session_id:sid,command_id:sid,op:{type:'string',enum:['load','play','pause','stop','seek']},audio_id:{type:'string',pattern:'^au_[a-f0-9-]{36}$'},seconds:{type:'number',minimum:0,maximum:86400}}},run:a=>post({action:'command',session_id:a.session_id,op:a.op,...(a.command_id===undefined?{}:{command_id:a.command_id}),...(a.audio_id===undefined?{}:{audio_id:a.audio_id}),...(a.seconds===undefined?{}:{seconds:a.seconds})})},
+  ];
+}

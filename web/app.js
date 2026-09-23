@@ -1,3 +1,4 @@
+import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -17474,6 +17475,7 @@ const INFO_HOSTS = {
   video: "#videoclips",
   vfx: "#vfx",
   workflow: "#workflow",
+  avatars: "#avatars",
   studio: "#studio",
   reactive: "#reactive",
   training: "#training",
@@ -17506,6 +17508,9 @@ function mountAllInfo() {
 function setView(name, options) {
   const collabScene = options?.collabScene || null;
   state.view = name;
+  const route = new URL(location.href);
+  route.searchParams.set("view", name);
+  history.replaceState(null, "", route);
   for (const a of document.querySelectorAll(".nav a")) {
     a.classList.toggle("on", a.dataset.view === name);
   }
@@ -17572,6 +17577,8 @@ function setView(name, options) {
   $("studio").hidden = name !== "studio";
   // Video Workflow (fork-only). See FORK_DELTA.md.
   $("workflow").hidden = name !== "workflow";
+  $("avatars").hidden = name !== "avatars";
+  showAvatarWorkshop(name === "avatars");
   if (name === "workflow") wfOpen();
   $("settings").hidden = name !== "settings";
   $("musicWorkflows").hidden = name !== "musiclab";
@@ -19395,6 +19402,7 @@ setMode("song");
  * Music sit under Create in the rail; Explore is Community, to be reworked.
  * setMode("song") still runs above, so the Music form is already in the state
  * it always was the moment you click Music. */
+const entryView = initialStudioView(location.href, [...Object.keys(INFO_HOSTS), "home", "jobs"]);
 setView("home");
 setGrid(localStorage.getItem("aiplayGrid") === "1");
 ovRender();
@@ -19404,7 +19412,7 @@ $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll().then(() => initWelcome({autoOpen:!state.musicOnly}));
+poll().then(() => initWelcome({autoOpen:!state.musicOnly && !entryView}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();
@@ -19583,3 +19591,6 @@ document.addEventListener("click", async (e) => {
     { title: `Open ${where}?`, ok: "Leave page", cancel: "Stay here", tone: "warn" });
   if (go) location.href = a.href;
 }, true);
+
+// Deep links open after the workflow and remaining view controllers initialize.
+if (entryView) setView(entryView);

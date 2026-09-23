@@ -6,6 +6,7 @@
 <title>AIPLAY Studio</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="avatar-shell.css">
 <link rel="stylesheet" href="galleries.css">
 <link rel="stylesheet" href="music-input.css">
 <link rel="stylesheet" href="music-workflows.css">
@@ -70,7 +71,7 @@
       <a href="#" data-view="images" title="Images"><i>▣</i><span class="lbl">Images</span></a>
       <a href="#" data-view="video" title="Video"><i>▷</i><span class="lbl">Video</span></a>
       <a href="#" data-view="vfx" title="VFX"><i>◈</i><span class="lbl">VFX</span></a>
-      <a href="avatars.html" data-page="avatars" title="3D"><i>◇</i><span class="lbl">3D</span></a>
+      <a href="#" data-view="avatars" title="3D"><i>◇</i><span class="lbl">3D</span></a>
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">Edit</span></div>
       <a href="#" data-view="workflow" title="Workflow"><i>❖</i><span class="lbl">Workflow</span></a>
@@ -4668,7 +4669,12 @@
     <!-- WELCOME: the first thing anyone sees. The mark, the name, and one row
          of ways in. Nothing else, on purpose. data-go is app.js's existing
          view switch; Explore is Community (to be reworked). -->
-    <div id="home" class="home" hidden>
+    <div id="avatars" hidden class="page page-wide">
+  <header class="page-head stagehead"><h2>3D workshop</h2><a class="btn2" href="/?view=workflow" title="Generate a mesh from an image in Video Workflow">Image to 3D ↗</a></header>
+  <iframe id="avatarFrame" title="3D avatar workshop" allow="autoplay"></iframe>
+</div>
+
+<div id="home" class="home" hidden>
       <div class="homein">
         <img class="homelogo" src="assets/aiplay-logo.png?v=1" alt="">
         <h1 class="homename"><b>AI PLAY</b><span>STUDIO</span></h1>

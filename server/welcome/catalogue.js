@@ -580,7 +580,7 @@ const TABS = [
       "Import a self-contained GLB or VRM 1.0 avatar, inspect its skin and test its movement. "
       + "VRM models retain their embedded expressions, toon materials and spring-bone hair. "
       + "Choose existing parts, adjust colours, save named looks and control them through MCP. "
-      + "The transparent overlay follows the active look. Model files, manifests and looks export separately.",
+      + "Preview local voice audio with loudness-driven mouth motion and MCP playback. The transparent overlay follows the active look. Model files, manifests and looks export separately.",
     makes: ["Validated local avatar assets", "Saved looks with expressions and hair settings", "A transparent browser overlay", "Original model and manifest handoffs"],
     start: "Try anime sample, or import a rigged model. Use Test movement and save a look.",
     /* Runtime dependencies ship through npm. The curated reference model is
@@ -588,7 +588,7 @@ const TABS = [
     needs: [],
     cant:
       "Looks configure components already inside the model. This page does not fit arbitrary outfits, "
-      + "create face or hair rigs, generate dance clips or provide automatic audio lip-sync. "
+      + "create face or hair rigs, generate dance clips or infer phonemes from speech. "
       + "Image-to-3D and local body rigging remain in Workflow. VRM workshop and World GLB use separate "
       + "import budgets; local VRM acceptance does not grant Agent World admission. A persona ID is "
       + "local attribution, not account ownership. Review deformation visually before handoff.",

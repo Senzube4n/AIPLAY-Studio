@@ -25,6 +25,15 @@ node scripts/suites_test.mjs || exit 1
 node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-runtime_test.js || exit 1
 node --check web/avatar-runtime.js || exit 1
 node --check web/avatar-appearance.js || exit 1
+node --check web/avatar-shell.js || exit 1
+node --check web/avatar-parts.js || exit 1
+node --check web/avatar-voice.js || exit 1
+node --check web/avatar-lipsync.js || exit 1
+node --check web/avatars.js || exit 1
+node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
+node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1
+AVATAR_PY="${AIPLAY_AVATAR_PYTHON:-${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv311/Scripts/python.exe}"
+if [ -x "$AVATAR_PY" ]; then "$AVATAR_PY" server/mesh/weight_transfer_test.py || exit 1; else python server/mesh/weight_transfer_test.py || exit 1; fi
 node --test server/collab/video-recipe_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1

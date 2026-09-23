@@ -1,3 +1,4 @@
+import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
@@ -2281,6 +2282,7 @@ const imageEditor = createImageEditor({
   },
 });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
+const weightTransferRoutes = createWeightTransferRoutes({json, directory:path.join(config.outputDir,'avatar-weight-transfer'), provenance:prov});
 
 /* The Video lab. It needs the art runner (an arm is awaited by the clip event
  * the runner emits, not by polling a directory) and the same rememberClip the
@@ -2408,6 +2410,9 @@ const server = http.createServer(async (req, res) => {
     // ---- API ------------------------------------------------------------
     if (p === '/api/avatars' || p.startsWith('/api/avatars/')) {
       if (await avatarRoutes(req, res, url)) return;
+    }
+    if (p === '/api/avatar-weight-transfer') {
+      if (await weightTransferRoutes(req, res, url)) return;
     }
     if (p === "/api/music-input") {
       if (await musicInputRoutes(req, res, url)) return;

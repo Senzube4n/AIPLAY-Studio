@@ -71,7 +71,6 @@ const APP = readFileSync(path.join(HERE, "..", "..", "web", "app.js"), "utf8");
  * also its catalogue id and the view name it must mount under. */
 const PAGES = [
   { rail: "daw", js: "web/daw.js", html: "web/daw.html" },
-  { rail: "avatars", js: "web/avatars.js", html: "web/avatars.html" },
 ].map((p) => ({ ...p,
   src: readFileSync(path.join(HERE, "..", "..", ...p.js.split("/")), "utf8"),
   doc: readFileSync(path.join(HERE, "..", "..", ...p.html.split("/")), "utf8") }));

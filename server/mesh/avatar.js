@@ -8,6 +8,7 @@ import { readGlb, assertSkinned } from './glb.js';
 import { deformReport } from './deform.js';
 import { createExampleInstaller, AVATAR_EXAMPLE } from './avatar-example.js';
 import { createAppearanceService } from './appearance.js';
+import { createAvatarPlaybackRoutes } from './avatar-playback.js';
 import { VRM_LIMITS, VRM_EXTENSIONS, inspectVrmDocument } from './vrm-profile.js';
 
 export const AVATAR_LIMITS = Object.freeze({ bytes: 8*1024*1024, triangles: 30000, materials: 4, joints: 96, textureSide: 1024, texturePixels: 4*1024*1024 });
@@ -182,6 +183,7 @@ function localRequest(req) {
 }
 export function createAvatarRoutes({directory,json,provenance}) {
   const service=createAvatarService({directory,record:event=>provenance.append('library',event)});
+  const playback=createAvatarPlaybackRoutes({directory:path.join(directory,'playback'),inspectAsset:service.file,json,provenance});
   const installExample=createExampleInstaller(service);
   const appearance=createAppearanceService({directory:path.join(directory,'looks'),inspectAsset:service.file,record:event=>provenance.append('library',event)});
   const vendor=new Map([
@@ -195,6 +197,7 @@ export function createAvatarRoutes({directory,json,provenance}) {
     try {
       localRequest(req);
       res.setHeader('Cache-Control','private, no-store'); res.setHeader('X-Content-Type-Options','nosniff');
+      if(await playback(req,res,url))return true;
       if(req.method==='GET'&&['/api/avatars/vendor/three-vrm.module.js','/api/avatars/vendor/three-vrm-LICENSE'].includes(url.pathname)) {
         const name=url.pathname.endsWith('LICENSE')?'LICENSE':'lib/three-vrm.module.js';
         const bytes=await readFile(fileURLToPath(new URL(`../../node_modules/@pixiv/three-vrm/${name}`,import.meta.url)));

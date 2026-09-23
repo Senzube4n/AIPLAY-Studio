@@ -4191,6 +4191,8 @@ details.adv[open] summary::before { content: "▾"; }
 }
 .nav a i { width: 20px; flex: none; font-size: 16px; }
 .nav a .lbl { overflow: hidden; text-overflow: ellipsis; transition: opacity .18s; }
+/* Full-width views keep the expanded rail at narrow desktop sizes too. */
+.shell.solo:not(.railmini) .nav a .lbl { display: block; }
 .navmain { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; gap: 2px; }
 .navgroup { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
 .navhead {

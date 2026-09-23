@@ -1,0 +1,7 @@
+/* The real rail and player remain owned by index.html. */
+#avatars.page { max-width: 1560px; padding-bottom: 20px; }
+#avatars .page-head { display: flex; align-items: center; gap: 12px; }
+#avatars .page-head .btn2 { margin-left: auto; text-decoration: none; }
+#avatarFrame { display: block; width: 100%; height: 900px; border: 0; color-scheme: dark; }
+
+#avatars .page-head .infobtn { margin-left: 0; }

@@ -1,22 +1,61 @@
-:root{color-scheme:dark;--bg:#0d1118;--panel:#151c27;--line:#2a3545;--muted:#9baac0;--text:#edf3fc;--accent:#82e6bd}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}a{color:var(--accent);text-decoration:none}header{height:64px;padding:0 32px;display:flex;align-items:center;gap:32px;border-bottom:1px solid var(--line)}header>a:first-child{font-weight:800;letter-spacing:2px;color:var(--text)}header>a:first-child span{font-weight:400;font-size:11px;color:var(--muted)}header>a:last-child{margin-left:auto}main{max-width:1560px;margin:auto;padding:32px}.intro{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}h1{font-size:34px;letter-spacing:-1px;margin:2px 0 6px}h2{font-size:17px;margin:0}.intro p{margin:0;color:var(--muted)}.eyebrow{font-size:10px;letter-spacing:2px;color:var(--accent)!important;font-weight:700}.chip{padding:6px 12px;border-radius:24px;border:1px solid var(--line);white-space:nowrap;color:var(--muted);font-size:12px}.layout{display:grid;grid-template-columns:310px minmax(0,1fr);gap:20px}aside,.workspace{display:flex;flex-direction:column;gap:20px}section,aside>details{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}.section-heading{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:15px}button,input,select,textarea{font:inherit;color:inherit;background:#101722;border:1px solid var(--line);border-radius:7px}button{min-height:42px;padding:8px 14px;cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}.primary{background:var(--accent);color:#10291e;font-weight:700;border:0}label{display:flex;flex-direction:column;gap:5px;margin:12px 0;color:var(--muted);font-size:12px}input,select,textarea{padding:10px;min-height:42px;min-width:0}input[type=checkbox]{min-height:auto}textarea{resize:vertical;min-height:72px}.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.hint{font-size:12px;color:var(--muted)}summary{cursor:pointer;font-weight:600;padding:3px 0}#status{min-height:34px;color:var(--muted);padding:0 2px 10px}#status.error{color:#ffbca7}#library{display:flex;flex-direction:column;gap:8px}#library button{text-align:left;width:100%}#library button[aria-current=true]{border-color:var(--accent);background:#18352f}#library small{display:block;color:var(--muted)}#viewport{position:relative;height:min(52vh,590px);min-height:320px;background:radial-gradient(ellipse at 50% 35%,#273346,#121b29 75%);border-radius:10px;overflow:hidden}#viewport canvas{width:100%;height:100%;display:block;touch-action:none}#empty-view{position:absolute;left:0;right:0;top:42%;text-align:center;color:var(--muted);pointer-events:none}.camera-controls,.motion-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}.camera-controls label{flex-direction:row;align-items:center;margin:0 5px}.motion-controls label{margin:0}.scrubber{flex:1;min-width:110px}.scrubber input{padding:0}#time-label{font-size:12px;min-width:52px}.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.fact{background:#101722;padding:12px;border-radius:8px}.fact strong{display:block;font-size:20px}.fact span{font-size:11px;color:var(--muted)}#warnings p{border-left:2px solid #e6ba82;padding-left:10px;color:#eacbad;font-size:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:420px;overflow:auto;padding:12px;background:#101722;border-radius:8px}#downloads{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0}button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:3px}@media(max-width:850px){main{padding:20px}.layout{grid-template-columns:250px minmax(0,1fr)}.facts{grid-template-columns:repeat(2,1fr)}header{padding:0 20px}}@media(max-width:650px){header{gap:12px;font-size:12px}header>span{display:none}main{padding:16px}.layout{display:flex;flex-direction:column}.workspace{order:-1}#viewport{height:400px;min-height:280px}h1{font-size:28px}.intro .chip{display:none}.section-heading{flex-wrap:wrap}.motion-controls{gap:10px}.motion-controls .scrubber{order:5;flex-basis:100%}aside>section{order:-1}button{min-height:44px}}
-/* THE INFO PANEL'S TOKENS, ALIASED RATHER THAN RESTYLED. web/info.css and
-   web/modelfit.css deliberately spell no colour of their own — a rule
-   server/welcome/ui_test.js enforces — so they read the app shell's
-   variables, and this page does not load the app shell. Declaring them on
-   the host rather than on :root keeps the bridge inside the panel: nothing
-   else on this page inherits a second palette. --primary is this page's own
-   accent so the ⓘ matches its surroundings; the rest are the shell's
-   values, so the panel reads as the same panel it is everywhere else. */
-.a-infohost{display:flex;flex-direction:column;
-  --rail:hsla(0,0%,2%,.9);--raise:hsla(220,15%,12%,.9);
-  --edge:hsla(195,100%,60%,.25);--edge-s:hsla(195,100%,60%,.35);
-  --hair:var(--line);--ink:var(--text);--dim:var(--muted);
-  --faint:hsl(0,0%,68%);--ghost:hsl(0,0%,52%);--primary:var(--accent);
-  --ok:hsl(142,76%,46%);--err:hsl(0,85%,60%);--warn:hsl(38,92%,55%);
-  --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
-  --disp:Bahnschrift,"DIN Alternate","Segoe UI Variable Display",system-ui,sans-serif}
+/* Workshop layout uses Studio's shared page kit and palette. */
+html.avatar-document { background: var(--bg); color-scheme: dark; }
+html.avatar-document.avatar-overlay { background: transparent; }
+body.avatar-workshop { overflow: auto; background: transparent; }
+#avatarWorkshop { width: 100%; margin: 0; padding: 0 2px 12px; }
+#avatarWorkshop h2 { font: 600 16px var(--disp); margin: 0; }
+#avatarWorkshop a { color: var(--primary); }
+#avatarWorkshop #status { min-height: 25px; margin: 0 0 10px; color: var(--faint); }
+#avatarWorkshop #status.error { color: var(--err); }
+#avatarWorkshop .layout { display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 16px; align-items: start; }
+#avatarWorkshop .workspace, #avatarWorkshop .avatar-library { display: flex; flex-direction: column; min-width: 0; }
+#avatarWorkshop .pcard { padding: 16px; }
+#avatarWorkshop .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+#avatarWorkshop .eyebrow { font: 10px var(--mono); color: var(--ghost); overflow-wrap: anywhere; margin: 0 0 4px; }
+#avatarWorkshop label { display: flex; flex-direction: column; gap: 5px; margin: 12px 0; color: var(--faint); font-size: 12px; min-width: 0; }
+#avatarWorkshop label .in2, #avatarWorkshop label .sel2 { width: 100%; min-width: 0; }
+#avatarWorkshop textarea { resize: vertical; min-height: 65px; }
+#avatarWorkshop input[type=file] { width: 100%; min-width: 0; padding: 8px; font-size: 11px; }
+#avatarWorkshop input[type=checkbox] { accent-color: var(--primary); }
+#avatarWorkshop .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#avatarWorkshop #library { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+#avatarWorkshop #library button { width: 100%; text-align: left; white-space: normal; border-radius: 10px; }
+#avatarWorkshop #library button[aria-current=true] { border-color: var(--primary); background: var(--raise); }
+#avatarWorkshop #library small { display: block; color: var(--ghost); font-size: 11px; }
+#avatarWorkshop .avatar-library > .pcard > .hint { display: block; margin-top: 8px; }
+#viewport { position: relative; height: 440px; min-height: 280px; background: radial-gradient(ellipse at 50% 35%,var(--raise),var(--rail)); border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; }
+#viewport canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+#empty-view { position: absolute; inset: 42% 0 auto; text-align: center; color: var(--ghost); pointer-events: none; }
+#avatarWorkshop .camera-controls, #avatarWorkshop .motion-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+#avatarWorkshop .camera-controls label { flex-direction: row; align-items: center; margin: 0 4px; }
+#avatarWorkshop .camera-controls a { text-decoration: none; }
+#avatarWorkshop .motion-controls label { margin: 0; }
+#avatarWorkshop .scrubber { flex: 1; min-width: 110px; }
+#avatarWorkshop input[type=range] { padding: 0; accent-color: var(--primary); }
+#time-label { font: 11px var(--mono); min-width: 52px; }
+#avatarWorkshop .facts { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+#avatarWorkshop .fact { background: var(--raise); padding: 10px; border-radius: 8px; }
+#avatarWorkshop .fact strong { display: block; font: 600 18px var(--disp); }
+#avatarWorkshop .fact span { font-size: 11px; color: var(--faint); }
+#warnings p { border-left: 2px solid var(--warn); padding-left: 10px; color: var(--faint); font-size: 12px; }
+#avatarWorkshop pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px var(--mono); max-height: 320px; overflow: auto; padding: 12px; background: var(--rail); border-radius: 8px; }
+#downloads { display: flex; gap: 18px; flex-wrap: wrap; margin: 14px 0; }
+#appearance-panel .appearance-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 8px 18px; }
+#appearance-panel .appearance-grid label { margin: 8px 0; }
+#appearance-panel input[type=color] { width: 100%; height: 32px; padding: 3px; background: var(--rail); border: 1px solid var(--hair); border-radius: 6px; }
+#appearance-panel input[type=range] { width: 100%; }
+#appearance-panel details { margin-top: 16px; }
+#appearance-panel .camera-controls { margin-bottom: 12px; }
+#avatarWorkshop :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+@media(min-width:1350px) { #viewport { height: 520px; } }
+@media(max-width:850px) { #avatarWorkshop .layout { grid-template-columns: 210px minmax(0,1fr); } #avatarWorkshop .pcard { padding: 12px; } #avatarWorkshop .facts { grid-template-columns: repeat(2,1fr); } }
+@media(max-width:650px) { #avatarWorkshop .layout { display: flex; flex-direction: column; } #avatarWorkshop .workspace, #avatarWorkshop .avatar-library { width: 100%; } #avatarWorkshop .workspace { order: -1; } #viewport { height: 380px; } #avatarWorkshop .section-heading { flex-wrap: wrap; } #avatarWorkshop .motion-controls .scrubber { flex-basis: 100%; } }
+body.avatar-overlay { background: transparent; overflow: hidden; }
+body.avatar-overlay #avatarWorkshop :is(.avatar-library, #status, #details, #appearance-panel, .section-heading, .camera-controls, .motion-controls, #voice-panel) { display: none; }
+body.avatar-overlay #avatarWorkshop, body.avatar-overlay #avatarWorkshop .layout, body.avatar-overlay #avatarWorkshop .workspace, body.avatar-overlay #avatarWorkshop .viewport-panel { display: block; width: 100%; height: 100vh; max-width: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+body.avatar-overlay #viewport { width: 100%; height: 100vh; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+body.avatar-overlay #avatarWorkshop #status.error { display: block; position: fixed; top: 12px; left: 12px; right: 12px; z-index: 2; background: var(--panel); padding: 10px; border-radius: 7px; }
+#voice-enable-overlay { display: none; }
+body.avatar-overlay #voice-enable-overlay:not([hidden]) { display: block; position: fixed; top: 12px; left: 12px; z-index: 3; background: var(--raise); border-color: var(--primary); }
 
-#appearance-panel[hidden]{display:none}#appearance-panel .appearance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 18px}#appearance-panel .appearance-grid label{margin:8px 0}#appearance-panel input[type=color]{width:100%;padding:4px}#appearance-panel input[type=range]{width:100%;padding:0}#appearance-panel details{margin-top:16px}#appearance-panel .camera-controls{margin-bottom:12px}
-
-body.avatar-overlay{background:transparent;overflow:hidden}body.avatar-overlay header,body.avatar-overlay .intro,body.avatar-overlay aside,body.avatar-overlay #avatarInfoHost,body.avatar-overlay #status,body.avatar-overlay #details,body.avatar-overlay #appearance-panel,body.avatar-overlay .section-heading,body.avatar-overlay .camera-controls,body.avatar-overlay .motion-controls{display:none}body.avatar-overlay main,body.avatar-overlay .layout,body.avatar-overlay .workspace,body.avatar-overlay .viewport-panel{display:block;width:100%;height:100vh;max-width:none;margin:0;padding:0;border:0;border-radius:0;background:transparent}body.avatar-overlay #viewport{width:100%;height:100vh;min-height:0;border-radius:0;background:transparent}
-body.avatar-overlay #status.error{display:block;position:fixed;top:12px;left:12px;right:12px;z-index:2;background:var(--panel);padding:10px;border-radius:7px}
+#part-output { display: block; overflow-wrap: anywhere; font: 11px var(--mono); color: var(--faint); }
