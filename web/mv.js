@@ -984,6 +984,7 @@ function renderClips() {
         ? `<button class="edtool sm" data-shotrender="${esc(s.id)}"
              title="Re-render this shot: hold the seed, choose which prompt, and see what changed. The same control the inspector uses — there is only one.">↻ Render…</button>`
         : `<button class="edtool sm" data-genclip="${esc(s.id)}">Generate</button>`}
+        <button class="edtool sm" data-friendclip="${esc(s.id)}" title="Choose a friend and review this saved scene before preparing its render request.">Ask friend</button>
         <button class="edtool sm" data-shot="${esc(s.id)}"
           title="Open this one shot: the exact prompt it sends, which reference sheets actually resolved, and every take with the evidence for its own render">Inspect…</button>
         <button class="edtool sm" data-planadd="clip|${esc(s.id)}"
@@ -992,16 +993,13 @@ function renderClips() {
   }).join("");
   const done = d.clips.filter((c) => c.clipFile).length;
   return `<div class="wfcard"><h3>Video clips</h3>
-    <p class="hint">Each scene renders with its cast as named references AND the real
-      stretch of the song frozen in — a lyrical shot lip-syncs the actual track. Scenes
-      carrying references render on H3 (2–5 min each); regenerating keeps every earlier
-      take.</p>
+    <p class="hint">Render here or ask a friend.</p>
     <table class="wftable"><thead><tr><th>#</th><th>Time</th><th>Line</th><th>Clip</th><th>Takes</th><th>Board</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <p class="hint"><b>Inspect</b> opens one shot on its own: the exact prompt that will be
+    <details class="more"><summary>Shot details</summary><p class="hint"><b>Inspect</b> opens one shot on its own: the exact prompt that will be
       sent — editable, and what you edit is what renders — which reference sheets resolved
       and which names reached the render as nothing, and every take with the prompt and
-      references that made it. Re-rendering from there keeps every earlier take.</p>
+      references that made it. Re-rendering from there keeps every earlier take.</p></details>
     <div id="wfShotEdit"></div>
     ${/* ⚠ WHERE A NIGHT IS DECIDED. One clip is a decision worth one clip's GPU
         * and its undo is not picking the take — press Generate and watch. A SET
@@ -1014,11 +1012,11 @@ function renderClips() {
       <button class="edtool" type="button" data-planfrom="stale"
         title="Seeds a plan from the same scan mv_regen_stale reports: every clip whose take predates its board or its cast.">Plan what's stale</button>
     </div>
-    <p class="hint">A <b>plan</b> is the list of renders somebody intends to make, with the engine,
+    <details class="more"><summary>Plan details</summary><p class="hint">A <b>plan</b> is the list of renders somebody intends to make, with the engine,
       the size and the minutes per item, that you read and approve <b>before</b> the GPU is
       touched — and it shows, per scene, which references would reach the render as nothing.
       Use it when one intent spends more than one expensive call. A single test render does not
-      need one: press Generate, or Inspect and render one shot.</p>
+      need one: press Generate, or Inspect and render one shot.</p></details>
     ${done ? `<div class="framepick"><button class="edtool" id="wfToStudio">Move to Studio → (${done} scene${done > 1 ? "s" : ""}, chronological)</button></div>` : ""}
   </div>`;
 }
@@ -4547,6 +4545,9 @@ function wire(view) {
       const btn = document.querySelector(`[data-genboard="${CSS.escape(id)}"]`);
       if (btn) btn.title = cb.checked ? SINGLE_TITLE : SHEETS_TITLE;
     };
+  }
+  for (const btn of document.querySelectorAll("[data-friendclip]")) {
+    btn.onclick = () => document.dispatchEvent(new CustomEvent("aiplay:collab-scene", { detail: { slug: wf.slug, segmentId: btn.dataset.friendclip } }));
   }
   for (const btn of document.querySelectorAll("[data-genclip]")) {
     btn.onclick = () => {

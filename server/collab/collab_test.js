@@ -416,7 +416,8 @@ console.log("\n§6  the doors: shared API checks and explicit MCP intents");
     /plan that is <b>proposed<\/b>/.test(html) && /nobody has picked<\/b>/.test(html));
 
   ok("...and the keys are made when it is opened, not at boot",
-    /if \(name === "collab"\) paintCollab\(\);/.test(app));
+    // Scene context is passed only when Collab opens; no identity is minted at boot.
+    /if \(name === "collab"\) paintCollab\(false, collabScene\);/.test(app));
 }
 
 console.log("\n\u00a76b  the errand: a friend's order becomes a project that renders what was asked");

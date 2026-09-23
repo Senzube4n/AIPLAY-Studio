@@ -5267,7 +5267,7 @@ function disarmCollab() {
 }
 
 let collabPainted = false;
-async function paintCollab(force = false) {
+async function paintCollab(force = false, scene = null) {
   const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
@@ -5295,7 +5295,7 @@ async function paintCollab(force = false) {
     const rows = r.projects || r || [];
     const sel = $("cbProject");
     if (sel && Array.isArray(rows)) {
-      const selected = sel.value;
+      const selected = scene?.slug || sel.value;
       sel.innerHTML = rows.map((p) => `<option value="${esc(p.slug)}">${esc(p.title || p.slug)}</option>`).join("");
       if (rows.some((p) => p.slug === selected)) sel.value = selected;
       if ($("cbPlanProject")) { $("cbPlanProject").innerHTML = sel.innerHTML; $("cbPlanProject").value = sel.value; }
@@ -5305,7 +5305,29 @@ async function paintCollab(force = false) {
   await refreshCollab();
   await loadCollabPlan(true);
   paintCbKind();
+  if (scene) selectCollabScene(scene);
 }
+
+function selectCollabScene({slug, segmentId}) {
+  invalidateCbPreview();
+  if (!cbSceneReady || cbLoadedSlug !== slug || !cbProjectDoc?.segments?.some(s => s.id === segmentId && s.mode === "generate")) {
+    cbSay("Scene unavailable. Refresh the project.");
+    return false;
+  }
+  collabTabChosen = true;
+  setCbTab("Send");
+  $("cbKind").value = "order"; paintCbKind();
+  $("cbSegment").value = segmentId;
+  for (const id of ["cbSeed", "cbSteps", "cbEngineMode"]) $(id).value = "";
+  cbSay("");
+  $("cbTo")?.focus?.();
+  return true;
+}
+if (typeof document !== "undefined") document.addEventListener("aiplay:collab-scene", (event) => {
+  const scene = event.detail;
+  if (typeof scene?.slug !== "string" || typeof scene?.segmentId !== "string") return;
+  setView("collab", { collabScene: {slug:scene.slug, segmentId:scene.segmentId} });
+});
 
 /* Repainting is SEPARATE from paintCollab, which mints the keys on first sight
  * and must stay bound to the view change exactly as it is. */
@@ -17431,7 +17453,8 @@ function mountAllInfo() {
   for (const [view, selector] of Object.entries(INFO_HOSTS)) mountInfo(view, selector);
 }
 
-function setView(name) {
+function setView(name, options) {
+  const collabScene = options?.collabScene || null;
   state.view = name;
   for (const a of document.querySelectorAll(".nav a")) {
     a.classList.toggle("on", a.dataset.view === name);
@@ -17463,7 +17486,7 @@ function setView(name) {
   $("imgPanel").hidden = name !== "images";
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
-  if (name === "collab") paintCollab();
+  if (name === "collab") paintCollab(false, collabScene);
   if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
