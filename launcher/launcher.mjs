@@ -185,6 +185,7 @@ async function probeStudio() {
       engineReady: !!s.engine?.ready,
       engineExpected: s.config?.engineExpected ?? !s.config?.musicOnly,
       musicOnly: !!s.config?.musicOnly,
+      cloudOnly: !!s.config?.cloudOnly,
       torch: s.engine?.torch || null,
       device: s.engine?.device || null,
     };
@@ -340,6 +341,14 @@ async function systemCheck({ redetect = false } = {}) {
         : null,
       note: musicVia === "yue2-comfy" ? "Music screens only. Starts ComfyUI for YuE2." : "Music screens only. No ComfyUI.",
     },
+    /* Hosted models through Comfy Router on the user's own Comfy key. Needs
+     * nothing local but Node: no ComfyUI, no card, no model files. */
+    cloud: {
+      available: nodeMajor >= 20,
+      engine: "Comfy Router (cloud)",
+      warn: null,
+      note: "Image, video, audio, 3D and text models on your Comfy API key. No ComfyUI needed.",
+    },
   };
 
   return {
@@ -370,12 +379,12 @@ async function launch(mode) {
   if (studio.state === "starting") throw new Error("Studio is already starting.");
   if (child) throw new Error("Studio is already running from this launcher.");
   if (installChild || install.state === "running") throw new Error("Wait for the engine install to finish.");
-  if (!["full", "music"].includes(mode)) throw new Error("Unknown mode.");
+  if (!["full", "music", "cloud"].includes(mode)) throw new Error("Unknown mode.");
 
   setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
   const running = await probeStudio();
   if (running) {
-    setState({ mode: running.musicOnly ? "music" : "full", state: "external", stage: null, error: null });
+    setState({ mode: running.cloudOnly ? "cloud" : running.musicOnly ? "music" : "full", state: "external", stage: null, error: null });
     addLog(`Studio is already running at ${STUDIO_URL} (started outside this launcher). Opening it.`, "sys");
     openInBrowser(STUDIO_URL);
     return;
@@ -392,10 +401,11 @@ async function launch(mode) {
     }
   }
 
-  const script = mode === "music" ? path.join("scripts", "start-music.mjs") : path.join("server", "index.js");
-  const env = { ...process.env, AIPLAY_MUSIC_ONLY: mode === "music" ? "1" : "0" };
+  const script = mode === "music" ? path.join("scripts", "start-music.mjs")
+    : mode === "cloud" ? path.join("scripts", "start-cloud.mjs") : path.join("server", "index.js");
+  const env = { ...process.env, AIPLAY_MUSIC_ONLY: mode === "music" ? "1" : "0", AIPLAY_CLOUD_ONLY: mode === "cloud" ? "1" : "0" };
   delete env.AIPLAY_OPEN;   // the launcher opens Studio itself, once the engine is ready
-  addLog(`Starting ${mode === "music" ? "music-only" : "full"} Studio…`, "sys");
+  addLog(`Starting ${mode === "music" ? "music-only" : mode === "cloud" ? "Comfy API" : "full"} Studio…`, "sys");
   child = spawn(process.execPath, [script], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   const me = child;
   setState({ stage: "server", pid: child.pid });

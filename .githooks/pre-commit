@@ -673,6 +673,9 @@ node --test server/download_test.js || exit 1
 node --test server/modelsdir_test.js || exit 1
 # FastH3: the third video engine's graph, its attention pair and its download row.
 node --test server/fasth3_test.js || exit 1
+# Comfy API mode: the Router client, run queue, result reader, simple forms
+# (checked against the published schemas in server/router/fixtures) and the mode.
+node --test server/router/router_test.js || exit 1
 # Your own LoRAs on the Video screen reach both video graphs.
 node --test server/video_lora_test.js || exit 1
 node --test server/power_test.js || exit 1

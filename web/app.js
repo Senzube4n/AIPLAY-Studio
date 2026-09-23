@@ -52,6 +52,7 @@ import { paintLocal, initLocal } from "./modellocal.js";
 // welcome.js writes none, and it is the same object studio_screen_info returns.
 import { mountInfo } from "./info.js";
 import { appConfirm, appPrompt, appAlert } from "./dialog.js";
+import { showRouter } from "./router.js";
 import { openModelPicker } from "./modelpick.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
@@ -17714,6 +17715,7 @@ const INFO_HOSTS = {
   mcp: "#mcp",
   about: "#about",
   thanks: "#thanks",
+  router: "#router",
 };
 
 /**
@@ -17821,6 +17823,9 @@ function setView(name, options) {
   $("home").hidden = name !== "home";
   if (name === "home") { const h = $("home"); h.classList.remove("in"); void h.offsetWidth; h.classList.add("in"); }
   $("thanks").hidden = name !== "thanks";
+  // Comfy API (launcher mode only): web/router.js owns the page.
+  $("router").hidden = name !== "router";
+  if (name === "router") showRouter();
   $("mcp").hidden = name !== "mcp";
   $("about").hidden = name !== "about";
   $("games").hidden = name !== "games";
@@ -19037,9 +19042,27 @@ function applyStatus(s) {
   if (!s.engine) return;
   noticeMusicOutcome(s);
   paintModelLoad(s);
+  /* The launcher's "Use Comfy API" mode: the Comfy API page and the screens
+   * that need nothing local. Full Studio never shows the page, so it never
+   * offers anything that spends credits. */
+  if (s.config?.cloudOnly && !state.cloudOnly) {
+    state.cloudOnly = true;
+    const cloudViews = new Set(["router", "mcp", "about", "thanks"]);
+    for (const link of document.querySelectorAll(".rail [data-view]")) {
+      if (link.dataset.view === "router") link.hidden = false;
+      else if (!cloudViews.has(link.dataset.view)) link.style.display = "none";
+    }
+    for (const link of document.querySelectorAll(".rail [data-page]")) link.style.display = "none";
+    // A heading with nothing left under it goes too.
+    for (const g of document.querySelectorAll(".rail .navgroup")) {
+      g.hidden = ![...g.querySelectorAll("a")].some((a) => !a.hidden && a.style.display !== "none");
+    }
+    setView("router");
+  }
   if (s.config?.musicOnly && !state.musicOnly) {
     state.musicOnly = true;
-    const coreViews = new Set(["create", "models", "settings", "agent", "about", "thanks", "community"]);
+    // "mcp" is the Agent page's view name; "agent" matched nothing and hid it.
+    const coreViews = new Set(["create", "models", "settings", "mcp", "about", "thanks", "community"]);
     for (const link of document.querySelectorAll(".rail [data-view]")) {
       if (!coreViews.has(link.dataset.view)) link.style.display = "none";
     }
@@ -19051,7 +19074,9 @@ function applyStatus(s) {
    * locally running things is a line that is read once and never again; what
    * is worth a line in the rail is the states where something is NOT ready,
    * and the work box already says what is happening. */
-  const line = state.musicOnly
+  // Comfy API mode has no local engine to wait for: nothing to say.
+  const line = state.cloudOnly ? ""
+    : state.musicOnly
     ? (s.config?.musicEngine === "yue2-comfy"
         ? (s.engine.ready ? "" : "MUSIC ONLY · STARTING COMFYUI…")
         : s.config?.musicEngines?.["yue2-gguf"]?.ready ? "" : "NATIVE MUSIC · SETUP NEEDED")
@@ -19062,7 +19087,7 @@ function applyStatus(s) {
 
   const b = s.engine.backend;
   const warn = $("engineWarn");
-  if (!state.musicOnly && b && b.ok === false) {
+  if (!state.musicOnly && !state.cloudOnly && b && b.ok === false) {
     // The one check that protects the entire product claim.
     warn.hidden = false;
     warn.innerHTML = `<b>This install is running about 5× slower than it should.</b><br>${esc(b.message)}<br><br>${esc(b.fix)}`;
@@ -19715,7 +19740,7 @@ $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll().then(() => initWelcome({autoOpen:!state.musicOnly}));
+poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();

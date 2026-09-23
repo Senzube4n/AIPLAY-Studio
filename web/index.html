@@ -6,6 +6,7 @@
 <title>AIPLAY Studio</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="router.css">
 <link rel="stylesheet" href="galleries.css">
 <link rel="stylesheet" href="music-input.css">
 <link rel="stylesheet" href="music-workflows.css">
@@ -79,6 +80,8 @@
     <div class="nav navmain">
       <a href="#" class="on" data-view="home" title="Welcome"><i>&#8962;</i><span class="lbl">Welcome</span></a>
       <div class="navgroup"><div class="navhead"><span class="lbl">Create</span></div>
+      <!-- Shown only in the launcher's "Use Comfy API" mode (web/app.js applyStatus). -->
+      <a href="#" data-view="router" title="Comfy API" hidden><i>&#9729;</i><span class="lbl">Comfy API</span></a>
       <a href="#" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
       <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
       <a href="#" data-view="musiclab" title="Music Lab"><i>♫</i><span class="lbl">Music Lab</span></a>
@@ -3304,6 +3307,53 @@
         <h3>Keep it going</h3>
         <p>Free, open source, and made in spare hours. No subscription, ever. If it earned a place in your day, a coffee genuinely helps.</p>
         <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">&#9829; Support on Ko-fi</a>
+      </section>
+    </div>
+
+    <!-- COMFY API (launcher: "Use Comfy API"). Hosted models through Comfy
+         Router on the user's own key and credits; web/router.js draws it and
+         server/router/ runs it. Only reachable in that mode. -->
+    <div id="router" hidden class="page page-wide">
+      <header class="page-head">
+        <h2>Comfy API</h2>
+        <p>Hosted image, video, audio, 3D and text models, run with your Comfy API key and credits.</p>
+      </header>
+      <nav class="pnav" aria-label="Comfy API sections"></nav>
+
+      <section class="pcard" id="router-key" data-nav="Key">
+        <h3>Key</h3>
+        <p class="pcard-sub">Kept encrypted on this computer and sent only to Comfy.</p>
+        <div class="rtkey">
+          <span class="chip busy" id="rtKeyChip">Checking…</span>
+          <input class="line" id="rtKey" type="password" autocomplete="off" spellcheck="false" placeholder="comfyui-…" aria-label="Comfy API key" hidden>
+          <button class="btn2 go" id="rtKeySave" type="button" hidden>Save key</button>
+          <button class="btn2" id="rtKeyChange" type="button" hidden>Change</button>
+          <button class="btn2 danger" id="rtKeyForget" type="button" hidden>Forget</button>
+        </div>
+        <p class="hint" id="rtKeyHint">Get a key and credits at <a href="https://platform.comfy.org/profile/api-keys" target="_blank" rel="noopener">platform.comfy.org</a>.</p>
+      </section>
+
+      <section class="pcard" id="router-make" data-nav="Make">
+        <h3>Make</h3>
+        <div class="rtkinds" id="rtKinds" role="group" aria-label="Kind of model"></div>
+        <div class="params">
+          <label for="rtModel">model</label>
+          <span class="pv"><select id="rtModel" class="sel2"></select></span>
+        </div>
+        <p class="hint" id="rtModelNote"></p>
+        <div class="rtmodes" id="rtModes" role="group" aria-label="Form"></div>
+        <form id="rtForm" class="rtform" autocomplete="off"></form>
+        <textarea id="rtJson" rows="10" spellcheck="false" aria-label="Request body (JSON)" hidden></textarea>
+        <div class="ctawrap">
+          <span class="ctanote" id="rtRunNote"></span>
+          <div class="cta"><button class="btn" id="rtRun" type="button" disabled>Run</button></div>
+        </div>
+      </section>
+
+      <section class="pcard" id="router-runs" data-nav="Results">
+        <h3>Results</h3>
+        <p class="pcard-sub">Saved to <code id="rtOut"></code> the moment they arrive.</p>
+        <div id="rtRuns" class="rtruns"></div>
       </section>
     </div>
 

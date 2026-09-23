@@ -7,8 +7,10 @@ upload, no credits, no per-song cost.
 
 **Same public repository, two launch modes—not a separate YuE2 edition.**
 One launcher — `AIPLAY Studio.exe`, or `AIPLAY Studio.cmd` if you would rather
-read the script — offers both: **Music only** and **Full Studio**. Downloading
-the app does not install every AI model.
+read the script — offers **Music only** and **Full Studio**, plus **Use Comfy
+API** (cloud models on your own Comfy key; every run uses Comfy credits; no
+ComfyUI needed, or `npm run start:cloud`). Downloading the app does not install
+every AI model.
 
 For native lyric-to-song generation, install **Node.js 20+ and Studio**. You do
 **not** need ComfyUI, Python, MiniMax or any image/video model.

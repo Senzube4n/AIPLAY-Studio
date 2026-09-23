@@ -40,6 +40,15 @@ this same app, **not a separate GitHub repository or edition**. To make songs
 with native YuE2 GGUF you do not need ComfyUI, Python, MiniMax or any image and
 video models.
 
+**No graphics card, or want hosted models?** The launcher's **Use Comfy API**
+mode (new) runs image, video, audio, 3D and text models on Comfy's cloud through
+[Comfy Router](https://docs.comfy.org/development/comfy-router/quickstart), with
+your own Comfy API key. It needs no ComfyUI and no card, and **every run uses
+Comfy credits**, so it asks before each one. Full Studio and Music only never
+spend credits. Get a key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
+choose **Use Comfy API** in the launcher, and paste the key on the page. Or run
+`npm run start:cloud`.
+
 ## YuE2 music-only quickstart
 
 Works on **Windows x64 with any card**: setup picks audio.cpp's CUDA build on

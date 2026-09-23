@@ -30,6 +30,11 @@ try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")) || {}; } catch
 // The optional native music entry point never needs a ComfyUI/Python rig.
 const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
   ? process.env.AIPLAY_MUSIC_ONLY === "1" : saved.musicOnly === true;
+/* The Comfy API entry point (launcher: "Use Comfy API"): models run on Comfy's
+ * cloud through Comfy Router with the user's own key and credits, so nothing
+ * local is needed, not ComfyUI and not a card. Only the launcher turns it on,
+ * so full Studio never shows a page that spends credits. */
+const CLOUD_ONLY = !MUSIC_ONLY && process.env.AIPLAY_CLOUD_ONLY === "1";
 const RIG = process.env.AIPLAY_RIG || saved.rig
   || (MUSIC_ONLY ? path.join(APPDATA, "rig") : "D:\\AI\\aiplay-studio-bench");
 /* Where model weights live. A ComfyUI Desktop install keeps them outside the
@@ -92,7 +97,8 @@ export const config = {
   rig: RIG,
   dataDir: APPDATA,
   musicOnly: MUSIC_ONLY,
-  comfyAutoStart: !MUSIC_ONLY,
+  cloudOnly: CLOUD_ONLY,
+  comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
   musicInput: {
@@ -165,7 +171,10 @@ export const config = {
    * coupling is why changing it needs an engine restart rather than taking
    * effect on the next render. */
   outputDir: process.env.AIPLAY_OUTPUT || saved.outputDir
-    || (MUSIC_ONLY ? path.join(APPDATA, "output") : path.join(RIG, "ComfyUI", "output")),
+    /* Comfy API mode with no ComfyUI set up keeps its results in app data,
+     * like music-only; with one, beside everything else Studio made. */
+    || (MUSIC_ONLY || (CLOUD_ONLY && !process.env.AIPLAY_RIG && !saved.rig)
+      ? path.join(APPDATA, "output") : path.join(RIG, "ComfyUI", "output")),
   settingsFile: SETTINGS_FILE,
   // Where `LoadLatent` looks. Its `latent` input is a name RELATIVE to this, so
   // the encoder writes here and the graph refers to the basename only.

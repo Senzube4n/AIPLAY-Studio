@@ -54,6 +54,10 @@ import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
+import { createRouterClient } from "./router/client.js";
+import { createCatalog } from "./router/catalog.js";
+import { createRouterJobs } from "./router/jobs.js";
+import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
@@ -1005,7 +1009,7 @@ function probeOne(py, mods) {
 }
 let probedBy = {};
 async function pythonPackages() {
-  if (config.musicOnly) return {};
+  if (config.musicOnly || config.cloudOnly) return {};
   if (packageCache && Date.now() - packageCache.at < 30_000) return packageCache.value;
   const value = {};
   const by = {};
@@ -1491,7 +1495,7 @@ const onAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "am
 /* Whether this process starts ComfyUI. Always in full Studio; in music-only
  * only when a YuE2 checkpoint makes YuE2-through-ComfyUI possible. Sent in
  * /api/status so the launcher knows whether to wait for the engine. */
-let comfyWanted = !config.musicOnly;
+let comfyWanted = !config.musicOnly && !config.cloudOnly;
 
 /** YuE2 checkpoints in any checkpoints folder the engine loads from. */
 async function findYue2Checkpoints() {
@@ -2359,6 +2363,23 @@ const cloud = createCloud({
   usageFile: path.join(config.paths.appData, "llm-usage.json"),
 });
 const llmRoutes = createLlmRoutes({ json, readBody, cloud, config });
+
+/* Comfy Router (the launcher's "Use Comfy API" mode): hosted models on the
+ * user's own Comfy key and credits. Mounted only in that mode, so full Studio
+ * has no route that can spend a credit. */
+const routerClient = createRouterClient({ getKey: () => getSecret(ROUTER_KEY) });
+const routerJobs = createRouterJobs({
+  client: routerClient,
+  dir: path.join(config.paths.appData, "router"),
+  outDir: path.join(config.outputDir, "router"),
+});
+const routerRoutes = config.cloudOnly ? createRouterRoutes({
+  json, readBody, config,
+  secrets: { has: hasSecret, set: setSecret, clear: clearSecret, status: secretStatus },
+  client: routerClient,
+  catalog: createCatalog({ dir: path.join(config.paths.appData, "router") }),
+  jobs: routerJobs,
+}) : null;
 const chatRoutes = createChatRoutes({ json, readBody, config, cloud });
 
 /* Saved galleries (styles, lyrics, Simple descriptions, chat prompts) and the
@@ -2515,6 +2536,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/llm" || p === "/api/llm/models") {
       if (await llmRoutes(req, res, url)) return;
     }
+    if (routerRoutes && (p === "/api/router" || p.startsWith("/api/router/"))) {
+      if (await routerRoutes(req, res, url)) return;
+    }
     if (p === "/api/gallery" || p === "/api/enhance") {
       if (await promptToolRoutes(req, res, url)) return;
     }
@@ -2588,6 +2612,8 @@ const server = http.createServer(async (req, res) => {
           musicAceLoraStrength: config.music.aceLoraStrength,
           musicModels: await musicModelChoices(),
           musicOnly: config.musicOnly,
+          // The launcher's "Use Comfy API" mode: the web app shows the Comfy API page only.
+          cloudOnly: !!config.cloudOnly,
           engineExpected: comfyWanted,
           /* The real-audio tokenizer (musicYue2Tokenizer): with it on disk,
            * Continue works on any track in the library, not only on takes. */
@@ -10831,6 +10857,14 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
   await batch.load();
   const b = batch.status().run;
   if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
+  if (config.cloudOnly) {
+    /* Comfy API mode needs nothing local: no ComfyUI, no card. Runs left
+     * queued by the last session are collected now. */
+    console.log("  Comfy API mode: models run on Comfy's cloud with your key and credits. ComfyUI is not started.");
+    await routerJobs.resume();
+    jobs.emit("update", jobs.snapshot());
+    return;
+  }
   if (config.musicOnly) {
     /* Music-only starts no ComfyUI — unless this machine has a ComfyUI install
      * AND a YuE2 checkpoint, and native GGUF is not the chosen, installed
