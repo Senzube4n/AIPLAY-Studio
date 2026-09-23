@@ -142,7 +142,8 @@ export function workspaceTools(api, safeName) {
         refImages: { type: "array", maxItems: 9, items: { type: "string" }, description: "Extra library references: max9 for edit/style, max8 for inpaint because image2 is the selection mask." },
         selection: { type: "object", description: "The editor selection specification; required for inpaint. Read image_tools_catalog for selection shapes." },
         seed: { type: "integer" }, steps: { type: "integer", minimum: 1, maximum: 50 }, cfg: { type: "number", minimum: 1, maximum: 10 },
-        refResolution: { type: "integer", minimum: 0, maximum: 4096, multipleOf: 32 }, transparent: { type: "boolean" },
+        refResolution: { type: "integer", minimum: 0, maximum: 4096, multipleOf: 32 },
+        transparent: { type: "boolean", description: "Ask for alpha (edit/style only). Without it, references with transparency are flattened onto white." },
         dit: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" },
       }, additionalProperties: false },
       async run(a) {

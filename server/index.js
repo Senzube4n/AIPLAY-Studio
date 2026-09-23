@@ -2305,7 +2305,7 @@ const collabPlanningRoutes = createCollabPlanningRoutes({
   resolveKitCue: musicWorkflowRoutes.resolveKitCue,
 });
 const imageEditor = createImageEditor({
-  imageDir: IMAGE_DIR, inputDir: config.inputDir, python: config.python,
+  imageDir: IMAGE_DIR, inputDir: config.inputDir, coverDir: COVER_DIR, python: config.python,
   async preflight(options) {
     await stageQwenReferences(options.refImages, {
       inputDir: config.inputDir, coverDir: COVER_DIR, imageDir: IMAGE_DIR,

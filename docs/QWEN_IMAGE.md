@@ -57,6 +57,14 @@ at image 2. Inpaint reserves image 2 for the selection mask and permits eight mo
 references. The mask also controls the final composite: zero-mask RGBA pixels stay
 exactly equal to the frozen source, including transparent pixels.
 
+Unless Transparent is on, the editor sends an extra reference that has alpha
+flattened onto white. That is what Qwen's vision tower sees, but its VAE keeps all
+four channels, and one cutout reference was enough to make the whole generation
+transparent. Inside the selection the generation is laid over the source, so a
+transparent pixel keeps the source instead of punching a hole. The review names the
+share of the selection that came back transparent, and a selection that came back
+fully transparent fails instead of producing an unchanged candidate.
+
 Compare the candidate with the frozen source before accepting it. Accept adds a
 full-canvas layer and hides the old layers; undo restores their visibility. The old
 layers remain in the saved document. Revision checks and a shared shelf lock refuse

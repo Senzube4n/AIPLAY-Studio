@@ -10940,7 +10940,7 @@ async function iedAIPoll() {
       $("iedAIStatus").textContent = `Queued or generating · seed ${r.seed}. The original is unchanged.`;
       iedAI.poll = setTimeout(iedAIPoll, 2000);
     } else if (r.status === "ready") {
-      $("iedAIStatus").textContent = `Review ${r.width}×${r.height} result · seed ${r.seed}. ${r.semantics}`;
+      $("iedAIStatus").textContent = [`Review ${r.width}×${r.height} result · seed ${r.seed}.`, ...(r.warnings || []), r.semantics].join(" ");
       await loadImages();
     } else if (r.status === "error") $("iedAIStatus").textContent = r.error || "The generation failed.";
     iedAIPaint();

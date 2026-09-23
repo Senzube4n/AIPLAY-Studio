@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createImageEditor, editorOptions } from "./image-editor.js";
@@ -66,6 +66,59 @@ test("generation freezes source and mask as first two references, then review/ac
     const undone = await editor.request({ action: "undo", id: made.id });
     assert.equal(undone.status, "undone");
     assert.equal(calls.at(-1).payload.revision, "accepted");
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test("references reach Qwen flattened unless transparency is asked for; composite warnings reach the review", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "aiplay-editor-"));
+  try {
+    const dirs = { imageDir: path.join(temp, "images"), inputDir: path.join(temp, "input"), coverDir: path.join(temp, "covers") };
+    const calls = [], registered = [];
+    const warning = "Qwen returned 86% of the selection transparent; those pixels keep the source.";
+    const editor = createImageEditor({ ...dirs, python: "unused",
+      runPython: async (mode, payload) => {
+        calls.push({ mode, payload });
+        // Stands in for image_editor.py: only the first reference had alpha.
+        if (mode === "prepare") return { width: 8, height: 8, references: payload.references.map((r, i) => i ? r.name : path.basename(r.out)) };
+        if (mode === "finish") return { width: 8, height: 8, resizedToSource: false, warnings: [warning] };
+      },
+      generate: async options => { calls.push({ mode: "generate", options }); return { name: "out.png" }; },
+      register: async (name, metadata) => { registered.push(metadata); },
+    });
+    const refImages = ["cutout.png", "aiplay_frame_0123456789ab.png"];
+    const made = await editor.request({ source: "frame.png", prompt: "Put the paper bird here", mode: "inpaint", refImages,
+      selection: { shapes: [{ kind: "rect", x: 1, y: 1, w: 4, h: 4 }] } });
+    const sent = calls.find(c => c.mode === "prepare").payload.references;
+    assert.deepEqual(sent.map(r => r.name), refImages);
+    assert.deepEqual(sent.map(r => r.candidates), [[path.join(dirs.coverDir, "cutout.png"), path.join(dirs.imageDir, "cutout.png")],
+      [path.join(dirs.inputDir, "aiplay_frame_0123456789ab.png")]]);
+    for (const r of sent) {
+      assert.equal(path.dirname(r.out), dirs.inputDir);
+      assert.match(path.basename(r.out), /^aiplay_frame_[a-f0-9]{12}\.png$/);
+    }
+    assert.notEqual(sent[0].out, sent[1].out);
+    const asked = calls.find(c => c.mode === "generate").options.refImages;
+    assert.deepEqual(asked.slice(2), [path.basename(sent[0].out), "aiplay_frame_0123456789ab.png"]);
+    await new Promise(resolve => setImmediate(resolve));
+    const ready = await editor.request({ action: "status", id: made.id });
+    assert.equal(ready.status, "ready");
+    assert.deepEqual(ready.warnings, [warning]);
+    assert.equal(ready.candidate.warnings, undefined);
+    assert.deepEqual(registered[0].refImages, refImages);  // provenance names what the user chose
+    calls.length = 0;
+    await editor.request({ source: "frame.png", prompt: "Cut out the bird", transparent: true, refImages: ["cutout.png"] });
+    assert.deepEqual(calls.find(c => c.mode === "prepare").payload.references, []);
+    assert.deepEqual(calls.find(c => c.mode === "generate").options.refImages.slice(1), ["cutout.png"]);
+    let flattened;
+    const refused = createImageEditor({ ...dirs, generate: async () => ({ name: "out.png" }),
+      preflight: async () => { throw new Error("Missing Qwen node"); },
+      runPython: async (mode, payload) => {
+        flattened = payload.references[0].out;
+        await writeFile(flattened, "flat");
+        return { width: 8, height: 8, references: [path.basename(flattened)] };
+      } });
+    await assert.rejects(refused.request({ source: "frame.png", prompt: "edit", refImages: ["cutout.png"] }), /Missing Qwen/);
+    await assert.rejects(stat(flattened), { code: "ENOENT" });
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

@@ -64,6 +64,14 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
   return out;
 }
 
+const UPLOADED = /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/i;
+
+/** Where a reference name may live, in lookup order: an upload sits in the
+ * engine's input directory, anything else is a cover or a library image. */
+export function qwenReferenceCandidates(name, { inputDir, coverDir, imageDir }) {
+  return (UPLOADED.test(name) ? [inputDir] : [coverDir, imageDir]).filter(Boolean).map((dir) => path.join(dir, name));
+}
+
 /** Preserve order and fail the whole request if any reference is invalid.
  * Uploaded names are checked on disk too; their prefix is not proof of presence. */
 export async function stageQwenReferences(names, { inputDir, coverDir, imageDir }) {
@@ -76,9 +84,8 @@ export async function stageQwenReferences(names, { inputDir, coverDir, imageDir 
   });
   // Validate every source before copying any of them.
   const sources = await Promise.all(valid.map(async (name) => {
-    const uploaded = /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/i.test(name);
-    const candidates = uploaded ? [path.join(inputDir, name)] : [path.join(coverDir, name), path.join(imageDir, name)];
-    for (const source of candidates) {
+    const uploaded = UPLOADED.test(name);
+    for (const source of qwenReferenceCandidates(name, { inputDir, coverDir, imageDir })) {
       const found = await stat(source).catch(() => null);
       if (found?.isFile() && found.size > 0) {
         const file = await open(source, "r");
