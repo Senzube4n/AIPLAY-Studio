@@ -127,5 +127,6 @@ if (d.status !== "completed") {
   console.error(`\n${d.status.toUpperCase()}:`, String(d.error || "").slice(0, 1000));
   process.exit(1);
 }
-const o = d.outputs[0];
+// Not outputs[0]: on ComfyUI 0.36 LoadVideo echoes the file it read as a row of type "input".
+const o = d.outputs.find((r) => (r.type || "output") === "output");
 console.log(`\n  ${d.elapsedSec.toFixed(0)}s -> ${o?.subfolder}/${o?.file}`);

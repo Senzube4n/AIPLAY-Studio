@@ -764,6 +764,38 @@ console.log("\n  -- 3d outputs: SaveGLB is collected, and its kind survives --")
       .events.some((e) => e.data?.outputs?.[0]?.kind === "3d"));
 }
 
+/* ── LoadVideo's echo is recorded, never shelved ─────────────────────────
+ *
+ * ComfyUI 0.36 makes LoadVideo report the file it READ as an output row of
+ * type "input", and node-id order puts it FIRST in the enhance graph (load 1,
+ * save 9). The adopter resolves every name against the OUTPUT folder, so an
+ * echo that reached it would move a same-named file there into the library,
+ * and a claim would file the source under the caller's name. */
+console.log("\n  -- LoadVideo's input echo: recorded, never adopted or claimed --");
+{
+  writeFileSync(path.join(outDir, "aiplay_enh_0123456789.mp4"), "a bystander with the staged name");
+  const echoFirst = {
+    1: { images: [{ filename: "aiplay_enh_0123456789.mp4", subfolder: "", type: "input" }], animated: [true] },
+    9: { images: [{ filename: "arm3_00001.mp4", subfolder: "gate", type: "output" }], animated: [true] },
+  };
+  const adopted = [];
+  const spy = async ({ output }) => { adopted.push(output.file); return `clips/${output.file}`; };
+  const c = clientOn(fakeEngine({ historyAfter: 2, outputs: echoFirst }), { dir: path.join(tmp, "echo"), adopt: spy });
+  const r = await c.run({ graph: LTX_VIDEO_GRAPH, actor: "user", via: "api", label: "an enhance-shaped run" });
+  ok("the echo is on the record, first and typed \"input\"",
+    r.outputs[0]?.type === "input" && r.outputs[0]?.node === "1" && r.outputs[1]?.type === "output",
+    JSON.stringify(r.outputs.map((o) => [o.node, o.type, o.file])));
+  ok("...and only the file the graph WROTE reaches the adopter",
+    adopted.length === 1 && adopted[0] === "arm3_00001.mp4", JSON.stringify(adopted));
+  ok("...so the echo carries no library name", r.outputs[0]?.adoptedAs === null, String(r.outputs[0]?.adoptedAs));
+
+  const claimed = await clientOn(fakeEngine({ historyAfter: 2, outputs: echoFirst }), { dir: path.join(tmp, "echo-claim") })
+    .run({ graph: LTX_VIDEO_GRAPH, actor: "user", via: "api", claim: "clips/named.mp4" });
+  ok("a claim names the written file, never the echo",
+    claimed.outputs[0]?.adoptedAs === null && claimed.outputs[1]?.adoptedAs === "clips/named.mp4",
+    JSON.stringify(claimed.outputs.map((o) => [o.type, o.adoptedAs])));
+}
+
 console.log("\n  -- §11: every row the spec promises, off one real run --");
 {
   const stub = fakeEngine({ historyAfter: 2 });

@@ -4,6 +4,9 @@ import multiprocessing
 import queue
 import contextlib
 import io
+import json
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -89,6 +92,92 @@ class EditorTests(unittest.TestCase):
         got = np.asarray(Image.open(self.file("candidate.png")))
         self.assertEqual(list(got[0, 0]), [240, 30, 10, 128])
         np.testing.assert_array_equal(got[0, 1], self.original[0, 1])
+
+    def transparent_generation(self, patch):
+        """An opaque frame, and a generation that came back clear: purple
+        under zero alpha, like the one a cutout reference caused."""
+        frame = np.zeros((24, 40, 4), np.uint8)
+        frame[:] = [30, 120, 60, 255]
+        Image.fromarray(frame, "RGBA").save(self.file("frame.png"))
+        editor.prepare({**self.base, "source": "frame.png"})
+        generated = np.zeros((24, 40, 4), np.uint8)
+        generated[:] = [129, 110, 150, 0]
+        patch(generated)
+        Image.fromarray(generated, "RGBA").save(self.file("generated.png"))
+        return frame, generated
+
+    def finish_generated(self):
+        return editor.finish({"dir": self.directory, "sourcePath": self.file("frozen.png"),
+            "generated": "generated.png", "maskPath": self.file("mask.npy"),
+            "out": self.file("candidate.png"), "thumbOut": self.file("candidate_t.png")})
+
+    def test_transparent_generation_keeps_the_source_instead_of_punching_a_hole(self):
+        def patch(generated):
+            generated[9:13, 14:18] = [250, 250, 245, 255]  # what Qwen did draw
+            generated[7, 11] = [255, 0, 0, 128]
+        frame, generated = self.transparent_generation(patch)
+        finished = self.finish_generated()
+        self.assertEqual(finished["warnings"], ["Qwen returned 86% of the selection transparent; those pixels keep the source."])
+        mask = np.load(self.file("mask.npy"))
+        got = np.asarray(Image.open(self.file("candidate.png")))
+        np.testing.assert_array_equal(got[mask == 0], frame[mask == 0])
+        clear = (mask > 0) & (generated[..., 3] == 0)
+        np.testing.assert_array_equal(got[clear], frame[clear])
+        np.testing.assert_array_equal(got[9:13, 14:18], generated[9:13, 14:18])
+        # Half alpha lies over the frame; it does not make the frame half clear.
+        self.assertEqual(list(got[7, 11]), [143, 60, 30, 255])
+
+    def test_generation_clear_over_the_whole_selection_fails_the_candidate(self):
+        self.transparent_generation(lambda generated: None)
+        with self.assertRaisesRegex(ValueError, "whole selection transparent"):
+            self.finish_generated()
+        self.assertFalse(os.path.exists(self.file("candidate.png")))
+
+    def test_references_with_alpha_are_flattened_onto_white(self):
+        cutout = np.zeros((6, 8, 4), np.uint8)
+        cutout[:] = [129, 110, 150, 0]
+        cutout[1:3, 1:3] = [200, 40, 20, 255]
+        cutout[4, 4] = [0, 200, 0, 128]
+        Image.fromarray(cutout, "RGBA").save(self.file("cutout.png"))
+        Image.new("RGBA", (8, 6), (10, 20, 30, 255)).save(self.file("solid.png"))
+        Image.new("RGB", (8, 6), (10, 20, 30)).save(self.file("plain.png"))
+        names = ["cutout.png", "solid.png", "plain.png", "missing.png"]
+        references = [{"name": name, "candidates": [self.file("covers-" + name), self.file(name)],
+                       "out": self.file(f"flat-{name}")} for name in names]
+        ready = editor.prepare({**self.base, "references": references})
+        self.assertEqual(ready["references"], ["flat-cutout.png", "solid.png", "plain.png", "missing.png"])
+        self.assertEqual([n for n in names if os.path.exists(self.file(f"flat-{n}"))], ["cutout.png"])
+        with Image.open(self.file("flat-cutout.png")) as flat:
+            self.assertEqual(flat.mode, "RGB")
+            got = np.asarray(flat)
+        self.assertEqual(list(got[0, 0]), [255, 255, 255])
+        self.assertEqual(list(got[1, 1]), [200, 40, 20])
+        # The vision tower's own formula: rgb * a + (1 - a) over white.
+        self.assertEqual(list(got[4, 4]), [127, 227, 127])
+        np.testing.assert_array_equal(np.asarray(Image.open(self.file("cutout.png"))), cutout)
+        self.assertEqual(editor.prepare(self.base)["references"], [])
+
+    def test_plain_generations_flatten_through_the_same_rule(self):
+        # stageQwenReferences runs this command for /api/image in the engine's python.
+        keyed = Image.new("P", (3, 1), 0)
+        keyed.putpalette([90, 30, 200, 10, 200, 10])
+        keyed.putpixel((1, 0), 1)
+        keyed.save(self.file("keyed.png"), transparency=0)
+        Image.new("RGBA", (3, 1), (10, 20, 30, 255)).save(self.file("solid.png"))
+        references = [{"name": name, "candidates": [self.file(name)], "out": self.file(f"flat-{name}")}
+                      for name in ("keyed.png", "solid.png")]
+        with open(self.file("job.json"), "w", encoding="utf-8") as handle:
+            json.dump({"dir": self.directory, "references": references}, handle)
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "image_editor.py")
+        done = subprocess.run([sys.executable, script, "flatten", self.file("job.json")],
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads(done.stdout.strip().splitlines()[-1]),
+                         {"ok": True, "references": ["flat-keyed.png", "solid.png"]})
+        with Image.open(self.file("flat-keyed.png")) as flat:
+            self.assertEqual(flat.mode, "RGB")
+            self.assertEqual([flat.getpixel((x, 0)) for x in range(3)], [(255, 255, 255), (10, 200, 10), (255, 255, 255)])
+        self.assertFalse(os.path.exists(self.file("flat-solid.png")))
 
     def test_empty_and_unknown_selections_refused(self):
         for selection in ({"shapes": []}, {"shapes": [{"kind": "not-a-tool"}]}):

@@ -45,8 +45,11 @@ are an explicit choice. Missing references are refused rather than silently omit
 
 Transparency is an RGBA generation request, not background removal. The graph
 preserves the dedicated VAE's RGBA output. Prompt adherence and edge quality
-still need inspection. Existing per-image privacy blur remains available in the
-library and through `image_set_blur`; it is independent of model selection.
+still need inspection. Unless Transparent is on, a reference with alpha is sent
+flattened onto white, as Qwen's vision tower sees it; its VAE would keep the alpha
+and hand back a transparent picture. With Transparent on, references keep their
+alpha. Existing per-image privacy blur remains available in the library and
+through `image_set_blur`; it is independent of model selection.
 
 ## Layered image editor
 
@@ -56,6 +59,14 @@ Edit and Style modes allow nine more pictures. Style puts its first style refere
 at image 2. Inpaint reserves image 2 for the selection mask and permits eight more
 references. The mask also controls the final composite: zero-mask RGBA pixels stay
 exactly equal to the frozen source, including transparent pixels.
+
+Unless Transparent is on, the editor sends an extra reference that has alpha
+flattened onto white. That is what Qwen's vision tower sees, but its VAE keeps all
+four channels, and one cutout reference was enough to make the whole generation
+transparent. Inside the selection the generation is laid over the source, so a
+transparent pixel keeps the source instead of punching a hole. The review names the
+share of the selection that came back transparent, and a selection that came back
+fully transparent fails instead of producing an unchanged candidate.
 
 Compare the candidate with the frozen source before accepting it. Accept adds a
 full-canvas layer and hides the old layers; undo restores their visibility. The old

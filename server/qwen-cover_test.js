@@ -189,6 +189,7 @@ test("API response, real queue, sampler and saved image provenance keep the same
     hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
     personas: { get: async () => null }, applyPersona, personaFits,
     stageQwenReferences: async (names) => names,
+    imageEditor: { flattenReferences: async (references) => references.map((row) => row.name) },
     COVER_DIR: path.join(config.outputDir, "covers"), IMAGE_DIR: path.join(config.outputDir, "images"),
     pendingImagePrompt: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(),
     /* The fourth side-map. This lane SLICES the cover handler out of index.js and

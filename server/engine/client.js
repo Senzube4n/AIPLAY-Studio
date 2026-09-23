@@ -1026,8 +1026,14 @@ export function createEngineClient(deps = {}) {
           };
           /* `claim` means the caller files this asset itself under its own name
            * (art.js registers a clip; jobs.js a song). Adopting it again here
-           * would write a second library entry for one file. */
-          if (spec.claim) row.adoptedAs = String(spec.claim);
+           * would write a second library entry for one file.
+           *
+           * Only a row of type "output" is claimed or shelved. An "input" echo
+           * names the file the graph READ and a "temp" preview lives in the
+           * engine's temp folder; the adopter resolves every name against the
+           * OUTPUT folder, where a same-named file would be moved instead. */
+          if (row.type !== "output") { /* recorded, never claimed or adopted */ }
+          else if (spec.claim) row.adoptedAs = String(spec.claim);
           else if (spec.adopt !== false && adopter) {
             try { row.adoptedAs = (await adopter({ runId, record, output: row, actor, spec })) ?? null; }
             catch (e) { console.warn(`  [engine] ${runId}: could not adopt ${o.filename}: ${e.message}`); }

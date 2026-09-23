@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { deflateSync, crc32 } from "node:zlib";
 import { CATALOG } from "./models.js";
 import { qwenImageStatus, stageQwenReferences } from "./qwen-status.js";
 import { QWEN_IMAGE_FILES, qwenImageRequiredNodes } from "./qwen-image.js";
@@ -102,4 +103,81 @@ test("readiness depends on whether there are references, not how many", () => {
   const some = list(1);
   for (const n of [2, 3, 5, 10]) assert.equal(list(n), some, `${n} references need the same nodes as one`);
   assert.notEqual(list(0), some, "no references is a different graph, and is the one key that must differ");
+});
+
+/** A real 2x1 PNG. The tEXt chunk stands in for the workflow ComfyUI writes
+ * ahead of the pixels, so a tRNS chunk sits behind a few KB of metadata. */
+function png(colorType, trns = null) {
+  const chunk = (type, data) => {
+    const out = Buffer.alloc(12 + data.length);
+    out.writeUInt32BE(data.length, 0); out.write(type, 4, "ascii"); data.copy(out, 8);
+    out.writeUInt32BE(crc32(out.subarray(4, 8 + data.length)), 8 + data.length);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0); ihdr.writeUInt32BE(1, 4); ihdr[8] = 8; ihdr[9] = colorType;
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr),
+    chunk("tEXt", Buffer.from(`workflow\0${"{}".repeat(2000)}`)),
+    ...(colorType === 3 ? [chunk("PLTE", Buffer.from([90, 30, 200]))] : []),
+    ...(trns ? [chunk("tRNS", trns)] : []),
+    chunk("IDAT", deflateSync(Buffer.alloc(1 + 2 * channels))), chunk("IEND", Buffer.alloc(0))]);
+}
+
+test("without transparency every reference that can carry alpha is flattened; the rest stage byte-exact", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "qwen-flat-"));
+  const dirs = { inputDir: path.join(root, "input"), coverDir: path.join(root, "covers"), imageDir: path.join(root, "images") };
+  try {
+    for (const dir of Object.values(dirs)) await mkdir(dir);
+    const files = {
+      "cut.png": [dirs.imageDir, png(6)],
+      "gray-alpha.png": [dirs.imageDir, png(4)],
+      "keyed.png": [dirs.imageDir, png(2, Buffer.alloc(6))],
+      "palette.png": [dirs.coverDir, png(3, Buffer.from([0]))],
+      "photo.png": [dirs.imageDir, png(2)],
+      "gray.png": [dirs.imageDir, png(0)],
+      "indexed.png": [dirs.imageDir, png(3)],
+      "scene.jpg": [dirs.coverDir, Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70])],
+      "art.webp": [dirs.imageDir, Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBPVP8X"), Buffer.alloc(10)])],
+      "aiplay_frame_0123456789ab.png": [dirs.inputDir, png(6)],
+    };
+    for (const [name, [dir, bytes]] of Object.entries(files)) await writeFile(path.join(dir, name), bytes);
+    const names = Object.keys(files);
+    const handed = [];
+    // The contract flatten_references keeps: its own name when opaque after
+    // all, which the grey+alpha fixture stands for here.
+    const flatten = async (references) => {
+      handed.push(...references);
+      return Promise.all(references.map(async ({ name, candidates, out }) => {
+        if ((await readFile(candidates[0]))[25] === 4) return name;
+        await writeFile(out, png(2));
+        return path.basename(out);
+      }));
+    };
+    const staged = await stageQwenReferences(names, { ...dirs, flatten });
+    const withAlpha = ["cut.png", "gray-alpha.png", "keyed.png", "palette.png", "art.webp", "aiplay_frame_0123456789ab.png"];
+    assert.deepEqual(handed.map((row) => row.name), withAlpha, "a JPEG and PNGs with no alpha channel or tRNS never pay for python");
+    for (const row of handed) {
+      assert.deepEqual(row.candidates, [path.join(files[row.name][0], row.name)]);
+      assert.equal(path.dirname(row.out), dirs.inputDir);
+      assert.match(path.basename(row.out), /^aiplay_frame_[0-9a-f]{12}\.png$/);
+    }
+    const flattened = new Map(handed.filter((row) => row.name !== "gray-alpha.png").map((row) => [row.name, path.basename(row.out)]));
+    const plain = await stageQwenReferences(names, dirs);
+    assert.equal(handed.length, withAlpha.length, "transparent staging never flattens");
+    assert.equal(plain.at(-1), "aiplay_frame_0123456789ab.png");
+    for (const [i, name] of names.entries()) {
+      assert.deepEqual(await readFile(path.join(dirs.inputDir, plain[i])), files[name][1], `${name} stages raw for a transparent request`);
+      if (flattened.has(name)) {
+        assert.equal(staged[i], flattened.get(name));
+        assert.notEqual(staged[i], plain[i], `${name}: a transparent request must not overwrite the flattened copy`);
+        assert.deepEqual(await readFile(path.join(dirs.inputDir, staged[i])), png(2));
+      } else assert.equal(staged[i], plain[i], `${name} stages exactly as before`);
+    }
+    assert.deepEqual(await stageQwenReferences(names, { ...dirs, flatten }), staged, "the same source flattens to the same name");
+    const again = handed.length;
+    assert.deepEqual(await stageQwenReferences(staged, { ...dirs, flatten }), staged, "a flattened picture is opaque");
+    assert.equal(handed.length, again + 1, "only the reference that stayed as it was is asked about again");
+    await assert.rejects(stageQwenReferences(["cut.png"], { ...dirs, flatten: async () => { throw new Error("python is gone"); } }), /python is gone/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

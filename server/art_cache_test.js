@@ -35,6 +35,16 @@
  * — a cache hit whose twin was DELETED from the library — re-renders rather
  * than handing back a name with no file under it.
  *
+ * THE INPUT ECHO. On ComfyUI 0.36 LoadVideo reports the file it READ as an
+ * output row of type "input", and /history's outputs come back in node-id
+ * order. The enhance graph loads at node 1 and saves at node 9, so the echo is
+ * the FIRST row: measured 2026-09-23, seven RIFE jobs finished on the GPU and
+ * then died with `ENOENT ... rename 'output\aiplay_enh_<hash>.mp4'` while the
+ * real result sat in output/clips. The fake engine below echoes every
+ * LoadVideo in the shape the rig's own `preview_input_video` writes, so the
+ * real #enhance, #restyle and a continuation through #clip must each file the
+ * SaveVideo output and leave no orphan behind.
+ *
  *   node server/art_cache_test.js
  */
 import os from "node:os";
@@ -46,11 +56,13 @@ import { mkdir, rm, readFile, writeFile, stat, readdir } from "node:fs/promises"
 const TMP = path.join(os.tmpdir(), `art-cache-test-${process.pid}-${Date.now().toString(36)}`);
 process.env.AIPLAY_OUTPUT = path.join(TMP, "output");
 process.env.AIPLAY_APPDATA = path.join(TMP, "appdata");
+// #enhance and #restyle STAGE their source here; never the rig's own input folder.
+process.env.AIPLAY_INPUT = path.join(TMP, "input");
 
 const { config } = await import("./config.js");
 const art = await import("./art.js");
 const { engine } = await import("./engine/client.js");
-const { ArtRunner, CLIP_DIR, graphHash } = art;
+const { ArtRunner, CLIP_DIR, graphHash, savedClip } = art;
 
 /* THE DOOR, STOOD UP WITHOUT AN ENGINE.
  *
@@ -100,16 +112,27 @@ globalThis.fetch = async (url, init) => {
       execCache.set(key, { filename, subfolder: "clips", type: "output" });
     }
     // A HIT falls through writing nothing at all — that is the bug.
-    histories.set(id, execCache.get(key));
+    /* Filed under the graph's own SaveVideo node, and every LoadVideo echoes
+     * the file it read, as ComfyUI 0.36 does: `images` + `animated`, folder
+     * type "input" (comfy_extras/nodes_video.py, preview_input_video). */
+    const outputs = {};
+    for (const [nid, node] of Object.entries(graph)) {
+      if (node.class_type === "LoadVideo") {
+        outputs[nid] = { images: [{ filename: node.inputs.file, subfolder: "", type: "input" }], animated: [true] };
+      }
+    }
+    const saveNode = Object.keys(graph).find((nid) => graph[nid].class_type === "SaveVideo") ?? "9";
+    outputs[saveNode] = { images: [execCache.get(key)], animated: [true] };
+    histories.set(id, outputs);
     return { ok: true, json: async () => ({ prompt_id: id }) };
   }
   const m = u.match(/\/history\/(.+)$/);
   if (m) {
-    const out = histories.get(m[1]);
+    const outputs = histories.get(m[1]);
     return {
       ok: true,
       json: async () => ({
-        [m[1]]: { status: { completed: true }, outputs: { 9: { images: [out] } } },
+        [m[1]]: { status: { completed: true }, outputs },
       }),
     };
   }
@@ -149,6 +172,22 @@ function render(id, extra = {}) {
       file: `clip:${id}`, kind: "video", seed: 4242,
       video: { prompt: "a paper boat on wet tarmac", seconds: 2, width: 512, height: 320, ...extra },
     });
+  });
+}
+
+/** Queue any job and resolve with the runner's event for it, or `{ error }`:
+ *  a failure is an assertion to report, not a crash that hides the rest.
+ *  `lastError` is sticky, so only a NEW one belongs to this job. */
+function finish(event, match, req) {
+  const was = runner.lastError;
+  return new Promise((resolve) => {
+    const t = setTimeout(() => settle({ error: `${event} never finished` }), 30_000);
+    const settle = (v) => { clearTimeout(t); runner.off(event, onEvent); runner.off("update", onUpdate); resolve(v); };
+    const onEvent = (evt) => { if (match(evt)) settle(evt); };
+    const onUpdate = () => { if (runner.lastError && runner.lastError !== was) settle({ error: runner.lastError }); };
+    runner.on(event, onEvent);
+    runner.on("update", onUpdate);
+    runner.request(req);
   });
 }
 
@@ -227,6 +266,96 @@ try {
   ok("a changed prompt renders and keeps its own name", other.clip === "ddd.mp4",
      `got ${other.clip}`);
   ok("and is fingerprinted apart from the first", submitted.at(-1) !== submitted[0]);
+
+  /* ── the input echo ─────────────────────────────────────────────────── */
+  const INPUT = process.env.AIPLAY_INPUT;
+  /** The engine door's completion record for one run: what /history listed, in order. */
+  const recorded = async (runId) => (await ledger())
+    .find((e) => e.type === "generate" && e.asset === `engine/${runId}`)?.data?.outputs || [];
+  await writeFile(path.join(CLIP_DIR, "src.mp4"), "source frames", "utf8");
+
+  console.log("\n  -- enhance: LoadVideo's echo of its input is listed FIRST --");
+  let shelf = new Set(await readdir(CLIP_DIR));
+  const enh = await finish("enhanced", (e) => e.source === "src.mp4", {
+    file: "src.mp4", title: "src.mp4", kind: "enhance", force: true,
+    video: {
+      interpolate: { model: "rife_v4.26.safetensors", multiplier: 4, slow: false }, upscale: null,
+      keepAudio: true, srcWidth: 512, srcHeight: 320, srcSeconds: 2,
+    },
+  });
+  const enhRows = await recorded(enh.runId);
+  ok("the run listed the echo first, as the rig does (load node 1, save node 9)",
+     enhRows[0]?.type === "input" && enhRows[0]?.node === "1" && /^aiplay_enh_/.test(enhRows[0]?.file || "")
+       && enhRows[1]?.node === "9" && enhRows[1]?.type === "output",
+     JSON.stringify(enhRows.map((r) => [r.node, r.type, r.file])));
+  /* THE REGRESSION. Before the fix this job died with
+   * `ENOENT: no such file or directory, rename '...output\aiplay_enh_<hash>.mp4'`. */
+  ok("the enhance files what SaveVideo wrote, named for what was done", enh.clip === "src_4xfps.mp4",
+     enh.error || `got ${enh.clip}`);
+  ok("and those are the engine's frames, not the source's",
+     /^frames for /.test(await readFile(path.join(CLIP_DIR, "src_4xfps.mp4"), "utf8").catch(() => "")));
+  const enhShelf = (await readdir(CLIP_DIR)).filter((n) => !shelf.has(n));
+  ok("no orphan is left in the clip library: the one new file is the named result",
+     enhShelf.length === 1 && enhShelf[0] === "src_4xfps.mp4", JSON.stringify(enhShelf));
+  ok("the source clip is untouched",
+     await readFile(path.join(CLIP_DIR, "src.mp4"), "utf8") === "source frames");
+  ok("the staged copy is gone from the input folder",
+     !(await readdir(INPUT).catch(() => [])).some((n) => n.startsWith("aiplay_enh_")));
+  ok("the echo stays on the record and is never shelved",
+     enhRows[0]?.adoptedAs === null);
+
+  console.log("\n  -- restyle: the same echo, at node 30 --");
+  shelf = new Set(await readdir(CLIP_DIR));
+  const rs = await finish("restyled", (e) => e.source === "src.mp4", {
+    file: "src.mp4", title: "src.mp4", kind: "restyle", force: true, seed: 7,
+    video: { prompt: "the same boat, drawn in ink", guideEvery: 24, seconds: 2, width: 512, height: 320 },
+  });
+  ok("the restyle run carried the echo on its record",
+     (await recorded(rs.runId)).some((r) => r.type === "input" && /^aiplay_rs_/.test(r.file)));
+  ok("the restyle files what SaveVideo wrote", rs.clip === "src_restyled.mp4"
+     && /^frames for /.test(await readFile(path.join(CLIP_DIR, "src_restyled.mp4"), "utf8").catch(() => "")),
+     rs.error || `got ${rs.clip}`);
+  const rsShelf = (await readdir(CLIP_DIR)).filter((n) => !shelf.has(n));
+  ok("...and leaves no orphan", rsShelf.length === 1, JSON.stringify(rsShelf));
+
+  console.log("\n  -- a continuation through #clip: the echo at node 70 --");
+  await mkdir(INPUT, { recursive: true });
+  await writeFile(path.join(INPUT, "aiplay_cont_test.mp4"), "source frames", "utf8");
+  shelf = new Set(await readdir(CLIP_DIR));
+  const cont = await finish("clip", (e) => e.file === "clip:eee", {
+    file: "clip:eee", kind: "video", seed: 4242,
+    video: {
+      prompt: "a paper boat on wet tarmac", seconds: 2, width: 512, height: 320, engine: "h3",
+      continueFrom: { file: "aiplay_cont_test.mp4", frames: 49, fps: 24, hasAudio: false, overlapFrames: 9, extensionFrames: 40 },
+    },
+  });
+  ok("the continuation run carried the echo on its record",
+     (await recorded(cont.runId)).some((r) => r.type === "input" && r.node === "70"),
+     JSON.stringify((await recorded(cont.runId)).map((r) => [r.node, r.type, r.file])));
+  ok("the continuation files what SaveVideo wrote", cont.clip === "eee.mp4"
+     && /^frames for /.test(await readFile(path.join(CLIP_DIR, "eee.mp4"), "utf8").catch(() => "")),
+     cont.error || `got ${cont.clip}`);
+  const contShelf = (await readdir(CLIP_DIR)).filter((n) => !shelf.has(n));
+  ok("...and leaves no orphan", contShelf.length === 1, JSON.stringify(contShelf));
+
+  /* Restyle and a continuation are right above partly because their loaders
+   * carry the LARGER node id. The pick itself must not depend on that. */
+  console.log("\n  -- the pick is by node, whatever the numbering --");
+  const g = { 1: { class_type: "LoadVideo" }, 4: { class_type: "SaveImage" }, 21: { class_type: "SaveVideo" } };
+  ok("an echo and another saved file ahead of SaveVideo: SaveVideo's row wins",
+     savedClip([
+       { node: "1", file: "aiplay_rs_x.mp4", subfolder: "", type: "input" },
+       { node: "4", file: "still_00001_.png", subfolder: "", type: "output" },
+       { node: "21", file: "rs_00001_.mp4", subfolder: "clips", type: "output" },
+     ], g)?.file === "rs_00001_.mp4");
+  ok("with no SaveVideo row, an echo or a temp preview is never the answer",
+     savedClip([
+       { node: "1", file: "aiplay_rs_x.mp4", subfolder: "", type: "input" },
+       { node: "5", file: "ComfyUI_temp_video_00001_.mp4", subfolder: "", type: "temp" },
+       { node: "7", file: "out_00001_.mp4", subfolder: "clips", type: "output" },
+     ], {})?.file === "out_00001_.mp4");
+  ok("an echo alone is no clip at all, so the job says so instead of renaming the input",
+     savedClip([{ node: "1", file: "aiplay_enh_x.mp4", subfolder: "", type: "input" }], g) === null);
 } finally {
   globalThis.fetch = realFetch;
   runner.stopAll?.();

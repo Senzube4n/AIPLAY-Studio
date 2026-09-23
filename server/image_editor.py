@@ -121,6 +121,39 @@ def paint_target(job):
     return {**result, "ref": layer["id"]}
 
 
+def flatten_references(references):
+    """Qwen's vision tower sees a reference's alpha over white, but its VAE
+    encodes all four channels, so one cutout reference turned a whole
+    generation transparent. Hand Qwen the picture its vision tower sees.
+
+    A name that is missing or unreadable stays as it is: staging refuses it
+    with the message every other Qwen door gives."""
+    names = []
+    for reference in references:
+        path = next((p for p in reference["candidates"] if os.path.isfile(p)), None)
+        rgba = None
+        if path:
+            try:
+                with Image.open(path) as image:
+                    if any(band in ("A", "a") for band in image.getbands()) or "transparency" in image.info:
+                        rgba = image.convert("RGBA")
+            except OSError:
+                pass
+        if rgba is None or rgba.getextrema()[3][0] == 255:
+            names.append(reference["name"])
+            continue
+        flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        flat.alpha_composite(rgba)
+        flat.convert("RGB").save(reference["out"])
+        names.append(os.path.basename(reference["out"]))
+    return names
+
+
+def flatten(job):
+    """The same rule for a plain Qwen generation (stageQwenReferences)."""
+    return {"references": flatten_references(job["references"])}
+
+
 def prepare(job):
     doc = open_doc(job) if job.get("documentId") else None
     if doc:
@@ -153,7 +186,23 @@ def prepare(job):
         coverage = float(np.mean(mask))
     return {"width": image.width, "height": image.height, "warnings": warnings,
             "document": doc, "revision": revision(doc) if doc else None, "coverage": coverage,
+            "references": flatten_references(job.get("references") or []),
             "sourcePreview": "data:image/png;base64," + base64.b64encode(preview_data.getvalue()).decode("ascii")}
+
+
+def over_source(generated, original):
+    """The generation laid over the source; straight alpha, float32 0..1.
+
+    A masked edit never asks for transparency, but Qwen can still return it.
+    Pasted through the selection, that punched a hole in an opaque frame and
+    showed the colour under the alpha. Opaque pixels are copied, so an opaque
+    generation composites exactly as before; clear ones leave the source."""
+    ag, ao = generated[..., 3:], original[..., 3:]
+    alpha = ag + ao * (1 - ag)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rgb = (generated[..., :3] * ag + original[..., :3] * ao * (1 - ag)) / alpha
+    over = np.concatenate([rgb, alpha], axis=-1)
+    return np.where(ag >= 1, generated, np.where(ag <= 0, original, over))
 
 
 def finish(job):
@@ -167,19 +216,29 @@ def finish(job):
         # exact document grid before applying its selection.
         image = image.resize((original.shape[1], original.shape[0]), Image.Resampling.LANCZOS)
     result = np.asarray(image).copy()
+    warnings = []
     if job.get("maskPath"):
         mask = np.load(job["maskPath"], allow_pickle=False)
         if mask.shape != original.shape[:2]:
             raise ValueError("Frozen selection does not match the source dimensions.")
-        result = imgdoc.to_uint8(imgselect.blend(original.astype(np.float32) / 255,
-                                               result.astype(np.float32) / 255, mask))
+        generated = result.astype(np.float32) / 255
+        selected = mask > 0
+        clear = selected & (generated[..., 3] < .5)
+        if not np.any(selected & ~clear):
+            raise ValueError("Qwen returned the whole selection transparent, so the edit would change nothing. "
+                             "A reference or source with transparency can cause this.")
+        share = float(np.sum(mask[clear]) / np.sum(mask[selected]))
+        if share >= .01:
+            warnings.append(f"Qwen returned {share:.0%} of the selection transparent; those pixels keep the source.")
+        source01 = original.astype(np.float32) / 255
+        result = imgdoc.to_uint8(imgselect.blend(source01, over_source(generated, source01), mask))
         result[mask <= 0] = original[mask <= 0]  # includes hidden RGB and alpha
     final = Image.fromarray(result, "RGBA")
     final.save(job["out"])
     thumb = final.copy()
     thumb.thumbnail((256, 256), Image.Resampling.LANCZOS)
     thumb.save(job["thumbOut"])
-    return {"width": final.width, "height": final.height, "resizedToSource": resized}
+    return {"width": final.width, "height": final.height, "resizedToSource": resized, "warnings": warnings}
 
 
 def _accept_locked(job):
@@ -240,7 +299,7 @@ def main():
         job = json.load(handle)
     try:
         action = {"preview": preview, "paint-target": paint_target, "prepare": prepare, "finish": finish,
-                  "accept": accept, "undo": undo}[sys.argv[1]]
+                  "accept": accept, "undo": undo, "flatten": flatten}[sys.argv[1]]
         print(json.dumps({"ok": True, **action(job)}))
     except Exception as error:
         print(json.dumps({"ok": False, "error": str(error)}))

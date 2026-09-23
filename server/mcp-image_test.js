@@ -669,6 +669,11 @@ const NO_CONTROL = {
     "replay of a recorded expansion. The agent path uses it to reproduce a picture exactly; "
     + "the human equivalent is a 'make this one again' button on a tile, which is a gesture "
     + "rather than a form field and has not been built.",
+  refAlpha:
+    "the Transparent box already decides it: off flattens a reference onto white, on keeps "
+    + "its alpha. The only other combination a box could add, keep on an opaque picture, is "
+    + "the one that turned a whole generation transparent. The image editor sends keep for "
+    + "its frozen source, whose alpha a masked edit composites through.",
 };
 
 const noControl = routeFields.filter((f) => !new RegExp("\\b" + f + "\\b").test(imgPostSrc));

@@ -13,10 +13,12 @@ const start = source.indexOf('if (p === "/api/image" && req.method === "POST")')
 const end = source.indexOf('if (p === "/api/', start + 20);
 assert.ok(start > 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations }=deps; ${source.slice(start, end)}`);
+const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor }=deps; ${source.slice(start, end)}`);
+
+const flattenReferences = async (references) => references.map((row) => row.name);
 
 async function request(body, { ready = true, persona = null, stageError = null } = {}) {
-  const queued = [], preflights = [], staged = [];
+  const queued = [], preflights = [], staged = [], stagedWith = [];
   const deps = {
     p: "/api/image", req: { method: "POST" }, res: {}, readBody: async () => ({ action: "create", ...body }),
     json: (_, status, result) => ({ status, body: result }), path,
@@ -25,13 +27,14 @@ async function request(body, { ready = true, persona = null, stageError = null }
     qwenImageStatus: async ({ options } = {}) => { preflights.push(options); return { ready, filesReady: ready, runtimeReady: ready, missingFiles: [], missingNodes: ready ? [] : ["TextEncodeQwenImage21"], error: ready ? null : "Missing runtime" }; },
     hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
     personas: { get: async () => persona }, personaFits, applyPersona,
-    stageQwenReferences: async (names) => { staged.push(names); if (stageError) throw new Error(stageError); return names.map((name) => `staged-${name}`); },
+    stageQwenReferences: async (names, options) => { staged.push(names); stagedWith.push(options); if (stageError) throw new Error(stageError); return names.map((name) => `staged-${name}`); },
     COVER_DIR: "covers", IMAGE_DIR: "images",
     pendingImagePrompt: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(),
     prov: { actorFrom: () => "agent:test" }, resolveRepeat: () => ({}), imageDupGuard: { remember() {} },
     art: { request: (shot) => { queued.push(shot); return { id: "job" }; }, status: () => ({}) }, combinations: () => 1,
+    imageEditor: { flattenReferences },
   };
-  return { ...await run(deps), queued, preflights, staged };
+  return { ...await run(deps), queued, preflights, staged, stagedWith };
 }
 
 test("omitted engine chooses Qwen, keeps its own preset, and refuses unavailable runtime before queueing", async () => {
@@ -59,6 +62,27 @@ test("reference/alpha settings and persona ordering reach the queue; missing ref
   assert.equal(result.preflights.at(-1).refImages.length, 2);
   const missing = await request({ prompt: "x", refImages: ["gone.png"] }, { stageError: "Reference image is missing" });
   assert.equal(missing.status, 400); assert.equal(missing.queued.length, 0);
+});
+
+test("a reference reaches Qwen over white unless transparency is asked for or the caller keeps its own", async () => {
+  const flattenWith = async (body) => {
+    const result = await request({ prompt: "x", persona: "Alex", refImages: ["cut.png"], ...body }, { persona: { name: "Alex", fragment: "red coat", refImages: ["face.png"] } });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual(result.staged[0], ["face.png", "cut.png"], "persona references go through the same staging");
+    return result.stagedWith[0].flatten;
+  };
+  assert.equal(await flattenWith({}), flattenReferences, "an opaque request sends what the vision tower sees");
+  assert.equal(await flattenWith({ transparent: true }), null, "a transparent request keeps its references as they are");
+  assert.equal(await flattenWith({ refAlpha: "keep" }), null);
+  assert.equal(await flattenWith({ transparent: true, refAlpha: "white" }), flattenReferences);
+  for (const refAlpha of ["none", true, ""]) {
+    const refused = await request({ prompt: "x", refImages: ["cut.png"], refAlpha });
+    assert.equal(refused.status, 400); assert.equal(refused.queued.length, 0); assert.equal(refused.staged.length, 0);
+  }
+  // The editor flattens its extra references itself; its frozen source keeps
+  // the alpha a masked edit composites through.
+  const editor = source.slice(source.indexOf("const imageEditor = createImageEditor("), source.indexOf("async register(name, metadata, actor)"));
+  assert.match(editor, /body: JSON\.stringify\(\{ \.\.\.body, refAlpha: "keep" \}\)/);
 });
 
 test("invalid native options never reach the queue and Qwen image identities include edit settings", async () => {

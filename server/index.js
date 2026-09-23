@@ -2357,7 +2357,7 @@ const collabPlanningRoutes = createCollabPlanningRoutes({
   resolveKitCue: musicWorkflowRoutes.resolveKitCue,
 });
 const imageEditor = createImageEditor({
-  imageDir: IMAGE_DIR, inputDir: config.inputDir, python: config.python,
+  imageDir: IMAGE_DIR, inputDir: config.inputDir, coverDir: COVER_DIR, python: config.python,
   async preflight(options) {
     await stageQwenReferences(options.refImages, {
       inputDir: config.inputDir, coverDir: COVER_DIR, imageDir: IMAGE_DIR,
@@ -2368,9 +2368,11 @@ const imageEditor = createImageEditor({
   generate: (options, actor) => requestImageAndWait({
     art, options, actor,
     async submit(body, who) {
+      // The editor flattens its own extra references. Its frozen source keeps
+      // its alpha, which a masked edit composites through.
       const response = await fetch(`http://127.0.0.1:${config.uiPort}/api/image`, {
         method: "POST", headers: { "Content-Type": "application/json", "x-aiplay-actor": who || "system" },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(120_000),
+        body: JSON.stringify({ ...body, refAlpha: "keep" }), signal: AbortSignal.timeout(120_000),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "The image request was refused.");
@@ -7184,6 +7186,13 @@ const server = http.createServer(async (req, res) => {
           if (graph[7]?.class_type === "EmptyLatentImage") { b.width = graph[7].inputs.width; b.height = graph[7].inputs.height; }
           b.refSizing = b.refSizing ?? "reference"; b.refResolution = graph[4].inputs.resolution;
           b.transparent = b.transparent ?? false;
+          /* TextEncodeQwenImage21 shows its vision tower a reference's alpha
+           * over white, but its VAE encodes all four channels, so one cutout
+           * reference turned a whole opaque generation transparent. Unless
+           * transparency is asked for, a reference goes in as the vision tower
+           * sees it. "keep" is for a caller that prepared its own. */
+          b.refAlpha = b.refAlpha ?? (b.transparent ? "keep" : "white");
+          if (!["white", "keep"].includes(b.refAlpha)) throw new TypeError("refAlpha must be white or keep.");
           const readiness = await qwenImageStatus({ options: { ...b, prompt: "readiness check", seed: b.seed ?? 0 } });
           if (!readiness.ready) return json(res, 400, { ...readiness, ...(readiness.missingFiles?.length ? { needsModel: QWEN_IMAGE_ENGINE } : {}) });
         } catch (err) { return json(res, 400, { error: err.message }); }
@@ -7332,6 +7341,7 @@ const server = http.createServer(async (req, res) => {
           const personaRefs = personaUsed?.refImages || [];
           const staged = await stageQwenReferences([...personaRefs, ...own], {
             inputDir: config.inputDir, coverDir: COVER_DIR, imageDir: IMAGE_DIR,
+            flatten: b.refAlpha === "white" ? imageEditor.flattenReferences : null,
           });
           if (personaUsed) personaUsed = { ...personaUsed, refImages: staged.slice(0, personaRefs.length) };
           refImages = staged.slice(personaRefs.length);
