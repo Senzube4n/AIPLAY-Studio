@@ -5266,8 +5266,9 @@ function disarmCollab() {
   if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
 }
 
+let collabVideoDraft = null, cbOpenedVideo = null;
 let collabPainted = false;
-async function paintCollab(force = false, scene = null) {
+async function paintCollab(force = false, scene = null, videoRecipe = null) {
   const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
@@ -5306,6 +5307,7 @@ async function paintCollab(force = false, scene = null) {
   await loadCollabPlan(true);
   paintCbKind();
   if (scene) selectCollabScene(scene);
+  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-recipe"; paintCbKind(); $("cbTo")?.focus?.(); }
 }
 
 function selectCollabScene({slug, segmentId}) {
@@ -5496,7 +5498,8 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
-  cbOpenedResources = null;
+  cbOpenedResources = null; cbOpenedVideo = null;
+  if ($("cbUseVideo")) $("cbUseVideo").hidden = true;
   if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
@@ -5535,6 +5538,17 @@ async function openCollabFile(file) {
         `From ${r.from.nickname || r.from.fp} (${r.from.verified ? "verified" : "NOT verified"})\n${r.describes}\n\n`
         + (r.packet?.prompt ? `The prompt they are asking you to render:\n${r.packet.prompt}\n\n` : "")
         + (r.note || "");
+    }
+    if (r.kind === "video-recipe" && r.videoRecipe) {
+      cbOpenedVideo = {file:r.file || file, video:r.videoRecipe};
+      $("cbUseVideo").hidden = false;
+      $("cbOpened").textContent = `${r.describes}
+
+${r.videoRecipe.prompt}
+
+Negative: ${r.videoRecipe.negative || "(none)"}
+Guidance: ${r.videoRecipe.guidance} · Audio: ${r.videoRecipe.keepAudio ? "keep" : "off"}
+Custom LoRAs and conditioning bridge off. Review before rendering.`;
     }
     if (r.kind === "resources" && r.packet && r.from?.fp) {
       cbOpenedResources = { fp: r.from.fp, resources: r.packet, file: r.file || file };
@@ -5804,6 +5818,7 @@ $("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return pai
 
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
+  if (kind === "video-recipe") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
   return {
     slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
@@ -5830,7 +5845,7 @@ for (const id of ["cbTo", "cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineM
 $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
   const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
-  if (body.kind !== "resources" && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  if (!["resources", "video-recipe"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
   $("cbPreview").disabled = true;
   $("cbPackNote").textContent = "Reading the exact outgoing contents…";
   const r = await cb({ action: "preview", ...body });
@@ -5838,12 +5853,12 @@ $("cbPreview")?.addEventListener("click", async () => {
   if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
   if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
   cbPreparedPreview = { id: r.previewId, key };
-  const packet = r.packet || {}, shot = packet.shot || packet, order = packet.order || {};
+  const packet = r.packet || {}, shot = packet.video || packet.shot || packet, order = packet.order || {};
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
   $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${r.describes || body.kind}`;
   $("cbPreviewPrompt").textContent = shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
-  $("cbPreviewSettings").textContent = body.kind === "shot" || body.kind === "order"
+  $("cbPreviewSettings").textContent = body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
     ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
     : r.note || "Review the full contents below.";
   $("cbPreviewManifest").innerHTML = manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
@@ -7689,6 +7704,40 @@ async function enableVideo() {
   return !!state.video.enabled;
 }
 
+function videoFriendRecipe() {
+  const [width,height]=vidWH();
+  if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
+    throw new Error("Text-only recipes only. Remove frames, references, soundtrack and loop first.");
+  if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
+  return {engine:state.video?.engine || "ltx",prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
+    ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
+}
+$("vidRecipeClear")?.addEventListener("click",()=>{state.videoRecipeLoaded=false;$("vidRecipeClear").hidden=true;$("clipNote").textContent="Recipe mode cleared.";});
+$("vidAskFriend")?.addEventListener("click",()=>{
+  try {const videoRecipe=videoFriendRecipe();setView("collab",{videoRecipe});}
+  catch(e){$("clipNote").textContent=e.message;}
+});
+$("cbUseVideo")?.addEventListener("click",async()=>{
+  const opened=cbOpenedVideo;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  if (!(await setVideoEngine(opened.video.engine))) return;
+  if (cbOpenedVideo !== opened) return;
+  const v=opened.video;
+  $("vidPrompt").value=v.prompt; $("vidNeg").value=v.negative || ""; $("vidSeed").value=String(v.seed);
+  Object.assign($("vidSecs"),{min:"1",max:"20",step:"any"});
+  Object.assign($("vidSteps"),{min:"2",max:"40",step:"1"});
+  $("vidGuide").step="any";
+  $("vidSecs").value=String(v.seconds); $("vidSteps").value=String(v.steps); $("vidGuide").value=String(v.guidance);
+  $("vidAudio").value=v.keepAudio?"1":"0"; $("vidLoop").checked=false;
+  $("vidSize").value="custom"; $("vidW").value=String(v.width); $("vidH").value=String(v.height);
+  for(const id of ["vidFrom","vidTo","vidSndSong"])$(id).value="";
+  if(state.frameUploads){delete state.frameUploads.vidFrom;delete state.frameUploads.vidTo;}
+  state.midFrames=[];state.refImages=[];state.refAudios=[];state.sndUpload=null;
+  for(const id of ["vidModel","vidEncoder","vidVideoVae","vidAudioVae"])if($(id))$(id).value="auto";
+  vidLoraStack=[];vidPaintLoras();state.videoRecipeLoaded=true;$("vidRecipeClear").hidden=false;
+  setView("video");vidPaint();$("clipNote").textContent="Friend recipe loaded. Default models; custom LoRAs and bridge off.";
+});
+
 $("vidCreate").onclick = async () => {
   if (!state.video?.enabled) {
     const go = await bottomDrawer({
@@ -7753,6 +7802,7 @@ $("vidCreate").onclick = async () => {
         seed: $("vidSeed").value.trim() ? Number($("vidSeed").value.trim()) : undefined,
         guidance: +$("vidGuide").value,
         guideStrength: +$("vidPin").value / 100,
+        ...(state.videoRecipeLoaded ? {bridge:"off",bridgeAlpha:0} : {}),
       }),
     })).json();
     if (r.error) { failSay(r); return; }
@@ -17486,7 +17536,7 @@ function setView(name, options) {
   $("imgPanel").hidden = name !== "images";
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
-  if (name === "collab") paintCollab(false, collabScene);
+  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe);
   if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models

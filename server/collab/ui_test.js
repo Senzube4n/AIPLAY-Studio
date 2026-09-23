@@ -294,3 +294,12 @@ test("movie handoff overrides a different project selected in Collab", async () 
   await f.run('paintCollab(false,{slug:"episode",segmentId:"closing"})');
   assert.equal(f.node("cbProject").value,"episode");assert.equal(f.node("cbSegment").value,"closing");assert.equal(f.node("cbKind").value,"order");
 });
+
+
+test("standalone video handoff keeps its recipe separate from movie orders",async()=>{
+ const f=fixture(); const video={engine:"ltx",prompt:"Moonlight",width:1280,height:704,seconds:5,steps:8,guidance:3,keepAudio:false,seed:42};
+ f.context.recipe=video;await f.run("paintCollab(false,null,recipe)");f.node("cbTo").value=f.peer.fp;
+ assert.equal(f.node("cbKind").value,"video-recipe");
+ assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-recipe",to:f.peer.fp,video});
+ assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
+});

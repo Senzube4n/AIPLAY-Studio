@@ -106,6 +106,7 @@ export const ROUTABLE = {
   collab_credit: null,
   collab_free: null,
   collab_orders: null,
+  collab_video_preview: null,
   collab_preview: null, // local snapshot; packing is a separate explicit write
   collab_add_peer: "writes",
   collab_set_role: "writes",

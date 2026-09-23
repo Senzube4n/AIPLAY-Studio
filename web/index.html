@@ -1144,6 +1144,8 @@
     <div class="ctawrap">
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
+        <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
+        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
     </div>
@@ -1806,6 +1808,7 @@
           </div>
 
           <div id="cbReadFace" hidden>
+            <button class="btn2" type="button" id="cbUseVideo" hidden title="Load the reviewed recipe into Video. Rendering is a separate action.">Use video recipe</button>
             <b class="subhead" id="cbReadWho">A friend sent you something to look at</b>
             <pre id="cbOpened" class="cbopened" hidden></pre>
             <div class="chips"><button class="btn sm primary" type="button" id="cbSaveResources" hidden>Save hardware card to friend</button></div>
@@ -1884,6 +1887,7 @@
               <option value="project">project document + asset manifest (no media)</option>
               <option value="resources">what this Studio can do</option>
               <option value="order">one scene for them to RENDER, and send back</option>
+              <option value="video-recipe">video recipe (from Video)</option>
             </select></span>
           </div>
           <div class="params" id="cbSegmentRow">

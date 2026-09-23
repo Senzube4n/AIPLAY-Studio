@@ -1,3 +1,4 @@
+import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
  *
@@ -4833,8 +4834,8 @@ const server = http.createServer(async (req, res) => {
             b.kind = frozen.payload.kind; b.to = frozen.peer.fp;
           }
           const kind = String(b.kind || "");
-          if (!["shot", "project", "resources", "order"].includes(kind)) {
-            return json(res, 400, { error: "kind must be shot, project, resources or order.", reason: "kind" });
+          if (!["shot", "project", "resources", "order", "video-recipe"].includes(kind)) {
+            return json(res, 400, { error: "kind must be shot, project, resources, order or video-recipe.", reason: "kind" });
           }
           const { peers } = await collabRoster.roster({ appData });
           const peer = peers.find((x) => x.fp === String(b.to || ""));
@@ -4916,6 +4917,14 @@ const server = http.createServer(async (req, res) => {
               note: "Packed exactly the reviewed snapshot. Send this file using your usual file-sharing method." });
           }
 
+          if (kind === "video-recipe") {
+            if (action !== "preview") return json(res,400,{error:"Preview this recipe before preparing it.",reason:"preview-required"});
+            const recipe=makeVideoRecipe(b.video);
+            return previewFor(recipe, `${recipe.id}-to-${peer.fp.slice(0,8)}.aiplay`, {
+              describes:describeVideoRecipe(recipe),
+              note:"Text-only recipe. Uses the receiver's default models with custom LoRAs and conditioning bridge off. Review before rendering. Return tracking is not included."
+            });
+          }
           if (kind === "resources") {
             /* ⚠ `gpuStatus()` ANSWERS FROM A CACHE a background nvidia-smi
              * fills, so the first call after a restart is null on a machine
@@ -5077,6 +5086,11 @@ const server = http.createServer(async (req, res) => {
            * sentence that names both numbers. */
           const talk = speaks(packet?.v);
           if (!talk.ok) return json(res, 409, { error: talk.why, reason: talk.reason, protocol: talk.theirs, from: { fp: sender.fp, nickname: sender.nickname } });
+          let videoRecipe = null;
+          if (packet?.kind === "video-recipe") {
+            if (!sender.verified || !["lender","collaborator"].includes(sender.role)) return json(res,403,{error:"Verify this sender and assign a role before using a video recipe.",reason:"role"});
+            videoRecipe = readVideoRecipe(packet);
+          }
           /* Their build, recorded on their row: a caption, never a gate. */
           if (packet?.by) await collabRoster.setBuild({ appData, fp: sender.fp, by: packet.by }).catch(() => {});
           return json(res, 200, {
@@ -5085,13 +5099,14 @@ const server = http.createServer(async (req, res) => {
             ...(talk.why ? { compatNote: talk.why } : {}),
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
+            ...(videoRecipe ? {videoRecipe, makeClipArgs:videoRecipeMcpArgs(packet)} : {}),
             /* The prompt as its own field: a screen must be able to show it
              * whole and unstyled rather than trimmed into a sentence. */
             ...(packet?.kind === "order" ? { prompt: String(packet.shot?.prompt || "") } : {}),
             /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
              * packet" and the four words a person is being asked to agree to
              * were only ever visible after they had already agreed. */
-            describes: packet?.kind === "resources" ? describeResources(packet, Date.now())
+            describes: videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
               : packet?.kind === "order" ? describeOrder(packet, Date.now())
                 : packet?.kind === "return" ? `A finished take for scene ${packet.segmentId} of order ${packet.orderId}, rendered on ${packet.record?.model || "their machine"}. Press Receive to check it against what you ordered.`
                   : describeAnyPacket(packet),

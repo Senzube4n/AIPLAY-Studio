@@ -22,6 +22,7 @@ node --check server/index.js || exit 1
 # *_test.{js,mjs,py} on disk must appear in this file or be exempted BY NAME
 # with a reason in the script. ~0.1 s.
 node scripts/suites_test.mjs || exit 1
+node --test server/collab/video-recipe_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_studio_persistence.mjs || exit 1

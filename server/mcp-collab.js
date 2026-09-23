@@ -1,3 +1,4 @@
+import {VIDEO_RECIPE_SCHEMA,normalizeVideoRecipe} from "./collab/video-recipe.js";
 /**
  * Collab MCP uses the same local API as the page. Tools expose reads and explicit
  * user intents, including peer verification statements, roles and acceptance.
@@ -9,6 +10,12 @@
 export function collabTools(api, safeName) {
   return [
     ...collabControlTools(api, safeName),
+    {
+      name:"collab_video_preview",
+      description:"Preview a text-only standalone video recipe for a verified friend. Uses receiver default models, with custom LoRAs and conditioning bridge off. No references, audio inputs, model overrides or remote rendering. Review the frozen preview then use collab_pack. Receiver opens with collab_open and reviews makeClipArgs before separately calling make_clip. No automated return tracking.",
+      inputSchema:{type:"object",required:["to","video"],additionalProperties:false,properties:{to:{type:"string"},video:VIDEO_RECIPE_SCHEMA}},
+      async run(a){const video=normalizeVideoRecipe(a.video);const r=await api("POST","/api/collab",{action:"preview",kind:"video-recipe",to:String(a.to||""),video});if(r?.error)throw new Error(r.error);return r;}
+    },
     {
       name: "collab_me",
       description:
