@@ -187,7 +187,7 @@ await rm(vidBase, { recursive: true, force: true });
 console.log("\nVIDEO WIRING");
 const WF = read("workflow.js");
 ok("both video graphs take named files, merged LAST so one part replaces one part",
-  /\.\.\.config\.video\.engines\.h3, \.\.\.\(models \|\| \{\}\)/.test(WF)
+  /\.\.\.\(config\.video\.engines\[engine\] \|\| config\.video\.engines\.h3\), \.\.\.\(models \|\| \{\}\)/.test(WF)
   && /\.\.\.config\.video\.engines\.ltx, \.\.\.\(models \|\| \{\}\)/.test(WF));
 /* The encoder and VAE rows arrive JUDGED, not just listed. listParts returns
  * every file in models/vae and models/text_encoders by name, which is what let
@@ -219,8 +219,8 @@ ok("on H3 a named file stands in for the reference checkpoint too, not half of i
 ok("the job carries the patch to the graph", /models: picked\.models \|\| undefined/.test(INDEX) && /models: job\.models/.test(ART));
 ok("the Video screen has all four rows", /id="vidModel"/.test(HTML) && /id="vidEncoder"/.test(HTML)
   && /id="vidVideoVae"/.test(HTML) && /id="vidAudioVae"/.test(HTML));
-ok("...the audio VAE is offered on H3 only, where the graph has one to replace",
-  /vidAudioVaeL", "vidAudioVaeW"\]\) \{ const el = \$\(id\); if \(el\) el\.hidden = eng !== "h3"; \}/.test(APP));
+ok("...the audio VAE is offered on the H3 graph (H3, FastH3), not on LTX, which has none to replace",
+  /vidAudioVaeL", "vidAudioVaeW"\]\) \{ const el = \$\(id\); if \(el\) el\.hidden = eng === "ltx"; \}/.test(APP));
 ok("...the shelf is re-read when the engine changes", /vidModelShape\(\);/.test(APP));
 ok("...and nothing is sent while every row says auto", /function vidModelChoice\(\)/.test(APP)
   && /\.\.\.vidModelChoice\(\),/.test(APP));

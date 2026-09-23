@@ -29,7 +29,8 @@ console.log("\n§1  the simple way on the Video screen");
   ok("Fast is 3 where the TaoMate build is on disk, 8 elsewhere", /const fastSteps = eng\.turbo3Ready \? 3 : 8;/.test(app) && /b\.dataset\.vq === "fast" \? \(eng\.turbo3Ready \? 3 : 8\) : b\.dataset\.vq === "standard" \? 8 : 20/.test(app));
   ok("...a click sets the slider and repaints", /\$\("vidSteps"\)\.value = String\(steps\);\n\s+vidPaint\(\);/.test(app));
   ok("...the chips light up on the slider's value", /aria-pressed", stNow === want \? "true" : "false"/.test(app));
-  ok("...and the row hides with the slider on LTX", /qRow\.hidden = cur === "ltx";/.test(app));
+  ok("...and the row hides with the slider on LTX and on a fixed-step engine (FastH3)",
+    /const noSteps = cur === "ltx" \|\| !!eng\.fixedSteps;/.test(app) && /qRow\.hidden = noSteps;/.test(app));
   ok("the status carries turbo3Ready per engine", /turbo3Ready: \/taomate\/i\.test\(String\(e\.turboLora3 \|\| ""\)\),/.test(index));
 }
 

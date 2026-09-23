@@ -2749,7 +2749,8 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       required: ["engine"],
-      properties: { engine: { type: "string", enum: ["h3", "ltx"] } },
+      properties: { engine: { type: "string", enum: ["h3", "ltx", "fasth3"],
+        description: "fasth3 = FastVideo's 8-step distillation of H3: fixed 8 steps, no references, same territory clause as H3." } },
       additionalProperties: false,
     },
     async run(a) {
@@ -2811,7 +2812,7 @@ export const TOOLS = [
       required: ["prompt"],
       properties: {
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
-        engine: { type: "string", enum: ["h3", "ltx"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected." },
+        engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
         quality: { type: "string", enum: ["fast", "best"],
           description: "fast = the distilled path: 3 steps on the TaoMate build when it is installed (studio_status says turbo3Ready), else 8 — measured as coherent and as sharp as 8 at 25–40% less wall time. best = the full model on its native schedule, measurably smoother but several times slower. Default: the engine's own default (currently 'best' on H3). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },

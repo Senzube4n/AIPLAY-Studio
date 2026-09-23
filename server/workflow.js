@@ -1791,7 +1791,8 @@ export function chainVideoLoras(g, from, loras) {
 
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
-  return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);
+  // FastH3 is H3's graph with its own settings (config.video.engines.fasth3).
+  return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3({ ...opts, engine });
 }
 
 /* How much of a reference audio clip rides into the render. The whole file
@@ -1895,8 +1896,15 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * ({dit, ditRef, textEncoder, videoVae, audioVae}). Merged
                                 * LAST so one named part replaces one part and the rest of
                                 * the engine is untouched — see server/modelpick.js. */
-                               models = null }) {
-  const v = { ...config.video, ...config.video.engines.h3, ...(models || {}) };
+                               models = null,
+                               /* Which H3-family engine: "h3" or "fasth3". And
+                                * FastH3's dense attention backend for this render,
+                                * "pytorch" or "kitchen"; unset = the engine's own. */
+                               engine = "h3", attention = undefined }) {
+  const v = { ...config.video, ...(config.video.engines[engine] || config.video.engines.h3), ...(models || {}) };
+  /* A distillation with a trained schedule runs at that schedule whatever the
+   * slider says: FastH3 is 8 steps, and 20 of them is not a better FastH3. */
+  if (v.fixedSteps) steps = v.fixedSteps;
   const w = width ?? v.width, h = height ?? v.height;
   /* A CONTINUATION renders a window of overlap + extension frames: the
    * source's last `overlapFrames` (17k+5) are anchored at frame 0 as a native
@@ -2047,6 +2055,20 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const sampler = h3SamplerFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const shiftV = shift.video, shiftA = shift.audio;
+  /* SPARSE ATTENTION — FastH3 only (config `sparseAttention`), in the order
+   * ComfyUI's FastH3 templates chain it: shift, then the dense backend, then
+   * the sparse patch, whose output feeds the guider and the scheduler. */
+  const sparse = v.sparseAttention || null;
+  const attnNodes = sparse ? {
+    80: { class_type: "ModelAttentionBackend", inputs: { model: ["6", 0],
+      attention: (attention ?? v.attention) === "kitchen" ? "comfy kitchen attention" : "pytorch attention" } },
+    81: { class_type: "BlockSparseAttention", inputs: { model: ["80", 0],
+      selection: sparse.method, "selection.keep_percent": sparse.keepPercent,
+      start_percent: sparse.startPercent, end_percent: sparse.endPercent, dense_blocks: "",
+      min_tokens: sparse.minTokens, extra_tokens: sparse.extraTokens,
+      sink_conditioning: sparse.sinkConditioning, verbose: false } },
+  } : {};
+  const SAMPLE_MODEL = sparse ? ["81", 0] : ["6", 0];
   /* ── VIDEO-TO-VIDEO ──────────────────────────────────────────────────────
    *
    * A control video drives the render frame by frame instead of one opening
@@ -2178,8 +2200,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     Object.assign(g, controlNodes, controlApply);
     g[6] = { class_type: "MiniMaxH3SigmaShift",
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA } };
-    g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
-    g[8] = { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
+    Object.assign(g, attnNodes);
+    g[7] = { class_type: "BasicGuider", inputs: { model: SAMPLE_MODEL, conditioning: [pos, 0] } };
+    g[8] = { class_type: "BasicScheduler", inputs: { model: SAMPLE_MODEL, scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
     g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } };
     g[10] = { class_type: "RandomNoise", inputs: { noise_seed: seed } };
     g[11] = { class_type: "SamplerCustomAdvanced",
@@ -2235,8 +2258,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // The LoRA'd model on the fast path, the bare one on the quality path.
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA },
     },
-    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [cont ? "74" : sound ? "23" : BASE, 0] } },
-    8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
+    ...attnNodes,
+    7: { class_type: "BasicGuider", inputs: { model: SAMPLE_MODEL, conditioning: [cont ? "74" : sound ? "23" : BASE, 0] } },
+    8: { class_type: "BasicScheduler", inputs: { model: SAMPLE_MODEL, scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     11: {

@@ -2669,6 +2669,11 @@ const server = http.createServer(async (req, res) => {
                * the day the 4-step build was added. */
               turboMaxSteps: e.turboMaxSteps ?? null, turbo4MaxSteps: e.turbo4MaxSteps ?? null,
               turbo3MaxSteps: e.turbo3MaxSteps ?? null,
+              /* A distillation that runs at one step count (FastH3: 8) and its
+               * attention choice: the screen hides the step slider for it and
+               * shows the attention picker instead. */
+              fixedSteps: e.fixedSteps ?? null,
+              attention: e.sparseAttention ? (e.attention || "pytorch") : null,
               /* Whether the 3-step distillation is actually on disk: config
                * falls back to the 4-step file at these step counts otherwise,
                * and a 4-step LoRA sampled at 3 is the wrong model. make_clip's
@@ -6039,7 +6044,9 @@ const server = http.createServer(async (req, res) => {
          * message points at the real substitute rather than just saying no. */
         if ((refImages.length || refAudios.length) && eng !== "h3") {
           return json(res, 400, {
-            error: "References need MiniMax H3 — LTX has no reference input (a model limit, not a setting). On LTX: compose the identity still first (Images can edit with references), then use it as the opening frame.",
+            error: eng === "fasth3"
+              ? "References need MiniMax H3. FastH3 was distilled without them; switch the engine to MiniMax H3 for this clip."
+              : "References need MiniMax H3 — LTX has no reference input (a model limit, not a setting). On LTX: compose the identity still first (Images can edit with references), then use it as the opening frame.",
           });
         }
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
@@ -6112,8 +6119,11 @@ const server = http.createServer(async (req, res) => {
              * ask gets a big budget instead of being killed mid-render. */
             width: Math.min(Math.max(Number(b.width) || videoEngine(eng).width, 256), 3840),
             height: Math.min(Math.max(Number(b.height) || videoEngine(eng).height, 256), 3840),
-            steps: Math.min(Math.max(Number(b.steps) || videoEngine(eng).steps || 20, 2), 40),
+            // A fixed-schedule distillation (FastH3) records the steps it will run.
+            steps: videoEngine(eng).fixedSteps || Math.min(Math.max(Number(b.steps) || videoEngine(eng).steps || 20, 2), 40),
             keepAudio: b.keepAudio !== false,
+            // FastH3's dense attention backend; anything else means its default.
+            attention: b.attention === "kitchen" || b.attention === "pytorch" ? b.attention : undefined,
             negative: typeof b.negative === "string" ? b.negative.slice(0, 500) : undefined,
             // One dial for both CFG scales — see videoGraphLtx for why they must
             // not be settable apart.

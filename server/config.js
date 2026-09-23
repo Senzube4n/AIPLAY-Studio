@@ -1681,6 +1681,42 @@ export const config = {
  * exists would otherwise be accepted at boot and fail much later, somewhere
  * that cannot explain itself.
  */
+/* ── FastH3 ──────────────────────────────────────────────────────────────
+ * FastVideo's DMD2 distillation of MiniMax H3 (FastVideo/FastVideo-FastH3-Comfy):
+ * eight steps with no turbo LoRA, the same text encoder and VAEs as H3, and
+ * trained against VSA sparse attention. Built on H3's settings so sizes, frame
+ * rule and soundtrack behave the same; everything below is what differs,
+ * copied from ComfyUI's own video_fastvideo_fasth3 templates.
+ *
+ * No references: FastH3 distilled t2va and fl2va only, so the route and the
+ * Video screen keep references to H3 exactly as they do for LTX. */
+config.video.engines.fasth3 = {
+  ...config.video.engines.h3,
+  label: "FastH3",
+  dit: pick("diffusion_models",
+    "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+    "fastvideo_fasth3_8step_v2_pruned_bf16.safetensors",
+    "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors"),
+  ditRef: null,
+  // A distillation already: none of H3's turbo LoRAs load on top of it.
+  turboLora: null, turboLora4: null, turboLora3: null, refTurboLora: null, refTurboLora4: null,
+  turboMaxSteps: 0, turbo4MaxSteps: 0, turbo3MaxSteps: 0, turboShiftByLora: {},
+  bridge: "off",
+  // The trained schedule: 8 steps, res_multistep, video shift 10 (not H3's 12).
+  steps: 8, fixedSteps: 8,
+  sampler: "res_multistep", scheduler: "simple",
+  shiftVideo: 10, shiftAudio: 3,
+  /* The checkpoint was trained with FastVideo's VSA at 10% of video cubes.
+   * ComfyUI's BlockSparseAttention runs dense wherever its kernel is missing,
+   * so a card without one still renders, only without the speed-up. */
+  sparseAttention: { method: "vsa", keepPercent: 10, startPercent: 0.2, endPercent: 1,
+    minTokens: 12288, extraTokens: 256, sinkConditioning: "exact_kv_and_rows" },
+  /* The dense attention it falls back to. "pytorch" by default; "kitchen" is
+   * Comfy Kitchen's INT8 attention (the template's choice), picked per render
+   * on the Video screen. ComfyUI falls back to PyTorch where Kitchen is absent. */
+  attention: "pytorch",
+};
+
 const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
 config.music.engines["yue2-gguf"] = {
   label: "YuE2 GGUF · Q4 / Q8 · non-commercial",

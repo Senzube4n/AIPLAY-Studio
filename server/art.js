@@ -1491,6 +1491,8 @@ export class ArtRunner extends EventEmitter {
       audioTrack: job.audioTrack,
       continueFrom: job.continueFrom || null,
       bridge: job.bridge, bridgeAlpha: job.bridgeAlpha,
+      // FastH3's dense attention backend ("pytorch" | "kitchen"); others ignore it.
+      attention: job.attention,
       negative: job.negative, guidance: job.guidance, guideStrength: job.guideStrength,
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.

@@ -671,6 +671,8 @@ node --test server/gpu_test.js || exit 1
 node --test server/download_test.js || exit 1
 # Changing the models folder keeps what is already downloaded.
 node --test server/modelsdir_test.js || exit 1
+# FastH3: the third video engine's graph, its attention pair and its download row.
+node --test server/fasth3_test.js || exit 1
 # Your own LoRAs on the Video screen reach both video graphs.
 node --test server/video_lora_test.js || exit 1
 node --test server/power_test.js || exit 1

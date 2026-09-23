@@ -6947,13 +6947,20 @@ function vidPaint() {
     : "Video is switched off. Press Render and Studio asks to switch it on.";
   $("vidEngineNote").textContent = cur === "ltx"
     ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
+    : eng.fixedSteps
+    ? "H3 distilled to " + eng.fixedSteps + " fixed steps, with sound; references need MiniMax H3."
     : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references — pictures and sounds the description can call by name.";
   // LTX has no single step count — it is baked into two fixed sigma schedules.
+  // FastH3 has one, and it is fixed (eng.fixedSteps): no slider for either.
+  const noSteps = cur === "ltx" || !!eng.fixedSteps;
   const stepRow = $("vidSteps").closest(".pv");
   if (stepRow) {
-    stepRow.hidden = cur === "ltx";
-    if (stepRow.previousElementSibling) stepRow.previousElementSibling.hidden = cur === "ltx";
+    stepRow.hidden = noSteps;
+    if (stepRow.previousElementSibling) stepRow.previousElementSibling.hidden = noSteps;
   }
+  /* FastH3's dense attention backend. Only an engine that sends `attention`
+   * has the choice; the others never show the row. */
+  for (const id of ["vidAttnL", "vidAttnW"]) { const el = $(id); if (el) el.hidden = !eng.attention; }
   $("vidSecsV").textContent = $("vidSecs").value + "s";
   $("vidStepsV").textContent = $("vidSteps").value;
   /* The quality chips are the step slider in three words; they hide with it
@@ -6961,7 +6968,7 @@ function vidPaint() {
    * Fast reads the server: 3 where the TaoMate build is on disk, else 8. */
   const qRow = $("vidQualityRow");
   if (qRow) {
-    qRow.hidden = cur === "ltx";
+    qRow.hidden = noSteps;
     const fastSteps = eng.turbo3Ready ? 3 : 8;
     const stNow = +$("vidSteps").value;
     for (const b of qRow.querySelectorAll("[data-vq]")) {
@@ -7070,7 +7077,7 @@ function vidPaint() {
     ? Math.round(+$("vidSecs").value * fps) + 1
     : alignedFrames(+$("vidSecs").value);
   const mpxf = (w * h * frames) / 1e6;
-  const stepScale = cur === "ltx" ? 1 : (+$("vidSteps").value) / 8;
+  const stepScale = cur === "ltx" ? 1 : (eng.fixedSteps || +$("vidSteps").value) / 8;
   const secs = Math.round((eng.costFixedSeconds ?? 15)
     + (eng.costRate ?? 0.84) * Math.pow(mpxf, eng.costExponent ?? 1.2) * stepScale);
 
@@ -7103,13 +7110,14 @@ function vidPaint() {
    * than quietly used: 4 for the matched build, or 13+ for the bare model on
    * its native schedule (measured cleanest at 20 with shift 12). */
   const hasRefs = ((state.refImages || []).length + (state.refAudios || []).length) > 0;
-  const stepPath = cur === "ltx" ? ""
+  const fixedPath = cur === "ltx" || !!eng.fixedSteps;
+  const stepPath = fixedPath ? ""
     : st <= t4 ? " · " + t4 + "-step turbo path"
     : st <= t8 ? (hasRefs ? " · " + t4 + "-step build run at " + st + " steps"
                           : " · 8-step turbo path")
     : " · full-model path";
-  const refMismatch = cur !== "ltx" && hasRefs && st > t4 && st <= t8;
-  const betweenBuilds = cur !== "ltx" && !hasRefs && st > t4 && st < 8;
+  const refMismatch = !fixedPath && hasRefs && st > t4 && st <= t8;
+  const betweenBuilds = !fixedPath && !hasRefs && st > t4 && st < 8;
 
   $("vidEst").textContent = on
     ? "about " + fmt(secs) + " once the engine is idle · " + frames + " frames at " + fps + " fps"
@@ -7131,6 +7139,11 @@ function vidPaint() {
 }
 
 for (const id of ["vidSecs", "vidSteps", "vidSize", "vidW", "vidH", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
+/* The attention choice is remembered on this browser only; PyTorch until changed. */
+if ($("vidAttn")) {
+  try { const a = localStorage.getItem("aiplayVidAttn"); if (a === "pytorch" || a === "kitchen") $("vidAttn").value = a; } catch { /* storage blocked */ }
+  $("vidAttn").onchange = () => { try { localStorage.setItem("aiplayVidAttn", $("vidAttn").value); } catch { /* not kept */ } };
+}
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
@@ -7227,7 +7240,7 @@ async function vidModelShape() {
       : "";
   }
   /* LTX has no audio decoder in its graph, so there is nothing to replace. */
-  for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng !== "h3"; }
+  for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng === "ltx"; }
   vidLoadLoras();
 }
 
@@ -7929,6 +7942,8 @@ $("vidCreate").onclick = async () => {
         fromUpload: state.frameUploads?.vidFrom?.name,
         seconds: +$("vidSecs").value, steps: +$("vidSteps").value,
         width, height, keepAudio: $("vidAudio").value === "1",
+        // FastH3 only: its dense attention backend. Other engines never send it.
+        attention: state.video?.engines?.[state.video?.engine]?.attention ? $("vidAttn").value : undefined,
         loop: $("vidLoop").checked && !!$("vidFrom").value,
         // Ignored by the server when `loop` is set — the loop IS the closing
         // frame — but sent regardless so unticking loop restores the choice.
@@ -8061,7 +8076,7 @@ function clipGroupsOf(rows, mode) {
   for (const c of rows) {
     const m = c.meta || {};
     if (mode === "engine") {
-      const e = m.engine === "ltx" ? "LTX 2.5" : m.engine === "h3" ? "MiniMax H3" : "Unknown engine";
+      const e = m.engine === "ltx" ? "LTX 2.5" : m.engine === "h3" ? "MiniMax H3" : m.engine === "fasth3" ? "FastH3" : "Unknown engine";
       put(`c:e:${e}`, e, c);
     } else if (mode === "track") {
       // A clip made on its own has no song above it, and saying so is more use
@@ -8115,7 +8130,7 @@ function clipCard(c) {
     const m = c.meta || {};
     const stem = c.name.replace(/\.(mp4|webm)$/, "");
     const badges = [
-      m.engine === "ltx" ? "LTX" : m.engine === "h3" ? "H3" : null,
+      m.engine === "ltx" ? "LTX" : m.engine === "h3" ? "H3" : m.engine === "fasth3" ? "FastH3" : null,
       m.loop ? "loop" : null,
       m.width && m.height ? `${m.width}×${m.height}` : null,
     ].filter(Boolean);

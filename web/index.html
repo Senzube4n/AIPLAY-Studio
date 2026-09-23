@@ -1036,6 +1036,15 @@
       <span class="pv"><input id="vidSecs" type="range" min="1" max="15" step="1" value="5"><b id="vidSecsV">5s</b></span>
       <label for="vidSteps">steps</label>
       <span class="pv"><input id="vidSteps" type="range" min="3" max="28" step="1" value="20"><b id="vidStepsV">20</b></span>
+      <!-- FastH3's dense attention backend (web/app.js vidPaint shows it only
+           for an engine that has the choice). Kitchen is Comfy Kitchen's INT8
+           attention; ComfyUI uses PyTorch where Kitchen is missing. -->
+      <label for="vidAttn" id="vidAttnL" hidden>attention</label>
+      <span class="pv" id="vidAttnW" hidden><select id="vidAttn" class="sel2"
+          title="Kitchen INT8 is faster where its kernels exist; ComfyUI falls back to PyTorch elsewhere.">
+        <option value="pytorch">PyTorch</option>
+        <option value="kitchen">Kitchen INT8</option>
+      </select></span>
       <label for="vidSize">size</label>
       <span class="pv"><!-- Populated per engine: H3 native 1344x768 is not a legal LTX size,
            and LTX quantises to a 32px latent grid after halving. -->
