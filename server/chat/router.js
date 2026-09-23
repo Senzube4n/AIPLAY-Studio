@@ -515,6 +515,15 @@ export const ROUTABLE = {
   avatar_list: null,
   avatar_inspect: null,
   avatar_import: null,
+  avatar_install_example: null,
+  avatar_appearance_inventory: null,
+  avatar_appearance_list: null,
+  avatar_appearance_get: null,
+  avatar_appearance_save: null,
+  avatar_appearance_delete: null,
+  avatar_appearance_active: null,
+  avatar_appearance_activate: null,
+
   avatar_export: null,
 };
 

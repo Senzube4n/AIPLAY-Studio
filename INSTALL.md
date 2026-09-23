@@ -271,20 +271,36 @@ you will read is comments explaining each one. Here is what that is.
 
 1. **Checks for Node.js.** If it is missing, it says so and stops. Nothing else
    happens.
-2. **Fetches three dependencies** on first run. That is the entire list — they
-   pull nothing else in behind them — and it takes a few seconds:
+2. **Fetches npm dependencies** on first run. The four direct packages are:
 
    | Package | Licence | What it is for |
    | --- | --- | --- |
    | `ws` | MIT | WebSockets: following a ComfyUI job's progress, and the live panels in the app |
-   | `three` | MIT | The 3D renderer for the avatar review viewer. Served to your browser from `node_modules`, not bundled |
-   | `gltf-validator` | Apache-2.0 (Khronos) | The official glTF validator every uploaded avatar GLB is checked with |
+   | `three` | MIT | The 3D renderer, served to your browser from `node_modules` |
+   | `gltf-validator` | Apache-2.0 (Khronos) | The official glTF validator used for uploaded avatars |
+   | `@pixiv/three-vrm` | MIT (pixiv Inc.) | Local VRM avatars, expressions, MToon materials and spring bones |
 
-   **All three are required to start.** None of them is an optional extra: the
-   server imports the validator at the top of `server/mesh/avatar.js`, which
-   `server/index.js` imports, so Studio does not boot without them. If you
-   updated an older copy of this repository in place, delete `node_modules` and
-   let the launcher fetch them again.
+   The VRM package also installs these thirteen transitive packages, all at
+   version 3.5.5 under the MIT licence (copyright 2019-2026 pixiv Inc.):
+
+   - `@pixiv/three-vrm-core`
+   - `@pixiv/three-vrm-materials-hdr-emissive-multiplier`
+   - `@pixiv/three-vrm-materials-mtoon`
+   - `@pixiv/three-vrm-materials-v0compat`
+   - `@pixiv/three-vrm-node-constraint`
+   - `@pixiv/three-vrm-springbone`
+   - `@pixiv/types-vrm-0.0`
+   - `@pixiv/types-vrmc-materials-hdr-emissive-multiplier-1.0`
+   - `@pixiv/types-vrmc-materials-mtoon-1.0`
+   - `@pixiv/types-vrmc-node-constraint-1.0`
+   - `@pixiv/types-vrmc-springbone-1.0`
+   - `@pixiv/types-vrmc-springbone-extended-collider-1.0`
+   - `@pixiv/types-vrmc-vrm-1.0`
+
+   The server imports the glTF validator at startup; the VRM packages provide
+   the browser's avatar runtime. Both launchers fetch missing direct packages.
+   After updating an older copy, run `npm install --omit=dev` in the Studio
+   folder to reconcile the complete dependency graph with `package-lock.json`.
 3. **Finds your ComfyUI.** It looks in your home folder, Documents, Desktop, and
    on every drive from C: to F: for `ComfyUI`, `AI`, `AI\ComfyUI`,
    `ComfyUI_windows_portable` and `StabilityMatrix` — and one level inside each

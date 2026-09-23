@@ -6,6 +6,9 @@ import { readFile, writeFile, mkdir, rename, readdir, stat } from 'node:fs/promi
 import validator from 'gltf-validator';
 import { readGlb, assertSkinned } from './glb.js';
 import { deformReport } from './deform.js';
+import { createExampleInstaller, AVATAR_EXAMPLE } from './avatar-example.js';
+import { createAppearanceService } from './appearance.js';
+import { VRM_LIMITS, VRM_EXTENSIONS, inspectVrmDocument } from './vrm-profile.js';
 
 export const AVATAR_LIMITS = Object.freeze({ bytes: 8*1024*1024, triangles: 30000, materials: 4, joints: 96, textureSide: 1024, texturePixels: 4*1024*1024 });
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
@@ -32,16 +35,20 @@ function dimensions(bytes, mime) {
   throw fault('Every texture must be an embedded, readable PNG or JPEG.');
 }
 
-export async function inspectAvatar(bytes) {
-  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length>AVATAR_LIMITS.bytes) throw fault('Avatar GLB must be nonempty and at most 8 MiB.', 413);
+export async function inspectAvatar(bytes, profile="world") {
+  if(!["world","vrm"].includes(profile)) throw fault("Unknown avatar profile.");
+  const limits=profile==="vrm"?VRM_LIMITS:AVATAR_LIMITS;
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length>limits.bytes) throw fault(`Avatar must be nonempty and at most ${limits.bytes/1024/1024} MiB.`, 413);
   const g=readGlb(bytes);
   if (!g.ok) throw fault(g.why.join('; '),422);
   const j=g.json;
   if (j.buffers?.some(b=>b.uri) || j.images?.some(i=>i.uri)) throw fault('Embed all buffers and textures in the GLB; external and data URIs are not accepted.',422);
   // A review viewer must not load extensions it cannot faithfully render.
   const allowed=new Set(['KHR_materials_unlit','KHR_materials_emissive_strength','KHR_texture_transform']);
-  const unsupported=(j.extensionsUsed||[]).filter(x=>!allowed.has(x));
+  if(profile==='vrm') for(const extension of VRM_EXTENSIONS) allowed.add(extension);
+  const unsupported=[...new Set([...(j.extensionsUsed||[]),...(j.extensionsRequired||[])])].filter(x=>!allowed.has(x));
   if (unsupported.length) throw fault(`Export standard PBR without unsupported extensions: ${unsupported.join(', ')}.`,422);
+  const vrm=profile==='vrm'?inspectVrmDocument(j):null;
   if ((j.nodes?.length||0)>512 || (j.accessors?.length||0)>4096 || (j.animations?.length||0)>32) throw fault('Avatar scene exceeds the local review complexity limit.',422);
   const report=await validator.validateBytes(new Uint8Array(bytes), {format:'glb', maxIssues:100, externalResourceFunction:()=>Promise.reject(new Error('External resources are disabled.'))});
   if (report.issues.numErrors) throw fault(`glTF validation failed: ${report.issues.messages.filter(x=>x.severity===0).slice(0,6).map(x=>`${x.code}: ${x.message}`).join('; ')}`,422);
@@ -67,7 +74,7 @@ export async function inspectAvatar(bytes) {
     ? `The skin binds but does not deform: ${deform.why.join('; ')}`
     : `The skin could not be posed, so it was not shown to deform (this is not a pass): ${deform.why.join('; ')}`,422);
   const allJoints=new Set((j.skins||[]).flatMap(s=>s.joints));
-  if (allJoints.size>AVATAR_LIMITS.joints) throw fault('Avatar exceeds the 96-joint budget.',422);
+  if (allJoints.size>limits.joints) throw fault(`Avatar exceeds the ${limits.joints}-joint budget.`,422);
   let triangles=0, primitives=0;
   for (const mesh of j.meshes||[]) for (const p of mesh.primitives||[]) {
     if ((p.mode??4)!==4) throw fault('Avatar primitives must be triangles.',422);
@@ -75,16 +82,16 @@ export async function inspectAvatar(bytes) {
     if (!Number.isInteger(p.material) || !j.materials?.[p.material]) throw fault('Every primitive needs an explicit PBR material.',422);
   }
   const materials=j.materials?.length||0;
-  if (triangles>AVATAR_LIMITS.triangles || materials>AVATAR_LIMITS.materials || primitives>16) throw fault('Avatar exceeds 30,000 triangles, four materials or 16 primitives.',422);
+  if (triangles>limits.triangles || materials>limits.materials || primitives>(vrm?128:16)) throw fault(`Avatar exceeds ${limits.triangles} triangles, ${limits.materials} materials or ${vrm?128:16} primitives.`,422);
   const textures=(j.images||[]).map((image,index)=>{
     const v=j.bufferViews?.[image.bufferView];
     if (!v || v.buffer!==0) throw fault('Texture must use the embedded binary buffer.',422);
     const [width,height]=dimensions(g.binData.subarray(v.byteOffset||0,(v.byteOffset||0)+v.byteLength),image.mimeType);
-    if (!width || !height || width>1024 || height>1024) throw fault('Texture dimensions exceed 1024 pixels.',422);
+    if (!width || !height || width>limits.textureSide || height>limits.textureSide) throw fault(`Texture dimensions exceed ${limits.textureSide} pixels.`,422);
     return {index,width,height,mimeType:image.mimeType};
   });
   const texturePixels=textures.reduce((n,t)=>n+t.width*t.height,0);
-  if (texturePixels>AVATAR_LIMITS.texturePixels) throw fault('Combined textures exceed four megapixels.',422);
+  if (texturePixels>limits.texturePixels) throw fault('Combined textures exceed the selected profile budget.',422);
   const clips=(j.animations||[]).map((clip,index)=>{
     const ends=clip.samplers.map(s=>j.accessors[s.input].max?.[0]??0);
     return {index,name:clip.name||`Animation ${index+1}`,duration:Math.max(0,...ends),channels:clip.channels.length};
@@ -97,12 +104,12 @@ export async function inspectAvatar(bytes) {
   if (!textures.length) warnings.push('No image textures; material colours only.');
   if (missingClips.length) warnings.push(`Missing own embedded clips: ${missingClips.join(', ')}.`);
   if (anchors.length<4) warnings.push('Chest, back and both hand attachment anchors are not all present.');
-  return {sha256:digest(bytes),bytes:bytes.length,triangles,primitives,materials,joints:allJoints.size,jointNames,textures,texturePixels,clips,anchors,
+  return {profile,vrm,sha256:digest(bytes),bytes:bytes.length,triangles,primitives,materials,joints:allJoints.size,jointNames,textures,texturePixels,clips,anchors,
     validation:{validator:validator.version(),errors:0,warnings},missingClips,
     deformation:{state:deform.state,strain:deform.strain,joint:deform.jointName,probeDegrees:deform.probeDegrees,
       minStrain:deform.minStrain,sampled:deform.sampled,vertices:deform.vertices,probedJoints:deform.probedJoints,
       crossCheck:deform.cross.state,crossAgreed:deform.agree},
-    state:'needs_visual_review',limits:AVATAR_LIMITS,
+    state:'needs_visual_review',limits,
     caveat:'The skin was posed and its vertices really move, but that is existence, not quality: structural validation does not verify identity, deformation QUALITY (weights, volume loss, candy-wrapper twists), in-place motion, phone performance or account ownership. The Blender cross-check is UNRUN on this path, which is not a second opinion in favour.'};
 }
 
@@ -126,6 +133,8 @@ export function createAvatarService({directory,record=async()=>{}}) {
     return rows.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
   }
   async function importAsset(input,actor='system') {
+    const profile=input.profile||'world', limits=profile==='vrm'?VRM_LIMITS:AVATAR_LIMITS;
+    if(!['world','vrm'].includes(profile)) throw fault('Unknown avatar profile.');
     const name=text(input.name,'Name',100), license=text(input.license,'License/provenance',2000), source=text(input.source,'Source description',2000);
     const family=text(input.skeleton_family,'Skeleton family',100);
     const facing=input.facing;
@@ -135,15 +144,15 @@ export function createAvatarService({directory,record=async()=>{}}) {
     if(Boolean(input.path)===Boolean(input.data_base64)) throw fault('Supply exactly one local path or base64 GLB upload.');
     let bytes;
     if(input.path) {
-      if(!path.isAbsolute(input.path)||path.extname(input.path).toLowerCase()!=='.glb') throw fault('Use an absolute local .glb path.');
-      const info=await stat(input.path); if(!info.isFile()||info.size>AVATAR_LIMITS.bytes) throw fault('Input is not a GLB file within the 8 MiB limit.',413);
+      if(!path.isAbsolute(input.path)||!(profile==='vrm'?['.vrm','.glb']:['.glb']).includes(path.extname(input.path).toLowerCase())) throw fault('Use an absolute local GLB or VRM path for the selected profile.');
+      const info=await stat(input.path); if(!info.isFile()||info.size>limits.bytes) throw fault(`Input exceeds the ${limits.bytes/1024/1024} MiB profile limit.`,413);
       bytes=await readFile(input.path);
     } else {
-      if(typeof input.data_base64!=='string'||input.data_base64.length>Math.ceil(AVATAR_LIMITS.bytes*4/3)+4||input.data_base64.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data_base64)) throw fault('Invalid base64 GLB upload.');
+      if(typeof input.data_base64!=='string'||input.data_base64.length>Math.ceil(limits.bytes*4/3)+4||input.data_base64.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data_base64)) throw fault('Invalid base64 GLB upload.');
       bytes=Buffer.from(input.data_base64,'base64');
       if(bytes.toString('base64')!==input.data_base64) throw fault('Invalid base64 GLB upload.');
     }
-    const inspection=await inspectAvatar(bytes),id=`av_${randomUUID()}`;
+    const inspection=await inspectAvatar(bytes,profile),id=`av_${randomUUID()}`;
     const row={schema:1,id,name,createdAt:new Date().toISOString(),actor,personaAttribution:{personaId,authority:'unverified source attribution; not an account binding'},source,license,skeletonFamily:family,coordinates:{units:'metres',up:'+Y',facing,declaredBy:actor},inspection,
       review:{state:'pending',note:'Inspect identity, skin deformation, foot contact, in-place motion and attachments before world adoption.'},
       files:{glb:`/api/avatars/${id}/avatar.glb`,manifest:`/api/avatars/${id}/manifest.json`},previewUrl:`/avatars.html?id=${id}`};
@@ -154,7 +163,7 @@ export function createAvatarService({directory,record=async()=>{}}) {
     await rename(path.join(idPath(id),'manifest.tmp'),path.join(idPath(id),'manifest.json'));
     return row;
   }
-  async function inspect(id) { const {row,bytes}=await file(id); return {...row,inspection:await inspectAvatar(bytes)}; }
+  async function inspect(id) { const {row,bytes}=await file(id); return {...row,inspection:await inspectAvatar(bytes,row.inspection.profile||"world")}; }
   async function exportAsset(id,actor='system') {
     const row=await inspect(id);
     await record({type:'export',actor,asset:`avatar/${id}`,data:{sha256:row.inspection.sha256,destination:'local handoff',reviewState:row.review.state}});
@@ -173,6 +182,8 @@ function localRequest(req) {
 }
 export function createAvatarRoutes({directory,json,provenance}) {
   const service=createAvatarService({directory,record:event=>provenance.append('library',event)});
+  const installExample=createExampleInstaller(service);
+  const appearance=createAppearanceService({directory:path.join(directory,'looks'),inspectAsset:service.file,record:event=>provenance.append('library',event)});
   const vendor=new Map([
     ['three.module.js','build/three.module.js'],['three.core.js','build/three.core.js'],
     ['loaders/GLTFLoader.js','examples/jsm/loaders/GLTFLoader.js'],['controls/OrbitControls.js','examples/jsm/controls/OrbitControls.js'],
@@ -184,30 +195,45 @@ export function createAvatarRoutes({directory,json,provenance}) {
     try {
       localRequest(req);
       res.setHeader('Cache-Control','private, no-store'); res.setHeader('X-Content-Type-Options','nosniff');
+      if(req.method==='GET'&&['/api/avatars/vendor/three-vrm.module.js','/api/avatars/vendor/three-vrm-LICENSE'].includes(url.pathname)) {
+        const name=url.pathname.endsWith('LICENSE')?'LICENSE':'lib/three-vrm.module.js';
+        const bytes=await readFile(fileURLToPath(new URL(`../../node_modules/@pixiv/three-vrm/${name}`,import.meta.url)));
+        res.writeHead(200,{'Content-Type':name==='LICENSE'?'text/plain':'text/javascript; charset=utf-8'});res.end(bytes);return true;
+      }
       const module=vendor.get(url.pathname.replace('/api/avatars/vendor/',''));
       if(req.method==='GET'&&url.pathname.startsWith('/api/avatars/vendor/')&&module) {
         const bytes=await readFile(fileURLToPath(new URL(`../../node_modules/three/${module}`,import.meta.url)));
         res.writeHead(200,{'Content-Type':module==='LICENSE'?'text/plain':'text/javascript; charset=utf-8'});res.end(bytes);return true;
       }
-      const match=url.pathname.match(/^\/api\/avatars\/(av_[a-f0-9-]{36})\/(avatar\.glb|manifest\.json)$/);
+      const match=url.pathname.match(/^\/api\/avatars\/(av_[a-f0-9-]{36})\/(avatar\.glb|manifest\.json|appearance\.json)$/);
       if(req.method==='GET'&&match) {
         const {row,bytes}=await service.file(match[1]);
+        if(match[2]==='appearance.json') {json(res,200,await appearance.active(match[1]));return true;}
         if(match[2]==='manifest.json') {json(res,200,row);return true;}
         res.writeHead(200,{'Content-Type':'model/gltf-binary','Content-Length':bytes.length,'Content-Disposition':`inline; filename="${match[1]}.glb"`});res.end(bytes);return true;
       }
       if(url.pathname!=='/api/avatars') throw fault('Avatar route not found.',404);
-      if(req.method==='GET') {json(res,200,{avatars:await service.list(),limits:AVATAR_LIMITS});return true;}
+      if(req.method==='GET') {json(res,200,{avatars:await service.list(),limits:AVATAR_LIMITS,vrmLimits:VRM_LIMITS,example:AVATAR_EXAMPLE});return true;}
       if(req.method!=='POST') throw fault('Use GET or POST.',405);
       if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||'')) throw fault('Avatar POST requires application/json.',415);
-      const limit=Math.ceil(AVATAR_LIMITS.bytes*4/3)+10000,chunks=[];let size=0;
-      for await(const part of req) {size+=part.length;if(size>limit)throw fault('Avatar request exceeds 8 MiB upload limit.',413);chunks.push(part);}
+      const limit=Math.ceil(VRM_LIMITS.bytes*4/3)+10000,chunks=[];let size=0;
+      for await(const part of req) {size+=part.length;if(size>limit)throw fault('Avatar request exceeds 64 MiB upload limit.',413);chunks.push(part);}
       let b;try{b=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw fault('Invalid JSON.');}
       if(!b||typeof b!=='object'||Array.isArray(b))throw fault('Request must be an object.');
       const actor=provenance.actorFrom(req);let result;
-      if(b.action==='import') result=await service.importAsset(b,actor);
+      const {action,...input}=b;
+      if(action==='install_example') result=await installExample(actor);
+      else if(action==='appearance_inventory') result=await appearance.inventory(b.id);
+      else if(action==='appearance_list') result=await appearance.list(b.id);
+      else if(action==='appearance_get') result=await appearance.get(b.id,b.look_id);
+      else if(action==='appearance_save') result=await appearance.save(input,actor);
+      else if(action==='appearance_delete') result=await appearance.remove(input,actor);
+      else if(action==='appearance_active') result=await appearance.active(b.id);
+      else if(action==='appearance_activate') result=await appearance.activate(input,actor);
+      else if(b.action==='import') result=await service.importAsset(b,actor);
       else if(b.action==='inspect')result=await service.inspect(b.id);
-      else if(b.action==='export')result=await service.exportAsset(b.id,actor);
-      else throw fault('Action must be import, inspect or export.');
+      else if(b.action==='export'){result=await service.exportAsset(b.id,actor);const look=await appearance.active(b.id);if(look)result={...result,appearance:look,files:{...result.files,look:`/api/avatars/${b.id}/appearance.json`}};}
+      else throw fault('Unknown avatar action.');
       json(res,200,result);
     } catch(e) {json(res,e.status||500,{error:e.message});}
     return true;

@@ -22,6 +22,9 @@ node --check server/index.js || exit 1
 # *_test.{js,mjs,py} on disk must appear in this file or be exempted BY NAME
 # with a reason in the script. ~0.1 s.
 node scripts/suites_test.mjs || exit 1
+node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-runtime_test.js || exit 1
+node --check web/avatar-runtime.js || exit 1
+node --check web/avatar-appearance.js || exit 1
 node --test server/collab/video-recipe_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
@@ -447,6 +450,7 @@ ADAPTER_PY="$PY"
 # thousands of green lines. Each candidate must print its own path to count.
 [ -x "$ADAPTER_PY" ] || ADAPTER_PY="$(python3 -c "import sys;print(sys.executable)" 2>/dev/null || python -c "import sys;print(sys.executable)" 2>/dev/null)"
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_adapter_test.py || exit 1; fi
+if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_native_attention_test.py || exit 1; fi
 # Matte regression images need OpenCV/numpy, but no model or GPU.
 MATTE_PY="${AIPLAY_MESH_PYTHON:-${AIPLAY_RIG:-}/venv3d/Scripts/python.exe}"
 if [ -x "$MATTE_PY" ]; then "$MATTE_PY" server/mesh/matte_test.py || exit 1

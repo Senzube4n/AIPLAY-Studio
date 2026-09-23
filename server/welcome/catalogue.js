@@ -577,32 +577,21 @@ const TABS = [
   {
     id: "avatars", icon: "◇", name: "3D", group: "make",
     lead:
-      "A review bench for a rigged character you already have. Import a self-contained GLB and it is "
-      + "checked twice: once by the Khronos glTF validator, and once against its own bytes, to see "
-      + "whether the skin is REAL rather than merely declared — joints that exist as nodes, that share "
-      + "one root, and that the mesh's own weights actually address. Then you look at it, which is the "
-      + "half no file check can do: orbit the mesh, turn the skeleton and the wireframe on, play the "
-      + "clips the file brought with it and scrub them frame by frame. When it holds up, prepare a "
-      + "handoff — the GLB and its manifest together, with who imported it and what they claimed about "
-      + "its rights recorded beside it.",
-    makes: ["A local shelf of characters that passed validation", "A joint, texture, clip and anchor inventory for each rig", "A GLB and manifest packaged for a world to import"],
-    start: "Import a rigged .glb, then orbit it and play its own clips before you trust it.",
-    /* Genuinely nothing to fetch. The Khronos validator and the three.js viewer
-     * are npm dependencies that arrive with the app, there are no weights, and
-     * nothing on this screen touches the card the renders queue for. */
+      "Import a self-contained GLB or VRM 1.0 avatar, inspect its skin and test its movement. "
+      + "VRM models retain their embedded expressions, toon materials and spring-bone hair. "
+      + "Choose existing parts, adjust colours, save named looks and control them through MCP. "
+      + "The transparent overlay follows the active look. Model files, manifests and looks export separately.",
+    makes: ["Validated local avatar assets", "Saved looks with expressions and hair settings", "A transparent browser overlay", "Original model and manifest handoffs"],
+    start: "Try anime sample, or import a rigged model. Use Test movement and save a look.",
+    /* Runtime dependencies ship through npm. The curated reference model is
+     * a separate, explicit download; this page needs no generation weights. */
     needs: [],
     cant:
-      "It reviews; it does not create. Nothing here generates a mesh, rigs an unrigged one, retargets a "
-      + "clip onto a different skeleton or authors an animation — the character and its motion have to "
-      + "arrive inside the file. The limits are hard and small on purpose: 8 MiB, 30,000 triangles, four "
-      + "materials, 96 joints, and every texture embedded, because a rig that reaches out to the network "
-      + "to finish drawing itself is not self-contained. A persona ID recorded here is an attribution "
-      + "you typed, not proof of ownership and not an account binding; installing the character in a "
-      + "world is that world's own import, with its own allowlist and its own adapter, and nothing on "
-      + "this screen changes any of that. And passing the file checks is the cheap half — whether the "
-      + "shoulders deform, whether the feet stay on the ground, whether the walk stays in place and "
-      + "whether it still looks like the character are judgements only your eyes make, which is why the "
-      + "review state stays pending until you say so.",
+      "Looks configure components already inside the model. This page does not fit arbitrary outfits, "
+      + "create face or hair rigs, generate dance clips or provide automatic audio lip-sync. "
+      + "Image-to-3D and local body rigging remain in Workflow. VRM workshop and World GLB use separate "
+      + "import budgets; local VRM acceptance does not grant Agent World admission. A persona ID is "
+      + "local attribution, not account ownership. Review deformation visually before handoff.",
   },
 
   {

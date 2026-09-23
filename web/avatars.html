@@ -11,33 +11,45 @@
 </head><body>
 <header><a href="/">AI PLAY <span>STUDIO</span></a><span>3D workshop</span><a href="/?view=workflow">Image to 3D ↗</a></header>
 <main>
-<div class="intro"><div><p class="eyebrow">AVATAR REVIEW</p><h1>3D</h1><p>Inspect a rigged character, test its animations and prepare an agent world handoff.</p></div><span class="chip">UI + MCP</span></div>
+<div class="intro"><div><p class="eyebrow">LOCAL AVATARS</p><h1>3D</h1><p>Configure a local avatar, test expressions and hair, and save looks for your persona.</p></div><span class="chip">UI + MCP</span></div>
 <div id="avatarInfoHost" class="a-infohost"></div>
 <div id="status" role="status" aria-live="polite">Loading your local avatars…</div>
 <div class="layout">
 <aside>
-<section><div class="section-heading"><h2>Your characters</h2><button id="refresh" type="button">Refresh</button></div><div id="library"></div></section>
+<section><div class="section-heading"><h2>Your characters</h2><button id="refresh" type="button">Refresh</button></div><div id="library"></div><button id="install-example" class="btn2" title="Download the official pixiv reference model (10.3 MiB). VRM Public License 1.0; original usage terms stay embedded.">Try anime sample</button><a class="hint" href="https://vrm.dev/licenses/1.0/" target="_blank" rel="noopener">Sample licence ↗</a></section>
 <details id="import-panel" open><summary>Import a rigged character</summary>
 <form id="import-form">
-<label>Self-contained GLB<input name="file" type="file" accept=".glb" required></label>
+<label>Avatar file<input name="file" type="file" accept=".glb,.vrm" required></label>
+<label>Import profile<select name="profile"><option value="world">World GLB</option><option value="vrm">VRM 1.0 workshop</option></select></label>
 <label>Character name<input name="name" required maxlength="100" placeholder="Mika · development body"></label>
 <div class="fields"><label>Source persona ID<input name="persona_id" inputmode="numeric" placeholder="Optional"></label><label>Facing<select name="facing"><option>+Z</option><option>-Z</option><option>+X</option><option>-X</option></select></label></div>
 <label>Rig family / version<input name="skeleton_family" required maxlength="100" placeholder="mika-v1"></label>
 <label>Reference and creation method<textarea name="source" required maxlength="2000" placeholder="Canonical reference, author and method"></textarea></label>
 <label>License / usage provenance<textarea name="license" required maxlength="2000" placeholder="Record the actual source permissions"></textarea></label>
-<p class="hint">Metres, Y-up. Up to 8 MiB, 30,000 triangles, 4 materials and 96 joints. Use the character’s own embedded clips.</p>
+<p class="hint">World GLB: 8 MiB. Local VRM 1.0: 64 MiB.</p>
 <button class="primary" type="submit">Validate and import</button>
 </form></details>
 </aside>
 <div class="workspace">
 <section class="viewport-panel"><div class="section-heading"><div><p class="eyebrow" id="family">LOCAL REVIEW</p><h2 id="character-name">Choose a character</h2></div><span id="review-state" class="chip">Awaiting import</span></div>
 <div id="viewport"><p id="empty-view">Your character will appear here.<br>Orbit to inspect its silhouette and joints.</p></div>
-<div class="camera-controls"><button data-camera="front">Front</button><button data-camera="side">Side</button><button data-camera="back">Back</button><button data-camera="fit">Fit</button><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
+<div class="camera-controls"><button data-camera="front">Front</button><button data-camera="side">Side</button><button data-camera="back">Back</button><button data-camera="fit">Fit</button><a id="overlay-open" href="#" target="_blank" rel="noopener" title="Use this local URL as an OBS browser source. Appearance follows the active saved look.">Overlay ↗</a><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
+<div class="camera-controls"><button id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button></div>
 <div class="motion-controls"><label>Motion<select id="motion" disabled><option value="">Rest pose</option></select></label><button id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
 </section>
-<section id="details" hidden><div class="section-heading"><h2>Handoff readiness</h2><button id="export" class="primary">Prepare handoff</button></div>
-<div id="facts" class="facts"></div><div id="warnings"></div>
-<p class="hint">Inspect identity, shoulders, elbows, hips, knees and feet through every clip. Check ground contact, motion staying in place and attachment positions. File checks do not replace this review.</p>
+<section id="appearance-panel" hidden class="pcard" data-nav="Appearance">
+<div class="section-heading"><h2>Appearance</h2><span id="appearance-state" class="chip">Embedded defaults</span></div>
+<div class="fields"><label>Saved look<select id="appearance-looks"><option value="">Choose a look</option></select></label><label>Look name<input id="appearance-name" maxlength="80" placeholder="Stage outfit"></label></div>
+<label>Source persona<input id="appearance-persona" inputmode="numeric" placeholder="Optional persona ID" title="Local attribution only; live account binding is a separate platform action."></label>
+<div class="camera-controls"><button id="appearance-new" class="btn2">New look</button><button id="appearance-save" class="btn">Save look</button><button id="appearance-delete" class="btn2">Delete look</button><label><input type="checkbox" id="appearance-springs" checked> Hair physics</label></div>
+<details class="more" open><summary>Parts</summary><div id="appearance-parts" class="appearance-grid"></div></details>
+<details class="more"><summary>Material colours</summary><div id="appearance-colors" class="appearance-grid"></div></details>
+<details id="appearance-expression-group" class="more" open><summary>Expressions</summary><div id="appearance-expressions" class="appearance-grid"></div></details>
+<p class="hint">Looks configure the parts, expressions and spring chains already inside this file.</p>
+</section>
+<section id="details" hidden><div class="section-heading"><h2>Asset details</h2><button id="export" class="primary">Prepare handoff</button></div>
+<div id="facts" class="facts"></div><details class="more"><summary>Validation notes</summary><div id="warnings"></div></details>
+<p class="hint">Review joints, attachments and ground contact before exporting.</p>
 <div id="downloads"></div><details><summary>Provenance and rig inventory</summary><pre id="metadata"></pre></details>
 <p class="hint">A local persona ID records the intended source. The world verifies ownership and model binding separately during adoption.</p>
 </section>

@@ -458,12 +458,32 @@ RUNTIME DEPENDENCIES (separate installations)
                            top of server/mesh/avatar.js, which server/index.js
                            imports, so it is loaded on start. REQUIRED FOR BOOT.
 
-                           ⚠ These three are npm's `dependencies`, installed by
-                           `npm install --omit=dev` on first launch. None is
-                           optional and none is lazily loaded: without any one
-                           of them Studio does not start at all. Nothing else
-                           is installed from npm — there are no transitive
-                           dependencies beyond these three packages.
+    @pixiv/three-vrm 3.5.5 MIT, copyright (c) 2019-2026 pixiv Inc. Local VRM
+                           preview, expressions, MToon materials and spring
+                           bones. Its original LICENSE is served locally at
+                           /api/avatars/vendor/three-vrm-LICENSE. The following
+                           transitive packages are also installed at 3.5.5;
+                           each carries the same pixiv Inc. MIT LICENSE:
+                           @pixiv/three-vrm-core
+                           @pixiv/three-vrm-materials-hdr-emissive-multiplier
+                           @pixiv/three-vrm-materials-mtoon
+                           @pixiv/three-vrm-materials-v0compat
+                           @pixiv/three-vrm-node-constraint
+                           @pixiv/three-vrm-springbone
+                           @pixiv/types-vrm-0.0
+                           @pixiv/types-vrmc-materials-hdr-emissive-multiplier-1.0
+                           @pixiv/types-vrmc-materials-mtoon-1.0
+                           @pixiv/types-vrmc-node-constraint-1.0
+                           @pixiv/types-vrmc-springbone-1.0
+                           @pixiv/types-vrmc-springbone-extended-collider-1.0
+                           @pixiv/types-vrmc-vrm-1.0
+
+                           npm installs these four direct dependencies and
+                           thirteen transitive packages with
+                           `npm install --omit=dev`. Keep each package's
+                           LICENSE in node_modules when redistributing it.
+                           Avatar model licenses are separate and retained
+                           in their embedded VRM metadata.
     Basic Pitch            Apache-2.0 (Spotify AB, copyright 2022) — automatic
                            music transcription behind the audio→notes feature
                            (server/vfx/notes.py). Installed by the user via

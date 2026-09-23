@@ -159,16 +159,47 @@ console.log("\n  every npm dependency is documented");
   const pkg = JSON.parse(read("package.json"));
   const deps = Object.keys(pkg.dependencies || {});
   const lock = JSON.parse(read("package-lock.json"));
-  const installed = Object.keys(lock.packages || {})
-    .filter((k) => k.startsWith("node_modules/"))
-    .map((k) => k.slice("node_modules/".length));
+  const packages = lock.packages || {};
+  const packageKeys = Object.keys(packages).filter((k) => k.startsWith("node_modules/"));
+  const installed = packageKeys.map((k) => k.split("node_modules/").at(-1));
   /* The lock is the truth about what `npm install` actually puts on the disk.
    * A transitive dependency nobody declared is still a licence this file owes
-   * the reader, so the two lists are compared rather than one being trusted. */
-  ok("package-lock installs exactly the declared dependencies",
-    installed.length === deps.length && deps.every((d) => installed.includes(d)),
-    `lock installs ${installed.join(", ")}; package.json declares ${deps.join(", ")}`,
-    `${deps.length}: ${deps.join(", ")}`);
+   * the reader. Compare root declarations separately from the resolved graph. */
+  const sortedEntries = (value) => JSON.stringify(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)));
+  ok("package-lock root dependencies match package.json",
+    sortedEntries(packages[""]?.dependencies) === sortedEntries(pkg.dependencies),
+    "the lock root names or version ranges differ from package.json");
+  const graphErrors = [], reached = new Set(), pending = [""];
+  const resolveDependency = (from, name) => {
+    for (let owner = from;;) {
+      const key = `${owner ? owner + "/" : ""}node_modules/${name}`;
+      if (packages[key]) return key;
+      if (!owner) return null;
+      const parent = owner.lastIndexOf("/node_modules/");
+      owner = parent < 0 ? "" : owner.slice(0, parent);
+    }
+  };
+  while (pending.length) {
+    const key = pending.pop(), entry = packages[key] || {};
+    if (reached.has(key)) continue;
+    reached.add(key);
+    const edges = { ...entry.dependencies, ...entry.optionalDependencies, ...entry.peerDependencies };
+    for (const name of Object.keys(edges)) {
+      const target = resolveDependency(key, name);
+      const optional = name in (entry.optionalDependencies || {}) || entry.peerDependenciesMeta?.[name]?.optional;
+      if (target) pending.push(target);
+      else if (!optional) graphErrors.push(`${key || "root"} cannot resolve ${name}`);
+    }
+  }
+  for (const key of packageKeys) {
+    if (!reached.has(key)) graphErrors.push(`${key} is not reachable from a declared dependency`);
+    try {
+      const actual = JSON.parse(read(`${key}/package.json`));
+      if (actual.name !== key.split("node_modules/").at(-1) || actual.version !== packages[key].version)
+        graphErrors.push(`${key} installed name/version differs from the lock`);
+    } catch { graphErrors.push(`${key} is not installed`); }
+  }
+  ok("every locked package is reachable and installed at its locked version", !graphErrors.length, graphErrors.join("; "));
   const notice = read("NOTICE");
   const install = read("INSTALL.md");
   for (const dep of new Set([...deps, ...installed])) {
@@ -183,8 +214,14 @@ console.log("\n  every npm dependency is documented");
   const launcher = read("AIPLAY Studio.cmd");
   for (const dep of deps) {
     ok(`the launcher checks for ${dep} before skipping npm install`,
-      launcher.includes(`node_modules\\${dep}`),
+      launcher.includes(`node_modules\\${dep.replaceAll("/", "\\")}`),
       "an existing node_modules missing this package would not trigger an install");
+  }
+  const nativeLauncher = read("launcher/exe/AiplayLauncher.cs");
+  const nativeGuard = nativeLauncher.match(/static bool DepsPresent\(string root\)\s*\{([\s\S]*?)return true;/)?.[1] || "";
+  for (const dep of deps) {
+    ok(`the native launcher checks for ${dep} before skipping npm install`, nativeGuard.includes(JSON.stringify(dep)),
+      "the windowless launcher dependency guard differs from package.json");
   }
   /* ⚠ THE EXACT SENTENCE THAT WENT FALSE. Both documents said one package, and
    * kept saying it through two additions. Pin the shape of the claim, not the

@@ -1,7 +1,7 @@
 // AIPLAY Studio.exe — a small Windows front door for launcher\launcher.mjs.
 //
 // It does what AIPLAY Studio.cmd does (find Node.js 20+, preferring the private
-// copy in .\node that AIPLAY Studio Setup.exe puts there, fetch the three npm
+// copy in .\node that AIPLAY Studio Setup.exe puts there, fetch the npm
 // packages if missing, run the launcher) without a console window, and keeps a
 // tray icon while the launcher runs: click it to reopen the launcher window,
 // right-click to open Studio or to stop Studio and quit. The launcher's output
@@ -82,7 +82,7 @@ static class Program
             using (var p = Process.Start(psi)) p.WaitForExit();
             if (!DepsPresent(root))
             {
-                Fail("Studio's npm packages are still missing (ws, three, gltf-validator).\n\nOpen a terminal in\n" + root + "\nand run: npm install --omit=dev");
+                Fail("Studio's npm packages are still missing (ws, three, gltf-validator, @pixiv/three-vrm).\n\nOpen a terminal in\n" + root + "\nand run: npm install --omit=dev");
                 return 1;
             }
         }
@@ -157,7 +157,7 @@ static class Program
 
     static bool DepsPresent(string root)
     {
-        foreach (var pkg in new[] { "ws", "three", "gltf-validator" })
+        foreach (var pkg in new[] { "ws", "three", "gltf-validator", "@pixiv/three-vrm" })
             if (!Directory.Exists(Path.Combine(root, "node_modules", pkg))) return false;
         return true;
     }
