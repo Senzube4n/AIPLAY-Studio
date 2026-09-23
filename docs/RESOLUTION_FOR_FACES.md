@@ -54,15 +54,57 @@ and it is what licenses reading anything else:
 - Warm 261 s against cold 276 s puts model load at ~15 s, so every other row's
   wall clock is essentially pure render.
 
-## Clip length is not the binding constraint — size is
+## ~~Clip length is not the binding constraint — size is~~
 
-At 1792×1008, delivering a fixed 3 minutes costs **16.1–20.6 GPU-hours across the
-entire legal length range** (56 to 209 frames) — a 28% band. Size, over the same
-ladder, is a **2.7× range**. Total cost also *rises* with clip length, which is the
-opposite of the usual intuition.
+### 🔴 WITHDRAWN 2026-09-10. Length matters, past a threshold we never reached.
 
-**So cut to the music, not to the budget.** Clip length should be chosen for the
-edit; the only decision that moves the bill is the size.
+The claim here was: at 1792×1008, delivering a fixed 3 minutes costs **16.1–20.6
+GPU-hours across the entire legal length range** (56 to 209 frames) — a 28% band
+against a 2.7× range for size — so cut to the music, not to the budget.
+
+**That was extrapolation, not measurement, and it is wrong at the top end.**
+
+Every row of this sweep rendered **56 frames** (`SECONDS = 2` in
+`scripts/h3_ressweep.mjs`, fixed, because the question was spatial). The 56→209
+band was produced by running `config.h3`'s cost model over a length range
+*nothing on this rig has ever rendered* — using the exponent this same document
+flags, two sections down, as under-quoting by −19% at the expensive corner.
+
+An external replication (Nemyra, 158 logged H3 renders) measured what actually
+happens up there. Cost is smooth to roughly **331k latent tokens** and then is
+not: **30% more frames cost 2.6×**, and the two renders past that point were the
+only two of 158 to exceed an hour — one logging two hard OOMs before its third
+attempt completed in 117 minutes:
+
+    Allocation on device 0 would exceed allowed memory.
+    Currently allocated 8.86 GiB, Requested 8.91 GiB (comfy_kitchen int8_linear)
+
+Their smooth-regime numbers reproduce ours exactly (864×480 → 1344×768 at 124f:
+3.2 → 11.8 min, matching the 1.43 area exponent), which is what makes the
+divergence at the top credible rather than a rig difference.
+
+**Where our measurements actually stop.** Latent tokens are
+`video_latent_t(frames) × (h/16) × (w/16)`, from `nodes_minimax_h3.py`:
+
+| render | latent tokens |
+|---|---|
+| this sweep, 1344×768 × 56f | 68,544 |
+| this sweep, 1792×1008 × 56f | 119,952 |
+| this sweep, 1920×1088 × 56f (largest row) | 138,720 |
+| the shift resweep / cost-model anchor, 1344×768 × 124f | **149,184** |
+| — the observed cliff — | **~331,000** |
+| 1792×1008 × 209f, the number this section quoted | 437,472 |
+
+**Nothing in this repository has rendered above ~149k tokens.** The cost model is
+fitted entirely inside the smooth regime and then extrapolated straight through a
+discontinuity it has no way to know about — at 2.2× beyond our largest render.
+
+**So the honest position:** size dominates *within the range we measured*, and
+the face-pixel results above stand — they are all 56-frame renders and unaffected.
+But "cut to the music, not to the budget" is withdrawn as general advice. Past
+~331k tokens the length term stops being cheap and starts being the thing that
+OOMs. Anyone planning a long clip at or above native area should treat ~331k as a
+ceiling to test against, not a number to extrapolate past.
 
 ## Two bugs found on the way, both fixed or filed
 

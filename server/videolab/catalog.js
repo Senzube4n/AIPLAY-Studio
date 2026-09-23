@@ -272,12 +272,18 @@ export const SIZE_RULES = [
   },
   {
     id: "length",
-    headline: "Clip length is not what costs you. Size is.",
+    /* WITHDRAWN AND REPLACED 2026-09-10 — see the same note in
+     * server/welcome/catalogue.js. The 56-to-209 frame band this card used to
+     * quote was the cost model run over lengths nothing on this rig has
+     * rendered, and it is wrong at the top end. */
+    headline: "Length is cheap until it isn't, and we never rendered the cliff.",
     body:
-      "Delivering a fixed three minutes at 1792x1008 costs 16.1-20.6 GPU-hours across the entire "
-      + "legal length range, a 28% band — while the size ladder alone is a 2.7x range. Total cost "
-      + "also RISES with clip length, which is the opposite of the usual intuition. So cut to the "
-      + "music and choose the size for the budget, never the other way round.",
+      "Inside the measured range, size is the bill: the ladder alone is a 2.7x span and length costs "
+      + "almost nothing. Above roughly 331k latent tokens that stops holding — an outside replication "
+      + "over 158 renders measured 30% more frames costing 2.6x, with hard out-of-memory failures. "
+      + "The largest render behind these numbers is 149k tokens; 1792x1008 at 209 frames is 437k, "
+      + "well past the cliff. Cut to the music inside the range we measured, and treat a long clip at "
+      + "a large size as unmeasured rather than cheap.",
     cite: DOCS.faces,
   },
 ];

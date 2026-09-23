@@ -700,24 +700,33 @@ than the weights — see the pip line in section 4.
 
 ---
 
-## Optional: the audio-reactive engine
+## Optional: the audio-reactive page
 
-Nothing above is affected by this, and you do not need it.
+Nothing above is affected by this, and you do not need to install anything for
+most of it.
 
-The Reactive page renders on a **second ComfyUI** that you set up yourself,
-because the node pack behind it is GPL-3.0 and cannot ship inside an Apache-2.0
-application. It is a separate install with its own node packs and about 8.7 GB
-of additional weights, and Studio downloads none of it.
+> **This section used to describe a second ComfyUI.** Reactive was once a client
+> for a separate engine running a GPL-3.0 node pack, which meant a second
+> install and about 8.7 GB of extra weights. That is gone: since 2026-09-18 the
+> page renders on Studio's own compositor, and the two diffusion looks run on
+> the engine you already have. If you set one up because this page told you to,
+> nothing in Studio uses it.
 
-If you never set it up, the page tells you so and everything else works exactly
-as described above.
+**Cuts, Crossfade, Pulse, Film and Psychedelic need nothing extra.** They are
+comps built out of ordinary layers and keyframes, rendered by `server/vfx` on
+the CPU with numpy doing the pixels and ffmpeg muxing the song. They run on an
+AMD card, or on no GPU at all.
 
-Two traps worth knowing before you start:
+**Paint and Motion are diffusion, and they need an NVIDIA card** and the engine
+you installed above — not a second one. Motion additionally wants the SD1.5 and
+AnimateDiff v3 weights, which sit in the Models screen with everything else and
+download the same way; the page names what is missing rather than failing at
+render time.
 
-- The pack fails to import on Windows unless UTF-8 is forced, and reports it as
-  one warning line rather than an error.
-- Installing the usual ControlNet preprocessors can replace your PyTorch build,
-  which costs about 5× the speed of everything — see section 5.
+One trap worth knowing: installing the usual ControlNet preprocessors can
+replace your PyTorch build, which costs about 5× the speed of everything — see
+section 5. Studio's depth and line-art hints come from its own nodes and do not
+need that pack.
 
 ---
 

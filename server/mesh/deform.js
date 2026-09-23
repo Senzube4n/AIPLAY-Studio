@@ -670,7 +670,7 @@ export async function bpyDeform(file, { python, script, timeoutMs = 120000, degr
   }
   try { await stat(py); } catch {
     return unrun(`The deformation script is not at ${py}. It lives in the GPL previz toolkit because it `
-      + `imports bpy; run \`git submodule update --init\`, or set AIPLAY_DEFORM_SCRIPT. This is UNRUN, not a pass.`);
+      + `imports bpy, and this Apache-2.0 tree ships no copy of it. Clone the toolkit and point AIPLAY_DEFORM_SCRIPT at its script. This is UNRUN, not a pass.`);
   }
 
   const args = [py, "--glb", String(file), "--degrees", String(degrees)];

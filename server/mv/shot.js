@@ -224,11 +224,38 @@ export function resolveShot(doc, segmentId, opts = {}) {
    * chose until after it had run. That is now the first thing the shot record
    * says, above the prompt, for exactly this reason. */
   const mode = String(doc.brief?.videoEngine || "hybrid").toLowerCase();
-  const hasRefs = castRefs > 0 && doc.brief?.castRefs !== false;
+  const refsWanted = doc.brief?.castRefs !== false;
+
+  /* ⚠ TWO QUESTIONS THAT WERE ONE VARIABLE, AND THE SECOND ANSWER WAS WRONG.
+   *
+   * "does this scene justify H3's price?" and "should this scene's pictures be
+   * attached?" are not the same question, and `hasRefs = castRefs > 0` used to
+   * answer both. For hybrid that is harmless — a cast-less scene goes to LTX,
+   * and LTX has no picture input, so there is nothing to attach either way.
+   *
+   * On an EXPLICIT "h3" project it was a straight defect. The engine is H3
+   * because the brief said so; the ten-times cost is already being paid; and
+   * then a board with no person on it — a room, a prop, an empty case — had its
+   * pictures withheld anyway, because the ROUTER's question came back "no
+   * cast". The plates were resolved, named in the prompt, and never sent. Worse
+   * than losing them: `opensOn` below then pinned the flux storyboard as frame
+   * 0 on exactly those shots, so the one picture that DID reach the render was
+   * the one the owner had asked to keep out of the clip path.
+   *
+   * MEASURED on ABOVE THE WATER: 8 of 34 shots, and 9 of the coda's 12, because
+   * a shot of a city has nobody standing in it. The workaround was to import a
+   * duplicate of a plate under `characters` purely to trip the counter — two of
+   * the nine slots spent on one image to answer a question nobody was asking.
+   *
+   * So the router keeps counting CAST (that part was right and is why props
+   * stopped re-routing the engine), and the attachment follows THE ENGINE THAT
+   * WILL ACTUALLY RUN. `brief.castRefs: false` still switches pictures off
+   * everywhere, which is the only thing it ever claimed to do. */
+  const engine = mode === "h3" ? "h3" : mode === "ltx" ? "ltx"
+    : (castRefs > 0 && refsWanted ? "h3" : "ltx");
   // H3 is the only engine with a <Picture N> input, so refs can only be honoured
   // there. Asking for LTX is therefore also asking to drop them.
-  const useRefs = hasRefs && mode !== "ltx";
-  const engine = mode === "h3" ? "h3" : mode === "ltx" ? "ltx" : (useRefs ? "h3" : "ltx");
+  const useRefs = engine === "h3" && refsWanted && refs.length > 0;
 
   /* THE STORYBOARD AS A REFERENCE (not a first frame), OPT-IN PER PROJECT.
    *

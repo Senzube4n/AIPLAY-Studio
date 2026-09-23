@@ -394,6 +394,23 @@ node server/imgdoors_test.js || exit 1
 # can never record as a human one — the invariant every dossier stands on),
 # the origin fold, and the source pins that keep the Tier-1 AI marker
 # unstrippable via any exposed option. Art-50 compliance layer; do not thin.
+# THE LICENCE BOUNDARY. Anything that does `import bpy` is a derivative work of
+# Blender by the Foundation's stated position, and this tree is Apache-2.0 and
+# public. The only legal seam is a subprocess. config.js has said so all along;
+# nothing CHECKED it - an earlier branch carried the scan inside a previz test
+# file and the history rewrite dropped the file, guard included. Meanwhile the
+# tree went from one Blender crossing to three (mv/blender.js, mesh/deform.js,
+# mesh/runner.js). Reads files only: no GPU, no network, no engine.
+node server/licence_test.js || exit 1
+# THE FIVE-MINUTE WALL UNDER NINETEEN RENDER HARNESSES. fetch() abandons a
+# request ~305 s after it goes out if no response headers have come back, and a
+# `wait: true` render sends its headers LAST - so every scripts/*.mjs that
+# drives a clip died at five minutes while the engine finished the render into
+# a library with nothing waiting for it. The median H3 clip here is 317 s. This
+# lane holds the fast half: the transport behaves, its opt-in deadline really
+# fires, and no harness has drifted back onto fetch. The slow half - the actual
+# 310 s race between the two - is scripts/doorpost_proof.mjs, run by hand.
+node scripts/lib/doorpost_test.mjs || exit 1
 node server/provenance_test.js || exit 1
 # PRIVATE MODE: the words are not written, and the event still is. It sits
 # beside the provenance lane because it is the same ledger, and because the
@@ -449,6 +466,17 @@ if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_adapter_test.py |
 # imgselect decides where every other op lands, so a regression here is a
 # regression in all 25 adjustments and all 75 effects at once.
 if [ -x "$PY" ]; then "$PY" server/imgselect_test.py || exit 1; fi
+# THE TWO INSTRUMENTS BEHIND NUMBERS THIS REPO PUBLISHES AS FACT.
+# server/control/pose.js, docs/DEEP_DIVE.md and server/control/README.md all quote
+# "mean joint error 33.7 px over 803 joint pairs" and the H-S identity band z of
+# 2.57 - and until now nothing in the tree could recompute either. Both tests are
+# fully synthetic (a two-person crossing and a foil pool built in tempfile), so
+# they need no renders, no GPU and no rig media. Both assert a NEGATIVE as well as
+# a positive: the old largest-box tracker must FAIL the crossing, and the
+# central-band window must FAIL to separate two actors - which is what stops
+# someone later "simplifying" the per-actor boxes away.
+if [ -x "$PY" ]; then "$PY" scripts/pose_follow_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" scripts/identity_band_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgstroke_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgtext_test.py || exit 1; fi
 # imgdoc composites THROUGH engine.py rather than owning a copy of the blend

@@ -29,6 +29,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../server/config.js";
 
+import { postJSON } from "./lib/doorpost.mjs";
 /* ── THE DOOR ─────────────────────────────────────────────────────────────
  * This harness no longer knows where ComfyUI is, because nothing does: the app
  * binds the engine to an unpublished loopback port chosen fresh at every start.
@@ -46,7 +47,7 @@ const APP = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 async function door(body) {
   let r;
   try {
-    r = await fetch(`${APP}/api/engine`, {
+    r = await postJSON(`${APP}/api/engine`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:styleref_probe" },
       body: JSON.stringify({ action: "prompt", wait: true, adopt: false, pollMs: 300, ...body }),

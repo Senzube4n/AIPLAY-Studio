@@ -1035,12 +1035,22 @@ function videoFacts() {
         source: "Same sweep. The honest limit of the resolution answer.",
       },
       {
-        headline: "Clip length is not what costs you. Size is.",
+        /* ⚠ THIS CARD USED TO SAY "clip length is not what costs you", quote a
+         * 16-to-21 GPU-hour envelope as measured, and tell you to cut to the
+         * music and not to the budget. RESOLUTION_FOR_FACES.md withdrew all of
+         * that on 2026-09-10: every row of that sweep was 56 frames, and the
+         * 56-to-209 band was the cost model extrapolated over lengths nothing
+         * here has ever rendered. The card is the withdrawal, because a page
+         * that keeps giving retracted advice is worse than one that says
+         * nothing — the reader has no way to know it was taken back. */
+        headline: "Length is cheap until it isn't, and we never rendered the cliff.",
         body:
-          "Delivering a fixed three minutes costs 16 to 21 GPU-hours across the entire legal clip-length "
-          + "range — a 28% band — while the size ladder spans 2.7x. So cut to the music, not to the "
-          + "budget: length is an editing decision, size is the bill.",
-        source: "Measured at 1792x1008 across 56 to 209 frames.",
+          "Inside the range this rig has measured, size is the bill: the ladder spans 2.7x and length "
+          + "costs almost nothing. That stops being true somewhere above 331k latent tokens, where an "
+          + "outside replication over 158 renders found 30% more frames costing 2.6x, with hard "
+          + "out-of-memory failures. Our largest render is 149k. 1792x1008 at 209 frames is 437k. Cut "
+          + "to the music inside the measured range, and treat a long clip at a large size as unknown.",
+        source: "Measured here to 149k latent tokens; the cliff is somebody else's 158 renders.",
       },
       {
         headline: `${Count(FAST_STEPS)} steps is a different model, not a faster one.`,

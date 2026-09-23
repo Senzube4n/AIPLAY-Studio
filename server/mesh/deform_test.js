@@ -215,9 +215,16 @@ console.log("\n§5  the second opinion, when it cannot be had");
   const r = await bpyDeform("nowhere.glb",
     { python: process.execPath, script: "no-such-deform-script-for-this-test.py" });
   ok("a missing toolkit script reports UNRUN", r.state === "unrun", r.state);
-  ok("...naming the script and the submodule that carries it",
+  /* ⚠ IT USED TO ASSERT THE WORD "submodule", AND THE WORD WAS WRONG. This tree
+   * has no .gitmodules and no vendor/ directory, so the reason it was checking for
+   * told the reader to run `git submodule update --init` - a command that succeeds,
+   * fetches nothing, and leaves them exactly where they started with no idea why.
+   * The reason must still say what is missing, where it comes from and how to point
+   * at it; that is three clauses where the old form checked two. */
+  ok("...naming the script, the toolkit that carries it, and the setting that points at it",
     /no-such-deform-script-for-this-test\.py/.test(r.why.join(" "))
-    && /submodule/.test(r.why.join(" ")), r.why.join(" "));
+    && /previz toolkit/.test(r.why.join(" "))
+    && /AIPLAY_DEFORM_SCRIPT/.test(r.why.join(" ")), r.why.join(" "));
 }
 {
   /* A REAL SPAWN THAT ANSWERS NOTHING. node runs, exits 0, prints no marker:
@@ -314,8 +321,8 @@ try { await stat(rigPython); } catch {
 if (!interpreterReason) {
   try { await stat(script); } catch {
     interpreterReason = `The deformation script is not at ${script}. It imports bpy, so it lives in the `
-      + `GPL previz toolkit rather than this Apache-2.0 tree; run \`git submodule update --init\` or set `
-      + `AIPLAY_DEFORM_SCRIPT. Blender's half of this suite did not run — UNRUN, not a pass.`;
+      + `GPL previz toolkit, and this Apache-2.0 tree ships no copy of it. Clone the toolkit and set `
+      + `AIPLAY_DEFORM_SCRIPT at its script. Blender's half of this suite did not run — UNRUN, not a pass.`;
   }
 }
 

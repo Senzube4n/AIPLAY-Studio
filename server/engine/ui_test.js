@@ -446,7 +446,19 @@ ok("...and the change of role is written down where the old gap was",
 console.log("\n  -- every harness goes through the door, and says who it is --");
 
 const SCRIPTS = walk(path.join(ROOT, "scripts"), [".mjs"]).map(rel).sort();
-const HARNESS = SCRIPTS.filter((f) => read(f).includes("/api/engine"));
+/* ⚠ CODE, NOT PROSE — this was a raw substring over the whole file and it
+ * counted two files that never post anywhere as harnesses that had forgotten
+ * their actor. scripts/lib/doorpost.mjs is the shared transport; its docstring
+ * explains at length what a `wait: true` call to /api/engine does, and saying so
+ * made it a caller. scripts/doorpost_proof.mjs answers its own stub server and
+ * mentions the route only to say it is deliberately NOT using that path.
+ *
+ * The census must be able to survive the tree DISCUSSING the door — the same
+ * rule server/licence_test.js is built on, where a substring match for "bpy"
+ * would fail on config.js's own explanation of why nothing imports it. Nothing
+ * else is relaxed: the census still reaches every .mjs under scripts/,
+ * subdirectories included, and still judges what the code does. */
+const HARNESS = SCRIPTS.filter((f) => codeOf(read(f)).includes("/api/engine"));
 ok(`the fork's render harnesses post to /api/engine (${HARNESS.length})`,
   HARNESS.length >= 16, HARNESS.join(", "));
 

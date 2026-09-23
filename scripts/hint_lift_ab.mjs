@@ -32,6 +32,7 @@ import { existsSync, copyFileSync } from "node:fs";
 import { animateGraph, ANIMATE_SIZES } from "../server/animatediff.js";
 import { config } from "../server/config.js";
 
+import { postJSON } from "./lib/doorpost.mjs";
 /* ⚠ THROUGH THE STUDIO'S DOOR, NOT THE ENGINE CLIENT. The engine is a CHILD of
  * the server process; a separate node process importing the client finds no
  * child of its own and is refused — correctly, because whatever else answered
@@ -46,7 +47,7 @@ const door = async (body) => {
    * how fifteen scripts once each built their own address. Same door, same
    * handler, no engine route in the URL. scripts/reactive_video.mjs does the
    * same. */
-  const r = await fetch(`http://127.0.0.1:${config.uiPort}/api/engine`, {
+  const r = await postJSON(`http://127.0.0.1:${config.uiPort}/api/engine`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:hint_lift_ab" },
     body: JSON.stringify(body),

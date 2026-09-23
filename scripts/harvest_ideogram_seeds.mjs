@@ -52,6 +52,7 @@ import { config } from "../server/config.js";
  * harvested as passing and then have its render deleted as a card. */
 import { pngLumaStats, refusalCard } from "../server/art.js";
 
+import { postJSON } from "./lib/doorpost.mjs";
 const arg = (flag) => {
   const i = process.argv.indexOf(flag);
   return i > 0 ? process.argv[i + 1] : undefined;
@@ -88,7 +89,7 @@ const APP = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 async function door(body) {
   let r;
   try {
-    r = await fetch(`${APP}/api/engine`, {
+    r = await postJSON(`${APP}/api/engine`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:harvest_ideogram_seeds" },
       body: JSON.stringify({ action: "prompt", wait: true, adopt: false, pollMs: 2000, ...body }),

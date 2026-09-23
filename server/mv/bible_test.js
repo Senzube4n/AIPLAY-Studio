@@ -328,6 +328,30 @@ console.log("\n  the lipSync flag survives commitBible");
     /audioTrack:\s*\(doc\.song\?\.file && songConditioned\)/.test(gsrc));
   ok("...and songConditioned still names the board flag as one of its ways in",
     /songConditioned\s*=[\s\S]{0,160}board\?\.lipSync/.test(gsrc));
+
+  /* ⚠ AND THE SECOND WRITER, WHICH THESE FOUR CHECKS DID NOT SEE.
+   *
+   * The four above pin commitBible — the whole-bible commit, which an LLM uses
+   * once. upsertBoard is the OTHER door: it is what `set_board` calls, what the
+   * board editor posts to, and what every per-scene change in a real build goes
+   * through. It had no `lipSync` key at all, so `set_board { lipSync: true }`
+   * answered ok and returned a board without it, and the clause generate.js
+   * reads stayed exactly as dead as before through the path anybody actually
+   * films with. Fixing one of two writers is not fixing the flag, and a source
+   * check aimed at the writer you happened to think of will say it is.
+   *
+   * So this counts the BUILDERS instead of naming one. Every board object in
+   * bible.js declares `characterRefs:`; every one of them has to declare
+   * `lipSync:` too, and a third door added later is caught by arithmetic
+   * rather than by somebody remembering to extend a regex. */
+  const builders = (bsrc.match(/^\s*characterRefs: /gm) || []).length;
+  const flags = (bsrc.match(/^\s*lipSync: /gm) || []).length;
+  ok(`every board builder in bible.js carries lipSync (${flags} of ${builders})`,
+    builders >= 2 && flags === builders,
+    "a writer that omits it returns ok and hands back a board the renderer reads as silent");
+  ok("...and upsertBoard PRESERVES it when the caller does not mention it",
+    /lipSync: board\.lipSync === undefined \? !!old\?\.lipSync : !!board\.lipSync/.test(bsrc),
+    "the board editor sends no lipSync key, so an unconditional !! turns singing off on every Save");
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

@@ -39,6 +39,7 @@ import path from "node:path";
 import { config } from "../server/config.js";
 import { tokenizeTrack, tokenizerStatus } from "../server/music/tokenize.js";
 
+import { postJSON } from "./lib/doorpost.mjs";
 const APP = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 const STEPS = Number(process.env.PROBE_STEPS || 60);
 const RANK = Number(process.env.PROBE_RANK || 8);
@@ -49,7 +50,7 @@ const SOURCE = process.argv[2] || path.join(config.outputDir, "Hex Appeal.wav");
 async function post(body) {
   let r;
   try {
-    r = await fetch(`${APP}/api/engine`, {
+    r = await postJSON(`${APP}/api/engine`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:yue2_train_probe2" },
       body: JSON.stringify(body),

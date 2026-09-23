@@ -198,9 +198,21 @@ const MEASURED = [
   ["7.55% at native", /7\.55%/],
   ["591 s at 1792x1008", /591\.\d+ s/],
   ["721 s at 1920x1088", /721\.\d+ s/],
-  ["a 28% band across the legal clip lengths", /28% band/],
   ["a 2.7x cost span over the size ladder", /2\.7x range/],
-  ["56 to 209 frames", /56 to 209 frames/],
+  /* ⚠ THREE FIGURES LEFT THIS LIST ON 2026-09-10 AND THAT IS THE POINT. The
+   * page used to quote "16 to 21 GPU-hours", "a 28% band" and "56 to 209
+   * frames" as measured. RESOLUTION_FOR_FACES.md withdrew all three: every row
+   * of that sweep rendered 56 frames, and the band was the cost model run over
+   * lengths nothing here has rendered. They still appear in the document —
+   * inside the withdrawal, as the claim being retracted — so a check that only
+   * asked "is this number in the document?" went on passing while the page
+   * gave advice the document had taken back. What replaces them is the
+   * measurement that survived and the one that overturned it. */
+  ["149k latent tokens as the largest render behind these numbers", /149,184/],
+  ["331k latent tokens as the observed cliff", /~\*\*331,000\*\*|331,000/],
+  ["30% more frames costing 2.6x past it", /30% more frames cost 2\.6/],
+  ["158 logged renders in the replication", /158 logged H3 renders/],
+  ["437k tokens for the length the old card recommended", /437,472/],
 ];
 for (const [claim, re] of MEASURED) {
   const figure = /([\d.]+)/.exec(claim)[1];
@@ -209,19 +221,49 @@ for (const [claim, re] of MEASURED) {
     `docs/RESOLUTION_FOR_FACES.md: ${re.test(FACES) ? "has it" : "DOES NOT HAVE IT"}; `
       + `the page: ${qualityText.includes(figure) ? "shows it" : "does not show it"}`);
 }
-/* The one claim on the page that is ROUNDED rather than quoted. The document
- * measures 16.1–20.6 GPU-hours; the page says "16 to 21". So the check is not
- * "does this string appear" — it is arithmetic: the envelope must CONTAIN the
- * measurement and must not be widened past the nearest whole hour, which is
- * how a real span quietly becomes a rhetorical one. */
-const band = /([\d.]+)[–-]([\d.]+) GPU-hours/.exec(FACES);
-const claimed = /(\d+) to (\d+) GPU-hours/.exec(qualityText);
-const [lo, hi] = [Number(band?.[1]), Number(band?.[2])];
-ok(`"${claimed?.[0]}" is the document's own ${lo}–${hi}, rounded to whole hours`,
-  !!band && !!claimed
-    && Number(claimed[1]) === Math.floor(lo) && Number(claimed[2]) === Math.ceil(hi),
-  `docs/RESOLUTION_FOR_FACES.md measures ${lo}–${hi} GPU-hours; the page claims `
-    + `${claimed?.[1]} to ${claimed?.[2]} — an envelope must contain the measurement and stop there`);
+/* ── A WITHDRAWN CLAIM MUST NOT SURVIVE ANYWHERE A READER CAN FIND IT ───────
+ *
+ * This replaces an arithmetic check on the GPU-hour envelope, and the reason it
+ * replaces it is that the arithmetic was fine and the claim was not. The page
+ * said "16 to 21 GPU-hours"; the document said "16.1–20.6"; the check confirmed
+ * the rounding and passed for weeks after the document retracted the whole
+ * paragraph with a 🔴 WITHDRAWN heading two lines above the number it was
+ * reading. An envelope can contain its measurement perfectly and still be
+ * advice nobody stands behind any more.
+ *
+ * So the check is now about the RETRACTION, across every surface that carries
+ * it — the Welcome page, the Video Lab catalog and the MCP tool description —
+ * because a user meets this claim on whichever one they happen to open, and
+ * fixing one of three is the failure mode this exists to catch.
+ *
+ * The advice was "cut to the music, not to the budget": at 1792x1008 a
+ * three-minute delivery was said to cost the same whether you cut at 56 frames
+ * or at 209. 209 frames there is 437,472 latent tokens, and the cliff an
+ * outside replication measured sits at roughly 331,000 — so the old advice was
+ * precisely wrong at the end of the range it recommended most. */
+const WITHDRAWN = [
+  [/\d+(\.\d+)?\s*(to|-|–)\s*\d+(\.\d+)?\s*GPU-hours/i, "the withdrawn GPU-hour envelope"],
+  [/56 to 209 frames|56-209 frames/i, "the frame range nothing on this rig has rendered"],
+  [/cut to the music,? (not to the budget|and choose the size for the budget)/i,
+    "the retracted advice, verbatim"],
+  [/28% band/i, "the band that came from the cost model, not from a render"],
+  [/length is not (what costs you|the cost)/i, "the retracted headline"],
+];
+const SURFACES = [
+  ["the Welcome page's video cards", qualityText],
+  ["server/videolab/catalog.js", await readFile(path.join(REPO, "server", "videolab", "catalog.js"), "utf8")],
+  ["server/mcp-videolab.js", await readFile(path.join(REPO, "server", "mcp-videolab.js"), "utf8")],
+];
+for (const [where, text] of SURFACES) {
+  for (const [re, what] of WITHDRAWN) {
+    ok(`${where} does not repeat ${what}`, !re.test(text),
+      `docs/RESOLUTION_FOR_FACES.md withdrew this on 2026-09-10 under a 🔴 WITHDRAWN heading; `
+        + `${where} is still telling people it was measured`);
+  }
+  ok(`${where} names the cliff instead, so the reader knows where the answer stops`,
+    /331k|331,000/.test(text) && /2\.6x/.test(text),
+    "withdrawing advice without replacing it leaves the reader with the old advice");
+}
 
 /* ── EVERY NEED RESOLVES ────────────────────────────────────────────────────
  *

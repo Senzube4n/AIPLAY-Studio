@@ -753,7 +753,14 @@ exactly what a second copy of this app, a stale script with a number baked in, o
 a person following an old note actually does. Two exceptions are named rather
 than hidden: the 3D stack is a deliberate **second door** with its own Python
 that writes the same two ledger events and carries a `door` field saying so, and
-the optional Reactive engine on its own port writes **no** provenance at all.
+the engine's own port is the only one anything renders on.
+
+> That sentence used to end "and the optional Reactive engine on its own port
+> writes **no** provenance at all." Both halves stopped being true on
+> 2026-09-18, when Reactive became a recipe over `server/vfx` and its two
+> diffusion looks moved onto the main engine. There is no second port, and
+> `/api/reactive/run` stamps the actor from the request like every other door —
+> `server/provenance_test.js` fails if it stops.
 
 ---
 

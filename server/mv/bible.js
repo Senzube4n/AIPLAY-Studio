@@ -51,6 +51,7 @@ export function bibleSpec(doc) {
           backgroundRefs: ["names from backgrounds[]"],
           propRefs: ["names from props[] — declare the car in EVERY scene it appears in"],
           crowd: "true when the frame holds unnamed people beyond the named cast — a festival crowd, a street, a room of strangers. Without it the prompt states the exact number of people and caps the shot at the named cast.",
+          lipSync: "true ONLY when a mouth in frame is singing THIS scene's line. It freezes the song under the render so the lips match; on every other scene it buys nothing and costs render time. Most scenes of a music video are not singing.",
           refProminence: { "<name>": 0.5 },
         }],
       },
@@ -206,6 +207,20 @@ export async function upsertBoard(slug, segmentId, board) {
        * Same treatment as imageFile and takes on the next line: a field the
        * editor does not send is a field it does not intend to clear. */
       crowd: board.crowd === undefined ? !!old?.crowd : !!board.crowd,
+      /* ⚠ AND THE SAME FOR lipSync, WHICH THIS DOOR DROPPED ENTIRELY.
+       *
+       * commitBible got the writer (see the long note there); upsertBoard, the
+       * door the board editor and every per-scene agent call actually use, had
+       * no `lipSync` key at all. So `set_board { lipSync: true }` returned ok,
+       * the board came back without it, and generate.js's third clause stayed
+       * dead through the one path anybody builds a film with. Fixing the flag
+       * in one of two writers is not fixing the flag.
+       *
+       * `undefined` PRESERVES rather than clears, exactly as crowd above does
+       * and for the same reason: the board editor's payload does not carry
+       * this key, and a Save from that screen must not silently turn the song
+       * off under a scene somebody set to sing. */
+      lipSync: board.lipSync === undefined ? !!old?.lipSync : !!board.lipSync,
       refProminence: prom, imageFile: old?.imageFile || null, takes: old?.takes || [],
       updatedAt: Date.now(),
     };

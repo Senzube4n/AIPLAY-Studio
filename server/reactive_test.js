@@ -234,6 +234,65 @@ console.log("\n§4  the page, the door, the tool, the router, the doc");
   ok("the README no longer sends people to a second engine", !/second ComfyUI that\s+you set up/.test(readme) && /Reactive/.test(readme));
 }
 
+/* ⚠ AND THE SAME CHECK OVER EVERY SHIPPED DOCUMENT, BECAUSE TWO OF THEM KEPT
+ * SAYING IT FOR FIVE DAYS AFTER THE PAGE STOPPED.
+ *
+ * The block above pinned web/index.html and README.md, which is where anybody
+ * looking for this claim would look. It is not where a person INSTALLING finds
+ * it. INSTALL.md carried a whole section headed "Optional: the audio-reactive
+ * engine" telling the reader to stand up a second ComfyUI and about 8.7 GB of
+ * weights for a page that had not used either since 2026-09-18, and
+ * docs/DEEP_DIVE.md told them that engine wrote no provenance — on a door that
+ * stamps its actor from the request and has a test in provenance_test.js
+ * saying so. Two documents, both shipped, both wrong, neither read by any
+ * check.
+ *
+ * So the sweep is over the whole documentation set rather than the two files
+ * somebody thought of, and the way it PASSES is the point: a document may
+ * still contain the phrase as long as it is saying it is no longer true. A
+ * changelog entry ("no longer asks for a second ComfyUI") and a withdrawal
+ * note ("this section used to describe a second ComfyUI") both read fine to a
+ * person and both have to survive, or the honest fix is the thing that breaks
+ * the build. */
+{
+  const dir = new URL("../docs/", import.meta.url);
+  const docs = ["../README.md", "../INSTALL.md", "../API.md",
+    ...fs.readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => `../docs/${f}`)];
+  ok(`the documentation sweep reads the whole set (${docs.length} files)`, docs.length >= 8,
+    "a sweep that reads two files proves what two files say");
+  /* "is gone / used to / no longer / stopped" anywhere in the sentence marks it
+   * as history. Anything else asserting a second engine is still an instruction. */
+  /* ⚠ "not a second" WAS IN THIS LIST AND IT MADE THE CHECK UNFALSIFIABLE. The
+   * replacement prose says "the engine you installed above — not a second one",
+   * so any paragraph that kept those four words was read as history no matter
+   * what else it said: a sabotage that put "they need a second ComfyUI" back
+   * into that same paragraph passed. A retraction marker has to be a word the
+   * fixed text does not casually contain. */
+  const RETRACTED = /(no longer|used to|stopped|is gone|never came|nothing .{0,30}uses it)/i;
+  for (const rel of docs) {
+    const text = src(rel);
+    const bad = text.split(/\n\s*\n/).filter((para) =>
+      /second ComfyUI|second (render )?engine/i.test(para) && !RETRACTED.test(para));
+    ok(`${rel.replace("../", "")} does not still ask for a second engine`, bad.length === 0,
+      bad.map((b) => b.replace(/\s+/g, " ").slice(0, 150)).join("  ||  "));
+    /* ⚠ AND THE OTHER HALF OF THE SAME SENTENCE, WHICH THE PHRASE SWEEP ABOVE
+     * CANNOT SEE. docs/DEEP_DIVE.md did not only place Reactive on a second
+     * port - it told the reader that door wrote NO provenance, which would make
+     * it the one render path in the app with no ledger entry. The door stamps
+     * `prov.actorFrom(req)` and provenance_test.js fails if it stops, so this is
+     * a claim about a security property that was never true and would not have
+     * tripped a search for "second ComfyUI". Its own check, in its own words. */
+    const noProv = text.split(/\n\s*\n/).filter((para) =>
+      /[Rr]eactive[^.]{0,120}(no|never)[^.]{0,40}provenance/.test(para) && !RETRACTED.test(para));
+    ok(`${rel.replace("../", "")} does not claim the Reactive door skips the ledger`, noProv.length === 0,
+      noProv.map((b) => b.replace(/\s+/g, " ").slice(0, 150)).join("  ||  "));
+  }
+  const install = src("../INSTALL.md");
+  ok("INSTALL.md says what Reactive actually needs instead of leaving a hole",
+    /server\/vfx/.test(install) && /AnimateDiff/.test(install) && /Models screen/.test(install),
+    "deleting a wrong instruction without writing the right one leaves the reader guessing");
+}
+
 console.log("\n§  how hard it moves, and the circle on the bass (2026-09-20)");
 {
   const { motionDials } = await import("./reactive_motion.js");

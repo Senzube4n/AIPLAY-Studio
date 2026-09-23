@@ -61,6 +61,37 @@ def ms(fn, n=5):
     return best
 
 
+def ratio_of(fn_a, fn_b, n=9):
+    """Is fn_a at least `factor` times fn_b? Measured PAIRWISE, and the reason is
+    a real failure on this machine.
+
+    Two calls to ms() are two separate best-of-5 windows, and best-of-5 does not
+    survive a busy box: measured during an H3 render at 100% GPU, `cv2.pow`
+    alone came back at 36.7 ms where it is 16.0 ms on a quiet machine - a 2.3x
+    inflation that survived taking the minimum of five, because all five samples
+    sat inside the same contended window. The ratio flipped, the lane failed,
+    and nothing about the code under test had changed. A check that fails
+    because something ELSE is using the machine is a check people learn to skip.
+
+    So the two are timed back to back inside one loop, so each pair sees the
+    same machine, and the verdict is the MEDIAN of the per-pair ratios rather
+    than a ratio of two independent minima. The claim being made is about the
+    shape of the code, not about this second's wall clock."""
+    fn_a(); fn_b()
+    ratios = []
+    for _ in range(n):
+        t0 = time.perf_counter(); fn_a(); a = time.perf_counter() - t0
+        t0 = time.perf_counter(); fn_b(); b = time.perf_counter() - t0
+        ratios.append(a / b if b > 0 else float("inf"))
+    ratios.sort()
+    return ratios[len(ratios) // 2]
+
+
+def slower_than(fn_a, fn_b, factor, n=9):
+    """fn_a costs at least `factor` times fn_b, measured pairwise. See ratio_of."""
+    return ratio_of(fn_a, fn_b, n) >= factor
+
+
 # ── the curve is the standard's ───────────────────────────────────────────────
 
 print("\nthe piecewise IEC 61966-2-1 curve")
@@ -258,18 +289,44 @@ lut_err = float(np.abs(colour.linear_to_srgb(_lut_decode(v)) - v).max()) * 255.0
 print("        1080p a %d-entry lerp LUT                        %6.1f ms  (off by %.3f codes)"
       % (LUT_N, lut_ms, lut_err))
 eq("the LUT loses to cv2.pow outright, which is why it is not used",
-   lut_ms > ms(lambda: colour.srgb_to_linear(a3)), True)
+   slower_than(lambda: _lut_decode(a3), lambda: colour.srgb_to_linear(a3), 1.0), True)
 
 # Where the time actually goes: the toe, not the power. Worth pinning, because
 # somebody optimising this will reach for the exponent first and find nothing.
 pow_only = ms(lambda: cv2.pow(a3, 2.4))
 print("        1080p cv2.pow alone, no toe                      %6.1f ms" % pow_only)
 eq("the toe costs about as much as the power it is spliced onto",
-   ms(lambda: colour.srgb_to_linear(a3)) > pow_only * 1.5, True)
+   slower_than(lambda: colour.srgb_to_linear(a3), lambda: cv2.pow(a3, 2.4), 1.5), True)
 
-# The guard, not the spec: the numbers above are the report. This only catches a
-# rewrite that made a whole-frame pair cost more than a 1080p glow and a half.
-eq("the 1080p whole-frame pair stays under 150ms", pair_frame < 150.0, True)
+# The guard, not the spec: the numbers above are the report.
+#
+# THE REAL CLAIM, AND IT DOES NOT DEPEND ON WHAT ELSE THE MACHINE IS DOING. This
+# path exists because cv2.pow beats the obvious numpy expression; if a rewrite
+# loses that, everything above is decoration. Measured pairwise so both halves
+# see the same machine, and it holds steady under load - taken during an H3
+# render at 100% GPU the shipped round trip was 0.446x the naive one, spread
+# 0.399 to 0.500. The line at 0.7 is comfortably clear of that and still fails
+# the moment somebody drops back to `** 2.4`.
+def _naive_pair():
+    x = f[..., :3]
+    lin = np.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4)
+    np.where(lin <= 0.0031308, lin * 12.92, 1.055 * (lin ** (1 / 2.4)) - 0.055)
+
+
+shipped_vs_naive = ratio_of(lambda: colour.encode_rgb(colour.decode_rgb(f)), _naive_pair)
+print("        the shipped round trip costs %.3fx the naive numpy one" % shipped_vs_naive)
+eq("the shipped round trip really is faster than the obvious numpy one",
+   shipped_vs_naive < 0.7, True)
+
+# AND A CEILING, DELIBERATELY LOOSE. This was 150 ms and it failed the gate on a
+# machine that was busy rendering - not because anything changed, but because
+# the quiet number is 137 ms and nine percent of headroom cannot tell a bad
+# rewrite from a busy box. A check that fails when something ELSE is using the
+# machine is one people learn to skip. 250 ms still catches the regression it
+# names: the naive round trip above costs roughly 2.2x the shipped one, so any
+# rewrite that lost the fast path lands well past this line.
+eq("...and the 1080p whole-frame pair stays under 250ms (137ms quiet, 147ms under load)",
+   pair_frame < 250.0, True)
 
 
 print("\n%d passed, %d failed\n" % (PASS, FAIL))

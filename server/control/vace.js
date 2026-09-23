@@ -181,12 +181,17 @@ export const VACE_OPERATING_POINT = {
    *
    *   the NULL (`rows[].null`) is CMA recomputed with THIS arm's own estimated
    *   flow circularly shifted in time — the max over 20 fixed-seed shifts, each
-   *   at least 12 frames from zero (`measured_null`, at scripts/gate_score.py:660
-   *   IN THE BASE REPOSITORY — C:\temp\AIPLAYStudio, not this one. The gate
-   *   harness never came across to the fork, and this tree HAS a scripts/ that
-   *   does not contain it, so a reader who resolves the path against this
-   *   checkout gets a missing file and concludes the citation has gone stale.
-   *   It has not; it is one directory over.)
+   *   at least 12 frames from zero.
+   *
+   *   ⚠ AND THE HARNESS THAT COMPUTED IT IS NOT PUBLISHED. This used to cite
+   *   `scripts/gate_score.py:660` and then name a directory on the author's own
+   *   laptop as where to find it, which is worth nothing to anybody reading
+   *   this repository: a path that resolves on exactly one machine is a
+   *   citation to a file nobody else has, and it reads as a stale link rather
+   *   than as a missing tool. So the DEFINITION above is the citation - shift
+   *   this arm's own estimated flow circularly in time by at least 12 frames,
+   *   take the max CMA over 20 fixed seeds, and the number comes back out of
+   *   the footage without any of our code.)
    *   Every arm has one: W0 0.041, W1 0.402, W2 0.292, W4 0.320. It answers
    *   "how well would this render's own motion match the control if the timing
    *   were destroyed", which is the null that catches a render that moves
@@ -213,8 +218,8 @@ export const VACE_OPERATING_POINT = {
   CMA_null: 0.402,
   CMA_null_kind: "time-shift",
   CMA_null_what: "CMA recomputed with W1's own estimated flow circularly shifted in time, "
-    + "max over 20 fixed-seed shifts of at least 12 frames (measured_null in the BASE "
-    + "repository's scripts/gate_score.py — that harness is not in this tree)",
+    + "max over 20 fixed-seed shifts of at least 12 frames. The harness that measured it is "
+    + "not published, so the definition is the citation: recomputable from the footage",
   /** The arms that really are the controls, with what they really scored. */
   CMA_zero_strength: -0.056,
   CMA_zero_strength_arm: "W8",

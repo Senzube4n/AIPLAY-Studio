@@ -81,7 +81,7 @@ export function videoLabTools(api) {
             description: "Which arms to run: h3_quality, h3_turbo4, h3_turbo8, ltx, hybrid. Default: all five.",
           },
           seed: { type: "integer", description: "Held across every arm. Rolled and recorded when omitted." },
-          seconds: { type: "integer", description: "Clip length for every arm. Keep it short for a comparison — length is not what costs you, size is (measured: a 28% cost band across the entire legal length range against a 2.7x band across sizes)." },
+          seconds: { type: "integer", description: "Clip length for every arm. Keep it short for a comparison: inside the measured range length costs little next to size (a 2.7x band), and above roughly 331k latent tokens it stops being cheap at all - 30% more frames for 2.6x in an outside replication, which is past anything rendered here." },
           width: { type: "integer", description: "Pin a size for every arm. Omit and each arm renders at ITS engine's native size, which is usually what you want — asking LTX for H3's 1344x768 silently gets you 1280x704 after its halve-then-floor." },
           height: { type: "integer", description: "Pinned with width, or omitted with it. Both arms of a comparison must be the same size or the comparison has two variables in it." },
           ref_images: { type: "array", items: { type: "string" }, maxItems: 9, description: "Image names the prompt calls as <Picture 1>… H3 arms use them; the LTX arm cannot and says so on its result." },
@@ -370,9 +370,12 @@ export function videoLabTools(api) {
         + "clears it with margin; stay knees-up and no render size rescues it.\n"
         + "  2. UPSCALING INVENTS DETAIL, IT DOES NOT RECOVER IT. There is nothing to read a lash "
         + "line off, so an upscaler draws a plausible one. Render native or above.\n"
-        + "  3. LENGTH IS NOT THE COST. Three minutes delivered at the knee costs 16.1-20.6 "
-        + "GPU-hours across the entire legal length range — a 28% band — while the size ladder "
-        + "alone is 2.7x. Cut to the music; choose the size for the budget.\n\n"
+        + "  3. LENGTH IS CHEAP UNTIL IT ISN'T. Inside the range this rig has measured, size is the "
+        + "bill and the ladder alone is 2.7x. Above roughly 331k latent tokens that stops holding: "
+        + "an outside replication over 158 renders measured 30% more frames costing 2.6x, with hard "
+        + "out-of-memory failures. The largest render behind these numbers is 149k tokens; 1792x1008 "
+        + "at 209 frames is 437k, well past it. Cut to the music inside the measured range, and "
+        + "treat a long clip at a large size as unmeasured rather than cheap.\n\n"
         + "Sizes are per engine and not interchangeable: H3's native 1344x768 is not a legal LTX "
         + "size. Setting one records it for that engine only.",
       inputSchema: {

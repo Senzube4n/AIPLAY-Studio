@@ -119,11 +119,30 @@ ok("a scene with cast routes to H3 under the default hybrid mode", r.engine === 
   ok("...and an explicit ltx is honoured rather than overridden by the presence of a sheet",
     resolveShot(d3, "s1_0").engine === "ltx" && resolveShot(d3, "s1_0").useRefs === false);
   const d4 = baseDoc(); d4.brief.videoEngine = "h3"; d4.boards[0].characterRefs = [];
-  ok("...and an explicit h3 is honoured on a scene with no cast at all",
-    resolveShot(d4, "s1_0").engine === "h3");
+  const r4 = resolveShot(d4, "s1_0");
+  ok("...and an explicit h3 is honoured on a scene with no cast at all", r4.engine === "h3");
+  /* ⚠ THE HALF THIS PANEL USED TO LEAVE UNCHECKED, AND IT WAS THE BROKEN HALF.
+   * The line above asserted the ENGINE and stopped. `useRefs` was gated on the
+   * ROUTER's question — "is there cast?" — so on an explicit-h3 project a board
+   * with no person on it ran on H3, paid H3's price, and had its pictures
+   * withheld. Eight of ABOVE THE WATER's 34 shots and nine of the coda's twelve
+   * went out that way. The engine assertion passed the whole time. */
+  ok("...AND ITS PICTURES ARE ACTUALLY SENT, because H3 is the engine that will run",
+    r4.useRefs === true && r4.refsSent === true && r4.refs.length > 0,
+    `useRefs ${r4.useRefs}, refsSent ${r4.refsSent}, refs ${r4.refs.length}`);
+  ok("...so the flux storyboard is NOT pinned as frame 0 on a room with nobody in it",
+    r4.opensOn === null && r4.guideMode === "none",
+    `opensOn ${r4.opensOn}, guideMode ${r4.guideMode}`);
+  const d4b = baseDoc(); d4b.brief.videoEngine = "h3";
+  d4b.boards[0].characterRefs = []; d4b.boards[0].propRefs = []; d4b.boards[0].backgroundRefs = [];
+  ok("...and a board that names nothing at all sends nothing, h3 or not",
+    resolveShot(d4b, "s1_0").useRefs === false, "no pictures is not the same as pictures withheld");
   const d5 = baseDoc(); d5.brief.castRefs = false;
   ok("...and castRefs:false drops the references instead of collecting and discarding them",
     resolveShot(d5, "s1_0").useRefs === false && resolveShot(d5, "s1_0").engine === "ltx");
+  const d5b = baseDoc(); d5b.brief.castRefs = false; d5b.brief.videoEngine = "h3";
+  ok("...on an explicit h3 project too, which is the only thing that switch ever claimed",
+    resolveShot(d5b, "s1_0").useRefs === false);
 }
 
 /* ── RESOLVED IS NOT SENT ────────────────────────────────────────────────

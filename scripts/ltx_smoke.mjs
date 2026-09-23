@@ -26,11 +26,13 @@
  * On the night this door was built, 424 files in the output folder had none of
  * that. See docs/ENGINE_DOOR.md.
  */
+import { postJSON } from "./lib/doorpost.mjs";
+
 const APP = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 async function door(body) {
   let r;
   try {
-    r = await fetch(`${APP}/api/engine`, {
+    r = await postJSON(`${APP}/api/engine`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:ltx_smoke" },
       body: JSON.stringify({ action: "prompt", wait: true, adopt: true, pollMs: 3000, ...body }),
