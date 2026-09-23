@@ -245,6 +245,28 @@ function bumpSavePrefix(graph, nonce) {
   return bumped;
 }
 
+/**
+ * The clip the graph's SaveVideo wrote: picked by NODE, never by position.
+ *
+ * ⚠ NOT `outputs[0]`. On ComfyUI 0.36 LoadVideo reports the file it READ as an
+ * output row of type "input", and /history keys outputs by node id, which a
+ * JSON parse hands back in ascending numeric order. The enhance graph loads at
+ * node 1 and saves at node 9, so the first row was the staged source: measured
+ * 2026-09-23, seven RIFE jobs finished on the GPU and then died renaming
+ * output/aiplay_enh_<hash>.mp4, a file that lives in the INPUT folder, while
+ * the real result sat in output/clips as enh_0000N_.mp4. Restyle (load 30,
+ * save 21) and a continuation or control video (load 70 or 30, save 15-29)
+ * were right only because their loaders carry the larger id.
+ *
+ * With no row from a SaveVideo node, the first row of type "output": an
+ * "input" echo or a "temp" preview is never a file in the output folder.
+ */
+export function savedClip(outputs, graph) {
+  const saves = new Set(Object.keys(graph || {}).filter((id) => graph[id]?.class_type === "SaveVideo"));
+  const written = (outputs || []).filter((o) => (o.type || "output") === "output");
+  return written.find((o) => saves.has(String(o.node))) || written[0] || null;
+}
+
 /* How many pass-seeds one Ideogram job may burn before it gives up. Each one
  * is a full render, so this is a spend cap, not a confidence level — and it is
  * only ever reached on a machine whose ladder is long enough to offer three
@@ -1626,9 +1648,9 @@ export class ArtRunner extends EventEmitter {
       }
       // SaveVideo reports under `images` with animated:true, not a `videos` key —
       // the client normalises both into one list, so this no longer has to care.
-      const outs = done.outputs;
-      if (!outs.length) throw new Error("engine returned no clip");
-      const src = path.join(config.outputDir, outs[0].subfolder || "", outs[0].file);
+      const saved = savedClip(done.outputs, graph);
+      if (!saved) throw new Error("engine returned no clip");
+      const src = path.join(config.outputDir, saved.subfolder || "", saved.file);
       /* Standalone clips have no track to be named after, so they carry a
        * `clip:<id>` pseudo-file. Naming them after that keeps one flat folder
        * and one naming rule for both kinds. */
@@ -1749,9 +1771,9 @@ export class ArtRunner extends EventEmitter {
       if (done.status !== "completed") {
         throw new Error(done.error || `the engine did not finish (${done.status})`);
       }
-      const outs = done.outputs;
-      if (!outs.length) throw new Error("engine returned no clip");
-      const out = path.join(config.outputDir, outs[0].subfolder || "", outs[0].file);
+      const saved = savedClip(done.outputs, graph);
+      if (!saved) throw new Error("engine returned no clip");
+      const out = path.join(config.outputDir, saved.subfolder || "", saved.file);
 
       /* Named for what was done, so the library reads as a list of versions
        * rather than a list of hashes. Collisions get a counter rather than
@@ -1836,9 +1858,9 @@ export class ArtRunner extends EventEmitter {
       if (done.status !== "completed") {
         throw new Error(done.error || `the engine did not finish (${done.status})`);
       }
-      const outs = done.outputs;
-      if (!outs.length) throw new Error("engine returned no clip");
-      const out = path.join(config.outputDir, outs[0].subfolder || "", outs[0].file);
+      const saved = savedClip(done.outputs, graph);
+      if (!saved) throw new Error("engine returned no clip");
+      const out = path.join(config.outputDir, saved.subfolder || "", saved.file);
       const stem = path.basename(job.file).replace(/\.(mp4|webm)$/i, "");
       let name = `${stem}_restyled.mp4`;
       for (let i = 2; ; i++) {

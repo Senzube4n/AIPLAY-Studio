@@ -117,7 +117,9 @@ async function beatsFor(song) {
 async function submit(graph) {
   const d = await door({ graph, label: `${NAME} chunk`, project: NAME });
   if (d.status !== "completed") throw new Error(`${d.status}: ${String(d.error || "").slice(0, 500)}`);
-  const o = d.outputs[0];
+  /* Not outputs[0]: on ComfyUI 0.36 LoadVideo echoes the file it read as a row
+   * of type "input", and only the node numbering kept it behind SaveVideo. */
+  const o = d.outputs.find((r) => (r.type || "output") === "output");
   if (!o) throw new Error("no video returned");
   return path.join(config.outputDir, o.subfolder || "", o.file);
 }
