@@ -163,6 +163,23 @@ function stableJson(v) {
 }
 
 /** A stable fingerprint of a submitted graph — this render's identity. */
+/**
+ * The options ModelAttentionBackend offers, from an /object_info answer.
+ *
+ * TWO SHAPES, because ComfyUI changed it: the v3 node API reports a combo as
+ * `["COMBO", { options: [...] }]` (what 0.36 sends, measured), older builds as
+ * `[[...options], { ... }]`. Reading only one would make every engine on the
+ * other shape look like it has no Comfy Kitchen — silently slow, never broken.
+ * Anything unreadable is an empty list, which means "not offered".
+ */
+export function attentionOptions(info) {
+  const spec = info?.ModelAttentionBackend?.input?.required?.attention;
+  if (!Array.isArray(spec)) return [];
+  if (Array.isArray(spec[0])) return spec[0].map(String);
+  if (spec[0] === "COMBO" && Array.isArray(spec[1]?.options)) return spec[1].options.map(String);
+  return [];
+}
+
 export function graphHash(graph) {
   return createHash("sha256").update(stableJson(graph)).digest("hex").slice(0, 16);
 }
@@ -476,10 +493,45 @@ export class ArtRunner extends EventEmitter {
     engineDoor.on("rebound", () => {
       try { this.#ws?.close(); } catch { /* already gone */ }
       this.#ws = null;
+      /* A restarted engine may be a different ComfyUI (an update, another
+       * launch flag), so what it offers is asked again, not remembered. */
+      this.#ckOffered = undefined;
     });
   }
 
   #ws;
+
+  /* undefined = not asked this boot; true/false = the engine's own answer. */
+  #ckOffered;
+
+  /**
+   * Which attention an H3 graph should carry: "ck" or null (no node).
+   *
+   * THREE CONDITIONS, AND THE ORDER IS THE POINT.
+   *  1. An EXPLICIT attention choice in the launcher's Advanced settings wins.
+   *     Somebody who picked PyTorch there — to debug, or because a model
+   *     misbehaved — asked for it, and a per-graph node would overrule them
+   *     without a word. Only "no choice" or "Comfy Kitchen" lets CK through.
+   *  2. config.video.engines.h3.attention says "ck" (see the measurement there).
+   *  3. The RUNNING engine offers the option. ModelAttentionBackend lists
+   *     "comfy kitchen attention" only when comfy_kitchen int8 is available, and
+   *     a value its COMBO does not list fails the WHOLE prompt at validation —
+   *     so on a card without the kernel, asking would not be slower, it would
+   *     be a render that never starts. Asked once per engine boot; a probe that
+   *     fails is "not offered", never an exception.
+   */
+  async h3Attention() {
+    const chosen = config.comfy?.options?.attention;
+    if (chosen && chosen !== "--use-ck-attention") return null;
+    if ((config.video.engines.h3?.attention ?? "ck") !== "ck") return null;
+    if (this.#ckOffered === undefined) {
+      try {
+        const info = await engineDoor.objectInfo("ModelAttentionBackend");
+        this.#ckOffered = attentionOptions(info).includes("comfy kitchen attention");
+      } catch { this.#ckOffered = false; }
+    }
+    return this.#ckOffered ? "ck" : null;
+  }
 
   /** Idempotent, lazy, and never fatal — progress is a nicety, not the work. */
   #connect() {
@@ -1492,6 +1544,11 @@ export class ArtRunner extends EventEmitter {
       continueFrom: job.continueFrom || null,
       bridge: job.bridge, bridgeAlpha: job.bridgeAlpha,
       negative: job.negative, guidance: job.guidance, guideStrength: job.guideStrength,
+      /* Comfy Kitchen int8 attention on H3 — 1.5-1.9x on the sampler, measured
+       * (config.js). Named here for the reason the warning above gives: an
+       * option this call does not list is dropped in silence, and a speedup
+       * dropped in silence is invisible — the clip is merely slow. */
+      attention: (job.engine || config.video.engine) === "ltx" ? null : await this.h3Attention(),
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.
       keepAudio: job.keepAudio ?? !job.file.startsWith("clip:"),

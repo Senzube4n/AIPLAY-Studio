@@ -1883,7 +1883,15 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * ({dit, ditRef, textEncoder, videoVae, audioVae}). Merged
                                 * LAST so one named part replaces one part and the rest of
                                 * the engine is untouched — see server/modelpick.js. */
-                               models = null }) {
+                               models = null,
+                               /* "ck" wraps the model in ModelAttentionBackend (Comfy
+                                * Kitchen int8 attention); anything else leaves it out.
+                                * NOT defaulted from config here: whether the engine
+                                * offers the option is a fact about the running
+                                * ComfyUI, and a value it does not list fails the whole
+                                * prompt at validation. art.js h3Attention() decides and
+                                * passes it; a caller that says nothing gets no node. */
+                               attention = null }) {
   const v = { ...config.video, ...config.video.engines.h3, ...(models || {}) };
   const w = width ?? v.width, h = height ?? v.height;
   /* A CONTINUATION renders a window of overlap + extension frames: the
@@ -2068,7 +2076,16 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                     strength: Number(controlStrength), start_percent: Number(controlStart),
                     end_percent: Number(controlEnd), control_video: ["32", 0] } },
   } : {};
-  const MODEL = useControl ? ["34", 0] : BARE_MODEL;
+  /* ⚠ THE ATTENTION NODE WRAPS THE MODEL AFTER EVERYTHING THAT PATCHES IT —
+   * turbo LoRA, the person's LoRAs, the Fun-ControlNet — and before the sigma
+   * shift, because the shift feeds BOTH the guider and the scheduler; patching
+   * after it would leave one of them on the dense-attention model. Node 85:
+   * refs take 40-48, audio refs 50+2i, continuation 70-77, user LoRAs 90+. */
+  const attentionNodes = attention === "ck" ? {
+    85: { class_type: "ModelAttentionBackend",
+          inputs: { model: useControl ? ["34", 0] : BARE_MODEL, attention: "comfy kitchen attention" } },
+  } : {};
+  const MODEL = attention === "ck" ? ["85", 0] : useControl ? ["34", 0] : BARE_MODEL;
   const lora = (name = h3TurboLoraFor(v, { steps: steps ?? v.steps }).lora) => (useTurbo ? {
     18: {
       class_type: "LoraLoaderModelOnly",
@@ -2163,7 +2180,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       Object.assign(g, contNodes(pos));
       pos = "74";
     }
-    Object.assign(g, controlNodes, controlApply);
+    Object.assign(g, controlNodes, controlApply, attentionNodes);
     g[6] = { class_type: "MiniMaxH3SigmaShift",
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA } };
     g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
@@ -2187,6 +2204,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     ...img(lastFrame, 17),
     ...controlNodes,
     ...controlApply,
+    ...attentionNodes,
     1: unetNode(v.dit),
     /* THE TURBO LoRA — fast path only (see `useTurbo` above). History: it was
      * named in config from day one and never loaded; then loaded always; now

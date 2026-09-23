@@ -1285,6 +1285,39 @@ export const config = {
      * model on its native schedule, exactly like the templates. */
     turboMaxSteps: 12,
 
+    /* COMFY KITCHEN ATTENTION, per graph: "ck" puts a ModelAttentionBackend
+     * node between the LoRAs and the sigma shift; "pytorch" leaves it out.
+     *
+     * MEASURED 2026-09-23 on this card (RTX 4070 Ti SUPER, Ada), on a real
+     * film-clip graph — ref2va int8 + ref2v 4-step turbo, 1344x768, 107
+     * frames, two reference plates — four renders interleaved OFF/ON/OFF/ON
+     * with a fresh seed each:
+     *
+     *     steady s/step   pytorch 32.8, 39.5    comfy kitchen 17.3, 25.7
+     *     whole clip      pytorch 209 s, 187 s  comfy kitchen 101 s, 140 s
+     *
+     * 1.9x and 1.5x on the sampler inside each pair (the second pair ran
+     * ~20% slower in BOTH arms, which is contention, not the setting). The
+     * gain is all in sampling; text encode and VAE decode did not move. At
+     * 1:1 the CK frames showed no banding, blocking or int8 noise and the
+     * best feather detail of the four. This is the lever Maurice Bourdon's
+     * 12 GB H3 post names, and every one of 698 earlier H3 renders in
+     * comfy.log said "Using pytorch attention" — it was available since
+     * ComfyUI 0.32 and never switched on.
+     *
+     * H3 ONLY, deliberately. The launcher's Attention choice (comfyargs.js)
+     * flips EVERY model — FLUX.2, Qwen Image, LTX, YuE2's nodes, AnimateDiff
+     * — and none of those are measured under int8 attention. A per-graph
+     * node changes the one model it wraps.
+     *
+     * Two things turn it off without anybody editing this line: a card whose
+     * ComfyUI does not offer the option (the node's COMBO lists it only when
+     * comfy_kitchen int8 is available, and an unlisted value fails the whole
+     * prompt at validation), and an EXPLICIT attention choice in the
+     * launcher's Advanced settings, which is a person saying what they want.
+     * Both are decided in art.js h3Attention(). */
+    attention: "ck",
+
     /* H3 ALWAYS renders audio — there is no video-only path, and moving the
      * audio shift changes its level without changing the time it costs
      * (measured: identical wall-clock, audio RMS -14.1 to -27.6 dBFS). For a clip
