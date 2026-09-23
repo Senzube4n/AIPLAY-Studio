@@ -454,23 +454,6 @@ const TABS = [
     cant: "It does nothing on its own; every button opens another screen.",
   },
   {
-    id: "router", icon: "☁", name: "Comfy API", group: "make",
-    lead:
-      "The launcher's Use Comfy API mode: image, video, audio, 3D and text models from many providers, "
-      + "run on Comfy's cloud through Comfy Router with your own Comfy API key. Nothing runs on this "
-      + "machine, so it needs no ComfyUI and no graphics card, and every run costs Comfy credits, which "
-      + "is why it lives in its own mode and asks before each run. Featured models have a short form; "
-      + "every other model gets a form built from its published fields, or its raw JSON.",
-    makes: ["Pictures, clips, sound and speech from hosted models", "3D models from a description", "Answers from hosted language models"],
-    start: "Save your Comfy API key, pick a kind and a model, and press Run.",
-    needs: [],
-    needsNote: "A Comfy API key with credits, from platform.comfy.org. No model files.",
-    cant:
-      "It spends real credits and cannot quote a price before a run; the Router reports a cost after "
-      + "some runs and not others, and your Comfy workspace has the full usage. Results are downloaded "
-      + "as they finish, because their links expire within a day.",
-  },
-  {
     id: "chat", icon: "◗", name: "Chat", group: "make",
     lead:
       "Say what you want to make, in ordinary words, and it does it — writes and renders a song, "
@@ -517,6 +500,23 @@ const TABS = [
     ],
     cant:
       "No piano roll: you steer with words, and takes vary. Everything shares the graphics card.",
+  },
+  {
+    id: "router", icon: "☁", name: "Comfy API", group: "make",
+    lead:
+      "The launcher's Use Comfy API mode: image, video, audio, 3D and text models from many providers, "
+      + "run on Comfy's cloud through Comfy Router with your own Comfy API key. Nothing runs on this "
+      + "machine, so it needs no ComfyUI and no graphics card, and every run costs Comfy credits, which "
+      + "is why it lives in its own mode and asks before each run. Featured models have a short form; "
+      + "every other model gets a form built from its published fields, or its raw JSON.",
+    makes: ["Pictures, clips, sound and speech from hosted models", "3D models from a description", "Answers from hosted language models"],
+    start: "Save your Comfy API key, pick a kind and a model, and press Run.",
+    needs: [],
+    needsNote: "A Comfy API key with credits, from platform.comfy.org. No model files.",
+    cant:
+      "It spends real credits and cannot quote a price before a run; the Router reports a cost after "
+      + "some runs and not others, and your Comfy workspace has the full usage. Results are downloaded "
+      + "as they finish, because their links expire within a day.",
   },
   {
     id: "musiclab", icon: "♫", name: "Music Lab", group: "make",

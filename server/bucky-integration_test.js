@@ -37,10 +37,10 @@ test("video adapter input refuses silent drops, path rewriting and truncation", 
 test("the API verifies shelf presence and architecture before queueing, including retained model folders", async () => {
   const files = adapters.map((a) => ({ name: a.name, folder: "loras", full: `old-models/loras/${a.name}` }));
   const read = [];
-  const opts = { engine: "h3", shelf: async () => files, probe: async (p) => { read.push(p); return { family: "lora", variant: "MiniMax H3" }; } };
+  const opts = { engine: "h3", loraBase: "MiniMax H3", shelf: async () => files, probe: async (p) => { read.push(p); return { family: "lora", variant: "MiniMax H3" }; } };
   assert.deepEqual(await validateVideoLoras(adapters, opts), adapters);
   assert.deepEqual(read, files.map(f => f.full));
-  await assert.rejects(validateVideoLoras(adapters, { ...opts, engine: "ltx" }), /not LTX/);
+  await assert.rejects(validateVideoLoras(adapters, { ...opts, engine: "ltx", loraBase: "LTX" }), /not LTX/);
   await assert.rejects(validateVideoLoras(adapters, { ...opts, shelf: async () => [] }), /No such file/);
   await assert.rejects(validateVideoLoras(adapters, { ...opts, probe: async () => ({ family: "checkpoint" }) }), /not a recognized LoRA/);
   await assert.rejects(validateVideoLoras(adapters, { ...opts, automatic: [adapters[0].name] }), /loads automatically/);
@@ -147,7 +147,7 @@ test("a late LoRA list cannot repaint the newly selected engine", async () => {
   const fn = app.match(/async function vidLoadLoras\(\) \{[\s\S]*?\n\}/)[0];
   const pending = [], els = { vidLoraPick: {}, vidEngine: { value: "h3" }, vidLoraNote: {} };
   const context = vm.createContext({ $: id => els[id], state: { video: { engines: {} } }, esc: x => x,
-    VID_LORA_BASE: { h3: "MiniMax H3", ltx: "LTX" }, vidLoraFit: () => "yes", vidPaintLoras: () => {},
+    vidLoraFit: () => "yes", vidPaintLoras: () => {},
     fetch: () => new Promise(resolve => pending.push(resolve)) });
   vm.runInContext(`let vidLoraRequest=0, vidLoraShelf=[]; ${fn}`, context);
   const old = vm.runInContext("vidLoadLoras()", context);

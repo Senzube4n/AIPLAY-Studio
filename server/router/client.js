@@ -108,6 +108,30 @@ const seconds = (h) => {
 };
 
 /**
+ * The decrypted key, read once and kept, for `getKey`. `drop()` forgets it and
+ * moves a generation; index.js calls it before AND after every save or forget.
+ * A read that started in an earlier generation still answers its own caller,
+ * but never stores what it read: without that, a poll that began reading the
+ * store while a new key was being written decrypted the OLD one and cached it
+ * after the clear, and every later run used the old key until a restart.
+ *
+ * @param {() => Promise<string|null>} read  the store (secrets.js getSecret)
+ */
+export function routerKeyCache(read) {
+  let key, gen = 0;
+  return {
+    async getKey() {
+      if (key) return key;
+      const mine = gen;
+      const k = await read();
+      if (mine === gen && k) key = k;
+      return k;
+    },
+    drop() { gen++; key = undefined; },
+  };
+}
+
+/**
  * @param {object}   o
  * @param {Function} o.getKey     async () => the Comfy API key, or null
  * @param {Function} [o.fetchImpl]
@@ -127,9 +151,16 @@ export function createRouterClient({ getKey, fetchImpl = globalThis.fetch, base 
     const limit = Math.max(timeoutMs, payload ? Math.ceil(payload.length / 50) : 0);
     let res;
     try {
+      /* ⚠ redirect: "manual". fetch follows a redirect by default and, on a
+       * cross-origin one, strips only Authorization, Proxy-Authorization,
+       * Cookie and Host: X-API-Key went along (measured on Node 22's undici),
+       * and a 307/308 re-sent the whole submit body too. The key goes to
+       * api.comfy.org and nowhere else, so a 3xx is answered below, never
+       * followed. */
       res = await fetchImpl(`${base}${path}`, {
         method, headers,
         body: payload,
+        redirect: "manual",
         signal: AbortSignal.timeout(limit),
       });
     } catch (e) {
@@ -145,6 +176,17 @@ export function createRouterClient({ getKey, fetchImpl = globalThis.fetch, base 
       dropped: h("x-comfy-router-dropped-params"),
       contentType: ctype,
     };
+    /* A redirect is a final error, not a success with no body (which left a
+     * status poll "queued" forever and a submit retrying forty times), and not
+     * retryable: provider_error is outside the retry list and a 3xx is neither
+     * 0 nor 503. */
+    if (res.status >= 300 && res.status < 400) {
+      try { await res.body?.cancel?.(); } catch { /* nothing to drain */ }
+      let where = "another address";
+      try { where = new URL(h("location") || "", base).host || where; } catch { /* no usable Location */ }
+      throw new RouterError({ status: res.status, type: "provider_error", requestId: meta.requestId,
+        detail: `Comfy Router redirected this call to ${where}; Studio did not follow it, so the key stays at api.comfy.org` });
+    }
     if (res.status >= 400) {
       let j = null;
       try { j = await res.json(); } catch { /* not JSON */ }

@@ -7077,6 +7077,12 @@ function vidPaint() {
    * must not eat the user's references — and the submit only sends them when
    * H3 is the engine that will render. */
   $("vidRefWrap").hidden = cur !== "h3";
+  /* Ask friend explains itself before anyone clicks: a recipe is H3 or LTX. */
+  if ($("vidAskFriend")) {
+    const recipeOk = recipeEngineOk(cur);
+    $("vidAskFriend").disabled = !recipeOk;
+    $("vidAskFriend").title = recipeOk ? "Prepare a text-only recipe for a friend using their default models." : recipeEngineRefusal();
+  }
   /* The soundtrack works on BOTH engines now — LTX freezes the audio latent,
    * H3 freezes it AND anchors it so the model can read the vocal (the lip-sync
    * pair). The section shows everywhere. */
@@ -7339,9 +7345,12 @@ async function vidModelShape() {
 let vidLoraStack = [];      // [{ name, strength }]
 let vidLoraShelf = [];
 let vidLoraRequest = 0;
-const VID_LORA_BASE = { h3: "MiniMax H3", ltx: "LTX" };
+/* The base each engine's LoRAs are made for comes from /api/status
+ * (engines[eng].loraBase, config.js), the same value /api/video checks: a copy
+ * of the list here once left FastH3 out, so every LoRA was offered as
+ * "unverified" and Render refused it. */
 function vidLoraFit(l, eng = $("vidEngine").value || state.video?.engine || "h3") {
-  const want = VID_LORA_BASE[eng];
+  const want = state.video?.engines?.[eng]?.loraBase;
   if (!l?.base || !want) return "unknown";
   return l.base === want ? "yes" : "no";
 }
@@ -7355,7 +7364,12 @@ async function vidLoadLoras() {
     if (request !== vidLoraRequest) return;
     vidLoraShelf = (d.loras || []).filter((l) => l.isLora && !own.has(l.name));
   } catch { if (request !== vidLoraRequest) return; vidLoraShelf = []; }
-  const label = VID_LORA_BASE[eng] || "this engine";
+  const engRow = state.video?.engines?.[eng];
+  /* An engine that takes no LoRAs of its own (no loraBase) hides the row
+   * rather than offering what Render would refuse. Before the engine list has
+   * arrived nothing is known, so the row stays as it is. */
+  if ($("vidLoraRow")) $("vidLoraRow").hidden = !!engRow && !engRow.loraBase;
+  const label = engRow?.loraBase || "this engine";
   /* ⚠ A LoRA FOR ANOTHER ENGINE IS NOT OFFERED. It used to be listed disabled
    * with its base beside it, which is a row you can read and cannot use. An
    * UNVERIFIED one still appears: its base could not be read, and that is not
@@ -7411,8 +7425,11 @@ $("vidLoraPick").onchange = () => {
 /* Filled at once too, not only when the engine list arrives: a picker that
  * waits on the status call looks empty to anyone who opens the screen first. */
 vidLoadLoras();
-/** The stack as the render sends it: only rows that can go on this engine. */
+/** The stack as the render sends it: only rows that can go on this engine,
+ *  and nothing at all for an engine that takes none. */
 function vidLoraChoice() {
+  const engRow = state.video?.engines?.[$("vidEngine").value || state.video?.engine];
+  if (engRow && !engRow.loraBase) return {};
   const rows = vidLoraStack.filter((l) => vidLoraFit(vidLoraShelf.find((x) => x.name === l.name) || { base: l.base }) !== "no");
   return rows.length ? { loras: rows.map((l) => ({ name: l.name, strength: l.strength })) } : {};
 }
@@ -7961,12 +7978,25 @@ async function enableVideo() {
 }
 
 function videoFriendRecipe() {
+  const recipeEngine = state.video?.engine || "ltx";
+  if (!recipeEngineOk(recipeEngine)) throw new Error(recipeEngineRefusal());
   const [width,height]=vidWH();
   if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
     throw new Error("Text-only recipes only. Remove frames, references, soundtrack and loop first.");
   if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
-  return {engine:state.video?.engine || "ltx",prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
+  return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
+}
+/* A recipe carries MiniMax H3 or LTX settings (server/collab/video-recipe.js,
+ * whose enum is the wire format a friend's Studio reads). Any other engine is
+ * refused on the page, by name and with the way out, instead of reaching the
+ * collab door's "Invalid video setting: engine." A friend on an older build,
+ * or without FastH3's DiT, could not open a FastH3 recipe anyway.
+ * collab/video-recipe_test.js runs videoFriendRecipe() for every engine config
+ * has. Declarations, not consts: vidPaint() reads them and is hoisted above. */
+function recipeEngineOk(eng) { return eng === "h3" || eng === "ltx"; }
+function recipeEngineRefusal() {
+  return "Recipes carry MiniMax H3 or LTX settings. FastH3 is H3 at a fixed 8 steps; switch the engine to MiniMax H3 to ask a friend.";
 }
 $("vidRecipeClear")?.addEventListener("click",()=>{state.videoRecipeLoaded=false;$("vidRecipeClear").hidden=true;$("clipNote").textContent="Recipe mode cleared.";});
 $("vidAskFriend")?.addEventListener("click",()=>{

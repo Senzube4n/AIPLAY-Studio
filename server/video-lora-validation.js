@@ -22,11 +22,18 @@ export function videoLoraInput(value) {
   });
 }
 
-export async function validateVideoLoras(value, { engine, shelf, probe, automatic = [] }) {
+/**
+ * `loraBase` is the engine's own (config.js video.engines.<name>.loraBase, the
+ * name detect.js gives LoRAs made for it), passed in by the caller so this file
+ * keeps no copy of the list: a copy here and another on the Video screen left
+ * FastH3 out of both, and every LoRA was offered and then refused with "Choose
+ * H3 or LTX" while FastH3 was already chosen. No base: this engine takes none.
+ */
+export async function validateVideoLoras(value, { engine, loraBase, label, shelf, probe, automatic = [] }) {
   const rows = videoLoraInput(value);
   if (!rows?.length) return rows;
-  const expected = { h3: "MiniMax H3", ltx: "LTX" }[engine];
-  if (!expected) throw new Error("Choose H3 or LTX before adding video LoRAs.");
+  const expected = loraBase;
+  if (!expected) throw new Error(`${label || engine || "This engine"} takes no LoRAs of your own. Clear the LoRA list, or switch to an engine that does.`);
   const files = await shelf();
   for (const row of rows) {
     if (automatic.includes(row.name)) throw new Error(`${row.name} is an engine speed adapter and loads automatically; remove it from the custom stack.`);

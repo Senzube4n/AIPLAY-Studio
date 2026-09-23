@@ -36,3 +36,43 @@ test('receiver loads exact settings and clears incompatible local conditioning w
  assert.equal(state.sndUpload,null);assert.equal(state.refImages.length,0);assert.equal(context.vidLoraStack.length,0);assert.equal(state.videoRecipeLoaded,true);assert.deepEqual(views,['video']);
  node('vidRecipeClear').click();assert.equal(state.videoRecipeLoaded,false);
 });
+
+/* EVERY ENGINE ON THE VIDEO SCREEN EITHER MAKES A RECIPE OR IS REFUSED BY NAME.
+ * FastH3 came in beside the recipe and the two first met in the merge: Ask
+ * friend built {engine:'fasth3'}, and the collab door answered only "Invalid
+ * video setting: engine." The page's own videoFriendRecipe() runs here once per
+ * engine config has. An engine the wire format carries must pass
+ * makeVideoRecipe; any other must be in NOT_RECIPE AND refused on the page with
+ * a sentence that says what to do, so a future engine fails this lane rather
+ * than the button. */
+const NOT_RECIPE = new Set(['fasth3']);
+test('Ask friend: every video engine makes a valid recipe, or is refused on the page by name', async () => {
+  const { config } = await import('../config.js');
+  const { readFile } = await import('node:fs/promises'); const vm = await import('node:vm');
+  const source = await readFile(new URL('../../web/app.js', import.meta.url), 'utf8');
+  const fields = { vidPrompt: 'A dancer steps into the light', vidSecs: '5', vidSteps: '8', vidGuide: '3', vidNeg: '', vidAudio: '1', vidSeed: '123',
+    vidFrom: '', vidTo: '', vidSndSong: '' };
+  const nodes = new Map();
+  const node = (id) => { if (!nodes.has(id)) nodes.set(id, { value: fields[id] ?? '', checked: false, hidden: false, addEventListener() {} }); return nodes.get(id); };
+  const state = { video: {}, frameUploads: {}, midFrames: [], refImages: [], refAudios: [], sndUpload: null };
+  const context = vm.createContext({ $: node, state, vidWH: () => [1280, 704], vidModelChoice: () => ({}), vidLoraStack: [] });
+  vm.runInContext(source.slice(source.indexOf('function videoFriendRecipe()'), source.indexOf('$("vidCreate").onclick')), context);
+  const engines = Object.keys(config.video.engines);
+  assert.ok(engines.includes('h3') && engines.includes('ltx') && engines.includes('fasth3'), engines.join(', '));
+  for (const eng of NOT_RECIPE) assert.ok(engines.includes(eng), `${eng} is a real engine`);
+  for (const eng of engines) {
+    state.video.engine = eng;
+    let recipe = null, refusal = null;
+    try { recipe = vm.runInContext('videoFriendRecipe()', context); } catch (e) { refusal = e; }
+    if (NOT_RECIPE.has(eng)) {
+      assert.ok(refusal, `${eng}: the page refuses it`);
+      assert.match(refusal.message, /Recipes carry MiniMax H3 or LTX settings.*switch the engine to MiniMax H3/, `${eng}: and says what to do`);
+      assert.throws(() => makeVideoRecipe({ engine: eng, prompt: 'p', width: 1280, height: 704, seconds: 5, steps: 8, guidance: 3, keepAudio: true }),
+        /engine/, `${eng}: the wire format does not carry it, which is why the page refuses it`);
+    } else {
+      assert.equal(refusal, null, `${eng}: ${refusal?.message}`);
+      assert.equal(recipe.engine, eng);
+      assert.equal(makeVideoRecipe(recipe).video.engine, eng, `${eng}: the collab door accepts what the page built`);
+    }
+  }
+});

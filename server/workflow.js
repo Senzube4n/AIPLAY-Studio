@@ -794,10 +794,13 @@ const onDisk = (sub, file) => [config.modelsDir, ...(config.modelsAlso || [])]
   .some((b) => { try { return fs.statSync(path.join(b, sub, file)).size > 0; } catch { return false; } });
 
 /* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
- * encoder (models.js downloads it there). Whichever is on disk wins. */
+ * encoder (models.js downloads it there), and ONLY that: ROCm has no kernel for
+ * nvfp4 (models.js fp4Blocked), so an nvfp4 file that is on disk (an NVIDIA
+ * machine's folder added as an extra) is never named, and a machine without the
+ * fp8 is told to fetch it. On NVIDIA, whichever is on disk wins. */
 function ideogramEncoder() {
   const order = cardIsAmd()
-    ? ["qwen3vl_8b_fp8_scaled.safetensors", "qwen3vl_8b_nvfp4.safetensors"]
+    ? ["qwen3vl_8b_fp8_scaled.safetensors"]
     : ["qwen3vl_8b_nvfp4.safetensors", "qwen3vl_8b_fp8_scaled.safetensors"];
   return order.find((n) => onDisk("text_encoders", n)) || order[0];
 }
@@ -1899,10 +1902,11 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                models = null,
                                /* Which H3-family engine's settings: "h3" or "fasth3". videoGraph() passes it. */
                                engine = "h3",
-                               /* "ck" wraps the model in ModelAttentionBackend (Comfy Kitchen int8); anything
-                                * else leaves it out. NOT defaulted from config: art.js videoAttention() decides
-                                * (H3 through h3Attention(), FastH3 from its per-render picker); a caller that
-                                * says nothing gets no node. */
+                               /* "ck" wraps the model in ModelAttentionBackend (Comfy Kitchen int8), "pytorch"
+                                * in the same node set to PyTorch; anything else leaves it out. NOT defaulted from
+                                * config: art.js videoAttention() decides (H3 through h3Attention(), "ck" or null;
+                                * FastH3 from its per-render picker, always a node); a caller that says nothing
+                                * gets no node. */
                                attention = null }) {
   const v = { ...config.video, ...(config.video.engines[engine] || config.video.engines.h3), ...(models || {}) };
   /* A distillation with a trained schedule runs at that schedule whatever the
@@ -2064,8 +2068,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * through, and BlockSparseAttention wraps whatever override is on the model when it is
    * applied (install_override keeps the previous one as its dense path), so the fallback
    * is the same. 81 MUST follow the shift: it turns start/end_percent into sigmas from the
-   * model's model_sampling at patch time. No Kitchen = no backend node, and the
-   * launcher's attention is the dense fallback. */
+   * model's model_sampling at patch time. The dense backend is the one the person picked
+   * (art.js videoAttention() always names one for FastH3), never the launcher's flag. */
   const sparse = v.sparseAttention || null;
   const sparseNodes = sparse ? {
     81: { class_type: "BlockSparseAttention", inputs: { model: ["6", 0],
@@ -2113,12 +2117,19 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * shift, because the shift feeds BOTH the guider and the scheduler; patching
    * after it would leave one of them on the dense-attention model. Node 85:
    * refs take 40-48, audio refs 50+2i, continuation 70-77, FastH3's sparse node 81,
-   * user LoRAs 90+. */
-  const attentionNodes = attention === "ck" ? {
+   * user LoRAs 90+.
+   *
+   * "ck" is Comfy Kitchen; "pytorch" is an EXPLICIT PyTorch node, which only an
+   * engine with a per-render picker asks for (FastH3, art.js videoAttention()):
+   * without it the dense part runs under whatever attention the launcher
+   * started ComfyUI with. h3Attention() never says "pytorch", so H3's graphs,
+   * and the cache keys hashed from them, are unchanged. Anything else: no node. */
+  const backend = { ck: "comfy kitchen attention", pytorch: "pytorch attention" }[attention] || null;
+  const attentionNodes = backend ? {
     85: { class_type: "ModelAttentionBackend",
-          inputs: { model: useControl ? ["34", 0] : BARE_MODEL, attention: "comfy kitchen attention" } },
+          inputs: { model: useControl ? ["34", 0] : BARE_MODEL, attention: backend } },
   } : {};
-  const MODEL = attention === "ck" ? ["85", 0] : useControl ? ["34", 0] : BARE_MODEL;
+  const MODEL = backend ? ["85", 0] : useControl ? ["34", 0] : BARE_MODEL;
   const lora = (name = h3TurboLoraFor(v, { steps: steps ?? v.steps }).lora) => (useTurbo ? {
     18: {
       class_type: "LoraLoaderModelOnly",

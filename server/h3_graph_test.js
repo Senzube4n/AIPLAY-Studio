@@ -304,10 +304,19 @@ try {
       ok(`${label}: so guider AND scheduler both run on the CK model`,
         g["7"].inputs.model[0] === "6" && g["8"].inputs.model[0] === "6");
     }
-    for (const off of [null, undefined, "pytorch", "", "CK"]) {
+    for (const off of [null, undefined, "", "CK", "kitchen"]) {
       const g = videoGraphH3({ ...base, refImages: ["a.png"], attention: off });
       ok(`attention ${JSON.stringify(off)} puts no node in the graph`,
         !Object.values(g).some((n) => n.class_type === "ModelAttentionBackend") && g["6"].inputs.model[0] !== "85");
+    }
+    /* "pytorch" is an EXPLICIT PyTorch node in the same place. Only an engine
+     * with a per-render picker asks for it (FastH3); h3Attention() answers "ck"
+     * or null, so H3's own graphs and their cache keys do not change. */
+    {
+      const g = videoGraphH3({ ...base, refImages: ["a.png"], attention: "pytorch" });
+      ok("attention \"pytorch\" is node 85 on \"pytorch attention\", read by the shift",
+        g["85"]?.class_type === "ModelAttentionBackend" && g["85"]?.inputs.attention === "pytorch attention"
+          && g["6"].inputs.model[0] === "85", JSON.stringify(g["85"]));
     }
     /* Node 85 is the only free id in that neighbourhood. The first A/B harness
      * used 50 and would have overwritten the first AUDIO reference's loader. */
@@ -342,14 +351,19 @@ try {
     {
       const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);
       ok("...videoAttention gives LTX no node", /if \(name === "ltx"\) return null;/.test(va));
-      ok("...and every H3-family engine goes through h3Attention(), never around it", /return this\.h3Attention\(\);/.test(va));
+      ok("...H3 goes through h3Attention(), never around it", /return this\.h3Attention\(\);/.test(va));
+      ok("...and an engine with its own picker names a literal backend, never the launcher's",
+        /if \(eng\?\.sparseAttention\) \{[\s\S]{0,200}return "pytorch";[\s\S]{0,120}return \(await this\.#kitchenOffered\(\)\) \? "ck" : "pytorch";/.test(va));
     }
     const fn = art.slice(art.indexOf("async h3Attention()"), art.indexOf("async h3Attention()") + 900);
+    const probe = art.slice(art.indexOf("async #kitchenOffered()"), art.indexOf("async #kitchenOffered()") + 500);
+    ok("h3Attention answers \"ck\" or null, never \"pytorch\" (so H3's graphs are unchanged)",
+      /return \(await this\.#kitchenOffered\(\)\) \? "ck" : null;/.test(fn) && !/"pytorch"/.test(fn.slice(0, fn.indexOf("async #kitchenOffered()"))));
     ok("h3Attention lets an EXPLICIT launcher choice other than CK win",
       /const chosen = config\.comfy\?\.options\?\.attention;\s*if \(chosen && chosen !== "--use-ck-attention"\) return null;/.test(fn));
     ok("...honours config's own switch", /config\.video\.engines\.h3\?\.attention \?\? "ck"\) !== "ck"\) return null/.test(fn));
-    ok("...asks the running engine whether it offers the option", /engineDoor\.objectInfo\("ModelAttentionBackend"\)/.test(fn) && /attentionOptions\(info\)\.includes\("comfy kitchen attention"\)/.test(fn));
-    ok("...and a failed probe means not offered, never a thrown render", /catch \{ this\.#ckOffered = false; \}/.test(fn));
+    ok("...asks the running engine whether it offers the option", /engineDoor\.objectInfo\("ModelAttentionBackend"\)/.test(probe) && /attentionOptions\(info\)\.includes\("comfy kitchen attention"\)/.test(probe));
+    ok("...and a failed probe means not offered, never a thrown render", /catch \{ this\.#ckOffered = false; \}/.test(probe));
     ok("an engine restart forgets the answer, because it may be a different ComfyUI",
       /engineDoor\.on\("rebound", \(\) => \{[\s\S]{0,300}this\.#ckOffered = undefined;/.test(art));
   }

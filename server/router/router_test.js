@@ -15,7 +15,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { createRouterClient, RouterError, validModelId, validationText } from "./client.js";
+import { createRouterClient, RouterError, validModelId, validationText, routerKeyCache } from "./client.js";
 import { findAssets, textOf, extFor, isAsset } from "./outputs.js";
 import { FEATURED, ADAPTERS, buildSimple, simpleFor } from "./adapters.js";
 import { kindOf, inputOf, createCatalog, HIDDEN_FIELDS } from "./catalog.js";
@@ -80,6 +80,75 @@ test("errors: named buckets, unknown ones read as internal_error, no key refuses
   const none = createRouterClient({ getKey: async () => null, fetchImpl: async () => { throw new Error("must not be called"); } });
   await assert.rejects(none.submit("bfl/flux-2-pro", {}, "i"), (e) => e.type === "unauthorized");
   assert.equal(validationText([{ loc: ["body", "a", 0], msg: "bad" }]), "a.0: bad");
+});
+
+/* A REDIRECT IS NEVER FOLLOWED WITH THE KEY. fetch follows by default and, on a
+ * cross-origin hop, strips Authorization and Cookie but not X-API-Key: a stand-in
+ * API answering 302 got the key delivered to the other origin (Node 22, undici
+ * 6.21). With redirect "manual" the raw 3xx comes back, and it must be a final,
+ * readable error: read as a success it left a poll "queued" forever and a submit
+ * retrying forty times. */
+test("a redirect from the Router is refused, never followed, never retried, and the key goes nowhere else", async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    const calls = [];
+    const c = createRouterClient({
+      getKey: async () => "comfyui-secret-key-0001",
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init });
+        return res(status, {}, { location: "https://storage.elsewhere.example/out.png", "content-type": "text/html" });
+      },
+    });
+    for (const [what, go] of [["result", () => c.result("bfl/flux-2-pro", "req-1")], ["status", () => c.status("bfl/flux-2-pro", "req-1")],
+      ["submit", () => c.submit("bfl/flux-2-pro", { prompt: "p" }, "idem-1")]]) {
+      const before = calls.length;
+      await assert.rejects(go(), (e) => e instanceof RouterError && e.status === status && !e.retryable
+        && /storage\.elsewhere\.example/.test(e.message) && /did not follow/.test(e.message), `${status} ${what}`);
+      assert.equal(calls.length, before + 1, `${status} ${what}: one call, nothing followed`);
+      assert.equal(calls.at(-1).init.redirect, "manual", `${status} ${what}: fetch is told not to follow`);
+      assert.ok(calls.every((x) => new URL(x.url).host === "api.comfy.org"), "every request went to api.comfy.org only");
+    }
+  }
+});
+
+/* THE KEY CACHE AND A SAVE THAT OVERLAPS A POLL. A save takes ~300 ms of DPAPI
+ * in powershell; a poll that began reading the store during it decrypted the
+ * OLD key and cached it after the clear, so every later run used the old key
+ * until a restart. The read here resolves only after the save has finished,
+ * which is exactly that interleaving. */
+test("a key read that overlapped a save or a forget never becomes the cached key", async () => {
+  let store = "OLDKEY-0000000000000", reads = 0;
+  const pending = [];
+  const readStore = () => { reads++; const seen = store; return new Promise((ok) => pending.push(() => ok(seen))); };
+  const cache = routerKeyCache(readStore);
+  const flush = () => { while (pending.length) pending.shift()(); };
+  const save = async (value) => { cache.drop(); try { store = value; } finally { cache.drop(); } };
+
+  const inflight = cache.getKey();          // a poll starts reading the old file...
+  await save("NEWKEY-1111111111111");        // ...the page saves a new key...
+  flush();
+  assert.equal(await inflight, "OLDKEY-0000000000000", "the poll that was already reading answers what it read");
+  const next = cache.getKey(); flush();
+  assert.equal(await next, "NEWKEY-1111111111111", "but the next poll reads the NEW key: the old one was never stored");
+  const cached = await cache.getKey();
+  assert.equal(cached, "NEWKEY-1111111111111", "and that one is kept");
+  const readsWhenCached = reads;
+  await cache.getKey();
+  assert.equal(reads, readsWhenCached, "a cached key is not decrypted again");
+
+  const fresh = routerKeyCache(readStore);   // Forget, with a poll's read in flight
+  const polling = fresh.getKey();
+  fresh.drop(); store = null; fresh.drop();
+  flush();
+  assert.equal(await polling, "NEWKEY-1111111111111", "the poll in flight answers what it read");
+  const after = fresh.getKey(); flush();
+  assert.equal(await after, null, "after Forget there is no key, not a remembered one");
+
+  const index = read("server/index.js");
+  assert.match(index, /routerKeyCache\(\(\) => getSecret\(ROUTER_KEY\)\)/, "index.js caches through it");
+  assert.match(index, /set: async \(name, value\) => \{ dropRouterKey\(\); try \{ return await setSecret\(name, value\); \} finally \{ dropRouterKey\(\); \} \},/,
+    "a save drops the key before and after its write");
+  assert.match(index, /clear: async \(name\) => \{ dropRouterKey\(\); try \{ return await clearSecret\(name\); \} finally \{ dropRouterKey\(\); \} \} \},/,
+    "and so does Forget");
 });
 
 /* ── reading a result ───────────────────────────────────────────────────── */
@@ -452,6 +521,49 @@ test("routes: a provider's file is served sandboxed, so a scripted SVG runs nowh
   } finally { await rm(outDir, { recursive: true, force: true }); }
 });
 
+/* A SCHEMA'S PROPERTY NAMES ARE THE PROVIDER'S WORDS, not Studio's. inputOf()
+ * copies keys through as published (and a day's cache keeps them), and the
+ * form put each one into id="rtf_<name>" unescaped: a key holding a double
+ * quote closed the attribute and wrote its own markup into Studio's page, for
+ * every one of the field types (measured: 9 of 9 injected, and the onerror ran
+ * in headless Edge). The page's own form functions, lifted from web/router.js,
+ * fed such a schema through the real inputOf. */
+test("the form built from a published schema never lets a property name write markup", () => {
+  const page = read("web/router.js");
+  const esc = /const esc = [^\n]+\n/.exec(page)[0];
+  const engine = page.slice(page.indexOf("const MAIN = "), page.indexOf("function paintForm()"));
+  const { fieldHtml, schemaFields } = new Function(`${esc}${engine}\nreturn { fieldHtml, schemaFields };`)();
+  const evil = (tag) => `${tag}"><img src=x onerror=alert(1)><x a="`;
+  const props = {
+    [evil("text")]: { type: "string" },
+    [evil("prompt")]: { type: "string" },
+    [evil("steps")]: { type: "integer", minimum: 1, maximum: 9 },
+    [evil("scale")]: { type: "number" },
+    [evil("loop")]: { type: "boolean" },
+    [evil("mode")]: { type: "string", enum: ["a", "b"] },
+    [evil("extra")]: { type: "object" },
+    [evil("image")]: { type: "string", description: "input image, base64 data URI" },
+    [evil("video")]: { type: "string", description: "a video clip as a base64 data URI" },
+    "image.url with spaces": { type: "string" },
+  };
+  const doc = { paths: { "/v2/models/a/b": { post: { requestBody: { content: { "application/json": { schema: { type: "object", properties: props } } } } } } } };
+  const fields = schemaFields({ input: inputOf(doc, "a/b").input, hidden: [] });
+  assert.equal(fields.length, Object.keys(props).length, "every property became a field");
+  assert.deepEqual(new Set(fields.map((f) => f.type)), new Set(["text", "longtext", "int", "number", "bool", "enum", "json", "media"]));
+  const ids = new Set();
+  for (const f of fields) {
+    const html = fieldHtml(f);
+    assert.ok(!/<img/i.test(html), `${f.type}: the name wrote a tag: ${html.slice(0, 160)}`);
+    for (const [, id] of html.matchAll(/\b(?:id|for)="([^"]*)"/g)) {
+      assert.match(id, /^rtf_\d+$/, `${f.type}: element ids are numbered, never the provider's name`);
+      if (/\bid="/.test(html)) ids.add(id);
+    }
+    assert.ok(html.includes(`data-f="${f.name.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")}"`)
+      || html.includes("data-media=") || html.includes("data-drop="), `${f.type}: the name travels only escaped, in the data attributes`);
+  }
+  assert.ok(ids.size >= fields.length - 1, "and each field's id is its own");
+});
+
 test("a cancel pressed while the submit is in flight reaches the Router, and the run stays cancelled", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "aiplay-router-"));
   try {
@@ -520,6 +632,6 @@ test("the web app shows the page only in that mode, and asks before every run", 
   assert.doesNotMatch(page, /localStorage/, "the key is never kept in the browser");
   // Full Studio mounts no /api/router, and the Welcome card still leads here.
   assert.match(page, /if \(e\.status === 404\) \{ paintOffMode\(\); return; \}/, "a 404 is the other mode, said plainly");
-  assert.match(page, /This page runs in the launcher's Use Comfy API mode\. Full Studio never spends credits\./);
+  assert.match(page, /This page runs in the launcher's Use Comfy API mode\. Full Studio never spends Comfy credits\./);
   assert.match(page, /min="\$\{esc\(f\.min\)\}"/, "schema numbers are escaped into attributes like every other schema text");
 });

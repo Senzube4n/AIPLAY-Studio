@@ -51,7 +51,7 @@ function paintOffMode() {
     note.id = "rtOffMode";
     $("router").querySelector(".page-head")?.after(note);
   }
-  note.textContent = "This page runs in the launcher's Use Comfy API mode. Full Studio never spends credits.";
+  note.textContent = "This page runs in the launcher's Use Comfy API mode. Full Studio never spends Comfy credits.";
 }
 
 /* ── the key ─────────────────────────────────────────────────────────── */
@@ -173,8 +173,17 @@ function isScalar(sch) {
   return ["string", "integer", "number", "boolean"].includes(sch.type) && !sch.oneOf && !sch.anyOf;
 }
 
+/* ⚠ ELEMENT IDS ARE NUMBERED, NEVER BUILT FROM THE FIELD NAME. A field name is
+ * a property key from the model's published schema (server/router/catalog.js
+ * copies keys through as they come), and it went into id="…" unescaped: a key
+ * with a double quote in it closed the attribute and put markup of its choosing
+ * into Studio's own page, where a script passes every same-origin guard. The
+ * id only pairs a label with its control; values are read through the escaped
+ * data-f / data-media / data-drop attributes, so a counter loses nothing and
+ * also pairs names that are not valid ids (a space, a dot). */
+let rtfSeq = 0;
 function fieldHtml(f) {
-  const id = `rtf_${f.name}`;
+  const id = `rtf_${++rtfSeq}`;
   const req = f.required ? " *" : "";
   const tip = f.help ? ` title="${esc(f.help)}"` : "";
   const label = `<label for="${id}"${tip}>${esc(f.label)}${req}</label>`;

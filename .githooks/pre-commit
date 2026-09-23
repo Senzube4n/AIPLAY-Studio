@@ -741,6 +741,14 @@ node server/art_cache_test.js || exit 1
 # server/ and scripts/ path off `import.meta.url).pathname`. The python half
 # skips only where no python runs at all.
 node server/lrc_test.js || exit 1
+# WHO MAY OPEN THE DOORS THAT CHOOSE WHAT RUNS HERE. A cross-site no-cors POST
+# (text/plain, no preflight) moved the rig Studio launches, the output and
+# models folders, switched paid API mode on with its cap at $1000, stored its
+# own key and queued a song; only addAlso said 403. The real route text, sliced
+# out of index.js, with the real sameOriginLocalJson: /api/models (every
+# action), /api/settings (and its network/device path refusal), /api/apimode,
+# /api/generate, and /api/audio's sandbox header. Temp folders, no server.
+node --test server/cross-origin-doors_test.js || exit 1
 # THE PREVIEW CACHE KEY, against real files in a temp directory. The cache was
 # keyed on the root comp's updatedAt alone, so an edit inside a CHILD comp
 # repainted the parent and its cached frames went on being served. No python and

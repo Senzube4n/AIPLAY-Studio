@@ -525,27 +525,42 @@ export class ArtRunner extends EventEmitter {
     const chosen = config.comfy?.options?.attention;
     if (chosen && chosen !== "--use-ck-attention") return null;
     if ((config.video.engines.h3?.attention ?? "ck") !== "ck") return null;
+    return (await this.#kitchenOffered()) ? "ck" : null;
+  }
+
+  /** Condition 3 on its own: whether the RUNNING engine's ModelAttentionBackend
+   *  lists "comfy kitchen attention". Asked once per engine boot (the rebound
+   *  handler forgets it); a probe that fails is "not offered", never a throw. */
+  async #kitchenOffered() {
     if (this.#ckOffered === undefined) {
       try {
         const info = await engineDoor.objectInfo("ModelAttentionBackend");
         this.#ckOffered = attentionOptions(info).includes("comfy kitchen attention");
       } catch { this.#ckOffered = false; }
     }
-    return this.#ckOffered ? "ck" : null;
+    return this.#ckOffered;
   }
 
-  /** The attention a video graph carries, "ck" or null, for any engine. LTX: none.
-   *  H3: h3Attention(). An engine with its own picker (config `sparseAttention`, FastH3)
-   *  follows the person's per-render pick (job.attention, "kitchen" | "pytorch") else its
-   *  config default ("pytorch"); a Kitchen pick passes the SAME launcher and engine-offers
-   *  checks as H3, never around them. */
+  /** The attention a video graph carries, for any engine. LTX: none (null).
+   *  H3: h3Attention(), "ck" or null.
+   *
+   *  An engine with its own picker (config `sparseAttention`, FastH3) gets the
+   *  backend the person PICKED, written into the graph: "ck" or "pytorch", never
+   *  null. Leaving the node out would hand the dense part of the schedule to
+   *  whatever the launcher started ComfyUI with (Sage, CK int8 or PyTorch), so a
+   *  "PyTorch" pick ran under Sage and a "Kitchen" pick ran PyTorch, with nothing
+   *  on screen saying so. H3's launcher veto is H3's rule for having NO per-render
+   *  choice, so it does not apply here; the engine-offers probe still does, and a
+   *  Kitchen pick the engine does not offer becomes an explicit PyTorch node,
+   *  which is what ComfyUI would fall back to anyway. */
   async videoAttention(job) {
     const name = job.engine || config.video.engine;
     if (name === "ltx") return null;
     const eng = config.video.engines[name];
     if (eng?.sparseAttention) {
       const want = job.attention ?? eng.attention;
-      if (want !== "kitchen" && want !== "ck") return null;
+      if (want !== "kitchen" && want !== "ck") return "pytorch";
+      return (await this.#kitchenOffered()) ? "ck" : "pytorch";
     }
     return this.h3Attention();
   }

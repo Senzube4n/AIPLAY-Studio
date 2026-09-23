@@ -56,7 +56,7 @@ import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
-import { createRouterClient } from "./router/client.js";
+import { createRouterClient, routerKeyCache } from "./router/client.js";
 import { createCatalog } from "./router/catalog.js";
 import { createRouterJobs } from "./router/jobs.js";
 import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
@@ -149,7 +149,7 @@ let coverSkipSaid = false;
 async function checkedVideoLoras(value, engine) {
   const e = videoEngine(engine);
   return validateVideoLoras(value, {
-    engine, shelf: async () => scanBases(await modelBases()), probe: probeModel,
+    engine, loraBase: e.loraBase, label: e.label, shelf: async () => scanBases(await modelBases()), probe: probeModel,
     automatic: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4].filter(Boolean),
   });
 }
@@ -2120,9 +2120,13 @@ function json(res, code, body) {
  * and the body is declared application/json, which a cross-site page cannot
  * send without a preflight no route answers. The Settings page and MCP's api()
  * both send application/json. One copy: /api/music-gguf/setup (installs a
- * runtime), /api/lyrics's python choice (names a program to run), /api/models
- * addAlso (a folder the engine loads from) and the Comfy API page's POSTs
- * (a key, and runs that spend credits; server/router/routes.js) share it. */
+ * runtime), /api/lyrics's python choice (names a program to run), POST
+ * /api/models (every action: the folders the engine loads from and downloads
+ * into, overrides, downloads), POST /api/settings (the rig whose ComfyUI Studio
+ * launches, and the output folder), POST /api/apimode (the paid mode, its cap
+ * and its keys), POST /api/generate (a song, which in API mode is billed) and
+ * the Comfy API page's POSTs (a key, and runs that spend credits;
+ * server/router/routes.js) share it. */
 function sameOriginLocalJson(req) {
   const host = req.headers.host || "";
   const local = [`127.0.0.1:${config.uiPort}`, `localhost:${config.uiPort}`, `[::1]:${config.uiPort}`];
@@ -2437,9 +2441,15 @@ const llmRoutes = createLlmRoutes({ json, readBody, cloud, config });
  * has no route that can spend a credit. */
 /* The key, decrypted once. secrets.js decrypts through DPAPI in a new
  * powershell.exe per call, and the client asks on every poll of every run;
- * cleared by the page's own save and forget, the only two ways it changes. */
-let routerKey;
-const routerClient = createRouterClient({ getKey: async () => (routerKey ??= await getSecret(ROUTER_KEY)) });
+ * dropped by the page's own save and forget, the only two ways it changes.
+ * ⚠ A GENERATION, NOT JUST A CLEAR. A save takes ~300 ms (read the store,
+ * encrypt in powershell, write), and a poll that started reading during it
+ * decrypted the OLD file and cached it after the clear: every later run was
+ * submitted and polled on the old key until Studio restarted. The generation
+ * moves before AND after each write, so a read that began before the write
+ * finished never stores what it read. */
+const { getKey: getRouterKey, drop: dropRouterKey } = routerKeyCache(() => getSecret(ROUTER_KEY));
+const routerClient = createRouterClient({ getKey: getRouterKey });
 const routerJobs = createRouterJobs({
   client: routerClient,
   dir: path.join(config.paths.appData, "router"),
@@ -2450,8 +2460,8 @@ const routerJobs = createRouterJobs({
 const routerRoutes = config.cloudOnly ? createRouterRoutes({
   json, readBody, config, sameOriginLocalJson,
   secrets: { has: hasSecret, status: secretStatus,
-    set: async (name, value) => { routerKey = undefined; return setSecret(name, value); },
-    clear: async (name) => { routerKey = undefined; return clearSecret(name); } },
+    set: async (name, value) => { dropRouterKey(); try { return await setSecret(name, value); } finally { dropRouterKey(); } },
+    clear: async (name) => { dropRouterKey(); try { return await clearSecret(name); } finally { dropRouterKey(); } } },
   client: routerClient,
   catalog: createCatalog({ dir: path.join(config.paths.appData, "router") }),
   jobs: routerJobs,
@@ -2808,6 +2818,10 @@ const server = http.createServer(async (req, res) => {
                * apply it twice. */
               ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
                 .filter(Boolean).map((n) => path.basename(String(n))),
+              /* The base a LoRA must have been made for (config.js), which the
+               * Video screen's picker judges against and /api/video checks: null
+               * means this engine takes none, and the picker hides. */
+              loraBase: e.loraBase ?? null,
             }])),
             seconds: videoEngine().seconds,
             width: videoEngine().width, height: videoEngine().height },
@@ -2972,6 +2986,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/models" && req.method === "POST") {
+      /* EVERY action here chooses what the engine loads or fetches: the main
+       * models folder (setModelsDir, which also makes a folder the page names),
+       * the extra ones (addAlso, dropAlso), a catalogue file's stand-in
+       * (override), a download, a folder scan, the OS folder dialog. A guard
+       * on addAlso alone left setModelsDir, which does more, open to any page,
+       * so the one guard is the handler's first line, before the body is read. */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Changing models or model folders is only accepted from Studio's own page or a local client." });
       const b = await readBody(req);
       try {
         /* The OS folder picker. Blocks until the dialog closes. */
@@ -2987,9 +3008,8 @@ const server = http.createServer(async (req, res) => {
          * Downloads still go to the main folder. Needs a restart: the engine's
          * model paths are written when it starts. */
         if (b.action === "addAlso") {
-          /* It decides which folders the engine LOADS from, so it is a
-           * choice about what runs on this machine: the one guard for those. */
-          if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Adding a models folder is only accepted from Studio's own page or a local client." });
+          /* It decides which folders the engine LOADS from: the handler's
+           * first line has already asked whether the request is Studio's own. */
           const raw = String(b.dir || "").trim();
           if (!raw) return json(res, 400, { error: "Give a folder." });
           const dir = path.resolve(raw);
@@ -3539,6 +3559,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/generate" && req.method === "POST") {
+      /* A song costs GPU time, and with API mode on it bills the person's own
+       * fal.ai or MiniMax key: only Studio's page and local clients queue one. */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Songs are only queued from Studio's own page or a local client." });
       const body = await readBody(req);
       if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
       if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
@@ -6648,7 +6671,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/settings" && req.method === "POST") {
+      /* The rig is the folder whose ComfyUI/main.py Studio RUNS at its next
+       * start, and the output folder is where every render lands: a web page in
+       * another origin must not choose either. Refused before the body is read. */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Changing the rig or output folder is only accepted from Studio's own page or a local client." });
       const b = await readBody(req);
+      /* A folder on this computer's own disk. \\server\share is absolute to
+       * path.win32, so a UNC or device path (\\?\, \\.\) would pass the stat
+       * below and make Studio run, or write to, another machine; it is refused
+       * before anything touches it (the mkdir probe would already reach the
+       * host). The same rule as the timed lyrics python. */
+      for (const key of ["outputDir", "rig"]) {
+        if (typeof b[key] !== "string" || !b[key].trim()) continue;
+        const raw = b[key].trim();
+        if (/^[\\/]{2}/.test(raw)) return json(res, 400, { error: "Choose a folder on this computer's own disk, not a network or device path." });
+        if (!path.isAbsolute(raw) || /[\r\n\0]/.test(raw) || raw.length > 1024) return json(res, 400, { error: "Give the full path to the folder, not a relative one." });
+      }
       const next = {};
       if (typeof b.outputDir === "string" && b.outputDir.trim()) {
         const dir = path.resolve(b.outputDir.trim());
@@ -6825,6 +6863,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/apimode" && req.method === "POST") {
+      /* The paid API mode: its switch, its spending cap and the provider keys it
+       * bills. Another origin must not turn it on, raise the cap, or swap in its
+       * own key so later prompts and lyrics go to its account. */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "API mode settings are only accepted from Studio's own Settings page or a local client." });
       const b = await readBody(req);
 
       /* Saving a key. It is written straight to the encrypted store and dropped
@@ -10838,11 +10880,26 @@ const server = http.createServer(async (req, res) => {
       const name = decodeURIComponent(p.slice("/api/audio/".length));
       if (name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad name" });
       const full = path.join(config.outputDir, name);
+      /* The Comfy API's results (outputDir/router) have their own door,
+       * /api/router/file/, which serves them sandboxed; a provider's scripted
+       * SVG is not served through this one as well. Judged on the joined path
+       * ("./router/x" is router/x), and on the folder name as Windows opens it:
+       * trailing dots and spaces dropped, a ":stream" suffix ignored. The
+       * sandbox header below is the protection; this is the second fence. */
+      const top = path.relative(config.outputDir, full).split(/[\\/]/)[0].split(":")[0].replace(/[. ]+$/, "").toLowerCase();
+      if (top === "router") return json(res, 404, { error: "not found" });
 
       let size;
       try { size = (await stat(full)).size; } catch { return json(res, 404, { error: "not found" }); }
       const type = MIME[path.extname(name)] || "application/octet-stream";
-      const base = { "Content-Type": type, "Accept-Ranges": "bytes" };
+      /* ⚠ SANDBOXED AND NEVER SNIFFED. Anything under outputDir can be named
+       * here, SVG and HTML included, and a file opened as a PAGE would run its
+       * scripts in Studio's origin, past every same-origin guard. `sandbox`
+       * gives such a page an opaque origin and no scripts; <audio>, <video> and
+       * <img> ignore a subresource's CSP, so playback and scrubbing are
+       * unchanged (the app uses this door only for media and covers). */
+      const base = { "Content-Type": type, "Accept-Ranges": "bytes",
+        "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox" };
 
       const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
       if (m) {

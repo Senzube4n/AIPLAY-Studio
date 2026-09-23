@@ -77,9 +77,11 @@ test("a second models folder can be added on purpose, beside the main one", () =
   const index = readFileSync(new URL("./index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   assert.match(index, /if \(b\.action === "addAlso"\) \{/);
   // It decides what the engine loads, so a cross-site no-cors text/plain POST
-  // or a rebound DNS name must not reach it: the one guard for such requests.
-  assert.match(index, /if \(b\.action === "addAlso"\) \{\n(?:\s*\/?\*[^\n]*\n)*\s+if \(!sameOriginLocalJson\(req\)\) return json\(res, 403,/,
-    "the first thing addAlso does is ask whether the request is Studio's own");
+  // or a rebound DNS name must not reach it: the one guard for such requests,
+  // at the top of the whole handler, because setModelsDir, dropAlso, override
+  // and scanFolder sit in the same POST (cross-origin-doors_test runs it).
+  assert.match(index, /if \(p === "\/api\/models" && req\.method === "POST"\) \{\n(?:\s*\/?\*[^\n]*\n)*\s+if \(!sameOriginLocalJson\(req\)\) return json\(res, 403,[^\n]*\n\s+const b = await readBody\(req\);/,
+    "the first thing the models POST does, for every action, is ask whether the request is Studio's own");
   assert.match(index, /const next = uniqueDirs\(\[\.\.\.\(config\.modelsAlso \|\| \[\]\), dir\]\);\n\s+await mergeSettings\(\{ modelsAlso: next \}\);/,
     "added to the extra folders, never made the download folder");
   assert.match(index, /if \(samePath\(dir, config\.modelsDir\)\) return json\(res, 400/, "the main folder is not its own extra");
@@ -117,4 +119,57 @@ test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
   }
   const models = readFileSync(new URL("./models.js", import.meta.url), "utf8");
   assert.match(models, /async #one\(id, f, getBase, _setBase\) \{\r?\n\s+if \(fp4Blocked\(f\)\) \{/, "checked before a byte is fetched");
+});
+
+/* THE CATALOGUE AND THE ENGINE AGREE ON AN AMD CARD, with the files a real AMD
+ * machine holds: the int4 H3 encoder Studio itself downloaded before the amd
+ * entry existed, and an nvfp4 Ideogram encoder that came with an NVIDIA
+ * machine's folder added as an extra. config.js reads the card ONCE at load
+ * (AMD_CARD), so this runs in its own process with an AMD settings file; the
+ * in-process test above flips config.gpu after load and cannot see pick().
+ * Before the fix, pick() loaded the int4 while the Models screen called H3 not
+ * installed (27.1 GB missing) and /api/video refused to switch to it, and
+ * Ideogram's graph named the nvfp4 that ROCm has no kernel for. */
+test("an AMD card holding the int4 H3 encoder: the Models screen and the graph agree, and Ideogram never names nvfp4", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const box = path.join(root, "amd");
+  const appdata = path.join(box, "appdata"), main = path.join(box, "main"), extra = path.join(box, "extra");
+  const INT4 = "qwen3vl_32b_minimax_h3-int4_convrot.safetensors", INT8 = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors";
+  await mkdir(appdata, { recursive: true });
+  await mkdir(main, { recursive: true });
+  await mkdir(path.join(extra, "text_encoders"), { recursive: true });
+  await writeFile(path.join(extra, "text_encoders", INT4), Buffer.alloc(16, 1));
+  await writeFile(path.join(extra, "text_encoders", "qwen3vl_8b_nvfp4.safetensors"), Buffer.alloc(16, 1));
+  await writeFile(path.join(appdata, "settings.json"), JSON.stringify({
+    gpu: { vendor: "amd", totalMb: 16304 }, torchBackend: "rocm", rig: path.join(box, "rig"), modelsDir: main, modelsAlso: [extra],
+  }));
+  const here = (f) => new URL(`./${f}`, import.meta.url).href;
+  const child = `
+    const { config } = await import(${JSON.stringify(here("config.js"))});
+    const { ModelManager, cardIsAmd } = await import(${JSON.stringify(here("models.js"))});
+    const { videoReady, videoGraph, ideogramGraph } = await import(${JSON.stringify(here("workflow.js"))});
+    const st = await new ModelManager().status();
+    const slot = (id) => (st.find((c) => c.id === id)?.files || []).find((f) => /qwen3vl_32b_minimax_h3/.test(f.dest));
+    const g = videoGraph({ engine: "h3", prompt: "p", seed: 1, seconds: 2 });
+    console.log(JSON.stringify({
+      amd: cardIsAmd(), te: config.video.engines.h3.textEncoder,
+      graphTe: Object.values(g).find((n) => /CLIPLoader/.test(n.class_type))?.inputs?.clip_name,
+      missing: videoReady("h3").missing,
+      video: slot("video") && { dest: slot("video").dest.split(/[\\\\/]/).pop(), present: slot("video").present },
+      fast: slot("videoFastH3") && { present: slot("videoFastH3").present },
+      ideogram: ideogramGraph({ prompt: "p", seed: 1 })[3].inputs.clip_name,
+    }));
+    process.exit(0);`;
+  const env = { ...process.env, AIPLAY_APPDATA: appdata };
+  delete env.AIPLAY_MODELS_DIR;
+  const out = execFileSync(process.execPath, ["--input-type=module", "-e", child], { env, encoding: "utf8", timeout: 60_000 });
+  const r = JSON.parse(out.trim().split(/\r?\n/).pop());
+  assert.equal(r.amd, true, "the child really is on an AMD card");
+  assert.equal(r.te, INT4, "pick() takes the int4 that is on disk");
+  assert.equal(r.graphTe, INT4, "and the H3 graph loads it");
+  assert.ok(!r.missing.includes(INT4), "the engine calls the encoder present");
+  assert.equal(r.video?.dest, INT8, "on AMD the catalogue slot is the int8 build");
+  assert.equal(r.video?.present, true, "and the int4 already there fills it: no 27.1 GB download asked for");
+  assert.equal(r.fast?.present, true, "FastH3's row shares the slot");
+  assert.equal(r.ideogram, "qwen3vl_8b_fp8_scaled.safetensors", "Ideogram never names nvfp4 on AMD, even with one on disk");
 });

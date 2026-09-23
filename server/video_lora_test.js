@@ -113,7 +113,10 @@ test("the route, the job and the page carry the stack", () => {
   assert.match(src("./art.js"), /loras: job\.loras,/, "the job hands it to the graph");
   const app = src("../web/app.js");
   assert.match(app, /\.\.\.vidLoraChoice\(\),/);
-  assert.match(app, /const VID_LORA_BASE = \{ h3: "MiniMax H3", ltx: "LTX" \};/, "the names detect.js gives these LoRAs");
+  assert.doesNotMatch(app, /VID_LORA_BASE/, "no copy of the engine list on the screen");
+  assert.match(app, /const want = state\.video\?\.engines\?\.\[eng\]\?\.loraBase;/, "the picker judges against the engine's own base, from /api/status");
+  assert.match(index, /loraBase: e\.loraBase \?\? null,/, "which /api/status sends");
+  assert.match(index, /engine, loraBase: e\.loraBase, label: e\.label, shelf:/, "and /api/video checks against the same value");
   assert.match(app, /!own\.has\(l\.name\)/, "the engine's own turbo LoRAs are not offered twice");
   assert.match(src("../web/index.html"), /<select id="vidLoraPick"/);
   assert.match(src("./detect.js"), /return \{ variant: "MiniMax H3"/);

@@ -1092,6 +1092,13 @@ export const config = {
      * -resolution work was measured on and it stays available. */
     h3: {
     label: "MiniMax H3",
+    /* The architecture name server/detect.js reads out of a LoRA made for this
+     * engine. The ONE place it is written: the Video screen's LoRA picker and
+     * /api/video's check (video-lora-validation.js) both read it from here, via
+     * /api/status, so they cannot disagree. FastH3 inherits it through the
+     * spread below (its DiT is H3's, distilled; the graph stacks your LoRAs on
+     * it as on H3's). An engine without one takes no LoRAs of your own. */
+    loraBase: "MiniMax H3",
     /* OFFICIAL weights first — Comfy-Org/MiniMax-H3 published the full set
      * (2026-08-24; it did not exist when the third-party builds were hunted
      * down). Measured, same seed and flow: the official pruned int8 DiT with
@@ -1476,6 +1483,7 @@ export const config = {
      * The HF repo is access-gated: it needs an accepted licence and a token. */
     ltx: {
     label: "LTX 2.5",
+    loraBase: "LTX",
     dit: "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
     textEncoder: "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
     /* ⚠ "-conv-". The vendor template's widget says ltx-2.5-video-vae-bf16 and
@@ -1843,7 +1851,10 @@ config.video.engines.fasth3 = {
     minTokens: 12288, extraTokens: 256, sinkConditioning: "exact_kv_and_rows" },
   /* The dense attention it falls back to. "pytorch" by default; "kitchen" is
    * Comfy Kitchen's INT8 attention (the template's choice), picked per render
-   * on the Video screen. ComfyUI falls back to PyTorch where Kitchen is absent. */
+   * on the Video screen. The pick is written into the graph as node 85 either
+   * way (art.js videoAttention()), so the launcher's own Attention setting
+   * cannot overrule it; where the engine does not offer Kitchen, the node says
+   * PyTorch. */
   attention: "pytorch",
 };
 

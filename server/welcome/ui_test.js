@@ -351,6 +351,21 @@ ok("every rail entry has a paragraph in the catalogue",
 ok("...and the catalogue names no screen that does not exist",
   [...covered].every((v) => rail.includes(v)),
   [...covered].filter((v) => !rail.includes(v)).join(", "));
+/* ORDER, where the rail's order is the owner's (chat/ui_test pins the rail:
+ * Welcome, Chat, Music). The Welcome window draws each group in catalogue
+ * order, so a catalogue that still read Welcome, Comfy API, Chat opened the
+ * tour with a page Full Studio hides and does not mount. Only the head of the
+ * group and the Comfy API card are pinned here: the rest of the catalogue has
+ * older drift from the rail (daw, vfx, settings/mcp, Explore) that this check
+ * would fail on without the merge having caused it. */
+{
+  const order = [...CATALOGUE.matchAll(/^\s*id: "([a-z]+)", icon:/gm)].map((m) => m[1]);
+  ok("the catalogue opens as the rail does: Welcome, Chat, Music",
+    order[0] === "home" && order[1] === "chat" && order[2] === "create", order.slice(0, 4).join(", "));
+  ok("...and the Comfy API card comes after Music, where its rail link is",
+    order.indexOf("router") > order.indexOf("create") && railViews.indexOf("router") > railViews.indexOf("create"),
+    `catalogue ${order.indexOf("router")}, rail ${railViews.indexOf("router")}`);
+}
 
 /* ── every screen carries an ⓘ ──────────────────────────────────────────────
  *

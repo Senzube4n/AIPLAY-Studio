@@ -487,9 +487,16 @@ const H3_SHARED_FILES = [
     dest: M("text_encoders/qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), bytes: 14173709116,
     alt: ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors"],
     /* ROCm has only a slow fallback for this int4 build; the official
-     * int8 is the format AMD cards already run for Music 3 and Qwen. */
+     * int8 is the format AMD cards already run for Music 3 and Qwen.
+     * An int4 ALREADY on disk still counts (the alt): config.js's AMD pick()
+     * accepts it as its second choice and the graph loads it, and before the
+     * amd entry existed Studio's own downloader fetched int4 on every card. Without
+     * the alt, an AMD machine holding H3 was told H3 needs a 27.1 GB download
+     * and /api/video refused to switch to an engine that renders. A fresh AMD
+     * install still downloads the int8. */
     amd: { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors`,
-      dest: M("text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"), bytes: 27141342152 } },
+      dest: M("text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"), bytes: 27141342152,
+      alt: ["qwen3vl_32b_minimax_h3-int4_convrot.safetensors"] } },
   { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors`,
     dest: M("vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496,
     alt: ["minimax_h3_video_vae_int8_convrot.safetensors"] },

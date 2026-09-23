@@ -45,7 +45,8 @@ mode (new) runs image, video, audio, 3D and text models on Comfy's cloud through
 [Comfy Router](https://docs.comfy.org/development/comfy-router/quickstart), with
 your own Comfy API key. It needs no ComfyUI and no card, and **every run uses
 Comfy credits**, so it asks before each one. Full Studio and Music only never
-spend credits. Get a key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
+spend Comfy credits; Full Studio's separate API mode, off until you switch it on
+in Settings, bills your own fal.ai or MiniMax key. Get a Comfy API key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
 choose **Use Comfy API** in the launcher, and paste the key on the page. Or run
 `npm run start:cloud`.
 
