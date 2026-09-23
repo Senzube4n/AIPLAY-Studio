@@ -135,6 +135,20 @@ export async function commitBible(slug, bible) {
           characterRefs: (b.characterRefs || []).map(norm), backgroundRefs: (b.backgroundRefs || []).map(norm),
           propRefs: (b.propRefs || []).map(norm),
           crowd: !!b.crowd,
+          /* ⚠ READ IN generate.js AND WRITTEN NOWHERE UNTIL NOW. The song is
+           * frozen under an H3 render when `engine === "ltx" || !useRefs ||
+           * Boolean(board?.lipSync) || brief.songConditioning === "always"`,
+           * and that third clause was dead: no writer carried the flag, so the
+           * per-scene opt-in could never be true and the only working lever was
+           * the all-or-nothing brief flag.
+           *
+           * It matters because the granularity is the whole point. A music
+           * video is mostly not singing - 23 of Bewitching's 50 scenes are -
+           * and freezing a song under a shot of her hands costs render time for
+           * a mouth that is not in frame. Measured the hard way: the first cut
+           * of Bewitching rendered all 50 with no audio input at all, so every
+           * close-up mouths something unrelated to the lyric. */
+          lipSync: !!b.lipSync,
           refProminence: prom,
           imageFile: old?.imageFile || null, takes: old?.takes || [],
           updatedAt: Date.now(),

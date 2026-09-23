@@ -298,5 +298,37 @@ const find = (d, kind) => undeclaredRecurring(d).filter((u) => u.kind === kind);
   }
 }
 
+/* ── the board flag that reaches the renderer ────────────────────────────
+ *
+ * generate.js freezes the song under an H3 render when
+ *
+ *     engine === "ltx" || !useRefs || Boolean(board?.lipSync)
+ *       || brief.songConditioning === "always"
+ *
+ * and on the reference path the first two are false. The third clause was DEAD:
+ * `lipSync` was read there and written nowhere, because commitBible did not
+ * carry it onto the board it builds. So the per-scene opt-in could never be
+ * true, and the only working lever was the all-or-nothing brief flag.
+ *
+ * MEASURED, not theorised: the first cut of Bewitching rendered all 50 scenes
+ * with NO audio input node in the graph at all - MiniMaxH3ReferenceToVideo and
+ * LoadImage only - so every close-up mouthed something unrelated to the lyric.
+ * A clause nothing can satisfy looks exactly like a clause that works, which is
+ * why it survived this long and why it gets a pin rather than a comment.
+ *
+ * The granularity is the point: 23 of those 50 scenes sing, and freezing a song
+ * under a shot of her hands buys a mouth that is not in frame. */
+console.log("\n  the lipSync flag survives commitBible");
+{
+  const bsrc = readFileSync(new URL("./bible.js", import.meta.url), "utf8");
+  const gsrc = readFileSync(new URL("./generate.js", import.meta.url), "utf8");
+  ok("commitBible writes lipSync onto the board it builds", /lipSync:\s*!!b\.lipSync/.test(bsrc));
+  ok("...and generate.js is still the reader that needs it", /Boolean\(board\?\.lipSync\)/.test(gsrc));
+  ok("...and audioTrack is still gated on that same decision",
+    /audioTrack:\s*\(doc\.song\?\.file && songConditioned\)/.test(gsrc));
+  ok("...and songConditioned still names the board flag as one of its ways in",
+    /songConditioned\s*=[\s\S]{0,160}board\?\.lipSync/.test(gsrc));
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);
