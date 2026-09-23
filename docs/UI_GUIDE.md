@@ -369,6 +369,9 @@ New web scripts get a `node --check` line in `.githooks/pre-commit`.
       preview hides when the strip repaints.
 - [ ] No painter reaches for the network on every repaint; a readiness key
       is keyed on what changes the answer, not on what is on screen.
+- [ ] A seed, or anything else that decides what comes out, is random by
+      default. A fixed one in the markup means every machine makes the
+      same thing from the same words.
 - [ ] Works in Simple mode as well as Advanced.
 - [ ] Looked at it at a normal window size and at 700px wide.
 - [ ] `.githooks/pre-commit` passes (UI tests read `web/index.html`).

@@ -456,11 +456,16 @@
       <div data-music-input></div>
     </details>
 
+      <!-- RANDOM BY DEFAULT. The seed used to arrive locked on a fixed number,
+           so the same words gave the identical song every time and a second
+           Create looked like it had done nothing. app.js rolls the starting
+           number at boot and paintSeed() keeps these two buttons in step; the
+           state that ships here is the one they will be in. -->
       <div class="seedrow">
         <span class="sk">Seed</span>
-        <input class="sv" id="seed" inputmode="numeric" value="418923">
-        <button class="seedbtn on" type="button" id="seedLock">locked</button>
-        <button class="seedbtn" type="button" id="seedRand">random</button>
+        <input class="sv" id="seed" inputmode="numeric" placeholder="random">
+        <button class="seedbtn" type="button" id="seedLock">lock</button>
+        <button class="seedbtn on" type="button" id="seedRand">random</button>
       </div>
       <p class="seednote" id="seedNote"></p>
 

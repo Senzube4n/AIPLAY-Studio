@@ -71,7 +71,16 @@ const size = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b /
 
 
 const state = {
-  seedLocked: true,
+  /* ⚠ UNLOCKED, AND IT MATTERS MORE HERE THAN ANYWHERE. A locked seed with a
+   * fixed starting value means the same words give the same song every time,
+   * for ever, on a fresh install: press Create twice and wonder why nothing
+   * changed. Images and Video already leave their seed box empty and let the
+   * server roll one; Music is the screen that shipped with a number in the
+   * box and "locked" lit up. Loading a past song's settings has always rolled
+   * a fresh seed for the same reason (see the loader below) — this makes the
+   * first song behave like the second. Locking is one click, and that click
+   * keeps the seed on screen, which is the case where repeatability is wanted. */
+  seedLocked: false,
   loop: false,
   shuffle: false,
   lastVol: 1,
@@ -92,7 +101,7 @@ function paintSeed() {
   // "I changed one word and got a different song" is a guaranteed support ticket.
   $("seedNote").innerHTML = state.seedLocked
     ? "Repeatability needs the same seed, model, precision, settings and inputs; an identical file isn’t guaranteed. <b>Editing lyrics can change the song.</b>"
-    : "A fresh seed each time — a different song from the same words.";
+    : "A fresh seed each time: a different song from the same words. Lock it to keep one.";
 }
 $("seedLock").onclick = () => { state.seedLocked = true; paintSeed(); };
 $("seedRand").onclick = () => {
@@ -19451,6 +19460,11 @@ setMode("song");
 setView("home");
 setGrid(localStorage.getItem("aiplayGrid") === "1");
 ovRender();
+/* The number in the box is what "lock" would lock, so it must not be the same
+ * number on every machine on every boot. Create rolls a fresh one before each
+ * render while the seed is unlocked; this is only so the box is honest before
+ * the first one. */
+if (!state.seedLocked) $("seed").value = Math.floor(Math.random() * 4294967296);
 paintSeed();
 paintScaffold();
 $("maxDur").oninput();

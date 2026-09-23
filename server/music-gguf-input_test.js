@@ -278,7 +278,8 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   const elements = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
   elements.btnCreate = { disabled: false }; elements.btnPreview = { disabled: false };
   elements.yAbcUse = { checked: false }; elements.yAbc = { value: "" }; elements.scoreUse = { checked: false };
-  // seedLocked: the app's default. Unlocked (🎲 random) re-rolls the seed on every Create.
+  // seedLocked is LOCKED here so the request carries seed 17 and can be asserted.
+  // The app's own default is unlocked, which re-rolls the seed on every Create.
   const state = { mode: "lyrics", musicEngine: "yue2-gguf", takes: 2, engineReady: false, seedLocked: true,
     musicEngines: { "yue2-gguf": { runtime: "audiocpp", ready: true } },
     audioRef: { latent: "stale-minimax-input" } };

@@ -129,3 +129,22 @@ test("'don't record the prompt' sits with the Make button, not in the reference 
   assert.match(read("web/ui.css"), /\.ctatog \{/);
   assert.match(APP, /private: \$\("imgPrivate"\)\.checked/);
 });
+
+test("the seed is random by default on every screen", () => {
+  // Music: it shipped locked on a fixed number, so the same words gave the
+  // identical song for ever and a second Create looked like it had done nothing.
+  assert.match(APP, /seedLocked: false,/, "Music's seed starts unlocked");
+  assert.match(APP, /if \(!state\.seedLocked\) \$\("seed"\)\.value = Math\.floor\(Math\.random\(\)/,
+    "and the number in the box is rolled at boot, not shipped in the markup");
+  const row = /<div class="seedrow">[\s\S]*?<\/div>/.exec(HTML)?.[0] || "";
+  assert.match(row, /id="seed" inputmode="numeric" placeholder="random"/, "no fixed seed in the markup");
+  assert.match(row, /class="seedbtn" type="button" id="seedLock">lock</, "lock is the off state");
+  assert.match(row, /class="seedbtn on" type="button" id="seedRand">random</, "random is lit");
+  // Images and Video send nothing and let the server roll one; an empty box
+  // with this placeholder is what makes that happen.
+  assert.match(HTML, /id="vidSeed" inputmode="numeric" placeholder="random"/);
+  assert.match(HTML, /id="imgSeed" type="number" class="sel2 sm" placeholder="random"/);
+  for (const id of ["imgSeed", "vidSeed"]) {
+    assert.doesNotMatch(HTML, new RegExp(`id="${id}"[^>]*\svalue="`), `${id} must ship empty`);
+  }
+});
