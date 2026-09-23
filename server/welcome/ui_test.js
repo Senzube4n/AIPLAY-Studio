@@ -511,6 +511,15 @@ ok(`web/info.js names no readiness state of its own (${Object.keys(NEED_STATES).
     + "in server/welcome/catalogue.js NEED_STATES, which is the table the panel is already "
     + "handed and the one an agent reads too.");
 
+/* THE GROUP ANSWER REACHES THE PANEL. Before a music engine is ready the Models
+ * screen badges every music row "one music engine required" and no single one
+ * `required` (server/models.js markRequired). The join used to carry only
+ * `required`, so this panel would have shown the selected engine with no chip
+ * at all while the Models screen said one is required. */
+ok("a music row's group answer reaches the info panel, in the Models screen's words",
+  /requiredGroup: cap\?\.requiredGroup \?\? null,/.test(ROUTES)
+  && /n\.requiredGroup === "music" \? '<span class="infoneed">one music engine required<\/span>'/.test(INFO));
+
 /* ── the panel may not push the screen out from under itself ───────────────
  *
  * MEASURED, at 1440x900. This panel is prose about a screen and can run to any

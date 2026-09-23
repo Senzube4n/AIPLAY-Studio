@@ -111,7 +111,9 @@ function needRow(n, info) {
     <li class="inforow">
       <div class="inforowhead">
         <b>${esc(n.label)}</b>
-        ${n.required ? '<span class="infoneed">required</span>' : ""}
+        ${/* The Models screen's words for the same flags (web/app.js requiredBadge). */
+          n.required ? '<span class="infoneed">required</span>'
+          : n.requiredGroup === "music" ? '<span class="infoneed">one music engine required</span>' : ""}
         ${chip(n.state, info.needStates)}
         ${chip(n.fit?.state, info.fitStates, n.fit?.why)}
         ${size ? `<span class="fitsize">${esc(size)}</span>` : ""}

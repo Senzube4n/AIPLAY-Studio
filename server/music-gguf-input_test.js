@@ -19,6 +19,8 @@ try {
 // to the empty test rig rather than the owner's configured installation.
 const { prepareGgufJob } = await import("./music-gguf-input.js");
 const { config } = await import("./config.js");
+// The route marks the required badge over its overlaid rows; the slice below runs the real rule.
+const { markRequired } = await import("./models.js");
 const valid = (extra = {}) => ({ caption: "Warm acoustic folk", lyrics: "Sing softly\nUnder the moon", ...extra });
 const queued = [];
 const atBoundary = (body) => { const spec = prepareGgufJob(body, "agent:test"); queued.push(spec); return spec; };
@@ -211,6 +213,7 @@ await test("Models response preserves catalogue variant rows and exposes separat
     // The Models route now also files each row into a collapsible section.
     modelGroupOf: () => "music",
     ggufSetup: { pending: false, status: async () => status },
+    markRequired,
   }, { timeout: 1000 });
   status = { ready: false, variants: { q4_0: { ready: false }, q8_0: { ready: true } },
     message: "Native YuE2 Q4_0 is not installed.", downloadBytes: 2933415003, progress: null };
@@ -228,6 +231,19 @@ await test("Models response preserves catalogue variant rows and exposes separat
   status = { ...status, variants: { q4_0: { ready: false }, q8_0: { ready: false } }, message: "Fixture runtime unavailable" };
   const unavailable = (await projection())[0];
   assert.equal(unavailable.ready, false);assert.match(unavailable.note, /Fixture runtime unavailable/);
+  /* THE BADGE IS MARKED AFTER THE OVERLAY. status() cannot see the native kit
+   * (the row has no files of its own), so marked before the overlay a set-up
+   * native engine would still read "one music engine required". */
+  const shipped = config.music.engine;
+  try {
+    config.music.engine = "yue2-gguf";
+    status = { ...status, variants: { q4_0: { ready: false }, q8_0: { ready: true } } };
+    const chosen = (await projection())[0];
+    assert.equal(chosen.required, true, "the selected native engine, set up, is the required one");
+    assert.equal(chosen.requiredGroup, null);
+  } finally {
+    config.music.engine = shipped;
+  }
 });
 
 await test("Python YuE2 refuses native Q4/Q8 before its kit, hardware checks or queue", async () => {

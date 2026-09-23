@@ -338,6 +338,67 @@ ok("no screen names a video engine by its capability id",
     + " — reach it through the engine key so config.js decides which engines exist. "
     + "index.js's own comment: a third engine used to resolve silently to H3's row.");
 
+/* THE MUSIC NEED IS THE ENGINE THIS INSTALL PICKED. It was the catalogue's
+ * `required` row, always MiniMax Music 3, under "the one download that is not
+ * optional", while the Models screen badges the SELECTED engine: a YuE2
+ * install's Music panel named MiniMax as not optional beside no required chip
+ * and never mentioned YuE2. Resolved when asked, so a switch is seen at once,
+ * and through the same MODEL_TO_CAPABILITY map every engine need uses. */
+const musicNeedOf = (view) => resolveNeeds(screenFor(view))
+  .filter((n) => /one music engine/.test(String(n.for))).map((n) => n.capability);
+const shippedMusic = config.music.engine;
+try {
+  config.music.engine = "yue2";
+  for (const view of ["create", "musiclab", "overnight"]) {
+    ok(`${view}: with YuE2 selected the music need is YuE2's row, not MiniMax's`,
+      JSON.stringify(musicNeedOf(view)) === JSON.stringify([MODEL_TO_CAPABILITY.yue2]),
+      musicNeedOf(view).join(", ") || "no music need at all");
+  }
+  config.music.engine = "minimax-music3";
+  ok("...and with MiniMax Music 3 selected it is MiniMax's",
+    JSON.stringify(musicNeedOf("create")) === JSON.stringify(["engine"]), musicNeedOf("create").join(", "));
+  config.music.engine = "gone";
+  ok("...and a saved engine that maps to no row falls back to the catalogue's default, never to nothing",
+    JSON.stringify(musicNeedOf("create")) === JSON.stringify([CATALOG.find((c) => c.required).id]),
+    musicNeedOf("create").join(", "));
+} finally {
+  config.music.engine = shippedMusic;
+}
+ok("no need calls one music engine the download that is not optional",
+  TABS.every((t) => (t.needs || []).every((n) => !/\bnot optional\b/i.test(String(n.for)))));
+
+/* THE TOUR NAMES THE SAME ROW. catalogue() is what /api/welcome and the MCP
+ * tool studio_capabilities return, and it handed TABS out raw: once the music
+ * need became a placeholder resolved only in resolveNeeds(), agents reading
+ * the tour got {kind:"music", id:"selected"}, which is no capability id, where
+ * the same entry had named the real row. Resolved per call, into copies, so a
+ * switch of engine is seen by the next call and TABS itself is never rewritten
+ * (a rewrite would answer every later call with the first engine it saw). */
+const tourMusic = (doc) => doc.tabs.flatMap((t) => (t.needs || [])
+  .filter((n) => /one music engine/.test(String(n.for))).map((n) => `${t.id}:${n.kind}:${n.id}`));
+const leaked = (doc) => doc.tabs.flatMap((t) => (t.needs || [])
+  .filter((n) => n.kind === "music" || n.id === "selected").map((n) => `${t.id}: ${JSON.stringify(n)}`));
+try {
+  config.music.engine = "yue2";
+  const asYue = catalogue();
+  ok("catalogue(): no screen hands an agent the unresolved music placeholder",
+    leaked(asYue).length === 0, leaked(asYue).join("\n          "));
+  ok("catalogue(): with YuE2 selected, every music need is YuE2's row",
+    tourMusic(asYue).length === 3
+      && tourMusic(asYue).every((s) => s.endsWith(`:model:${MODEL_TO_CAPABILITY.yue2}`)),
+    tourMusic(asYue).join(", "));
+  config.music.engine = "minimax-music3";
+  ok("...and the next call follows a switch to MiniMax Music 3",
+    tourMusic(catalogue()).length === 3 && tourMusic(catalogue()).every((s) => s.endsWith(":model:engine")),
+    tourMusic(catalogue()).join(", "));
+  ok("...without rewriting TABS, which keeps the placeholder for the next call to resolve",
+    TABS.filter((t) => (t.needs || []).some((n) => n.kind === "music")).length === 3);
+  ok("...and every model need the tour hands out names a real catalogue row",
+    catalogue().tabs.every((t) => (t.needs || []).every((n) => n.kind !== "model" || CAP_IDS.has(n.id))));
+} finally {
+  config.music.engine = shippedMusic;
+}
+
 const imageNeeds = screenFor("images").needs.filter((n) => n.kind === "model").map((n) => n.id);
 /* THE THIRD COPY OF A RULE THAT IS NOW ONE RULE. This was the subtraction too
  * — "the engine map's values, minus video, minus the required one" — which is

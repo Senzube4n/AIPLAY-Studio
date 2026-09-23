@@ -25,6 +25,7 @@
  */
 import { createChatTools, CHAT_ACTOR } from "./tools.js";
 import { config } from "../config.js";
+import { readFileSync } from "node:fs";
 
 let pass = 0;
 const failures = [];
@@ -245,22 +246,59 @@ console.log("\nTHE WORDS ON THE WIRE");
 }
 
 {
-  /* Nothing new in the folder and a quiet queue means the render is over and it
-   * produced no file. It THROWS: the loop draws a failed tool card for a throw
-   * and a satisfied one for a result, and "your picture is ready" over an empty
-   * folder is the sentence this whole strand exists to stop. */
+  /* ITS OWN FAILURE, IN ITS OWN WORDS. The wait follows the `job.id` the route
+   * returned (server/art-wait.js, the waiter MCP's make_image runs) and throws
+   * that job's `error`. It used to wait for the whole queue and quote
+   * `lastError`, the queue's last failure: somebody else's, here. */
   const api = recorder({
     "GET /api/images": { images: [{ name: "old.png" }] },
     "GET /api/images/qwen-status": { ready: true },
-    "POST /api/image": { ok: true, id: "i1" },
-    "GET /api/status": { art: { queued: 0, current: null, lastError: "CUDA out of memory" } },
+    "POST /api/image": { ok: true, id: "i1", job: { id: "j1" } },
+    "GET /api/status": { art: { jobIds: true, queued: 0, current: null, items: [],
+      recent: [{ id: "j1", title: "a cat", error: "CUDA out of memory" }],
+      lastError: "an overnight clip: disk full" } },
   });
   let threw = null;
   try { await createChatTools({ api }).get("make_image").run({ prompt: "a cat" }); }
   catch (e) { threw = e.message; }
-  ok("a render that produces no file FAILS rather than reporting a picture, and carries the "
-     + "queue's own last error",
+  ok("a render that fails FAILS rather than reporting a picture, and carries its OWN job's error",
     /did not come out/.test(threw || "") && /CUDA out of memory/.test(threw || ""), String(threw));
+  ok("...never the queue's last error, which belongs to another job",
+    !/disk full/.test(threw || ""), String(threw));
+}
+
+{
+  /* Nothing new in the folder and its own job finished clean: the render is over
+   * and it produced no file. It THROWS: the loop draws a failed tool card for a
+   * throw and a satisfied one for a result, and "your picture is ready" over an
+   * empty folder is the sentence this whole strand exists to stop. A stranger's
+   * failure in `lastError` is not the reason, so it is not quoted. */
+  const api = recorder({
+    "GET /api/images": { images: [{ name: "old.png" }] },
+    "GET /api/images/qwen-status": { ready: true },
+    "POST /api/image": { ok: true, id: "i2", job: { id: "j2" } },
+    "GET /api/status": { art: { jobIds: true, queued: 0, current: null, items: [],
+      recent: [{ id: "j2", title: "a dog", error: null }], lastError: "an overnight clip: CUDA out of memory" } },
+  });
+  let threw = null;
+  try { await createChatTools({ api }).get("make_image").run({ prompt: "a dog" }); }
+  catch (e) { threw = e.message; }
+  ok("a render that produces no file FAILS rather than reporting a picture",
+    /went quiet without producing a file/.test(threw || ""), String(threw));
+  ok("...and does not blame it on another job's failure",
+    !/CUDA out of memory/.test(threw || ""), String(threw));
+}
+
+{
+  /* REUSED, NOT COPIED: one waiter for MCP and the chat, so the next fix to it
+   * lands in both. A second hand-written loop here is how this one went stale. */
+  const src = readFileSync(new URL("./tools.js", import.meta.url), "utf8");
+  ok("the chat's picture wait is server/art-wait.js, following the route's job id",
+    /import \{ waitForArtJob \} from "\.\.\/art-wait\.js";/.test(src)
+    && /await waitForArtJob\(\{ api, sleep, timeoutMs: 300_000, kind: "image", jobId: r\.job\?\.id, pollMs: 1500 \}\);/.test(src));
+  // Comments may still tell the history; code may not read the field.
+  ok("...and no picture error is built from lastError any more",
+    !/lastError/.test(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")));
 }
 
 {

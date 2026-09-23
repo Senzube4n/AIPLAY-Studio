@@ -96,7 +96,8 @@ console.log("\n§4  the door, the queue, the tool, the router, the page and the 
   ok("...never throwing the render away when ffmpeg is absent", /await rename\(kept, fresh\)\.catch\(\(\) => \{\}\);/.test(art));
   ok("...and says so in the clip's record", /extendedFrom: job\.extendedFrom \|\| null,\n\s+continuation: job\.continuation \|\| null,/.test(art));
   ok("extend_clip exists and posts the action", /name: "extend_clip"/.test(mcp) && /action: "extend", clip: safeName\(a\.clip, "clip"\),/.test(mcp));
-  ok("...waiting like the other clip tools", /await waitForArt\(\(Number\(a\.timeout_seconds\) \|\| 900\) \* 1000, "video"\);/.test(mcp));
+  // On ITS OWN job id: the queue-wide wait read a stranger's lastError as this render's verdict.
+  ok("...waiting like the other clip tools, on its own job", /await waitForArt\(\(Number\(a\.timeout_seconds\) \|\| 900\) \* 1000, "video", r\.job\?\.id\);/.test(mcp));
   ok("the router routes it to the gpu", /extend_clip: "gpu",/.test(router));
   ok("the clip card offers it on video files only", /data-cext="\$\{esc\(c\.name\)\}"/.test(app) && /\/\\\.\(mp4\|webm\)\$\/i\.test\(c\.name\) \? `<button data-cext/.test(app));
   ok("...opening a sheet that carries the clip's own prompt", /\$\("cextPrompt"\)\.value = cextClip\.meta\?\.prompt \|\| "";/.test(app) && /id="cext"/.test(html));

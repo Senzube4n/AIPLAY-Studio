@@ -8,8 +8,12 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { CATALOG } from "./models.js";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+import { CATALOG, markRequired } from "./models.js";
+import { config } from "./config.js";
 
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const app = src("../web/app.js"), index = src("./index.js"), pick = src("../web/modelpick.js");
@@ -118,4 +122,102 @@ test("Render is never greyed out for video being off: it asks in a drawer and sw
   assert.match(app, /body: JSON\.stringify\(\{ action: "enable", value: true \}\),/, "the same switch Settings uses");
   const css = src("../web/styles.css");
   assert.match(css, /\.bdrawer-wrap\.open \.bdrawer \{ transform: translateY\(0\); \}/, "it slides up from the bottom");
+});
+
+/* THE REQUIRED BADGE FOLLOWS THE SELECTED ENGINE, AND ONLY ONCE IT IS READY.
+ * status() copied the catalogue's `required`, which marks MiniMax Music 3 as
+ * config.js's starting engine, so an install running YuE2 was told MiniMax was
+ * REQUIRED and offered 11.92 GB it would never render with. Badging "the
+ * selected engine" alone fixed that for nobody new: a fresh install's selected
+ * engine IS config.js's MiniMax, and /api/music refuses to select an engine
+ * that is not downloaded, so a newcomer was still told MiniMax was the one.
+ * Until the selected engine is ready no single row is required, and every
+ * music row carries the group. The rows are the engine map's own, so a new
+ * engine is in these tests the day it is in config.js. */
+const MUSIC_CAPS = [...new Set(Object.values(config.music.engines).map((e) => e.capability))];
+/* Status rows the way the screen gets them: every music row, plus one that is
+ * not a music row and must come through untouched. */
+const rows = (ready = []) => [...MUSIC_CAPS, "coverArt"].map((id) => ({
+  id, ready: ready.includes(id), required: !!CATALOG.find((c) => c.id === id)?.required, requiredGroup: null,
+}));
+const selecting = (engine) => ({ ...config.music, engine });
+const local = { enabled: false }, hosted = { enabled: true, provider: "fal" };
+const badges = (list) => list.filter((r) => r.required).map((r) => r.id);
+const groups = (list) => list.filter((r) => r.requiredGroup).map((r) => `${r.id}:${r.requiredGroup}`);
+
+test("a fresh install badges no single music engine: every music row says one is required", () => {
+  /* The real status() on the real default config, with nothing on disk: a
+   * child process with empty settings, models, rig and output folders, the
+   * way qwen-cover_test.js reads a fresh config. It stats files and writes none. */
+  const dir = mkdtempSync(path.join(os.tmpdir(), "models-screen-"));
+  try {
+    const env = { ...process.env, AIPLAY_APPDATA: path.join(dir, "settings"), AIPLAY_MODELS_DIR: path.join(dir, "models"),
+      AIPLAY_RIG: path.join(dir, "rig"), AIPLAY_OUTPUT: path.join(dir, "output") };
+    delete env.AIPLAY_MUSIC_ONLY;                  // the full Studio, not the music-only entry point
+    const url = (rel) => JSON.stringify(new URL(rel, import.meta.url).href);
+    const source = `import { config } from ${url("./config.js")}; import { ModelManager } from ${url("./models.js")};`
+      + "const rows = (await new ModelManager().status()).map(({ id, ready, required, requiredGroup }) => ({ id, ready, required, requiredGroup }));"
+      + "console.log(JSON.stringify({ engine: config.music.engine, api: !!config.api.enabled, rows }));";
+    const printed = execFileSync(process.execPath, ["--input-type=module", "-e", source], { env, encoding: "utf8", timeout: 60_000 });
+    const fresh = JSON.parse(printed.trim().split("\n").at(-1));
+    assert.equal(fresh.engine, "minimax-music3", "the default engine is unchanged; this is about the badge");
+    assert.equal(fresh.api, false);
+    const musicRows = fresh.rows.filter((r) => MUSIC_CAPS.includes(r.id));
+    assert.equal(musicRows.length, MUSIC_CAPS.length, "every music row is on the screen");
+    assert.ok(musicRows.every((r) => !r.ready), "nothing is on disk, or this case proves nothing");
+    assert.deepEqual(badges(musicRows), [], "no single music row is REQUIRED: MiniMax least of all");
+    assert.deepEqual(groups(musicRows).sort(), MUSIC_CAPS.map((id) => `${id}:music`).sort(), "every music row says one music engine is required");
+    assert.deepEqual(groups(fresh.rows.filter((r) => !MUSIC_CAPS.includes(r.id))), [], "no other row joins the group");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("once the selected engine is ready it alone is required; hosted Music 3 needs no local weights", () => {
+  const yue = markRequired(rows(["musicYue2"]), { music: selecting("yue2"), api: local });
+  assert.deepEqual(badges(yue), ["musicYue2"], "a YuE2 install is not told MiniMax is required");
+  assert.deepEqual(groups(yue), [], "the choice is made, so no group");
+  assert.deepEqual(badges(markRequired(rows(["engine"]), { music: selecting("minimax-music3"), api: local })), ["engine"],
+    "a MiniMax install that has its weights still is");
+  assert.deepEqual(badges(markRequired(rows(["musicYue2Gguf"]), { music: selecting("yue2-gguf"), api: local })), ["musicYue2Gguf"],
+    "the native engine, when it is the one selected and set up");
+
+  // Selected but not on disk: MiniMax being there does not answer for YuE2.
+  const notYet = markRequired(rows(["engine"]), { music: selecting("yue2"), api: local });
+  assert.deepEqual(badges(notYet), []);
+  assert.deepEqual(groups(notYet), MUSIC_CAPS.map((id) => `${id}:music`));
+  // A saved engine that maps to no row points at nothing: the group is the true answer.
+  assert.deepEqual(groups(markRequired(rows(["engine"]), { music: selecting("gone"), api: local })), MUSIC_CAPS.map((id) => `${id}:music`));
+
+  /* HOSTED MUSIC 3 renders on the provider's machine (jobs.js #runApi takes
+   * exactly api.enabled + minimax-music3), so the 11.92 GB local download is
+   * not required, and nothing else is either: the music engine is working. */
+  const api = markRequired(rows([]), { music: selecting("minimax-music3"), api: hosted });
+  assert.deepEqual(badges(api), [], "API mode is not told to download local weights");
+  assert.deepEqual(groups(api), [], "...nor that it still lacks a music engine");
+  // API mode is Music 3's alone: a local YuE2 with the switch left on still needs its files.
+  assert.deepEqual(badges(markRequired(rows(["musicYue2"]), { music: selecting("yue2"), api: hosted })), ["musicYue2"]);
+
+  const other = markRequired(rows([]), { music: selecting("yue2"), api: local }).find((r) => r.id === "coverArt");
+  assert.equal(other.requiredGroup, null, "a row outside the music engines keeps its catalogue answer");
+  /* The catalogue flag itself is unchanged: fit.js and the docs find the
+   * DEFAULT engine by it, and the welcome panels fall back to it. */
+  assert.deepEqual(CATALOG.filter((c) => c.required).map((c) => c.id), ["engine"]);
+});
+
+test("no music engine's sentence says required or optional: the badge is the one place that answer lives", () => {
+  for (const id of MUSIC_CAPS) {
+    assert.doesNotMatch(CATALOG.find((c) => c.id === id).why, /\b(required|optional)\b/i, id);
+  }
+});
+
+test("both card shapes badge from the server's answer, and /api/models marks after the native overlay", () => {
+  assert.match(app, /const requiredBadge = \(c\) => \(c\.required \? "required" : c\.requiredGroup === "music" \? "one music engine required" : ""\);/);
+  // The native card reads the flags instead of printing "optional" whatever is selected.
+  assert.match(app, /<span class="badge">\$\{requiredBadge\(c\) \|\| "optional"\}<\/span>/);
+  assert.doesNotMatch(app, /<span class="badge">optional<\/span>/);
+  assert.match(app, /\$\{requiredBadge\(c\) \? `<span class="badge">\$\{requiredBadge\(c\)\}<\/span>` : ""\}/);
+  assert.doesNotMatch(app, /c\.required \? '<span class="badge">required<\/span>'/, "the old flag-only badge is gone");
+  // The native GGUF row's readiness exists only after the overlay, so the mark is taken over it.
+  assert.match(index, /const capabilities = markRequired\(cat\.map\(\(c\) => \(\{\n\s+\.\.\.c,\n\s+\.\.\.\(c\.nativeSetup \? \{ready:/);
 });

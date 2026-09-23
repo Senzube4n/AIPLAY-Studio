@@ -65,6 +65,7 @@
  * panel is an agent's song in the ledger and says so.
  */
 import { config } from "../config.js";
+import { waitForArtJob } from "../art-wait.js";
 
 /** The actor every request from this loop is filed under. Forced in code, the
  *  way server/mcp.js forces its own — no argument or setting can make this
@@ -388,11 +389,11 @@ export function createChatTools(deps = {}) {
         }
 
         /* WHICH FILE IS OURS. The route answers the moment the job is QUEUED —
-         * `id`, `seed` and the art queue's state, never a file name, because
-         * the picture does not exist yet. Covers, images and clips share one
-         * idle-drain queue with no per-job handle to watch (server/mcp.js's
-         * waitForArt says so and this is the same read), so the honest way to
-         * name the file is to know the folder before and after. */
+         * `id`, `seed`, `job.id` and the art queue's state, never a file name,
+         * because the picture does not exist yet. `job.id` is what the wait
+         * below follows, so the VERDICT is this job's own; the file is still
+         * named by knowing the folder before and after, because no status row
+         * carries the picture's final name. */
         const before = new Set(((await api("GET", "/api/images")).images || []).map((i) => i.name));
         if (engine === "qwen-image-2.1") {
           const readiness = await api("GET", "/api/images/qwen-status");
@@ -415,39 +416,38 @@ export function createChatTools(deps = {}) {
           throw new Error("Pictures are switched off in this Studio — the Cover art switch on the Settings screen. Nothing was queued and no card was spent. Turn it on and ask me again.");
         }
 
-        /* WAIT FOR THE QUEUE TO GO QUIET. The person is sitting in front of a
-         * chat panel: "it started" is not an answer to "draw me a picture",
-         * The chat waits up to five minutes. This is a response budget, not a
-         * performance claim about Qwen; running out REPORTS rather than throws —
-         * a render that is still going has not failed. */
-        const deadline = Date.now() + 300_000;
-        await sleep(1200);                      // let the request reach the queue
-        let art = {};
-        for (;;) {
-          const st = await api("GET", "/api/status");
-          art = st.art || {};
-          if (!(Number(art.queued) > 0) && !art.current) break;
-          if (Date.now() > deadline) {
+        /* WAIT FOR THIS PICTURE, by its job id: the same waiter MCP's make_image
+         * runs (server/art-wait.js), not a copy of it. The person is sitting in
+         * front of a chat panel: "it started" is not an answer to "draw me a
+         * picture". The chat waits up to five minutes. This is a response
+         * budget, not a performance claim about Qwen; running out REPORTS rather
+         * than throws — a render that is still going has not failed. Its own
+         * failure throws, in its own words; it no longer waits for the whole
+         * queue and then quotes whatever failed last. */
+        try {
+          await waitForArtJob({ api, sleep, timeoutMs: 300_000, kind: "image", jobId: r.job?.id, pollMs: 1500 });
+        } catch (err) {
+          if (err?.stillWorking) {
             return {
               made: 0, still_drawing: true, engine, seed: r.seed ?? null,
               note: "The picture is taking longer than five minutes and it is still drawing. "
                 + "Nothing was cancelled. Ask list_images in a while to see whether it landed.",
             };
           }
-          await sleep(1500);
+          throw new Error(`The picture did not come out: ${err.message}`);
         }
 
         const made = ((await api("GET", "/api/images")).images || [])
           .map((i) => i.name).filter((n) => !before.has(n));
         if (!made.length) {
-          /* Nothing appeared and the queue is quiet, so this render is over and
-           * it produced no file. Thrown rather than returned: the loop draws a
-           * failed tool card for a throw and a satisfied one for a result, and
-           * a person told a picture was drawn when none was is exactly the
-           * sentence this whole strand exists to stop. */
-          throw new Error(art.lastError
-            ? `The picture did not come out: ${String(art.lastError).slice(0, 200)}`
-            : "The picture queue went quiet without producing a file. Look at the Images tab.");
+          /* Nothing appeared and the render is over, so it produced no file.
+           * Thrown rather than returned: the loop draws a failed tool card for
+           * a throw and a satisfied one for a result, and a person told a
+           * picture was drawn when none was is exactly the sentence this whole
+           * strand exists to stop. NOT `art.lastError`: its own failure has
+           * already thrown above, so whatever lastError holds here is some
+           * other job's, and quoting it would blame this picture for it. */
+          throw new Error("The picture queue went quiet without producing a file. Look at the Images tab.");
         }
         return {
           made: made.length, image: made[0], engine, seed: r.seed ?? null,

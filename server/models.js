@@ -468,7 +468,13 @@ export const CATALOG = [
   {
     id: "engine",
     label: "Music engine — MiniMax Music 3",
-    why: "Required. This is what writes and renders the music.",
+    /* Not "Required." any more: this sentence sits on the card whatever engine
+     * is selected, and on a YuE2 install it told a newcomer to fetch 11.92 GB
+     * they will never render with. Whether it IS required is markRequired()'s
+     * answer, shown as the badge. No music engine's sentence says "required" or
+     * "optional" at all: the badge is the one place that answer lives, and
+     * models-screen_test.js reads every music row's `why` for either word. */
+    why: "Writes and renders the music. Studio needs one music engine, the one picked in the music model list, not every one.",
     licence: "MiniMax Music3 Community Licence",
 
     /* Read in full from the publisher's own repo on 2026-08-27
@@ -495,6 +501,11 @@ export const CATALOG = [
       ],
       note: "Unlike H3 and LTX, this licence never says “we claim no rights in your Outputs” — it simply never restricts them, and its conditions all attach to the software and to commercial products built on it. The absence is stated here rather than read as either a claim or a disclaimer.",
     },
+    /* THE CATALOGUE'S DEFAULT, not this install's need. It marks the engine
+     * config.js starts on (minimax-music3), and fit.js and the docs read it as
+     * exactly that; the welcome panels fall back to it only when the selected
+     * engine names no row. What the Models screen badges is markRequired(): the
+     * SELECTED music engine once it is ready, "one music engine" before. */
     required: true,
     files: [
       { url: `${HF}/Comfy-Org/MiniMax-Music-3/resolve/main/diffusion_models/minimax_music3_dit_int8_convrot.safetensors`,
@@ -526,7 +537,7 @@ export const CATALOG = [
   {
     id: "musicYue2Gguf",
     label: "Music engine — YuE2 GGUF Q4 / optional Q8 (experimental)",
-    why: "Make music without ComfyUI, Python, MiniMax, or image/video models, on NVIDIA, AMD, Intel or the CPU: setup fetches the audio.cpp build that fits this machine. Choose one precision in the native setup panel; the other is not required.",
+    why: "Make music without ComfyUI, Python, MiniMax, or image/video models, on NVIDIA, AMD, Intel or the CPU: setup fetches the audio.cpp build that fits this machine. Choose one precision in the native setup panel; one is enough.",
     nativeSetup: true,
     required: false,
     licence: "CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms on NVIDIA only",
@@ -1001,7 +1012,9 @@ export const CATALOG = [
   {
     id: "musicYue2",
     label: "Music engine — YuE2 3B",
-    why: "An optional Python music engine with an editable score. Choose one music engine; MiniMax is not needed for native YuE2 GGUF.",
+    /* No "optional" here: when YuE2 is the selected engine the card carries the
+     * required badge, and the sentence under it must not argue with it. */
+    why: "A Python music engine with an editable score. Studio needs one music engine, the one picked in the music model list, not every one.",
 
     /* 🔴 THREE LICENCES, NOT ONE, and they answer three different questions.
      * Each was read off THIS MACHINE on 2026-09-11, not off a repository tag:
@@ -2967,6 +2980,53 @@ async function fileHave(f) {
   try { return (await stat(f.dest)).size; } catch { return 0; }
 }
 
+/**
+ * What THIS install needs, as the Models screen badges it. Not the same
+ * question as the catalogue's `required`.
+ *
+ * An install needs ONE music engine. The catalogue flag marks config.js's
+ * starting engine, MiniMax Music 3, and the Models screen used to badge
+ * straight from it, so an install running YuE2 was told MiniMax was REQUIRED
+ * and shown an 11.92 GB download it would never render with. So, per status
+ * row (the list, because one row's answer turns on another row's readiness):
+ *
+ *   selected engine READY   that row alone is `required`. The choice is made
+ *                           and on disk, so it is the one thing not to delete.
+ *   selected engine NOT     no music row is `required`; every one carries
+ *   ready (a fresh install) `requiredGroup: "music"` and the card says "one
+ *                           music engine required". Badging the selected row
+ *                           here would be the old defect again: a fresh
+ *                           install's selected engine is config.js's default,
+ *                           and /api/music refuses to select an engine that is
+ *                           not downloaded, so a newcomer would be told MiniMax
+ *                           is required before they could ever pick YuE2.
+ *   hosted Music 3          nothing: API mode renders on the provider's
+ *                           machine, and jobs.js sends exactly this pair
+ *                           (api.enabled, engine minimax-music3) to #runApi.
+ *
+ * A saved engine that names no row is "not ready": it points at nothing, so
+ * the group answer is the true one. Readiness is the row's own `ready`, which
+ * is what the card beside the badge says. /api/models overlays the native GGUF
+ * row's readiness from its setup (status() cannot see that runtime), so it
+ * marks again after the overlay; the answer depends only on the rows given.
+ *
+ * The music rows come from config's engine map (each engine names its
+ * capability), not a list typed here, so a new engine is covered the day it is
+ * added there. Every other row keeps its catalogue flag.
+ */
+export function markRequired(rows, { music = config.music, api = config.api } = {}) {
+  const engines = music?.engines || {};
+  const musicRows = new Set(Object.values(engines).map((e) => e?.capability).filter(Boolean));
+  const selected = engines[music?.engine]?.capability || null;
+  const hosted = !!api?.enabled && music?.engine === "minimax-music3";
+  const chosen = !hosted && !!selected && rows.some((r) => r.id === selected && r.ready);
+  return rows.map((r) => (!musicRows.has(r.id) ? r : {
+    ...r,
+    required: chosen && r.id === selected,
+    requiredGroup: hosted || chosen ? null : "music",
+  }));
+}
+
 export class ModelManager extends EventEmitter {
   constructor() {
     super();
@@ -3043,7 +3103,10 @@ export class ModelManager extends EventEmitter {
         // or, here, fail a size check after a multi-gigabyte fetch.
         awaiting: cap.awaiting || null,
         note: cap.note,
+        // The catalogue's flag, until markRequired() below replaces it on the
+        // music rows with this install's answer (the badge the screen shows).
         required: !!cap.required,
+        requiredGroup: null,
         // What the machine needs, and what else could be used instead. Stated
         // because "4 GB to download" answers a different question from "will it
         // run on my card" — and the second is the one that stops people.
@@ -3067,7 +3130,7 @@ export class ModelManager extends EventEmitter {
         progress: this.progress.get(cap.id) || null,
       });
     }
-    return out;
+    return markRequired(out);
   }
 
   /* The fetch of each running download, so Cancel can stop it mid-wait. */

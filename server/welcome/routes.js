@@ -151,6 +151,10 @@ function joinNeeds(tab, live) {
       ...n,
       label: cap?.label ?? n.capability ?? n.id,
       required: !!cap?.required,
+      /* The Models screen's own answer for a music row before an engine is
+       * ready ("one music engine required"), carried so this panel and that
+       * screen cannot disagree about the same row (models.js markRequired). */
+      requiredGroup: cap?.requiredGroup ?? null,
       licence: cap?.licence ?? null,
       home: cap?.home ?? null,
       /* Carried whole, never summarised — the two that can cost somebody

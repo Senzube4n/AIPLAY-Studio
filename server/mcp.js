@@ -50,6 +50,7 @@ import { musicAuditionTools } from "./mcp-music-auditions.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { videoLoraInput } from "./video-lora-validation.js";
+import { waitForArtJob, emptyResultNote } from "./art-wait.js";
 
 /* The welcome window's catalogue (FORK): what the studio is and can make, in
  * the same words the app shows a new person. */
@@ -204,33 +205,17 @@ async function waitForSong(jobId, timeoutMs) {
 }
 
 /**
- * Wait for the art queue to go quiet.
+ * Wait for ONE art job, the one this call just queued, and judge it by its own
+ * outcome. server/art-wait.js holds the loop and the reasons, and the chat's
+ * picture tool runs the same one: it used to throw `art.lastError`, the
+ * queue's last failure whoever's it was, after waiting for the whole queue.
  *
- * Covers/images/clips share ONE idle-drain queue that yields to music, so there
- * is no per-job id to watch — the honest signal is the queue emptying. Which
- * also means: do not call this while a song is rendering, or it waits for the
- * song too. Said in the tool description rather than worked around.
+ * Music still preempts: a job behind a song just stays queued, so calling this
+ * while a song renders waits for the song too. Said in the tool descriptions
+ * rather than worked around.
  */
-async function waitForArt(timeoutMs, kind) {
-  const deadline = Date.now() + timeoutMs;
-  await sleep(1200);                       // let the request reach the queue
-  for (;;) {
-    const st = await api("GET", "/api/status");
-    const art = st.art || {};
-    const busy = art.queued > 0 || !!art.current;
-    if (!busy) {
-      if (art.lastError) throw new Error(art.lastError);
-      return st;
-    }
-    if (Date.now() > deadline) {
-      throw new Error(
-        `Still working after ${Math.round(timeoutMs / 1000)}s`
-        + (art.current ? ` (${art.current.kind} for ${art.current.title})` : "")
-        + `, ${art.queued} queued. Nothing was cancelled.`,
-      );
-    }
-    await sleep(2000);
-  }
+async function waitForArt(timeoutMs, kind, jobId) {
+  return waitForArtJob({ api, sleep, timeoutMs, kind, jobId });
 }
 
 /* ───────────────────────────────────────────────── the music video */
@@ -2659,7 +2644,7 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r.error) throw new Error(r.error);
-      await waitForArt((Number(a.timeout_seconds) || 600) * 1000, "image");
+      const settled = await waitForArt((Number(a.timeout_seconds) || 600) * 1000, "image", r.job?.id);
       const after = (await api("GET", "/api/images")).images || [];
       const made = after.filter((i) => !before.has(i.name)).map((i) => i.name);
       /* THE CHECK, FOLDED INTO THE RENDER. An expectation is attached to every
@@ -2695,7 +2680,9 @@ export const TOOLS = [
         ...(r.prompt ? { prompt: r.prompt, prompt_choices: r.promptChoices, combinations: r.combinations } : {}),
         seed: r.seed,
         ...(r.note ? { note: r.note } : {}),
-        ...(made.length ? {} : { note: "Nothing new appeared — check studio_status for the last error." }),
+        /* Reached with its OWN failure already thrown by the wait, so never "the
+         * last error": that is the queue's, a stranger's. art-wait.js says why. */
+        ...(made.length ? {} : { note: emptyResultNote(settled, r.job?.id, "list_images") }),
       };
     },
   },
@@ -2942,10 +2929,11 @@ export const TOOLS = [
       }
       const r = await api("POST", "/api/video", body);
       if (r.error) throw new Error(r.error);
-      await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video");
+      const settled = await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video", r.job?.id);
       const after = (await api("GET", "/api/clips")).clips || [];
       const made = after.filter((c) => !before.has(c.name)).map((c) => c.name);
-      return { clips: made, note: made.length ? undefined : "Nothing new appeared — check studio_status for the last error." };
+      // Its own failure has already thrown; see emptyResultNote in art-wait.js.
+      return { clips: made, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips") };
     },
   },
 
@@ -3013,7 +3001,7 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r.error) throw new Error(r.error);
-      await waitForArt((Number(a.timeout_seconds) || 1800) * 1000, "restyle");
+      const settled = await waitForArt((Number(a.timeout_seconds) || 1800) * 1000, "restyle", r.job?.id);
       const after = (await api("GET", "/api/clips")).clips || [];
       const made = after.filter((c) => !before.has(c.name)).map((c) => c.name);
       return {
@@ -3022,7 +3010,8 @@ export const TOOLS = [
         bpm: r.bpm ?? null,
         // Shown so the caller can see the audio actually reached the render.
         guide_strengths: r.strengths ? r.strengths.map((x) => Number(x.toFixed(3))) : null,
-        note: made.length ? undefined : "Nothing new appeared — check studio_status for the last error.",
+        // Its own failure has already thrown; see emptyResultNote in art-wait.js.
+        note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
       };
     },
   },
@@ -3067,7 +3056,7 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r.error) throw new Error(r.error);
-      await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video");
+      const settled = await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video", r.job?.id);
       const after = (await api("GET", "/api/clips")).clips || [];
       const made = after.filter((c) => !before.has(c.name) && !/_new\.mp4$/i.test(c.name));
       const mine = made.find((c) => c.name === `${r.id}.mp4`) || made[0] || null;
@@ -3079,7 +3068,8 @@ export const TOOLS = [
         overlap_frames: r.overlapFrames, extension_frames: r.extensionFrames,
         extension_seconds: r.extensionSeconds,
         note: mine ? (mine.meta?.continuation?.joined === false ? `Not joined: ${mine.meta.continuation.error}` : undefined)
-          : "Nothing new appeared — check studio_status for the last error.",
+          // Its own failure has already thrown; see emptyResultNote in art-wait.js.
+          : emptyResultNote(settled, r.job?.id, "list_clips"),
       };
     },
   },

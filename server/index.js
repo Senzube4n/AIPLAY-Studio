@@ -49,13 +49,14 @@ import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
 import { gpuStatus, ramStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
+import { jobStanding, ownFailure } from "./art-wait.js";
 import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -300,27 +301,59 @@ async function renderMediaForBatch(kind, item, take, actor) {
    * announces both kinds by the `file` handle the route minted, so the wait is
    * an event rather than a poll, and a run advances the moment its step is
    * really finished. */
-  const landed = (event, file) => new Promise((resolve, reject) => {
+  const landed = (event, file, jobId) => new Promise((resolve, reject) => {
+    const produced = (e) => (event === "cover" ? (e.covers || []) : [e.clip].filter(Boolean));
     const done = (e) => {
       if (e.file !== file) return;
       cleanup();
-      resolve(event === "cover" ? (e.covers || []) : [e.clip].filter(Boolean));
+      resolve(produced(e));
     };
-    const failed = () => {
-      /* The art runner reports a failure by going idle with an error rather
-       * than by emitting for this file, so the queue is what says so. */
-      if (art.status().queued === 0 && !art.status().current) {
+    /* ITS OWN FAILURE, heard the way its success is heard: art.js emits
+     * "failed" with the job's own `file` and its whole error text.
+     *
+     * ⚠ THIS USED TO WAIT FOR THE QUEUE TO GO IDLE AND THEN REJECT WITH
+     * `art.lastError`, and neither half worked. It read art.status().queued and
+     * .current at the top level, where status() has neither (both live under
+     * .art), so the idle test never passed: a failed overnight picture or clip
+     * held the whole night for the three-hour ceiling below and was then
+     * recorded as "step timed out". And had it fired, lastError is the QUEUE's
+     * last failure, whoever's it was, so a step could have been failed with
+     * another job's error: the verdict server/art-wait.js stopped borrowing for
+     * the MCP tools and the chat. */
+    const failed = (e) => {
+      if (e.file !== file) return;
+      cleanup();
+      reject(new Error(e.error || "the render did not produce anything"));
+    };
+    /* A JOB NO EVENT WILL EVER NAME, found by the `job.id` the route returned
+     * and the same jobStanding() the MCP waiter reads: dropped from the queue
+     * (drop() and stopAll() emit nothing for it), or already finished before
+     * these listeners were attached. Asked once now and again on every update.
+     * A route that returned no id ("unnamed") leaves only the events and the
+     * ceiling, as before. */
+    const standing = () => {
+      const a = art.status().art || {};
+      const { where, row } = jobStanding(a, jobId);
+      if (where === "missing") {
         cleanup();
-        reject(new Error(art.lastError || "the render did not produce anything"));
+        reject(new Error(`the ${kind} job ${jobId} is no longer queued, running or finished: it was dropped from the queue before it rendered`));
+      } else if (where === "finished") {
+        cleanup();
+        if (row.error) reject(new Error(ownFailure(row, a.lastError, kind)));
+        else resolve(produced(row));
       }
     };
-    const cleanup = () => { art.off(event, done); art.off("update", failed); clearTimeout(t); };
+    const cleanup = () => {
+      art.off(event, done); art.off("failed", failed); art.off("update", standing); clearTimeout(t);
+    };
     /* A ceiling, not a schedule: art.js already sizes its own per-render
      * deadline from the job. This only catches a step that vanished entirely,
      * which would otherwise stall the whole night on one item. */
     const t = setTimeout(() => { cleanup(); reject(new Error("step timed out")); }, 3 * 60 * 60 * 1000);
     art.on(event, done);
-    art.on("update", failed);
+    art.on("failed", failed);
+    art.on("update", standing);
+    standing();
   });
 
   if (kind === "image") {
@@ -341,7 +374,7 @@ async function renderMediaForBatch(kind, item, take, actor) {
       }),
     })).json();
     if (r.error) throw new Error(r.error);
-    return await landed("cover", `image:${r.id}`);
+    return await landed("cover", `image:${r.id}`, r.job?.id);
   }
 
   if (kind === "video") {
@@ -354,7 +387,7 @@ async function renderMediaForBatch(kind, item, take, actor) {
       }),
     })).json();
     if (r.error) throw new Error(r.error);
-    return await landed("clip", r.file ?? `clip:${r.id}`);
+    return await landed("clip", r.file ?? `clip:${r.id}`, r.job?.id);
   }
 
   throw new Error(`Unknown overnight kind: ${kind}`);
@@ -2731,7 +2764,10 @@ const server = http.createServer(async (req, res) => {
       const nativeSetup = await ggufSetup.status();
       const nativeReadyLabels = Object.entries(nativeSetup.variants || {})
         .filter(([, variant]) => variant.ready).map(([precision]) => precision.toUpperCase());
-      const capabilities = cat.map((c) => ({
+      /* markRequired() again, over the overlaid rows: the native GGUF row's
+       * readiness is known only here, from its setup, and the badge follows
+       * the selected engine's readiness (models.js says why). */
+      const capabilities = markRequired(cat.map((c) => ({
         ...c,
         ...(c.nativeSetup ? {ready:Object.values(nativeSetup.variants || {}).some(v=>v.ready) || nativeSetup.ready,
           nativeVariants:nativeSetup.variants,totalBytes:nativeSetup.downloadBytes,progress:nativeSetup.progress,
@@ -2752,7 +2788,7 @@ const server = http.createServer(async (req, res) => {
         files: (c.files || []).map((f) => ({ ...f, shelf: f.folder ? shelfOf(f.folder) : null })),
         group: modelGroupOf(c),
         ...(c.id === "engine" && minimaxAmdRisk() ? { note: [`⚠ ${MINIMAX_AMD_WARNING}`, c.note].filter(Boolean).join(" ") } : {}),
-      }));
+      })));
 
       return json(res, 200, {
         disk,

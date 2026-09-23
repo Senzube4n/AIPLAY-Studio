@@ -6427,6 +6427,11 @@ $("btnBackfillArt").onclick = async () => {
  * package is missing says so rather than failing later with a stack trace.
  */
 const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`);
+/* THE REQUIRED BADGE'S WORDS, one rule for both card shapes. The server decides
+ * (server/models.js markRequired): the selected music engine once it is ready,
+ * and before that no single row but every music row's group, because a fresh
+ * install has not chosen and must not be told MiniMax is the one it needs. */
+const requiredBadge = (c) => (c.required ? "required" : c.requiredGroup === "music" ? "one music engine required" : "");
 
 async function loadModels() {
   let d = null;
@@ -6459,8 +6464,9 @@ async function loadModels() {
           : `<span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
              ${c.runtimeLabel ? `<span class="mmiss">${esc(c.ready && c.backend ? `runs on ${c.backend === "cpu" ? "the CPU" : c.backend}` : c.runtimeLabel)}</span>` : ""}
              <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button>`;
+      // Required when it is the selected, ready music engine; "one music engine" before one is.
       return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
-      <div class="mhead"><b>${esc(c.label)}</b><span class="badge">optional</span><span class="mlic">${esc(c.licence)}</span></div>
+      <div class="mhead"><b>${esc(c.label)}</b><span class="badge">${requiredBadge(c) || "optional"}</span><span class="mlic">${esc(c.licence)}</span></div>
       <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
       <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
       <div class="mfoot">${foot}</div>
@@ -6507,7 +6513,7 @@ async function loadModels() {
           <b>${c.home
         ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
         : esc(c.label)}</b>
-          ${c.required ? '<span class="badge">required</span>' : ""}
+          ${requiredBadge(c) ? `<span class="badge">${requiredBadge(c)}</span>` : ""}
           <span class="mlic">${esc(c.licence)}</span>
         </div>
         <p class="mwhy">${esc(c.why)}</p>

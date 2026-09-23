@@ -642,6 +642,12 @@ export class ArtRunner extends EventEmitter {
         enabled: this.enabled,
         paused: this.paused,
         queued: this.queue.length,
+        /* "Every row below carries its job's `id`", SAID rather than inferred.
+         * A waiter that guessed it from the rows present read an empty queue
+         * and an empty history (a Studio just restarted) as a server without
+         * ids, and reported a job that no longer existed as a success at once.
+         * server/art-wait.js keys on this flag and nothing else. */
+        jobIds: true,
         // Offline engine work remains queued, with an explicit reason. Once
         // ready, Qwen's file/node preflight either dispatches or records a
         // normal failed-job event; an unavailable model is never substituted.
@@ -652,6 +658,13 @@ export class ArtRunner extends EventEmitter {
         // running. Without it the status line said "Drawing a cover for X"
         // while the queue was separating stems or rendering a 30 s clip.
         current: this.current && {
+          /* `id` on the running, the waiting and the finished rows alike: it is
+           * the handle the routes already return as `job.id`, and the only one
+           * that names exactly one job. A waiter (MCP's and the chat's) watches
+           * ITS id through all three lists and reads its own `error`; see
+           * server/art-wait.js for the verdict `lastError` used to borrow from
+           * strangers. */
+          id: this.current.id,
           file: this.current.file, title: this.current.title, kind: this.current.kind,
           // Real per-step progress from the engine, not a timer.
           progress: this.progress,
@@ -669,6 +682,7 @@ export class ArtRunner extends EventEmitter {
          * Trimmed to what a list needs — the full job objects carry graphs and
          * buffers that have no business crossing the wire. */
         recent: (this.done || []).slice(0, 200).map((j) => ({
+          id: j.id || null,
           kind: j.kind,
           title: j.title || null,
           file: j.file || null,
@@ -690,7 +704,7 @@ export class ArtRunner extends EventEmitter {
         /* EVERY waiting job, not just the next three. A queue you cannot see
          * is a queue you cannot manage — the UI needs one row per job, with
          * the `file` key that drop() takes. */
-        items: this.queue.map((j) => ({ file: j.file, kind: j.kind, title: j.title || null })),
+        items: this.queue.map((j) => ({ id: j.id, file: j.file, kind: j.kind, title: j.title || null })),
         lastError: this.lastError,
       },
     };

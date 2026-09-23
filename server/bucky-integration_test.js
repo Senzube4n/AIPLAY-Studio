@@ -7,15 +7,21 @@ import { videoLoraInput, validateVideoLoras } from "./video-lora-validation.js";
 import { modelTools } from "./mcp-models.js";
 import { TOOLS } from "./mcp.js";
 import { ROUTABLE } from "./chat/router.js";
+import { emptyResultNote } from "./art-wait.js";
 
 const src = (file) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const index = src("./index.js"), app = src("../web/app.js");
 const adapters = [{ name: "look.safetensors", strength: 0.6 }, { name: "motion.safetensors", strength: 0 }];
 const tool = (name) => TOOLS.find((t) => t.name === name);
+/* The tool's run() is evaluated against exactly these names, so every
+ * module-scope name it calls must be listed here. emptyResultNote joined the
+ * list when the four render tools stopped pointing an empty result at the
+ * queue's last error; it is the REAL one from art-wait.js, not a stub, so the
+ * note this lane sees is the note an agent sees. */
 function mockedRun(name, api) {
   const code = String(tool(name).run).replace(/^async run\(/, "async function(");
-  return new Function("api", "safeName", "waitForArt", "videoLoraInput", `return (${code});`)(
-    api, (v) => { if (/[/\\]|\.\./.test(v)) throw new Error("bad name"); return v; }, async () => {}, videoLoraInput);
+  return new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", `return (${code});`)(
+    api, (v) => { if (/[/\\]|\.\./.test(v)) throw new Error("bad name"); return v; }, async () => {}, videoLoraInput, emptyResultNote);
 }
 
 test("video adapter input refuses silent drops, path rewriting and truncation", () => {

@@ -272,7 +272,10 @@ const videoEngine = need("engine");
 const pkg = (id, why, install) => ({ kind: "package", id, for: why, install });
 
 /* Found by `required`, not by id — the same way fit.js finds it, so a second
- * required capability is picked up rather than quietly left off every panel. */
+ * required capability is picked up rather than quietly left off every panel.
+ * Since the music need follows the SELECTED engine (selectedMusicCapability
+ * below), this is only its fallback: the catalogue's default engine, for a
+ * saved engine name that maps to no row. */
 const REQUIRED_IDS = CATALOG.filter((c) => c.required).map((c) => c.id);
 const VIDEO_ENGINE_KEYS = Object.keys(config.video.engines);
 /* THE ROWS THAT SAY THEY MAKE PICTURES — the same one rule fit.js asks, so the
@@ -287,12 +290,36 @@ const VIDEO_ENGINE_KEYS = Object.keys(config.video.engines);
  * models.js for why the rule is positive now. */
 const IMAGE_CAP_IDS = CATALOG.filter(isPictureModel).map((c) => c.id);
 
-const MUSIC_NEEDS = REQUIRED_IDS.map((id) =>
-  model(id, "the song itself — the one download that is not optional"));
+/* THE MUSIC ENGINE THIS INSTALL HAS PICKED, not the catalogue's default one.
+ * This was REQUIRED_IDS, i.e. always MiniMax Music 3, under "the one download
+ * that is not optional"; the Models screen badges the selected engine, so on a
+ * YuE2 install the panel named MiniMax as not optional beside no required chip
+ * and never mentioned YuE2. Kind "music" is resolved in resolveNeeds() at the
+ * moment the panel is asked, because the selection changes while Studio runs. */
+const MUSIC_NEEDS = [need("music")("selected",
+  "the song itself: Studio needs one music engine, the one picked in Music, not every one")];
 const VIDEO_NEEDS = VIDEO_ENGINE_KEYS.map((k) =>
   videoEngine(k, "whichever engine you render with; one is enough"));
 const IMAGE_NEEDS = IMAGE_CAP_IDS.map((id) =>
   model(id, "any one picture model will do — this is the whole choice"));
+
+/**
+ * The capability row of the music engine config.music.engine names, through the
+ * same MODEL_TO_CAPABILITY map every other engine need goes through. A saved
+ * name that maps to nothing falls back to the catalogue's default engine, so the
+ * panel still names a real download rather than none.
+ */
+function selectedMusicCapability(music = config.music) {
+  return MODEL_TO_CAPABILITY[music?.engine] ?? REQUIRED_IDS[0] ?? null;
+}
+
+/* The "music" placeholder, made an ordinary model need for the selected row.
+ * ONE resolution for BOTH doors a need leaves by: resolveNeeds() (the Info
+ * panel, studio_screen_info) and catalogue() (the tour, /api/welcome and
+ * studio_capabilities). The catalogue used to hand TABS out raw, so an agent
+ * reading studio_capabilities got {kind:"music", id:"selected"}, which is not a
+ * capability id, where the same entry had named the real row before. */
+const resolveMusicNeed = (n) => (n?.kind === "music" ? model(selectedMusicCapability(), n.for) : n);
 
 /**
  * One need, resolved to WHAT IT POINTS AT — never to what this machine can run.
@@ -301,7 +328,9 @@ const IMAGE_NEEDS = IMAGE_CAP_IDS.map((id) =>
  * catalogue_test.js can prove every need on every screen names something real
  * without a server, a card or a disk. The other half — is it downloaded, does
  * it fit this card, is the package importable — is live, belongs to
- * /api/models, and is joined on in server/welcome/routes.js.
+ * /api/models, and is joined on in server/welcome/routes.js. The one input
+ * read at call time is config.music.engine, for the music need: a choice the
+ * person made, not a fact about the machine, and still no disk is touched.
  *
  * A model whose capability declares `needsPackage` expands into TWO needs: the
  * weights and the pip install. Reading it off the capability is what keeps the
@@ -324,7 +353,9 @@ export function resolveNeeds(tab) {
     seen.add(key);
     out.push(n);
   };
-  for (const n of tab?.needs || []) {
+  for (const raw of tab?.needs || []) {
+    // The selected music engine becomes an ordinary model need for its row.
+    const n = resolveMusicNeed(raw);
     if (n.kind === "package") {
       push({
         kind: "package", id: n.id, for: n.for, package: n.id, capability: null,
@@ -1154,7 +1185,12 @@ export function catalogue({ showcase = null } = {}) {
     version: WELCOME_VERSION,
     identity: IDENTITY,
     groups: GROUPS,
-    tabs: TABS,
+    /* Copies with the music need resolved at the moment of asking, never
+     * written back into TABS: the selection changes while Studio runs, and a
+     * resolution stored in TABS would answer every later call with the first
+     * engine it saw. A tab with no music need is handed out as it is. */
+    tabs: TABS.map((t) => ((t.needs || []).some((n) => n.kind === "music")
+      ? { ...t, needs: t.needs.map(resolveMusicNeed) } : t)),
     start: START,
     video: videoFacts(),
     licences: licenceFacts(),
