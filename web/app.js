@@ -15411,8 +15411,19 @@ function imgQwenShape() {
   if (!advanced) $("imgAdv").hidden = true;
   imgQueueGate();
 }
+/* ⚠ `refs` IS A BUCKET, NOT A COUNT, and that is what stops this screen from
+ * re-checking on every single drop. The answer depends on which NODE CLASSES
+ * the graph needs and which model files are on the shelf; references add the
+ * loading nodes, and the second one adds nothing the first did not. Measured
+ * from qwenImageGraph(): the class list for 1, 2, 3, 5 and 10 references is
+ * identical, and only 0 differs. Sending the real count made the key change on
+ * every add and remove, so a drag and drop meant a round trip and an orange
+ * spinner over the engine dropdown — and "Make image" greyed out until it came
+ * back. Now the key changes once, when the first reference arrives.
+ * The real count still goes with the RENDER; this is only the readiness key. */
 function imgQwenQuery() {
-  const query = new URLSearchParams({ refs: String(imgRefs.length || ($("imgPersona").value ? 1 : 0)), transparent: String($("imgTransparent").checked) });
+  const refs = imgRefs.length || ($("imgPersona").value ? 1 : 0);
+  const query = new URLSearchParams({ refs: refs ? "1" : "0", transparent: String($("imgTransparent").checked) });
   if ($("imgEngine").value === "checkpoint") {
     const pick = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
     if (pick?.dit) query.set("dit", pick.dit);
@@ -15423,14 +15434,31 @@ function imgQwenQuery() {
   }
   return query;
 }
+/* Painting the form is not a user action. Dropping four pictures repaints four
+ * times, and each repaint that reached straight for the network was a request
+ * nobody asked for; this coalesces a burst into the one check at the end of it.
+ * Anything the user clicks (Check again, the engine, a character) still calls
+ * imgQwenCheck directly, because a control that waits is a control that feels
+ * broken. */
+var imgQwenSoon = null;   // var: imgRefsPaint can run before this line at boot
+function imgQwenCheckSoon() {
+  clearTimeout(imgQwenSoon);
+  imgQwenSoon = setTimeout(() => { imgQwenSoon = null; imgQwenCheck(); }, 400);
+}
 async function imgQwenCheck() {
+  clearTimeout(imgQwenSoon); imgQwenSoon = null;
   imgQwenShape();
   if (imgEffectiveEngine() !== "qwen-image-2.1") return true;
   const request = ++imgQwenRequest;
   const key = imgQwenQuery().toString();
   imgQwenRequestedKey = key;
   imgQwenChecking = true;
-  imgQwenPaint("busy", "Checking Qwen Image 2.1…");
+  /* The spinner waits a third of a second. A local check usually answers in
+   * tens of milliseconds, and a light that flicks orange and back on every one
+   * of them reads as a fault; one that spins when the answer is actually slow
+   * reads as work. The light is left alone until then, so a green Qwen stays
+   * green through a re-check that changes nothing. */
+  const spin = setTimeout(() => imgQwenPaint("busy", "Checking Qwen Image 2.1…"), 350);
   imgQueueGate();
   try {
     const response = await fetch(`/api/images/qwen-status?${key}`);
@@ -15457,6 +15485,7 @@ async function imgQwenCheck() {
     }
     return false;
   } finally {
+    clearTimeout(spin);
     if (request === imgQwenRequest) { imgQwenChecking = false; imgQueueGate(); }
   }
 }
@@ -15470,8 +15499,15 @@ async function imgQwenCheck() {
  * Clicking it opens the dropdown, or the details when it is red, so the
  * dropdown works whatever the light is doing. */
 var imgQwenSettle = null;   // var: imgQwenPaint can run before this line (imgQwenShape at boot)
+var imgQwenPainted = "";    // what the light is saying now, so it is not said twice
 function imgQwenPaint(tone, chip = "", note = "", needsModels = false) {
   const dot = $("imgQwenDot"), pv = dot.parentElement, pop = $("imgQwenStatus");
+  /* A repaint that says the same thing is not a repaint. Re-applying "ok"
+   * restarts the pulse and sends the light back to the right for another two
+   * seconds, so a re-check that changed nothing would make the dot hop. */
+  const same = `${tone}\u0000${chip}\u0000${note}`;
+  if (same === imgQwenPainted) return;
+  imgQwenPainted = same;
   clearTimeout(imgQwenSettle);
   pv.classList.remove("qbusy", "qok", "qerr", "qsettled");
   dot.hidden = tone === "off";
@@ -15538,10 +15574,18 @@ function imgRefsPaint() {
   const n = imgRefs.length;
 
   const prev = $("imgRefPrev");
-  /* Always on screen: a drop target you cannot see is one nobody finds. The
-   * empty state is a CSS ::before reading data-empty, so there is no placeholder
-   * row to mistake for a reference. */
-  prev.classList.toggle("isempty", !n);
+  /* ⚠ THE STRIP'S `hidden` IS READ BY THE DROP BOX. picdrop.js takes this
+   * element as its `strip`, shows it INSIDE the dashed zone, and opens the zone
+   * on `!strip.hidden && strip.children.length`. A version of this line that
+   * toggled a class instead left `hidden` set from the markup for ever: every
+   * dropped reference landed, was added, and was never seen, and the zone never
+   * opened — "drag and drop is broken". The target is not invisible meanwhile;
+   * the zone slides open while anything is being dragged, and dropAnywhere()
+   * takes a picture dropped anywhere on the Images panel. */
+  prev.hidden = !n;
+  /* The figures below are about to be thrown away; a preview hovering over one
+   * of them would outlive it. */
+  imgRefHoverHide();
   prev.innerHTML = imgRefs.map((m, i) => `<figure class="midthumb">
       <span class="refnum">${i + 1}</span>
       <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)} — click to say &quot;image ${i + 1}&quot;">
@@ -15612,7 +15656,7 @@ function imgRefsPaint() {
   if (wrap) wrap.hidden = fluxOnly && !n;
   imgRefTagNote();
   imgQwenShape();
-  if (eng === "qwen-image-2.1" && imgQwenRequestedKey !== imgQwenQuery().toString()) imgQwenCheck();
+  if (eng === "qwen-image-2.1" && imgQwenRequestedKey !== imgQwenQuery().toString()) imgQwenCheckSoon();
 }
 
 /* Say when the description names a reference that is not attached. Same guard
@@ -15685,18 +15729,26 @@ document.addEventListener("dragstart", (e) => {
  * is not legible at that size. The panel is fixed and body-level because the
  * form column is overflow-y:auto and would clip anything larger than the thumb
  * it grew out of. */
+/* ⚠ HIDING IT IS THE HARD HALF, and the reason this is a named function that
+ * imgRefsPaint calls. The strip is rebuilt with innerHTML on every add, remove
+ * and reorder, so the figure the pointer was over is DESTROYED and no mouseout
+ * is ever delivered: remove a reference while looking at its preview and the
+ * preview stays, hanging over a picture that is no longer there. Four exits —
+ * the repaint, a mouseover that is not a thumbnail, scrolling, and the pointer
+ * leaving the window. */
+function imgRefHoverHide() { const p = $("imgRefHover"); if (p) p.hidden = true; }
 {
   const panel = $("imgRefHover");
   if (panel) {
     const img = panel.querySelector("img");
     const cap = panel.querySelector("span");
-    const hide = () => { panel.hidden = true; };
+    const hide = imgRefHoverHide;
 
     document.addEventListener("mouseover", (e) => {
       const fig = e.target.closest?.("#imgRefPrev .midthumb");
-      if (!fig) return;
+      if (!fig) { hide(); return; }
       const thumb = fig.querySelector("img");
-      if (!thumb) return;
+      if (!thumb) { hide(); return; }
       img.src = thumb.src;
       cap.textContent = thumb.title ? thumb.title.split(" \u2014 ")[0] : "";
       panel.hidden = false;
@@ -15712,9 +15764,10 @@ document.addEventListener("dragstart", (e) => {
     document.addEventListener("mouseout", (e) => {
       if (e.target.closest?.("#imgRefPrev .midthumb")) hide();
     });
-    /* A panel left over a picture that has gone is a ghost: the list repaints on
-     * every add, remove and reorder. */
     addEventListener("scroll", hide, true);
+    document.addEventListener("mouseleave", hide);
+    /* A drag that starts under the preview would carry it along. */
+    document.addEventListener("dragstart", hide);
   }
 }
 

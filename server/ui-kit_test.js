@@ -99,3 +99,33 @@ test("a picture dropped anywhere on the Images or Video panel is taken, Simple m
   assert.match(css, /\.assist-on > [^{]*:not\(#vidFromField\):not\(#imgRefWrap\)[^{]* \{ display: none !important; \}/,
     "Simple mode keeps the reference field and the starting frame visible");
 });
+
+test("the reference strip's hidden is what opens the drop box, so imgRefsPaint sets it", () => {
+  const paint = /function imgRefsPaint\(\) \{[\s\S]*?\n\}/.exec(APP)?.[0] || "";
+  assert.match(paint, /prev\.hidden = !n;/,
+    "picdrop opens the zone on !strip.hidden && strip.children.length; a class instead leaves it hidden for ever");
+  assert.doesNotMatch(paint, /classList\.toggle\("isempty"/);
+  assert.match(paint, /imgRefHoverHide\(\);/, "the hover preview outlives the figure it points at otherwise");
+  assert.match(APP, /function imgRefHoverHide\(\)/);
+});
+
+test("Qwen readiness is keyed on whether there are references, not how many", () => {
+  const query = /function imgQwenQuery\(\) \{[\s\S]*?\n\}/.exec(APP)?.[0] || "";
+  assert.match(query, /refs: refs \? "1" : "0"/, "a real count re-checks on every drop");
+  assert.match(APP, /function imgQwenCheckSoon\(\)/, "repaints coalesce into one check");
+  assert.match(APP, /imgQwenRequestedKey !== imgQwenQuery\(\)\.toString\(\)\) imgQwenCheckSoon\(\)/);
+  // The light waits before it spins, so a fast local answer does not flicker.
+  assert.match(APP, /const spin = setTimeout\(\(\) => imgQwenPaint\("busy"/);
+  assert.match(APP, /if \(same === imgQwenPainted\) return;/, "saying the same thing again restarts the pulse");
+});
+
+test("'don't record the prompt' sits with the Make button, not in the reference block", () => {
+  const wrap = HTML.slice(HTML.indexOf('<div class="field" id="imgRefWrap">'), HTML.indexOf('id="imgRefEngineNote"'));
+  assert.doesNotMatch(wrap, /id="imgPrivate"/, "it is not a property of the references, and it pushed the drop box down");
+  const cta = HTML.slice(HTML.indexOf('<button class="btn primary wide" type="button" id="imgGo">'));
+  assert.match(cta.slice(0, 1600), /class="tog ctatog"[\s\S]*id="imgPrivate"/);
+  // One line with the detail in the tooltip, not a paragraph under the tick.
+  assert.doesNotMatch(HTML, /id="imgPrivateNote"/);
+  assert.match(read("web/ui.css"), /\.ctatog \{/);
+  assert.match(APP, /private: \$\("imgPrivate"\)\.checked/);
+});

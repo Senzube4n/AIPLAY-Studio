@@ -50,7 +50,13 @@ Rules:
 5. **Numbers and paths go in the value, not in a sentence.** Write
    `9.8 GB needed`, not "This recipe will require approximately 9.8 GB of
    graphics memory to run".
-6. **Long hints are cut to two lines automatically** (`web/ui.js`) with a
+6. **A caveat is not an exemption.** "People need to know what this does not
+   do before they rely on it" is true and is still not three lines under a
+   tick. Put the shortest honest version in the **label** and the rest in the
+   `title=""`: `Don't record the prompt` says what it drops without promising
+   what it cannot, so the paragraph explaining that it is not the same as
+   untraceable is not needed on screen.
+7. **Long hints are cut to two lines automatically** (`web/ui.js`) with a
    "more" link. That is a safety net, not permission to write long ones.
    Warnings (`.warnhint`), live status (`role="status"` / `aria-live`) and
    `.noclamp` are never cut. So keep those short too.
@@ -77,6 +83,24 @@ light on the Images engine dropdown is the reference (`imgQwenPaint()` in
   `requestAnimationFrame` per frame, writing only on change, and a 500 ms
   timer instead while the field is off screen). A position measured once goes
   stale as soon as the column scrolls or the screen switches.
+
+**A light costs a request, so do not light it on every repaint.** Three rules,
+all learned from the Qwen one flickering on every drag and drop:
+
+- **Key the answer on what actually changes it, not on what is on screen.**
+  The readiness key sent `refs: <count>`, so adding or removing any reference
+  changed it and fired a fresh check; the answer depends only on whether
+  there are references at all (`server/qwen-status_test.js` holds that to be
+  true, and fails if a future graph breaks it). Send a bucket.
+- **Form painters must not reach for the network.** `imgRefsPaint()` runs
+  once per dropped picture. Route a check called from a painter through a
+  short debounce (`imgQwenCheckSoon()`, 400 ms); anything the user clicks
+  calls the check directly, because a control that waits feels broken.
+- **Painting the same state twice is not painting.** `imgQwenPaint()` returns
+  early when the tone, chip and note are unchanged, and the busy state waits
+  350 ms before it shows. A local check answers in milliseconds, and a light
+  that flicks orange and back reads as a fault; one that spins only when the
+  answer is genuinely slow reads as work.
 
 **Everywhere else**, use a chip (in `web/ui.css`):
 
@@ -140,6 +164,7 @@ use it too.
 | You are adding… | Put it… |
 |---|---|
 | An option for one generation (a sampler, a LoRA, a size) | In that screen's form, in its `.params` grid, next to similar controls. Advanced or rare options go in the existing "More controls" / "Lab" disclosures. |
+| A property of the **run itself** (don't record the prompt, don't keep the intermediates) | Under the panel's main button, in its `.ctawrap`, as a one-line `.tog.ctatog`. It belongs with the control that starts the run, and `.ctawrap` is one of the few things Simple mode keeps. **Not** inside whichever `.field` happened to be open: dropped into the Images reference block, "don't record the prompt" read as a property of the references and pushed the drop box further down a column that already scrolls. |
 | A set-once preference | In **Settings**, in the matching card (Songs, Cover art, Video, Enhance, Battery Safe, Provenance, Hosted engine, Workflows, Folders). Only add a new `pcard` with `data-nav` if nothing fits. Persist it through `PREF_PATHS` in `server/config.js`. |
 | A new tool or workflow for an existing area (more music workflows) | A **tab** in that area's page (Music Lab has five). Not a new button in the form. |
 | A whole new area with several tools | Its own **rail page**, registered in all four places below. |
@@ -228,6 +253,25 @@ exactly, and so should anything new:
   select or upload button holds state, **hide it, don't delete it**.
 - Gallery tiles that can be dragged carry
   `draggable="true" data-picdrag='{"name","url"}'`.
+
+**⚠ The strip's `hidden` is the drop box's input, not decoration.** With the
+`strip` option the box opens its zone on
+`!strip.hidden && strip.children.length`. A screen that paints its own strip
+**must** keep setting `strip.hidden = !count` (Images does it in
+`imgRefsPaint()`). Replacing that line with a class — even a well-meaning
+"always on screen" one — leaves `hidden` set from the markup for ever: every
+dropped picture is accepted and added, the zone never opens, nothing appears,
+and the report is "drag and drop is broken". The target is not invisible in
+the meantime: the zone slides open while anything is being dragged, and
+`dropAnywhere()` covers the whole panel.
+
+**A hover preview must hide on repaint, not only on `mouseout`.** The strip is
+rebuilt with `innerHTML` on every add, remove and reorder, so the figure the
+pointer is over is destroyed and **no `mouseout` is ever delivered** — remove
+a reference while looking at its enlarged preview and the preview hangs there
+over nothing. `imgRefHoverHide()` is a named function for that reason and the
+painter calls it. Four exits: the repaint, a `mouseover` that is not a
+thumbnail, scrolling, and the pointer leaving the window.
 
 ## 7. Galleries (`web/galleries.css`)
 
@@ -321,6 +365,10 @@ New web scripts get a `node --check` line in `.githooks/pre-commit`.
 - [ ] Only existing component classes and colour tokens are used; new class
       names are prefixed and checked for collisions.
 - [ ] Every `id` survived; controls holding state were hidden, not deleted.
+- [ ] A picture input's painter still sets `strip.hidden`, and any hover
+      preview hides when the strip repaints.
+- [ ] No painter reaches for the network on every repaint; a readiness key
+      is keyed on what changes the answer, not on what is on screen.
 - [ ] Works in Simple mode as well as Advanced.
 - [ ] Looked at it at a normal window size and at 700px wide.
 - [ ] `.githooks/pre-commit` passes (UI tests read `web/index.html`).

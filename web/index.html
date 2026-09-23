@@ -1373,23 +1373,6 @@
         </div>
         <p class="hint" id="imgPersonaNote" hidden></p>
 
-        <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
-             The label names what it drops and the hint names what it keeps,
-             because "private" on its own reads as "untraceable" and somebody
-             would rely on that. The picture still carries its AI disclosure. -->
-        <div class="framepick">
-          <label class="hint" title="The prompt, the negative, every text node, the prompt hash and the label are left out of the ledger; no graph is filed; the engine's metadata chunk is stripped from the PNG; the gallery row keeps its seed, model and date but no prompt.">
-            <input type="checkbox" id="imgPrivate"> Private &mdash; don&rsquo;t record the prompt
-          </label>
-        </div>
-        <!-- ALWAYS ON SCREEN, not revealed on tick. What this does NOT do is what
-             somebody needs before deciding to rely on it; a caveat shown only to
-             people who have already trusted the control is aimed at the wrong
-             audience. One dim line is the whole cost. -->
-        <p class="hint" id="imgPrivateNote">The picture is still recorded and still marked
-          AI-generated &mdash; only the words are dropped. It cannot be applied afterwards,
-          and it does not touch pictures already made.</p>
-
         <!-- The drop box: the pictures live inside it (#imgRefPrev and its Clear
              are moved in by app.js). The select and upload button stay hidden
              because app.js keeps its state there. -->
@@ -1412,6 +1395,23 @@
       <div class="cta">
         <button class="btn primary wide" type="button" id="imgGo">Make image</button>
       </div>
+      <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
+           ⚠ IT IS A PROPERTY OF THE RENDER, so it lives with the button that
+           starts one. It arrived inside #imgRefWrap, between the character
+           toolbar and the drop box: it read as something to do with references,
+           it pushed the drop box further down a column that already scrolls,
+           and it applies to every engine on this screen whether there are
+           references or not. It also came with a three-line paragraph under it;
+           the label already says exactly what it drops, and the rest — what is
+           kept, and that it cannot be applied afterwards — is the tooltip. It
+           says "don't record the prompt" rather than "private" for the reason
+           that paragraph was written: "private" on its own reads as
+           untraceable, and the picture is still filed and still marked AI.
+           The .ctawrap is one of the few things Simple mode keeps, so this
+           stays reachable there too. -->
+      <label class="tog ctatog" for="imgPrivate"
+        title="Dropped: the prompt, the negative, every text node, the prompt hash and the label stay out of the ledger, no graph is filed, and the engine's own metadata chunk is stripped from the PNG. Kept: the picture, its seed, model and date, and its AI-generated mark. New renders only: it cannot be applied to pictures already made."><input
+        id="imgPrivate" type="checkbox"> Don&rsquo;t record the prompt</label>
 
       <!-- WHAT IS ACTUALLY HAPPENING, and a way out of it.
            A render passes through four states the screen never showed —

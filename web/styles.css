@@ -2550,13 +2550,12 @@ details.adv[open] summary::before { content: "▾"; }
 
 /* waypoint thumbnails on the Video page */
 .midprev{display:flex;gap:.4rem;flex-wrap:wrap;margin:.4rem 0}
-/* The reference drop box. A dashed outline is the one shape everybody reads
-   as "put something here", and it stays while the box has contents so the
-   target does not disappear the moment you use it once. */
-/* The empty state is a ::before rather than a real row, so there is never a
-   placeholder that could be mistaken for a chosen reference. */
-/* The thumbnails are draggable out of the library and into here, so the
-   cursor should say so on the way past. */
+/* The reference drop box itself is web/picdrop.js and web/ui.css — the dashed
+   zone, the empty state and the thumbnail grid all live there. Two comments
+   describing rules for a second copy of it survived a merge here after the
+   rules themselves went; they are gone.
+   The thumbnails are draggable out of the library and into it, so the cursor
+   should say so on the way past. */
 #imgGrid .imtile img{cursor:grab}
 /* The full picture, over everything, and never under the pointer: a preview
    that can be hovered is a preview that flickers. */

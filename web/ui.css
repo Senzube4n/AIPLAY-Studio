@@ -341,3 +341,15 @@ p.hint.open, div.hint.open { cursor: pointer; }
 }
 .picdrop .pdzone .midthumb .midx:hover { color: #fff; background: var(--err); border-color: transparent; }
 .picdrop .pdzone .midthumb figcaption { justify-content: center; }
+
+/* ── "Don't record the prompt", under the Make button ──────────────────────
+ * A property of the render, so it sits with the control that starts one. One
+ * line, dim, and it never grows a second one: a privacy control that wraps
+ * into a paragraph is the paragraph people stop reading. */
+.ctatog {
+  display: flex; align-items: center; gap: 7px;
+  margin: 8px 2px 0; font-size: 12px; color: var(--dim); cursor: pointer;
+  user-select: none;
+}
+.ctatog input { margin: 0; flex: 0 0 auto; }
+.ctatog:hover { color: var(--ink); }
