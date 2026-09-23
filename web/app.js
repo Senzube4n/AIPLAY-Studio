@@ -6376,6 +6376,25 @@ $("qLyrics").onchange = async () => {
     body: JSON.stringify({ action: "when", value: $("qLyrics").value }),
   });
 };
+/* The python timed lyrics run in. Applies at once (art.js reads it at every
+ * spawn); an empty field goes back to the default venv. The answer is the
+ * server's own verdict: whether faster-whisper AND stable-ts import there, the
+ * install lines when they do not, and that AIPLAY_WHISPER_PYTHON still wins
+ * when it is set. Nothing is decided here. */
+$("btnWhisperPy").onclick = async () => {
+  const b = $("btnWhisperPy");
+  b.disabled = true;
+  try {
+    const r = await (await fetch("/api/lyrics", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "python", value: $("qWhisperPy").value.trim() }),
+    })).json();
+    $("whisperPyNote").textContent = r.error || r.lyrics?.note || "Saved.";
+    $("whisperPyNote").classList.toggle("warn", !!r.error || r.lyrics?.ready === false);
+  } finally {
+    b.disabled = false;
+  }
+};
 /* Covers live beside the audio as loose PNGs; this puts them INSIDE it.
  *
  * Separate from "draw any missing covers" because it is a different operation
@@ -6432,6 +6451,13 @@ const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1
  * and before that no single row but every music row's group, because a fresh
  * install has not chosen and must not be told MiniMax is the one it needs. */
 const requiredBadge = (c) => (c.required ? "required" : c.requiredGroup === "music" ? "one music engine required" : "");
+/* WHICH python packages a row still needs: the server's `packageMissing` when
+ * it names them. Timed lyrics needs stable_whisper as well as faster_whisper,
+ * and naming the one that IS installed sent people to reinstall it. */
+const pkgWords = (c) => {
+  const m = c.packageMissing?.length ? c.packageMissing : [c.needsPackage];
+  return `the ${m.map(esc).join(" and ")} python package${m.length > 1 ? "s" : ""}`;
+};
 
 async function loadModels() {
   let d = null;
@@ -6486,9 +6512,9 @@ async function loadModels() {
       c.managedByPackage
         ? (c.packageReady
             ? `<span class="mok">✓ Ready</span><span class="mmiss">fetches ${gb(c.totalBytes)} the first time it runs</span>`
-            : `<span class="mwarn">Needs the ${esc(c.needsPackage)} python package</span>`)
+            : `<span class="mwarn">Needs ${pkgWords(c)}</span>`)
       : c.ready && c.packageReady ? `<span class="mok">✓ Ready</span>`
-      : c.ready && !c.packageReady ? `<span class="mwarn">Weights ready · needs the ${esc(c.needsPackage)} python package</span>`
+      : c.ready && !c.packageReady ? `<span class="mwarn">Weights ready · needs ${pkgWords(c)}</span>`
       : `<span class="mmiss">${gb(c.totalBytes - c.haveBytes)} to download</span>`;
     const need = c.totalBytes - c.haveBytes;
     const tooBig = need > (state.diskFree ?? Infinity);
@@ -18889,6 +18915,12 @@ function applyStatus(s) {
   if (s.config?.lyrics && !state.lyricsPainted) {
     state.lyricsPainted = true;
     $("qLyrics").value = s.config.lyrics.when || "off";
+    $("qWhisperPy").value = s.config.lyrics.whisperPython || "";
+    if (s.config.lyrics.defaultPython) $("qWhisperPy").placeholder = s.config.lyrics.defaultPython;
+    // The environment wins over this field; say so before anyone types in it.
+    if (s.config.lyrics.pythonFromEnv) {
+      $("whisperPyNote").textContent = `AIPLAY_WHISPER_PYTHON is set, so timed lyrics run in ${s.config.lyrics.python} whatever this field says.`;
+    }
   }
   if (s.config?.provenance) {
     // Kept on state so the song panel and the image editor can honour the

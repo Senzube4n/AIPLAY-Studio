@@ -17,6 +17,7 @@ import { readdir, stat, readFile, writeFile, mkdir, unlink, rename } from "node:
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { isNativeLibraryWav, readNativeWavTags, tagNativeWav } from "./library-wav.js";
 
@@ -117,7 +118,7 @@ export class Library {
     try {
       const out = await new Promise((resolve) => {
         const proc = spawn(config.python, [
-          path.join(path.dirname(new URL(import.meta.url).pathname.slice(1)), "tag_audio.py"),
+          path.join(path.dirname(fileURLToPath(import.meta.url)), "tag_audio.py"),
           target, metaPath,
           /* The cover, when there is one to embed.
            *
@@ -150,7 +151,7 @@ export class Library {
     }
     const out = await new Promise((resolve) => {
       const proc = spawn(config.python, [
-        path.join(path.dirname(new URL(import.meta.url).pathname.slice(1)), "tag_audio.py"),
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "tag_audio.py"),
         path.join(config.outputDir, file),
       ]);
       let so = "";
@@ -174,7 +175,7 @@ export class Library {
    */
   async joinExtension(originalFile, extensionFile, atSeconds, { from = 0 } = {}) {
     const out = `extend_${Date.now()}.flac`;
-    const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+    const here = path.dirname(fileURLToPath(import.meta.url));
     /* `from` skips the head of the incoming file. A YuE2 continuation is a whole
      * song (the kept part re-rendered, then the new material), so only its
      * tail past the seam is taken; a MiniMax extension holds the new section
@@ -208,7 +209,7 @@ export class Library {
    */
   async replaceSection(originalFile, newFile, atSeconds, toSeconds, { from = 0, report = false } = {}) {
     const out = `replace_${Date.now()}_${randomUUID().slice(0, 8)}.flac`;
-    const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+    const here = path.dirname(fileURLToPath(import.meta.url));
     const ops = JSON.stringify([{
       op: "replace",
       with: path.join(config.outputDir, newFile),
@@ -254,7 +255,7 @@ export class Library {
   async spliceTrajectory(priorCodes, newCodes, keepFrames) {
     if (!priorCodes || !newCodes) return null;
     const out = path.join(config.outputDir, ".codes", `joined_${Date.now()}.npz`);
-    const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+    const here = path.dirname(fileURLToPath(import.meta.url));
     const code = await new Promise((resolve) => {
       const proc = spawn(config.python, [
         path.join(here, "splice_codes.py"), priorCodes, newCodes, String(keepFrames), out,
@@ -271,7 +272,7 @@ export class Library {
    *  lyrics and style the sidecar never stored. */
   async readTags(file) {
     if (isNativeLibraryWav(file)) return readNativeWavTags(path.join(config.outputDir, file));
-    const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+    const here = path.dirname(fileURLToPath(import.meta.url));
     const out = await new Promise((resolve) => {
       const proc = spawn(config.python, [
         path.join(here, "tag_audio.py"), path.join(config.outputDir, file), "--read",

@@ -14,6 +14,7 @@
  */
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 
 let pass = 0;
@@ -49,7 +50,7 @@ console.log("\n§1  the driver: a replay branch, and what it replays");
     /raise Refused\("--extend-from %s has no %s;/.test(py));
   const python = config?.yue?.python || "D:\\AI\\aiplay-studio-bench\\venv-yue\\Scripts\\python.exe";
   if (fs.existsSync(python)) {
-    const r = spawnSync(python, ["-m", "py_compile", new URL("./yue_driver.py", import.meta.url).pathname.slice(1)], { encoding: "utf8" });
+    const r = spawnSync(python, ["-m", "py_compile", fileURLToPath(new URL("./yue_driver.py", import.meta.url))], { encoding: "utf8" });
     ok("the driver byte-compiles under the YuE2 python", r.status === 0, (r.stderr || r.stdout || "").trim().slice(0, 300));
   } else {
     console.log("  skip  the YuE2 python is not on this machine; the driver was not byte-compiled");

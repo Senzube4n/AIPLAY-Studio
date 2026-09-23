@@ -390,7 +390,8 @@ Half of this capability is verified and half is not, and the unread half is the 
   · **MiniMax Music 3 DAV encoder** — `python -m pip install numpy torch av` (on top of the 306 MB of weights in the table)
   · **HTDemucs (fine-tuned)** — `python -m pip install demucs`
   · **TTS voices (Kokoro + Qwen3-TTS)** — kokoro + qwen-tts (sidecar venv at tts-venv/) — no single command; see the Models screen
-  · **Whisper large-v3** — `python -m pip install faster-whisper`
+  · **Whisper large-v3** — `python -m pip install faster-whisper stable-ts`
+    → Into Studio's own whisper venv, not the python on your PATH: `%USERPROFILE%\aiplay-whisper\venv` (or the python chosen in Settings > Songs > "timed lyrics python", or AIPLAY_WHISPER_PYTHON). With Python 3.11 or newer, in a new Command Prompt or PowerShell window (both open in your user folder): `python -m venv "aiplay-whisper\venv"`, then `aiplay-whisper\venv\Scripts\python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126`, then `aiplay-whisper\venv\Scripts\python.exe -m pip install faster-whisper stable-ts`. The torch line is for an NVIDIA card only. On Linux the venv's python is `aiplay-whisper/venv/bin/python`.
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 

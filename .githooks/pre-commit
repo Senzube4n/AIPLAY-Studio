@@ -716,6 +716,15 @@ node server/artgate_test.js || exit 1
 # cache keyed on the graph — so it needs no GPU, and it covers both halves: the
 # miss that renders, and the hit that must resolve to the twin rather than die.
 node server/art_cache_test.js || exit 1
+# TIMED LYRICS SAY WHY THEY FAILED. A new user got "alignment failed" for a
+# whisper python that did not exist; art.js kept only lrc.py's stdout, so a
+# missing interpreter, a percent-encoded script path ("AIPLAY%20Studio"), a
+# native cuDNN abort and a stray traceback all read as those two words. Stub
+# interpreters pin each sentence; the real lrc.py runs against fake whisper
+# modules (no torch, no GPU) for the CPU fallback; and a sweep keeps every
+# server/ and scripts/ path off `import.meta.url).pathname`. The python half
+# skips only where no python runs at all.
+node server/lrc_test.js || exit 1
 # THE PREVIEW CACHE KEY, against real files in a temp directory. The cache was
 # keyed on the root comp's updatedAt alone, so an edit inside a CHILD comp
 # repainted the parent and its cached frames went on being served. No python and

@@ -52,7 +52,7 @@ import { fileURLToPath } from "node:url";
 import { CATALOG } from "./models.js";
 import {
   rebuild, TARGETS, BEGIN, END,
-  rebuildHtml, HTML_TARGET, HTML_BLOCKS, htmlBegin, htmlEnd,
+  rebuildHtml, HTML_TARGET, HTML_BLOCKS, htmlBegin, htmlEnd, targetCommands,
 } from "../scripts/models_table.mjs";
 import { TOOLS } from "./mcp.js";
 import { ggufFilesFor } from "./music/yue-gguf.js";
@@ -254,7 +254,10 @@ console.log("\n  the pip half");
   /* No document may invent a pip line the catalogue does not state. This is the
    * check that would have caught INSTALL.md telling people to install into
    * ComfyUI's own python, which is the 4.9x defect. */
-  const known = new Set(withCmd.map((c) => c.packageInstall));
+  /* Plus the lines models_table.mjs prints under a row to say WHICH python
+   * (timed lyrics' own venv): built from the catalogue's line by server/lrc.js,
+   * the builder the app's messages use, and aimed at that venv on purpose. */
+  const known = new Set([...withCmd.map((c) => c.packageInstall), ...targetCommands()]);
   for (const [doc, text] of [["README.md", readme], ["INSTALL.md", install]]) {
     /* ⚠ A backticked `pip install` with nothing after it is a MENTION, not a
      * command — §5 carries one ("Never `pip install` anything into ComfyUI's

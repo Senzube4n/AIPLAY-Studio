@@ -18,6 +18,7 @@
  * it exits. Beds go through the ordinary music queue like any song.
  */
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -44,7 +45,7 @@ function runPy(script, args, timeoutMs = 30 * 60e3, python = config.python) {
   });
 }
 
-const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /* ─────────────────────────────────────────────────────────── ingest */
 

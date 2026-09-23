@@ -20,7 +20,7 @@ try {
 const { prepareGgufJob } = await import("./music-gguf-input.js");
 const { config } = await import("./config.js");
 // The route marks the required badge over its overlaid rows; the slice below runs the real rule.
-const { markRequired } = await import("./models.js");
+const { markRequired, modulesOf } = await import("./models.js");
 const valid = (extra = {}) => ({ caption: "Warm acoustic folk", lyrics: "Sing softly\nUnder the moon", ...extra });
 const queued = [];
 const atBoundary = (body) => { const spec = prepareGgufJob(body, "agent:test"); queued.push(spec); return spec; };
@@ -214,6 +214,8 @@ await test("Models response preserves catalogue variant rows and exposes separat
     modelGroupOf: () => "music",
     ggufSetup: { pending: false, status: async () => status },
     markRequired,
+    // Which python modules a row needs (timed lyrics needs two; see server/lrc_test.js).
+    modulesOf,
   }, { timeout: 1000 });
   status = { ready: false, variants: { q4_0: { ready: false }, q8_0: { ready: true } },
     message: "Native YuE2 Q4_0 is not installed.", downloadBytes: 2933415003, progress: null };

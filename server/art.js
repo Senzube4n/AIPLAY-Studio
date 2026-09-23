@@ -32,6 +32,7 @@ import { qwenImageStatus } from "./qwen-status.js";
 import { resolvePick } from "./modelpick.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { joinClips } from "./clipjoin.js";
+import { runLrc, LRC_SCRIPT } from "./lrc.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 /* The ledger, imported HERE and not only at the API seam in index.js: a clip
  * served from the engine's cache is a fact only the renderer can know, and it
@@ -1911,7 +1912,6 @@ export class ArtRunner extends EventEmitter {
     const lyrics = (job.lyrics || "").trim();
     if (!lyrics) throw new Error("no lyrics to time (instrumental?)");
 
-    const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
     const tmp = path.join(config.paths.appData, `lyr_${Date.now()}.txt`);
     await writeFile(tmp, lyrics, "utf8");
 
@@ -1920,7 +1920,6 @@ export class ArtRunner extends EventEmitter {
     await mkdir(LRC_DIR, { recursive: true });
 
     const args = [
-      path.join(here, "lrc.py"),
       path.join(config.outputDir, job.file),
       tmp,
       outStem,
@@ -1931,29 +1930,21 @@ export class ArtRunner extends EventEmitter {
     }
 
     try {
-      const out = await new Promise((resolve) => {
-        const proc = spawn(config.lyrics.python, args, {
-          windowsHide: true,
-          env: { ...process.env, AIPLAY_WHISPER_MODEL: config.lyrics.model },
-        });
-        let so = "", se = "";
-        proc.stdout.on("data", (d) => (so += d));
-        proc.stderr.on("data", (d) => (se += d));
-        proc.on("exit", () => resolve(so));
-        proc.on("error", () => resolve(""));
+      /* server/lrc.js runs server/lrc.py (LRC_SCRIPT, found with fileURLToPath)
+       * and turns every failure into a sentence that names its cause. This used
+       * to be an inline spawn that kept only stdout and threw "alignment failed"
+       * for a missing python, an unopenable script, a native cuDNN abort and a
+       * traceback alike: four causes, one message, no way to tell them apart. */
+      const info = await runLrc({
+        python: config.lyrics.python,
+        // The interpreter scripts/extras_setup.mjs tells people to install
+        // into; server/docs_test.js pairs that claim with this spawn.
+        launch: (argv, opts) => spawn(config.lyrics.python, argv, opts),
+        script: LRC_SCRIPT,
+        args,
+        env: { ...process.env, AIPLAY_WHISPER_MODEL: config.lyrics.model },
+        model: config.lyrics.model,
       });
-      /* Take the LAST {...} in stdout rather than the last line.
-       *
-       * Splitting on newlines is wrong here: whisper's progress bars are drawn
-       * with carriage returns, so the whole animation and the JSON arrive as one
-       * "line" and JSON.parse chokes on "Transcribi…". The script now suppresses
-       * that output, but a library that prints one stray banner should not make
-       * a completed alignment look like a failure — which is exactly what
-       * happened: both LRC files were written and the job still reported an
-       * error. */
-      const m = out.match(/\{[\s\S]*\}/);
-      const info = JSON.parse(m ? m[0] : "{}");
-      if (!info.ok) throw new Error(info.error || "alignment failed");
       return { lrc: `${stem}.lrc`, wordLrc: `${stem}.word.lrc`, ...info };
     } finally {
       unlink(tmp).catch(() => {});

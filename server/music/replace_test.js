@@ -14,6 +14,7 @@
  */
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 
 let pass = 0;
@@ -23,7 +24,7 @@ function ok(label, cond, detail = "") {
   else { failures.push(label); console.log(`  FAIL  ${label}${detail ? `\n          ${detail}` : ""}`); }
 }
 const src = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
-const serverDir = new URL("../", import.meta.url).pathname.slice(1);
+const serverDir = fileURLToPath(new URL("../", import.meta.url));
 
 const HARNESS = String.raw`
 import sys, json, os, subprocess, tempfile

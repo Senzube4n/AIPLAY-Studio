@@ -92,6 +92,36 @@ function detectPython(rig) {
   return path.join(rig, "venv", "Scripts", "python.exe");
 }
 
+/**
+ * The whisper venv's interpreter when nothing names another.
+ *
+ * `Scripts\python.exe` is the Windows venv layout ONLY. Everywhere else a venv
+ * keeps it in `bin/python`, and a Windows path handed to a Linux spawn is an
+ * ENOENT whose message tells people to create a folder their system cannot
+ * have. Platform and home are parameters so lrc_test.js pins the Linux answer
+ * on a Windows machine.
+ */
+export function defaultWhisperPython(platform = process.platform, home = os.homedir()) {
+  const p = platform === "win32" ? path.win32 : path.posix;
+  return p.join(home, "aiplay-whisper", "venv", ...(platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"]));
+}
+
+/**
+ * The interpreter timed lyrics runs: AIPLAY_WHISPER_PYTHON, else the one chosen
+ * in Settings (prefs.lyrics.whisperPython), else the default venv.
+ *
+ * WHY A SETTING AT ALL. Until now the environment variable was the only way to
+ * name another python, and an environment variable reaches the server only
+ * through the launcher that starts it: "setx …, then restart Studio" changed
+ * nothing while the launcher kept running. A saved choice needs no restart,
+ * because art.js reads config.lyrics.python at every spawn. The environment
+ * still wins, as it does for every other path in this file, so a launcher that
+ * sets it on purpose is never overridden by a stale field; Settings says so.
+ */
+export function whisperPython(choice = config.lyrics?.whisperPython) {
+  return process.env.AIPLAY_WHISPER_PYTHON || choice || defaultWhisperPython();
+}
+
 export const config = {
   rig: RIG,
   dataDir: APPDATA,
@@ -738,10 +768,12 @@ export const config = {
    * Same off/all/starred/liked shape as stems, and off by default for the same
    * reason: it is a deliberate act, and it costs a whisper pass over the audio.
    *
-   * ⚠ Runs in the RE-TIMING venv (`C:\aiplay-whisper\venv`), which already has
-   * stable-whisper, faster-whisper, ctranslate2 and a CUDA torch installed and
-   * working. Not the ComfyUI venv — ctranslate2 expects a different torch than
-   * the cu130 build the engine depends on.
+   * ⚠ Runs in the RE-TIMING venv (`%USERPROFILE%\aiplay-whisper\venv`, or the
+   * python chosen in Settings, or AIPLAY_WHISPER_PYTHON: see whisperPython()),
+   * which needs stable-ts and faster-whisper; a CUDA torch there puts it on the
+   * GPU, and without one lrc.py times on the CPU
+   * (AIPLAY_WHISPER_DEVICE=auto|cuda|cpu). Not the ComfyUI venv — ctranslate2
+   * expects a different torch than the cu130 build the engine depends on.
    *
    * ⚠ Measured honesty: line-level timing is reliable; word-level is approximate
    * on sung vocals, because a word held across two bars has no single onset. The
@@ -761,8 +793,12 @@ export const config = {
   lyrics: {
     when: "off",
     model: "large-v3",
-    python: process.env.AIPLAY_WHISPER_PYTHON
-      || path.join(os.homedir(), "aiplay-whisper", "venv", "Scripts", "python.exe"),
+    /* The interpreter a person chose in Settings > Songs (or with the
+     * timed_lyrics_python tool), saved as prefs.lyrics.whisperPython; null when
+     * nobody chose. `python` below is what actually runs, and is recomputed
+     * from this after the saved prefs are read (see whisperPython()). */
+    whisperPython: null,
+    python: process.env.AIPLAY_WHISPER_PYTHON || defaultWhisperPython(),
     // Separating the vocal first measurably helps a dense mix. It is skipped
     // when stems already exist for the track, and skipped entirely when the mix
     // is clear enough — a 92.9% match was achieved on the raw mix in testing.
@@ -1764,6 +1800,12 @@ export const config = {
  * that cannot explain itself.
  */
 const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
+/* An interpreter path from settings.json: absolute on THIS platform, one line.
+ * Existence is checked where it is set (POST /api/lyrics) and where it is run
+ * (server/lrc.js), not here: a python on an unplugged drive is still the one the
+ * person chose, and dropping it at boot would silently put the default back. */
+const OK_PYTHON_PATH = (v) => v === null
+  || (typeof v === "string" && v.length > 0 && v.length <= 1024 && !/[\r\n\0]/.test(v) && path.isAbsolute(v));
 config.music.engines["yue2-gguf"] = {
   label: "YuE2 GGUF · Q4 / Q8 · non-commercial",
   runtime: "audiocpp", capability: "musicYue2Gguf",
@@ -1795,6 +1837,7 @@ export const PREF_PATHS = [
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],
   ["lyrics", "when", OK_WHEN],
+  ["lyrics", "whisperPython", OK_PYTHON_PATH],
   ["output", "format", (v) => ["flac", "mp3", "opus"].includes(v)],
   ["output", "mp3Quality", (v) => ["V0", "128k", "320k"].includes(v)],
   ["output", "opusQuality", (v) => ["64k", "96k", "128k", "192k", "320k"].includes(v)],
@@ -1841,6 +1884,8 @@ for (const [group, key, ok] of PREF_PATHS) {
 if (typeof saved.prefs?.tier === "string" && config.vramTiers[saved.prefs.tier]) {
   config.tier = saved.prefs.tier;
 }
+/* The whisper interpreter, now that a saved choice may have been read. */
+config.lyrics.python = whisperPython();
 /* Music-only runs native YuE2 GGUF, or YuE2 through ComfyUI when this machine
  * has a ComfyUI install and a YuE2 checkpoint (decided at startup, index.js). */
 if (config.musicOnly && !["yue2-gguf", "yue2-comfy"].includes(config.music.engine)) config.music.engine = "yue2-gguf";

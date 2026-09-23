@@ -34,6 +34,7 @@
 import path from "node:path";
 import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel } from "./models.js";
 import { config } from "./config.js";
+import { SETTING_WORDS } from "./lrc.js";
 
 /* ── the four answers ──────────────────────────────────────────────────────
  *
@@ -328,6 +329,19 @@ export function bytesFor(caps) {
   return { totalBytes: total, missingBytes: missing, sharedBytes: shared };
 }
 
+/* WHERE a package goes. Timed lyrics runs in a venv of its own
+ * (config.lyrics.python), and "your SYSTEM Python" is where a first user put
+ * faster-whisper, which Studio never runs for timed lyrics: the run died as
+ * "alignment failed". Every other package here does run in the system python. */
+function packageHome(cap) {
+  if (cap.id === "lyrics") {
+    return `It goes in ${config.lyrics.python}, the python timed lyrics run in (${SETTING_WORDS} changes it), `
+      + "not your system Python and never ComfyUI's.";
+  }
+  return "It goes in your SYSTEM Python, never ComfyUI's, because installing it there can move "
+    + "the torch build the engine depends on.";
+}
+
 /**
  * WHAT SHOULD THIS PERSON DOWNLOAD.
  *
@@ -520,9 +534,8 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
       needsPackage: cap.needsPackage || null,
       install: cap.packageInstall || null,
       why: cap.packageReady === false
-        ? `Needs the \`${cap.needsPackage}\` Python package, which Studio cannot fetch — it is a pip install, `
-          + "not a file. It goes in your SYSTEM Python, never ComfyUI's, because installing it there can move "
-          + "the torch build the engine depends on."
+        ? `Needs the ${(cap.packageMissing?.length ? cap.packageMissing : [cap.needsPackage]).map((m) => `\`${m}\``).join(" and ")} `
+          + "Python package, which Studio cannot fetch — it is a pip install, not a file. " + packageHome(cap)
         : "The Python side of this is present.",
     }));
 

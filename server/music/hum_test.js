@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { config } from "../config.js";
 import { readScore } from "../score/abc.js";
@@ -24,7 +25,7 @@ function ok(label, cond, detail = "") {
   else { failures.push(label); console.log(`  FAIL  ${label}${detail ? `\n          ${detail}` : ""}`); }
 }
 const src = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
-const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 console.log("\n§1  the tracker, on a synthetic hum");
 {

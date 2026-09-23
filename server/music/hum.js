@@ -15,6 +15,7 @@
  * the tracker reads; nothing here decodes audio itself.
  */
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile, readFile, stat, realpath, rm } from "node:fs/promises";
@@ -22,7 +23,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { config } from "../config.js";
 
 const MAX_BYTES = 50 * 1024 * 1024;
-const SCRIPT = new URL("./hum_to_abc.py", import.meta.url).pathname.slice(1);
+const SCRIPT = fileURLToPath(new URL("./hum_to_abc.py", import.meta.url));
 
 export class HumRefusal extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }

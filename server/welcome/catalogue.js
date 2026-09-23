@@ -36,7 +36,7 @@
  * that has no `cant`.
  */
 import { config } from "../config.js";
-import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel } from "../models.js";
+import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, modulesOf } from "../models.js";
 /* The compositor's own vocabulary. "Ten kinds of layer" was TYPED here while
  * the list had grown to eleven — an audio layer was added to vfx/store.js and
  * this sentence went on saying ten, because nothing checks a word. A count in
@@ -206,9 +206,13 @@ export const NEED_STATES = {
   },
   "absent": {
     tone: "bad", chip: "Not installed", inline: true,
+    /* "the interpreter named below", not "your SYSTEM Python": every package
+     * row carries the python it was probed in (routes.js interpreterLine), and
+     * for timed lyrics that is Studio's whisper venv. "SYSTEM Python" there
+     * sent people to install into the python that never runs it. */
     line: "A pip install rather than a download — Studio cannot fetch this one for you. It goes in "
-        + "your SYSTEM Python, never ComfyUI's, because installing it there can move the torch build "
-        + "the engine depends on.",
+        + "the interpreter named below, never ComfyUI's, because installing it there can move the "
+        + "torch build the engine depends on.",
   },
   "unknown": {
     tone: "unknown", chip: "Cannot tell", inline: true,
@@ -373,9 +377,13 @@ export function resolveNeeds(tab) {
     const capability = n.kind === "engine" ? (MODEL_TO_CAPABILITY[n.id] ?? null) : n.id;
     const cap = CATALOG.find((c) => c.id === capability) || null;
     push({ kind: n.kind, id: n.id, for: n.for, capability, package: null });
-    if (cap?.needsPackage) {
+    /* One row per module that must import (`needsModules`, else the one
+     * `needsPackage`): timed lyrics needs stable_whisper as well as
+     * faster_whisper, and a panel showing only the second said "installed"
+     * over a feature that could not run. */
+    for (const mod of modulesOf(cap)) {
       push({
-        kind: "package", id: cap.needsPackage, package: cap.needsPackage, capability: null,
+        kind: "package", id: mod, package: mod, capability: null,
         /* Derived from the capability that declares it, so this sentence names
          * whatever model the map points at rather than a label typed beside a
          * module name that could stop being true. */

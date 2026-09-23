@@ -17,8 +17,9 @@
  * the server; the legacy Studio canvas export remains browser-based.
  */
 import http from "node:http";
-import { URL } from "node:url";
+import { URL, fileURLToPath } from "node:url";
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import { vfxTools } from "./mcp-vfx.js";
 import { dawTools } from "./mcp-daw.js";
 // Video Workflow tools (FORK — see FORK_DELTA.md).
@@ -3364,6 +3365,21 @@ export const TOOLS = [
   },
 
   {
+    name: "timed_lyrics_python",
+    description: "Which Python timed lyrics run in, and whether they can: whisper needs faster-whisper AND stable-ts in THAT interpreter, not the python on PATH. With no `python`, reports the interpreter, where it came from (the default venv, Settings, or AIPLAY_WHISPER_PYTHON), whether both import, and the install lines when they do not. With `python` (the full path to an existing python.exe or bin/python), makes it the one timed lyrics use, at once and across restarts: the same field as Settings > Songs > timed lyrics python. \"\" goes back to the default venv. AIPLAY_WHISPER_PYTHON, when set, still wins, and the answer says so.",
+    inputSchema: {
+      type: "object",
+      properties: { python: { type: "string", maxLength: 1024, description: "Optional: the full path of the python to use from now on; \"\" for the default." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/lyrics", a.python === undefined ? { action: "python" } : { action: "python", value: a.python });
+      if (r?.error) throw new Error(r.error);
+      return r.lyrics;
+    },
+  },
+
+  {
     name: "prompt_gallery",
     description: "The saved galleries the Music and Chat pages share: `styles`, `lyrics`, `simple` (Simple-mode descriptions) and `chat` (chat prompts). action list (default) returns the saved entries, newest first; save stores `text` (an identical entry moves to the top); delete removes the entry with `id`.",
     inputSchema: {
@@ -3492,8 +3508,18 @@ async function handle(msg) {
  *
  * `/api/mcp` imports it for the tool list, and a module that starts reading
  * stdin on import would quietly steal the server's own input stream. */
-const RUN_DIRECTLY = !!process.argv[1]
-  && import.meta.url.endsWith(process.argv[1].split(path.sep).join("/"));
+/* Compared as PATHS, never as URL text. import.meta.url is percent-encoded
+ * ("AIPLAY%20Studio", "Zo%C3%AB") and argv[1] is not, so the old test (does
+ * the URL string end with argv[1]?) was false in the installer's default folder
+ * and in any folder with a space or an accent: an MCP client launched the
+ * server and it never read its stdin. lrc_test.js runs this exact line from
+ * such a folder. Both sides are REAL paths: Node realpaths the main module
+ * it loads, so import.meta.url names the target of a junction or symlink while
+ * argv[1] still names the link, and a Studio reached through one never read
+ * its stdin either. A path that does not resolve is not a main module. */
+const RUN_DIRECTLY = !!process.argv[1] && (() => {
+  try { return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(process.argv[1])); } catch { return false; }
+})();
 
 let buf = "";
 /* How many calls are still running.

@@ -4458,9 +4458,18 @@
             <option value="starred">When I star a track</option>
             <option value="liked">When I like a track</option>
           </select></span>
+
+          <!-- The python timed lyrics run in. server/lrc.js names this label in
+               its messages (SETTING_WORDS) and lrc_test.js pins the pair. It
+               applies at once: the old way, AIPLAY_WHISPER_PYTHON, reached the
+               server only after the launcher itself was restarted. -->
+          <label for="qWhisperPy">timed lyrics python</label>
+          <span class="pv"><input class="line" id="qWhisperPy" spellcheck="false"
+            placeholder="…\aiplay-whisper\venv\Scripts\python.exe"> <button class="btn2" type="button" id="btnWhisperPy">Use</button></span>
         </div>
         <p class="hint" id="fmtNote"></p>
         <p class="hint" id="lyricsNote">Timed lyrics are two .lrc files per song (lines and words) for visualisers. Word timing is approximate on sung vocals.</p>
+        <p class="hint" id="whisperPyNote">Timed lyrics need faster-whisper and stable-ts in the python above. Leave it empty for the default. Use checks both.</p>
         <p class="hint" id="setNote"></p>
       </section>
 

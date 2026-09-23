@@ -252,6 +252,8 @@ input.line {
 }
 input.line:focus { outline: none; border-color: var(--primary); }
 input.line::placeholder { color: var(--ghost); }
+/* The timed-lyrics verdict ends with install commands, one per line. */
+#whisperPyNote { white-space: pre-line; }
 input[type=range] { accent-color: var(--primary); width: 100%; }
 .scaffold {
   margin: 0; font-family: var(--mono); font-size: 10.5px; line-height: 1.5;

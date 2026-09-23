@@ -33,6 +33,7 @@
 import { mkdir, readdir, copyFile, writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { config } from "../server/config.js";
 
@@ -233,7 +234,7 @@ const GRAIN = Number(opt("grain", 0.02));
 async function analyse(song) {
   if (!song) return null;
   const py = config.python;
-  const script = path.join(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ""), "beats.py");
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "beats.py");
   const out = await new Promise((res) => {
     const p = spawn(py, [script, path.join(OUTPUT, song)]);
     let s = "", e = "";

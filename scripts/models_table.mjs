@@ -32,6 +32,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATALOG } from "../server/models.js";
+import { installLines, SETTING_WORDS, PYTHON_MIN } from "../server/lrc.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "..");
@@ -238,6 +239,39 @@ const FLAGS = [
   },
 ];
 
+/**
+ * WHERE timed lyrics' packages go, under the generic line.
+ *
+ * The generic `python -m pip install faster-whisper stable-ts` is how a first
+ * user put both packages into the python on their PATH, which Studio never runs
+ * for timed lyrics, and got "alignment failed". So this row also says which
+ * interpreter, and gives the verified commands from the same builder the app's
+ * own messages use (server/lrc.js installLines). They are aimed at a path
+ * RELATIVE to the user folder, which a new Command Prompt or PowerShell window
+ * opens in: both shells run it as written, with a space in the user name or
+ * not, where `%USERPROFILE%` would work in only one of them.
+ */
+const TARGET_LINES = {
+  lyrics: () => installLines("aiplay-whisper\\venv\\Scripts\\python.exe", { platform: "win32", create: true }),
+};
+/** Every command line the target notes print. server/docs_test.js accepts
+ *  these beside the catalogue's own lines: they come from the builder the app's
+ *  messages use, so they are not a document inventing a pip command. */
+export const targetCommands = () => Object.values(TARGET_LINES).flatMap((f) => f());
+
+const TARGET_NOTES = {
+  lyrics: () => {
+    const lines = TARGET_LINES.lyrics();
+    return "\n    → Into Studio's own whisper venv, not the python on your PATH: "
+      + "`%USERPROFILE%\\aiplay-whisper\\venv` (or the python chosen in "
+      + `${SETTING_WORDS}, or AIPLAY_WHISPER_PYTHON). With ${PYTHON_MIN}, in a new `
+      + "Command Prompt or PowerShell window (both open in your user folder): "
+      + lines.map((l) => `\`${l}\``).join(", then ")
+      + ". The torch line is for an NVIDIA card only. On Linux the venv's python is "
+      + "`aiplay-whisper/venv/bin/python`.";
+  },
+};
+
 /** Every capability that needs something from pip, with the line to type. */
 function pipBody() {
   const caps = CATALOG.filter((c) => c.viaPackage || c.packageInstall);
@@ -248,7 +282,7 @@ function pipBody() {
     const extra = (c.files || []).length
       ? ` (on top of the ${size(bytesOf(c))} of weights in the table)`
       : "";
-    return `  · **${modelName(c.label)}** — ${what}${extra}`;
+    return `  · **${modelName(c.label)}** — ${what}${extra}${TARGET_NOTES[c.id]?.() || ""}`;
   });
   return "Some capabilities are Python packages that fetch their own weights, so Studio has no file to "
     + "verify and no button to press. They belong in a Python that is **not** ComfyUI's: installing them "
@@ -469,7 +503,10 @@ export function rebuildHtml(current, file) {
   return lines.join(EOL);
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("models_table.mjs")) {
+/* Paths, not URL text: `file://${argv[1]}` never equals a percent-encoded,
+ * three-slash import.meta.url on Windows, and the endsWith() rescue that made
+ * it work would also fire for any other script of the same name. */
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const check = process.argv.includes("--check");
   let drifted = 0;
   /* Three documents, two renderers, one catalogue. The HTML page is rebuilt by

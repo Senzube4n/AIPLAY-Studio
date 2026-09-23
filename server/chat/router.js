@@ -528,6 +528,7 @@ export const WITHHELD = {
   enhance_lyrics: "the chat writes lyrics itself; a second model rewriting them is a round trip for nothing, and a local one would take the card",
   enhance_description: "the chat already turns an idea into a song; rewriting the idea through a second model adds nothing",
   enhance_model: "which model Enhance uses is a setting for a person, chosen in Settings",
+  timed_lyrics_python: "names a program Studio will execute; a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",

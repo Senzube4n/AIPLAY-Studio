@@ -151,7 +151,11 @@ export function modelTools(api) {
           territoryExcluded: c.region?.excluded || null,
           downloadable: !c.gated,
           gatedHow: c.gated?.how || null,
-          needsPackage: c.packageReady === false ? c.needsPackage : null,
+          /* The module(s) actually missing: timed lyrics needs stable_whisper as
+           * well as faster_whisper, and naming the one that imports sent an
+           * agent to reinstall it. */
+          needsPackage: c.packageReady === false
+            ? (c.packageMissing?.length ? c.packageMissing.join(" and ") : c.needsPackage) : null,
           install: c.packageReady === false ? c.packageInstall : null,
           /* WHAT A POLL NEEDS TO SEE. `ready` alone cannot tell "still
            * fetching" from "failed ten seconds ago", and the route already

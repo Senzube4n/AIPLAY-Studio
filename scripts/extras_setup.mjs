@@ -29,7 +29,8 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { config } from "../server/config.js";
-import { CATALOG } from "../server/models.js";
+import { CATALOG, modulesOf } from "../server/models.js";
+import { runLines, installLines, venvOf, SETTING_WORDS, PYTHON_MIN, ENV_RESTART } from "../server/lrc.js";
 
 /**
  * Which interpreter each capability's package has to land in.
@@ -65,12 +66,15 @@ const TARGETS = [
 
 const has = (py) => !!py && existsSync(py);
 
-/** Is the module importable in that interpreter? A missing interpreter is a
- *  different answer from a missing package and gets a different sentence. */
-function probe(py, mod) {
+/** Is EVERY module importable in that interpreter? A missing interpreter is a
+ *  different answer from a missing package and gets a different sentence.
+ *  Every one, not the first: timed lyrics imports stable_whisper as well as
+ *  faster_whisper, and checking only the second said "Nothing to do" over a
+ *  venv where every run failed. */
+function probe(py, mods) {
   return new Promise((res) => {
     if (!has(py)) return res("no-python");
-    const p = spawn(py, ["-c", `import importlib.util as u,sys;sys.exit(0 if u.find_spec(${JSON.stringify(mod)}) else 1)`],
+    const p = spawn(py, ["-c", `import importlib.util as u,sys;sys.exit(0 if all(u.find_spec(m) for m in ${JSON.stringify(mods)}) else 1)`],
       { windowsHide: true });
     p.on("error", () => res("no-python"));
     p.on("exit", (c) => res(c === 0 ? "present" : "missing"));
@@ -94,7 +98,8 @@ for (const t of TARGETS) {
   const cap = CATALOG.find((c) => c.id === t.id);
   if (!cap) continue;
   const py = t.python();
-  const state = await probe(py, cap.needsPackage);
+  const mods = modulesOf(cap);
+  const state = await probe(py, mods);
   if (state === "present" && quiet) continue;
 
   const mark = state === "present" ? "OK  " : state === "missing" ? "GET " : "??  ";
@@ -102,18 +107,33 @@ for (const t of TARGETS) {
   line(`        ${t.why}`);
   line(`        python: ${py}${has(py) ? "" : "   ← does not exist on this machine"}`);
   if (state === "present") {
-    line(`        \`${cap.needsPackage}\` imports here already. Nothing to do.`);
+    line(`        ${mods.map((m) => `\`${m}\``).join(" and ")} ${mods.length > 1 ? "import" : "imports"} here already. Nothing to do.`);
   } else {
     missing++;
     /* The catalogue holds the command with a bare `python`; the only thing
-     * added here is which python. Substituting rather than retyping is what
-     * keeps this from becoming a second copy of the install line. */
-    const cmd = (cap.packageInstall || "").replace(/^python\b/, `"${py}"`);
-    line(`        run:`);
-    line(`          ${cmd}`);
-    if (state === "no-python") {
+     * added here is which python, by the ONE builder every install message in
+     * Studio uses (server/lrc.js runLines). It used to substitute `"<py>"`,
+     * and a quoted program is a parse error in PowerShell. Timed lyrics gets the
+     * verified set: its venv when the python is missing, CUDA torch, then
+     * faster-whisper and stable-ts. */
+    const cmds = t.id === "lyrics"
+      ? installLines(py, { create: state === "no-python" })
+      : runLines(py, [(cap.packageInstall || "").replace(/^python\s+/, "")]);
+    line(`        run, one line at a time${process.platform === "win32" ? " (Command Prompt or PowerShell)" : ""}:`);
+    for (const c of cmds) line(`          ${c}`);
+    if (t.id === "lyrics") line(`        The torch line is for an NVIDIA card only (it puts whisper on the GPU).`);
+    if (state === "no-python" && t.id === "lyrics") {
+      // installLines adds the venv line only when that python sits in a venv.
+      line(venvOf(py)
+        ? `        That interpreter is missing; the first line creates it (${PYTHON_MIN}).`
+        : `        That interpreter is missing. Install ${PYTHON_MIN} there first.`);
+      line(`        Or choose a python you already have in ${SETTING_WORDS}.`);
+    } else if (state === "no-python") {
+      /* setx, not set: set lasts one console window, and Studio is started by
+       * the launcher, which keeps the environment it was started with. */
       line(`        That interpreter is missing. Install Python 3.10+ there, or point Studio`);
-      line(`        at one you have:  set ${t.setting}=C:\\path\\to\\python.exe`);
+      line(`        at one you have:  setx ${t.setting} "C:\\path\\to\\python.exe"`);
+      line(`        then ${ENV_RESTART}.`);
     }
   }
   line();

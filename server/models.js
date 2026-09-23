@@ -2523,11 +2523,17 @@ export const CATALOG = [
     approxBytes: 3090000000,
     note: "We already know the words, so this is alignment rather than transcription — the model supplies timing and the known lyrics supply the text. Measured 97.9% of words timed by direct match on a real track.",
     needsPackage: "faster_whisper",
+    /* EVERY module server/lrc.py imports, by import name. `needsPackage` names
+     * one, and probing only that one badged this row Ready in a fresh venv where
+     * every run died on "No module named 'stable_whisper'" (measured
+     * 2026-09-23). The Models screen, the welcome panel and Settings are Ready
+     * only when all of these import in the lyrics interpreter. */
+    needsModules: ["faster_whisper", "stable_whisper"],
     /* pip's name has a hyphen; the module's has an underscore. `needsPackage` is
      * what `importlib.find_spec` is asked for and `packageInstall` is what a
      * person types, and they are genuinely different strings — typing the
      * import name at a pip prompt installs somebody else's abandoned package. */
-    packageInstall: "python -m pip install faster-whisper",
+    packageInstall: "python -m pip install faster-whisper stable-ts",
     requires: {
       vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16,
       note: "About 36 s for a 2.5-minute song at int8_float16. Line timing is reliable; word timing is approximate on sung vocals.",
@@ -3014,6 +3020,14 @@ async function fileHave(f) {
  * capability), not a list typed here, so a new engine is covered the day it is
  * added there. Every other row keeps its catalogue flag.
  */
+/** Every module a capability needs, by import name: `needsModules` when the
+ *  catalogue lists several (timed lyrics), else its one `needsPackage`. The
+ *  Models screen, the welcome panel, Settings and extras_setup.mjs all ask
+ *  this, so none of them can go back to checking only the first. */
+export function modulesOf(cap) {
+  return cap?.needsModules || (cap?.needsPackage ? [cap.needsPackage] : []);
+}
+
 export function markRequired(rows, { music = config.music, api = config.api } = {}) {
   const engines = music?.engines || {};
   const musicRows = new Set(Object.values(engines).map((e) => e?.capability).filter(Boolean));
@@ -3113,6 +3127,8 @@ export class ModelManager extends EventEmitter {
         requires: cap.requires || null,
         variants: cap.variants || null,
         needsPackage: cap.needsPackage || null,
+        // Every module that must import, when there is more than one (lyrics).
+        needsModules: cap.needsModules || null,
         // The command a person types to get that package. A capability whose
         // only blocker is a pip install used to report the blocker and not the
         // remedy, which is the shape of every "rough edge" complaint about this

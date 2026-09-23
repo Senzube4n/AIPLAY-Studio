@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config, prefsSnapshot, loraStepsOf } from "./config.js";
+import { config, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
@@ -50,13 +50,14 @@ import { BatchRunner } from "./batch.js";
 import { gpuStatus, ramStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
+import { whisperPythonMissing, pythonVerdict } from "./lrc.js";
 import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired } from "./models.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -975,23 +976,36 @@ let packageCache = null;
 // config.lyrics.python (art.js), and those may differ from each other and from
 // SYSTEM_PYTHON. The Models screen once reported faster_whisper present in an
 // interpreter that never launches it. `probed` says which python answered.
+//
+// BOTH modules lrc.py imports, in the lyrics interpreter. Probing only
+// faster_whisper badged timed lyrics Ready in a fresh venv where every run then
+// died on "No module named 'stable_whisper'" (measured 2026-09-23). The list is
+// written out here because welcome/catalogue_test.js reads these literals; it
+// must equal the catalogue's `needsModules` for "lyrics", which lrc_test.js pins.
 const PACKAGE_PROBES = () => {
   const sys = config.systemPython || SYSTEM_PYTHON;
   const groups = new Map();
   const add = (py, m) => groups.set(py, [...(groups.get(py) || []), m]);
   for (const m of ["demucs", "torch", "av", "numpy"]) add(sys, m);
-  add(config.lyrics?.python || sys, "faster_whisper");
+  for (const m of ["faster_whisper", "stable_whisper"]) add(config.lyrics?.python || sys, m);
   return [...groups.entries()];
 };
-function probeOne(py, mods) {
+/** What POST /api/lyrics "python" probes: the catalogue's list, the one the
+ *  Models row reads, so Settings and that row cannot disagree. */
+const LYRICS_MODULES = modulesOf(CATALOG.find((c) => c.id === "lyrics") || {});
+function probeOne(py, mods, timeoutMs = 20_000) {
   return new Promise((resolve) => {
     const proc = spawn(py, ["-c",
       `import importlib.util as u,json;print(json.dumps({m:u.find_spec(m) is not None for m in ${JSON.stringify(mods)}}))`],
       { windowsHide: true });
+    // find_spec imports nothing, so a real python answers in well under a
+    // second; one that hangs (a stalled disk, a wrapper waiting on input) must
+    // not hold the route or the Models screen open. It reads as "not found".
+    const timer = setTimeout(() => { try { proc.kill(); } catch { /* gone */ } resolve({}); }, timeoutMs);
     let so = "";
     proc.stdout.on("data", (d) => (so += d));
-    proc.on("exit", () => { try { resolve(JSON.parse(so)); } catch { resolve({}); } });
-    proc.on("error", () => resolve({}));
+    proc.on("exit", () => { clearTimeout(timer); try { resolve(JSON.parse(so)); } catch { resolve({}); } });
+    proc.on("error", () => { clearTimeout(timer); resolve({}); });
   });
 }
 let probedBy = {};
@@ -2050,6 +2064,25 @@ function json(res, code, body) {
   res.end(s);
 }
 
+/* A REQUEST THAT CHOOSES WHAT RUNS ON THIS MACHINE comes from Studio's own page
+ * or a local client, never from a web page the person happens to have open.
+ * readBody parses the bytes whatever the Content-Type, and a cross-site page can
+ * POST a text/plain JSON body with mode 'no-cors' and no preflight: it gets no
+ * answer back, but the route still runs. So the test is on the request itself:
+ * the Host is this machine on the UI port (a rebound DNS name fails here), an
+ * Origin, which a browser sends on every cross-site POST, is this same origin,
+ * and the body is declared application/json, which a cross-site page cannot
+ * send without a preflight no route answers. The Settings page and MCP's api()
+ * both send application/json. One copy: /api/music-gguf/setup (installs a
+ * runtime) and /api/lyrics's python choice (names a program to run) share it. */
+function sameOriginLocalJson(req) {
+  const host = req.headers.host || "";
+  const local = [`127.0.0.1:${config.uiPort}`, `localhost:${config.uiPort}`, `[::1]:${config.uiPort}`];
+  return local.includes(host)
+    && (!req.headers.origin || req.headers.origin === `http://${host}`)
+    && /^application\/json(?:;|$)/i.test(req.headers["content-type"] || "");
+}
+
 /* ⚠ A SIZE CAP HAS TO REFUSE WHILE READING, NOT AFTER. Everything below runs
  * before any route sees a byte: the body is concatenated and handed to
  * JSON.parse, so a hundred-megabyte paste is a hundred-megabyte string in V8
@@ -2621,7 +2654,13 @@ const server = http.createServer(async (req, res) => {
           siteSessions: config.community.sessions,
           output: config.output,
           stems: config.stems,
-          lyrics: { when: config.lyrics.when, model: config.lyrics.model },
+          lyrics: {
+            when: config.lyrics.when, model: config.lyrics.model,
+            // Settings > Songs shows the interpreter that will run, and the one
+            // chosen there; they differ when AIPLAY_WHISPER_PYTHON is set.
+            python: config.lyrics.python, whisperPython: config.lyrics.whisperPython,
+            pythonFromEnv: !!process.env.AIPLAY_WHISPER_PYTHON, defaultPython: defaultWhisperPython(),
+          },
           video: {
             enabled: config.video.enabled, when: config.video.when,
             engine: config.video.engine,
@@ -2749,10 +2788,7 @@ const server = http.createServer(async (req, res) => {
         catch(err) { return json(res, 400, {error:err.message}); }
       }
       if (req.method !== "POST") return json(res, 405, {error:"Use GET or POST."});
-      const host=req.headers.host || '';
-      const allowedHosts=[`127.0.0.1:${config.uiPort}`,`localhost:${config.uiPort}`,`[::1]:${config.uiPort}`];
-      if (!allowedHosts.includes(host) || (req.headers.origin && req.headers.origin!==`http://${host}`)
-        || !/^application\/json(?:;|$)/i.test(req.headers['content-type']||'')) {
+      if (!sameOriginLocalJson(req)) {
         return json(res,403,{error:"Native setup requires a same-origin local JSON request."});
       }
       const b=await readBody(req);
@@ -2794,7 +2830,10 @@ const server = http.createServer(async (req, res) => {
         // A capability can have every weight on disk and still not run if its
         // python package is absent. Saying so is the difference between a
         // useful message and a mystery.
-        packageReady: c.needsPackage ? !!pkgs[c.needsPackage] : true,
+        packageReady: modulesOf(c).every((m) => !!pkgs[m]),
+        /* WHICH ones are missing, so the row can name stable_whisper when it is
+         * the one absent, rather than the faster_whisper it does have. */
+        packageMissing: modulesOf(c).filter((m) => !pkgs[m]),
         /* "4 GB to download" and "will it run on my card" are different
          * questions and only the first one was ever answered here. `requires`
          * has been on every row since the catalogue was written; this is the
@@ -10338,6 +10377,52 @@ const server = http.createServer(async (req, res) => {
         savePrefs();
         return json(res, 200, { ok: true, lyrics: config.lyrics });
       }
+      /* WHICH PYTHON TIMES THE LYRICS: Settings > Songs > "timed lyrics python",
+       * and the timed_lyrics_python tool. No `value` reports; a path chooses it
+       * (at once: art.js reads config.lyrics.python at every spawn, so nothing
+       * restarts); "" or null goes back to the default venv. The answer carries
+       * the same probe the Models screen runs, so a chosen python that lacks
+       * stable-ts says so HERE, not on the first song. */
+      if (b.action === "python") {
+        if (b.value !== undefined) {
+          /* This names a program Studio runs at once (the probe below) and on
+           * every later lyrics job, so only Studio's page or a local client may
+           * set it: the same guard as the native runtime installer. Reading it
+           * stays open (no `value`), because a verdict runs nothing new. */
+          if (!sameOriginLocalJson(req)) {
+            return json(res, 403, { error: "Choosing the timed lyrics python requires a same-origin local JSON request." });
+          }
+          // Explorer's "Copy as path" wraps the path in quotes; take it as pasted.
+          const raw = b.value === null ? "" : String(b.value).trim().replace(/^"(.*)"$/, "$1").trim();
+          if (raw) {
+            /* \\server\share\python.exe is absolute to path.win32 and stat()s as
+             * a file, so a UNC or device path (\\?\, \\.\) would run a program
+             * off another machine. A python lives on a local disk. */
+            if (/^[\\/]{2}/.test(raw)) {
+              return json(res, 400, { error: "Choose a python on this computer's own disk, not a network or device path." });
+            }
+            if (!path.isAbsolute(raw) || /[\r\n\0]/.test(raw) || raw.length > 1024) {
+              return json(res, 400, { error: `Give the full path to the python, for example ${defaultWhisperPython()}.` });
+            }
+            let st = null;
+            try { st = await stat(raw); } catch { /* answered below */ }
+            if (!st?.isFile()) return json(res, 400, { error: `There is no file at ${raw}.` });
+          }
+          config.lyrics.whisperPython = raw ? path.resolve(raw) : null;
+          config.lyrics.python = whisperPython();
+          packageCache = null; // the Models screen probes the new interpreter on its next read
+          savePrefs();
+        }
+        const py = config.lyrics.python;
+        const got = whisperPythonMissing(py) ? {} : await probeOne(py, LYRICS_MODULES).catch(() => ({}));
+        return json(res, 200, {
+          ok: true,
+          lyrics: pythonVerdict({
+            python: py, chosen: config.lyrics.whisperPython,
+            modules: Object.fromEntries(LYRICS_MODULES.map((m) => [m, !!got[m]])),
+          }),
+        });
+      }
       if (b.action === "run") {
         const file = String(b.file || "");
         if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
@@ -10353,6 +10438,11 @@ const server = http.createServer(async (req, res) => {
           if (lyr) library.remember(file, { lyrics: lyr });
         }
         if (!lyr) return json(res, 400, { error: "This track has no lyrics to time." });
+        /* Refuse here, where the click can show it, rather than queue a job
+         * that dies at once: a missing whisper python is the usual first
+         * failure on a new machine, and the sentence says how to make it. */
+        const noPython = whisperPythonMissing(config.lyrics.python);
+        if (noPython) return json(res, 400, { error: noPython });
         art.request({ file, title: m.title, kind: "lrc", lyrics: lyr, force: true });
         return json(res, 200, { ok: true, ...art.status() });
       }
