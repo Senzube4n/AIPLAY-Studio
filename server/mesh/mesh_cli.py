@@ -164,7 +164,7 @@ def matte(src, dst):
     never reached.
 
     ⚠ AND IT IS A HEURISTIC, NOT A SEGMENTER. Otsu on luminance, largest
-    connected component, holes filled, and a cut for the ground reflection —
+    connected component, and a cut for the ground reflection —
     which works on a lit subject against a dark ground and will not work on a
     subject darker than what is behind it. Every number it used goes into the
     result line, so a bad matte is visible in the record rather than inferred
@@ -193,10 +193,14 @@ def matte(src, dst):
         stats["note"] = "the input had an alpha channel but not a usable matte, so one was keyed"
 
     h, w = img.shape[:2]
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     lum = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     thr, mask = cv2.threshold(lum, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     stats["otsu"] = float(thr)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
+    # Closing joined nearby feet; filling holes erased arm/torso openings.
+    # Preserve the threshold's negative space. Cleanup belongs in an explicit
+    # editable matte, not in the unseen input to image-to-3D.
 
     n, labels, cc, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     if n <= 1:
@@ -208,10 +212,7 @@ def matte(src, dst):
     stats["largestPx"] = int(areas.max())
     stats["largestPctOfFrame"] = round(100.0 * float(areas.max()) / (w * h), 2)
 
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8), iterations=3)
-    ff = mask.copy()
-    cv2.floodFill(ff, np.zeros((h + 2, w + 2), np.uint8), (0, 0), 255)
-    mask = mask | cv2.bitwise_not(ff)
+    stats["preservesThresholdGaps"] = True
 
     # ── the ground reflection ────────────────────────────────────────────
     # A reflective floor is the same brightness as the feet standing on it, so
@@ -249,7 +250,7 @@ def matte(src, dst):
 
     a = out[:, :, 3]
     stats.update({
-        "source": "keyed here from luminance (Otsu, largest component, holes filled)",
+        "source": "keyed here from luminance (Otsu, largest component, gaps preserved)",
         "cropWidth": int(out.shape[1]), "cropHeight": int(out.shape[0]),
         "alphaZeroPct": round(100 * float((a == 0).mean()), 2),
         "alphaFullPct": round(100 * float((a == 255).mean()), 2),

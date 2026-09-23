@@ -446,6 +446,12 @@ ADAPTER_PY="$PY"
 # thousands of green lines. Each candidate must print its own path to count.
 [ -x "$ADAPTER_PY" ] || ADAPTER_PY="$(python3 -c "import sys;print(sys.executable)" 2>/dev/null || python -c "import sys;print(sys.executable)" 2>/dev/null)"
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_adapter_test.py || exit 1; fi
+# Matte regression images need OpenCV/numpy, but no model or GPU.
+MATTE_PY="${AIPLAY_MESH_PYTHON:-${AIPLAY_RIG:-}/venv3d/Scripts/python.exe}"
+if [ -x "$MATTE_PY" ]; then "$MATTE_PY" server/mesh/matte_test.py || exit 1
+elif [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import cv2,numpy" >/dev/null 2>&1; then
+  "$ADAPTER_PY" server/mesh/matte_test.py || exit 1
+fi
 # imgselect decides where every other op lands, so a regression here is a
 # regression in all 25 adjustments and all 75 effects at once.
 if [ -x "$PY" ]; then "$PY" server/imgselect_test.py || exit 1; fi

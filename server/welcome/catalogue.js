@@ -575,7 +575,7 @@ const TABS = [
    * validated GLB and its manifest — and because that is where the rail puts it,
    * directly after the DAW. */
   {
-    id: "avatars", icon: "◇", name: "Avatars", group: "make",
+    id: "avatars", icon: "◇", name: "3D", group: "make",
     lead:
       "A review bench for a rigged character you already have. Import a self-contained GLB and it is "
       + "checked twice: once by the Khronos glTF validator, and once against its own bytes, to see "
