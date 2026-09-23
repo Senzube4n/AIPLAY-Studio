@@ -48,7 +48,7 @@ import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
-import { gpuStatus, ramStatus } from "./gpu.js";
+import { gpuStatus, ramStatus, cpuStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
 import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
@@ -873,6 +873,47 @@ art.on("update", () => {
 // Optional model weights. Nothing here downloads on its own — the catalogue
 // reports what is missing and how large it is, and the user presses a button.
 const models = new ModelManager();
+
+/* ── what the models are costing on disk ──────────────────────────────────
+ *
+ * The rail shows VRAM and RAM; disk is the third thing that runs out, and it
+ * is the one that runs out QUIETLY — a download stops, and nothing on the
+ * screen had been counting.
+ *
+ * ⚠ CACHED FOR A MINUTE, and that is not an optimisation. /api/status is
+ * polled every few seconds and models.status() stats every file in a
+ * 45-capability catalogue; doing that per poll would put hundreds of syscalls
+ * a minute behind a number that changes when somebody downloads a model. The
+ * Models screen recomputes it directly, so a fresh download is never more than
+ * a minute from being counted here and is immediate there.
+ */
+let diskMark = { at: 0, value: null };
+async function modelsDisk() {
+  if (Date.now() - diskMark.at < 60000) return diskMark.value;
+  diskMark.at = Date.now();
+  try {
+    const [cat, free] = await Promise.all([models.status(), diskFree()]);
+    /* Installed means present AND the right size, which is the same test the
+     * Models screen shows a tick for: a half-finished download is not storage
+     * this app is using on purpose. */
+    /* ⚠ DEDUPLICATED BY PATH. Several capabilities share a file — three rows
+     * name the same Qwen3-4B encoder — and counting per capability would quote
+     * storage that is not being used twice. A partially downloaded file counts
+     * for what is actually on the disk (`have`), because that is the question. */
+    const seen = new Map();
+    for (const cap of cat || []) {
+      for (const f of cap.files || []) {
+        if (!f.dest || seen.has(f.dest)) continue;
+        seen.set(f.dest, f.present ? (Number(f.bytes) || 0) : (Number(f.have) || 0));
+      }
+    }
+    let bytes = 0, files = 0;
+    for (const n of seen.values()) { if (n > 0) { bytes += n; files += 1; } }
+    diskMark.value = { modelBytes: bytes, modelFiles: files,
+      freeBytes: free?.freeBytes ?? null, totalBytes: free?.totalBytes ?? null };
+  } catch { diskMark.value = null; }
+  return diskMark.value;
+}
 const ggufSetup = new GgufSetup();
 models.on("update", () => push(jobs.snapshot()));
 
@@ -2650,6 +2691,8 @@ const server = http.createServer(async (req, res) => {
         power: powerSnapshot(),
         gpu: gpuStatus(),
         ram: ramStatus(),
+        cpu: cpuStatus(),
+        disk: await modelsDisk(),
         ...art.status(),
         ...jobs.snapshot(),
         // Disk is the source of truth, so the library survives restarts and shows

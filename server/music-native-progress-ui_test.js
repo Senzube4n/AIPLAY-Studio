@@ -40,7 +40,7 @@ function harness() {
   const nodes = new Map();
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); };
   const state = { library: [], playingFile: "", realtimeRatio: 1.53 };
-  const controller = runInNewContext(`${controllerSource}\n({ renderNow, renderQueue, paintMiniQueue, rowHtml, openSong, musicWarningHtml })`, {
+  const controller = runInNewContext(`${controllerSource}\n({ renderNow, renderQueue, rowHtml, openSong, musicWarningHtml })`, {
     $, state, esc: escapeHtml, dur: (s) => `${Math.round(s)}s`, fmt: (s) => `${Math.round(s)}s`, clock: () => "CLOCK",
     artBg: () => "#000", stamp: () => "", when: () => "just now", extendIndex: () => null, STAGE_WORD: {},
     paintLineage() {}, renderMerge() {}, paintExtend() {}, paintProvenance() {},
@@ -111,41 +111,48 @@ test("Python YuE2 and MiniMax retain their stages and estimate behavior", () => 
 test("native queue-only work never inherits a MiniMax duration or a completion clock", () => {
   const h = harness();
   h.renderQueue({ queue: [native({ state: "queued", etaSeconds: 999 })] });
-  assert.equal(h.$("qTotal").textContent, "ETA unavailable");
-  assert.doesNotMatch(h.$("qEta").textContent, /done by|CLOCK|999/);
-  assert.match(h.$("qRows").innerHTML, /unknown/);
-  h.paintMiniQueue({ queue: [native({ state: "queued", etaSeconds: 999 })] });
-  assert.match(h.$("miniqNow").textContent, /Waiting.*ETA unavailable/);
-  assert.match(h.$("miniqTally").textContent, /1 job remaining.*ETA unavailable/);
-  assert.doesNotMatch(h.$("miniqTally").textContent, /eta ≈/);
+  assert.equal(h.$("wbState").textContent, "queued");
+  assert.equal(h.$("wbEta").textContent, "ETA unknown");
+  assert.doesNotMatch(h.$("wbEta").textContent, /CLOCK|999/);
+  assert.match(h.$("wbNow").textContent, /waiting to start/);
+  assert.match(h.$("wbRest").textContent, /then 1 song/);
 });
 
 test("mixed queues retain known row estimates but cannot promise a total ETA", () => {
   const h = harness();
   const s = { current: native({ etaSeconds: null }), queue: [{ engine: "minimax-music3", title: "Other", etaSeconds: 120 }], art: { queued: 1, queuedKinds: { clip: 1 } } };
   h.renderQueue(s);
-  assert.equal(h.$("qTotal").textContent, "ETA unavailable");
-  assert.match(h.$("qRows").innerHTML, /120s/);
-  assert.match(h.$("qEta").textContent, /estimated for other jobs/);
-  assert.doesNotMatch(h.$("qEta").textContent, /done by/);
-  h.paintMiniQueue(s);
-  assert.match(h.$("miniqNow").textContent, /ETA unavailable/);
-  assert.match(h.$("miniqTally").textContent, /ETA unavailable/);
+  assert.equal(h.$("wbEta").textContent, "ETA unknown");
+  assert.match(h.$("wbNow").textContent, /song · Take · ETA unknown/);
+  assert.doesNotMatch(h.$("wbEta").textContent, /by CLOCK/);
+  // What is behind it is still counted, by kind: a cover is seconds, a clip minutes.
+  assert.match(h.$("wbRest").textContent, /then 1 song, 1 clip/);
   // A measured native ETA is a real estimate and counts like any other.
-  h.paintMiniQueue({ current: native({ etaSeconds: 90 }), queue: [] });
-  assert.doesNotMatch(h.$("miniqNow").textContent, /unavailable/);
-  assert.doesNotMatch(h.$("miniqTally").textContent, /unavailable/);
+  h.renderQueue({ current: native({ etaSeconds: 90 }), queue: [] });
+  assert.doesNotMatch(h.$("wbNow").textContent, /unknown/);
+  assert.doesNotMatch(h.$("wbEta").textContent, /unknown/);
 });
 
 test("non-native queues still use their existing estimates", () => {
   const h = harness();
-  const s = { queue: [{ engine: "yue2", title: "Score", etaSeconds: 120 }] };
-  h.renderQueue(s);
-  assert.equal(h.$("qTotal").textContent, "~120s of work");
-  assert.equal(h.$("qEta").textContent, "done by CLOCK");
-  h.paintMiniQueue(s);
-  assert.match(h.$("miniqTally").textContent, /eta ≈ 2m/);
-  assert.doesNotMatch(h.$("miniqTally").textContent, /unavailable/);
+  h.renderQueue({ queue: [{ engine: "yue2", title: "Score", etaSeconds: 120 }] });
+  assert.equal(h.$("wbState").textContent, "queued");
+  assert.equal(h.$("wbEta").textContent, "~2m · by CLOCK");
+  assert.doesNotMatch(h.$("wbEta").textContent, /unknown/);
+});
+
+test("one box, and it says what is being made, what waits, and the day's tally", () => {
+  const h = harness();
+  const midday = new Date(); midday.setHours(12, 0, 0, 0);
+  h.state.library = [{ createdAt: midday.getTime() }, { createdAt: midday.getTime() }];
+  h.state.images = [{ at: midday.getTime() }];
+  h.state.clips = [{ at: 1 }];   // last year: not today
+  h.renderQueue({ current: { engine: "minimax-music3", title: "Cheese On My Mind", etaSeconds: 240 } });
+  assert.equal(h.$("wbState").textContent, "working");
+  assert.match(h.$("wbNow").textContent, /^song · Cheese On My Mind · ~4m$/);
+  assert.match(h.$("wbEta").textContent, /~4m · by CLOCK/);
+  assert.equal(h.$("wbRest").textContent, "3 done today");
+  assert.equal(h.$("wbBox")?.hidden ?? false, false);
 });
 
 test("library warning is compact and opens the existing song details", () => {

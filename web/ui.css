@@ -353,3 +353,35 @@ p.hint.open, div.hint.open { cursor: pointer; }
 }
 .ctatog input { margin: 0; flex: 0 0 auto; }
 .ctatog:hover { color: var(--ink); }
+
+/* ── Create, with its other ways to render in a drawer ─────────────────────
+ * One control: Create fills the row, the arrow is welded to its right end,
+ * and the drawer pops UPWARD because the button is pinned to the foot of a
+ * column — a menu that opened downward would open off the screen. */
+.ctasplit { position: relative; display: flex; flex: 1; min-width: 0; }
+.ctasplit > #btnCreate { flex: 1; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ctasplit.solo > #btnCreate { border-radius: 12px; }
+.ctamore {
+  flex: 0 0 auto; width: 42px; padding: 0;
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 1px solid hsla(0,0%,0%,.22);
+  display: grid; place-items: center;
+}
+.ctadrawer {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 20;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--edge);
+  box-shadow: 0 16px 40px hsla(0,0%,0%,.55);
+  animation: ctadrawerin .16s cubic-bezier(.22,.8,.24,1);
+}
+@keyframes ctadrawerin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* The drawer's button is a normal one, not another Create: .cta sizes its
+ * buttons for the main action, and inheriting that here made a second
+ * full-height primary-looking button in a pop-up. */
+/* ⚠ `flex: 0 0 auto` MATTERS. `.btn` carries `flex: 1 1 0` for the button
+   rows it normally lives in, and in this column that made it grow to fill
+   the drawer: a 96px Preview button in a 139px pop-up. */
+.ctadrawer .btn { flex: 0 0 auto; width: 100%; font-size: var(--fs-sm); border-radius: 9px; padding: 8px 12px; }
+.ctadrawer .hint { margin: 0; font-size: 11px; line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { .ctadrawer { animation: none; } }

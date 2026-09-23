@@ -148,3 +148,202 @@ test("the seed is random by default on every screen", () => {
     assert.doesNotMatch(HTML, new RegExp(`id="${id}"[^>]*\svalue="`), `${id} must ship empty`);
   }
 });
+
+test("the player bar stops at the rail, and leaves when there is nothing to play", () => {
+  const css = read("web/styles.css");
+  // It used to span every column, so it ran under the quick-access rail: the
+  // bottom of the rail was covered and everything in it was pushed up.
+  assert.doesNotMatch(css, /grid-template-areas:[^;]*"player player player"/);
+  for (const areas of ['"rail create stage" "rail player player"',
+                       '"rail stage" "rail player"',
+                       '"rail create" "rail stage" "rail player"']) {
+    assert.ok(css.includes(`grid-template-areas: ${areas}`), areas);
+  }
+  // One number for its height, and it is 0 while the bar is closed.
+  assert.match(css, /\.shell \{[\s\S]{0,400}--playerh: 0px;/);
+  assert.match(css, /\.shell\.hasplayer \{ --playerh: \d+px; \}/);
+  assert.doesNotMatch(css, /bottom: 64px|inset: 0 0 64px 0/);
+  assert.match(css, /bottom: var\(--playerh, 0px\)/);
+  assert.match(css, /inset: 0 0 var\(--playerh, 0px\) 0/);
+  // ✕ at one end, the full-player arrow at the other, transport in between.
+  const bar = /<div class="player">[\s\S]*?\n  <\/div>/.exec(HTML)?.[0] || "";
+  assert.ok(bar, "the player bar");
+  assert.ok(bar.indexOf('id="pClose"') < bar.indexOf('id="pArt"'), "✕ is at the far left");
+  assert.ok(bar.indexOf('id="pExpand"') > bar.indexOf('id="pVol"'), "the arrow is at the far right");
+  // Added on play and never removed was the bug: one song left the bar all day.
+  assert.match(APP, /function playerClose\(\) \{[\s\S]*?classList\.remove\("hasplayer"\)/);
+  assert.match(APP, /\$\("pClose"\)\.onclick = playerClose;/);
+  assert.match(APP, /setTimeout\(\(\) => \{ if \(audio\.ended\) playerClose\(\); \}/,
+    "the end of the queue closes it, but autoplay's next track keeps it");
+});
+
+test("Create is one button with its other ways to render folded into it", () => {
+  // Preview was a second button of the same size beside Create, which it is not.
+  assert.match(HTML, /<div class="ctasplit solo" id="ctaSplit">[\s\S]*?id="btnCreate"[\s\S]*?id="ctaMore"[\s\S]*?id="ctaDrawer"[\s\S]*?id="btnPreview"/);
+  assert.match(APP, /function ctaDrawer\(open\)/);
+  assert.match(APP, /\$\("btnPreview"\)\.onclick = \(\) => \{ ctaDrawer\(false\); generate\(true\); \};/);
+  // No cheap pass on this engine means no arrow, not a disabled one.
+  assert.match(APP, /\$\("ctaSplit"\)\?\.classList\.toggle\("solo", only\);/);
+  const css = read("web/ui.css");
+  assert.match(css, /\.ctadrawer \{[\s\S]*?bottom: calc\(100% \+ 8px\)/, "the drawer opens upward");
+  assert.match(css, /\.ctadrawer \.btn \{ flex: 0 0 auto;/, ".btn's own flex:1 would fill the drawer");
+});
+
+test("one box in the rail for what is being made, not two", () => {
+  // A "working / <title> / Stop" panel at the top of the footer and a
+  // "▶ song · <title> / 1 job remaining" panel at the bottom counted the same
+  // queue in different words, and read as two queues.
+  for (const gone of ["queueBox", "miniQ", "miniqNow", "miniqNext", "miniqTally", "qTotal", "qRows"]) {
+    assert.doesNotMatch(HTML, new RegExp(`id="${gone}"`), gone);
+    assert.doesNotMatch(APP, new RegExp(`\$\("${gone}"\)`), gone);
+  }
+  assert.doesNotMatch(APP, /paintMiniQueue/);
+  const foot = /<div class="railfoot">[\s\S]*?<\/nav>/.exec(HTML)?.[0] || "";
+  // Above the Ko-fi button, and the panel opens upward over the rail rather
+  // than pushing its siblings around at the foot of the window.
+  assert.ok(foot.indexOf('id="workBox"') < foot.indexOf('class="kofi"'), "above Support on Ko-fi");
+  assert.ok(foot.indexOf('id="wbPanel"') < foot.indexOf('id="wbStrip"'), "the panel is above the strip");
+  for (const id of ["wbState", "wbEta", "wbNow", "wbRest", "qStop", "wbStrip", "wbLine"]) {
+    assert.match(foot, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(foot, /class="qmore" data-go="jobs"/);
+  const css = read("web/styles.css");
+  // Fixed, not absolute: .rail is overflow:hidden and sliced the panel in half
+  // once the rail was collapsed to 64px.
+  assert.match(css, /\.workbox \.wbpanel\{position:fixed;width:210px/);
+  assert.match(APP, /panel\.style\.bottom = `\$\{Math\.max\(8, window\.innerHeight - r\.top \+ 6\)\}px`;/,
+    "placed against the strip");
+  assert.match(css, /\.workbox:hover \.wbpanel/, "a glance is the point, so hover opens it");
+  assert.match(css, /\.workbox \.wbpanel \.qstop,\.workbox \.wbpanel \.qmore,\.workbox \.wbpanel \.wbnow\{cursor:pointer\}/);
+  assert.match(APP, /function wbLine\(what, right, busy\)/, "the strip's one line");
+  assert.match(APP, /wbLine\("idle", today \? `\$\{today\} today` : "", false\);/);
+  // The day's tally is counted from the files' own times, so it survives a restart.
+  assert.match(APP, /function doneToday\(\)/);
+  assert.match(APP, /count\(state\.library, "createdAt"\) \+ count\(state\.images, "at"\) \+ count\(state\.clips, "at"\)/);
+});
+
+test("the native GGUF engine does not claim its runtime and VRAM are unmeasurable", () => {
+  // The phrase survives in the comment that explains why it went; what must
+  // not survive is a setCta saying it to the user.
+  for (const call of APP.match(/setCta\(`[^`]*`/g) || []) {
+    assert.doesNotMatch(call, /not measured/, call);
+  }
+  // Every finished song records how long it took and how long it is.
+  assert.match(APP, /function measuredRatio\(engine\)/);
+  assert.match(APP, /t\.renderSeconds \/ t\.durationSeconds/);
+  assert.match(APP, /const seen = measuredRatio\(state\.musicEngine\);/);
+  assert.match(APP, /your first song sets the estimate for this card/);
+});
+
+test("pinning a song moves the list with the click, not with the reply", () => {
+  assert.match(APP, /function flagNow\(file, flag, value\) \{[\s\S]*?reList\(\);[\s\S]*?trackAction\(/);
+  assert.match(APP, /flagNow\(decodeURIComponent\(fl\.dataset\.f\), fl\.dataset\.flag, on\);/);
+  assert.match(APP, /flagNow\(decodeURIComponent\(rt\.dataset\.f\), "rating", on \? 1 : 0\);/);
+});
+
+test("four meters in the rail: VRAM, RAM, disk and CPU", () => {
+  const foot = /<div class="railfoot">[\s\S]*?<\/nav>/.exec(HTML)?.[0] || "";
+  for (const id of ["gpuBox", "ramBox", "diskBox", "cpuBox"]) assert.match(foot, new RegExp(`id="${id}"`), id);
+  // Disk: the bar is how full the drive is, the number is what the models cost,
+  // and the tooltip says how many files that is.
+  // The figures are written to fit half a rail; the long halves (free space,
+  // drive fullness, core count) are in the tooltips. See the rail-width test.
+  assert.match(APP, /\$\("diskText"\)\.textContent = `\$\{size\(d\.modelBytes\)\} models`;/);
+  assert.match(APP, /model file\$\{d\.modelFiles === 1 \? "" : "s"\} on this disk/);
+  // CPU: measured between polls, so "no reading yet" is null, not 0%.
+  assert.match(APP, /pct == null \? `\$\{c\.cores\} cores`/);
+  const gpu = read("server/gpu.js");
+  assert.match(gpu, /export function cpuStatus\(\)/);
+  assert.match(gpu, /percent: dTotal > 0 \? /, "differenced between calls, not totals since boot");
+  const index = read("server/index.js");
+  assert.match(index, /cpu: cpuStatus\(\),\s+disk: await modelsDisk\(\),/);
+  assert.match(index, /if \(Date\.now\(\) - diskMark\.at < 60000\) return diskMark\.value;/,
+    "/api/status is polled every few seconds; stat-ing the whole catalogue per poll is not free");
+  assert.match(index, /seen\.set\(f\.dest, f\.present/, "a file two capabilities share is counted once");
+});
+
+test("the vendor credit is above the mark, and says why it is there", () => {
+  // MiniMax-Music3 §3.1 / MiniMax H3 §IV.2: the name shown prominently in the
+  // interface of a product using it. Above the logo is as prominent as this
+  // window gets, and a name with no explanation invites the question.
+  const rail = HTML.slice(HTML.indexOf('<nav class="rail">'), HTML.indexOf('<div class="nav navmain">'));
+  assert.ok(rail.indexOf('id="attrib"') < rail.indexOf('<div class="brand">'), "above the mark");
+  assert.match(rail, /<button class="poweredby" type="button" id="attrib" hidden/);
+  assert.match(rail, /<b id="poweredName">MiniMax-Music3<\/b><i aria-hidden="true">\?<\/i>/,
+    "the NAME is what the clause asks for; \"Powered by\" was two thirds of the line");
+  assert.match(APP, /\$\("attrib"\)\.onclick = \(\) => \{/);
+  assert.match(APP, /must show .MiniMax-Music3. prominently in its interface/);
+  // Only the vendor whose licence asks: ACE-Step is MIT, YuE2 is CC BY-NC.
+  assert.match(APP, /const owed = \(!yueParams && !aceParams\) \? "MiniMax-Music3" : minimaxVideo \? "MiniMax H3" : "";/);
+  assert.match(APP, /\$\("attrib"\)\.hidden = !owed;/);
+  // "RUNNING LOCALLY" under a window full of locally running things said nothing.
+  assert.doesNotMatch(HTML, /RUNNING LOCALLY/);
+  assert.match(APP, /\$\("engineLineWrap"\)\.hidden = !line;/, "the engine line shows only when something is not ready");
+});
+
+test("the meters keep their fill bars but lose the blue rules between them", () => {
+  const css = read("web/styles.css");
+  for (const id of ["gpuFill", "ramFill", "diskFill", "cpuFill"]) {
+    assert.match(HTML, new RegExp(`<i id="${id}">`), id);
+    assert.match(APP, new RegExp(`\\$\\("${id}"\\)\\.style\\.width`), id);
+  }
+  // --edge is a translucent blue, so a border-top on every meter drew four blue
+  // rules across the foot of the rail in among the four fill bars.
+  assert.doesNotMatch(css, /^\.gpu \{[^}]*border-top/m, "no divider on every meter");
+  assert.match(css, /\.meters \{ display: grid; grid-template-columns: 1fr 1fr;[\s\S]*?border-top: 1px solid var\(--edge\)/,
+    "one hairline above the block, not one per meter, and two meters to a row");
+  // Idle hides Stop, so without this the panel led nowhere at all.
+  assert.match(HTML, /<div class="wbnow" id="wbNow" data-go="jobs"/);
+  assert.match(css, /\.workbox\.resting \.qstop\{display:none\}/);
+  assert.doesNotMatch(css, /\.workbox\.resting \.wbfoot\{display:none\}/, "'all jobs' stays when idle");
+});
+
+test("the note under every main button is a drop-up above it, and takes no pointer", () => {
+  const css = read("web/styles.css");
+  // A permanent estimate line under the main button of every screen is three
+  // lines of dead column across the app, read once and never again.
+  assert.match(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[\s\S]*?position: absolute;[\s\S]*?bottom: calc\(100% - 10px\)/);
+  assert.match(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[\s\S]*?pointer-events: none;/,
+    "hovering the button must never stop you pressing it");
+  assert.match(css, /\.ctawrap:hover > \.ctanote, \.ctawrap:focus-within > \.ctanote/);
+  assert.match(css, /\.ctanote:empty, #imgPanel \.ctawrap > \.hint:empty \{ display: none; \}/);
+  // The gutter that line needed went with it.
+  assert.match(css, /margin-top: auto; padding: 10px 0 6px;/, "the button sits closer to the bottom");
+  assert.doesNotMatch(css, /#vidPanel \.ctawrap > \.ctanote \{ order: -1; \}/, "nothing left to order");
+});
+
+test("one Unload button, always visible, for every engine", () => {
+  // It was two buttons on a list of three engines, coming and going as the
+  // record changed; on anything else the bar was not there at all.
+  const paint = /function paintModelLoad\(s\) \{[\s\S]*?\n\}/.exec(APP)?.[0] || "";
+  assert.match(paint, /box\.hidden = false;/, "every engine, not a list of three");
+  assert.match(paint, /\$\("btnModelLoad"\)\.hidden = true;/, "Load is hidden, not deleted");
+  assert.match(paint, /unload\.disabled = busy \|\| !holding;/, "disabled, never absent");
+  // ⚠ The half that made it look broken: a cover or clip unloads the music
+  // model and puts its own on the card, so loadedModel goes null while
+  // ComfyUI still holds several GB.
+  assert.match(paint, /const holding = !!loaded \|\| !!s\.artResident;/);
+  assert.match(read("server/jobs.js"), /artResident: this\.comfy\?\.ready \? !!this\.artResident : false,/);
+  assert.match(HTML, /<button class="btn sm ghost" type="button" id="btnModelUnload">Unload<\/button>/,
+    "no hidden attribute on the markup either");
+});
+
+test("the rail has its own width and a grip to set it", () => {
+  const css = read("web/styles.css");
+  // Two meters to a row means how much of their text fits is a function of
+  // this width; one number chosen here is right at one screen size only.
+  assert.match(css, /grid-template-columns: var\(--railw, 248px\) var\(--colw/);
+  assert.match(css, /grid-template-columns: var\(--railw, 248px\) minmax\(0, 1fr\);/);
+  assert.doesNotMatch(css, /grid-template-columns: 220px/, "no hard-coded rail width left");
+  assert.match(css, /\.railgrip \{[\s\S]*?cursor: col-resize;/);
+  assert.match(css, /\.rail \{ position: relative;/, "the grip is absolute against the rail");
+  assert.match(css, /\.shell\.railmini \.railgrip \{ display: none; \}/, "nothing to drag when collapsed");
+  assert.match(HTML, /<button class="railgrip" type="button" id="railGrip"/);
+  assert.match(APP, /const KEY = "aiplayRailW";/);
+  assert.match(APP, /Math\.max\(200, Math\.min\(w, Math\.min\(420, innerWidth - 520\)\)\)/, "clamped both ways");
+  assert.match(APP, /grip\?\.addEventListener\("dblclick", \(\) => set\(0\)\);/, "double-click resets");
+  // At 248px each cell is 107px, and the figures are written to fit it: the
+  // long halves (free space, core count, drive fullness) are in the tooltips.
+  assert.match(APP, /\$\("diskText"\)\.textContent = `\$\{size\(d\.modelBytes\)\} models`;/);
+  assert.match(APP, /\$\("cpuText"\)\.textContent = pct == null \? `\$\{c\.cores\} cores` : `\$\{pct\}% CPU`;/);
+});

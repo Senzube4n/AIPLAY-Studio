@@ -89,7 +89,9 @@ test("grow handles instead of corner grips; Simple mode hides Lyrics and Styles 
   const app = src("../web/app.js"), css = src("../web/styles.css");
   for (const [id, key] of [["simpleText", "simple"], ["lyrics", "lyrics"], ["caption", "caption"]])
     assert.ok(app.includes(`growHandle($("${id}"), "${key}"`), id);
-  assert.match(css, /#simpleText, #lyrics, #caption \{ resize: none; \}/);
+  // #scaffold joined them when the section structure became a textarea in the
+  // same box as the lyrics, instead of a <pre> in a black panel below it.
+  assert.match(css, /#simpleText, #lyrics, #scaffold, #caption \{ resize: none; \}/);
   assert.match(css, /\.growbar i \{[^}]*background: var\(--primary\)/, "light blue");
   assert.match(css, /\.growbar \{[^}]*bottom: -8px;[^}]*opacity: 0;[\s\S]*?\.growbar:hover, \.growbar\.drag/, "on the outer border, shown only near it");
   for (const [ta, box] of [["simpleText", "simplePanel"], ["lyrics", "lyricsBox"], ["caption", "stylesBox"]])
@@ -340,10 +342,13 @@ test("Music, Images and Video share one layout: creator column left, what it mad
   assert.match(css, /:is\(#imgPanel \.vidform, #vidPanel\) :is\(\.lbl, \.flabel\) \{\s*text-transform: none;/, "one label style");
 });
 
-test("Images and Video line up row for row; Video's note sits above Render clip; Music's idea label matches", () => {
+test("Images and Video line up row for row; every note sits above its button; Music's idea label matches", () => {
   const css = src("../web/styles.css");
   assert.match(css, /#vidPanel \{ gap: 12px; \}/, "both columns step by 12px");
-  assert.match(css, /#vidPanel \.ctawrap > \.ctanote \{ order: -1; \}/, "the note above the button");
+  // Video's note was ordered above Render clip with flex. Every screen's note
+  // is a hover drop-up above its own button now, so there is nothing to order.
+  assert.match(css, /\.ctawrap:hover > \.ctanote/, "the note rises above the button");
+  assert.doesNotMatch(css, /#vidPanel \.ctawrap > \.ctanote \{ order: -1; \}/);
   assert.match(css, /#imagesview \.wrow\.imgtools \{ margin: 0 0 8px; min-height: 32px;/, "the galleries' bars on one line");
   assert.match(css, /\.create \.simple \.simple-label \{ font-size: var\(--fs-md\); font-weight: 500; margin: 7px 6px 1px 10px;/, "Music's label like the others");
 });
@@ -473,7 +478,9 @@ test("the left column: the same room on the right as on the left, and a divider 
   const html = src("../web/index.html"), app = src("../web/app.js"), css = src("../web/styles.css");
   assert.match(css, /\.create, #vidPanel, #imgPanel \{ scrollbar-gutter: stable; padding-right: 16px; \}/, "16px to the scrollbar, as the left's 16px");
   assert.match(html, /<div class="colgrip" id="colGrip" role="separator" aria-orientation="vertical"/);
-  assert.match(css, /grid-template-columns: 220px var\(--colw, minmax\(340px, 420px\)\) minmax\(0, 1fr\);/);
+  // The rail is its own draggable width now (--railw, 248px by default), so
+  // this column sits between two grips rather than beside a fixed 220px.
+  assert.match(css, /grid-template-columns: var\(--railw, 248px\) var\(--colw, minmax\(340px, 420px\)\) minmax\(0, 1fr\);/);
   assert.match(app, /const clamp = \(w\) => Math\.round\(Math\.max\(320, Math\.min\(w, maxW\(\)\)\)\);/, "never under 320px, the stage keeps 380px");
   assert.match(app, /grip\?\.addEventListener\("dblclick", \(\) => set\(0\)\);/, "double-click resets");
 });

@@ -67,11 +67,22 @@ test("the page: tick boxes, the bar, session boxes, and today/yesterday open", a
   assert.match(css, /\.batchbar \{ flex: none; \}/, "the bar is not squeezed by the library's flex column");
 });
 
-test("MiniMax: Instrumental is a switch in the Lyrics box, YuE2 keeps its tab", async () => {
+test("MiniMax: Write / Structure is a two-sided switch in the Lyrics box, YuE2 keeps its tab", async () => {
   const html = await src("../web/index.html"), app = await src("../web/app.js");
-  assert.match(html, /<summary>Lyrics<button class="lyrswap" type="button" id="lyricsSwap"/);
+  // A switch with both sides visible, not one button naming the side you are NOT on.
+  assert.match(html, /<summary>Lyrics<span class="lyrswap" id="lyricsSwap" hidden role="group"/);
+  assert.match(html, /data-lyrmode="song"[^>]*>Write<\/button>/);
+  assert.match(html, /data-lyrmode="instrumental"[^>]*>Structure<\/button>/);
   assert.match(app, /return !!eng\?\.instrumentalToggle && !yueEngine\(\) && !eng\?\.ace;/);
   assert.match(app, /\$\("modeInstr"\)\.hidden = inBox \|\|/);
-  assert.match(app, /e\.preventDefault\(\); e\.stopPropagation\(\);\n\s+setMode\(state\.mode === "instrumental" \? "song" : "instrumental"\);/,
+  assert.match(app, /e\.preventDefault\(\); e\.stopPropagation\(\);/,
     "the switch does not fold the box it sits in");
+  assert.match(app, /if \(!side \|\| side\.dataset\.lyrmode === state\.mode\) return;/,
+    "pressing the side you are already on does nothing");
+  // One field, two ways to fill it: the picker takes the tag strip's place, and
+  // its text lands in the box where the words would be.
+  assert.match(app, /\$\("lyricTags"\)\.hidden = structure;/);
+  assert.match(app, /\$\("scaffold"\)\.hidden = !structure;/);
+  assert.match(html, /<textarea id="scaffold" rows="7"/, "a textarea, not a <pre> in a black box");
+  assert.doesNotMatch(html, /class="scaffold"/);
 });

@@ -168,6 +168,8 @@ use it too.
 | A set-once preference | In **Settings**, in the matching card (Songs, Cover art, Video, Enhance, Battery Safe, Provenance, Hosted engine, Workflows, Folders). Only add a new `pcard` with `data-nav` if nothing fits. Persist it through `PREF_PATHS` in `server/config.js`. |
 | A new tool or workflow for an existing area (more music workflows) | A **tab** in that area's page (Music Lab has five). Not a new button in the form. |
 | A whole new area with several tools | Its own **rail page**, registered in all four places below. |
+| The cost or caveat of the main button ("about 4:00 on your card") | A `.ctanote` inside the `.ctawrap`. It is a **hover drop-up above the button**, absolutely positioned with `pointer-events: none`, and an empty one draws nothing. Not a permanent line underneath: read once, then dead column on every screen for ever. |
+| A second way to run the same thing (Preview beside Create) | In a drawer behind an arrow welded to the main button's right end (`.ctasplit` / `.ctadrawer`), opening upward. Not a second button of the same size: that reads as an equal choice. When an engine has no second way, the arrow is absent and the button is plain again. |
 | A confirmation ("delete this?", "run on battery?") | `appConfirm()` from `web/dialog.js`. Modals are for questions, not for features. |
 | Something about the machine or the engine | The **Engine** page, or a chip in the corner. |
 | Background explanation of a screen | The Welcome catalogue (`server/welcome/catalogue.js`), which feeds the ⓘ panel and the tour. Not the screen itself. |
@@ -286,6 +288,84 @@ Badges (engine, loop, size) are small pills.
   Posters come from OpenCV (`scripts/clipthumb.py`), which a portable Python
   may lack and which cannot read every codec.
 
+## 7b. The transport bar
+
+- **It is not a fixture.** It appears when something plays and goes when there
+  is nothing left to control: the end of the queue, or the ✕ at its far left.
+  A pause keeps it, because the next thing you do is press play. It was added
+  on the first `play` and never removed, so one song left it across the bottom
+  of every screen for the rest of the session.
+- **It stops at the rail.** The shell's grid areas are
+  `"rail create stage" "rail player player"`: the rail spans both rows, so the
+  bar starts at the rail's wall. Spanning every column (`"player player
+  player"`) put it under the quick-access menu, cut off the bottom of it, and
+  pushed everything in it up.
+- **Its height is `--playerh`, set on `.shell`, and it is `0px` while the bar
+  is closed.** Anything that stops above the bar (the full player, the song
+  panel) uses that variable. Both used to hard-code 64px, which was wrong
+  whenever the bar changed size and wrong the whole time it was shut.
+- The two controls that resize it sit at the two ends: ✕ at the far left,
+  the full-player arrow at the far right, transport in the middle.
+
+## 7c. The rail's foot
+
+- **One box for what is being made.** There were two, eight inches apart,
+  counting the same queue in different words. `#workBox` is a one-line strip
+  (what is being made, how long it has left, a dot that pulses while it runs)
+  with a panel that opens **upward** on hover, click or focus: the state, the
+  ETA and the clock time, what is waiting behind it by kind, the day's tally,
+  Stop and "all jobs". **The panel's own line is a link to the jobs page**:
+  when idle the Stop button is hidden, so without it the panel was a dead end. It sits above the Ko-fi button, and the panel is
+  absolutely positioned so opening it moves nothing.
+- **It says "idle" when nothing is rendering**, with the day's count, and no
+  Stop button.
+- **"Done today" is counted from the files' own timestamps** (songs'
+  `createdAt`, pictures' and clips' `at`), not from a session counter that
+  resets when the app does.
+- **The rail's width is `--railw`, 248px, and there is a grip on its right
+  edge** (`.railgrip`, drag / arrow keys / double-click to reset, remembered
+  per browser, clamped 200–420px). It is not 220px because the meters pair two
+  to a row: at 220 each cell was 93px and the disk and CPU figures were cut off
+  on a 1080p screen. **A figure that has to fit half a rail is written to fit
+  it** — the long halves (free space, drive fullness, core count) go in the
+  tooltip, never into an ellipsis.
+- **Four meters, two to a row** (`.meters`), each answering a different "why
+  is this slow": VRAM, system RAM, disk (what the models cost, with how full
+  the drive is in the tooltip) and CPU. Each keeps its own fill bar: the
+  number is exact, the bar is the glance. A meter with no reading yet shows an
+  empty bar and says so rather than a made-up 0%.
+- **⚠ No divider between them.** Every meter used to carry its own
+  `border-top`, and `--edge` is a translucent **blue** — so four meters drew
+  four blue rules across the foot of the rail in among their four fill bars,
+  and a separator could not be told from a reading. One hairline above the
+  whole block, none between.
+- **⚠ The drop-up is `position: fixed`, and app.js places it.** `.rail` is
+  `overflow: hidden`, so an absolutely positioned panel is clipped by it —
+  invisible at full width, and sliced in half once the rail is collapsed to
+  64px. Anything that has to escape the rail needs the same treatment.
+
+## 7d. Licence credits in the interface
+
+Some model licences ask for the model's name **in the interface**, not on a
+credits page: MiniMax-Music3 §3.1 and MiniMax H3 §IV.2 both do. In this app
+that is the `.poweredby` button at the very top of the rail, above the mark.
+
+- **It is conditional.** It appears when the engine whose licence asks for it
+  is the selected one, and names that one. ACE-Step is MIT and YuE2 is
+  CC BY-NC; neither asks, so neither is named there.
+- **It explains itself.** Pressing it says which clause it serves and that
+  choosing another engine removes it. A name with no explanation invites "why
+  is this here", and the answer belongs where the question is asked.
+- **It is the name and a `?`, nothing else.** The clause asks for the NAME
+  shown prominently; "Powered by" was two thirds of the line and served
+  nothing. One 21px row.
+- **It is not the only place.** The Models screen names the model against
+  every capability and quotes the clause before anything is downloaded, and
+  `examples/README.md` carries it; `server/docs_test.js` pins both. Do not
+  remove it from those.
+- Do not add a general "running locally" or "powered by <whatever>" line
+  beside it. The work box says what is happening.
+
 ## 8. Motion and the visualiser
 
 Only three things move with the music: the player bar's line, the playing
@@ -293,6 +373,19 @@ song's row (artwork pulse, equaliser bars) and the player's artwork. Do not
 add more reactive surfaces. The rail foot, the Advanced box, the Create bar
 and every scrollbar used to pulse too, and it was too much. Everything
 animated respects `prefers-reduced-motion`.
+
+## 8b. Load and unload
+
+- **One button: Unload.** Load is hidden (not deleted — the route and handler
+  stay wired), because the first song loads the model anyway.
+- **It is shown for every engine and disabled rather than absent** when there
+  is nothing on the card. A control that comes and goes teaches nobody where
+  it lives, and it was the main reason it "worked sometimes".
+- **⚠ "Is anything loaded" is two questions.** `loadedModel` is the MUSIC
+  model. Rendering a cover or a clip unloads it and puts a picture model on
+  the card, so `loadedModel` goes null while ComfyUI is holding several GB —
+  `artResident` is the other half (`server/jobs.js` snapshot). Unload frees
+  whatever is there, so it is enabled on either.
 
 ## 9. Simple mode and the model bar
 
@@ -372,6 +465,10 @@ New web scripts get a `node --check` line in `.githooks/pre-commit`.
 - [ ] A seed, or anything else that decides what comes out, is random by
       default. A fixed one in the markup means every machine makes the
       same thing from the same words.
+- [ ] Nothing on screen claims something cannot be measured that the app
+      already measures (render times, VRAM, RAM, disk, CPU).
+- [ ] A two-way control is a switch showing both sides, not one button naming
+      the side you are not on.
 - [ ] Works in Simple mode as well as Advanced.
 - [ ] Looked at it at a normal window size and at 700px wide.
 - [ ] `.githooks/pre-commit` passes (UI tests read `web/index.html`).
