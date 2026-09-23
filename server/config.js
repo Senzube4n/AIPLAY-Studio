@@ -55,10 +55,21 @@ const MODELS_DIR = MODELS_DIR_PINNED || path.join(RIG, "ComfyUI", "models");
  *
  * Order is preference: measured build first, downloadable substitute last.
  */
-const pick = (sub, ...names) => {
-  const dir = path.join(MODELS_DIR, sub);
-  return names.find((n) => { try { return fs.statSync(path.join(dir, n)).size > 0; } catch { return false; } })
-    ?? names[names.length - 1];
+const pick = (sub, ...names) => names.find((n) => onDisk(sub, n)) ?? names[names.length - 1];
+
+/* "Is this file on disk, with bytes in it", asked one way for pick() and for
+ * the H3 step defaults below `config`, so the two cannot disagree about it.
+ * A declaration, so pick() above can use it. */
+function onDisk(sub, name) {
+  try { return fs.statSync(path.join(MODELS_DIR, sub, String(name))).size > 0; } catch { return false; }
+}
+
+/** The step count a turbo LoRA was distilled for, read off its file name
+ *  (`_8step_`), or null for a name that does not say. One reader for the H3
+ *  step defaults below, /api/status and mv/plancost.js loraSteps(). */
+export const loraStepsOf = (name) => {
+  const m = /(\d+)step/i.exec(String(name ?? ""));
+  return m ? Number(m[1]) : null;
 };
 
 /** Find a python inside a ComfyUI rig, trying every layout in the wild.
@@ -1157,24 +1168,41 @@ export const config = {
      * all — so this value has never actually been exercised. */
     loraStrength: 1.0,
 
-    /* 20, not 8.
+    /* THE MATCHED TURBO SETTING THIS DISK HAS, NEVER A LITERAL. 4 here, and
+     * raised to 8 below the object (the step-defaults block after `config`)
+     * only where pick() resolved BOTH turboLora and refTurboLora to an 8-step
+     * file, because a 4-step distillation run at 8 is the wrong model and the
+     * Models screen fetches no 8-step file: a literal 8 is right only on a rig
+     * that fetched those files by hand, as this one did. It was 20 until
+     * 2026-09-23. This is the number every render that names no step count
+     * gets: make_clip without `quality` or `steps`, the API, and the Video Lab
+     * panel. The Video screen's slider opens on the same number (/api/status
+     * sends it as stepDefaults.standard).
      *
-     * Measured 2026-08-18 at native size and 124 frames, same prompt and seed:
-     *     turbo @  8   detail 38.0   308 s   clean but flat
-     *     turbo @ 20   detail 88.8   660 s   VISIBLY the best — face, knit,
-     *                                        lamp and bedding all resolve
-     *     full  @ 30   detail 70.2   963 s   BROKEN: the face is a smear
+     * What is on file, each with its scope:
+     *   - docs/H3_REFERENCE_BLEED.md, arm H against arm C (2026-09-12, ONE
+     *     shot, the reference path, 1344x768 x 260 frames): the bare model at
+     *     20 steps came back about equal to the ref2v 8-step turbo (detail 346
+     *     against 324/251) at 2.4x the time, 45 min against 19. It is the only
+     *     A/B of the two paths this graph runs today.
+     *   - 2026-08-24, two seeds: the bare model at 20 with shift 12 was the
+     *     cleanest arm, and the churn it beat was the turbo LoRA run AT 20
+     *     steps (docs/ENGINE_TRAPS.md), which no longer happens: see
+     *     turboMaxSteps below.
+     *   - 2026-08-18, native size, 124 frames, same prompt and seed. This
+     *     table is why the default used to be 20:
+     *       turbo @  8   detail 38.0   308 s   clean but flat
+     *       turbo @ 20   detail 88.8   660 s   VISIBLY the best
+     *       full  @ 30   detail 70.2   963 s   BROKEN: the face is a smear
+     *     Its "turbo @ 20" is that same LoRA-at-20 path, and "full @ 30" ran
+     *     at shift 4 (see shiftVideo), so neither row is a render made now.
      *
-     * The last row is the useful one. Dropping the LoRA and running 30 steps
-     * puts an UNDISTILLED model under BasicGuider, i.e. cfg 1 — and without
-     * classifier-free guidance it does not follow the prompt. Testing that
-     * properly needs CFGGuider and a negative, which this graph does not have.
-     * So "more steps without the LoRA" is not a path we have, and its high
-     * high-frequency score was artefact noise, not detail: that metric cannot
-     * tell texture from mush, and the frames had to be looked at.
-     *
-     * 8 remains a good fast setting and the slider still reaches it. */
-    steps: 20,
+     * So the one direct comparison found no visible gain for 20, and the
+     * 8-step turbo costs under half the time. Best (20, the bare model) is
+     * still one click on the Video screen and make_clip's quality "best". The
+     * MV pipeline never read this default: it sends its own 8
+     * (mv/generate.js). */
+    steps: 4,
     /* Auto follows the publisher's Euler recipe for the LightX2V turbo
      * builds, retaining res_multistep for the measured bare/3-step paths.
      * An explicit Video Lab sampler remains an override for every path. */
@@ -1676,6 +1704,44 @@ export const config = {
 
   paths: { appData: APPDATA },
 };
+
+/* H3'S DEFAULT STEP COUNT, AND THE THREE QUALITY CHIPS, FOLLOW THE DISK.
+ *
+ * An 8-step default is right only where the 8-step turbo files are on disk.
+ * The Models screen fetches the fl2v 4-step 768p (its "video" row) and the
+ * ref2v 4-step v0.1 ("videoRefs") and no 8-step file, so on a machine set up
+ * from that screen `turboLora` and `refTurboLora` fall back to 4-step files.
+ * A literal 8 there ran a 4-step distillation at 8 steps on every render that
+ * named no step count, the move the turboLora4 comment calls "a different one
+ * used wrongly". So each number is what this disk can run matched:
+ *
+ *   standard  8 where pick() resolved BOTH turboLora and refTurboLora to an
+ *             8-step file, else 4, the matched 4-step setting. Never the
+ *             bare model by default: 20 costs 2.4x the time (arm H vs C).
+ *   fast      3 where a TaoMate 3-step file resolved, else 4 where both
+ *             4-step slots did, else the same as standard (one chip then,
+ *             not two that do the same thing).
+ *   best      20, the bare model, which no LoRA file gates.
+ *
+ * `steps` is standard. /api/status sends stepDefaults and turboBuilds, and
+ * the Video screen's slider and chips and make_clip's `quality` read them
+ * there rather than keeping a literal. Resolved once, at import, like pick()
+ * itself: a file downloaded later loads after a restart, and so does the
+ * default that matches it. A file's step count is read off its name
+ * (loraStepsOf), and only for a file that is on disk, because pick() returns
+ * its last name when none is.
+ * server/mcp-steer_test.js builds both disks in a temp folder and pins this. */
+{
+  const h3 = config.video.engines.h3;
+  const stepsOnDisk = (name) => (onDisk("loras", name) ? loraStepsOf(name) : null);
+  const eight = stepsOnDisk(h3.turboLora) === 8 && stepsOnDisk(h3.refTurboLora) === 8;
+  const four = stepsOnDisk(h3.turboLora4) === 4 && stepsOnDisk(h3.refTurboLora4) === 4;
+  const three = stepsOnDisk(h3.turboLora3) === 3;
+  const standard = eight ? 8 : 4;
+  h3.turboBuilds = { three, four, eight };
+  h3.stepDefaults = { fast: three ? 3 : four ? 4 : standard, standard, best: 20 };
+  h3.steps = standard;
+}
 
 /**
  * The settings that survive a restart.

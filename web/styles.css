@@ -6,6 +6,11 @@
  * Always dark — there is no light mode, same as the site and every DAW.
  */
 :root {
+  /* Tells the browser too. Without it every native control this sheet does not
+   * restyle (inputs, buttons, <audio> players, scrollbars, date pickers) paints
+   * in the white light-mode default on the dark panels. There is no light mode
+   * to follow, so it is fixed. Pinned in server/ui-kit_test.js. */
+  color-scheme: dark;
   --bg:        linear-gradient(135deg, hsl(0,0%,3%) 0%, hsl(220,15%,6%) 100%);
   --rail:      hsla(0,0%,2%,.9);
   --panel:     hsla(220,12%,8%,.8);

@@ -462,7 +462,10 @@ preference; standalone `make_image` takes its own `engine`), `make_song` (every 
 territory-locked ones — never assumed). On the page the same choices are two
 layers: the Video screen's Fast / Standard / Best chips and the Images engine
 dropdown for everyone, the step slider, the Video Lab knobs and Advanced
-Options for people who want the number.
+Options for people who want the number. The step counts behind Fast / Standard
+/ Best (and make_clip's `quality`) follow the turbo files on disk: Standard,
+also the default, is 8 only where both 8-step builds are present, else 4.
+`studio_status` shows them as `video.h3_quality_steps`.
 
 ### The cover, on the page
 Advanced Options → *Hum a melody, or cover a song* → transcriber *Whole song*:

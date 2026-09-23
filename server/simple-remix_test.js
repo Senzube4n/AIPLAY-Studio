@@ -439,7 +439,11 @@ test("Images and Video get Music's grow handle on their Simple and Advanced boxe
 
 test("Video quality: Fast only when it differs from Standard, chips in a row; no Make button in any Simple mode", () => {
   const app = src("../web/app.js"), css = src("../web/styles.css");
-  assert.match(app, /\$\("vidQFast"\)\.hidden = !eng\.turbo3Ready;/, "without TaoMate, Fast is Standard: one chip, not two");
+  /* Fast and Standard are the server's numbers (stepDefaults, which follow the
+   * disk), so "the same" is a comparison of those numbers, not of the TaoMate
+   * flag: without TaoMate Fast is the 4-step build, which equals Standard on a
+   * disk without the 8-step files. server/mcp-steer_test.js pins the numbers. */
+  assert.match(app, /\$\("vidQFast"\)\.hidden = qs\.fast === qs\.standard;/, "where Fast would equal Standard: one chip, not two");
   assert.match(css, /#vidQualityRow > \.pv\.chips \{ flex-wrap: nowrap;/);
   assert.match(css, /\.create\.simplemode \.ctawrap > \.cta, \.assist-on \.ctawrap > \.cta \{ display: none !important; \}/,
     "the assistant makes it on your word: Create, Make image and Render clip hide in Simple");

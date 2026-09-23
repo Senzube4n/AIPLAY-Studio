@@ -454,6 +454,12 @@ export const TOOLS = [
           models_installed: st.config?.video?.ready !== false,
           engine: st.config?.video?.engine,
           missing: st.config?.video?.missing || [],
+          /* The step counts make_clip's `quality` maps to on THIS disk, and
+           * the turbo builds behind them (config.js resolves both from what
+           * pick() found): standard is 8 only where both 8-step files are on
+           * disk, else 4, and is the default a render with no quality gets. */
+          h3_quality_steps: st.config?.video?.engines?.h3?.stepDefaults ?? null,
+          h3_turbo_builds: st.config?.video?.engines?.h3?.turboBuilds ?? null,
         },
       };
     },
@@ -2800,7 +2806,7 @@ export const TOOLS = [
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected." },
         quality: { type: "string", enum: ["fast", "best"],
-          description: "fast = the distilled path: 3 steps on the TaoMate build when it is installed (studio_status says turbo3Ready), else 8 — measured as coherent and as sharp as 8 at 25–40% less wall time. best = the full model on its native schedule, measurably smoother but several times slower. Default: the engine's own default (currently 'best' on H3). Prefer this over `steps`." },
+          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
@@ -2866,19 +2872,24 @@ export const TOOLS = [
       }
       const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
       /* `quality` is the semantic dial; `steps` is the escape hatch and wins.
-       * The mapping lives here rather than in the caller's head because the
-       * turbo threshold is a measured implementation detail that has already
-       * moved once. 8 is the distilled fast point, 20 the measured good one. */
+       * The mapping lives in the server rather than in the caller's head, or
+       * here, because which step counts are MATCHED depends on the disk:
+       * config.js resolves stepDefaults from the turbo files pick() found and
+       * /api/status sends them. No quality leaves `steps` unset, so the
+       * engine's own default (the same `standard`) applies; 20 is the bare
+       * model. A literal 8 here ran a 4-step LoRA at 8 steps on an install
+       * set up from the Models screen, which fetches no 8-step file. */
       /* MEASURED 2026-09-17 (three prompts, one seed each): the TaoMate 3-step
        * build renders two seconds at native size in 92–157 s against the
        * 8-step build's 148–197 s, and the frames are as coherent and as sharp
-       * — so "fast" is 3 steps wherever that file is installed (the status
-       * says), and 8 where it is not (a 4-step LoRA sampled at 3 is the wrong
-       * model). References always keep their own builds; the graph decides. */
-      const turbo3 = engine === "h3" && st.config?.video?.engines?.h3?.turbo3Ready === true;
+       * — so "fast" is 3 steps wherever that file is installed, and the 4-step
+       * build where it is not (a 4-step LoRA sampled at 3 is the wrong model).
+       * References always keep their own builds; the graph decides. LTX has
+       * no stepDefaults and ignores steps; the fallbacks are for it. */
+      const qs = engine === "h3" ? st.config?.video?.engines?.h3?.stepDefaults : null;
       const steps = Number.isFinite(a.steps) ? a.steps
-        : a.quality === "fast" ? (turbo3 ? 3 : 8)
-        : a.quality === "best" ? 20
+        : a.quality === "fast" ? (qs?.fast ?? 4)
+        : a.quality === "best" ? (qs?.best ?? 20)
         : undefined;
       const body = {
         action: "create", prompt: a.prompt,

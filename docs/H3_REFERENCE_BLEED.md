@@ -201,6 +201,10 @@ sigma 0.387. Costs the entire point of the 4-step path — 5× wall clock.
   to 20 steps at 1344×768, where `useTurbo` is false and no LoRA loads. But 97 of
   100 real clips ran at 4 or 8 steps and 61 at 1920×1088. The longest justification
   comment in `config.js` describes a configuration used 3 times out of 100.
+  *(Since 2026-09-23 it resolves to the matched turbo setting the disk has: 8
+  where both 8-step builds are on disk, else 4, since the Models screen fetches
+  only the 4-step ones. The Video screen opens on the same number, and 20 on
+  the bare model is the Best chip. Arm H below is why the default left 20.)*
 - **The reference path has never been verified at the settings in use.** Checked
   once, by eye, in `0df69e6`: one reference, 864×480, 8 steps. Meanwhile 53 of 100
   clips used two or three references at 1920×1088 and 4 steps.

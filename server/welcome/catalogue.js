@@ -45,7 +45,7 @@ import { LAYER_TYPES } from "../vfx/store.js";
 /* Where the commit point is computed for the Video lab's panel. The sigma
  * figures in the quality block are that same arithmetic rather than a second
  * copy of a table, so they follow the sigma shift if it is ever re-measured. */
-import { commitSigma } from "../videolab/catalog.js";
+import { commitSigma, COMPARE_CONFIGS } from "../videolab/catalog.js";
 
 /* ── counts, spelled ─────────────────────────────────────────────────────────
  *
@@ -993,6 +993,14 @@ const stepsInLora = (name, fallback) => {
 };
 const FAST_STEPS = stepsInLora(config.video.engines.h3?.turboLora4, 4);
 const MID_STEPS = stepsInLora(config.video.engines.h3?.turboLora, 8);
+/* AND THE BARE MODEL'S, which no LoRA file carries. The sigma sentence below
+ * used to end on config.js's default step count, which was 20 and so named
+ * the no-LoRA path; since 2026-09-23 that default is the matched turbo
+ * setting the disk has (8 with both 8-step files, else 4), so it equals
+ * MID_STEPS or FAST_STEPS and the sentence said one number twice. Read from
+ * the Video Lab's no-LoRA arm, which is 20 like the Best chip and make_clip's
+ * "best". */
+const BARE_STEPS = COMPARE_CONFIGS.find((c) => c.id === "h3_quality")?.steps ?? 20;
 const SHIFT = config.video.engines.h3?.shiftVideo ?? 12;
 /* Three decimals, because that is the precision docs/H3_REFERENCE_BLEED.md
  * reports and the Video lab's panel shows. */
@@ -1093,8 +1101,8 @@ function videoFacts() {
           + `${Math.round(commitSigma(FAST_STEPS, SHIFT) * 100)}% of the picture in one jump, and the `
           + "cleanest thing in its field of view is your reference image, which is why references occupy "
           + "the opening frames and then hand over. "
-          + `${Count(MID_STEPS)} steps commits at ${sigmaAt(MID_STEPS)}, `
-          + `${count(config.video.engines.h3?.steps)} at ${sigmaAt(config.video.engines.h3?.steps)}.`,
+          + `${Count(MID_STEPS)} steps commits at ${sigmaAt(MID_STEPS)}, and the bare model's `
+          + `${count(BARE_STEPS)} at ${sigmaAt(BARE_STEPS)}.`,
         source: "Read from ComfyUI's own scheduler and confirmed frame by frame on a 4-step clip "
           + "(2026-09-02) — docs/H3_REFERENCE_BLEED.md. The sigmas here are computed by the same "
           + "function the Video lab's panel shows, server/videolab/catalog.js commitSigma, so they "

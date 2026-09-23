@@ -6700,11 +6700,34 @@ function vidWH() {
   return ($("vidSize").value || "1280x704").split("x").map(Number);
 }
 
+/* THE QUALITY CHIPS' STEP COUNTS, as the server resolved them from the disk
+ * (config.js, the step-defaults block after `config`; /api/status sends them
+ * as stepDefaults). Standard is 8 only where both 8-step turbo files are on
+ * disk, else 4, and Fast is 3 only where the TaoMate build is, else the 4-step
+ * build. A literal 8 here opened a Models-screen install, which has the 4-step
+ * files alone, on a 4-step LoRA run at 8 steps. The fallbacks serve an engine
+ * that sends none (LTX, which hides the chips): 4 is matched on every disk
+ * that has any H3 turbo file. */
+function vidQualitySteps(eng) {
+  const d = eng?.stepDefaults || {};
+  const standard = Number(d.standard) || 4;
+  return { fast: Number(d.fast) || standard, standard, best: Number(d.best) || 20 };
+}
+
 function vidPaint() {
   const on = !!state.video?.enabled;
   const engines = state.video?.engines || {};
   const cur = state.video?.engine || "ltx";
   const eng = engines[cur] || {};
+
+  /* The slider opens on Standard, the number above, once: on the first status
+   * that carries it. After that the slider is the person's, and the status
+   * poll every four seconds must not pull it back. index.html's value is only
+   * what shows before that status lands. */
+  if (!state.vidStepsOpened && eng.stepDefaults) {
+    state.vidStepsOpened = true;
+    $("vidSteps").value = String(vidQualitySteps(eng).standard);
+  }
 
   // Painted once; after that the select is left alone so it cannot fight a change.
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
@@ -6770,21 +6793,29 @@ function vidPaint() {
   $("vidStepsV").textContent = $("vidSteps").value;
   /* The quality chips are the step slider in three words; they hide with it
    * (LTX has no step count) and light up when the slider sits on their value.
-   * Fast reads the server: 3 where the TaoMate build is on disk, else 8. */
+   * Every number is the server's (vidQualitySteps), and each chip's label and
+   * title are written from it, so a chip never names a build this disk lacks. */
   const qRow = $("vidQualityRow");
   if (qRow) {
     qRow.hidden = cur === "ltx";
-    const fastSteps = eng.turbo3Ready ? 3 : 8;
+    const qs = vidQualitySteps(eng);
     const stNow = +$("vidSteps").value;
     for (const b of qRow.querySelectorAll("[data-vq]")) {
-      const want = b.dataset.vq === "fast" ? fastSteps : b.dataset.vq === "standard" ? 8 : 20;
+      const want = qs[b.dataset.vq];
       b.setAttribute("aria-pressed", stNow === want ? "true" : "false");
+      const small = b.querySelector("small");
+      if (small) small.textContent = want + " steps";
     }
-    /* Without the TaoMate build Fast IS Standard (8 steps on the same model):
-     * two chips doing one thing, lit together. Fast shows only when it is
-     * really faster; the "!" says how to get it. */
-    $("vidQFast").hidden = !eng.turbo3Ready;
-    $("vidQualityNote").textContent = eng.turbo3Ready
+    const build = (n) => n === 3 ? "The TaoMate 3-step build" : "The " + n + "-step turbo build";
+    $("vidQFast").title = build(qs.fast);
+    qRow.querySelector('[data-vq="standard"]').title = build(qs.standard)
+      + (qs.standard === 8 ? "" : ": the 8-step files are not on this disk");
+    /* Where Fast would be the same number as Standard (no TaoMate build, and
+     * no 4-step build under an 8-step Standard) it is two chips doing one
+     * thing, lit together. Fast shows only when it is really faster; the "!"
+     * says how to get it. */
+    $("vidQFast").hidden = qs.fast === qs.standard;
+    $("vidQualityNote").textContent = qs.fast === 3
       ? "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time."
       : "Install the TaoMate 3-step row on the Models screen and Fast drops to 3 steps.";
   }
@@ -6903,25 +6934,38 @@ function vidPaint() {
   const st = +$("vidSteps").value;
   const t4 = eng.turbo4MaxSteps ?? 5;
   const t8 = eng.turboMaxSteps ?? 12;
-  /* ⚠ THE REFERENCE PATH HAS NO 8-STEP BUILD. Three turbo files ship: a ref2v
-   * 4-step, an fl2v 4-step and an fl2v 8-step. With reference images attached
-   * the render uses the ref2v checkpoint, and the only distillation matching it
-   * is the 4-step one — so between t4 and t8 the fallback resolves to that
-   * 4-step file and runs it at up to 12 steps. config.js names that exact move:
-   * "a distillation trained for 4 steps run at 8 is not a faster model, it is a
-   * different one used wrongly."
+  /* THE FILE THAT LOADS, NAMED BY ITS OWN STEP COUNT. `eng.loraSteps` is the
+   * step count of each file config.js resolved, by slot (/api/status), and
+   * the slots are the ones workflow.js h3TurboLoraFor chooses between: at or
+   * below turbo3MaxSteps on the fl2v path turboLora3, at or below t4
+   * turboLora4 (refTurboLora4 with references), and up to t8 turboLora
+   * (refTurboLora). This used to print t4 as a build's name, and t4 is a
+   * threshold, 5: "5-step turbo path" at 4 steps, and "5-step build run at 8
+   * steps" for a file distilled for 4. It also took the 8-step files as given
+   * on the fl2v path, and the Models screen fetches only the 4-step ones.
    *
-   * There is no good option in that band on this path, so it is named rather
-   * than quietly used: 4 for the matched build, or 13+ for the bare model on
-   * its native schedule (measured cleanest at 20 with shift 12). */
+   * Between t4 and t8 the file is an 8-step build where this disk has one.
+   * Without it pick() fell back to a 4-step file, which then runs at up to 12
+   * steps. config.js names that exact move: "a distillation trained for 4
+   * steps run at 8 is not a faster model, it is a different one used
+   * wrongly." That is `mismatch`: the 4-step build's own count, or 13+ for
+   * the bare model. With the 8-step file, 6-7 is the band between the two
+   * builds (`betweenBuilds`). No step count known (a status without
+   * loraSteps) names no build and warns about none. */
   const hasRefs = ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+  const ls = eng.loraSteps || {};
+  const lowFile = (hasRefs ? ls.refTurboLora4 : st <= (eng.turbo3MaxSteps ?? 3) ? ls.turboLora3 : ls.turboLora4) ?? null;
+  const midFile = (hasRefs ? ls.refTurboLora : ls.turboLora) ?? null;
+  const fourFile = (hasRefs ? ls.refTurboLora4 : ls.turboLora4) ?? 4;
   const stepPath = cur === "ltx" ? ""
-    : st <= t4 ? " · " + t4 + "-step turbo path"
-    : st <= t8 ? (hasRefs ? " · " + t4 + "-step build run at " + st + " steps"
-                          : " · 8-step turbo path")
+    : st <= t4 ? (lowFile ? " · " + lowFile + "-step turbo path" : " · turbo path")
+    : st <= t8 ? (!midFile ? " · turbo path"
+                : st > midFile ? " · " + midFile + "-step build run at " + st + " steps"
+                : hasRefs ? " · " + midFile + "-step reference build"
+                : " · " + midFile + "-step turbo path")
     : " · full-model path";
-  const refMismatch = cur !== "ltx" && hasRefs && st > t4 && st <= t8;
-  const betweenBuilds = cur !== "ltx" && !hasRefs && st > t4 && st < 8;
+  const mismatch = cur !== "ltx" && midFile !== null && midFile < 8 && st > midFile && st > t4 && st <= t8;
+  const betweenBuilds = cur !== "ltx" && midFile === 8 && st > t4 && st < 8;
 
   $("vidEst").textContent = on
     ? "about " + fmt(secs) + " once the engine is idle · " + frames + " frames at " + fps + " fps"
@@ -6929,9 +6973,9 @@ function vidPaint() {
       + (small && !short ? " · ⚠ below native size, expect softer detail" : "")
       // Only 6-7 is genuinely orphaned: at or below t4 the 4-step build loads,
       // at 8 and up the 8-step one does, and between them neither fits.
-      + (refMismatch ? " · ⚠ no reference build for " + st + " steps — use "
-          + t4 + " (fast) or 13+ (best)" : "")
-      + (betweenBuilds ? " · ⚠ between the " + t4 + "-step and 8-step builds — use " + t4 + " or 8" : "")
+      + (mismatch ? " · ⚠ no " + (hasRefs ? "reference " : "") + "build for " + st + " steps on this disk: use "
+          + fourFile + " (the " + fourFile + "-step build) or 13+ (the bare model)" : "")
+      + (betweenBuilds ? " · ⚠ between the " + fourFile + "-step and 8-step builds: use " + fourFile + " or 8" : "")
       + stepPath
       // Reference tokens are attended on every step, so they cost time. One
       // measured point: one picture at 864x480x124 added ~10% — more and
@@ -6946,7 +6990,8 @@ for (const id of ["vidSecs", "vidSteps", "vidSize", "vidW", "vidH", "vidGuide", 
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
-    const steps = b.dataset.vq === "fast" ? (eng.turbo3Ready ? 3 : 8) : b.dataset.vq === "standard" ? 8 : 20;
+    // The same numbers the chips are lit and labelled by: the server's.
+    const steps = vidQualitySteps(eng)[b.dataset.vq];
     $("vidSteps").value = String(steps);
     vidPaint();
   };
@@ -17242,9 +17287,17 @@ async function loadWorkflows() {
 }
 
 async function loadArtPrefs() {
+  /* The covers picker is the Images screen's engine list, copied, never
+   * retyped. A hand-kept second list missed qwen-image-2.1 (the shipped
+   * default), anima and krea2, and a <select> given a value it has no option
+   * for shows blank. server/ui-kit_test.js holds #imgEngine to config.js's
+   * art-engine whitelist, so a new engine cannot go missing from either.
+   * The label is data-cover where an option has one: "takes refs" and
+   * "editing" are true on the Images screen and not for a cover. */
+  $("artEngine").replaceChildren(...[...$("imgEngine").options].map((o) => new Option(o.dataset.cover || o.textContent, o.value)));
   try {
     const d = await (await fetch("/api/artconfig")).json();
-    $("artEngine").value = d.engine || "flux2";
+    $("artEngine").value = d.engine || "qwen-image-2.1";
     $("artQuality").value = d.quality || "default";
     $("artStyle").value = d.style || "";
     $("artStyle").dataset.def = d.styleDefault || "";

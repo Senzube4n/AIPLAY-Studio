@@ -52,7 +52,7 @@
  */
 
 /** Every path here is checked against the filesystem by plan_test.js. */
-import { config } from "../config.js";
+import { config, loraStepsOf } from "../config.js";
 import { h3TurboLoraFor } from "../workflow.js";
 
 export const COST_DOCS = {
@@ -83,11 +83,10 @@ export const AREA_EXP = 1.43;
 export const SECONDS_EXP = 1.34;
 
 /** The step count a turbo LoRA was distilled for, read off its file name
- *  (`_8step_`), or null for a name that does not say. */
-export const loraSteps = (name) => {
-  const m = /(\d+)step/i.exec(String(name ?? ""));
-  return m ? Number(m[1]) : null;
-};
+ *  (`_8step_`), or null for a name that does not say. config.js owns the
+ *  reader, because its H3 step defaults and /api/status ask the same thing
+ *  and three copies of one regex is how a file name gets read two ways. */
+export const loraSteps = loraStepsOf;
 
 /**
  * The distillation the graph would ACTUALLY load for this request, as its
@@ -159,9 +158,17 @@ export const COST_ROWS = [
     w: 1344, h: 768, seconds: 124 / FPS, wall: 308,
     what: "the 8-step distillation. 5 m 08 s — clean but flat.",
     cite: COST_DOCS.directing },
+  /* EACH CLAIM WITH ITS SCOPE (server/config.js, the `steps` note). The 660 s
+   * was measured with the turbo LoRA loaded at 20 steps; 20 steps is 20
+   * forward passes on either path, so it prices the bare model too. The
+   * "visibly the best" said beside it was that LoRA-at-20 render, not this
+   * path, and the only A/B of the bare model against a turbo build is
+   * docs/H3_REFERENCE_BLEED.md arm H vs C: about equal to the ref2v 8-step at
+   * 2.4x the time. So this row claims the time and nothing else. */
   { id: "h3-bare-native", engine: "h3", stepClass: "bare",
     w: 1344, h: 768, seconds: 124 / FPS, wall: 660,
-    what: "no LoRA, the bare model at 20 steps. 11 m 00 s, and visibly the best.",
+    what: "no LoRA, the bare model at 20 steps. 11 m 00 s: a 20-step time, which holds on either path. "
+      + "The one A/B against a turbo build (arm H vs C) found it about equal to the ref2v 8-step, at 2.4x the time.",
     cite: COST_DOCS.directing },
 
   /* ── H3 above native, 5-second scene. THE ROW THE FILMS WERE MADE ON. Both

@@ -2030,6 +2030,9 @@ company-wide revenue. No references (FLUX.2's trick) and no negative prompt
 **"fast" means 3 steps now.** `make_clip`'s fast preset renders on the TaoMate
 build where it is installed (measured as coherent and as sharp as the 8-step
 build on three prompts, at 25–40% less wall time) and 8 steps where it is not.
+(Since 2026-09-23 every quality word follows the disk instead: where TaoMate
+is missing, fast is the 4-step build, and the default is 8 only where both
+8-step turbo files are on disk, else 4. `studio_status` shows the numbers.)
 
 **A conditioning bridge, as the Studio's own node.** BUNNY (action logic) and
 the original Semantic Bridge rewrite H3's text conditioning before the

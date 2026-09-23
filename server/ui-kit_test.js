@@ -92,6 +92,60 @@ test("a clip poster that fails falls back instead of showing a broken image", ()
   assert.match(read("web/galleries.css"), /\.cthumb\.cth-none/);
 });
 
+test("the whole app tells the browser it is dark, not just the 3D page", () => {
+  /* Only avatars.css declared it, and only avatars.html loads that sheet, so
+   * every other screen drew native inputs, buttons and <audio> players white.
+   * styles.css is the sheet index.html and daw.html share. */
+  const root = /^:root \{([\s\S]*?)\n\}/m.exec(read("web/styles.css"))?.[1] || "";
+  assert.match(root, /\n\s*color-scheme: dark;/, "styles.css :root declares color-scheme: dark");
+  assert.match(HTML, /<link rel="stylesheet" href="styles\.css/, "and the index loads that sheet");
+});
+
+test("the covers engine picker is the Images engine list, and that list is the server's", async () => {
+  /* Settings' covers dropdown was a hand-typed second list that lacked
+   * qwen-image-2.1, the shipped default, so it showed blank. Now it is copied
+   * from #imgEngine before loadArtPrefs sets its value, and #imgEngine is held
+   * to the whitelist config.js accepts, so an engine added there cannot go
+   * missing from either picker without failing here. The route that saves the
+   * choice and the agent tool that sets it each keep their own copy of that
+   * list, so they are held to it as well: an engine the dropdown offers and
+   * the route refuses fails Save with "engine must be ...". */
+  assert.match(HTML, /<select id="artEngine" class="sel2"><\/select>/, "no hand-typed options left to drift");
+  const load = /async function loadArtPrefs\(\) \{[\s\S]*?\n\}/.exec(APP)?.[0] || "";
+  const fill = load.indexOf('$("artEngine").replaceChildren(...[...$("imgEngine").options].map((o) => new Option(o.dataset.cover || o.textContent, o.value)));');
+  assert.ok(fill > 0, "loadArtPrefs copies #imgEngine's options into #artEngine");
+  assert.ok(fill < load.indexOf('$("artEngine").value ='), "...before it sets the saved engine");
+  const sel = /<select id="imgEngine"[^>]*>([\s\S]*?)<\/select>/.exec(HTML)?.[1] || "";
+  const offered = [...sel.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]).sort();
+  const names = (literal) => literal.split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean).sort();
+  // The same literal provenance_test.js reads; config.js says so above it.
+  const accepted = names(/\["art",\s*"engine",\s*\(v\)\s*=>\s*\[([^\]]*)\]/.exec(read("server/config.js"))?.[1] || "");
+  assert.ok(accepted.includes("qwen-image-2.1") && accepted.length >= 8, `config.js whitelist read: ${accepted.join(", ")}`);
+  assert.deepEqual(offered, accepted, "#imgEngine offers exactly the engines config.js accepts for art");
+  const route = /p === "\/api\/artconfig" && req\.method === "POST"[\s\S]*?if \(!\[([^\]]*)\]\.includes\(b\.engine\)\)/.exec(read("server/index.js"))?.[1] || "";
+  assert.deepEqual(names(route), accepted, "POST /api/artconfig accepts exactly the engines config.js does");
+  const { TOOLS } = await import("./mcp.js");
+  const tool = [...(TOOLS.find((t) => t.name === "set_image_engine")?.inputSchema?.properties?.engine?.enum || [])].sort();
+  assert.deepEqual(tool, accepted, "set_image_engine offers exactly the engines config.js accepts");
+});
+
+test("the engine labels have no em dash, and the covers copy claims nothing a cover lacks", () => {
+  /* docs/UI_GUIDE.md rule 4: no em dashes on screen. And #imgEngine's labels
+   * describe the Images screen, where FLUX.2 takes references and Qwen edits.
+   * A cover does neither and has no negative field, so the label the covers
+   * dropdown shows (data-cover where there is one, else the text) must not
+   * say it does. */
+  const sel = /<select id="imgEngine"[^>]*>([\s\S]*?)<\/select>/.exec(HTML)?.[1] || "";
+  const opts = [...sel.matchAll(/<option value="([^"]+)"([^>]*)>([^<]*)<\/option>/g)]
+    .map(([, value, attrs, text]) => ({ value, text, cover: /\bdata-cover="([^"]*)"/.exec(attrs)?.[1] ?? text }));
+  assert.ok(opts.length >= 8, `read ${opts.length} options`);
+  for (const o of opts) {
+    assert.doesNotMatch(`${o.text} ${o.cover}`, /—/, `${o.value}: no em dash in its labels`);
+    assert.doesNotMatch(o.cover, /\b(refs?|references?|edit(s|ing)?|negatives?)\b/i,
+      `${o.value}'s covers label "${o.cover}" claims something covers do not do`);
+  }
+});
+
 test("a picture dropped anywhere on the Images or Video panel is taken, Simple mode included", () => {
   assert.ok(APP.includes('dropAnywhere($("imgPanel"), () => picDrops.img)'));
   assert.ok(APP.includes('dropAnywhere($("vidPanel"), () => picDrops.from)'));

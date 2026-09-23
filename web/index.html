@@ -930,17 +930,27 @@
         camera move — H3 holds a simple shot far better than a busy one.</p>
     </div>
 
-    <!-- THE SIMPLE WAY. Three words instead of a step count: Fast is the
-         distilled path (3 steps on the TaoMate build when it is installed,
-         else 8), Standard the 8-step build, Best the bare model at 20. The
-         slider under More controls is the same number, for people who want
-         it; the chips light up when the slider sits on their value. -->
+    <!-- THE SIMPLE WAY. Three words instead of a step count, and every count
+         is the server's (/api/status stepDefaults, resolved by config.js from
+         what is on disk): Fast is 3 on the TaoMate build where it is
+         installed, else the 4-step build; Standard is the 8-step build where
+         both 8-step files are on disk, else the 4-step one (the Models screen
+         fetches only those); Best the bare model at 20. app.js
+         vidQualitySteps writes each chip's label and title from them, so the
+         numbers typed below are only what shows before the first status:
+         vidQualitySteps' own fallbacks, which server/mcp-steer_test.js holds
+         them to. The slider under More controls is the same number, for
+         people who want it; the chips light up when the slider sits on their
+         value. Best's title claims only the time (660 s against 308 s in
+         config.js's cost note, 45 min against 19 in arm H vs C). That A/B,
+         the only one of the bare 20 against today's 8-step turbo, saw no
+         visible gain. -->
     <div class="params" id="vidQualityRow">
       <label>quality</label>
       <span class="pv chips">
-        <button type="button" class="edtool" data-vq="fast" id="vidQFast" title="The distilled path: 3 steps on the TaoMate build">Fast<small>3 steps</small></button>
-        <button type="button" class="edtool" data-vq="standard" title="The 8-step build">Standard<small>8 steps</small></button>
-        <button type="button" class="edtool" data-vq="best" title="The bare model at 20 steps: measurably smoother, several times slower">Best<small>20 steps</small></button>
+        <button type="button" class="edtool" data-vq="fast" id="vidQFast" hidden title="The 4-step turbo build">Fast<small>4 steps</small></button>
+        <button type="button" class="edtool" data-vq="standard" title="The 4-step turbo build">Standard<small>4 steps</small></button>
+        <button type="button" class="edtool" data-vq="best" title="The bare model at 20 steps: over twice as long as Standard">Best<small>20 steps</small></button>
         <span class="tipsrc" id="vidQualityNote"></span>
       </span>
     </div>
@@ -948,8 +958,16 @@
     <div class="params">
       <label for="vidSecs">length</label>
       <span class="pv"><input id="vidSecs" type="range" min="1" max="15" step="1" value="5"><b id="vidSecsV">5s</b></span>
+      <!-- Opens on Standard, which app.js sets once from /api/status
+           (stepDefaults.standard, the same number as config.js's H3 default:
+           8 where both 8-step turbo files are on disk, else 4). Not on Best:
+           docs/H3_REFERENCE_BLEED.md, arm H vs C, the bare model at 20 steps
+           bought nothing visible over the 8-step turbo, at 2.4x the time. One
+           shot, on the reference path, so Best stays a click away. The 4
+           typed here shows only until that status lands; it is matched on
+           every disk that has any H3 turbo file. -->
       <label for="vidSteps">steps</label>
-      <span class="pv"><input id="vidSteps" type="range" min="3" max="28" step="1" value="20"><b id="vidStepsV">20</b></span>
+      <span class="pv"><input id="vidSteps" type="range" min="3" max="28" step="1" value="4"><b id="vidStepsV">4</b></span>
       <label for="vidSize">size</label>
       <span class="pv"><!-- Populated per engine: H3 native 1344x768 is not a legal LTX size,
            and LTX quantises to a 32px latent grid after halving. -->
@@ -1184,14 +1202,19 @@
              red when it cannot run (the details pop out beside the field).
              Hovering it says what it is doing; clicking it opens the dropdown
              (or, when red, the details). -->
+        <!-- This list is also Settings' covers engine list: loadArtPrefs copies
+             it, taking data-cover where an option has one. Covers take no
+             references, do no editing and have no negative field, so an option
+             whose label here names one of those carries a covers label that
+             does not (server/ui-kit_test.js holds that). -->
         <span class="pv qwenpv"><span class="qdot" id="imgQwenDot" hidden><i></i></span><select id="imgEngine" class="sel2">
-          <option value="qwen-image-2.1" selected>Qwen Image 2.1 — generation &amp; editing</option>
-          <option value="flux2">FLUX.2 klein — fast, takes refs</option>
-          <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
-          <option value="zimage-base">Z-Image base — 25 steps, real negatives</option>
-          <option value="anima">Anima — anime &amp; illustration</option>
-          <option value="krea2">Krea 2 Turbo — 8 steps, frontier look</option>
-          <option value="ideogram4">Ideogram 4 — non-commercial</option>
+          <option value="qwen-image-2.1" selected data-cover="Qwen Image 2.1">Qwen Image 2.1: generation &amp; editing</option>
+          <option value="flux2" data-cover="FLUX.2 klein: fast, Apache-2.0">FLUX.2 klein: fast, takes refs</option>
+          <option value="zimage">Z-Image Turbo: 8 steps, Apache-2.0</option>
+          <option value="zimage-base" data-cover="Z-Image base: 25 steps, Apache-2.0">Z-Image base: 25 steps, real negatives</option>
+          <option value="anima">Anima: anime &amp; illustration</option>
+          <option value="krea2">Krea 2 Turbo: 8 steps, frontier look</option>
+          <option value="ideogram4">Ideogram 4: non-commercial</option>
           <option value="checkpoint">Your own model file</option>
         </select></span>
 
@@ -4456,13 +4479,9 @@
             </select></span>
 
             <label for="artEngine">covers engine</label>
-            <span class="pv"><select id="artEngine" class="sel2">
-              <option value="flux2">FLUX.2 klein (default, Apache-2.0)</option>
-              <option value="zimage">Z-Image Turbo (8 steps, Apache-2.0)</option>
-              <option value="zimage-base">Z-Image base (25 steps, Apache-2.0)</option>
-              <option value="ideogram4">Ideogram 4 (non-commercial)</option>
-              <option value="checkpoint">Your own model file</option>
-            </select></span>
+            <!-- Filled from #imgEngine by loadArtPrefs (app.js), not typed here:
+                 a second hand-kept list lost qwen-image-2.1 and showed blank. -->
+            <span class="pv"><select id="artEngine" class="sel2"></select></span>
             <label for="artCkpt" id="artCkptL" hidden>model file</label>
             <span class="pv" id="artCkptW" hidden><select id="artCkpt" class="sel2"></select></span>
             <label for="artQuality" id="artQualityL" hidden>preset</label>

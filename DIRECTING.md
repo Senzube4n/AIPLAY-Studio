@@ -438,6 +438,13 @@ and seed:
 | 8 | the 8-step distillation | 5 m 08 s | clean but flat |
 | **20** | no LoRA, the bare model | 11 m 00 s | visibly the best — face, knit and lamp all resolve |
 
+*Scope of the 20 row (2026-09-23):* the render behind its time and its verdict
+had the turbo LoRA loaded at 20 steps (`server/config.js`, the `steps` note).
+The time carries over, since 20 steps cost the same on either path; "visibly
+the best" belongs to that LoRA-at-20 render. The one A/B of the bare model
+against a turbo build is `docs/H3_REFERENCE_BLEED.md` arm H vs C: about equal
+to the ref2v 8-step, at 2.4x the time.
+
 ⚠ With REFERENCE IMAGES attached, the honest step counts are the ones a file
 was distilled for. Four turbo files ship — a ref2v 4-step (v0.1), a ref2v
 8-step (v1.0 768p, on disk since 2026-09-12), an fl2v 4-step and an fl2v

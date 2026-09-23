@@ -624,11 +624,22 @@ export const KNOBS = [
     applies: "h3",
     kind: "number", min: 2, max: 40, step: 1,
     path: ["video", "engines", "h3", "steps"],
+    /* EACH MEASUREMENT WITH ITS SCOPE, as config.js's `steps` note gives them.
+     * This used to call 20 on the bare model "11 m 00 s, and visibly the
+     * best", but that verdict was the turbo LoRA run AT 20 (2026-08-18); only
+     * the time carries over, because 20 steps cost the same on either path.
+     * The one bare-against-turbo A/B on file is arm H vs C. And 8 loads an
+     * 8-step file only where one is on disk: the Models screen fetches the
+     * 4-step builds alone, which is why config.js's default follows the disk. */
     effect:
-      "Not a quality dial — a model picker. 4 loads the 4-step distillation (~2 m 37 s at native "
-      + "size and 124 frames), 8 loads the 8-step one (5 m 08 s, clean but flat), 20 loads no LoRA "
-      + "at all and runs the bare model (11 m 00 s, and visibly the best: face, knit and lamp all "
-      + "resolve). The bands between the builds are the ones with no good answer.",
+      "Not a quality dial, a model picker. 4 loads the 4-step distillation (~2 m 37 s at native "
+      + "size and 124 frames). 8 loads the 8-step one where that file is on disk (5 m 08 s, clean "
+      + "but flat); without it, 8 runs the 4-step file past its design point. 20 loads no LoRA and "
+      + "runs the bare model: 11 m 00 s is the time of any 20-step render, measured with the LoRA "
+      + "loaded, and the 'visibly the best' once quoted with it was that LoRA-at-20 render. The one "
+      + "A/B of the bare model against a turbo build (arm H vs C, one shot, reference path) found it "
+      + "about equal to the ref2v 8-step at 2.4x the time. The bands between the builds are the ones "
+      + "with no good answer.",
     cite: DOCS.directing,
   },
   {

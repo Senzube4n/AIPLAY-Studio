@@ -28,7 +28,7 @@ import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel } from "../models.js";
 /* The two sources the numeral census checks the prose against. Imported rather
  * than retyped, which is the whole point of the census. */
 import { LAYER_TYPES } from "../vfx/store.js";
-import { commitSigma } from "../videolab/catalog.js";
+import { commitSigma, COMPARE_CONFIGS } from "../videolab/catalog.js";
 
 let pass = 0;
 const failures = [];
@@ -152,7 +152,21 @@ for (const [id, eng] of Object.entries(config.video.engines)) {
  * shift config.js actually ships. */
 const h3cfg = config.video.engines.h3;
 const turboBody = c.video.quality.find((q) => /distillation is applied/.test(q.body))?.body ?? "";
-for (const n of [4, 8, h3cfg.steps]) {
+/* The bare model's count is the Video Lab's no-LoRA arm, not config's default:
+ * since 2026-09-23 that default is a turbo setting (8 or 4, by what is on
+ * disk), and the sentence must still reach the path with no LoRA on it. */
+const bareSteps = COMPARE_CONFIGS.find((x) => x.id === "h3_quality")?.steps;
+ok(`the no-LoRA arm is above the turbo threshold (${bareSteps} > ${h3cfg.turboMaxSteps})`,
+  bareSteps > h3cfg.turboMaxSteps && turboBody.includes(`the bare model's ${W[bareSteps]} at`));
+/* The two turbo counts are the files this disk resolved, not a literal 4 and
+ * 8: the sentence reads them off turboLora4 and turboLora, and on an install
+ * set up from the Models screen (4-step files only) turboLora IS the 4-step
+ * file, so a literal 8 failed there while the page was right. config.js's
+ * default is not listed on its own any more: the sentence is about the
+ * builds, and the no-LoRA arm above covers the path without one. (Imported
+ * here, not at the top, so the import block stays as it was.) */
+const { loraStepsOf } = await import("../config.js");
+for (const n of new Set([loraStepsOf(h3cfg.turboLora4) ?? 4, loraStepsOf(h3cfg.turboLora) ?? 8, bareSteps])) {
   const s = commitSigma(n, h3cfg.shiftVideo)?.toFixed(3);
   ok(`the commit point at ${n} steps is computed, not quoted (sigma ${s})`,
     turboBody.includes(s),

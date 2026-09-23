@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config, prefsSnapshot } from "./config.js";
+import { config, prefsSnapshot, loraStepsOf } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
@@ -2663,8 +2663,24 @@ const server = http.createServer(async (req, res) => {
               /* Whether the 3-step distillation is actually on disk: config
                * falls back to the 4-step file at these step counts otherwise,
                * and a 4-step LoRA sampled at 3 is the wrong model. make_clip's
-               * "fast" reads this to choose 3 or 8. */
+               * "fast" and the Video screen's Fast chip read stepDefaults.fast
+               * below, which is 3 exactly where this is true. */
               turbo3Ready: /taomate/i.test(String(e.turboLora3 || "")),
+              /* The step counts this DISK runs matched (config.js, the block
+               * after `config`): Standard is 8 only where both 8-step files
+               * resolved, else 4, and Fast is 3 only where TaoMate did. The
+               * Video screen's slider opens on `standard` and its chips read
+               * all three, and make_clip's `quality` maps through them, so no
+               * surface keeps a literal 8 that a Models-screen install (4-step
+               * files only) would run as a 4-step LoRA at 8 steps. */
+              stepDefaults: e.stepDefaults ?? null,
+              turboBuilds: e.turboBuilds ?? null,
+              /* The step count each resolved file was distilled for, by slot
+               * (config.js loraStepsOf), so the screen names "the 4-step
+               * build" by the file that loads rather than by the
+               * turbo4MaxSteps threshold, which is 5. */
+              loraSteps: Object.fromEntries(["turboLora", "turboLora4", "turboLora3", "refTurboLora", "refTurboLora4"]
+                .map((k) => [k, loraStepsOf(e[k])])),
               /* The distillations this engine loads by itself: the Video screen's
                * LoRA picker leaves them out, because stacking one again would
                * apply it twice. */
