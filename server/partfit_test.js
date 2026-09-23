@@ -122,6 +122,40 @@ test("a VAE is judged twice, because one file feeds two different rows", () => {
   assert.match(src("../web/app.js"), /r\.fitAudio\?\.\[eng\]/, "and the audio one separately");
 });
 
+test("H3 reaches for the int8 video VAE first, because it is the faster one", () => {
+  /* ComfyUI 0.36 shipped three MiniMax H3 VAE speedups: a fused encoder kernel
+   * (automatic), fp16 accumulation behind `--fast`, and an int8 decoder as a
+   * drop-in weights swap. Both VAE files were already on this rig and config
+   * listed the fp16 one FIRST, so `pick()` took it and the faster build sat
+   * unused.
+   *
+   * MEASURED HERE, not quoted from the post, because the post's headline is 2x
+   * on encode+decode and that is not this machine's bottleneck: a clip is ~350 s
+   * of DiT sampling around a ~25 s VAE stage, and the encoder only ever sees two
+   * small reference images.
+   *
+   *     fp16 VAE     24 samples   median 360.9 s   (up to 464 s)
+   *     int8 VAE      5 samples   median  317.4 s   (287-347)
+   *
+   * About 12%, with every int8 sample under the fp16 median. Quality compared
+   * frame to frame on a face close-up: skin texture, hair strands, eye detail
+   * and the lip highlight all hold, no banding.
+   *
+   * `--fast fp16_accumulation` was tested too and is NOT set: 365.8 s with it
+   * against a 356 s median without, and 332 s for int8 without it against a
+   * 317 s median with. No measurable gain on a DiT-bound workload, and ComfyUI
+   * calls it "untested and potentially quality deteriorating" - so it buys
+   * nothing and carries risk.
+   *
+   * The int8 file is also 3,171 MB against fp16's 5,207 MB, which is 2 GB of
+   * headroom on a 16 GB card running --lowvram. */
+  const cfg = src("./config.js");
+  const order = /videoVae: pick\("vae",[\s\S]{0,40}?"([^"]+)",[\s\S]{0,40}?"([^"]+)"/.exec(cfg);
+  assert.ok(order, "the H3 videoVae pick is still a two-name pick()");
+  assert.match(order[1], /int8/, "the int8 build is named FIRST — pick() takes the first that exists");
+  assert.match(order[2], /fp16/, "and the fp16 build stays as the fallback for a rig without it");
+});
+
 test("the screen lists what fits, keeps unknowns, and says what it left out", () => {
   const app = src("../web/app.js"), html = src("../web/index.html");
   assert.match(app, /const fits = \(v\) => v !== "no";/,
