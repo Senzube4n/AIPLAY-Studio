@@ -534,6 +534,22 @@ export class ArtRunner extends EventEmitter {
     return this.#ckOffered ? "ck" : null;
   }
 
+  /** The attention a video graph carries, "ck" or null, for any engine. LTX: none.
+   *  H3: h3Attention(). An engine with its own picker (config `sparseAttention`, FastH3)
+   *  follows the person's per-render pick (job.attention, "kitchen" | "pytorch") else its
+   *  config default ("pytorch"); a Kitchen pick passes the SAME launcher and engine-offers
+   *  checks as H3, never around them. */
+  async videoAttention(job) {
+    const name = job.engine || config.video.engine;
+    if (name === "ltx") return null;
+    const eng = config.video.engines[name];
+    if (eng?.sparseAttention) {
+      const want = job.attention ?? eng.attention;
+      if (want !== "kitchen" && want !== "ck") return null;
+    }
+    return this.h3Attention();
+  }
+
   /** Idempotent, lazy, and never fatal — progress is a nicety, not the work. */
   #connect() {
     if (this.#ws && this.#ws.readyState <= 1) return;
@@ -1562,8 +1578,11 @@ export class ArtRunner extends EventEmitter {
       /* Comfy Kitchen int8 attention on H3 — 1.5-1.9x on the sampler, measured
        * (config.js). Named here for the reason the warning above gives: an
        * option this call does not list is dropped in silence, and a speedup
-       * dropped in silence is invisible — the clip is merely slow. */
-      attention: (job.engine || config.video.engine) === "ltx" ? null : await this.h3Attention(),
+       * dropped in silence is invisible — the clip is merely slow.
+       * ONE `attention:` key in this object: a second one is not an error in
+       * JavaScript, the later simply wins (fasth3_test.js guards it). FastH3's
+       * per-render pick is read inside videoAttention(). */
+      attention: await this.videoAttention(job),
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.
       keepAudio: job.keepAudio ?? !job.file.startsWith("clip:"),

@@ -274,3 +274,32 @@ test("prepare render request uses the planned scene and eligible owner without p
   assert.equal(f.node("cbPack").disabled, true);
   assert.ok(!f.calls.some((call) => ["pack", "accept"].includes(call.body?.action)));
 });
+
+
+test("movie generation handoff selects the saved scene without preparing or running work", async () => {
+  const f=fixture();
+  f.node("cbSeed").value="999"; f.node("cbSteps").value="40"; f.node("cbEngineMode").value="ltx";
+  await f.run('paintCollab(false, {slug:"episode",segmentId:"closing"})');
+  assert.equal(f.node("cbKind").value,"order");assert.equal(f.node("cbSegment").value,"closing");
+  for(const id of ["cbSeed","cbSteps","cbEngineMode"])assert.equal(f.node(id).value,"");
+  assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
+  assert.equal(f.run('selectCollabScene({slug:"episode",segmentId:"deleted"})'),false);
+  assert.equal(f.run('selectCollabScene({slug:"other",segmentId:"closing"})'),false);
+});
+
+
+test("movie handoff overrides a different project selected in Collab", async () => {
+  const f=fixture();f.node("cbProject").value="old-project";
+  f.context.respond=(url,body)=>url==="/api/mv/projects"?{projects:[{slug:"old-project"},{slug:"episode"}]}:f.defaults(url,body);
+  await f.run('paintCollab(false,{slug:"episode",segmentId:"closing"})');
+  assert.equal(f.node("cbProject").value,"episode");assert.equal(f.node("cbSegment").value,"closing");assert.equal(f.node("cbKind").value,"order");
+});
+
+
+test("standalone video handoff keeps its recipe separate from movie orders",async()=>{
+ const f=fixture(); const video={engine:"ltx",prompt:"Moonlight",width:1280,height:704,seconds:5,steps:8,guidance:3,keepAudio:false,seed:42};
+ f.context.recipe=video;await f.run("paintCollab(false,null,recipe)");f.node("cbTo").value=f.peer.fp;
+ assert.equal(f.node("cbKind").value,"video-recipe");
+ assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-recipe",to:f.peer.fp,video});
+ assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
+});

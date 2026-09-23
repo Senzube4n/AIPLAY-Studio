@@ -6,7 +6,7 @@ REM  Opens one window with both launch modes (Full Studio, Music only) and a
 REM  system check: graphics card, CUDA or ROCm, ComfyUI, models, YuE2.
 REM  Studio is opened in your browser only once ComfyUI reports it is ready.
 REM
-REM  Still a readable .cmd: it checks Node.js and the three npm packages, then
+REM  Still a readable .cmd: it checks Node.js and the npm packages, then
 REM  runs launcher\launcher.mjs, which you can read too. This console is the
 REM  launcher itself; closing it stops Studio.
 REM ============================================================================
@@ -34,6 +34,7 @@ if errorlevel 1 (
 if not exist "node_modules\ws" goto :deps
 if not exist "node_modules\three" goto :deps
 if not exist "node_modules\gltf-validator" goto :deps
+if not exist "node_modules\@pixiv\three-vrm" goto :deps
 goto :ready
 :deps
 echo   Fetching dependencies (a few seconds)...

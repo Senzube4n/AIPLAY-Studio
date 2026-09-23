@@ -22,6 +22,10 @@ node --check server/index.js || exit 1
 # *_test.{js,mjs,py} on disk must appear in this file or be exempted BY NAME
 # with a reason in the script. ~0.1 s.
 node scripts/suites_test.mjs || exit 1
+node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-runtime_test.js || exit 1
+node --check web/avatar-runtime.js || exit 1
+node --check web/avatar-appearance.js || exit 1
+node --test server/collab/video-recipe_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_studio_persistence.mjs || exit 1
@@ -463,6 +467,13 @@ ADAPTER_PY="$PY"
 # thousands of green lines. Each candidate must print its own path to count.
 [ -x "$ADAPTER_PY" ] || ADAPTER_PY="$(python3 -c "import sys;print(sys.executable)" 2>/dev/null || python -c "import sys;print(sys.executable)" 2>/dev/null)"
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_adapter_test.py || exit 1; fi
+if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_native_attention_test.py || exit 1; fi
+# Matte regression images need OpenCV/numpy, but no model or GPU.
+MATTE_PY="${AIPLAY_MESH_PYTHON:-${AIPLAY_RIG:-}/venv3d/Scripts/python.exe}"
+if [ -x "$MATTE_PY" ]; then "$MATTE_PY" server/mesh/matte_test.py || exit 1
+elif [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import cv2,numpy" >/dev/null 2>&1; then
+  "$ADAPTER_PY" server/mesh/matte_test.py || exit 1
+fi
 # imgselect decides where every other op lands, so a regression here is a
 # regression in all 25 adjustments and all 75 effects at once.
 if [ -x "$PY" ]; then "$PY" server/imgselect_test.py || exit 1; fi
@@ -688,6 +699,11 @@ node --test server/gpu_test.js || exit 1
 node --test server/download_test.js || exit 1
 # Changing the models folder keeps what is already downloaded.
 node --test server/modelsdir_test.js || exit 1
+# FastH3: the third video engine's graph, its attention pair and its download row.
+node --test server/fasth3_test.js || exit 1
+# Comfy API mode: the Router client, run queue, result reader, simple forms
+# (checked against the published schemas in server/router/fixtures) and the mode.
+node --test server/router/router_test.js || exit 1
 # Your own LoRAs on the Video screen reach both video graphs.
 node --test server/video_lora_test.js || exit 1
 node --test server/power_test.js || exit 1

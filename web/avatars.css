@@ -15,3 +15,8 @@
   --ok:hsl(142,76%,46%);--err:hsl(0,85%,60%);--warn:hsl(38,92%,55%);
   --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
   --disp:Bahnschrift,"DIN Alternate","Segoe UI Variable Display",system-ui,sans-serif}
+
+#appearance-panel[hidden]{display:none}#appearance-panel .appearance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 18px}#appearance-panel .appearance-grid label{margin:8px 0}#appearance-panel input[type=color]{width:100%;padding:4px}#appearance-panel input[type=range]{width:100%;padding:0}#appearance-panel details{margin-top:16px}#appearance-panel .camera-controls{margin-bottom:12px}
+
+body.avatar-overlay{background:transparent;overflow:hidden}body.avatar-overlay header,body.avatar-overlay .intro,body.avatar-overlay aside,body.avatar-overlay #avatarInfoHost,body.avatar-overlay #status,body.avatar-overlay #details,body.avatar-overlay #appearance-panel,body.avatar-overlay .section-heading,body.avatar-overlay .camera-controls,body.avatar-overlay .motion-controls{display:none}body.avatar-overlay main,body.avatar-overlay .layout,body.avatar-overlay .workspace,body.avatar-overlay .viewport-panel{display:block;width:100%;height:100vh;max-width:none;margin:0;padding:0;border:0;border-radius:0;background:transparent}body.avatar-overlay #viewport{width:100%;height:100vh;min-height:0;border-radius:0;background:transparent}
+body.avatar-overlay #status.error{display:block;position:fixed;top:12px;left:12px;right:12px;z-index:2;background:var(--panel);padding:10px;border-radius:7px}

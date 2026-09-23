@@ -4,6 +4,7 @@ Run: python server/mesh/unirig_adapter_test.py
 The executor is recorded, not a model; these tests make no quality claims.
 """
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -457,6 +458,58 @@ class CrossLanguageAgreementTests(unittest.TestCase):
             file.write_bytes(self.fixture({"skinned": True, "breaks": "count"}))
             with self.assertRaisesRegex(RuntimeError, "bind matrices"):
                 adapter.validate_skinned_glb(file)
+
+
+class NativeRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="unirig-native-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "source"
+        # Small source contracts exercise preparation without an upstream checkout.
+        self.sources = {
+            "src/data/extract.py": 'for file in inputs:\n            file_name = file.removeprefix("./")\n',
+            "src/model/unirig_skin.py": "from flash_attn.modules.mha import MHA\n",
+            "configs/model/unirig_ar_350m_1024_81920_float32.yaml": "_attn_implementation: flash_attention_2\n",
+            "src/model/pointcept/models/PTv3Object.py": '    flash_attn = None\n            assert flash_attn is not None, "Make sure flash_attn is installed."\nflash_attn.flash_attn_varlen_qkvpacked_func(\n',
+        }
+        for rel, source in self.sources.items():
+            file = self.repo / rel
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(source, encoding="utf-8")
+        (self.repo / "run.py").write_text("# source fixture\n")
+        contract = {rel: hashlib.sha256(source.encode()).hexdigest() for rel, source in self.sources.items()}
+        self.patcher = patch.dict(adapter.NATIVE_SOURCE_HASHES, contract, clear=True)
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+
+    def test_preparation_is_private_and_preserves_ragged_point_attention(self):
+        target = adapter.prepare_native_runtime(self.repo, self.root / "runtime")
+        self.assertIn("os.path.basename(file)", (target / "src/data/extract.py").read_text())
+        self.assertIn("NativeCrossMHA as MHA", (target / "src/model/unirig_skin.py").read_text())
+        point = (target / "src/model/pointcept/models/PTv3Object.py").read_text()
+        self.assertIn("native_varlen_qkvpacked(", point)
+        self.assertNotIn("flash_attn.flash_attn_varlen_qkvpacked_func(", point)
+        self.assertNotIn("enable_flash=False", point)
+        self.assertTrue((target / "src/model/aiplay_native_attention.py").is_file())
+        for rel, source in self.sources.items():
+            self.assertEqual((self.repo / rel).read_text(), source)
+        self.assertFalse((self.repo / "src/model/aiplay_native_attention.py").exists())
+
+    def test_unknown_source_is_rejected_before_copy(self):
+        (self.repo / "src/model/unirig_skin.py").write_text("# changed upstream\n")
+        with self.assertRaisesRegex(RuntimeError, "source contract changed"):
+            adapter.prepare_native_runtime(self.repo, self.root / "runtime")
+        self.assertFalse((self.root / "runtime").exists())
+
+    def test_backend_requires_explicit_valid_choice(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(adapter.attention_backend(), "flash_attention_2")
+        with patch.dict(os.environ, {"AIPLAY_UNIRIG_ATTENTION": "sdpa"}):
+            self.assertEqual(adapter.attention_backend(), "sdpa")
+        with patch.dict(os.environ, {"AIPLAY_UNIRIG_ATTENTION": "pretend-flash"}):
+            with self.assertRaises(ValueError):
+                adapter.attention_backend()
 
 
 if __name__ == "__main__":

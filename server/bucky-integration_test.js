@@ -85,13 +85,18 @@ test("model-folder MCP exposes new-folder creation and removal without download 
   const t = modelTools(api).find(t => t.name === "models_folder");
   await t.run({ action: "use", dir: "F:\\Models", force: true, create: true });
   await t.run({ action: "drop", dir: "D:\\OldModels" });
+  // The Models screen's "Add as extra", as a tool: plain control, number, tool.
+  await t.run({ action: "also", dir: "E:\\MoreModels" });
   assert.deepEqual(calls, [
     ["POST", "/api/models", { action: "setModelsDir", dir: "F:\\Models", force: true, create: true }],
     ["POST", "/api/models", { action: "dropAlso", dir: "D:\\OldModels" }],
+    ["POST", "/api/models", { action: "addAlso", dir: "E:\\MoreModels" }],
   ]);
+  assert.ok(t.inputSchema.properties.action.enum.includes("also"));
   await assert.rejects(t.run({ action: "use", dir: "F:\\Missing", create: true }), /force/);
   await assert.rejects(t.run({ action: "drop", dir: " " }), /folder/);
-  assert.equal(calls.length, 2);
+  await assert.rejects(t.run({ action: "move", dir: "F:\\Models" }), /scan, use, also or drop/);
+  assert.equal(calls.length, 3);
 });
 
 test("typed load/unload and video-enable actions preserve the API contracts and chat classification", async () => {

@@ -338,7 +338,12 @@ try {
      * and drops the rest in silence — so a speedup nobody passes is simply
      * absent, and a slow clip is not an error anyone sees. */
     const art = fs.readFileSync(new URL("./art.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-    ok("art.js hands the H3 graph its attention", /attention: \(job\.engine \|\| config\.video\.engine\) === "ltx" \? null : await this\.h3Attention\(\)/.test(art));
+    ok("art.js hands the H3 graph its attention", /attention: await this\.videoAttention\(job\),/.test(art));
+    {
+      const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);
+      ok("...videoAttention gives LTX no node", /if \(name === "ltx"\) return null;/.test(va));
+      ok("...and every H3-family engine goes through h3Attention(), never around it", /return this\.h3Attention\(\);/.test(va));
+    }
     const fn = art.slice(art.indexOf("async h3Attention()"), art.indexOf("async h3Attention()") + 900);
     ok("h3Attention lets an EXPLICIT launcher choice other than CK win",
       /const chosen = config\.comfy\?\.options\?\.attention;\s*if \(chosen && chosen !== "--use-ck-attention"\) return null;/.test(fn));

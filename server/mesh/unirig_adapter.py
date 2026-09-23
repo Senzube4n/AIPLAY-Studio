@@ -4,6 +4,7 @@ No packages or weights are installed here. A successful prerequisite probe is
 not an end-to-end model validation; each actual run must produce a skinned GLB.
 """
 import argparse
+import hashlib
 import importlib
 import importlib.metadata
 import importlib.util
@@ -28,6 +29,67 @@ CHECKPOINTS = {
     "skeleton": "skeleton/articulation-xl_quantization_256/model.ckpt",
     "skin": "skin/articulation-xl/model.ckpt",
 }
+# Native inference is opt-in and tested against these upstream source contracts
+# (UniRig 6793c6640ff01c8fb389f3993434124bb43d2933). Normalize line endings before
+# hashing so a Windows checkout and a source archive have the same contract.
+NATIVE_SOURCE_HASHES = {
+    "src/data/extract.py": "f31041bb2da7286ba431541602b5fe7218b52a4b0cf4272d46029164a0138891",
+    "src/model/unirig_skin.py": "68bd4134462997d945c7f535a5787d93b10c3b65240de5b4d187624f61bfcf9a",
+    "src/model/pointcept/models/PTv3Object.py": "32ea574f3d4fa85ebdb7e74f3549f1637745e6b68739adfc91110bcb07e20ced",
+    "configs/model/unirig_ar_350m_1024_81920_float32.yaml": "5baa90902a4ae8ef64693df612646df149543d410290f5a48b1db0442111f511",
+}
+
+
+def attention_backend():
+    backend = os.environ.get("AIPLAY_UNIRIG_ATTENTION", "flash_attention_2")
+    if backend not in ("flash_attention_2", "sdpa"):
+        raise ValueError("AIPLAY_UNIRIG_ATTENTION must be flash_attention_2 or sdpa")
+    return backend
+
+
+def native_source_contract(repo):
+    for rel, expected in NATIVE_SOURCE_HASHES.items():
+        source = (Path(repo) / rel).read_text(encoding="utf-8")
+        if hashlib.sha256(source.encode("utf-8")).hexdigest() != expected:
+            raise RuntimeError("Native UniRig source contract changed: " + rel
+                               + "; use the tested upstream revision or revalidate this adapter")
+
+
+def prepare_native_runtime(repo, target):
+    """Adapt only a private source copy; never install or impersonate flash_attn."""
+    repo, target = Path(repo), Path(target)
+    native_source_contract(repo)
+    target.mkdir(parents=True, exist_ok=False)
+    for directory in ("src", "configs"):
+        shutil.copytree(repo / directory, target / directory,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copyfile(repo / "run.py", target / "run.py")
+    if (repo / "LICENSE").is_file():
+        shutil.copyfile(repo / "LICENSE", target / "LICENSE")
+
+    def replace(rel, old, new):
+        file = target / rel
+        source = file.read_text(encoding="utf-8")
+        if source.count(old) != 1:
+            raise RuntimeError("Native UniRig source pattern changed: " + rel)
+        file.write_text(source.replace(old, new), encoding="utf-8")
+
+    replace("src/data/extract.py", 'for file in inputs:\n            file_name = file.removeprefix("./")',
+            "for file in inputs:\n            file_name = os.path.basename(file)")
+    replace("src/model/unirig_skin.py", "from flash_attn.modules.mha import MHA",
+            "from .aiplay_native_attention import NativeCrossMHA as MHA")
+    replace("configs/model/unirig_ar_350m_1024_81920_float32.yaml",
+            "_attn_implementation: flash_attention_2", "_attn_implementation: sdpa")
+    replace("src/model/pointcept/models/PTv3Object.py", "    flash_attn = None",
+            "    flash_attn = None\nfrom ...aiplay_native_attention import native_varlen_qkvpacked")
+    replace("src/model/pointcept/models/PTv3Object.py",
+            '            assert flash_attn is not None, "Make sure flash_attn is installed."',
+            "            # Explicit native SDPA keeps the original ragged partitions.")
+    replace("src/model/pointcept/models/PTv3Object.py", "flash_attn.flash_attn_varlen_qkvpacked_func(",
+            "native_varlen_qkvpacked(")
+    shutil.copyfile(Path(__file__).with_name("unirig_native_attention.py"),
+                    target / "src/model/aiplay_native_attention.py")
+    return target
 IMPORTS = {
     "torch": "PyTorch inference runtime",
     "bpy": "Blender mesh extraction and skin transfer",
@@ -61,9 +123,17 @@ def probe():
     """Import prerequisites without loading model weights or allocating tensors."""
     repo, weights = locations()
     missing, versions = [], {}
+    backend = "invalid"
 
     def fail(module, error, why):
         missing.append({"module": module, "error": str(error), "why": why})
+
+    try:
+        backend = attention_backend()
+        if backend == "sdpa":
+            native_source_contract(repo)
+    except Exception as exc:
+        fail("attention backend", str(exc), "Native SDPA is an explicit experimental adapter for the tested source revision.")
 
     versions["python"] = ".".join(map(str, sys.version_info[:3]))
     if sys.version_info[:2] != (3, 11):
@@ -76,6 +146,8 @@ def probe():
         if not file.is_file() or file.stat().st_size < 1024:
             fail(name + " checkpoint", str(file), "A complete local checkpoint is required; this adapter never downloads weights.")
     for module, why in IMPORTS.items():
+        if module == "flash_attn.modules.mha" and backend == "sdpa":
+            continue
         try:
             importlib.import_module(module)
         except Exception as exc:
@@ -90,6 +162,8 @@ def probe():
             pass  # The import failure above is the useful diagnostic.
     try:
         versions["torch"] = importlib.metadata.version("torch")
+        if backend == "sdpa" and versions["torch"].split("+")[0] != "2.5.1":
+            fail("native torch version", versions["torch"], "The native backend was measured with torch 2.5.1; use an isolated compatible runtime.")
         torch = sys.modules.get("torch")
         if torch is not None and not torch.version.cuda:
             fail("CUDA", "CPU-only PyTorch", "Both upstream inference tasks require an NVIDIA CUDA runtime.")
@@ -103,19 +177,24 @@ def probe():
         fail("OPT configuration", type(exc).__name__ + ": " + str(exc), "Cache facebook/opt-350m/config.json in the separate runtime before running; network access is disabled during inference.")
     if not missing:
         # Exercise the real entry-point import graph, still without main/model construction.
-        try:
-            import runpy
-            sys.path.insert(0, str(repo))
-            runpy.run_path(str(repo / "run.py"), run_name="_aiplay_unirig_import_probe")
-        except Exception as exc:
-            fail("upstream entry point", type(exc).__name__ + ": " + str(exc), "run.py must import successfully before any model inference.")
-        finally:
-            if sys.path[0] == str(repo):
-                sys.path.pop(0)
+        with tempfile.TemporaryDirectory(prefix="aiplay-unirig-probe-") as temp:
+            checked_repo = repo
+            try:
+                import runpy
+                if backend == "sdpa":
+                    checked_repo = prepare_native_runtime(repo, Path(temp) / "runtime")
+                sys.path.insert(0, str(checked_repo))
+                runpy.run_path(str(checked_repo / "run.py"), run_name="_aiplay_unirig_import_probe")
+            except Exception as exc:
+                fail("upstream entry point", type(exc).__name__ + ": " + str(exc), "run.py must import successfully before any model inference.")
+            finally:
+                if sys.path[0] == str(checked_repo):
+                    sys.path.pop(0)
     return {"canRig": not missing, "missing": missing, "python": versions["python"],
             "executable": sys.executable, "versions": versions,
             "invocationImplemented": True, "endToEndValidated": False,
             "validation": "prerequisite imports and local configuration only; no GPU model run",
+            "attentionBackend": backend, "experimental": backend == "sdpa",
             "offline": True, "stages": ["extract", "skeleton", "extract-skeleton", "skin", "merge"]}
 
 
@@ -573,19 +652,22 @@ def run_stages(source, output, repo, weights, python=sys.executable, seed=42, ex
     # The output's filesystem is used so os.replace is atomic even for in-place rigging.
     with tempfile.TemporaryDirectory(prefix=".unirig-", dir=output.parent) as temp:
         work = Path(temp)
+        backend = attention_backend()
+        runtime = prepare_native_runtime(repo, work / "runtime") if backend == "sdpa" else repo
         staged_source = work / "source.glb"
         shutil.copyfile(source, staged_source)
-        for stage in stage_plan(python, repo, weights, staged_source, work, seed):
+        for stage in stage_plan(python, runtime, weights, staged_source, work, seed):
             begin = time.monotonic()
             print("[unirig] " + stage["id"], file=sys.stderr, flush=True)
-            executor(stage["argv"], cwd=str(repo), env=offline_env(), check=True)
+            executor(stage["argv"], cwd=str(runtime), env=offline_env(), check=True)
             if not stage["expected"].is_file() or stage["expected"].stat().st_size == 0:
                 raise RuntimeError("UniRig " + stage["id"] + " finished without its expected artifact: " + str(stage["expected"]))
             stages.append({"stage": stage["id"], "seconds": round(time.monotonic() - begin, 3)})
         checked = validate_skinned_glb(work / "rigged.glb")
         os.replace(work / "rigged.glb", output)
     return {"rigSeconds": round(time.monotonic() - started, 3), "rigStages": stages,
-            "rigSeed": seed, "rigRuntime": python, "rigValidation": checked, "rigOffline": True}
+            "rigSeed": seed, "rigRuntime": python, "rigValidation": checked, "rigOffline": True,
+            "rigAttentionBackend": backend, "rigExperimental": backend == "sdpa"}
 
 
 def main():
@@ -594,7 +676,11 @@ def main():
     parser.add_argument("--input")
     parser.add_argument("--output")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--attention", choices=("flash_attention_2", "sdpa"),
+                        help="explicit experimental SDPA uses a verified private source copy")
     args = parser.parse_args()
+    if args.attention:
+        os.environ["AIPLAY_UNIRIG_ATTENTION"] = args.attention
     os.environ.update({k: v for k, v in offline_env().items() if k in ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "WANDB_MODE", "PYTHONDONTWRITEBYTECODE"]})
     measured = probe()
     if args.probe:

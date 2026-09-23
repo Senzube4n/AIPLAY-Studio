@@ -75,13 +75,14 @@ export function paintLocal(d, root = document) {
         aria-label="Models folder path">
       <button class="btn sm ghost" type="button" data-mf="browse">Browse…</button>
       <button class="btn sm ghost" type="button" data-mf="check">Check</button>
+      <button class="btn sm ghost" type="button" data-mf="also" disabled>Add as extra</button>
       <button class="btn sm" type="button" data-mf="use" disabled>Use this folder</button>
     </div>
-    <p class="hint" id="mfNote">Studio checks for, downloads into and loads from this folder. To download
-      somewhere else (a bigger drive), pick or type a folder, even an empty or new one, and press Use this folder.${
+    <p class="hint" id="mfNote">Studio checks for, downloads into and loads from this folder. Use this folder
+      moves new downloads to another one; Add as extra also checks a second folder of models.${
       others.length ? ` The engine also loads from ${others.map(esc).join(" · ")}.` : ""}</p>
     ${(loc.also || []).length ? `<div class="mfalso">${(loc.also || []).map((d) => `
-      <span>Still loading the models already in <code>${esc(d)}</code></span>
+      <span>Also loading the models in <code>${esc(d)}</code></span>
       <button class="btn sm ghost" type="button" data-mf-drop="${esc(d)}">Stop using</button>`).join("")}</div>` : ""}`;
   if (draft !== null) root.getElementById("mfPath").value = draft;
 
@@ -165,6 +166,7 @@ export function initLocal(refresh, root = document) {
     n.classList.toggle("fitbad", bad);
   };
   const useBtn = () => root.querySelector('[data-mf="use"]');
+  const alsoBtn = () => root.querySelector('[data-mf="also"]');
 
   /* An empty or not-yet-made folder is a legitimate choice: it is where NEW
    * downloads go. The folder being left is remembered by the server and still
@@ -182,10 +184,12 @@ export function initLocal(refresh, root = document) {
         note(`${dir} does not exist yet. Use this folder creates it and sends new downloads there; `
           + "the models you already have keep working from where they are.");
         if (b) b.disabled = false;
+        if (alsoBtn()) alsoBtn().disabled = true;
         return;
       }
       note(r.error || "Could not read that folder.", true);
       if (b) b.disabled = true;
+      if (alsoBtn()) alsoBtn().disabled = true;
       return;
     }
     const parts = Object.entries(r.folders || {}).map(([k, v]) => `${k} ${v.files}`);
@@ -194,10 +198,13 @@ export function initLocal(refresh, root = document) {
       ? `${r.files} model files, ${gb(r.bytes)}: ${parts.join(" · ")}.${same(r.dir, current) ? " This is the current folder." : ""}`
       : `${r.dir} has no models yet. Use this folder sends new downloads there; the models you already have keep working from where they are.`);
     if (b) b.disabled = same(r.dir, current);
+    if (alsoBtn()) alsoBtn().disabled = !r.files || same(r.dir, current);
   }
 
   root.addEventListener("input", (e) => {
-    if (e.target.id === "mfPath" && useBtn()) useBtn().disabled = true;
+    if (e.target.id !== "mfPath") return;
+    if (useBtn()) useBtn().disabled = true;
+    if (alsoBtn()) alsoBtn().disabled = true;
   });
   root.addEventListener("change", (e) => {
     const sel = e.target.closest?.("[data-mo-sel]");
@@ -229,6 +236,10 @@ export function initLocal(refresh, root = document) {
         await check(r.path);
       } else if (mf?.dataset.mf === "check") {
         await check(root.getElementById("mfPath").value);
+      } else if (mf?.dataset.mf === "also") {
+        const r = await post({ action: "addAlso", dir: root.getElementById("mfPath").value });
+        note(r.ok ? r.note : (r.error || "Not saved."), !r.ok);
+        return;   // stays disabled: nothing changes until restart
       } else if (mf?.dataset.mf === "use") {
         const r = await post({ action: "setModelsDir", dir: root.getElementById("mfPath").value, force: fresh, create: fresh });
         note(r.ok ? r.note : (r.error || "Not saved."), !r.ok);
@@ -246,7 +257,7 @@ export function initLocal(refresh, root = document) {
     } finally {
       /* "Use this folder" stays disabled once saved — nothing changes until a
        * restart, and check() re-enables it for a different folder. */
-      if (mf?.dataset.mf !== "use") btn.disabled = false;
+      if (mf?.dataset.mf !== "use" && mf?.dataset.mf !== "also") btn.disabled = false;
     }
   });
 }

@@ -6,6 +6,7 @@
 <title>AIPLAY Studio</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="router.css">
 <link rel="stylesheet" href="galleries.css">
 <link rel="stylesheet" href="music-input.css">
 <link rel="stylesheet" href="music-workflows.css">
@@ -50,9 +51,24 @@
 
   <!-- ───────────────── rail ───────────────── -->
   <nav class="rail">
+    <!-- Drag the right edge to widen it; double-click puts it back. The
+         meters pair two to a row, so how much of their text fits is the
+         owner's call rather than one number baked in at one screen size. -->
+    <button class="railgrip" type="button" id="railGrip" tabindex="-1"
+      aria-label="Drag to resize the menu, double-click to reset"
+      title="Drag to resize · double-click to reset"></button>
     <!-- Drop the real AI PLAY mark at web/assets/aiplay-logo.png and it replaces
          the wordmark automatically. The manifest icon in the March export turned
          out to be the old Midnight Tée branding, so this is a placeholder. -->
+    <!-- ⚠ A LICENCE CONDITION, ABOVE EVERYTHING ELSE IN THE WINDOW.
+         MiniMax-Music3 §3.1 and MiniMax H3 §IV.2 ask for the model's name
+         shown prominently in the interface of a product that uses it, which is
+         why it is here rather than on a credits page — an About box is exactly
+         what the requirement exists to avoid. It is a button: a name with no
+         explanation invites "why is this here", and the answer is one dialog
+         away instead of nowhere. Painted by musicEnginePaint() in app.js. -->
+    <button class="poweredby" type="button" id="attrib" hidden
+      title="Why this name is here"><b id="poweredName">MiniMax-Music3</b><i aria-hidden="true">?</i></button>
     <div class="brand">
       <img id="logo" src="assets/aiplay-logo.png?v=1" alt="AI PLAY" hidden>
       <div class="wordmark"><b>AI PLAY</b><span>STUDIO</span></div>
@@ -66,11 +82,16 @@
       <div class="navgroup"><div class="navhead"><span class="lbl">Create</span></div>
       <a href="#" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
       <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
+      <!-- Shown only in the launcher's "Use Comfy API" mode (web/app.js applyStatus),
+           where the rest of this group is hidden. Below Chat and Music, which
+           head the group in Full Studio (the owner's ask, 2026-09-19;
+           server/chat/ui_test.js). -->
+      <a href="#" data-view="router" title="Comfy API" hidden><i>&#9729;</i><span class="lbl">Comfy API</span></a>
       <a href="#" data-view="musiclab" title="Music Lab"><i>♫</i><span class="lbl">Music Lab</span></a>
       <a href="#" data-view="images" title="Images"><i>▣</i><span class="lbl">Images</span></a>
       <a href="#" data-view="video" title="Video"><i>▷</i><span class="lbl">Video</span></a>
       <a href="#" data-view="vfx" title="VFX"><i>◈</i><span class="lbl">VFX</span></a>
-      <a href="avatars.html" data-page="avatars" title="Avatars"><i>◇</i><span class="lbl">Avatars</span></a>
+      <a href="avatars.html" data-page="avatars" title="3D"><i>◇</i><span class="lbl">3D</span></a>
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">Edit</span></div>
       <a href="#" data-view="workflow" title="Workflow"><i>❖</i><span class="lbl">Workflow</span></a>
@@ -101,30 +122,62 @@
       <a href="#" data-view="thanks" title="Thanks"><i>&#9829;</i><span class="lbl">Thanks</span></a>
     </div>
     <div class="railfoot">
-      <!-- EVERYTHING THAT IS COMING, in one place that survives a tab switch.
-           The Songs screen already showed what was rendering, but only while you
-           were looking at it — and the number that matters when you are deciding
-           whether to go to bed is the SUM, not the current job. -->
-      <div class="queuebox" id="queueBox" hidden>
-        <div class="qhead"><b id="qTotal"></b><span id="qEta"></span></div>
-        <div class="qrows" id="qRows"></div>
-        <!-- Stops whatever is generating, of any kind. Until this existed the
-             only cancel in the app was for the SONG job, so a 28-minute clip
-             queued by mistake had to be waited out and a queue of boards could
-             only be cleared by restarting the server. -->
-        <!-- One row for both: the rail is 150px wide and these were taking a
-             line each, which is what pushed the panel out of space. -->
-        <div class="qfoot">
-          <button type="button" class="qstop" id="qStop" title="Stop everything that is generating">Stop</button>
-          <a href="#" class="qmore" data-go="jobs" title="Every job this session, with timings">all jobs &rsaquo;</a>
+      <!-- ⚠ ONE BOX FOR WHAT IS BEING MADE, and it is the only one.
+           There were two, eight inches apart, saying the same thing in
+           different words: a "working / <title> / Stop / all jobs" panel and a
+           "▶ song · <title> · ~4m / 1 job remaining · eta ≈ 4m" panel. Two
+           panels counting the same queue is two chances to disagree, and it
+           read as two queues.
+
+           IT IS A DROP-UP. The strip is one line — what is being made, and
+           how long it has left — and the rest opens UPWARD over the rail on
+           hover: the panel is at the foot of the window, so a menu that opened
+           downward would open off the screen. Hover rather than click because
+           the whole point is a glance. Counts and ETAs come from what THIS
+           session measured, so a budget-video night and a native-video night
+           estimate differently. -->
+      <div class="workbox" id="workBox" hidden>
+        <!-- The panel, above the strip: what is being made, what is waiting
+             behind it, what has been finished today, and the two things you
+             might do about it. -->
+        <div class="wbpanel" id="wbPanel">
+          <div class="wbhead"><b id="wbState">working</b><span id="wbEta"></span></div>
+          <!-- The line is the way in: a click opens the jobs page, idle or not.
+               Without it the idle panel was a dead end — its Stop button is
+               hidden when there is nothing to stop, so nothing in it led
+               anywhere. -->
+          <div class="wbnow" id="wbNow" data-go="jobs" title="See every job this session"></div>
+          <div class="wbrest" id="wbRest" hidden></div>
+          <!-- Stops whatever is generating, of any kind. Until this existed the
+               only cancel in the app was for the SONG job, so a 28-minute clip
+               queued by mistake had to be waited out and a queue of boards could
+               only be cleared by restarting the server.
+               One row for both: the rail is narrow and a line each is what
+               pushed the old panel out of space. -->
+          <div class="wbfoot">
+            <button type="button" class="qstop" id="qStop" title="Stop everything that is generating">Stop</button>
+            <a href="#" class="qmore" data-go="jobs" title="Every job this session, with timings">all jobs &rsaquo;</a>
+          </div>
         </div>
+        <button type="button" class="wbstrip" id="wbStrip" aria-expanded="false"
+          aria-controls="wbPanel" title="What is being made. Open for the queue and the controls.">
+          <i class="wbdot" aria-hidden="true"></i><span id="wbLine">idle</span><span class="wbcaret" aria-hidden="true">&#9652;</span>
+        </button>
       </div>
       <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">♥ Support on Ko-fi</a>
-      <!-- Licence requirement: MiniMax-Music3 shown prominently, not in an About box. -->
-      <!-- VRAM and system RAM together. They are coupled on this engine: every
-           low-VRAM tier works by streaming weights from system memory, so a
-           machine short on RAM is slow for a different reason than one short on
-           card — and the VRAM bar alone cannot tell those two apart. -->
+      <!-- WHAT RUNS OUT, all four of them. VRAM and system RAM are coupled on
+           this engine: every low-VRAM tier streams weights from system memory,
+           so a machine short on RAM is slow for a different reason than one
+           short on card, and the VRAM bar alone cannot tell those apart. Disk
+           is the one that runs out QUIETLY — a download stops and nothing had
+           been counting. The CPU is the only meter that means anything at all
+           on the CPU builds. -->
+      <!-- Each has its own fill bar: the number is exact and the bar is the
+           glance. ⚠ NO DIVIDERS BETWEEN THEM. Every meter used to carry a
+           border-top, and --edge is a translucent blue, so four meters drew
+           four blue rules across the foot of the rail on top of their four
+           fill bars. They are one block with one line above it. -->
+      <div class="meters">
       <div class="gpu" id="gpuBox" hidden>
         <div class="gpubar"><i id="gpuFill"></i></div>
         <span id="gpuText"></span>
@@ -133,20 +186,16 @@
         <div class="gpubar"><i id="ramFill"></i></div>
         <span id="ramText"></span>
       </div>
-      <!-- The mini queue: what is rendering, what is next, how much is left.
-           Counts and ETAs come from what THIS session actually measured, so a
-           budget-video night and a native-video night estimate differently. -->
-      <div class="miniq" id="miniQ" hidden data-go="jobs" title="See every job this session">
-        <div class="miniqNow" id="miniqNow"></div>
-        <div class="miniqNext" id="miniqNext" hidden></div>
-        <div class="miniqTally" id="miniqTally"></div>
+      <div class="gpu" id="diskBox" hidden>
+        <div class="gpubar"><i id="diskFill"></i></div>
+        <span id="diskText"></span>
       </div>
-      <!-- Slimmed, not removed: the MiniMax-Music3 credit on the main window is
-           a licence condition (settled 2026-08-19) — the Models page listing is
-           in ADDITION to it, not instead of it. -->
-      <div class="attrib slim">
-        Powered by <b id="poweredName">MiniMax-Music3</b><span id="poweredEngine"></span> · <span id="engineLine">starting…</span>
+      <div class="gpu" id="cpuBox" hidden>
+        <div class="gpubar"><i id="cpuFill"></i></div>
+        <span id="cpuText"></span>
       </div>
+      </div><!-- /.meters -->
+      <div class="attrib slim" id="engineLineWrap" hidden><span id="engineLine"></span></div>
     </div>
   </nav>
 
@@ -175,9 +224,16 @@
              `loadedModel` in /api/status (the job runner's own record — ComfyUI
              lists no loaded models). Nothing here has to be touched: the first
              song loads the model and a different model unloads the old one. -->
+        <!-- ⚠ ONE BUTTON, AND IT IS ALWAYS THERE. Unload frees whatever
+             ComfyUI is holding, so it is shown for every engine rather than a
+             list of three, and it is DISABLED rather than absent when there
+             is nothing on the card: a control that comes and goes teaches
+             nobody where it lives. Load is kept hidden, not deleted — the
+             route and the handler are still wired and the first song loads
+             the model anyway. -->
         <span class="mload" id="modelLoad" hidden>
           <button class="btn sm ghost" type="button" id="btnModelLoad" hidden>Load</button>
-          <button class="btn sm ghost" type="button" id="btnModelUnload" hidden>Unload</button>
+          <button class="btn sm ghost" type="button" id="btnModelUnload">Unload</button>
         </span>
         <label class="mpill" title="Choose the music model">
           <b id="musicPillName">Model</b><span class="caret">▾</span>
@@ -349,35 +405,53 @@
          back open on Song. -->
     <div class="slide" id="lyricsSlide"><div class="slidein">
     <details class="sbox" id="lyricsBox" open>
-      <summary>Lyrics<button class="lyrswap" type="button" id="lyricsSwap" hidden
-        title="Switch between your lyrics and an instrumental structure">🎼 Instrumental</button></summary>
+      <!-- ⚠ A SWITCH BETWEEN TWO WAYS TO FILL THIS BOX, not between two kinds
+           of song. It used to be one button reading "🎼 Instrumental" / "✎
+           Lyrics", which made no sense: both sides are the lyrics field, and
+           what actually changes is whether you write the words yourself or
+           have a section structure written for you. The right-hand side is
+           still what the engine calls an instrumental (bare section tags and
+           no words) — that is just not what the control is FOR. -->
+      <summary>Lyrics<span class="lyrswap" id="lyricsSwap" hidden role="group"
+        aria-label="What goes in this box"><button type="button" data-lyrmode="song"
+        aria-pressed="true">Write</button><button type="button" data-lyrmode="instrumental"
+        aria-pressed="false">Structure</button></span></summary>
     <div class="field" id="lyricsField">
       <div class="tagbar" id="lyricTags"></div>
+      <!-- STRUCTURE MODE lives in the same field, with its picker exactly where
+           the tag strip is: pick a shape, drag for how many sections, and the
+           text appears in the box below in the same place your words would.
+           Instrumentals stop after ~30 s with no lyrics, because the model has
+           nothing to pace itself against; section tags with no words fix it
+           (measured 32.5 s -> 157.2 s), which is what this writes. -->
+      <div class="structbar" id="instrField" hidden>
+        <select id="structure" class="sel2 sm" aria-label="Structure">
+          <option value="electronic">Electronic / dance</option>
+          <option value="orchestral">Orchestral / cinematic</option>
+          <option value="band">Rock / band</option>
+          <option value="ambient">Ambient / drone</option>
+          <option value="jazz">Jazz / small group</option>
+          <option value="lofi">Lo-fi / beats</option>
+        </select>
+        <input id="sections" type="range" min="2" max="20" step="1" value="8"
+          aria-label="How many sections">
+        <span class="sp meta" id="sectionsV">8 sections</span>
+      </div>
       <!-- 7 rows, not 9. It still shows a verse and a chorus at once, resizes by
            drag, and scrolls past that — while giving ~50px back to the panel. -->
       <textarea id="lyrics" rows="7" spellcheck="false"
         placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
+      <!-- ⚠ A TEXTAREA, and writable on purpose. It was a <pre> in a black box
+           that matched nothing else on the screen, and it was contenteditable
+           anyway — so it looked like output you could not touch while being
+           input you could. Same box as the lyrics above it; edit the structure
+           it writes for you, or write one from scratch. -->
+      <textarea id="scaffold" rows="7" spellcheck="false" hidden
+        aria-label="Section structure"></textarea>
       <!-- Kept to ONE line. The longer wording wrapped to two at this column
            width, costing 16px on every render to say the same thing. -->
       <div class="fieldfoot"><p class="hint cnt"><span class="cc" id="lyricsCount"></span></p>
         <div class="ptools" data-field="lyrics" data-gallery="lyrics" data-label="lyrics"></div></div>
-    </div>
-
-    <!-- Instrumentals stop after ~30 s with no lyrics, because the model has
-         nothing to pace itself against. Section tags with no words fix it:
-         measured 32.5 s -> 157.2 s. This control writes that scaffold. -->
-    <div class="field" id="instrField" hidden>
-      <label class="flabel" for="structure">Structure <span class="sp meta" id="sectionsV">8 sections</span></label>
-      <select id="structure" class="sel2">
-        <option value="electronic">Electronic / dance</option>
-        <option value="orchestral">Orchestral / cinematic</option>
-        <option value="band">Rock / band</option>
-        <option value="ambient">Ambient / drone</option>
-        <option value="jazz">Jazz / small group</option>
-        <option value="lofi">Lo-fi / beats</option>
-      </select>
-      <input id="sections" type="range" min="2" max="20" step="1" value="8">
-      <pre class="scaffold" id="scaffold" contenteditable="true" spellcheck="false"></pre>
     </div>
     </details>
     </div></div>
@@ -456,11 +530,16 @@
       <div data-music-input></div>
     </details>
 
+      <!-- RANDOM BY DEFAULT. The seed used to arrive locked on a fixed number,
+           so the same words gave the identical song every time and a second
+           Create looked like it had done nothing. app.js rolls the starting
+           number at boot and paintSeed() keeps these two buttons in step; the
+           state that ships here is the one they will be in. -->
       <div class="seedrow">
         <span class="sk">Seed</span>
-        <input class="sv" id="seed" inputmode="numeric" value="418923">
-        <button class="seedbtn on" type="button" id="seedLock">locked</button>
-        <button class="seedbtn" type="button" id="seedRand">random</button>
+        <input class="sv" id="seed" inputmode="numeric" placeholder="random">
+        <button class="seedbtn" type="button" id="seedLock">lock</button>
+        <button class="seedbtn on" type="button" id="seedRand">random</button>
       </div>
       <p class="seednote" id="seedNote"></p>
 
@@ -773,8 +852,21 @@
          reachable without scrolling at ANY size, on any content. -->
     <div class="ctawrap">
       <div class="cta">
-        <button class="btn ghost" type="button" id="btnPreview">Preview</button>
-        <button class="btn" type="button" id="btnCreate">Create</button>
+        <!-- ONE BUTTON, with the other way to render folded into it. Preview
+             used to sit beside Create as an equal, which it is not: it is the
+             cheap pass you take now and then. It is behind the arrow at
+             Create's right end, in a drawer that pops upward, and the arrow
+             is not there at all on the engines that have no cheap pass. -->
+        <div class="ctasplit solo" id="ctaSplit">
+          <button class="btn" type="button" id="btnCreate">Create</button>
+          <button class="btn ctamore" type="button" id="ctaMore" hidden
+            aria-expanded="false" aria-haspopup="true"
+            title="Other ways to render this">&#9652;</button>
+          <div class="ctadrawer" id="ctaDrawer" hidden>
+            <button class="btn ghost" type="button" id="btnPreview">Preview</button>
+            <span class="hint">A short, cheap pass to hear the idea.</span>
+          </div>
+        </div>
       </div>
       <p class="ctanote" id="ctaNote">—</p>
     </div>
@@ -968,6 +1060,15 @@
            every disk that has any H3 turbo file. -->
       <label for="vidSteps">steps</label>
       <span class="pv"><input id="vidSteps" type="range" min="3" max="28" step="1" value="4"><b id="vidStepsV">4</b></span>
+      <!-- FastH3's dense attention backend (web/app.js vidPaint shows it only
+           for an engine that has the choice). Kitchen is Comfy Kitchen's INT8
+           attention; ComfyUI uses PyTorch where Kitchen is missing. -->
+      <label for="vidAttn" id="vidAttnL" hidden>attention</label>
+      <span class="pv" id="vidAttnW" hidden><select id="vidAttn" class="sel2"
+          title="Kitchen INT8 is faster where its kernels exist; ComfyUI falls back to PyTorch elsewhere.">
+        <option value="pytorch">PyTorch</option>
+        <option value="kitchen">Kitchen INT8</option>
+      </select></span>
       <label for="vidSize">size</label>
       <span class="pv"><!-- Populated per engine: H3 native 1344x768 is not a legal LTX size,
            and LTX quantises to a 32px latent grid after halving. -->
@@ -1162,6 +1263,8 @@
     <div class="ctawrap">
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
+        <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
+        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
     </div>
@@ -1394,23 +1497,6 @@
         </div>
         <p class="hint" id="imgPersonaNote" hidden></p>
 
-        <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
-             The label names what it drops and the hint names what it keeps,
-             because "private" on its own reads as "untraceable" and somebody
-             would rely on that. The picture still carries its AI disclosure. -->
-        <div class="framepick">
-          <label class="hint" title="The prompt, the negative, every text node, the prompt hash and the label are left out of the ledger; no graph is filed; the engine's metadata chunk is stripped from the PNG; the gallery row keeps its seed, model and date but no prompt.">
-            <input type="checkbox" id="imgPrivate"> Private &mdash; don&rsquo;t record the prompt
-          </label>
-        </div>
-        <!-- ALWAYS ON SCREEN, not revealed on tick. What this does NOT do is what
-             somebody needs before deciding to rely on it; a caveat shown only to
-             people who have already trusted the control is aimed at the wrong
-             audience. One dim line is the whole cost. -->
-        <p class="hint" id="imgPrivateNote">The picture is still recorded and still marked
-          AI-generated &mdash; only the words are dropped. It cannot be applied afterwards,
-          and it does not touch pictures already made.</p>
-
         <!-- The drop box: the pictures live inside it (#imgRefPrev and its Clear
              are moved in by app.js). The select and upload button stay hidden
              because app.js keeps its state there. -->
@@ -1433,6 +1519,23 @@
       <div class="cta">
         <button class="btn primary wide" type="button" id="imgGo">Make image</button>
       </div>
+      <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
+           ⚠ IT IS A PROPERTY OF THE RENDER, so it lives with the button that
+           starts one. It arrived inside #imgRefWrap, between the character
+           toolbar and the drop box: it read as something to do with references,
+           it pushed the drop box further down a column that already scrolls,
+           and it applies to every engine on this screen whether there are
+           references or not. It also came with a three-line paragraph under it;
+           the label already says exactly what it drops, and the rest — what is
+           kept, and that it cannot be applied afterwards — is the tooltip. It
+           says "don't record the prompt" rather than "private" for the reason
+           that paragraph was written: "private" on its own reads as
+           untraceable, and the picture is still filed and still marked AI.
+           The .ctawrap is one of the few things Simple mode keeps, so this
+           stays reachable there too. -->
+      <label class="tog ctatog" for="imgPrivate"
+        title="Dropped: the prompt, the negative, every text node, the prompt hash and the label stay out of the ledger, no graph is filed, and the engine's own metadata chunk is stripped from the PNG. Kept: the picture, its seed, model and date, and its AI-generated mark. New renders only: it cannot be applied to pictures already made."><input
+        id="imgPrivate" type="checkbox"> Don&rsquo;t record the prompt</label>
 
       <!-- WHAT IS ACTUALLY HAPPENING, and a way out of it.
            A render passes through four states the screen never showed —
@@ -1829,6 +1932,7 @@
           </div>
 
           <div id="cbReadFace" hidden>
+            <button class="btn2" type="button" id="cbUseVideo" hidden title="Load the reviewed recipe into Video. Rendering is a separate action.">Use video recipe</button>
             <b class="subhead" id="cbReadWho">A friend sent you something to look at</b>
             <pre id="cbOpened" class="cbopened" hidden></pre>
             <div class="chips"><button class="btn sm primary" type="button" id="cbSaveResources" hidden>Save hardware card to friend</button></div>
@@ -1907,6 +2011,7 @@
               <option value="project">project document + asset manifest (no media)</option>
               <option value="resources">what this Studio can do</option>
               <option value="order">one scene for them to RENDER, and send back</option>
+              <option value="video-recipe">video recipe (from Video)</option>
             </select></span>
           </div>
           <div class="params" id="cbSegmentRow">
@@ -3231,6 +3336,53 @@
       </section>
     </div>
 
+    <!-- COMFY API (launcher: "Use Comfy API"). Hosted models through Comfy
+         Router on the user's own key and credits; web/router.js draws it and
+         server/router/ runs it. Only reachable in that mode. -->
+    <div id="router" hidden class="page page-wide">
+      <header class="page-head">
+        <h2>Comfy API</h2>
+        <p>Hosted image, video, audio, 3D and text models, run with your Comfy API key and credits.</p>
+      </header>
+      <nav class="pnav" aria-label="Comfy API sections"></nav>
+
+      <section class="pcard" id="router-key" data-nav="Key">
+        <h3>Key</h3>
+        <p class="pcard-sub">Kept encrypted on this computer and sent only to Comfy.</p>
+        <div class="rtkey">
+          <span class="chip busy" id="rtKeyChip">Checking…</span>
+          <input class="line" id="rtKey" type="password" autocomplete="off" spellcheck="false" placeholder="comfyui-…" aria-label="Comfy API key" hidden>
+          <button class="btn2 go" id="rtKeySave" type="button" hidden>Save key</button>
+          <button class="btn2" id="rtKeyChange" type="button" hidden>Change</button>
+          <button class="btn2 danger" id="rtKeyForget" type="button" hidden>Forget</button>
+        </div>
+        <p class="hint" id="rtKeyHint">Get a key and credits at <a href="https://platform.comfy.org/profile/api-keys" target="_blank" rel="noopener">platform.comfy.org</a>.</p>
+      </section>
+
+      <section class="pcard" id="router-make" data-nav="Make">
+        <h3>Make</h3>
+        <div class="rtkinds" id="rtKinds" role="group" aria-label="Kind of model"></div>
+        <div class="params">
+          <label for="rtModel">model</label>
+          <span class="pv"><select id="rtModel" class="sel2"></select></span>
+        </div>
+        <p class="hint" id="rtModelNote"></p>
+        <div class="rtmodes" id="rtModes" role="group" aria-label="Form"></div>
+        <form id="rtForm" class="rtform" autocomplete="off"></form>
+        <textarea id="rtJson" rows="10" spellcheck="false" aria-label="Request body (JSON)" hidden></textarea>
+        <div class="ctawrap">
+          <span class="ctanote" id="rtRunNote"></span>
+          <div class="cta"><button class="btn" id="rtRun" type="button" disabled>Run</button></div>
+        </div>
+      </section>
+
+      <section class="pcard" id="router-runs" data-nav="Results">
+        <h3>Results</h3>
+        <p class="pcard-sub">Saved to <code id="rtOut"></code> the moment they arrive.</p>
+        <div id="rtRuns" class="rtruns"></div>
+      </section>
+    </div>
+
     <div id="thanks" class="thanks" hidden>
       <h1>Thanks</h1>
       <p class="lead">The people who built this, and then the work it is built
@@ -3262,7 +3414,10 @@
         displayed by anything built on it. That is a condition of use rather than a
         courtesy, so it stays on the main window instead of moving here &mdash; a
         credits page is exactly the &ldquo;About box&rdquo; the requirement exists
-        to avoid. The line in the bottom-left corner is that attribution.</p>
+        to avoid. The line above the mark, top left, is that attribution; press it
+        and it says so. It is also on the Models screen against every capability
+        that uses it, with the clause quoted in full before anything is
+        downloaded.</p>
 
       <h2>The software</h2>
       <dl class="thankslist">
@@ -4827,9 +4982,15 @@
   </div>
 
   <!-- ───────────────── player ───────────────── -->
+  <!-- ───────────────── player ─────────────────
+       ⚠ IT IS NOT A FIXTURE. It appears when something plays and goes when
+       there is nothing left to control (app.js: playerOpen / playerClose).
+       ✕ at the far left closes it, ⌃ at the far right opens the full player:
+       the two things that make the bar bigger or smaller sit at the two ends,
+       and neither is in the middle where the transport is. -->
   <div class="player">
+    <button class="pclose" type="button" id="pClose" title="Close the player" aria-label="Close the player">&#10005;</button>
     <div class="np">
-      <button class="expand" type="button" id="pExpand" title="Open the full player" aria-label="Open the full player">⌃</button>
       <div class="art" id="pArt"></div>
       <div class="npmeta">
         <div class="t" id="pTitle">—</div>
@@ -4854,6 +5015,7 @@
       <button class="tbtn" type="button" id="pMute" title="Mute">🔊</button>
       <input id="pVol" type="range" min="0" max="1" step="0.02" value="1" aria-label="Volume">
     </div>
+    <button class="expand" type="button" id="pExpand" title="Open the full player" aria-label="Open the full player">⌃</button>
   </div>
 
 </div>

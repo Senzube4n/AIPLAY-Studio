@@ -30,6 +30,11 @@ try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")) || {}; } catch
 // The optional native music entry point never needs a ComfyUI/Python rig.
 const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
   ? process.env.AIPLAY_MUSIC_ONLY === "1" : saved.musicOnly === true;
+/* The Comfy API entry point (launcher: "Use Comfy API"): models run on Comfy's
+ * cloud through Comfy Router with the user's own key and credits, so nothing
+ * local is needed, not ComfyUI and not a card. Only the launcher turns it on,
+ * so full Studio never shows a page that spends credits. */
+const CLOUD_ONLY = !MUSIC_ONLY && process.env.AIPLAY_CLOUD_ONLY === "1";
 const RIG = process.env.AIPLAY_RIG || saved.rig
   || (MUSIC_ONLY ? path.join(APPDATA, "rig") : "D:\\AI\\aiplay-studio-bench");
 /* Where model weights live. A ComfyUI Desktop install keeps them outside the
@@ -42,6 +47,10 @@ const RIG = process.env.AIPLAY_RIG || saved.rig
  * the test had emptied, and that lane passed only on machines without them. */
 const MODELS_DIR_PINNED = process.env.AIPLAY_MODELS_DIR || saved.modelsDir || null;
 const MODELS_DIR = MODELS_DIR_PINNED || path.join(RIG, "ComfyUI", "models");
+/* The extra models folders (settings `modelsAlso`): one left behind by "Use this
+ * folder", or one added with "Add as extra". The engine loads from all of them
+ * (localmodels.js writes them into its YAML), so a file in any of them is on disk. */
+const MODELS_ALSO = Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d) => typeof d === "string" && d.trim()) : [];
 
 /**
  * First of these filenames that is actually on disk, else the last one.
@@ -59,9 +68,11 @@ const pick = (sub, ...names) => names.find((n) => onDisk(sub, n)) ?? names[names
 
 /* "Is this file on disk, with bytes in it", asked one way for pick() and for
  * the H3 step defaults below `config`, so the two cannot disagree about it.
- * A declaration, so pick() above can use it. */
+ * Every folder the engine loads from counts: the models folder and the extra
+ * ones (config.modelsAlso). A declaration, so pick() above can use it. */
 function onDisk(sub, name) {
-  try { return fs.statSync(path.join(MODELS_DIR, sub, String(name))).size > 0; } catch { return false; }
+  const bases = [MODELS_DIR, ...MODELS_ALSO];
+  return bases.some((b) => { try { return fs.statSync(path.join(b, sub, String(name))).size > 0; } catch { return false; } });
 }
 
 /** The step count a turbo LoRA was distilled for, read off its file name
@@ -71,6 +82,10 @@ export const loraStepsOf = (name) => {
   const m = /(\d+)step/i.exec(String(name ?? ""));
   return m ? Number(m[1]) : null;
 };
+
+/* The card first-run setup saved. Same test as index.js onAmd() and
+ * models.js cardIsAmd(): ROCm has no kernel for NVIDIA's fp4 formats. */
+const AMD_CARD = saved.torchBackend === "rocm" || saved.gpu?.vendor === "amd";
 
 /** Find a python inside a ComfyUI rig, trying every layout in the wild.
  *
@@ -126,7 +141,8 @@ export const config = {
   rig: RIG,
   dataDir: APPDATA,
   musicOnly: MUSIC_ONLY,
-  comfyAutoStart: !MUSIC_ONLY,
+  cloudOnly: CLOUD_ONLY,
+  comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
   musicInput: {
@@ -143,7 +159,7 @@ export const config = {
    * downloaded stay where they are, so the old folder is remembered here and
    * still searched, by Studio for "is it installed" and by the engine for
    * loading (server/localmodels.js writes it into the same YAML). */
-  modelsAlso: Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d) => typeof d === "string" && d.trim()) : [],
+  modelsAlso: MODELS_ALSO,
   /* The card first-run setup found ({vendor, name, totalMb, source}). Only a
    * fallback for machines where nvidia-smi cannot be read — see gpu.js. */
   gpu: saved.gpu && typeof saved.gpu === "object" ? saved.gpu : null,
@@ -199,7 +215,10 @@ export const config = {
    * coupling is why changing it needs an engine restart rather than taking
    * effect on the next render. */
   outputDir: process.env.AIPLAY_OUTPUT || saved.outputDir
-    || (MUSIC_ONLY ? path.join(APPDATA, "output") : path.join(RIG, "ComfyUI", "output")),
+    /* Comfy API mode with no ComfyUI set up keeps its results in app data,
+     * like music-only; with one, beside everything else Studio made. */
+    || (MUSIC_ONLY || (CLOUD_ONLY && !process.env.AIPLAY_RIG && !saved.rig)
+      ? path.join(APPDATA, "output") : path.join(RIG, "ComfyUI", "output")),
   settingsFile: SETTINGS_FILE,
   // Where `LoadLatent` looks. Its `latent` input is a name RELATIVE to this, so
   // the encoder writes here and the graph refers to the basename only.
@@ -1092,8 +1111,18 @@ export const config = {
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
       "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
-    textEncoder: pick("text_encoders",
-      "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
+    /* AMD gets the official int8 build (models.js downloads it there): ROCm
+     * has only a slow fallback for the int4 one. The int8 name is repeated
+     * last so a machine holding neither is told to fetch the int8. */
+    textEncoder: AMD_CARD
+      ? pick("text_encoders",
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors")
+      : pick("text_encoders",
+        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
     videoVae: pick("vae",
       "minimax_h3_video_vae_int8_convrot.safetensors",
       "minimax_h3_video_vae_fp16.safetensors"),
@@ -1778,6 +1807,45 @@ export const config = {
   h3.stepDefaults = { fast: three ? 3 : four ? 4 : standard, standard, best: 20 };
   h3.steps = standard;
 }
+
+/* ── FastH3 ──────────────────────────────────────────────────────────────
+ * FastVideo's DMD2 distillation of MiniMax H3 (FastVideo/FastVideo-FastH3-Comfy):
+ * eight steps with no turbo LoRA, the same text encoder and VAEs as H3, and
+ * trained against VSA sparse attention. Built on H3's settings so sizes, frame
+ * rule and soundtrack behave the same; everything below is what differs,
+ * copied from ComfyUI's own video_fastvideo_fasth3 templates.
+ *
+ * No references: FastH3 distilled t2va and fl2va only, so the route and the
+ * Video screen keep references to H3 exactly as they do for LTX. */
+config.video.engines.fasth3 = {
+  ...config.video.engines.h3,
+  label: "FastH3",
+  dit: pick("diffusion_models",
+    "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+    "fastvideo_fasth3_8step_v2_pruned_bf16.safetensors",
+    "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors"),
+  ditRef: null,
+  // A distillation already: none of H3's turbo LoRAs load on top of it.
+  turboLora: null, turboLora4: null, turboLora3: null, refTurboLora: null, refTurboLora4: null,
+  turboMaxSteps: 0, turbo4MaxSteps: 0, turbo3MaxSteps: 0, turboShiftByLora: {},
+  bridge: "off",
+  // The trained schedule: 8 steps, res_multistep, video shift 10 (not H3's 12).
+  steps: 8, fixedSteps: 8,
+  /* The H3 step-defaults block above ran before this spread, so H3's chips and
+   * turbo builds would travel with it. A fixed schedule has neither. */
+  stepDefaults: null, turboBuilds: null,
+  sampler: "res_multistep", scheduler: "simple",
+  shiftVideo: 10, shiftAudio: 3,
+  /* The checkpoint was trained with FastVideo's VSA at 10% of video cubes.
+   * ComfyUI's BlockSparseAttention runs dense wherever its kernel is missing,
+   * so a card without one still renders, only without the speed-up. */
+  sparseAttention: { method: "vsa", keepPercent: 10, startPercent: 0.2, endPercent: 1,
+    minTokens: 12288, extraTokens: 256, sinkConditioning: "exact_kv_and_rows" },
+  /* The dense attention it falls back to. "pytorch" by default; "kitchen" is
+   * Comfy Kitchen's INT8 attention (the template's choice), picked per render
+   * on the Video screen. ComfyUI falls back to PyTorch where Kitchen is absent. */
+  attention: "pytorch",
+};
 
 /**
  * The settings that survive a restart.

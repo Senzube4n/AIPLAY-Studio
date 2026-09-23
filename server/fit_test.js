@@ -252,8 +252,13 @@ console.log("\n── resolveVideoEngine, on a machine holding nothing ───
  * state of a fresh install, reproduced without deleting anything. `config` is a
  * plain mutable object; restored below. */
 const realRig = config.rig;
+/* videoReady() also searches the extra models folders (settings `modelsAlso`),
+ * so a machine whose settings name one would find real weights there and fail
+ * this lane. Emptied for the block, restored with the rig. */
+const realAlso = config.modelsAlso;
 config.rig = path.join(os.tmpdir(), "aiplay-fit-test-no-models");
 try {
+  config.modelsAlso = [];
   const r = resolveVideoEngine();
   ok("with no weights anywhere, it does not claim to be ready", r.ready === false);
   ok("...it leaves the user's saved choice alone",
@@ -272,6 +277,7 @@ try {
     typeof r.why === "string" && r.why.length > 40 && /Models screen/.test(r.why), r.why);
 } finally {
   config.rig = realRig;
+  config.modelsAlso = realAlso;
 }
 
 console.log("\n── what counts as a picture model ──────────────────────────────");

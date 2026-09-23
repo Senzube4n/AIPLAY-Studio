@@ -50,7 +50,9 @@ function ps(script, stdin = "") {
     const encoded = Buffer.from(script, "utf16le").toString("base64");
     const p = spawn("powershell.exe",
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-      { stdio: ["pipe", "pipe", "pipe"] });
+      /* windowsHide: a server the launcher started hidden flashed a console
+       * window on every call, and the Comfy API page polls. */
+      { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let out = "", err = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => (err += d));

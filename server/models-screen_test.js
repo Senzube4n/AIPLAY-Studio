@@ -91,9 +91,13 @@ test("a MiniMax song's badge names the model, not just its precision", () => {
   assert.doesNotMatch(app, /\$\{esc\(j\.model \|\| "int8"\)\}/);
 });
 
-test("Unload is always there for the ComfyUI music engines", () => {
-  assert.match(app, /\$\("btnModelUnload"\)\.hidden = false;/,
+test("Unload is always there, for every engine, and disabled rather than absent", () => {
+  assert.match(app, /unload\.hidden = false;/,
     "it used to hide whenever a cover or clip had already unloaded the music model");
+  assert.match(app, /box\.hidden = false;/, "and used to be missing entirely on all but three engines");
+  assert.match(app, /unload\.disabled = busy \|\| !holding;/);
+  assert.match(app, /const holding = !!loaded \|\| !!s\.artResident;/,
+    "a picture model on the card is still something to free");
 });
 
 test("every screen's 'model not installed' opens the model window, gated ones with their how-to", () => {

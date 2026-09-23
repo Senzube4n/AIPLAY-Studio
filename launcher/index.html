@@ -137,6 +137,12 @@
   .mode .sub { margin: 1px 0 0; color: var(--faint); font-size: 12.5px; }
   .engine { font-size: 12.5px; color: var(--dim); }
   .engine b { font-weight: 600; color: var(--ink); }
+  .tagnew, .tagcredit {
+    display: inline-block; vertical-align: 2px; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+    font: 700 10px var(--sans, inherit); letter-spacing: .06em; text-transform: uppercase;
+  }
+  .tagnew { color: var(--on); background: linear-gradient(120deg, var(--brand-2), var(--brand-3) 70%, var(--brand-4)); }
+  .tagcredit { color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
   .warnline {
     margin: 0; font-size: 12px; color: var(--warn);
     background: color-mix(in srgb, var(--warn) 9%, transparent);
@@ -318,6 +324,22 @@
       <div class="actions"><button class="btn" type="button" data-launch="music" disabled>Launch Music only</button></div>
     </article>
 
+    <!-- Comfy API: hosted models on the user's own Comfy key and credits
+         (server/router/). Needs no ComfyUI. The only mode that spends money,
+         so the card says so before anything else. -->
+    <article class="card mode" id="mode-cloud">
+      <div class="mode-head">
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.2 9.1 4.5 4.5 0 0 0 7 18z"/></svg></div>
+        <div>
+          <h3>Use Comfy API <span class="tagnew">New</span></h3>
+          <p class="sub" data-f="note">Cloud models on your Comfy API key. No ComfyUI needed.</p>
+        </div>
+      </div>
+      <div class="engine">Runs on: <b data-f="engine">Comfy Router (cloud)</b> <span class="tagcredit">Requires credits</span></div>
+      <p class="warnline" data-f="warn" hidden></p>
+      <div class="actions"><button class="btn" type="button" data-launch="cloud" disabled>Launch Comfy API</button></div>
+    </article>
+
     <article class="card" id="run" hidden>
       <div class="steps" id="steps"></div>
       <p class="errline" id="err" hidden></p>
@@ -399,8 +421,9 @@ function paintCheck() {
     </div>`).join("")
     + (check.setupError ? `<p class="note">${esc(check.setupError)}</p>` : "")
     + (check.notes || []).map((n) => `<p class="note">${esc(n)}</p>`).join("");
-  for (const m of ["full", "music"]) {
+  for (const m of ["full", "music", "cloud"]) {
     const card = $(`mode-${m}`), info = check.modes[m];
+    if (!card || !info) continue;
     card.querySelector('[data-f="engine"]').textContent = info.engine;
     card.querySelector('[data-f="note"]').textContent = info.note;
     const w = card.querySelector('[data-f="warn"]');
@@ -465,9 +488,10 @@ function paintButtons() {
   for (const b of document.querySelectorAll("[data-launch]")) {
     const m = b.dataset.launch;
     b.disabled = busy || !check || !check.modes[m]?.available;
-    b.textContent = studio.mode === m && busy ? (studio.state === "ready" ? "Running" : "Starting…") : `Launch ${m === "full" ? "Full Studio" : "Music only"}`;
+    b.textContent = studio.mode === m && busy ? (studio.state === "ready" ? "Running" : "Starting…")
+      : `Launch ${m === "full" ? "Full Studio" : m === "cloud" ? "Comfy API" : "Music only"}`;
   }
-  for (const m of ["full", "music"]) $(`mode-${m}`).classList.toggle("active", studio.mode === m && busy);
+  for (const m of ["full", "music", "cloud"]) $(`mode-${m}`)?.classList.toggle("active", studio.mode === m && busy);
 }
 function paintState() {
   const s = studio.state;
@@ -482,7 +506,7 @@ function paintState() {
     const at = order.indexOf(studio.stage);
     const doneAll = s === "ready";
     $("steps").innerHTML = order
-      .filter((k) => !(k === "setup" && studio.mode === "music"))
+      .filter((k) => !(k === "setup" && (studio.mode === "music" || studio.mode === "cloud")))
       .map((k) => {
         const i = order.indexOf(k);
         const skip = k === "engine" && !engine;

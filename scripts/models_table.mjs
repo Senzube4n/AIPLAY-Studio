@@ -69,7 +69,7 @@ const modelName = (label) => {
   return (parts.length > 1 ? parts.slice(1).join(" — ") : parts[0]).trim();
 };
 
-const bytesOf = (cap) => (cap.files || []).reduce((a, f) => a + (f.bytes || 0), 0);
+const bytesOf = (cap) => ((cap.defaultFiles || cap.files) || []).reduce((a, f) => a + (f.bytes || 0), 0);
 
 /**
  * Which destination files belong to more than one capability.
@@ -83,7 +83,7 @@ const bytesOf = (cap) => (cap.files || []).reduce((a, f) => a + (f.bytes || 0), 
 export function sharedFiles() {
   const owners = new Map();
   for (const cap of CATALOG) {
-    for (const f of cap.files || []) {
+    for (const f of (cap.defaultFiles || cap.files) || []) {
       /* ⚠ THE WHOLE DEST, NOT THE BASENAME — and this was a live wrong claim,
        * not a hypothetical. Shared means THE SAME FILE, which is a path; the
        * basename is only a proxy for it, and the proxy broke the moment two
@@ -179,7 +179,7 @@ const FLAGS = [
      * `+pip` means the weights ARE a download and a python package is needed on
      * top of them. Two different first minutes, so two different markers. */
     key: "pip",
-    has: (c) => !!c.viaPackage && !(c.files || []).length,
+    has: (c) => !!c.viaPackage && !((c.defaultFiles || c.files) || []).length,
     heading: "**pip, not a download**",
     /* Spelled out rather than abbreviated to the key, because the page that
      * uses `mark` has no footnote under the table — a cell reading "pip" beside
@@ -189,7 +189,7 @@ const FLAGS = [
   },
   {
     key: "+pip",
-    has: (c) => !!c.packageInstall && (c.files || []).length > 0,
+    has: (c) => !!c.packageInstall && ((c.defaultFiles || c.files) || []).length > 0,
     heading: null,               // covered by the pip footnote above
     mark: () => "+ a pip package",
     body: () => "",
@@ -279,7 +279,7 @@ function pipBody() {
     const what = c.packageInstall
       ? `\`${c.packageInstall}\``
       : `${c.viaPackage} — no single command; see the Models screen`;
-    const extra = (c.files || []).length
+    const extra = ((c.defaultFiles || c.files) || []).length
       ? ` (on top of the ${size(bytesOf(c))} of weights in the table)`
       : "";
     return `  · **${modelName(c.label)}** — ${what}${extra}${TARGET_NOTES[c.id]?.() || ""}`;

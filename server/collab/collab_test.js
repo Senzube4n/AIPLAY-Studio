@@ -1,3 +1,4 @@
+import * as recipeM from "./video-recipe.js";
 /**
  * COLLAB, phase one: an identity, a roster, a sealed courier and two units.
  *
@@ -416,7 +417,8 @@ console.log("\n§6  the doors: shared API checks and explicit MCP intents");
     /plan that is <b>proposed<\/b>/.test(html) && /nobody has picked<\/b>/.test(html));
 
   ok("...and the keys are made when it is opened, not at boot",
-    /if \(name === "collab"\) paintCollab\(\);/.test(app));
+    // Scene context is passed only when Collab opens; no identity is minted at boot.
+    /if \(name === "collab"\) paintCollab\(false, collabScene, options\?\.videoRecipe\);/.test(app));
 }
 
 console.log("\n\u00a76b  the errand: a friend's order becomes a project that renders what was asked");
@@ -626,7 +628,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * that will ever be sent. A fake named after what the code SHOULD say is
      * how a harness goes blind. */
     "art", "jobs", "engineDoor", "probeClip", "CLIP_DIR", "fetch", "ERRAND_SEGMENT",
-    "MAX_BUNDLE_BYTES", "pictureKind", "MIME_FOR"];
+    "MAX_BUNDLE_BYTES", "pictureKind", "MIME_FOR", "makeVideoRecipe", "readVideoRecipe", "describeVideoRecipe", "videoRecipeMcpArgs"];
   /* eslint-disable-next-line no-new-func */
   const run = new Function(...names, `return (async () => { ${body} return { status: 0, body: { error: "the route did not answer" } }; })();`);
 
@@ -703,6 +705,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       async (url, init) => { proposed.push(JSON.parse(init.body)); return { json: async () => ({ ok: true, planId: "p_fake123" }) }; },
       errandM.ERRAND_SEGMENT,
       sealM.MAX_BUNDLE_BYTES, errandM.pictureKind, errandM.MIME_FOR,
+      recipeM.makeVideoRecipe, recipeM.readVideoRecipe, recipeM.describeVideoRecipe, recipeM.videoRecipeMcpArgs,
     ).then((r) => r ?? answered);
   };
   const call = (b, headers = { origin: "http://127.0.0.1:4173" }) => callWith(b, {}, headers);
@@ -761,6 +764,21 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   eq("what arrives is the scene and not the film",
     [inside.kind, inside.segmentId, JSON.stringify(inside).includes("a secret line")],
     ["shot", "s1_0", false]);
+
+  const video = {engine:"ltx",prompt:"A dancer in moonlight",width:1280,height:704,seconds:17.5,steps:32,guidance:2.3,keepAudio:false,seed:123};
+  const videoPreview = await call({action:"preview",kind:"video-recipe",to:friend.fp,video});
+  eq("standalone video previews without a movie project", videoPreview.status, 200);
+  const videoPacked = await call({action:"pack",previewId:videoPreview.body.previewId});
+  eq("reviewed video recipe seals for the friend",videoPacked.status,200);
+  const videoInside = JSON.parse(sealM.openSealed({blob:await readFile(videoPacked.body.file),me:friend.fp,sealPrivate:theirKeys.sealPrivate,senderSignPublicB64:()=>me.body.signPublic}).payload.toString("utf8"));
+  eq("signed video recipe preserves all settings",recipeM.readVideoRecipe(videoInside),video);
+  const incomingRecipe = path.join(out,"incoming-video.aiplay");
+  await writeFile(incomingRecipe,sealM.sealTo({payload:Buffer.from(JSON.stringify(videoInside)),toSealPublicB64:me.body.sealPublic,toSignPublicB64:me.body.signPublic,toFp:me.body.fp,fromFp:friend.fp,signPrivate:theirKeys.signPrivate}));
+  const beforeRecipeProposals=proposed.length;
+  const receivedRecipe=await call({action:"open",file:incomingRecipe});
+  eq("receiver opens validated video settings",[receivedRecipe.status,receivedRecipe.body.videoRecipe],[200,video]);
+  eq("receiver gets exact MCP render arguments",receivedRecipe.body.makeClipArgs,recipeM.videoRecipeMcpArgs(videoInside));
+  eq("opening a recipe never proposes rendering",proposed.length,beforeRecipeProposals);
 
   const fromNobody = await call({ action: "open", file: packed.body.file });
   eq("a bundle addressed elsewhere is refused here, and says whose it is",

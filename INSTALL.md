@@ -7,8 +7,10 @@ upload, no credits, no per-song cost.
 
 **Same public repository, two launch modes—not a separate YuE2 edition.**
 One launcher — `AIPLAY Studio.exe`, or `AIPLAY Studio.cmd` if you would rather
-read the script — offers both: **Music only** and **Full Studio**. Downloading
-the app does not install every AI model.
+read the script — offers **Music only** and **Full Studio**, plus **Use Comfy
+API** (cloud models on your own Comfy key; every run uses Comfy credits; no
+ComfyUI needed, or `npm run start:cloud`). Downloading the app does not install
+every AI model.
 
 For native lyric-to-song generation, install **Node.js 20+ and Studio**. You do
 **not** need ComfyUI, Python, MiniMax or any image/video model.
@@ -271,20 +273,36 @@ you will read is comments explaining each one. Here is what that is.
 
 1. **Checks for Node.js.** If it is missing, it says so and stops. Nothing else
    happens.
-2. **Fetches three dependencies** on first run. That is the entire list — they
-   pull nothing else in behind them — and it takes a few seconds:
+2. **Fetches npm dependencies** on first run. The four direct packages are:
 
    | Package | Licence | What it is for |
    | --- | --- | --- |
    | `ws` | MIT | WebSockets: following a ComfyUI job's progress, and the live panels in the app |
-   | `three` | MIT | The 3D renderer for the avatar review viewer. Served to your browser from `node_modules`, not bundled |
-   | `gltf-validator` | Apache-2.0 (Khronos) | The official glTF validator every uploaded avatar GLB is checked with |
+   | `three` | MIT | The 3D renderer, served to your browser from `node_modules` |
+   | `gltf-validator` | Apache-2.0 (Khronos) | The official glTF validator used for uploaded avatars |
+   | `@pixiv/three-vrm` | MIT (pixiv Inc.) | Local VRM avatars, expressions, MToon materials and spring bones |
 
-   **All three are required to start.** None of them is an optional extra: the
-   server imports the validator at the top of `server/mesh/avatar.js`, which
-   `server/index.js` imports, so Studio does not boot without them. If you
-   updated an older copy of this repository in place, delete `node_modules` and
-   let the launcher fetch them again.
+   The VRM package also installs these thirteen transitive packages, all at
+   version 3.5.5 under the MIT licence (copyright 2019-2026 pixiv Inc.):
+
+   - `@pixiv/three-vrm-core`
+   - `@pixiv/three-vrm-materials-hdr-emissive-multiplier`
+   - `@pixiv/three-vrm-materials-mtoon`
+   - `@pixiv/three-vrm-materials-v0compat`
+   - `@pixiv/three-vrm-node-constraint`
+   - `@pixiv/three-vrm-springbone`
+   - `@pixiv/types-vrm-0.0`
+   - `@pixiv/types-vrmc-materials-hdr-emissive-multiplier-1.0`
+   - `@pixiv/types-vrmc-materials-mtoon-1.0`
+   - `@pixiv/types-vrmc-node-constraint-1.0`
+   - `@pixiv/types-vrmc-springbone-1.0`
+   - `@pixiv/types-vrmc-springbone-extended-collider-1.0`
+   - `@pixiv/types-vrmc-vrm-1.0`
+
+   The server imports the glTF validator at startup; the VRM packages provide
+   the browser's avatar runtime. Both launchers fetch missing direct packages.
+   After updating an older copy, run `npm install --omit=dev` in the Studio
+   folder to reconcile the complete dependency graph with `package-lock.json`.
 3. **Finds your ComfyUI.** It looks in your home folder, Documents, Desktop, and
    on every drive from C: to F: for `ComfyUI`, `AI`, `AI\ComfyUI`,
    `ComfyUI_windows_portable` and `StabilityMatrix` — and one level inside each
@@ -342,6 +360,7 @@ you want and when.
 | Chat — Qwen3 4B | 8.0 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
 | Stem separation — HTDemucs (fine-tuned) | ~336 MB | MIT · pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Video clips — MiniMax H3 (quantised) | 42.9 GB | MiniMax H3 Community · ⚠ territory | 16 GB (24 rec) | 32 GB (64 rec) |
+| Video clips — FastH3 (8 steps) | 42.1 GB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | 16 GB (24 rec) | 32 GB (64 rec) |
 | Video references — MiniMax H3 ref2va | 22.9 GB | MiniMax H3 Community · ⚠ territory | 16 GB (24 rec) | 32 GB (64 rec) |
 | Background removal — BiRefNet | 444 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Images — Ideogram 4 (open 9B) | 25.2 GB | Ideogram Non-Commercial Model Agreement · ⚠ terms unread | 12 GB (16 rec) | 32 GB (32 rec) |
@@ -369,9 +388,9 @@ you want and when.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-45 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
+46 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
-⚠ **territory** — **TaoMate 3-step LoRA (H3) and TaoMate 3-step, rank-19 average (H3, small) and BUNNY (action logic) and Semantic Bridge v1.** Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher. **video-to-video control (H3 Fun ControlNet).** A patch on MiniMax H3, so its Community Licence applies unchanged: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. MiniMax's hosted API is available everywhere; it is running the open weights locally that is limited. The download goes straight to the publisher. **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
+⚠ **territory** — **TaoMate 3-step LoRA (H3) and TaoMate 3-step, rank-19 average (H3, small) and BUNNY (action logic) and Semantic Bridge v1.** Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher. **video-to-video control (H3 Fun ControlNet).** A patch on MiniMax H3, so its Community Licence applies unchanged: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. MiniMax's hosted API is available everywhere; it is running the open weights locally that is limited. The download goes straight to the publisher. **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. **FastH3 (8 steps).** Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. AIPLAY Studio does not host the weights; the download goes straight to the publisher. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
 ⚠ **gated** — **LTX 2.5 (quantised).** The repository is access-gated, so the built-in downloader cannot fetch it — it has no token and deliberately nowhere to keep one. Accept the licence on the model page, then in the ComfyUI python environment run `hf auth login` followed by `python scripts/fetch_ltx25.py`. About 40 GB. Licence and access: https://huggingface.co/Lightricks/LTX-2.5
 
@@ -395,9 +414,9 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 19 of 45 are classified as placing no licence conditions on generated material (ACE-Step 1.5 turbo (ComfyUI), FLUX.2 klein 4B, Qwen3 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, Depth Anything V2 Small, AnimateDiff v3 (SD1.5), SparseCtrl RGB (AnimateDiff v3), IP-Adapter Plus (SD1.5), ViT-H/14 (LAION-2B), TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 15 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), video-to-video control (H3 Fun ControlNet), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised), DreamShaper 8 (the Motion look's painter), depth and line art (SD1.5, fp16)). 9 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 19 of 46 are classified as placing no licence conditions on generated material (ACE-Step 1.5 turbo (ComfyUI), FLUX.2 klein 4B, Qwen3 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, Depth Anything V2 Small, AnimateDiff v3 (SD1.5), SparseCtrl RGB (AnimateDiff v3), IP-Adapter Plus (SD1.5), ViT-H/14 (LAION-2B), TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 16 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), video-to-video control (H3 Fun ControlNet), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), FastH3 (8 steps), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised), DreamShaper 8 (the Motion look's painter), depth and line art (SD1.5, fp16)). 9 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
-**shared files** — 4 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 9.0 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Qwen3 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `qwen_image_vae.safetensors` (254 MB) is shared by Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures). The Models screen quotes the deduplicated figure.
+**shared files** — 7 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 29.0 GB less. `qwen3vl_32b_minimax_h3-int4_convrot.safetensors` (14.2 GB) is shared by MiniMax H3 (quantised), FastH3 (8 steps); `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Qwen3 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `minimax_h3_video_vae_fp16.safetensors` (5.2 GB) is shared by MiniMax H3 (quantised), FastH3 (8 steps); `minimax_h3_audio_vae_fp32.safetensors` (605 MB) is shared by MiniMax H3 (quantised), FastH3 (8 steps); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `qwen_image_vae.safetensors` (254 MB) is shared by Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures). The Models screen quotes the deduplicated figure.
 
 Studio hosts no weights and mirrors none: every download goes straight to the publisher, and the licence is between you and them.
 <!-- MODELS:END -->

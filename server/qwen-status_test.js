@@ -87,3 +87,19 @@ test("reference staging validates the whole ordered set, including uploaded file
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* The Images screen asks this route with `refs` as a BUCKET — "none" or "some"
+ * — and caches the answer under that key, so it does not re-check every time a
+ * picture is dragged in or taken out. That is only sound while the answer is
+ * the same for one reference as for ten. It is the node list that decides, and
+ * references add their loading nodes once; the second one adds nothing new. If
+ * a future graph gives, say, the fourth reference a node of its own, this test
+ * fails and web/app.js imgQwenQuery() has to send the real count again. */
+test("readiness depends on whether there are references, not how many", () => {
+  const list = (n) => qwenImageRequiredNodes({
+    refImages: Array.from({ length: n }, (_, i) => `reference-${i + 1}.png`),
+  }).slice().sort().join(",");
+  const some = list(1);
+  for (const n of [2, 3, 5, 10]) assert.equal(list(n), some, `${n} references need the same nodes as one`);
+  assert.notEqual(list(0), some, "no references is a different graph, and is the one key that must differ");
+});

@@ -147,6 +147,16 @@ for (const [id, eng] of Object.entries(config.video.engines)) {
     "an engine that grows a third schedule must not be described by a sentence that says two");
 }
 
+/* DERIVED — a fixed-schedule engine (FastH3) says its fixed count. It loads no
+ * turbo LoRA (turboMaxSteps 0), and "applies only below 0" was a sentence
+ * about nothing. */
+for (const [id, eng] of Object.entries(config.video.engines)) {
+  if (!eng.fixedSteps) continue;
+  const note = c.video.engines.find((e) => e.id === id).stepsNote;
+  ok(`${id}: "${eng.fixedSteps} fixed steps", not a turbo threshold`,
+    note.includes(`${eng.fixedSteps} fixed steps`) && !/applies only below/.test(note), note);
+}
+
 /* DERIVED — the sigma figures, which are arithmetic and not a remembered table.
  * Recomputed here from the same function the Video lab's panel uses, at the
  * shift config.js actually ships. */

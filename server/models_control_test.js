@@ -176,8 +176,10 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
    * H3's weights rather than a model of its own, so a clip driven by it is an
    * H3 output and carries the same territory clause — its row says so in the
    * same words as the rows above it. */
+  /* 2026-09-23: FastH3, FastVideo's 8-step distillation of H3; its repo names
+   * H3's licence as its own. */
   const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small",
-                              "videoH3FunControl", "bridgeBunny", "bridgeSemantic"];
+                              "videoH3FunControl", "bridgeBunny", "bridgeSemantic", "videoFastH3"];
   ok("...and H3 and its derivatives are the only things that carry one",
     locked.every((id) => H3_AND_DERIVATIVES.includes(id)), locked.join(", "));
 }

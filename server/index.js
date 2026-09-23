@@ -1,3 +1,4 @@
+import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
  *
@@ -47,7 +48,7 @@ import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
-import { gpuStatus, ramStatus } from "./gpu.js";
+import { gpuStatus, ramStatus, cpuStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
 import { whisperPythonMissing, pythonVerdict } from "./lrc.js";
@@ -55,6 +56,10 @@ import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
+import { createRouterClient } from "./router/client.js";
+import { createCatalog } from "./router/catalog.js";
+import { createRouterJobs } from "./router/jobs.js";
+import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf } from "./models.js";
@@ -906,6 +911,47 @@ art.on("update", () => {
 // Optional model weights. Nothing here downloads on its own — the catalogue
 // reports what is missing and how large it is, and the user presses a button.
 const models = new ModelManager();
+
+/* ── what the models are costing on disk ──────────────────────────────────
+ *
+ * The rail shows VRAM and RAM; disk is the third thing that runs out, and it
+ * is the one that runs out QUIETLY — a download stops, and nothing on the
+ * screen had been counting.
+ *
+ * ⚠ CACHED FOR A MINUTE, and that is not an optimisation. /api/status is
+ * polled every few seconds and models.status() stats every file in a
+ * 45-capability catalogue; doing that per poll would put hundreds of syscalls
+ * a minute behind a number that changes when somebody downloads a model. The
+ * Models screen recomputes it directly, so a fresh download is never more than
+ * a minute from being counted here and is immediate there.
+ */
+let diskMark = { at: 0, value: null };
+async function modelsDisk() {
+  if (Date.now() - diskMark.at < 60000) return diskMark.value;
+  diskMark.at = Date.now();
+  try {
+    const [cat, free] = await Promise.all([models.status(), diskFree()]);
+    /* Installed means present AND the right size, which is the same test the
+     * Models screen shows a tick for: a half-finished download is not storage
+     * this app is using on purpose. */
+    /* ⚠ DEDUPLICATED BY PATH. Several capabilities share a file — three rows
+     * name the same Qwen3-4B encoder — and counting per capability would quote
+     * storage that is not being used twice. A partially downloaded file counts
+     * for what is actually on the disk (`have`), because that is the question. */
+    const seen = new Map();
+    for (const cap of cat || []) {
+      for (const f of cap.files || []) {
+        if (!f.dest || seen.has(f.dest)) continue;
+        seen.set(f.dest, f.present ? (Number(f.bytes) || 0) : (Number(f.have) || 0));
+      }
+    }
+    let bytes = 0, files = 0;
+    for (const n of seen.values()) { if (n > 0) { bytes += n; files += 1; } }
+    diskMark.value = { modelBytes: bytes, modelFiles: files,
+      freeBytes: free?.freeBytes ?? null, totalBytes: free?.totalBytes ?? null };
+  } catch { diskMark.value = null; }
+  return diskMark.value;
+}
 const ggufSetup = new GgufSetup();
 models.on("update", () => push(jobs.snapshot()));
 
@@ -1010,7 +1056,7 @@ function probeOne(py, mods, timeoutMs = 20_000) {
 }
 let probedBy = {};
 async function pythonPackages() {
-  if (config.musicOnly) return {};
+  if (config.musicOnly || config.cloudOnly) return {};
   if (packageCache && Date.now() - packageCache.at < 30_000) return packageCache.value;
   const value = {};
   const by = {};
@@ -1496,7 +1542,7 @@ const onAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "am
 /* Whether this process starts ComfyUI. Always in full Studio; in music-only
  * only when a YuE2 checkpoint makes YuE2-through-ComfyUI possible. Sent in
  * /api/status so the launcher knows whether to wait for the engine. */
-let comfyWanted = !config.musicOnly;
+let comfyWanted = !config.musicOnly && !config.cloudOnly;
 
 /** YuE2 checkpoints in any checkpoints folder the engine loads from. */
 async function findYue2Checkpoints() {
@@ -2074,7 +2120,9 @@ function json(res, code, body) {
  * and the body is declared application/json, which a cross-site page cannot
  * send without a preflight no route answers. The Settings page and MCP's api()
  * both send application/json. One copy: /api/music-gguf/setup (installs a
- * runtime) and /api/lyrics's python choice (names a program to run) share it. */
+ * runtime), /api/lyrics's python choice (names a program to run), /api/models
+ * addAlso (a folder the engine loads from) and the Comfy API page's POSTs
+ * (a key, and runs that spend credits; server/router/routes.js) share it. */
 function sameOriginLocalJson(req) {
   const host = req.headers.host || "";
   const local = [`127.0.0.1:${config.uiPort}`, `localhost:${config.uiPort}`, `[::1]:${config.uiPort}`];
@@ -2383,6 +2431,31 @@ const cloud = createCloud({
   usageFile: path.join(config.paths.appData, "llm-usage.json"),
 });
 const llmRoutes = createLlmRoutes({ json, readBody, cloud, config });
+
+/* Comfy Router (the launcher's "Use Comfy API" mode): hosted models on the
+ * user's own Comfy key and credits. Mounted only in that mode, so full Studio
+ * has no route that can spend a credit. */
+/* The key, decrypted once. secrets.js decrypts through DPAPI in a new
+ * powershell.exe per call, and the client asks on every poll of every run;
+ * cleared by the page's own save and forget, the only two ways it changes. */
+let routerKey;
+const routerClient = createRouterClient({ getKey: async () => (routerKey ??= await getSecret(ROUTER_KEY)) });
+const routerJobs = createRouterJobs({
+  client: routerClient,
+  dir: path.join(config.paths.appData, "router"),
+  outDir: path.join(config.outputDir, "router"),
+});
+/* sameOriginLocalJson: the one rule for a request that spends or chooses
+ * what runs here. The routes check the Host themselves before anything. */
+const routerRoutes = config.cloudOnly ? createRouterRoutes({
+  json, readBody, config, sameOriginLocalJson,
+  secrets: { has: hasSecret, status: secretStatus,
+    set: async (name, value) => { routerKey = undefined; return setSecret(name, value); },
+    clear: async (name) => { routerKey = undefined; return clearSecret(name); } },
+  client: routerClient,
+  catalog: createCatalog({ dir: path.join(config.paths.appData, "router") }),
+  jobs: routerJobs,
+}) : null;
 const chatRoutes = createChatRoutes({ json, readBody, config, cloud });
 
 /* Saved galleries (styles, lyrics, Simple descriptions, chat prompts) and the
@@ -2539,6 +2612,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/llm" || p === "/api/llm/models") {
       if (await llmRoutes(req, res, url)) return;
     }
+    if (routerRoutes && (p === "/api/router" || p.startsWith("/api/router/"))) {
+      if (await routerRoutes(req, res, url)) return;
+    }
     if (p === "/api/gallery" || p === "/api/enhance") {
       if (await promptToolRoutes(req, res, url)) return;
     }
@@ -2612,6 +2688,8 @@ const server = http.createServer(async (req, res) => {
           musicAceLoraStrength: config.music.aceLoraStrength,
           musicModels: await musicModelChoices(),
           musicOnly: config.musicOnly,
+          // The launcher's "Use Comfy API" mode: the web app shows the Comfy API page only.
+          cloudOnly: !!config.cloudOnly,
           engineExpected: comfyWanted,
           /* The real-audio tokenizer (musicYue2Tokenizer): with it on disk,
            * Continue works on any track in the library, not only on takes. */
@@ -2699,6 +2777,11 @@ const server = http.createServer(async (req, res) => {
                * the day the 4-step build was added. */
               turboMaxSteps: e.turboMaxSteps ?? null, turbo4MaxSteps: e.turbo4MaxSteps ?? null,
               turbo3MaxSteps: e.turbo3MaxSteps ?? null,
+              /* A distillation that runs at one step count (FastH3: 8) and its
+               * attention choice: the screen hides the step slider for it and
+               * shows the attention picker instead. */
+              fixedSteps: e.fixedSteps ?? null,
+              attention: e.sparseAttention ? (e.attention || "pytorch") : null,
               /* Whether the 3-step distillation is actually on disk: config
                * falls back to the 4-step file at these step counts otherwise,
                * and a 4-step LoRA sampled at 3 is the wrong model. make_clip's
@@ -2737,6 +2820,8 @@ const server = http.createServer(async (req, res) => {
         power: powerSnapshot(),
         gpu: gpuStatus(),
         ram: ramStatus(),
+        cpu: cpuStatus(),
+        disk: await modelsDisk(),
         ...art.status(),
         ...jobs.snapshot(),
         // Disk is the source of truth, so the library survives restarts and shows
@@ -2898,6 +2983,30 @@ const server = http.createServer(async (req, res) => {
         /* Preview a folder (scanFolder), or adopt it as the models folder
          * (setModelsDir). Adopting needs a restart: the catalogue's download
          * paths and the engine's model paths are both fixed at start. */
+        /* One more models folder to check and load from, beside the main one.
+         * Downloads still go to the main folder. Needs a restart: the engine's
+         * model paths are written when it starts. */
+        if (b.action === "addAlso") {
+          /* It decides which folders the engine LOADS from, so it is a
+           * choice about what runs on this machine: the one guard for those. */
+          if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Adding a models folder is only accepted from Studio's own page or a local client." });
+          const raw = String(b.dir || "").trim();
+          if (!raw) return json(res, 400, { error: "Give a folder." });
+          const dir = path.resolve(raw);
+          if (!(await stat(dir).catch(() => null))?.isDirectory()) return json(res, 400, { error: `Not a folder: ${dir}` });
+          if (samePath(dir, config.modelsDir)) return json(res, 400, { error: "That is already the models folder." });
+          const files = await scanBases([dir]);
+          if (!files.length) {
+            return json(res, 400, {
+              error: `No model files in the usual subfolders of ${dir} (checkpoints, diffusion_models, vae, …). `
+                + "Pick the folder that CONTAINS those subfolders.",
+            });
+          }
+          const next = uniqueDirs([...(config.modelsAlso || []), dir]);
+          await mergeSettings({ modelsAlso: next });
+          return json(res, 200, { ok: true, also: next, needsRestart: true,
+            note: `Saved. Restart AIPLAY Studio to load the ${files.length} model files in ${dir}. Downloads still go to the models folder.` });
+        }
         /* Stop loading from an earlier models folder (it stays on disk). */
         if (b.action === "dropAlso") {
           if (typeof b.dir !== "string" || !b.dir.trim()) return json(res, 400, { error: "Give the previous folder to stop using." });
@@ -4924,8 +5033,8 @@ const server = http.createServer(async (req, res) => {
             b.kind = frozen.payload.kind; b.to = frozen.peer.fp;
           }
           const kind = String(b.kind || "");
-          if (!["shot", "project", "resources", "order"].includes(kind)) {
-            return json(res, 400, { error: "kind must be shot, project, resources or order.", reason: "kind" });
+          if (!["shot", "project", "resources", "order", "video-recipe"].includes(kind)) {
+            return json(res, 400, { error: "kind must be shot, project, resources, order or video-recipe.", reason: "kind" });
           }
           const { peers } = await collabRoster.roster({ appData });
           const peer = peers.find((x) => x.fp === String(b.to || ""));
@@ -5007,6 +5116,14 @@ const server = http.createServer(async (req, res) => {
               note: "Packed exactly the reviewed snapshot. Send this file using your usual file-sharing method." });
           }
 
+          if (kind === "video-recipe") {
+            if (action !== "preview") return json(res,400,{error:"Preview this recipe before preparing it.",reason:"preview-required"});
+            const recipe=makeVideoRecipe(b.video);
+            return previewFor(recipe, `${recipe.id}-to-${peer.fp.slice(0,8)}.aiplay`, {
+              describes:describeVideoRecipe(recipe),
+              note:"Text-only recipe. Uses the receiver's default models with custom LoRAs and conditioning bridge off. Review before rendering. Return tracking is not included."
+            });
+          }
           if (kind === "resources") {
             /* ⚠ `gpuStatus()` ANSWERS FROM A CACHE a background nvidia-smi
              * fills, so the first call after a restart is null on a machine
@@ -5168,6 +5285,11 @@ const server = http.createServer(async (req, res) => {
            * sentence that names both numbers. */
           const talk = speaks(packet?.v);
           if (!talk.ok) return json(res, 409, { error: talk.why, reason: talk.reason, protocol: talk.theirs, from: { fp: sender.fp, nickname: sender.nickname } });
+          let videoRecipe = null;
+          if (packet?.kind === "video-recipe") {
+            if (!sender.verified || !["lender","collaborator"].includes(sender.role)) return json(res,403,{error:"Verify this sender and assign a role before using a video recipe.",reason:"role"});
+            videoRecipe = readVideoRecipe(packet);
+          }
           /* Their build, recorded on their row: a caption, never a gate. */
           if (packet?.by) await collabRoster.setBuild({ appData, fp: sender.fp, by: packet.by }).catch(() => {});
           return json(res, 200, {
@@ -5176,13 +5298,14 @@ const server = http.createServer(async (req, res) => {
             ...(talk.why ? { compatNote: talk.why } : {}),
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
+            ...(videoRecipe ? {videoRecipe, makeClipArgs:videoRecipeMcpArgs(packet)} : {}),
             /* The prompt as its own field: a screen must be able to show it
              * whole and unstyled rather than trimmed into a sentence. */
             ...(packet?.kind === "order" ? { prompt: String(packet.shot?.prompt || "") } : {}),
             /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
              * packet" and the four words a person is being asked to agree to
              * were only ever visible after they had already agreed. */
-            describes: packet?.kind === "resources" ? describeResources(packet, Date.now())
+            describes: videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
               : packet?.kind === "order" ? describeOrder(packet, Date.now())
                 : packet?.kind === "return" ? `A finished take for scene ${packet.segmentId} of order ${packet.orderId}, rendered on ${packet.record?.model || "their machine"}. Press Receive to check it against what you ordered.`
                   : describeAnyPacket(packet),
@@ -6051,7 +6174,9 @@ const server = http.createServer(async (req, res) => {
          * message points at the real substitute rather than just saying no. */
         if ((refImages.length || refAudios.length) && eng !== "h3") {
           return json(res, 400, {
-            error: "References need MiniMax H3 — LTX has no reference input (a model limit, not a setting). On LTX: compose the identity still first (Images can edit with references), then use it as the opening frame.",
+            error: eng === "fasth3"
+              ? "References need MiniMax H3. FastH3 was distilled without them; switch the engine to MiniMax H3 for this clip."
+              : "References need MiniMax H3 — LTX has no reference input (a model limit, not a setting). On LTX: compose the identity still first (Images can edit with references), then use it as the opening frame.",
           });
         }
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
@@ -6124,8 +6249,11 @@ const server = http.createServer(async (req, res) => {
              * ask gets a big budget instead of being killed mid-render. */
             width: Math.min(Math.max(Number(b.width) || videoEngine(eng).width, 256), 3840),
             height: Math.min(Math.max(Number(b.height) || videoEngine(eng).height, 256), 3840),
-            steps: Math.min(Math.max(Number(b.steps) || videoEngine(eng).steps || 20, 2), 40),
+            // A fixed-schedule distillation (FastH3) records the steps it will run.
+            steps: videoEngine(eng).fixedSteps || Math.min(Math.max(Number(b.steps) || videoEngine(eng).steps || 20, 2), 40),
             keepAudio: b.keepAudio !== false,
+            // FastH3's dense attention backend; anything else means its default.
+            attention: b.attention === "kitchen" || b.attention === "pytorch" ? b.attention : undefined,
             negative: typeof b.negative === "string" ? b.negative.slice(0, 500) : undefined,
             // One dial for both CFG scales — see videoGraphLtx for why they must
             // not be settable apart.
@@ -10884,6 +11012,14 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
   await batch.load();
   const b = batch.status().run;
   if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
+  if (config.cloudOnly) {
+    /* Comfy API mode needs nothing local: no ComfyUI, no card. Runs left
+     * queued by the last session are collected now. */
+    console.log("  Comfy API mode: models run on Comfy's cloud with your key and credits. ComfyUI is not started.");
+    await routerJobs.resume();
+    jobs.emit("update", jobs.snapshot());
+    return;
+  }
   if (config.musicOnly) {
     /* Music-only starts no ComfyUI — unless this machine has a ComfyUI install
      * AND a YuE2 checkpoint, and native GGUF is not the chosen, installed

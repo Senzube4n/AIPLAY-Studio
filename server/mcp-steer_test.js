@@ -39,7 +39,8 @@ console.log("\n§1  the simple way on the Video screen");
   ok("three chips above More controls", /id="vidQualityRow"[\s\S]*?data-vq="fast"[\s\S]*?data-vq="standard"[\s\S]*?data-vq="best"[\s\S]*?id="vidAdv"/.test(html));
   ok("...a click sets the slider and repaints", /\$\("vidSteps"\)\.value = String\(steps\);\n\s+vidPaint\(\);/.test(app));
   ok("...the chips light up on the slider's value", /aria-pressed", stNow === want \? "true" : "false"/.test(app));
-  ok("...and the row hides with the slider on LTX", /qRow\.hidden = cur === "ltx";/.test(app));
+  ok("...and the row hides with the slider on LTX and on a fixed-step engine (FastH3)",
+    /const noSteps = cur === "ltx" \|\| !!eng\.fixedSteps;/.test(app) && /qRow\.hidden = noSteps;/.test(app));
   ok("the status carries turbo3Ready per engine", /turbo3Ready: \/taomate\/i\.test\(String\(e\.turboLora3 \|\| ""\)\),/.test(index));
 
   /* EVERY STEP COUNT ON THE SCREEN IS THE SERVER'S, and the server's follows
@@ -96,11 +97,21 @@ console.log("\n§1  the simple way on the Video screen");
     + "console.log(JSON.stringify({ steps: h3.steps, stepDefaults: h3.stepDefaults, turboBuilds: h3.turboBuilds,"
     + " loraSteps: Object.fromEntries(slots.map((k) => [k, loraStepsOf(h3[k])])), loaded: { fl2v: at(false), refs: at(true) },"
     + " turboMaxSteps: h3.turboMaxSteps, turbo3MaxSteps: h3.turbo3MaxSteps, turbo4MaxSteps: h3.turbo4MaxSteps }));";
-  const disk = (files) => {
+  /* `extra`: the files go in a SECOND models folder named in settings
+   * `modelsAlso` ("Add as extra", or the folder "Use this folder" left
+   * behind), and the main folder holds no LoRA at all. The engine loads from
+   * both, so pick() and the step defaults must both look in both. */
+  const disk = (files, { extra = false } = {}) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "h3-disk-"));
     try {
+      const shelf = path.join(dir, extra ? "extra" : "models", "loras");
       fs.mkdirSync(path.join(dir, "models", "loras"), { recursive: true });
-      for (const f of files) fs.writeFileSync(path.join(dir, "models", "loras", f), "x");
+      fs.mkdirSync(shelf, { recursive: true });
+      for (const f of files) fs.writeFileSync(path.join(shelf, f), "x");
+      if (extra) {
+        fs.mkdirSync(path.join(dir, "settings"), { recursive: true });
+        fs.writeFileSync(path.join(dir, "settings", "settings.json"), JSON.stringify({ modelsAlso: [path.join(dir, "extra")] }));
+      }
       const env = { ...process.env, AIPLAY_APPDATA: path.join(dir, "settings"), AIPLAY_MODELS_DIR: path.join(dir, "models"),
         AIPLAY_RIG: path.join(dir, "rig"), AIPLAY_OUTPUT: path.join(dir, "output") };
       delete env.AIPLAY_MUSIC_ONLY;
@@ -124,6 +135,21 @@ console.log("\n§1  the simple way on the Video screen");
     shopTao.steps === 4 && same(shopTao.stepDefaults, { fast: 3, standard: 4, best: 20 }), JSON.stringify(shopTao));
   ok("8 needs BOTH paths: the fl2v 8-step alone, with only the ref2v 4-step, stays 4",
     halfEight.steps === 4 && halfEight.stepDefaults?.standard === 4 && halfEight.turboBuilds?.eight === false, JSON.stringify(halfEight));
+  /* THE SECOND MODELS FOLDER. pick() and the step defaults ask one onDisk(),
+   * and it searches every folder the engine loads from. Asked two ways, a
+   * LoRA only in the extra folder made pick() choose the 8-step file while
+   * the step defaults, looking in the main folder alone, said 4: an 8-step
+   * distillation run at 4 steps on every render that named no count. */
+  const extraRig = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { extra: true });
+  ok("with every LoRA in an EXTRA models folder, the answers equal the same files in the main one",
+    !extraRig.error && same(extraRig, rig), JSON.stringify(extraRig));
+  ok("...8-step names, Standard 8, and the 8-step builds counted",
+    extraRig.loraSteps?.turboLora === 8 && extraRig.stepDefaults?.standard === 8 && extraRig.turboBuilds?.eight === true
+    && extraRig.steps === 8, JSON.stringify(extraRig));
+  ok("config.js: pick() and the step defaults share ONE onDisk(), and it reads the extra folders",
+    /const pick = \(sub, \.\.\.names\) => names\.find\(\(n\) => onDisk\(sub, n\)\)/.test(src("./config.js"))
+    && (src("./config.js").match(/function onDisk\(/g) || []).length === 1
+    && /function onDisk\(sub, name\) \{\n\s+const bases = \[MODELS_DIR, \.\.\.MODELS_ALSO\];/.test(src("./config.js")));
   /* The point of all of it: on every disk the default loads a file distilled
    * for exactly that many steps, on both paths, which is what workflow.js
    * h3TurboLoraFor picks when a render names no step count. */

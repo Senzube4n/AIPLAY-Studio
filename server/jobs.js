@@ -1193,6 +1193,14 @@ export class JobRunner extends EventEmitter {
       /* What ComfyUI is holding, per Studio's record — none while the engine
        * is down, because a restarted ComfyUI holds nothing. */
       loadedModel: this.comfy?.ready ? this.loaded : null,
+      /* ⚠ AND WHETHER IT IS HOLDING A PICTURE MODEL, which is a different
+       * question and the reason the Unload button looked broken. Rendering a
+       * cover or a clip unloads the music model and puts its own on the card,
+       * so `loadedModel` goes null while ComfyUI is still holding several GB.
+       * A screen that asked only the first question said "nothing is loaded"
+       * with the card full, and Unload — which frees whatever is there —
+       * looked like it worked at random. */
+      artResident: this.comfy?.ready ? !!this.artResident : false,
       current: view(this.current),
       queue: this.queue.map(view),
       history: this.history.slice(0, 40).map(view),

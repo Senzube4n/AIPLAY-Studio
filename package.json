@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "start:music": "node scripts/start-music.mjs",
+    "start:cloud": "node scripts/start-cloud.mjs",
     "dev": "node --watch server/index.js",
     "test": "node scripts/trace_load.mjs && node scripts/test_timeline.mjs && node scripts/test_watchdog.mjs && node scripts/test_workflow.mjs && node scripts/test_apimode.mjs",
     "smoke": "node scripts/smoke_api.mjs"
@@ -15,6 +16,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@pixiv/three-vrm": "3.5.5",
     "gltf-validator": "2.0.0-dev.3.10",
     "three": "0.185.1",
     "ws": "^8.18.0"

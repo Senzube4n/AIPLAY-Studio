@@ -2743,7 +2743,8 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       required: ["engine"],
-      properties: { engine: { type: "string", enum: ["h3", "ltx"] } },
+      properties: { engine: { type: "string", enum: ["h3", "ltx", "fasth3"],
+        description: "fasth3 = FastVideo's 8-step distillation of H3: fixed 8 steps, no references, same territory clause as H3." } },
       additionalProperties: false,
     },
     async run(a) {
@@ -2797,7 +2798,10 @@ export const TOOLS = [
       + "<Picture 1> performs the song from <Audio 1> on a rooftop\". A reference is not "
       + "pinned to a frame — the model recasts the subject wherever the words put it, which "
       + "is how you keep one character across many shots. ⚠ H3's licence grants NO rights "
-      + "in " + H3_EXCLUDED + " — where that applies, stay on LTX.\n\n"
+      + "in " + H3_EXCLUDED + " — where that applies, stay on LTX.\n"
+      + "  • FastH3 — H3 distilled to 8 fixed steps (quality and steps do not apply). Takes "
+      + "first_frame/last_frame, no references; `attention` picks the dense attention under its "
+      + "sparse attention. Same licence and territory clause as H3.\n\n"
       + "Passing an engine-specific input while the other engine is selected is REFUSED "
       + "rather than silently ignored; pass `engine` to switch first. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
@@ -2805,7 +2809,7 @@ export const TOOLS = [
       required: ["prompt"],
       properties: {
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
-        engine: { type: "string", enum: ["h3", "ltx"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected." },
+        engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
         quality: { type: "string", enum: ["fast", "best"],
           description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
@@ -2838,6 +2842,7 @@ export const TOOLS = [
         bridge_alpha: { type: "number", minimum: 0, maximum: 1, description: "H3 only: the bridge's blend strength for this render. Publishers recommend 0.10–0.15; 0 bypasses." },
         loras: { type: "array", maxItems: 8, description: "Custom video LoRAs in order, from list_loras. Known wrong architectures and missing files are refused. Engine speed adapters load automatically and must not be listed again. Unrecognized bases remain unverified.", items: { type: "object", required: ["name"], properties: { name: { type: "string" }, strength: { type: "number", minimum: -4, maximum: 4, default: 1 } }, additionalProperties: false } },
         seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
+        attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it. H3 decides its own; LTX has none. Default: pytorch." },
         timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
       },
       additionalProperties: false,
@@ -2863,13 +2868,19 @@ export const TOOLS = [
       }
       const engine = st.config?.video?.engine;
       const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song;
+      /* The refusals name the engine that IS selected: with three engines,
+       * "but LTX is selected" was false on FastH3. */
+      const engLabel = st.config?.video?.engines?.[engine]?.label || engine || "another engine";
       if (wantsRefs && engine !== "h3") {
-        throw new Error("Named references (<Picture n> / <Audio n>) need MiniMax H3, but LTX is selected. Pass engine:\"h3\", or use first_frame/last_frame/mid_frames, which is how LTX takes pictures.");
+        throw new Error(`Named references (<Picture n> / <Audio n>) need MiniMax H3, but ${engLabel} is selected. Pass engine:"h3"`
+          + (engine === "ltx" ? ", or use first_frame/last_frame/mid_frames, which is how LTX takes pictures."
+            : `, or on ${engLabel} use first_frame/last_frame, which it takes; it was distilled without references.`));
       }
       // Soundtrack works on BOTH engines: LTX freezes the audio latent, H3
       // freezes AND anchors it (the lip-sync pair). No guard on this axis.
       if (Array.isArray(a.mid_frames) && a.mid_frames.length && engine !== "ltx") {
-        throw new Error("mid_frames (pass-through pictures) are an LTX feature. Pass engine:\"ltx\", or on H3 use ref_images.");
+        throw new Error(`mid_frames (pass-through pictures) are an LTX feature, and ${engLabel} is selected. Pass engine:"ltx"`
+          + (engine === "h3" ? ", or on H3 use ref_images." : `, or on ${engLabel} use first_frame/last_frame.`));
       }
       const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
       /* `quality` is the semantic dial; `steps` is the escape hatch and wins.
@@ -2905,6 +2916,8 @@ export const TOOLS = [
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
         bridge: typeof a.bridge === "string" && a.bridge ? a.bridge : undefined,
         bridgeAlpha: Number.isFinite(a.bridge_alpha) ? a.bridge_alpha : undefined,
+        // FastH3's per-render pick; the route keeps only "pytorch" | "kitchen".
+        attention: a.attention === "kitchen" || a.attention === "pytorch" ? a.attention : undefined,
         loras,
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it

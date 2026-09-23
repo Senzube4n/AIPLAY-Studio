@@ -451,7 +451,16 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
   }
   /* ── video: the best one with a button ───────────────────────────────── */
   const videos = VIDEO_IDS.map(withFit).filter(Boolean);
-  const fetchable = videos.filter((v) => !v.cap.gated && v.fit.state !== "wont-run").sort(rank);
+  /* Between two video rows that are equally ready and equally fitting, the
+   * engine selected in settings wins before size does: FastH3 is 1 GB smaller
+   * than H3 but unmeasured here, and a fresh install's default is H3. */
+  const chosenVideo = MODEL_TO_CAPABILITY[config.video.engine];
+  const videoRank = (a, b) => {
+    if (a.cap.ready !== b.cap.ready || FIT_RANK[a.fit.state] !== FIT_RANK[b.fit.state]) return rank(a, b);
+    if ((a.cap.id === chosenVideo) !== (b.cap.id === chosenVideo)) return a.cap.id === chosenVideo ? -1 : 1;
+    return rank(a, b);
+  };
+  const fetchable = videos.filter((v) => !v.cap.gated && v.fit.state !== "wont-run").sort(videoRank);
   const gatedOnes = videos.filter((v) => v.cap.gated);
 
   if (fetchable.length) {

@@ -68,13 +68,14 @@ export function modelTools(api) {
     },
     {
       name: "models_folder",
-      description: "Scan a local models folder, use it for future downloads, or stop using a previous folder. scan reads only. use saves the preference and keeps models from the previous folder available after restart; force:true permits an empty folder and create:true also creates a missing folder under an existing parent. drop stops searching a previous folder after restart, without deleting its files. No model move, download or restart occurs in this tool.",
-      inputSchema: { type: "object", required: ["action", "dir"], properties: { action: { type: "string", enum: ["scan", "use", "drop"] }, dir: { type: "string", minLength: 1 }, force: { type: "boolean" }, create: { type: "boolean", description: "With use and force:true, create a missing folder whose parent exists." } }, additionalProperties: false },
+      description: "Scan a local models folder, use it for future downloads, or stop using a previous folder. scan reads only. use saves the preference and keeps models from the previous folder available after restart; force:true permits an empty folder and create:true also creates a missing folder under an existing parent. drop stops searching a previous folder after restart, without deleting its files. also adds a second folder of models that already exist, to check and load from after a restart; downloads still go to the models folder, and the main folder itself is refused. No model move, download or restart occurs in this tool.",
+      inputSchema: { type: "object", required: ["action", "dir"], properties: { action: { type: "string", enum: ["scan", "use", "also", "drop"] }, dir: { type: "string", minLength: 1 }, force: { type: "boolean" }, create: { type: "boolean", description: "With use and force:true, create a missing folder whose parent exists." } }, additionalProperties: false },
       async run(a) {
         if (typeof a.dir !== "string" || !a.dir.trim()) throw new Error("Give a models folder.");
         if (a.action === "scan") return await api("POST", "/api/models", { action: "scanFolder", dir: a.dir });
         if (a.action === "drop") return await api("POST", "/api/models", { action: "dropAlso", dir: a.dir });
-        if (a.action !== "use") throw new Error("Choose scan, use or drop.");
+        if (a.action === "also") return await api("POST", "/api/models", { action: "addAlso", dir: a.dir });
+        if (a.action !== "use") throw new Error("Choose scan, use, also or drop.");
         if (a.create && !a.force) throw new Error("Creating a new models folder requires force:true as well as create:true.");
         return await api("POST", "/api/models", { action: "setModelsDir", dir: a.dir, force: a.force === true, ...(a.create === true ? { create: true } : {}) });
       },

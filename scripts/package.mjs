@@ -44,6 +44,11 @@ const FILES = ["package.json", "package-lock.json", "AIPLAY Studio.cmd", "README
  */
 const SCRIPTS = [
   "setup.mjs",              // first run: find the engine
+  // The launcher's other two ways in, and the engine installer it runs. Each
+  // was missing here, so a zip could only ever start Full Studio.
+  "start-music.mjs",        // Music only
+  "start-cloud.mjs",        // Use Comfy API
+  "install-engine.mjs",     // the launcher's "Install ComfyUI"
   "build-launcher-exe.mjs", // rebuild AIPLAY Studio.exe + launcher/aiplay.ico from source
   "dav_encode.py",          // audio reference: the encode ComfyUI refuses to do
   "_audio_io.py",           // the only correct audio loader; dav_encode needs it

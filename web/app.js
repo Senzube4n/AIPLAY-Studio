@@ -51,7 +51,8 @@ import { paintLocal, initLocal } from "./modellocal.js";
 // what this machine actually has. It writes no copy of its own, exactly as
 // welcome.js writes none, and it is the same object studio_screen_info returns.
 import { mountInfo } from "./info.js";
-import { appConfirm, appPrompt } from "./dialog.js";
+import { appConfirm, appPrompt, appAlert } from "./dialog.js";
+import { showRouter } from "./router.js";
 import { openModelPicker } from "./modelpick.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
@@ -71,7 +72,16 @@ const size = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b /
 
 
 const state = {
-  seedLocked: true,
+  /* ⚠ UNLOCKED, AND IT MATTERS MORE HERE THAN ANYWHERE. A locked seed with a
+   * fixed starting value means the same words give the same song every time,
+   * for ever, on a fresh install: press Create twice and wonder why nothing
+   * changed. Images and Video already leave their seed box empty and let the
+   * server roll one; Music is the screen that shipped with a number in the
+   * box and "locked" lit up. Loading a past song's settings has always rolled
+   * a fresh seed for the same reason (see the loader below) — this makes the
+   * first song behave like the second. Locking is one click, and that click
+   * keeps the seed on screen, which is the case where repeatability is wanted. */
+  seedLocked: false,
   loop: false,
   shuffle: false,
   lastVol: 1,
@@ -92,7 +102,7 @@ function paintSeed() {
   // "I changed one word and got a different song" is a guaranteed support ticket.
   $("seedNote").innerHTML = state.seedLocked
     ? "Repeatability needs the same seed, model, precision, settings and inputs; an identical file isn’t guaranteed. <b>Editing lyrics can change the song.</b>"
-    : "A fresh seed each time — a different song from the same words.";
+    : "A fresh seed each time: a different song from the same words. Lock it to keep one.";
 }
 $("seedLock").onclick = () => { state.seedLocked = true; paintSeed(); };
 $("seedRand").onclick = () => {
@@ -238,7 +248,7 @@ function scaffold(n) {
 function paintScaffold() {
   const n = +$("sections").value;
   $("sectionsV").textContent = `${n} sections`;
-  $("scaffold").textContent = scaffold(n);
+  $("scaffold").value = scaffold(n);
   // ~19 s of music per section, from the 8-section / 157 s measurement.
   $("advHint").textContent = `About ${fmt(n * 19)} of music, roughly.`;
   countChars();
@@ -291,7 +301,7 @@ for (const id of ["capMeta", "capVocal", "capArr"]) {
 
 function countChars() {
   const cap = captionValue();
-  const lyr = state.mode === "instrumental" ? $("scaffold").textContent : $("lyrics").value;
+  const lyr = state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value;
   const est = Math.ceil((cap.length + lyr.length) / 4);
   const pct = est / TOKEN_BUDGET;
 
@@ -332,10 +342,20 @@ function paintLyricsSwap() {
   const inBox = instrInLyricsBox(), sw = $("lyricsSwap");
   if (sw) {
     sw.hidden = !inBox;
+    /* Two sides, each showing which one it is: "Write" and "Structure" are
+     * the two ways to fill this one box, which is what the control actually
+     * does. The old single button said "🎼 Instrumental" on one press and "✎
+     * Lyrics" on the other, so it named a kind of song rather than a way of
+     * working and never showed which side you were on. */
     const on = state.mode === "instrumental";
-    sw.textContent = on ? "✎ Lyrics" : "🎼 Instrumental";
-    sw.title = on ? "Back to writing lyrics" : "Switch to an instrumental: a section structure instead of words";
-    sw.setAttribute("aria-pressed", String(on));
+    for (const b of sw.querySelectorAll("[data-lyrmode]")) {
+      const mine = b.dataset.lyrmode === (on ? "instrumental" : "song");
+      b.setAttribute("aria-pressed", String(mine));
+      b.classList.toggle("on", mine);
+    }
+    sw.title = on
+      ? "A section structure is being written for you. Switch to write the words yourself."
+      : "Writing the words yourself. Switch to have a section structure written instead.";
   }
   if ($("modeInstr")) $("modeInstr").hidden = inBox || (state.musicEngines?.[state.musicEngine]?.instrumentalToggle === false);
   $("modeSong").setAttribute("aria-pressed", String(!state.simple && (state.mode === "song" || (state.mode === "instrumental" && inBox))));
@@ -345,23 +365,34 @@ function setMode(m) {
   state.mode = m;
   $("modeSong").setAttribute("aria-pressed", String(!state.simple && m === "song"));
   $("modeInstr").setAttribute("aria-pressed", String(!state.simple && m === "instrumental"));
-  $("lyricsField").hidden = m === "instrumental";
   /* The section scaffold is MiniMax's instrumental device: bare tags for the
    * model to pace itself against. YuE2 SINGS brackets, so its instrumental is
    * empty lyrics and a style that says so — the server writes that phrasing
    * (index.js /api/generate), and there is nothing here to scaffold. */
-  $("instrField").hidden = m !== "instrumental" || yueEngine() || aceEngine();
-  if (m === "instrumental" && !yueEngine() && !aceEngine()) paintScaffold();
+  const structure = m === "instrumental" && !yueEngine() && !aceEngine();
+  /* ONE FIELD, TWO WAYS TO FILL IT. The structure picker takes the tag strip's
+   * place and its text lands in the box where the words would be, rather than
+   * in a second panel underneath with its own heading. */
+  $("lyricTags").hidden = structure;
+  $("instrField").hidden = !structure;
+  $("lyrics").hidden = structure;
+  $("scaffold").hidden = !structure;
+  $("lyricsField").hidden = m === "instrumental" && !structure;
+  if (structure) paintScaffold();
   /* Nothing left in the Lyrics card (YuE2's instrumental has no scaffold), so
    * slide the whole card away; MiniMax keeps it for its Structure picker. */
-  $("lyricsSlide")?.classList.toggle("closed", m === "instrumental" && $("instrField").hidden);
+  $("lyricsSlide")?.classList.toggle("closed", m === "instrumental" && !structure);
   if (typeof paintLyricsSwap === "function") paintLyricsSwap();
   countChars();
 }
 $("lyricsSwap")?.addEventListener("click", (e) => {
   // Inside <summary>: without this the click also folds the Lyrics box.
   e.preventDefault(); e.stopPropagation();
-  setMode(state.mode === "instrumental" ? "song" : "instrumental");
+  const side = e.target.closest?.("[data-lyrmode]");
+  /* A click on the switch's own padding is not a choice; only the two sides
+   * are, and pressing the side you are already on does nothing. */
+  if (!side || side.dataset.lyrmode === state.mode) return;
+  setMode(side.dataset.lyrmode);
   $("lyricsBox").open = true;
 });
 
@@ -901,6 +932,16 @@ function musicEnginePaint() {
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
   const preview = $("btnPreview");
   if (preview) preview.hidden = yueParams || aceParams;   // no cheap pass on YuE2 or ACE-Step
+  /* No second way to render means no arrow: Create goes back to being one
+   * plain button rather than a split one with an empty drawer behind it. */
+  if ($("ctaMore")) {
+    const only = !!preview?.hidden;
+    $("ctaMore").hidden = only;
+    $("ctaSplit")?.classList.toggle("solo", only);
+    /* typeof: server/music-gguf-q8-ui_test.js lifts this function out of the
+     * file and runs it with only the names it injects, as several tests do. */
+    if (only && typeof ctaDrawer === "function") ctaDrawer(false);
+  }
   const durLabel = document.querySelector('label[for="maxDur"]');
   if (durLabel) durLabel.textContent = yueParams || aceParams ? "Length" : "Length ceiling";
   const cap = $("caption");
@@ -922,11 +963,24 @@ function musicEnginePaint() {
       ? "[Verse]\nYour words…\n\n[Chorus]\n…"
       : "[Verse]\nSodium light on the ring road again…";
   }
-  /* The model name itself, not appended after a hard-coded "MiniMax-Music3":
-   * with YuE2 selected the sidebar read "Powered by MiniMax-Music3 · YuE2 3B". */
-  const powered = $("poweredEngine");
-  if ($("poweredName")) $("poweredName").textContent = aceParams ? "ACE-Step 1.5" : yueParams ? "YuE2 3B" : "MiniMax-Music3";
-  if (powered) powered.textContent = aceParams ? " (MIT)" : yueParams ? " (CC BY-NC 4.0)" : "";
+  /* ⚠ THE CREDIT IS A LICENCE CONDITION AND IT BELONGS TO ONE VENDOR, so it
+   * appears when that vendor's engine is the one selected and not otherwise.
+   * MiniMax-Music3 §3.1 asks for "MiniMax-Music3" shown prominently in the
+   * interface of a product that uses it; MiniMax H3 §IV.2 asks the same for
+   * "MiniMax H3". ACE-Step is MIT and YuE2 is CC BY-NC, and neither asks for
+   * an interface credit — so naming THEM there was a permanent line in the
+   * window that no licence wanted. It sits above the mark, which is as
+   * prominent as this window gets, and says why it is there when pressed. */
+  if ($("attrib")) {
+    /* EVERY name that is owed, not the first one: MiniMax-Music3 with H3 video
+     * on owes both, and each licence asks for its own name. /h3/ also matches
+     * "fasth3", which carries H3's licence (models.js videoFastH3). */
+    const vid = String(state.video?.engine || "");
+    const minimaxVideo = state.video?.enabled && /h3|minimax/i.test(vid);
+    const owed = [(!yueParams && !aceParams) ? "MiniMax-Music3" : "", minimaxVideo ? "MiniMax H3" : ""].filter(Boolean).join(" · ");
+    $("attrib").hidden = !owed;
+    if (owed && $("poweredName")) $("poweredName").textContent = owed;
+  }
   /* Guided mode writes MiniMax's three-part caption grammar ("Global
    * Metadata. … Vocal Details. …"); YuE2 takes one line of tags. The toggle
    * is hidden under YuE2 by its data-engine tag, and an open Guided box is
@@ -1088,7 +1142,7 @@ function presetShow(e) {
 function simpleLock() {
   const lock = !!state.simple;
   for (const id of ["caption", "lyrics", "capMeta", "capVocal", "capArr"]) { const el = $(id); if (el) el.readOnly = lock; }
-  $("scaffold")?.setAttribute("contenteditable", lock ? "false" : "true");
+  if ($("scaffold")) $("scaffold").readOnly = lock;
 }
 
 /* ── song reference (drop box) ────────────────────────── */
@@ -2872,7 +2926,7 @@ $("btnToOvernight").onclick = () => {
   ov.ideas.push({
     title: $("title").value.trim() || "Untitled",
     caption,
-    lyrics: instrumental ? $("scaffold").textContent : $("lyrics").value.trim(),
+    lyrics: instrumental ? $("scaffold").value : $("lyrics").value.trim(),
     instrumental,
     maxDuration: +$("maxDur").value,
   });
@@ -2939,7 +2993,28 @@ async function runExtend() {
     $("btnCreate").disabled = false;
   }
 }
-$("btnPreview").onclick = () => generate(true);
+/* ── Create, with the other ways to render folded into it ──────────────────
+ * Preview is not Create's equal: it is the cheap pass you take now and then,
+ * and standing beside Create as a second button of the same size it read as
+ * one. It lives in a drawer behind the arrow at Create's right end. The arrow
+ * is absent, not disabled, on the engines with no cheap pass, and Create is a
+ * plain full-width button again when it is. */
+function ctaDrawer(open) {
+  const d = $("ctaDrawer"), more = $("ctaMore");
+  if (!d) return;
+  d.hidden = !open;
+  more?.setAttribute("aria-expanded", String(!!open));
+  $("ctaSplit")?.classList.toggle("open", !!open);
+}
+$("ctaMore").onclick = (e) => {
+  e.stopPropagation();
+  ctaDrawer($("ctaDrawer").hidden);
+};
+document.addEventListener("click", (e) => {
+  if (!$("ctaDrawer")?.hidden && !$("ctaSplit")?.contains(e.target)) ctaDrawer(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") ctaDrawer(false); });
+$("btnPreview").onclick = () => { ctaDrawer(false); generate(true); };
 $("btnCancel").onclick = () => fetch("/api/cancel", { method: "POST" });
 
 /* The queue's own stop button. Same endpoint as btnCancel, which now stops the
@@ -3024,100 +3099,173 @@ function musicWarningHtml(track, compact = false) {
  * confident one made at the start.
  */
 function renderQueue(s) {
-  const box = $("queueBox");
+  const box = $("workBox");
   if (!box) return;
-  const rows = [];
-  let secs = 0;
+  const a = s.art || {};
   const unknownNative = nativeMusicPending(s);
 
-  const cur = s.current;
-  if (cur) {
-    rows.push({ now: true, what: cur.title || "rendering", secs: null });
-  }
-  /* ⚠ AND THE ART JOB THAT IS ACTUALLY RUNNING.
-   *
-   * `s.current` is the SONG job; the art lane's running job was never a row
-   * here — only its QUEUE was, via queuedKinds. So during a long clip render
-   * with nothing waiting behind it, this panel had no rows at all and hid
-   * itself. The Stop button disappeared exactly while there was something to
-   * stop, and reappeared the moment another job queued up: the flicker Senzu
-   * saw, and the reason the box seemed to come and go at random.
-   *
-   * A render is work in progress and belongs in the list of work in progress. */
-  const art = s.art || {};
-  if (art.current) {
-    const el = Number(art.current.elapsed) || 0;
-    const pc = Number(art.current.progress) || 0;
-    /* Remaining from measured progress, not a guess: at 40% after 4 minutes the
-     * honest answer is 6 more, and the panel already knows both numbers. */
-    const left = (pc > 0.02 && el > 5) ? Math.max(0, Math.round(el / pc - el)) : 0;
-    rows.push({
-      now: true,
-      what: `${art.current.title || art.current.kind || "rendering"}${pc ? ` · ${Math.round(pc * 100)}%` : ""}`,
-      secs: left || null,
-    });
-    secs += left;
-  }
-  for (const j of (s.queue || [])) {
-    if (j.engine === "yue2-gguf") {
-      rows.push({ what: j.title || "song", unknown: true });
-      continue;
-    }
-    /* The server's own estimate rides on the row (jobs.js #estimate knows
-     * each engine's measured ratio); the MiniMax figure is the fallback for
-     * a row that predates it. */
-    const est = Number(j.etaSeconds) > 0 ? Number(j.etaSeconds) : 150 * (state.realtimeRatio || 1.53);
-    secs += est;
-    rows.push({ what: j.title || "song", secs: est });
+  /* WHAT IS BEING MADE, and what kind of thing it is. The art lane's running
+   * job counts as work in progress: it was once left out here, so a long clip
+   * render with nothing behind it emptied the panel and took the Stop button
+   * away exactly while there was something to stop. */
+  let now = null, nowEta = 0;
+  if (a.current) {
+    const pc = Number(a.current.progress) || 0, el = Number(a.current.elapsed) || 0;
+    /* Remaining from measured progress, not a guess: at 40% after 4 minutes
+     * the honest answer is 6 more, and both numbers are already here. */
+    nowEta = pc > 0.05 ? Math.max(0, el / pc - el)
+      : Math.max(0, (a.stats?.[a.current.kind]?.avg ?? KIND_FALLBACK[a.current.kind] ?? 180) - el);
+    now = { kind: KIND_LABEL[a.current.kind] || a.current.kind, title: a.current.title || "", pc };
+  } else if (s.current) {
+    const native = s.current.engine === "yue2-gguf" && !ggufEtaKnown(s.current);
+    nowEta = native ? 0 : Number(s.current.etaSeconds) || 0;
+    now = { kind: "song", title: s.current.title || "", pc: 0, native };
   }
 
-  /* The art lane drains covers, clips, stems and lyrics. Counting KINDS rather
-   * than a flat total, because a cover is three seconds and a clip is minutes —
-   * a single number over both is the kind of average that is never true. */
-  const kinds = (s.art && s.art.queuedKinds) || {};
-  const ART_SECS = { cover: 4, clip: 90, stems: 60, lrc: 36, enhance: 16, upscale: 99 };
-  for (const [k, n] of Object.entries(kinds)) {
+  /* WHAT IS WAITING, counted by KIND rather than as one total: a cover is
+   * three seconds and a clip is minutes, and a single number over both is the
+   * kind of average that is never true. */
+  const waiting = [];
+  let rest = 0;
+  const musicQ = (s.queue || []).length;
+  if (musicQ) waiting.push(`${musicQ} song${musicQ > 1 ? "s" : ""}`);
+  for (const job of (s.queue || [])) {
+    if (job.engine === "yue2-gguf") continue;
+    rest += Number(job.etaSeconds) > 0 ? Number(job.etaSeconds) : 150 * (state.realtimeRatio || 1.53);
+  }
+  for (const [kind, n] of Object.entries(a.queuedKinds || {})) {
     if (!n) continue;
-    const est = (ART_SECS[k] ?? 30) * n;
-    secs += est;
-    rows.push({ what: `${n} ${k}${n > 1 ? "s" : ""}`, secs: est });
+    waiting.push(`${n} ${KIND_LABEL[kind] || kind}${n > 1 ? "s" : ""}`);
+    rest += n * (a.stats?.[kind]?.avg ?? KIND_FALLBACK[kind] ?? 180);
   }
-
   const run = s.run;
   if (run && (run.state === "running" || run.state === "paused")) {
-    const left = Number(run.secondsLeft) || 0;
-    secs += left;
+    const left = Math.max(0, (run.total || 0) - (run.done || 0));
     const kind = run.kind === "image" ? "picture" : run.kind === "video" ? "clip" : "song";
-    rows.push({
-      what: `overnight · ${Math.max(0, (run.total || 0) - (run.done || 0))} ${kind}s left${run.state === "paused" ? " (paused)" : ""}`,
-      secs: left,
-    });
+    waiting.push(`overnight: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
+    rest += Number(run.secondsLeft) || 0;
   }
 
-  /* ⚠ DO NOT HIDE THE INSTANT THE QUEUE EMPTIES.
-   *
-   * Between two jobs there is a moment with nothing running and nothing queued,
-   * and this used to hide the whole box for it — so a long batch flashed the
-   * panel away and back on every handover, and everything under it in the rail
-   * jumped up and down with it. That reads as the app glitching.
-   *
-   * Two seconds of grace: long enough to cover a handover, short enough that a
-   * genuinely finished queue still tidies itself away. */
-  if (!rows.length) {
+  const busy = !!now || waiting.length;
+  /* ⚠ DO NOT HIDE THE INSTANT THE QUEUE EMPTIES. Between two jobs there is a
+   * moment with nothing running and nothing queued; hiding for it made a long
+   * batch flash the panel away and back on every handover, and everything
+   * under it in the rail jumped with it. Two seconds of grace covers a
+   * handover, and a genuinely finished queue still tidies itself away. */
+  if (!busy) {
     if (!renderQueue.emptyAt) renderQueue.emptyAt = Date.now();
-    if (Date.now() - renderQueue.emptyAt > 2000) box.hidden = true;
-    return;
-  }
-  renderQueue.emptyAt = 0;
+    if (Date.now() - renderQueue.emptyAt > 2000) {
+      /* Settled: no Stop, no ETA, no queue — just the day's tally, and
+       * nothing at all on a machine that has not made anything today. */
+      const today = doneToday();
+      box.hidden = !today;
+      box.classList.add("resting");
+      $("wbState").textContent = "idle";
+      $("wbEta").textContent = "";
+      $("wbNow").textContent = today ? `${today} done today` : "";
+      $("wbRest").hidden = true;
+      wbLine("idle", today ? `${today} today` : "", false);
+      return;
+    }
+  } else renderQueue.emptyAt = 0;
   box.hidden = false;
-  $("qTotal").textContent = unknownNative ? "ETA unavailable" : secs ? `~${dur(secs)} of work` : "working";
-  /* The clock time, not just a duration: "done by 06:40" is the form the
-   * decision is actually made in. */
-  $("qEta").textContent = unknownNative
-    ? (secs ? `~${dur(secs)} estimated for other jobs` : "Native music runtime is not measured")
-    : secs ? `done by ${clock(Date.now() + secs * 1000)}` : "";
-  $("qRows").innerHTML = rows.map((r) =>
-    `<div class="qrow${r.now ? " now" : ""}"><span>${esc(r.what)}</span><b>${r.unknown ? "unknown" : r.secs ? dur(r.secs) : "now"}</b></div>`).join("");
+  box.classList.remove("resting");
+
+  const total = nowEta + rest;
+  $("wbState").textContent = now ? "working" : "queued";
+  /* The clock time as well as the duration: "done by 06:40" is the form the
+   * go-to-bed decision is actually made in. */
+  $("wbEta").textContent = unknownNative ? "ETA unknown"
+    : total > 30 ? `~${fmtEta(total)} · by ${clock(Date.now() + total * 1000)}` : "";
+  $("wbNow").textContent = now
+    ? `${now.kind} · ${now.title}`.slice(0, 46)
+      + (now.native ? " · ETA unknown" : nowEta > 5 ? ` · ~${fmtEta(nowEta)}` : "")
+      + (now.pc ? ` · ${Math.round(now.pc * 100)}%` : "")
+    : "waiting to start";
+  const today = doneToday();
+  const tail = [waiting.length ? `then ${waiting.join(", ")}` : "", today ? `${today} done today` : ""]
+    .filter(Boolean).join(" · ");
+  $("wbRest").hidden = !tail;
+  $("wbRest").textContent = tail;
+  /* The strip is the one line you see without opening anything: what is being
+   * made and how long it has left, and nothing else. */
+  wbLine(now ? `${now.kind} · ${now.title}`.slice(0, 28) : "queued",
+    unknownNative ? "" : nowEta > 5 ? `~${fmtEta(nowEta)}` : "", true);
+}
+
+/* The compact line, and the dot that says whether anything is happening. */
+function wbLine(what, right, busy) {
+  const line = $("wbLine");
+  if (!line) return;
+  line.textContent = right ? `${what} · ${right}` : what;
+  $("workBox")?.classList.toggle("busy", !!busy);
+  const strip = $("wbStrip");
+  if (strip) strip.title = busy
+    ? "What is being made. Open for the queue and the controls."
+    : "Nothing is rendering. Open for today's tally.";
+}
+
+/* WHAT THIS CARD ACTUALLY DOES, per second of audio, for one engine. Every
+ * finished song records how long it took (`renderSeconds`) and how long it is
+ * (`durationSeconds`), so an engine with no published figure for this machine
+ * still has one after the first song: the last few renders, averaged. An
+ * engine nobody has run here yet returns null, and the caller says that
+ * instead of inventing a number. */
+function measuredRatio(engine) {
+  const rows = (state.library || [])
+    .filter((t) => t.engine === engine && Number(t.renderSeconds) > 0 && Number(t.durationSeconds) > 0)
+    .slice(0, 8);
+  if (!rows.length) return null;
+  return { n: rows.length, ratio: rows.reduce((sum, t) => sum + t.renderSeconds / t.durationSeconds, 0) / rows.length };
+}
+
+/* The drop-up opens on hover (CSS) and on a click or Enter, which is what
+ * makes it reachable without a pointer. A click toggles `open` so it stays put
+ * while you press Stop; moving the pointer off it closes it again. */
+{
+  const box = $("workBox"), strip = $("wbStrip");
+  /* addEventListener: several tests lift this stretch of the file out and run
+   * it against stub elements that have no event machinery. Real listeners are
+   * only meaningful against a real DOM anyway. */
+  if (box?.addEventListener && strip?.addEventListener) {
+    /* ⚠ THE PANEL IS FIXED, so it has to be placed. The rail is
+     * overflow:hidden and an absolutely positioned panel was clipped by it —
+     * invisible at full width, sliced in half in the collapsed 64px rail.
+     * Placed against the strip each time it opens, and again on resize, which
+     * is when the rail changes width. */
+    const place = () => {
+      const r = strip.getBoundingClientRect();
+      if (!r.width) return;
+      const panel = $("wbPanel");
+      const w = Math.min(210, window.innerWidth - 16);
+      panel.style.width = `${w}px`;
+      panel.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+      panel.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+    };
+    const say = (open) => { if (open) place(); strip.setAttribute("aria-expanded", String(open)); };
+    window.addEventListener("resize", () => { if (box.matches(":hover, .open")) place(); });
+    strip.addEventListener("click", () => { box.classList.toggle("open"); say(box.classList.contains("open")); });
+    box.addEventListener("mouseenter", () => say(true));
+    box.addEventListener("mouseleave", () => { box.classList.remove("open"); say(false); });
+    box.addEventListener("focusin", () => say(true));
+    box.addEventListener("focusout", (e) => {
+      if (!box.contains(e.relatedTarget)) { box.classList.remove("open"); say(false); }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && box.classList.contains("open")) { box.classList.remove("open"); say(false); strip.focus(); }
+    });
+  }
+}
+
+/* HOW MUCH GOT FINISHED TODAY, counted from the things themselves rather than
+ * from a session counter that resets when the app does. Songs carry
+ * `createdAt`, pictures and clips carry `at`; all three are the file's own
+ * time, so this survives a restart and still means what it says at 2 a.m. */
+function doneToday() {
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  const since = midnight.getTime();
+  const count = (list, key) => (list || []).reduce((n, row) => n + ((row?.[key] || 0) >= since ? 1 : 0), 0);
+  return count(state.library, "createdAt") + count(state.images, "at") + count(state.clips, "at");
 }
 
 function renderNow(cur, queued = 0) {
@@ -4184,14 +4332,14 @@ async function onRowClick(e) {
   if (fl) {
     const on = !fl.classList.contains("on");
     fl.classList.toggle("on", on);   // optimistic, so the click feels instant
-    trackAction({ action: "flag", file: decodeURIComponent(fl.dataset.f), flag: fl.dataset.flag, value: on });
+    flagNow(decodeURIComponent(fl.dataset.f), fl.dataset.flag, on);
     return;
   }
   const rt = e.target.closest("[data-rate]");
   if (rt) {
     const on = !rt.classList.contains("on");
     rt.classList.toggle("on", on);
-    trackAction({ action: "flag", file: decodeURIComponent(rt.dataset.f), flag: "rating", value: on ? 1 : 0 });
+    flagNow(decodeURIComponent(rt.dataset.f), "rating", on ? 1 : 0);
     return;
   }
   const tr = e.target.closest("[data-trash]");
@@ -4423,6 +4571,19 @@ $("batchBar").addEventListener("click", (e) => {
   const b = e.target.closest("[data-batch]");
   if (b && !b.disabled) runBatch(b.dataset.batch);
 });
+
+/* ⚠ THE LIST HAS TO MOVE WITH THE CLICK, not with the reply. The button
+ * itself was already optimistic, but the PINNED STRIP is drawn from
+ * state.library, which only changed when the round trip came back and the next
+ * poll repainted — so pinning lit the pin at once and the song appeared at the
+ * top a visible beat later. The same beat unpinned it, restarred it and
+ * re-rated it. Set the flag on the row we already hold, repaint, and let the
+ * server's answer confirm it. */
+function flagNow(file, flag, value) {
+  for (const row of (state.library || [])) if (row.file === file) row[flag] = value;
+  reList();
+  trackAction({ action: "flag", file, flag, value });
+}
 
 function trackAction(body) {
   return fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -5266,8 +5427,9 @@ function disarmCollab() {
   if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
 }
 
+let collabVideoDraft = null, cbOpenedVideo = null;
 let collabPainted = false;
-async function paintCollab(force = false) {
+async function paintCollab(force = false, scene = null, videoRecipe = null) {
   const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
@@ -5295,7 +5457,7 @@ async function paintCollab(force = false) {
     const rows = r.projects || r || [];
     const sel = $("cbProject");
     if (sel && Array.isArray(rows)) {
-      const selected = sel.value;
+      const selected = scene?.slug || sel.value;
       sel.innerHTML = rows.map((p) => `<option value="${esc(p.slug)}">${esc(p.title || p.slug)}</option>`).join("");
       if (rows.some((p) => p.slug === selected)) sel.value = selected;
       if ($("cbPlanProject")) { $("cbPlanProject").innerHTML = sel.innerHTML; $("cbPlanProject").value = sel.value; }
@@ -5305,7 +5467,30 @@ async function paintCollab(force = false) {
   await refreshCollab();
   await loadCollabPlan(true);
   paintCbKind();
+  if (scene) selectCollabScene(scene);
+  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-recipe"; paintCbKind(); $("cbTo")?.focus?.(); }
 }
+
+function selectCollabScene({slug, segmentId}) {
+  invalidateCbPreview();
+  if (!cbSceneReady || cbLoadedSlug !== slug || !cbProjectDoc?.segments?.some(s => s.id === segmentId && s.mode === "generate")) {
+    cbSay("Scene unavailable. Refresh the project.");
+    return false;
+  }
+  collabTabChosen = true;
+  setCbTab("Send");
+  $("cbKind").value = "order"; paintCbKind();
+  $("cbSegment").value = segmentId;
+  for (const id of ["cbSeed", "cbSteps", "cbEngineMode"]) $(id).value = "";
+  cbSay("");
+  $("cbTo")?.focus?.();
+  return true;
+}
+if (typeof document !== "undefined") document.addEventListener("aiplay:collab-scene", (event) => {
+  const scene = event.detail;
+  if (typeof scene?.slug !== "string" || typeof scene?.segmentId !== "string") return;
+  setView("collab", { collabScene: {slug:scene.slug, segmentId:scene.segmentId} });
+});
 
 /* Repainting is SEPARATE from paintCollab, which mints the keys on first sight
  * and must stay bound to the view change exactly as it is. */
@@ -5474,7 +5659,8 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
-  cbOpenedResources = null;
+  cbOpenedResources = null; cbOpenedVideo = null;
+  if ($("cbUseVideo")) $("cbUseVideo").hidden = true;
   if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
@@ -5513,6 +5699,17 @@ async function openCollabFile(file) {
         `From ${r.from.nickname || r.from.fp} (${r.from.verified ? "verified" : "NOT verified"})\n${r.describes}\n\n`
         + (r.packet?.prompt ? `The prompt they are asking you to render:\n${r.packet.prompt}\n\n` : "")
         + (r.note || "");
+    }
+    if (r.kind === "video-recipe" && r.videoRecipe) {
+      cbOpenedVideo = {file:r.file || file, video:r.videoRecipe};
+      $("cbUseVideo").hidden = false;
+      $("cbOpened").textContent = `${r.describes}
+
+${r.videoRecipe.prompt}
+
+Negative: ${r.videoRecipe.negative || "(none)"}
+Guidance: ${r.videoRecipe.guidance} · Audio: ${r.videoRecipe.keepAudio ? "keep" : "off"}
+Custom LoRAs and conditioning bridge off. Review before rendering.`;
     }
     if (r.kind === "resources" && r.packet && r.from?.fp) {
       cbOpenedResources = { fp: r.from.fp, resources: r.packet, file: r.file || file };
@@ -5782,6 +5979,7 @@ $("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return pai
 
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
+  if (kind === "video-recipe") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
   return {
     slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
@@ -5808,7 +6006,7 @@ for (const id of ["cbTo", "cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineM
 $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
   const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
-  if (body.kind !== "resources" && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  if (!["resources", "video-recipe"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
   $("cbPreview").disabled = true;
   $("cbPackNote").textContent = "Reading the exact outgoing contents…";
   const r = await cb({ action: "preview", ...body });
@@ -5816,12 +6014,12 @@ $("cbPreview")?.addEventListener("click", async () => {
   if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
   if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
   cbPreparedPreview = { id: r.previewId, key };
-  const packet = r.packet || {}, shot = packet.shot || packet, order = packet.order || {};
+  const packet = r.packet || {}, shot = packet.video || packet.shot || packet, order = packet.order || {};
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
   $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${r.describes || body.kind}`;
   $("cbPreviewPrompt").textContent = shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
-  $("cbPreviewSettings").textContent = body.kind === "shot" || body.kind === "order"
+  $("cbPreviewSettings").textContent = body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
     ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
     : r.note || "Review the full contents below.";
   $("cbPreviewManifest").innerHTML = manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
@@ -6808,13 +7006,20 @@ function vidPaint() {
     : "Video is switched off. Press Render and Studio asks to switch it on.";
   $("vidEngineNote").textContent = cur === "ltx"
     ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
+    : eng.fixedSteps
+    ? "H3 distilled to " + eng.fixedSteps + " fixed steps, with sound; references need MiniMax H3."
     : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references — pictures and sounds the description can call by name.";
   // LTX has no single step count — it is baked into two fixed sigma schedules.
+  // FastH3 has one, and it is fixed (eng.fixedSteps): no slider for either.
+  const noSteps = cur === "ltx" || !!eng.fixedSteps;
   const stepRow = $("vidSteps").closest(".pv");
   if (stepRow) {
-    stepRow.hidden = cur === "ltx";
-    if (stepRow.previousElementSibling) stepRow.previousElementSibling.hidden = cur === "ltx";
+    stepRow.hidden = noSteps;
+    if (stepRow.previousElementSibling) stepRow.previousElementSibling.hidden = noSteps;
   }
+  /* FastH3's dense attention backend. Only an engine that sends `attention`
+   * has the choice; the others never show the row. */
+  for (const id of ["vidAttnL", "vidAttnW"]) { const el = $(id); if (el) el.hidden = !eng.attention; }
   $("vidSecsV").textContent = $("vidSecs").value + "s";
   $("vidStepsV").textContent = $("vidSteps").value;
   /* The quality chips are the step slider in three words; they hide with it
@@ -6823,7 +7028,7 @@ function vidPaint() {
    * title are written from it, so a chip never names a build this disk lacks. */
   const qRow = $("vidQualityRow");
   if (qRow) {
-    qRow.hidden = cur === "ltx";
+    qRow.hidden = noSteps;
     const qs = vidQualitySteps(eng);
     const stNow = +$("vidSteps").value;
     for (const b of qRow.querySelectorAll("[data-vq]")) {
@@ -6939,7 +7144,7 @@ function vidPaint() {
     ? Math.round(+$("vidSecs").value * fps) + 1
     : alignedFrames(+$("vidSecs").value);
   const mpxf = (w * h * frames) / 1e6;
-  const stepScale = cur === "ltx" ? 1 : (+$("vidSteps").value) / 8;
+  const stepScale = cur === "ltx" ? 1 : (eng.fixedSteps || +$("vidSteps").value) / 8;
   const secs = Math.round((eng.costFixedSeconds ?? 15)
     + (eng.costRate ?? 0.84) * Math.pow(mpxf, eng.costExponent ?? 1.2) * stepScale);
 
@@ -6979,19 +7184,22 @@ function vidPaint() {
    * builds (`betweenBuilds`). No step count known (a status without
    * loraSteps) names no build and warns about none. */
   const hasRefs = ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+  /* LTX and a fixed-schedule engine (FastH3, eng.fixedSteps) load no turbo
+   * build, so they name no path and warn about none. */
+  const fixedPath = cur === "ltx" || !!eng.fixedSteps;
   const ls = eng.loraSteps || {};
   const lowFile = (hasRefs ? ls.refTurboLora4 : st <= (eng.turbo3MaxSteps ?? 3) ? ls.turboLora3 : ls.turboLora4) ?? null;
   const midFile = (hasRefs ? ls.refTurboLora : ls.turboLora) ?? null;
   const fourFile = (hasRefs ? ls.refTurboLora4 : ls.turboLora4) ?? 4;
-  const stepPath = cur === "ltx" ? ""
+  const stepPath = fixedPath ? ""
     : st <= t4 ? (lowFile ? " · " + lowFile + "-step turbo path" : " · turbo path")
     : st <= t8 ? (!midFile ? " · turbo path"
                 : st > midFile ? " · " + midFile + "-step build run at " + st + " steps"
                 : hasRefs ? " · " + midFile + "-step reference build"
                 : " · " + midFile + "-step turbo path")
     : " · full-model path";
-  const mismatch = cur !== "ltx" && midFile !== null && midFile < 8 && st > midFile && st > t4 && st <= t8;
-  const betweenBuilds = cur !== "ltx" && midFile === 8 && st > t4 && st < 8;
+  const mismatch = !fixedPath && midFile !== null && midFile < 8 && st > midFile && st > t4 && st <= t8;
+  const betweenBuilds = !fixedPath && midFile === 8 && st > t4 && st < 8;
 
   $("vidEst").textContent = on
     ? "about " + fmt(secs) + " once the engine is idle · " + frames + " frames at " + fps + " fps"
@@ -7010,9 +7218,17 @@ function vidPaint() {
           ? " · references ride along, expect it slower" : "")
       + (cur === "ltx" && sndPicked ? " · the finished clip plays your chosen audio" : "")
     : "switch video on in Settings first";
+  /* An estimate rises above Render clip on hover; a warning (⚠, or video
+   * switched off) stays in place, .stick in styles.css. */
+  $("vidEst").classList.toggle("stick", !on || /⚠/.test($("vidEst").textContent));
 }
 
 for (const id of ["vidSecs", "vidSteps", "vidSize", "vidW", "vidH", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
+/* The attention choice is remembered on this browser only; PyTorch until changed. */
+if ($("vidAttn")) {
+  try { const a = localStorage.getItem("aiplayVidAttn"); if (a === "pytorch" || a === "kitchen") $("vidAttn").value = a; } catch { /* storage blocked */ }
+  $("vidAttn").onchange = () => { try { localStorage.setItem("aiplayVidAttn", $("vidAttn").value); } catch { /* not kept */ } };
+}
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
@@ -7110,7 +7326,7 @@ async function vidModelShape() {
       : "";
   }
   /* LTX has no audio decoder in its graph, so there is nothing to replace. */
-  for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng !== "h3"; }
+  for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng === "ltx"; }
   vidLoadLoras();
 }
 
@@ -7744,6 +7960,40 @@ async function enableVideo() {
   return !!state.video.enabled;
 }
 
+function videoFriendRecipe() {
+  const [width,height]=vidWH();
+  if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
+    throw new Error("Text-only recipes only. Remove frames, references, soundtrack and loop first.");
+  if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
+  return {engine:state.video?.engine || "ltx",prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
+    ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
+}
+$("vidRecipeClear")?.addEventListener("click",()=>{state.videoRecipeLoaded=false;$("vidRecipeClear").hidden=true;$("clipNote").textContent="Recipe mode cleared.";});
+$("vidAskFriend")?.addEventListener("click",()=>{
+  try {const videoRecipe=videoFriendRecipe();setView("collab",{videoRecipe});}
+  catch(e){$("clipNote").textContent=e.message;}
+});
+$("cbUseVideo")?.addEventListener("click",async()=>{
+  const opened=cbOpenedVideo;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  if (!(await setVideoEngine(opened.video.engine))) return;
+  if (cbOpenedVideo !== opened) return;
+  const v=opened.video;
+  $("vidPrompt").value=v.prompt; $("vidNeg").value=v.negative || ""; $("vidSeed").value=String(v.seed);
+  Object.assign($("vidSecs"),{min:"1",max:"20",step:"any"});
+  Object.assign($("vidSteps"),{min:"2",max:"40",step:"1"});
+  $("vidGuide").step="any";
+  $("vidSecs").value=String(v.seconds); $("vidSteps").value=String(v.steps); $("vidGuide").value=String(v.guidance);
+  $("vidAudio").value=v.keepAudio?"1":"0"; $("vidLoop").checked=false;
+  $("vidSize").value="custom"; $("vidW").value=String(v.width); $("vidH").value=String(v.height);
+  for(const id of ["vidFrom","vidTo","vidSndSong"])$(id).value="";
+  if(state.frameUploads){delete state.frameUploads.vidFrom;delete state.frameUploads.vidTo;}
+  state.midFrames=[];state.refImages=[];state.refAudios=[];state.sndUpload=null;
+  for(const id of ["vidModel","vidEncoder","vidVideoVae","vidAudioVae"])if($(id))$(id).value="auto";
+  vidLoraStack=[];vidPaintLoras();state.videoRecipeLoaded=true;$("vidRecipeClear").hidden=false;
+  setView("video");vidPaint();$("clipNote").textContent="Friend recipe loaded. Default models; custom LoRAs and bridge off.";
+});
+
 $("vidCreate").onclick = async () => {
   if (!state.video?.enabled) {
     const go = await bottomDrawer({
@@ -7778,6 +8028,8 @@ $("vidCreate").onclick = async () => {
         fromUpload: state.frameUploads?.vidFrom?.name,
         seconds: +$("vidSecs").value, steps: +$("vidSteps").value,
         width, height, keepAudio: $("vidAudio").value === "1",
+        // FastH3 only: its dense attention backend. Other engines never send it.
+        attention: state.video?.engines?.[state.video?.engine]?.attention ? $("vidAttn").value : undefined,
         loop: $("vidLoop").checked && !!$("vidFrom").value,
         // Ignored by the server when `loop` is set — the loop IS the closing
         // frame — but sent regardless so unticking loop restores the choice.
@@ -7808,6 +8060,7 @@ $("vidCreate").onclick = async () => {
         seed: $("vidSeed").value.trim() ? Number($("vidSeed").value.trim()) : undefined,
         guidance: +$("vidGuide").value,
         guideStrength: +$("vidPin").value / 100,
+        ...(state.videoRecipeLoaded ? {bridge:"off",bridgeAlpha:0} : {}),
       }),
     })).json();
     if (r.error) { failSay(r); return; }
@@ -7909,7 +8162,7 @@ function clipGroupsOf(rows, mode) {
   for (const c of rows) {
     const m = c.meta || {};
     if (mode === "engine") {
-      const e = m.engine === "ltx" ? "LTX 2.5" : m.engine === "h3" ? "MiniMax H3" : "Unknown engine";
+      const e = m.engine === "ltx" ? "LTX 2.5" : m.engine === "h3" ? "MiniMax H3" : m.engine === "fasth3" ? "FastH3" : "Unknown engine";
       put(`c:e:${e}`, e, c);
     } else if (mode === "track") {
       // A clip made on its own has no song above it, and saying so is more use
@@ -7963,7 +8216,7 @@ function clipCard(c) {
     const m = c.meta || {};
     const stem = c.name.replace(/\.(mp4|webm)$/, "");
     const badges = [
-      m.engine === "ltx" ? "LTX" : m.engine === "h3" ? "H3" : null,
+      m.engine === "ltx" ? "LTX" : m.engine === "h3" ? "H3" : m.engine === "fasth3" ? "FastH3" : null,
       m.loop ? "loop" : null,
       m.width && m.height ? `${m.width}×${m.height}` : null,
     ].filter(Boolean);
@@ -15416,8 +15669,19 @@ function imgQwenShape() {
   if (!advanced) $("imgAdv").hidden = true;
   imgQueueGate();
 }
+/* ⚠ `refs` IS A BUCKET, NOT A COUNT, and that is what stops this screen from
+ * re-checking on every single drop. The answer depends on which NODE CLASSES
+ * the graph needs and which model files are on the shelf; references add the
+ * loading nodes, and the second one adds nothing the first did not. Measured
+ * from qwenImageGraph(): the class list for 1, 2, 3, 5 and 10 references is
+ * identical, and only 0 differs. Sending the real count made the key change on
+ * every add and remove, so a drag and drop meant a round trip and an orange
+ * spinner over the engine dropdown — and "Make image" greyed out until it came
+ * back. Now the key changes once, when the first reference arrives.
+ * The real count still goes with the RENDER; this is only the readiness key. */
 function imgQwenQuery() {
-  const query = new URLSearchParams({ refs: String(imgRefs.length || ($("imgPersona").value ? 1 : 0)), transparent: String($("imgTransparent").checked) });
+  const refs = imgRefs.length || ($("imgPersona").value ? 1 : 0);
+  const query = new URLSearchParams({ refs: refs ? "1" : "0", transparent: String($("imgTransparent").checked) });
   if ($("imgEngine").value === "checkpoint") {
     const pick = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
     if (pick?.dit) query.set("dit", pick.dit);
@@ -15428,14 +15692,31 @@ function imgQwenQuery() {
   }
   return query;
 }
+/* Painting the form is not a user action. Dropping four pictures repaints four
+ * times, and each repaint that reached straight for the network was a request
+ * nobody asked for; this coalesces a burst into the one check at the end of it.
+ * Anything the user clicks (Check again, the engine, a character) still calls
+ * imgQwenCheck directly, because a control that waits is a control that feels
+ * broken. */
+var imgQwenSoon = null;   // var: imgRefsPaint can run before this line at boot
+function imgQwenCheckSoon() {
+  clearTimeout(imgQwenSoon);
+  imgQwenSoon = setTimeout(() => { imgQwenSoon = null; imgQwenCheck(); }, 400);
+}
 async function imgQwenCheck() {
+  clearTimeout(imgQwenSoon); imgQwenSoon = null;
   imgQwenShape();
   if (imgEffectiveEngine() !== "qwen-image-2.1") return true;
   const request = ++imgQwenRequest;
   const key = imgQwenQuery().toString();
   imgQwenRequestedKey = key;
   imgQwenChecking = true;
-  imgQwenPaint("busy", "Checking Qwen Image 2.1…");
+  /* The spinner waits a third of a second. A local check usually answers in
+   * tens of milliseconds, and a light that flicks orange and back on every one
+   * of them reads as a fault; one that spins when the answer is actually slow
+   * reads as work. The light is left alone until then, so a green Qwen stays
+   * green through a re-check that changes nothing. */
+  const spin = setTimeout(() => imgQwenPaint("busy", "Checking Qwen Image 2.1…"), 350);
   imgQueueGate();
   try {
     const response = await fetch(`/api/images/qwen-status?${key}`);
@@ -15462,6 +15743,7 @@ async function imgQwenCheck() {
     }
     return false;
   } finally {
+    clearTimeout(spin);
     if (request === imgQwenRequest) { imgQwenChecking = false; imgQueueGate(); }
   }
 }
@@ -15475,8 +15757,15 @@ async function imgQwenCheck() {
  * Clicking it opens the dropdown, or the details when it is red, so the
  * dropdown works whatever the light is doing. */
 var imgQwenSettle = null;   // var: imgQwenPaint can run before this line (imgQwenShape at boot)
+var imgQwenPainted = "";    // what the light is saying now, so it is not said twice
 function imgQwenPaint(tone, chip = "", note = "", needsModels = false) {
   const dot = $("imgQwenDot"), pv = dot.parentElement, pop = $("imgQwenStatus");
+  /* A repaint that says the same thing is not a repaint. Re-applying "ok"
+   * restarts the pulse and sends the light back to the right for another two
+   * seconds, so a re-check that changed nothing would make the dot hop. */
+  const same = `${tone}\u0000${chip}\u0000${note}`;
+  if (same === imgQwenPainted) return;
+  imgQwenPainted = same;
   clearTimeout(imgQwenSettle);
   pv.classList.remove("qbusy", "qok", "qerr", "qsettled");
   dot.hidden = tone === "off";
@@ -15543,10 +15832,18 @@ function imgRefsPaint() {
   const n = imgRefs.length;
 
   const prev = $("imgRefPrev");
-  /* Always on screen: a drop target you cannot see is one nobody finds. The
-   * empty state is a CSS ::before reading data-empty, so there is no placeholder
-   * row to mistake for a reference. */
-  prev.classList.toggle("isempty", !n);
+  /* ⚠ THE STRIP'S `hidden` IS READ BY THE DROP BOX. picdrop.js takes this
+   * element as its `strip`, shows it INSIDE the dashed zone, and opens the zone
+   * on `!strip.hidden && strip.children.length`. A version of this line that
+   * toggled a class instead left `hidden` set from the markup for ever: every
+   * dropped reference landed, was added, and was never seen, and the zone never
+   * opened — "drag and drop is broken". The target is not invisible meanwhile;
+   * the zone slides open while anything is being dragged, and dropAnywhere()
+   * takes a picture dropped anywhere on the Images panel. */
+  prev.hidden = !n;
+  /* The figures below are about to be thrown away; a preview hovering over one
+   * of them would outlive it. */
+  imgRefHoverHide();
   prev.innerHTML = imgRefs.map((m, i) => `<figure class="midthumb">
       <span class="refnum">${i + 1}</span>
       <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)} — click to say &quot;image ${i + 1}&quot;">
@@ -15617,7 +15914,7 @@ function imgRefsPaint() {
   if (wrap) wrap.hidden = fluxOnly && !n;
   imgRefTagNote();
   imgQwenShape();
-  if (eng === "qwen-image-2.1" && imgQwenRequestedKey !== imgQwenQuery().toString()) imgQwenCheck();
+  if (eng === "qwen-image-2.1" && imgQwenRequestedKey !== imgQwenQuery().toString()) imgQwenCheckSoon();
 }
 
 /* Say when the description names a reference that is not attached. Same guard
@@ -15690,18 +15987,26 @@ document.addEventListener("dragstart", (e) => {
  * is not legible at that size. The panel is fixed and body-level because the
  * form column is overflow-y:auto and would clip anything larger than the thumb
  * it grew out of. */
+/* ⚠ HIDING IT IS THE HARD HALF, and the reason this is a named function that
+ * imgRefsPaint calls. The strip is rebuilt with innerHTML on every add, remove
+ * and reorder, so the figure the pointer was over is DESTROYED and no mouseout
+ * is ever delivered: remove a reference while looking at its preview and the
+ * preview stays, hanging over a picture that is no longer there. Four exits —
+ * the repaint, a mouseover that is not a thumbnail, scrolling, and the pointer
+ * leaving the window. */
+function imgRefHoverHide() { const p = $("imgRefHover"); if (p) p.hidden = true; }
 {
   const panel = $("imgRefHover");
   if (panel) {
     const img = panel.querySelector("img");
     const cap = panel.querySelector("span");
-    const hide = () => { panel.hidden = true; };
+    const hide = imgRefHoverHide;
 
     document.addEventListener("mouseover", (e) => {
       const fig = e.target.closest?.("#imgRefPrev .midthumb");
-      if (!fig) return;
+      if (!fig) { hide(); return; }
       const thumb = fig.querySelector("img");
-      if (!thumb) return;
+      if (!thumb) { hide(); return; }
       img.src = thumb.src;
       cap.textContent = thumb.title ? thumb.title.split(" \u2014 ")[0] : "";
       panel.hidden = false;
@@ -15717,9 +16022,10 @@ document.addEventListener("dragstart", (e) => {
     document.addEventListener("mouseout", (e) => {
       if (e.target.closest?.("#imgRefPrev .midthumb")) hide();
     });
-    /* A panel left over a picture that has gone is a ghost: the list repaints on
-     * every add, remove and reorder. */
     addEventListener("scroll", hide, true);
+    document.addEventListener("mouseleave", hide);
+    /* A drag that starts under the preview would carry it along. */
+    document.addEventListener("dragstart", hide);
   }
 }
 
@@ -16349,6 +16655,7 @@ $("imgGo").onclick = async () => {
     const effective = imgEffectiveEngine();
     if (effective === "qwen-image-2.1" && !(await imgQwenCheck())) {
       $("imgNote").textContent = "Qwen Image 2.1 is not ready. Check the model files and ComfyUI support above.";
+      $("imgNote").classList.add("stick");   // a refusal stays in place (styles.css .stick)
       return;
     }
     btn.textContent = "Queued…";
@@ -16415,6 +16722,7 @@ $("imgGo").onclick = async () => {
     })).json();
     if (r.error) { imgWatch(null); if (!offerModel(r)) await appAlert(r.error, "Nothing was queued"); return; }
     $("imgNote").textContent = "Queued. It renders when nothing else is using the GPU.";
+    $("imgNote").classList.remove("stick");
     /* The job this screen is now watching — the strip above reads it, and the ✕
      * needs the file name to drop it while it is still only waiting. */
     imgWatch(`image:${r.id}`);
@@ -16431,6 +16739,7 @@ $("imgGo").onclick = async () => {
       await loadImages();
       if ((state.images || []).length > before) {
         $("imgNote").textContent = "Done.";
+        $("imgNote").classList.remove("stick");
         imgWatch(null);
         break;
       }
@@ -16520,7 +16829,7 @@ function paintImgProgress(s) {
     if (done) {
       imgFailed = done.error || null;
       imgWaiting = null;
-      if (imgFailed) $("imgNote").textContent = "That render failed.";
+      if (imgFailed) { $("imgNote").textContent = "That render failed."; $("imgNote").classList.add("stick"); }
     }
   }
   const ours = !!imgWaiting;
@@ -16606,8 +16915,10 @@ $("imgProgStop").onclick = async () => {
     $("imgNote").textContent = r.error
       ? r.error
       : running ? "Stopped." : "Dropped from the queue.";
+    $("imgNote").classList.toggle("stick", !!r.error);
   } catch {
     $("imgNote").textContent = "Could not reach the server to stop it.";
+    $("imgNote").classList.add("stick");
   } finally {
     $("imgProgStop").disabled = false;
   }
@@ -17502,6 +17813,7 @@ const INFO_HOSTS = {
   mcp: "#mcp",
   about: "#about",
   thanks: "#thanks",
+  router: "#router",
 };
 
 /**
@@ -17516,7 +17828,8 @@ function mountAllInfo() {
   for (const [view, selector] of Object.entries(INFO_HOSTS)) mountInfo(view, selector);
 }
 
-function setView(name) {
+function setView(name, options) {
+  const collabScene = options?.collabScene || null;
   state.view = name;
   for (const a of document.querySelectorAll(".nav a")) {
     a.classList.toggle("on", a.dataset.view === name);
@@ -17548,7 +17861,7 @@ function setView(name) {
   $("imgPanel").hidden = name !== "images";
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
-  if (name === "collab") paintCollab();
+  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe);
   if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
@@ -17608,6 +17921,9 @@ function setView(name) {
   $("home").hidden = name !== "home";
   if (name === "home") { const h = $("home"); h.classList.remove("in"); void h.offsetWidth; h.classList.add("in"); }
   $("thanks").hidden = name !== "thanks";
+  // Comfy API (launcher mode only): web/router.js owns the page.
+  $("router").hidden = name !== "router";
+  if (name === "router") showRouter();
   $("mcp").hidden = name !== "mcp";
   $("about").hidden = name !== "about";
   $("games").hidden = name !== "games";
@@ -17734,6 +18050,52 @@ for (const a of document.querySelectorAll(".nav a")) {
   });
   grip?.addEventListener("dblclick", () => set(0));
 }
+/* ── the rail's own width ──────────────────────────────────────────────────
+ *
+ * Same handle as the column's, on the rail's right edge: drag to size it, ←/→
+ * step by 16px, a double-click goes back to 248px. Remembered in this browser.
+ *
+ * It exists because the four meters pair two to a row, so how much of their
+ * text fits is a function of this width — one number chosen here would be
+ * right at one screen size and wrong at every other. 200px still holds the
+ * nav labels; past 420px the rail is taking room from the work. */
+{
+  const shell = document.querySelector(".shell"), grip = $("railGrip");
+  const KEY = "aiplayRailW";
+  const clamp = (w) => Math.round(Math.max(200, Math.min(w, Math.min(420, innerWidth - 520))));
+  const set = (w, save = true) => {
+    if (!w) { shell.style.removeProperty("--railw"); try { localStorage.removeItem(KEY); } catch { /* private mode */ } return; }
+    shell.style.setProperty("--railw", `${clamp(w)}px`);
+    if (save) try { localStorage.setItem(KEY, String(clamp(w))); } catch { /* private mode */ }
+  };
+  const now = () => document.querySelector(".rail")?.offsetWidth || 248;
+  try { const w = +localStorage.getItem(KEY); if (w > 0) set(w, false); } catch { /* private mode */ }
+  addEventListener("resize", () => { const w = parseInt(shell.style.getPropertyValue("--railw"), 10); if (w) set(w, false); });
+  grip?.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, w0 = now();
+    grip.setPointerCapture(e.pointerId);
+    shell.classList.add("raildrag");
+    const move = (ev) => set(w0 + ev.clientX - x0, false);
+    const up = () => {
+      shell.classList.remove("raildrag");
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      set(now());
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+  grip?.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    set(now() + (e.key === "ArrowRight" ? 16 : -16));
+  });
+  grip?.addEventListener("dblclick", () => set(0));
+}
 function setRailMini(mini) {
   document.querySelector(".shell")?.classList.toggle("railmini", mini);
   const b = $("railToggle");
@@ -17750,6 +18112,26 @@ if ($("railToggle")) {
   setRailMini(mini);
   $("railToggle").onclick = () => setRailMini(!document.querySelector(".shell").classList.contains("railmini"));
 }
+/* ── why the model's name is at the top of the window ──────────────────────
+ *
+ * A name with no explanation invites "why is this here", and the honest answer
+ * is short: somebody else's licence asks for it. Saying so where the question
+ * is asked beats a paragraph nobody reads on a page nobody opens. */
+if ($("attrib")) $("attrib").onclick = () => {
+  const name = $("poweredName")?.textContent || "MiniMax-Music3";
+  // One clause per name shown: both when MiniMax-Music3 and H3 video are both in use.
+  const clauses = [];
+  if (/MiniMax-Music3/.test(name)) clauses.push("MiniMax-Music3's Community Licence, §3.1: a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface.");
+  if (/MiniMax H3/.test(name)) clauses.push("MiniMax H3's licence, §IV.2: a commercial product or service using H3 must display “MiniMax H3” prominently.");
+  if (!clauses.length) clauses.push("MiniMax-Music3's Community Licence, §3.1: a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface.");
+  appAlert([...clauses, "",
+    "It is the engine this screen is set to, so its name goes where the interface is most prominent rather than on a "
+    + "credits page, which is the About box the condition exists to avoid. Choose another engine and it goes: ACE-Step "
+    + "is MIT and YuE2 is CC BY-NC, and neither asks for an interface credit.", "",
+    "The full clause, and the rights on what you make with it, are on the Models screen before anything is downloaded.",
+  ].join("\n"), { title: `Why “${name}” is up there` });
+};
+
 /* In-page cross-links (the About page pointing at Agent or Thanks). Delegated,
  * because the rail loop above only wires the rail. */
 document.addEventListener("click", (e) => {
@@ -18046,7 +18428,7 @@ $("ovAdd").onclick = () => {
   ov.ideas.push({
     title: $("title").value.trim() || "Untitled",
     caption,
-    lyrics: state.mode === "instrumental" ? $("scaffold").textContent : $("lyrics").value.trim(),
+    lyrics: state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value.trim(),
     instrumental: state.mode === "instrumental",
     maxDuration: +$("maxDur").value,
   });
@@ -18479,6 +18861,10 @@ audio.onended = () => {
   // Rolling on is the default, but it fights you when you are judging one take
   // against another — the next render starts before you have decided.
   if (!state.loop && state.autoplay) step(1, true);
+  /* Nothing took over, so there is nothing left to control and the bar goes.
+   * Asked on a later tick, not here: autoplay's step() above sets a new source
+   * in this one, and loading a source is what clears `ended`. */
+  setTimeout(() => { if (audio.ended) playerClose(); }, 80);
 };
 
 // Persisted, because it is a working preference rather than a per-session one.
@@ -18501,8 +18887,22 @@ paintAuto();
 audio.addEventListener("play", visStart);
 audio.addEventListener("pause", visStop);
 audio.addEventListener("ended", visStop);
-/* The player bar only exists once something has been played. */
-audio.addEventListener("play", () => document.querySelector(".shell")?.classList.add("hasplayer"));
+/* ── the player bar comes and goes ─────────────────────────────────────────
+ * ⚠ IT IS NOT A FIXTURE. It was added on the first `play` and never removed,
+ * so one song played once left the bar across the bottom of every screen for
+ * the rest of the session, with nothing in it to control. It appears when
+ * something plays and leaves when there is nothing left to play: the end of
+ * the queue, or ✕.
+ * A PAUSE IS NOT NOTHING. Pausing keeps the bar, because the next thing you
+ * do is press play again. */
+const playerShell = () => document.querySelector(".shell");
+function playerClose() {
+  audio.pause();
+  $("pPlay").textContent = "▶";
+  playerShell()?.classList.remove("hasplayer");
+}
+audio.addEventListener("play", () => playerShell()?.classList.add("hasplayer"));
+$("pClose").onclick = playerClose;
 /* Seeking: press anywhere on the (tall, invisible) hit area and drag; the bar
  * and time follow the pointer, and the jump happens on release. */
 let scrubbing = false;
@@ -18661,7 +19061,12 @@ let musicOutcomeArmed = false;
  * same line on every status poll, and without this it erased the warning
  * within the same applyStatus call that put it there. */
 let musicOutcomeMsg = null;
-function setCta(text) { if (!musicOutcomeMsg && $("ctaNote")) $("ctaNote").textContent = text; }
+/* An estimate is a hover drop-up again: the .stick a warning put on the note
+ * comes off with the first estimate after the next Create (generate() clears
+ * musicOutcomeMsg; it is lifted into slice-and-eval tests with no ctaNote). */
+function setCta(text) {
+  if (!musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = text; $("ctaNote").classList.remove("stick"); }
+}
 function noticeMusicOutcome(s) {
   const h = s.history?.[0];
   const key = h ? `${h.id}:${h.state}` : null;
@@ -18673,7 +19078,8 @@ function noticeMusicOutcome(s) {
     : h.state === "done" && h.note ? `⚠ ${h.note}`
     : h.state === "done" && !h.file ? `⚠ “${title}” finished, but no audio file was found in the output folder.`
     : null;
-  if (msg) { musicOutcomeMsg = msg; if ($("ctaNote")) $("ctaNote").textContent = msg; }
+  // .stick: the warning stays under Create, not only under the pointer (styles.css).
+  if (msg) { musicOutcomeMsg = msg; if ($("ctaNote")) { $("ctaNote").textContent = msg; $("ctaNote").classList.add("stick"); } }
 }
 
 /* WHETHER COMFYUI IS HOLDING THE MUSIC MODEL — and two optional buttons.
@@ -18685,16 +19091,20 @@ function paintModelLoad(s) {
   const box = $("modelLoad");
   if (!box) return;
   const e = state.musicEngine;
-  /* Every model that lives in ComfyUI shows both buttons, always: greyed out
-   * with the reason while ComfyUI starts, rather than vanishing. The native
-   * GGUF runtime has nothing to load or unload. */
-  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3" || e === "ace-step15");
-  if (box.hidden) return;
+  /* ⚠ EVERY ENGINE, ONE BUTTON, ALWAYS VISIBLE. It used to be two buttons on
+   * a list of three engines; on anything else the bar was simply not there,
+   * and on the three it came and went as the record changed. Unload frees
+   * whatever ComfyUI is holding whatever engine is selected, so the bar is
+   * always up and the button is DISABLED when there is nothing to free. */
+  box.hidden = false;
+  $("btnModelLoad").hidden = true;
+  const unload = $("btnModelUnload");
+  unload.hidden = false;
+
   if (!s.engine?.ready) {
-    $("btnModelLoad").hidden = $("btnModelUnload").hidden = false;
-    $("btnModelLoad").disabled = $("btnModelUnload").disabled = true;
-    $("btnModelLoad").title = $("btnModelUnload").title = "ComfyUI is starting";
-    $("modelLoadText").textContent = "ComfyUI is starting.";
+    unload.disabled = true;
+    unload.title = "ComfyUI is not running, so it is holding nothing.";
+    $("modelLoadText").textContent = state.engineExpected ? "ComfyUI is starting." : "";
     return;
   }
   const aceDit = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)?.dit
@@ -18704,26 +19114,29 @@ function paintModelLoad(s) {
     ? `yue2-comfy:${state.musicYue2Checkpoint}`
     : `minimax-music3:${$("qModel")?.value || state.musicPrecision || "int8"}`;
   const loaded = s.loadedModel;
+  /* ⚠ AND THE PICTURE MODEL COUNTS. Rendering a cover or a clip unloads the
+   * music model and puts its own on the card, so `loadedModel` goes null
+   * while ComfyUI is still holding several GB — which is exactly when the
+   * button stopped working "at random". `artResident` is the other half of
+   * the question (server/jobs.js snapshot). */
+  const holding = !!loaded || !!s.artResident;
   const busy = !!(s.current || s.queue?.length) || !!modelLoadBusy;
-  $("modelLoadText").textContent = modelLoadBusy === "load" ? "Loading the model into ComfyUI…"
-    : modelLoadBusy === "unload" ? "Unloading…"
+  /* An engine that runs OUTSIDE ComfyUI (YuE2 GGUF, the Python kit) loads
+   * its own model per song, so "the first song loads it" and "the next song
+   * unloads it" are false there (jobs.js modelKey() is null for them). What
+   * is true is that ComfyUI may be holding the card they need; YuE2 must not
+   * share it, so Unload stays useful. The runtime comes from /api/status. */
+  const inComfy = (state.musicEngines?.[e]?.runtime ?? "comfy") === "comfy";
+  $("modelLoadText").textContent = modelLoadBusy === "unload" ? "Unloading…"
+    : !inComfy ? (holding ? "ComfyUI is holding a model this engine does not use; Unload frees the card for it." : "")
     : loaded?.key === want ? "✓ Loaded in ComfyUI — songs start straight away."
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
-    : "Not loaded yet — the first song loads it.";
-  /* MiniMax has no warm-up on the server: it loads with its first song. The
-   * button stays, greyed, so the bar looks the same for every model. */
-  const canLoad = e === "yue2-comfy" || e === "ace-step15";
-  $("btnModelLoad").hidden = loaded?.key === want;
-  $("btnModelLoad").title = canLoad ? "Load the model into ComfyUI now" : "MiniMax loads with its first song";
-  $("btnModelUnload").title = "Free the graphics card";
-  /* Always offered while ComfyUI runs. It used to appear only while Studio's
-   * own record said a music model was loaded, and that record is cleared the
-   * moment a cover or a clip takes the card (it unloads the music model
-   * first), so after most MiniMax songs the button was simply not there.
-   * Unload frees whatever ComfyUI holds either way. */
-  $("btnModelUnload").hidden = false;
-  $("btnModelLoad").disabled = busy || !canLoad;
-  $("btnModelUnload").disabled = busy;
+    : s.artResident ? "A picture model is on the card; the next song unloads it."
+    : "Nothing is loaded — the first song loads it.";
+  unload.disabled = busy || !holding;
+  unload.title = busy ? "Not while something is rendering"
+    : holding ? "Free the graphics card"
+    : "Nothing is loaded to free";
 }
 async function modelLoadAction(action) {
   modelLoadBusy = action;
@@ -18742,9 +19155,27 @@ function applyStatus(s) {
   if (!s.engine) return;
   noticeMusicOutcome(s);
   paintModelLoad(s);
+  /* The launcher's "Use Comfy API" mode: the Comfy API page and the screens
+   * that need nothing local. Full Studio never shows the page, so it never
+   * offers anything that spends credits. */
+  if (s.config?.cloudOnly && !state.cloudOnly) {
+    state.cloudOnly = true;
+    const cloudViews = new Set(["router", "mcp", "about", "thanks"]);
+    for (const link of document.querySelectorAll(".rail [data-view]")) {
+      if (link.dataset.view === "router") link.hidden = false;
+      else if (!cloudViews.has(link.dataset.view)) link.style.display = "none";
+    }
+    for (const link of document.querySelectorAll(".rail [data-page]")) link.style.display = "none";
+    // A heading with nothing left under it goes too.
+    for (const g of document.querySelectorAll(".rail .navgroup")) {
+      g.hidden = ![...g.querySelectorAll("a")].some((a) => !a.hidden && a.style.display !== "none");
+    }
+    setView("router");
+  }
   if (s.config?.musicOnly && !state.musicOnly) {
     state.musicOnly = true;
-    const coreViews = new Set(["create", "models", "settings", "agent", "about", "thanks", "community"]);
+    // "mcp" is the Agent page's view name; "agent" matched nothing and hid it.
+    const coreViews = new Set(["create", "models", "settings", "mcp", "about", "thanks", "community"]);
     for (const link of document.querySelectorAll(".rail [data-view]")) {
       if (!coreViews.has(link.dataset.view)) link.style.display = "none";
     }
@@ -18752,16 +19183,24 @@ function applyStatus(s) {
   }
   state.engineReady = s.engine.ready;
   state.engineExpected = !!s.config?.engineExpected;
-  $("engineLine").textContent = state.musicOnly
+  /* ⚠ ONLY WHEN IT SAYS SOMETHING. "RUNNING LOCALLY" under a window full of
+   * locally running things is a line that is read once and never again; what
+   * is worth a line in the rail is the states where something is NOT ready,
+   * and the work box already says what is happening. */
+  // Comfy API mode has no local engine to wait for: nothing to say.
+  const line = state.cloudOnly ? ""
+    : state.musicOnly
     ? (s.config?.musicEngine === "yue2-comfy"
-        ? (s.engine.ready ? "MUSIC ONLY · YUE2 VIA COMFYUI" : "MUSIC ONLY · STARTING COMFYUI…")
-        : s.config?.musicEngines?.["yue2-gguf"]?.ready ? "NATIVE MUSIC READY" : "NATIVE MUSIC · SETUP NEEDED")
-    : s.engine.ready ? "RUNNING LOCALLY" : "STARTING…";
+        ? (s.engine.ready ? "" : "MUSIC ONLY · STARTING COMFYUI…")
+        : s.config?.musicEngines?.["yue2-gguf"]?.ready ? "" : "NATIVE MUSIC · SETUP NEEDED")
+    : s.engine.ready ? "" : "STARTING…";
+  $("engineLine").textContent = line;
+  $("engineLineWrap").hidden = !line;
   $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready;
 
   const b = s.engine.backend;
   const warn = $("engineWarn");
-  if (!state.musicOnly && b && b.ok === false) {
+  if (!state.musicOnly && !state.cloudOnly && b && b.ok === false) {
     // The one check that protects the entire product claim.
     warn.hidden = false;
     warn.innerHTML = `<b>This install is running about 5× slower than it should.</b><br>${esc(b.message)}<br><br>${esc(b.fix)}`;
@@ -19041,12 +19480,63 @@ function applyStatus(s) {
     $("ramBox").title = r.note;
   }
 
+  /* DISK, which is the one that runs out quietly: a download stops and nothing
+   * on the screen had been counting. The bar is how full the drive is; the
+   * number is what the MODELS are costing, because that is the part you can do
+   * something about, and the tooltip says how many files that is. */
+  const d = s.disk;
+  $("diskBox").hidden = !d || !d.totalBytes;
+  if (d && d.totalBytes) {
+    const used = d.totalBytes - (d.freeBytes || 0);
+    const pct = Math.min(100, Math.round((used / d.totalBytes) * 100));
+    $("diskFill").style.width = `${pct}%`;
+    $("diskFill").style.background = (d.freeBytes || 0) < 20e9 ? "var(--warn)" : "var(--accent, var(--secondary))";
+    /* SHORT ENOUGH FOR HALF A RAIL. These sit two to a row, and the free
+     * space and the drive's fullness are already in the tooltip — a figure
+     * that is cut off mid-word tells you less than a shorter true one. */
+    $("diskText").textContent = `${size(d.modelBytes)} models`;
+    $("diskBox").title = `${d.modelFiles} model file${d.modelFiles === 1 ? "" : "s"} on this disk, `
+      + `taking ${size(d.modelBytes)}. The drive is ${pct}% full: ${size(used)} of ${size(d.totalBytes)}. `
+      + "Counted once per file, so a model two capabilities share is not counted twice. Refreshed every minute.";
+  }
+
+  /* THE PROCESSOR, which on the CPU builds is the only meter that means
+   * anything. Null percent is "no reading yet" (it is measured between two
+   * polls, not since boot): an empty bar and the core count, never a 0% that
+   * would claim the machine is idle. */
+  const c = s.cpu;
+  $("cpuBox").hidden = !c || !c.cores;
+  if (c && c.cores) {
+    const pct = c.percent;
+    $("cpuFill").style.width = `${pct ?? 0}%`;
+    $("cpuFill").style.background = (pct ?? 0) > 92 ? "var(--warn)" : "var(--primary)";
+    $("cpuText").textContent = pct == null ? `${c.cores} cores` : `${pct}% CPU`;
+    $("cpuBox").title = `${c.model ? `${c.model}. ` : ""}${c.note}`;
+  }
+
   if (s.config) {
     // Estimate from the song we would actually get, not the ceiling: length
     // follows lyrics (or the instrumental scaffold), not the slider.
     const n = state.takes || 1;
     if ((state.musicEngines || {})[state.musicEngine]?.runtime === "audiocpp") {
-      setCta(`${n > 1 ? `${n} takes · ` : ""}Experimental native GGUF · runtime and VRAM not measured here`);
+      /* ⚠ IT SAID "runtime and VRAM not measured here", AND BOTH HALVES WERE
+       * FALSE. Every finished song records how long it took and how long it
+       * is, so the runtime of this engine on THIS card is measured the moment
+       * one has been made — measuredRatio reads them back. And the VRAM meter
+       * is eight inches up the same rail, so telling somebody VRAM cannot be
+       * measured while a VRAM bar is on screen is worse than saying nothing.
+       * Before the first native song there is genuinely no figure, and the
+       * honest line is that the first one makes it, not that it is
+       * unmeasurable. */
+      const seen = measuredRatio(state.musicEngine);
+      const want = Math.min(Math.max(+$("maxDur").value || 150, 30), 360);
+      if (seen) {
+        const one = Math.round(want * seen.ratio);
+        setCta(`${n > 1 ? `${n} takes · about ${fmt(one * n)} in total` : `about ${fmt(one)}`} on your card`
+          + ` · from your last ${seen.n} native song${seen.n > 1 ? "s" : ""}`);
+      } else {
+        setCta(`${n > 1 ? `${n} takes · ` : ""}Native GGUF · your first song sets the estimate for this card`);
+      }
     } else if (state.musicEngine === "yue2-comfy") {
       /* YuE2 THROUGH COMFYUI, from its own measurements — not the Python
        * kit's ratios below. RX 9060 XT 16 GB, 2026-09-16: a warm 30 s song
@@ -19147,7 +19637,6 @@ async function poll() {
     renderQueue(s);
     renderList(s);
     applyBatch(s);
-    paintMiniQueue(s);
     paintImgProgress(s);
     imgSeeFinished(s);
     /* Kept so the Jobs view can paint the moment it is opened rather than
@@ -19330,66 +19819,9 @@ function fmtEta(s) {
   if (s < 5400) return `${Math.round(s / 60)}m`;
   return `${(s / 3600).toFixed(1)}h`;
 }
-function paintMiniQueue(s) {
-  const box = $("miniQ");
-  if (!box) return;
-  const a = s.art || {};
-  const music = s.current ? 1 : 0;
-  const musicQ = (s.queue || []).length;
-  const unknownNative = nativeMusicPending(s);
-  const artQ = a.queued || 0;
-  const running = a.current || (s.current ? { kind: "music", title: s.current.title } : null);
-  const total = music + musicQ + (a.current ? 1 : 0) + artQ;
-
-  if (!total) {
-    // Show the tally line briefly after work finishes, then rest.
-    if (a.doneCount) {
-      box.hidden = false;
-      $("miniqNow").textContent = "idle";
-      $("miniqNext").hidden = true;
-      $("miniqTally").textContent = `${a.doneCount} job${a.doneCount > 1 ? "s" : ""} done this session`;
-    } else box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-
-  // Current job + its ETA from the engine's real progress when it has one.
-  let curEta = 0;
-  if (a.current) {
-    const p = a.current.progress, el = a.current.elapsed || 0;
-    curEta = p > 0.05 ? Math.max(0, el / p - el)
-      : Math.max(0, (a.stats?.[a.current.kind]?.avg ?? KIND_FALLBACK[a.current.kind] ?? 180) - el);
-    $("miniqNow").textContent = `▶ ${KIND_LABEL[a.current.kind] || a.current.kind} · ${a.current.title || ""}`.slice(0, 46)
-      + (curEta ? ` · ~${fmtEta(curEta)}` : "");
-  } else if (s.current) {
-    const native = s.current.engine === "yue2-gguf" && !ggufEtaKnown(s.current);
-    curEta = native ? 0 : s.current.etaSeconds || 0;
-    $("miniqNow").textContent = `▶ song · ${s.current.title || ""}`.slice(0, 46)
-      + (native ? " · ETA unavailable" : curEta ? ` · ~${fmtEta(curEta)}` : "");
-  } else {
-    $("miniqNow").textContent = unknownNative ? "Waiting · ETA unavailable" : "Waiting";
-  }
-
-  // What comes next, by name where known, by kind-count otherwise.
-  const nexts = (a.nextTitles || []).map((n) => `${KIND_LABEL[n.kind] || n.kind}: ${n.title}`.slice(0, 40));
-  if (musicQ) nexts.unshift(`song ×${musicQ}`);
-  $("miniqNext").hidden = !nexts.length;
-  $("miniqNext").textContent = nexts.length ? "next: " + nexts.slice(0, 2).join(" · ") + (artQ + musicQ > 2 ? " …" : "") : "";
-
-  // The tally: done / total this session, and the honest remaining estimate.
-  let remaining = curEta;
-  for (const [kind, n] of Object.entries(a.queuedKinds || {})) {
-    remaining += n * (a.stats?.[kind]?.avg ?? KIND_FALLBACK[kind] ?? 180);
-  }
-  for (const job of (s.queue || [])) {
-    if (job.engine === "yue2-gguf") continue;
-    remaining += Number(job.etaSeconds) > 0 ? Number(job.etaSeconds)
-      : (s.current?.engine !== "yue2-gguf" && s.current?.etaSeconds) || 180;
-  }
-  const done = a.doneCount || 0;
-  $("miniqTally").textContent =
-    `${total} job${total > 1 ? "s" : ""} remaining${done ? ` · ${done} done` : ""}${unknownNative ? " · ETA unavailable" : remaining > 30 ? ` · eta ≈ ${fmtEta(remaining)}` : ""}`;
-}
+/* The mini queue that used to live here is gone: it counted the same jobs as
+ * the panel above the Ko-fi link and said so in different words. renderQueue()
+ * is the one painter now. */
 
 // Use the real mark if it is there, fall back to the wordmark if not.
 // The <img> starts hidden but the browser still loads it, so by the time this
@@ -19416,13 +19848,18 @@ setMode("song");
 setView("home");
 setGrid(localStorage.getItem("aiplayGrid") === "1");
 ovRender();
+/* The number in the box is what "lock" would lock, so it must not be the same
+ * number on every machine on every boot. Create rolls a fresh one before each
+ * render while the seed is unlocked; this is only so the box is honest before
+ * the first one. */
+if (!state.seedLocked) $("seed").value = Math.floor(Math.random() * 4294967296);
 paintSeed();
 paintScaffold();
 $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll().then(() => initWelcome({autoOpen:!state.musicOnly}));
+poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();

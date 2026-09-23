@@ -27,7 +27,7 @@ import { config } from "./config.js";
 /* Data only — the catalogue's `gated` flag and the engine->capability map.
  * models.js imports config.js and nothing else from this tree, so there is
  * no cycle here. */
-import { CATALOG, MODEL_TO_CAPABILITY } from "./models.js";
+import { CATALOG, MODEL_TO_CAPABILITY, cardIsAmd } from "./models.js";
 
 /**
  * Flow-matching shifted sigma schedule: sigma(t) = shift*t / (1 + (shift-1)*t),
@@ -788,6 +788,20 @@ export function ideogramRefusalMessage(ladderLength, tried) {
     + `FLUX.2 / a checkpoint instead.`;
 }
 
+/* In the models folder or one of the extra ones (config.modelsAlso): the
+ * engine loads from all of them. */
+const onDisk = (sub, file) => [config.modelsDir, ...(config.modelsAlso || [])]
+  .some((b) => { try { return fs.statSync(path.join(b, sub, file)).size > 0; } catch { return false; } });
+
+/* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
+ * encoder (models.js downloads it there). Whichever is on disk wins. */
+function ideogramEncoder() {
+  const order = cardIsAmd()
+    ? ["qwen3vl_8b_fp8_scaled.safetensors", "qwen3vl_8b_nvfp4.safetensors"]
+    : ["qwen3vl_8b_nvfp4.safetensors", "qwen3vl_8b_fp8_scaled.safetensors"];
+  return order.find((n) => onDisk("text_encoders", n)) || order[0];
+}
+
 export function ideogramGraph({ prompt, seed, width, height, quality = "default", count = 1, prefix = "image" }) {
   const snap = (v, d) => Math.max(256, Math.floor(((v ?? d) + 15) / 16) * 16);
   const w = snap(width, 1024), h = snap(height, 1024);
@@ -798,7 +812,7 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
   return {
     1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_fp8_scaled.safetensors", weight_dtype: "default" } },
     2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_fp8_scaled.safetensors", weight_dtype: "default" } },
-    3: { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_nvfp4.safetensors", type: "ideogram4", device: "default" } },
+    3: { class_type: "CLIPLoader", inputs: { clip_name: ideogramEncoder(), type: "ideogram4", device: "default" } },
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["3", 0], text: prompt } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
     6: { class_type: "CFGOverride", inputs: { model: ["1", 0], cfg: 3, start_percent: 0.7, end_percent: 1 } },
@@ -1313,9 +1327,7 @@ export function videoReady(name) {
   for (const [key, sub] of Object.entries(VIDEO_MODEL_DIRS)) {
     const file = e[key];
     if (!file) continue;
-    try {
-      if (fs.statSync(path.join(config.modelsDir, sub, file)).size > 0) continue;
-    } catch { /* falls through to missing */ }
+    if (onDisk(sub, file)) continue;
     missing.push(file);
   }
   return { ready: missing.length === 0, missing };
@@ -1779,7 +1791,8 @@ export function chainVideoLoras(g, from, loras) {
 
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
-  return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);
+  // FastH3 is H3's graph with its own settings (config.video.engines.fasth3).
+  return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3({ ...opts, engine });
 }
 
 /* How much of a reference audio clip rides into the render. The whole file
@@ -1884,15 +1897,17 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * LAST so one named part replaces one part and the rest of
                                 * the engine is untouched — see server/modelpick.js. */
                                models = null,
-                               /* "ck" wraps the model in ModelAttentionBackend (Comfy
-                                * Kitchen int8 attention); anything else leaves it out.
-                                * NOT defaulted from config here: whether the engine
-                                * offers the option is a fact about the running
-                                * ComfyUI, and a value it does not list fails the whole
-                                * prompt at validation. art.js h3Attention() decides and
-                                * passes it; a caller that says nothing gets no node. */
+                               /* Which H3-family engine's settings: "h3" or "fasth3". videoGraph() passes it. */
+                               engine = "h3",
+                               /* "ck" wraps the model in ModelAttentionBackend (Comfy Kitchen int8); anything
+                                * else leaves it out. NOT defaulted from config: art.js videoAttention() decides
+                                * (H3 through h3Attention(), FastH3 from its per-render picker); a caller that
+                                * says nothing gets no node. */
                                attention = null }) {
-  const v = { ...config.video, ...config.video.engines.h3, ...(models || {}) };
+  const v = { ...config.video, ...(config.video.engines[engine] || config.video.engines.h3), ...(models || {}) };
+  /* A distillation with a trained schedule runs at that schedule whatever the
+   * slider says: FastH3 is 8 steps, and 20 of them is not a better FastH3. */
+  if (v.fixedSteps) steps = v.fixedSteps;
   const w = width ?? v.width, h = height ?? v.height;
   /* A CONTINUATION renders a window of overlap + extension frames: the
    * source's last `overlapFrames` (17k+5) are anchored at frame 0 as a native
@@ -2043,6 +2058,23 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const sampler = h3SamplerFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const shiftV = shift.video, shiftA = shift.audio;
+  /* SPARSE ATTENTION, FastH3 only (config `sparseAttention`). ComfyUI's templates chain
+   * shift -> ModelAttentionBackend -> BlockSparseAttention; here the dense backend is
+   * node 85 below, the one H3 uses, before the shift. The shift copies transformer_options
+   * through, and BlockSparseAttention wraps whatever override is on the model when it is
+   * applied (install_override keeps the previous one as its dense path), so the fallback
+   * is the same. 81 MUST follow the shift: it turns start/end_percent into sigmas from the
+   * model's model_sampling at patch time. No Kitchen = no backend node, and the
+   * launcher's attention is the dense fallback. */
+  const sparse = v.sparseAttention || null;
+  const sparseNodes = sparse ? {
+    81: { class_type: "BlockSparseAttention", inputs: { model: ["6", 0],
+      selection: sparse.method, "selection.keep_percent": sparse.keepPercent,
+      start_percent: sparse.startPercent, end_percent: sparse.endPercent, dense_blocks: "",
+      min_tokens: sparse.minTokens, extra_tokens: sparse.extraTokens,
+      sink_conditioning: sparse.sinkConditioning, verbose: false } },
+  } : {};
+  const SAMPLE_MODEL = sparse ? ["81", 0] : ["6", 0];
   /* ── VIDEO-TO-VIDEO ──────────────────────────────────────────────────────
    *
    * A control video drives the render frame by frame instead of one opening
@@ -2080,7 +2112,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * turbo LoRA, the person's LoRAs, the Fun-ControlNet — and before the sigma
    * shift, because the shift feeds BOTH the guider and the scheduler; patching
    * after it would leave one of them on the dense-attention model. Node 85:
-   * refs take 40-48, audio refs 50+2i, continuation 70-77, user LoRAs 90+. */
+   * refs take 40-48, audio refs 50+2i, continuation 70-77, FastH3's sparse node 81,
+   * user LoRAs 90+. */
   const attentionNodes = attention === "ck" ? {
     85: { class_type: "ModelAttentionBackend",
           inputs: { model: useControl ? ["34", 0] : BARE_MODEL, attention: "comfy kitchen attention" } },
@@ -2183,8 +2216,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     Object.assign(g, controlNodes, controlApply, attentionNodes);
     g[6] = { class_type: "MiniMaxH3SigmaShift",
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA } };
-    g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
-    g[8] = { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
+    Object.assign(g, sparseNodes);
+    g[7] = { class_type: "BasicGuider", inputs: { model: SAMPLE_MODEL, conditioning: [pos, 0] } };
+    g[8] = { class_type: "BasicScheduler", inputs: { model: SAMPLE_MODEL, scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
     g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } };
     g[10] = { class_type: "RandomNoise", inputs: { noise_seed: seed } };
     g[11] = { class_type: "SamplerCustomAdvanced",
@@ -2241,8 +2275,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // The LoRA'd model on the fast path, the bare one on the quality path.
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA },
     },
-    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [cont ? "74" : sound ? "23" : BASE, 0] } },
-    8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
+    ...sparseNodes,
+    7: { class_type: "BasicGuider", inputs: { model: SAMPLE_MODEL, conditioning: [cont ? "74" : sound ? "23" : BASE, 0] } },
+    8: { class_type: "BasicScheduler", inputs: { model: SAMPLE_MODEL, scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     11: {

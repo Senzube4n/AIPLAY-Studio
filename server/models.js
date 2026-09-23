@@ -83,6 +83,21 @@ function homeFor(cap) {
   return u.split("/resolve/")[0];
 }
 const M = (p) => path.join(config.modelsDir, p);
+
+/**
+ * The card, as first-run setup saved it. Read when asked, not frozen at load,
+ * the same test as index.js onAmd().
+ *
+ * NVFP4 and the other fp4 builds need NVIDIA tensor cores. ROCm and Intel's
+ * XPU have no kernel for them, so on those cards a catalogue row names another
+ * build of the same file (`amd` on the file entry) and the downloader refuses
+ * any fp4 file outright, in case a row ever forgets to.
+ */
+export const cardIsAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "amd";
+const noFp4Card = () => cardIsAmd() || config.gpu?.vendor === "intel" || config.torchBackend === "xpu";
+export const fp4Blocked = (f) => noFp4Card() && /fp4/i.test(path.basename(String(f?.dest || f?.url || "")));
+/** A file list with each entry's `amd` build swapped in on an AMD card. */
+const forCard = (files) => (cardIsAmd() ? files.map((f) => f.amd || f) : files);
 /**
  * The one shelf that is NOT models/.
  *
@@ -463,6 +478,25 @@ const YUE2_GRANT = {
   clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
   url: "https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE",
 };
+
+/* H3's text encoder and two VAEs. FastH3 loads the same three, so both rows
+ * name the same files and a machine holding one engine fetches only the other
+ * engine's DiT. */
+const H3_SHARED_FILES = [
+  { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/main/qwen3vl_32b_minimax_h3-int4_convrot.safetensors`,
+    dest: M("text_encoders/qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), bytes: 14173709116,
+    alt: ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors"],
+    /* ROCm has only a slow fallback for this int4 build; the official
+     * int8 is the format AMD cards already run for Music 3 and Qwen. */
+    amd: { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors`,
+      dest: M("text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"), bytes: 27141342152 } },
+  { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors`,
+    dest: M("vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496,
+    alt: ["minimax_h3_video_vae_int8_convrot.safetensors"] },
+  { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors`,
+    dest: M("vae/minimax_h3_audio_vae_fp32.safetensors"), bytes: 605254808,
+    alt: ["minimax_h3_audio_vae_bf16.safetensors"] },
+];
 
 export const CATALOG = [
   {
@@ -1435,20 +1469,13 @@ export const CATALOG = [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
         dest: M("diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"), bytes: 20970379616,
         alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] },
-      { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/main/qwen3vl_32b_minimax_h3-int4_convrot.safetensors`,
-        dest: M("text_encoders/qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), bytes: 14173709116 },
-      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors`,
-        dest: M("vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496,
-        alt: ["minimax_h3_video_vae_int8_convrot.safetensors"] },
-      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors`,
-        dest: M("vae/minimax_h3_audio_vae_fp32.safetensors"), bytes: 605254808,
-        alt: ["minimax_h3_audio_vae_bf16.safetensors"] },
+      ...H3_SHARED_FILES,
       // Full-rank turbo LoRA on purpose — the 440 MB resized-rank one has two
       // independent reports of camera-movement and prompt-following damage.
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors`,
         dest: M("loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"), bytes: 1956192992 },
     ],
-    note: "43 GB — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step.",
+    note: "43 GB (56 GB on AMD, which gets the int8 text encoder) — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step.",
     requires: {
       vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
       note: "The heaviest capability in Studio by a wide margin. Never runs while music is generating.",
@@ -1463,6 +1490,48 @@ export const CATALOG = [
       { label: "Text encoder int8 convrot, official", bytes: 27141342152, note: "Nearly twice the size." },
       { label: "Video VAE fp16, official (offered)", bytes: 5207808496 },
       { label: "Audio VAE fp32, official (offered)", bytes: 605254808 },
+    ],
+  },
+  {
+    id: "videoFastH3",
+    label: "Video clips — FastH3 (8 steps)",
+    why: "FastVideo's 8-step distillation of MiniMax H3: text or opening and closing pictures to a clip with sound, in 8 steps and no speed-up LoRA. It uses H3's text encoder and VAEs, so with H3 installed only the model file is new. No references; those stay on H3.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/FastVideo/FastVideo-FastH3-Comfy",
+    /* The repo names H3's licence as its own, so everything the H3 row says
+     * about outputs and territory applies unchanged, like the TaoMate row. */
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property); FastH3 is a distillation of H3 and its card names that licence",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with FastH3 is an H3 output and carries the same limit.",
+        "§V.3 — Outputs may not be used to improve any other AI model.",
+        "§IV.2 — a commercial product or service using H3 must display “MiniMax H3” prominently.",
+      ],
+      note: "A distillation of H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. AIPLAY Studio does not host the weights; the download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    files: [
+      { url: `${HF}/FastVideo/FastVideo-FastH3-Comfy/resolve/main/diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors`,
+        dest: M("diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors"), bytes: 22128378696,
+        alt: ["fastvideo_fasth3_8step_v2_pruned_bf16.safetensors"] },
+      ...H3_SHARED_FILES,
+    ],
+    note: "22.1 GB on a machine that already has H3; 42 GB without it (55 GB on AMD, which gets the int8 text encoder). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. Render speed and quality not measured here.",
+    requires: {
+      vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
+      note: "The same size of model as H3, run for 8 steps. Never runs while music is generating.",
+    },
+    variants: [
+      { label: "DiT 8-step v2 pruned int8 convrot (offered)", bytes: 22128378696 },
+      { label: "DiT 8-step v2 pruned bf16", bytes: 44079246824, note: "Twice the download; not measured here." },
     ],
   },
   {
@@ -1563,7 +1632,11 @@ export const CATALOG = [
       { url: `${HF}/Comfy-Org/Ideogram-4/resolve/main/diffusion_models/ideogram4_unconditional_fp8_scaled.safetensors`,
         dest: M("diffusion_models/ideogram4_unconditional_fp8_scaled.safetensors"), bytes: 9280741293 },
       { url: `${HF}/Comfy-Org/Ideogram-4/resolve/main/text_encoders/qwen3vl_8b_nvfp4.safetensors`,
-        dest: M("text_encoders/qwen3vl_8b_nvfp4.safetensors"), bytes: 6305221764 },
+        dest: M("text_encoders/qwen3vl_8b_nvfp4.safetensors"), bytes: 6305221764,
+        alt: ["qwen3vl_8b_fp8_scaled.safetensors"],
+        // nvfp4 has no kernel on ROCm; the vendor's fp8 build of the same encoder.
+        amd: { url: `${HF}/Comfy-Org/Ideogram-4/resolve/main/text_encoders/qwen3vl_8b_fp8_scaled.safetensors`,
+          dest: M("text_encoders/qwen3vl_8b_fp8_scaled.safetensors"), bytes: 10588637512 } },
       { url: `${HF}/Comfy-Org/Ideogram-4/resolve/main/vae/flux2-vae.safetensors`,
         dest: M("vae/flux2-vae.safetensors"), bytes: 336211292 },
     ],
@@ -2632,6 +2705,17 @@ export const CATALOG = [
   },
 ];
 
+/* Rows with an `amd` build answer `files` for the card they run on: status,
+ * sizes and the downloader all read the same list, so none of them can offer
+ * one build and fetch the other. */
+for (const cap of CATALOG) {
+  const all = cap.files;
+  if (!Array.isArray(all) || !all.some((f) => f.amd)) continue;
+  Object.defineProperty(cap, "files", { get: () => forCard(all), enumerable: true, configurable: true });
+  // The published list, the same on every machine: the docs tables read this.
+  Object.defineProperty(cap, "defaultFiles", { value: all, enumerable: false });
+}
+
 /* ───────────────────────────── what a capability MAKES, said POSITIVELY
  *
  * `makes: "picture"` sits on the five rows an image render can come out of and
@@ -2722,6 +2806,8 @@ export const MODEL_TO_CAPABILITY = {
   "anima": "imageAnima",
   "h3": "video",
   "ltx": "videoLtx",
+  // FastVideo's 8-step H3 distillation: config.video.engines.fasth3.
+  "fasth3": "videoFastH3",
   /* ⚠ THE CONTROL PAIR, AND WHAT HAD TO CHANGE BEFORE THESE TWO LINES COULD
    * EXIST — this is still the load-bearing comment on this map.
    *
@@ -3270,6 +3356,10 @@ export class ModelManager extends EventEmitter {
   }
 
   async #one(id, f, getBase, _setBase) {
+    if (fp4Blocked(f)) {
+      throw new Error(`${path.basename(f.dest)} is an fp4 build, which needs an NVIDIA card. `
+        + "It was not downloaded. Use another build of it from the Models screen.");
+    }
     await mkdir(path.dirname(f.dest), { recursive: true });
     const part = `${f.dest}.part`;
     let from = 0;
