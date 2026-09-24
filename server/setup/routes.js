@@ -14,14 +14,18 @@
  *
  * The ids: "lyrics" (server/setup/venv.js, a private Python for timed lyrics)
  * and "studio-packages" (server/setup/engine-packages.js, Studio's own OpenCV,
- * librosa and soundfile again, into an engine Studio installed).
+ * librosa, soundfile and SciPy again, into an engine Studio installed, only
+ * the ones that do not import).
  *
  * A setup that would change nothing answers 409 with the sentence saying why
  * (AIPLAY_WHISPER_PYTHON names the interpreter; an engine Studio did not
- * install), and nothing is fetched.
+ * install; Studio running a python other than its engine's own), and nothing
+ * is fetched.
  *
- * The same door serves the Models row, Settings > Songs, the refusal on "Time
- * the lyrics", and the MCP tools setup_feature and setup_status.
+ * The same door serves the Models row, Settings > Songs, every refusal that
+ * carries a setup id (the "Time the lyrics" refusal, and a missing module in
+ * hum-to-score, the tokenizer, the compositor or the DAW), and the MCP tools
+ * setup_feature and setup_status.
  */
 import { TORCH_CHOICES } from "./venv.js";
 

@@ -21,12 +21,20 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile, readFile, stat, realpath, rm } from "node:fs/promises";
 import { randomUUID, createHash } from "node:crypto";
 import { config } from "../config.js";
+import { engineModuleRefusal } from "../setup/engine-packages.js";
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const SCRIPT = fileURLToPath(new URL("./hum_to_abc.py", import.meta.url));
 
+/** A refusal by sentence. `extra` carries the R0 fields a door relays
+ *  (setup, pip, python, module, reason): a missing module is status 409 with
+ *  the pip line, and setup "studio-packages" where that setup would fix it. */
 export class HumRefusal extends Error {
-  constructor(message, status = 400) { super(message); this.status = status; }
+  constructor(message, status = 400, extra = {}) {
+    super(message);
+    this.status = status;
+    for (const k of ["setup", "pip", "python", "module", "reason"]) if (extra?.[k] != null) this[k] = extra[k];
+  }
 }
 
 function run(cmd, argv, { timeoutMs = 120e3 } = {}) {
@@ -83,7 +91,7 @@ export async function stageSource(source, dir, { libraryDir = config.outputDir }
  * notes, bars, pitchRange, source }. Refuses, by sentence, what the tracker
  * refuses (under a second, over a minute, no pitched notes).
  */
-export async function transcribeHum({ source, bpm = null, key = null, python = config.python, ffmpeg = "ffmpeg" } = {}) {
+export async function transcribeHum({ source, bpm = null, key = null, python = config.python, rig = config.rig, ffmpeg = "ffmpeg" } = {}) {
   const dir = path.join(os.tmpdir(), "aiplay-hum", randomUUID().slice(0, 8));
   try {
     const staged = await stageSource(source, dir);
@@ -99,10 +107,11 @@ export async function transcribeHum({ source, bpm = null, key = null, python = c
     if (typeof key === "string" && /^[A-G](b|#)?m?$/.test(key.trim())) argv.push("--key", key.trim());
     const r = await run(python, argv);
     if (r.code !== 0) {
-      const why = (r.err || "").trim().split("\n").filter(Boolean).pop() || `the pitch tracker exited ${r.code}`;
-      throw new HumRefusal(/No module named/.test(why)
-        ? `The engine's python lacks a package the pitch tracker needs (${why}).`
-        : why);
+      /* "No module named 'scipy'": which module, which python, the pip line,
+       * and the Install button where Studio's own engine setup would fix it. */
+      const refusal = await engineModuleRefusal({ stderr: r.err, feature: "Hum to score", rig, python });
+      if (refusal) throw new HumRefusal(refusal.message, refusal.status, refusal);
+      throw new HumRefusal((r.err || "").trim().split("\n").filter(Boolean).pop() || `the pitch tracker exited ${r.code}`);
     }
     const line = (r.out || "").trim().split("\n").pop();
     let answer;

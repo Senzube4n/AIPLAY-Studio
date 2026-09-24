@@ -851,6 +851,12 @@ node server/lrc_test.js || exit 1
 # job answering its request at once, the door's guard and size cap, and the MCP
 # tools (setup_feature withheld from the chat). No network, no Python, no GPU.
 node server/setup_venv_test.js || exit 1
+# A MISSING MODULE BECOMES AN INSTALL BUTTON: "No module named 'scipy'" from
+# hum-to-score, the tokenizer, the compositor or the DAW answers 409 with the
+# module, the python and the pip line, and setup "studio-packages" only where
+# Studio's own engine setup would fix that python; the repair runs --add-only
+# against the frozen constraints. Stand-in pythons, no network, no GPU.
+node server/setup/engine-refusal_test.js || exit 1
 # WHO MAY OPEN THE DOORS THAT CHOOSE WHAT RUNS HERE. A cross-site no-cors POST
 # (text/plain, no preflight) moved the rig Studio launches, the output and
 # models folders, switched paid API mode on with its cap at $1000, stored its

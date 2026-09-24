@@ -592,8 +592,9 @@ document.addEventListener("click", async (e) => {
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-retry]");
   if (!b || b.disabled) return;
-  if (!confirm("Install Studio's own packages (OpenCV, librosa and soundfile) into Studio's engine?\n\n"
-    + "They are pinned to the PyTorch and numpy already there, so neither changes. Nothing is removed.")) return;
+  if (!confirm("Install Studio's own packages (OpenCV, librosa, soundfile and SciPy, only the ones that do not import) into Studio's engine?\n\n"
+    + "Every package already there is pinned first, so the PyTorch and numpy there do not change. "
+    + "One that is installed but does not import is put back at the version it already has.")) return;
   b.disabled = true;
   const r = await api("/api/install", { retry: b.dataset.retry });
   if (r.error) { alert(r.error); b.disabled = false; }

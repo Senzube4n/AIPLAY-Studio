@@ -12,7 +12,7 @@
  *     ComfyUI\                    ComfyUI at COMFY_TAG (server/setup/pins.js)
  *     venv\                       its python environment
  *     python\                     the python that venv was made from
- *     studio-constraints.txt      the torch/numpy pins Studio's packages went in under
+ *     studio-constraints.txt      every package's version (pip freeze) when Studio's went in
  *     .aiplay-engine.json         marker: this folder is Studio's to replace
  *   <app data>\tools\uv\uv.exe    the kept uv (pinned, checksum-checked): server/setup/uv.js
  *
@@ -26,8 +26,10 @@
  * fallback). Python comes from uv (astral-sh/uv), which fetches a standalone
  * interpreter, so no system Python is needed. After ComfyUI's requirements it
  * adds Studio's own packages (server/setup/studio-packages.js: OpenCV, librosa,
- * soundfile) under a constraints file that pins the torch and numpy already
- * installed. If only those fail, the engine is kept and the answer says so.
+ * soundfile, SciPy), only the ones that do not import, under a constraints
+ * file holding every package already installed at its version, so nothing
+ * there moves (one that is installed but does not import is put back at that
+ * version). If only those fail, the engine is kept and the answer says so.
  *
  * NOTHING OUTSIDE ITS FOLDERS. uv's `python install` would also drop a
  * python3.x.exe in ~/.local/bin and register the interpreter in the Windows
@@ -42,7 +44,15 @@
  *
  *   --studio-packages   add only Studio's packages to a FINISHED engine this
  *                       installer made (marker complete). Refused on any other
- *                       folder, and it never deletes anything.
+ *                       folder, and it deletes nothing of the engine's; the
+ *                       pip download cache beside it (<engine>-cache\pip) is
+ *                       removed afterwards.
+ *   --add-only          with --studio-packages, from inside a running Studio
+ *                       (the in-app button, MCP): adds what is missing and
+ *                       replaces nothing, since the running engine holds the
+ *                       installed packages' files open. A package that is
+ *                       installed but does not import is then left for the
+ *                       launcher's Try again, which runs with Studio stopped.
  *
  * Output: plain log lines, plus machine lines the launcher reads:
  *   @@step {"id":"torch","label":"Installing PyTorch","n":5,"of":10}
@@ -60,7 +70,7 @@ import { pipeline } from "node:stream/promises";
 import { COMFY_TAG, comfyArchiveUrl, keptUvPath, UV_PYTHON_INSTALL_ARGS, UV_PRIVATE_ENV } from "../server/setup/pins.js";
 import { ensureUv } from "../server/setup/uv.js";
 import {
-  STUDIO_PACKAGES, VERSIONS_PROBE, MODULES_PROBE, probeLine, constraintsText, missingModules, studioWarning,
+  STUDIO_PACKAGES, STUDIO_MODULES, MODULES_PROBE, LEFTOVERS_PROBE, probeLine, missingModules, studioWarning, addStudioPackages,
 } from "../server/setup/studio-packages.js";
 
 const run = promisify(execFile);
@@ -250,32 +260,33 @@ const PIP_ENV = {
 const runPy = (py, code, timeout = 300_000) =>
   run(py, ["-s", "-c", code], { env: { ...process.env, ...PIP_ENV }, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
 
+/** The engine's `pip freeze`: every installed distribution as name==version. */
+const pipFreeze = async (py) =>
+  (await run(py, ["-s", "-m", "pip", "freeze"], { env: { ...process.env, ...PIP_ENV }, timeout: 120_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout;
+
 /**
- * Studio's own packages, into an engine this installer made. The installed
- * torch and numpy are read first and written into studio-constraints.txt, and
- * pip gets that file with -c, so nothing it resolves can move them.
- * Returns { ok, pinned, error? }; never throws for a pip failure, because the
- * engine it is adding to already works (the caller says so, loudly).
+ * Studio's own packages, into an engine this installer made
+ * (server/setup/studio-packages.js addStudioPackages): every installed
+ * package is written into studio-constraints.txt from `pip freeze` and pip
+ * gets that file with -c, so nothing installed moves; only the modules that
+ * do not import are named, and one pip lists but cannot import is put back
+ * at its frozen version with --force-reinstall --no-deps, unless `replace`
+ * is false (--add-only: Studio is running), then only what it lacks is added.
+ * Returns { ok, pinned, plan, kept, keptModules, error? }; never throws for a
+ * pip failure, because the engine it is adding to already works (the caller
+ * says so, loudly).
  */
-async function installStudioPackages(py, pip) {
-  let pinned;
-  try {
-    pinned = probeLine((await runPy(py, VERSIONS_PROBE, 120_000)).stdout, "versions");
-  } catch (e) {
-    return { ok: false, error: `could not read the engine's torch and numpy: ${String(e.stderr || e.message).trim().split("\n").pop()}` };
-  }
-  let text;
-  try { text = constraintsText(pinned); } catch (e) { return { ok: false, error: e.message }; }
-  const file = path.join(ROOT, "studio-constraints.txt");
-  await writeFile(file, text);
-  log(`Pinned so pip cannot move the engine: ${text.trim().split("\n").join(", ")}`);
-  try {
-    await pip([...STUDIO_PACKAGES, "-c", file]);
-    return { ok: true, pinned };
-  } catch (e) {
-    return { ok: false, pinned, error: String(e.message).split("\n")[0] };
-  }
+function installStudioPackages(py, pip, { replace = true } = {}) {
+  return addStudioPackages({
+    root: ROOT, pip, log, write: (file, text) => writeFile(file, text), replace,
+    runPy: (code, timeout) => runPy(py, code, timeout), freeze: () => pipFreeze(py),
+  });
 }
+
+/** The engine record's studioPackages: what the check found, and which
+ *  modules it checked, so a record made before SciPy joined the list says so
+ *  instead of vouching for a module nobody looked at (launcher/checks.mjs). */
+const studioRecord = (studio) => ({ ok: studio.ok, missing: studio.missing, checked: [...STUDIO_MODULES] });
 
 /** A real import of each of Studio's modules: { ok, missing, reasons }. */
 async function checkStudioModules(py) {
@@ -286,6 +297,11 @@ async function checkStudioModules(py) {
   } catch (e) {
     return { ok: false, missing: missingModules({}), reasons: { error: String(e.stderr || e.message).trim().split("\n").pop() } };
   }
+}
+
+/** Half-removed package folders pip left in site-packages ("~cipy"), or null. */
+async function readLeftovers(py) {
+  try { return probeLine((await runPy(py, LEFTOVERS_PROBE, 60_000)).stdout, "leftovers"); } catch { return null; }
 }
 
 /* ── the install ─────────────────────────────────────────────────────────── */
@@ -396,8 +412,8 @@ async function install() {
    * the person the whole install to save one retry. */
   const studioCheck = await checkStudioModules(py);
   const studio = { ok: studioCheck.ok, missing: studioCheck.missing, pinned: studioRun.pinned || null };
-  studio.warning = studioWarning(studio.missing, studioRun.ok ? "" : studioRun.error);
-  log(studio.ok ? "Studio's own packages import: cv2, librosa, soundfile." : `(!) ${studio.warning}`);
+  studio.warning = studioWarning(studio.missing, studioRun.ok ? "" : studioRun.error, studio.ok ? null : await readLeftovers(py));
+  log(studio.ok ? `Studio's own packages import: ${STUDIO_MODULES.join(", ")}.` : `(!) ${studio.warning}`);
   for (const [m, why] of Object.entries(studioCheck.reasons || {})) log(`    ${m}: ${why}`);
 
   step("test");
@@ -414,12 +430,12 @@ async function install() {
     ...cur, rig: ROOT, python: py,
     torchBackend: probed.backend, torchVersion: probed.version,
     comfyExtraArgs: flags, launchFrom: `Studio's own ComfyUI (${tag}, ${BACKEND})`,
-    engineInstall: { backend: BACKEND, comfy: tag, torch: probed.version, studioPackages: { ok: studio.ok, missing: studio.missing }, at: new Date().toISOString() },
+    engineInstall: { backend: BACKEND, comfy: tag, torch: probed.version, studioPackages: studioRecord(studio), at: new Date().toISOString() },
   };
   if (gpu) next.gpu = gpu; else if (BACKEND === "cpu") next.gpu = { vendor: "cpu", name: "CPU only", totalMb: 0, source: "chosen at install" };
   await mkdir(APPDATA, { recursive: true });
   await writeFile(SETTINGS, JSON.stringify(next, null, 2));
-  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: true, comfy: tag, torch: probed.version, studio: { ok: studio.ok, missing: studio.missing }, finishedAt: new Date().toISOString() }, null, 2));
+  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: true, comfy: tag, torch: probed.version, studio: studioRecord(studio), finishedAt: new Date().toISOString() }, null, 2));
   /* A finished install needs its download cache no more: gigabytes of wheels.
    * (A FAILED one keeps it; see clean().) The kept uv is not in here. */
   await rm(CACHE, { recursive: true, force: true }).catch(() => {});
@@ -447,36 +463,55 @@ if (process.argv.includes("--plan")) {
   process.exit(0);
 }
 
+/* After --studio-packages: the pip wheels it fetched (<engine>-cache\pip) are
+ * not kept, since a finished engine has no install to retry, and the cache
+ * folder goes too once nothing but its own marker is left in it. Only ever
+ * the cache beside a marked engine, never the engine. */
+async function dropPipCache() {
+  await rm(path.join(CACHE, "pip"), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => {});
+  const left = existsSync(CACHE) ? await readdir(CACHE).catch(() => ["?"]) : ["?"];
+  if (left.every((n) => n === ".aiplay-engine-cache")) await rm(CACHE, { recursive: true, force: true }).catch(() => {});
+}
+
 /* --studio-packages: only Studio's own packages, into a FINISHED engine this
- * installer made. Anything else is refused, and this path deletes nothing:
- * the engine it adds to already works. */
+ * installer made. Anything else is refused, and this path deletes nothing of
+ * the engine's: the engine it adds to already works. */
 if (process.argv.includes("--studio-packages")) {
+  const addOnly = process.argv.includes("--add-only");
+  let code = 1;
   try {
     const mark = await readJson(MARKER);
     if (mark?.complete !== true) {
       throw new Error(`${ROOT} holds no finished engine made by this installer, so nothing was installed into it. Studio adds packages only to an engine it installed itself.`);
     }
-    const py = venvPython(ROOT);
-    if (!existsSync(py)) throw new Error(`The engine at ${ROOT} has no python at ${py}.`);
-    const comfyDir = path.join(ROOT, "ComfyUI");
-    const pip = (args) => exec(py, ["-m", "pip", "install", "--progress-bar", "raw", ...args], { env: PIP_ENV, cwd: comfyDir });
-    const got = await installStudioPackages(py, pip);
-    const check = await checkStudioModules(py);
-    const studio = { ok: check.ok, missing: check.missing, warning: studioWarning(check.missing, got.ok ? "" : got.error) };
-    await writeFile(MARKER, JSON.stringify({ ...mark, studio: { ok: studio.ok, missing: studio.missing } }, null, 2));
-    const cur = await readJson(SETTINGS);
-    if (cur?.engineInstall) {
-      await writeFile(SETTINGS, JSON.stringify({ ...cur, engineInstall: { ...cur.engineInstall, studioPackages: { ok: studio.ok, missing: studio.missing } } }, null, 2));
+    try {
+      const py = venvPython(ROOT);
+      if (!existsSync(py)) throw new Error(`The engine at ${ROOT} has no python at ${py}.`);
+      const comfyDir = path.join(ROOT, "ComfyUI");
+      const pip = (args) => exec(py, ["-m", "pip", "install", "--progress-bar", "raw", ...args], { env: PIP_ENV, cwd: comfyDir });
+      const got = await installStudioPackages(py, pip, { replace: !addOnly });
+      const check = await checkStudioModules(py);
+      /* What --add-only left in place and still does not import: the launcher's. */
+      const putBack = (got.kept || []).filter((_, i) => check.missing.includes(got.keptModules?.[i]));
+      const studio = { ok: check.ok, missing: check.missing,
+        warning: studioWarning(check.missing, got.ok ? "" : got.error, check.ok ? null : await readLeftovers(py), { putBack }) };
+      await writeFile(MARKER, JSON.stringify({ ...mark, studio: studioRecord(studio) }, null, 2));
+      const cur = await readJson(SETTINGS);
+      if (cur?.engineInstall) {
+        await writeFile(SETTINGS, JSON.stringify({ ...cur, engineInstall: { ...cur.engineInstall, studioPackages: studioRecord(studio) } }, null, 2));
+      }
+      log(studio.ok ? `Studio's own packages import: ${STUDIO_MODULES.join(", ")}.` : `(!) ${studio.warning}`);
+      log(`@@done ${JSON.stringify({ rig: ROOT, python: py, studio })}`);
+      code = studio.ok ? 0 : 1;
+    } finally {
+      await dropPipCache();
     }
-    log(studio.ok ? "Studio's own packages import: cv2, librosa, soundfile." : `(!) ${studio.warning}`);
-    log(`@@done ${JSON.stringify({ rig: ROOT, python: py, studio })}`);
-    process.exit(studio.ok ? 0 : 1);
   } catch (e) {
     const message = String(e?.message || e).trim();
     log(`\nFAILED: ${message}`);
     log(`@@error ${JSON.stringify({ message, step: "studio", cleaned: false })}`);
-    process.exit(1);
   }
+  process.exit(code);
 }
 
 try {

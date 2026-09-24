@@ -57,10 +57,16 @@ registry entry), and an existing ComfyUI is never modified:
    README's table names it (an RX 9060 XT gets `device-gfx1200`), ROCm 7.2 on
    Linux, XPU for Intel Arc, the CPU build otherwise;
 4. ComfyUI's requirements, then Studio's own packages (OpenCV, librosa,
-   soundfile, pinned to the torch and numpy just installed), then a check that
-   PyTorch can see the card, and a test start of ComfyUI (`--quick-test-for-ci`).
+   soundfile and SciPy, only those that do not import, with every package
+   already installed pinned at its version so none of them moves), then a
+   check that PyTorch can see the card, and a test start of ComfyUI
+   (`--quick-test-for-ci`).
    If only Studio's packages fail, the engine is kept and the launcher's
-   "Studio's own packages" row offers **Try again**.
+   "Studio's own packages" row offers **Try again**. From inside a running
+   Studio the same repair only adds what is missing; a package that is
+   installed but does not import is put back at its version by the
+   launcher's Try again, with Studio stopped, since the running engine holds
+   its files open.
 
 **If any step fails**, the half-built engine folder is deleted and its download
 cache is kept (so the next try does not fetch the same gigabytes again), and

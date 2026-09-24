@@ -25,6 +25,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { CATALOG } from "../models.js";
+import { engineModuleRefusal, refusalError } from "../setup/engine-packages.js";
 
 export const TOKENIZER_ID = "musicYue2Tokenizer";
 const SCRIPT = fileURLToPath(new URL("./yue_tokenize.py", import.meta.url));
@@ -130,7 +131,7 @@ function run(cmd, argv, { timeoutMs = 30 * 60e3 } = {}) {
  * that know the card is busy pass "cpu": MERT in bf16 is 1.3 GB and a render
  * in flight has no room for it.
  */
-export async function tokenizeTrack({ source, device = null, python = config.python, force = false, runner = run } = {}) {
+export async function tokenizeTrack({ source, device = null, python = config.python, rig = config.rig, force = false, runner = run } = {}) {
   if (!source) throw new Error("tokenizeTrack needs a source file.");
   const st = await tokenizerStatus();
   if (!st.ready) {
@@ -160,9 +161,14 @@ export async function tokenizeTrack({ source, device = null, python = config.pyt
   try { parsed = JSON.parse(line); } catch { parsed = null; }
   if (!parsed || parsed.error || r.code !== 0) {
     const why = parsed?.error || (r.err || "").trim().split(/\r?\n/).filter(Boolean).pop() || `exit ${r.code}`;
-    const e = new Error(/No module named|ModuleNotFoundError/.test(why)
-      ? `The engine's python lacks a package the tokenizer needs (${why}).`
-      : `The tokenizer failed: ${why}`);
+    /* A missing module is this machine not being ready (409), not a failed
+     * run: the refusal names the module, the python and the pip line, and
+     * carries setup "studio-packages" where Studio's engine setup fixes it.
+     * The script's own error line goes last, so it is the one read. */
+    const refusal = await engineModuleRefusal({ stderr: `${r.err || ""}\n${parsed?.error || ""}`,
+      feature: "The real-audio tokenizer", rig, python });
+    if (refusal) throw refusalError(refusal);
+    const e = new Error(`The tokenizer failed: ${why}`);
     e.status = 500; e.reason = "tokenizer-failed";
     throw e;
   }

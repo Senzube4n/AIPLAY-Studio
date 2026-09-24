@@ -1,5 +1,6 @@
 /**
- * ONE-CLICK SETUPS ON THE PAGE — the [Set up timed lyrics] button.
+ * ONE-CLICK SETUPS ON THE PAGE — [Set up timed lyrics], [Install what this
+ * needs] and every other setup the server lists.
  *
  * Three places, one door (POST /api/setup, server/setup/routes.js):
  *   - Settings > Songs: #btnSetupLyrics (data-setup-feature="lyrics"), the
@@ -7,8 +8,14 @@
  *     note under it (data-setup-note="lyrics");
  *   - the Models screen: paintSetupButtons() adds the button, and a note, to
  *     each row the server names as a setup's capability while it is not ready;
- *   - the refusal on "Time the lyrics": offerSetup() shows the server's offer
- *     with the refusal's first sentence, and [Set up timed lyrics] / [Not now].
+ *   - a refusal that carries a setup id (R0: `{ error, setup }`):
+ *     offerSetup(r.setup, r.error) shows the refusal's first sentence and the
+ *     server's offer, with the setup's own button and [Not now]. "Time the
+ *     lyrics" sends "lyrics"; a missing OpenCV, librosa, soundfile or SciPy in
+ *     Studio's own engine sends "studio-packages" (hum-to-score, the
+ *     tokenizer, the compositor, the DAW); stem separation sends "stems".
+ *     offerSetup knows none of them by name: title, button, offer and whether
+ *     it is blocked or ready all come from the server's status for that id.
  *
  * NOTHING IS DECIDED HERE. Which rows get a button, whether the feature works,
  * whether a setup would change anything (blocked), the folder, the PyTorch
@@ -141,13 +148,39 @@ export async function startSetup(id) {
   await begin(s);
 }
 
-/** The refusal on "Time the lyrics" (the door answers { error, setup }).
- *  `lead` goes before it: a batch says how many were not queued. */
+/** A refusal's first sentence, the one offerSetup shows (R0): cut at the
+ *  first ". " outside parentheses, so a python path in them, such as
+ *  (C:\Users\J. Carr\…\python.exe), is not cut in half. Unbalanced
+ *  parentheses fall back to the plain split. */
+export function firstSentence(text) {
+  const s = String(text || "");
+  let depth = 0;
+  for (let i = 0; i < s.length - 1; i++) {
+    const c = s[i];
+    if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    else if (c === "." && depth === 0 && /\s/.test(s[i + 1])) return s.slice(0, i + 1);
+  }
+  return depth > 0 ? s.split(/(?<=\.)\s/)[0] : s;
+}
+
+/** A refusal that names a setup (the door answers { error, setup }), for any
+ *  id the server lists. `lead` goes before it: a batch says how many were
+ *  not queued. An unknown, blocked or ready setup is said, not offered; one
+ *  already running (started from another screen, or by an agent) is shown
+ *  with its progress instead of being offered twice. */
 export async function offerSetup(id, message, { lead = "" } = {}) {
   await readStatus(true);
   const s = setupOf(id);
-  const first = String(message || "").split(/(?<=\.)\s/)[0];
+  const first = firstSentence(message);
   if (!s || s.blocked || s.ready) { appAlert(`${lead ? `${lead} ` : ""}${s?.blocked || message}`); return; }
+  if (s.job?.state === "running") {
+    running.add(s.id);
+    paintAll();
+    poll();
+    appAlert(`${lead ? `${lead} ` : ""}${first}\n\n${noteText(s)}`);
+    return;
+  }
   if (!(await appConfirm(`${lead ? `${lead} ` : ""}${first}\n\n${offerOf(s)}`, { title: s.title, ok: s.button, cancel: "Not now" }))) return;
   await begin(s);
 }

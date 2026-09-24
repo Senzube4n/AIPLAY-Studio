@@ -14,7 +14,7 @@
  * launcher and the Models screen move together.
  */
 import { CATALOG } from "../server/models.js";
-import { MODULE_WORDS, STUDIO_MODULES } from "../server/setup/studio-packages.js";
+import { MODULE_WORDS, STUDIO_MODULES, STUDIO_USES, ADDED_BY_STUDIO, diskWords, moduleWords } from "../server/setup/studio-packages.js";
 
 /** The catalogue row the Models screen calls "Video clips — MiniMax H3". */
 export const H3_ROW = "video";
@@ -122,20 +122,30 @@ export function musicOnlyNote(startsComfy) {
  * The "Studio's own packages" row, for an engine Studio installed
  * (settings.engineInstall), or null for any other ComfyUI. `retry` is the
  * page's button: "Try again" after a failure, "Install" on an engine made
- * before this step existed (its record has no studioPackages).
+ * before this step existed (its record has no studioPackages), with the size
+ * on disk beside it. The record is what the installer last saw, and an "ok"
+ * vouches only for the modules it `checked`: a record written before SciPy
+ * joined the list names the three it covered and says SciPy was not checked
+ * (Studio probes it when a feature needs it, and a failed repair from inside
+ * Studio writes a record this row then offers Try again for).
  */
 export function studioPackagesItem(engineInstall) {
   if (!engineInstall) return null;
   const sp = engineInstall.studioPackages;
   const words = (mods) => mods.map((m) => MODULE_WORDS[m] || m).join(", ");
-  const uses = "Clip posters, the compositor, hum-to-score and the DAW bounce need them";
+  const uses = STUDIO_USES;
   if (!sp) {
     return { id: "studiopkgs", label: "Studio's own packages", status: "off", value: "not installed yet",
-      detail: `${uses}. This engine was installed before Studio added them.`, retry: "studio-packages", retryLabel: "Install" };
+      detail: `${uses}. This engine was installed before Studio added them. ${diskWords(ADDED_BY_STUDIO)}`,
+      retry: "studio-packages", retryLabel: "Install" };
   }
   if (sp.ok === true) {
-    return { id: "studiopkgs", label: "Studio's own packages", status: "ok", value: words(STUDIO_MODULES),
-      detail: `in the engine's python. ${uses}.` };
+    const checked = Array.isArray(sp.checked) ? STUDIO_MODULES.filter((m) => sp.checked.includes(m)) : ADDED_BY_STUDIO;
+    const unchecked = STUDIO_MODULES.filter((m) => !checked.includes(m));
+    return { id: "studiopkgs", label: "Studio's own packages", status: "ok", value: words(checked),
+      detail: `in the engine's python. ${uses}.`
+        + (unchecked.length ? ` ${moduleWords(unchecked)}: not checked yet (added to the list after this engine was installed); `
+          + "Studio checks it when a feature needs it." : "") };
   }
   const missing = Array.isArray(sp.missing) && sp.missing.length ? sp.missing : STUDIO_MODULES;
   return { id: "studiopkgs", label: "Studio's own packages", status: "warn", value: `missing: ${words(missing)}`,

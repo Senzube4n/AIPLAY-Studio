@@ -221,6 +221,28 @@ test("Studio's own packages have a row, and Try again runs the installer's --stu
   const old = studioPackagesItem({ backend: "cpu" });
   assert.equal(old.retry, "studio-packages", "an engine from before the step can get them too");
   assert.equal(old.retryLabel, "Install");
+  /* R4d: SciPy is one of them (librosa imports lazily, so it is checked by
+   * name), every feature that needs them is named, and the size is the
+   * measured one, not "not measured". */
+  /* An "ok" vouches only for what the installer checked: a record from
+   * before SciPy joined the list names the three and says SciPy was not
+   * checked, while a record that lists what it checked names all four. */
+  assert.equal(good.value, "OpenCV (cv2), librosa, soundfile");
+  assert.match(good.detail, /SciPy: not checked yet \(added to the list after this engine was installed\); Studio checks it when a feature needs it\.$/);
+  const checked = studioPackagesItem({ backend: "nvidia", studioPackages: { ok: true, missing: [], checked: ["cv2", "librosa", "soundfile", "scipy"] } });
+  assert.equal(checked.value, "OpenCV (cv2), librosa, soundfile, SciPy");
+  assert.doesNotMatch(checked.detail, /not checked/);
+  assert.equal(checked.retry, undefined);
+  assert.match(old.detail, /^Clip posters, the compositor, hum-to-score, the real-audio tokenizer and the DAW need them\. This engine was installed before Studio added them\. About 0\.3 GB on disk\.$/);
+  assert.doesNotMatch(old.detail, /not been measured/);
+  assert.match(src("../launcher/index.html"), /Install Studio's own packages \(OpenCV, librosa, soundfile and SciPy, only the ones that do not import\)/);
+  /* The confirm no longer promises "Nothing is removed": the launcher's run
+   * (Studio stopped) may put a broken package back at its own version. */
+  assert.match(src("../launcher/index.html"), /One that is installed but does not import is put back at the version it already has\./);
+  assert.doesNotMatch(src("../launcher/index.html"), /Nothing is removed/);
+  assert.match(src("../launcher/launcher.mjs"), /import \{ STUDIO_MODULES, moduleWords \} from "\.\.\/server\/setup\/studio-packages\.js";/);
+  assert.doesNotMatch(src("../launcher/launcher.mjs"), /["`][^"`\n]*OpenCV, librosa/, "the launcher's log lines take the names from the one list");
+  assert.match(src("../launcher/launcher.mjs"), /addLog\(`Installing Studio's own packages \(\$\{moduleWords\(STUDIO_MODULES\)\}: only the ones that do not import\) into its engine\.`, "sys"\);/);
   const launcher = src("../launcher/launcher.mjs");
   assert.match(launcher, /studioPackagesItem\(engineInstall\),\n  \]\.filter\(Boolean\);/);
   assert.match(launcher, /if \(b\.retry === "studio-packages"\) \{ await startStudioPackages\(\); return send\(res, 200, pkgRetry\); \}/);

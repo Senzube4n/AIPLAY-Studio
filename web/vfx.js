@@ -361,7 +361,10 @@ async function postVfx(body) {
     e.code = "comp_conflict";
     throw e;
   }
-  if (!r.ok || d.error) throw new Error(d.error || `VFX request failed (${r.status}).`);
+  if (!r.ok || d.error) {
+    if (typeof offerRefusalSetup === "function") offerRefusalSetup(d);
+    throw new Error(d.error || `VFX request failed (${r.status}).`);
+  }
   if (body.slug === V.slug && d.comp && d.comp.updatedAt !== V.comp?.updatedAt) {
     previewAudio.invalidate();
     if (V.playing) stop();
@@ -372,8 +375,23 @@ async function postVfx(body) {
 async function getJson(path) {
   const r = await fetch(path);
   const d = await r.json();
-  if (d.error) throw new Error(d.error);
+  if (d.error) {
+    if (typeof offerRefusalSetup === "function") offerRefusalSetup(d);
+    throw new Error(d.error);
+  }
   return d;
+}
+
+/** A refusal that names a one-click setup (R0 `setup`: OpenCV missing from
+ *  Studio's own engine, which engine.py imports at the top) offers it with
+ *  the dialog from web/setup-feature.js. At most once a minute per setup: a
+ *  broken engine fails the catalog, every frame and every action the same
+ *  way. The error still reaches the screen as before. */
+const setupOffered = new Map();
+function offerRefusalSetup(d) {
+  if (!d?.setup || Date.now() - (setupOffered.get(d.setup) || 0) < 60_000) return;
+  setupOffered.set(d.setup, Date.now());
+  import("./setup-feature.js").then((m) => m.offerSetup(d.setup, d.error)).catch(() => {});
 }
 
 /** Every mutation lands here: run it, take the server's document back, repaint.

@@ -84,6 +84,11 @@ import { bigroomPlan, resolveRefs } from "./arrange.js";
 import { bounceOrigin } from "./bounce-origin.js";
 import { bounceOptions } from "./bounce-options.js";
 import * as prov from "../provenance.js";
+/* engine.py imports scipy.signal at the top: a python without SciPy (or any
+ * module) answers a sentence naming the module, the python and the pip line —
+ * status 409, the R0 fields, and setup "studio-packages" where Studio's own
+ * engine setup would fix it — instead of a traceback tail. */
+import { engineModuleRefusal, refusalError, engineRefusalFields } from "../setup/engine-packages.js";
 /* §3 THE VOICE LAB: its routes and its analysis maths live beside ear.js and
  * mixer.js in server/daw/voicelab.js, and are mounted in ONE line inside the
  * action switch below — the same shape handleMixerAction has, sharing this
@@ -333,6 +338,19 @@ export function createDawRoutes(deps) {
   const { json, readBody, config } = deps;
   const spawnPython = deps.spawnPython
     ?? ((args, opts = {}) => spawn(config.python, args, { windowsHide: true, ...opts }));
+
+  /** The engine's python could not import a module: the refusal as an Error
+   *  (status 409, reason "missing-module"), else null. */
+  const moduleRefusal = async (text) => {
+    const r = await engineModuleRefusal({ stderr: text, feature: "The DAW render", rig: config.rig, python: config.python });
+    return r ? refusalError(r) : null;
+  };
+  /** A door's failure reply: a missing module is 409 with its fields, anything
+   *  else keeps the status the door always answered. */
+  const failWith = (res, err, status = 400) => {
+    const missing = err?.reason === "missing-module";
+    return json(res, missing ? 409 : status, { error: String(err?.message || err), ...(missing ? engineRefusalFields(err) : {}) });
+  };
 
   /* [DAWREC] The provenance ledger, injected like vfx does it — optional so
    * the structural tests can build this factory bare, and guarded so a
@@ -654,7 +672,7 @@ export function createDawRoutes(deps) {
     });
     if (reply.ok === false) {
       if (reply.fatal) throw transport(`the DAW serve child hit ${reply.error} and exited`);
-      throw new Error(reply.error || `${cmd} failed`);
+      throw (await moduleRefusal(reply.error)) || new Error(reply.error || `${cmd} failed`);
     }
     return reply;
   }
@@ -674,11 +692,11 @@ export function createDawRoutes(deps) {
         proc.stdout.on("data", (d) => { so += d; });
         proc.stderr.on("data", (d) => { se += d; });
         proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python (${config.python}): ${e.message}`)); });
-        proc.on("close", (code) => {
+        proc.on("close", async (code) => {
           clearTimeout(timer);
           const tail = so.trim().split(/\r?\n/).pop();
           if (timedOut) { reject(new Error(`The engine ran past ${Math.round(timeoutMs / 1000)}s and was stopped.`)); return; }
-          if (code !== 0 && !tail) { reject(new Error(se.trim().slice(-400) || `engine exit ${code}`)); return; }
+          if (code !== 0 && !tail) { reject((await moduleRefusal(se)) || new Error(se.trim().slice(-400) || `engine exit ${code}`)); return; }
           resolve(tail);
         });
       });
@@ -686,7 +704,7 @@ export function createDawRoutes(deps) {
       try { r = JSON.parse(line); } catch {
         throw new Error(`engine.py did not answer with JSON: ${String(line).slice(0, 200)}`);
       }
-      if (r.ok === false) throw new Error(r.error || `${mode} failed`);
+      if (r.ok === false) throw (await moduleRefusal(r.error)) || new Error(r.error || `${mode} failed`);
       return r;
     } finally {
       unlink(jobPath).catch(() => {});
@@ -784,16 +802,16 @@ export function createDawRoutes(deps) {
         proc.stdout.on("data", (d) => { so += d; });
         proc.stderr.on("data", (d) => { se += d; });
         proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python (${config.python}): ${e.message}`)); });
-        proc.on("close", (code) => {
+        proc.on("close", async (code) => {
           clearTimeout(timer);
           if (timedOut) { reject(new Error(`instruments.py ${mode} ran past ${Math.round(timeoutMs / 1000)}s and was stopped.`)); return; }
           const tail = so.trim().split(NL_RE).pop();
-          if (!tail) { reject(new Error(se.trim().slice(-400) || `instruments.py exit ${code}`)); return; }
+          if (!tail) { reject((await moduleRefusal(se)) || new Error(se.trim().slice(-400) || `instruments.py exit ${code}`)); return; }
           resolve(tail);
         });
       });
       const r = JSON.parse(line);
-      if (r.ok === false) throw new Error(r.error || `${mode} failed`);
+      if (r.ok === false) throw (await moduleRefusal(r.error)) || new Error(r.error || `${mode} failed`);
       return r;
     } finally {
       unlink(jobPath).catch(() => {});
@@ -1394,7 +1412,7 @@ export function createDawRoutes(deps) {
           await mkdir(DAW_DIR(), { recursive: true });
           await runEngineFast("chirp", { sr: 48000, out: full }, 30_000);
         } catch (err) {
-          json(res, 503, { error: String(err.message || err) }); return true;
+          failWith(res, err, 503); return true;
         }
       }
       const st = await stat(full);
@@ -1436,7 +1454,7 @@ export function createDawRoutes(deps) {
           unlink(capPath).catch(() => {});
         }
       } catch (err) {
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -1501,7 +1519,7 @@ export function createDawRoutes(deps) {
         });
         createReadStream(full).pipe(res);
       } catch (err) {
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -1524,7 +1542,7 @@ export function createDawRoutes(deps) {
         });
         res.end(buf);
       } catch (err) {
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -1559,7 +1577,7 @@ export function createDawRoutes(deps) {
         const r = addChunk(s, url.searchParams.get("seq"), buf);
         json(res, 200, { ok: true, ...r });
       } catch (err) {
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -1592,7 +1610,7 @@ export function createDawRoutes(deps) {
           unlink(tmp).catch(() => {});
         }
       } catch (err) {
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -2933,7 +2951,7 @@ export function createDawRoutes(deps) {
           }), true;
       }
     } catch (err) {
-      return json(res, 400, { error: String(err.message || err) }), true;
+      return failWith(res, err, 400), true;
     }
   }
 

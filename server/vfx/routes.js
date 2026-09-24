@@ -62,6 +62,11 @@ import { createAudioPreview, validateAudioPreviewRequest } from "./audio-preview
  * is the one question worth asking here: is THIS Studio's ComfyUI child alive.
  * A port answering is not an answer to that. */
 import { engine } from "../engine/client.js";
+/* A python that cannot import cv2 (or any module) answers a sentence naming
+ * the module, the python and the pip line — status 409, the R0 fields, and
+ * setup "studio-packages" where Studio's own engine setup would fix it —
+ * instead of the tail of a traceback. */
+import { engineModuleRefusal, refusalError, engineRefusalFields } from "../setup/engine-packages.js";
 
 /** The library pictures and clips a comp's layers name (`src`), for the
  *  lineage the minors rule reads. A precomp layer names a comp, which the
@@ -369,6 +374,19 @@ export function createVfxRoutes(deps) {
   const spawnPython = deps.spawnPython
     ?? ((args, opts = {}) => spawn(config.python, args, { windowsHide: true, ...opts }));
 
+  /** The engine's python could not import a module: the refusal as an Error
+   *  (status 409, reason "missing-module"), else null. */
+  const moduleRefusal = async (text) => {
+    const r = await engineModuleRefusal({ stderr: text, feature: "The compositor", rig: config.rig, python: config.python });
+    return r ? refusalError(r) : null;
+  };
+  /** A door's failure reply: a missing module is 409 with its fields, anything
+   *  else keeps the status the door always answered. */
+  const failWith = (res, err, status = 400) => {
+    const missing = err?.reason === "missing-module";
+    return json(res, missing ? 409 : status, { error: String(err?.message || err), ...(missing ? engineRefusalFields(err) : {}) });
+  };
+
   /* ────────────────────────────────────────────── small, shared validators */
 
   /** Names come from a browser or a model, so nothing is trusted as a path. */
@@ -463,7 +481,10 @@ export function createVfxRoutes(deps) {
           if (signal?.aborted) { reject(new Error("Render cancelled.")); return; }
           const tail = buf.trim() || last;
           if (timedOut) { reject(new Error(`The engine ran past ${Math.round(timeoutMs / 1000)}s and was stopped.`)); return; }
-          if (code !== 0 && !tail) { reject(new Error(err.trim().slice(-400) || `engine exit ${code}`)); return; }
+          if (code !== 0 && !tail) {
+            reject((await moduleRefusal(err)) || new Error(err.trim().slice(-400) || `engine exit ${code}`));
+            return;
+          }
           resolve(tail);
         });
       });
@@ -474,7 +495,7 @@ export function createVfxRoutes(deps) {
       }
       // audiokeys/tracker report success by simply not setting ok:false, while
       // the engine always sets ok — so only an explicit false is a failure.
-      if (r.ok === false) throw new Error(r.error || `${mode} failed`);
+      if (r.ok === false) throw (await moduleRefusal(r.error)) || new Error(r.error || `${mode} failed`);
       return r;
     } finally {
       unlink(jobPath).catch(() => {});
@@ -588,6 +609,9 @@ export function createVfxRoutes(deps) {
       proc.on("error", (e) => fail(`could not start python (${config.python}): ${e.message}`));
       proc.on("close", (code) => {
         if (!ready) {
+          /* A missing module (cv2 at the top of engine.py) is a transport
+           * failure here on purpose: the per-call path below runs the same
+           * import and answers the refusal with its fields (runJob). */
           fail(`the serve child exited (${code}) before it was ready: ${lane.stderrTail.slice(-300)}`);
           return;
         }
@@ -676,7 +700,7 @@ export function createVfxRoutes(deps) {
        * failure. A plain refusal is a verdict: the per-call path would say
        * exactly the same words, so it is NOT retried. */
       if (reply.fatal) throw transport(`the serve child hit ${reply.error} and exited`);
-      throw new Error(reply.error || `${cmd} failed`);
+      throw (await moduleRefusal(reply.error)) || new Error(reply.error || `${cmd} failed`);
     }
     return reply;
   }
@@ -736,9 +760,10 @@ export function createVfxRoutes(deps) {
     let catalogHit = null;
     let catalogMiss = 0;
     let catalogMissWhy = `The ${what} catalog is not readable yet.`;
+    let catalogMissErr = null;   // a missing module: the refusal itself, fields and all
     return async function readCatalog() {
       if (catalogHit) return catalogHit;
-      if (Date.now() < catalogMiss) throw new Error(catalogMissWhy);
+      if (Date.now() < catalogMiss) throw catalogMissErr || new Error(catalogMissWhy);
       try {
         const line = await new Promise((resolve, reject) => {
           const proc = spawnPython(["-c", prog]);
@@ -747,10 +772,10 @@ export function createVfxRoutes(deps) {
           proc.stdout.on("data", (d) => { so += d; });
           proc.stderr.on("data", (d) => { se += d; });
           proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python: ${e.message}`)); });
-          proc.on("close", (code) => {
+          proc.on("close", async (code) => {
             clearTimeout(timer);
             const tail = so.trim().split(/\r?\n/).pop();
-            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
+            if (code !== 0 || !tail) reject((await moduleRefusal(se)) || new Error(se.trim().slice(-300) || `exit ${code}`));
             else resolve(tail);
           });
         });
@@ -759,7 +784,8 @@ export function createVfxRoutes(deps) {
       } catch (err) {
         catalogMiss = Date.now() + 30_000;
         catalogMissWhy = `The ${what} catalog is not readable yet (${sourceFile}): ${err.message}`;
-        throw new Error(catalogMissWhy);
+        catalogMissErr = err?.reason === "missing-module" ? err : null;
+        throw catalogMissErr || new Error(catalogMissWhy);
       }
     };
   }
@@ -2192,7 +2218,7 @@ export function createVfxRoutes(deps) {
       try {
         json(res, 200, { shapes: await readShapeCatalog() });
       } catch (err) {
-        json(res, 503, { error: String(err.message || err) });
+        failWith(res, err, 503);
       }
       return true;
     }
@@ -2204,7 +2230,7 @@ export function createVfxRoutes(deps) {
       try {
         json(res, 200, await readLightsCatalog());
       } catch (err) {
-        json(res, 503, { error: String(err.message || err) });
+        failWith(res, err, 503);
       }
       return true;
     }
@@ -2292,7 +2318,7 @@ export function createVfxRoutes(deps) {
          * thing that refuses a bad value cannot disagree about what is legal. */
         json(res, 200, { effects, groups, compSettings, blendModes: BLEND_MODES });
       } catch (err) {
-        json(res, 503, { error: String(err.message || err) });
+        failWith(res, err, 503);
       }
       return true;
     }
@@ -2437,7 +2463,7 @@ export function createVfxRoutes(deps) {
       } catch (err) {
         // A failed frame answers JSON, not a broken image: the viewer can read
         // the reason and say it out loud instead of showing a torn icon.
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -2595,7 +2621,7 @@ export function createVfxRoutes(deps) {
               + "still usable by name.",
         });
       } catch (err) {
-        json(res, 400, { error: String(err.message || err) });
+        failWith(res, err, 400);
       }
       return true;
     }
@@ -5087,6 +5113,7 @@ export function createVfxRoutes(deps) {
       }
       });
     } catch (err) {
+      if (err?.reason === "missing-module") return failWith(res, err), true;
       return json(res, err.code === "comp_conflict" ? 409 : 400, {
         error: String(err.message || err),
         ...(err.code === "comp_conflict" ? { code: err.code, currentRevision: err.currentRevision, comp: err.comp } : {}),

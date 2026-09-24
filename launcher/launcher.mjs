@@ -37,6 +37,8 @@ import { ffmpegPath, ffprobePath } from "../server/clipjoin.js";
 import { ramItem, ffmpegItem, cardAdvice, musicOnlyNote, studioPackagesItem } from "./checks.mjs";
 /* "Try again" beside Studio's own packages: the engine installer's --studio-packages, the same run MCP's setup_feature makes. */
 import { runStudioPackages } from "../server/setup/engine-packages.js";
+/* Their names, from the one list the installer and the check use. */
+import { STUDIO_MODULES, moduleWords } from "../server/setup/studio-packages.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
  * server/config.js; copied by name here rather than importing config.js, which
@@ -145,13 +147,13 @@ async function startStudioPackages() {
   if (!settings.engineInstall || !settings.rig) throw new Error("Studio adds its packages only to an engine it installed itself.");
   Object.assign(pkgRetry, { state: "running", message: null });
   emit("pkgretry", pkgRetry);
-  addLog("Installing Studio's own packages (OpenCV, librosa, soundfile) into its engine.", "sys");
+  addLog(`Installing Studio's own packages (${moduleWords(STUDIO_MODULES)}: only the ones that do not import) into its engine.`, "sys");
   runStudioPackages({ rig: settings.rig, appData: APPDATA, script: path.join(ROOT, "scripts", "install-engine.mjs"),
     onLine: (l) => addLog(l, "out"), onChild: (c) => { pkgChild = c; } })
     .then((out) => {
       pkgChild = null;
       checkCache = null;
-      const message = out.ok ? "Studio's own packages are installed: OpenCV, librosa and soundfile import in the engine."
+      const message = out.ok ? `Studio's own packages are installed: ${moduleWords(STUDIO_MODULES)} import in the engine.`
         : out.studio?.warning || out.error || "The packages did not install.";
       addLog(message, out.ok ? "sys" : "err");
       Object.assign(pkgRetry, { state: out.ok ? "done" : "failed", message });
@@ -179,7 +181,7 @@ async function startInstall(backend) {
   const onLine = (line) => {
     if (line.startsWith("@@step ")) { try { const st = JSON.parse(line.slice(7)); setInstall({ step: st.label, n: st.n, of: st.of }); } catch {} return; }
     /* The engine works either way; Studio's own packages (OpenCV, librosa,
-     * soundfile) not all installing is said, not hidden (install-engine.mjs). */
+     * soundfile, SciPy) not all installing is said, not hidden (install-engine.mjs). */
     if (line.startsWith("@@done ")) { done = true; try { warning = JSON.parse(line.slice(7)).studio?.warning || null; } catch {} return; }
     if (line.startsWith("@@error ")) { try { const e = JSON.parse(line.slice(8)); errorMsg = e.message; errorStep = e.step; } catch {} return; }
     addLog(line, "out");
@@ -347,8 +349,8 @@ async function systemCheck({ redetect = false } = {}) {
         : ggufInstalled ? "no ComfyUI needed"
         : "Any card (CUDA on NVIDIA, Vulkan on AMD and Intel, or the CPU) · install from Models · no ComfyUI needed" },
     ffmpegItem({ ffmpeg, ffprobe }),
-    /* Only for an engine Studio installed: whether OpenCV, librosa and
-     * soundfile went in, with Try again when they did not. */
+    /* Only for an engine Studio installed: whether OpenCV, librosa,
+     * soundfile and SciPy went in, with Try again when they did not. */
     studioPackagesItem(engineInstall),
   ].filter(Boolean);
 

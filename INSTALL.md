@@ -127,9 +127,12 @@ You want `v20` or higher. Anything older and Studio will not start.
 ComfyUI it asks *What should Studio run on?* (NVIDIA / AMD / Intel Arc / CPU
 only) and installs its own ComfyUI (v0.36.0, the version this Studio is tested
 with) with the right PyTorch into `%USERPROFILE%\.aiplay-studio\engine`, plus
-the three Python packages Studio itself uses there (OpenCV, librosa, soundfile;
-if only those fail, the engine is kept and the launcher's "Studio's own
-packages" row has **Try again**). Nothing outside Studio's folder changes: the
+the Python packages Studio itself uses there (OpenCV, librosa and soundfile,
+about 0.3 GB, and SciPy, which ComfyUI brings; if only those fail, the engine
+is kept and the launcher's "Studio's own packages" row has **Try again**;
+inside Studio, a feature that finds one missing names it, the python and the
+pip line, and the setup that installs it into Studio's own engine). Nothing
+outside Studio's folder changes: the
 Python it fetches gets no ~/.local/bin copy and no registry entry. If the
 install fails it removes the half-built engine, keeps what it downloaded so the
 next try is quicker, and asks again with the exact error. Models come next,

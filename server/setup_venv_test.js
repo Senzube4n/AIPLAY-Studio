@@ -29,7 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSetupRunner, lyricsRecipe, offerSentence, localDiskProblem, venvPython, RECIPE_IDS, TORCH_CHOICES } from "./setup/venv.js";
 import { createSetupRoutes, oneRunner } from "./setup/routes.js";
-import { createEnginePackagesRunner, runStudioPackages, ENGINE_SETUP_ID } from "./setup/engine-packages.js";
+import { createEnginePackagesRunner, runStudioPackages, ENGINE_SETUP_ID, venvPython as engineVenvPython } from "./setup/engine-packages.js";
 import { UV_PYTHON_INSTALL_ARGS, UV_PRIVATE_ENV } from "./setup/pins.js";
 import { TORCH_PIP, whisperPip } from "./lrc.js";
 import { CATALOG, modulesOf } from "./models.js";
@@ -391,10 +391,14 @@ console.log("@@done " + JSON.stringify({ studio: { ok: true, missing: [] } }));
   process.env.FAKE_ENGINE_LOG = engineLog;
   const rig = path.join(tmp, "engine");
   mkdirSync(rig, { recursive: true });
-  const py = process.execPath;
-  const make = (probe = () => ({ cv2: false, librosa: false, soundfile: false })) => createEnginePackagesRunner({
+  /* The engine's own venv python (a runner blocks any other: R4d 5). Never
+   * run: both probes are faked. */
+  const py = engineVenvPython(rig);
+  mkdirSync(path.dirname(py), { recursive: true });
+  writeFileSync(py, "");
+  const make = (probe = () => ({ cv2: false, librosa: false, soundfile: false, scipy: false })) => createEnginePackagesRunner({
     appData: path.join(tmp, "eng-appdata"), rig: () => rig, python: () => py, probe: async (p, m) => probe(p, m), quickMs: 30,
-    run: (o) => runStudioPackages({ ...o, script: FAKE_ENGINE }),
+    imports: async (p, m) => probe(p, m), run: (o) => runStudioPackages({ ...o, script: FAKE_ENGINE }),
   });
 
   let r = make();
@@ -404,17 +408,17 @@ console.log("@@done " + JSON.stringify({ studio: { ok: true, missing: [] } }));
   ok("...status says why, with the command for its own python", /-m pip install opencv-python-headless librosa soundfile/.test((await r.status()).setups[0].blocked || ""));
 
   writeFileSync(path.join(rig, ".aiplay-engine.json"), JSON.stringify({ complete: true, backend: "nvidia" }));
-  r = make(() => ({ cv2: true, librosa: true, soundfile: true }));
+  r = make(() => ({ cv2: true, librosa: true, soundfile: true, scipy: true }));
   job = await r.run(ENGINE_SETUP_ID);
-  ok("all three already importing is a no-op", job.state === "ready" && job.noop && calls(engineLog).length === 0, JSON.stringify(job));
+  ok("all four already importing is a no-op", job.state === "ready" && job.noop && calls(engineLog).length === 0, JSON.stringify(job));
 
   r = make();
   await r.run(ENGINE_SETUP_ID);
   for (let i = 0; i < 200 && (await r.status()).setups[0].job?.state === "running"; i++) await sleep(20);
   job = (await r.status()).setups[0].job;
   const got = calls(engineLog);
-  ok("a missing package runs the installer's --studio-packages against config.rig, and reports done",
-    job.state === "done" && got.length === 1 && got[0].argv.join(" ") === "--studio-packages" && got[0].rig === rig
+  ok("a missing package runs the installer's --studio-packages --add-only against config.rig, and reports done",
+    job.state === "done" && got.length === 1 && got[0].argv.join(" ") === "--studio-packages --add-only" && got[0].rig === rig
       && got[0].appData === path.join(tmp, "eng-appdata") && /installed in the engine/.test(job.message), JSON.stringify({ job, got }));
   ok("...its output lines are the job's lines", job.lines.some((l) => /installing opencv-python-headless/.test(l)));
 
