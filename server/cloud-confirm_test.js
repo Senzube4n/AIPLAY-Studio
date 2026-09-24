@@ -80,7 +80,7 @@ test("friend first, then your own key: one list, in that order, the paid one mar
    * honest limits live behind "More". */
   const friend = cloud.NO_STRONG_CARD[0];
   assert.doesNotMatch(friend.how.replace(/\.$/, ""), /[.!?]\s/, `one sentence: ${friend.how}`);
-  assert.match(friend.how, /^Free: .*Ask friend.*Workflow → Video clips/);
+  assert.match(friend.how, /^Free: .*Ask friend.*Music video → Video clips/);
   assert.match(friend.limits, /Collab → Friends/);
   assert.match(friend.limits, /video scenes, not songs/);
   assert.match(friend.limits, /has not been acceptance-tested yet/, "the round trip is not promised");
@@ -405,7 +405,7 @@ test("POST /api/cloud: another website changes nothing; the page's own JSON swit
   assert.deepEqual(st.body.order, ["friend", "own-key"]);
   assert.equal(st.body.hosted.on, false);
   assert.match(st.body.hosted.keySaid, /^Using the key …abcd saved on 21 Sep 2026 by another copy of Studio on this Windows account/);
-  assert.match(st.body.comfy.note, /outside a music video\. Music videos are made in Full Studio's Workflow/);
+  assert.match(st.body.comfy.note, /outside a music video\. Music videos are made in Full Studio's Music video screen/);
   assert.ok(!JSON.stringify(st.body).includes("value"), "no key value in the status");
   assert.equal((await hit({ host: "rebind.evil.example:4173" })).status, 403, "a rebound page reads nothing");
 
@@ -463,14 +463,14 @@ test("GET /api/cloud in each launch mode: the hosted engine says where it runs; 
   assert.equal(full.hosted.runsHere, true);
   assert.equal(full.hosted.note, null);
   assert.equal(full.friend.available, true);
-  assert.match(full.comfy.note, /^Comfy API clips are made in the launcher's Use Comfy API mode, outside a music video\. Music videos are made in Full Studio's Workflow; without a strong card, ask a friend on Collab/);
+  assert.match(full.comfy.note, /^Comfy API clips are made in the launcher's Use Comfy API mode, outside a music video\. Music videos are made in Full Studio's Music video screen; without a strong card, ask a friend on Collab/);
   const musicOnly = await (mk({ musicOnly: true }))();
   assert.equal(musicOnly.hosted.runsHere, false, "Music only refuses MiniMax, so the hosted engine cannot run there");
   assert.match(musicOnly.hosted.note, /makes songs in Full Studio only/);
   assert.equal(musicOnly.friend.available, false);
   const comfyOnly = await (mk({ cloudOnly: true }))();
   assert.equal(comfyOnly.hosted.runsHere, false);
-  assert.match(comfyOnly.comfy.note, /^Music videos need Full Studio: this mode has no Music, Workflow or Collab screen\. Without a strong card, start Full Studio/);
+  assert.match(comfyOnly.comfy.note, /^Music videos need Full Studio: this mode has no Music, Music video or Collab screen\. Without a strong card, start Full Studio/);
   /* The page shows those notes and keeps a switch it cannot use from being turned on. */
   const sw = read("web/cloudswitch.js");
   assert.match(sw, /say\("cloudHostedNote", d\.hosted\?\.note\);/);

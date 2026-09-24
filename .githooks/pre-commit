@@ -669,6 +669,18 @@ if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
 # disk rather than a placeholder.
 node server/welcome/ui_test.js || exit 1
 node server/welcome/catalogue_test.js || exit 1
+# THE SHELL (UI_PLAN B1, B3-B6, E1): a fresh install opens Simple and an install
+# in use keeps Advanced (written for it), an unparseable settings.json is never
+# written over, a Home card opens Simple either way, every "Advanced adds"
+# tooltip names controls Simple really hides, the first-run lines on eight
+# imaginary machines, the rail (Make first, More tools folded, Models and
+# Settings pinned), the phone media rule, plain words for every run, and the
+# Make buttons (a writing model is yes, no or not known yet).
+node --check web/level.js || exit 1
+node --check web/rail.js || exit 1
+node --check web/runwords.js || exit 1
+node --check web/writer.js || exit 1
+node server/welcome/level_test.js || exit 1
 # THE VIDEO LAB's parity gate and its arithmetic. The gate runs the usual
 # two-directional census in BOTH surfaces (an action a person cannot reach and
 # an action an agent cannot reach are both failures here — the first run found

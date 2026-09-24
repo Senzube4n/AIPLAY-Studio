@@ -293,7 +293,7 @@ console.log("\n§3  the two tools that were missing");
   ok("...sending the territory acknowledgement only when it is true", /\.\.\.\(a\.accept_region === true \? \{ acceptRegion: true \} : \{\}\),/.test(String(dm?.run || "")));
   ok("...and saying never to assume it", /never assume it/i.test(dm?.description || "") && /Never assumed/.test(dm?.inputSchema?.properties?.accept_region?.description || ""));
   ok("both are withheld from the in-app chat by sentence, like set_video_engine",
-    typeof WITHHELD?.set_image_engine === "string" && /Images page/.test(WITHHELD.set_image_engine)
+    typeof WITHHELD?.set_image_engine === "string" && /Pictures page/.test(WITHHELD.set_image_engine)
     && typeof WITHHELD?.download_model === "string" && /Models page/.test(WITHHELD.download_model)
     && !(("set_image_engine" in (ROUTABLE || {})) || ("download_model" in (ROUTABLE || {}))));
   const api = src("../API.md");

@@ -45,6 +45,11 @@
   <link rel="stylesheet" href="chat.css">
   <!-- The Agent page (cloud models + MCP). -->
   <link rel="stylesheet" href="agent.css">
+  <!-- The shell: the rail's "More tools" fold, the Simple level's switches,
+       the Home first-run lines and the phone layout (UI_PLAN B1, B3, B5, B6,
+       E1). LAST, because it re-lays the grid the sheets above set up; it
+       spells no colour of its own (server/welcome/level_test.js). -->
+  <link rel="stylesheet" href="shell.css">
 </head>
 <body>
 
@@ -75,48 +80,47 @@
       <div class="wordmark"><b>AI PLAY</b><span>STUDIO</span></div>
       <button class="railtoggle" type="button" id="railToggle" title="Collapse the menu" aria-label="Collapse the menu" aria-expanded="true">&#10094;</button>
     </div>
-    <!-- Suno-style rail: the two things most people come for on top, the rest in
-         named groups, and the housekeeping pinned to the bottom. ❮ collapses it
-         to icons only. setView() still finds every entry through ".nav a". -->
+    <!-- MAKE FIRST, THE REST FOLDED (UI_PLAN B1). The five things a newcomer
+         comes for sit on top; every other screen is one click away under
+         "More tools", a <details> whose open or folded state web/rail.js
+         remembers in this browser. Models and Settings are pinned in the
+         bottom block so they are never below the fold. Only labels changed:
+         every data-view is the one it was, so setView(), INFO_HOSTS and the
+         catalogue find every entry through ".nav a" exactly as before.
+         ❮ collapses the rail to icons only. -->
     <div class="nav navmain">
-      <a href="#" class="on" data-view="home" title="Welcome"><i>&#8962;</i><span class="lbl">Welcome</span></a>
-      <div class="navgroup"><div class="navhead"><span class="lbl">Create</span></div>
-      <a href="#" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
+      <a href="#" class="on" data-view="home" title="Home"><i>&#8962;</i><span class="lbl">Home</span></a>
+      <div class="navgroup navmake"><div class="navhead"><span class="lbl">Make</span></div>
       <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
       <!-- Shown only in the launcher's "Use Comfy API" mode (web/app.js applyStatus),
-           where the rest of this group is hidden. Below Chat and Music, which
-           head the group in Full Studio (the owner's ask, 2026-09-19;
-           server/chat/ui_test.js). -->
+           where the rest of the rail is hidden; it sits in Make so that mode
+           never has to open a fold to reach its only page. -->
       <a href="#" data-view="router" title="Comfy API" hidden><i>&#9729;</i><span class="lbl">Comfy API</span></a>
-      <a href="#" data-view="musiclab" title="Music Lab"><i>♫</i><span class="lbl">Music Lab</span></a>
-      <a href="#" data-view="images" title="Images"><i>▣</i><span class="lbl">Images</span></a>
+      <a href="#" data-view="images" title="Pictures"><i>▣</i><span class="lbl">Pictures</span></a>
       <a href="#" data-view="video" title="Video"><i>▷</i><span class="lbl">Video</span></a>
+      <a href="#" data-view="workflow" title="Music video"><i>❖</i><span class="lbl">Music video</span></a>
+      </div>
+      <details class="navgroup navmore" id="navMore">
+        <summary class="navhead navmorehead" title="More tools"><i aria-hidden="true">&#8943;</i><span class="lbl">More tools</span><b class="navcaret" aria-hidden="true">&#9662;</b></summary>
+      <a href="#" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
+      <a href="#" data-view="musiclab" title="Music Lab"><i>♫</i><span class="lbl">Music Lab</span></a>
       <a href="#" data-view="vfx" title="VFX"><i>◈</i><span class="lbl">VFX</span></a>
       <a href="#" data-view="avatars" title="3D"><i>◇</i><span class="lbl">3D</span></a>
-      </div>
-      <div class="navgroup"><div class="navhead"><span class="lbl">Edit</span></div>
-      <a href="#" data-view="workflow" title="Workflow"><i>❖</i><span class="lbl">Workflow</span></a>
       <a href="#" data-view="studio" title="Studio"><i>✂</i><span class="lbl">Studio</span></a>
       <a href="daw.html" data-page="daw" title="DAW"><i>&#9645;</i><span class="lbl">DAW</span></a>
-      </div>
-      <div class="navgroup"><div class="navhead"><span class="lbl">Automate</span></div>
       <a href="#" data-view="reactive" title="Reactive"><i>◉</i><span class="lbl">Reactive</span><span class="pip" id="reactPip" hidden></span></a>
       <a href="#" data-view="training" title="Training"><i>⚙</i><span class="lbl">Training</span></a>
       <a href="#" data-view="collab" title="Collab"><i>&#9901;</i><span class="lbl">Collab</span></a>
       <a href="#" data-view="overnight" title="Overnight"><i>☾</i><span class="lbl">Overnight</span><span class="pip run" id="ovPip" hidden></span></a>
-      </div>
-      <div class="navgroup"><div class="navhead"><span class="lbl">Explore</span></div>
       <a href="#" data-view="community" title="Community"><i>◎</i><span class="lbl">Community</span><span class="pip" id="commPip" hidden></span></a>
       <a href="#" data-view="radio" title="Radio"><i>&#8767;</i><span class="lbl">Radio</span></a>
       <a href="#" data-view="blog" title="Blog"><i>&#9998;</i><span class="lbl">Blog</span></a>
       <a href="#" data-view="games" title="Games"><i>⚄</i><span class="lbl">Games</span></a>
-      </div>
-      <div class="navgroup"><div class="navhead"><span class="lbl">System</span></div>
-      <a href="#" data-view="models" title="Models"><i>▤</i><span class="lbl">Models</span><span class="pip" id="modelPip" hidden></span></a>
       <a href="#" data-view="engine" title="Engine"><i>⌁</i><span class="lbl">Engine</span></a>
-      </div>
+      </details>
     </div>
     <div class="nav navbottom">
+      <a href="#" data-view="models" title="Models"><i>▤</i><span class="lbl">Models</span><span class="pip" id="modelPip" hidden></span></a>
       <a href="#" data-view="mcp" title="Agent"><i>&#9670;</i><span class="lbl">Agent</span></a>
       <a href="#" data-view="settings" title="Settings"><i>⚙</i><span class="lbl">Settings</span></a>
       <a href="#" data-view="about" title="About"><i>&#10022;</i><span class="lbl">About</span></a>
@@ -165,6 +169,11 @@
           <i class="wbdot" aria-hidden="true"></i><span id="wbLine">idle</span><span class="wbcaret" aria-hidden="true">&#9652;</span>
         </button>
       </div>
+      <!-- The way out of Simple, at the foot of every screen (UI_PLAN E1). Shown
+           by web/level.js only while the saved level is Simple; it saves
+           Advanced through /api/welcome {action:"level"}, the same door
+           Settings' switch and studio_welcome use. -->
+      <button type="button" class="levelfoot" id="levelFoot" hidden>Show every setting</button>
       <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">♥ Support on Ko-fi</a>
       <!-- WHAT RUNS OUT, all four of them. VRAM and system RAM are coupled on
            this engine: every low-VRAM tier streams weights from system memory,
@@ -296,6 +305,11 @@
       <button type="button" id="modeSimple" aria-pressed="false" title="Describe the song and let the assistant write it">Simple</button>
       <button type="button" id="modeSong" aria-pressed="true">Song</button>
       <button type="button" id="modeInstr" aria-pressed="false">Instrumental</button>
+      <!-- Shown only while Simple is on (web/shell.css), where Song and
+           Instrumental step aside: the bar then reads Simple | Advanced, as
+           Pictures and Video do. Its tooltip is the server's "Advanced adds"
+           line (web/level.js). -->
+      <button type="button" id="modeAdv" aria-pressed="false" title="Advanced: every setting">Advanced</button>
     </div>
 
     <!-- SIMPLE MODE. The Chat tab's assistant, narrowed to this panel: it can
@@ -309,7 +323,7 @@
       <div class="simple-status" id="simpleStatus" hidden><i></i><span id="simpleStatusText">Thinking…</span></div>
       <div class="simple-confirm" id="simpleConfirm" hidden>
         <span>Ready to make this song?</span>
-        <button class="btn sm" type="button" id="simpleYes">Generate</button>
+        <button class="btn sm" type="button" id="simpleYes">Make song</button>
         <button class="btn sm ghost" type="button" id="simpleNo">Not yet</button>
       </div>
       <label class="flabel simple-label" for="simpleText">Describe your idea</label>
@@ -338,7 +352,7 @@
             <button type="button" class="simple-new" id="simpleNew" title="Start a new conversation">＋ New</button>
           </div>
           <div class="ptools" data-gallery="simple" data-target="simpleText" data-label="ideas"></div>
-          <button class="simple-send" type="submit" id="simpleSend" aria-label="Send">↑</button>
+          <button class="simple-send" type="submit" id="simpleSend" aria-label="Make song">Make song</button>
         </div>
       </form>
     </section>
@@ -902,10 +916,10 @@
       <div class="ovideas" id="ovIdeas"></div>
       <div class="edbar">
         <button class="btn sm" type="button" id="ovAdd">+ Add what's in Create</button>
-        <!-- The Images screen already holds an engine, a model, a size, steps,
+        <!-- The Pictures screen already holds an engine, a model, a size, steps,
              cfg and a prompt. Re-typing them here would be a second place for
              them to drift, so the button takes what is on that screen. -->
-        <button class="btn sm" type="button" id="ovAddImage" hidden>+ Add what's on the Images tab</button>
+        <button class="btn sm" type="button" id="ovAddImage" hidden>+ Add what's on the Pictures screen</button>
         <button class="edtool" type="button" id="ovClear">Clear</button>
       </div>
     </div>
@@ -1265,7 +1279,7 @@
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
-        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models. To send reference pictures, use Workflow → Video clips → Ask friend, which carries them.">Ask friend</button>
+        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models. To send reference pictures, use Music video → Video clips → Ask friend, which carries them.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
     </div>
@@ -1277,7 +1291,7 @@
        the stage. Its controls keep their ids; only the column moved. -->
   <section class="ovcol" id="imgPanel" hidden>
     <div class="vidform">
-      <div class="ovhead"><h2>Images</h2></div>
+      <div class="ovhead"><h2>Pictures</h2></div>
       <!-- The engine's own description. Four hundred characters of it on
            some engines, which is a paragraph nobody reads above a form —
            so it is the "!" beside the engine row now (web/tips.js reads
@@ -2316,7 +2330,7 @@
                the window narrows. -->
           <div class="libhead">
           <div class="stagehead">
-            <h2>Images</h2>
+            <h2>Pictures</h2>
             <span class="count" id="imgCountLbl"></span>
           </div>
           <input class="bigsearch" id="imgSearch" type="search" placeholder="Search images by prompt…" autocomplete="off">
@@ -2482,7 +2496,7 @@
          is where you watch it and override it. -->
     <div id="workflow" hidden>
       <div class="wfhead">
-        <h2>Video Workflow</h2>
+        <h2>Music video</h2>
         <p class="hint" id="wfIntro">Turn a finished song into a music video, one
           stage at a time. Nothing here spends GPU until you ask it to.</p>
       </div>
@@ -2971,7 +2985,7 @@
         <div class="rlab">
           <span>Pictures <i id="reactPicked">none picked</i> <i>· click to pick, in the order they should appear</i></span>
           <div class="reactimgs" id="reactImgs"></div>
-          <p class="hint">Any pictures from the Images library. Two or more read as a
+          <p class="hint">Any pictures from the Pictures library. Two or more read as a
             sequence; one reads as a breathing still.</p>
         </div>
 
@@ -3132,8 +3146,9 @@
 
       <!-- WHICH BUILD THIS IS: the build, and the original's commit it
            contains. The button is the only part that touches the internet,
-           and only when pressed. The welcome tour re-opens from here (wired in
-           web/welcome.js); it opens by itself once, on a fresh install. -->
+           and only when pressed. The welcome tour opens from here (wired in
+           web/welcome.js); it no longer opens by itself: a new install gets
+           three lines on Home instead (UI_PLAN B5). -->
       <section class="pcard" id="about-build" data-nav="This build">
         <h3>This build</h3>
         <div class="verbox" id="verBox">
@@ -3243,7 +3258,7 @@
           <div><dt>&#9834; Music</dt>
             <dd>Describe a song; a full track with vocals renders on your card. Takes, stems, FLAC / MP3 / Opus, automatic covers.</dd>
             <dd class="cant">No piano roll: you steer with words, and takes vary.</dd></div>
-          <div><dt>&#9635; Images</dt>
+          <div><dt>&#9635; Pictures</dt>
             <dd>Make pictures and edit them: layers, curves, brushes, selections, cutout, text, seven export formats.</dd>
             <dd class="cant">RGB only, no print pipeline.</dd></div>
           <div><dt>&#9655; Video</dt>
@@ -3268,7 +3283,7 @@
             <dd>Every capability, its files, size and licence, shown before download.</dd>
             <dd class="cant">Never downloads on its own; first use means a wait.</dd></div>
           <div><dt>&#9881; Settings</dt>
-            <dd>Formats, covers, video, Battery Safe, folders, hosted engine, custom workflows.</dd>
+            <dd>Simple or every setting, formats, covers, video, Battery Safe, folders, hosted engine, custom workflows.</dd>
             <dd class="cant">The hosted engine costs real money; that is why it has a cap.</dd></div>
           <div><dt>&#9670; Agent</dt>
             <dd>Connect an AI assistant over MCP. That page lists its own limits.</dd></div>
@@ -3348,12 +3363,12 @@
       <header class="page-head">
         <h2>Comfy API</h2>
         <p>Hosted image, video, audio, 3D and text models, run with your Comfy API key and credits.</p>
-        <!-- Said plainly, because Use Comfy API hides the Workflow: a music
-             video is made in Full Studio's Workflow, and without a strong card a
+        <!-- Said plainly, because Use Comfy API hides Music video: a music
+             video is made in Full Studio's Music video screen, and without a strong card a
              friend renders its scenes (Collab), before any paid route. The
              sentence is the server's (GET /api/cloud comfy.note, worded for the
              mode this page is open in); web/router.js paints it here. -->
-        <p class="hint" id="rtNoMv"><b>Music videos are made in Full Studio's Workflow.</b> Without a strong
+        <p class="hint" id="rtNoMv"><b>Music videos are made in Full Studio's Music video screen.</b> Without a strong
           graphics card, ask a friend on Collab to render the scenes (free).</p>
       </header>
       <nav class="pnav" aria-label="Comfy API sections"></nav>
@@ -4386,7 +4401,8 @@
     </div>
 
     <!-- ── Chat ───────────────────────────────────────────────────────────
-         The first screen in the rail and the boot default. Filled by
+         The first entry under More tools in the rail (UI_PLAN B1); the boot
+         default is Home. Filled by
          web/chat.js from /api/chat, which streams the loop's PHASES rather
          than tokens — ComfyUI's TextGenerate node returns its whole string
          when the graph finishes, so there is no partial decode to forward and
@@ -4595,6 +4611,20 @@
       <header class="page-head"><h2>Settings</h2><p>Set once, then forget. Every change applies straight away unless it says otherwise.</p></header>
       <nav class="pnav" aria-label="Settings sections"></nav>
 
+      <!-- HOW THE MAKE SCREENS OPEN (UI_PLAN E1). The saved level, changed only
+           here, at the foot of the rail and through studio_welcome; the
+           per-screen Simple / Advanced switches are for one visit. The line
+           under it says who chose (web/level.js, from the server). -->
+      <section class="pcard" id="set-level" data-nav="Screens">
+        <h3>Screens</h3>
+        <p class="pcard-sub">How Music, Pictures and Video open.</p>
+        <div class="params">
+          <label for="levelAll">make screens</label>
+          <span class="pv"><label class="tog"><input type="checkbox" id="levelAll"> Show every setting</label></span>
+        </div>
+        <p class="hint" id="levelNote"></p>
+      </section>
+
       <!-- WHAT STUDIO PICKED, AND WHAT YOU CHOSE (UI_PLAN A1). One line per
            default from studio_status `defaults` (server/fit.js defaultFor),
            filled by web/receipt.js; Change goes to the control that owns it. -->
@@ -4663,12 +4693,12 @@
         <div id="artBox">
           <div class="params">
             <!-- AUTOMATIC covers only. Off once refused every "cover" job, which
-                 is also how an Images-screen picture is queued (server/art.js
-                 `asked`), so the label says the Images screen still works. -->
+                 is also how a Pictures-screen picture is queued (server/art.js
+                 `asked`), so the label says the Pictures screen still works. -->
             <label for="qArt">automatic covers</label>
             <span class="pv"><select id="qArt" class="sel2">
               <option value="1">On, when the card is idle</option>
-              <option value="0">Off (the Images screen still works)</option>
+              <option value="0">Off (the Pictures screen still works)</option>
             </select></span>
 
             <label for="artEngine">covers engine</label>
@@ -4692,7 +4722,7 @@
           <details class="more"><summary>How cover prompts are built</summary>
             <p>Each prompt is the style line, then <code>, evoking &lt;subject&gt;</code>. The subject
               comes from the song's caption, or its title, or a neutral object for untitled tracks.
-              A change applies to the next cover. The Images screen keeps its own engine choice.</p>
+              A change applies to the next cover. The Pictures screen keeps its own engine choice.</p>
           </details>
         </div>
         <hr class="sub-rule">
@@ -4917,7 +4947,7 @@
          of ways in. Nothing else, on purpose. data-go is app.js's existing
          view switch; Explore is Community (to be reworked). -->
     <div id="avatars" hidden class="page page-wide">
-  <header class="page-head stagehead"><h2>3D workshop</h2><a class="btn2" href="/?view=workflow" title="Generate a mesh from an image in Video Workflow">Image to 3D ↗</a></header>
+  <header class="page-head stagehead"><h2>3D workshop</h2><a class="btn2" href="/?view=workflow" title="Generate a mesh from an image in Music video">Image to 3D ↗</a></header>
   <iframe id="avatarFrame" title="3D avatar workshop" allow="autoplay"></iframe>
 </div>
 
@@ -4928,12 +4958,22 @@
         <p class="hometag">Made with AI, by people who wanted more from it.<br>
           Local, free and open. By the community, for the community.<br>
           Everything you make here is yours and stays on this machine.</p>
+        <!-- THE FIRST-RUN LINES (UI_PLAN B5), in place of the tour that used to
+             open by itself: what Studio read on this PC, which models, and
+             whether video clips fit. Filled by web/welcome.js from /api/welcome
+             {action:"first_run"}, word for word, and only on a new install;
+             Hide posts `dismiss`. The tour is under About. -->
+        <div class="homestrip" id="homeStrip" hidden role="note" aria-label="About this PC">
+          <p class="homestriplines" id="homeStripLines"></p>
+          <div class="homestriplinks"><span id="homeStripLinks"></span>
+            <button type="button" class="homestriphide" id="homeStripHide">Hide</button></div>
+        </div>
         <p class="homestart">Start with</p>
         <nav class="homego" aria-label="Start with">
           <a href="#" data-go="chat">Chat</a>
           <a href="#" data-go="create">Music</a>
           <a href="#" data-go="video">Video</a>
-          <a href="#" data-go="images">Image</a>
+          <a href="#" data-go="images">Pictures</a>
           <a href="#" data-go="community">Explore</a>
         </nav>
         <!-- Style packs from aiplay.live (they used to sit on Community): a
@@ -5252,6 +5292,8 @@
 <!-- Simple mode for the Images and Video panels: the switch and the
      "Describe your idea" block are built by the script (server/chat/form-tools.js). -->
 <script type="module" src="assist.js"></script>
+<!-- The rail's "More tools" fold: open or folded, remembered in this browser. -->
+<script type="module" src="rail.js"></script>
 <!-- The "!" hover tips in the Music panel. -->
 <script type="module" src="tips.js"></script>
 <!-- The Agent page: cloud API keys, which model answers where, and the MCP details. -->

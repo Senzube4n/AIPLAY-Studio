@@ -366,8 +366,8 @@ export function createChatTools(deps = {}) {
         + "and says nothing is the wrong picture, and it spent the card just the same.\n"
         + "ONE picture per call. There is no way to ask for several here, and asking twice costs "
         + "the card twice.\n"
-        + "The picture goes into the Studio's own Images library. Tell the person the file name "
-        + "and tell them to open the Images tab in the left rail to look at it.\n"
+        + "The picture goes into the Studio's own Pictures library. Tell the person the file name "
+        + "and tell them to open Pictures in the left rail to look at it.\n"
         + "Use list_images afterwards to see what is in that library.",
       args: {
         prompt: { type: "string", required: true,
@@ -447,14 +447,14 @@ export function createChatTools(deps = {}) {
            * strand exists to stop. NOT `art.lastError`: its own failure has
            * already thrown above, so whatever lastError holds here is some
            * other job's, and quoting it would blame this picture for it. */
-          throw new Error("The picture queue went quiet without producing a file. Look at the Images tab.");
+          throw new Error("The picture queue went quiet without producing a file. Look at Pictures in the left rail.");
         }
         return {
           made: made.length, image: made[0], engine, seed: r.seed ?? null,
           /* WHERE IT LANDED, in the words of the screen it landed on, and the
-           * address that shows it — the same /api/image/<name> the Images tab
+           * address that shows it — the same /api/image/<name> the Pictures screen
            * itself paints from. */
-          where: "the Images tab in the left rail of the Studio",
+          where: "the Pictures screen in the left rail of the Studio",
           url: `/api/image/${made[0]}`,
           ...(r.note ? { note: r.note } : {}),
         };
@@ -470,7 +470,7 @@ export function createChatTools(deps = {}) {
         + "it reads a folder and draws nothing, so it costs no graphics card at all.\n"
         + "This is how you check whether a picture arrived: call make_image, then call this and "
         + "look for the file name at the top.\n"
-        + "The file name is what the person will see on the Images tab in the left rail, so say it "
+        + "The file name is what the person will see on the Pictures screen in the left rail, so say it "
         + "to them.",
       args: {
         limit: { type: "integer", note: "How many to return. 10 by default, 50 at most." },
@@ -481,7 +481,7 @@ export function createChatTools(deps = {}) {
         return {
           count: Math.min(all.length, limit),
           total: all.length,
-          where: "the Images tab in the left rail of the Studio",
+          where: "the Pictures screen in the left rail of the Studio",
           images: all.slice(0, limit).map((i) => ({
             file: i.name,
             /* The prompt is TRIMMED. An overnight render's prompt runs to

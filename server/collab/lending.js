@@ -61,7 +61,7 @@ import { orderPlanItem } from "./order.js";
  * quietly pointing at a screen the rail no longer names. The page's own
  * sentences read the rail's label directly (web/app.js cbScreen).
  */
-export const WORKFLOW_SCREEN = "Workflow";
+export const WORKFLOW_SCREEN = "Music video";
 
 /** Where an errand's plan is approved: its own project's Plan card. */
 export const planPlace = (title) => `${WORKFLOW_SCREEN} → “${title}” → the Plan card`;

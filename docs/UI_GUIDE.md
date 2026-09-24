@@ -181,6 +181,11 @@ now **Music Lab** in the rail.
 ### Adding a rail page: all four, or the tests fail
 
 1. The rail link in `web/index.html`: `<a href="#" data-view="mypage" …>`.
+   **Where in the rail:** the Make group holds only what a newcomer comes for
+   (Home, Music, Pictures, Video, Music video). Everything else goes inside the
+   "More tools" fold (`<details id="navMore">`), and housekeeping in
+   `.navbottom` (Models and Settings stay there, never below the fold).
+   `server/welcome/level_test.js` pins all three lists.
 2. The toggle in `setView()` in `web/app.js`: `$("mypage").hidden = name !== "mypage";`.
 3. The ⓘ mount: a line in `INFO_HOSTS` in `web/app.js`.
 4. A paragraph in `server/welcome/catalogue.js`, and bump the count in its
@@ -389,6 +394,32 @@ animated respects `prefers-reduced-motion`.
 
 ## 9. Simple mode and the model bar
 
+- **Which one a screen opens on is the saved level** (`web/level.js`,
+  `server/welcome/level.js`): Simple on a new install, Advanced on one already
+  in use, and a Home card opens its screen Simple either way. The per-screen
+  switch is a choice for one visit; "Show every setting" (Settings, the foot of
+  the rail, `studio_welcome {action:"level"}`) is the one that is saved. The
+  Advanced switch is always visible in Simple, and its tooltip is the server's
+  "Advanced adds ..." line. **A new Simple screen subscribes with `onLevel()`**
+  and its row goes in `ADVANCED_ADDS`, naming the control ids it promises.
+- **In Simple the one button says what it makes** ("Make song", "Make picture",
+  "Make clip"), never a bare arrow, and **pressing it is the go-ahead**. With a
+  writing model it asks the assistant, and a reply that set the form up without
+  starting it is followed by the real button (the log says "You pressed Make
+  …"). With none (the server answered, and has none), Pictures and Video put
+  the words in the real prompt and press the real Make button; Music makes the
+  song already in the form when nothing was typed, and when words were typed it
+  says they cannot become a song yet and offers the form's song, never making
+  it in their place. While the engine is still starting, whether there is a
+  writing model is NOT KNOWN (`web/writer.js`): nothing is sent, the log says
+  so, and the next press asks again. The real buttons (#btnCreate, #imgGo,
+  #vidCreate) stay hidden in Simple on purpose: the labelled button presses
+  them, and two Make buttons on one screen is one too many. So #vidCreate is
+  NOT added to the exception rule below, and adding it would change nothing
+  anyway: #imgGo and #vidCreate sit inside `.ctawrap > .cta`, which Simple
+  hides in its own rule (the `:not(#imgGo)` in the exception list is a leftover
+  from before the button moved there). `server/welcome/level_test.js` §9 pins
+  the Make buttons.
 - **Simple mode** (`.assist-on`, `web/assist.js`) hides every child of the
   form except a short list of exceptions in **one** rule in
   `web/styles.css`. Something the person dropped must stay visible, which
@@ -439,6 +470,7 @@ a comment saying why:
 | `server/mcp-image_test.js` | the Images reference ids |
 | `server/models-screen_test.js` | Unload is always offered |
 | `scripts/trace_load.mjs` | `app.js` evaluates with no top-level throw |
+| `server/welcome/level_test.js` | the level (fresh Simple, in use Advanced, an unparseable settings.json never written over, Home cards Simple), the rail's Make / More / bottom lists, the phone media rule in `web/shell.css`, the first-run lines, the "Advanced adds" ids (present, and hidden by Simple), the Make buttons |
 
 New web scripts get a `node --check` line in `.githooks/pre-commit`.
 

@@ -435,7 +435,7 @@ test("the Workflow view listens for the project Collab asks it to open", () => {
 
 test("each Ask friend names the other: Video's is text only, Workflow's carries the pictures", () => {
   const mv = readFileSync(new URL("../../web/mv.js", import.meta.url), "utf8");
-  assert.match(html, /id="vidAskFriend" title="[^"]*Workflow → Video clips → Ask friend, which carries them/);
+  assert.match(html, /id="vidAskFriend" title="[^"]*Music video → Video clips → Ask friend, which carries them/);
   /* The page's own sentences name the screen by the rail's label (cbScreen),
    * typeof-guarded because vidPaint and videoFriendRecipe are lifted alone. */
   assert.match(source, /use \$\{typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow"\} → Video clips → Ask friend, which carries them\.`\);/);

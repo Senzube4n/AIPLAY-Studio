@@ -1,7 +1,20 @@
 /* Simple mode for the Images and Video panels.
  *
- * Each panel gets a Simple / Advanced switch (Advanced by default, remembered
- * per panel) and, in Simple, the Music panel's "Describe your idea" block. The
+ * Each panel gets a Simple / Advanced switch and, in Simple, the Music panel's
+ * "Describe your idea" block. Which one a panel opens on is NOT remembered
+ * here: it is the saved level (UI_PLAN E1, web/level.js, server/welcome/
+ * level.js), Simple on a new install and Advanced on one already in use, and a
+ * Home card opens its panel Simple either way. The switch itself is a choice
+ * for this visit; "Show every setting" in Settings is the one that is saved.
+ * The Advanced button's tooltip is the server's list of what Advanced adds.
+ *
+ * The Simple block's button says what it makes (Make picture, Make clip), and
+ * pressing it is the go-ahead. With a writing model it asks the assistant, and
+ * when the reply set the form up without starting it, the real Make button is
+ * pressed after it. With none (the server answered and has none), the words
+ * go straight into the real prompt and the real Make button is pressed. Both
+ * are said in the log. While the engine is still starting nothing is sent
+ * (web/writer.js). The
  * assistant behind it (server/chat/form-tools.js, /api/chat/image and
  * /api/chat/video) sees EVERY control of the panel's form — read here from the
  * DOM, so a control added later is covered with no change — and can set any of
@@ -11,6 +24,8 @@
  */
 import { fillModelMenu } from "./chat.js";
 import { growHandle } from "./grow.js";
+import { onLevel } from "./level.js";
+import { writerFrom, whyNoWriter, notYetLine } from "./writer.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -20,6 +35,7 @@ const PANELS = {
   image: {
     root: () => document.querySelector("#imgPanel .vidform"),
     prompt: "imgPrompt", button: "imgGo", note: "imgNote", engine: "imgEngine", engineLabel: "Image model",
+    view: "images", make: "Make picture",
     /* "Your own model file": the engine choice that needs a second one, the file. */
     own: { value: "checkpoint", pick: "imgCkpt", label: "Model file" },
     kinds: ["image", "cover"],
@@ -29,6 +45,7 @@ const PANELS = {
   video: {
     root: () => $("vidPanel"),
     prompt: "vidPrompt", button: "vidCreate", note: "vidEst", engine: "vidEngine", engineLabel: "Video model",
+    view: "video", make: "Make clip",
     kinds: ["video"],
     placeholder: "Slow push in on a rainy neon street at night, one cyclist rides through the puddles…",
     doing: { set_form: "Setting up the clip…", generate: "Starting the clip…" },
@@ -255,7 +272,7 @@ function build(kind) {
         </label>
         <button type="button" class="simple-new" title="Start a new conversation">＋ New</button>
         <div class="ptools" data-gallery="${kind}" data-target="${kind}AsText" data-label="ideas"></div>
-        <button class="simple-send" type="submit" aria-label="Send">↑</button>
+        <button class="simple-send" type="submit" aria-label="${esc(P.make)}">${esc(P.make)}</button>
       </div>
     </form>`;
   /* Under the heading — and under its ⓘ panel when that is already there, so
@@ -289,8 +306,8 @@ function mount(kind) {
   const setBusy = (on) => {
     busy = on;
     send.classList.toggle("stop", on);
-    send.textContent = on ? "■" : "↑";
-    send.setAttribute("aria-label", on ? "Stop" : "Send");
+    send.textContent = on ? "■ Stop" : P.make;
+    send.setAttribute("aria-label", on ? "Stop" : P.make);
   };
 
   const setMode = (simple) => {
@@ -299,15 +316,43 @@ function mount(kind) {
     for (const b of bar.querySelectorAll("button")) b.setAttribute("aria-pressed", String((b.dataset.m === "simple") === simple));
     if (simple) { loadModels(); setTimeout(() => text.focus(), 0); }
   };
-  bar.addEventListener("click", (e) => { const b = e.target.closest("button[data-m]"); if (b) setMode(b.dataset.m === "simple"); });
-  /* Every start opens on Advanced (the owner's call, 2026-09-19); Simple is
-   * one click away and stays chosen until the page is reloaded. */
+  let touched = false;
+  bar.addEventListener("click", (e) => { const b = e.target.closest("button[data-m]"); if (b) { touched = true; setMode(b.dataset.m === "simple"); } });
+  /* Advanced until the saved level arrives (web/level.js): a new install then
+   * opens Simple, one in use stays Advanced, and a Home card opens this panel
+   * Simple either way. A switch the person already pressed is kept. */
   setMode(false);
+  onLevel((n) => {
+    const tip = n.advancedAdds?.[P.view];
+    const adv = bar.querySelector('[data-m="advanced"]');
+    if (adv && tip) adv.title = tip;
+    if (n.view && n.view !== P.view) return;
+    if (n.boot && touched) return;
+    setMode(!!n.simple);
+  });
 
+  /* Whether a writing model can answer: true, false, or null for not known
+   * yet (the engine still starting). web/writer.js; read again at every press
+   * until it is true. */
+  let writer = null;
   async function loadModels() {
     let d = null;
     try { d = await (await fetch("/api/chat/music/models")).json(); } catch { /* offline */ }
     fillModelMenu(model, d, "Put a Qwen3 (or Gemma) text encoder in models/text_encoders, or connect an API on the Agent page");
+    writer = writerFrom(d);
+  }
+  /* NO WRITING MODEL: the words ARE the prompt. They go into the real prompt
+   * field, the real Make button is pressed, and the log says that is what
+   * happened, so nothing was chosen behind the person's back. */
+  async function makeDirect(message) {
+    const field = $(P.prompt);
+    if (!field) return;
+    row("me", esc(message));
+    field.value = message;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    row("note", "No writing model here, so your words went in as they are.");
+    const got = await pressMake(kind);
+    row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? ` · ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
   }
   model.addEventListener("change", async () => {
     try { await fetch("/api/chat/music/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: model.value }) }); }
@@ -317,15 +362,19 @@ function mount(kind) {
   box.querySelector(".simple-new").addEventListener("click", () => { session = null; log.innerHTML = ""; text.focus(); });
   document.addEventListener("aiplay:llm-changed", () => { if (!box.hidden) loadModels(); });
 
+  /* What the running reply did, for the Make button's go-ahead (ask `make`). */
+  let turn = null;
   async function onEvent(ev) {
+    const t = turn || {};
     if (ev.type === "open") { session = ev.session; return; }
     if (ev.type === "thinking") return say("Thinking…");
     if (ev.type === "tool_call") return say(P.doing[ev.tool] || "Working…");
     if (ev.type === "tool_result") {
-      if (ev.error) return row("fail", `${esc(ev.tool)} did not work: ${esc(ev.error)}`);
+      if (ev.error) { t.failed = true; return row("fail", `${esc(ev.tool)} did not work: ${esc(ev.error)}`); }
       const r = ev.result || {};
-      if (r.form?.fields) { await applyFields(r.form.fields); row("did", `✓ Set ${esc(r.changed || "the form")}`); }
+      if (r.form?.fields) { t.set = true; await applyFields(r.form.fields); row("did", `✓ Set ${esc(r.changed || "the form")}`); }
       if (r.action === "generate") {
+        t.started = true;
         const got = await pressMake(kind);
         row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? ` — ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
       }
@@ -336,15 +385,19 @@ function mount(kind) {
       return row("note", `<span class="gpuwarn">⚠ ${esc(ev.text || "Using the graphics card.")}</span> `
         + '<button type="button" class="btn sm ghost gpucancel">Cancel</button>');
     }
-    if (ev.type === "proposal") return row("note", `${esc(ev.text || "")} Type yes to go ahead.`);
-    if (ev.type === "busy" || ev.type === "error") return row(ev.type === "busy" ? "note" : "fail", esc(ev.text));
+    if (ev.type === "proposal") { t.proposed = true; return row("note", `${esc(ev.text || "")} Type yes to go ahead.`); }
+    if (ev.type === "busy" || ev.type === "error") { t.failed = true; return row(ev.type === "busy" ? "note" : "fail", esc(ev.text)); }
     if (ev.type === "done" || ev.type === "end") say("");
   }
 
-  async function ask(message) {
+  /* `make`: the words came from pressing the Make button (or Enter in its
+   * box), which is the person's go-ahead. A reply that set the form up and did
+   * not start it is followed by the real button, and the log says so. */
+  async function ask(message, { make = false } = {}) {
     message = String(message || "").trim();
     if (busy || !message) return;
     setBusy(true);
+    turn = { make, set: false, started: false, proposed: false, failed: false, stopped: false };
     stream = new AbortController();
     row("me", esc(message));
     say("Thinking…");
@@ -374,11 +427,19 @@ function mount(kind) {
         }
       }
     } catch (e) {
+      turn.stopped = true;
       row(e?.name === "AbortError" ? "note" : "fail", e?.name === "AbortError" ? "Stopped." : `That did not work. ${esc(e.message || e)}`);
     } finally {
+      const t = turn;
+      turn = null;
       stream = null;
       setBusy(false);
       say("");
+      if (t?.make && t.set && !t.started && !t.proposed && !t.failed && !t.stopped) {
+        row("note", `You pressed ${esc(P.make)}, so Studio pressed it on the form too.`);
+        const got = await pressMake(kind);
+        row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? ` — ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
+      }
     }
   }
 
@@ -386,8 +447,20 @@ function mount(kind) {
     e.preventDefault();
     if (busy) { stream?.abort(); return; }                 // the button is Stop while a reply runs
     const v = text.value;
-    text.value = "";
-    ask(v);
+    if (!v.trim()) { text.focus(); return; }
+    (async () => {
+      /* Asked again at every press until the answer is yes (web/writer.js).
+       * Not known yet (the engine starting) sends nothing and says so; the
+       * words stay in the box. */
+      if (writer !== true) await loadModels();
+      if (writer === null) {
+        const why = await whyNoWriter();
+        if (why.kind !== "noengine") return row("note", esc(notYetLine(why.kind, P.make)));
+      }
+      text.value = "";
+      if (writer !== true) return makeDirect(v.trim());
+      return ask(v, { make: true });
+    })();
   });
   text.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!busy) form.requestSubmit(); }

@@ -25,7 +25,12 @@ import { fileURLToPath } from "node:url";
 const APPDATA = process.env.AIPLAY_APPDATA || path.join(os.homedir(), ".aiplay-studio");
 const SETTINGS_FILE = path.join(APPDATA, "settings.json");
 let saved = {};
-try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")) || {}; } catch { /* first run */ }
+/* A file that is THERE but could not be read or parsed (a trailing comma, a
+ * byte-order mark) is not a first run. Kept, so nothing that writes on its own
+ * at start (the level, server/welcome/level.js) mistakes it for one. */
+let settingsUnreadable = null;
+try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")) || {}; }
+catch (err) { if (err?.code !== "ENOENT") settingsUnreadable = err?.message || String(err); }
 
 // The optional native music entry point never needs a ComfyUI/Python rig.
 const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
@@ -1952,7 +1957,42 @@ config.music.engines["yue2-gguf"] = {
   experimental: true,
   note: "Native Q4 (default, smaller) or optional Q8 (higher precision), both with F16 VAE. Choose and install weights in Models. No Python or ComfyUI required. Higher precision is not a guarantee of better audio. Non-commercial weights; attribution required. Duration is not guaranteed.",
 };
+/* THE LEVEL EVERY MAKE SCREEN OPENS ON (UI_PLAN E1, the owner's decision of
+ * 2026-09-24): a NEW install opens Music, Pictures and Video on Simple; an
+ * install that was already in use, the owner's included, keeps Advanced.
+ *
+ * "Already in use" is not "settings.json exists": the launcher and the engine
+ * installer write that file (rig, python, gpu) before Studio's first start, so
+ * on a fresh install it is always there. What only a Studio that has RUN
+ * writes is IN_USE_KEYS below: prefs, the welcome flag, the API mode, the
+ * Agent page's keys, a saved workflow, a chosen writing model, a model
+ * override, the DAW's latency. (modelsDir, modelsAlso, outputDir and rig are
+ * not in it: the launcher writes those too.) Songs already made are the other
+ * sign, and level.js reads the library for them before saving Simple.
+ * `levelBy` says who chose, so Settings can say "Studio chose Simple for a new
+ * install" rather than pretending the person did.
+ *
+ * A FILE THAT IS THERE AND CANNOT BE READ is not a new install: it is an
+ * install whose file has a trailing comma or a byte-order mark. It keeps
+ * Advanced, and nothing is written over it (`unreadable`), so fixing the comma
+ * brings every setting back as it was.
+ * server/welcome/level.js saves the answer on the first start and on every
+ * change; server/welcome/level_test.js walks every kind of install. */
+export const LEVELS = ["simple", "advanced"];
+export const IN_USE_KEYS = ["prefs", "welcome", "api", "llm", "customWorkflows",
+  "chatModel", "chatModelMusic", "enhanceModel", "modelOverrides", "dawLatency"];
+export function startLevel(settings, { unreadable = null } = {}) {
+  if (unreadable) return { level: "advanced", levelBy: "studio", saved: false, unreadable: String(unreadable) };
+  const s = settings || {};
+  const want = s.prefs?.ui?.level;
+  if (LEVELS.includes(want)) return { level: want, levelBy: s.prefs.ui.levelBy === "studio" ? "studio" : "you", saved: true };
+  const used = IN_USE_KEYS.some((k) => s[k] !== undefined && s[k] !== null);
+  return { level: used ? "advanced" : "simple", levelBy: "studio", saved: false };
+}
+config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
+  ["ui", "level", (v) => LEVELS.includes(v)],
+  ["ui", "levelBy", (v) => v === "studio" || v === "you"],
   ["video", "enabled", (v) => typeof v === "boolean"],
   ["video", "engine", (v) => Object.prototype.hasOwnProperty.call(config.video.engines, v)],
   ["video", "when", OK_WHEN],

@@ -228,7 +228,7 @@ console.log("\nTHE WORDS ON THE WIRE");
   ok("...and names the file by DIFFING the folder, which is the only handle there is",
     out.image === "new.png" && out.made === 1, JSON.stringify(out));
   ok("...and says where it landed and how to look at it, not just that it worked",
-    /Images tab/.test(out.where) && out.url === "/api/image/new.png", JSON.stringify(out));
+    /Pictures screen/.test(out.where) && out.url === "/api/image/new.png", JSON.stringify(out));
 
   let noPrompt = null;
   try { await createChatTools({ api: recorder() }).get("make_image").run({ prompt: "  " }); }
@@ -354,7 +354,7 @@ console.log("\nTHE WORDS ON THE WIRE");
   ok("...and a picture with no recorded prompt says null rather than inventing one",
     out.images[1].prompt === null && out.images[1].model === null);
   ok("...and says where they are, which is the answer to 'where did my picture go'",
-    /Images tab/.test(out.where), out.where);
+    /Pictures screen/.test(out.where), out.where);
   const one = await createChatTools({
     api: recorder({ "GET /api/images": { images: [{ name: "a.png" }, { name: "b.png" }] } }),
   }).get("list_images").run({ limit: 1 });
@@ -481,7 +481,7 @@ if (!up) {
   ok(`list_images reads the REAL images folder (${pics.total} pictures on this disk)`,
     Number.isInteger(pics.total) && Array.isArray(pics.images) && pics.count <= 5,
     JSON.stringify(pics).slice(0, 200));
-  ok("...and every row carries the file name the person will see on the Images tab",
+  ok("...and every row carries the file name the person will see on the Pictures screen",
     pics.images.every((i) => typeof i.file === "string" && i.file.length > 0));
 }
 

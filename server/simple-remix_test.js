@@ -75,7 +75,10 @@ test("one solid block: chips on top, the writing space, one bar with Send at its
   const form = html.slice(html.indexOf('<form class="simple-input"'), html.indexOf("</form>", html.indexOf('<form class="simple-input"')));
   assert.ok(form.indexOf('id="simpleChips"') < form.indexOf('id="simpleText"') && form.indexOf('id="simpleText"') < form.indexOf('class="simple-bar"'));
   for (const id of ["exPick", "simpleModel", "simpleNew", "simpleSend"]) assert.ok(form.includes(`id="${id}"`), `${id} is inside the block`);
-  assert.match(form, /<button class="simple-send"[^>]*>↑<\/button>\s*<\/div>\s*$/, "Send ends the bar");
+  /* Labelled, not a bare ↑ (UI_PLAN B3): the one button in Simple says what it
+   * makes. Images and Video say Make picture and Make clip (web/assist.js). */
+  assert.match(form, /<button class="simple-send"[^>]*>Make song<\/button>\s*<\/div>\s*$/, "Make song ends the bar");
+  assert.match(src("../web/assist.js"), /view: "images", make: "Make picture",[\s\S]*?view: "video", make: "Make clip",/);
   assert.match(css, /\.create form\.simple-input textarea \{\s*flex: none;[^}]*height: 280px/, "the writing space never shrinks");
   assert.match(app, /form\?\.addEventListener\("mousedown"/, "a click anywhere in the block writes in it");
   // A dropped song fills the read-only boxes, as a preset does; presets for every model.
@@ -332,7 +335,7 @@ test("the Images page's ⓘ sits in its heading, not loose above the page", () =
 
 test("Music, Images and Video share one layout: creator column left, what it made on the right", () => {
   const html = src("../web/index.html"), app = src("../web/app.js"), css = src("../web/styles.css");
-  assert.match(html, /<section class="ovcol" id="imgPanel" hidden>\s*<div class="vidform">\s*<div class="ovhead"><h2>Images<\/h2><\/div>/, "Images' form is the left column, titled like Video's");
+  assert.match(html, /<section class="ovcol" id="imgPanel" hidden>\s*<div class="vidform">\s*<div class="ovhead"><h2>Pictures<\/h2><\/div>/, "Images' form is the left column, titled like Video's, and named as the rail names it (UI_PLAN B1)");
   assert.match(html, /<div id="imagesview" hidden>\s*<div class="vidwrap">\s*<div class="vidlib">/, "the stage holds only the gallery");
   assert.match(app, /const hasLeft = lib \|\| name === "overnight" \|\| name === "video" \|\| name === "images";/);
   assert.match(app, /\$\("imgPanel"\)\.hidden = name !== "images";/);

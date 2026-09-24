@@ -195,16 +195,22 @@ console.log("\nTHE PLACE IN THE APP");
 
 const railViews = [...HTML.matchAll(/<a href="#"[^>]*data-view="([a-z]+)"/g)].map((m) => m[1]);
 ok("chat is in the rail", railViews.includes("chat"), railViews.join(", "));
-ok("...and it heads the Create group, with Music under it (the owner's ask, 2026-09-19)",
-  railViews[0] === "home" && railViews[1] === "chat" && railViews[2] === "create", railViews.join(", "));
+/* The rail was Home, Chat, Music (the owner's ask, 2026-09-19) until UI_PLAN
+ * B1, approved 2026-09-24: Make first (Home, Music, Pictures, Video, Music
+ * video), and Chat heads the "More tools" fold, one click away. */
+ok("...and the rail opens Home, then Make: Music, Pictures, Video, Music video",
+  railViews[0] === "home" && railViews[1] === "create" && railViews[2] === "router"
+    && railViews[3] === "images" && railViews[4] === "video" && railViews[5] === "workflow", railViews.join(", "));
+ok("...and Chat heads the More tools fold",
+  /<details class="navgroup navmore" id="navMore">\s*<summary[^>]*>[\s\S]*?<\/summary>\s*<a href="#" data-view="chat"/.test(HTML));
 
 const APPCODE = noComments(APPJS);
 ok("Welcome is the boot default", /\nsetView\("home"\);/.test(APPCODE),
   "web/app.js's boot line must be setView(\"home\")");
 ok("...and its rail entry carries class=\"on\" so the highlight matches the boot view",
   /<a href="#" class="on" data-view="home"/.test(HTML));
-ok("Welcome: the mark, the name, and Chat · Music · Video · Image · Explore (Community)",
-  /<div id="home" class="home" hidden>[\s\S]*?class="homelogo"[\s\S]*?<b>AI PLAY<\/b><span>STUDIO<\/span>[\s\S]*?Start with[\s\S]*?data-go="chat">Chat<[\s\S]*?data-go="create">Music<[\s\S]*?data-go="video">Video<[\s\S]*?data-go="images">Image<[\s\S]*?data-go="community">Explore</.test(HTML)
+ok("Welcome: the mark, the name, and Chat · Music · Video · Pictures · Explore (Community)",
+  /<div id="home" class="home" hidden>[\s\S]*?class="homelogo"[\s\S]*?<b>AI PLAY<\/b><span>STUDIO<\/span>[\s\S]*?Start with[\s\S]*?data-go="chat">Chat<[\s\S]*?data-go="create">Music<[\s\S]*?data-go="video">Video<[\s\S]*?data-go="images">Pictures<[\s\S]*?data-go="community">Explore</.test(HTML)
   && /\$\("home"\)\.hidden = name !== "home";/.test(APPCODE));
 ok("...and no OTHER rail entry claims the highlight",
   (HTML.match(/<a href="#" class="on" data-view=/g) || []).length === 1);
@@ -380,7 +386,7 @@ ok("...and it spends, so it carries a cost sentence and goes through the loop's 
   img.spends === true && String(img.cost || "").length > 20, img.cost || "no cost sentence");
 ok("...and it tells the model where the picture lands and how the person sees it, because a file "
    + "name with no place attached is not an answer to 'draw me a picture'",
-  /Images library/.test(img.description) && /Images tab/.test(img.description));
+  /Pictures library/.test(img.description) && /open Pictures in the left rail/.test(img.description));
 ok("list_images is FREE and read-only — it is what makes make_image answerable ('did it work?')",
   tools.get("list_images").spends === false && !tools.get("list_images").cost);
 ok("...and nothing in this file POSTs to an image route except make_image's own create",

@@ -51,8 +51,9 @@
  * 1344x768; wiring them to the tier is the next change. Until it lands every
  * sentence here that names a smaller size says how to set it by hand
  * (h3SetSizeByHand), and none claims Studio does it. When the wiring lands,
- * that function, h3TierSummary(), fit.js's FIT_STATES.smaller line and the
- * models_for_this_machine description are the four places to reword.
+ * that function, h3TierSummary(), fit.js's FIT_STATES.smaller line, the
+ * models_for_this_machine description and Home's first-run video line
+ * (server/welcome/firstrun.js, "smaller") are the five places to reword.
  */
 
 /** The fitted line, and the one number added on top of it. */

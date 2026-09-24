@@ -519,7 +519,7 @@ export function initRouter() {
 /** Called by setView each time the page opens. */
 export async function showRouter() {
   initRouter();
-  /* "Music videos are made in Full Studio's Workflow…": the server's sentence
+  /* "Music videos are made in Full Studio's Music video screen…": the server's sentence
    * for the mode this page is open in (GET /api/cloud comfy.note). The page
    * keeps its written placeholder if the read fails. */
   fetch("/api/cloud").then((r) => (r.ok ? r.json() : null)).then((d) => {

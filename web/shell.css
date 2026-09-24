@@ -1,0 +1,118 @@
+/* THE SHELL: the rail's "More tools" fold, the Simple level's switches, the
+ * Home first-run lines and the phone layout (UI_PLAN B1, B3, B5, B6, E1).
+ *
+ * Its own sheet, loaded LAST in web/index.html, on the bargain web/welcome.css
+ * and web/engine.css make: additive to styles.css, and it spells no colour of
+ * its own, only the tokens styles.css defines. server/welcome/level_test.js
+ * checks both, and that the phone rule is here. */
+
+/* ── the rail: Make on top, everything else in one fold (B1) ─────────────── */
+/* The fold's head reads as one more entry, not as a group heading: it is the
+ * way to fifteen screens, so it has to look like something to press. */
+.navmore > summary.navmorehead {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px;
+  height: auto; padding: 9px 11px; border-radius: 9px;
+  font-size: 15px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--faint);
+  white-space: nowrap; overflow: hidden;
+}
+.navmore > summary.navmorehead::-webkit-details-marker { display: none; }
+.navmore > summary.navmorehead:hover { background: var(--panel); color: var(--ink); }
+.navmore > summary.navmorehead > i { width: 20px; flex: none; text-align: center; font-style: normal; font-size: 16px; opacity: .85; }
+.navmore > summary.navmorehead .navcaret { margin-left: auto; font-size: 10px; font-weight: 400; color: var(--ghost); transition: transform .18s; }
+.navmore[open] > summary.navmorehead .navcaret { transform: rotate(180deg); }
+.navmore[hidden] { display: none; }
+/* Collapsed to icons, the head is an icon like the rest, not the 1px rule the
+ * other group headings become. */
+.shell.railmini .navmore > summary.navmorehead { height: auto; margin: 0; padding: 10px 0; background: none; justify-content: center; }
+.shell.railmini .navmore > summary.navmorehead .lbl,
+.shell.railmini .navmore > summary.navmorehead .navcaret { display: none; }
+
+/* The way out of Simple, at the foot of the rail (E1). */
+.levelfoot {
+  font: inherit; font-size: 12px; color: var(--faint); cursor: pointer;
+  background: none; border: 1px solid var(--edge); border-radius: 6px; padding: 5px 8px;
+}
+.levelfoot:hover { color: var(--primary); border-color: var(--primary); }
+.levelfoot[hidden] { display: none; }
+
+/* ── Simple: the button says what it makes (B3) ──────────────────────────── */
+.create .simple-bar .simple-send, .assist .simple-bar .simple-send {
+  width: auto; min-width: 36px; padding: 0 16px; border-radius: 999px;
+  font-size: 13.5px; font-weight: 700; white-space: nowrap;
+}
+.create .simple-bar .simple-send.stop, .assist .simple-bar .simple-send.stop { font-size: 13px; }
+
+/* Music in Simple reads Simple | Advanced, as Pictures and Video do: Song and
+ * Instrumental step aside (they only ever left Simple), Advanced stands in. */
+#modeAdv { display: none; }
+.create.simplemode #modeSeg #modeSong, .create.simplemode #modeSeg #modeInstr { display: none; }
+.create.simplemode #modeSeg #modeAdv { display: block; }
+
+/* ── Home: the first-run lines (B5) ──────────────────────────────────────── */
+.homestrip {
+  margin: 22px 0 0; max-width: 520px; width: 100%; box-sizing: border-box;
+  padding: 10px 14px; border: 1px solid var(--edge); border-radius: 12px; background: var(--panel);
+  text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--dim);
+}
+.homestrip[hidden] { display: none; }
+.homestriplines { margin: 0; }
+.homestriplines > span { display: block; }
+.homestriplines > span + span { margin-top: 4px; }
+.homestriplinks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; font-size: 12.5px; }
+.homestriplinks #homeStripLinks { display: contents; }
+.homestriplinks a { color: var(--primary); text-decoration: none; }
+.homestriplinks a:hover { text-decoration: underline; }
+.homestriphide { margin-left: auto; font: inherit; font-size: 12px; color: var(--ghost); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
+.homestriphide:hover { color: var(--ink); }
+
+/* ── phones and narrow windows (B6) ──────────────────────────────────────
+ *
+ * UI_PLAN measured it at 375 px before this: the Music, Pictures and Video
+ * form column was 32 px wide, so nothing could be made. Below 768 px the page scrolls as
+ * one: the form first, the library under it, the player after that, and the
+ * rail becomes a bar of icons fixed along the bottom edge, where a thumb is
+ * and where the work box's drop-up already opens upward. Every entry stays
+ * in it; "More tools" unfolds sideways and the bar scrolls on its own. */
+@media (max-width: 767px) {
+  body { overflow: auto; }
+  .shell, .shell.solo, .shell.railmini, .shell.railmini.solo {
+    --barh: 54px;
+    height: auto; min-height: 100vh; padding-bottom: var(--barh);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas: "create" "stage" "player";
+  }
+  .shell.solo, .shell.railmini.solo { grid-template-areas: "stage" "player"; }
+  .create, .ovcol { overflow: visible; border-right: 0; border-bottom: 1px solid var(--edge); }
+  .stage { overflow: visible; }
+  .colgrip { display: none; }
+  .ctawrap { bottom: var(--barh); }
+  .player { position: sticky; bottom: var(--barh); z-index: 25; }
+
+  .rail {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    height: var(--barh); box-sizing: border-box; padding: 0 6px; gap: 0;
+    flex-direction: row; align-items: center;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+    border-right: 0; border-top: 1px solid var(--edge);
+  }
+  .rail > .railgrip, .rail > .poweredby, .rail > .brand { display: none; }
+  .rail .nav, .rail .navmain, .rail .navbottom {
+    flex: 0 0 auto; flex-direction: row; align-items: center;
+    min-height: 0; overflow: visible; gap: 0;
+  }
+  .rail .navgroup { flex-direction: row; align-items: center; margin: 0; gap: 0; }
+  .rail .navgroup > .navhead:not(summary) { display: none; }
+  .rail .navmore { white-space: nowrap; }
+  .rail .navmore > summary.navmorehead, .rail .navmore > a { display: inline-flex; vertical-align: middle; }
+  .rail .nav a, .rail .navmore > summary.navmorehead { position: relative; justify-content: center; padding: 10px; gap: 0; }
+  /* :not(.railmini) as well, to outrank the rule that shows labels on
+   * full-width views (styles.css ".shell.solo:not(.railmini) .nav a .lbl"). */
+  .shell .rail .nav a .lbl, .shell.solo:not(.railmini) .rail .nav a .lbl,
+  .rail .navmore > summary.navmorehead .lbl, .rail .navmore .navcaret { display: none; }
+  .rail .nav a .pip { position: absolute; margin: 0; top: 6px; right: 4px; }
+  .rail .navbottom { margin-left: 4px; padding: 0 0 0 4px; border-top: 0; border-left: 1px solid var(--hair); }
+  .rail .railfoot { flex: 0 0 auto; flex-direction: row; margin-left: 4px; padding: 0; border-top: 0; }
+  .rail .railfoot > :not(.workbox) { display: none; }
+  .rail .workbox #wbLine, .rail .workbox .wbcaret { display: none; }
+}

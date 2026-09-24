@@ -283,7 +283,10 @@ import * as prov from "./provenance.js";
  * /api/welcome and nothing else, and the document it serves is the same one
  * server/mcp-welcome.js hands an agent. */
 import { createWelcomeRoutes } from "./welcome/routes.js";
-/* CHAT v1 (FORK): the first screen in the rail. Owns /api/chat and nothing
+/* Simple or Advanced: saved on the first start so a new install stays the new
+ * install it was (UI_PLAN E1; server/welcome/level.js says why). */
+import { persistStartLevel } from "./welcome/level.js";
+/* CHAT v1 (FORK): the first entry under More tools. Owns /api/chat and nothing
  * else. Its eight tools reach this same server's own routes over loopback rather
  * than importing the runners out of this file's closure — the shape
  * welcome/routes.js already uses for /api/models, and for the same reason: one
@@ -2572,7 +2575,7 @@ const earRoutes = createEarRoutes({ json, readBody, config, provenance: prov });
 /* The welcome window's surface: the capability catalogue, the showcase read off
  * this disk, and the first-run flag. Two dependencies, both of them this file's
  * own helpers — everything else it needs it reads from config. */
-const welcomeRoutes = createWelcomeRoutes({ json, readBody });
+const welcomeRoutes = createWelcomeRoutes({ json, readBody, sameOriginLocalJson });
 
 /* Chat v1. Two dependencies, both of them this file's own helpers; the model it
  * runs, the tools it can call and where it keeps its conversations all come
@@ -2895,6 +2898,9 @@ const server = http.createServer(async (req, res) => {
            * studio_status returns it; the receipts and Settings read it. */
           defaults,
           musicOnly: config.musicOnly,
+          /* Simple or Advanced, and who chose (UI_PLAN E1). web/level.js reads
+           * the same through /api/welcome, which also carries the tooltips. */
+          ui: { level: config.ui.level, levelBy: config.ui.levelBy },
           // The launcher's "Use Comfy API" mode: the web app shows the Comfy API page only.
           cloudOnly: !!config.cloudOnly,
           engineExpected: comfyWanted,
@@ -11439,6 +11445,7 @@ async function powerTick() {
 
 server.listen(config.uiPort, "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
+  persistStartLevel().catch((err) => console.warn(`  [settings] the starting level was not saved: ${err.message}`));
 
   /* Open the browser HERE, not in the launcher.
    *

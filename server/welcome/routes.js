@@ -15,16 +15,20 @@
  * │       if (await welcomeRoutes(req, res, url)) return; }                │
  * └────────────────────────────────────────────────────────────────────────┘
  *
- * FIVE ACTIONS, and the reason there are exactly five is the parity rule:
+ * SEVEN ACTIONS, and every one of them is there by the parity rule:
  *
  *   catalogue    what this studio is and can do (server/welcome/catalogue.js)
  *   screen_info  ONE screen: its paragraph, its limit, its first move, and what
  *                it needs — joined against what this machine actually has
  *   showcase     what it has actually made, off this disk (showcase.js)
- *   dismiss      remember that this person has seen the welcome
- *   reopen       forget that, so it opens again
+ *   dismiss      remember that this person has seen the first-run lines
+ *   reopen       forget that, so Home shows them again
+ *   first_run    the three lines Home shows on a new install (firstrun.js),
+ *                in place of the tour that used to open by itself (UI_PLAN B5)
+ *   level        read, or with `level`, save, whether the make screens open
+ *                Simple or Advanced (level.js, UI_PLAN E1)
  *
- * Every one of them is posted by web/welcome.js AND by a tool in
+ * Every one of them is posted by web/welcome.js or web/level.js AND by a tool in
  * server/mcp-welcome.js. There is no read an agent can do that a person
  * cannot, and — the direction that actually finds bugs — no switch an agent can
  * flip that a person cannot. `reopen` exists as an ACTION rather than as a
@@ -51,6 +55,8 @@ import path from "node:path";
 import { config } from "../config.js";
 import { catalogue, WELCOME_VERSION, TABS, screenFor, resolveNeeds, needState, NEED_STATES, NEED_WORDS } from "./catalogue.js";
 import { showcase } from "./showcase.js";
+import { firstRunLines } from "./firstrun.js";
+import { levelState, saveLevel } from "./level.js";
 
 /* ── where "will it run here" comes from ───────────────────────────────────
  *
@@ -263,7 +269,7 @@ async function state() {
   };
 }
 
-export function createWelcomeRoutes({ json, readBody }) {
+export function createWelcomeRoutes({ json, readBody, sameOriginLocalJson = null }) {
   return async function welcomeRoutes(req, res, url) {
     const p = url.pathname;
 
@@ -309,7 +315,8 @@ export function createWelcomeRoutes({ json, readBody }) {
 
     if (p === "/api/welcome" && req.method === "POST") {
       let b = {};
-      try { b = await readBody(req); } catch { b = {}; }
+      /* Capped while reading: every body this door takes is a few words. */
+      try { b = await readBody(req, 64 * 1024); } catch { b = {}; }
       try {
         switch (String(b.action || "")) {
           /* What this studio is and can do. The window's whole render, and the
@@ -355,10 +362,9 @@ export function createWelcomeRoutes({ json, readBody }) {
             return true;
           }
 
-          /* Seen it. Written the moment the window opens rather than when it
-           * closes: a person who opens the welcome, reads two paragraphs and
-           * navigates away has been shown around, and an app that re-opens it
-           * because they did not press the button is an app that nags. */
+          /* Seen it. Since UI_PLAN B5 the tour no longer opens by itself: a new
+           * install gets three lines on Home instead, and their Hide posts
+           * this. Once written, Home stops showing them. */
           case "dismiss": {
             const w = await writeWelcomeFlag({
               seenVersion: WELCOME_VERSION,
@@ -368,20 +374,48 @@ export function createWelcomeRoutes({ json, readBody }) {
             return true;
           }
 
-          /* Forget it, so the window opens by itself again. The About page's
+          /* Forget it, so Home shows the first-run lines again. The tour's own
            * button and an agent's `studio_welcome` both land here. */
           case "reopen": {
             const w = await writeWelcomeFlag({ seenVersion: null, seenAt: null });
             json(res, 200, {
               ok: true, welcome: w, ...(await state()),
-              note: "The welcome will open by itself the next time this page is loaded.",
+              note: "Home will show the first-run lines again the next time this page is loaded.",
             });
+            return true;
+          }
+
+          /* The three lines for Home. They need the machine, so they cost the
+           * same /api/models round trip screen_info does; the tour stays free. */
+          case "first_run": {
+            json(res, 200, { ok: true, ...(await state()), ...firstRunLines(await liveModels()) });
+            return true;
+          }
+
+          /* Simple or Advanced. Without `level` it reads; with it, it saves the
+           * person's choice. Saving changes how every make screen opens, so it
+           * answers only Studio's own page or a local MCP client, the same
+           * guard the doors that choose what runs use (index.js). */
+          case "level": {
+            if (b.level === undefined || b.level === null) {
+              json(res, 200, { ok: true, ...levelState() });
+              return true;
+            }
+            /* Fails CLOSED: routes built without the guard cannot save at all. */
+            if (typeof sameOriginLocalJson !== "function" || !sameOriginLocalJson(req)) {
+              json(res, 403, { error: "The level is changed from Studio's own page or a local MCP client." });
+              return true;
+            }
+            /* 400 for a level that does not exist; 409 when settings.json is
+             * there and unreadable, which level.js refuses to write over. */
+            try { json(res, 200, { ok: true, ...(await saveLevel(String(b.level))) }); }
+            catch (err) { json(res, err?.status || 400, { ...levelState(), error: err?.message || String(err) }); }
             return true;
           }
 
           default:
             json(res, 400, {
-              error: "Unknown action. Try: catalogue, screen_info, showcase, dismiss, reopen.",
+              error: "Unknown action. Try: catalogue, screen_info, showcase, dismiss, reopen, first_run, level.",
             });
             return true;
         }

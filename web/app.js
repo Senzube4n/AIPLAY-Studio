@@ -30,6 +30,8 @@ import { wfOpen, initWorkflow } from "./mv.js";
 // from About. Writes no copy of its own — it renders the catalogue served by
 // server/welcome/, which is the same document studio_capabilities returns.
 import { initWelcome } from "./welcome.js";
+// Simple or Advanced on load, from the server (web/level.js, UI_PLAN E1).
+import { onLevel } from "./level.js";
 import { growHandle, growWrap } from "./grow.js";
 // The score panel (YuE2's editable lead sheet). It reaches its own <details>
 // through the DOM and talks to /api/score on its own; app.js only mounts it at
@@ -1324,6 +1326,8 @@ $("lyricTags").addEventListener("click", (e) => {
 $("modeSong").onclick = () => { setSimple(false); setMode("song"); };
 $("modeInstr").onclick = () => { setSimple(false); setMode("instrumental"); };
 $("modeSimple").onclick = () => setSimple(!state.simple);
+/* Simple's way back, shown in Song and Instrumental's place while Simple is on. */
+$("modeAdv")?.addEventListener("click", () => setSimple(false));
 
 /* ── Simple mode: the assistant fills this form ─────────────────────────────
  * web/chat.js runs the conversation against /api/chat/music and talks to this
@@ -1414,6 +1418,19 @@ function applySimple(on) {
   setMode(state.mode === "instrumental" ? "instrumental" : "song");
   if (state.simple) setTimeout(() => $("simpleText")?.focus(), 0);
 }
+/* THE LEVEL (UI_PLAN E1). A new install opens Music on Simple, an install in
+ * use keeps Advanced, and a Home card opens it Simple either way. The news and
+ * the tooltip come from the server through web/level.js; a switch the person
+ * already pressed on this screen is kept over the boot news. Below applySimple
+ * on purpose: onLevel may call back at once, and setSimple's lets must exist. */
+let musicModeTouched = false;
+$("modeSeg")?.addEventListener("click", () => { musicModeTouched = true; });
+onLevel((n) => {
+  if ($("modeAdv") && n.advancedAdds?.create) $("modeAdv").title = n.advancedAdds.create;
+  if (n.view && n.view !== "create") return;
+  if (n.boot && musicModeTouched) return;
+  if (!!n.simple !== !!state.simple) setSimple(!!n.simple, true);
+});
 document.addEventListener("aiplay:simple-snapshot", (e) => {
   const d = e.detail;
   const val = (id) => $(id)?.value ?? "";
@@ -17568,7 +17585,7 @@ async function loadReactive() {
   const paintImages = () => {
     $("reactImgs").innerHTML = (state.images || []).map((im) => `
       <button type="button" class="reactimg" data-rimg="${esc(im.name)}" title="${esc(im.name)}">
-        <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("") || '<span class="hint">No pictures in the Images library yet.</span>';
+        <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("") || '<span class="hint">No pictures in the Pictures library yet.</span>';
     reactPaintPicked();
   };
   /* Cached pictures remain usable while other resources load. */
@@ -17752,7 +17769,7 @@ function reactRequest() {
   const pictures = reactPicked.filter((n) => !/\.(mp4|webm|mov|mkv|m4v)$/i.test(n));
   if ((paint || motion) && !clips.length) throw new Error(`The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`);
   if (paint && !pictures.length) throw new Error("Paint needs at least one selected reference picture as well as a clip.");
-  if (motion?.anchorMode === "references" && Number($("reactMotionSourceHold").value) > 0 && !pictures.length) throw new Error("Reference anchors need at least one picture from the Images grid.");
+  if (motion?.anchorMode === "references" && Number($("reactMotionSourceHold").value) > 0 && !pictures.length) throw new Error("Reference anchors need at least one picture from the Pictures grid.");
   return { song, pictures: [...reactPicked], prompt: reactPicked.length ? undefined : prompt,
     count: Number($("reactCount").value) || 6, style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
     seconds: secs > 0 ? secs : undefined, start: start > 0 ? start : undefined, paint, motion, orientation: $("reactOrient").value };
@@ -18413,7 +18430,7 @@ function ovSetKind(k) {
   $("ovAdd").hidden = media;
   $("ovAddImage").hidden = !media;
   $("ovAddImage").textContent = ov.kind === "image"
-    ? "+ Add what's on the Images tab" : "+ Add what's on the Video tab";
+    ? "+ Add what's on the Pictures screen" : "+ Add what's on the Video screen";
   ovRender();
 }
 const OV_KEYS = { music: "aiplayIdeas", image: "aiplayIdeasImage", video: "aiplayIdeasVideo" };
@@ -18432,7 +18449,7 @@ function ovRender() {
   if (!ov.ideas.length) {
     box.innerHTML = `<div class="ovempty">${ov.kind === "music"
       ? "No ideas yet. Write one in Create, then add it here."
-      : `No prompts yet. Set one up on the ${ov.kind === "image" ? "Images" : "Video"} tab, then add it here. A prompt with {a|b|c} in it makes a different picture each take.`}</div>`;
+      : `No prompts yet. Set one up on the ${ov.kind === "image" ? "Pictures" : "Video"} screen, then add it here. A prompt with {a|b|c} in it makes a different picture each take.`}</div>`;
   } else {
     box.innerHTML = ov.ideas.map((it, i) => {
       /* A media idea has a prompt where a song has a caption, and the prompt is
@@ -18747,7 +18764,7 @@ $("ovAddImage").onclick = async () => {
   const isImg = ov.kind === "image";
   const prompt = (isImg ? $("imgPrompt") : $("vidPrompt"))?.value.trim();
   if (!prompt) {
-    alert(`Write a prompt on the ${isImg ? "Images" : "Video"} tab first — that is what this queues.`);
+    alert(`Write a prompt on the ${isImg ? "Pictures" : "Video"} screen first — that is what this queues.`);
     return;
   }
   const idea = isImg ? ovImageIdea(prompt) : {
@@ -20108,8 +20125,9 @@ attachHelp();
 visClaim();
 setMode("song");
 /* THE BOOT DEFAULT IS WELCOME (the owner's call, 2026-09-19): the mark, the
- * name and one row of ways in — Chat, Music, Video, Image, Explore. Chat and
- * Music sit under Create in the rail; Explore is Community, to be reworked.
+ * name and one row of ways in — Chat, Music, Video, Image, Explore. Music sits
+ * under Make in the rail and Chat under More tools (UI_PLAN B1); Explore is
+ * Community, to be reworked.
  * setMode("song") still runs above, so the Music form is already in the state
  * it always was the moment you click Music. */
 const entryView = initialStudioView(location.href, [...Object.keys(INFO_HOSTS), "home", "jobs"]);

@@ -305,6 +305,14 @@ const IMAGE_CAP_IDS = CATALOG.filter(isPictureModel).map((c) => c.id);
  * moment the panel is asked, because the selection changes while Studio runs. */
 const MUSIC_NEEDS = [need("music")("selected",
   "the song itself: Studio needs one music engine, the one picked in Music, not every one")];
+/* The video engines whose licence leaves out whole territories, by their own
+ * rows' `region`: the Video card names them rather than saying "one of them". */
+const REGION_LOCKED_VIDEO = VIDEO_ENGINE_KEYS
+  .filter((k) => CATALOG.find((c) => c.id === MODEL_TO_CAPABILITY[k])?.region?.excluded?.length)
+  .map((k) => config.video.engines[k].label);
+const REGION_CLAUSE = !REGION_LOCKED_VIDEO.length ? ""
+  : REGION_LOCKED_VIDEO.length === 1 ? `, and ${REGION_LOCKED_VIDEO[0]} excludes whole territories`
+  : `, and ${REGION_LOCKED_VIDEO.slice(0, -1).join(", ")} and ${REGION_LOCKED_VIDEO.at(-1)} each exclude whole territories`;
 const VIDEO_NEEDS = VIDEO_ENGINE_KEYS.map((k) =>
   videoEngine(k, "whichever engine you render with; one is enough"));
 const IMAGE_NEEDS = IMAGE_CAP_IDS.map((id) =>
@@ -427,13 +435,13 @@ const IDENTITY = {
 /* ── where do I start ───────────────────────────────────────────────────── */
 
 const START = [
-  { what: "Or just say what you want", where: "Chat",
-    detail: "The screen the app opens on. Describe what you want to make and it uses the studio for you, asking before it spends time on the graphics card." },
+  { what: "Or just say what you want", where: "Chat, under More tools",
+    detail: "Describe what you want to make and it uses the studio for you, asking before it spends time on the graphics card." },
   { what: "Get the music model", where: "Models",
     detail: "The only required download. Its licence is shown before a byte is fetched." },
   { what: "Make your first song", where: "Music",
     detail: "Describe it in a sentence or two and press Create. Four to five minutes for a three-minute track; a cover picture arrives on its own." },
-  { what: "Give it a picture", where: "Images",
+  { what: "Give it a picture", where: "Pictures",
     detail: "Generate a look, then open it in the editor — layers, curves, cutout, type. The original is never overwritten." },
   { what: "Make it move", where: "Video, then Studio",
     detail: "Render a clip or two, drop them on the timeline over the song, switch on the karaoke overlay, press Export." },
@@ -454,8 +462,8 @@ const START = [
  */
 const TABS = [
   {
-    id: "home", icon: "⌂", name: "Welcome", group: "make",
-    lead: "The first page: the studio's mark and one row of ways in — Chat, Music, Video, Image and Explore.",
+    id: "home", icon: "⌂", name: "Home", group: "make",
+    lead: "The first page: the studio's mark and one row of ways in — Chat, Music, Video, Pictures and Explore.",
     makes: ["A place to start"],
     start: "Pick what you want to make.",
     needs: [],
@@ -467,9 +475,8 @@ const TABS = [
       "Say what you want to make, in ordinary words, and it does it — writes and renders a song, "
       + "looks through what you have already made, starts a music-video project, blocks a shot in "
       + "Blender. The model answering you is Qwen3-4B, running on your own graphics card; nothing "
-      + "you type here leaves this machine and there is no account and no key. It is the first "
-      + "screen because it is the only one you can use without already knowing which of the other "
-      + "eighteen your idea belongs on.\n"
+      + "you type here leaves this machine and there is no account and no key. It is the one "
+      + "screen you can use without already knowing which of the others your idea belongs on.\n"
       + "Anything that costs time on the graphics card is PROPOSED rather than done: it shows you "
       + "the exact settings and what they cost, and waits for you to say yes.",
     makes: ["Songs, described in a sentence", "A music-video project to build in", "Blocked-out shots to watch before spending on a render", "Answers about what is already on this disk"],
@@ -541,7 +548,7 @@ const TABS = [
       "It spends real credits and cannot quote a price before a run; the Router reports a cost after "
       + "some runs and not others, and your Comfy workspace has the full usage. Results are downloaded "
       + "as they finish, because their links expire within a day. It cannot make a music video: the mode "
-      + "has no Music, Workflow or Collab screen, and its results do not reach a project's scenes.",
+      + "has no Music, Music video or Collab screen, and its results do not reach a project's scenes.",
   },
   {
     id: "musiclab", icon: "♫", name: "Music Lab", group: "make",
@@ -558,7 +565,7 @@ const TABS = [
       + "Supplied-score themes currently require Python YuE2 or native GGUF.",
   },
   {
-    id: "images", icon: "▣", name: "Images", group: "make",
+    id: "images", icon: "▣", name: "Pictures", group: "make",
     lead:
       "Makes pictures — standalone or as cover art — and opens them in a full image editor: layers and "
       + "blend modes, curves and levels, brushes, selections, one-click background cutout, a type tool, "
@@ -595,7 +602,7 @@ const TABS = [
     ],
     cant:
       "Each engine is a separate multi-gigabyte download with its own licence and its own hardware "
-      + "appetite, and one of them excludes whole territories. One render is seconds of video and minutes "
+      + `appetite${REGION_CLAUSE}. One render is seconds of video and minutes `
       + "of waiting.",
   },
   {
@@ -673,13 +680,13 @@ const TABS = [
     cant:
       "Looks configure components already inside the model. This page does not fit arbitrary outfits, "
       + "create face or hair rigs, generate dance clips or infer phonemes from speech. "
-      + "Image-to-3D and local body rigging remain in Workflow. VRM workshop and World GLB use separate "
+      + "Image-to-3D and local body rigging remain in Music video. VRM workshop and World GLB use separate "
       + "import budgets; local VRM acceptance does not grant Agent World admission. A persona ID is "
       + "local attribution, not account ownership. Review deformation visually before handoff.",
   },
 
   {
-    id: "workflow", icon: "❖", name: "Workflow", group: "assemble",
+    id: "workflow", icon: "❖", name: "Music video", group: "assemble",
     lead:
       "The music-video pipeline, as a project rather than a pile of files. It cuts the song into scenes, "
       + "holds a brief and a bible (the cast, the places, the rules the whole video obeys), storyboards "

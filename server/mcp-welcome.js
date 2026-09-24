@@ -133,17 +133,24 @@ export function welcomeTools(api) {
     {
       name: "studio_welcome",
       description:
-        "Control the first-run welcome window. `reopen` makes it open by itself the next time the "
-        + "app's page is loaded — use it when a user asks to see the tour again, or when you are "
-        + "handing the machine to somebody new. `dismiss` marks it seen so it stops opening. The "
-        + "same flag the window's own button writes, in the app's settings file, so the two surfaces "
-        + "can never disagree about whether this person has been shown around.",
+        "The first run and the level. `first_run` returns the three lines Home shows a new install "
+        + "about THIS PC (what card Studio read, which music and picture models, whether video clips "
+        + "fit), word for word. `reopen` makes Home show them again next load; `dismiss` hides them. "
+        + "`level` reads whether Music, Pictures and Video open Simple or Advanced, who chose it, and "
+        + "what Advanced adds on each screen; with `level` set it saves the person's choice, the "
+        + "same switch as Settings > Screens > Show every setting. Ask before changing it. The tour "
+        + "itself no longer opens by itself; it is under About.",
       inputSchema: {
         type: "object",
         properties: {
           action: {
-            type: "string", enum: ["reopen", "dismiss"],
-            description: "reopen = show it again next load; dismiss = stop showing it.",
+            type: "string", enum: ["reopen", "dismiss", "first_run", "level"],
+            description: "reopen = show the first-run lines again next load; dismiss = hide them; "
+              + "first_run = read them; level = read the Simple/Advanced level, or save it with `level`.",
+          },
+          level: {
+            type: "string", enum: ["simple", "advanced"],
+            description: "With action level: save this as how the make screens open. Leave out to read.",
           },
         },
         required: ["action"],
@@ -151,8 +158,19 @@ export function welcomeTools(api) {
       },
       async run(a) {
         const want = String(a.action || "");
+        if (want === "first_run") {
+          const r = await post({ action: "first_run" });
+          return { lines: r.lines, links: r.links, machine: r.machine, shown_on_home: r.firstRun };
+        }
+        if (want === "level") {
+          const r = a.level === undefined
+            ? await post({ action: "level" })
+            : await post({ action: "level", level: String(a.level) });
+          const { ok, ...state } = r;
+          return state;
+        }
         if (want !== "reopen" && want !== "dismiss") {
-          throw new Error('action must be "reopen" or "dismiss".');
+          throw new Error('action must be "reopen", "dismiss", "first_run" or "level".');
         }
         /* Two literal posts rather than one interpolated `action: want`, so the
          * parity gate can SEE both names in this file. A gate that reads source
@@ -162,10 +180,10 @@ export function welcomeTools(api) {
           ? await post({ action: "reopen" })
           : await post({ action: "dismiss" });
         return {
-          welcome_opens_next_load: r.firstRun,
+          first_run_lines_next_load: r.firstRun,
           seen_version: r.seenVersion,
           seen_at: r.seenAt,
-          note: r.note ?? "The welcome will not open by itself again.",
+          note: r.note ?? "Home will not show the first-run lines again.",
         };
       },
     },

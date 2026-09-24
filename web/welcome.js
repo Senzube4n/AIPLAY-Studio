@@ -13,13 +13,13 @@
  * server/welcome/ui_test.js is what keeps it that way.
  * ═════════════════════════════════════════════════════════════════════════
  *
- * OPENS ONCE. On boot the page asks the server whether this install has been
- * shown around; the flag lives in settings.json, not in this browser, so it is
- * one answer for every browser on the machine and an agent can read and change
- * it too. The `dismiss` post goes out the moment the window OPENS rather than
- * when it closes, because someone who reads two paragraphs and clicks away has
- * been shown around, and an app that re-opens its tour because you did not
- * press the button is an app that nags.
+ * IT NO LONGER OPENS BY ITSELF (UI_PLAN B5). A new install gets three lines on
+ * Home instead (#homeStrip): what Studio read on this PC, which models, and
+ * whether video clips fit, word for word from /api/welcome {action:"first_run"}
+ * (server/welcome/firstrun.js), the same lines studio_welcome returns. Hide
+ * posts `dismiss`; the flag lives in settings.json, not in this browser, so it
+ * is one answer for every browser on the machine and an agent can read and
+ * change it too. The tour itself is under About ("Take the welcome tour").
  *
  * NAVIGATION IS BORROWED, NOT INVENTED. Every screen card carries
  * `data-go="<view>"`, which app.js's existing delegated handler already turns
@@ -261,7 +261,7 @@ function render(c) {
         ${showcase(c)}
       </div>
       <footer class="wcfoot">
-        <button type="button" class="wcbtn" id="wcAgain">Show this again next launch</button>
+        <button type="button" class="wcbtn" id="wcAgain">Show the Home notes again</button>
         <span class="wcspacer"></span>
         <a class="wcbtn" href="#" data-go="about">The long version, on About &rsaquo;</a>
         <button type="button" class="wcbtn on" id="wcGo">Start making something</button>
@@ -300,7 +300,7 @@ function wire(el) {
     again.disabled = true;
     try {
       const r = await post({ action: "reopen" });
-      again.textContent = r.ok ? "It will open again next launch" : "Could not save that";
+      again.textContent = r.ok ? "Back on Home next launch" : "Could not save that";
     } catch { again.textContent = "Could not save that"; }
   };
 
@@ -362,5 +362,25 @@ export async function initWelcome({autoOpen=true}={}) {
   try { r = await post({ action: "catalogue" }); } catch { return; }
   if (!r?.catalogue) return;
   state.cat = r.catalogue;
-  if (autoOpen && r.firstRun) openWelcome({ auto: true });
+  /* `autoOpen` now means "show the first-run lines": false in the launcher's
+   * Music-only and Comfy API modes and when a link opened another screen. */
+  if (autoOpen && r.firstRun) paintFirstRun();
+}
+
+/* ── the first-run lines on Home ────────────────────────────────────────── */
+/* The lines, the links (label and view, both from the server) and a Hide.
+ * Silent on failure, like the rest of this file: no lines is a quiet Home. */
+export async function paintFirstRun() {
+  const box = document.getElementById("homeStrip");
+  if (!box) return;
+  let r = null;
+  try { r = await post({ action: "first_run" }); } catch { return; }
+  if (!r?.lines?.length || !r.firstRun) { box.hidden = true; return; }
+  const lines = document.getElementById("homeStripLines");
+  if (lines) lines.innerHTML = r.lines.map((l) => `<span>${esc(l)}</span>`).join("");
+  const links = document.getElementById("homeStripLinks");
+  if (links) links.innerHTML = (r.links || []).map((k) => `<a href="#" data-go="${esc(k.view)}">${esc(k.label)}</a>`).join("");
+  const hide = document.getElementById("homeStripHide");
+  if (hide) hide.onclick = () => { box.hidden = true; post({ action: "dismiss" }).catch(() => {}); };
+  box.hidden = false;
 }
