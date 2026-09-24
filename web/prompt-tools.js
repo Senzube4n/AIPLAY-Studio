@@ -10,6 +10,8 @@
  * page and MCP share them. Writing into a box fires `input`, so the page's
  * own counters and state follow as if it had been typed. */
 
+import { fillModelMenu } from "./chat.js";
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -148,12 +150,12 @@ async function paintEnhanceModel() {
   try {
     const d = await api("GET", "/api/enhance");
     const rows = d.models || [];
-    sel.innerHTML = `<option value="">Same as Simple mode (then Chat)</option>`
-      + rows.map((m) => `<option value="${esc(m.file)}">${esc(m.label || m.file)}</option>`).join("")
-      + (d.offline ? `<option value="" disabled>Local models appear when the engine is running</option>` : "");
-    sel.value = d.own && rows.some((m) => m.file === d.own) ? d.own : "";
-    sel.title = d.current ? `Enhance uses ${rows.find((m) => m.file === d.current)?.label || d.current}` : "";
-    sel.disabled = false;
+    /* The same picker as every other writer (web/chat.js fillModelMenu, UI_PLAN
+     * B2): writers only, by name; one is plain text; "Show every file" beside
+     * it; plus this picker's own first choice. */
+    fillModelMenu(sel, d, "Put a Qwen3 (or Gemma) text encoder in models/text_encoders, or connect an API on the Agent page",
+      { lead: "Same as Simple mode (then Chat)" });
+    sel.title = d.current ? `Enhance uses ${rows.find((m) => m.file === d.current)?.label || d.current}` : sel.title;
   } catch (e) {
     sel.innerHTML = `<option value="">${esc(e.message)}</option>`;
   }

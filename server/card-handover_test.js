@@ -34,29 +34,36 @@ test("a music model leaves ComfyUI before a picture or clip, and the way back un
   assert.match(jobs, /this\.loaded = null;\n\s+this\.artResident = false;/, "an unload clears both records");
 });
 
-test("automatic covers skip absent catalogue engines while Qwen keeps its explicit runner readiness result", async () => {
+/* INSTALLER_PLAN S5: Qwen is no longer waved through. With its files missing
+ * every song queued a cover that could only fail ("Qwen Image 2.1 is
+ * unavailable"); now the cover row of machineDefaults() (server/fit.js
+ * defaultFor "cover") says no, in one sentence, for Qwen as for any engine. */
+test("automatic covers skip an engine whose files are missing, Qwen included", async () => {
   const index = src("./index.js");
   assert.ok(/if \(\(live \? live\.cover : true\) && await coverCanRun\(\)\) \{/.test(index));
   const fn = index.match(/async function coverCanRun\(\) \{[\s\S]*?\n\}/)?.[0];
   assert.ok(fn);
-  const config = { art: { engine: "flux2", checkpoint: null } };
-  let custom = null, ready = false, checks = 0;
-  const models = { status: async () => { checks++; return [{ id: "coverArt", label: "FLUX", ready }]; } };
-  const check = new Function("assignedTo", "config", "models", "MODEL_TO_CAPABILITY", "QWEN_IMAGE_ENGINE", "console",
-    `let coverSkipSaid = false; ${fn}; return coverCanRun;`)(() => custom, config, models, { flux2: "coverArt" }, "qwen-image-2.1", { log() {} });
-  assert.equal(await check(), false);
-  config.art.checkpoint = "old-selection.safetensors";
-  assert.equal(await check(), false, "a stale checkpoint does not bypass another engine's readiness");
-  config.art.engine = "checkpoint";
-  assert.equal(await check(), true);
-  config.art.engine = "qwen-image-2.1";
-  const before = checks;
-  assert.equal(await check(), true, "ArtRunner owns Qwen file/node readiness and emits the failed-job result");
-  assert.equal(checks, before);
-  config.art.engine = "flux2"; custom = "my-cover";
-  assert.equal(await check(), true);
-  custom = null; ready = true;
-  assert.equal(await check(), true);
+  const { defaultFor } = await import("./fit.js");
+  const { CATALOG, isPictureModel } = await import("./models.js");
+  let saved = "flux2", custom = false, ready = [];
+  // What machineDefaults hands coverCanRun: the cover row of fit.js defaultFor, over these rows.
+  const machineDefaults = async () => [defaultFor("cover", { saved, custom, machine: null,
+    capabilities: CATALOG.filter(isPictureModel).map((c) => ({ ...c, ready: ready.includes(c.id) })) })];
+  const check = new Function("machineDefaults", "console", `let coverSkipSaid = false; ${fn}; return coverCanRun;`)(machineDefaults, { log() {} });
+  assert.equal(await check(), false, "FLUX chosen and not on disk: no cover job");
+  saved = "qwen-image-2.1";
+  assert.equal(await check(), false, "Qwen chosen and its files missing: no cover job either");
+  ready = ["qwen-image-2.1"];
+  assert.equal(await check(), true, "Qwen's files there: its runner still checks the runtime nodes");
+  saved = "checkpoint"; custom = true; ready = [];
+  assert.equal(await check(), true, "your own model file or cover workflow is yours to answer for");
+  saved = null; custom = false;
+  assert.equal(await check(), false, "nothing chosen and no picture model on disk: none");
+  ready = ["coverArt"];
+  assert.equal(await check(), true, "nothing chosen, FLUX.2 klein on disk: covers");
+  /* A stale checkpoint name does not bypass another engine's readiness: only
+   * the checkpoint ENGINE with a file counts as the person's own. */
+  assert.match(index, /custom: !!assignedTo\("cover"\) \|\| \(config\.art\.engine === "checkpoint" && !!config\.art\.checkpoint\),/);
 });
 
 test("a run status is never an HTTP status: the reply carries the sentence instead of crashing", () => {

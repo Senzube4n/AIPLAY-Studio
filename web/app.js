@@ -630,6 +630,8 @@ function needModel(kind, o = {}) {
   });
 }
 globalThis.aiplayNeedModel = needModel;
+/* For web/receipt.js: Fix on a failed start opens this window. */
+globalThis.aiplayOfferModel = offerModel;
 
 /**
  * ONE ANSWER TO "THAT MODEL IS NOT INSTALLED", ON EVERY SCREEN.
@@ -2887,8 +2889,12 @@ async function generate(preview, mixSeed) {
       body: JSON.stringify(spec),
     });
     const j = await r.json();
-    if (j.error) { failSay(j); return; }
+    /* Said under Create in the server's own words, with Fix where there is one
+     * (web/receipt.js); the model window or an alert where that file is absent. */
+    if (j.error) { if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("ctaNote", j); else failSay(j); return; }
     else state.lastSpec = { ...spec };
+    // A start that went through (Create or Preview) clears the last "Couldn't start".
+    if (typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("ctaNote");
 
     for (let i = 1; i < n; i++) {
       await fetch("/api/generate", {
@@ -5031,10 +5037,14 @@ $("edSave").onclick = async () => {
 $("edRegen").onclick = async () => {
   const file = state.editFile;
   if (!file) return;
-  await fetch("/api/art", {
+  const r = await fetch("/api/art", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "regenerate", file }),
-  });
+  }).then((x) => x.json()).catch(() => ({}));
+  /* Refused when no picture model can draw it (409, "Add a picture model to
+   * get covers."): the server's sentence, and the model window where it named
+   * one, never a "Queued" for a cover that will not come. */
+  if (r?.error) { $("edArt").title = r.error; if (r.needsModel) offerModel(r); else await appAlert(r.error, "No cover was queued"); return; }
   $("edArt").title = "Queued — drawn as soon as nothing is generating";
 };
 $("edUpload").onclick = () => $("edArtFile").click();
@@ -6642,6 +6652,10 @@ $("btnBackfillArt").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "backfill" }),
     }).then((x) => x.json());
+    /* A refusal (no picture model on this PC) is said in the server's words,
+     * with the model window where it named one; it used to read as "Every
+     * track already has a cover". */
+    if (r.error) { $("artNote").textContent = r.error; if (r.needsModel) offerModel(r); return; }
     $("artNote").textContent = r.queued
       ? `${r.queued} queued. They are drawn only while nothing is generating, so music never waits.`
       : "Every track already has a cover.";
@@ -8109,7 +8123,8 @@ $("vidCreate").onclick = async () => {
         ...(state.videoRecipeLoaded ? {bridge:"off",bridgeAlpha:0} : {}),
       }),
     })).json();
-    if (r.error) { failSay(r); return; }
+    if (r.error) { if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("vidEst", r); else failSay(r); return; }
+    if (typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst");
     $("clipNote").textContent = "Queued. It renders once the engine is idle — music always goes first.";
   } finally {
     vidPaint();
@@ -16766,7 +16781,13 @@ $("imgGo").onclick = async () => {
         ...(seedRaw === "" ? {} : { seed: Number(seedRaw) }),
       }),
     })).json();
-    if (r.error) { imgWatch(null); if (!offerModel(r)) await appAlert(r.error, "Nothing was queued"); return; }
+    if (r.error) {
+      imgWatch(null);
+      if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("imgNote", r);
+      else if (!offerModel(r)) await appAlert(r.error, "Nothing was queued");
+      return;
+    }
+    if (typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("imgNote");
     $("imgNote").textContent = "Queued. It renders when nothing else is using the GPU.";
     $("imgNote").classList.remove("stick");
     /* The job this screen is now watching — the strip above reads it, and the ✕
@@ -17700,6 +17721,9 @@ $("artReset").onclick = () => { $("artStyle").value = $("artStyle").dataset.def 
 $("artSave").onclick = async () => {
   $("artSaved").textContent = "";
   const body = { engine: $("artEngine").value, quality: $("artQuality").value, style: $("artStyle").value };
+  /* Picked on purpose (web/receipt.js marks a person's change): remembered
+   * even when it is the engine Studio had picked for this PC. */
+  if ($("artEngine").dataset.touched === "1") body.choose = true;
   if (body.engine === "checkpoint") body.checkpoint = $("artCkpt").value || null;
   const r = await (await fetch("/api/artconfig", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -19349,7 +19373,18 @@ function applyStatus(s) {
     state.musicPrecision = s.config.musicPrecision;
     if ($("qModel")) $("qModel").value = s.config.musicPrecision;
   }
-  if (s.config?.musicEngine && !state.musicEngine) state.musicEngine = s.config.musicEngine;
+  /* Seeded once; after that the page's own choice wins. A default the MACHINE
+   * picked (server/fit.js defaultFor) follows the disk while this page still
+   * holds what the server last gave it: a download finishing moves it. */
+  const musicDefault = (s.config?.defaults || []).find((d) => d.key === "music.engine");
+  /* Settings' "Let Studio pick" (web/receipt.js) asks for one re-seed. */
+  const reseed = globalThis.aiplayMusicReseed === true;
+  if (reseed) globalThis.aiplayMusicReseed = false;
+  if (s.config?.musicEngine && (!state.musicEngine || reseed || (musicDefault?.chosenBy === "machine"
+      && state.musicEngine === state.musicEngineSeeded && s.config.musicEngine !== state.musicEngine))) {
+    state.musicEngine = state.musicEngineSeeded = s.config.musicEngine;
+    if ("musicYue2Checkpoint" in s.config) state.musicYue2Checkpoint = s.config.musicYue2Checkpoint;
+  }
   /* The engine list arrives with this snapshot, so the selector cannot be
    * painted at load time — it was, and it came up empty on a cold start and
    * never filled, the same defect renderList() fixes for the Video picker.
@@ -19615,7 +19650,7 @@ function applyStatus(s) {
       // True for the Python kit only: it starts a new process, and loads the model, for every song.
       setCta(n > 1
         ? `${n} takes · about ${fmt(one * n)} in total on your card`
-        : `about ${fmt(one)} on your card · each song starts a fresh Python process and reloads the model`);
+        : `about ${fmt(one)} on your card`);   // how the Python kit runs: the ⓘ panel (catalogue.js)
     } else {
       // Estimate from the song we would actually get, not the ceiling: length
       // follows lyrics (or the instrumental scaffold), not the slider.
@@ -19630,6 +19665,8 @@ function applyStatus(s) {
         : `about ${fmt(one)} on your card · re-rolls ~3× faster`);
     }
   }
+  /* The receipts and Settings' "Picked for this PC" (web/receipt.js). */
+  if (typeof globalThis.aiplayReceipts === "function") globalThis.aiplayReceipts(s);
 }
 
 function paintTier() {

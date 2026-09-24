@@ -47,6 +47,40 @@ export function labelFor(file) {
   return quant ? `${name} (${quant.replace(/_scaled$/i, "")})` : name;
 }
 
+/**
+ * WHICH OF THESE CAN WRITE (UI_PLAN B2).
+ *
+ * The list above is every file ComfyUI can load as a text encoder whose name
+ * looks like a language model, and six raw file names is what a newcomer was
+ * shown. Some of them cannot write at all: a BASE model continues text rather
+ * than following an instruction (qwen_3_06b_base), ACE-Step's planners write
+ * audio codes, LTX's Gemma carries LTX's projection, and an fp4 build runs
+ * natively only on an RTX 50-series card (config.js says why: it is
+ * dequantised on load anywhere else). They stay under "Show every file".
+ * Returns { ok, why }.
+ */
+export function writerVerdict(file, { gpuName = null } = {}) {
+  const n = path.basename(String(file || "")).toLowerCase();
+  if (/(^|[_.-])base([_.-]|$)/.test(n)) return { ok: false, why: "a base model: it continues text, it does not follow a request" };
+  if (/ace[_-]?1\.?5|_ace\d/.test(n)) return { ok: false, why: "ACE-Step's planner: it writes audio codes, not words" };
+  if (/gemma/.test(n) && /ltx/.test(n)) return { ok: false, why: "LTX's text encoder, with LTX's projection built in" };
+  if (/(^|[_.-])(nv)?fp4([_.-]|$)/.test(n) && !/rtx\s*50\d\d/i.test(String(gpuName || ""))) {
+    return { ok: false, why: "an fp4 build: only RTX 50-series cards run it natively" };
+  }
+  return { ok: true, why: null };
+}
+
+/** "Qwen3 4B - writes lyrics and prompts": the model, in words, and what it is for. */
+export function writerLabel(file) {
+  const n = path.basename(String(file || "")).toLowerCase();
+  const size = (n.match(/(?:^|[_-])(\d+(?:\.\d+)?)b(?:[_.-]|$)/) || [])[1];
+  const family = /qwen[_-]?3[_-]?vl/.test(n) ? "Qwen3-VL" : /qwen[_-]?3/.test(n) ? "Qwen3"
+    : /qwen[_-]?2[._-]?5/.test(n) ? "Qwen2.5" : /gemma[_-]?3/.test(n) ? "Gemma 3" : /gemma/.test(n) ? "Gemma"
+    : /llama/.test(n) ? "Llama" : /ministral/.test(n) ? "Ministral" : /mistral/.test(n) ? "Mistral" : null;
+  const name = family ? `${family}${size ? ` ${size}B` : ""}` : labelFor(file);
+  return `${name} - writes lyrics and prompts`;
+}
+
 /** Choices out of an /object_info row, old ([list]) and new (["COMBO",{options}]) shapes. */
 function choicesOf(info, cls) {
   const spec = info?.[cls]?.input?.required?.clip_name;
@@ -80,8 +114,21 @@ function rank(file) {
  * with the engine down; a saved `api:` choice whose key has since been removed
  * falls back to a local file rather than failing the turn. Nothing is ever
  * switched to a paid API automatically — only a person picking it does that. */
-export function createChatModels({ engine, config, key = "chatModel", fallbackKey = null, cloud = null }) {
+/* `gpu` (optional): () => gpuStatus(), for the card's name — writerVerdict()
+ * keeps fp4 builds off every card but an RTX 50-series. */
+export function createChatModels({ engine, config, key = "chatModel", fallbackKey = null, cloud = null, gpu = null }) {
   let cache = null;          // { at, models }
+  const gpuName = () => { try { return (typeof gpu === "function" ? gpu() : gpu)?.name || null; } catch { return null; } };
+  /* The rows that can write, each with its friendly name; the same builds of
+   * one model told apart by precision. */
+  const writersOf = (models) => {
+    const rows = (models || []).filter((m) => writerVerdict(m.file, { gpuName: gpuName() }).ok)
+      .map((m) => ({ ...m, label: writerLabel(m.file), fileLabel: m.label }));
+    const seen = new Map();
+    for (const r of rows) seen.set(r.label, (seen.get(r.label) || 0) + 1);
+    const quant = (r) => (/\(([^)]+)\)$/.exec(r.fileLabel || "") || [])[1] || path.basename(r.file);
+    return rows.map((r) => (seen.get(r.label) > 1 ? { ...r, label: r.label.replace(" - ", ` (${quant(r)}) - `) } : r));
+  };
 
   async function list({ fresh = false } = {}) {
     if (!fresh && cache && Date.now() - cache.at < 60_000) return cache.models;
@@ -120,7 +167,8 @@ export function createChatModels({ engine, config, key = "chatModel", fallbackKe
     }
     const models = await list().catch(() => null);
     if (models?.length) {
-      const hit = models.find((m) => m.file === want) || models[0];
+      /* Nothing chosen: a model that can write, before a base model or a planner. */
+      const hit = models.find((m) => m.file === want) || writersOf(models)[0] || models[0];
       return hit;
     }
     const file = want || DEFAULT_CHAT_MODEL;
@@ -165,8 +213,17 @@ export function createChatModels({ engine, config, key = "chatModel", fallbackKe
     const apis = cloud ? await cloud.choices().catch(() => []) : [];
     const picked = await resolve();
     const current = picked.api || models ? picked.file : saved() || DEFAULT_CHAT_MODEL;
+    /* `models` is what can write (UI_PLAN B2), friendly names first; `every`
+     * is every file, for "Show every file". A person's own choice stays in
+     * `models` even when it would be filtered: it is theirs. */
+    const writers = writersOf(models);
+    const mine = !writers.some((m) => m.file === current) ? (models || []).find((m) => m.file === current) : null;
+    const every = [...apis, ...(models || []).map((m) => {
+      const v = writerVerdict(m.file, { gpuName: gpuName() });
+      return v.ok ? m : { ...m, why: v.why };
+    })];
     /* `offline` is still about the ENGINE: the page shows the API rows either way. */
-    return { models: [...apis, ...(models || [])], current, offline: !models };
+    return { models: [...apis, ...writers, ...(mine ? [mine] : [])], every, current, offline: !models };
   }
 
   return { list, resolve, choose, clear, status };

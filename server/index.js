@@ -19,7 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython } from "./config.js";
+import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
@@ -50,7 +50,7 @@ import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
-import { gpuStatus, ramStatus, cpuStatus } from "./gpu.js";
+import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
 import { whisperPythonMissing, pythonVerdict } from "./lrc.js";
@@ -155,19 +155,83 @@ async function checkedVideoLoras(value, engine) {
     automatic: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4].filter(Boolean),
   });
 }
+/* Qwen too, now: its files missing is the same "not installed" as any other
+ * engine's, and a cover queued without them could only fail ("Qwen Image 2.1
+ * is unavailable") after every song. Its runtime check still runs in art.js
+ * when the files are there. The answer and its one sentence are the cover row
+ * of machineDefaults() (server/fit.js defaultFor "cover"). */
 async function coverCanRun() {
-  if (assignedTo("cover") || (config.art.engine === "checkpoint" && config.art.checkpoint)) return true;
-  // Qwen's runner checks both native files and runtime nodes, and reports a
-  // normal failed job to Overnight/UI. A catalogue-only skip hides that result.
-  if (config.art.engine === QWEN_IMAGE_ENGINE) return true;
-  const capId = MODEL_TO_CAPABILITY[config.art.engine || "flux2"];
-  if (!capId) return true;
-  const row = (await models.status().catch(() => [])).find((c) => c.id === capId);
-  if (!row || row.ready) return true;
-  if (!coverSkipSaid) console.log(`  [cover] skipped: ${row.label} is not installed (Models screen, Images). Songs are unaffected.`);
+  const cover = (await machineDefaults().catch(() => null))?.find((d) => d.key === "art.engine");
+  if (!cover || cover.canRun) return true;
+  if (!coverSkipSaid) console.log(`  [cover] skipped: ${cover.why} Songs are unaffected.`);
   coverSkipSaid = true;
   return false;
 }
+
+/**
+ * DEFAULTS THAT FOLLOW THE DISK, and who chose each one.
+ *
+ * server/fit.js defaultFor() decides; this reads what it needs (the catalogue,
+ * the music model choices, the machine) and puts the answer into the live
+ * config ONLY where nobody chose — config.js applyMachineDefault, which never
+ * reaches settings.json. Worked out on read: /api/status, a song queued with no
+ * engine named, and a cover about to be queued. Cached for five seconds, like
+ * the music model list it reads, because /api/status is polled every four
+ * seconds by every open tab; a choice clears the cache at once.
+ * Returns studio_status's `defaults`: [{key, value, chosenBy, why, …}].
+ */
+let defaultsCache = { at: 0, value: null };
+async function machineDefaults() {
+  if (defaultsCache.value && Date.now() - defaultsCache.at < 5000) return defaultsCache.value;
+  /* The card first: until its first reading gpuStatus() is null and every
+   * machine looks like one with no card (native GGUF on NVIDIA, the int8 build
+   * on AMD). Waited for once, bounded; instant afterwards. */
+  await gpuFirstReading();
+  const cat = await models.status();
+  const choices = await musicModelChoices(cat);
+  const machine = readMachine(gpuStatus(), ramStatus());
+  machine.amdMusicFixed = hasAmdMusicFix(studioLaunchArgs());
+  /* What settings.json holds (a session's swap reports the saved value beside
+   * the one running) and who put it there. */
+  const swap = sessionOverride("music", "engine");
+  const ckptSwap = sessionOverride("music", "yue2Checkpoint");
+  const music = defaultFor("music", {
+    saved: prefChosen("music", "engine")
+      ? { engine: swap ? swap.saved : config.music.engine,
+        checkpoint: prefChosen("music", "yue2Checkpoint") ? (ckptSwap ? ckptSwap.saved : config.music.yue2Checkpoint) : null,
+        kept: prefOrigin("music", "engine") === "kept" }
+      : null,
+    session: swap || ckptSwap
+      ? { engine: config.music.engine, checkpoint: ckptSwap ? config.music.yue2Checkpoint : null, reason: (swap || ckptSwap).reason }
+      : null,
+    choices, machine, musicOnly: config.musicOnly,
+    api: { enabled: !!config.api?.enabled, provider: config.api?.provider || null },
+    literal: config.musicOnly ? "yue2-gguf" : LITERAL_DEFAULTS.music.engine,
+  });
+  applyMachineDefault("music", "engine", music.value);
+  if (music.checkpointBy === "machine") applyMachineDefault("music", "yue2Checkpoint", music.checkpoint);
+  const image = defaultFor("image", {
+    saved: prefChosen("image", "engine") ? config.image.engine : null, kept: prefOrigin("image", "engine") === "kept",
+    capabilities: cat, machine, literal: LITERAL_DEFAULTS.image.engine,
+  });
+  applyMachineDefault("image", "engine", image.value);
+  const cover = defaultFor("cover", {
+    saved: prefChosen("art", "engine") ? config.art.engine : null, kept: prefOrigin("art", "engine") === "kept",
+    custom: !!assignedTo("cover") || (config.art.engine === "checkpoint" && !!config.art.checkpoint),
+    capabilities: cat, machine, literal: LITERAL_DEFAULTS.art.engine,
+  });
+  applyMachineDefault("art", "engine", cover.value);
+  const h3 = config.video.engines.h3;
+  const steps = h3?.stepDefaults ? defaultFor("videoSteps", { engine: "h3", label: h3.label, stepDefaults: h3.stepDefaults, turboBuilds: h3.turboBuilds }) : null;
+  const value = [music, image, cover, steps].filter(Boolean);
+  /* Not cached while the card is still unread (the wait above timed out):
+   * the next read answers again rather than repeating a no-card answer. */
+  defaultsCache = gpuReadOnce() ? { at: Date.now(), value } : { at: 0, value: null };
+  return value;
+}
+/* A startup swap: the machine's pick when nobody chose; for a saved choice,
+ * this session only (config.js overrideForSession), never written back. */
+const settle = (group, key, value, reason) => overrideForSession(group, key, value, reason);
 
 function missingSupport(cap, ownDit, own = {}) {
   if (!cap) return null;
@@ -200,7 +264,7 @@ function missingSupport(cap, ownDit, own = {}) {
 import {
   scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
 } from "./localmodels.js";
-import { readMachine, fitFor, recommendFor, FIT_STATES } from "./fit.js";
+import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor } from "./fit.js";
 import { h3Status } from "./h3tier.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
@@ -2510,14 +2574,14 @@ const routerRoutes = config.cloudOnly ? createRouterRoutes({
   catalog: createCatalog({ dir: path.join(config.paths.appData, "router") }),
   jobs: routerJobs,
 }) : null;
-const chatRoutes = createChatRoutes({ json, readBody, config, cloud });
+const chatRoutes = createChatRoutes({ json, readBody, config, cloud, gpu: gpuStatus });
 
 /* Saved galleries (styles, lyrics, Simple descriptions, chat prompts) and the
  * Enhance button (server/prompt-tools.js). Enhance asks its own chosen model —
  * saved as enhanceModel, falling back to Simple mode's and then Chat's — and a
  * local one is refused while a render holds the card. */
 const enhanceModels = createChatModels({ engine: engineDoor, config, key: "enhanceModel",
-  fallbackKey: ["chatModelMusic", "chatModel"], cloud });
+  fallbackKey: ["chatModelMusic", "chatModel"], cloud, gpu: gpuStatus });
 const promptToolRoutes = createPromptToolRoutes({
   json, readBody,
   gallery: createGallery({ file: path.join(config.paths.appData, "prompt-gallery.json") }),
@@ -2701,6 +2765,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/status") {
+      /* Before anything below reads config.music.engine: an unchosen default
+       * follows the disk (machineDefaults), so the page and studio_status name
+       * what will actually run. */
+      const defaults = await machineDefaults().catch(() => null);
       return json(res, 200, {
         engine: {
           ready: comfy.ready,
@@ -2750,6 +2818,9 @@ const server = http.createServer(async (req, res) => {
           musicAceLora: config.music.aceLora,
           musicAceLoraStrength: config.music.aceLoraStrength,
           musicModels: await musicModelChoices(),
+          /* Who chose each default: {key, value, chosenBy "machine"|"you", why}.
+           * studio_status returns it; the receipts and Settings read it. */
+          defaults,
           musicOnly: config.musicOnly,
           // The launcher's "Use Comfy API" mode: the web app shows the Comfy API page only.
           cloudOnly: !!config.cloudOnly,
@@ -2958,6 +3029,8 @@ const server = http.createServer(async (req, res) => {
       } catch(err) {return json(res,400,{error:err.message});}
     }
     if (p === "/api/models" && req.method !== "POST") {
+      // The selected engine (REQUIRED badge, the recommendation's music slot) follows the disk when unchosen.
+      if (typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const [cat, pkgs, disk] = await Promise.all([models.status(), pythonPackages(), diskFree()]);
 
       /* THE MACHINE, READ ONCE. Both readings are already taken for the status
@@ -3623,6 +3696,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
       if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
+      // No engine named: the default follows the disk when nobody chose (machineDefaults).
+      if (body.engine === undefined && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const requestedEngine=body.engine || config.music.engine;
       if (config.musicOnly && requestedEngine !== "yue2-gguf" && !(requestedEngine === "yue2-comfy" && comfyWanted)) return json(res, 400, {error:"Music-only mode runs YuE2 (native GGUF, or through ComfyUI when a YuE2 checkpoint is found). Start full Studio for other engines."});
       if (requestedEngine === "yue2-gguf") {
@@ -5688,8 +5763,8 @@ const server = http.createServer(async (req, res) => {
         mergedFrom: files, createdAt: Date.now(),
       });
       // Give it a cover like anything else, rather than leaving one track in the
-      // library conspicuously without art.
-      art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, lyrics: base.lyrics, seed: base.seed });
+      // library conspicuously without art — when a picture model can draw one.
+      if (await coverCanRun()) art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, lyrics: base.lyrics, seed: base.seed });
       return json(res, 200, { file: out, ...info, merged: files.length });
     }
 
@@ -5853,6 +5928,14 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/art" && req.method === "POST") {
       const b = await readBody(req);
       try {
+        /* A cover that could only fail is not queued: with no picture model on
+         * this PC (or the chosen one missing) say the one sentence instead. */
+        if (b.action === "backfill" || b.action === "regenerate") {
+          const cover = (await machineDefaults().catch(() => null))?.find((d) => d.key === "art.engine");
+          if (cover && cover.canRun === false) {
+            return json(res, 409, { error: cover.why, needsModel: MODEL_TO_CAPABILITY[cover.value] || null, ...art.status() });
+          }
+        }
         if (b.action === "backfill") {
           const n = await art.backfill(await library.list());
           return json(res, 200, { ok: true, queued: n, ...art.status() });
@@ -6435,14 +6518,45 @@ const server = http.createServer(async (req, res) => {
      * and the style line every auto cover prompt opens with. Takes effect on
      * the NEXT cover — nothing needs a restart. */
     if (p === "/api/artconfig" && req.method === "GET") {
+      await machineDefaults().catch(() => null);   // an unchosen engine follows the disk
       return json(res, 200, {
         engine: config.art.engine, checkpoint: config.art.checkpoint,
         quality: config.art.quality, style: config.art.style,
         styleDefault: config.artStyleDefault,
+        /* The Images screen's engine (a picture with none named), and which
+         * of the two somebody chose rather than the machine. */
+        imageEngine: config.image.engine,
+        chosen: { engine: prefChosen("art", "engine"), imageEngine: prefChosen("image", "engine") },
       });
     }
     if (p === "/api/artconfig" && req.method === "POST") {
+      /* This door chooses what paints every cover and every picture made with
+       * no engine named, and saves it: Studio's own page or a local client
+       * only, asked before the body is read (cross-origin-doors_test.js). */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Picture and cover settings are only accepted from Studio's own page or a local client." });
       const b = await readBody(req);
+      const answer = () => ({ ok: true, engine: config.art.engine, checkpoint: config.art.checkpoint,
+        quality: config.art.quality, style: config.art.style, imageEngine: config.image.engine,
+        chosen: { engine: prefChosen("art", "engine"), imageEngine: prefChosen("image", "engine") } });
+      /* "auto" (Settings' "Let Studio pick", set_image_engine engine "auto"):
+       * forget the choice, so the machine picks from the disk again. */
+      if (b.engine === "auto" || b.imageEngine === "auto") {
+        if (b.engine === "auto") forgetPref("art", "engine");
+        if (b.imageEngine === "auto") forgetPref("image", "engine");
+        defaultsCache.at = 0;
+        await machineDefaults().catch(() => null);
+        savePrefs();
+        return json(res, 200, answer());
+      }
+      /* The Images screen's engine, remembered when the person picks it there
+       * (or set_image_engine with use_for "pictures"). Kept even when its
+       * files are missing: Make says what to download, and nothing switches. */
+      if (b.imageEngine !== undefined) {
+        /* config.js's own check for the saved value (the covers' list minus "checkpoint"). */
+        if (!PREF_PATHS.find(([g, k]) => g === "image" && k === "engine")[2](b.imageEngine)) {
+          return json(res, 400, { error: "imageEngine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 (your own model file is picked per picture)" });
+        }
+      }
       if (b.engine !== undefined) {
         if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(b.engine)) {
           return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | checkpoint" });
@@ -6464,7 +6578,11 @@ const server = http.createServer(async (req, res) => {
           const cap = (await models.status()).find((c) => c.id === "imageIdeogram");
           if (cap && !cap.ready) return json(res, 400, { error: "Ideogram 4 is not downloaded — open the Models screen first. And mind its NON-COMMERCIAL licence before making it the library default." });
         }
-        config.art.engine = b.engine;
+        /* Apply on the covers card posts the engine with the style line; the
+         * machine's own pick sent back unchanged is not a choice to freeze.
+         * Picked on purpose it is: `choose` (the card when its engine was
+         * touched, set_image_engine always) remembers even the machine's pick. */
+        if (b.choose === true || b.engine !== config.art.engine || prefChosen("art", "engine")) config.art.engine = b.engine;
       }
       if (b.checkpoint !== undefined) {
         const nm = b.checkpoint === null ? null : path.basename(String(b.checkpoint));
@@ -6486,9 +6604,10 @@ const server = http.createServer(async (req, res) => {
         if (!st || st.length > 1500) return json(res, 400, { error: "The style line must be 1-1500 characters." });
         config.art.style = st;
       }
+      if (b.imageEngine !== undefined) config.image.engine = b.imageEngine;   // checked above, applied with the rest
+      defaultsCache.at = 0;   // the covers line says "you" from the next read
       savePrefs();
-      return json(res, 200, { ok: true, engine: config.art.engine, checkpoint: config.art.checkpoint,
-                              quality: config.art.quality, style: config.art.style });
+      return json(res, 200, answer());
     }
 
     /**
@@ -6512,6 +6631,10 @@ const server = http.createServer(async (req, res) => {
      * model that was not H3.
      */
     if (p === "/api/music" && req.method === "POST") {
+      /* Every action here chooses what runs or saves a file name (the model,
+       * its build, the LoRAs, "auto"): Studio's own page or a local client
+       * only, asked before the body is read (cross-origin-doors_test.js). */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Music settings are only accepted from Studio's own page or a local client." });
       const b = await readBody(req);
       /* THE MUSIC MODEL PICKER: an engine and its build in one choice. A build
        * that cannot render here is refused at the click; native YuE2 GGUF may be
@@ -6638,6 +6761,16 @@ const server = http.createServer(async (req, res) => {
         savePrefs();
         return json(res, 200, { ok: true, music: { yue2LoraClip: config.music.yue2LoraClip, yue2LoraClipStrength: config.music.yue2LoraClipStrength } });
       }
+      /* "auto": forget the choice, so the machine picks from the disk again
+       * (server/fit.js defaultFor). Only ever on an explicit ask. */
+      if (b.action === "engine" && b.value === "auto") {
+        forgetPref("music", "engine"); forgetPref("music", "yue2Checkpoint");
+        defaultsCache.at = 0;
+        const d = (await machineDefaults()).find((x) => x.key === "music.engine");
+        musicChoicesCache.at = 0;
+        savePrefs();
+        return json(res, 200, { ok: true, music: { engine: config.music.engine }, chosenBy: "machine", why: d?.why ?? null });
+      }
       if (b.action === "model") {
         const choice = (await musicModelChoices(await models.status())).find((x) => x.value === String(b.value || ""));
         if (!choice) return json(res, 400, { error: "Unknown music model." });
@@ -6671,6 +6804,7 @@ const server = http.createServer(async (req, res) => {
         if (jobs.loaded && jobs.loaded.key !== nextKey && !jobs.current && !jobs.queue.length) {
           await jobs.unloadModels().catch(() => {});
         }
+        defaultsCache.at = 0;
         savePrefs();
         return json(res, 200, { ok: true, music: { engine: choice.engine, precision: choice.precision } });
       }
@@ -6692,6 +6826,7 @@ const server = http.createServer(async (req, res) => {
           });
         }
         config.music.engine = e;
+        defaultsCache.at = 0;
         savePrefs();
         return json(res, 200, { ok: true, music: { engine: e } });
       }
@@ -7235,6 +7370,9 @@ const server = http.createServer(async (req, res) => {
           }
         }
       }
+      /* No engine named (make_image without one): the saved picture engine, or
+       * the machine's pick from the disk when nobody chose (machineDefaults). */
+      if (!b.engine && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const engine = b.engine || config.image.engine;
       if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
       if (engine === QWEN_IMAGE_ENGINE) {
@@ -11148,6 +11286,14 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
     jobs.emit("update", jobs.snapshot());
     return;
   }
+  /* Defaults that follow the disk (machineDefaults), before anything below
+   * reads the music engine. Said once, so the log shows what Studio picked,
+   * and what this session runs instead of a saved choice. machineDefaults
+   * waits for the card's first reading, so vendorNow() below has it too. */
+  for (const d of (await machineDefaults().catch(() => null)) || []) {
+    if (d.chosenBy === "machine" || d.savedValue) console.log(`  default: ${d.why}`);
+  }
+  const vendorNow = () => { const g = gpuStatus(); return g?.totalMb ? (g.vendor || "nvidia") : null; };
   if (config.musicOnly) {
     /* Music-only starts no ComfyUI — unless this machine has a ComfyUI install
      * AND a YuE2 checkpoint, and native GGUF is not the chosen, installed
@@ -11173,12 +11319,14 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
     }
     comfyWanted = true;
     if (!ckpts.includes(config.music.yue2Checkpoint)) {
-      config.music.yue2Checkpoint = ckpts.find((n) => /bf16/i.test(n)) || ckpts[0];
+      settle("music", "yue2Checkpoint", yue2BuildFor(ckpts, vendorNow()), "Your YuE2 build is not in a checkpoints folder");
     }
     const gguf = await ggufSetup.status().catch(() => ({}));
     const ggufReady = Object.values(gguf.variants || {}).some((v) => v?.ready) || gguf.ready === true;
-    if (config.music.engine !== "yue2-comfy" && !ggufReady) config.music.engine = "yue2-comfy";
-    musicChoicesCache.at = 0;
+    if (config.music.engine !== "yue2-comfy" && !ggufReady) {
+      settle("music", "engine", "yue2-comfy", "The music-only launch runs YuE2, and native YuE2 GGUF is not installed");
+    }
+    musicChoicesCache.at = 0; defaultsCache.at = 0;
     console.log(`  music-only mode: YuE2 checkpoint found (${bareName(config.music.yue2Checkpoint)}) — starting ComfyUI for YuE2 3B`);
   } else if (config.music.engine === "yue2-gguf") {
     /* Full Studio remembering native GGUF where it is not installed (it is a
@@ -11189,13 +11337,14 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
     const ggufReady = Object.values(gguf.variants || {}).some((v) => v?.ready) || gguf.ready === true;
     const ckpts = ggufReady ? [] : await findYue2Checkpoints().catch(() => []);
     if (!ggufReady && ckpts.length) {
-      config.music.engine = "yue2-comfy";
+      /* This session only: settings.json keeps native GGUF, and the Studio
+       * runs it again once it is installed (config.js overrideForSession). */
+      settle("music", "engine", "yue2-comfy", "Native YuE2 GGUF is not installed");
       if (!ckpts.includes(config.music.yue2Checkpoint)) {
-        config.music.yue2Checkpoint = ckpts.find((n) => /bf16/i.test(n)) || ckpts[0];
+        settle("music", "yue2Checkpoint", yue2BuildFor(ckpts, vendorNow()), "Your YuE2 build is not in a checkpoints folder");
       }
-      musicChoicesCache.at = 0;
-      savePrefs();
-      console.log(`  native YuE2 GGUF is selected but not installed — using YuE2 through ComfyUI (${bareName(config.music.yue2Checkpoint)}) instead`);
+      musicChoicesCache.at = 0; defaultsCache.at = 0;
+      console.log(`  native YuE2 GGUF is selected but not installed — this session uses YuE2 through ComfyUI (${bareName(config.music.yue2Checkpoint)}); the choice stays saved`);
     }
   }
   console.log("  starting the engine (one long-lived ComfyUI process)…");

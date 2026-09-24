@@ -456,7 +456,10 @@ Every render setting has a tool: `make_clip` (`quality` fast|best, `steps`,
 `bridge`, `bridge_alpha`), `video_settings` (every Video Lab knob, including
 `turbo3_max_steps`, `turbo_shift_video`, `bridge_adapter`, `bridge_alpha`),
 `set_video_engine`, `set_image_engine` (the persistent automatic song-cover
-preference; standalone `make_image` takes its own `engine`), `make_song` (every YuE2 dial: `key`, `bpm`, `meter`, `temperature`,
+preference, or with `use_for` "pictures" the Images screen's engine that
+`make_image` and music-video stills use when they name none; `"auto"` forgets
+the choice), `set_music_engine`
+(the persistent music model; `"auto"` forgets the choice), `make_song` (every YuE2 dial: `key`, `bpm`, `meter`, `temperature`,
 `top_p`, `top_k`, `repetition_penalty`, `plan_temperature`, `plan_top_p`,
 `lora`), and `download_model` (a catalogue row, with `accept_region` for the
 territory-locked ones — never assumed). On the page the same choices are two
@@ -466,6 +469,20 @@ Options for people who want the number. The step counts behind Fast / Standard
 / Best (and make_clip's `quality`) follow the turbo files on disk: Standard,
 also the default, is 8 only where both 8-step builds are present, else 4.
 `studio_status` shows them as `video.h3_quality_steps`.
+
+When nothing is saved, the music model, the picture model and the cover engine
+follow what is on the disk (YuE2 through ComfyUI, then YuE2 GGUF; the
+recommended picture model that is present), worked out on every read and never
+written into settings.json. A saved choice always wins; a settings file an
+older Studio wrote keeps its values (and the Images engine keeps Qwen Image
+2.1, the old default), reported as `kept`. `studio_status` `defaults` lists each
+one as `{key, value, chosenBy: "machine" | "you", why}`, plus `kept`,
+`savedValue` (this session runs something else than the saved choice: the
+music-only launch, or a saved GGUF that is not installed; nothing is
+rewritten) and `paid` (API mode on: songs are billed to the person's own key).
+With no picture model on the disk no cover is queued and the cover row says
+"Add a picture model to get covers." Settings → *Picked for this PC* shows the
+same rows, with Change and, on a saved one, *Let Studio pick*.
 
 ### The cover, on the page
 Advanced Options → *Hum a melody, or cover a song* → transcriber *Whole song*:

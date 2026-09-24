@@ -109,14 +109,16 @@ export function blankProject(title, kind = "mv") {
       boardRef: false,
       /* WHICH IMAGE MODEL DRAWS THE SHEETS AND BOARDS.
        *
-       * null keeps the library-wide default (config.art.engine, flux2). The
-       * point of exposing it per project: FLUX.2 is the only engine here with
-       * REFERENCE images, and it is a generalist — asked for anime hands it
+       * null keeps the library-wide cover default (config.art.engine: your
+       * saved choice, or, when nobody chose, the recommended picture model on
+       * this PC — server/fit.js defaultFor). The point of exposing it per
+       * project: FLUX.2 and Qwen Image 2.1 take REFERENCE images, and FLUX.2
+       * is a generalist — asked for anime hands it
        * produces the extra fingers this project found. An anime-specialised
        * checkpoint draws the style far better and takes no references, which
        * is an acceptable trade for a project whose identity comes from H3's
        * own reference path rather than from the board. */
-      imageEngine: null,          // null | "flux2" | "ideogram" | "checkpoint"
+      imageEngine: null,          // null | "flux2" | "ideogram" | "checkpoint" | "qwen-image-2.1"
       imageCheckpoint: null,      // a file in ComfyUI/models/checkpoints
       storyboardStyle: "sketch",
     },

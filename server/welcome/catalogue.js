@@ -36,6 +36,7 @@
  * that has no `cant`.
  */
 import { config } from "../config.js";
+import { RUNGS as YUE_RUNGS } from "../music/yue_fit.js";
 import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, modulesOf } from "../models.js";
 /* The compositor's own vocabulary. "Ten kinds of layer" was TYPED here while
  * the list had grown to eleven — an audio layer was added to vfx/store.js and
@@ -500,6 +501,20 @@ const TABS = [
     ],
     cant:
       "No piano roll: you steer with words, and takes vary. Everything shares the graphics card.",
+    /* HOW EACH ENGINE RUNS, moved off the Make button (UI_PLAN C2: "no
+     * rationale in the UI"). The receipt under Create says what will happen;
+     * this says why it takes what it takes. Numbers read from config.js. */
+    howItRuns: [
+      "YuE2 through ComfyUI keeps the model loaded between songs, so only the first song after a start waits for it to load.",
+      "The YuE2 Python kit starts a fresh Python process for every song and reloads the model each time, so every song pays for the load.",
+      /* Both measured ratios come from the Long rung itself (music/yue_fit.js),
+       * the one place they were measured into. */
+      `Longer YuE2 songs (Python kit) use the configuration measured to reach them: the ${config.yue.queryChunk}-token `
+        + "prefill block, plus the model's first half off the card during the solve. "
+        + (YUE_RUNGS.find((r) => r.id === "long")?.costs?.[0]
+          || `It is slightly slower than the standard ${config.music.engines.yue2?.realtimeRatio}× the song's length, and the same audio.`),
+      "MiniMax Music 3 keeps what it worked out for a take, so a re-roll of the same song runs about 3× faster than the first render.",
+    ],
   },
   {
     id: "router", icon: "☁", name: "Comfy API", group: "make",

@@ -39,6 +39,7 @@ import {
   h3TierFor, h3Status, h3SetSizeByHand, H3_VRAM_OFFERED_GB, H3_VRAM_MIN_GB, H3_VRAM_FULL_GB, H3_RAM_MEASURED_GB,
   H3_RAM_FLOOR_GB, H3_ASK_A_FRIEND,
 } from "./h3tier.js";
+import { musicDefault } from "./music-default.js";
 
 /* ── the five answers ──────────────────────────────────────────────────────
  *
@@ -460,6 +461,20 @@ function regionLine(cap) {
     : "";
 }
 
+/** One order for "which of these", used by the recommendation and by the
+ *  defaults below: on disk, then fit, then the least restrictive licence,
+ *  then the smaller download. Rows are {cap, fit}. */
+function rankPick(a, b) {
+  /* Already downloaded wins outright. Recommending a 25 GB fetch to somebody
+   * who is holding an equally good 14 GB one is not advice, it is a bill. */
+  if (a.cap.ready !== b.cap.ready) return a.cap.ready ? -1 : 1;
+  const f = FIT_RANK[a.fit.state] - FIT_RANK[b.fit.state];
+  if (f) return f;
+  const r = (RIGHTS_RANK[a.cap.outputRights?.class] ?? 2) - (RIGHTS_RANK[b.cap.outputRights?.class] ?? 2);
+  if (r) return r;
+  return (a.cap.totalBytes || 0) - (b.cap.totalBytes || 0);
+}
+
 /**
  * Bytes for a set of capabilities, counting each FILE once.
  *
@@ -558,16 +573,7 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
     return cap ? { cap, fit: fitFor(cap.requires, machine) } : null;
   };
 
-  const rank = (a, b) => {
-    /* Already downloaded wins outright. Recommending a 25 GB fetch to somebody
-     * who is holding an equally good 14 GB one is not advice, it is a bill. */
-    if (a.cap.ready !== b.cap.ready) return a.cap.ready ? -1 : 1;
-    const f = FIT_RANK[a.fit.state] - FIT_RANK[b.fit.state];
-    if (f) return f;
-    const r = (RIGHTS_RANK[a.cap.outputRights?.class] ?? 2) - (RIGHTS_RANK[b.cap.outputRights?.class] ?? 2);
-    if (r) return r;
-    return (a.cap.totalBytes || 0) - (b.cap.totalBytes || 0);
-  };
+  const rank = rankPick;
 
   const picks = [];
   const notes = [];
@@ -801,4 +807,131 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
     diskFits: disk ? disk.freeBytes >= missingBytes : null,
     diskFreeBytes: disk ? disk.freeBytes : null,
   };
+}
+
+/* ── WHAT RUNS WHEN NOBODY CHOSE ───────────────────────────────────────────
+ *
+ * A fresh install used to aim music at MiniMax Music 3 and pictures and covers
+ * at Qwen Image 2.1, neither of which the recommended download fetches; the
+ * first song opened a download for the wrong engine and every cover after it
+ * failed. defaultFor() is asked only when a preference is NOT saved, answers
+ * from what is on this PC, and is worked out on every read: index.js applies it
+ * to the live config without writing it into settings.json (config.js
+ * applyMachineDefault), so the day a download finishes the default follows it.
+ *
+ * A SAVED CHOICE ALWAYS WINS, ready or not, and is reported as the person's —
+ * with a sentence when its files are missing, never a silent swap. Nothing
+ * here picks a paid API (only a person does that) and the YuE2 Python kit only
+ * when it is installed and ready. The config.js literals are the last resort.
+ *
+ * Pure, like everything else in this file: index.js hands over what it read
+ * (the music model choices, the catalogue rows, the machine) and
+ * server/defaults_test.js asks the same questions of four imaginary machines. */
+
+/** The one sentence when no picture model can paint a cover. */
+export const COVER_NEEDS_MODEL = "Add a picture model to get covers.";
+
+/** The engine names a picture can be made with, read from the same map the
+ *  provenance ledger uses, restricted to the rows that make pictures. */
+const PICTURE_ENGINES = Object.entries(MODEL_TO_CAPABILITY).filter(([, id]) => IMAGE_IDS.includes(id));
+
+/** "Images — FLUX.2 klein 4B" -> "FLUX.2 klein 4B": the model half of a row label. */
+const shortLabel = (label) => String(label || "").split("—").pop().trim();
+
+/* The music answer lives in server/music-default.js (import-free), because the
+ * launcher asks the same question on its first screen and may not import this
+ * file (config.js computes a whole Studio at import time). */
+export { yue2BuildFor } from "./music-default.js";
+
+/* Who a saved value belongs to, in the words every row uses. `kept` is a value
+ * an older Studio wrote into settings.json on its own: it wins like a choice,
+ * but nobody can say it was chosen. */
+const saidBy = (kept) => (kept ? "Saved in your settings:" : "You chose");
+
+function pictureRows(capabilities, machine) {
+  const byId = new Map((capabilities || []).map((c) => [c.id, c]));
+  return PICTURE_ENGINES.map(([engine, id]) => {
+    const cap = byId.get(id);
+    return cap ? { engine, cap, fit: fitFor(cap.requires, machine || { gpu: null, ram: { totalGb: 0 } }) } : null;
+  }).filter(Boolean);
+}
+
+/* A saved picture engine: ready when its row is on disk; "checkpoint" (the
+ * person's own model file) is theirs to have put there. */
+function savedPicture(saved, capabilities, machine) {
+  const row = pictureRows(capabilities, machine).find((r) => r.engine === saved);
+  return { ready: row ? !!row.cap.ready : saved === "checkpoint", label: row ? shortLabel(row.cap.label) : saved === "checkpoint" ? "your own model file" : saved };
+}
+
+function pictureDefault({ saved = null, kept = false, capabilities = [], machine = null, literal = "qwen-image-2.1" }) {
+  const key = "image.engine";
+  if (saved) {
+    const { ready, label } = savedPicture(saved, capabilities, machine);
+    return { key, value: saved, chosenBy: "you", kept: !!kept, ready, label,
+      why: `${saidBy(kept)} ${label} for pictures${ready ? "." : ", and it is not on this PC. The Models screen has it; Studio does not switch for you."}` };
+  }
+  const rows = pictureRows(capabilities, machine);
+  const onDisk = rows.filter((r) => r.cap.ready).sort(rankPick)[0];
+  if (onDisk) {
+    return { key, value: onDisk.engine, chosenBy: "machine", kept: false, ready: true, label: shortLabel(onDisk.cap.label),
+      why: `Studio picked ${shortLabel(onDisk.cap.label)} for pictures because it is on this PC.` };
+  }
+  /* Nothing on disk: the one the recommendation would fetch, so Make picture
+   * opens the download for the right model rather than a research-licence one. */
+  const best = rows.filter((r) => r.fit.state !== "wont-run").sort(rankPick)[0];
+  if (best) {
+    return { key, value: best.engine, chosenBy: "machine", kept: false, ready: false, label: shortLabel(best.cap.label),
+      why: `No picture model is on this PC yet. ${shortLabel(best.cap.label)} is the one to get (the Models screen has it).` };
+  }
+  return { key, value: literal, chosenBy: "machine", kept: false, ready: false, label: literal,
+    why: "No picture model is on this PC yet. The Models screen has them." };
+}
+
+function coverDefault({ saved = null, kept = false, custom = false, capabilities = [], machine = null, literal = "qwen-image-2.1" }) {
+  const key = "art.engine";
+  if (custom) {
+    return { key, value: saved || literal, chosenBy: "you", kept: false, ready: true, canRun: true, label: saved || literal,
+      why: "Your own cover workflow or model file paints the covers." };
+  }
+  if (saved) {
+    const { ready, label } = savedPicture(saved, capabilities, machine);
+    return { key, value: saved, chosenBy: "you", kept: !!kept, ready, canRun: ready, label,
+      why: ready ? `${saidBy(kept)} ${label} for covers.`
+        : `${COVER_NEEDS_MODEL} ${kept ? `Your settings name ${label}` : `You chose ${label}`}, and it is not on this PC.` };
+  }
+  const pic = pictureDefault({ capabilities, machine, literal });
+  return { key, value: pic.value, chosenBy: "machine", kept: false, ready: pic.ready, canRun: pic.ready, label: pic.label,
+    why: pic.ready ? `Studio picked ${pic.label} for covers because it is on this PC.` : COVER_NEEDS_MODEL };
+}
+
+/* `turboBuilds` says which speed-up files config.js found; with none on disk
+ * the count is config.js's fallback, and the sentence says so rather than
+ * calling it matched. Clips only, for now: music-video clips still render at
+ * their own count until the music-video lane reads this one. */
+function videoStepsDefault({ engine = "h3", label = "H3", stepDefaults = null, turboBuilds = null }) {
+  const value = Number.isFinite(stepDefaults?.standard) ? stepDefaults.standard : null;
+  const onDisk = !turboBuilds || Object.values(turboBuilds).some(Boolean);
+  return { key: "video.steps", value, chosenBy: "machine", kept: false, ready: value !== null && onDisk, label: `${value ?? "?"} steps`, engine,
+    why: value === null ? `No ${label} step count is known on this PC.`
+      : onDisk ? `${value} steps for clips: the step count the ${label} speed-up files on this PC were made for.`
+      : `${value} steps for clips, the count the ${label} speed-up files the Models screen fetches are made for. None are on this PC yet.` };
+}
+
+/**
+ * The default for one kind, and who chose it.
+ *   "music"      ctx: server/music-default.js musicDefault
+ *                     { saved: {engine, checkpoint, kept} | null, session, choices, machine, api, musicOnly, literal }
+ *   "image"      ctx: { saved: engine | null, kept, capabilities, machine, literal }
+ *   "cover"      ctx: { saved: engine | null, kept, custom, capabilities, machine, literal }
+ *   "videoSteps" ctx: { engine, label, stepDefaults, turboBuilds }
+ * Always { key, value, chosenBy: "machine" | "you", kept, why, ready, label }.
+ * "you" is a saved value, which always wins; `kept` says an older Studio saved
+ * it on its own, and its `why` says "Saved in your settings" instead of "You chose".
+ */
+export function defaultFor(kind, ctx = {}) {
+  if (kind === "music") return musicDefault(ctx);
+  if (kind === "image") return pictureDefault(ctx);
+  if (kind === "cover") return coverDefault(ctx);
+  if (kind === "videoSteps") return videoStepsDefault(ctx);
+  throw new Error(`defaultFor: unknown kind ${kind}`);
 }

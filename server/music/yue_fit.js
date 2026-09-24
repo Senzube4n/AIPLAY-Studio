@@ -495,11 +495,11 @@ function fitMemory(want, usable, base) {
         /* Two short lines. A song inside the measured reach is the normal case
          * now — six of them rendered tonight — and a paragraph about the
          * mechanism belongs in the code, not under the slider. */
+        /* The mechanism and its ratios are in the Music ⓘ panel now
+         * (server/welcome/catalogue.js howItRuns, UI_PLAN C2). */
         lines: [
-          `Measured to ${fmt(covered.reachSeconds)} on this card in this configuration `
-          + `(the 512-token prefill block plus the model's first half off the card during the solve).`,
-          `Slightly slower — about 2.65× the song's length to render instead of 2.39× — and the `
-          + `same audio: the same weights, moved.`,
+          `Measured to ${fmt(covered.reachSeconds)} on this card in this configuration.`,
+          "Slightly slower, and the same audio. The ⓘ panel says how it runs.",
         ],
       },
     };

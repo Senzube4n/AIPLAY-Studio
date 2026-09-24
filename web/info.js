@@ -163,6 +163,13 @@ function needRow(n, info) {
  * because `studio_screen_info` is the other reader, and an agent that has just
  * been told what a screen does needs to be told how to get to it.
  */
+/* The screen's "How it runs" lines (catalogue.js howItRuns), folded: the engine
+ * internals that used to sit under the Make button (UI_PLAN C2). */
+function howItRuns(lines) {
+  return `<details class="infohow"><summary>How it runs</summary><ul>`
+    + lines.map((l) => `<li>${esc(l)}</li>`).join("") + "</ul></details>";
+}
+
 function render(info) {
   return `
     <div class="infohead">
@@ -172,6 +179,7 @@ function render(info) {
     <p class="infolead">${esc(info.lead)}</p>
     ${info.makes?.length
       ? `<ul class="infomakes">${info.makes.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>` : ""}
+    ${info.howItRuns?.length ? howItRuns(info.howItRuns) : ""}
     <p class="infocant"><b>Can't:</b> ${esc(info.cant)}</p>
     <p class="infofirst"><b>First move:</b> ${esc(info.first)}</p>
 

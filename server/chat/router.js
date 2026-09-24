@@ -586,6 +586,7 @@ export const WITHHELD = {
   music_input_capabilities: "harmless, but only meaningful beside the three above",
   set_video_engine: "changes a persistent app setting the person set on the Video page",
   set_image_engine: "changes a persistent app setting the person set on the Images page",
+  set_music_engine: "changes a persistent app setting the person set on the Music page, and can switch paid API mode on",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",
   studio_welcome: "drives the first-run window",

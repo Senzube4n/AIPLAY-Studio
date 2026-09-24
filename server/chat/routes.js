@@ -89,8 +89,8 @@ export function createChatRoutes(deps = {}) {
     : (deps.tools || createChatTools({ uiPort: config.uiPort }));
   const cloud = deps.cloud || null;
   const chatModels = scope !== "studio"
-    ? (deps.musicChatModels || createChatModels({ engine, config, key: "chatModelMusic", fallbackKey: "chatModel", cloud }))
-    : (deps.chatModels || createChatModels({ engine, config, cloud }));
+    ? (deps.musicChatModels || createChatModels({ engine, config, key: "chatModelMusic", fallbackKey: "chatModel", cloud, gpu: deps.gpu }))
+    : (deps.chatModels || createChatModels({ engine, config, cloud, gpu: deps.gpu }));
   const model = deps.model || createQwenModel({ engine, resolve: chatModels.resolve, cloud });
   const dir = scope !== "studio"
     ? ((scope === "music" && deps.musicDir) || path.join(deps.dir || path.join(config.paths.appData, "chat"), scope))

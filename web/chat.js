@@ -719,9 +719,17 @@ function ask(text) {
  * page first, then the local files ComfyUI can load. Shared by the Chat tab
  * and Simple mode. The engine being down only hides the local group — a
  * connected API still works without it. Returns the current row, or null.
+ *
+ * `opts.lead`: a first option worth "" (Settings' Enhance picker: "Same as
+ * Simple mode (then Chat)"), selected unless the answer's `own` choice is in
+ * the list. All six writer pickers come through here (UI_PLAN B2).
  */
-export function fillModelMenu(sel, d, emptyTitle) {
-  const models = Array.isArray(d?.models) ? d.models : [];
+export function fillModelMenu(sel, d, emptyTitle, opts = {}) {
+  /* `models` is what can write, by name (server/chat/models.js writerVerdict);
+   * `every` is every file, behind "Show every file" (UI_PLAN B2). */
+  const all = sel.dataset?.every === "1" && Array.isArray(d?.every);
+  const models = all ? d.every : Array.isArray(d?.models) ? d.models : [];
+  writerExtras(sel, d, models, all, emptyTitle, opts);
   const apis = models.filter((m) => m.api);
   const local = models.filter((m) => !m.api);
   if (!models.length) {
@@ -730,15 +738,44 @@ export function fillModelMenu(sel, d, emptyTitle) {
     sel.title = d && !d.offline ? emptyTitle : "";
     return null;
   }
-  const opt = (m) => `<option value="${esc(m.file)}" title="${esc(m.api ? m.model : m.file)}">${esc(m.label)}</option>`;
-  sel.innerHTML = (apis.length ? `<optgroup label="Cloud API">${apis.map(opt).join("")}</optgroup>` : "")
+  const opt = (m) => `<option value="${esc(m.file)}" title="${esc(m.api ? m.model : m.file)}">${esc(m.label)}${m.why ? ` — ${esc(m.why)}` : ""}</option>`;
+  sel.innerHTML = (opts.lead ? `<option value="">${esc(opts.lead)}</option>` : "") + (apis.length ? `<optgroup label="Cloud API">${apis.map(opt).join("")}</optgroup>` : "")
     + (local.length ? `<optgroup label="Local · this machine">${local.map(opt).join("")}</optgroup>`
       : d.offline ? '<optgroup label="Local · this machine"><option value="" disabled>waiting for the engine…</option></optgroup>' : "");
   const cur = models.find((m) => m.file === d.current) || null;
-  sel.value = cur ? cur.file : models[0].file;
+  if (opts.lead) sel.value = d.own && models.some((m) => m.file === d.own) ? d.own : "";
+  else sel.value = cur ? cur.file : models[0].file;
   sel.title = cur?.api ? `${cur.label} — answers over the internet, billed to your API account` : (d.current || "");
   sel.disabled = false;
   return cur;
+}
+
+/* ONE CHOICE IS PLAIN TEXT, NOT A MENU, and every file stays one click away.
+ * A span after the picker (the picker itself, its id and its change handler
+ * are untouched): the one writer's name, "Show every file" when the server
+ * filtered some out, and the way back. Only in a real document. */
+function writerExtras(sel, d, models, all, emptyTitle, opts = {}) {
+  if (typeof document === "undefined" || !sel?.parentNode || typeof sel.after !== "function") return;
+  let box = sel.nextElementSibling?.classList?.contains("mpick1") ? sel.nextElementSibling : null;
+  if (!box) {
+    box = document.createElement("span");
+    box.className = "mpick1";
+    sel.after(box);
+    box.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-every]");
+      if (!b || !box.fill) return;
+      sel.dataset.every = b.dataset.every;
+      fillModelMenu(sel, box.fill.d, box.fill.emptyTitle, box.fill.opts);
+    });
+  }
+  box.fill = { d, emptyTitle, opts };
+  const single = !all && models.length === 1 && !d?.offline;
+  const filtered = Array.isArray(d?.every) && d.every.length > (d?.models?.length || 0);
+  sel.hidden = single;
+  box.innerHTML = (single ? `<b title="${esc(models[0].file)}">${esc(models[0].label)}</b>` : "")
+    + (!all && filtered ? '<button type="button" class="linkbtn" data-every="1">Show every file</button>' : "")
+    + (all ? '<button type="button" class="linkbtn" data-every="">Only writers</button>' : "");
+  box.hidden = !box.innerHTML;
 }
 
 /* GET /api/chat/models lists what ComfyUI can load plus connected APIs; POST

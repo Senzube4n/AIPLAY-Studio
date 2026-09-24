@@ -449,6 +449,7 @@ function paintCheck() {
     const card = $(`mode-${m}`), info = check.modes[m];
     if (!card || !info) continue;
     card.querySelector('[data-f="engine"]').textContent = info.engine;
+    card.querySelector('[data-f="engine"]').title = info.why || "";   // who picked it, and why (musiccard.mjs)
     card.querySelector('[data-f="note"]').textContent = info.note;
     const w = card.querySelector('[data-f="warn"]');
     w.hidden = !info.warn;

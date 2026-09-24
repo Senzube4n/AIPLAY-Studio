@@ -199,6 +199,9 @@ async function screenInfo(view) {
       : { kind: "view", view: tab.id, label: `Open ${tab.name}` },
     needs,
     needsNote: tab.needsNote ?? null,
+    /* How the screen's engines run (catalogue.js howItRuns): the internals
+     * that used to sit under the Make button. */
+    howItRuns: tab.howItRuns ?? null,
     /* BIT-TRANSPARENT. A screen with nothing to fetch says so out loud rather
      * than showing an empty box, and it is not the panel that decides — the
      * sentence is here so the window and the tool say the same one. */

@@ -29,6 +29,7 @@ import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MOD
 import { appVersion, versionLine } from "../server/version.js";
 import { checkUpdates, lastCheck, updateSentence } from "../server/updates.js";
 import { selfUpdate, updateSource } from "../server/selfupdate.js";
+import { musicCards } from "./musiccard.mjs";
 import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf, autoVramFlags } from "../server/comfyargs.js";
 import { ffmpegPath, ffprobePath } from "../server/clipjoin.js";
 /* What the system check SAYS (RAM, ffmpeg, a weak card, Music only, Studio's
@@ -243,13 +244,6 @@ function openInBrowser(url) {
 
 /* ── the system check ──────────────────────────────────────────────────── */
 
-const ENGINE_LABEL = {
-  "minimax-music3": "MiniMax Music 3",
-  "yue2-comfy": "YuE2 3B (ComfyUI)",
-  "yue2": "YuE2 3B (Python kit)",
-  "yue2-gguf": "YuE2 GGUF (native)",
-};
-
 let checkCache = null;
 let checkInFlight = null;
 
@@ -306,7 +300,6 @@ async function systemCheck({ redetect = false } = {}) {
   const cpuChosen = engineInstall?.backend === "cpu";
   const running = await probeStudio();
 
-  const savedEngine = settings.prefs?.music?.engine || "minimax-music3";
   /* MiniMax on AMD renders when ComfyUI starts with PyTorch attention and CUDA
    * graphs off (Studio's default); warn only when this launch lacks them. */
   const cliText = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
@@ -359,27 +352,28 @@ async function systemCheck({ redetect = false } = {}) {
     studioPackagesItem(engineInstall),
   ].filter(Boolean);
 
-  // Music-only follows the saved choice when native GGUF is picked and installed (the server then starts no ComfyUI).
+  /* The music model each card names: Studio's own answer (launcher/musiccard.mjs
+   * asks server/music-default.js), so a fresh install that saved nothing is
+   * told what Studio will actually run, and the MiniMax-on-AMD warning appears
+   * only for somebody who saved MiniMax. */
   const ggufOk = ggufInstalled && !ggufMismatch;
-  const musicVia = savedEngine === "yue2-gguf" && ggufOk ? "yue2-gguf"
-    : comfyOk && yue2.length ? "yue2-comfy" : ggufOk ? "yue2-gguf" : null;
+  const cards = musicCards({
+    prefs: settings.prefs || {}, api: settings.api || null, yue2, comfyOk, ggufOk,
+    ggufPrecisions: ["q4_0", "q8_0"].filter((p) => existsSync(path.join(ggufModels, `yue2-3b-${p}.gguf`))),
+    minimaxReady, vendor, amdMusicFixed,
+  });
+  const musicVia = cards.music.via;
   const modes = {
     full: {
       available: comfyOk && nodeMajor >= 20,
-      engine: ENGINE_LABEL[savedEngine] || savedEngine,
-      warn: savedEngine === "minimax-music3" && vendor === "amd" && !amdMusicFixed
-        ? "Your selected music model is MiniMax, which renders broken audio on AMD unless ComfyUI starts with PyTorch attention and CUDA graphs off. Set the AMD/Intel engine fix to On under Advanced, or pick YuE2."
-        : savedEngine === "yue2-gguf" && !ggufOk
-          ? (yue2.length
-            ? "Native YuE2 GGUF is selected but not installed; Studio switches to YuE2 through ComfyUI at start."
-            : "Native YuE2 GGUF is selected but not installed. Install it from the Models screen after launch.")
-          : null,
+      engine: cards.full.engine,
+      why: cards.full.why,
+      warn: cards.full.warn,
       note: comfyOk ? "Every screen: music, images, video, the DAW and the rest. Starts ComfyUI." : "Needs a ComfyUI install.",
     },
     music: {
       available: nodeMajor >= 20,
-      engine: musicVia === "yue2-comfy" ? `YuE2 3B through ComfyUI (${bare(yue2.find((n) => /bf16/i.test(n)) || yue2[0])})`
-        : musicVia === "yue2-gguf" ? "YuE2 GGUF (native)" : "setup needed",
+      engine: cards.music.engine,
       warn: !musicVia
         ? (ggufMismatch ? "The installed GGUF runtime is the NVIDIA build. Reinstall it from the Models screen after launch."
           : "Install YuE2 GGUF from the Models screen after launch (any card), or put a YuE2 checkpoint in ComfyUI's models/checkpoints.")

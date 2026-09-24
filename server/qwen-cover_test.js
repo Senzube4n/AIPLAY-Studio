@@ -53,7 +53,7 @@ after(async () => {
 async function configSnapshot(settings) {
   const dir = await mkdtemp(path.join(temp, "prefs-"));
   if (settings) await writeFile(path.join(dir, "settings.json"), JSON.stringify(settings));
-  const source = `import {config,prefsSnapshot} from ${JSON.stringify(new URL("./config.js", import.meta.url).href)}; console.log(JSON.stringify({image:config.image.engine,art:config.art.engine,prefs:prefsSnapshot().art}));`;
+  const source = `import {config,prefsSnapshot,prefChosen} from ${JSON.stringify(new URL("./config.js", import.meta.url).href)}; console.log(JSON.stringify({image:config.image.engine,art:config.art.engine,prefs:prefsSnapshot().art,chosen:prefChosen("art","engine")}));`;
   return JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", source], {
     env: { ...process.env, AIPLAY_APPDATA: dir }, encoding: "utf8", timeout: 10_000,
   }));
@@ -77,11 +77,17 @@ function cover(file, extra = {}) {
   });
 }
 
-test("fresh installs default both image generation and covers to Qwen", async () => {
+/* DEFAULTS FOLLOW THE DISK (UI_PLAN A1, INSTALLER_PLAN S5). A fresh install's
+ * picture and cover engine is worked out from what is on this PC when it is
+ * read (server/fit.js defaultFor, applied by index.js), and never written into
+ * settings.json. config.js alone holds only the last resort, unchosen. What the
+ * machine picks on each disk is server/defaults_test.js's. */
+test("a fresh install saves no cover engine: config.js holds only the unchosen last resort", async () => {
   const snapshot = await configSnapshot();
-  assert.equal(snapshot.image, "qwen-image-2.1");
+  assert.equal(snapshot.image, "qwen-image-2.1", "the literal is the last resort");
   assert.equal(snapshot.art, "qwen-image-2.1");
-  assert.equal(snapshot.prefs.engine, "qwen-image-2.1");
+  assert.equal(snapshot.chosen, false, "nobody chose it");
+  assert.equal(snapshot.prefs?.engine, undefined, "so settings.json is not given one");
 });
 
 test("saved cover engine and disabled preference survive the fresh default", async () => {
@@ -90,6 +96,7 @@ test("saved cover engine and disabled preference survive the fresh default", asy
     assert.equal(snapshot.art, selected);
     assert.equal(snapshot.prefs.engine, selected);
     assert.equal(snapshot.prefs.enabled, false);
+    assert.equal(snapshot.chosen, true, "a saved engine is the person's, and always wins");
     assert.equal(snapshot.image, "qwen-image-2.1");
   }
 });
@@ -306,8 +313,22 @@ test("an MCP render queued after a failed one is reported as the success it was"
   readiness = { ready: true };
   const good = runner.request({ file: "waiter-good.flac", title: "waiter-good", caption: "a blue kite" });
   assert.equal(await verdict(good.id), "ok", "its own render succeeded; the earlier failure is not its verdict");
-  assert.match(runner.status().art.lastError, /waiter-long/, "the queue's last failure is still reported as the queue's");
+  /* A SUCCESS CLEARS IT (the 2026-09-23 audit found lastError sticky until a
+   * restart, so Settings and studio_status kept a failure the next render had
+   * put right). Each finished row still carries its own error. */
+  assert.equal(runner.status().art.lastError, null, "a success clears the queue's last failure");
+  assert.match(runner.status().art.recent.find((row) => row.title === "waiter-long")?.error || "", /Missing or incomplete/,
+    "the failed row keeps its own error");
   assert.equal(runner.status().art.recent[0].id, good.id, "finished rows carry the id the routes return");
+  /* ...AND ITS WHOLE WORDS SURVIVE THE CLEARING. A waiter that polls after a
+   * quick success can no longer borrow the uncut text from lastError, so the
+   * newest rows carry it themselves (fullError) and ownFailure reads it first. */
+  const { ownFailure } = await import("./art-wait.js");
+  const longRow = runner.status().art.recent.find((row) => row.title === "waiter-long");
+  assert.match(longRow?.fullError || "", /Choose Download in Models when ready\.$/, "the newest failed row carries its uncut error");
+  assert.match(ownFailure(longRow, runner.status().art.lastError, "image"), /^waiter-long: .*Choose Download in Models when ready\.$/,
+    "a failure followed by a success still reads whole");
+  assert.equal(runner.status().art.recent.find((row) => row.title === "waiter-bad")?.fullError, undefined, "a short error needs no second copy");
 
   /* THE EMPTY-RESULT NOTE IS ABOUT ITS OWN JOB. The four MCP render tools said
    * "Nothing new appeared — check studio_status for the last error" for an
@@ -351,7 +372,7 @@ test("an MCP render queued after a failed one is reported as the success it was"
     assert.equal(runner.status().art.current?.id, held.id, "the running row carries the id the route returned");
     release();
     assert.equal(await waiting, "ok", "released, it is judged by its own outcome, not the queue's last failure");
-    assert.match(runner.status().art.lastError, /waiter-long/, "...which is still a stranger's");
+    assert.equal(runner.status().art.lastError, null, "...and its success leaves no stale failure behind");
   } finally {
     release();
     runner.qwenStatus = ungated;

@@ -126,7 +126,9 @@ test("the covers engine picker is the Images engine list, and that list is the s
   assert.deepEqual(names(route), accepted, "POST /api/artconfig accepts exactly the engines config.js does");
   const { TOOLS } = await import("./mcp.js");
   const tool = [...(TOOLS.find((t) => t.name === "set_image_engine")?.inputSchema?.properties?.engine?.enum || [])].sort();
-  assert.deepEqual(tool, accepted, "set_image_engine offers exactly the engines config.js accepts");
+  // "auto" is not an engine: it forgets the choice (Settings' "Let Studio pick").
+  assert.ok(tool.includes("auto"), "set_image_engine can hand the choice back to Studio");
+  assert.deepEqual(tool.filter((e) => e !== "auto"), accepted, "set_image_engine offers exactly the engines config.js accepts");
 });
 
 test("the engine labels have no em dash, and the covers copy claims nothing a cover lacks", () => {
@@ -359,18 +361,19 @@ test("the meters keep their fill bars but lose the blue rules between them", () 
   assert.doesNotMatch(css, /\.workbox\.resting \.wbfoot\{display:none\}/, "'all jobs' stays when idle");
 });
 
-test("the note under every main button is a drop-up above it, and takes no pointer", () => {
+test("the note under every main button stays visible; the receipt carries the estimate", () => {
   const css = read("web/styles.css");
-  // A permanent estimate line under the main button of every screen is three
-  // lines of dead column across the app, read once and never again.
-  assert.match(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[\s\S]*?position: absolute;[\s\S]*?bottom: calc\(100% - 10px\)/);
-  assert.match(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[\s\S]*?pointer-events: none;/,
-    "hovering the button must never stop you pressing it");
-  assert.match(css, /\.ctawrap:hover > \.ctanote, \.ctawrap:focus-within > \.ctanote/);
+  /* UI_PLAN C2 undid the hover drop-up (d04ad3e): the estimate is what a
+   * newcomer needs BEFORE pressing, not after hovering. The receipt line
+   * (web/receipt.js) carries it, and the note steps aside only while it does. */
+  assert.match(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[\s\S]*?position: static;/);
+  assert.doesNotMatch(css, /\.ctawrap:hover > \.ctanote/, "no hover-only estimate");
+  assert.doesNotMatch(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[^}]*opacity: 0/, "never invisible by default");
+  assert.match(css, /\.ctawrap > \.ctanote\.rc-took:not\(\.stick\) \{ display: none; \}/, "a warning is never hidden");
   assert.match(css, /\.ctanote:empty, #imgPanel \.ctawrap > \.hint:empty \{ display: none; \}/);
-  // The gutter that line needed went with it.
   assert.match(css, /margin-top: auto; padding: 10px 0 6px;/, "the button sits closer to the bottom");
   assert.doesNotMatch(css, /#vidPanel \.ctawrap > \.ctanote \{ order: -1; \}/, "nothing left to order");
+  assert.match(HTML, /<script type="module" src="receipt\.js"><\/script>/, "the receipt is loaded");
 });
 
 test("a warning or failure under a main button stays in place, not only under the pointer", () => {

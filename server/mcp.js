@@ -479,6 +479,16 @@ export const TOOLS = [
            * models_for_this_machine: this tool is called often. */
           h3_card_tier: h3Brief(st.config?.video?.h3),
         },
+        /* What runs when nothing names it, and who chose it: "you" (a saved
+         * choice, which always wins; `kept` when an older Studio saved it on
+         * its own) or "machine" (worked out from what is on this PC, never
+         * saved). `savedValue` when this session runs something else than the
+         * saved choice, `paid` when songs are billed to the person's own key.
+         * The receipts under Make and Settings show the same rows. Change
+         * music with set_music_engine, pictures and covers with set_image_engine. */
+        defaults: (st.config?.defaults || []).map((d) => ({ key: d.key, value: d.value, chosenBy: d.chosenBy, why: d.why,
+          ...(d.kept ? { kept: true } : {}), ...(d.savedValue ? { savedValue: d.savedValue } : {}),
+          ...(d.paid ? { paid: true } : {}), ...(d.canRun === false ? { canRun: false } : {}) })),
       };
     },
   },
@@ -2537,7 +2547,7 @@ export const TOOLS = [
   {
     name: "make_image",
     description:
-      "Draw a picture, defaulting to Qwen Image 2.1. Runtime and weights must be ready; check qwen_image_status. It runs only while "
+      "Draw a picture. With no `engine` it uses the saved picture engine, or when nobody chose one the recommended picture model on this PC (studio_status `defaults`, key image.engine, says which and why; set_image_engine with use_for \"pictures\" saves one). Qwen Image 2.1's runtime and weights must be ready; check qwen_image_status. It runs only while "
       + "nothing else is generating — music always takes priority. Blocks until it is done.\n\n"
       + "Pass `ref_images` for Qwen Image 2.1 or FLUX.2 editing: the prompt refers to them as "
       + "\"image 1\", \"image 2\" in order — \"put the character from image 1 into the scene "
@@ -2579,7 +2589,7 @@ export const TOOLS = [
         height: { type: "integer" },
         seed: { type: "integer" },
         engine: { type: "string", enum: ["qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
-          description: "qwen-image-2.1 (default): native INT8 Qwen Image 2.1, generation/editing, up to 10 refs, 25 steps at CFG 1, noncommercial research license. "
+          description: "qwen-image-2.1: native INT8 Qwen Image 2.1, generation/editing, up to 10 refs, 25 steps at CFG 1, noncommercial research license. "
             + "flux2: FLUX.2 klein 4B, Apache-2.0, 4 steps, also takes ref_images. "
             + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
             + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
@@ -2641,7 +2651,11 @@ export const TOOLS = [
         // Declared AND forwarded: a schema that names a field its run() drops is
         // a feature that answers ok and does nothing.
         private: a.private === true,
-        engine: a.engine || "qwen-image-2.1", quality: a.quality, checkpoint: a.checkpoint,
+        /* No engine named: none is sent, and /api/image uses the saved picture
+         * engine or the machine's pick from the disk (studio_status defaults,
+         * image.engine). Posting Qwen here aimed a FLUX-only install at files
+         * it never downloaded. */
+        ...(a.engine ? { engine: a.engine } : {}), quality: a.quality, checkpoint: a.checkpoint,
         negative: a.negative, cfg: a.cfg,
         refSizing: a.ref_sizing, refResolution: a.ref_resolution, transparent: a.transparent, refAlpha: a.ref_alpha,
         count: a.count, width: a.width, height: a.height,
@@ -2773,11 +2787,52 @@ export const TOOLS = [
   },
 
   {
+    /* THE THIRD ENGINE SETTER (UI_PLAN A1). set_image_engine and
+     * set_video_engine existed; the music model was reachable only through
+     * studio_api_request. Posts the Music page's own door, so the refusals and
+     * the unload are the page's. Withheld from the in-app chat by sentence. */
+    name: "set_music_engine",
+    description:
+      "Choose the music model persistently: the same choice as the Music page's model picker and the Models "
+      + "screen's Music model. With no saved choice Studio uses what is installed and ready on this PC "
+      + "(studio_status `defaults` says which and why); this saves yours, and a saved choice always wins.\n\n"
+      + "  • engine — pick an engine and let Studio pick its build: yue2-comfy (YuE2 through ComfyUI), "
+      + "yue2-gguf (native YuE2 GGUF), yue2 (the YuE2 Python kit), minimax-music3, ace-step15. "
+      + "\"auto\" forgets your choice so Studio picks from the disk again.\n"
+      + "  • model — pick one exact build by its `value` from `choices` (call with no arguments to list them).\n\n"
+      + "Refused when that model is not downloaded (models_for_this_machine says; download_model fetches). "
+      + "A MiniMax \"api\" choice switches paid API mode on, billed per song to your own key. Choosing a "
+      + "different model unloads the previous one when nothing is rendering.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        engine: { type: "string", enum: ["auto", "yue2-comfy", "yue2-gguf", "yue2", "minimax-music3", "ace-step15"] },
+        model: { type: "string", description: "An exact build: a `value` from `choices`, e.g. \"yue2-comfy:yue2_3b_int8_convrot.safetensors\" or \"yue2-gguf:q4_0\"." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      if (a.engine && a.model) throw new Error("Pass engine or model, not both.");
+      if (a.model) await api("POST", "/api/music", { action: "model", value: String(a.model).slice(0, 300) });
+      else if (a.engine) await api("POST", "/api/music", { action: "engine", value: a.engine });
+      const st = await api("GET", "/api/status");
+      const d = (st.config?.defaults || []).find((x) => x.key === "music.engine") || null;
+      return {
+        engine: st.config?.musicEngine ?? null,
+        chosenBy: d?.chosenBy ?? null, why: d?.why ?? null,
+        choices: (st.config?.musicModels || []).map((c) => ({ value: c.value, label: c.label, ready: !!c.available, note: c.note ?? null,
+          ...(c.api ? { paid: true } : {}) })),
+      };
+    },
+  },
+
+  {
     name: "set_image_engine",
     description:
-      "Choose the automatic cover-art engine persistently. Standalone make_image defaults to Qwen Image 2.1; pass engine there to choose another. "
+      "Choose a picture engine persistently: for covers (the default), for pictures (the Images screen's engine, and make_image or a music video's stills with no engine named), or both, with `use_for`. "
+      + "\"auto\" forgets the choice, so Studio picks from what is on this PC again. make_image still takes its own `engine` per picture. "
       + "qwen-image-2.1 supports references, 25 steps at CFG 1, and requires a compatible runtime and native files. "
-      + "Fresh installs default to Qwen Image 2.1 for covers too; saved cover preferences remain unchanged. flux2: FLUX.2 klein, Apache-2.0, also takes references. "
+      + "With no saved choice, covers use the recommended picture model on this PC, and none are queued while no picture model is there (studio_status `defaults`, key art.engine); a saved choice always wins. flux2: FLUX.2 klein, Apache-2.0, also takes references. "
       + "zimage / zimage-base: Z-Image, Apache-2.0, photographic; base honours a negative prompt. "
       + "anima: anime and illustration. "
       + "ideogram4: typography and layouts; ⚠ NON-COMMERCIAL licence. "
@@ -2788,15 +2843,25 @@ export const TOOLS = [
       type: "object",
       required: ["engine"],
       properties: {
-        engine: { type: "string", enum: ["qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
-        checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with." },
+        engine: { type: "string", enum: ["auto", "qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
+        checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with (covers only; a picture's own file is picked per picture)." },
+        use_for: { type: "string", enum: ["covers", "pictures", "both"],
+          description: "covers (default): the engine that paints song covers. pictures: the Images screen's engine, used by make_image and music-video stills when they name none; kept even when its files are missing (make_image then says what to download). both." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      const r = await api("POST", "/api/artconfig", { engine: a.engine, ...(a.checkpoint ? { checkpoint: safeName(a.checkpoint, "checkpoint") } : {}) });
+      const use = a.use_for || "covers";
+      if (a.engine === "checkpoint" && use !== "covers") throw new Error("Your own model file paints covers only; make_image picks a file per picture (engine checkpoint + checkpoint).");
+      const body = {
+        ...(use !== "pictures" ? { engine: a.engine, ...(a.engine === "auto" ? {} : { choose: true }) } : {}),
+        ...(use !== "covers" ? { imageEngine: a.engine } : {}),
+        ...(a.checkpoint && use !== "pictures" ? { checkpoint: safeName(a.checkpoint, "checkpoint") } : {}),
+      };
+      const r = await api("POST", "/api/artconfig", body);
       if (r.error) throw new Error(r.error);
-      return { engine: r.engine ?? r.art?.engine ?? a.engine, checkpoint: r.checkpoint ?? r.art?.checkpoint ?? null };
+      return { engine: r.engine ?? r.art?.engine ?? a.engine, checkpoint: r.checkpoint ?? r.art?.checkpoint ?? null,
+        image_engine: r.imageEngine ?? null, chosen: r.chosen ?? null };
     },
   },
 
@@ -3382,7 +3447,7 @@ export const TOOLS = [
 
   {
     name: "enhance_model",
-    description: "Which language model the Enhance tools (enhance_style, enhance_lyrics, enhance_description) use, and the choices. With `model`, choose one: a value from `models[].file`, e.g. \"api:anthropic\" for a connected API or a local model file. With none chosen, Enhance uses Simple mode's model, then Chat's.",
+    description: "Which language model the Enhance tools (enhance_style, enhance_lyrics, enhance_description) use, and the choices. With `model`, choose one: a value from `models[].file`, e.g. \"api:anthropic\" for a connected API or a local model file. With none chosen, Enhance uses Simple mode's model, then Chat's. `models` lists the ones that can write, by name (the same list every writer picker on the page shows); files that cannot (a base model, ACE-Step's planners, LTX's encoder, an fp4 build off an RTX 50-series card) are in `not_writers` with the reason.",
     inputSchema: {
       type: "object",
       properties: { model: { type: "string", description: "Optional: the model to use from now on." } },
@@ -3391,7 +3456,8 @@ export const TOOLS = [
     async run(a) {
       const r = a.model ? await api("POST", "/api/enhance", { action: "model", model: a.model }) : await api("GET", "/api/enhance");
       if (r?.error) throw new Error(r.error);
-      return { current: r.current, models: (r.models || []).map((m) => ({ file: m.file, label: m.label || m.file, api: !!m.api })), offline: !!r.offline };
+      return { current: r.current, models: (r.models || []).map((m) => ({ file: m.file, label: m.label || m.file, api: !!m.api })), offline: !!r.offline,
+        not_writers: (r.every || []).filter((m) => m.why).map((m) => ({ file: m.file, why: m.why })) };
     },
   },
 

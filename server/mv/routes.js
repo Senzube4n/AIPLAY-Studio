@@ -939,7 +939,9 @@ export function createMvRoutes(deps) {
             const ENUMS = {
               songConditioning: ["auto", "always"],
               videoEngine: ["h3", "ltx", "hybrid"],
-              imageEngine: ["flux2", "ideogram", "checkpoint"],
+              /* Qwen Image 2.1 too: it is an image engine art.js renders, and a
+               * project that names it must not be refused (INSTALLER_PLAN S5). */
+              imageEngine: ["flux2", "ideogram", "checkpoint", "qwen-image-2.1"],
               baseScale: ["auto", "full"],
               qualityMode: ["budget", "recommended", "high"],
               /* ⚠ MATCHES THE CONTROL, which offers five. An earlier draft of

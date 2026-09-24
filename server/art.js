@@ -735,7 +735,7 @@ export class ArtRunner extends EventEmitter {
          * finished and not one of them what they were or where the file went.
          * Trimmed to what a list needs — the full job objects carry graphs and
          * buffers that have no business crossing the wire. */
-        recent: (this.done || []).slice(0, 200).map((j) => ({
+        recent: (this.done || []).slice(0, 200).map((j, i) => ({
           id: j.id || null,
           kind: j.kind,
           title: j.title || null,
@@ -752,6 +752,10 @@ export class ArtRunner extends EventEmitter {
             : (j.startedAt && j.finishedAt) ? j.finishedAt - j.startedAt : null,
           at: j.finishedAt || j.at || null,
           error: j.error ? String(j.error).slice(0, 200) : null,
+          /* The whole failure, for the newest rows only: `lastError` used to
+           * be the one place the uncut text lived, and it now clears on the
+           * next success (art-wait.js ownFailure reads this first). */
+          ...(i < 20 && j.error && String(j.error).length > 200 ? { fullError: String(j.error).slice(0, 4000) } : {}),
         })),
         stats: this.stats || {},
         nextTitles: this.queue.slice(0, 3).map((j) => ({ kind: j.kind, title: j.title })),
@@ -1074,6 +1078,12 @@ export class ArtRunner extends EventEmitter {
          * could report it. */
         job.finishedAt = Date.now();
         job.durationMs = job.startedAt ? job.finishedAt - job.startedAt : null;
+        /* A success clears the queue's last failure. It used to stay until a
+         * restart (the 2026-09-23 audit): Settings and studio_status kept
+         * reporting a failure the next render had already put right. Each
+         * finished row still carries its own `error`, and the newest ones
+         * their uncut `fullError` for the waiters (art-wait.js). */
+        this.lastError = null;
       } catch (err) {
         job.finishedAt = Date.now();
         job.durationMs = job.startedAt ? job.finishedAt - job.startedAt : null;

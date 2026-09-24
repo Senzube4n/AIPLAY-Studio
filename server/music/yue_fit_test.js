@@ -162,8 +162,11 @@ ok("...and a promotion the user did not ask for gets a note, not silence",
  * case, and the owner asked for the paragraph to go once 4:25 had rendered. */
 ok("...that is short — two lines — and quotes the measured reach",
   long.info.lines.length === 2 && /Measured to 4:25/.test(long.info.lines[0]));
-ok("...and the cost of the change, as the two measured ratios",
-  /slower/i.test(long.info.lines[1]) && /2\.65×/.test(long.info.lines[1]) && /2\.39×/.test(long.info.lines[1]));
+/* The mechanism and its two ratios moved to the Music ⓘ panel (catalogue.js
+ * howItRuns, UI_PLAN C2); the note keeps the plain half: slower, same audio. */
+ok("...and the cost of the change in plain words, the internals left to the ⓘ panel",
+  /slower/i.test(long.info.lines[1]) && /same audio/.test(long.info.lines[1])
+  && !/512-token|2\.65×|prefill/.test(long.info.lines.join(" ")));
 ok("...right up to the long reach itself",
   fit(264.6).rung.id === "long" && fit(264.6).ceiling === null);
 

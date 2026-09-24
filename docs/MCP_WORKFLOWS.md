@@ -7,7 +7,8 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Workflow | Tools |
 |---|---|
 | Qwen native weights and readiness | `model_inventory`, `models_for_this_machine`, `download_model`, `cancel_download`, `qwen_image_status` |
-| Automatic song-cover preference | `set_image_engine`: persistent cover engine; fresh installs use Qwen Image 2.1, existing saved choices are preserved |
+| Automatic song-cover and picture preference | `set_image_engine`: persistent cover engine, or with `use_for` `pictures` / `both` the engine `make_image` uses when it names none; `auto` forgets the choice; with no saved choice both use the recommended picture model on this PC (`studio_status` `defaults`), and saved choices are preserved |
+| Music model | `set_music_engine`: persistent music model (an engine, an exact build, or `auto`); with no saved choice Studio uses what is installed and ready |
 | Installed model choices | `list_checkpoints`, `list_dits`, `list_loras`, `sampling_options`, `models_folder`, `model_override` |
 | Image creation and ordered references | `make_image`: refs, reference sizing/resolution, dimensions, alpha, native DiT/encoder/VAE, seed and sampling settings |
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
@@ -24,8 +25,9 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 
 ## Image edit review
 
-Fresh installs use Qwen Image 2.1 for standalone images and automatic song covers.
-Install the native model files explicitly in Models and check `qwen_image_status`;
+With no saved choice, standalone images and automatic song covers use the
+recommended picture model on this PC; no cover is queued while none is there.
+To use Qwen Image 2.1, install the native model files explicitly in Models and check `qwen_image_status`;
 selecting Qwen does not install or update the runtime. `set_image_engine` changes
 the saved cover preference only after readiness passes. Standalone `make_image`
 can select its own engine. Automatic covers wait visibly for an offline engine;

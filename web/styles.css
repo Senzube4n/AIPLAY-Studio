@@ -523,25 +523,42 @@ details.adv[open] summary::before { content: "▾"; }
 .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .btn.ghost { flex: 0 0 96px; background: none; border: 1px solid var(--edge); color: var(--dim); }
 .btn.ghost:hover { border-color: var(--primary); color: var(--primary); filter: none; }
-/* ⚠ THE NOTE IS A DROP-UP, NOT A LINE UNDER THE BUTTON. "about 4:00 on your
-   card · re-rolls ~3x faster" is worth reading once and then never again, and
-   a permanent line of it under the main button of every screen is three lines
-   of dead column across the app. It rises above the button on hover and takes
-   no pointer: hovering the button must never stop you pressing it, and there
-   is nothing in the note to click. An empty note draws nothing at all. */
+/* THE NOTE UNDER THE BUTTON STAYS VISIBLE (UI_PLAN C2). It was a drop-up that
+   showed only under the pointer, and the estimate is what a newcomer needs
+   before pressing, not after hovering. The receipt line (web/receipt.js)
+   carries the estimate now, so the note steps aside while it does
+   (.rc-took below); any other message, and every warning, stays in place.
+   An empty note draws nothing at all. */
 .ctanote, #imgPanel .ctawrap > .hint {
-  position: absolute; left: 0; right: 0; bottom: calc(100% - 10px); z-index: 5;
-  margin: 0; padding: 8px 10px; border-radius: 9px;
+  position: static; margin: 0; padding: 4px 0 0;
   font-family: var(--mono); font-size: 10px; line-height: 1.45; text-align: center;
-  color: var(--dim); background: var(--panel); border: 1px solid var(--edge);
-  box-shadow: 0 12px 30px hsla(0,0%,0%,.5);
-  opacity: 0; transform: translateY(4px); pointer-events: none;
-  transition: opacity .14s, transform .14s;
+  color: var(--dim);
 }
-.ctawrap:hover > .ctanote, .ctawrap:focus-within > .ctanote,
-#imgPanel .ctawrap:hover > .hint, #imgPanel .ctawrap:focus-within > .hint { opacity: 1; transform: none; }
 .ctanote:empty, #imgPanel .ctawrap > .hint:empty { display: none; }
-@media (prefers-reduced-motion: reduce) { .ctanote, #imgPanel .ctawrap > .hint { transition: none; } }
+.ctawrap > .ctanote.rc-took:not(.stick) { display: none; }
+/* THE RECEIPT: "YuE2 3B · 32 steps · up to 2:30 · about 4:00 · Change". Each
+   field is a button to the control that owns it (web/receipt.js RECEIPTS). */
+.receipt { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--dim); text-align: center; }
+.receipt p { margin: 0; }
+.receipt .rcf { font: inherit; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.receipt button.rcf:hover { color: var(--primary); text-decoration: underline; }
+.receipt .rcsep { opacity: .45; margin: 0 5px; }
+.receipt .rcchange { font: inherit; background: none; border: 0; padding: 0; color: var(--primary); text-decoration: underline; cursor: pointer; }
+.receipt .rcfail { color: var(--warn); margin-top: 2px; }
+/* The note's qualifiers after the estimate ("re-rolls ~3× faster"). */
+.receipt .rctail { opacity: .8; font-style: italic; }
+.rc-hi { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 6px; }
+/* One writing model is a name, not a menu (web/chat.js writerExtras). */
+.mpick1 { font-size: 12px; margin-left: 6px; color: var(--dim); }
+.mpick1 b { font-weight: 500; color: var(--ink); margin-right: 8px; }
+/* "Show every file" is an Advanced thing (UI_PLAN B2): not beside the Simple
+   writers (Music Simple, the Images and Video assist bars). */
+.simple-model .mpick1 [data-every] { display: none; }
+/* Settings: what Studio picked for this PC, and what you chose. */
+.deflist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.deflist li.off span { color: var(--warn); }
+/* Kept from settings an older Studio saved on its own: said, not claimed. */
+.deflist li.kept span { font-style: italic; }
 /* ⚠ BUT A WARNING OR A FAILURE STAYS IN PLACE. "⚠ 'X' failed", "⚠ no build
    for 7 steps on this disk", "That render failed." are not a cost to read
    once: a note that shows only under the pointer is a failure nobody sees.

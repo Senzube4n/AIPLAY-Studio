@@ -116,6 +116,10 @@ export async function waitForArtJob({ api, sleep, timeoutMs, kind, jobId, pollMs
  * cut text is still ours, which beats borrowing anybody else's.
  */
 export function ownFailure(done, lastError, kind) {
+  /* The row's own uncut text first (art.js status() keeps it on the newest
+   * rows): a success clears `lastError` now, and between a failure and the
+   * next poll a quick job can succeed. */
+  if (typeof done.fullError === "string" && done.fullError) return `${done.title || kind}: ${done.fullError}`;
   const own = `${done.title}: ${done.error}`;
   if (done.title && typeof lastError === "string" && lastError.startsWith(own)) return lastError;
   return `${done.title || kind}: ${done.error}`;

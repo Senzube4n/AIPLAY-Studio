@@ -63,6 +63,10 @@ const HEADS = [
   ["POST /api/settings (the rig Studio launches, the output folder)", 'if (p === "/api/settings" && req.method === "POST") {', "const b = await readBody(req);"],
   ["POST /api/apimode (the paid mode, its cap, its keys)", 'if (p === "/api/apimode" && req.method === "POST") {', "const b = await readBody(req);"],
   ["POST /api/generate (a song, billed in API mode)", 'if (p === "/api/generate" && req.method === "POST") {', "const body = await readBody(req);"],
+  /* Defaults that follow the disk: the music model (model, engine, "auto",
+   * LoRAs) and the picture and cover engines are chosen and saved here. */
+  ["POST /api/music (the music model, its build, \"auto\", the LoRAs)", 'if (p === "/api/music" && req.method === "POST") {', "const b = await readBody(req);"],
+  ["POST /api/artconfig (the cover and picture engines, \"auto\")", 'if (p === "/api/artconfig" && req.method === "POST") {', "const b = await readBody(req);"],
 ];
 for (const [door, open, readLine] of HEADS) {
   test(`${door}: refused before its body is read, from anywhere but Studio's page or a local client`, async () => {

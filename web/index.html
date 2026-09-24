@@ -4583,6 +4583,15 @@
       <header class="page-head"><h2>Settings</h2><p>Set once, then forget. Every change applies straight away unless it says otherwise.</p></header>
       <nav class="pnav" aria-label="Settings sections"></nav>
 
+      <!-- WHAT STUDIO PICKED, AND WHAT YOU CHOSE (UI_PLAN A1). One line per
+           default from studio_status `defaults` (server/fit.js defaultFor),
+           filled by web/receipt.js; Change goes to the control that owns it. -->
+      <section class="pcard" id="set-defaults" data-nav="Picked for this PC">
+        <h3>Picked for this PC</h3>
+        <p class="pcard-sub">What runs when you have not chosen, worked out from what is on this PC. A model you pick is kept until you change it or press Let Studio pick.</p>
+        <ul class="deflist" id="defaultsList"></ul>
+      </section>
+
       <!-- extractSettings() in app.js moves graphics memory, precision,
            schedule and visualiser into #settingsParams, and their notes after
            #setNote. Keep both ids inside this card. -->
@@ -5199,6 +5208,9 @@
 <script type="module" src="credits.js"></script>
 <script type="module" src="roulette.js"></script>
 <script type="module" src="prompt-tools.js"></script>
+<!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
+     for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
+<script type="module" src="receipt.js"></script>
   <!-- The full picture behind a reference thumbnail. At BODY level and fixed,
        because the form column it belongs to is overflow-y:auto and would clip
        anything bigger than the 88x50 thumb — which is the entire point. -->

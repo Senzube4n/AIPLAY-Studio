@@ -1612,12 +1612,14 @@ export const config = {
   },
 
   /**
-   * Images and automatic covers default to Qwen Image 2.1 on fresh installs.
-   * Saved cover-engine preferences still win. Qwen's native INT8 files and
-   * compatible runtime must be ready; nothing here downloads them or selects
-   * another engine automatically. Its graph owns its sampling defaults.
+   * Images and automatic covers follow the disk when nobody chose: the
+   * recommended picture model that is on this PC (server/fit.js defaultFor,
+   * applied by index.js and never written into settings.json). "qwen-image-2.1"
+   * below is only the last resort. A saved cover engine always wins. Qwen's
+   * native INT8 files and compatible runtime must be ready when it is chosen;
+   * nothing here downloads them. Its graph owns its sampling defaults.
    *
-   * The FLUX.2 klein settings below remain for explicitly selected FLUX covers.
+   * The FLUX.2 klein settings below are what a FLUX cover renders with.
    *
    * Chosen over Z-Image-Turbo and Krea-2-Turbo on three counts: it is the
    * smallest DiT of the three (4.07 GB official fp8), it is Apache-2.0 with no
@@ -1984,6 +1986,10 @@ export const PREF_PATHS = [
    * the hook fails. */
   ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(v)],
   ["art", "checkpoint", (v) => v === null || (typeof v === "string" && /^[\w .()-]+\.(safetensors|ckpt)$/i.test(v))],
+  /* The Images screen's engine, and a picture with none named (make_image, a
+   * music video's stills). The covers' list above, read at call time rather
+   * than retyped; minus "checkpoint", which needs a file picked per picture. */
+  ["image", "engine", (v) => v !== "checkpoint" && PREF_PATHS.find(([g, k]) => g === "art" && k === "engine")[2](v)],
   ["art", "quality", (v) => ["default", "quality"].includes(v)],
   ["art", "style", (v) => typeof v === "string" && v.length > 0 && v.length <= 1500],
   ["enhance", "when", (v) => ["off", "all"].includes(v)],
@@ -1996,10 +2002,96 @@ export const PREF_PATHS = [
   ["power", "graceMinutes", (v) => Number.isInteger(v) && v >= 1 && v <= 60],
 ];
 
-/** Just the preference fields, ready to be merged into settings.json. */
+/**
+ * DEFAULTS THAT FOLLOW THE DISK: who chose each of these values.
+ *
+ * The literals in `config` above (music "minimax-music3", pictures and covers
+ * "qwen-image-2.1") aimed a fresh install at models it never downloaded. When
+ * nobody has chosen, server/fit.js defaultFor() works out what is on this PC
+ * and index.js applies it here WITHOUT marking it chosen, so prefsSnapshot()
+ * never writes it into settings.json and the next start works it out again.
+ * Any ordinary assignment (a route, a saved file, a test) is a choice and is
+ * marked as one, so a new route that sets the value is remembered without
+ * having to know this exists. The literals stay as the last resort.
+ *
+ * Three origins: "you" (chosen, or read from a settings file this Studio
+ * wrote), "kept" (read from a settings file an OLDER Studio wrote, which saved
+ * every value whether or not anybody chose it: it wins like a choice, and is
+ * worded "Saved in your settings" rather than "You chose"), and none (the
+ * machine's). `keptFromBefore` in settings.json carries "kept" across starts
+ * and marks a file as this Studio's.
+ */
+const MACHINE_KEYS = [["music", "engine"], ["music", "yue2Checkpoint"], ["art", "engine"], ["image", "engine"]];
+export const LITERAL_DEFAULTS = Object.fromEntries(["music", "art", "image"].map((g) => [g,
+  Object.fromEntries(MACHINE_KEYS.filter(([mg]) => mg === g).map(([, k]) => [k, config[g][k]]))]));
+const origin = new Map();         // id -> "you" | "kept"
+const machineValue = new Map();   // id -> the live value
+const sessionSaved = new Map();   // id -> { saved, reason }: a saved choice this launch does not run
+for (const [group, key] of MACHINE_KEYS) {
+  const id = `${group}.${key}`;
+  machineValue.set(id, config[group][key]);
+  Object.defineProperty(config[group], key, {
+    enumerable: true, configurable: true,
+    get: () => machineValue.get(id),
+    /* A saved null checkpoint is "no choice", not a choice of nothing. */
+    set: (v) => {
+      machineValue.set(id, v);
+      sessionSaved.delete(id);
+      if (v !== null) origin.set(id, "you"); else origin.delete(id);
+    },
+  });
+}
+/** Whether a person (or a saved file) chose this value, rather than the machine. */
+export function prefChosen(group, key) { return origin.has(`${group}.${key}`); }
+/** "you", "kept" (an older Studio saved it on its own) or null (the machine's). */
+export function prefOrigin(group, key) { return origin.get(`${group}.${key}`) || null; }
+/** Put the machine's pick in place without marking it chosen. Ignored once chosen. */
+export function applyMachineDefault(group, key, value) {
+  const id = `${group}.${key}`;
+  if (!machineValue.has(id) || origin.has(id)) return false;
+  machineValue.set(id, value);
+  return true;
+}
+/**
+ * THIS LAUNCH RUNS SOMETHING ELSE, AND NOTHING IS SAVED. A startup that cannot
+ * run a saved choice (the music-only launch runs YuE2 only; a saved native
+ * GGUF that is not installed) swaps the live value for this session: the saved
+ * one stays in settings.json, is reported beside the one running (`reason`),
+ * and is back the next time it can run. Unchosen, it is the machine's pick.
+ */
+export function overrideForSession(group, key, value, reason = null) {
+  const id = `${group}.${key}`;
+  if (!machineValue.has(id)) return false;
+  if (!origin.has(id)) { machineValue.set(id, value); return true; }
+  /* A second swap keeps what was SAVED, and the newer, fuller reason. */
+  const prev = sessionSaved.get(id);
+  sessionSaved.set(id, { saved: prev ? prev.saved : machineValue.get(id), reason: reason ?? prev?.reason ?? null });
+  machineValue.set(id, value);
+  return true;
+}
+/** The saved value this session is not running, and why; null when it runs what is saved. */
+export function sessionOverride(group, key) {
+  const s = sessionSaved.get(`${group}.${key}`);
+  return s ? { saved: s.saved, reason: s.reason, value: machineValue.get(`${group}.${key}`) } : null;
+}
+/** Forget a choice, so the machine decides again ("auto", Let Studio pick). */
+export function forgetPref(group, key) {
+  const id = `${group}.${key}`;
+  origin.delete(id);
+  sessionSaved.delete(id);
+}
+
+/** Just the preference fields, ready to be merged into settings.json. A value
+ *  the machine picked is left out: it is worked out again on the next start.
+ *  A session's swap is not saved either: the saved value is written back. */
 export function prefsSnapshot() {
   const out = { tier: config.tier };
-  for (const [group, key] of PREF_PATHS) (out[group] ||= {})[key] = config[group][key];
+  for (const [group, key] of PREF_PATHS) {
+    const id = `${group}.${key}`;
+    if (machineValue.has(id) && !origin.has(id)) continue;
+    (out[group] ||= {})[key] = sessionSaved.has(id) ? sessionSaved.get(id).saved : config[group][key];
+  }
+  out.keptFromBefore = [...origin].filter(([, o]) => o === "kept").map(([id]) => id);
   return out;
 }
 
@@ -2013,6 +2105,21 @@ for (const [group, key, ok] of PREF_PATHS) {
   if (ok(v)) config[group][key] = v;
   else console.warn(`  [settings] ignoring saved ${group}.${key}: ${JSON.stringify(v)}`);
 }
+/* SETTINGS AN OLDER STUDIO WROTE. Before defaults followed the disk, the first
+ * save wrote every preference, chosen or not, so a value in such a file is
+ * kept (it wins) but nobody can say it was chosen: "kept". The Images engine
+ * was never saved at all; it was the literal, so an existing install keeps the
+ * literal rather than moving to whatever the disk suggests (the owner's
+ * pictures and music-video stills stay on Qwen Image 2.1). A file this Studio
+ * wrote carries `keptFromBefore`, even empty, and says which are still kept. */
+if (saved.prefs && typeof saved.prefs === "object") {
+  if (!Array.isArray(saved.prefs.keptFromBefore)) {
+    if (!origin.has("image.engine")) config.image.engine = LITERAL_DEFAULTS.image.engine;
+    for (const [group, key] of MACHINE_KEYS) if (origin.has(`${group}.${key}`)) origin.set(`${group}.${key}`, "kept");
+  } else {
+    for (const id of saved.prefs.keptFromBefore) if (origin.has(id)) origin.set(id, "kept");
+  }
+}
 /* The graphics-memory tier is a launch FLAG, so it is applied before the engine
  * starts rather than through setTier — which exists to change it afterwards and
  * restarts the process to do so. */
@@ -2023,4 +2130,8 @@ if (typeof saved.prefs?.tier === "string" && config.vramTiers[saved.prefs.tier])
 config.lyrics.python = whisperPython();
 /* Music-only runs native YuE2 GGUF, or YuE2 through ComfyUI when this machine
  * has a ComfyUI install and a YuE2 checkpoint (decided at startup, index.js). */
-if (config.musicOnly && !["yue2-gguf", "yue2-comfy"].includes(config.music.engine)) config.music.engine = "yue2-gguf";
+/* A saved engine it cannot run is swapped for this session only (overrideForSession):
+ * settings.json keeps the choice, and the full Studio runs it again. */
+if (config.musicOnly && !["yue2-gguf", "yue2-comfy"].includes(config.music.engine)) {
+  overrideForSession("music", "engine", "yue2-gguf", "The music-only launch runs YuE2 only");
+}

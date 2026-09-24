@@ -218,6 +218,17 @@ node server/krea2_test.js || exit 1
 # dial the door takes; set_image_engine and download_model exist, post the
 # right doors, and are withheld from the in-app chat by sentence.
 node server/mcp-steer_test.js || exit 1
+# DEFAULTS FOLLOW THE DISK (UI_PLAN A1, B2, C2; INSTALLER_PLAN S5): fit.js
+# defaultFor on four imaginary machines — a saved choice always wins, a fresh
+# install never gets the Python kit unless it is ready, no default names a
+# missing model while a ready one exists, no picture model means no cover in
+# one sentence; config.js never writes the machine's pick to settings.json;
+# studio_status.defaults and set_music_engine (withheld from chat) run against
+# a stub; only writing models are offered, by name; every receipt field under
+# a Make button names a control that exists; an older Studio's settings (the
+# owner's) keep every value, pictures included; the launcher names what Studio runs.
+node --check web/receipt.js || exit 1
+node server/defaults_test.js || exit 1
 # EXTEND AND REPLACE ON THE PAGE, AND THE GGUF CARD: one panel with a mode
 # switch and two handles that never cross, both offered from the row menu and
 # the song panel; the setup card folds once installed and carries the authors'

@@ -210,11 +210,12 @@ function read() {
 }
 
 /** Never blocks a request: returns the last reading and refreshes behind it. */
+let pending = null;
 export function gpuStatus() {
   const now = Date.now();
   if (!inflight && now - lastAt > MIN_GAP_MS) {
     inflight = true;
-    read().then((r) => {
+    pending = read().then((r) => {
       if (r) cached = r;
       lastAt = Date.now();
       inflight = false;
@@ -222,6 +223,26 @@ export function gpuStatus() {
   }
   return cached;
 }
+
+/**
+ * THE FIRST READING, WAITED FOR. gpuStatus() answers null until nvidia-smi
+ * (or the AMD read) has come back once, about 2.5 s after start, and a
+ * decision taken in that window treats every card as no card: the defaults
+ * (server/fit.js defaultFor) picked native GGUF on NVIDIA and the int8 YuE2
+ * build on AMD. Resolves with the reading, or null for a machine with no card
+ * once the read has finished; never waits longer than `maxMs`. Instant after
+ * the first read.
+ */
+export function gpuFirstReading(maxMs = 8000) {
+  gpuStatus();
+  if (lastAt) return Promise.resolve(cached);
+  return Promise.race([
+    (pending || Promise.resolve()).then(() => cached),
+    new Promise((resolve) => setTimeout(() => resolve(cached), maxMs).unref?.()),
+  ]);
+}
+/** Whether the first reading has finished (a null gpuStatus() then means no card). */
+export const gpuReadOnce = () => lastAt > 0;
 
 /**
  * System memory, alongside the card.

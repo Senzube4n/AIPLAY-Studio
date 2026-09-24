@@ -346,8 +346,8 @@ test("Images and Video line up row for row; every note sits above its button; Mu
   const css = src("../web/styles.css");
   assert.match(css, /#vidPanel \{ gap: 12px; \}/, "both columns step by 12px");
   // Video's note was ordered above Render clip with flex. Every screen's note
-  // is a hover drop-up above its own button now, so there is nothing to order.
-  assert.match(css, /\.ctawrap:hover > \.ctanote/, "the note rises above the button");
+  // sits under its own button in the flow now (UI_PLAN C2), so nothing to order.
+  assert.match(css, /\.ctanote, #imgPanel \.ctawrap > \.hint \{[\s\S]*?position: static;/, "the note sits under the button");
   assert.doesNotMatch(css, /#vidPanel \.ctawrap > \.ctanote \{ order: -1; \}/);
   assert.match(css, /#imagesview \.wrow\.imgtools \{ margin: 0 0 8px; min-height: 32px;/, "the galleries' bars on one line");
   assert.match(css, /\.create \.simple \.simple-label \{ font-size: var\(--fs-md\); font-weight: 500; margin: 7px 6px 1px 10px;/, "Music's label like the others");
