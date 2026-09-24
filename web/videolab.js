@@ -186,6 +186,36 @@ function paintCommit() {
  * in server/videolab/catalog.js and nothing at all in here — which is the only
  * version of this that survives contact with a weekly release cycle.
  */
+/* ONE CONTROL PER VALUE (UI_PLAN C3). A row whose value the Video screen already
+ * has a control for (`formControl`, server/videolab/catalog.js: the steps
+ * slider, H3 audio, sparse attention) shows that control's value and a way to
+ * it, not a second control that could say the opposite, and beside it the
+ * saved default video_settings reads and sets, each named, so the row never
+ * shows one value while the tool reports another under the same name. */
+function mirrorText(el) {
+  if (!el) return "";
+  if (el.type === "checkbox") return el.checked ? "on" : "off";
+  if (el.tagName === "SELECT") return el.selectedOptions?.[0]?.textContent?.trim() || el.value || "";
+  return String(el.value ?? "");
+}
+/** The saved default a mirrored row stands for, as video_settings reports it. */
+function savedText(k) {
+  if (k.kind === "bool") return k.value ? "on" : "off";
+  return k.value == null ? "unset" : String(k.value);
+}
+function paintMirrors() {
+  for (const m of document.querySelectorAll("#vlabKnobs [data-mirror] b")) {
+    m.textContent = mirrorText($(m.parentElement.dataset.mirror));
+  }
+}
+function showControl(id) {
+  const el = $(id);
+  if (!el) return;
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true;
+  el.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  el.focus?.();
+}
+
 function paintKnobs() {
   const box = $("vlabKnobs");
   if (!box || !LAB) return;
@@ -194,7 +224,15 @@ function paintKnobs() {
 
   box.innerHTML = rows.map((k) => {
     let control;
-    if (k.kind === "bool") {
+    const mirror = k.formControl ? $(k.formControl) : null;
+    if (mirror) {
+      /* Two values, each named: the form's, which a clip made on the Video
+       * screen uses, and the saved default video_settings reads and sets,
+       * which a render that names none uses (make_clip, the API). */
+      control = `<span class="vlab-mirror" data-mirror="${esc(k.formControl)}"><b>${esc(mirrorText(mirror))}</b>
+        on the Video screen · <i>${esc(savedText(k))}</i> for a render that names none
+        <button class="edtool" type="button" data-show="${esc(k.formControl)}">Show</button></span>`;
+    } else if (k.kind === "bool") {
       control = `<input type="checkbox" data-knob="${esc(k.id)}"${k.value ? " checked" : ""}>`;
     } else if (k.kind === "enum") {
       control = `<select class="sel2 sm" data-knob="${esc(k.id)}">${k.options
@@ -205,7 +243,7 @@ function paintKnobs() {
     } else {
       control = `<input class="line" type="text" data-knob="${esc(k.id)}" value="${esc(k.value ?? "")}">`;
     }
-    const unset = k.unsetAt != null && (k.value == null || k.value === k.unsetAt)
+    const unset = !mirror && k.unsetAt != null && (k.value == null || k.value === k.unsetAt)
       ? `<span class="vlab-badge">unset — today's behaviour</span>` : "";
     return `<div class="vlab-knob">
       <div class="vlab-knob-head">
@@ -216,6 +254,7 @@ function paintKnobs() {
     </div>`;
   }).join("");
 
+  for (const b of box.querySelectorAll("[data-show]")) b.addEventListener("click", () => showControl(b.dataset.show));
   for (const el of box.querySelectorAll("[data-knob]")) {
     el.addEventListener("change", async () => {
       const id = el.dataset.knob;
@@ -840,6 +879,11 @@ function mount() {
    * would silently delete the cost estimate. */
   $("vidSteps")?.addEventListener("input", onStepsMoved);
   $("vidEngine")?.addEventListener("change", () => setTimeout(refresh, 150));
+  /* The mirrored rows follow the form's own controls as they move. */
+  for (const id of ["vidSteps", "vidAudio", "vidSparse"]) {
+    $(id)?.addEventListener("input", paintMirrors);
+    $(id)?.addEventListener("change", paintMirrors);
+  }
 
   /* The size list is rebuilt by app.js on every engine switch, which is also
    * the moment this panel's numbers stop being about the right engine. Watching

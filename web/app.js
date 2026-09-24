@@ -7163,11 +7163,18 @@ function vidPaint() {
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
     state.vidEnginesPainted = true;
     vidModelShape();
+    /* An Advanced-only engine (FastH3, config `advanced`) goes by its Advanced
+     * label, "More motion (FastH3, experimental)". */
     const opts = Object.entries(engines)
-      .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.label) + "</option>").join("");
+      .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.advanced?.label || e.label) + "</option>").join("");
     $("vidEngine").innerHTML = opts;
     $("qVideoEngine").innerHTML = opts;
   }
+  /* ...and it is not in the main list (the H3 lab, 2026-09-24): hidden there
+   * unless it is the saved choice, which keeps rendering on it and shows as
+   * selected. Its switch is Advanced's "More motion" (web/vidfit.js), which
+   * picks this same option. Settings' list keeps every engine. */
+  for (const o of $("vidEngine").options) o.hidden = !!engines[o.value]?.advanced && o.value !== cur;
   $("vidEngine").value = cur;
   $("qVideoEngine").value = cur;
 
@@ -7244,7 +7251,9 @@ function vidPaint() {
       if (small) small.textContent = want + " steps";
     }
     const build = (n) => n === 3 ? "The TaoMate 3-step build" : "The " + n + "-step turbo build";
-    $("vidQFast").title = build(qs.fast);
+    /* On the 3-step build the chip's title is the server's note, which says
+     * what the saved sparse attention does to it (fastNote, video-plain.js). */
+    $("vidQFast").title = (qs.fast === 3 && eng.fastNote) || build(qs.fast);
     qRow.querySelector('[data-vq="standard"]').title = build(qs.standard)
       + (qs.standard === 8 ? "" : ": the 8-step files are not on this disk");
     /* Where Fast would be the same number as Standard (no TaoMate build, and
@@ -7252,9 +7261,10 @@ function vidPaint() {
      * thing, lit together. Fast shows only when it is really faster; the "!"
      * says how to get it. */
     $("vidQFast").hidden = qs.fast === qs.standard;
-    $("vidQualityNote").textContent = qs.fast === 3
-      ? "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time."
-      : "Install the Fast setting for H3 on the Models screen (a 182 MB file) and Fast drops to 3 steps.";
+    /* The server's words (video-plain.js fastNote): they follow the disk and
+     * the saved sparse attention, which makes Fast slightly softer, so this
+     * line can no longer promise "as sharp as the 8-step build" while it runs. */
+    $("vidQualityNote").textContent = eng.fastNote || "";
   }
 
   /* Loop only makes sense with an opening picture — the trick IS reusing that
@@ -7280,9 +7290,13 @@ function vidPaint() {
   /* References are H3's ref2va path; the LTX graph has no equivalent, so the
    * whole section hides rather than sitting there doing nothing. Anything
    * already attached is KEPT while hidden — switching engines back and forth
-   * must not eat the user's references — and the submit only sends them when
-   * H3 is the engine that will render. */
-  $("vidRefWrap").hidden = cur !== "h3";
+   * must not eat the user's references — and Render sends them on every
+   * engine, so the server refuses a clip whose engine ignores them rather than
+   * the page dropping them unsaid. */
+  /* ...except while anything is attached: then the slots stay in view on any
+   * engine, with the server's sentence saying this one ignores them
+   * (#vidRefIgnored, web/vidfit.js), so nothing is dropped out of sight. */
+  $("vidRefWrap").hidden = cur !== "h3" && !((state.refImages || []).length + (state.refAudios || []).length);
   /* Ask friend explains itself before anyone clicks: a recipe is H3 or LTX. */
   if ($("vidAskFriend")) {
     const recipeOk = recipeEngineOk(cur);
@@ -8245,6 +8259,9 @@ $("vidCreate").onclick = async () => {
     });
     if (!go || !(await enableVideo())) return;
   }
+  /* On a card H3 is not offered on, the server's sentence first, as a
+   * question (web/vidfit.js): never a silent render, never a silent stop. */
+  if (typeof globalThis.aiplayVidAsk === "function" && !(await globalThis.aiplayVidAsk(appConfirm))) return;
   /* ⚠ THROUGH vidWH(), never by re-parsing the select. This line used to be
    * `$("vidSize").value.split("x").map(Number)`, which on the custom option
    * splits the literal string "custom" and yields [NaN] — so a custom size
@@ -8282,14 +8299,19 @@ $("vidCreate").onclick = async () => {
         ...vidModelChoice(),
         /* Your own LoRAs; absent when the stack is empty. */
         ...vidLoraChoice(),
-        /* References, H3 only — kept client-side across an engine switch but
-         * only SENT when H3 renders, so the server's refusal can never eat
-         * work the user did under the other engine. Order matters: it is the
+        /* References — kept client-side across an engine switch, and SENT
+         * whatever the engine: on one that ignores them (FastH3, LTX) the
+         * server refuses the clip in the sentence the reference slots already
+         * show, instead of this page dropping them without a word. The refusal
+         * eats nothing: they stay attached here. Order matters: it is the
          * ordinal the prompt's <Picture n> / <Audio n> tags resolve to. */
-        refImages: state.video?.engine === "h3"
-          ? (state.refImages || []).map((m) => m.name) : undefined,
-        refAudios: state.video?.engine === "h3"
-          ? (state.refAudios || []).map((a) => ({ name: a.name, start: a.start || 0 })) : undefined,
+        refImages: (state.refImages || []).length ? state.refImages.map((m) => m.name) : undefined,
+        refAudios: (state.refAudios || []).length
+          ? state.refAudios.map((a) => ({ name: a.name, start: a.start || 0 })) : undefined,
+        /* H3's sparse attention on the Fast setting, named only while the
+         * switch differs from the saved setting (web/vidfit.js); absent, the
+         * saved setting applies and no default is sent as a request. */
+        sparse: typeof globalThis.aiplayVidSparse === "function" ? globalThis.aiplayVidSparse() : undefined,
         /* Soundtrack — both engines take it now. */
         audioTrack: (state.sndUpload || $("vidSndSong").value)
           ? { name: state.sndUpload?.name || $("vidSndSong").value,
@@ -8306,7 +8328,11 @@ $("vidCreate").onclick = async () => {
     })).json();
     if (r.error) { if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("vidEst", r); else failSay(r); return; }
     if (typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst");
-    $("clipNote").textContent = "Queued. It renders once the engine is idle — music always goes first.";
+    /* What the server changed from the request, and the RAM line, in its words. */
+    /* "Not offered" was the question the person just answered: not said twice. */
+    const said = Array.isArray(r.warnings) ? r.warnings.filter((w) => w?.id !== "not-offered").map((w) => w?.text).filter(Boolean) : [];
+    $("clipNote").textContent = "Queued. It renders once the engine is idle — music always goes first."
+      + (said.length ? " " + said.join(" ") : "");
   } finally {
     vidPaint();
   }
@@ -19486,10 +19512,11 @@ function applyStatus(s) {
     $("qTier").innerHTML = s.config.tiers.map((t) => `<option value="${t.id}">${esc(t.label)}</option>`).join("");
     $("qTier").value = s.config.tier || "auto";
     state.tiers = s.config.tiers;
+    state.tierScope = s.config.tierScope || "";
     paintTier();
     $("qTier").onchange = async () => {
       const t = state.tiers.find((x) => x.id === $("qTier").value);
-      if (!(await appConfirm(`Switch to “${t.label}”?\n\n${t.note}\n\nThis restarts the engine, which clears the cached take — your next re-roll will cost a full render.`))) {
+      if (!(await appConfirm(`Switch to “${t.label}”?\n\n${t.note}\n\n${state.tierScope ? state.tierScope + " " : ""}This restarts the engine, which clears the cached take — your next re-roll will cost a full render.`))) {
         $("qTier").value = state.tier || "auto"; return;
       }
       $("tierHint").textContent = "Restarting the engine…";
@@ -19627,9 +19654,13 @@ function applyStatus(s) {
       row.hidden = !vready;
       if (!state.ovEnginePainted && s.config.video.engines) {
         state.ovEnginePainted = true;
+        /* An Advanced-only engine (FastH3) by its Advanced label, as on the
+         * Video screen... */
         $("ovEngine").innerHTML = Object.entries(s.config.video.engines)
-          .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.label) + "</option>").join("");
+          .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.advanced?.label || e.label) + "</option>").join("");
       }
+      /* ...and out of this list too unless it is the saved choice. */
+      for (const o of $("ovEngine").options) o.hidden = !!s.config.video.engines?.[o.value]?.advanced && o.value !== s.config.video.engine;
       $("ovEngine").value = s.config.video.engine;
     }
   }
@@ -19862,11 +19893,15 @@ function applyStatus(s) {
   }
   /* The receipts and Settings' "Picked for this PC" (web/receipt.js). */
   if (typeof globalThis.aiplayReceipts === "function") globalThis.aiplayReceipts(s);
+  /* The Video screen following the card (web/vidfit.js). */
+  if (typeof globalThis.aiplayVidFit === "function") globalThis.aiplayVidFit(s);
 }
 
 function paintTier() {
   const t = (state.tiers || []).find((x) => x.id === $("qTier").value);
-  $("tierHint").textContent = t ? t.note : "";
+  /* The server's scope sentence after the tier's own note: the choice restarts
+   * the engine for every model, video included, and is not a video size. */
+  $("tierHint").textContent = t ? [t.note, state.tierScope].filter(Boolean).join(" ") : "";
 }
 
 /* Recompute the estimate as the user types, so the number tracks what they will

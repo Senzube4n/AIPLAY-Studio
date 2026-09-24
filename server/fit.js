@@ -86,8 +86,8 @@ export const FIT_STATES = {
     tone: "warn",
     chip: "Runs at a smaller size",
     line: "The card is under what full size needs; a smaller picture and a shorter clip were "
-        + "measured to fit a card this size. The row names the size. Studio does not pick it for you "
-        + "yet: set it on the Video screen.",
+        + "measured to fit a card this size. The row names the size, and the Video screen starts "
+        + "there.",
     rank: 2,
   },
   "unknown": {

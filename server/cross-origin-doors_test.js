@@ -69,6 +69,9 @@ const HEADS = [
    * music door's model action also switches the paid hosted engine. */
   ["POST /api/music (the music model, its build, \"auto\", the LoRAs; its model action switches the paid hosted engine)", 'if (p === "/api/music" && req.method === "POST") {', "const b = await readBody(req);"],
   ["POST /api/artconfig (the cover and picture engines, \"auto\")", 'if (p === "/api/artconfig" && req.method === "POST") {', "const b = await readBody(req);"],
+  /* The video engine and every render (and its check), with a capped body. */
+  ["POST /api/video (the video engine, a render, its check)", 'if (p === "/api/video" && req.method === "POST") {',
+    '"could not read that body as JSON" });\n      }'],
 ];
 for (const [door, open, readLine] of HEADS) {
   test(`${door}: refused before its body is read, from anywhere but Studio's page or a local client`, async () => {
@@ -89,6 +92,44 @@ for (const [door, open, readLine] of HEADS) {
     }
   });
 }
+
+/* THE VIDEO LAB'S DOOR, which lives in server/videolab/routes.js: a comparison
+ * switches the engine and queues renders through POST /api/video over loopback
+ * (so that door's own guard could be walked around through this one), and
+ * set_knob saves video settings, sparse attention among them. The real head of
+ * its POST branch, run with the real guard, handed in by index.js. */
+test("POST /api/videolab (comparisons, set_knob): refused before its body is read, from anywhere but Studio's page or a local client", async () => {
+  const ROUTES = readFileSync(new URL("./videolab/routes.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const open = 'if (req.method !== "POST") {';
+  const at = ROUTES.indexOf(open);
+  const end = ROUTES.indexOf('"could not read that body as JSON" });\n      return true;\n    }', at);
+  assert.ok(at > 0 && end > at, "routes.js has the POST head");
+  const head = ROUTES.slice(ROUTES.indexOf("}", at) + 1, end) + '"could not read that body as JSON" });\n      return true;\n    }';
+  const run = new AsyncFunction("req", "res", "json", "sameOriginLocalJson", "readBody", `${head}\nreturn { passed: true, b };`);
+  for (const [what, req] of FOREIGN) {
+    let reads = 0;
+    const r = await run(req, null, json, sameOriginLocalJson, async () => { reads++; return {}; });
+    assert.equal(r, true, `${what}: answered and handled`);
+    assert.equal(reads, 0, `${what}: the body was never read`);
+  }
+  let said = null;
+  const say = (_res, code, body) => { said = { code, body }; };
+  await run(FOREIGN[0][1], null, say, sameOriginLocalJson, async () => ({}));
+  assert.equal(said.code, 403);
+  assert.match(said.body.error, /only accepted from Studio's own page or a local client/);
+  await run(PAGE, null, say, undefined, async () => ({}));
+  assert.equal(said.code, 403, "a door handed no guard refuses rather than opening");
+  for (const [what, req] of [["Studio's page", PAGE], ["MCP / chat (no Origin)", LOCAL]]) {
+    let limit = null;
+    const r = await run(req, null, json, sameOriginLocalJson, async (_q, max) => { limit = max; return { action: "state" }; });
+    assert.deepEqual(r, { passed: true, b: { action: "state" } }, `${what} gets through`);
+    assert.equal(limit, 1024 * 1024, "with the body capped at 1 MB");
+  }
+  const big = await run(PAGE, null, json, sameOriginLocalJson, async () => { throw Object.assign(new Error("body is over 1 MB"), { tooBig: true }); });
+  assert.equal(big, true);
+  assert.match(ROUTES, /const \{ json, readBody, art, rememberClip, sameOriginLocalJson \} = deps;/);
+  assert.match(INDEX, /json, readBody, art, sameOriginLocalJson,\n\s+rememberClip:/, "index.js hands the Video Lab the one guard");
+});
 
 test("/api/models keeps ONE guard, at the top: addAlso no longer carries its own copy", () => {
   const route = slice('if (p === "/api/models" && req.method === "POST") {', 'if (p === "/api/', {});

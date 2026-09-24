@@ -28,7 +28,12 @@ test("FastH3 is an engine after H3 and LTX, built on H3's parts", () => {
   assert.equal(f.videoVae, h.videoVae);
   assert.equal(f.audioVae, h.audioVae);
   assert.equal(f.turboLora, null, "a distillation already: no turbo LoRA on top");
-  assert.equal(f.attention, "pytorch", "PyTorch attention unless the render asks for Kitchen");
+  /* The H3 lab (2026-09-24) timed FastH3 with Kitchen INT8; PyTorch was a
+   * default nobody had measured. */
+  assert.equal(f.attention, "kitchen", "Kitchen attention unless the render asks for PyTorch");
+  /* ...and it is an Advanced-only engine, with the lab's label and note. */
+  assert.equal(f.advanced?.label, "More motion (FastH3, experimental)");
+  assert.match(f.advanced?.note || "", /About 1\.4x the wait of Fast\. Can change the subject's colour or add a white blob; check the take\./);
 });
 
 /* ONE attention backend per graph, and it is node 85, before the shift, the
@@ -87,7 +92,7 @@ test("FastH3's attention pick reaches the graph whatever the launcher's attentio
     const art = new ArtRunner(null, null);
     launcher("--use-sage-attention");
     assert.equal(await art.videoAttention({ engine: "fasth3", attention: "pytorch" }), "pytorch", "Sage launcher, PyTorch pick: PyTorch");
-    assert.equal(await art.videoAttention({ engine: "fasth3" }), "pytorch", "no pick: the engine's default, PyTorch, written out");
+    assert.equal(await art.videoAttention({ engine: "fasth3" }), "ck", "no pick: the engine's default, Kitchen, where the engine offers it");
     assert.equal(await art.videoAttention({ engine: "fasth3", attention: "kitchen" }), "ck", "Sage launcher, Kitchen pick: Kitchen");
     assert.equal(await art.videoAttention({ engine: "h3" }), null, "H3 has no picker: the launcher's explicit choice still wins there");
     launcher("--use-pytorch-cross-attention");
@@ -103,6 +108,7 @@ test("FastH3's attention pick reaches the graph whatever the launcher's attentio
     launcher(undefined);
     const without = new ArtRunner(null, null);
     assert.equal(await without.videoAttention({ engine: "fasth3", attention: "kitchen" }), "pytorch", "Kitchen not offered: PyTorch, said in the graph");
+    assert.equal(await without.videoAttention({ engine: "fasth3" }), "pytorch", "...and so is the Kitchen default");
   } finally {
     engine.objectInfo = keepInfo;
     if (had) config.comfy.options.attention = keepAttn; else delete config.comfy.options.attention;
@@ -140,15 +146,20 @@ test("make_clip carries FastH3's attention pick, and its refusals name the engin
   const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
     `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
   const calls = [];
+  /* The reference sentence is the server's (video-plain.js), sent per engine on
+   * the status: the one the Video screen's reference slots show. */
+  const { refsIgnored } = await import("./video-plain.js");
+  const said = refsIgnored("fasth3", "FastH3");
   const api = async (method, p, body) => {
     calls.push({ method, p, body });
-    if (p === "/api/status") return { config: { video: { enabled: true, ready: true, engine: "fasth3", engines: { fasth3: { label: "FastH3" } } } } };
+    if (p === "/api/status") return { config: { video: { enabled: true, ready: true, engine: "fasth3", engines: { fasth3: { label: "FastH3", refsIgnored: said } } } } };
     if (p === "/api/clips") return { clips: [] };
     return { job: { id: "v1" } };
   };
   await run(api)({ prompt: "a forest", attention: "kitchen" });
   assert.equal(calls.find((c) => c.method === "POST").body.attention, "kitchen", "the pick reaches the route");
-  await assert.rejects(run(api)({ prompt: "a forest", ref_images: ["a.png"] }), /but FastH3 is selected/);
+  await assert.rejects(run(api)({ prompt: "a forest", ref_images: ["a.png"] }),
+    (e) => e.message.startsWith(said) && /FastH3 is selected: pass engine:"h3"/.test(e.message));
   await assert.rejects(run(api)({ prompt: "a forest", mid_frames: ["a.png"] }), /and FastH3 is selected/);
 });
 
@@ -198,7 +209,10 @@ test("the route, the job and the Video screen carry the attention choice; refere
   const index = read("./index.js");
   assert.match(index, /attention: b\.attention === "kitchen" \|\| b\.attention === "pytorch" \? b\.attention : undefined,/);
   assert.match(index, /steps: videoEngine\(eng\)\.fixedSteps \|\|/);
-  assert.match(index, /eng === "fasth3"\n\s+\? "References need MiniMax H3\. FastH3 was distilled without them/);
+  /* References on FastH3 or LTX: refused by the plan (server/video-plain.js),
+   * in the one sentence the page and make_clip show. */
+  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}/);
+  assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason \}\);/);
   const art = read("./art.js");
   assert.match(art, /attention: await this\.videoAttention\(job\),/);
   const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);
@@ -216,5 +230,6 @@ test("the route, the job and the Video screen carry the attention choice; refere
   assert.match(html, /<select id="vidAttn" class="sel2"[\s\S]*?<option value="pytorch">PyTorch<\/option>\s*<option value="kitchen">Kitchen INT8<\/option>/);
   assert.match(app, /el\.hidden = !eng\.attention;/, "the picker shows only for an engine with the choice");
   assert.match(app, /attention: state\.video\?\.engines\?\.\[state\.video\?\.engine\]\?\.attention \? \$\("vidAttn"\)\.value : undefined,/);
-  assert.match(app, /\$\("vidRefWrap"\)\.hidden = cur !== "h3";/, "references hide on FastH3 as on LTX");
+  assert.match(app, /\$\("vidRefWrap"\)\.hidden = cur !== "h3" && !\(\(state\.refImages \|\| \[\]\)\.length \+ \(state\.refAudios \|\| \[\]\)\.length\);/,
+    "references hide on FastH3 as on LTX, unless some are attached: then the slots stay and say so");
 });

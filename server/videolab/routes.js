@@ -124,7 +124,7 @@ export function labState(engineKey, refs = {}) {
 }
 
 export function createVideoLabRoutes(deps) {
-  const { json, readBody, art, rememberClip } = deps;
+  const { json, readBody, art, rememberClip, sameOriginLocalJson } = deps;
 
   /* One arm's render, awaited by IDENTITY rather than by polling a directory.
    *
@@ -272,6 +272,12 @@ export function createVideoLabRoutes(deps) {
             title: `${group.id} · ${arm.label}`,
           });
           if (r.error) throw new Error(r.error);
+          /* WHAT THE DOOR CHANGED FROM THE ARM (server/video-plain.js
+           * videoPlan): the reference build's step count, a tag taken out of
+           * the words, the card's size. Recorded on the arm, so a comparison
+           * card never shows a setting that did not run without saying so. */
+          const said = (Array.isArray(r.warnings) ? r.warnings : []).map((w) => w?.text).filter(Boolean);
+          if (said.length) arm.note = [arm.note, ...said].filter(Boolean).join(" ");
 
           /* Generous, and per arm rather than per comparison: a 20-step H3
            * render at native size is measured at 11 minutes and a 4K LTX one at
@@ -359,7 +365,22 @@ export function createVideoLabRoutes(deps) {
       return true;
     }
 
-    const b = await readBody(req);
+    /* A DOOR THAT CHOOSES WHAT RUNS: a comparison switches the engine and
+     * queues renders, and set_knob saves video settings. Studio's page or a
+     * local client only, the same guard as POST /api/video (whose own guard a
+     * comparison's loopback posts pass), and a body capped before it is parsed.
+     * Closed when the guard was not handed in: a door that cannot ask, refuses. */
+    if (typeof sameOriginLocalJson !== "function" || !sameOriginLocalJson(req)) {
+      json(res, 403, { error: "Video Lab changes and comparisons are only accepted from Studio's own page or a local client." });
+      return true;
+    }
+    let b;
+    try { b = await readBody(req, 1024 * 1024); }
+    catch (err) {
+      json(res, err?.tooBig ? 413 : 400, { error: err?.tooBig
+        ? `A Video Lab request is at most 1 MB (${err.message}). Nothing was changed.` : "could not read that body as JSON" });
+      return true;
+    }
     const action = String(b.action || "");
     try {
       switch (action) {

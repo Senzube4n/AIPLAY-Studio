@@ -228,8 +228,8 @@ ok("FastH3 and the reference build quote their own path's evidence; H3 and TaoMa
     && [rows[0], rows[2], rows[3]].every((r) => r.requires.h3Path === null));
 ok("no H3-family row still says 16 GB minimum", rows.every((r) => r.requires.vramMinGb !== 16));
 ok("the row note spells every tier out, from the table", rows.every((r) => r.requires.note.startsWith(h3Requires().note)));
-ok("...without claiming Studio picks the size (nothing does yet)",
-  !/Picks its size/.test(h3Requires().note) && /set it on the Video screen/.test(h3Requires().note)
+ok("...saying the Video screen starts at the card's size (it does now), and no more than that",
+  !/Picks its size/.test(h3Requires().note) && /the Video screen starts at it/.test(h3Requires().note)
     && /an experimental 832x480/.test(h3Requires().note) && !/ a 832/.test(h3Requires().note));
 ok("H3 and FastH3 say no AMD render has been tested",
   rows[0].note.includes(H3_AMD_NOTE) && rows[4].note.includes(H3_AMD_NOTE));
@@ -288,8 +288,9 @@ for (const [name, m] of Object.entries(MACHINES)) {
   const eight = fitFor(rows[0].requires, MACHINES["8 GB / 32 GB"]);
   ok("8 GB: the answer is a size, not 'Below the minimum'",
     eight.state === "smaller" && /960x544/.test(eight.why) && !/likely to fail/.test(eight.why) && /960x544, 5 s/.test(eight.short));
-  ok("...and it says Studio does not pick that size yet, and how to set it by hand",
-    /does not pick this size for you yet/.test(eight.why) && /custom…/.test(eight.why) && /960 x 544/.test(eight.why));
+  ok("...and it says the Video screen starts at that size, with the others under Advanced",
+    /The Video screen starts H3 clips at 960x544, 5 s or under/.test(eight.why) && /under Advanced/.test(eight.why)
+      && !/does not pick/.test(eight.why));
   ok("...and that the 100 s was measured on the Fast setting",
     /Fast setting/.test(eight.why) && /Standard setting was not timed/.test(eight.why));
   const six = fitFor(rows[0].requires, MACHINES["6 GB / 32 GB"]);

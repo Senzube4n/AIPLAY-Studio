@@ -435,6 +435,40 @@ the new frames alone kept beside it as `<id>_new.mp4`. The source is untouched.
 Without ffmpeg the new frames come back as the clip and its record's
 `continuation.joined` is false with the reason. MCP: `extend_clip`.
 
+### `POST /api/video` · `{ "action": "check" }` and what `create` says back
+`{ "action": "check", "prompt", "width", "height", "seconds", "steps",
+"refImages", "refAudios", "sparse", "fromCover" | "fromUpload" | "toCover" | "toUpload" | "framed",
+"sourceVideo" }` — the plan a `create` with the same body would render on this
+card (server/video-plain.js `videoPlan`), without staging or queueing
+anything: `engine`, `width`, `height`, `seconds`, `steps`, `sparse`,
+`fit` (`sentence` "This size needs about X GB free on the graphics card; you
+have Y GB…", `needGb`, `haveGb`, `over`, `scope`), `warnings` `[{id, text}]`,
+`notes` `[{id, text}]` (caveats that change nothing: `sparse-untried`, sol-attn
+at a size the lab never measured it at) and `refusal`. `create` renders that
+plan and returns the same `warnings`: `size` (no size named, so an H3 render
+on a smaller card starts at the card's tier size, said as "measured to fit" or,
+for the 6 GB preview, "not yet seen to fit"), `steps` (Fast with references
+runs the 4-step reference build's own count; 6 or 7 steps are left alone),
+`tags` (a `<Picture n>` / `<Audio n>` nothing attached answers is taken out of
+the description), `frames-untried` (a first or last frame on FastH3, which the
+lab ran on text only), `not-offered` (H3 on a card it is not offered on; the
+Video screen asks before it sends), `sparse` (sol-attn named for a render that
+cannot take it), `fit` and `ram` (under 32 GB of RAM). References on FastH3 or
+LTX are refused with `reason: "refs-ignored"` in the sentence `/api/status`
+sends per engine as `refsIgnored`. `"sparse": "sol-attn" | "off"` is H3's
+sparse attention for that render, applied on the Fast setting's plain path (the
+3-step build; no references, continuation or video-to-video) only; absent, the
+saved `sparse_attention` (video_settings) applies, and the Video screen sends it
+only while its switch differs from the saved value. `/api/status` also sends
+per engine `h3Tiers` (whether H3's card tiers apply) and `fastNote` (the Fast
+chip's words, which follow the disk and the saved sparse attention). A failed
+clip's status row carries the sentence as `error`, the engine's own text as
+`detail`, its kind as `errorReason` (`out-of-memory`, `ram-out-of-memory`,
+`refused`, `unreachable`, `engine-gone`, `timeout`, …) and both in `fullError`.
+The door takes Studio's own page or a local client only, with a 1 MB body, and
+so does `POST /api/videolab`. MCP: `make_clip` `check_only` (with `notes`),
+`sparse`, and its reply's `warnings`.
+
 ### The conditioning bridge on `POST /api/video`
 `create` and `extend` both take `"bridge": "<adapter file>" | "off"` and
 `"bridgeAlpha": 0–1` for that render; absent, the Video panel's
@@ -464,8 +498,8 @@ the reply carries `stem: { file, path, made }`. Refused with `reason:
 
 ### Steering the defaults from an agent
 Every render setting has a tool: `make_clip` (`quality` fast|best, `steps`,
-`bridge`, `bridge_alpha`), `video_settings` (every Video Lab knob, including
-`turbo3_max_steps`, `turbo_shift_video`, `bridge_adapter`, `bridge_alpha`),
+`bridge`, `bridge_alpha`, `sparse`, `check_only`), `video_settings` (every Video Lab knob, including
+`turbo3_max_steps`, `turbo_shift_video`, `bridge_adapter`, `bridge_alpha`, `sparse_attention`),
 `set_video_engine`, `set_image_engine` (the persistent automatic song-cover
 preference, or with `use_for` "pictures" the Images screen's engine that
 `make_image` and music-video stills use when they name none; `"auto"` forgets

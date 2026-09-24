@@ -5511,7 +5511,7 @@ button, input, select, textarea { font-family: inherit; }
   background: linear-gradient(135deg, hsla(195,100%,60%,.22), hsla(320,100%,70%,.18));
 }
 /* Simple: the Advanced form steps aside; the Make button and its progress stay. */
-.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(.ctawrap):not(.infopanel) { display: none !important; }
+.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(#vidTierRow):not(.ctawrap):not(.infopanel) { display: none !important; }
 .assist {
   flex: none; display: flex; flex-direction: column; gap: 4px; padding: 3px; margin-bottom: 10px;
   background: var(--raise); border: 1px solid var(--hair); border-radius: 18px;
@@ -6121,3 +6121,15 @@ button, input, select, textarea { font-family: inherit; }
 .bdrawer .bd-acts { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
 .bdrawer .bd-acts .btn { margin: 0; flex: 0 0 auto; }
 @media (prefers-reduced-motion: reduce) { .bdrawer, .bdrawer-wrap { transition: none; } }
+
+/* The Video screen follows the card (web/vidfit.js): the size chips wrap on a
+ * narrow column, the chip lit when the size list sits on it, and a failed
+ * render's sentence with the engine's own text folded under Details. */
+#vidTierChips { flex-wrap: wrap; }
+#vidTierChips button { padding: 5px 10px; }
+#vidTierChips button[data-experimental] { font-style: italic; }
+.vidfail { font-size: var(--fs-sm); color: var(--err); line-height: 1.45; }
+.vidfail details { margin-top: 4px; color: var(--faint); }
+.vidfail pre { white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; margin: 4px 0 0; font-size: var(--fs-xs); }
+.vlab-mirror { font-size: 12px; color: var(--faint); }
+.vlab-mirror b { color: var(--ink); font-weight: 600; }

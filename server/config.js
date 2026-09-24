@@ -5,6 +5,8 @@
  */
 import fs from "node:fs";
 import { autoVramFlags } from "./comfyargs.js";
+/* The card tiers' sizes join H3's size list (below the engines): pure data. */
+import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION } from "./h3tier.js";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -346,6 +348,10 @@ export const config = {
    * ~13 GB) and the small tiers are UNPROVEN ON REAL HARDWARE. Do not publish a
    * minimum-VRAM claim from this; the community beta settles it.
    */
+  /* Said beside every tier on the Music screen: the choice restarts the ONE
+   * engine, whose flags every model shares, and it is not a video size. */
+  vramTierScope: "Changing this restarts the engine for every model it runs, pictures and video (H3) "
+    + "included, not only music. It does not choose a video size: the Video screen picks that from your card.",
   vramTiers: {
     auto:   { label: "Auto", flags: autoVramFlags(saved.gpu?.totalMb), note: "From your card: under 12 GB streams weights from system RAM (low VRAM); 12 GB and up runs normal mode, which keeps a model on the card while there is room and moves it off when the next one needs it. An unread card stays on low VRAM. H3's 12 GB result was measured in low-VRAM mode; normal mode on a 12 GB card is untested." },
     /* The same flags Auto gives 12 GB and up (comfyargs.js autoVramFlags), so
@@ -1479,6 +1485,29 @@ export const config = {
      * Both are decided in art.js h3Attention(). */
     attention: "ck",
 
+    /* SPARSE ATTENTION ON THE FAST SETTING, and only there (the H3 lab,
+     * 2026-09-24, arm A3 against A: 1344x768, 8 s, one 16 GB card). ComfyUI
+     * 0.36's own BlockSparseAttention in sol-attn mode, as node 81 after the
+     * sigma shift (workflow.js h3SparseFor): tau 1.3, dense for the first 20%
+     * of the schedule, only above 12,288 video tokens. Measured: step 1 stays
+     * dense, steps 2 and 3 run 1.54x faster, so the sampler is 1.26x and the
+     * whole clip 1.15x faster (22.5 s saved on a 172 s clip), for a slightly
+     * softer, paler picture. Not measured on the 4- or 8-step builds, on the
+     * reference path, on continuations or video-to-video, so those stay dense;
+     * not measured at 960x544 or with the rank-19 TaoMate file either, which
+     * the note says. The recipe and its words are h3tier.js H3_SOL_ATTN, the
+     * one copy.
+     *
+     * `sparse` is the setting ("sol-attn" | "off"): the Video screen's Advanced
+     * "Sparse attention" switch saves it (video_settings' sparse_attention row,
+     * the same value) and follows it; a render names it only to differ from it
+     * (make_clip `sparse`, or the page while its save is in flight). `solAttn` is the
+     * measured recipe, not a setting. The node runs dense by itself on a card
+     * without the comfy_kitchen sol_attn kernel; an engine without the node or
+     * the mode gets no node at all (art.js videoSparse asks it first). */
+    sparse: "sol-attn",
+    solAttn: H3_SOL_ATTN,
+
     /* H3 ALWAYS renders audio — there is no video-only path, and moving the
      * audio shift changes its level without changing the time it costs
      * (measured: identical wall-clock, audio RMS -14.1 to -27.6 dBFS). For a clip
@@ -1504,6 +1533,8 @@ export const config = {
       { w: 768, h: 1344, label: "768 x 1344 · vertical" },
       { w: 1080, h: 1920, label: "1080 x 1920 · 1080p vertical — slow" },
       { w: 864, h: 480, label: "864 x 480 · fast, noticeably softer" },
+      /* The card tiers' own sizes (server/h3tier.js) join below, so the size
+       * chip a smaller card starts on is a size this list has. */
     ],
     },
 
@@ -1879,6 +1910,18 @@ export const config = {
   h3.steps = standard;
 }
 
+/* THE CARD TIERS' SIZES in H3's list, from server/h3tier.js (the one source),
+ * each labelled with the card it was measured for. Added before FastH3 copies
+ * H3's settings, so both list them. A size already listed is not repeated. */
+{
+  const h3 = config.video.engines.h3;
+  for (const t of H3_TIERS) {
+    if (!t.width || h3.sizes.some((z) => z.w === t.width && z.h === t.height)) continue;
+    h3.sizes.push({ w: t.width, h: t.height,
+      label: `${t.width} x ${t.height} · ${t.label.toLowerCase()} for ${t.minGb} GB cards${t.experimental ? ", experimental" : ""}` });
+  }
+}
+
 /* ── FastH3 ──────────────────────────────────────────────────────────────
  * FastVideo's DMD2 distillation of MiniMax H3 (FastVideo/FastVideo-FastH3-Comfy):
  * eight steps with no turbo LoRA, the same text encoder and VAEs as H3, and
@@ -1912,13 +1955,22 @@ config.video.engines.fasth3 = {
    * so a card without one still renders, only without the speed-up. */
   sparseAttention: { method: "vsa", keepPercent: 10, startPercent: 0.2, endPercent: 1,
     minTokens: 12288, extraTokens: 256, sinkConditioning: "exact_kv_and_rows" },
-  /* The dense attention it falls back to. "pytorch" by default; "kitchen" is
-   * Comfy Kitchen's INT8 attention (the template's choice), picked per render
-   * on the Video screen. The pick is written into the graph as node 85 either
-   * way (art.js videoAttention()), so the launcher's own Attention setting
-   * cannot overrule it; where the engine does not offer Kitchen, the node says
-   * PyTorch. */
-  attention: "pytorch",
+  /* H3's sol-attn switch is H3's: FastH3 always runs its own VSA above. */
+  sparse: null, solAttn: null,
+  /* NOT IN THE MAIN ENGINE LIST (the H3 lab, 2026-09-24): slower than the Fast
+   * setting in every pair (1.37x the wall at 1344x768, 8 s; 1.22x at 960x544)
+   * and good on one prompt of three (a white blob on one, colour changes on
+   * another). The Video screen offers it under Advanced with this label and
+   * note, text to video only; a saved FastH3 choice keeps rendering on it. */
+  advanced: { label: H3_MORE_MOTION.label, note: H3_MORE_MOTION.note },
+  /* The dense attention it falls back to. "kitchen" (Comfy Kitchen's INT8
+   * attention, the template's choice and the one the H3 lab timed FastH3 with)
+   * by default; "pytorch" on request, per render, on the Video screen. The pick
+   * is written into the graph as node 85 either way (art.js videoAttention()),
+   * so the launcher's own Attention setting cannot overrule it; where the
+   * engine does not offer Kitchen, the node says PyTorch. It was "pytorch"
+   * until the lab: the default a person got was a speed nobody had measured. */
+  attention: "kitchen",
 };
 
 /**
