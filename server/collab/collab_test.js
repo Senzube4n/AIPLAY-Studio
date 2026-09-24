@@ -310,10 +310,15 @@ console.log("\n§6  the doors: shared API checks and explicit MCP intents");
     && /verified: a.verified/.test(mcp));
   ok("accept and adopt forward explicit review/override intents",
     /seen: a.seen === true/.test(mcp) && /anyway: a.anyway === true/.test(mcp));
-  ok("chat reads freely but asks before local sharing and permission writes",
+  ok("chat reads freely but asks before local sharing, and never grants trust or lends",
     /collab_me: null/.test(router) && /collab_roster: null/.test(router)
-    && /collab_open: null/.test(router) && /collab_verify: "writes"/.test(router)
-    && /collab_accept: "writes"/.test(router) && /collab_pack: "writes"/.test(router));
+    && /collab_open: null/.test(router)
+    && /collab_accept: "writes"/.test(router) && /collab_pack: "writes"/.test(router)
+    /* The trust grant, the role and the minutes a day are a person's, on the
+     * Collab screen: withheld from the in-app chat, kept for MCP clients. */
+    && ["collab_verify", "collab_set_role", "collab_set_lend_minutes"].every((n) =>
+      !new RegExp(`^\\s*${n}: (null|"writes"|"gpu"|"destroys"),`, "m").test(router)
+      && new RegExp(`^\\s*${n}: "[^"]{40,}`, "m").test(router)));
   /* ── THE TABBED REBUILD, AND THE TWO HOLES IT NEARLY OPENED ─────────────
    *
    * The page was eight sections on one flat scroll, about a thousand words
@@ -668,8 +673,12 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     "collabLending",
     /* The minors rule (server/safety): the real checks, the real flag reader,
      * and index.js's own mvRowWords, sliced out of the file below. */
-    "assertSafe", "safetyRefusal", "bodyOfError", "shotFlags", "mvRowWords"];
+    "assertSafe", "safetyRefusal", "bodyOfError", "shotFlags", "mvRowWords",
+    /* The Friends row's own words for the lending role (cloud-switch.js), which
+     * the "no role" refusal names. */
+    "LENDER_ROLE_LABEL"];
   const refusalM = await import("../safety/refusal.js");
+  const { LENDER_ROLE_LABEL } = await import("../cloud-switch.js");
   const rowWordsAt = index.indexOf("function mvRowWords(");
   const mvRowWords = new Function(`${index.slice(rowWordsAt, index.indexOf("\n}\n", rowWordsAt) + 2)} return mvRowWords;`)();
   /* eslint-disable-next-line no-new-func */
@@ -760,6 +769,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       recipeM.makeVideoRecipe, recipeM.readVideoRecipe, recipeM.describeVideoRecipe, recipeM.videoRecipeMcpArgs,
       lendingDoor,
       refusalM.assertSafe, refusalM.safetyRefusal, refusalM.bodyOfError, orderM.shotFlags, mvRowWords,
+      LENDER_ROLE_LABEL,
     ).then((r) => r ?? answered);
   };
   const call = (b, headers = { origin: "http://127.0.0.1:4173" }) => callWith(b, {}, headers);
@@ -1299,6 +1309,18 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     await writeFile(p3, sealedElsewhere);
     eq("an order whose take would go to a third party is refused",
       [(await call({ action: "accept", file: p3, seen: true })).body.reason], ["return-address"]);
+  }
+  /* ⚠ A VERIFIED FRIEND WITH NO ROLE may not spend the card, and the refusal
+   * names the role to give in the Friends row's own words. The route reads
+   * LENDER_ROLE_LABEL; this reaches that line, so a name the harness does not
+   * hand over is a ReferenceError here, not in front of somebody. */
+  {
+    await call({ action: "set_role", fp: friend.fp, role: "none" });
+    const noRoleAccept = await call({ action: "accept", file: orderPath, seen: true });
+    await call({ action: "set_role", fp: friend.fp, role: "lender" });
+    eq("an order from a verified friend with no role is refused by role, naming the role to give",
+      [noRoleAccept.status, noRoleAccept.body.reason, (noRoleAccept.body.error || "").includes(`“${LENDER_ROLE_LABEL}”`)],
+      [400, "role", true]);
   }
   /* ⚠ A PAUSED QUEUE ACCEPTS WORK THAT NEVER STARTS, so `anyway` may not
    * override it — a friend waiting on a take that is not coming is worse than a

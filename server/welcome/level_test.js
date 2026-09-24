@@ -419,6 +419,14 @@ const MACHINES = {
   "no card": readMachine(null, ram(32659)),
   "no card, 16 GB RAM": readMachine(null, ram(16310)),
   "AMD 16 GB": readMachine({ name: "AMD Radeon RX 9060 XT", totalMb: 16304, usedMb: 0, vendor: "amd" }, ram(32659)),
+  /* The release critic's probe machines: a 6 GB card (the Video screen offers
+   * it the experimental preview), a 32 GB laptop reading 31.4 GB and a 16 GB
+   * machine reading 15.4 GB (h3tier.js ramBoxGb, the one RAM reader), and a
+   * PC whose engine runs on the CPU (no card at all). */
+  "6 GB": readMachine(nv("NVIDIA GeForce RTX 2060", 6144), ram(32659)),
+  "12 GB laptop reading 31.4 GB": readMachine(nv("NVIDIA GeForce RTX 4070 Laptop GPU", 12282), ram(Math.round(31.4 * 1024))),
+  "12 GB, reading 15.4 GB of RAM": readMachine(nv("NVIDIA GeForce RTX 4070", 12282), ram(Math.round(15.4 * 1024))),
+  "no card, CPU engine": readMachine(null, ram(32659), { cpuOnly: true }),
 };
 const linesFor = (machine) => {
   const capabilities = freshCaps().map((c) => ({ ...c, fit: fitFor(c.requires, machine) }));
@@ -430,11 +438,16 @@ for (const [name, machine] of Object.entries(MACHINES)) {
   const all = r.lines.join(" ");
   const videoPick = models.recommended.picks.find((p) => p.slot === "video");
   const music = models.recommended.picks.find((p) => p.slot === "music");
+  /* The video line carries the what-instead order (friend, own key, Reactive),
+   * so it is allowed more room than the other two. */
   ok(`${name}: three lines, plain words (${r.lines.length})`,
-    r.lines.length === 3 && !/_|undefined|null|NaN|\[object/.test(all) && r.lines.every((l) => l.length <= 260 && /\.$/.test(l)),
+    r.lines.length === 3 && !/_|undefined|null|NaN|\[object/.test(all)
+    && r.lines.every((l, i) => l.length <= (i === 2 ? 300 : 260) && /\.$/.test(l)),
     r.lines.join(" | "));
   ok(`${name}: the first line names what was read`,
-    machine.gpu ? r.lines[0].includes(machine.gpu.name) && r.lines[0].includes(`${machine.gpu.vramGb} GB`) : /could not read a graphics card/.test(r.lines[0]),
+    machine.gpu ? r.lines[0].includes(machine.gpu.name) && r.lines[0].includes(`${machine.gpu.vramGb} GB`)
+      : machine.h3?.noCard ? /has no graphics card for Studio/.test(r.lines[0]) && /runs on the CPU/.test(r.lines[0]) && !/could not read/.test(r.lines[0])
+      : /could not read a graphics card/.test(r.lines[0]),
     r.lines[0]);
   /* Decimal GB, as Models counts: never the GiB figure of the same bytes. */
   const musicCap = capabilities.find((c) => c.id === music?.id);
@@ -468,7 +481,20 @@ for (const [name, machine] of Object.entries(MACHINES)) {
     /* The engine the Video screen runs, judged by its own row. */
     const row = capabilities.find((c) => c.id === MODEL_TO_CAPABILITY[config.video.engine]);
     const f = row.fit;
-    const vramShort = machine.gpu && f.yourVramGb < f.needVramGb, ramShort = f.yourRamGb < f.needRamGb;
+    /* The H3 family is judged by its tier (h3tier.js), as the Video screen
+     * judges it: a card on the preview tier is offered the preview there, so
+     * the line says that instead of the row's printed minimum. */
+    const preview = f.h3?.tier === "preview";
+    const vramShort = machine.gpu && f.yourVramGb < f.needVramGb && !preview, ramShort = f.yourRamGb < f.needRamGb;
+    if (preview) {
+      ok(`${name}: a card on the preview tier is told what the Video screen offers it, not "needs an 8 GB card"`,
+        /offered on this \d+ GB card only as an experimental \d+x\d+ preview/.test(r.lines[2]) && /the Video screen starts there/.test(r.lines[2])
+        && !/needs an? \d+ GB card/.test(r.lines[2]), r.lines[2]);
+    }
+    if (machine.h3?.noCard) {
+      ok(`${name}: no card at all is said as such, not "cannot tell"`,
+        /no graphics card for MiniMax H3 to render on/.test(r.lines[2]) && !/cannot tell/.test(r.lines[2]), r.lines[2]);
+    }
     ok(`${name}: no video pick, and the line names the half that falls short from the row's own numbers`,
       (!vramShort || r.lines[2].includes(`${f.needVramGb} GB card`))
       && (!ramShort || r.lines[2].includes(`${f.needRamGb} GB of RAM`))
@@ -482,12 +508,43 @@ for (const [name, machine] of Object.entries(MACHINES)) {
         r.lines[2].includes(`not recommended with ${f.yourRamGb} GB of RAM`) && r.lines[2].includes(`${f.recRamGb} GB)`)
         && !/card and this one has|bigger card/.test(r.lines[2]), r.lines[2]);
     }
-    ok(`${name}: a friend's card comes first (Collab), worded as untried between two PCs, then Reactive; nothing paid`,
-      /Collab \(built, not yet tried between two PCs\)/.test(r.lines[2]) && /Reactive/.test(r.lines[2])
-      && r.links[0]?.view === "collab" && r.links[1]?.view === "reactive" && !/API|credit|cloud|\$/i.test(all), r.lines[2]);
+    /* The order every surface uses (server/cloud-switch.js NO_STRONG_CARD):
+     * a friend first, then the person's own paid key; Reactive as a third,
+     * free way. Nothing paid is offered before the friend. */
+    const l3 = r.lines[2];
+    const [iFriend, iKey, iReactive] = [l3.indexOf("a friend's card (Collab, free; built, not yet tried between two PCs)"),
+      l3.indexOf("your own paid key (Settings)"), l3.indexOf("Reactive")];
+    ok(`${name}: a friend's card first (Collab, untried between two PCs), your own paid key second, then Reactive`,
+      iFriend > 0 && iKey > iFriend && iReactive > iKey
+      && r.links[0]?.view === "collab" && r.links[1]?.view === "settings" && r.links[2]?.view === "reactive"
+      && !/credit|\$/i.test(all), l3);
   }
   ok(`${name}: the links go to screens that exist`,
     r.links.every((k) => HTML.includes(`data-view="${k.view}"`)), JSON.stringify(r.links));
+}
+/* THE RELEASE CRITIC'S EDGES, judged the same way as the launcher and the
+ * Video screen: one RAM reader (h3tier.js ramBoxGb), and a fresh install's
+ * music line never names MiniMax Music 3. */
+{
+  const laptop = linesFor(MACHINES["12 GB laptop reading 31.4 GB"]);
+  ok("a 32 GB laptop reading 31.4 GB is a 32 GB machine here, and H3 is recommended as on the launcher",
+    MACHINES["12 GB laptop reading 31.4 GB"].ram.totalGb === 32 && /^Video clips on MiniMax H3/.test(laptop.r.lines[2]), laptop.r.lines[2]);
+  /* AMD (release critic): the download is the int8 build, unmeasured on AMD;
+   * the music line says so beside it. */
+  const amdLines = linesFor(MACHINES["AMD 16 GB"]);
+  ok("AMD: the music line names the YuE2 download and says it is not yet measured on AMD cards",
+    /^Music on YuE2 3B for ComfyUI once you get it \(about [\d.]+ GB\); the build it fetches is not yet measured on AMD cards\./.test(amdLines.r.lines[1]),
+    amdLines.r.lines[1]);
+  const low = linesFor(MACHINES["12 GB, reading 15.4 GB of RAM"]);
+  ok("a 16 GB machine reading 15.4 GB clears the 16 GB floor (offered, not recommended), and FLUX.2 klein stays the picture pick",
+    MACHINES["12 GB, reading 15.4 GB of RAM"].ram.totalGb === 16 && /not recommended with 16 GB of RAM/.test(low.r.lines[2])
+    && /FLUX\.2 klein/.test(low.r.lines[1]) && !/below its minimum/.test(low.r.lines[1]), low.r.lines.join(" | "));
+  for (const [name, machine] of Object.entries(MACHINES)) {
+    const { r, models } = linesFor(machine);
+    const music = models.recommended.picks.find((p) => p.slot === "music");
+    ok(`${name}: a fresh install's music line is Studio's pick, never MiniMax Music 3`,
+      !/MiniMax Music 3/.test(r.lines[1]) && music?.chosenBy === "machine" && !/your selected/.test(music?.why || ""), r.lines[1]);
+  }
 }
 /* The plan's own persona (12 GB, 32 GB of RAM). The lab measured H3 at full
  * quality under a 12 GB cap; whether Home says so is the H3 row's verdict

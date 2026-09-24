@@ -32,12 +32,20 @@ export const ENGINE_LABEL = {
  *   ggufOk         native YuE2 GGUF installed, and the right build for this card
  *   ggufPrecisions which GGUF files are there: ["q4_0", "q8_0"]
  *   minimaxReady   MiniMax Music 3's three files are on disk
- *   vendor         "nvidia" | "amd" | "intel" | null
+ *   vendor         "nvidia" | "amd" | "intel" | "cpu" | null. "cpu" is the
+ *                  CPU-only install's stub (scripts/install-engine.mjs writes
+ *                  settings.gpu { vendor: "cpu", totalMb: 0 }): no card.
+ *   cardRead       false when a card was named but its memory was not read.
+ *                  Studio's readMachine counts that as no card reading
+ *                  (server/fit.js), so the default does too.
  *   amdMusicFixed  this launch starts ComfyUI with the AMD music fix
+ *   comfyFits      false when this PC is under YuE2-for-ComfyUI's minimum,
+ *   comfyShort     and which half fell short, "card" or "ram"
+ *                  (checks.mjs yue2ComfyVerdict, the function Studio asks)
  * @returns {{ full: {engine, warn, why, value, chosenBy}, music: {via, engine} }}
  */
 export function musicCards({ prefs = {}, api = null, yue2 = [], comfyOk = false, ggufOk = false,
-  ggufPrecisions = [], minimaxReady = false, vendor = null, amdMusicFixed = false } = {}) {
+  ggufPrecisions = [], minimaxReady = false, vendor = null, cardRead = true, amdMusicFixed = false, comfyFits, comfyShort = null } = {}) {
   const savedEngine = typeof prefs?.music?.engine === "string" ? prefs.music.engine : null;
   const savedCkpt = typeof prefs?.music?.yue2Checkpoint === "string" ? prefs.music.yue2Checkpoint : null;
   /* A file an older Studio wrote has no `keptFromBefore`: every value in it was
@@ -50,10 +58,14 @@ export function musicCards({ prefs = {}, api = null, yue2 = [], comfyOk = false,
     { engine: "minimax-music3", label: "MiniMax Music 3", available: minimaxReady && comfyOk },
     ...(api?.enabled ? [{ engine: "minimax-music3", api: api.provider || "fal", label: "MiniMax Music 3 · API", available: true }] : []),
   ];
-  const machine = { gpu: vendor ? { vendor } : null, amdMusicFixed };
+  /* A card Studio would read: not the CPU-only stub, and with its memory. */
+  const card = vendor && vendor !== "cpu" && cardRead !== false ? vendor : null;
+  const machine = { gpu: card ? { vendor: card } : null, amdMusicFixed };
+  /* comfy: Full Studio starts the ComfyUI found here; without one, a machine
+   * with nothing installed is pointed at the native GGUF instead. */
   const d = musicDefault({
     saved: savedEngine ? { engine: savedEngine, checkpoint: savedCkpt, kept } : null,
-    choices, machine, api: api?.enabled ? { enabled: true, provider: api.provider || null } : null,
+    choices, machine, api: api?.enabled ? { enabled: true, provider: api.provider || null } : null, comfy: comfyOk, comfyFits, comfyShort,
   });
 
   const ckptShown = d.value === "yue2-comfy"

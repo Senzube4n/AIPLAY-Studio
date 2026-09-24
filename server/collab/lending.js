@@ -48,6 +48,7 @@ import { estimateOne } from "../mv/plan.js";
 import { trapBand } from "../mv/plancost.js";
 import { ERRAND_SEGMENT, errandDoc, errandName } from "./errand.js";
 import { orderPlanItem } from "./order.js";
+import { H3_MV_SCREEN } from "../h3tier.js";
 
 /* ───────────────────────────────────────── where things are, in words */
 
@@ -61,7 +62,7 @@ import { orderPlanItem } from "./order.js";
  * quietly pointing at a screen the rail no longer names. The page's own
  * sentences read the rail's label directly (web/app.js cbScreen).
  */
-export const WORKFLOW_SCREEN = "Music video";
+export const WORKFLOW_SCREEN = H3_MV_SCREEN;   // the one copy: server/h3tier.js
 
 /** Where an errand's plan is approved: its own project's Plan card. */
 export const planPlace = (title) => `${WORKFLOW_SCREEN} → “${title}” → the Plan card`;

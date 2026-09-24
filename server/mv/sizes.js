@@ -19,19 +19,32 @@
  *   budget       Draft           864x480, the vendor's 0.4-megapixel default
  *   high         High            1920x1088, above H3's native size
  *
+ * THE REFERENCE PATH'S EVIDENCE, NOT THE FAST SETTING'S. A music video's
+ * scenes render with the cast's pictures on H3's 8-step reference build, and
+ * the lab measured that path only at 960x544 with ONE picture (314 MiB to
+ * spare under an 8 GB cap); full size there is predicted, the preview size was
+ * not run at all, and several pictures were never capped. So every note and
+ * "Studio's pick" sentence here quotes h3tier.js H3_PATHS.refs, never the
+ * TaoMate text-to-video runs the Video screen's tiers were measured with as
+ * if they were its own (the preview's says the text-only run is all there is).
+ *
  * PURE. No I/O. It imports only h3tier.js, which is pure too, so the MCP
  * process (server/mcp-mv.js) can read the list without loading the server.
  * The card reading comes in as an argument, the way h3tier.js takes it.
  */
-import { H3_TIERS, H3_LAB_CARD_GB, H3_RAM_FLOOR_GB, h3TierFor } from "../h3tier.js";
+import { H3_TIERS, H3_PATHS, H3_LAB_CARD_GB, H3_RAM_FLOOR_GB, H3_VAE_CAVEAT, h3TierFor, gbWithArticle } from "../h3tier.js";
 
 const tier = (id) => H3_TIERS.find((t) => t.id === id);
 const FULL = tier("full");
 const SMALL = tier("small");
 const PREVIEW = tier("preview");
 
-/** "an 8 GB card", "a 12 GB card": the article a number takes when it is read aloud. */
-const an = (n) => (/^(8|11|18)(\D|$)/.test(String(n)) ? "an" : "a");
+/** "an 8 GB card", "a 12 GB card": h3tier.js's article helper, the one copy. */
+const an = (n) => gbWithArticle(n).split(" ")[0];
+/* The reference path's evidence per tier (h3tier.js H3_PATHS.refs): what a
+ * music video's scenes really render on. */
+const REFS = H3_PATHS.refs;
+const MORE_PICTURES = "A cast with more than one picture was not measured at this size.";
 
 /* The two sizes that are not a card tier, typed once, here. */
 const DRAFT = Object.freeze({ width: 864, height: 480 });
@@ -69,23 +82,25 @@ export const MV_SIZES = Object.freeze([
   Object.freeze({
     id: "recommended", tier: "full", label: FULL.label,
     width: FULL.width, height: FULL.height, experimental: false,
-    note: `H3's own size. ${FULL.evidence}`,
+    note: `H3's own size. ${REFS.full.at16.evidence} ${MORE_PICTURES}`,
     cutSec: FULL.maxSeconds,
     cutWhy: `measured up to ${FULL.maxSeconds} s at ${FULL.width}x${FULL.height} under ${an(FULL.minGb)} `
-      + `${FULL.minGb} GB memory cap on the lab's ${H3_LAB_CARD_GB} GB card; longer is untested`,
+      + `${FULL.minGb} GB memory cap on the lab's ${H3_LAB_CARD_GB} GB card (text to video, the Fast setting); `
+      + "longer is untested",
   }),
   Object.freeze({
     id: "small", tier: "small", label: SMALL.label,
     width: SMALL.width, height: SMALL.height, experimental: false,
-    note: SMALL.evidence,
+    note: `${REFS.small.evidence} ${MORE_PICTURES} ${H3_VAE_CAVEAT}`,
     cutSec: SMALL.maxSeconds,
     cutWhy: `measured at ${SMALL.maxSeconds} s at ${SMALL.width}x${SMALL.height} under ${an(SMALL.minGb)} `
-      + `${SMALL.minGb} GB memory cap on the lab's ${H3_LAB_CARD_GB} GB card; longer is untested`,
+      + `${SMALL.minGb} GB memory cap on the lab's ${H3_LAB_CARD_GB} GB card, with one reference picture as well; `
+      + "longer is untested",
   }),
   Object.freeze({
     id: "preview", tier: "preview", label: PREVIEW.label,
     width: PREVIEW.width, height: PREVIEW.height, experimental: true,
-    note: PREVIEW.evidence,
+    note: REFS.preview.evidence,
     cutSec: PREVIEW.maxSeconds,
     cutWhy: `not proven at any length: ${PREVIEW.width}x${PREVIEW.height} for ${PREVIEW.maxSeconds} s was tried `
       + `under ${an(PREVIEW.minGb)} ${PREVIEW.minGb} GB memory cap and went over`,
@@ -183,6 +198,11 @@ const PICK_FOR_TIER = Object.freeze({ full: "recommended", small: "small", previ
  *
  *   gpu  gpuStatus() (totalMb, vendor, name) or null
  *   ram  ramStatus() (totalMb) or null
+ *   cpuOnly      no card, and Studio's engine runs on the CPU (index.js
+ *                cpuOnlyEngine): not offered, said as such, never "the card's
+ *                memory could not be read"
+ *   vaeMeasured  this PC loads the video decoder the H3 lab measured with
+ *                (h3tier.js H3_VAE_MEASURED): no decoder caveat in the pick
  *
  * `cardPick` is the brief value a new project starts at (null: the card could
  * not be read, or H3 is not offered on this machine, and the project keeps
@@ -190,10 +210,12 @@ const PICK_FOR_TIER = Object.freeze({ full: "recommended", small: "small", previ
  * sentence. `ramWarning` is h3tier's own sentence for a machine with less RAM
  * than H3 was measured with; the brief shows it under the size.
  */
-export function sizeChoices({ gpu = null, ram = null } = {}) {
+export function sizeChoices({ gpu = null, ram = null, cpuOnly = false, vaeMeasured = false } = {}) {
   const vramMb = Number(gpu?.totalMb) > 0 ? Number(gpu.totalMb) : null;
-  const ramGb = Number(ram?.totalMb) > 0 ? Number(ram.totalMb) / 1024 : null;
-  const t = h3TierFor({ vramMb, ramGb, vendor: gpu?.vendor || null });
+  const ramMb = Number(ram?.totalMb) > 0 ? Number(ram.totalMb) : null;
+  /* path "refs": the scenes render with the cast's pictures (see the header). */
+  const t = h3TierFor({ vramMb, ramMb, vendor: gpu?.vendor || null, path: "refs",
+    cpuOnly: vramMb === null && !!cpuOnly, vaeMeasured: !!vaeMeasured });
   /* A card H3 is not offered on gets no pick, whether the card or the RAM is
    * why: "Studio's pick for this card" beside "H3 is not offered here" would
    * be two answers to one question. */
@@ -216,10 +238,15 @@ export function sizeChoices({ gpu = null, ram = null } = {}) {
   });
   const pick = cardPick ? sizeById(cardPick) : null;
   const why = pick
-    ? `Studio's pick for this ${cardGb} GB card: ${pick.label}, ${pick.width}x${pick.height}.`
+    ? `Studio's pick for this ${cardGb} GB card: ${pick.label}, ${pick.width}x${pick.height}. `
+      + `Scenes render with the cast's pictures: ${t.evidence}`
+      + (t.experimental ? "" : ` ${MORE_PICTURES}`)
       + (t.recommend ? "" : ` ${t.notRecommended || ""}`)
     : t.id === "unknown"
       ? `${t.evidence} New projects start at full size.`
+      /* No card at all: the Video screen's answer, not "could not be read". */
+      : t.noCard
+        ? `H3 is not offered on this PC, so no size is picked for it and new projects start at full size. ${t.evidence}`
       : t.ramBelowFloor && t.id !== "none"
         ? `H3 is not offered on this machine: it has ${t.ramGb} GB of RAM, under the ${H3_RAM_FLOOR_GB} GB `
           + "H3 needs, so no size is picked for it and new projects start at full size."

@@ -18,10 +18,10 @@ MiniMax or any image/video model.
 
 1. Download and run **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Windows may say “Windows protected your PC” because the installer is not
-   signed yet: click **More info**, then **Run anyway**. It asks for a build and
-   a folder (the defaults are right), and installs Studio plus, when this PC has
-   no Node.js 20+, a private copy of it. No admin prompt. Section 3 says exactly
-   what it does.
+   signed yet: click **More info**, then **Run anyway**. When it asks which
+   build, choose **Senzu's**; then a folder (the default is right). It
+   installs Studio plus, when this PC has no Node.js 20+, a private copy of
+   it. No admin prompt. Section 3 says exactly what it does.
    *For developers:* install [Node.js](https://nodejs.org), then download the
    source from [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
    using **Code → Download ZIP**, or [download the ZIP directly](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
@@ -37,7 +37,9 @@ MiniMax or any image/video model.
 3. In **Models → Review Q4 / Q8 setup**, explicitly install **YuE2 GGUF Q4**: about **2.93 GB** for the
    Q4 model, F16 VAE and four sidecars, plus **833 MB** for the native runtime.
    Read the licence/source notices and wait for verification to complete.
-4. Open **Music**, enter a style and nonempty lyrics, then press **Create**.
+4. Open **Music**. A new install opens it on **Simple**: choose one of the
+   **Presets…** and press **Make song**. For your own words, press
+   **Advanced**, enter a style and nonempty lyrics, then press **Create**.
 
 Keep the launcher window open. If another Studio is already running, wait for
 its jobs to finish and close it before changing modes; both use port 4173 by default.
@@ -95,9 +97,9 @@ Other platforms are covered at the end, honestly.
 
 | You need | Why |
 |---|---|
-| **An NVIDIA or AMD graphics card.** 6 GB of VRAM minimum, 12 GB recommended. | The music model's first stage needs a GPU device: CUDA on NVIDIA, or ROCm on AMD (a ROCm torch presents the card as `cuda:0`). There is no CPU fallback — it stops with `Expected a cuda device, but got: cpu`. Intel and Apple graphics will not run this. The AMD path is measured on one card — see [NVIDIA, AMD, Intel or CPU](README.md#nvidia-amd-intel-or-cpu). |
+| **A graphics card for the music model Studio picks, or none.** YuE2 3B through ComfyUI (the build Studio recommends): an NVIDIA or AMD card, 8 GB of VRAM minimum, 12 GB recommended. The native YuE2 GGUF: any card (CUDA on NVIDIA, Vulkan on AMD and Intel) or the CPU, which is slow; Studio picks it with no card, on an Intel card, or on a PC under the ComfyUI build's card or RAM minimum. MiniMax Music 3, if you pick it: an NVIDIA or AMD card, 6 GB minimum, 12 GB recommended. | The ComfyUI music models' first stage needs a GPU device: CUDA on NVIDIA, or ROCm on AMD (a ROCm torch presents the card as `cuda:0`). There is no CPU fallback for them — MiniMax stops with `Expected a cuda device, but got: cpu`. Intel and Apple graphics will not run them. The AMD path is measured on one card — see [NVIDIA, AMD, Intel or CPU](README.md#nvidia-amd-intel-or-cpu). |
 | **16 GB of system RAM**, 32 GB recommended. | On smaller cards the model is streamed out of system RAM, so RAM does the work VRAM cannot. |
-| **Free disk space.** About 12 GB for music alone (MiniMax Music 3). About 66 GB more for music videos (MiniMax H3 and its reference build), and about 326 GB if you downloaded every model in the catalogue (a file two features share counted once). | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
+| **Free disk space.** About 4 GB for music alone (YuE2 3B through ComfyUI, the build Studio recommends; MiniMax Music 3, if you pick it instead, is about 12 GB). About 66 GB more for music videos (MiniMax H3 and its reference build), and about 326 GB if you downloaded every model in the catalogue (a file two features share counted once). | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
 | **Node.js 20 or newer.** | Studio's server is written in it. |
 | **A ComfyUI install.** | Studio drives one. It does not contain one. |
 

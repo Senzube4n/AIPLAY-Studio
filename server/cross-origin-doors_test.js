@@ -68,8 +68,10 @@ const HEADS = [
   /* Defaults that follow the disk: the music model (model, engine, "auto",
    * LoRAs) and the picture and cover engines are chosen and saved here; the
    * music door's model action also switches the paid hosted engine. */
-  ["POST /api/music (the music model, its build, \"auto\", the LoRAs; its model action switches the paid hosted engine)", 'if (p === "/api/music" && req.method === "POST") {', "const b = await readBody(req);"],
-  ["POST /api/artconfig (the cover and picture engines, \"auto\")", 'if (p === "/api/artconfig" && req.method === "POST") {', "const b = await readBody(req);"],
+  ["POST /api/music (the music model, its build, \"auto\", the LoRAs; its model action switches the paid hosted engine)", 'if (p === "/api/music" && req.method === "POST") {',
+    '"could not read that body as JSON" });\n      }'],
+  ["POST /api/artconfig (the cover and picture engines, \"auto\")", 'if (p === "/api/artconfig" && req.method === "POST") {',
+    '"could not read that body as JSON" });\n      }'],
   /* The video engine and every render (and its check), with a capped body. */
   ["POST /api/video (the video engine, a render, its check)", 'if (p === "/api/video" && req.method === "POST") {',
     '"could not read that body as JSON" });\n      }'],
@@ -252,6 +254,23 @@ test("POST /api/hum and /api/song_to_score: refused before the body is read, fro
       assert.equal(r?.code, 200, `${door}, ${what} gets through: ${JSON.stringify(r)}`);
       assert.equal(ran.length, 1, `${door}, ${what}: it ran`);
     }
+  }
+});
+
+/* The two settings doors read a few names, never a file: a 64 KB cap before
+ * JSON.parse, a 413 that says so, and a foreign request still refused first. */
+test("POST /api/music and /api/artconfig cap their bodies at 64 KB: 413 before JSON.parse", async () => {
+  for (const open of ['if (p === "/api/music" && req.method === "POST") {', 'if (p === "/api/artconfig" && req.method === "POST") {']) {
+    const head = slice(open, '"could not read that body as JSON" });\n      }', { through: true });
+    assert.match(head, /b = await readBody\(req, 64 \* 1024\)/, open);
+    const run = new AsyncFunction("req", "res", "json", "sameOriginLocalJson", "readBody", `${head}\nreturn { passed: true, b };`);
+    let limit = null;
+    const ok = await run(PAGE, null, json, sameOriginLocalJson, async (_q, max) => { limit = max; return { action: "x" }; });
+    assert.deepEqual(ok, { passed: true, b: { action: "x" } });
+    assert.equal(limit, 64 * 1024, "the cap reaches readBody");
+    const big = await run(PAGE, null, json, sameOriginLocalJson, async () => { throw Object.assign(new Error("body is over 64 KB"), { tooBig: true }); });
+    assert.equal(big.code, 413);
+    assert.match(big.body.error, /too large \(body is over 64 KB\)/);
   }
 });
 

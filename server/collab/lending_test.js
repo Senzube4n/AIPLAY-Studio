@@ -435,4 +435,24 @@ test("D: the server's screen name is the rail's own label, so a relabel of the r
   assert.equal(L.pickPlace(), `${rail} → Video clips → Inspect…`);
   /* The page's static hints are filled from the rail too. */
   assert.match(html, /<b data-screen="workflow">/);
+  /* ...and so are the words that send someone there from elsewhere: h3tier's
+   * "ask a friend" sentence (the H3 rows on Models), the Settings card's
+   * friend step, the README and the lending docs (release critic: they still
+   * said Workflow after the rail was renamed). */
+  const { H3_MV_SCREEN, H3_ASK_A_FRIEND } = await import("../h3tier.js");
+  const { NO_STRONG_CARD, LENDER_ROLE_LABEL } = await import("../cloud-switch.js");
+  assert.equal(H3_MV_SCREEN, rail, "server/h3tier.js H3_MV_SCREEN must equal the rail label too");
+  assert.ok(H3_ASK_A_FRIEND.includes(`on a scene in ${rail}`));
+  assert.ok(NO_STRONG_CARD[0].how.includes(`${rail} → Video clips`));
+  for (const doc of ["../../README.md", "../../docs/FRIEND_RENDERING.md", "../../docs/COLLAB.md", "../../docs/DEEP_DIVE.md"]) {
+    const text = await src(doc);
+    assert.doesNotMatch(text, /Workflow → Video clips|\*\*Workflow\*\* → \*\*Video clips\*\*|Open its plan in Workflow|Plan card in Workflow/,
+      `${doc} still names the old Workflow screen`);
+  }
+  /* The role the Settings card tells people to give, word for word as the
+   * Friends row offers it (web/app.js's role select). */
+  const app = await src("../../web/app.js");
+  assert.ok(app.includes(`["lender", "${LENDER_ROLE_LABEL}"]`), "the Friends row offers the role the Settings card names");
+  assert.ok(NO_STRONG_CARD[0].limits.includes(`"${LENDER_ROLE_LABEL}"`));
+  assert.doesNotMatch(NO_STRONG_CARD[0].limits, /may render single scenes for me|filing onto its scene by hand/);
 });

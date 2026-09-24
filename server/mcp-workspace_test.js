@@ -11,7 +11,7 @@ import path from "node:path";
 import { collabTools } from "./mcp-collab.js";
 import { modelTools } from "./mcp-models.js";
 import { TOOLS } from "./mcp.js";
-import { adaptTool, ROUTABLE, index } from "./chat/router.js";
+import { adaptTool, ROUTABLE, WITHHELD, index } from "./chat/router.js";
 
 function fixture() {
   const calls = [];
@@ -27,7 +27,11 @@ function fixture() {
 test("every new workflow tool is registered once and classified for local chat", () => {
   for (const t of fixture().tools) {
     assert.equal(TOOLS.filter(x => x.name === t.name).length, 1, t.name);
-    if (!["download_model", "cancel_download", "studio_api_request"].includes(t.name)) assert.ok(t.name in ROUTABLE, t.name);
+    /* Classified: routable with a gate, or withheld with a reason (the trust grant, a friend's role and
+     * their minutes a day are a person's on the Collab screen: chat/router.js WITHHELD). */
+    if (!["download_model", "cancel_download", "studio_api_request"].includes(t.name)) {
+      assert.ok(t.name in ROUTABLE || typeof WITHHELD[t.name] === "string", t.name);
+    }
   }
 });
 

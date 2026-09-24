@@ -34,7 +34,7 @@ import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmd
 import { ffmpegPath, ffprobePath } from "../server/clipjoin.js";
 /* What the system check SAYS (RAM, ffmpeg, a weak card, Music only, Studio's
  * packages): pure, so server/installer_test.js can call it. */
-import { ramItem, ffmpegItem, cardAdvice, musicOnlyNote, studioPackagesItem } from "./checks.mjs";
+import { ramItem, ffmpegItem, cardAdvice, musicOnlyNote, studioPackagesItem, yue2ComfyVerdict } from "./checks.mjs";
 /* "Try again" beside Studio's own packages: the engine installer's --studio-packages, the same run MCP's setup_feature makes. */
 import { runStudioPackages } from "../server/setup/engine-packages.js";
 /* Their names, from the one list the installer and the check use. */
@@ -359,10 +359,13 @@ async function systemCheck({ redetect = false } = {}) {
    * told what Studio will actually run, and the MiniMax-on-AMD warning appears
    * only for somebody who saved MiniMax. */
   const ggufOk = ggufInstalled && !ggufMismatch;
+  /* Card and RAM, judged by the function Studio asks (server/music-default.js
+   * yue2ComfyFit); a card whose memory was not read is no reading, as there. */
+  const comfyVerdict = yue2ComfyVerdict(gpu, totalmem());
   const cards = musicCards({
     prefs: settings.prefs || {}, api: settings.api || null, yue2, comfyOk, ggufOk,
     ggufPrecisions: ["q4_0", "q8_0"].filter((p) => existsSync(path.join(ggufModels, `yue2-3b-${p}.gguf`))),
-    minimaxReady, vendor, amdMusicFixed,
+    minimaxReady, vendor, cardRead: !!gpu?.totalMb, amdMusicFixed, comfyFits: comfyVerdict.fits, comfyShort: comfyVerdict.short,
   });
   const musicVia = cards.music.via;
   const modes = {

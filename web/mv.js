@@ -1439,12 +1439,18 @@ function renderBible() {
       characters and backgrounds, and one storyboard per scene — <b>this is what steers
       the clips</b>. Once a bible exists, every part of it is editable here, and
       <b>a scene's shot <i>action</i> is what writes its clip</b>.</p>
-    ${has ? "" : `<p class="hint" title="The agent reads the contract with mv_bible_spec and commits the bible with mv_set_bible.">
-      <b>How to get one today:</b> this page has no form that writes a first bible yet. Connect
-      an outside AI assistant over MCP (Claude Desktop, Claude Code or Cursor; the <b>Agent</b>
-      page shows how) and ask it to write the script for this project: it reads your scenes and
-      the rules, and writes the whole bible in one go. Studio's own Chat cannot do it, with a
-      local or a cloud model, because its tool list leaves out tools that take a whole document.</p>`}
+    ${has ? "" : `<div class="hint" title="The agent reads the contract with mv_bible_spec and commits the bible with mv_set_bible.">
+      <p><b>How to get one today:</b> this page has no form that writes a first bible yet, so the
+      first script comes from an outside AI assistant:</p>
+      <ol>
+        <li>Open the <b>Agent</b> page and connect Claude Desktop, Claude Code or Cursor to Studio (it shows how, step by step).</li>
+        <li>In that assistant, ask: <i>“Write the script for the music video ${esc(d.title || d.slug || "")}.”</i>
+          It reads your scenes and the rules, and writes the whole bible in one go.</li>
+        <li>Come back here: the story, the cast and one storyboard per scene appear on this card, and every part of it is editable.</li>
+      </ol>
+      <p>Studio's own Chat cannot do it, with a local or a cloud model, because its tool list leaves out
+      tools that take a whole document. Without a script you can still press <b>Generate</b> on a scene
+      under <b>Video clips</b>: it becomes a performance shot steered only by its lyric line.</p></div>`}
     ${has ? `
       <div class="params bibleform">
         <label for="wfLogline">logline</label>

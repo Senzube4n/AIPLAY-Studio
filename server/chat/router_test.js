@@ -468,6 +468,28 @@ head("§10  the overrides the chat may not send");
     ok("...while the ordinary call goes through, with no override in it",
       calls.length === 1 && !("anyway" in calls[0]), JSON.stringify(calls));
   }
+  /* ⚠ AND THE WAY ROUND IT (release critic, 2026-09-24): with collab_accept
+   * routable, raising a friend's minutes a day and then accepting walked past
+   * the same check the withheld `anyway` guards. The allowance, the role and
+   * the trust grant are a person's decisions on the Collab screen. */
+  for (const name of ["collab_set_lend_minutes", "collab_set_role", "collab_verify"]) {
+    ok(`${name} is withheld from the in-app chat, with a reason, and never routed`,
+      !(name in ROUTABLE) && typeof WITHHELD[name] === "string" && WITHHELD[name].length > 40
+      && !index().some((e) => e.tool.name === name), WITHHELD[name]);
+  }
+  ok("...and the minutes setter's reason names the accept it would get around",
+    /collab_accept/.test(WITHHELD.collab_set_lend_minutes) && /anyway/.test(WITHHELD.collab_set_lend_minutes));
+  /* video_settings SAVES what it sets (sparse attention on Fast among it). */
+  ok("video_settings asks first, and its card says the change is saved, not a new file",
+    ROUTABLE.video_settings === "writes" && /SAVED/.test(COST_TEXT_BY_TOOL.video_settings)
+    && !/NEW FILE/.test(COST_TEXT_BY_TOOL.video_settings));
+  /* A plain read asks too (the router gates the tool, not the call), so the
+   * card says reading changes nothing, in plain words, and the chat's tool
+   * list does not call it a file (release critic). */
+  const vs = adaptTool({ ...MCP_TOOLS.find((t) => t.name === "video_settings"), run: async () => ({}) }, ROUTABLE.video_settings);
+  ok("...its card says a read changes nothing, with no engine jargon, and its tag says it saves a setting, not a file",
+    /reading your video settings changes nothing/.test(vs.cost) && !/sparse attention|Fast/.test(vs.cost)
+    && gateLabel(vs) === "   [SAVES A SETTING \u2014 ASKS YOU FIRST]", `${vs.cost} | ${gateLabel(vs)}`);
   ok("every tool named on that list is a real tool with that argument",
     Object.entries(CHAT_WITHHELD_ARGS).every(([name, a]) => {
       const props = MCP_TOOLS.find((t) => t.name === name)?.inputSchema?.properties || {};

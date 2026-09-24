@@ -109,7 +109,7 @@ export const gateLabel = (t) => {
   /* Measured: two image tools hold the card. The rest write a file with numpy,
    * and telling the model they SPEND GPU TIME put a false sentence in front of
    * it and, through the confirm card, in front of the person. */
-  if (t.gate === "writes") return "   [WRITES A FILE — ASKS YOU FIRST]";
+  if (t.gate === "writes") return `   [${t.gateWords || "WRITES A FILE"} — ASKS YOU FIRST]`;
   return t.spends ? "   [SPENDS GPU TIME]" : "";
 };
 

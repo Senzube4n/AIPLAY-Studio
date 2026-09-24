@@ -1484,11 +1484,11 @@ slow app with no explanation is worse than a failure.
 
 **Ask a friend first.** Without a strong graphics card, the first answer is a
 friend who has one: on **Collab** you add each other once, press **Ask friend**
-beside a scene (Workflow → Video clips) and send them the sealed file it makes;
+beside a scene (Music video → Video clips) and send them the sealed file it makes;
 they send the finished clip back as a file for you to look at before you keep
 it. It is free, nothing connects to anybody, both of you run Full Studio, and it
-lends video scenes, not songs. A real two-PC round trip has not been
-acceptance-tested yet ([Collab](COLLAB.md),
+lends video scenes, not songs. Lending is built but not yet tried between two
+PCs ([Collab](COLLAB.md),
 [Ask a friend to render](FRIEND_RENDERING.md)). A paid
 service on your own key is the second answer. Both live on one Settings card,
 **No strong graphics card?**, in that order; `cloud_status` gives an agent the

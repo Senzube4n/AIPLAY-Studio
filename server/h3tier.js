@@ -96,10 +96,82 @@ export const H3_RAM_WARNING = `H3 was only measured with ${H3_RAM_MEASURED_GB} G
 
 export const H3_AMD_NOTE = "No H3 render has been tested on an AMD card yet.";
 
+/**
+ * SYSTEM RAM, READ ONCE, THE SAME WAY EVERYWHERE. os.totalmem() and Windows
+ * report USABLE memory: a 32 GB laptop whose integrated graphics keeps a
+ * slice reads 31.4 GB, a 16 GB one 15.4 GB, an APU that keeps 4 GB reads 28.
+ * Rounding (fit.js's rule for VRAM, where the driver keeps a fraction of a GB)
+ * turned 31.4 into "31 GB, under the 32 H3 was measured with" on Home while
+ * the launcher allowed 4 GB for exactly this and said "ok", and 15.4 into
+ * "under the 16 GB floor" while the launcher only said "slow". One reader
+ * now: a reading within RAM_RESERVED_GB under a size RAM is sold in counts as
+ * that size, for the floor and the recommendation alike, and anything else is
+ * rounded. server/fit.js (every row's RAM verdict, Home, Models), the Video
+ * and music-video screens (h3Status, server/mv/sizes.js) and the launcher's
+ * RAM line (launcher/checks.mjs) all call it. The lab's own machine read
+ * 31.9 GB.
+ *
+ * THE FLOOR TAKES THE SAME ALLOWANCE, ON PURPOSE. A 16 GB box whose
+ * integrated graphics keeps up to 4 GB reads as little as 12.1 GB and is
+ * judged a 16 GB machine, so H3 is offered there (never recommended: under the
+ * 32 GB it was measured with, with the paging warning). The floor is itself a
+ * judgement, not a measurement (nothing under 32 GB was tried), and a second,
+ * stricter reader would bring back two answers for one machine. A reading of
+ * 11.9 GB is a 12 GB box: under the floor. h3tier_test.js pins both.
+ */
+export const RAM_RESERVED_GB = 4;
+const RAM_SIZES_GB = Object.freeze([2, 4, 6, 8, 12, 16, 20, 24, 32, 36, 40, 48, 64, 96, 128, 192, 256, 384, 512]);
+
+/** System RAM in MiB (ramStatus().totalMb) to the whole GB Studio judges it as. Null when unread. */
+export function ramBoxGb(totalMb) {
+  const mb = Number(totalMb);
+  if (!Number.isFinite(mb) || mb <= 0) return null;
+  const gb = mb / 1024;
+  /* Strictly under the allowance, so a value this returns reads back as itself. */
+  const size = RAM_SIZES_GB.find((s) => s >= gb - 1e-9);
+  return size !== undefined && size - gb < RAM_RESERVED_GB ? size : Math.round(gb);
+}
+
+/** "an 8 GB", "a 12 GB": a GB figure with the article it takes read aloud. */
+export function gbWithArticle(n) {
+  return `${/^(8|11|18|8\d)(\D|$)/.test(String(n)) ? "an" : "a"} ${n} GB`;
+}
+
+/** The rail's name for the music-video screen: the one copy. server/collab/
+ *  lending.js (WORKFLOW_SCREEN) and server/cloud-switch.js read it from here,
+ *  and lending_test.js pins it to the rail's own label. */
+export const H3_MV_SCREEN = "Music video";
+
+/** Lending is built and has passed its tests on one machine; a render between
+ *  two PCs has not been tried. Every surface that offers it says so, in these
+ *  words: Home, Explore, the Video and music-video screens, the Models notes
+ *  and H3 rows, Settings and the launcher. Kept here because this file imports
+ *  nothing and its friend sentence below needs it; server/cloud-switch.js
+ *  re-exports it for everything else. */
+export const LENDING_UNTRIED = "built, not yet tried between two PCs";
+
 /* What someone under the floor can do instead: a friend's card first, never a
  * paid route by default (the owner's rule, 2026-09-24). */
-export const H3_ASK_A_FRIEND = "Ask a friend with a bigger machine to render it: Ask friend on the Video screen, "
-  + "or on a scene in Workflow, prepares the recipe for their card.";
+export const H3_ASK_A_FRIEND = `Ask a friend with a bigger machine to render it (Collab, free; ${LENDING_UNTRIED}): `
+  + `Ask friend on the Video screen, or on a scene in ${H3_MV_SCREEN}, prepares the recipe for their card.`;
+
+/**
+ * THE VIDEO VAE THE LAB HAD IS NOT THE ONE A NEW INSTALL GETS. Every measured
+ * figure below was taken with the rig's own 3.17 GB int8 video VAE (config.js
+ * loads it first when it is there). The Models screen downloads the 5.2 GB
+ * fp16 one: the int8 file Comfy-Org published is 2.81 GB, is not the file
+ * the rig measured, and was never rendered here (server/models.js, the H3
+ * row's variants). Decoding is part of the peak and the VAE is not shrunk by
+ * headroom, so the measured sizes carry this sentence until the fp16 VAE is
+ * measured at them, on every PC that does not load the measured file.
+ * H3_VAE_MEASURED names that file by name and size; index.js asks whether the
+ * VAE config.js loads is it (the name alone is not enough: Comfy-Org's int8
+ * has the same name) and passes `vaeMeasured` in, so this file stays pure.
+ * The sentence is for the screens, so it says "video decoder", not VAE.
+ */
+export const H3_VAE_MEASURED = Object.freeze({ file: "minimax_h3_video_vae_int8_convrot.safetensors", bytes: 3_171_670_912 });
+export const H3_VAE_CAVEAT = "A new install downloads a larger video decoder than the one these sizes were "
+  + "measured with, so a card near the edge may need a shorter clip.";
 
 /**
  * THE LAB'S OTHER TWO VERDICTS, one copy each: config.js (h3.solAttn,
@@ -215,7 +287,8 @@ const tierById = (id) => H3_TIERS.find((t) => t.id === id);
  * `below16` / `at16` for full size (a 16 GB card is where the lab ran them
  * natively, or did not), a plain string for the others. `measured` false
  * where the sentence is a prediction. A tier or path not listed keeps the
- * Fast setting's evidence (the preview and "none" do not depend on the path).
+ * Fast setting's evidence ("none" does not depend on the path; the reference
+ * path's preview says it was not run there, and what a picture adds).
  */
 export const H3_PATHS = Object.freeze({
   fasth3: Object.freeze({
@@ -238,9 +311,26 @@ export const H3_PATHS = Object.freeze({
         + "picture added about 240 MiB at 960x544." },
     },
     small: { measured: true, evidence: "Measured for the reference path (8 steps, one reference picture) under an "
-      + "8 GB cap on a 16 GB card: 960x544 for 5 s fit with only 314 MiB to spare, 137.8 s a clip there. Several "
-      + "pictures were never capped. A real 8 GB card is slower." },
+      + "8 GB cap on a 16 GB card: 960x544 for 5 s fit with only 314 MiB to spare, 137.8 s a clip there. "
+      + "A real 8 GB card is slower." },
+    /* Not run at the preview size at all: the Fast setting's text-only run is
+     * the only evidence there, and the reference picture costs on top of it. */
+    preview: { measured: false, evidence: "Experimental, not proven: the reference path was not run at 832x480, and "
+      + "one reference picture added about 240 MiB at 960x544. Text to video alone went over a 6 GB cap by 631 MiB "
+      + "at this size with a 2.6 GB desktop counted. Close GPU-heavy apps or plug the monitor into the integrated "
+      + "graphics." },
   }),
+});
+
+/** No graphics card at all: Studio's engine runs PyTorch on the CPU (the
+ *  launcher's "CPU only" install, settings.json torchBackend "cpu"). Not
+ *  offered, the same as a card under the preview floor. An AMD or Intel card
+ *  whose memory was not read stays H3_UNKNOWN ("cannot tell"). */
+export const H3_NO_CARD = Object.freeze({
+  id: "none", minGb: null, label: "Not offered",
+  plain: "H3 is not offered without a graphics card",
+  width: null, height: null, maxSeconds: 0, measured: false, experimental: false, noCard: true,
+  evidence: `This PC's engine runs on the CPU: there is no graphics card for H3 to render on. ${H3_ASK_A_FRIEND}`,
 });
 
 /** No card reading: no size is chosen, and every tier is listed instead. */
@@ -272,18 +362,22 @@ export function h3CardGb(vramMb) {
 /**
  * The tier for a card, plus the warnings and the recommendation that go with it.
  *   vramMb   the card's total memory in MiB (gpu.js totalMb), or null
- *   ramGb    system RAM in GB (rounded to whole GB here)
+ *   ramMb    system RAM in MiB (ramStatus().totalMb), judged by ramBoxGb
+ *   ramGb    or system RAM in GB, judged the same way (ramBoxGb(ramGb * 1024))
  *   vendor   "nvidia" | "amd" | "intel" | null
  *   path     null (H3, TaoMate) | "fasth3" | "refs": whose evidence to quote
+ *   cpuOnly  no card was read AND the engine runs on the CPU: not offered
+ *   vaeMeasured  this PC loads the video decoder the lab measured with
+ *            (H3_VAE_MEASURED): the measured sentences drop H3_VAE_CAVEAT
  * Returns the tier's own fields (evidence and `measured` for that path) plus
  * cardGb, ramGb, ramWarning, ramBelowFloor, amdNote, offered, recommend and
  * notRecommended (the sentence saying why not, or null).
  */
-export function h3TierFor({ vramMb = null, ramGb = null, vendor = null, path = null } = {}) {
+export function h3TierFor({ vramMb = null, ramMb = null, ramGb = null, vendor = null, path = null, cpuOnly = false, vaeMeasured = false } = {}) {
   const cardGb = h3CardGb(vramMb);
-  const tier = cardGb === null ? H3_UNKNOWN : H3_TIERS.find((t) => cardGb >= t.minGb);
-  const ram = Number(ramGb);
-  const ramWhole = Number.isFinite(ram) && ram > 0 ? Math.round(ram) : null;
+  const tier = cardGb === null ? (cpuOnly ? H3_NO_CARD : H3_UNKNOWN) : H3_TIERS.find((t) => cardGb >= t.minGb);
+  const ramWhole = ramMb !== null && ramMb !== undefined ? ramBoxGb(ramMb)
+    : Number(ramGb) > 0 ? ramBoxGb(Number(ramGb) * 1024) : null;
   const ramBelowFloor = ramWhole !== null && ramWhole < H3_RAM_FLOOR_GB;
   const ramShort = ramWhole !== null && ramWhole < H3_RAM_MEASURED_GB;
 
@@ -297,6 +391,9 @@ export function h3TierFor({ vramMb = null, ramGb = null, vendor = null, path = n
   } else if (tier.caveat && cardGb < H3_LAB_CARD_GB) {
     evidence = `${evidence} ${tier.caveat}`;
   }
+  /* A figure the lab measured was measured with its int8 video VAE: said
+   * wherever this PC does not load that file. */
+  if (measured && !vaeMeasured) evidence = `${evidence} ${H3_VAE_CAVEAT}`;
 
   const amd = vendor === "amd";
   const offered = tier.id !== "none" && !ramBelowFloor;
@@ -467,10 +564,9 @@ export function h3SizeFit({ width, height, seconds, frames } = {}, { vramMb = nu
  */
 export function h3LengthLine(t) {
   if (!t?.width || !t?.maxSeconds) return null;
-  const a = /^(8|11|18)$/.test(String(t.minGb)) ? "an" : "a";
   return t.measured
-    ? `The length went down to ${t.maxSeconds} s, the longest measured to fit at ${t.width}x${t.height} on ${a} `
-      + `${t.minGb} GB card; a longer clip is untested there, not forbidden.`
+    ? `The length went down to ${t.maxSeconds} s, the longest measured to fit at ${t.width}x${t.height} on `
+      + `${gbWithArticle(t.minGb)} card; a longer clip is untested there, not forbidden.`
     : `The length went down to ${t.maxSeconds} s, the length the experimental ${t.width}x${t.height} preview `
       + "is offered at; it has not been seen to fit yet.";
 }
@@ -496,16 +592,21 @@ export function h3StartSize(h3) {
  * from the same two readings the status bar already takes: gpu.js gpuStatus()
  * and ramStatus(). For the Fast setting's path, the one the Video screen starts on.
  */
-export function h3Status({ gpu = null, ram = null } = {}) {
+export function h3Status({ gpu = null, ram = null, cpuOnly = false, vaeMeasured = false } = {}) {
   const vramMb = Number(gpu?.totalMb) > 0 ? Number(gpu.totalMb) : null;
-  const ramGb = Number(ram?.totalMb) > 0 ? Number(ram.totalMb) / 1024 : null;
-  const t = h3TierFor({ vramMb, ramGb, vendor: gpu?.vendor || null });
+  const ramMb = Number(ram?.totalMb) > 0 ? Number(ram.totalMb) : null;
+  const t = h3TierFor({ vramMb, ramMb, vendor: gpu?.vendor || null, cpuOnly: vramMb === null && !!cpuOnly, vaeMeasured: !!vaeMeasured });
   const {
     cardGb, ramGb: ramWhole, ramWarning, ramBelowFloor, amdNote, offered, recommend, notRecommendedFor,
     notRecommended, caveat, ...tier
   } = t;
   return {
     card: vramMb === null ? null : { vramMb, vramGb: cardGb, name: gpu?.name || null, vendor: gpu?.vendor || null },
+    /* No card at all (the engine runs on the CPU): not offered, said as such. */
+    noCard: !!tier.noCard,
+    /* This PC loads the video decoder the lab measured with (H3_VAE_MEASURED):
+     * fit.js's H3 rows read it back, so their sentences match this block's. */
+    vaeMeasured: !!vaeMeasured,
     ramGb: ramWhole,
     tier,
     offered,
@@ -527,7 +628,7 @@ export function h3Status({ gpu = null, ram = null } = {}) {
     /* `title` is the chip's tooltip (the tier's plain line, which names the
      * length); `lengthSaid` is what the page shows when the chip shortened
      * the clip. */
-    choices: (vramMb === null ? H3_TIERS.filter((x) => x.id !== "none")
+    choices: (vramMb === null && !tier.noCard ? H3_TIERS.filter((x) => x.id !== "none")
       : offered ? H3_TIERS.filter((x) => x.id !== "none" && x.minGb <= tier.minGb) : [])
       .map((x) => ({ id: x.id, chip: x.chip || x.label, width: x.width, height: x.height, maxSeconds: x.maxSeconds,
         experimental: x.experimental, measured: x.measured, title: x.plain, lengthSaid: h3LengthLine(x) })),

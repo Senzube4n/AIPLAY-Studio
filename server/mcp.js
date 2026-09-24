@@ -2886,7 +2886,7 @@ export const TOOLS = [
   {
     name: "set_image_engine",
     description:
-      "Choose a picture engine persistently: for covers (the default), for pictures (the Images screen's engine, and make_image or a music video's stills with no engine named), or both, with `use_for`. "
+      "Choose a picture engine persistently: for covers (the default), for pictures (the Pictures screen's engine, and make_image or a music video's stills with no engine named), or both, with `use_for`. "
       + "\"auto\" forgets the choice, so Studio picks from what is on this PC again. make_image still takes its own `engine` per picture. "
       + "qwen-image-2.1 supports references, 25 steps at CFG 1, and requires a compatible runtime and native files. "
       + "With no saved choice, covers use the recommended picture model on this PC, and none are queued while no picture model is there (studio_status `defaults`, key art.engine); a saved choice always wins. flux2: FLUX.2 klein, Apache-2.0, also takes references. "
@@ -2903,7 +2903,7 @@ export const TOOLS = [
         engine: { type: "string", enum: ["auto", "qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
         checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with (covers only; a picture's own file is picked per picture)." },
         use_for: { type: "string", enum: ["covers", "pictures", "both"],
-          description: "covers (default): the engine that paints song covers. pictures: the Images screen's engine, used by make_image and music-video stills when they name none; kept even when its files are missing (make_image then says what to download). both." },
+          description: "covers (default): the engine that paints song covers. pictures: the Pictures screen's engine, used by make_image and music-video stills when they name none; kept even when its files are missing (make_image then says what to download). both." },
       },
       additionalProperties: false,
     },

@@ -39,6 +39,7 @@ writeFileSync(path.join(tmp, "settings.json"), JSON.stringify({ api: { enabled: 
 
 const { config } = await import("./config.js");
 const cloud = await import("./cloud-switch.js");
+const h3tier = await import("./h3tier.js");
 const { generateViaApi } = await import("./apiEngine.js");
 const { secretStatus } = await import("./secrets.js");
 const { JobRunner } = await import("./jobs.js");
@@ -83,7 +84,8 @@ test("friend first, then your own key: one list, in that order, the paid one mar
   assert.match(friend.how, /^Free: .*Ask friend.*Music video → Video clips/);
   assert.match(friend.limits, /Collab → Friends/);
   assert.match(friend.limits, /video scenes, not songs/);
-  assert.match(friend.limits, /has not been acceptance-tested yet/, "the round trip is not promised");
+  assert.ok(friend.how.includes(`(${cloud.LENDING_UNTRIED})`), "the round trip is not promised, in the step's own sentence");
+  assert.doesNotMatch(friend.limits, /acceptance-tested|tried between two PCs/, "said once, in the step, not twice");
   /* Own key: a key another copy of Studio saved is used AND shown, so the
    * sentence does not claim "only a key you paste here". */
   assert.match(cloud.NO_STRONG_CARD[1].how, /only a key typed into Studio on this Windows account, never one from another program or an environment variable/);
@@ -92,7 +94,25 @@ test("friend first, then your own key: one list, in that order, the paid one mar
   assert.equal(cloud.NO_STRONG_CARD[1].where, cloud.CLOUD_CARD_PLACE);
   assert.equal(cloud.HOSTED_KEY_PLACE, `${cloud.CLOUD_CARD_PLACE} → Hosted engine`);
   /* The video slot says what the paid half really is there. */
-  assert.match(cloud.NO_STRONG_CARD_VIDEO_LINE, /^Ask a friend .*first \(Collab, free\)\. A paid alternative .*Use Comfy API mode, outside a music video/);
+  assert.match(cloud.NO_STRONG_CARD_VIDEO_LINE, /^Ask a friend .*first \(Collab, free; built, not yet tried between two PCs\)\. A paid alternative .*Use Comfy API mode, outside a music video/);
+  /* Every surface says lending is untried between two PCs, in one clause. */
+  assert.equal(cloud.LENDING_UNTRIED, "built, not yet tried between two PCs");
+  for (const line of [cloud.NO_STRONG_CARD_LINE, cloud.NO_STRONG_CARD_VIDEO_LINE, friend.how]) assert.ok(line.includes(cloud.LENDING_UNTRIED), line);
+  /* ...and the places the release critic found without it: the H3 rows'
+   * friend sentence (Models, the Video screen's "not offered"), Explore's
+   * "No strong graphics card?" tip (built from each step's `how`) and the
+   * Comfy API card's pointer to a friend. One copy, in h3tier.js. */
+  assert.equal(h3tier.LENDING_UNTRIED, cloud.LENDING_UNTRIED);
+  assert.ok(h3tier.H3_ASK_A_FRIEND.includes(`(Collab, free; ${cloud.LENDING_UNTRIED})`), h3tier.H3_ASK_A_FRIEND);
+  const catalogue = read("server/welcome/catalogue.js");
+  assert.match(catalogue, /detail: NO_STRONG_CARD\.map\(\(w, i\) => `\$\{i \+ 1\}\. \$\{w\.title\}\. \$\{w\.how\}`\)/);
+  assert.match(catalogue, /for you first \(Collab, free; \$\{LENDING_UNTRIED\}\)\./);
+  assert.match(read("server/cloud-switch.js"), /import \{ H3_MV_SCREEN, LENDING_UNTRIED \} from "\.\/h3tier\.js";/);
+  /* The role named is the one the Friends row offers, and the fix that landed
+   * (Keep it files a take even onto a never-rendered scene) is not called missing. */
+  assert.ok(friend.limits.includes(`"${cloud.LENDER_ROLE_LABEL}"`));
+  assert.ok(read("web/app.js").includes(`["lender", "${cloud.LENDER_ROLE_LABEL}"]`), "the Friends row offers that role");
+  assert.doesNotMatch(friend.limits, /may render single scenes for me|filing onto its scene by hand/);
 });
 
 test("the paid question speaks whole seconds: 179.6 s is 3:00, never 2:60", () => {

@@ -191,9 +191,45 @@ console.log("\n  -- 3. a new video starts at its card's size, and the cut follow
     eight.choices.filter((c) => c.fits === false).every((c) => c.line));
   ok("...and the pick is said in words, with the Models screen's label for the size",
     /Studio's pick for this 8 GB card: Smaller size, 960x544/.test(eight.why), eight.why);
+  /* THE REFERENCE PATH (release critic): a music video's scenes render with
+   * the cast's pictures on the 8-step reference build, which the lab measured
+   * at 960x544 with ONE picture, 314 MiB to spare. The pick quotes that, not
+   * the text-only Fast setting, and says a bigger cast was not measured. */
+  const { H3_PATHS } = await import("../h3tier.js");
+  ok("...and quotes the reference path's own measurement (one picture, 314 MiB to spare), not the Fast setting's",
+    eight.why.includes(H3_PATHS.refs.small.evidence) && /314 MiB to spare/.test(eight.why)
+    && /more than one picture was not measured/.test(eight.why) && !/TaoMate 3-step/.test(eight.why), eight.why);
+  ok("...and on 12 GB full size is said to be PREDICTED for the reference path",
+    /PREDICTED/.test(card(12282).why) && /reference path/.test(card(12282).why), card(12282).why);
+  ok("...the size notes are the reference path's too",
+    sizes.MV_SIZES.find((s) => s.id === "small").note.startsWith(H3_PATHS.refs.small.evidence)
+    && sizes.MV_SIZES.find((s) => s.id === "recommended").note.includes(H3_PATHS.refs.full.at16.evidence));
   ok("...and \"an 8 GB card\", not \"a 8 GB card\"",
     card(6144).choices.some((c) => /Needs an 8 GB card/.test(c.line || "")) && !card(6144).choices.some((c) => /\ba 8 GB/.test(c.line || "")));
   ok("an unread card is said, and picks nothing", card(null).tier === "unknown" && /could not be read/.test(card(null).why));
+  /* NO CARD AT ALL (release critic): the CPU-only engine. The Video screen
+   * said "not offered: this PC has no graphics card" while the music video
+   * said the card's memory could not be read. One answer now. */
+  const cpu = sizes.sizeChoices({ gpu: null, ram: { totalMb: 32768 }, cpuOnly: true });
+  ok("a PC whose engine runs on the CPU: not offered, no pick, and never 'could not be read'",
+    cpu.cardPick === null && cpu.offered === false && /not offered on this PC/.test(cpu.why) && /no graphics card/.test(cpu.why)
+    && !/could not be read/.test(cpu.why) && !/null GB/.test(cpu.why), cpu.why);
+  const routes = read("server/mv/routes.js"), index = read("server/index.js");
+  ok("...and the server hands the music video that reading (cpuOnly and the decoder), as the Video screen gets it",
+    /cardReading: \(\) => \(\{ gpu: gpuStatus\(\), ram: ramStatus\(\), cpuOnly: cpuOnlyEngine\(\), vaeMeasured: h3VaeMeasured\(\) \}\)/.test(index)
+    && /cpuOnly: config\.torchBackend === "cpu"/.test(routes), "index.js createMvRoutes deps / routes.js default reading");
+  /* THE PREVIEW ON THE REFERENCE PATH (release critic): the pick quoted the
+   * text-only run; the reference path was never run at 832x480. */
+  const six = card(6144);
+  ok("a 6 GB card's pick says the reference path was not run at 832x480 and what one picture adds",
+    six.cardPick === "preview" && /reference path was not run at 832x480/.test(six.why) && /240 MiB/.test(six.why)
+    && six.choices.find((c) => c.id === "preview").note === H3_PATHS.refs.preview.evidence, six.why);
+  /* The 8 GB pick said "several pictures were never capped" and then "a cast
+   * with more than one picture was not measured": once now. */
+  ok("the 8 GB pick says the bigger-cast caveat once", (card(8188).why.match(/picture was not measured|pictures were never capped/g) || []).length === 1, card(8188).why);
+  ok("...and a PC loading the measured decoder gets no decoder caveat in the pick",
+    !sizes.sizeChoices({ gpu: { totalMb: 8188, vendor: "nvidia" }, ram: { totalMb: 32768 }, vaeMeasured: true }).why.includes("video decoder")
+    && card(8188).why.includes("video decoder"));
   /* RAM counts: under h3tier's floor H3 is not offered at all, so nothing is
    * Studio's pick, and the sentence says why. */
   const lowRam = sizes.sizeChoices({ gpu: { totalMb: 8188, vendor: "nvidia" }, ram: { totalMb: 8192 } });

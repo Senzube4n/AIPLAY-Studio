@@ -33,13 +33,13 @@
  */
 import path from "node:path";
 import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, rightsRank } from "./models.js";
-import { config } from "./config.js";
+import { config, prefChosen, prefOrigin } from "./config.js";
 import { SETTING_WORDS } from "./lrc.js";
 import {
   h3TierFor, h3Status, h3SetSizeByHand, H3_VRAM_OFFERED_GB, H3_VRAM_MIN_GB, H3_VRAM_FULL_GB, H3_RAM_MEASURED_GB,
-  H3_RAM_FLOOR_GB, H3_ASK_A_FRIEND,
+  H3_RAM_FLOOR_GB, H3_ASK_A_FRIEND, ramBoxGb,
 } from "./h3tier.js";
-import { musicDefault } from "./music-default.js";
+import { musicDefault, yue2ComfyFit } from "./music-default.js";
 import { NO_STRONG_CARD, NO_STRONG_CARD_VIDEO_LINE } from "./cloud-switch.js";
 
 /* ── the five answers ──────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ function exactGb(mb) {
  * is running on it. Free memory is still reported here — it is the right number
  * for "close Chrome first", just not for "can this machine do it at all".
  */
-export function readMachine(gpu, ram) {
+export function readMachine(gpu, ram, { cpuOnly = false, vaeMeasured = false } = {}) {
   const haveGpu = !!(gpu && gpu.totalMb);
   return {
     gpu: haveGpu
@@ -163,7 +163,11 @@ export function readMachine(gpu, ram) {
         }
       : null,
     ram: {
-      totalGb: gb(ram?.totalMb),
+      /* SYSTEM RAM IS NOT ROUNDED LIKE VRAM: Windows keeps up to a few GB of
+       * it for hardware and integrated graphics, so a 32 GB laptop reads 31.4.
+       * h3tier.js ramBoxGb is the one reader (the launcher's RAM line, the
+       * Video and music-video screens and every row here). */
+      totalGb: ramBoxGb(ram?.totalMb) ?? 0,
       totalExactGb: exactGb(ram?.totalMb),
       freeGb: exactGb((ram?.totalMb || 0) - (ram?.usedMb || 0)),
       note: ram?.note || null,
@@ -182,7 +186,7 @@ export function readMachine(gpu, ram) {
      * size and the RAM warning, from the same reading as everything above
      * (server/h3tier.js). The Models screen and models_for_this_machine both
      * carry `machine`, so neither has to work a tier out for itself. */
-    h3: h3Status({ gpu: haveGpu ? gpu : null, ram }),
+    h3: h3Status({ gpu: haveGpu ? gpu : null, ram, cpuOnly: !haveGpu && !!cpuOnly, vaeMeasured: !!vaeMeasured }),
   };
 }
 
@@ -223,6 +227,8 @@ function h3Fit(req, machine) {
     ramGb: machine.ram.totalGb,
     vendor: g?.vendor || null,
     path: req.h3Path || null,
+    cpuOnly: !g && !!machine.h3?.noCard,
+    vaeMeasured: !!machine.h3?.vaeMeasured,
   });
   const warning = [t.ramWarning, t.amdNote].filter(Boolean).join(" ") || null;
   const common = {
@@ -256,6 +262,10 @@ function h3Fit(req, machine) {
         + `ever measured with ${H3_RAM_MEASURED_GB} GB, and filled it, and nothing with less was tried. `
         + H3_ASK_A_FRIEND,
     };
+  }
+  /* No card at all (the engine runs on the CPU): not offered, not "cannot tell". */
+  if (!g && t.noCard) {
+    return { ...common, state: "wont-run", warning: null, recommendable: false, short: "no graphics card", why: t.evidence };
   }
   if (!g) {
     return {
@@ -540,6 +550,50 @@ function packageHome(cap) {
 }
 
 /**
+ * The music default from the catalogue rows, for a caller that did not hand
+ * over index.js's answer (the suites, a probe): the person's saved choice if
+ * config holds one, else musicDefault() over one choice per music engine,
+ * ready when its row is. index.js passes the answer it applied instead, read
+ * from the music model list itself, so the two cannot disagree on screen.
+ */
+function musicFromCaps(capabilities, machine) {
+  if (prefChosen("music", "engine")) {
+    return { value: config.music.engine, chosenBy: "you", kept: prefOrigin("music", "engine") === "kept",
+      paid: !!config.api?.enabled && config.music.engine === "minimax-music3" };
+  }
+  const byId = new Map((capabilities || []).map((c) => [c.id, c]));
+  const choices = Object.keys(config.music.engines || {}).map((engine) => {
+    const cap = byId.get(MODEL_TO_CAPABILITY[engine]);
+    if (!cap) return null;
+    return {
+      engine, available: !!cap.ready, label: String(cap.label || engine).split("—").pop().trim(),
+      checkpoint: engine === "yue2-comfy" && cap.ready ? (cap.files?.[0]?.name || null) : null,
+      precision: engine === "yue2-gguf" ? "q4_0" : null,
+    };
+  }).filter(Boolean);
+  const comfyFit = yue2ComfyFitOn(byId.get(MODEL_TO_CAPABILITY["yue2-comfy"]), machine);
+  return musicDefault({
+    choices, machine,
+    api: { enabled: !!config.api?.enabled, provider: config.api?.provider || null },
+    musicOnly: !!config.musicOnly, comfy: !config.musicOnly && !config.cloudOnly,
+    comfyFits: comfyFit.fits, comfyShort: comfyFit.short,
+  });
+}
+
+/**
+ * YuE2-through-ComfyUI's own floor on this machine, for the music default's
+ * nothing-ready answer: server/music-default.js yue2ComfyFit over the row's
+ * `requires` and readMachine's readings (the card in whole GB, RAM as
+ * h3tier.js ramBoxGb reads it, 0 when unread, as fitFor takes it). The
+ * launcher asks the same function (launcher/checks.mjs yue2ComfyVerdict).
+ * { fits, short }: `short` is "card" or "ram", the half that fell short.
+ */
+export function yue2ComfyFitOn(row, machine) {
+  if (!row) return { fits: undefined, short: null };
+  return yue2ComfyFit(row.requires, { vramGb: machine?.gpu ? machine.gpu.vramGb : null, ramGb: machine?.ram?.totalGb ?? null });
+}
+
+/**
  * WHAT SHOULD THIS PERSON DOWNLOAD.
  *
  * One block, computed once, for a screen and for an agent. The rules, and why
@@ -567,7 +621,7 @@ function packageHome(cap) {
  *     one you would have to ask a lawyer about. Ideogram 4 loses to Z-Image on
  *     that alone, and the reason says so in those words.
  */
-export function recommendFor({ capabilities, machine, disk } = {}) {
+export function recommendFor({ capabilities, machine, disk, music = null } = {}) {
   const byId = new Map(capabilities.map((c) => [c.id, c]));
   const withFit = (id) => {
     const cap = byId.get(id);
@@ -579,17 +633,32 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
   const picks = [];
   const notes = [];
 
-  /* ── the engine there is no choice about ─────────────────────────────── */
-  for (const id of [MODEL_TO_CAPABILITY[config.music.engine] || MUSIC_IDS[0]]) {
+  /* ── the engine there is no choice about ───────────────────────────────
+   * WHICH one is the music default's answer (server/music-default.js): the
+   * person's saved choice, else what Studio picks from this disk and card
+   * (index.js hands over the answer it applied; a caller that has none gets
+   * the same rule from the catalogue rows, musicFromCaps below). Worded by
+   * who chose it: a fresh install's YuE2 is Studio's pick, never "your
+   * selected music engine". */
+  const musicPick = music || musicFromCaps(capabilities, machine);
+  const mine = musicPick.chosenBy === "you";
+  for (const id of [MODEL_TO_CAPABILITY[musicPick.value] || MUSIC_IDS[0]]) {
     const e = withFit(id);
     if (!e) continue;
     picks.push({
       slot: "music", id, label: e.cap.label, fit: e.fit, ready: e.cap.ready,
       bytes: e.cap.totalBytes, licence: e.cap.licence,
       outputRights: e.cap.outputRights || null, region: e.cap.region || null,
+      chosenBy: musicPick.chosenBy || "machine", kept: !!musicPick.kept, paid: !!musicPick.paid,
       why: e.cap.ready
         ? `Already on disk. ${e.fit.why}`
-        : `This is your selected music engine; the other music engines are optional. ${e.fit.why}`,
+        : mine
+          ? `${musicPick.kept ? "Your settings name this music engine" : "You chose this music engine"}; the other music engines are optional. ${e.fit.why}`
+          : `Studio picked this music engine for this PC; the other music engines are optional. ${e.fit.why}`
+          /* On AMD the download is the int8 build, which nobody has measured
+           * there (the row's own note); said beside the pick, as Home says it. */
+          + (machine?.gpu?.vendor === "amd" && id === MODEL_TO_CAPABILITY["yue2-comfy"]
+            ? " The build it fetches (int8) is not yet measured on AMD cards; the bf16 build is the one measured there." : ""),
     });
   }
 
@@ -607,7 +676,11 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
    * selected, and a recommendation that quietly recommended something else
    * would be lying about what is about to run. It names the failure and names
    * the alternative that is measured to work on the same card. */
-  const amdMusic = picks.find((p) => p.slot === "music" && p.id === MODEL_TO_CAPABILITY["minimax-music3"]);
+  /* Only for a MiniMax the person chose (Studio never picks it on AMD without
+   * the fix: server/music-default.js), and never for the hosted one, which
+   * does not render on this card. */
+  const amdMusic = picks.find((p) => p.slot === "music" && p.id === MODEL_TO_CAPABILITY["minimax-music3"]
+    && p.chosenBy === "you" && !p.paid);
   // Not when ComfyUI starts with the fix (index.js sets amdMusicFixed from the launch args).
   if (amdMusic && machine.gpu?.vendor === "amd" && !machine.amdMusicFixed) {
     const alt = byId.get(MODEL_TO_CAPABILITY["yue2-comfy"]);
@@ -621,7 +694,7 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
     amdMusic.why += ` ⚠ ${AMD_MUSIC_WARNING}${altLine}`;
     notes.push({
       slot: "music-amd", id: amdMusic.id, label: amdMusic.label,
-      headline: `${modelName(amdMusic.label)} is selected, and it is not usable on this AMD card.`,
+      headline: `${amdMusic.kept ? "Your settings name" : "You chose"} ${modelName(amdMusic.label)}, and it is not usable on this AMD card.`,
       detail: AMD_MUSIC_WARNING + altLine,
     });
   }

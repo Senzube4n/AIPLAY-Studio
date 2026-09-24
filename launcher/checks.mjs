@@ -15,6 +15,14 @@
  */
 import { CATALOG } from "../server/models.js";
 import { MODULE_WORDS, STUDIO_MODULES, STUDIO_USES, ADDED_BY_STUDIO, diskWords, moduleWords } from "../server/setup/studio-packages.js";
+/* The one RAM reader and the H3 tiers (pure: server/h3tier.js imports
+ * nothing), so the launcher judges a 31.4 GB laptop and a 6 GB card the way
+ * Home, Models, Video and the music video do. */
+import { ramBoxGb, RAM_RESERVED_GB, h3TierFor, gbWithArticle, H3_RAM_FLOOR_GB, H3_VRAM_OFFERED_GB } from "../server/h3tier.js";
+import { LENDING_UNTRIED } from "../server/cloud-switch.js";
+import { yue2ComfyFit } from "../server/music-default.js";
+
+export { RAM_RESERVED_GB };
 
 /** The catalogue row the Models screen calls "Video clips — MiniMax H3". */
 export const H3_ROW = "video";
@@ -34,23 +42,42 @@ export function h3Needs(catalog = CATALOG) {
  * 15.99 GB. The numbers people know are the ones on the box. */
 const wholeGb = (bytes) => Math.round((Number(bytes) || 0) / 1024 ** 3);
 
-/** os.totalmem() is USABLE memory: a 32 GB laptop or APU whose integrated
- *  graphics keeps 1 to 4 GB reads 28 to 31 GB. Rounding cannot absorb that,
- *  so the RAM line allows this much under the floor before it warns. */
-export const RAM_RESERVED_GB = 4;
-
-/** The RAM row. Under the RAM H3 was measured with (less what integrated
- *  graphics may keep) it warns, in the words the owner chose. */
+/** The RAM row. os.totalmem() is USABLE memory: a 32 GB laptop or APU whose
+ *  integrated graphics keeps 1 to 4 GB reads 28 to 31 GB. server/h3tier.js
+ *  ramBoxGb allows RAM_RESERVED_GB for that, the same allowance Studio's
+ *  screens judge with. Under the RAM H3 was measured with it warns, in the
+ *  words the owner chose; under H3's floor it says H3 is not offered. */
 export function ramItem(totalBytes, need = h3Needs()) {
   const exact = (Number(totalBytes) || 0) / 1024 ** 3;
-  const low = need.ramGb > 0 && exact < need.ramGb - RAM_RESERVED_GB;
+  const judged = ramBoxGb(exact * 1024);
+  const low = need.ramGb > 0 && judged !== null && judged < need.ramGb;
+  const under = judged !== null && judged < H3_RAM_FLOOR_GB;
   const said = `Music videos (H3) were measured with ${need.ramGb} GB of RAM`;
   return {
     id: "ram", label: "System memory (RAM)", status: low ? "warn" : "ok",
     value: `${exact.toFixed(1)} GB`,
-    detail: low ? `${said}; with less, expect slow renders` : said,
+    detail: under ? `${said}; under ${H3_RAM_FLOOR_GB} GB they are not offered`
+      : low ? `${said}; with less, expect slow renders` : said,
   };
 }
+
+/** Whether this PC clears YuE2-for-ComfyUI's own minimum, card AND RAM (the
+ *  catalogue row the Models screen judges with), for the music default's
+ *  nothing-ready answer: a no sends a fresh install to the native GGUF
+ *  instead. The judgement is server/music-default.js yue2ComfyFit, the one
+ *  Studio makes (server/fit.js yue2ComfyFitOn), over the same readings: the
+ *  card in whole GB and os.totalmem() through h3tier.js ramBoxGb. A "CPU only"
+ *  install (settings.gpu vendor "cpu") has no card: a no, said as the card.
+ *  { fits: true | false | undefined (card not read), short: "card" | "ram" | null } */
+export function yue2ComfyVerdict(gpu, totalBytes = null, catalog = CATALOG) {
+  if (gpu?.vendor === "cpu") return { fits: false, short: "card" };
+  const requires = catalog.find((c) => c.id === "musicYue2Comfy")?.requires;
+  const vramGb = gpu?.totalMb ? wholeGb(gpu.totalMb * 1024 * 1024) : null;
+  const ramGb = Number(totalBytes) > 0 ? ramBoxGb(Number(totalBytes) / 1024 / 1024) : null;
+  return yue2ComfyFit(requires, { vramGb, ramGb });
+}
+/** The yes or no alone. */
+export const yue2ComfyFits = (gpu, totalBytes = null, catalog = CATALOG) => yue2ComfyVerdict(gpu, totalBytes, catalog).fits;
 
 /** The ffmpeg row: both programs, since exporting needs ffmpeg and reading a
  *  clip's length needs ffprobe. `found` is { ffmpeg, ffprobe }: a path or null. */
@@ -93,15 +120,30 @@ export function cardAdvice({ gpu = null, torchOnCard = false, fullAvailable = tr
   if (realCard && gb === null) return null;
   if (realCard && gb >= need.vramGb) return null;
   if (!realCard && torchOnCard) return null;
-  const why = realCard
-    ? `This ${gpu.name || "graphics card"} has ${gb} GB of memory; music videos (MiniMax H3) need a card with at least ${need.vramGb} GB, as the Models screen says.`
-    : "No graphics card that Studio can render on was read on this PC.";
+  /* The tier the Video and music-video screens give this card (h3tier.js):
+   * a 6 or 7 GB card is offered the experimental preview there, so the
+   * launcher says that rather than "needs 8 GB". */
+  const t = realCard ? h3TierFor({ vramMb: gpu.totalMb, vendor: gpu.vendor || null }) : null;
+  const name = gpu?.name || "graphics card";
+  const why = !realCard ? "No graphics card that Studio can render on was read on this PC."
+    : t?.id === "preview"
+      ? `This ${name} has ${gb} GB of memory: music videos (MiniMax H3) are offered on it only as an experimental `
+        + `${t.width}x${t.height} preview, not yet seen to fit; the measured sizes need ${gbWithArticle(need.vramGb)} card `
+        + "or more, as the Models and Video screens say."
+      /* Under the preview's floor: not offered at all. A card on a measured
+       * tier that is still under the catalogue's floor (a floor raised above
+       * the tiers) gets the catalogue's number, as the Models screen says it. */
+      : t?.id === "none"
+        ? `This ${name} has ${gb} GB of memory, under the ${H3_VRAM_OFFERED_GB} GB music videos (MiniMax H3) need even `
+          + "for an experimental preview, as the Models screen says."
+        : `This ${name} has ${gb} GB of memory; music videos (MiniMax H3) need a card with at least ${need.vramGb} GB, `
+          + "as the Models screen says.";
   return {
     why,
     /* The page leads each with its bold first words ("Ask a friend with a
      * strong card to render for you." / "Or use Comfy API"); these are the rest. */
     friend: "Collab, in Full Studio, packs a scene into a sealed file only they can open; they render it on their "
-      + "card and send the clip back. No account, no server, no cost. Both of you use Full Studio."
+      + `card and send the clip back (${LENDING_UNTRIED}). No account, no server, no cost. Both of you use Full Studio.`
       + (fullAvailable ? ""
         : needsEngine
           ? " Full Studio needs an engine first, even to lend and borrow: choose CPU only under \"What should Studio run on?\" "

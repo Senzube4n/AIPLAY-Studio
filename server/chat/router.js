@@ -114,9 +114,7 @@ export const ROUTABLE = {
   collab_video_preview: null,
   collab_preview: null, // local snapshot; packing is a separate explicit write
   collab_add_peer: "writes",
-  collab_set_role: "writes",
-  collab_verify: "writes",
-  collab_set_lend_minutes: "writes",
+  /* collab_set_role, collab_verify and collab_set_lend_minutes: WITHHELD below. */
   collab_remove_peer: "destroys",
   collab_set_resources: "writes",
   collab_pack: "writes",
@@ -337,7 +335,9 @@ export const ROUTABLE = {
   /* clips and video */
   list_clips: null,
   video_quality: null,
-  video_settings: null,
+  /* Its set path SAVES Video Lab defaults every later render reads (sparse
+   * attention on Fast among them), so it asks first, with its own sentence. */
+  video_settings: "writes",
   video_comparison: null,
   video_stills: null,
   video_verdict: null,
@@ -610,6 +610,9 @@ export const WITHHELD = {
   set_music_engine: "changes a persistent app setting the person set on the Music page, and can switch paid API mode on",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",
+  collab_set_lend_minutes: "raises or lowers how many minutes a day this card renders for a friend; with collab_accept routable, a chat could raise the allowance and then accept, walking past the minutes a person set exactly as the withheld \"anyway\" would. The Friends row on the Collab screen is where a person sets it (MCP clients keep the tool)",
+  collab_set_role: "makes a friend a lending friend or a collaborator, a trust decision about who may send this card work or hold the whole project; a person makes it on the Collab screen's Friends row (MCP clients keep the tool)",
+  collab_verify: "records that the twelve words were read aloud and matched, the one trust grant in Collab; a chat cannot hear the words, so a person presses it on the Collab screen (MCP clients keep the tool)",
   set_cloud: "switches a PAID service on, or raises its monthly cap: it decides whether songs bill the person's own key, and that is the person's decision on the Settings page (No strong graphics card?)",
   studio_welcome: "hides or re-shows the first-run lines and SAVES the Simple/Advanced level, a setting for a person (Settings > Screens), not a sentence in a chat box",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
@@ -668,6 +671,16 @@ export const COST_TEXT = {
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
   stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
+  /* The router gates the whole tool, so a plain read asks too: the card says
+   * that reading changes nothing. */
+  video_settings: "no graphics card time and no new file — reading your video settings changes nothing; a setting it changes is SAVED, and every later render uses it",
+};
+
+/** The tag the chat's tool list shows beside a gated tool whose gate's own tag
+ *  would be false for it (server/chat/loop.js gateLabel). video_settings is
+ *  "writes" for its confirm, but it saves a setting, not a file. */
+export const GATE_WORDS_BY_TOOL = {
+  video_settings: "SAVES A SETTING",
 };
 
 /* ─────────────────────────────────────────────── the flat-argument rule
@@ -761,6 +774,7 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     spends: !!gate,
     gate: gate || null,
     cost: gate ? (COST_TEXT_BY_TOOL[tool.name] || COST_TEXT[gate]) : undefined,
+    gateWords: gate ? GATE_WORDS_BY_TOOL[tool.name] || null : null,
     routed: true,
     run: (a) => {
       const decoded = { ...a };

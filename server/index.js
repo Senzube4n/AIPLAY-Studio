@@ -13,7 +13,7 @@ import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile, re
 import { ImgWorker } from "./imgworker.js";
 import { createImageEditor } from "./image-editor.js";
 import { requestImageAndWait } from "./image-job.js";
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +64,7 @@ import { createCatalog } from "./router/catalog.js";
 import { createRouterJobs } from "./router/jobs.js";
 import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
-import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost } from "./cloud-switch.js";
+import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost, LENDER_ROLE_LABEL } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
@@ -183,6 +183,26 @@ async function coverCanRun() {
  * Returns studio_status's `defaults`: [{key, value, chosenBy, why, …}].
  */
 let defaultsCache = { at: 0, value: null };
+/* No graphics card at all: the launcher installed ComfyUI's CPU-only PyTorch
+ * (settings.json torchBackend "cpu"). H3 is then not offered, rather than
+ * "cannot tell" (server/h3tier.js H3_NO_CARD); an AMD or Intel card whose
+ * memory was not read keeps "cannot tell". */
+function cpuOnlyEngine() { return config.torchBackend === "cpu"; }
+/* THE VIDEO DECODER THE H3 LAB MEASURED WITH (server/h3tier.js
+ * H3_VAE_MEASURED): the int8 file of the rig's own size, as config.js loads
+ * it. On a PC that loads it the measured tier sentences drop their "measured
+ * with a smaller video decoder" clause; everywhere else (a new install's fp16,
+ * Comfy-Org's same-named 2.81 GB int8) they keep it. Two stats, every 30 s. */
+let h3VaeCheck = { at: 0, value: false };
+function h3VaeMeasured() {
+  if (Date.now() - h3VaeCheck.at < 30_000) return h3VaeCheck.value;
+  const name = config.video.engines.h3?.videoVae;
+  const value = name === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
+    try { return statSync(path.join(base, "vae", name)).size === H3_VAE_MEASURED.bytes; } catch { return false; }
+  });
+  h3VaeCheck = { at: Date.now(), value };
+  return value;
+}
 async function machineDefaults() {
   if (defaultsCache.value && Date.now() - defaultsCache.at < 5000) return defaultsCache.value;
   /* The card first: until its first reading gpuStatus() is null and every
@@ -191,7 +211,7 @@ async function machineDefaults() {
   await gpuFirstReading();
   const cat = await models.status();
   const choices = await musicModelChoices(cat);
-  const machine = readMachine(gpuStatus(), ramStatus());
+  const machine = readMachine(gpuStatus(), ramStatus(), { cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() });
   machine.amdMusicFixed = hasAmdMusicFix(studioLaunchArgs());
   /* What settings.json holds (a session's swap reports the saved value beside
    * the one running) and who put it there. */
@@ -208,7 +228,12 @@ async function machineDefaults() {
       : null,
     choices, machine, musicOnly: config.musicOnly,
     api: { enabled: !!config.api?.enabled, provider: config.api?.provider || null },
-    literal: config.musicOnly ? "yue2-gguf" : LITERAL_DEFAULTS.music.engine,
+    /* Nothing ready names YuE2 through ComfyUI only where this launch runs one,
+     * on a PC its row does not put under the minimum (card or RAM: the
+     * launcher asks the same function, launcher/checks.mjs). */
+    comfy: comfyWanted,
+    ...(() => { const f = yue2ComfyFitOn(cat.find((c) => c.id === MODEL_TO_CAPABILITY["yue2-comfy"]), machine);
+      return { comfyFits: f.fits, comfyShort: f.short }; })(),
   });
   applyMachineDefault("music", "engine", music.value);
   if (music.checkpointBy === "machine") applyMachineDefault("music", "yue2Checkpoint", music.checkpoint);
@@ -266,8 +291,8 @@ function missingSupport(cap, ownDit, own = {}) {
 import {
   scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
 } from "./localmodels.js";
-import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor } from "./fit.js";
-import { h3Status, h3StartSize } from "./h3tier.js";
+import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
+import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
 /* The Video screen's sentences and the one plan behind a render (UI_PLAN C3/E4, the H3 lab's #5-#7). */
 import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote } from "./video-plain.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
@@ -2057,6 +2082,9 @@ const mvRoutes = createMvRoutes({
   /* What a library clip or picture was made from, for the minors rule: a
    * control render's driving clip is judged with its own history. */
   lineage,
+  /* The reading the music video's size pick is judged against: the Video
+   * screen's own (a PC with no card is "not offered" on both). */
+  cardReading: () => ({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
   /* Whether LTX's weights are on disk: "hybrid" sends a scene with no cast
    * there only when they are (server/mv/shot.js). */
   ltxReady: () => videoReady("ltx").ready,
@@ -2434,7 +2462,8 @@ async function readBody(req, maxBytes = 0) {
     chunks.push(c);
   }
   if (over) {
-    const err = new Error(`body is over ${Math.round(maxBytes / 1048576)} MB`);
+    /* In the unit the cap was set in: a 64 KB door said "over 0 MB". */
+    const err = new Error(`body is over ${maxBytes >= 1048576 ? `${Math.round(maxBytes / 1048576)} MB` : `${Math.round(maxBytes / 1024)} KB`}`);
     err.tooBig = true;
     throw err;
   }
@@ -3418,7 +3447,7 @@ const server = http.createServer(async (req, res) => {
              * inputs and the RAM warning. From the same readings as `gpu` and
              * `ram` below; arithmetic only, cheap enough to poll. */
             h3: (() => {
-              const h = h3Status({ gpu: gpuStatus(), ram: ramStatus() });
+              const h = h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() });
               /* The Video screen's start size for this card and, where H3 is
                * not offered, its one sentence (friend first, own key second). */
               return { ...h, start: h3StartSize(h), notOffered: h3NotOfferedLine(h) };
@@ -3527,7 +3556,7 @@ const server = http.createServer(async (req, res) => {
        * against the SAME reading — nvidia-smi is polled on a timer and a fit
        * table where row 3 saw a different card than row 11 would be indefensible
        * on the one screen whose job is to be trusted. */
-      const machine = readMachine(gpuStatus(), ramStatus());
+      const machine = readMachine(gpuStatus(), ramStatus(), { cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() });
       machine.amdMusicFixed = hasAmdMusicFix(studioLaunchArgs());
       machine.engineFix = { mode: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend), applies: machine.amdMusicFixed };
 
@@ -3573,7 +3602,10 @@ const server = http.createServer(async (req, res) => {
         /* WHAT TO ACTUALLY DOWNLOAD. Seventeen rows and no advice is not a
          * neutral position — it is the position that made a newcomer give up and
          * hand the job to an agent. */
-        recommended: recommendFor({ capabilities, machine, disk }),
+        /* The music slot is the default machineDefaults() applied above, and
+         * who chose it, so the recommendation and the Music screen agree. */
+        recommended: recommendFor({ capabilities, machine, disk,
+          music: (await machineDefaults().catch(() => null))?.find((d) => d.key === "music.engine") || null }),
         /* THE FOUR WORDS, SENT RATHER THAN RETYPED IN THE PAGE.
          *
          * Every row on the Models screen needs a short label for its verdict,
@@ -4664,6 +4696,18 @@ const server = http.createServer(async (req, res) => {
         const shelf = await scanBases(await modelBases());
         const found = ckpt && shelf.find((f) => f.folder === "checkpoints" && f.name === ckpt);
         if (!found) {
+          /* NONE AT ALL: a fresh install whose music default is YuE2 through
+           * ComfyUI (server/music-default.js). The page opens the download for
+           * that row (needsModel), not a list to pick from. */
+          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name));
+          if (!ckpt && !anyYue) {
+            /* The size from the catalogue row the Models screen fetches, never typed here. */
+            const get = CATALOG.find((c) => c.id === MODEL_TO_CAPABILITY["yue2-comfy"])?.files?.[0]?.bytes;
+            return json(res, 400, {
+              error: `YuE2 3B for ComfyUI is not on this PC yet${get ? ` (the ${(get / 1e9).toFixed(2)} GB int8 build)` : ""}. Open the Models screen to get it.`,
+              engine: musicEngine, reason: "weights-missing", needsModel: MODEL_TO_CAPABILITY["yue2-comfy"],
+            });
+          }
           return json(res, 400, {
             error: ckpt
               ? `The YuE2 checkpoint ${bareName(ckpt)} is no longer in a checkpoints folder. Pick another in the music model list.`
@@ -5369,7 +5413,7 @@ const server = http.createServer(async (req, res) => {
            * taken away, and neither is a person you have agreed to render for. */
           if (sender.role !== "lender" && sender.role !== "collaborator") {
             return json(res, 400, {
-              error: `${sender.nickname || sender.fp} is not a lending friend or a collaborator here, so this machine has not agreed to render for them. To agree: Collab → Friends → their row → “lending friend: we render single scenes for each other”, then accept again.`,
+              error: `${sender.nickname || sender.fp} is not a lending friend or a collaborator here, so this machine has not agreed to render for them. To agree: Collab → Friends → their row → “${LENDER_ROLE_LABEL}”, then accept again.`,
               reason: "role",
             });
           }
@@ -6967,7 +7011,7 @@ const server = http.createServer(async (req, res) => {
         /* Frames and a control video are named, not staged: the plan only
          * needs to know they ride. */
         const plan = videoPlan(b, { engineKey: gate.engine, eng: videoEngine(gate.engine),
-          h3: h3Status({ gpu: gpuStatus(), ram: ramStatus() }),
+          h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
           framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
           control: !!(b.sourceVideo || b.source_video) });
         return json(res, 200, { ok: !plan.refusal, engine: gate.engine, enabled: !!config.video.enabled, ...plan });
@@ -7165,7 +7209,7 @@ const server = http.createServer(async (req, res) => {
          * build's own step count; a render naming no size gets this card's
          * size. Each change is a warning in the reply. */
         const plan = videoPlan({ ...b, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
-          h3: h3Status({ gpu: gpuStatus(), ram: ramStatus() }), framed: !!(firstFrame || lastFrame),
+          h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }), framed: !!(firstFrame || lastFrame),
           control: !!control.video });
         if (plan.refusal) return json(res, 400, { error: plan.refusal.error, reason: plan.refusal.reason });
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
@@ -7369,7 +7413,11 @@ const server = http.createServer(async (req, res) => {
        * no engine named, and saves it: Studio's own page or a local client
        * only, asked before the body is read (cross-origin-doors_test.js). */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Picture and cover settings are only accepted from Studio's own page or a local client." });
-      const b = await readBody(req);
+      /* A few settings, never a file: capped at 64 KB before JSON.parse, as /api/cloud is. */
+      let b;
+      try { b = await readBody(req, 64 * 1024); } catch (err) {
+        return json(res, err.tooBig ? 413 : 400, { error: err.tooBig ? `That request is too large (${err.message}).` : "could not read that body as JSON" });
+      }
       const answer = () => ({ ok: true, engine: config.art.engine, checkpoint: config.art.checkpoint,
         quality: config.art.quality, style: config.art.style, imageEngine: config.image.engine,
         chosen: { engine: prefChosen("art", "engine"), imageEngine: prefChosen("image", "engine") } });
@@ -7471,7 +7519,11 @@ const server = http.createServer(async (req, res) => {
        * paid hosted engine on or off: Studio's own page or a local client
        * only, asked before the body is read (cross-origin-doors_test.js). */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Music settings are only accepted from Studio's own page or a local client." });
-      const b = await readBody(req);
+      /* A model choice and a few names, never a file: capped at 64 KB before JSON.parse. */
+      let b;
+      try { b = await readBody(req, 64 * 1024); } catch (err) {
+        return json(res, err.tooBig ? 413 : 400, { error: err.tooBig ? `That request is too large (${err.message}).` : "could not read that body as JSON" });
+      }
       /* THE MUSIC MODEL PICKER: an engine and its build in one choice. A build
        * that cannot render here is refused at the click; native YuE2 GGUF may be
        * chosen while not installed, because choosing it is how its setup panel

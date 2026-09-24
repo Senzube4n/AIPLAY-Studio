@@ -125,9 +125,76 @@ ok("the music-only launch: native first too, and its own last resort",
   && defaultFor("music", { choices: [], machine: MACHINES[0].machine, musicOnly: true, literal: "yue2-gguf" }).value === "yue2-gguf");
 const kitOnly = defaultFor("music", { choices: [choice.kit(true), choice.minimax(false)], machine: MACHINES[0].machine });
 ok("the Python kit, when it is the one thing installed and ready", kitOnly.value === "yue2" && kitOnly.ready, JSON.stringify(kitOnly));
+/* NOTHING READY IS NOT MINIMAX (release critic, 2026-09-24: UI_PLAN A1 /
+ * INSTALLER S5, music half). A fresh Full Studio install named MiniMax Music 3
+ * (config.js's old literal), called it "your selected music engine" and on
+ * AMD warned about the engine Studio had picked itself. It names the one to
+ * get now, the way pictures do, and it is the machine's pick, said as such. */
 const nothing = defaultFor("music", { choices: [choice.minimax(false), choice.paid(), choice.kit(false)], machine: MACHINES[0].machine, literal: "minimax-music3" });
-ok("nothing ready: the old literal, not ready, and a sentence pointing at Models",
-  nothing.value === "minimax-music3" && !nothing.ready && /Models screen/.test(nothing.why), JSON.stringify(nothing));
+ok("nothing ready on NVIDIA: YuE2 through ComfyUI, the int8 build, the machine's pick, not ready, pointing at Models",
+  nothing.value === "yue2-comfy" && nothing.precision === "int8" && nothing.chosenBy === "machine" && !nothing.ready
+  && /Studio picked YuE2 3B through ComfyUI/.test(nothing.why) && /Models screen/.test(nothing.why) && !/MiniMax/.test(nothing.why),
+  JSON.stringify(nothing));
+{
+  const empty = [choice.minimax(false), choice.paid()];
+  const amdEmpty = defaultFor("music", { choices: empty, machine: MACHINES[2].machine });
+  ok("nothing ready on AMD: YuE2 through ComfyUI, labelled as the int8 file Models fetches, said to be unmeasured on AMD, never MiniMax",
+    amdEmpty.value === "yue2-comfy" && amdEmpty.precision === "int8" && /· int8$/.test(amdEmpty.label) && amdEmpty.chosenBy === "machine"
+    && /not yet measured on AMD cards/.test(amdEmpty.why) && /bf16 build is the one measured/.test(amdEmpty.why)
+    && !/MiniMax/.test(amdEmpty.why), JSON.stringify(amdEmpty));
+  /* No size is typed into the sentence: the Models screen says it, from the row. */
+  ok("...and no download size is typed into the nothing-ready sentences",
+    ![nothing.why, amdEmpty.why].some((w) => /\d(\.\d+)? GB/.test(w)), nothing.why);
+  /* INTEL (release critic): the ComfyUI row is listed for NVIDIA and AMD; the
+   * native GGUF has a Vulkan build for Intel (README's Intel row). */
+  const intelEmpty = defaultFor("music", { choices: empty,
+    machine: readMachine({ name: "Intel Arc A770", totalMb: 16384, vendor: "intel" }, { totalMb: 32768 }) });
+  ok("nothing ready on an Intel card: the native GGUF Q4 (Vulkan), with the reason",
+    intelEmpty.value === "yue2-gguf" && intelEmpty.precision === "q4_0" && /Intel card/.test(intelEmpty.why) && /Vulkan/.test(intelEmpty.why),
+    JSON.stringify(intelEmpty));
+  const noCardEmpty = defaultFor("music", { choices: empty, machine: MACHINES[3].machine });
+  ok("nothing ready with no card: the native YuE2 GGUF Q4, said to run on the CPU",
+    noCardEmpty.value === "yue2-gguf" && noCardEmpty.precision === "q4_0" && /no graphics card/.test(noCardEmpty.why), JSON.stringify(noCardEmpty));
+  const noComfy = defaultFor("music", { choices: empty, machine: MACHINES[0].machine, comfy: false });
+  ok("nothing ready and no ComfyUI in this launch: the native GGUF Q4",
+    noComfy.value === "yue2-gguf" && /no ComfyUI/.test(noComfy.why), JSON.stringify(noComfy));
+  const small = defaultFor("music", { choices: empty, machine: MACHINES[0].machine, comfyFits: false });
+  ok("nothing ready on a card under YuE2-for-ComfyUI's minimum: the native GGUF Q4",
+    small.value === "yue2-gguf" && /under the minimum/.test(small.why), JSON.stringify(small));
+  const lowRam = defaultFor("music", { choices: empty, machine: MACHINES[0].machine, comfyFits: false, comfyShort: "ram" });
+  ok("...and when the RAM is the half that falls short, the sentence says RAM, not the card",
+    lowRam.value === "yue2-gguf" && /less RAM than YuE2 through ComfyUI asks for/.test(lowRam.why) && !/this card is under/.test(lowRam.why), lowRam.why);
+  const onlyNothing = defaultFor("music", { choices: [], machine: MACHINES[0].machine, musicOnly: true });
+  ok("nothing ready in the music-only launch: the native GGUF Q4", onlyNothing.value === "yue2-gguf" && /music-only launch/.test(onlyNothing.why));
+  ok("...and no nothing-ready answer is ever MiniMax, on any machine",
+    MACHINES.every((m) => defaultFor("music", { choices: empty, machine: m.machine }).value !== "minimax-music3"));
+  /* THE OWNER'S MACHINE: a saved YuE2 Python kit still wins, ready or not. */
+  const kitSaved = defaultFor("music", { saved: { engine: "yue2", checkpoint: null }, choices: empty, machine: MACHINES[0].machine });
+  ok("a saved YuE2 Python kit still wins over the machine's pick, as the person's",
+    kitSaved.value === "yue2" && kitSaved.chosenBy === "you", JSON.stringify(kitSaved));
+}
+/* THE RECOMMENDATION'S MUSIC SLOT follows the same answer, worded by who chose it. */
+{
+  const { recommendFor, fitFor } = await import("./fit.js");
+  const caps = CATALOG.map((c) => ({ ...c, ready: false, totalBytes: (c.files || []).reduce((s, f) => s + (f.bytes || 0), 0) || c.approxBytes || 0,
+    haveBytes: 0 }));
+  const rec = (machine, music) => recommendFor({ capabilities: caps.map((c) => ({ ...c, fit: fitFor(c.requires, machine) })), machine, disk: { freeBytes: 900e9 }, music });
+  const machinePick = defaultFor("music", { choices: [choice.minimax(false)], machine: MACHINES[2].machine });
+  const amdRec = rec(MACHINES[2].machine, machinePick);
+  const m = amdRec.picks.find((p) => p.slot === "music");
+  ok("recommendFor on a fresh AMD install: YuE2 for ComfyUI, 'Studio picked', and no AMD MiniMax warning",
+    m.id === "musicYue2Comfy" && m.chosenBy === "machine" && /^Studio picked this music engine/.test(m.why)
+    && /not yet measured on AMD cards/.test(m.why)
+    && !/your selected/.test(m.why) && !amdRec.notes.some((n) => n.slot === "music-amd"), JSON.stringify({ why: m.why, notes: amdRec.notes.map((n) => n.slot) }));
+  const chose = rec(MACHINES[2].machine, { value: "minimax-music3", chosenBy: "you", kept: false, paid: false });
+  const cm = chose.picks.find((p) => p.slot === "music");
+  ok("...a MiniMax the person chose on AMD still gets the warning, worded as theirs",
+    cm.id === "engine" && !!cm.amdWarning && /^You chose MiniMax Music 3/.test(chose.notes.find((n) => n.slot === "music-amd")?.headline || ""),
+    chose.notes.find((n) => n.slot === "music-amd")?.headline);
+  const hosted = rec(MACHINES[2].machine, { value: "minimax-music3", chosenBy: "you", kept: false, paid: true });
+  ok("...and the hosted MiniMax (it does not render on this card) gets none",
+    !hosted.notes.some((n) => n.slot === "music-amd"));
+}
 ok("a saved YuE2-through-ComfyUI with no checkpoint chosen gets the machine's build",
   (() => { const d = defaultFor("music", { saved: { engine: "yue2-comfy", checkpoint: null }, choices: MACHINES[0].choices, machine: MACHINES[0].machine });
     return d.chosenBy === "you" && d.checkpoint === INT8 && d.checkpointBy === "machine"; })());
@@ -330,7 +397,7 @@ console.log("\n§4  index.js and the MCP surface");
    * default worked out in that window treated every card as no card. */
   const md = /\nasync function machineDefaults\(\) \{[\s\S]*?\n\}\n/.exec(index)?.[0] || "";
   ok("machineDefaults waits for the card's first reading, and caches nothing read before it",
-    /await gpuFirstReading\(\);[\s\S]*readMachine\(gpuStatus\(\), ramStatus\(\)\)/.test(md) && /defaultsCache = gpuReadOnce\(\) \?/.test(md), md.slice(0, 200));
+    /await gpuFirstReading\(\);[\s\S]*readMachine\(gpuStatus\(\), ramStatus\(\)(, \{ cpuOnly: cpuOnlyEngine\(\)(, vaeMeasured: h3VaeMeasured\(\))? \})?\)/.test(md) && /defaultsCache = gpuReadOnce\(\) \?/.test(md), md.slice(0, 200));
   {
     /* ...and the wait itself, on this machine's own card (or none): null
      * before the first reading, then the reading, and "read once" either way. */
@@ -653,6 +720,73 @@ console.log("\n§7  the launcher names what Studio will run (launcher/musiccard.
     /for this session$/.test(swap.full.engine) && /your choice stays saved/.test(swap.full.warn || ""), JSON.stringify(swap.full));
   const hosted = musicCards({ prefs: {}, api: { enabled: true, provider: "fal" }, ...disk, vendor: "nvidia" });
   ok("API mode on: the hosted MiniMax on the person's own key, said so", /hosted, your API key/.test(hosted.full.engine) && /billed/.test(hosted.full.why));
+  /* THE EMPTY DISK (release critic): the Full card named MiniMax Music 3 on
+   * every fresh install, and on AMD warned about it. */
+  const empty = { yue2: [], comfyOk: true, ggufOk: false, minimaxReady: false };
+  for (const vendor of ["nvidia", "amd"]) {
+    const e = musicCards({ prefs: {}, ...empty, vendor, amdMusicFixed: false });
+    ok(`an empty disk on ${vendor}: the Full card names YuE2 through ComfyUI, Studio's pick, and no warning`,
+      /^YuE2 3B \(ComfyUI\)/.test(e.full.engine) && e.full.chosenBy === "machine" && e.full.warn === null
+      && !/MiniMax/.test(e.full.engine + e.full.why), JSON.stringify(e.full));
+  }
+  const noCard = musicCards({ prefs: {}, ...empty, vendor: null });
+  ok("an empty disk with no card: the native GGUF", /^YuE2 GGUF/.test(noCard.full.engine) && !/MiniMax/.test(noCard.full.why), JSON.stringify(noCard.full));
+  const small = musicCards({ prefs: {}, ...empty, vendor: "nvidia", comfyFits: false });
+  ok("an empty disk on a card under YuE2-for-ComfyUI's minimum: the native GGUF", /^YuE2 GGUF/.test(small.full.engine), JSON.stringify(small.full));
+  const { yue2ComfyFits, yue2ComfyVerdict } = await import("../launcher/checks.mjs");
+  ok("the launcher reads that minimum off the catalogue row (6 GB no, 8 GB yes, unread: unknown)",
+    yue2ComfyFits({ totalMb: 6144 }) === false && yue2ComfyFits({ totalMb: 8188 }) === true && yue2ComfyFits(null) === undefined
+    && /const comfyVerdict = yue2ComfyVerdict\(gpu, totalmem\(\)\);/.test(launcher)
+    && /cardRead: !!gpu\?\.totalMb, amdMusicFixed, comfyFits: comfyVerdict\.fits, comfyShort: comfyVerdict\.short,/.test(launcher));
+  /* THE CPU-ONLY INSTALL (release critic): scripts/install-engine.mjs writes
+   * settings.gpu { vendor: "cpu", totalMb: 0 }, and the launcher read "cpu" as
+   * a card, so its Full card named YuE2 through ComfyUI while Studio named the
+   * GGUF. The real stub now, not vendor null. */
+  const cpuStub = { vendor: "cpu", name: "CPU only", totalMb: 0 };
+  const cpuMachine = readMachine(null, { totalMb: 32768 }, { cpuOnly: true });
+  const cpu = musicCards({ prefs: {}, ...empty, vendor: "cpu", cardRead: !!cpuStub.totalMb, comfyFits: yue2ComfyFits(cpuStub, 32 * 1024 ** 3) });
+  ok("a CPU-only install's stub (vendor \"cpu\"): the launcher names the native GGUF Q4, as Studio does",
+    yue2ComfyFits(cpuStub) === false && /^YuE2 GGUF/.test(cpu.full.engine) && /no graphics card/.test(cpu.full.why)
+    && cpu.full.value === defaultFor("music", { choices: [], machine: cpuMachine }).value, JSON.stringify(cpu.full));
+  const cpuDefault = musicCards({ prefs: {}, ...empty, vendor: "cpu" });
+  ok("...even when nothing else says the card was not read", /^YuE2 GGUF/.test(cpuDefault.full.engine), JSON.stringify(cpuDefault.full));
+  const unread = musicCards({ prefs: {}, ...empty, vendor: "amd", cardRead: false });
+  ok("a card whose memory was not read is no reading, as Studio's readMachine counts it: the native GGUF",
+    /^YuE2 GGUF/.test(unread.full.engine) && readMachine({ name: "AMD Radeon", vendor: "amd" }, { totalMb: 32768 }).gpu === null, JSON.stringify(unread.full));
+  /* ONE JUDGEMENT, CARD AND RAM (release critic): the launcher checked VRAM
+   * only, Studio's fitFor also applies the row's 16 GB RAM floor, so an 8 GB
+   * laptop with 8 GB of RAM got two engines and Studio blamed the card. Both
+   * now ask music-default.js yue2ComfyFit; this grid holds it to fitFor, and
+   * the launcher's card to Studio's default, machine by machine. */
+  const { yue2ComfyFitOn, fitFor } = await import("./fit.js");
+  const comfyRow = CATALOG.find((c) => c.id === "musicYue2Comfy");
+  const grid = [];
+  for (const vramMb of [null, 6144, 8188, 12282, 16376]) {
+    for (const ramGb of [7.7, 8, 12, 12.1, 15.4, 16, 31.4, 32]) grid.push({ vramMb, ramGb });
+  }
+  const disagree = [];
+  for (const { vramMb, ramGb } of grid) {
+    const gpu = vramMb ? { name: "NVIDIA GeForce RTX", totalMb: vramMb, vendor: "nvidia" } : null;
+    const ramMb = Math.round(ramGb * 1024);
+    const m = readMachine(gpu, { totalMb: ramMb });
+    const studioFit = yue2ComfyFitOn(comfyRow, m);
+    if ((studioFit.fits !== false) !== (fitFor(comfyRow.requires, m).state !== "wont-run")) disagree.push(`fitFor ${vramMb}/${ramGb}`);
+    const studio = defaultFor("music", { choices: [], machine: m, comfyFits: studioFit.fits, comfyShort: studioFit.short });
+    const v = yue2ComfyVerdict(gpu, ramMb * 1024 * 1024);
+    const card = musicCards({ prefs: {}, ...empty, vendor: gpu?.vendor || null, cardRead: !!gpu?.totalMb, comfyFits: v.fits, comfyShort: v.short });
+    if (card.full.value !== studio.value || card.full.why !== studio.why) disagree.push(`${vramMb}/${ramGb}: launcher ${card.full.value} · Studio ${studio.value}`);
+  }
+  ok(`the launcher and Studio name the same nothing-ready engine, in the same words, on ${grid.length} machines (card x RAM), and the judgement is fitFor's`,
+    !disagree.length, disagree.join("; "));
+  const lapMb = Math.round(7.7 * 1024);
+  const laptop = readMachine({ name: "NVIDIA GeForce RTX 4060 Laptop GPU", totalMb: 8188, vendor: "nvidia" }, { totalMb: lapMb });
+  const lf = yue2ComfyFitOn(comfyRow, laptop);
+  const lapStudio = defaultFor("music", { choices: [], machine: laptop, comfyFits: lf.fits, comfyShort: lf.short });
+  const lv = yue2ComfyVerdict({ totalMb: 8188, vendor: "nvidia" }, lapMb * 1024 * 1024);
+  const lapCard = musicCards({ prefs: {}, ...empty, vendor: "nvidia", comfyFits: lv.fits, comfyShort: lv.short });
+  ok("an 8 GB laptop with 7.7 GB of RAM: the GGUF on both surfaces, and the reason is the RAM, not the card",
+    lapStudio.value === "yue2-gguf" && lapCard.full.value === "yue2-gguf" && /less RAM/.test(lapStudio.why)
+    && !/this card is under/.test(lapStudio.why) && lapCard.full.why === lapStudio.why, lapStudio.why);
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);

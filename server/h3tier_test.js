@@ -27,7 +27,8 @@
 import { readFileSync } from "node:fs";
 import {
   H3_TIERS, H3_FIT, H3_RAM_WARNING, H3_AMD_NOTE, H3_VRAM_MIN_GB, H3_VRAM_FULL_GB, H3_VRAM_OFFERED_GB,
-  H3_RAM_FLOOR_GB, H3_RAM_MEASURED_GB, H3_LAB_CARD_GB,
+  H3_RAM_FLOOR_GB, H3_RAM_MEASURED_GB, H3_LAB_CARD_GB, H3_VAE_CAVEAT, H3_VAE_MEASURED, H3_ASK_A_FRIEND, H3_MV_SCREEN, H3_PATHS,
+  RAM_RESERVED_GB, ramBoxGb, gbWithArticle,
   h3TierFor, h3Tokens, h3VramNeedMiB, h3Estimate, snapH3, h3SnapFrames, h3Snap32,
   h3TierTable, h3Status, h3Requires, h3Brief,
 } from "./h3tier.js";
@@ -87,7 +88,35 @@ ok("under 6 GB points to asking a friend first, and names no paid route",
 ok("the 12 GB result's --lowvram caveat is said to a 12 GB card",
   /--lowvram/.test(h3TierFor({ vramMb: 12282 }).evidence) && /untested/.test(h3TierFor({ vramMb: 12282 }).evidence));
 ok("...and not to the 16 GB card the lab ran on natively",
-  !/--lowvram/.test(h3TierFor({ vramMb: 16376 }).evidence) && h3TierFor({ vramMb: 16376 }).evidence === H3_TIERS[0].evidence);
+  !/--lowvram/.test(h3TierFor({ vramMb: 16376 }).evidence)
+  && h3TierFor({ vramMb: 16376 }).evidence === `${H3_TIERS[0].evidence} ${H3_VAE_CAVEAT}`);
+/* THE VAE THE LAB HAD (release critic): every figure was measured with the
+ * rig's 3.17 GB int8 video VAE; a new install downloads the 5.2 GB fp16 one.
+ * Every MEASURED sentence says so; the preview and the predictions do not
+ * claim a measurement, so they carry no caveat about one. */
+ok("every measured tier's evidence says a new install's video decoder was not measured, in plain words",
+  /larger video decoder than the one these sizes were measured with/.test(H3_VAE_CAVEAT) && !/VAE|int8|fp16|bf16/.test(H3_VAE_CAVEAT)
+  && [16376, 12282, 8188].every((mb) => h3TierFor({ vramMb: mb }).evidence.endsWith(H3_VAE_CAVEAT))
+  && h3TierFor({ vramMb: 8188, path: "refs" }).evidence.endsWith(H3_VAE_CAVEAT));
+/* ...and not on a PC that loads the file the lab measured with (the owner's
+ * rig: config.js picks the int8 name first; index.js checks its size, since
+ * Comfy-Org's own int8 has the same name and is not the measured file). */
+ok("a PC loading the measured decoder gets the measured sentences without the caveat",
+  [16376, 12282, 8188].every((mb) => !h3TierFor({ vramMb: mb, vaeMeasured: true }).evidence.includes(H3_VAE_CAVEAT))
+  && !h3Status({ gpu: { totalMb: 16376, vendor: "nvidia" }, ram: { totalMb: 32659 }, vaeMeasured: true }).tier.evidence.includes(H3_VAE_CAVEAT)
+  && h3Status({ gpu: { totalMb: 16376, vendor: "nvidia" }, ram: { totalMb: 32659 } }).tier.evidence.endsWith(H3_VAE_CAVEAT));
+ok("the measured file is named by name and size, and the size is not Comfy-Org's int8 (2.81 GB)",
+  H3_VAE_MEASURED.file === "minimax_h3_video_vae_int8_convrot.safetensors" && H3_VAE_MEASURED.bytes === 3_171_670_912
+  && read("./config.js").includes(`"${H3_VAE_MEASURED.file}"`) && read("./models.js").includes("bytes: 2811065184")
+  && /h3VaeMeasured\(\)/.test(read("./index.js")) && /H3_VAE_MEASURED\.bytes/.test(read("./index.js")));
+ok("...and an unmeasured size (the preview, a predicted reference-path full size) carries none",
+  !h3TierFor({ vramMb: 6144 }).evidence.includes(H3_VAE_CAVEAT)
+  && !h3TierFor({ vramMb: 12282, path: "refs" }).evidence.includes(H3_VAE_CAVEAT));
+ok("asking a friend names the rail's Music video screen, not the old Workflow",
+  H3_MV_SCREEN === "Music video" && H3_ASK_A_FRIEND.includes(`on a scene in ${H3_MV_SCREEN}`) && !/Workflow/.test(H3_ASK_A_FRIEND));
+ok("the article helper reads a GB figure aloud: an 8, an 11, an 18, an 80; a 6, a 12, a 16",
+  ["an 8 GB", "an 11 GB", "an 18 GB", "an 80 GB", "a 6 GB", "a 12 GB", "a 16 GB"].join("|")
+  === [8, 11, 18, 80, 6, 12, 16].map(gbWithArticle).join("|"));
 
 /* ── 2. the fit against the lab ────────────────────────────────────────── */
 console.log("\n── the VRAM fit, against the seven capped runs ─────────────────");
@@ -168,7 +197,26 @@ ok("snapH3 returns a size on both grids",
 /* ── 4. RAM and AMD ────────────────────────────────────────────────────── */
 console.log("\n── the RAM warning and the AMD note ─────────────────────────────");
 ok("16 GB of RAM gets the lab's warning", h3TierFor({ vramMb: 12282, ramGb: 16 }).ramWarning === H3_RAM_WARNING);
-ok("31.4 GB (a 32 GB machine giving 1 GB to the iGPU) is under 32", !!h3TierFor({ vramMb: 12282, ramGb: 31.4 }).ramWarning);
+/* ONE RAM READER (release critic): the launcher allowed 4 GB for what
+ * integrated graphics keeps while Home rounded, so one laptop was "ok" on the
+ * launcher and "not recommended" on Home. h3tier.js ramBoxGb is the reader
+ * everywhere now, with the launcher's allowance. */
+ok("31.4 GB (a 32 GB laptop giving some to the iGPU) counts as 32 and is not warned",
+  h3TierFor({ vramMb: 12282, ramGb: 31.4 }).ramWarning === null && h3TierFor({ vramMb: 12282, ramGb: 31.4 }).ramGb === 32);
+ok("the reader: a reading within RAM_RESERVED_GB under a size RAM is sold in is that size, else rounded",
+  RAM_RESERVED_GB === 4 && ramBoxGb(32659) === 32 && ramBoxGb(31.4 * 1024) === 32 && ramBoxGb(28.2 * 1024) === 32
+  && ramBoxGb(27.9 * 1024) === 28 && ramBoxGb(15.4 * 1024) === 16 && ramBoxGb(12 * 1024) === 12 && ramBoxGb(0) === null
+  && ramBoxGb(null) === null && ramBoxGb(65536) === 64);
+/* The floor takes the same allowance, on purpose (h3tier.js says why): a
+ * 16 GB box reading 12.1 GB is offered, never recommended; 11.9 GB is a 12 GB box. */
+ok("the RAM floor judges with the one reader: 12.1 GB reads as 16 (offered, not recommended), 11.9 GB as 12 (under the floor)",
+  ramBoxGb(12.1 * 1024) === 16 && ramBoxGb(11.9 * 1024) === 12
+  && h3TierFor({ vramMb: 16376, ramGb: 12.1 }).ramBelowFloor === false && h3TierFor({ vramMb: 16376, ramGb: 12.1 }).recommend === false
+  && h3TierFor({ vramMb: 16376, ramGb: 11.9 }).ramBelowFloor === true
+  && /THE FLOOR TAKES THE SAME ALLOWANCE, ON PURPOSE/.test(read("./h3tier.js")));
+ok("...and reading its own answer back gives the same answer (fit.js passes a judged figure on)",
+  [8, 12, 16, 24, 28, 31, 32, 64].every((g) => ramBoxGb(ramBoxGb(g * 1024) * 1024) === ramBoxGb(g * 1024)));
+ok("h3TierFor takes the reading in MiB too, the same way", h3TierFor({ vramMb: 12282, ramMb: 15.4 * 1024 }).ramGb === 16);
 ok("32 GB, read as 31.9, is not warned", h3TierFor({ vramMb: 12282, ramGb: 31.9 }).ramWarning === null);
 ok("64 GB is not warned", h3TierFor({ vramMb: 12282, ramGb: 64 }).ramWarning === null);
 ok("the warning names the measured figure and the pagefile",
@@ -176,9 +224,10 @@ ok("the warning names the measured figure and the pagefile",
 ok("an AMD card gets the untested note; NVIDIA does not",
   h3TierFor({ vramMb: 16368, ramGb: 32, vendor: "amd" }).amdNote === H3_AMD_NOTE
     && h3TierFor({ vramMb: 16376, ramGb: 32, vendor: "nvidia" }).amdNote === null);
-ok("the RAM floor is 16 GB: 15 is under it and not offered, 16 is offered with the warning",
+ok("the RAM floor is 16 GB: 12 is under it and not offered, 16 (and a 15.4 reading) is offered with the warning",
   H3_RAM_FLOOR_GB === 16
-    && h3TierFor({ vramMb: 16376, ramGb: 15 }).ramBelowFloor === true && h3TierFor({ vramMb: 16376, ramGb: 15 }).offered === false
+    && h3TierFor({ vramMb: 16376, ramGb: 12 }).ramBelowFloor === true && h3TierFor({ vramMb: 16376, ramGb: 12 }).offered === false
+    && h3TierFor({ vramMb: 16376, ramGb: 15.4 }).offered === true
     && h3TierFor({ vramMb: 16376, ramGb: 16 }).ramBelowFloor === false && h3TierFor({ vramMb: 16376, ramGb: 16 }).offered === true
     && !!h3TierFor({ vramMb: 16376, ramGb: 16 }).ramWarning);
 {
@@ -407,6 +456,14 @@ console.log("\n── the status block, the tool, the Auto note ─────�
     s.tiers.length === H3_TIERS.length && s.tiers.every((t) => !("evidence" in t)));
   const none = h3Status({ gpu: null, ram: { totalMb: 32659 } });
   ok("no card: no size chosen, no table", none.card === null && none.tier.id === "unknown" && none.table.length === 0);
+  /* NO CARD AT ALL (the engine runs on the CPU): not offered, no size chips,
+   * where a card that was merely not read stays "cannot tell". */
+  const cpu = h3Status({ gpu: null, ram: { totalMb: 32659 }, cpuOnly: true });
+  ok("a CPU-only engine: not offered, no chips, and said as no card rather than cannot tell",
+    cpu.noCard === true && cpu.offered === false && cpu.choices.length === 0 && cpu.tier.id === "none"
+    && /no graphics card for H3/.test(cpu.tier.evidence) && none.noCard === false && none.choices.length === 3);
+  ok("...a card that WAS read is never judged CPU-only",
+    h3Status({ gpu: { totalMb: 8188 }, ram: { totalMb: 32659 }, cpuOnly: true }).tier.id === "small");
   ok("readMachine carries the same block", JSON.stringify(MACHINES["8 GB / 32 GB"].h3.tier) ===
     JSON.stringify(h3Status({ gpu: { name: "RTX 3060 Ti", totalMb: 8188 }, ram: { totalMb: 32659 } }).tier));
   const b = h3Brief(s);
@@ -416,7 +473,7 @@ console.log("\n── the status block, the tool, the Auto note ─────�
   ok("...and null when there is no block", h3Brief(null) === null && h3Brief({}) === null);
 }
 const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-ok("/api/status serves it under config.video.h3", /h3: h3Status\(\{ gpu: gpuStatus\(\), ram: ramStatus\(\) \}\)/.test(code(read("./index.js"))));
+ok("/api/status serves it under config.video.h3", /h3: h3Status\(\{ gpu: gpuStatus\(\), ram: ramStatus\(\), cpuOnly: cpuOnlyEngine\(\), vaeMeasured: h3VaeMeasured\(\) \}\)/.test(code(read("./index.js"))));
 ok("studio_status returns the brief (no new tool)", /h3_card_tier: h3Brief\(st\.config\?\.video\?\.h3\)/.test(code(read("./mcp.js"))));
 ok("models_for_this_machine returns the warning, the size and recommendable per row",
   /warning: c\.fit\?\.warning/.test(read("./mcp-models.js")) && /h3Size: c\.fit\?\.h3/.test(read("./mcp-models.js"))

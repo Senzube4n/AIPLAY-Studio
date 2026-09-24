@@ -32,7 +32,7 @@
  *
  * Imports only data and pure helpers; no I/O.
  */
-import { CLOUD_CARD_PLACE } from "./cloud-switch.js";
+import { CLOUD_CARD_PLACE, LENDING_UNTRIED } from "./cloud-switch.js";
 import { h3SizeFit, h3StartSize, H3_VRAM_OFFERED_GB, H3_RAM_FLOOR_GB, H3_SOL_ATTN, H3_MORE_MOTION } from "./h3tier.js";
 import { h3MatchedSteps, h3SparseFor } from "./workflow.js";
 
@@ -129,15 +129,19 @@ export function refTagSentence(tags, { engineLabel, refsRide = true } = {}) {
 
 /** The Video screen's sentence when H3 is not offered on this machine, friend
  *  first and the person's own key second (owner decision, 2026-09-24). Null
- *  where H3 is offered, or the card could not be read. */
+ *  where H3 is offered, or where a card was not read (an AMD or Intel card
+ *  whose memory Studio could not see: "cannot tell"). A PC with no card at
+ *  all (the engine runs on the CPU, h3tier.js H3_NO_CARD) gets it too. */
 export function h3NotOfferedLine(h3) {
-  if (!h3 || h3.offered || !h3.card) return null;
-  const why = h3.ramBelowFloor
-    ? `this PC has ${h3.ramGb} GB of RAM, under the ${H3_RAM_FLOOR_GB} GB it needs`
-    : `this card has ${h3.card.vramGb} GB of graphics memory, and nothing under ${H3_VRAM_OFFERED_GB} GB was tested`;
-  return `H3 video is not offered here: ${why}. Ask a friend with a strong card first: Ask friend, beside `
-    + `Render clip in Advanced, prepares this clip for their card, free. After that, a paid service on your own `
-    + `key (${CLOUD_CARD_PLACE}).`;
+  if (!h3 || h3.offered || (!h3.card && !h3.noCard)) return null;
+  const why = h3.noCard
+    ? "this PC has no graphics card for it to render on (Studio's engine runs on the CPU)"
+    : h3.ramBelowFloor
+      ? `this PC has ${h3.ramGb} GB of RAM, under the ${H3_RAM_FLOOR_GB} GB it needs`
+      : `this card has ${h3.card.vramGb} GB of graphics memory, and nothing under ${H3_VRAM_OFFERED_GB} GB was tested`;
+  return `H3 video is not offered here: ${why}. Ask a friend with a strong card first (${LENDING_UNTRIED}): Ask `
+    + `friend, beside Render clip in Advanced, prepares this clip for their card, free. After that, a paid service `
+    + `on your own key (${CLOUD_CARD_PLACE}).`;
 }
 
 /* ── engine failures ──────────────────────────────────────────────────────── */

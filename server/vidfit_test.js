@@ -105,6 +105,16 @@ test("§1 where H3 is not offered: one sentence, a friend first, your own key se
   assert.match(status(8, 8).notOffered, /this PC has 8 GB of RAM, under the 16 GB it needs/);
   assert.equal(status(16, 32).notOffered, null);
   assert.equal(status(0, 0).notOffered, null, "an unread card is not told H3 is off");
+  assert.match(four, /Ask a friend with a strong card first \(built, not yet tried between two PCs\)/, "lending is said to be untried");
+  /* NO CARD AT ALL (release critic): the engine runs on the CPU, so H3 is not
+   * offered, no H3 size is shown, and the friend-first line appears; an AMD or
+   * Intel card whose memory was not read keeps "cannot tell". */
+  const h = tier.h3Status({ gpu: null, ram: { totalMb: 16310 }, cpuOnly: true });
+  const cpu = plain.h3NotOfferedLine(h);
+  assert.deepEqual(h.choices, [], "no H3 sizes on a PC with no card");
+  assert.equal(tier.h3StartSize(h), null);
+  assert.match(cpu, /^H3 video is not offered here: this PC has no graphics card for it to render on/);
+  assert.ok(cpu.indexOf("Ask a friend") < cpu.indexOf("your own key"), "the friend comes first there too");
 });
 
 /* ── §2 ─────────────────────────────────────────────────────────────────── */

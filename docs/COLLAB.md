@@ -74,9 +74,9 @@ Each is now fixed where the renderer's own function answers it:
   the matching file named from the engine's own table and the Models screen's
   catalogue (which offers no 8-step file). The borrower's returned take is
   noted by the same rule, with where to order the matching count.
-- The plan an accept proposes is the **Plan card in Workflow**, on the new
+- The plan an accept proposes is the **Plan card in Music video**, on the new
   "Order … from <name>" project — there is no "Plan screen" — and Collab's
-  **Open its plan in Workflow** goes there. The screen's name is read off the
+  **Open its plan in Music video** goes there. The screen's name is read off the
   rail on the page, and from one constant pinned to the rail on the server
   (`lending.js` `WORKFLOW_SCREEN`). The lender's role reads "lending
   friend: we render single scenes for each other" (stored value unchanged).

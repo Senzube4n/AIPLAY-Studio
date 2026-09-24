@@ -54,8 +54,9 @@ export function collabTools(api, safeName) {
       description:
         "ADD A FRIEND from the key card they sent you — the one line beginning AIPLAY1: that collab_me answers. "
         + "They arrive UNVERIFIED, with no role and no minutes: adding somebody is not trusting them. To finish, a "
-        + "person has to read the twelve words to them and hear the same twelve back, and mark it on the Collab "
-        + "screen or record their explicit confirmation with collab_verify. Refuses a card whose two keys do "
+        + "person has to read the twelve words to them and hear the same twelve back, then mark it on the Collab "
+        + "screen (an MCP client may instead record their explicit confirmation with collab_verify; Studio's own "
+        + "chat cannot). Refuses a card whose two keys do "
         + "not produce the fingerprint it claims, and refuses a fingerprint already on the roster — if their keys "
         + "really changed, remove them first and verify the new card aloud again.",
       inputSchema: {

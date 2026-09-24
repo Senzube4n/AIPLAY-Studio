@@ -234,8 +234,11 @@ export function createMvRoutes(deps) {
    * `ltxReady` (index.js passes videoReady("ltx")) decides where "hybrid"
    * sends a scene with no cast: LTX only when LTX is on this PC (shot.js).
    * Cached for five seconds, because a plan prices every scene through it. */
+  /* index.js passes the reading the Video screen takes (cpuOnly: no card, the
+   * engine on the CPU; vaeMeasured: the decoder the H3 lab measured with).
+   * The fallback reads the same settings.json field index.js cpuOnlyEngine does. */
   const cardReading = typeof deps.cardReading === "function"
-    ? deps.cardReading : () => ({ gpu: gpuStatus(), ram: ramStatus() });
+    ? deps.cardReading : () => ({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: config.torchBackend === "cpu" });
   if (typeof deps.ltxReady === "function") {
     let at = 0, last = true;
     setLtxReady(() => {

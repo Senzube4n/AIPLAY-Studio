@@ -48,7 +48,7 @@ import { LAYER_TYPES } from "../vfx/store.js";
  * copy of a table, so they follow the sigma shift if it is ever re-measured. */
 import { commitSigma, COMPARE_CONFIGS } from "../videolab/catalog.js";
 /* No strong card? Friend first, then your own key: the order is one list. */
-import { NO_STRONG_CARD } from "../cloud-switch.js";
+import { NO_STRONG_CARD, LENDING_UNTRIED } from "../cloud-switch.js";
 
 /* ── counts, spelled ─────────────────────────────────────────────────────────
  *
@@ -539,7 +539,7 @@ const TABS = [
       + "is why it lives in its own mode and asks before each run. Featured models have a short form; "
       + "every other model gets a form built from its published fields, or its raw JSON.\n"
       + "It is the paid way, and the second one: without a strong card, ask a friend with one to render "
-      + "for you first (Collab, free).",
+      + `for you first (Collab, free; ${LENDING_UNTRIED}).`,
     makes: ["Pictures, clips, sound and speech from hosted models", "3D models from a description", "Answers from hosted language models"],
     start: "Save your Comfy API key, pick a kind and a model, and press Run.",
     needs: [],

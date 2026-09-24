@@ -153,8 +153,16 @@ test("the launcher's RAM line warns under 32 GB, in the owner's words, with the 
   assert.equal(owner.status, "ok");
   assert.equal(owner.value, "31.9 GB");
   /* A 32 GB laptop or APU whose integrated graphics keeps some memory reads under 32. */
-  for (const usable of [30.5, 29.9, 28.2]) assert.equal(ramItem(usable * GiB).status, "ok", `${usable} GB usable is a 32 GB machine`);
+  for (const usable of [31.4, 30.5, 29.9, 28.2]) assert.equal(ramItem(usable * GiB).status, "ok", `${usable} GB usable is a 32 GB machine`);
   assert.equal(RAM_RESERVED_GB, 4);
+  /* ONE READER (release critic): the launcher's allowance is h3tier.js's, so
+   * Home, Models, Video and the music video judge the same machine the same way. */
+  const h3tier = await import("./h3tier.js");
+  assert.equal(RAM_RESERVED_GB, h3tier.RAM_RESERVED_GB, "the launcher re-exports h3tier's allowance, not a copy");
+  for (const usable of [31.4, 28.2, 27.9, 15.4, 11.9]) {
+    assert.equal(ramItem(usable * GiB).status === "ok", h3tier.ramBoxGb(usable * 1024) >= 32, `${usable} GB is judged as h3tier judges it`);
+  }
+  assert.match(ramItem(11.9 * GiB).detail, /under 16 GB they are not offered/, "under H3's floor the launcher says it is not offered");
   assert.equal(ramItem(27.9 * GiB).status, "warn");
   assert.equal(ramItem(23.9 * GiB).status, "warn", "a 24 GB machine");
   const small = ramItem(15.9 * GiB);
@@ -164,6 +172,7 @@ test("the launcher's RAM line warns under 32 GB, in the owner's words, with the 
   const checks = src("../launcher/checks.mjs");
   assert.match(checks, /import \{ CATALOG \} from "\.\.\/server\/models\.js";/);
   assert.doesNotMatch(checks, /STRONG_CARD_GB|H3_MEASURED_RAM_GB/, "no hand-kept copy of the thresholds");
+  assert.doesNotMatch(checks, /export const RAM_RESERVED_GB = /, "no hand-kept copy of the RAM allowance either");
 });
 
 test("a weak or missing card is pointed at a friend first and paid Comfy API second; every mode stays", async () => {
@@ -175,12 +184,20 @@ test("a weak or missing card is pointed at a friend first and paid Comfy API sec
   assert.equal(cardAdvice({ gpu: { name: "RTX 4070 Ti SUPER", totalMb: 16376, vendor: "nvidia" } }), null, "a 16 GB card needs no advice (the owner's)");
   assert.equal(cardAdvice({ gpu: { name: "RTX 3060", totalMb: 12288, vendor: "nvidia" } }), null, "12 GB gets full size on the Models screen");
   assert.equal(cardAdvice({ gpu: { name: "RTX 3060 Ti", totalMb: 8192, vendor: "nvidia" } }), null, "8 GB gets the smaller size on the Models screen");
-  assert.ok(cardAdvice({ gpu: { name: "RTX 3060", totalMb: 12288, vendor: "nvidia" }, need: { vramGb: 16, ramGb: 32 } }),
-    "when the catalogue raises the floor, the launcher follows");
+  const raised = cardAdvice({ gpu: { name: "RTX 3060", totalMb: 12288, vendor: "nvidia" }, need: { vramGb: 16, ramGb: 32 } });
+  assert.equal(raised?.why, "This RTX 3060 has 12 GB of memory; music videos (MiniMax H3) need a card with at least 16 GB, as the Models screen says.",
+    "when the catalogue raises the floor, the launcher follows, with the catalogue's number (not the preview's floor)");
+  /* THE SAME ANSWER AS THE VIDEO SCREEN (release critic): h3tier.js offers a
+   * 6 or 7 GB card the experimental 832x480 preview, so the launcher says
+   * that, not "needs 8 GB". Under 6 GB it is not offered at all. */
   const six = cardAdvice({ gpu: { name: "RTX 2060", totalMb: 6144, vendor: "nvidia" } });
-  assert.match(six?.why || "", /has 6 GB of memory; music videos \(MiniMax H3\) need a card with at least 8 GB, as the Models screen says\./,
-    "6 GB is under the minimum the Models screen prints (it offers such a card only an unproven preview)");
+  assert.match(six?.why || "", /has 6 GB of memory: music videos \(MiniMax H3\) are offered on it only as an experimental 832x480 preview, not yet seen to fit; the measured sizes need an 8 GB card or more/,
+    "6 GB gets the preview tier's own words, as Home and the Video screen say");
+  assert.doesNotMatch(six.why, /a 8 GB/);
+  const four = cardAdvice({ gpu: { name: "GTX 1650", totalMb: 4096, vendor: "nvidia" } });
+  assert.match(four?.why || "", /has 4 GB of memory, under the 6 GB music videos \(MiniMax H3\) need even for an experimental preview/);
   assert.match(six.friend, /^Collab, in Full Studio, packs a scene into a sealed file/);
+  assert.match(six.friend, /send the clip back \(built, not yet tried between two PCs\)\. No account, no server, no cost\./, "lending is said to be untried, as every surface says");
   assert.match(six.cloud, /your own Comfy API key, paid per run/);
   for (const none of [{ gpu: null }, { gpu: { vendor: "cpu", name: "CPU only", totalMb: 0 } }]) {
     assert.match(cardAdvice(none)?.why || "", /No graphics card that Studio can render on/);

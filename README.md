@@ -19,6 +19,10 @@
 </p>
 
 <p align="center">
+  When the installer asks which build, choose <b>Senzu's</b>.
+</p>
+
+<p align="center">
   Windows may say “Windows protected your PC” because the installer is not signed yet: click <b>More info</b>, then <b>Run anyway</b>.
 </p>
 
@@ -49,11 +53,11 @@ video models.
 
 1. **Ask a friend with a strong card to render for you.** It is free. In Full
    Studio, add each other once on **Collab**, then press **Ask friend** beside a
-   scene (Workflow → Video clips) and send them the sealed file it makes; they
+   scene (Music video → Video clips) and send them the sealed file it makes; they
    send the finished clip back as a file for you to look at before you keep it.
    Nothing connects to anybody: you pass the files on however you already send
-   files. It lends video scenes, not songs, and a real two-PC round trip has not
-   been acceptance-tested yet. See [Ask a friend to render](docs/FRIEND_RENDERING.md)
+   files. It lends video scenes, not songs, one scene per sealed file. Lending
+   is built but not yet tried between two PCs. See [Ask a friend to render](docs/FRIEND_RENDERING.md)
    and [Collab](docs/COLLAB.md).
 2. **Or pay for a service with your own key.** Both are off until you switch
    them on, and every paid run asks first. Studio uses only a key typed into
@@ -69,7 +73,7 @@ video models.
      on your own Comfy API key and credits, with no ComfyUI and no card. Get a
      key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
      choose **Use Comfy API** in the launcher and paste it on the page, or run
-     `npm run start:cloud`. That mode has no Music, Workflow or Collab screen,
+     `npm run start:cloud`. That mode has no Music, Music video or Collab screen,
      so a music video still needs Full Studio. Full Studio and Music only never
      spend Comfy credits.
 
@@ -87,8 +91,9 @@ The Vulkan and CPU builds bring their own.
 
 1. **Download and run [AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Windows may say “Windows protected your PC” because the installer is not
-   signed yet: click **More info**, then **Run anyway**. It asks for a build and
-   a folder; the defaults are right. No admin prompt.
+   signed yet: click **More info**, then **Run anyway**. When it asks which
+   build, choose **Senzu's**; then a folder, where the default is right. No
+   admin prompt.
    (Developers: the [source ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip) works too; open the extracted folder,
    not the ZIP viewer.)
 2. **Start AIPLAY Studio** from the shortcut Setup made (it is `AIPLAY Studio.exe`;
@@ -98,7 +103,9 @@ The Vulkan and CPU builds bring their own.
 3. Go to **Models → Review Q4 / Q8 setup** and pick **Q4_0** (smaller, the
    default) or **Q8_0** (optional, higher precision). Read the size and licence,
    accept if you agree, and click **Install**.
-4. Open **Music**, write your **Lyrics** and **Style**, and click **Create**.
+4. Open **Music**. A new install opens it on **Simple**: choose one of the
+   **Presets…** and press **Make song**. To write your own words, press
+   **Advanced**, fill in **Lyrics** and **Style**, and press **Create**.
    Finished songs appear as WAV files in the **Library**.
 
 **What gets downloaded?** About **2.93 GB** of model files for Q4 (**4.53 GB**
@@ -209,7 +216,7 @@ replaces torch, CUDA or ROCm.
 | **NVIDIA** | Everything. Use the portable `ComfyUI_windows_portable_nvidia.7z` (not `_cu126`) or a source install with a `+cu130` torch. |
 | **AMD Radeon** | Native YuE2 GGUF (Vulkan), YuE2, ACE-Step 1.5, MiniMax Music 3 and images through ComfyUI, Reactive, the DAW and compositor. MiniMax needs Studio's default launch flags (below). The 3D stack needs CUDA. |
 | **Intel Arc** | Native YuE2 GGUF (Vulkan), and ComfyUI with an XPU torch. |
-| **No GPU** | Native YuE2 GGUF on the CPU build, the DAW and the compositor. For video clips (here, or on any card too small for them), first ask a friend with a strong card to render them for you (**Collab**, free). Then, paid on your own key: [the hosted engine](docs/DEEP_DIVE.md#no-gpu-api-mode) for MiniMax Music 3 songs, or the launcher's **Use Comfy API** mode. |
+| **No GPU** | Native YuE2 GGUF on the CPU build, the DAW and the compositor. For video clips (here, or on any card too small for them), first ask a friend with a strong card to render them for you (**Collab**, free; built, not yet tried between two PCs). Then, paid on your own key: [the hosted engine](docs/DEEP_DIVE.md#no-gpu-api-mode) for MiniMax Music 3 songs, or the launcher's **Use Comfy API** mode. |
 
 **Default ComfyUI launch flags:** `--use-pytorch-cross-attention --disable-cuda-graphs`.
 They fixed MiniMax Music 3's broken audio on an RX 9060 XT, and they replace any other
@@ -221,7 +228,7 @@ Measured AMD results, launch flags and the details of every layout are in
 
 ## Full Studio: your first song
 
-For the whole suite (MiniMax Music 3, images, video and the rest):
+For the whole suite (music, images, video and the rest):
 
 1. Install **[Node.js](https://nodejs.org)** (the LTS installer).
 2. Have a **ComfyUI**, or let the launcher install one for you. See
@@ -229,11 +236,16 @@ For the whole suite (MiniMax Music 3, images, video and the rest):
 3. Double-click **`AIPLAY Studio.exe`** and choose **Full Studio**. It fetches
    its npm packages once and opens Studio in your browser.
 4. Open **Models**. It reads your card and memory and suggests what is worth
-   installing on *your* machine, with the size and licence of each. Nothing
-   downloads until you press a button.
-5. Open **Music**, write lyrics and a style, and press **Create**.
+   installing on *your* machine, with the size and licence of each: for music
+   on a fresh install, YuE2 3B through ComfyUI (the 3.96 GB int8 build), or the
+   native YuE2 GGUF Q4 on a small card or none. Nothing downloads until you
+   press a button.
+5. Open **Music**. It opens on **Simple**: choose one of the **Presets…** and
+   press **Make song**, or press **Advanced**, write lyrics and a style, and
+   press **Create**.
 
-On an RTX 4070 Ti SUPER, a MiniMax song takes roughly real time: about four
+MiniMax Music 3 (11.9 GB) is still in the Models list for anyone who picks it.
+On an RTX 4070 Ti SUPER a MiniMax song takes roughly real time: about four
 and a half minutes for four and a half minutes of audio. A shorter lyric means
 a shorter wait. Want a caption to start from? Try
 [`examples/01-song`](examples/01-song/).

@@ -20,14 +20,27 @@
  * video engine" note, the Welcome page and cloud_status all read them from
  * here), the two gates a paid run must pass, and GET/POST /api/cloud.
  *
- * It imports nothing. The keys, the spend ledger and the switch's writer are
+ * It imports only server/h3tier.js (the screen's name and the lending clause),
+ * which imports nothing. The keys, the spend ledger and the switch's writer are
  * handed in by index.js, so a test can drive every branch with fakes and
  * server/fit.js and the Welcome catalogue can read the sentences without
  * pulling the secret store in with them.
  */
 
+import { H3_MV_SCREEN, LENDING_UNTRIED } from "./h3tier.js";
+
+/** Lending is built, not yet tried between two PCs: every surface that offers
+ *  it says so, in these words (the one copy lives in h3tier.js). */
+export { LENDING_UNTRIED };
+
 /** The card, in the words on screen. */
 export const CLOUD_CARD_PLACE = "Settings → No strong graphics card?";
+
+/** The Collab role a friend who renders for you is given, word for word as
+ *  Collab → Friends offers it (web/app.js's role select; the stored value is
+ *  `lender`). cloud-confirm_test.js fails when the page's option and this
+ *  differ, so the Settings card never names a role that is not there. */
+export const LENDER_ROLE_LABEL = "lending friend: we render single scenes for each other";
 
 /** The order, as data. `paid` decides nothing on its own; it is what the page
  *  and an agent say beside each way. */
@@ -40,16 +53,15 @@ export const NO_STRONG_CARD = [
     paid: false,
     /* ONE sentence: what it is and the button to press. Everything else is in
      * `limits`, which the card keeps behind "More". */
-    how: "Free: a friend with a strong card renders your music video's scenes on their PC; press "
-      + "Ask friend beside a scene on Music video → Video clips and send them the sealed file it makes.",
+    how: `Free: a friend with a strong card renders your music video's scenes on their PC (${LENDING_UNTRIED}); `
+      + `press Ask friend beside a scene on ${H3_MV_SCREEN} → Video clips and send them the sealed file it makes.`,
     limits: "First add each other once on Collab → Friends: swap key cards, read the twelve words to "
-      + "each other, and give each other the role \"may render single scenes for me\". Both of you run "
+      + `each other, and make each other a "${LENDER_ROLE_LABEL}". Both of you run `
       + "Full Studio. Nothing connects to anybody: you pass the file on however you already send files, "
-      + "and your friend sends the finished clip back as a file for you to look at before you keep it. "
-      + "It lends video scenes, not songs, one scene at a time, rendered on your friend's card without "
-      + "your song under it, so keep singing close-ups for a card that has your song. A real two-PC "
-      + "round trip has not been acceptance-tested yet, and a returned clip may still need filing onto "
-      + "its scene by hand.",
+      + "and your friend sends the finished clip back as a file for you to look at before you keep it; "
+      + "Keep it files it onto its scene, even one you never rendered. "
+      + "It lends video scenes, not songs, one scene per sealed file, rendered on your friend's card without "
+      + "your song under it, so keep singing close-ups for a card that has your song.",
   },
   {
     id: "own-key",
@@ -70,7 +82,7 @@ export const NO_STRONG_CARD = [
 
 /** The one-line form, for places with room for a sentence and not a card. */
 export const NO_STRONG_CARD_LINE =
-  "Ask a friend with a strong card to render for you first (Collab, free). "
+  `Ask a friend with a strong card to render for you first (Collab, free; ${LENDING_UNTRIED}). `
   + `After that, a paid service on your own key (${CLOUD_CARD_PLACE}).`;
 
 /** The same answer for the video slot (the Models screen's "No video engine"
@@ -78,7 +90,7 @@ export const NO_STRONG_CARD_LINE =
  *  hosted engine makes songs, not clips, and the Comfy API's clips are made in
  *  another launch mode and cannot reach a music video's scenes. */
 export const NO_STRONG_CARD_VIDEO_LINE =
-  "Ask a friend with a strong card to render your music video's scenes for you first (Collab, free). "
+  `Ask a friend with a strong card to render your music video's scenes for you first (Collab, free; ${LENDING_UNTRIED}). `
   + "A paid alternative on your own key makes clips in the launcher's Use Comfy API mode, outside a "
   + `music video (${CLOUD_CARD_PLACE}).`;
 
