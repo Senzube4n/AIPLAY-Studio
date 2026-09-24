@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /** The page and MCP share the persisted, source-hashed appearance service. */
-export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()=>true}) {
+export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()=>true,onLook=()=>{}}) {
   const $=id=>document.getElementById(id),host=$('appearance-panel');
   let live=true,dirty=false,busy=false,polling=false,look=null,lastActive='',settings={},timer,version=0;
   const current=()=>live&&isCurrent();
@@ -41,7 +41,7 @@ export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()
     $('appearance-springs').disabled=busy||!inventory.spring.supported;
   };
   const paint=()=>{for(const c of controls)c();$('appearance-springs').checked=inventory.spring.supported&&settings.spring_enabled!==false;updateDisabled();};
-  const apply=next=>{look=next;settings=structuredClone(next?.settings||{});$('appearance-name').value=next?.name||'';$('appearance-persona').value=next?.personaAttribution?.personaId||'';dirty=false;runtime.apply(settings);paint();$('appearance-state').textContent=next?'Saved look':'Embedded defaults';};
+  const apply=next=>{look=next;settings=structuredClone(next?.settings||{});$('appearance-name').value=next?.name||'';$('appearance-persona').value=next?.personaAttribution?.personaId||'';dirty=false;runtime.apply(settings);paint();$('appearance-state').textContent=next?'Saved look':'Embedded defaults';onLook(next);};
   const refresh=async(token=version)=>{const rows=await api({action:'appearance_list',id:row.id});if(!current()||token!==version)return;$('appearance-looks').replaceChildren(new Option('Choose a look',''));for(const r of rows)$('appearance-looks').add(new Option(r.name,r.id));$('appearance-looks').value=look?.id||'';};
   const select=async(id,token)=>{const next=await api({action:'appearance_activate',id:row.id,look_id:id,sha256:inventory.sha256});if(!current()||token!==version)return;apply(next);lastActive=`${next.id}:${next.revision}`;$('appearance-looks').value=next.id;};
   const operation=async work=>{

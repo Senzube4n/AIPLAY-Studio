@@ -84,7 +84,7 @@ def local_matrix(node):
 
 def load(path):
     path = Path(path)
-    require(path.is_file() and path.suffix.lower() == ".glb", "Input must be an existing .glb file")
+    require(path.is_file() and path.suffix.lower() in (".glb", ".vrm"), "Input must be an existing GLB/VRM file")
     require(path.stat().st_size <= MAX_BYTES, "GLB exceeds the 128 MiB transfer limit")
     doc, binary = read_glb(path)
     require(isinstance(binary, bytes) and len(doc.get("buffers", [])) == 1
@@ -142,13 +142,11 @@ def primitive_geometry(doc, binary, primitive):
     return positions, [tuple(indices[i:i + 3]) for i in range(0, len(indices), 3)]
 
 
-def reference(path):
+def reference(path, reference_mesh_node=None, reference_primitive=None):
     data = load(path)
     doc, binary, parents, locals_, worlds, active = data
-    require(len(doc.get("skins", [])) == 1, "Reference must contain exactly one skin")
     validate_skinned_glb(path)
-    skin = doc["skins"][0]
-    joints = skin["joints"]
+    joints = sorted({j for skin in doc["skins"] for j in skin["joints"]})
     require(1 < len(joints) <= MAX_JOINTS, "Reference must have 2–256 joints")
     require(all(j in active for j in joints), "Every reference joint must belong to the default scene")
     names = [doc["nodes"][j].get("name") for j in joints]
@@ -160,47 +158,77 @@ def reference(path):
             j = parents[j]
             closure.add(j)
     kept = sorted(closure)
-    require(all(not doc["nodes"][j].get("extensions") for j in kept), "Reference skeleton node extensions are not supported")
+    require(all(set(doc["nodes"][j].get("extensions", {})) <= {"VRMC_node_constraint"} for j in kept),
+            "Reference skeleton node extensions are not supported")
     canonical_ids = {node: i for i, node in enumerate(kept)}
     canonical = {"joints": [canonical_ids[j] for j in joints], "nodes": [{"id": canonical_ids[j], "parent": canonical_ids.get(parents.get(j)),
                  "name": doc["nodes"][j].get("name"), "matrix": flatten(locals_[j])} for j in kept]}
     fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    binds = [matrix(list(row)) for row in accessor(doc, binary, skin["inverseBindMatrices"], "inverseBindMatrices", "MAT4")]
-    uses = [i for i in active if doc["nodes"][i].get("skin") == 0]
+    uses = sorted(i for i in active if "skin" in doc["nodes"][i])
     require(uses, "Reference skin has no mesh in the default scene")
-    for i in uses:
-        for joint, bind in zip(joints, binds):
-            require(max(abs(a - b) for a, b in zip(flatten(worlds[joint] @ bind), flatten(worlds[i]))) < 0.001,
-                    "Reference must be in its bind rest pose; posed defaults cannot be used as a weighted base")
+    if reference_mesh_node is not None:
+        require(type(reference_mesh_node) is int and reference_mesh_node in uses, "Selected reference mesh is not an active skinned mesh")
+        uses = [reference_mesh_node]
+    else:
+        # Preserve the simple CLI default, but never sample unrelated face/hair
+        # skins together. Fitting always supplies the explicit surface selection.
+        uses = [uses[0]]
+    if reference_primitive is not None:
+        count = len(doc["meshes"][doc["nodes"][uses[0]]["mesh"]]["primitives"])
+        require(type(reference_primitive) is int and 0 <= reference_primitive < count, "Selected reference primitive does not exist")
+    roots, _ = node_hierarchy(doc["nodes"])
+    require(len({roots[j] for j in joints}) == 1, "Reference skins must share one skeleton hierarchy")
+    skin = {"joints": joints, "skeleton": roots[joints[0]]}
+    # Some valid VRM bind matrices differ from raw node rest matrices around
+    # twist/constraint bones. Evaluate actual weighted vertices, not unused IBM
+    # entries. Large posed defaults remain unsupported; tiny exporter offsets
+    # are sampled consistently in their displayed default pose.
+    surface(data, uses, reference_primitive=reference_primitive)
     return data, skin, kept, fingerprint, uses
 
 
-def inspect_reference(path):
-    data, skin, kept, fingerprint, uses = reference(path)
+def inspect_reference(path, reference_mesh_node=None, reference_primitive=None):
+    data, skin, kept, fingerprint, uses = reference(path, reference_mesh_node, reference_primitive)
     return {"ok": True, "mode": "inspect-reference", "skeleton": fingerprint,
             "joints": len(skin["joints"]), "hierarchyNodes": len(kept), "meshNodes": len(uses),
-            "jointNames": [data[0]["nodes"][j]["name"] for j in skin["joints"]]}
+            "jointNames": [data[0]["nodes"][j]["name"] for j in skin["joints"]],
+            "baseJointNodes": skin["joints"], "referenceMeshNode": uses[0], "referencePrimitive": reference_primitive}
 
 
-def surface(data, uses):
+def surface(data, uses, reference_primitive=None, detailed=False):
     _, _, Vector, _, BVHTree = runtime()
     doc, binary, _, _, worlds, _ = data
-    vertices, triangles, weights = [], [], []
+    vertices, triangles, weights, normals = [], [], [], []
+    canonical = {j: i for i, j in enumerate(sorted({j for s in doc["skins"] for j in s["joints"]}))}
+    max_pose_deviation = 0.0
     for node in uses:
-        for primitive in doc["meshes"][doc["nodes"][node]["mesh"]]["primitives"]:
+        source_skin = doc["skins"][doc["nodes"][node]["skin"]]
+        binds = [matrix(list(row)) for row in accessor(doc, binary, source_skin["inverseBindMatrices"], "inverseBindMatrices", "MAT4")]
+        transforms = [worlds[j] @ ibm for j, ibm in zip(source_skin["joints"], binds)]
+        primitives = doc["meshes"][doc["nodes"][node]["mesh"]]["primitives"]
+        for pi, primitive in enumerate(primitives):
+            if reference_primitive is not None and pi != reference_primitive:
+                continue
             positions, faces = primitive_geometry(doc, binary, primitive)
             offset = len(vertices)
-            vertices.extend(worlds[node] @ Vector(p) for p in positions)
-            require(all(math.isfinite(c) and abs(c) <= 100000 for v in vertices[offset:] for c in v),
-                    "Reference geometry must have finite world coordinates within 100 km of origin")
             attrs = primitive["attributes"]
             pairs = []
             for n in range(len([k for k in attrs if k.startswith("JOINTS_")])):
                 js = accessor(doc, binary, attrs["JOINTS_%d" % n], "JOINTS", "VEC4", (5121, 5123), vertex=True)
                 ws = accessor(doc, binary, attrs["WEIGHTS_%d" % n], "WEIGHTS", "VEC4", (5121, 5123, 5126), normalized=True, vertex=True)
                 pairs.append((js, ws))
+            source_normals = accessor(doc, binary, attrs["NORMAL"], "NORMAL", "VEC3", vertex=True) if "NORMAL" in attrs else None
             for v in range(len(positions)):
-                weights.append({j: w for js, ws in pairs for j, w in zip(js[v], ws[v]) if w > 0})
+                row = {j: w for js, ws in pairs for j, w in zip(js[v], ws[v]) if w > 0}
+                actual = sum((transforms[j] @ Vector(positions[v]) * w for j, w in row.items()), Vector((0, 0, 0)))
+                max_pose_deviation = max(max_pose_deviation, (actual - worlds[node] @ Vector(positions[v])).length)
+                require(max_pose_deviation <= .005, "Reference must be near its bind rest pose; posed defaults cannot be used as a weighted base")
+                vertices.append(actual)
+                weights.append({canonical[source_skin["joints"][j]]: w for j, w in row.items()})
+                normals.append(sum((transforms[j].to_3x3().inverted().transposed() @ Vector(source_normals[v]) * w for j, w in row.items()), Vector((0, 0, 0))).normalized()
+                               if source_normals else Vector((0, 0, 0)))
+            require(all(math.isfinite(c) and abs(c) <= 100000 for v in vertices[offset:] for c in v),
+                    "Reference geometry must have finite world coordinates within 100 km of origin")
             for face in faces:
                 tri = tuple(offset + i for i in face)
                 a, b, c = [vertices[i] for i in tri]
@@ -208,7 +236,11 @@ def surface(data, uses):
                 triangles.append(tri)
             require(len(vertices) <= MAX_VERTICES and len(triangles) <= MAX_TRIANGLES, "Reference exceeds transfer geometry limits")
     require(triangles, "Reference has no transfer surface")
-    return BVHTree.FromPolygons(vertices, triangles, all_triangles=True), vertices, triangles, weights
+    bvh = BVHTree.FromPolygons(vertices, triangles, all_triangles=True)
+    if detailed:
+        return {"bvh": bvh, "vertices": vertices, "triangles": triangles, "weights": weights, "normals": normals,
+                "maxReferencePoseDeviation": max_pose_deviation}
+    return bvh, vertices, triangles, weights
 
 
 def barycentric(point, a, b, c):
@@ -233,7 +265,8 @@ def pack_glb(doc, binary):
             + struct.pack("<II", len(binary), 0x004E4942) + binary)
 
 
-def transfer(reference_path, target_path, output_path, expected_skeleton, transform, max_distance, mode="nearest-surface"):
+def transfer(reference_path, target_path, output_path, expected_skeleton, transform, max_distance, mode="nearest-surface",
+             reference_mesh_node=None, reference_primitive=None):
     started = time.monotonic()
     require(mode == "nearest-surface", "Only nearest-surface weight transfer is supported")
     require(type(max_distance) in (int, float) and math.isfinite(max_distance) and 0 < max_distance <= 1,
@@ -242,7 +275,7 @@ def transfer(reference_path, target_path, output_path, expected_skeleton, transf
     require(output_path.suffix.lower() == ".glb" and output_path not in (reference_path, target_path),
             "Output must be a separate .glb; input files are never overwritten")
     alignment = matrix(transform)
-    ref, skin, kept, fingerprint, uses = reference(reference_path)
+    ref, skin, kept, fingerprint, uses = reference(reference_path, reference_mesh_node, reference_primitive)
     require(isinstance(expected_skeleton, str) and fingerprint == expected_skeleton,
             "Reference skeleton mismatch; inspect and select the intended weighted base again")
     target = load(target_path)
@@ -260,7 +293,7 @@ def transfer(reference_path, target_path, output_path, expected_skeleton, transf
     primitives = doc["meshes"][0].get("primitives", [])
     require(primitives and all(not any(k.startswith(("JOINTS_", "WEIGHTS_")) for k in p.get("attributes", {})) for p in primitives),
             "Target already contains skin attributes, or no mesh primitives")
-    bvh, vertices, faces, source_weights = surface(ref, uses)
+    bvh, vertices, faces, source_weights = surface(ref, uses, reference_primitive=reference_primitive)
     _, _, Vector, _, _ = runtime()
     mesh_world = alignment @ worlds[node]
     results, distances, min_retained, count, target_triangles = [], [], 1.0, 0, 0
@@ -342,6 +375,7 @@ def transfer(reference_path, target_path, output_path, expected_skeleton, transf
               "coverage": 1.0, "maxDistance": max(distances), "meanDistance": sum(distances) / count,
               "distanceLimit": max_distance, "minRetainedWeight": min_retained,
               "referenceSha256": hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+              "baseJointNodes": skin["joints"], "referenceMeshNode": uses[0], "referencePrimitive": reference_primitive,
               "targetSha256": hashlib.sha256(target_path.read_bytes()).hexdigest(),
               "transform": transform, "requiresVisualReview": True,
               "blenderVersion": runtime()[0].app.version_string}
@@ -370,17 +404,19 @@ def main(argv=None):
     parser.add_argument("--transform", help="Explicit JSON 16-number glTF column-major alignment matrix in metres")
     parser.add_argument("--max-distance", type=float)
     parser.add_argument("--mode", choices=["nearest-surface"], default="nearest-surface")
+    parser.add_argument("--reference-mesh-node", type=int)
+    parser.add_argument("--reference-primitive", type=int)
     args = parser.parse_args(argv)
     try:
         if args.inspect_reference:
             require(not any((args.reference, args.target, args.output, args.expected_skeleton, args.transform, args.max_distance is not None)),
                     "Inspection and transfer arguments cannot be combined")
-            result = inspect_reference(args.inspect_reference)
+            result = inspect_reference(args.inspect_reference, args.reference_mesh_node, args.reference_primitive)
         else:
             require(all((args.reference, args.target, args.output, args.expected_skeleton, args.transform))
                     and args.max_distance is not None, "Transfer requires reference, target, output, expected-skeleton, transform and max-distance")
             result = transfer(args.reference, args.target, args.output, args.expected_skeleton,
-                              json.loads(args.transform), args.max_distance, args.mode)
+                              json.loads(args.transform), args.max_distance, args.mode, args.reference_mesh_node, args.reference_primitive)
         print(MARKER + json.dumps(result, allow_nan=False))
         return 0
     except Exception as exc:

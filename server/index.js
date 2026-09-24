@@ -1,4 +1,5 @@
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
+import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
@@ -221,7 +222,7 @@ import { createQwenModel, engineBusy } from "./chat/loop.js";
 import { createGallery, createEnhancer, createPromptToolRoutes } from "./prompt-tools.js";
 import { createMusicInputRoutes } from "./music-input.js";
 import { createMusicPlanRoutes } from "./music-plan.js";
-import { createAvatarRoutes } from "./mesh/avatar.js";
+import { createAvatarRoutes, createAvatarService } from "./mesh/avatar.js";
 import { fit, rungArgs, fp8Allowed, maxTokensFor, GENERATION_CAP_SECONDS, CONTEXT_SECONDS } from "./music/yue_fit.js";
 import { cudaCapability } from "./mesh/runner.js";
 /* The YuE2 door's own refusals, answered at the click rather than as a failed
@@ -2283,6 +2284,8 @@ const imageEditor = createImageEditor({
 });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
 const weightTransferRoutes = createWeightTransferRoutes({json, directory:path.join(config.outputDir,'avatar-weight-transfer'), provenance:prov});
+const avatarFitAssets = createAvatarService({directory:path.join(config.outputDir,'avatars')});
+const avatarFittingRoutes = createAvatarFittingRoutes({json,directory:path.join(config.outputDir,'avatar-fitting'),inspectAsset:avatarFitAssets.file,provenance:prov});
 
 /* The Video lab. It needs the art runner (an arm is awaited by the clip event
  * the runner emits, not by polling a directory) and the same rememberClip the
@@ -2413,6 +2416,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/avatar-weight-transfer') {
       if (await weightTransferRoutes(req, res, url)) return;
+    }
+    if (p === '/api/avatar-fitting' || p.startsWith('/api/avatar-fitting/')) {
+      if (await avatarFittingRoutes(req, res, url)) return;
     }
     if (p === "/api/music-input") {
       if (await musicInputRoutes(req, res, url)) return;

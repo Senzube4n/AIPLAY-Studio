@@ -146,6 +146,19 @@ class WeightTransferTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "skeleton mismatch"):
             self.run_transfer()
 
+    def test_multiple_skin_joint_order_is_remapped_to_complete_canonical_union(self):
+        def add_skin(doc):
+            # A second, unused-by-this-surface skin must not drop the source's
+            # unused hair joint, nor change the selected surface's slot meaning.
+            doc["skins"].append({**doc["skins"][0]})
+        rewrite(self.ref, add_skin)
+        self.signature = wt.inspect_reference(self.ref)["skeleton"]
+        report = self.run_transfer(reference_mesh_node=4, reference_primitive=0)
+        self.assertEqual(report["baseJointNodes"], [1, 2, 3])
+        self.assertEqual(report["referenceMeshNode"], 4)
+        self.assertEqual(report["referencePrimitive"], 0)
+        self.assertEqual(report["joints"], 3)
+
     def test_posed_reference_refused(self):
         rewrite(self.ref, lambda doc: doc["nodes"][2].update(translation=[.5, 0, 0]))
         with self.assertRaisesRegex(ValueError, "bind rest pose"):
