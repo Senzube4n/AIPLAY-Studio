@@ -144,9 +144,10 @@ const MAX_LEND_MINUTES = 1440;
  * app promising a capability and then declining to perform it, which is the
  * defect the ceremony above exists to avoid, not one it should introduce.
  *
- * So the promotion transition (any other role -> "lender") fills in 60 minutes a
- * day when the row is still holding 0. It is bounded, it is per-day, and it is
- * revocable with one call.
+ * So the promotion transition (from "none" into either lending role, "lender"
+ * or "collaborator" — accept admits both) fills in 60 minutes a day when the
+ * row is still holding 0. It is bounded, it is per-day, and it is revocable
+ * with one call.
  *
  * ⚠ HOW FAR AN EXPLICIT ZERO STICKS, stated exactly, because an earlier draft of
  * this note overclaimed it. `setLendMinutes(0)` on a lender survives re-saving
@@ -162,8 +163,11 @@ const MAX_LEND_MINUTES = 1440;
  * distinction ever matters, it needs a field, not a cleverer comparison.
  *
  * ⚠ 60 is a JUDGEMENT, not a measurement. Nothing here has measured what a
- * minute of somebody else's card is worth to a render, and the queue that would
- * spend these minutes does not exist yet. Treat the number as a starting
+ * minute of somebody else's card is worth to a render; accept checks these
+ * minutes against timed and estimated renders (lending.js budgetCheck), and
+ * sixty is about a dozen 5-second H3 scenes at 1344x768 by the plan's table
+ * (4.9 min each at 8 steps), not by a measurement on anybody's card. Treat the
+ * number as a starting
  * allowance chosen to be obviously finite, and expect to change it once a real
  * lend has been timed.
  */
@@ -563,7 +567,14 @@ export async function setRole({ appData, fp, role } = {}) {
     if (want !== "none" && !row.verified) {
       throw refuse("not-verified", `${row.nickname} has not been verified yet. Read the twelve words aloud and confirm they read back the same twelve, then set the role.`, 409);
     }
-    const promoting = want === "lender" && row.role !== "lender";
+    /* ⚠ BOTH LENDING ROLES START WITH MINUTES, BECAUSE ACCEPT READS THEM NOW.
+     * A collaborator's scenes are accepted like a lending friend's, and accept
+     * refuses a friend at 0 minutes (lending.js budgetCheck) — so a friend made
+     * a collaborator straight from "nothing yet" used to land at 0 and have
+     * every scene refused until "Accept anyway". Moving BETWEEN the two lending
+     * roles is not a new grant, so it keeps whatever number is there. */
+    const LENDS = ["lender", "collaborator"];
+    const promoting = LENDS.includes(want) && !LENDS.includes(row.role);
     row.role = want;
     if (want === "none") row.lendMinutesPerDay = 0;
     /* The starting allowance, and only on the transition. See the long note on
@@ -573,12 +584,14 @@ export async function setRole({ appData, fp, role } = {}) {
 }
 
 /**
- * How much of their card this peer has agreed to spend on your work, per day.
+ * How many minutes of THIS machine's card this peer's scenes may use per day.
  *
- * ⚠ NOTHING IN THIS FILE SPENDS IT OR COUNTS IT. This is a stored number and an
- * agreed ceiling, not an enforced budget — the accounting belongs to whatever
- * dispatches a lend, and it does not exist yet. Do not describe this in the UI
- * as a limit that is enforced, because today it is a limit that is REMEMBERED.
+ * ⚠ NOTHING IN THIS FILE SPENDS IT OR COUNTS IT. The accounting lives where a
+ * lend is accepted: the door's `accept` reads this number through
+ * server/collab/lending.js `budgetCheck`, against what the card has rendered
+ * for this peer today (timed) and promised (the plan's estimate), and refuses
+ * past it unless a person answers "Accept anyway". It is a daily ceiling
+ * checked at accept time — a scene already accepted runs to the end.
  *
  * 0 is a real and useful value: it means "on the roster, trusted, currently
  * lending nothing", which is what you set when a friend's card is busy for a

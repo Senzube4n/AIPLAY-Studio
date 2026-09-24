@@ -984,7 +984,7 @@ function renderClips() {
         ? `<button class="edtool sm" data-shotrender="${esc(s.id)}"
              title="Re-render this shot: hold the seed, choose which prompt, and see what changed. The same control the inspector uses — there is only one.">↻ Render…</button>`
         : `<button class="edtool sm" data-genclip="${esc(s.id)}">Generate</button>`}
-        <button class="edtool sm" data-friendclip="${esc(s.id)}" title="Choose a friend and review this saved scene before preparing its render request.">Ask friend</button>
+        <button class="edtool sm" data-friendclip="${esc(s.id)}" title="Choose a friend and review this saved scene before preparing its render request. It carries the scene's reference pictures; the song stays here, so a lip-sync scene comes back without lip-sync. For one text-only clip outside a project, use Video → Ask friend.">Ask friend</button>
         <button class="edtool sm" data-shot="${esc(s.id)}"
           title="Open this one shot: the exact prompt it sends, which reference sheets actually resolved, and every take with the evidence for its own render">Inspect…</button>
         <button class="edtool sm" data-planadd="clip|${esc(s.id)}"
@@ -4835,6 +4835,16 @@ export function initWorkflow(library) {
     e.preventDefault();
     wf.view = a.dataset.feedstage;
     paint();
+  });
+  /* Collab asks for a project by slug — a friend's order becomes "Order o_… from
+   * <name>", and its plan is the Plan card at the top of that project. This
+   * only chooses the project; the app's view change calls wfOpen(), which
+   * loads it, and nothing here approves or runs anything. */
+  document.addEventListener("aiplay:open-project", (e) => {
+    const slug = e.detail?.slug;
+    if (typeof slug !== "string" || !slug) return;
+    wf.slug = slug;
+    wf.view = null;
   });
 
   $("wfRail").addEventListener("click", (e) => {

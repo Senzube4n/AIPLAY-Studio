@@ -303,3 +303,228 @@ test("standalone video handoff keeps its recipe separate from movie orders",asyn
  assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-recipe",to:f.peer.fp,video});
  assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
 });
+
+/* ── LENDING FOR A PERSON WITH NO STRONG CARD ────────────────────────────
+ * Every override the door has is one a person can reach from this screen,
+ * and every one is a QUESTION: a missing dialog must never read as a yes. */
+
+test("a busy lender accepts from the screen: “Accept anyway” asks, then sends the override", async () => {
+  for (const answer of [false, true]) {
+    const f = fixture();
+    const asked = [];
+    f.context.bottomDrawer = async (o) => { asked.push(o); return answer; };
+    f.node("cbFile").value = "order.aiplay";
+    f.node("cbFileCard").dataset.armed = "order.aiplay";
+    f.context.respond = (url, body) => body?.action === "accept"
+      ? (body.anyway === true ? { ok: true, note: "Accepted." }
+        : { error: "The card is busy. You can still take it.", reason: "engine-busy", overridable: true,
+            overrides: [{ reason: "engine-busy", why: "A dance scene is rendering." }, { reason: "budget-zero", why: "You give Friend 0 minutes of your card a day." }] })
+      : f.defaults(url, body);
+    await f.fire("cbAcceptYes");
+    const accepts = f.calls.filter((c) => c.body?.action === "accept");
+    assert.equal(asked.length, 1, "one question, naming every override");
+    assert.match(asked[0].body, /dance scene.*0 minutes/s);
+    assert.equal(asked[0].yes, "Accept anyway");
+    assert.deepEqual(accepts.map((c) => c.body.anyway === true), answer ? [false, true] : [false]);
+  }
+});
+
+test("a refusal that cannot be overridden gets no question and no override", async () => {
+  const f = fixture(); let asked = 0;
+  f.context.bottomDrawer = async () => { asked++; return true; };
+  f.node("cbFile").value = "order.aiplay"; f.node("cbFileCard").dataset.armed = "order.aiplay";
+  f.context.respond = (url, body) => body?.action === "accept" ? { error: "The queue is paused.", reason: "art-paused", busy: true, overridable: false } : f.defaults(url, body);
+  await f.fire("cbAcceptYes");
+  assert.equal(asked, 0);
+  assert.equal(f.calls.filter((c) => c.body?.action === "accept").length, 1);
+  assert.match(f.node("cbSay").textContent, /paused/);
+});
+
+test("with no dialog at all, “Accept anyway” is a no, never a silent yes", async () => {
+  const f = fixture();
+  f.node("cbFile").value = "order.aiplay"; f.node("cbFileCard").dataset.armed = "order.aiplay";
+  f.context.respond = (url, body) => body?.action === "accept" ? { error: "busy", reason: "engine-busy", overridable: true, overrides: [{ reason: "engine-busy", why: "busy" }] } : f.defaults(url, body);
+  await f.fire("cbAcceptYes");
+  assert.ok(!f.calls.some((c) => c.body?.anyway === true));
+});
+
+test("the order card shows the speed-up file and the minutes BEFORE the yes", async () => {
+  const f = fixture();
+  f.node("cbFile").value = "order.aiplay";
+  f.context.respond = (url, body) => body?.action === "accept" ? {
+    reason: "not-seen", error: "Read it first.", prompt: "A dancer", describes: "One scene", pictures: [],
+    speedUp: "This scene asks for 8 steps, and the speed-up file this PC has for it is made for 4 steps.",
+    minutes: "Friend may use 60 minutes of your card a day.", overBudget: false,
+  } : f.defaults(url, body);
+  await f.fire("cbAcceptBtn");
+  assert.match(f.node("cbOrderPrompt").innerHTML, /made for 4 steps/);
+  assert.match(f.node("cbOrderPrompt").innerHTML, /60 minutes of your card a day/);
+});
+
+test("a take that failed its checks can be watched and kept anyway, only after playing it and saying yes", async () => {
+  const f = fixture();
+  const take = { from: "ab".repeat(16), file: `peer_${"ab".repeat(4)}_${"c".repeat(12)}.mp4`, segmentId: "s1_0", ok: false,
+    reason: "result-not-the-shot", why: "This clip is 96 frames and the scene wants about 107.", notes: ["Rendered without the song under it."], adopted: false };
+  f.context.respond = (url, body) => body?.action === "quarantine" ? { takes: [take] } : body?.action === "adopt" ? { ok: true, note: "Filed." } : f.defaults(url, body);
+  await f.run("paintTakes()");
+  const markup = f.node("cbTakes").innerHTML;
+  assert.match(markup, new RegExp(`<video[^>]*src="/api/collab-take/${take.from}/${take.file}"`), "the take can be watched here");
+  assert.match(markup, /class="btn sm cbadoptany"[^>]*>Keep anyway…/);
+  assert.doesNotMatch(markup, /cbadopt"/, "a refused take has no plain Keep");
+  assert.match(markup, /Rendered without the song under it/);
+  const asked = [];
+  f.context.bottomDrawer = async (o) => { asked.push(o); return true; };
+  const row = { dataset: { from: take.from, file: take.file }, querySelector: () => ({ textContent: take.why }) };
+  const press = () => f.node("cbTakes").handlers.click({ target: { classList: { contains: (c) => c === "cbadoptany" }, closest: () => row } });
+  await press();
+  assert.equal(asked.length, 0, "not asked before it has been played");
+  assert.ok(!f.calls.some((c) => c.body?.action === "adopt"));
+  assert.match(f.node("cbSay").textContent, /Play it first/);
+  /* Pressing play is not watching: only frames on screen ("playing") count. */
+  assert.equal(f.node("cbTakes").handlers.play, undefined, "a pressed play button alone does not mark a take watched");
+  f.node("cbTakes").handlers.playing({ target: { closest: () => row } });
+  await press();
+  assert.equal(asked.length, 1);
+  assert.match(asked[0].body, /96 frames/);
+  assert.deepEqual(f.calls.find((c) => c.body?.action === "adopt").body, { action: "adopt", from: take.from, file: take.file, anyway: true });
+});
+
+test("a take that passed keeps its plain Keep, which sends no override", async () => {
+  const f = fixture();
+  const take = { from: "ab".repeat(16), file: `peer_${"ab".repeat(4)}_${"d".repeat(12)}.mp4`, segmentId: "s1_0", ok: true, why: "ok", adopted: false };
+  f.context.respond = (url, body) => body?.action === "quarantine" ? { takes: [take] } : body?.action === "adopt" ? { ok: true } : f.defaults(url, body);
+  await f.run("paintTakes()");
+  assert.match(f.node("cbTakes").innerHTML, /cbadopt"[^>]*>Keep it/);
+  const row = { dataset: { from: take.from, file: take.file } };
+  await f.node("cbTakes").handlers.click({ target: { classList: { contains: (c) => c === "cbadopt" }, closest: () => row } });
+  assert.deepEqual(f.calls.find((c) => c.body?.action === "adopt").body, { action: "adopt", from: take.from, file: take.file });
+});
+
+test("an accepted errand opens its plan in Workflow, on its own project", async () => {
+  const f = fixture();
+  const events = [], views = [];
+  f.context.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init?.detail; } };
+  f.context.document = { dispatchEvent: (e) => { events.push(e); return true; } };
+  f.context.setView = (v) => views.push(v);
+  f.context.respond = (url, body) => body?.action === "orders" && body.side === "in"
+    ? { orders: [{ id: "o_0123456789ab", slug: "order-o-01234567-from-friend", from: { nickname: "Friend" }, order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, state: "landed" }] }
+    : f.defaults(url, body);
+  await f.run("paintErrands()");
+  assert.match(f.node("cbErrands").innerHTML, /cbopenplan[^>]*>Open its plan in Workflow/);
+  const row = { dataset: { slug: "order-o-01234567-from-friend", id: "o_0123456789ab" } };
+  await f.node("cbErrands").handlers.click({ target: { classList: { contains: (c) => c === "cbopenplan" }, closest: () => row } });
+  assert.deepEqual(events.map((e) => [e.type, e.detail.slug]), [["aiplay:open-project", "order-o-01234567-from-friend"]]);
+  assert.deepEqual(views, ["workflow"]);
+  assert.ok(!f.calls.some((c) => ["send_back", "accept"].includes(c.body?.action)), "opening the plan approves and sends nothing");
+});
+
+test("the lender's role reads the right way round and the stored value is unchanged", async () => {
+  const f = fixture(); await f.run("paintPeers()");
+  const markup = f.node("cbPeers").innerHTML;
+  assert.match(markup, /<option value="lender" selected>lending friend: we render single scenes for each other<\/option>/);
+  assert.doesNotMatch(markup, /may render single scenes for me/);
+  assert.match(markup, /Minutes of my card per day/);
+  assert.doesNotMatch(f.node("cbPeersNote").textContent, /advisory, not enforced/);
+});
+
+test("the Workflow view listens for the project Collab asks it to open", () => {
+  const mv = readFileSync(new URL("../../web/mv.js", import.meta.url), "utf8");
+  assert.match(mv, /addEventListener\("aiplay:open-project", \(e\) => \{[\s\S]{0,200}wf\.slug = slug;/);
+  assert.match(source, /if \(name === "workflow"\) wfOpen\(\);/, "the view change is what loads it");
+});
+
+test("each Ask friend names the other: Video's is text only, Workflow's carries the pictures", () => {
+  const mv = readFileSync(new URL("../../web/mv.js", import.meta.url), "utf8");
+  assert.match(html, /id="vidAskFriend" title="[^"]*Workflow → Video clips → Ask friend, which carries them/);
+  /* The page's own sentences name the screen by the rail's label (cbScreen),
+   * typeof-guarded because vidPaint and videoFriendRecipe are lifted alone. */
+  assert.match(source, /use \$\{typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow"\} → Video clips → Ask friend, which carries them\.`\);/);
+  assert.match(source, /const wfName = typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow";/);
+  assert.match(mv, /data-friendclip="[^"]*" title="[^"]*carries the scene's reference pictures[^"]*Video → Ask friend/);
+});
+
+/* ── THE REVIEW'S FINDINGS, PINNED ──────────────────────────────────────── */
+
+test("the take list fetches nothing until somebody presses play on one take", async () => {
+  const f = fixture();
+  const take = { from: "ab".repeat(16), file: `peer_${"ab".repeat(4)}_${"e".repeat(12)}.mp4`, segmentId: "s1_0", ok: false, reason: "result-not-the-shot", why: "x", adopted: false };
+  f.context.respond = (url, body) => body?.action === "quarantine" ? { takes: [take] } : f.defaults(url, body);
+  await f.run("paintTakes()");
+  assert.match(f.node("cbTakes").innerHTML, /<video[^>]*preload="none"/);
+  assert.doesNotMatch(f.node("cbTakes").innerHTML, /preload="metadata"|preload="auto"/);
+});
+
+test("a take this browser cannot play can still be kept — unseen, after a question that says so", async () => {
+  for (const how of ["error-event", "probe-failed"]) {
+    const f = fixture();
+    const take = { from: "ab".repeat(16), file: `peer_${"ab".repeat(4)}_${"f".repeat(12)}.mkv`, segmentId: "s1_0", ok: false,
+      reason: how === "probe-failed" ? "probe-failed" : "result-not-the-shot", why: "It could not be measured.", adopted: false };
+    f.context.respond = (url, body) => body?.action === "quarantine" ? { takes: [take] } : body?.action === "adopt" ? { ok: true } : f.defaults(url, body);
+    await f.run("paintTakes()");
+    assert.match(f.node("cbTakes").innerHTML, new RegExp(`data-reason="${take.reason}"`));
+    const asked = [];
+    f.context.bottomDrawer = async (o) => { asked.push(o); return true; };
+    const row = { dataset: { from: take.from, file: take.file, reason: take.reason }, querySelector: () => ({ textContent: take.why }) };
+    if (how === "error-event") {
+      f.node("cbTakes").handlers.error({ target: { tagName: "VIDEO", closest: () => row } });
+      assert.equal(row.dataset.unplayable, "1");
+      assert.match(f.node("cbSay").textContent, /cannot play that take.*keep it unseen/);
+    }
+    await f.node("cbTakes").handlers.click({ target: { classList: { contains: (c) => c === "cbadoptany" }, closest: () => row } });
+    assert.equal(asked.length, 1, `${how}: asked, not told to play a take that cannot play`);
+    assert.equal(asked[0].title, "Keep a take you have not watched?");
+    assert.equal(asked[0].yes, "Keep it unseen");
+    assert.match(asked[0].body, /cannot be played here, so you would be keeping it unseen/);
+    assert.deepEqual(f.calls.find((c) => c.body?.action === "adopt").body, { action: "adopt", from: take.from, file: take.file, anyway: true });
+  }
+});
+
+test("after “Not now”, the page says what to press — never a button that is not on the screen", async () => {
+  const f = fixture();
+  f.context.bottomDrawer = async () => false;
+  f.node("cbFile").value = "order.aiplay"; f.node("cbFileCard").dataset.armed = "order.aiplay";
+  f.context.respond = (url, body) => body?.action === "accept"
+    ? { error: "SERVER TEXT FOR TOOLS", reason: "budget-zero", overridable: true, overrides: [{ reason: "budget-zero", why: "You give Friend 0 minutes of your card a day." }] }
+    : f.defaults(url, body);
+  await f.fire("cbAcceptYes");
+  const said = f.node("cbSay").textContent;
+  assert.doesNotMatch(said, /SERVER TEXT FOR TOOLS/);
+  assert.match(said, /^Not accepted\. You give Friend 0 minutes.*Press “Yes — take the job” again/);
+  assert.equal(f.node("cbFileCard").dataset.armed, "order.aiplay", "the card stays armed, so pressing again asks again");
+});
+
+test("the Friends row shows what a friend used today, and warns when a lending friend has 0 minutes", async () => {
+  const f = fixture();
+  f.context.respond = (url, body) => body?.action === "roster"
+    ? { peers: [
+      { ...f.peer, lendMinutesPerDay: 60, usedToday: { said: "12 min timed on this card today", measuredMinutes: 12, pending: 0 } },
+      { fp: "cd".repeat(16), nickname: "Zero", verified: true, role: "collaborator", lendMinutesPerDay: 0, usedToday: { said: "nothing rendered for them yet today" } },
+      { fp: "ef".repeat(16), nickname: "Nobody", verified: true, role: "none", lendMinutesPerDay: 0 },
+    ] }
+    : f.defaults(url, body);
+  await f.run("paintPeers()");
+  const markup = f.node("cbPeers").innerHTML;
+  assert.match(markup, /Used today: 12 min timed on this card today/);
+  assert.equal((markup.match(/0 minutes: every scene they send asks you first/g) || []).length, 1, "the collaborator at 0, not the friend with no role");
+});
+
+test("every screen the Collab page names is the rail's own label, read when it paints", async () => {
+  const f = fixture();
+  const filled = [{ dataset: { screen: "workflow" }, textContent: "Workflow" }];
+  f.context.document = {
+    querySelector: (q) => (q === '[data-view="workflow"] .lbl' ? { textContent: " Music video " } : null),
+    querySelectorAll: (q) => (q === "[data-screen]" ? filled : []),
+    dispatchEvent: () => true,
+  };
+  f.context.respond = (url, body) => body?.action === "orders" && body.side === "in"
+    ? { orders: [{ id: "o_0123456789ab", slug: "order-x", from: { nickname: "Friend" }, order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, state: "landed" }] }
+    : f.defaults(url, body);
+  await f.run("paintErrands()");
+  assert.match(f.node("cbErrands").innerHTML, /cbopenplan[^>]*title="Music video → this project[^>]*>Open its plan in Music video</);
+  await f.run("refreshCollab()");
+  assert.equal(filled[0].textContent, "Music video", "the static hints follow the rail too");
+  assert.match(html, /<b data-screen="workflow">Workflow<\/b> &rarr; the &ldquo;Order/);
+  /* No rail (a page without one): the fallback, never an empty name. */
+  const bare = fixture();
+  assert.equal(bare.run('cbScreen("workflow", "Workflow")'), "Workflow");
+});

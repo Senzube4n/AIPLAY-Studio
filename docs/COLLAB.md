@@ -4,8 +4,8 @@
 in the document that is kept up to date** — everything below was written as a
 design and still reads as one.
 
-**Updated, 2026-09-22** — the identity, the friend list, the courier and the two
-units, with a screen, a door and six tools:
+**Updated, 2026-09-24** — the identity, the friend list, the courier, the two
+units and the lending loop, with a screen, two doors and twenty-four tools:
 
 | | |
 |---|---|
@@ -21,10 +21,13 @@ units, with a screen, a door and six tools:
 | `server/collab/errand.js` | an order becomes a one-scene project, with the friend's prompt frozen so this machine's style bible cannot reach it |
 | `server/collab/quarantine.js` | a returned take, measured here, held in a room until somebody presses Adopt |
 | `server/collab/inbox.js` | reading the folder. It opens nothing |
+| `server/collab/lending.js` | lending for a person with no strong card: the renderer's own frame count for a return, the speed-up file a lender lacks, the minutes a day read at accept, and filing a take onto a scene never rendered here |
 | `server/index.js` `/api/collab` | the one door, same-origin gated, the role checked where the bundle is written |
-| `server/mcp-collab.js` | ten tools, and five deliberate absences |
+| `server/index.js` `/api/collab-take/` | read-only: plays a quarantined take by its own name, so it can be watched before it is kept |
+| `server/mcp-collab.js` | twenty-four tools, including `collab_accept` (needs `seen: true`; `anyway` walks past a busy card or the friend's minutes, never anything else) and `collab_adopt` (`anyway` keeps a take that failed its checks); the in-app chat asks before every write (`server/chat/router.js`, "writes") and is never shown `anyway` on either (`CHAT_WITHHELD_ARGS`) |
 | the Collab screen | `web/index.html` / `web/app.js`, reached from the rail |
-| `server/collab/collab_test.js` | 156 pins in the hook, on the CPU, no engine and no network |
+| `server/collab/collab_test.js` | pins in the hook, on the CPU, no engine and no network — section 7 evaluates the door's own text |
+| `server/collab/lending_test.js` | the lending numbers pinned where they are computed: frame grid, filing, watching, lip-sync, minutes, speed-up files |
 
 **The lending loop is built.** An order carries four words — the scene, the
 seed, the steps and the engine mode — beside the finished prompt and the pictures
@@ -36,6 +39,47 @@ somebody presses Adopt — which files it as a take nobody has picked, carrying 
 lender's own model and licence, under the actor `peer:<fp>:<their own actor>`.
 The credit rollup has read that shape since the day it was written; this is the
 writer it was waiting for.
+
+**Updated, 2026-09-24 — lending works for a person with no strong card.**
+A borrower with no GPU renders nothing at home, so every scene of theirs is one
+"never rendered here", and the loop had five places that assumed otherwise.
+Each is now fixed where the renderer's own function answers it:
+
+- **A kept take is filed onto its scene** even when no clip row exists yet
+  (rows were made only by a first render); it is still nobody's pick. The
+  message no longer says such a scene "no longer exists".
+- **The return check centres on the engine's own frame count** — H3 rounds a
+  clip up to n mod 17 == 5 (a 6 s scene renders 158 frames, not 144), LTX to
+  8k+1 — computed by `alignFrames` on the errand the lender will actually run,
+  ± 4 frames of encoder slack. Order rows written before this accept either
+  engine's grid.
+- **A take that failed its checks can be watched and kept anyway** from the
+  screen, after playing it and answering a question; the ledger says the checks
+  did not pass.
+- **Lip-sync does not travel, and it is said.** A singing board or "Song under
+  the clip: always" is lent and rendered silent (the song never leaves); the
+  order's own sentence says so at preview and on the lender's card, and the
+  returned take's notes repeat it. Nothing is refused for it.
+- **Minutes a day are read at accept**, against what the card has rendered for
+  that friend today (timed on the art queue's own clock, so waiting behind
+  other jobs is not charged) and promised (the plan's estimate; LTX scenes are
+  priced too, and a scene with no estimate makes the total "at least"). Past
+  it, and on a busy card, the screen asks "Accept anyway?" listing every
+  reason; a paused queue or an unreadable engine is never overridable. Both
+  lending roles start at 60 minutes when given; the Friends row shows what was
+  used today (`collab_roster` `usedToday`).
+- **The lender is told when the order's step count overruns the speed-up file
+  their PC loads** (an 8-step order on a PC with only the 4-step files) before
+  they say yes — by plancost's `trapBand`, the rule the Plan card uses — with
+  the matching file named from the engine's own table and the Models screen's
+  catalogue (which offers no 8-step file). The borrower's returned take is
+  noted by the same rule, with where to order the matching count.
+- The plan an accept proposes is the **Plan card in Workflow**, on the new
+  "Order … from <name>" project — there is no "Plan screen" — and Collab's
+  **Open its plan in Workflow** goes there. The screen's name is read off the
+  rail on the page, and from one constant pinned to the rail on the server
+  (`lending.js` `WORKFLOW_SCREEN`). The lender's role reads "lending
+  friend: we render single scenes for each other" (stored value unchanged).
 
 **Not built** — a project-bundle IMPORTER (an order carries its own scene, so
 nothing here needs to swallow somebody else's whole document), standing consent,
@@ -325,6 +369,14 @@ collab_identity: "hands out a public key and the machine's engine fingerprint, w
 ```
 
 `collab_peers` and `collab_returns` (read-only) stay routable.
+
+⚠ **As built, this list is superseded** (2026-09-24). There is no `collab_import`
+or `collab_order` tool; orders are packed by `collab_preview` + `collab_pack`.
+`collab_accept` and `collab_adopt` DO exist: accept requires `seen: true` (the
+person read that exact file's prompt and pictures) and adopt keeps a failed take
+only with `anyway: true`. The in-app chat routes them as "writes", so it asks
+the person before each call; the banner at the top of this file is the current
+list.
 
 ### 7. The gate
 

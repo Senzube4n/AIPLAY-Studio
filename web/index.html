@@ -1265,7 +1265,7 @@
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
-        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models.">Ask friend</button>
+        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models. To send reference pictures, use Workflow → Video clips → Ask friend, which carries them.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
     </div>
@@ -1826,8 +1826,10 @@
          sent, and the network is whichever one you already use to send them
          things. The three things it deliberately will not do are written on
          the screen rather than left as absences: it will not verify a friend
-         for you, it will not lend your card without a number you type, and it
-         will not render what arrives without you reading it first. -->
+         for you, it will not lend your card past the minutes a day you give
+         each friend without asking you first (accept checks them; "Accept
+         anyway" is a question, never a default), and it will not render what
+         arrives without you reading it first. -->
     <div id="collab" hidden>
       <style>
         #collab .cbworkgrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-top:14px; }
@@ -1923,13 +1925,13 @@
               <button class="btn sm primary" type="button" id="cbAcceptYes" hidden>Yes &mdash; take the job</button>
             </div>
             <pre id="cbOrderPrompt" class="cbopened" hidden></pre>
-            <p class="hint"><b>Read it first.</b> An order carries the sentence your machine will be asked to draw, and the pictures it will draw from. Saying yes turns it into a project here with a plan that is <b>proposed</b> &mdash; nothing renders until you approve it on the <b>Plan</b> screen.</p>
+            <p class="hint"><b>Read it first.</b> An order carries the sentence your machine will be asked to draw, and the pictures it will draw from. Saying yes turns it into a project here with a plan that is <b>proposed</b> &mdash; nothing renders until you approve it: <b data-screen="workflow">Workflow</b> &rarr; the &ldquo;Order &hellip; from <i>their name</i>&rdquo; project &rarr; the <b>Plan</b> card (<b>Open its plan in <span data-screen="workflow">Workflow</span></b> below takes you there). If your card is busy or their minutes for today are used, pressing <b>Yes &mdash; take the job</b> asks you first, and <b>Accept anyway</b> is your answer.</p>
           </div>
 
           <div id="cbReturnFace" hidden>
             <b class="subhead" id="cbReturnWho">A finished scene has come back</b>
             <div class="chips"><button class="btn sm primary" type="button" id="cbReceiveBtn">Check it against what I asked for</button></div>
-            <p class="hint">This machine measures the file itself and checks it against the order you sent &mdash; the seed, the steps, the size and the length. It waits in quarantine until you keep it.</p>
+            <p class="hint">This machine measures the file itself and checks it against the order you sent &mdash; the seed, the steps, the size and the length the engine really renders. It waits in quarantine until you keep it; one that fails a check can be watched and kept anyway.</p>
           </div>
 
           <div id="cbReadFace" hidden>
@@ -1950,7 +1952,7 @@
         <div id="cbTakesWrap" hidden>
           <b class="subhead">Finished scenes waiting for you to keep or throw away</b>
           <div id="cbTakes" class="cblist"></div>
-          <p class="hint">Keeping one files it as a take <b>nobody has picked</b>, carrying their model and their licence rather than yours.</p>
+          <p class="hint">Keeping one files it as a take <b>nobody has picked</b>, carrying their model and their licence rather than yours &mdash; on its scene even if you never rendered that scene here. Choose it in <b data-screen="workflow">Workflow</b> &rarr; <b>Video clips</b> &rarr; <b>Inspect&hellip;</b>. Watch a take before you keep it (nothing is loaded until you press play); <b>Keep anyway&hellip;</b> is for one that failed a check and is still what you wanted, or one this browser cannot play, kept unseen after you say so.</p>
         </div>
 
         <details class="adv">

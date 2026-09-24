@@ -854,8 +854,13 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
    *
    * Two hours, because the ceiling should be "something is genuinely wrong",
    * not "this render is slower than the ones I happened to measure". */
-  const { clip } = await awaitArt(art, file, ["clip"], 120 * 60e3);
+  const { clip, seconds: ranSeconds } = await awaitArt(art, file, ["clip"], 120 * 60e3);
   const clipMs = Date.now() - clipAt;
+  /* `clipMs` runs from the request to the finish, so it includes every job
+   * queued ahead of this one. The art queue's own clock (the "clip" event's
+   * `seconds`, from when this job started running) is the render alone — the
+   * number a lender's minutes a day are charged in (collab/lending.js). */
+  const runMs = typeof ranSeconds === "number" && Number.isFinite(ranSeconds) ? Math.round(ranSeconds * 1000) : null;
 
   return updateProject(slug, (doc2) => {
     const seg2 = doc2.segments.find((s) => s.id === seg.id);
@@ -869,7 +874,7 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
     // The engine rides ON the take: once takes can be switched (pick_take
     // target "clip"), "which engine made the one that is playing" must survive
     // the switch — the row-level field alone forgets it.
-    row.takes.push({ clip, seed: usedSeed, at: Date.now(), ms: clipMs,
+    row.takes.push({ clip, seed: usedSeed, at: Date.now(), ms: clipMs, runMs,
                      engine,
                      /* WHICH picture this take opened on, recorded for the same
                       * reason the seed and the engine are: without it, "why does

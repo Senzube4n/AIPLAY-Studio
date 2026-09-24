@@ -40,6 +40,11 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
+/* The one rule for "this step count overruns the speed-up file that loaded",
+ * shared with the Plan card's floor note and the lender's accept check
+ * (lending.js speedUpCheck), so the three cannot disagree about a render. */
+import { trapBand } from "../mv/plancost.js";
+
 export const ORDER_V = 1;
 
 /** ⚠ EXACTLY FOUR WORDS. See the header for why the fourth is `engineMode`. */
@@ -56,6 +61,11 @@ export const ENGINE_MODES = Object.freeze(["h3", "ltx", "hybrid"]);
 export const STEPS_MIN = 2;
 export const STEPS_MAX = 40;
 export const SEED_MAX = 4294967295;
+
+/** Encoder slack on a returned take's frame count, around the count the
+ *  renderer's own grid gives (lending.js expectForOrder), never around a
+ *  length rounded by hand. */
+export const FRAME_SLACK = 4;
 
 /** The longest an order may stand. A sealed file is forever otherwise. */
 export const MAX_HOURS = 24 * 14;
@@ -148,7 +158,7 @@ function checkShot(shot) {
   if (String(shot.prompt).length > PROMPT_CAP) {
     throw refuse("bad-shot", `That scene's prompt is ${String(shot.prompt).length} characters. A prompt has to be readable by the person deciding whether to render it, and this one is longer than anything a person reads.`);
   }
-  for (const k of ["segmentId", "engine", "engineMode", "mode", "promptSource", "guideMode", "negative"]) {
+  for (const k of ["segmentId", "engine", "engineMode", "mode", "promptSource", "guideMode", "negative", "songUnder"]) {
     if (shot[k] !== undefined && shot[k] !== null && String(shot[k]).length > LABEL_CAP) {
       throw refuse("bad-shot", `That scene's ${k} is far longer than a label should be.`);
     }
@@ -415,8 +425,16 @@ export function describeOrder(orderDoc, now = 0) {
     ? Math.round((Number(orderDoc.expires) - now) / 3600_000)
     : null;
   const prompt = String(s.prompt || "");
+  /* ⚠ LIP-SYNC DOES NOT TRAVEL, AND THE SENTENCE BOTH PEOPLE READ SAYS SO. The
+   * song never leaves the owner's machine (packet.js), so a scene the owner
+   * renders with the song under it — a singing board, or "Song under the clip:
+   * always" — comes back rendered without it. It is lent anyway, because a
+   * silent take beats no take for somebody with no card; it is said here, at
+   * preview, on the lender's card and in the returned take's notes. */
+  const lipSync = s.songUnder === "lipsync" || s.songUnder === "always";
   return `One scene (${o.segmentId}), ${s.seconds ?? "?"}s at ${s.width}x${s.height} on ${o.engineMode} at ${o.steps} steps, seed ${o.seed}, with ${pics} picture${pics === 1 ? "" : "s"}.`
     + (left !== null ? ` ${left > 0 ? `Expires in ${left} hours.` : "Expired."}` : "")
+    + (lipSync ? ` ⚠ Lip-sync does not travel: the owner renders this scene with the song under it (${s.songUnder === "lipsync" ? "a singing board" : "“Song under the clip: always”"}), the song stays on the owner's machine, and this take is rendered without it — mouths will not follow the vocal.` : "")
     + (prompt ? ` It will render: "${prompt.length > 400 ? `${prompt.slice(0, 400)}…` : prompt}"` : " It carries no prompt at all, which is itself a reason not to run it.");
 }
 
@@ -462,6 +480,10 @@ export function makeReturn({ orderId, segmentId, result, probe, record, now = 0 
       outputRights: record.outputRights,
       engine: record.engine ?? null, steps: record.steps ?? null, seed: record.seed ?? null,
       ms: record.ms ?? null,
+      /* The step count the speed-up file this render loaded was made for, or
+       * null where none loads. A number and never a file name: the owner is
+       * told the two counts disagree, not what is on the lender's disk. */
+      turboSteps: Number.isInteger(record.turboSteps) ? record.turboSteps : null,
       /* The lender's OWN actor string, unqualified. The owner prefixes it with
        * `peer:<their fp>:` on adoption — see credit.js's fifth actor class. */
       actor: String(record.actor || "system"),
@@ -512,6 +534,9 @@ export function readReturn(payload) {
   if (!INNER_ACTOR_RE.test(String(p.record.actor || ""))) {
     p.record.actor = "system";
   }
+  /* A number the owner's notes quote, so it is bounded like one. */
+  const turbo = p.record.turboSteps;
+  p.record.turboSteps = Number.isInteger(turbo) && turbo >= 1 && turbo <= STEPS_MAX ? turbo : null;
   return { doc: p, bytes: buf };
 }
 
@@ -524,7 +549,11 @@ export function readReturn(payload) {
  * record that also survives the receiver's own ffprobe is not.
  */
 export function checkReturn(returnDoc, orderRow, ourProbe = null) {
-  const bad = (reason, why) => ({ ok: false, reason, why });
+  /* ⚠ NOTES ARE NOT CHECKS. They ride on the verdict either way and change
+   * nothing about it: what the borrower should know about how this take was
+   * made, said in this machine's words from numbers the return carries. */
+  const notes = returnNotes(returnDoc, orderRow);
+  const bad = (reason, why) => ({ ok: false, reason, why, notes });
   if (!orderRow) return bad("return-unknown-order", `This return answers order ${returnDoc.orderId}, which is not one this machine sent. Nothing was adopted.`);
   if (String(orderRow.to?.fp || "").toLowerCase() !== String(returnDoc.from || orderRow.to?.fp || "").toLowerCase() && returnDoc.from) {
     return bad("return-not-my-order", `Order ${returnDoc.orderId} went to ${orderRow.to?.nickname || orderRow.to?.fp} and this return came from somebody else.`);
@@ -563,9 +592,22 @@ export function checkReturn(returnDoc, orderRow, ourProbe = null) {
       return bad("result-not-the-shot", "This clip has an audio track on it. A scene comes back silent; the song is added here, and a track that arrived from somewhere else is a track nobody chose.");
     }
     /* A frame count is allowed a little slack — encoders round — but not much,
-     * because the length is what makes it fit the scene. */
-    if (Number.isFinite(want.frames) && Number.isFinite(probe.frames) && Math.abs(probe.frames - want.frames) > 4) {
-      return bad("result-not-the-shot", `This clip is ${probe.frames} frames and the scene wants about ${want.frames}.`);
+     * because the length is what makes it fit the scene.
+     *
+     * ⚠ AROUND THE RENDERER'S OWN COUNT, NOT A HAND-ROUNDED ONE. The centre
+     * used to be round(seconds * 24), and H3 rounds a clip UP to its 17k+5
+     * grid — a 6 s scene renders 158 frames — so a correct H3 take was refused
+     * by 14 frames. The row now carries the engine's own count
+     * (lending.js expectForOrder), and `framesAny` lists the centres a row
+     * written before that may have meant (lending.js framesAccepted). */
+    const centres = (Array.isArray(want.framesAny) && want.framesAny.length ? want.framesAny : [want.frames])
+      .map(Number).filter(Number.isFinite);
+    if (centres.length && Number.isFinite(probe.frames)
+        && !centres.some((c) => Math.abs(probe.frames - c) <= FRAME_SLACK)) {
+      const grid = want.engine === "h3" ? ", which H3 renders in steps of 17 frames"
+        : want.engine === "ltx" ? ", which LTX renders in steps of 8 frames" : "";
+      return bad("result-not-the-shot", `This clip is ${probe.frames} frames and the scene wants about ${centres.join(" or ")}`
+        + `${Number.isFinite(Number(want.seconds)) ? ` (${Number(want.seconds).toFixed(2)} s on ${want.engine || "its engine"}${grid})` : ""}.`);
     }
   }
   if (ourProbe && returnDoc.probe) {
@@ -575,5 +617,30 @@ export function checkReturn(returnDoc, orderRow, ourProbe = null) {
       }
     }
   }
-  return { ok: true, reason: null, why: "This is the clip that order asked for, at the seed and the steps it named, and it measures the way the scene needs." };
+  return { ok: true, reason: null, why: "This is the clip that order asked for, at the seed and the steps it named, and it measures the way the scene needs.", notes };
+}
+
+/**
+ * What the borrower should know about how a returned take was made. Sentences
+ * composed HERE from numbers — the return carries no prose that reaches this
+ * screen.
+ */
+export function returnNotes(returnDoc, orderRow) {
+  const notes = [];
+  const r = returnDoc?.record || {};
+  /* ⚠ NOT `Number(r.turboSteps)`: that turns "no speed-up file" (null) into 0,
+   * and every take rendered without one read as "made for 0 steps".
+   *
+   * ⚠ ONE RULE ON BOTH MACHINES: plancost's `trapBand`, given the step count
+   * of the file that really loaded on the lender's PC. The lender's accept
+   * card asked the same function (lending.js speedUpCheck), so a take is
+   * noted here exactly when the lender was warned there. */
+  const steps = Number(r.steps), turbo = r.turboSteps;
+  if (Number.isInteger(turbo) && turbo > 0 && trapBand(steps, { loaded: turbo })) {
+    notes.push(`Rendered at ${steps} steps on your friend's PC with a speed-up file made for ${turbo} steps, and ${steps} steps overruns it, so it may look burned or over-sharpened. To match the file their PC has, order ${turbo} steps next time: Collab → Send → “Pin the exact numbers” → Steps.`);
+  }
+  if (orderRow?.songUnder === "lipsync" || orderRow?.songUnder === "always") {
+    notes.push("Rendered without the song under it: the song stays on your machine, so on a lent scene the mouths do not follow the vocal. Render this scene here if the lip-sync matters.");
+  }
+  return notes;
 }

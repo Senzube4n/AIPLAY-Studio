@@ -188,8 +188,15 @@ console.log("\n§4  the roster: adding is not trusting");
   eq("...and the flag is checked, not coerced: the string \"no\" is not a yes",
     await refusal(() => roster.markVerified({ appData, fp: peer.fp, verified: "no" })), "bad-verified");
   await roster.markVerified({ appData, fp: peer.fp, verified: true });
-  eq("a role is allowed once the words have been read aloud",
-    (await roster.setRole({ appData, fp: peer.fp, role: "collaborator" })).role, "collaborator");
+  const asCollaborator = await roster.setRole({ appData, fp: peer.fp, role: "collaborator" });
+  eq("a role is allowed once the words have been read aloud", asCollaborator.role, "collaborator");
+  /* Accept reads the minutes of BOTH lending roles, so both start with them. */
+  eq("...and a collaborator starts with the same minutes a lending friend does, not 0",
+    asCollaborator.lendMinutesPerDay, 60);
+  eq("...and moving between the two lending roles keeps the number that is there",
+    (await roster.setLendMinutes({ appData, fp: peer.fp, minutesPerDay: 0 }),
+     (await roster.setRole({ appData, fp: peer.fp, role: "lender" })).lendMinutesPerDay), 0);
+  await roster.setRole({ appData, fp: peer.fp, role: "collaborator" });
   ok("an unknown role is refused", (await refusal(() => roster.setRole({ appData, fp: peer.fp, role: "owner" }))) !== null);
   eq("an unknown fingerprint is refused by name",
     await refusal(() => roster.setRole({ appData, fp: "0".repeat(32), role: "lender" })), "no-such-peer");
@@ -322,7 +329,7 @@ console.log("\n§6  the doors: shared API checks and explicit MCP intents");
   /* ⚠ #cbSay SITS OUTSIDE ALL THREE PANES. Five handlers write their result
    * into one element, which was safe only while everything was visible at once.
    * `send_back`'s refusal — "That errand has not rendered yet. Approve its plan
-   * on the Plan screen" — is the most important recovery sentence in the
+   * — Workflow → the Plan card" — is the most important recovery sentence in the
    * feature, and a pane would hide it on the tab you are not looking at. */
   ok("the status line is outside every pane, so no message can land on a hidden tab",
     html.indexOf('id="cbSay"') > 0
@@ -557,6 +564,26 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   const body = index.slice(start, index.indexOf(endMark, tail) + endMark.length);
 
   const compatM = await import("./compat.js");
+  const lendingM = await import("./lending.js");
+  /* ⚠ THE SPEED-UP CHECK READS THIS MACHINE'S DISK, so the door is handed one
+   * that answers the same on every machine: a PC with only the 4-step files,
+   * which is what the Models screen installs. The pins read what the door DOES
+   * with the answer; lending_test.js pins the answer itself. */
+  const realCfg = (await import("../config.js")).config;
+  const h3Real = realCfg.video.engines.h3;
+  const F4 = Object.keys(h3Real.turboShiftByLora).find((n) => /fl2v.*4step/.test(n));
+  const R4 = Object.keys(h3Real.turboShiftByLora).find((n) => /ref2v.*4step/.test(n));
+  /* Every turbo slot resolved to a 4-step file, which is what pick() does on a
+   * PC whose loras folder holds only what the Models screen fetched. */
+  const FOUR_STEP_ONLY = {
+    cfg: { ...realCfg, modelsDir: "/nowhere", modelsAlso: [],
+      video: { ...realCfg.video, engines: { ...realCfg.video.engines,
+        h3: { ...h3Real, turboLora: F4, turboLora4: F4, turboLora3: F4, refTurboLora: R4, refTurboLora4: R4 } } } },
+    onDisk: (n) => /4step/.test(String(n)),
+  };
+  const lendingDoor = { ...lendingM,
+    speedUpForOrder: (o) => lendingM.speedUpForOrder(o, FOUR_STEP_ONLY),
+    speedUpCheck: (a) => lendingM.speedUpCheck(a, FOUR_STEP_ONLY) };
   const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM] = [
     await import("./identity.js"), await import("./seal.js"),
     await import("./roster.js"), await import("./packet.js"),
@@ -570,7 +597,14 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     jobs: { current: null, queue: [] },
     plans: [],
     engine: { ready: true, queue: { running: 0, pending: 0 }, running: [] },
+    /* What this machine's ffprobe says about a returned take. */
+    probe: { frames: 141, fps: 24, width: 1344, height: 768, seconds: 5.875, videoStreams: 1, audioStreams: 0 },
   };
+  /* ⚠ THE PROJECTS THE DOOR WRITES, KEPT. The stand-in used to hand every
+   * update a throwaway document with one clip row for a scene the order never
+   * named, so "filed onto a scene" could not be asserted at all — which is how a
+   * take for a never-rendered scene landed nowhere and said so wrongly. */
+  const projectStore = {};
   const clipLibrary = await mkdtemp(path.join(tmpdir(), "aiplay-door-clips-"));
 
   await writeFile(path.join(clipLibrary, "errand-take.mp4"), Buffer.from("a rendered scene"));
@@ -628,7 +662,10 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * that will ever be sent. A fake named after what the code SHOULD say is
      * how a harness goes blind. */
     "art", "jobs", "engineDoor", "probeClip", "CLIP_DIR", "fetch", "ERRAND_SEGMENT",
-    "MAX_BUNDLE_BYTES", "pictureKind", "MIME_FOR", "makeVideoRecipe", "readVideoRecipe", "describeVideoRecipe", "videoRecipeMcpArgs"];
+    "MAX_BUNDLE_BYTES", "pictureKind", "MIME_FOR", "makeVideoRecipe", "readVideoRecipe", "describeVideoRecipe", "videoRecipeMcpArgs",
+    /* Lending for a person with no strong card: the frame grid, the speed-up
+     * check, the minutes a day and filing onto a never-rendered scene. */
+    "collabLending"];
   /* eslint-disable-next-line no-new-func */
   const run = new Function(...names, `return (async () => { ${body} return { status: 0, body: { error: "the route did not answer" } }; })();`);
 
@@ -658,6 +695,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
        * created, standing in as ALREADY RENDERED so `send_back` has a take to
        * seal. Its clip name is a real file in the fake clip library below. */
       async (slug) => (slug === "demo" ? DOC
+        /* The same scene with a board that sings: lip-sync does not travel. */
+        : slug === "demo-sing" ? { ...DOC, slug, boards: [{ ...DOC.boards[0], lipSync: true }] }
         : slug === "errand-1" ? {
           slug, brief: { videoEngine: "h3", videoSteps: 8 },
           clips: [{ segmentId: "s1_0", takes: [{ clip: "errand-take.mp4", seed: 7, ms: 100, engine: "h3" }] }],
@@ -695,17 +734,25 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
        * mistake. `fetch` is a PARAMETER here, which shadows the global — the
        * route's loopback call must not leave this process. */
       async () => ({ slug: "errand-1" }),
-      async (slug, fn) => fn({ slug, id: "x", createdAt: 0, clips: [{ segmentId: "s1_24", takes: [] }] }),
+      async (slug, fn) => {
+        /* The owner's project starts as the demo document with NO clip rows —
+         * a borrower who has rendered nothing — and every write is kept. */
+        const d = projectStore[slug] ?? (slug === "demo" ? structuredClone(DOC)
+          : { slug, id: "x", createdAt: 0, clips: [{ segmentId: "s1_24", takes: [] }] });
+        projectStore[slug] = await fn(d);
+        return projectStore[slug];
+      },
       () => machineState.plans,
       { status: () => ({ art: machineState.art }) },
       machineState.jobs,
       { status: async () => machineState.engine },
-      async () => ({ frames: 141, fps: 24, width: 1344, height: 768, seconds: 5.875, videoStreams: 1, audioStreams: 0 }),
+      async () => ({ ...machineState.probe }),
       clipLibrary,
       async (url, init) => { proposed.push(JSON.parse(init.body)); return { json: async () => ({ ok: true, planId: "p_fake123" }) }; },
       errandM.ERRAND_SEGMENT,
       sealM.MAX_BUNDLE_BYTES, errandM.pictureKind, errandM.MIME_FOR,
       recipeM.makeVideoRecipe, recipeM.readVideoRecipe, recipeM.describeVideoRecipe, recipeM.videoRecipeMcpArgs,
+      lendingDoor,
     ).then((r) => r ?? answered);
   };
   const call = (b, headers = { origin: "http://127.0.0.1:4173" }) => callWith(b, {}, headers);
@@ -989,12 +1036,69 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     /pictureKind\(buf\)/.test(src("../index.js")) && /MIME_FOR\[kind\]/.test(src("../index.js")));
   ok("...and the sentence a person reads says what will be RENDERED, not only how big",
     /It will render:/.test(unread.body.describes || ""), unread.body.describes);
+  /* ⚠ PIN 9 — WHAT A YES WOULD LOAD, BEFORE THE YES. An 8-step order on a PC
+   * holding only the 4-step speed-up files (what the Models screen installs)
+   * runs a 4-step file at 8 steps. The card says so, naming the file. */
+  ok("the card names the speed-up file this PC lacks for the order's step count",
+    /8 steps/.test(unread.body.speedUp || "") && /turbo_8step[^ ]*\.safetensors/.test(unread.body.speedUp || ""),
+    unread.body.speedUp);
+  /* ⚠ AND IT OFFERS ONLY WHAT THIS BUILD CAN DO. The Models screen fetches no
+   * 8-step file, so "add it before you approve" was advice a newcomer could not
+   * follow. The card says the count overruns the file that loads, that the
+   * Models screen does not offer the matching one, and the two real choices. */
+  ok("...says the order overruns the 4-step file, that the Models screen does not offer the 8-step one, and what can be done",
+    /8 steps overruns it/.test(unread.body.speedUp || "") && /Models screen does not offer it/.test(unread.body.speedUp || "")
+    && /render it as it is/.test(unread.body.speedUp || "") && /ask them to order 4 steps/.test(unread.body.speedUp || "")
+    && !/add it before you approve/.test(unread.body.speedUp || ""),
+    unread.body.speedUp);
+  ok("...and says what the friend's minutes a day would be spent on, before anybody agrees",
+    /minutes of your card a day/.test(unread.body.minutes || ""), unread.body.minutes);
 
   /* ⚠ BUSY FIRST. Accepting while the card is committed means a friend waits on
    * a take that is queued behind a render nobody told them about. */
   const whileBusy = await call({ action: "accept", file: orderPath, seen: true });
   eq("an order is refused while the card is busy", [whileBusy.status, whileBusy.body.reason], [409, "engine-busy"]);
+  /* ⚠ PIN 7 — A BUSY LENDER CAN SAY YES FROM THE SCREEN. The refusal used to
+   * end "Send it again with anyway:true", a parameter with no button. */
+  ok("...and the refusal offers the screen's “Accept anyway”, listing what it walks past",
+    whileBusy.body.overridable === true && /Accept anyway/.test(whileBusy.body.error)
+    && !/Send it again with anyway:true/.test(whileBusy.body.error)
+    && (whileBusy.body.overrides || []).map((o) => o.reason).join() === "engine-busy",
+    JSON.stringify(whileBusy.body));
+  /* ⚠ AND IT POINTS AT A BUTTON THAT IS ON THE SCREEN. "Accept anyway" lives
+   * only in the question "Yes — take the job" asks, so the sentence says to
+   * press that; "waits its turn" is said only when something is running. */
+  ok("...naming the press that asks the question, and the wait behind what is running",
+    /press “Yes — take the job” again and answer “Accept anyway”/.test(whileBusy.body.error)
+    && /waits its turn/.test(whileBusy.body.error), whileBusy.body.error);
+  /* ⚠ PIN 8 — THE MINUTES ARE READ. Zero minutes a day refuses; busy AND zero
+   * minutes lists BOTH, so the one confirmation names everything a yes spends. */
+  await call({ action: "set_lend_minutes", fp: friend.fp, minutesPerDay: 0 });
+  const busyAndZero = await call({ action: "accept", file: orderPath, seen: true });
+  eq("busy and out of minutes are listed together in one refusal",
+    [busyAndZero.status, (busyAndZero.body.overrides || []).map((o) => o.reason), busyAndZero.body.overridable],
+    [409, ["engine-busy", "budget-zero"], true]);
   machineState.engine = { ready: true, queue: { running: 0, pending: 0 }, running: [] };
+  const zeroMinutes = await call({ action: "accept", file: orderPath, seen: true });
+  eq("a friend given 0 minutes of this card is refused, and it can be walked past",
+    [zeroMinutes.status, zeroMinutes.body.reason, zeroMinutes.body.overridable, /0 minutes of your card/.test(zeroMinutes.body.error)],
+    [409, "budget-zero", true, true]);
+  ok("...and a refusal for minutes alone does not say the scene waits behind a busy card",
+    !/waits its turn/.test(zeroMinutes.body.error) && /Yes — take the job/.test(zeroMinutes.body.error), zeroMinutes.body.error);
+  /* ...and `anyway` walks past the minutes, on a second order so the first can
+   * still be accepted the ordinary way below. */
+  {
+    const second = orderM.makeOrder({ shot: shotForOrder, files: orderFiles,
+      order: { segmentId: "s1_0", seed: 8, steps: 8, engineMode: "h3" },
+      returnTo: { fp: friend.fp, nickname: "bucky" }, now: Date.now() });
+    const secondPath = path.join(out, "in", "order-second.aiplay");
+    await writeFile(secondPath, sealM.sealTo({ payload: Buffer.from(JSON.stringify(second), "utf8"),
+      toSealPublicB64: me.body.sealPublic, toSignPublicB64: me.body.signPublic,
+      toFp: me.body.fp, fromFp: friend.fp, signPrivate: theirKeys2.signPrivate }));
+    const past = await call({ action: "accept", file: secondPath, seen: true, anyway: true });
+    eq("“Accept anyway” takes the scene past the friend's minutes", [past.status, past.body.ok], [200, true]);
+  }
+  await call({ action: "set_lend_minutes", fp: friend.fp, minutesPerDay: 60 });
 
   const accepted = await call({ action: "accept", file: orderPath, seen: true });
   eq("an order becomes a project with a PROPOSED plan and nothing runs",
@@ -1002,6 +1106,31 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   ok("...and the door says so in the words a person needs",
     /nothing has rendered/i.test(accepted.body.note) && /approve/i.test(accepted.body.note),
     accepted.body.note);
+  /* ⚠ PIN 6 — THERE IS NO "PLAN SCREEN". The plan is the Plan card inside
+   * Workflow, on the project this accept made, and the sentence names both. */
+  ok("...and it names the real place: the rail's screen, the project's own title, the Plan card",
+    new RegExp(`${lendingM.WORKFLOW_SCREEN} → “Order o_[0-9a-f]{8} from bucky” → the Plan card`).test(accepted.body.note)
+    && !/plan screen/i.test(accepted.body.note) && accepted.body.title === "Order " + orderDoc.id.slice(0, 10) + " from bucky",
+    accepted.body.note);
+  ok("...and repeats the speed-up warning after the yes, where it cannot be scrolled past",
+    /⚠ .*8 steps/.test(accepted.body.note) && accepted.body.speedUp === unread.body.speedUp, accepted.body.note);
+  /* Case-insensitive: "the plan screen answered without a plan id" survived a
+   * case-sensitive version of this pin. */
+  ok("no sentence in the door sends anybody to a plan screen that does not exist, in any case",
+    !/plan screen/i.test(src("../index.js").slice(src("../index.js").indexOf('if (p === "/api/collab" && req.method === "POST")'))));
+  ok("...and no sentence the door writes names the screen by hand: it asks lending.js",
+    !/Workflow →/.test(src("../index.js").slice(src("../index.js").indexOf('if (p === "/api/collab" && req.method === "POST")'))));
+  /* The number behind "Minutes of my card per day", on the Friends row and in
+   * collab_roster, without a refused accept being the only place it appears. */
+  {
+    const rows = (await call({ action: "roster" })).body.peers || [];
+    const theirs = rows.find((x) => x.fp === friend.fp);
+    ok("the roster says what a lending friend has used of this card today, in accept's own sentence",
+      typeof theirs?.usedToday?.said === "string" && Number.isFinite(theirs.usedToday.measuredMinutes)
+      && Number.isFinite(theirs.usedToday.pending), JSON.stringify(theirs?.usedToday));
+    ok("...and says nothing of the kind for a friend who lends nothing",
+      rows.filter((x) => x.role !== "lender" && x.role !== "collaborator").every((x) => x.usedToday === undefined));
+  }
   /* ⚠ THE DOUBLE SPEND. The same bundle opened twice must not render twice. */
   eq("the same order accepted twice is refused rather than rendered again",
     [(await call({ action: "accept", file: orderPath, seen: true })).body.reason], ["already-landed"]);
@@ -1066,8 +1195,84 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     [appended.length, appended[0]?.evt?.actor, appended[0]?.evt?.asset],
     [1, `peer:${friend.fp}:agent:plan`, "mv/demo"]);
   ok("...as a take NOBODY HAS PICKED", !("pick" in adopted.body.take) && !("picked" in adopted.body.take));
+  /* ⚠ PIN 1 — A BORROWER WITH NO CARD HAS RENDERED NOTHING, so every scene is a
+   * scene with no clip row. The take used to land nowhere and the door said the
+   * scene no longer existed. It is filed onto the scene now, still unpicked. */
+  {
+    const row = (projectStore.demo?.clips || []).find((c) => c.segmentId === "s1_0");
+    eq("a take for a scene never rendered here is filed onto that scene, not lost",
+      [adopted.body.filed, adopted.body.created, !!row, row?.takes?.length, row?.takes?.[0]?.peer?.fp, row?.clipIndex],
+      [true, true, true, 1, friend.fp, 0]);
+    eq("...and it is still nobody's pick: nothing plays on that scene until a person chooses",
+      [row?.clipFile, row?.status], [undefined, undefined]);
+    ok("...and the sentence says where to choose it, not that the scene is gone",
+      /Inspect…/.test(adopted.body.note) && !/any more/.test(adopted.body.note), adopted.body.note);
+  }
   eq("adopting the same take twice is refused",
     [(await call({ action: "adopt", from: friend.fp, file: received.body.take.file })).body.reason], ["already-adopted"]);
+
+  /* ── A BORROWER'S RETURNS, walked through the door ─────────────────────
+   * A friend's take for an order THIS door packed (so the row is the one the
+   * build writes, not a hand-made fixture), measured here at `frames`. */
+  const returnFor = async (orderId, { frames, seed = 11, steps = 8, turboSteps = null } = {}) => {
+    machineState.probe = { frames, fps: 24, width: 1344, height: 768, seconds: frames / 24, videoStreams: 1, audioStreams: 0 };
+    const r = orderM.makeReturn({ orderId, segmentId: "s1_0",
+      result: { bytes: Buffer.from(`a take for ${orderId}, ${frames} frames, ${turboSteps}, ${Math.random()}`), ext: ".mp4" },
+      probe: { ...machineState.probe },
+      record: { model: "h3", outputRights: { class: "yours-with-conditions" }, engine: "h3", steps, seed, ms: 1, actor: "agent:plan", turboSteps },
+      now: Date.now() });
+    const file = path.join(out, "in", `return-${orderId}-${frames}-${turboSteps}.aiplay`);
+    await writeFile(file, sealM.sealTo({ payload: Buffer.from(JSON.stringify(r), "utf8"),
+      toSealPublicB64: me.body.sealPublic, toSignPublicB64: me.body.signPublic,
+      toFp: me.body.fp, fromFp: friend.fp, signPrivate: theirKeys2.signPrivate }));
+    return call({ action: "receive", file });
+  };
+  {
+    /* ⚠ PIN 2 — THE FRAME COUNT IS THE RENDERER'S. The scene is 4 s; H3 rounds
+     * a clip UP to n mod 17 == 5, so it renders 107 frames, and the old check
+     * (round(4 × 24) = 96, ± 4) refused every correct take. */
+    const sentRow = await bookM.findOrder({ outDir: collabOut, id: packedOrder.body.order, side: "out" });
+    eq("the order book records the frame count the renderer will actually make",
+      [sentRow.expect.engine, sentRow.expect.frames, sentRow.expect.slotFrames], ["h3", 107, 96]);
+    const onGrid = await returnFor(packedOrder.body.order, { frames: 107 });
+    eq("...so a correct H3 take, rounded up to its 17k+5 grid, is accepted",
+      [onGrid.status, onGrid.body.ok], [200, true]);
+    const handRounded = await returnFor(packedOrder.body.order, { frames: 96 });
+    eq("...while a take of round(seconds × 24) frames is not what H3 makes, and the refusal says why",
+      [handRounded.status, handRounded.body.reason, /steps of 17 frames/.test(handRounded.body.note)],
+      [400, "result-not-the-shot", true]);
+
+    /* ⚠ PIN 3 — "KEEP ANYWAY". A take that failed its checks stayed stuck:
+     * the page's Keep sent no override, and only the tool had one. */
+    const refusedFile = handRounded.body.take.file;
+    eq("a take that failed its checks is not kept by an ordinary press",
+      [(await call({ action: "adopt", from: friend.fp, file: refusedFile })).body.reason], ["return-refused"]);
+    const keptAnyway = await call({ action: "adopt", from: friend.fp, file: refusedFile, anyway: true });
+    eq("...and “Keep anyway” keeps it, filed onto its scene, with the ledger saying the checks did not pass",
+      [keptAnyway.status, keptAnyway.body.event?.data?.checksPassed, keptAnyway.body.filed, keptAnyway.body.created],
+      [200, false, true, false]);
+
+    /* ⚠ PIN 9, THE BORROWER'S HALF — a take rendered on a 4-step file at 8
+     * steps comes home saying so, in this machine's words. */
+    const burned = await returnFor(packedOrder.body.order, { frames: 107, turboSteps: 4 });
+    ok("a take rendered with a 4-step speed-up file at 8 steps comes home with a note saying so",
+      burned.body.ok === true && (burned.body.take.notes || []).some((n) => /made for 4 steps/.test(n))
+      && /made for 4 steps/.test(burned.body.note), JSON.stringify(burned.body).slice(0, 500));
+    ok("...and a matched one carries no such note",
+      !(onGrid.body.take.notes || []).length, JSON.stringify(onGrid.body.take.notes));
+
+    /* ⚠ PIN 4 — LIP-SYNC DOES NOT TRAVEL, AND IT IS SAID. A singing board is
+     * lent (a silent take beats none for somebody with no card) and every
+     * sentence about it says the mouths will not follow the vocal. */
+    const sing = await call({ action: "pack", slug: "demo-sing", to: friend.fp, kind: "order", segmentId: "s1_0", seed: 12, steps: 8, engineMode: "h3" });
+    ok("a singing scene is lent, and the sentence both people read says lip-sync does not travel",
+      sing.status === 200 && /Lip-sync does not travel/.test(sing.body.describes || ""), sing.body.describes || sing.body.error);
+    const singRow = await bookM.findOrder({ outDir: collabOut, id: sing.body.order, side: "out" });
+    eq("...the order book remembers why, as a word and not the song's name", singRow?.songUnder, "lipsync");
+    const silent = await returnFor(sing.body.order, { frames: 107, seed: 12 });
+    ok("...and the take that comes back says it was rendered without the song",
+      (silent.body.take?.notes || []).some((n) => /without the song/.test(n)), JSON.stringify(silent.body).slice(0, 400));
+  }
 
   /* ⚠ THE TAKE GOES BACK TO WHOEVER SIGNED THE ORDER. Without this a verified
    * friend could name a third party, and this machine would spend an hour of
@@ -1108,6 +1313,14 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
    * branch nobody tested — which is how nine actions went in green. */
   const sent = await call({ action: "send_back", id: orderDoc.id });
   eq("the lender can seal the finished take home", [sent.status, /\.aiplay$/.test(sent.body.name || "")], [200, true]);
+  {
+    /* PIN 9, THE LENDER'S HALF OF THE WIRE: the step count the loaded speed-up
+     * file was made for rides home as a NUMBER — never a file name. */
+    const home2 = JSON.parse(sealM.openSealed({ blob: await readFile(sent.body.file), me: friend.fp,
+      sealPrivate: theirKeys.sealPrivate, senderSignPublicB64: () => me.body.signPublic }).payload.toString("utf8"));
+    ok("the return says which step count this PC's speed-up file was made for, as a number",
+      Number.isInteger(home2.record.turboSteps) && !/safetensors/.test(JSON.stringify(home2.record)), JSON.stringify(home2.record));
+  }
   const dropped = await call({ action: "drop", from: friend.fp, file: received.body.take.file });
   eq("and a take can be thrown away", [dropped.status, dropped.body.dropped], [200, received.body.take.file]);
 
@@ -1185,6 +1398,29 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   const rolelessPreview = await call({ action: "preview", to: other.fp, kind: "resources", note: "Only evenings" });
   eq("a verified friend with no role can preview a resource card", [rolelessPreview.status, rolelessPreview.body.packet?.note, rolelessPreview.body.manifest], [200, "Only evenings", []]);
   eq("and can receive that exact card", (await call({ action: "pack", previewId: rolelessPreview.body.previewId })).status, 200);
+
+  /* ⚠ A COLLABORATOR'S FIRST SCENE IS NOT A BUDGET REFUSAL. Accept admits both
+   * lending roles and reads their minutes; a friend made a collaborator from
+   * "nothing yet" used to land at 0 and have every scene refused until
+   * "Accept anyway". Both roles now start with the promotion allowance. */
+  {
+    await call({ action: "set_role", fp: friend.fp, role: "none" });
+    const promoted = await call({ action: "set_role", fp: friend.fp, role: "collaborator" });
+    const row = ((await call({ action: "roster" })).body.peers || []).find((x) => x.fp === friend.fp);
+    eq("a friend made a collaborator starts with minutes of this card, as a lending friend does",
+      [promoted.status, row?.role, row?.lendMinutesPerDay > 0], [200, "collaborator", true]);
+    const third = orderM.makeOrder({ shot: shotForOrder, files: orderFiles,
+      order: { segmentId: "s1_0", seed: 9, steps: 8, engineMode: "h3" },
+      returnTo: { fp: friend.fp, nickname: "bucky" }, now: Date.now() });
+    const thirdPath = path.join(out, "in", "order-third.aiplay");
+    await writeFile(thirdPath, sealM.sealTo({ payload: Buffer.from(JSON.stringify(third), "utf8"),
+      toSealPublicB64: me.body.sealPublic, toSignPublicB64: me.body.signPublic,
+      toFp: me.body.fp, fromFp: friend.fp, signPrivate: theirKeys2.signPrivate }));
+    const first = await call({ action: "accept", file: thirdPath, seen: true });
+    eq("...so the collaborator's first scene is accepted without “Accept anyway”",
+      [first.status, first.body.ok, first.body.reason], [200, true, undefined]);
+    await call({ action: "set_role", fp: friend.fp, role: "lender" });
+  }
 
   const broken = await callWith({ action: "credit", slug: "demo" }, { chainOk: false, corrupt: 2 });
   ok("a ledger whose chain is broken is reported before anything is credited",

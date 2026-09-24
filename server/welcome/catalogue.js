@@ -827,8 +827,9 @@ const TABS = [
     needs: [],
     cant:
       "It cannot reach your friend for you. Phase one writes a file and reads one; sending it is whatever "
-      + "you already use. It also will not verify anybody, will not lend your card without a number you "
-      + "type, and will not render what arrives until you have read it. What a friend says their machine "
+      + "you already use. It also will not verify anybody, will not accept a friend's scene past the minutes "
+      + "a day you give them without asking you first (checked when you accept, from renders timed here and "
+      + "estimates), and will not render what arrives until you have read it. What a friend says their machine "
       + "can do is a message they sent, not a window onto it, so every copy is shown with its age.",
   },
 

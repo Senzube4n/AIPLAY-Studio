@@ -33,6 +33,7 @@ import path from "node:path";
 
 import { probeClip } from "../clipjoin.js";
 import { checkReturn, readReturn } from "./order.js";
+import { withFrameGrid } from "./lending.js";
 
 const FP_OK = /^[0-9a-f]{8,32}$/;
 /* ⚠ EVERY FUNCTION HERE PUTS THE FINGERPRINT INTO A PATH, and only one of them
@@ -112,9 +113,12 @@ export async function landReturn({ outDir, payload, fromFp, orderRow, now = 0, p
     seconds: measured.seconds, videoStreams: measured.videoStreams, audioStreams: measured.audioStreams,
   };
 
+  /* The order row is read through `withFrameGrid`, so the frame check centres
+   * on the renderer's own count — and a row written before rows named their
+   * engine accepts either engine's grid rather than refusing a correct take. */
   const verdict = measured.error
     ? { ok: false, reason: "probe-failed", why: `${measured.error} Without a measurement of our own there is nothing to check their record against, so this take was not accepted.` }
-    : checkReturn({ ...doc, from: fromFp }, orderRow, ourProbe);
+    : checkReturn({ ...doc, from: fromFp }, withFrameGrid(orderRow), ourProbe);
 
   const row = {
     v: 1,
@@ -131,6 +135,9 @@ export async function landReturn({ outDir, payload, fromFp, orderRow, now = 0, p
     ok: verdict.ok,
     reason: verdict.reason,
     why: verdict.why,
+    /* What the borrower should know about how it was made — this machine's own
+     * sentences (order.js returnNotes), never text from the return. */
+    notes: Array.isArray(verdict.notes) ? verdict.notes : [],
     /* ⚠ `adopted` IS THE ONLY THING THAT MOVES A FILE OUT OF THIS FOLDER, and a
      * landing never sets it. */
     adopted: false,
@@ -267,6 +274,31 @@ async function adoptOnce({ outDir, clipDir, fromFp, file, force = false, now = 0
   const next = { ...row, adopted: true, adoptedAt: Number(now) || 0, adoptedAs: name, adoptedDespite: row.ok ? null : row.reason };
   await writeFile(rowFile, JSON.stringify(next, null, 2), "utf8");
   return { take, event, file: dest, row: next };
+}
+
+/** Video types by extension, for the four extensions `landReturn` writes. */
+const WATCH_TYPES = Object.freeze({ ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska" });
+
+/**
+ * A quarantined take, found for WATCHING and nothing else — so a person can see
+ * a take before they keep it, including one that failed its checks.
+ *
+ * ⚠ THE NAME IS CHECKED AGAINST THE ONE SHAPE THIS MODULE WRITES, not filtered.
+ * `quarantineName` makes `peer_<fp8>_<sha12><ext>` and nothing else, so anything
+ * else — a sidecar, a path, another friend's folder — is refused rather than
+ * served. The fingerprint goes through `safeFp`, like every other path here.
+ */
+export async function quarantineTake({ outDir, fromFp, file } = {}) {
+  const fp8 = safeFp(fromFp).slice(0, 8);
+  const name = String(file ?? "");
+  const m = /^peer_([0-9a-f]{8})_[0-9a-f]{12}(\.(?:mp4|webm|mov|mkv))$/.exec(name);
+  if (!m || m[1] !== fp8) {
+    throw refuse("bad-arguments", `${JSON.stringify(name)} is not a returned take from that friend. Only a take this Studio wrote into quarantine can be watched.`);
+  }
+  const full = path.join(quarantineDir(outDir, fromFp), name);
+  const info = await stat(full).catch(() => null);
+  if (!info || !info.isFile()) throw refuse("no-such-return", `There is no take called ${name} in quarantine from that friend.`, 404);
+  return { file: full, size: info.size, type: WATCH_TYPES[m[2]] };
 }
 
 /** Throw a take away. The row goes with it; there is nothing to keep. */

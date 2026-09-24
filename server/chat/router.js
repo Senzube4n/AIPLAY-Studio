@@ -604,6 +604,28 @@ export const WITHHELD = {
   ab_create_project: "the audiobook surface is a whole workflow of its own and has had no pass for chat",
 };
 
+/**
+ * ARGUMENTS THE CHAT MAY NOT SEND, on tools it may otherwise call.
+ *
+ * Withholding a whole tool is too much here: accepting a friend's order and
+ * keeping a returned take are ordinary writes the chat may do after its
+ * per-call confirm. But each carries an OVERRIDE whose only purpose is to walk
+ * past a check a person set up or a check that failed, and the confirm card
+ * says "it writes a NEW FILE" -- it cannot say "and past the minutes a day you
+ * gave this friend". So the model is never shown the argument, and a call that
+ * sends it anyway is refused by name, never silently stripped. External MCP
+ * clients keep the typed schema; the person's own "Accept anyway" / "Keep
+ * anyway" on the Collab screen is where these belong.
+ */
+export const CHAT_WITHHELD_ARGS = {
+  collab_accept: {
+    anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
+  },
+  collab_adopt: {
+    anyway: "keeps a take that failed its checks; a person watches it and answers \"Keep anyway\" on the Collab screen",
+  },
+};
+
 /* Every audiobook tool, withheld as a group rather than one line each. */
 for (const t of MCP_TOOLS) {
   if (t.name.startsWith("ab_") && !(t.name in WITHHELD)) {
@@ -678,7 +700,9 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
   const required = new Set(tool.inputSchema?.required || []);
   const args = {};
   const jsonArgs = new Set();
+  const withheldArgs = CHAT_WITHHELD_ARGS[tool.name] || {};
   for (const [name, spec] of Object.entries(props)) {
+    if (name in withheldArgs) continue;
     const type = Array.isArray(spec?.type) ? spec.type[0] : spec?.type;
     if (!SCALAR.has(type)) {
       if (JSON_ARGUMENT_TOOLS.has(tool.name)) {
@@ -711,6 +735,12 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     routed: true,
     run: (a) => {
       const decoded = { ...a };
+      for (const [name, why] of Object.entries(withheldArgs)) {
+        if (decoded[name] !== undefined && decoded[name] !== false) {
+          throw new Error(`${name} is not available in this chat: it ${why}.`);
+        }
+        delete decoded[name];
+      }
       for (const name of jsonArgs) {
         if (decoded[name] === undefined) continue;
         if (typeof decoded[name] !== "string") throw new Error(`${name} must be a JSON string in local chat.`);
@@ -907,4 +937,4 @@ export function routedRegistry(core, message, { limit = ROUTE_LIMIT, pinned = []
   };
 }
 
-export default { ROUTABLE, WITHHELD, routedRegistry, chooseTools, adaptTool, scoreTool, index };
+export default { ROUTABLE, WITHHELD, CHAT_WITHHELD_ARGS, routedRegistry, chooseTools, adaptTool, scoreTool, index };

@@ -612,6 +612,30 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
   if (baseScale === "full") {
     noteBits.push("Sample at the delivered size rather than half-then-upscale (baseScale: full).");
   }
+  /* ⚠ THE SONG STAYS HOME, SO SAY WHICH SCENES THAT CHANGES. generate.js puts
+   * the song under a clip when the expression below holds and the project has
+   * one. A lent render never has it. For a singing board or "Song under the
+   * clip: always" that is the difference between lips that follow the vocal
+   * and lips that do not, so it is carried as a word both screens branch on
+   * (order.js describeOrder) — a label, never the file's name.
+   *
+   * ⚠ A DELIBERATE DUPLICATE, CHARACTER FOR CHARACTER. This module may not
+   * import generate.js (the import rule at the top), so `songUnderClip` is
+   * generate.js's own `songConditioned` expression copied verbatim, and
+   * server/collab/lending_test.js compares the two texts: a change there that
+   * is not made here fails that lane rather than drifting. */
+  const songUnderClip = engine === "ltx" || !useRefs || Boolean(board?.lipSync)
+    || doc.brief?.songConditioning === "always";
+  const songConditioned = !!doc.song?.file && songUnderClip;
+  const songUnder = !songConditioned ? null
+    : board.lipSync ? "lipsync"
+    : doc.brief?.songConditioning === "always" ? "always"
+    : "engine";
+  if (songUnder) {
+    noteBits.push(songUnder === "engine"
+      ? "The owner's own render of this scene has the song under it; this one is rendered without it."
+      : "Lip-sync does not travel: the owner renders this scene with the song under it so mouths follow the vocal, and the song stays on the owner's machine, so this take is rendered without it.");
+  }
   /* Worth a sentence: the owner has parked this scene, so a friend burning an
    * hour on it may be burning it on something nobody will cut in. */
   if (seg.mode && seg.mode !== "generate") {
@@ -639,6 +663,7 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
     guides,
     guideMode,
     loop,
+    songUnder,
     note: noteBits.join(" "),
   };
 }

@@ -37,7 +37,9 @@ export function collabTools(api, safeName) {
       description:
         "WHO THIS STUDIO KNOWS. Every friend: their fingerprint, the name you gave them, whether the twelve words "
         + "were ever read aloud (`verified`), what they are to you (`role`: none, lender or collaborator) and how "
-        + "many minutes of this card they may have in a day. A peer that is not verified may RECEIVE from you and "
+        + "many minutes of this card they may have in a day (`lendMinutesPerDay`), with what a lender or collaborator "
+        + "has used of it today (`usedToday`: minutes timed here, scenes accepted today still to render, and the "
+        + "sentence collab_accept shows). A peer that is not verified may RECEIVE from you and "
         + "may not be given a role — the roster enforces that, not the screen.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       async run() {
@@ -291,7 +293,7 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_set_lend_minutes",
-      description: "Record a peer's agreed daily lending allowance; zero records no allowance. This is a local planning setting, not enforcement of a remote GPU quota, a live reading of idle time or an automatic render.",
+      description: "Set how many minutes of THIS machine's card a peer's scenes may use per day; zero gives them none. collab_accept checks it against what their scenes have used today (timed here) and promised (estimated), and refuses past it unless anyway:true. It is not a remote GPU quota, a live reading of idle time or an automatic render.",
       inputSchema: { type: "object", required: ["fp", "minutesPerDay"], properties: { fp: { type: "string" }, minutesPerDay: { type: "integer", minimum: 0, maximum: 1440 } }, additionalProperties: false },
       async run(a) { return await api("POST", "/api/collab", { action: "set_lend_minutes", fp: String(a.fp || ""), minutesPerDay: a.minutesPerDay }); },
     },
@@ -321,8 +323,8 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_accept",
-      description: "Accept a reviewed incoming render order as a local project with a PROPOSED plan. First inspect collab_open and obtain the user's intent to accept that exact file; seen:true records that review. Signature, peer verification, role, expiry, duplicate and workload checks remain enforced. No GPU render starts; mv_plan_decide and mv_plan_run are separate. anyway:true only permits queuing behind an overridable busy state.",
-      inputSchema: { type: "object", required: ["file", "seen"], properties: { file: { type: "string" }, seen: { type: "boolean", description: "Explicitly reviewed this bundle's prompt and reference images." }, anyway: { type: "boolean", description: "Explicitly accept queuing behind busy work; default false." } }, additionalProperties: false },
+      description: "Accept a reviewed incoming render order as a local project with a PROPOSED plan. First inspect collab_open and obtain the user's intent to accept that exact file; seen:true records that review. Signature, peer verification, role, expiry, duplicate and workload checks remain enforced. No GPU render starts; mv_plan_decide and mv_plan_run are separate. anyway:true only walks past the overridable reasons the refusal lists in `overrides` (a busy card, or this friend's minutes a day) — show the person that list and get their yes first. The reply names a speed-up file this PC lacks for the order's step count, if any.",
+      inputSchema: { type: "object", required: ["file", "seen"], properties: { file: { type: "string" }, seen: { type: "boolean", description: "Explicitly reviewed this bundle's prompt and reference images." }, anyway: { type: "boolean", description: "Explicitly accept past the listed overrides (busy work, the friend's minutes a day); default false." } }, additionalProperties: false },
       async run(a) { return await api("POST", "/api/collab", { action: "accept", file: String(a.file || ""), seen: a.seen === true, anyway: a.anyway === true }); },
     },
     {
@@ -339,7 +341,7 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_adopt",
-      description: "Adopt a reviewed quarantined take into the clips library and its originating project as an UNSELECTED take. The current scene selection stays in place. Pass from/file exactly as returned by collab_quarantine. anyway is an explicit override of an overridable validation mismatch, never a default.",
+      description: "Adopt a reviewed quarantined take into the clips library and its originating project as an UNSELECTED take. The current scene selection stays in place; a scene never rendered on this machine gets its clip row made and still plays nothing until a take is picked (mv_pick_take). Pass from/file exactly as returned by collab_quarantine. anyway is an explicit override of a take that failed its checks — only after the person has watched it and said so — never a default.",
       inputSchema: { type: "object", required: ["from", "file"], properties: { from: { type: "string" }, file: { type: "string" }, anyway: { type: "boolean" } }, additionalProperties: false },
       async run(a) { return await api("POST", "/api/collab", { action: "adopt", from: String(a.from || ""), file: String(a.file || ""), anyway: a.anyway === true }); },
     },

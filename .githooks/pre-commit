@@ -247,6 +247,12 @@ node server/reactive_test.js || exit 1
 # mcp.js and has never existed in index.js, and seventy-one regular expressions
 # over the source did not see it. Runs on the CPU: no engine, no card, no network.
 node server/collab/collab_test.js || exit 1
+# LENDING FOR A PERSON WITH NO STRONG CARD: the return check centred on the
+# renderer's own frame grid (H3 rounds a clip up to 17k+5), a take filed onto a
+# scene never rendered here, a refused take watched by name only, lip-sync said
+# not to travel, the minutes a day read at accept, and the speed-up file a
+# lender lacks named before the yes. CPU only; the disk is handed in.
+node --test server/collab/lending_test.js || exit 1
 # ANIMATEDIFF ON THE APACHE-2.0 PIECES: the graph's shape (our schedule node,
 # our sliding ControlNet loader, the v3 module and adapter, Small depth by
 # licence, the decoded strengths), the schedule on the bars, and the gate

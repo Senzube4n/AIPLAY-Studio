@@ -554,7 +554,15 @@ export function costRowFor(engine, stepClass, { w, h, pass } = {}) {
  * it is the whole reason `totals.unpriced` exists.
  */
 export function tableMinutes({ engine, steps, width, height, seconds, refs = true, pass }) {
-  const stepClass = stepClassOf(steps, { refs });
+  /* ⚠ LTX HAS NO STEP CLASS. Its graph runs two fixed passes (8 steps at half
+   * size, then 3 at full — workflow.js videoGraphLtx takes no step count) and
+   * every LTX row above is measured as "bare". Classing an LTX scene by the
+   * brief's step count found no row for 4 or 8 and called the scene unpriced:
+   * a cast-less scene under hybrid, or any errand (its brief always carries the
+   * order's steps), read as "about 0 min" wherever a total was printed. The
+   * H3 overrun note is about an H3 file and says nothing about LTX either. */
+  const ltx = engine === "ltx";
+  const stepClass = ltx ? "bare" : stepClassOf(steps, { refs });
   const row = costRowFor(engine, stepClass, { w: width, h: height, pass });
   if (!row) return null;
   const area = Number(width) * Number(height);
@@ -573,7 +581,7 @@ export function tableMinutes({ engine, steps, width, height, seconds, refs = tru
     /* The bracket, carried per estimate rather than printed once in a footnote
      * nobody reads. See COST_SPREAD. */
     upperMinutes: Math.round(minutes * COST_SPREAD.factor * 10) / 10,
-    floor: trapBand(steps, { refs })
+    floor: !ltx && trapBand(steps, { refs })
       ? `${steps} steps overruns the ${loadedLoraSteps(steps, { refs })}-step file that loads — this is a floor, not a figure`
       : null,
   };

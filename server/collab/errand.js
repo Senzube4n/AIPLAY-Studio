@@ -123,7 +123,7 @@ export async function stageOrderFiles({ orderDoc, assetsDir } = {}) {
 /**
  * The document. Complete, ordinary, and one scene long.
  */
-export function errandDoc({ orderDoc, from, staged, now = 0 } = {}) {
+export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {}) {
   const shot = orderDoc.shot;
   const seconds = Number(shot.seconds) || 5;
   const brief = briefFor(orderDoc);
@@ -149,8 +149,13 @@ export function errandDoc({ orderDoc, from, staged, now = 0 } = {}) {
     /* ⚠ NO SONG, EVER. The order carries none — the owner's track is their
      * unreleased record and packet.js refuses to send it — and a scene rendered
      * here with some other audio under it would come back as a clip the owner
-     * did not ask for. A scene whose render would have been song-conditioned is
-     * refused at PACK time on the owner's side, so it never reaches here. */
+     * did not ask for. A scene the owner renders song-conditioned (a singing
+     * board, or "Song under the clip: always") is NOT refused at pack time: it
+     * is lent and rendered silent, because a take without lip-sync is better
+     * than none for somebody with no card. The loss is said out loud instead —
+     * the packet's `songUnder`, the order's own sentence (order.js
+     * describeOrder) at preview and on the lender's card, and the returned
+     * take's notes (order.js returnNotes). */
     song: null,
     brief,
     /* ⚠ BLANK, AND NOT BECAUSE IT DOES NOT MATTER. `clipPrompt` prepends the
@@ -243,10 +248,11 @@ export function errandDoc({ orderDoc, from, staged, now = 0 } = {}) {
       returnTo: orderDoc.returnTo,
       order: orderDoc.order,
       landedAt: now,
-      expect: {
+      /* What the finished clip should measure. The door passes the renderer's
+       * own count (lending.js expectForOrder: H3's 17k+5 grid, LTX's 8k+1);
+       * the fallback is the scene's plain length, for a caller that has none. */
+      expect: expect || {
         width: shot.width, height: shot.height, seconds,
-        /* What the finished clip should measure, so the return can be checked
-         * on the owner's side against the thing that was asked for. */
         frames: Math.round(seconds * 24),
       },
     },

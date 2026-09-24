@@ -338,6 +338,14 @@ import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrd
 import { describePacket as describeAnyPacket } from "./collab/packet.js";
 import { speaks, stamp as collabStamp, describeStamp } from "./collab/compat.js";
 import { adoptReturn, dropReturn, landReturn, listQuarantine } from "./collab/quarantine.js";
+/* Lending for a person with no strong card: the renderer's own frame grid, the
+ * speed-up file check, the minutes a day, and filing a take onto a scene that
+ * was never rendered here. One namespace, so the door gains one name. */
+import * as collabLending from "./collab/lending.js";
+import { quarantineTake } from "./collab/quarantine.js";
+/* One reading of a Range header for the take door and /api/clip; each used to
+ * carry its own copy, and both misread a suffix range. */
+import { byteRange } from "./byterange.js";
 import { scanInbox } from "./collab/inbox.js";
 import { createProject as createMvProject, updateProject as updateMvProject } from "./mv/store.js";
 import { anyRunning as plansRunningNow } from "./mv/planrun.js";
@@ -4698,6 +4706,33 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, file, name, bytes: n });
     }
 
+    /* WATCH A RETURNED TAKE BEFORE KEEPING IT. A take that failed its checks
+     * may still be the one somebody wants — "Keep anyway" exists for that — and
+     * nobody should keep a friend's render unseen. Read-only; the name is
+     * checked against the one shape quarantine.js writes. A page on another
+     * site could otherwise embed a friend's unreleased take, so a request that
+     * says it came from elsewhere is refused. */
+    if (p.startsWith("/api/collab-take/") && req.method === "GET") {
+      const site = String(req.headers["sec-fetch-site"] || "");
+      if (site && site !== "same-origin" && site !== "none") {
+        return json(res, 403, { error: "Returned takes play only on the Collab screen of this machine.", reason: "not-same-origin" });
+      }
+      const [fromFp = "", name = ""] = p.slice("/api/collab-take/".length).split("/").map((s) => { try { return decodeURIComponent(s); } catch { return ""; } });
+      let take;
+      try { take = await quarantineTake({ outDir: path.join(config.outputDir, "collab"), fromFp, file: name }); }
+      catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason }); }
+      const base = { "Content-Type": take.type, "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+      const range = byteRange(req.headers.range, take.size);
+      if (range?.unsatisfiable) { res.writeHead(416, { ...base, "Content-Range": `bytes */${take.size}` }); return res.end(); }
+      if (range) {
+        const { start, end } = range;
+        res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${take.size}`, "Content-Length": end - start + 1 });
+        return createReadStream(take.file, { start, end }).pipe(res);
+      }
+      res.writeHead(200, { ...base, "Content-Length": take.size });
+      return createReadStream(take.file).pipe(res);
+    }
+
     if (p === "/api/collab" && req.method === "POST") {
       /* ⚠ THE ONE DOOR IN THIS FILE THAT IS GATED, AND WHY IT HAD TO BE. There
        * are more than fifty `readBody(req)` sites here and almost none of them
@@ -4821,7 +4856,8 @@ const server = http.createServer(async (req, res) => {
          * order is re-opened and re-checked (never trusted from a previous
          * `open`), its pictures are written under names derived from their own
          * bytes, and a one-scene project is created carrying a plan that a
-         * human must still approve on the Plan screen. The card is not touched.
+         * human must still approve: the Plan card on the new "Order … from
+         * <name>" project (lending.js planPlace). The card is not touched.
          */
         if (action === "accept") {
           const asked = String(b.file || "");
@@ -4876,7 +4912,7 @@ const server = http.createServer(async (req, res) => {
            * taken away, and neither is a person you have agreed to render for. */
           if (sender.role !== "lender" && sender.role !== "collaborator") {
             return json(res, 400, {
-              error: `${sender.nickname || sender.fp} is not a lender or a collaborator here, so this machine has not agreed to render for them. Give them a role on the Collab screen first.`,
+              error: `${sender.nickname || sender.fp} is not a lending friend or a collaborator here, so this machine has not agreed to render for them. To agree: Collab → Friends → their row → “lending friend: we render single scenes for each other”, then accept again.`,
               reason: "role",
             });
           }
@@ -4891,15 +4927,24 @@ const server = http.createServer(async (req, res) => {
            *
            * Stateless on purpose: the refusal carries the prompt, and the same
            * call with `seen: true` goes through. No mistake on the page can skip
-           * it, and there is no `collab_accept` tool, so no agent can answer it
-           * on somebody's behalf either. */
+           * it. The `collab_accept` tool must send `seen: true` itself, and its
+           * description tells an agent to get the person's word on that exact
+           * file first; the in-app chat asks before it (chat/router.js
+           * "writes"). */
           if (b.seen !== true) {
+            /* ⚠ WHAT A YES WOULD COST THIS PC, ON THE SAME CARD AS WHAT IT WOULD
+             * DRAW: a speed-up file it lacks for this step count, and the
+             * friend's minutes a day. Both are said before anybody agrees. */
+            const speedUp = collabLending.speedUpForOrder(orderDoc);
+            const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
+              rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
             return json(res, 409, {
               error: `${sender.nickname || sender.fp.slice(0, 8)} is asking this machine to render this, and it will be a file on your disk when it is done. Read it, then accept again if you want to.`,
               reason: "not-seen",
               prompt: String(orderDoc.shot?.prompt || ""),
               describes: describeOrder(orderDoc, Date.now()),
               from: { fp: sender.fp, nickname: sender.nickname },
+              speedUp: speedUp.why, minutes: minutes.why, overBudget: minutes.over,
               /* ⚠ THE PICTURES THEMSELVES, NOT A COUNT. They are the render's
                * reference conditioning — the model sees every one of them — so a
                * card that shows the prompt and says "2 pictures" hides the half
@@ -4927,20 +4972,34 @@ const server = http.createServer(async (req, res) => {
             engineStatus: async () => engineDoor.status(),
           });
           const busy = machineBusy(readings);
+          /* ⚠ `anyway` OVERRIDES A BUSY CARD OR THIS FRIEND'S MINUTES A DAY AND
+           * NOTHING ELSE, and two of the busy readings are not overridable at
+           * all: a PAUSED queue will accept work that never starts, and an
+           * engine this machine cannot read is not a machine anybody can promise
+           * a render on. Everything else in this branch — verification, the
+           * role, the return address, the expiry — is a refusal and has no
+           * override. Every overridable reason is listed in ONE refusal, so the
+           * confirmation a person reads names everything `anyway` will walk
+           * past — a yes to "busy" never silently spends minutes too. */
+          const overrides = [];
           if (busy.busy) {
-            /* ⚠ `anyway` OVERRIDES A BUSY CARD AND NOTHING ELSE, and two of the
-             * readings are not overridable at all: a PAUSED queue will accept
-             * work that never starts, and an engine this machine cannot read is
-             * not a machine anybody can promise a render on. Everything else in
-             * this branch — verification, the role, the return address, the
-             * expiry — is a refusal and has no override. */
             const overridable = !["art-paused", "engine-unreachable"].includes(busy.reason);
-            if (!overridable || b.anyway !== true) {
-              return json(res, 409, {
-                error: busy.why + (overridable ? " Send it again with anyway:true if you want your friend's scene queued behind this." : ""),
-                reason: busy.reason, busy: true, overridable,
-              });
-            }
+            if (!overridable) return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable });
+            overrides.push({ reason: busy.reason, why: busy.why });
+          }
+          /* ⚠ THE MINUTES ARE READ HERE, NOT ONLY REMEMBERED. The friend row has
+           * always held `lendMinutesPerDay` and nothing read it, while two screens
+           * promised the card would not be lent without that number. Accept
+           * checks it against what this card has spent for them today (timed)
+           * and promised (the plan's own estimate) — see lending.js. */
+          const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+          if (minutes.over) overrides.push({ reason: minutes.reason, why: minutes.why });
+          if (overrides.length && b.anyway !== true) {
+            return json(res, 409, {
+              error: `${overrides.map((o) => o.why).join(" ")} It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)${busy.busy ? ", and your friend's scene waits its turn behind what is running" : ""}.`,
+              reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
+            });
           }
 
           const from = { fp: sender.fp, nickname: sender.nickname };
@@ -4958,7 +5017,7 @@ const server = http.createServer(async (req, res) => {
             const created = await createMvProject(errandTitle(orderDoc, from), "mv");
             slug = created.slug;
             const staged = await stageOrderFiles({ orderDoc, assetsDir: mvAssetsDir(slug) });
-            built = errandDoc({ orderDoc, from, staged, now: Date.now() });
+            built = errandDoc({ orderDoc, from, staged, now: Date.now(), expect: collabLending.expectForOrder(orderDoc) });
             await updateMvProject(slug, (d) => ({ ...built, slug: d.slug, id: d.id, createdAt: d.createdAt }));
           } catch (err) {
             /* The claim goes back, so an honest retry is possible. */
@@ -4993,7 +5052,7 @@ const server = http.createServer(async (req, res) => {
           if (proposed?.error || !planId) {
             await book.releaseOrder({ outDir, id: orderDoc.id }).catch(() => {});
             return json(res, 500, {
-              error: `The project was made (${slug}) but the plan could not be proposed: ${proposed?.error || "the plan screen answered without a plan id"}. Nothing will render. The order was not filed, so you can accept it again once that is fixed; delete ${slug} if you do.`,
+              error: `The project was made (${slug}) but the plan could not be proposed: ${proposed?.error || "the plan door (/api/mv/plan) answered without a plan id"}. Nothing will render. The order was not filed, so you can accept it again once that is fixed; delete ${slug} if you do.`,
               reason: "plan-not-proposed", slug,
             });
           }
@@ -5005,10 +5064,18 @@ const server = http.createServer(async (req, res) => {
             expect: built.collab.expect, landedAt: Date.now(),
           } });
 
+          /* ⚠ THE PLAN IS A CARD ON A PROJECT, NOT A PLACE OF ITS OWN. It is the
+           * Plan card of the project this accept just made, so the sentence
+           * names that project (lending.js planPlace, one place name for every
+           * sentence here) and the page offers a button that opens it. */
+          const title = errandTitle(orderDoc, from);
+          const speedUp = collabLending.speedUpForOrder(orderDoc);
           return json(res, 200, {
-            ok: true, slug, order: orderDoc.id, from, row, plan: planId,
+            ok: true, slug, title, order: orderDoc.id, from, row, plan: planId,
             describes: describeOrder(orderDoc, Date.now()),
-            note: "Accepted as a project on this machine, with a plan that is PROPOSED. Nothing has rendered and nothing will until you approve it on the Plan screen.",
+            speedUp: speedUp.why, minutes: minutes.why,
+            note: `Accepted as the project “${title}” on this machine, with a plan that is PROPOSED. Nothing has rendered and nothing will until you approve that plan: ${collabLending.planPlace(title)} (the “Open its plan” button under “What you agreed to render” takes you there).`
+              + (speedUp.why ? ` ⚠ ${speedUp.why}` : ""),
           });
         }
 
@@ -5023,7 +5090,7 @@ const server = http.createServer(async (req, res) => {
           const takes = clip?.takes || [];
           const take = takes[takes.length - 1];
           if (!take?.clip) {
-            return json(res, 400, { error: "That errand has not rendered yet. Approve its plan on the Plan screen and let it finish.", reason: "not-rendered" });
+            return json(res, 400, { error: `That errand has not rendered yet. Approve its plan — ${collabLending.planPlace(doc.title || row.slug)} — and let it finish.`, reason: "not-rendered", slug: row.slug });
           }
           const clipPath = path.join(CLIP_DIR, take.clip);
           const bytes = await readFile(clipPath).catch(() => null);
@@ -5053,6 +5120,10 @@ const server = http.createServer(async (req, res) => {
               engine: ranOn, steps: doc.brief?.videoSteps ?? null,
               seed: take.seed ?? null, ms: take.ms ?? null,
               actor: "agent:plan",
+              /* Which step count this PC's speed-up file was made for — a
+               * number, so the owner is told when it was not the ordered one. */
+              turboSteps: collabLending.speedUpCheck({ engine: ranOn, steps: doc.brief?.videoSteps,
+                refs: typeof take.refsSent === "boolean" ? take.refsSent : ranOn === "h3" && (take.refs || []).length > 0 }).madeFor,
             },
             now: Date.now(),
           });
@@ -5126,11 +5197,13 @@ const server = http.createServer(async (req, res) => {
             await book.noteReturn({ outDir, id: orderRow.id, entry: { ok: landed.ok, reason: landed.reason, file: landed.file } });
             await book.setOrderState({ outDir, id: orderRow.id, state: landed.ok ? "returned" : "refused", note: landed.why });
           }
+          const landedNotes = Array.isArray(landed.notes) ? landed.notes : [];
           return json(res, landed.ok ? 200 : 400, {
             ok: landed.ok, take: landed, reason: landed.reason,
-            note: landed.ok
+            note: (landed.ok
               ? "In quarantine. It has been measured here and it matches the order. Nothing is in your film yet — adopting it is a separate press."
-              : landed.why,
+              : `${landed.why} It waits under “Finished scenes waiting for you”: watch it there if this browser can play it, and keep it anyway if it is what you wanted.`)
+              + (landedNotes.length ? ` ${landedNotes.join(" ")}` : ""),
           });
         }
 
@@ -5143,19 +5216,27 @@ const server = http.createServer(async (req, res) => {
             file: String(b.file || ""), force: b.anyway === true, now: Date.now(),
           });
           const orderRow = await book.findOrder({ outDir, id: got.row.orderId, side: "out" });
+          const notes = Array.isArray(got.row.notes) ? got.row.notes : [];
+          const tail = notes.length ? ` ${notes.join(" ")}` : "";
           if (!orderRow?.slug) {
-            return json(res, 200, { ok: true, ...got, note: "Adopted into the clips library. The order it answers names no project on this machine, so it was not filed onto a scene." });
+            return json(res, 200, { ok: true, ...got, notes, note: `Adopted into the clips library. The order it answers names no project on this machine, so it was not filed onto a scene.${tail}` });
           }
           /* ⚠ THE SCENE THE OWNER ORDERED, NOT THE ONE THE LENDER NAMED. The
            * return's `segmentId` is a string from somebody else's machine; the
-           * order row is this machine's own record of what it asked for. */
+           * order row is this machine's own record of what it asked for.
+           *
+           * ⚠ AND A SCENE NEVER RENDERED HERE IS STILL A SCENE. Clip rows are
+           * made by a first render, so this used to file only onto scenes this
+           * machine had rendered — which, for a borrower with no card, is none
+           * of them — and then said the scene did not exist. lending.js makes
+           * the row the way generate.js does, and still picks nothing. */
           const wanted = orderRow.order?.segmentId || got.row.segmentId;
-          let filed = false;
+          let filedAs = { filed: false, created: false };
           await updateMvProject(orderRow.slug, (d) => {
-            const clip = (d.clips || []).find((c) => c.segmentId === wanted);
-            if (clip) { clip.takes = [...(clip.takes || []), got.take]; filed = true; }
+            filedAs = collabLending.fileTakeOnScene(d, wanted, got.take);
             return d;
           });
+          const filed = filedAs.filed;
           /* ⚠ THE LEDGER LINE IS WRITTEN HERE, ONCE, BY THE DOOR. quarantine.js
            * builds the event and does not append it: one writer on a hash
            * chain. */
@@ -5167,10 +5248,13 @@ const server = http.createServer(async (req, res) => {
            * scene it MEANT to file onto whether or not that scene existed, so a
            * take that landed nowhere read as filed. */
           return json(res, 200, {
-            ok: true, ...got, slug: orderRow.slug, filed, segmentId: wanted,
-            note: filed
-              ? `Filed onto ${wanted} in ${orderRow.slug} as a take nobody has picked. The scene keeps whatever it was using until you choose this one.`
-              : `Adopted into the clips library as ${got.take.clip}, but ${orderRow.slug} has no scene called ${wanted} any more, so it was not filed onto one. The clip is yours; put it where you want it.`,
+            ok: true, ...got, slug: orderRow.slug, filed, created: filedAs.created, segmentId: wanted, notes,
+            note: (filed
+              ? (filedAs.created
+                ? `Filed onto ${wanted} in ${orderRow.slug} as a take nobody has picked. Nothing was ever rendered for that scene here, so nothing plays there until you choose it: ${collabLending.pickPlace()} on that scene.`
+                : `Filed onto ${wanted} in ${orderRow.slug} as a take nobody has picked. The scene keeps whatever it was using until you choose this one (${collabLending.pickPlace()}).`)
+              : `Adopted into the clips library as ${got.take.clip}, but ${orderRow.slug} has no scene called ${wanted} any more, so it was not filed onto one. The clip is yours; put it where you want it.`)
+              + tail,
           });
         }
         if (action === "drop") {
@@ -5233,6 +5317,18 @@ const server = http.createServer(async (req, res) => {
            * and printed nothing in the module. A card is a message and not a
            * window, and the sentence that says so may not have two authors. */
           const now = Date.now();
+          /* WHAT EACH LENDING FRIEND HAS USED OF THIS CARD TODAY, counted the
+           * way accept counts it (lending.js lentToday) and said in one
+           * sentence written there — so the Friends row and collab_roster show
+           * the number behind "Minutes of my card per day" without a refused
+           * accept being the only place it appears. */
+          const lends = (x) => x.role === "lender" || x.role === "collaborator";
+          const lendRows = peers.some(lends) ? await book.listOrders({ outDir, side: "in" }).catch(() => []) : [];
+          const usedToday = await Promise.all(peers.map(async (x) => {
+            if (!lends(x)) return null;
+            const used = await collabLending.lentToday({ rows: lendRows, readProject: readMvProject, fp: x.fp, now });
+            return { ...used, said: collabLending.usedSentence(used) };
+          }));
           return json(res, 200, {
             ok: true,
             /* ⚠ TWO DIFFERENT SETS OF TWELVE WORDS, AND ONLY ONE WAS EVER ON
@@ -5242,10 +5338,11 @@ const server = http.createServer(async (req, res) => {
              * that says "I read the words and they matched" sitting on a row
              * with no words anywhere near it. Derived from the fingerprint the
              * roster already returns, so nothing new leaves this machine. */
-            peers: peers.map((x) => ({
+            peers: peers.map((x, i) => ({
               ...x,
               words: collabWords(x.fp),
               ...(x.resources ? { resourcesSaid: ageOf(x.resources.at, now) } : {}),
+              ...(usedToday[i] ? { usedToday: usedToday[i] } : {}),
             })),
           });
         }
@@ -5356,7 +5453,9 @@ const server = http.createServer(async (req, res) => {
               id: packet.id, at: packet.at, expires: packet.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
               slug: frozen.slug, order: packet.order,
-              expect: { width: packet.shot.width, height: packet.shot.height, frames: Math.round((Number(packet.shot.seconds) || 5) * 24) },
+              /* The renderer's own frame count for this order (H3's 17k+5 grid,
+               * LTX's 8k+1), and whether lip-sync stays home — see lending.js. */
+              expect: collabLending.expectForOrder(packet), songUnder: packet.shot.songUnder ?? null,
             } });
             return json(res, 200, { ok: true, ...wrote, kind, previewId: b.previewId,
               ...(kind === "order" ? { order: packet.id } : {}),
@@ -5441,7 +5540,7 @@ const server = http.createServer(async (req, res) => {
               id: orderDoc.id, at: orderDoc.at, expires: orderDoc.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
               slug: slugO, order: orderDoc.order,
-              expect: { width: shotO.width, height: shotO.height, frames: Math.round((Number(shotO.seconds) || 5) * 24) },
+              expect: collabLending.expectForOrder(orderDoc), songUnder: shotO.songUnder ?? null,
             } });
             return json(res, 200, {
               ok: true, ...wroteO, kind, order: orderDoc.id,
@@ -11034,14 +11133,13 @@ const server = http.createServer(async (req, res) => {
         "Content-Type": MIME[path.extname(name).toLowerCase()] || "application/octet-stream",
         "Accept-Ranges": "bytes",
       };
-      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
-      if (m) {
-        const start = m[1] ? Number(m[1]) : 0;
-        const end = Math.min(m[2] ? Number(m[2]) : size - 1, size - 1);
-        if (start > end || start >= size) {
-          res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` });
-          return res.end();
-        }
+      const range = byteRange(req.headers.range, size);
+      if (range?.unsatisfiable) {
+        res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` });
+        return res.end();
+      }
+      if (range) {
+        const { start, end } = range;
         res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
         return createReadStream(full, { start, end }).pipe(res);
       }

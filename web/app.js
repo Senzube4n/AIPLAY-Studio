@@ -5435,14 +5435,59 @@ const cb = (body) => fetch("/api/collab", {
  * Five handlers used to write into #cbFreeNote, which was safe only while the
  * page was one flat scroll. With panes, a message can land on a tab nobody is
  * looking at — and `send_back`'s refusal ("That errand has not rendered yet.
- * Approve its plan on the Plan screen") is the single most important recovery
- * sentence in the feature. #cbFreeNote now answers the busy question and
- * nothing else. */
+ * Approve its plan — Workflow → the Plan card") is the single most important
+ * recovery sentence in the feature. #cbFreeNote now answers the busy question
+ * and nothing else. */
 function cbSay(msg) {
   const el = $("cbSay");
   if (!el) return;
   el.textContent = String(msg || "");
   el.hidden = !msg;
+}
+
+/* ⚠ A YES THAT GOES PAST A CHECK IS ASKED FOR, EVERY TIME. "Accept anyway" and
+ * "Keep anyway" both walk past something the server refused, so each is its
+ * own question with the server's own reasons in it. The app's bottom drawer
+ * when it is there; the browser's confirm otherwise; and NO when neither is —
+ * a missing dialog must never read as consent. */
+function cbConfirm({ title, body, yes }) {
+  if (typeof bottomDrawer === "function") return bottomDrawer({ title, body, yes, no: "Not now" });
+  return Promise.resolve(typeof confirm === "function" ? confirm(`${title}\n\n${body}`) : false);
+}
+
+/* THE PLAN LIVES IN WORKFLOW, ON THE ERRAND'S OWN PROJECT. There is no "Plan
+ * screen": a friend's order becomes a project called "Order o_… from <name>",
+ * and its plan is the Plan card at the top of that project in Workflow. This
+ * asks the Workflow view to open that project (web/mv.js listens) and goes
+ * there. */
+/* ⚠ A SCREEN IS NAMED BY THE RAIL'S OWN LABEL, NEVER BY A WORD TYPED HERE.
+ * The agreed UI plan relabels rail entries (Workflow is to read "Music video"),
+ * and every sentence in this section that says where to go reads the label
+ * off the rail itself, so a relabel reaches them all. `fallback` is only for a
+ * page with no rail (a test's fake DOM). The server's sentences use one
+ * constant pinned to the same label (server/collab/lending.js WORKFLOW_SCREEN). */
+function cbScreen(view, fallback) {
+  try {
+    const lbl = typeof document !== "undefined" && document.querySelector?.(`[data-view="${view}"] .lbl`);
+    const text = String(lbl?.textContent || "").trim();
+    return text || fallback;
+  } catch { return fallback; }
+}
+/* The static hints carry <b data-screen="workflow">Workflow</b>: filled from
+ * the rail on every Collab paint, so the markup and the rail cannot disagree. */
+function cbFillScreens() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  for (const el of document.querySelectorAll("[data-screen]")) {
+    el.textContent = cbScreen(el.dataset.screen, el.textContent);
+  }
+}
+
+function cbOpenProject(slug) {
+  if (!slug) return;
+  if (typeof document !== "undefined" && typeof CustomEvent === "function") {
+    document.dispatchEvent(new CustomEvent("aiplay:open-project", { detail: { slug } }));
+  }
+  if (typeof setView === "function") setView("workflow");
 }
 
 const CB_TABS = ["In", "Plan", "Send", "Friends"];
@@ -5542,6 +5587,7 @@ if (typeof document !== "undefined") document.addEventListener("aiplay:collab-sc
 /* Repainting is SEPARATE from paintCollab, which mints the keys on first sight
  * and must stay bound to the view change exactly as it is. */
 async function refreshCollab() {
+  cbFillScreens();
   const peers = await paintPeers();
   await Promise.all([paintInbox().catch(() => {}), paintErrands().catch(() => {}),
     paintTakes().catch(() => {}), paintOutbox().catch(() => {})]);
@@ -5602,10 +5648,20 @@ async function paintPeers() {
       <code>${esc(p.fp.slice(0, 8))}…</code>
       <span class="${p.verified ? "ok" : "warn"}">${p.verified ? "verified aloud" : "you have not read the words together yet"}</span>
       <select class="sel2 cbrole" ${p.verified ? "" : "disabled"}>
-        ${[["none", "nothing yet"], ["lender", "may render single scenes for me"], ["collaborator", "may have my whole project"]]
+        ${/* ⚠ THE LABEL, NOT THE VALUE. "lender" is the relationship in BOTH
+            * directions — they may render a scene for you, and you may render
+            * one for them — and the old label named only the first, so a person
+            * accepting a friend's scene had to pick a sentence that said the
+            * opposite. The stored value is unchanged. */
+          [["none", "nothing yet"], ["lender", "lending friend: we render single scenes for each other"], ["collaborator", "collaborator: may have my whole project"]]
       .map(([x, label]) => `<option value="${x}"${x === p.role ? " selected" : ""}>${label}</option>`).join("")}
       </select>
-      <label>Advisory minutes/day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
+      <label title="Accepting their scene checks this against what your card has already rendered for them today, what you accepted from them today and have not rendered yet, and this scene. 0 gives them none; “Accept anyway” can still go past it, after asking you.">Minutes of my card per day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
+      ${/* What they have used of it today — the server's sentence (lending.js
+          * usedSentence), the same one the accept card shows. */
+        p.usedToday?.said ? `<span class="cbres">Used today: ${esc(p.usedToday.said)}</span>` : ""}
+      ${(p.role === "lender" || p.role === "collaborator") && !(Number(p.lendMinutesPerDay) > 0)
+        ? '<span class="cbres warn">0 minutes: every scene they send asks you first (“Accept anyway”). Type a number above to lend them your card without asking.</span>' : ""}
       <span class="cbres">${p.resources ? esc(shortResources(p.resources, p.resourcesSaid)) : "has not said what they can do"}</span>
       <span class="cbres">Availability: <b>Unknown</b> · ${p.resources?.gpu?.vramMb ? `${(p.resources.gpu.vramMb / 1024).toFixed(1)} GB VRAM` : "VRAM unknown"} · ${p.resources?.ramMb ? `${(p.resources.ramMb / 1024).toFixed(1)} GB RAM` : "RAM unknown"}</span>
       ${p.resources ? `<details class="cbres"><summary>Offered capabilities (${p.resources.ready?.length || 0})</summary><p>${esc((p.resources.ready || []).join(" · ") || "None listed")}</p>${p.resources.note ? `<p>${esc(p.resources.note)}</p>` : ""}</details>` : ""}
@@ -5617,7 +5673,7 @@ async function paintPeers() {
   const note = $("cbPeersNote");
   if (note) {
     note.textContent = peers.length
-      ? `${peers.length} friend${peers.length === 1 ? "" : "s"} · ${peers.filter((p) => p.verified).length} verified. Hardware cards are dated snapshots. Remote jobs, schedules and idle state are unknown. Minutes/day is advisory, not enforced.`
+      ? `${peers.length} friend${peers.length === 1 ? "" : "s"} · ${peers.filter((p) => p.verified).length} verified. Hardware cards are dated snapshots. Remote jobs, schedules and idle state are unknown. Accepting a friend's scene checks their minutes of your card per day; “Accept anyway” can go past it, after asking you.`
       : "Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.";
   }
   return peers;
@@ -6257,12 +6313,13 @@ async function paintErrands() {
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
   host.innerHTML = rows.map((o) => `
-    <div class="cbpeer" data-id="${esc(o.id)}">
+    <div class="cbpeer" data-id="${esc(o.id)}" data-slug="${esc(o.slug || "")}">
       <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
       <span class="meta">seed ${esc(String(o.order?.seed ?? "?"))} · ${esc(String(o.order?.steps ?? "?"))} steps · ${esc(o.order?.engineMode || "?")}</span>
       <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "landed")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}${o.planId ? ` · plan ${esc(o.planId)}` : ""}</span>
+      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Workflow"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Workflow"))}</button>` : ""}
       ${o.state === "rendered" ? "" : '<button class="btn sm cbsend" type="button">Send the take back</button>'}
     </div>`).join("");
 }
@@ -6274,15 +6331,50 @@ async function paintTakes() {
   if (cbListError("Returned takes", r)) return;
   const rows = r.takes || [];
   if (wrap) wrap.hidden = !rows.length;
-  host.innerHTML = rows.map((t) => `
-    <div class="cbpeer" data-from="${esc(t.from)}" data-file="${esc(t.file)}">
+  /* ⚠ WATCH IT HERE, THEN DECIDE. A take that failed its checks used to stay
+   * stuck — "Keep it" sent no override — though a person who has watched it
+   * may want it anyway. The player reads the quarantined file through its own
+   * read-only door; "Keep anyway…" asks only after the take has been played. */
+  host.innerHTML = rows.map((t) => {
+    const watch = `/api/collab-take/${encodeURIComponent(String(t.from || ""))}/${encodeURIComponent(String(t.file || ""))}`;
+    return `
+    <div class="cbpeer" data-from="${esc(t.from)}" data-file="${esc(t.file)}" data-reason="${esc(t.reason || "")}">
       <b>${esc(t.segmentId || "?")}</b>
       <code>${esc(String(t.from).slice(0, 8))}</code>
       <span class="${t.ok ? "ok" : "warn"}">${t.adopted ? "kept" : t.ok ? "checked" : esc(t.reason || "refused")}</span>
       <span class="cbres">${esc(t.why || "")}</span>
-      ${t.adopted ? "" : '<button class="btn sm cbadopt" type="button">Keep it</button><button class="btn sm ghost cbdrop" type="button">Throw it away</button>'}
-    </div>`).join("");
+      ${(Array.isArray(t.notes) ? t.notes : []).map((n) => `<span class="cbres warn">${esc(n)}</span>`).join("")}
+      ${/* ⚠ preload="none": the list paints without handing a friend's
+          * unchecked bytes to the browser's decoder — nothing is fetched
+          * until somebody presses play on that one take. */
+        t.adopted ? "" : `<video class="cbtakevid" controls playsinline preload="none" src="${esc(watch)}"></video>`}
+      ${t.adopted ? "" : t.ok
+        ? '<button class="btn sm cbadopt" type="button">Keep it</button>'
+        : '<button class="btn sm cbadoptany" type="button" title="It failed a check. Play it first; keeping it anyway files it as a take nobody has picked, and the ledger says the checks did not pass.">Keep anyway…</button>'}
+      ${t.adopted ? "" : '<button class="btn sm ghost cbdrop" type="button">Throw it away</button>'}
+    </div>`;
+  }).join("");
 }
+/* Media events do not bubble, so the list listens in the capture phase: a row
+ * whose take has started playing is a row somebody has watched.
+ * ⚠ "playing", NOT "play". "play" fires the moment the button is pressed,
+ * before a single frame is decoded — so a take this browser cannot play read
+ * as watched. "playing" fires only once frames are actually on screen. */
+$("cbTakes")?.addEventListener("playing", (ev) => {
+  const row = ev.target?.closest?.(".cbpeer");
+  if (row) row.dataset.played = "1";
+}, true);
+/* A take this browser cannot decode (an .mkv, HEVC, or a file that failed this
+ * machine's own measurement) never fires "play", so "Play it first" would wait
+ * for ever. Its row is marked, and "Keep anyway…" then asks the harder
+ * question instead: keep it unseen. */
+$("cbTakes")?.addEventListener("error", (ev) => {
+  if (String(ev.target?.tagName || "").toUpperCase() !== "VIDEO") return;
+  const row = ev.target.closest?.(".cbpeer");
+  if (!row) return;
+  row.dataset.unplayable = "1";
+  cbSay("This browser cannot play that take. You can still keep it unseen with “Keep anyway…”, throw it away, or ask your friend to render it again.");
+}, true);
 
 /* ⚠ TWO PRESSES, AND THE FIRST ONE IS READING. The door refuses an accept that
  * does not say the prompt was seen, and hands the prompt back with the refusal
@@ -6307,7 +6399,12 @@ $("cbAcceptBtn")?.addEventListener("click", async () => {
             + pics.map((p) => (p.dataUrl
               ? `<img src="${esc(p.dataUrl)}" alt="" style="max-height:140px;margin:6px 6px 0 0;border:1px solid var(--edge);border-radius:4px"> `
               : `<span class="warn">one picture this Studio could not read as a picture (${esc(String(p.bytes))} bytes) — that alone is a reason to refuse</span> `)).join("")
-          : "It carries no pictures.");
+          : "It carries no pictures.")
+        /* What a yes would cost THIS PC: a speed-up file it lacks for the
+         * order's step count, and the friend's minutes a day. The server's
+         * sentences, shown before the yes rather than after it. */
+        + (r.speedUp ? `\n\n<span class="warn">⚠ ${esc(r.speedUp)}</span>` : "")
+        + (r.minutes ? `\n\n<span class="${r.overBudget ? "warn" : "meta"}">${esc(r.minutes)}</span>` : "");
     }
     /* The file that was SHOWN is the only one the yes-press may send. */
     if (card) card.dataset.armed = file;
@@ -6329,8 +6426,25 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
     disarmCollab();
     return;
   }
-  const r = await cb({ action: "accept", file, seen: true });
-  cbSay(r.error || r.note || "Accepted. Approve its plan on the Plan screen when you are ready.");
+  let r = await cb({ action: "accept", file, seen: true });
+  /* ⚠ "ACCEPT ANYWAY", ASKED — NEVER A PARAMETER A PERSON HAS TO TYPE. The door
+   * lists every overridable reason at once (a busy card, the friend's minutes
+   * a day), so this one question names everything a yes walks past. A paused
+   * queue or an unreachable engine is not overridable and gets no button. */
+  if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({
+      title: "Accept anyway?",
+      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Workflow")}.`,
+      yes: "Accept anyway",
+    });
+    if (!go) {
+      cbSay(`Not accepted. ${r.overrides.map((o) => o.why).join(" ")} Press “Yes — take the job” again if you change your mind; you will be asked again.`);
+      return;
+    }
+    if (card?.dataset.armed !== file) { cbSay("That is not the file whose prompt you just read. Press “Show me exactly what they want” again for this one."); disarmCollab(); return; }
+    r = await cb({ action: "accept", file, seen: true, anyway: true });
+  }
+  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Workflow")}” under “What you agreed to render for friends”.`);
   if (!r.error) disarmCollab();
   await refreshCollab();
 });
@@ -6343,6 +6457,7 @@ $("cbReceiveBtn")?.addEventListener("click", async () => {
 
 $("cbErrands")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
+  if (row && ev.target.classList.contains("cbopenplan")) { cbOpenProject(row.dataset.slug); return; }
   if (!row || !ev.target.classList.contains("cbsend")) return;
   const r = await cb({ action: "send_back", id: row.dataset.id });
   if (r.error) { cbSay(r.error); return; }
@@ -6358,6 +6473,27 @@ $("cbTakes")?.addEventListener("click", async (ev) => {
   const body = { from: row.dataset.from, file: row.dataset.file };
   if (ev.target.classList.contains("cbadopt")) {
     const r = await cb({ action: "adopt", ...body });
+    cbSay(r.error || r.note || "Kept.");
+  } else if (ev.target.classList.contains("cbadoptany")) {
+    /* ⚠ KEEP ANYWAY: WATCHED FIRST, THEN ASKED. The same override the tool's
+     * collab_adopt `anyway` has always had, behind two things a person does:
+     * play the take, then say yes to a question that names what failed. */
+    const unseen = row.dataset.unplayable === "1" || row.dataset.reason === "probe-failed";
+    if (row.dataset.played !== "1" && !unseen) { cbSay("Play it first — it failed a check, and “Keep anyway” is for a take you have watched and still want."); return; }
+    const why = row.querySelector?.(".cbres")?.textContent || "It did not pass this machine's checks.";
+    const go = await cbConfirm(unseen
+      ? {
+        title: "Keep a take you have not watched?",
+        body: `${why} It cannot be played here, so you would be keeping it unseen. Keeping it files it on its scene as a take nobody has picked, and the ledger records that the checks did not pass.`,
+        yes: "Keep it unseen",
+      }
+      : {
+        title: "Keep this take anyway?",
+        body: `${why} Keeping it files it on its scene as a take nobody has picked, and the ledger records that the checks did not pass.`,
+        yes: "Keep anyway",
+      });
+    if (!go) return;
+    const r = await cb({ action: "adopt", ...body, anyway: true });
     cbSay(r.error || r.note || "Kept.");
   } else if (ev.target.classList.contains("cbdrop")) {
     await cb({ action: "drop", ...body });
@@ -7134,7 +7270,8 @@ function vidPaint() {
   if ($("vidAskFriend")) {
     const recipeOk = recipeEngineOk(cur);
     $("vidAskFriend").disabled = !recipeOk;
-    $("vidAskFriend").title = recipeOk ? "Prepare a text-only recipe for a friend using their default models." : recipeEngineRefusal();
+    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
+    $("vidAskFriend").title = recipeOk ? `Prepare a text-only recipe for a friend using their default models. To send reference pictures, use ${wfName} → Video clips → Ask friend, which carries them.` : recipeEngineRefusal();
   }
   /* The soundtrack works on BOTH engines now — LTX freezes the audio latent,
    * H3 freezes it AND anchors it so the model can read the vocal (the lip-sync
@@ -8034,8 +8171,12 @@ function videoFriendRecipe() {
   const recipeEngine = state.video?.engine || "ltx";
   if (!recipeEngineOk(recipeEngine)) throw new Error(recipeEngineRefusal());
   const [width,height]=vidWH();
+  /* ⚠ THE OTHER ASK FRIEND CARRIES PICTURES, SO THIS REFUSAL POINTS AT IT. A
+   * recipe is text only (collab/video-recipe.js refuses files by design), and
+   * a person holding reference pictures was told to remove them and nothing
+   * else — while Workflow's Ask friend packs a scene with its pictures. */
   if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
-    throw new Error("Text-only recipes only. Remove frames, references, soundtrack and loop first.");
+    throw new Error(`This Ask friend sends text only: remove frames, references, soundtrack and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow"} → Video clips → Ask friend, which carries them.`);
   if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};

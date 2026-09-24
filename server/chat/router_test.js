@@ -24,7 +24,7 @@
  */
 import {
   ROUTABLE, WITHHELD, COST_TEXT, index, chooseTools, routedRegistry,
-  adaptTool, callableShape, scoreTool, toolTokens, words, wantsRemoval, ROUTE_LIMIT,
+  adaptTool, callableShape, scoreTool, toolTokens, words, wantsRemoval, ROUTE_LIMIT, CHAT_WITHHELD_ARGS,
 } from "./router.js";
 import { TOOLS as MCP_TOOLS } from "../mcp.js";
 import { createChatTools } from "./tools.js";
@@ -440,6 +440,37 @@ head("§9  the scorer, and that routing costs no model call");
   ok("an empty message routes nothing", chooseTools("").length === 0);
   ok("a message of pure punctuation routes nothing", chooseTools("!!! ??? ...").length === 0);
   ok("a very long message does not throw", chooseTools("render ".repeat(500)).length <= ROUTE_LIMIT);
+}
+
+/* ─────────────────────────────────────────────────────────────── §10 */
+head("§10  the overrides the chat may not send");
+
+{
+  /* Accepting a friend's order and keeping a returned take are ordinary writes
+   * the chat may make after its confirm card. Their `anyway` is not: it walks
+   * past a busy card, the minutes a day a person gave that friend, or a take
+   * that failed its checks — and the confirm card cannot say which. */
+  const argsFor = (name) => (name === "collab_accept" ? { file: "x.aiplay", seen: true } : { from: "ab", file: "x.mp4" });
+  for (const name of ["collab_accept", "collab_adopt"]) {
+    const tool = MCP_TOOLS.find((t) => t.name === name);
+    ok(`${name} is routable, and its override is on the withheld list`,
+      !!tool && ROUTABLE[name] === "writes" && "anyway" in (CHAT_WITHHELD_ARGS[name] || {}));
+    const calls = [];
+    const adapted = adaptTool({ ...tool, run: async (a) => { calls.push(a); return { ok: true }; } }, ROUTABLE[name]);
+    ok(`...${name} is never shown \`anyway\``, !("anyway" in adapted.args) && "file" in adapted.args);
+    let refused = null;
+    try { await adapted.run({ ...argsFor(name), anyway: true }); } catch (e) { refused = e.message; }
+    ok("...and a call that sends it anyway is refused by name, never silently stripped",
+      /^anyway is not available in this chat/.test(refused || "") && calls.length === 0, refused);
+    await adapted.run(argsFor(name));
+    ok("...while the ordinary call goes through, with no override in it",
+      calls.length === 1 && !("anyway" in calls[0]), JSON.stringify(calls));
+  }
+  ok("every tool named on that list is a real tool with that argument",
+    Object.entries(CHAT_WITHHELD_ARGS).every(([name, a]) => {
+      const props = MCP_TOOLS.find((t) => t.name === name)?.inputSchema?.properties || {};
+      return Object.keys(a).every((k) => k in props);
+    }));
 }
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
