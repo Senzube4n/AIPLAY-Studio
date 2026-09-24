@@ -4503,6 +4503,16 @@ def cmd_release(_job=None):
 SERVE_MODES = dict(MODES, stats=cmd_stats, release=cmd_release)
 
 
+def _utf8_stream(stream):
+    """The same stream, speaking UTF-8. One that cannot be reconfigured (None
+    under pythonw, a sys.stdin something else replaced) is returned as it is."""
+    try:
+        stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    return stream
+
+
 def serve(stdin=None, stdout=None):
     """One process, many jobs: `{"id":…, "cmd":"frame", "job":{…}}` a line in,
     one JSON line out, until stdin closes or a `shutdown` arrives.
@@ -4534,9 +4544,17 @@ def serve(stdin=None, stdout=None):
     Requests are served strictly one at a time and answers come back in order, so
     `render`'s existing untagged progress lines still belong to the one job in
     flight and are left exactly as they are.
+
+    The pipes are UTF-8 whatever the interpreter was started with. routes.js
+    writes UTF-8, but on Windows a python whose stdin is a pipe decodes it with
+    the ANSI code page (cp1252), so a text layer's "·" arrived as "Â·" and "█"
+    as "â–ˆ", and only on this lane: the per-call modes read their job from a
+    file opened as UTF-8, which is why a render drew the same layer correctly.
     """
-    stdin = sys.stdin if stdin is None else stdin
-    stdout = sys.stdout if stdout is None else stdout
+    if stdin is None:
+        stdin = _utf8_stream(sys.stdin)
+    if stdout is None:
+        stdout = _utf8_stream(sys.stdout)
 
     def reply(obj):
         stdout.write(json.dumps(obj) + "\n")
