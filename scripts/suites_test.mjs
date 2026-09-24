@@ -63,7 +63,10 @@ const UNREGISTERED = {
   "scripts/restyle_test.mjs": MANUAL_HARNESS + " Takes a clip name and a song on the command line.",
 };
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "__pycache__", "output", "outputs", ".venv", "venv", "venv311"]);
+/* .claude is gitignored agent scratch (worktrees, lab folders). A suite in it
+ * can never be committed, so it can never be registered or exempted either:
+ * counting it fails every commit until someone else's lab file is moved. */
+const SKIP_DIRS = new Set(["node_modules", ".git", ".claude", "__pycache__", "output", "outputs", ".venv", "venv", "venv311"]);
 const IS_SUITE = /_test\.(js|mjs|py)$/;
 
 function walk(dir, out = []) {
