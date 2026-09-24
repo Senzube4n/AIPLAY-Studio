@@ -33,6 +33,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { deriveTitle } from "./workflow.js";
+import { assertSafe } from "./safety/refusal.js";
+import { enumerate } from "./wildcards.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = path.join(config.paths.appData, "batch.json");
@@ -58,6 +60,21 @@ export function cleanMediaItem(it, kind) {
     count: Number.isFinite(it.count) ? clamp(it.count, 1, 4) : undefined,
     seconds: Number.isFinite(it.seconds) ? clamp(it.seconds, 1, 30) : undefined,
   };
+  /* ⚠ THE MINORS RULE, AT START, so a night is not forty refusals. Checked on
+   * every prompt the template can EXPAND to: a plan any one of whose takes
+   * would put a child or teenager beside sexual content is refused whole, and
+   * "{a family picnic with kids|a nude figure study of an adult}" is not,
+   * because no take holds both. A template with more than 256 expansions is
+   * checked whole, braces and all (the old, stricter reading). Every take is
+   * checked again at /api/image or /api/video and at the engine door, which
+   * also covers a plan saved before this check existed. Pictures and clips
+   * only; a music batch's captions are songs. */
+  if (kind === "image" || kind === "video") {
+    const { prompts, truncated } = enumerate(item.prompt, 256);
+    for (const take of truncated ? [item.prompt] : prompts) {
+      assertSafe({ door: "batch.start", via: `batch.${kind}`, texts: [take] });
+    }
+  }
   if (kind !== "image") return item;
   for (const key of ["dit", "ditEngine", "encoder", "vae", "persona", "quality", "sampler", "scheduler", "refSizing"]) {
     if (it[key] !== undefined) {

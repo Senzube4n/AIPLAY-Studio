@@ -382,7 +382,7 @@ test("8: a take timed before runMs existed still counts, and the sentence says i
 
 test("8: the render's own clock is what generate.js writes on a take", async () => {
   const gen = await src("../mv/generate.js");
-  assert.match(gen, /const \{ clip, seconds: ranSeconds \} = await awaitArt\(art, file, \["clip"\]/);
+  assert.match(gen, /const \{ clip, seconds: ranSeconds(?:, meta: \w+)? \} = await awaitArt\(art, file, \["clip"\]/);
   assert.match(gen, /row\.takes\.push\(\{ clip, seed: usedSeed, at: Date\.now\(\), ms: clipMs, runMs,/);
   const art = await src("../art.js");
   assert.match(art, /this\.emit\("clip", \{\s*file: job\.file, clip,\s*seconds: Math\.round\(\(Date\.now\(\) - this\.startedAt\) \/ 1000\)/,

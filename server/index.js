@@ -273,7 +273,7 @@ import { createPromptStore } from "./prompts.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { runReactive } from "./reactive.js";
-import { paintClip } from "./reactive_paint.js";
+import { paintClip, paintDials } from "./reactive_paint.js";
 import { motionClip, motionChoices } from "./reactive_motion.js";
 // Video Workflow (fork-only). See FORK_DELTA.md.
 import { createMvRoutes } from "./mv/routes.js";
@@ -334,7 +334,7 @@ import { createPreviewStore, assertPreviewFresh } from "./collab/preview.js";
 const collabPreviews = createPreviewStore();
 import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
 import { creditRollup, creditLines } from "./collab/credit.js";
-import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn } from "./collab/order.js";
+import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn, shotFlags } from "./collab/order.js";
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
 import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrderFiles } from "./collab/errand.js";
@@ -359,6 +359,12 @@ import { seedScore } from "./music/seed.js";
 import { appVersion, versionLine } from "./version.js";
 import { checkUpdates, lastCheck, updateSentence } from "./updates.js";
 import { BatteryGuard, watchPower } from "./power.js";
+/* THE MINORS RULE (docs/SAFETY.md): sexual content involving minors is refused
+ * at every door, whatever the model, the agent or the setting. */
+import { onRefusal, safetyRefusal, assertSafe, bodyOfError } from "./safety/refusal.js";
+import { LineageMap, lineageOf } from "./safety/lineage.js";
+import { createSafetyRoutes } from "./safety/routes.js";
+import { BACKSTOP_TOKEN } from "./safety/backstop.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -631,6 +637,10 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
                            * shelf, so without this the answer to "what made this?"
                            * is a category rather than a model. */
                           checkpoint: checkpoint ?? null,
+                          /* imageOptions carries `safety` too: two booleans,
+                           * never words, kept when private — what the minors
+                           * rule knows this picture was made from
+                           * (art.js, server/safety/lineage.js). */
                           ...(imageOptions || {}),
                           ...(isPrivate ? {} : (wildOf || {})) });
     // Generated-media registration: the image entered the library here.
@@ -756,6 +766,14 @@ function enhanceLimitBytes() {
 const provNote = (scope, evt) =>
   prov.append(scope, evt).catch((err) =>
     console.error(`  [provenance] event lost (${evt?.type}/${evt?.asset}): ${err.message}`));
+
+/* ⚠ EVERY REFUSAL UNDER THE MINORS RULE IS FILED, AND NOTHING OF WHAT WAS
+ * ASKED. server/safety/refusal.js builds the event: type "refused", the code,
+ * the door and a caller id, no prompt, no label, no hash. The engine door files
+ * its own; this is the one listener for every other door (routes, the art
+ * queue, collab orders and recipes, overnight plans, the Comfy Router, the
+ * enhancer, MV control renders, the engine's own backstop). */
+onRefusal((evt) => provNote("library", evt));
 
 /**
  * The tagging meta's provenance fields for a library audio file: the pinned
@@ -899,7 +917,14 @@ const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_pr
 
 const ckptProbeCache = new Map();
 
-const imageMeta = new Map();
+/* ⚠ A LineageMap, NOT A PLAIN Map (server/safety/lineage.js). Every row
+ * written here gets its wordless minors fingerprint, `safety: {minor,
+ * sexual}`, from its own words and from every file it names as its parent, so
+ * the dozens of places below that write a derived picture (edit, upscale,
+ * cutout, mask, sheet, composite, document, vector...) copy it forward without
+ * each having to remember. Rows read back from disk go in with `load`. */
+const libraryRows = (n) => [imageMeta.get(n), clipMeta.get(n)].filter(Boolean);
+const imageMeta = new LineageMap(libraryRows);
 const pendingImagePrompt = new Map();
 /* WHO asked for the image — parked beside the prompt for the same reason, so
  * the ledger's generate event can carry the honest actor (user vs agent:*)
@@ -922,7 +947,7 @@ async function saveImageStore() {
 }
 try {
   const raw = JSON.parse(await readFile(IMAGE_STORE, "utf8"));
-  for (const [k, v] of Object.entries(raw)) imageMeta.set(k, v);
+  for (const [k, v] of Object.entries(raw)) imageMeta.load(k, v);
 } catch { /* none yet */ }
 
 /* WHAT WAS ASKED FOR, and whether anyone checked (server/review.js).
@@ -947,7 +972,63 @@ const clipTimes = new Map();
  *
  * In memory for standalone clips (they are not library rows); track-attached
  * ones also go into the sidecar, which is the copy that survives a restart. */
-const clipMeta = new Map();
+const clipMeta = new LineageMap(libraryRows);
+
+/**
+ * WHAT THE PICTURES A REQUEST HANDS OVER WERE MADE FROM, for the minors rule.
+ *
+ * A reference picture, an opening frame, the image being edited and the clip
+ * being continued or restyled all reach the model as pixels, which no text
+ * check can read. What this app CAN read is what each library file was made
+ * from: its stored prompt (imageMeta, clipMeta) and its wordless fingerprint,
+ * for it and for EVERY ancestor it names (an edit's `derivedFrom`, a sheet's
+ * `sheetOf`, a composite's sources...), with no depth limit
+ * (server/safety/lineage.js). The words go in as context and the fingerprints
+ * as flags; both count on both sides exactly like the prompt, so "make her
+ * nude" on a picture that was made as "a portrait of a child" is refused, on
+ * the fifth edit as on the first, and on a private render that kept no words.
+ * An upload has no history; that residual is stated in docs/SAFETY.md.
+ * @returns {{ texts: string[], flags: object[] }}
+ */
+function lineage(values) {
+  return lineageOf(values, libraryRows);
+}
+
+/** The words an MV project row carries (a cast member's description and sheet
+ *  prompt, a plate prompt), for the rows named: what stands behind a
+ *  <Picture n> in a scene sent to a friend. Context only; never sent. */
+function mvRowWords(doc, names = []) {
+  const rows = [...(doc?.characters || []), ...(doc?.backgrounds || []), ...(doc?.props || [])];
+  const out = [];
+  for (const n of new Set(names)) {
+    const row = rows.find((r) => r?.name === n);
+    for (const k of ["description", "sheetPrompt", "platePrompt"]) {
+      if (typeof row?.[k] === "string" && row[k].trim()) out.push(row[k]);
+    }
+  }
+  return out;
+}
+
+/** The library pictures an editor document is built from: every `src` its
+ *  layers (and masks) name, read from the document shelf imgdoc.py keeps
+ *  beside the images. A shelf this cannot read names nothing. */
+async function documentSources(id) {
+  try {
+    const shelf = JSON.parse(await readFile(path.join(IMAGE_DIR, "_documents.json"), "utf8"));
+    const doc = shelf?.documents?.[String(id)];
+    const out = [];
+    const visit = (v, d) => {
+      if (d > 16 || !v || typeof v !== "object") return;
+      if (Array.isArray(v)) { for (const x of v) visit(x, d + 1); return; }
+      for (const [k, x] of Object.entries(v)) {
+        if (k === "src" && typeof x === "string" && x.trim()) out.push(x);
+        else visit(x, d + 1);
+      }
+    };
+    visit(doc, 0);
+    return out;
+  } catch { return []; }
+}
 
 /**
  * Both of the above, on disk.
@@ -963,7 +1044,7 @@ let clipStoreTimer = null;
 async function loadClipStore() {
   try {
     const raw = JSON.parse(await readFile(CLIP_STORE, "utf8"));
-    for (const [k, v] of Object.entries(raw.meta ?? {})) clipMeta.set(k, v);
+    for (const [k, v] of Object.entries(raw.meta ?? {})) clipMeta.load(k, v);
     for (const [k, v] of Object.entries(raw.times ?? {})) clipTimes.set(k, v);
   } catch { /* first run, or unreadable — neither is worth failing over */ }
 }
@@ -1906,6 +1987,9 @@ async function renderTimeline(name, { fade = 0, beatZoom = 0, beatsFile = null }
 
 const mvRoutes = createMvRoutes({
   json, readBody, library, art, beatsFor, LRC_DIR, CLIP_DIR, IMAGE_DIR, COVER_DIR,
+  /* What a library clip or picture was made from, for the minors rule: a
+   * control render's driving clip is judged with its own history. */
+  lineage,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
    *
    * `provenance` is the same module every other surface writes through, so a
@@ -2699,6 +2783,12 @@ const engineRoutes = createEngineRoutes({
  * CLIP_DIR, IMAGE_DIR and the closure above are all built in this file. */
 engineDoor.setAdopter(engineRoutes.adopt);
 
+/* THE ENGINE'S OWN BACKSTOP ASKS HERE. server/comfy_nodes/aiplay_safety_gate.py
+ * sends every graph posted to the engine (including through a revealed or
+ * pinned port, which never passes through this process) to POST
+ * /api/safety/check with the per-boot token the supervisor gave it. */
+const safetyRoutes = createSafetyRoutes({ json, readBody, token: BACKSTOP_TOKEN });
+
 /* ⚠ MODULE SCOPE, BECAUSE THE HANDLER BELOW RUNS PER REQUEST. This was first
  * written beside adoptEngineImage, which READS like module scope and is not -
  * it lives inside the createServer callback. Every request re-declared this as
@@ -2733,6 +2823,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/engine" || p.startsWith("/api/engine/")) {
       if (await engineRoutes(req, res, url)) return;
     }
+    if (p === "/api/safety/check") {
+      if (await safetyRoutes(req, res, url)) return;
+    }
 
     // ---- API ------------------------------------------------------------
     if (p === '/api/avatars' || p.startsWith('/api/avatars/')) {
@@ -2761,7 +2854,27 @@ const server = http.createServer(async (req, res) => {
       catch (error) { return json(res, 400, { error: error.message }); }
     }
     if (p === "/api/images/ai-edit" && req.method === "POST") {
-      try { return json(res, 200, await imageEditor.request(await readBody(req), prov.actorFrom(req))); }
+      try {
+        const b = await readBody(req);
+        /* ⚠ THE MINORS RULE, before the editor prepares anything. The picture
+         * being edited is pixels; the prompt it was made from (and whatever it
+         * was derived from) is read as context, so an edit instruction on a
+         * picture of a child is judged with that child in view. The render
+         * itself goes through /api/image and the engine door, which check the
+         * words again. */
+        if (!b?.action || b.action === "create") {
+          /* A document is edited as a whole: its layers' own library pictures
+           * are what it was made from. */
+          const editLineage = lineage([b?.source, ...(Array.isArray(b?.refImages) ? b.refImages : []),
+            ...(b?.documentId ? await documentSources(b.documentId) : [])]);
+          const refused = safetyRefusal({
+            door: "api.images.ai-edit", actor: prov.actorFrom(req), texts: [String(b?.prompt || "")],
+            context: editLineage.texts, flags: editLineage.flags,
+          });
+          if (refused) return json(res, 422, refused);
+        }
+        return json(res, 200, await imageEditor.request(b, prov.actorFrom(req)));
+      }
       catch (error) { return json(res, 400, { error: error.message }); }
     }
     /* ⚠ THE DOOR THAT WAS NEVER HUNG. server/score/ shipped with 2451 lines and
@@ -3088,6 +3201,8 @@ const server = http.createServer(async (req, res) => {
         if (b.action === "clear") return json(res, 200, batch.clear());
         return json(res, 400, { error: "Unknown action." });
       } catch (err) {
+        /* An overnight plan refused under the minors rule (batch.js) says so. */
+        if (err?.safety) return json(res, 422, { error: String(err.message), code: err.code, ...(err.hint ? { hint: err.hint } : {}) });
         return json(res, 400, { error: String(err.message || err) });
       }
     }
@@ -3525,6 +3640,13 @@ const server = http.createServer(async (req, res) => {
        * in foldOrigin. A door that fabricates a human is worse than a door that
        * records nothing. */
       const who = prov.actorFrom(req);
+      /* ⚠ THE MINORS RULE, before a bar is analysed. Pictures made from this
+       * prompt go through /api/image, the Paint look through /api/engine and
+       * the Motion look through the engine door, and each checks again. */
+      if (typeof b.prompt === "string" && b.prompt.trim()) {
+        const refused = safetyRefusal({ door: "api.reactive", actor: who, texts: [b.prompt] });
+        if (refused) return json(res, 422, refused);
+      }
       const loop = async (door, body) => {
         const r = await fetch(`http://127.0.0.1:${config.uiPort}${door}`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -3609,16 +3731,32 @@ const server = http.createServer(async (req, res) => {
           waitIdle,
           /* The Paint look's renderer: frames through the engine door, the
            * clip into the library, progress on the console. */
-          paint: (po) => paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
-            actor: who,
-            onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
-          }),
+          /* ⚠ THE MINORS RULE, on the look's words with what the source clip
+           * and the style pictures were made from (server/safety/lineage.js).
+           * Paint's frames reach the engine one by one through /api/engine,
+           * which sees the words but not this history, so it is judged here. */
+          paint: (po) => {
+            const lin = lineage([po.clip, ...(Array.isArray(po.styles) ? po.styles : [])]);
+            const d = paintDials(po.dials || {});
+            assertSafe({ door: "reactive.paint", via: "reactive.paint", actor: who, texts: [d.styleA, d.styleB],
+              context: lin.texts, flags: lin.flags });
+            return paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
+              actor: who,
+              onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
+            });
+          },
           /* The Motion look: AnimateDiff through the engine door, adopted
-           * into the clips library like any other render. */
-          motion: (mo) => motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, { engine: engineDoor, actor: who }),
+           * into the clips library like any other render. The door judges
+           * its graph with the source clip's and the pictures' history. */
+          motion: (mo) => {
+            const lin = lineage([mo.clip, ...(Array.isArray(mo.pictures) ? mo.pictures : [])]);
+            return motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
+              { engine: engineDoor, actor: who });
+          },
         });
         return json(res, 200, out);
       } catch (err) {
+        if (err?.safety) return json(res, 422, bodyOfError(err));
         return json(res, 400, { error: String(err.message || err) });
       }
     }
@@ -5526,6 +5664,10 @@ const server = http.createServer(async (req, res) => {
             const meO = await collabIdentity({ appData });
             const orderDoc = makeOrder({
               shot: shotO, files: filesO,
+              /* THE MINORS RULE, with the words behind each <Picture n>: the
+               * named rows' own descriptions, which stay on this machine. What
+               * each picture was made as also travels, wordless, on its row. */
+              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.name)),
               order: {
                 segmentId: shotO.segmentId,
                 /* The defaults are the SCENE's own, so an order with nothing
@@ -5572,6 +5714,12 @@ const server = http.createServer(async (req, res) => {
           const packet = kind === "shot"
             ? await shotPacket({ doc, segmentId: String(b.segmentId || ""), assetsDir: assets })
             : await projectBundle({ doc, assetsDir: assets });
+          /* ⚠ THE MINORS RULE ON A SHOT SENT FOR SOMEBODY ELSE TO RENDER: the
+           * same check an order gets, before anything is sealed or shown. */
+          if (kind === "shot") {
+            assertSafe({ door: "collab.shot", via: "collab", texts: [String(packet.prompt || "")],
+              context: mvRowWords(doc, (packet.refs || []).map((r) => r.name)), flags: shotFlags(packet) });
+          }
           if (action === "preview") return previewFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`, {
             slug, document: doc, describes: describePacket(packet),
           });
@@ -5638,6 +5786,16 @@ const server = http.createServer(async (req, res) => {
            * sentence that names both numbers. */
           const talk = speaks(packet?.v);
           if (!talk.ok) return json(res, 409, { error: talk.why, reason: talk.reason, protocol: talk.theirs, from: { fp: sender.fp, nickname: sender.nickname } });
+          /* ⚠ THE MINORS RULE BEFORE THE CARD. An order or a shot this Studio
+           * would refuse to accept is refused when it is OPENED, so its words
+           * are never put on a screen here either: only the sentence, and who
+           * sent it. */
+          if (packet?.kind === "order" || packet?.kind === "shot") {
+            const shotIn = packet.kind === "order" ? packet.shot : packet;
+            const refusedIn = safetyRefusal({ door: "collab.open", via: "collab",
+              texts: [String(shotIn?.prompt || "")], flags: shotFlags(shotIn) });
+            if (refusedIn) return json(res, 422, { ...refusedIn, from: { fp: sender.fp, nickname: sender.nickname } });
+          }
           let videoRecipe = null;
           if (packet?.kind === "video-recipe") {
             if (!sender.verified || !["lender","collaborator"].includes(sender.role)) return json(res,403,{error:"Verify this sender and assign a role before using a video recipe.",reason:"role"});
@@ -5670,6 +5828,8 @@ const server = http.createServer(async (req, res) => {
         }
         return json(res, 400, { error: `Unknown action: ${action}`, reason: "action" });
       } catch (e) {
+        /* A minors refusal answers like every other door: 422, the sentence, its code. */
+        if (e?.safety) return json(res, 422, { ...bodyOfError(e), reason: e.reason });
         const status = e?.status || (e?.reason ? 400 : 500);
         return json(res, status, { error: e?.message || String(e), ...(e?.reason ? { reason: e.reason } : {}) });
       }
@@ -6165,6 +6325,7 @@ const server = http.createServer(async (req, res) => {
             seed: Math.floor(Math.random() * 4294967296), force: true,
           });
           if (!redraw) {
+            if (art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
             return json(res, 409, {
               error: `The cover was not queued — ${art.lastRefusal || "the queue refused it"}.`,
               ...art.status(),
@@ -6337,6 +6498,14 @@ const server = http.createServer(async (req, res) => {
         const prior = clipMeta.get(name);
         const prompt = String(b.prompt || prior?.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe what happens next — this clip carries no prompt of its own." });
+        /* ⚠ THE MINORS RULE: the continuation's words, with the clip it
+         * continues (and that clip's own history) as context. */
+        const extendLineage = lineage([name]);
+        {
+          const refused = safetyRefusal({ door: "api.video.extend", actor: prov.actorFrom(req), texts: [prompt],
+            context: extendLineage.texts, flags: extendLineage.flags });
+          if (refused) return json(res, 422, refused);
+        }
         // Staged under a content name so the engine's LoadVideo can pick it from its input folder.
         const staged = `aiplay_cont_${createHash("sha1").update(`${name}:${st.size}:${Math.round(st.mtimeMs)}`).digest("hex").slice(0, 12)}${path.extname(name).toLowerCase()}`;
         await mkdir(config.inputDir, { recursive: true });
@@ -6361,6 +6530,7 @@ const server = http.createServer(async (req, res) => {
               overlapFrames: overlap, extensionFrames: ext,
             },
             extendedFrom: name,
+            safetyContext: extendLineage.texts, safetyFlags: extendLineage.flags,
             bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
@@ -6368,6 +6538,7 @@ const server = http.createServer(async (req, res) => {
             loras: videoLoras(b.loras),
           },
         });
+        if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 200, {
           ok: true, id, job: job && { id: job.id },
           overlapFrames: overlap, extensionFrames: ext, windowFrames: overlap + ext,
@@ -6389,6 +6560,21 @@ const server = http.createServer(async (req, res) => {
         catch (err) { return json(res, 400, { error: err.message }); }
         const prompt = String(b.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe the clip first." });
+        /* ⚠ THE MINORS RULE, before anything is staged: the prompt, with the
+         * stored prompts of every library picture or clip it is handed (the
+         * opening and closing frames, the waypoints, the references, the
+         * driving video) as context. */
+        const clipLineage = lineage([
+          b.fromCover, b.toCover,
+          ...(Array.isArray(b.midUploads) ? b.midUploads : []),
+          ...(Array.isArray(b.refImages) ? b.refImages : []),
+          b.sourceVideo || b.source_video,
+        ]);
+        {
+          const refused = safetyRefusal({ door: "api.video.create", actor: prov.actorFrom(req), texts: [prompt],
+            context: clipLineage.texts, flags: clipLineage.flags });
+          if (refused) return json(res, 422, refused);
+        }
 
         /* Opening and closing frames have to be readable by LoadImage, which only
          * looks in ComfyUI's input directory — so a cover living in output/covers
@@ -6649,8 +6835,10 @@ const server = http.createServer(async (req, res) => {
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
             loras: videoLoras(b.loras),
+            safetyContext: clipLineage.texts, safetyFlags: clipLineage.flags,
           },
         });
+        if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
       }
 
@@ -6708,7 +6896,10 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "bad file" });
         }
         const m = library.meta.get(file) || {};
-        art.request({ file, title: m.title, caption: m.caption, seed: m.seed, kind: "video", force: true });
+        const queued = art.request({ file, title: m.title, caption: m.caption, seed: m.seed, kind: "video", force: true });
+        /* No typed prompt here: the caption becomes one, and the queue checks
+         * THAT under the minors rule. */
+        if (!queued && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 200, { ok: true, ...art.status() });
       }
       return json(res, 400, { error: "Unknown action." });
@@ -7729,6 +7920,25 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      /* ⚠ THE MINORS RULE, on the words this picture will really be made from:
+       * the template expanded and the persona's words folded in exactly as
+       * applyPersona folds them below. The stored prompts of the library
+       * pictures handed over as references (the caller's and the persona's)
+       * count as well. Before anything is staged: 422 and nothing copied,
+       * queued or recorded but the refusal. The art queue and the engine door
+       * check again, the door on the final graph. */
+      const imageLineage = lineage([
+        ...(Array.isArray(b.refImages) ? b.refImages : []),
+        ...(personaUsed?.refImages || []),
+      ]);
+      {
+        const refused = safetyRefusal({
+          door: "api.image", actor: prov.actorFrom(req),
+          texts: [applyPersona(personaUsed, { prompt }).prompt], context: imageLineage.texts, flags: imageLineage.flags,
+        });
+        if (refused) return json(res, 422, refused);
+      }
+
       /* Reference images — FLUX in-context editing. Staged into ComfyUI's
        * input dir exactly the way video frames are: an already-staged upload
        * name passes through, a cover or Images-screen file is copied in. The
@@ -7809,6 +8019,8 @@ const server = http.createServer(async (req, res) => {
         video: {
           prompt: finalPrompt,
           engine,
+          /* Carried to the engine door, which checks the final graph with it. */
+          safetyContext: imageLineage.texts, safetyFlags: imageLineage.flags,
           quality: b.quality === "quality" ? "quality" : "default",
           checkpoint: b.checkpoint || undefined,
           /* The model file a person picked, and the halves they named for it.
@@ -7908,6 +8120,8 @@ const server = http.createServer(async (req, res) => {
         pendingImagePrompt.delete(file);
         pendingImageActor.delete(file);
         pendingImageWild.delete(file);
+        /* The queue's own minors check said no: the one sentence, as a 422. */
+        if (art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 409, {
           error: `The render was not queued — ${art.lastRefusal || "the queue refused it"}.`,
           ...art.status(),
@@ -10622,6 +10836,13 @@ const server = http.createServer(async (req, res) => {
       if (!/\.(mp4|webm)$/i.test(name)) return json(res, 400, { error: "not a video clip" });
       const prompt = String(b.prompt || "").trim();
       if (!prompt) return json(res, 400, { error: "Describe the look first." });
+      /* ⚠ THE MINORS RULE: the new look, with the source clip's own history. */
+      const restyleLineage = lineage([name]);
+      {
+        const refused = safetyRefusal({ door: "api.restyle", actor: prov.actorFrom(req), texts: [prompt],
+          context: restyleLineage.texts, flags: restyleLineage.flags });
+        if (refused) return json(res, 422, refused);
+      }
       const vr = videoReady("ltx");
       if (!vr.ready) return json(res, 400, { error: `LTX is not installed: ${vr.missing.join(", ")}` });
 
@@ -10663,6 +10884,7 @@ const server = http.createServer(async (req, res) => {
         seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
         video: {
           prompt, negative: b.negative,
+          safetyContext: restyleLineage.texts, safetyFlags: restyleLineage.flags,
           guideEvery: every,
           guideStrength: Number.isFinite(b.guideStrength) ? Number(b.guideStrength) : undefined,
           strengths,
@@ -10670,6 +10892,7 @@ const server = http.createServer(async (req, res) => {
           seconds: Number(b.seconds) || undefined,
         },
       });
+      if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
       return json(res, 200, {
         ok: true, job: job && { id: job.id },
         guides: strengths?.length ?? null, strengths, bpm,

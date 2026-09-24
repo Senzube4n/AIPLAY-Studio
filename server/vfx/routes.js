@@ -63,6 +63,15 @@ import { createAudioPreview, validateAudioPreviewRequest } from "./audio-preview
  * A port answering is not an answer to that. */
 import { engine } from "../engine/client.js";
 
+/** The library pictures and clips a comp's layers name (`src`), for the
+ *  lineage the minors rule reads. A precomp layer names a comp, which the
+ *  library does not know, and is harmless there. */
+const layerSourcesOf = (doc) => {
+  const out = new Set();
+  for (const l of doc?.layers || []) if (typeof l?.src === "string" && l.src.trim()) out.add(path.basename(l.src.trim()));
+  return out.size ? [...out] : undefined;
+};
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
 const AUDIOKEYS = path.join(__dirname, "audiokeys.py");
@@ -1713,6 +1722,9 @@ export function createVfxRoutes(deps) {
           try {
             deps.rememberClip(outName, Math.round((r.ms ?? 0) / 1000) || null, {
               source: "vfx", comp: doc.slug,
+              /* The library files it was composited from, so the minors rule
+               * carries their fingerprints forward (server/safety/lineage.js). */
+              layerSources: layerSourcesOf(doc),
               clipSeconds: Number((to - from).toFixed(3)),
               fps: doc.fps ?? null, at: Date.now(),
             });
@@ -2514,6 +2526,7 @@ export function createVfxRoutes(deps) {
             deps.rememberImage(outName, {
               prompt: `${doc.name} — compositor frame at ${t}s`,
               source: "vfx", comp: doc.slug, t, scale, draft,
+              layerSources: layerSourcesOf(doc),
               view: view?.name ?? null,
               width: r.width ?? null, height: r.height ?? null,
               /* Nothing here came out of a checkpoint, so the gallery's

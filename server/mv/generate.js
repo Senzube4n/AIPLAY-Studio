@@ -29,6 +29,65 @@ import { resolveShot, markBoardRefsChanged, refreshBoardStale } from "./shot.js"
  * reports it — two copies would disagree the first time anybody added a noun,
  * and the map would then be quietly kinder than the lint. */
 import { undeclaredRecurring, declaredAssets, namesAsset, saidWords } from "./bible.js";
+import { safetyError, CODE as SAFETY_CODE } from "../safety/refusal.js";
+import { UNVERIFIABLE_CODE } from "../safety/graph.js";
+
+/**
+ * THE WORDS BEHIND THE PICTURES A RENDER IS HANDED, for the minors rule.
+ *
+ * A board or clip prompt names its cast only BY NAME ("<Picture 1> is Mara"),
+ * and who Mara is reaches the model as her sheet, a picture no text check can
+ * read. So a child described in a character's description, rendered to a
+ * sheet, and then put in a sexual board action would pass a check of the
+ * prompt alone. Each render here therefore hands the art queue the named
+ * rows' own descriptions as `safetyContext`: words that are never sent to the
+ * model, and that count on both sides of the check exactly like the prompt
+ * (server/safety/minors.js). The engine door checks them again.
+ */
+export function castContext(doc, names = []) {
+  const rows = [...(doc?.characters || []), ...(doc?.backgrounds || []), ...(doc?.props || [])];
+  const out = [];
+  for (const n of new Set(names)) {
+    const row = rows.find((r) => r?.name === n);
+    if (!row) continue;
+    for (const k of ["description", "sheetPrompt", "platePrompt"]) {
+      if (typeof row[k] === "string" && row[k].trim()) out.push(row[k]);
+    }
+  }
+  return out;
+}
+
+/**
+ * THE SAME, WITHOUT WORDS AND WITHOUT A WAY ROUND IT.
+ *
+ * A description can be edited after its sheet is drawn, so the words above
+ * say what a row is NOW and not what its picture was MADE as. Every take
+ * carries the wordless fingerprint of what it was rendered from
+ * (server/safety/lineage.js), and this returns the fingerprint of the take
+ * each named row has ADOPTED, which is the picture a render is actually handed.
+ * A board's own adopted still counts too (pass the board as `board`).
+ */
+export function castFlags(doc, names = [], { board = null } = {}) {
+  const rows = [...(doc?.characters || []), ...(doc?.backgrounds || []), ...(doc?.props || [])];
+  /* A row may also carry `safety` itself: a friend's errand (collab/errand.js)
+   * has no takes, only the flags the sender's Studio put on each picture. */
+  const adopted = (row) => {
+    const flags = [];
+    if (row?.safety && typeof row.safety === "object") flags.push(row.safety);
+    if (!row?.imageFile) return flags;
+    const take = (row.takes || []).find((t) => t?.file === row.imageFile);
+    if (take?.safety && typeof take.safety === "object") flags.push(take.safety);
+    return flags;
+  };
+  const out = [];
+  for (const n of new Set(names)) out.push(...adopted(rows.find((r) => r?.name === n)));
+  if (board) out.push(...adopted(board));
+  return out;
+}
+
+const boardCast = (board) => [
+  ...(board?.characterRefs || []), ...(board?.backgroundRefs || []), ...(board?.propRefs || []),
+];
 
 const rollSeed = () => Math.floor(Math.random() * 4294967296);
 
@@ -38,6 +97,12 @@ const rollSeed = () => Math.floor(Math.random() * 4294967296);
  * and on a deadline, because a wedged queue must not wedge the route forever.
  */
 export function awaitArt(art, file, events, timeoutMs = 20 * 60e3) {
+  /* A job the queue REFUSED under the minors rule was never queued, and its
+   * `failed` event went out inside request() — before this wait began. Every
+   * MV caller ignores request()'s return, so without asking here it would wait
+   * the whole deadline for an answer that has already been given. */
+  const refused = typeof art?.refusalFor === "function" ? art.refusalFor(file) : null;
+  if (refused) return Promise.reject(safetyError({ door: "art.request", hint: refused.hint }));
   return new Promise((resolve, reject) => {
     const done = (fn) => (payload) => {
       if (payload.file !== file) return;
@@ -45,7 +110,14 @@ export function awaitArt(art, file, events, timeoutMs = 20 * 60e3) {
       fn(payload);
     };
     const ok = done(resolve);
-    const bad = done((p) => reject(new Error(p.error || "render failed")));
+    /* A refusal keeps its own words (the sentence and any hint after it) and
+     * its code, so the MV routes answer it as a 422 like every other door. */
+    const bad = done((p) => {
+      if (p.code !== SAFETY_CODE && p.code !== UNVERIFIABLE_CODE) return reject(new Error(p.error || "render failed"));
+      const e = safetyError({ door: "engine.dispatch", code: p.code });
+      if (p.error) e.message = String(p.error);
+      return reject(e);
+    });
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error("render timed out — check the queue on the Music tab"));
@@ -396,6 +468,8 @@ export async function generateAsset(deps, slug, { target, id, count = 4, seed, r
       count: Math.min(Math.max(Number(count) || 1, 1), 4),
       width: wide ? 1344 : 768, height: wide ? 768 : 1344,
       refImages,
+      safetyContext: castContext(doc, target === "board" ? boardCast(row) : [row.name]),
+      safetyFlags: castFlags(doc, target === "board" ? boardCast(row) : []),
     },
   });
   /* HOW LONG IT TOOK, kept on the take.
@@ -407,7 +481,7 @@ export async function generateAsset(deps, slug, { target, id, count = 4, seed, r
    * survives whatever art.js does internally, and it is the number a person
    * actually means by "how long did that take". */
   const askedAt = Date.now();
-  const { covers } = await awaitArt(art, file, ["cover"]);
+  const { covers, safety } = await awaitArt(art, file, ["cover"]);
   const tookMs = Date.now() - askedAt;
 
   return updateProject(slug, async (doc2) => {
@@ -421,7 +495,10 @@ export async function generateAsset(deps, slug, { target, id, count = 4, seed, r
         // asset folder for the picture that is keeping a car the same car.
         target === "character" ? "char" : target === "background" ? "bg"
           : target === "prop" ? "prop" : "board");
-      row2.takes.push({ file: staged, seed: usedSeed, at: Date.now(), ms: tookMs });
+      /* `safety`: the wordless minors fingerprint of what this take was drawn
+       * from, which castFlags reads however the row's words change later. */
+      row2.takes.push({ file: staged, seed: usedSeed, at: Date.now(), ms: tookMs,
+                        ...(safety ? { safety: { minor: safety.minor === true, sexual: safety.sexual === true } } : {}) });
       if (!row2.imageFile) row2.imageFile = staged;   // first take auto-selects
     }
     row2.status = "rendered";
@@ -514,6 +591,7 @@ export async function generateBoardFrames(deps, slug, { id, seed } = {}) {
   const noCast = (row.characterRefs || []).length === 0;
 
   const frames = [];
+  const frameFlags = [];               // each beat's minors fingerprint, beside it
   let prev = null;
   let beatMs = 0;                      // the whole sequence, not one frame
   for (let i = 0; i < shots.length; i++) {
@@ -558,15 +636,19 @@ export async function generateBoardFrames(deps, slug, { id, seed } = {}) {
       file, title: `${doc.title} · ${row.name || "board"} · beat ${i + 1}`, kind: "cover", force: true,
       engine: doc.brief?.imageEngine || undefined, checkpoint: doc.brief?.imageCheckpoint || undefined,
       seed: usedSeed,
-      video: { prompt, count: 1, width: wide ? 1344 : 768, height: wide ? 768 : 1344, refImages },
+      video: { prompt, count: 1, width: wide ? 1344 : 768, height: wide ? 768 : 1344, refImages,
+               safetyContext: castContext(doc, boardCast(row)),
+               /* Each beat after the first is drawn FROM the one before it. */
+               safetyFlags: [...castFlags(doc, boardCast(row)), ...frameFlags] },
     });
     const beatAt = Date.now();
-    const { covers } = await awaitArt(art, file, ["cover"]);
+    const { covers, safety } = await awaitArt(art, file, ["cover"]);
     beatMs += Date.now() - beatAt;
     const made = (covers || [])[0];
     if (!made) throw new Error(`Beat ${i + 1} of ${row.name || id} produced nothing — check studio_status.`);
     const staged = await stageAsset(slug, path.join(config.outputDir, "images", made), "board");
     frames.push(staged);
+    frameFlags.push(safety ? { minor: safety.minor === true, sexual: safety.sexual === true } : null);
     prev = staged;
   }
 
@@ -577,7 +659,8 @@ export async function generateBoardFrames(deps, slug, { id, seed } = {}) {
      * folding them into takes would lose it. */
     row2.shotFrames = frames;
     row2.takes = row2.takes || [];
-    for (const f of frames) row2.takes.push({ file: f, seed: null, at: Date.now(), beat: true });
+    frames.forEach((f, i) => row2.takes.push({ file: f, seed: null, at: Date.now(), beat: true,
+      ...(frameFlags[i] ? { safety: frameFlags[i] } : {}) }));
     row2.beatMs = beatMs;
     /* The opening beat stays the board's representative still, so every existing
      * reader (the grid, the clip's firstFrame fallback) keeps working. */
@@ -840,6 +923,14 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
         ? { name: await stageSongForComfy(doc.song.file), start: seg.startSec }
         : undefined,
       keepAudio: false,
+      /* Who is behind each <Picture n>, and the board still the clip may open
+       * on — see castContext above. */
+      safetyContext: [
+        ...castContext(doc, board ? boardCast(board) : (doc.characters || []).map((c) => c.name)),
+        ...(typeof board?.boardPrompt === "string" && board.boardPrompt.trim() ? [board.boardPrompt] : []),
+      ],
+      /* ...and what those pictures were drawn as, whatever their words say now. */
+      safetyFlags: castFlags(doc, board ? boardCast(board) : (doc.characters || []).map((c) => c.name), { board }),
     },
   });
   const clipAt = Date.now();
@@ -854,13 +945,15 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
    *
    * Two hours, because the ceiling should be "something is genuinely wrong",
    * not "this render is slower than the ones I happened to measure". */
-  const { clip, seconds: ranSeconds } = await awaitArt(art, file, ["clip"], 120 * 60e3);
+  const { clip, seconds: ranSeconds, meta: clipMade } = await awaitArt(art, file, ["clip"], 120 * 60e3);
   const clipMs = Date.now() - clipAt;
   /* `clipMs` runs from the request to the finish, so it includes every job
    * queued ahead of this one. The art queue's own clock (the "clip" event's
    * `seconds`, from when this job started running) is the render alone — the
    * number a lender's minutes a day are charged in (collab/lending.js). */
   const runMs = typeof ranSeconds === "number" && Number.isFinite(ranSeconds) ? Math.round(ranSeconds * 1000) : null;
+  const clipSafety = clipMade?.safety && typeof clipMade.safety === "object"
+    ? { minor: clipMade.safety.minor === true, sexual: clipMade.safety.sexual === true } : null;
 
   return updateProject(slug, (doc2) => {
     const seg2 = doc2.segments.find((s) => s.id === seg.id);
@@ -876,6 +969,7 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
     // the switch — the row-level field alone forgets it.
     row.takes.push({ clip, seed: usedSeed, at: Date.now(), ms: clipMs, runMs,
                      engine,
+                     ...(clipSafety ? { safety: clipSafety } : {}),
                      /* WHICH picture this take opened on, recorded for the same
                       * reason the seed and the engine are: without it, "why does
                       * scene 4 hold its face and scene 9 not" has no answer on

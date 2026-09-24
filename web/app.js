@@ -5077,13 +5077,16 @@ $("edSave").onclick = async () => {
 $("edRegen").onclick = async () => {
   const file = state.editFile;
   if (!file) return;
+  /* The answer is READ: a cover the queue refused (the minors rule's 422, or
+   * a 409) says so instead of claiming it was queued. */
   const r = await fetch("/api/art", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "regenerate", file }),
   }).then((x) => x.json()).catch(() => ({}));
   /* Refused when no picture model can draw it (409, "Add a picture model to
    * get covers."): the server's sentence, and the model window where it named
-   * one, never a "Queued" for a cover that will not come. */
+   * one; refused under the minors rule (422): its one sentence. Never a
+   * "Queued" for a cover that will not come. */
   if (r?.error) { $("edArt").title = r.error; if (r.needsModel) offerModel(r); else await appAlert(r.error, "No cover was queued"); return; }
   $("edArt").title = "Queued — drawn as soon as nothing is generating";
 };

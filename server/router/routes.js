@@ -203,6 +203,8 @@ export function createRouterRoutes({ json, readBody, config, sameOriginLocalJson
       json(res, 404, { error: "unknown /api/router route" });
       return true;
     } catch (e) {
+      /* A refusal under the minors rule answers 422 with its code, like every door. */
+      if (e.safety) { json(res, 422, { error: e.message, code: e.code, ...(e.hint ? { hint: e.hint } : {}), ...(e.found ? { found: e.found } : {}) }); return true; }
       json(res, e.tooBig ? 413 : 400, { error: e.tooBig ? "That upload is over the Router's 100 MB limit." : e.message });
       return true;
     }

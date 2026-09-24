@@ -351,6 +351,14 @@ operations without a dedicated tool. Peer verification records the user's actual
 word check; adding a capability does not grant trust or send files by itself.
 Browser playback, OS dialogs and legacy canvas capture remain browser operations.
 
+## What Studio will not make
+
+Studio refuses any request that pairs a child or teenager with nudity or sexual
+content: "This can't be made: it pairs a child or teenager with sexual
+content." That holds for every model, screen, agent and setting, including
+private and overnight renders, and nothing switches it off. Adult content stays
+your choice. See [docs/SAFETY.md](docs/SAFETY.md).
+
 ## Working on this repository
 
 **Changing the interface? Read [docs/UI_GUIDE.md](docs/UI_GUIDE.md) first.**

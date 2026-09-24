@@ -62,6 +62,13 @@ import { TOOL, normalizeActor } from "../provenance.js";
 import { buildRecord, graphProblems, sha256, sortedJSON } from "./record.js";
 import { store as defaultStore } from "./store.js";
 import { applyModelOverrides } from "../localmodels.js";
+import { checkGraph } from "../safety/graph.js";
+import { refusalEvent, safetyError } from "../safety/refusal.js";
+
+/** Where the Studio's safety node inside ComfyUI says whether it is armed. */
+export const BACKSTOP_STATUS_PATH = "/aiplay/safety_status";
+export const BACKSTOP_NOT_ARMED = "The engine's port is not handed out: the Studio's safety check inside the engine "
+  + "is not running, so graphs posted there directly would not be checked. Restart the engine from the Studio.";
 
 /**
  * ⚠ EVERY WAIT IN THE POLL LOOP IS BOUNDED, and these numbers are not fresh
@@ -254,6 +261,22 @@ export function createEngineClient(deps = {}) {
    * names nobody must not inherit that choice by omission (SPEC D1.0).
    */
   async function reveal({ actor = "system" } = {}) {
+    /* ⚠ NOT TO AN ENGINE WHOSE MINORS BACKSTOP IS NOT ARMED. A revealed port
+     * takes graphs that never pass through this process; the only check on
+     * them is the Studio's own node inside ComfyUI
+     * (server/comfy_nodes/aiplay_safety_gate.py), which reports whether it
+     * loaded and was told where to ask. If it did not, the number is not
+     * handed out, and the sentence says why. */
+    if (ready()) {
+      let armed = false;
+      try { armed = (await getJSON(BACKSTOP_STATUS_PATH, 3000))?.armed === true; } catch { armed = false; }
+      if (!armed) {
+        const e = new Error(BACKSTOP_NOT_ARMED);
+        e.status = 409;
+        e.reason = "backstop-not-armed";
+        throw e;
+      }
+    }
     /* ⚠ RECORDED FIRST, AND A THROW ABORTS — the same inversion `dispatch()`
      * makes, for the same reason. Revealing the port is acceptable precisely
      * BECAUSE the ledger can afterwards say "at 02:14 this was revealed;
@@ -491,6 +514,8 @@ export function createEngineClient(deps = {}) {
    *
    *   1. validate the graph, and say which of the two ComfyUI save formats
    *      this is when it is the wrong one
+   *      …and refuse sexual content involving minors (server/safety), filing
+   *      only a wordless `refused` event: nothing below runs for such a graph
    *   2. build the record — pure
    *   3. store the graph under its own hash
    *   4. AWAIT the delegate event, AND LET A THROW ABORT
@@ -515,6 +540,33 @@ export function createEngineClient(deps = {}) {
       const err = new Error(`this graph cannot be run: ${problems[0]}`);
       err.problems = problems;
       throw err;
+    }
+    /* ⚠ SEXUAL CONTENT INVOLVING MINORS IS NEVER SENT, AND NEVER FILED.
+     *
+     * Every local render reaches the engine through this function, and this is
+     * the one place that sees the FINAL words: after wildcards, the persona
+     * fold, covers written from lyrics, MV clip prompts built from bibles,
+     * editor prefixes, custom workflows and raw graphs from /api/engine. So the
+     * check is here, before the record is built, before a dry run returns,
+     * before the graph is stored and before the delegate line — a refused graph
+     * leaves no copy of its words anywhere, only a `refused` event that names
+     * the door and the code (server/safety/refusal.js).
+     *
+     * It applies whatever `private`, `dryRun`, the actor or `via` say, and
+     * nothing in `deps` reaches it: there is no switch. `safetyContext` and
+     * `safetyFlags` only ADD (an MV cast member's description behind a
+     * <Picture n>, the stored prompt of a reference picture, the wordless
+     * fingerprint a library picture or clip carries); they can never remove
+     * anything. A graph whose words are written while it runs is refused too
+     * (graph.js UNVERIFIABLE). The throw is what every waiter already hears:
+     * art.js emits `failed`, MV's awaitArt rejects, engine/routes.js answers
+     * 422. */
+    const safety = checkGraph(graph, { context: spec.safetyContext, flags: spec.safetyFlags });
+    if (!safety.ok) {
+      await prov.append("library", refusalEvent({
+        door: "engine.dispatch", via: String(spec.via ?? "").trim() || null, actor: normalizeActor(spec.actor), code: safety.code,
+      })).catch((e) => console.error(`  [engine] a refusal was not recorded: ${e.message}`));
+      throw safetyError({ door: "engine.dispatch", hint: safety.hint, code: safety.code, reason: safety.reason, found: safety.found });
     }
     const via = String(spec.via ?? "").trim();
     if (!via) {

@@ -39,6 +39,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import { assertSafe } from "../safety/refusal.js";
 
 /* The one rule for "this step count overruns the speed-up file that loaded",
  * shared with the Plan card's floor note and the lender's accept check
@@ -144,7 +145,13 @@ function isShotPacket(shot) {
     && typeof shot.segmentId === "string" && typeof shot.prompt === "string";
 }
 
-function checkShot(shot) {
+/** The wordless flags a shot's pictures carry (packet.js puts `safety` on
+ *  each reference and guide row). Junk is ignored by the check, and a flag
+ *  can only ever add a half. */
+export const shotFlags = (shot) => [...(Array.isArray(shot?.refs) ? shot.refs : []), ...(Array.isArray(shot?.guides) ? shot.guides : [])]
+  .map((r) => r?.safety).filter((f) => f && typeof f === "object");
+
+function checkShot(shot, { context = [] } = {}) {
   const secs = Number(shot.seconds);
   /* A floor as well as a ceiling: 0.001 passed a "greater than zero" test and
    * made the consent card read "0.001s" for a render that costs exactly as much
@@ -158,6 +165,16 @@ function checkShot(shot) {
   if (String(shot.prompt).length > PROMPT_CAP) {
     throw refuse("bad-shot", `That scene's prompt is ${String(shot.prompt).length} characters. A prompt has to be readable by the person deciding whether to render it, and this one is longer than anything a person reads.`);
   }
+  /* ⚠ THE MINORS RULE, ON BOTH SIDES OF A LOAN. This one function runs when
+   * an order is SEALED (makeOrder, on the sender) and when it is ACCEPTED
+   * (readOrder, on the lender), so a scene that pairs a child or teenager with
+   * sexual content can neither be sent nor be taken on. The prompt is the
+   * frozen text the lender would render verbatim; the negative is not intent.
+   * The prompt names its cast only by NAME, so what each picture was made as
+   * travels beside it as two booleans (shotFlags) and is read on both sides;
+   * the sender also adds the cast's own words (`context`), which never leave
+   * its machine. Throws a 422 with the one sentence (server/safety/refusal.js). */
+  assertSafe({ door: "collab.order", via: "collab", texts: [String(shot.prompt)], context, flags: shotFlags(shot) });
   for (const k of ["segmentId", "engine", "engineMode", "mode", "promptSource", "guideMode", "negative", "songUnder"]) {
     if (shot[k] !== undefined && shot[k] !== null && String(shot[k]).length > LABEL_CAP) {
       throw refuse("bad-shot", `That scene's ${k} is far longer than a label should be.`);
@@ -194,11 +211,11 @@ function shotFiles(shot) {
  * carries no `name` — it is a frame rather than a character — so the join is on
  * `file`, which both have, and nothing here reads `name` off a guide.)
  */
-export function makeOrder({ shot, files = [], order, returnTo, expiresInHours = 48, now = 0, id = null } = {}) {
+export function makeOrder({ shot, files = [], order, returnTo, expiresInHours = 48, now = 0, id = null, safetyContext = [] } = {}) {
   if (!isShotPacket(shot)) {
     throw refuse("bad-arguments", "An order carries one shot packet, and what was passed is not one. Build it with packet.js shotPacket() — that function is where the decision about what may leave this machine lives, and an order must not make that decision a second time.");
   }
-  checkShot(shot);
+  checkShot(shot, { context: safetyContext });
   if (!returnTo || typeof returnTo !== "object" || !FP_RE.test(String(returnTo.fp || ""))) {
     throw refuse("bad-arguments", "An order must say where the finished take goes back to: returnTo.fp is this machine's own 32-character fingerprint.");
   }

@@ -51,6 +51,11 @@ import * as prov from "./provenance.js";
  * `const engine = job.engine || …` two lines above won. Caught by
  * art_cache_test.js on the first run, which is exactly what that test is for. */
 import { engine as engineDoor } from "./engine/client.js";
+/* The minors rule, asked at the queue's door as well as the engine's: a
+ * refusal here costs nothing and says so at once, before a job waits behind
+ * music for the GPU. server/safety/minors.js is the rule. */
+import { checkPrompt, fingerprintOf } from "./safety/minors.js";
+import { announceRefusal, refusalBody, CODE as SAFETY_CODE, REFUSAL } from "./safety/refusal.js";
 
 /**
  * Fold the track's filename into its seed.
@@ -527,6 +532,33 @@ export class ArtRunner extends EventEmitter {
   /* undefined = not asked this boot; true/false = the engine's own answer. */
   #ckOffered;
 
+  /* Files refused under the minors rule, remembered briefly so a caller that
+   * starts waiting AFTER request() returned (MV's awaitArt) still hears the
+   * refusal instead of waiting twenty minutes for an event already gone. */
+  #refused = new Map();
+
+  /** The refusal for a file this runner just refused under the minors rule,
+   *  or null. */
+  refusalFor(file) {
+    return this.#refused.get(file) || null;
+  }
+
+  /**
+   * The words a job will be rendered from, derived exactly the way #render,
+   * #clip and #restyle derive them. Null for kinds that make no picture
+   * (stems, timed lyrics, sound effects, enhancement): those are not checked.
+   */
+  #renderedWords(job) {
+    if (job.kind === "video") return job.prompt || videoPrompt({ caption: job.caption, title: job.title, seed: job.seed });
+    if (job.kind === "restyle") return job.prompt || "";
+    if (job.kind === "cover" || !job.kind) {
+      return String(job.file).startsWith("image:")
+        ? (job.prompt || "")
+        : coverPrompt({ caption: job.caption, title: job.title, seed: job.seed, lyrics: job.lyrics });
+    }
+    return null;
+  }
+
   /**
    * Which attention an H3 graph should carry: "ck" or null (no node).
    *
@@ -791,6 +823,10 @@ export class ArtRunner extends EventEmitter {
    * Anything new belongs here AND on the job below. */
   request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, actor, asked = false, private: isPrivate = false }) {
     this.lastRefusal = null;
+    /* Set only when the refusal is the minors rule, so a route can answer 422
+     * with the one sentence rather than its generic "not queued" 409. */
+    this.lastRefusalCode = null;
+    this.lastRefusalBody = null;
     if (!file) return this.#refuse("nothing to render — no file was named");
     /* `enabled` is the COVER ART setting, and it used to gate every kind.
      *
@@ -861,6 +897,37 @@ export class ArtRunner extends EventEmitter {
       // validated this object, and adding a knob should not need three edits.
       ...(video || {}),
     };
+    /* ⚠ SEXUAL CONTENT INVOLVING MINORS IS NOT QUEUED. Checked on the words
+     * this job WILL render — a cover's prompt written from lyrics, a clip's from
+     * its caption — plus any `safetyContext` the caller attached (an MV cast
+     * member's description behind a <Picture n>) and any `safetyFlags` (the
+     * wordless fingerprints of the pictures it is handed). The engine door
+     * checks the final graph again; this answer is the early, free one.
+     *
+     * Several callers ignore request()'s return and wait on events (MV's
+     * awaitArt, sfxcue), so a refusal is also announced as `failed` for this
+     * file and remembered for a late listener (refusalFor). */
+    const words = this.#renderedWords(job);
+    if (words !== null) {
+      const verdict = checkPrompt([words], { context: job.safetyContext, flags: job.safetyFlags });
+      if (!verdict.ok) {
+        announceRefusal({ door: "art.request", via: `art.${kind}`, actor: job.actor });
+        const body = refusalBody({ hint: verdict.hint, found: verdict.found });
+        this.lastRefusalCode = SAFETY_CODE;
+        this.lastRefusalBody = body;
+        this.#refused.delete(file);
+        this.#refused.set(file, { error: body.error, code: SAFETY_CODE, hint: verdict.hint || null });
+        if (this.#refused.size > 200) this.#refused.delete(this.#refused.keys().next().value);
+        this.emit("failed", { file, kind, owner: job.owner || null, error: body.error, code: SAFETY_CODE, runId: null });
+        return this.#refuse(REFUSAL);
+      }
+    }
+    /* A file refused earlier and asked for again with words that pass is no
+     * longer refused: a late waiter must not hear the old answer. */
+    this.#refused.delete(file);
+    /* The wordless fingerprint of what this job will make (server/safety/
+     * lineage.js): kept on the job, stamped on the picture or clip it makes. */
+    job.safety = fingerprintOf([words ?? ""], { context: job.safetyContext, flags: job.safetyFlags });
     this.queue.push(job);
     this.emit("update");
     this.#schedule();
@@ -1005,6 +1072,8 @@ export class ArtRunner extends EventEmitter {
                * Carries the graph fingerprint, so "why is this the same file?"
                * has an answer that can be checked. */
               cacheHit: job.cacheHit || null,
+              // The wordless minors fingerprint (server/safety/lineage.js).
+              safety: job.safety || null,
               at: Date.now(),
             },
           });
@@ -1017,7 +1086,7 @@ export class ArtRunner extends EventEmitter {
             seconds: Math.round((Date.now() - this.startedAt) / 1000),
             runId: job.runId ?? null,
             meta: {
-              source: "restyle", from: job.file, prompt: job.prompt,
+              source: "restyle", from: job.file, prompt: job.prompt, safety: job.safety || null,
               guideEvery: job.guideEvery, strengths: job.strengths || null,
               width: job.width || null, height: job.height || null,
               clipSeconds: job.seconds || null,
@@ -1068,7 +1137,13 @@ export class ArtRunner extends EventEmitter {
                                durationMs: job.startedAt ? Date.now() - job.startedAt : null,
                                engine: job._paintedBy || job.engine || "flux2",
                                checkpoint: job._paintedWith || null,
-                               imageOptions: job._imageOptions || null });
+                               /* The wordless minors fingerprint (server/safety/lineage.js) rides in
+                                * imageOptions, which index.js spreads onto the picture's row, so it
+                                * is kept even when the picture is private and its words are not. It
+                                * is also on the event itself, for MV's takes. */
+                               imageOptions: job._imageOptions || job.safety
+                                 ? { ...(job._imageOptions || {}), ...(job.safety ? { safety: job.safety } : {}) } : null,
+                               safety: job.safety || null });
         }
         /* Stamp the finish ONCE, here, rather than in each of the seven
          * kind-specific branches above — every one of them falls through to
@@ -1088,8 +1163,21 @@ export class ArtRunner extends EventEmitter {
         job.finishedAt = Date.now();
         job.durationMs = job.startedAt ? job.finishedAt - job.startedAt : null;
         job.error = String(err.message || err);
+        /* ⚠ A MINORS REFUSAL AT THE ENGINE DOOR LEAVES NO WORDS BEHIND. A
+         * picture's title is the first 48 characters of its prompt, and this
+         * job is about to be listed in status().art.recent, logged and shown as
+         * lastError. So its words go before any of that: the title, the
+         * prompt and the context, and the error is the sentence alone. */
+        if (err?.safety) {
+          job.title = null;
+          job.prompt = null;
+          job.usedPrompt = null;
+          job.caption = null;
+          job.lyrics = null;
+          job.safetyContext = null;
+        }
         if (!this.done.includes(job)) this.done.unshift(job);
-        this.lastError = `${job.title}: ${String(err.message || err)}`;
+        this.lastError = err?.safety ? String(err.message || err) : `${job.title}: ${String(err.message || err)}`;
         console.error(`  [${job.kind}] ${this.lastError}`);
         /* ⚠ Announce the failure, or an Overnight row waits forever.
          *
@@ -1103,6 +1191,9 @@ export class ArtRunner extends EventEmitter {
         this.emit("failed", {
           file: job.file, kind: job.kind, owner: job.owner || null,
           error: String(err.message || err),
+          /* Present when the engine door refused the graph under the minors
+           * rule, so a waiter can answer 422 rather than "render failed". */
+          ...(err?.safety ? { code: err.code } : {}),
           /* Present when the engine was actually reached: the door recorded the
            * failure too, with the status, the error and the elapsed time. A
            * render that died used to leave no trace of any kind. */
@@ -1373,6 +1464,7 @@ export class ArtRunner extends EventEmitter {
     const done = await engineDoor.run({
       private: job.private === true,
       graph, actor: job.actor, via: `art.${standalone ? "image" : "cover"}`,
+      safetyContext: job.safetyContext, safetyFlags: job.safetyFlags,
       clientId: this.clientId, timeoutMs: budget, pollMs: 400,
       label: job.title || job.file, project: null,
       /* The runner files these itself, under a name derived from the TRACK and
@@ -1679,6 +1771,7 @@ export class ArtRunner extends EventEmitter {
       const done = await engineDoor.run({
       private: job.private === true,
         graph, actor: job.actor, via: "art.clip",
+        safetyContext: job.safetyContext, safetyFlags: job.safetyFlags,
         clientId: this.clientId, timeoutMs: budgetMs, pollMs: 1000,
         label: job.title || job.file,
         // Renamed into the clip library below, or resolved to an earlier clip
@@ -1894,6 +1987,7 @@ export class ArtRunner extends EventEmitter {
       const done = await engineDoor.run({
       private: job.private === true,
         graph, actor: job.actor, via: "art.restyle",
+        safetyContext: job.safetyContext, safetyFlags: job.safetyFlags,
         clientId: this.clientId, timeoutMs: 1_800_000, pollMs: 1000,
         label: `restyle ${path.basename(job.file)}`,
         adopt: false,   // named below with a collision counter, as in #enhance

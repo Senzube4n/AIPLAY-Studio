@@ -89,6 +89,8 @@ import {
   VACE_STRENGTH_LADDER, VACE_LICENCE, VACE_LICENCE_VERIFIED, DEFAULT_NEGATIVE,
 } from "../control/vace.js";
 import { readProject, updateProject, assetsDir, noteRun } from "./store.js";
+import { castContext, castFlags } from "./generate.js";
+import { assertSafe } from "../safety/refusal.js";
 
 /**
  * THE THREE MODES, as data, because the page and the tools both read them and a
@@ -586,6 +588,8 @@ export async function controlRender(deps, slug, {
    * That is the 96-frame clip's story with a different number on it, so it gets
    * the same answer. `judgeStrength` is vace.js's own sentence, asked early;
    * `refPath` is resolved here and merely COPIED later. */
+  let safetyContext = [];
+  let safetyFlags = [];
   if (wantsVace) {
     if (typeof prompt !== "string" || !prompt.trim()) {
       throw new Error("A control render needs a `prompt`. WAN renders a gray field from an empty "
@@ -593,6 +597,23 @@ export async function controlRender(deps, slug, {
     }
     const judged = judgeStrength(strength);
     if (!judged.ok) throw new Error(judged.why);
+    /* ⚠ THE MINORS RULE, BEFORE ANYTHING IS STAGED. This path goes straight
+     * to the engine door and never through the art queue, so this is its
+     * early refusal (the door checks the graph again). The reference sheet is
+     * a picture; the words behind it are its row's description, and what its
+     * adopted take was drawn as is its fingerprint (castFlags). The driving
+     * clip is a picture too: a library clip carries its own history
+     * (deps.lineage, server/safety/lineage.js); a blockout is grey capsules. */
+    const refName = reference && String(reference).trim() ? path.basename(String(reference).trim()) : null;
+    const refRow = refName
+      ? [...(doc.characters || []), ...(doc.backgrounds || []), ...(doc.props || [])]
+        .find((r) => r?.imageFile && path.basename(String(r.imageFile)) === refName)
+      : null;
+    const drive = source === "clip" && typeof deps?.lineage === "function"
+      ? deps.lineage([name]) : { texts: [], flags: [] };
+    safetyContext = [...(refRow ? castContext(doc, [refRow.name]) : []), ...(drive.texts || [])];
+    safetyFlags = [...(refRow ? castFlags(doc, [refRow.name]) : []), ...(drive.flags || [])];
+    assertSafe({ door: "mv.control", via: "mv.control", actor, texts: [prompt], context: safetyContext, flags: safetyFlags });
   }
 
   /* THE REFERENCE, RESOLVED BEFORE ANYTHING RUNS. Named on a mode that does not
@@ -790,7 +811,7 @@ export async function controlRender(deps, slug, {
      * 1280x704 x 121-frame render measured 31.99 minutes here, and 45-minute
      * deadlines abandoned renders that then finished. */
     const done = await engine.run({
-      graph, actor, via: "mv.control", clientId: "aiplay-mv-control",
+      graph, actor, via: "mv.control", clientId: "aiplay-mv-control", safetyContext, safetyFlags,
       label: `${mode} control — ${name}`, project: slug, shot: segmentId ?? null,
       adopt: true, timeoutMs: 90 * 60_000, pollMs: 3_000,
     });

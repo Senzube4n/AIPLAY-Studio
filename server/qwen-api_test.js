@@ -7,13 +7,14 @@ import { qwenImageGraph, QWEN_IMAGE_PRESET } from "./qwen-image.js";
 import { QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { applyPersona, personaFits } from "./personas.js";
 import { jobIdentity } from "./wildcards.js";
+import { safetyRefusal } from "./safety/refusal.js";
 
 const source = readFileSync(new URL("./index.js", import.meta.url), "utf8");
 const start = source.indexOf('if (p === "/api/image" && req.method === "POST")');
 const end = source.indexOf('if (p === "/api/', start + 20);
 assert.ok(start > 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor }=deps; ${source.slice(start, end)}`);
+const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor,safetyRefusal,lineage }=deps; ${source.slice(start, end)}`);
 
 const flattenReferences = async (references) => references.map((row) => row.name);
 
@@ -33,6 +34,8 @@ async function request(body, { ready = true, persona = null, stageError = null }
     prov: { actorFrom: () => "agent:test" }, resolveRepeat: () => ({}), imageDupGuard: { remember() {} },
     art: { request: (shot) => { queued.push(shot); return { id: "job" }; }, status: () => ({}) }, combinations: () => 1,
     imageEditor: { flattenReferences },
+    /* The minors rule (server/safety): the REAL check, and no library lineage. */
+    safetyRefusal, lineage: () => ({ texts: [], flags: [] }),
   };
   return { ...await run(deps), queued, preflights, staged, stagedWith };
 }

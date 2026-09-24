@@ -59,6 +59,30 @@ cannot execute; the route tells the two apart and says which one it got.
 Full description, the record it writes, and what it deliberately does not defend
 against: [docs/ENGINE_DOOR.md](docs/ENGINE_DOOR.md).
 
+### Refused: sexual content involving minors (422)
+
+Every door that makes a picture or a clip refuses a request whose words pair a
+child or teenager with nudity or sexual content. This includes `/api/image`,
+`/api/images/ai-edit`, `/api/video`, `/api/restyle`, `/api/art`,
+`/api/reactive/run`, `/api/batch`, `/api/mv`, `/api/collab`, `/api/router/run`,
+`/api/enhance` and `/api/engine`. The answer is always:
+
+```json
+{ "error": "This can't be made: it pairs a child or teenager with sexual content.", "code": "minor-sexual" }
+```
+
+The status is HTTP 422 and nothing is queued. `error` always starts with that
+sentence; when there is something to do about it (move "no children" to the
+negative prompt, or part of it came from a picture or cast member the request
+uses) that follows in `error` and in `hint`. `found` says where each half came
+from (`"prompt"` or `"context"`), never the words. Some doors also say `reason`.
+A picture graph that writes its prompt while it runs answers 422 with code
+`unverifiable-text`. There is no flag that turns this off. The negative prompt
+is never counted as intent. See [docs/SAFETY.md](docs/SAFETY.md).
+
+`POST /api/safety/check` is internal: Studio's own ComfyUI node asks it, with a
+per-boot token, about graphs posted to the engine directly.
+
 ---
 
 ## Reading state

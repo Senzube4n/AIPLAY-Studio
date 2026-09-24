@@ -480,6 +480,16 @@ node server/licence_test.js || exit 1
 # 310 s race between the two - is scripts/doorpost_proof.mjs, run by hand.
 node scripts/lib/doorpost_test.mjs || exit 1
 node server/provenance_test.js || exit 1
+# THE MINORS RULE (docs/SAFETY.md): sexual content involving minors is refused
+# at every door, with no override. minors_test holds WHAT is refused to two
+# tables - clinical token pairs, the disguises, Dutch/German/Japanese - and the
+# ordinary prompts that share a word with the rule and must pass. doors_test
+# holds WHERE: the engine door refuses when called directly whatever private,
+# dryRun or injected deps say, sends nothing, stores no graph and files one
+# `refused` event with no words; every other door answers the same 422 and
+# queues nothing. Temp dirs only, no server, no engine.
+node server/safety/minors_test.js || exit 1
+node server/safety/doors_test.js || exit 1
 # PRIVATE MODE: the words are not written, and the event still is. It sits
 # beside the provenance lane because it is the same ledger, and because the
 # thing it guards is a SILENCE - a render that records nothing looks exactly
@@ -1224,6 +1234,10 @@ if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/sparsectrl_pairs_test.py || e
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/sparsectrl_lifecycle_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/yue2_continue_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy, scipy" >/dev/null 2>&1; then "$ADAPTER_PY" server/reactive_rms_test.py || exit 1; fi
+# The minors rule's backstop INSIDE ComfyUI (server/comfy_nodes/aiplay_safety_gate.py):
+# stdlib only, so it runs on whatever python is here. It must never raise, since
+# ComfyUI swallows a handler's exception and runs the original prompt.
+if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/safety_gate_test.py || exit 1; fi
 # The final grade on every music video. eq=contrast=1.09 ran the bottom of the
 # range into zero and flattened thirteen shadow codes into one; this measures a
 # ramp through the grade the renderer actually composes. Skips without ffmpeg.

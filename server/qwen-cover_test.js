@@ -17,6 +17,7 @@ const { ArtRunner } = await import("./art.js");
 const { engine } = await import("./engine/client.js");
 const { QWEN_IMAGE_FILES, qwenImageGraph, QWEN_IMAGE_PRESET } = await import("./qwen-image.js");
 const { applyPersona, personaFits } = await import("./personas.js");
+const { safetyRefusal } = await import("./safety/refusal.js");
 const original = { run: engine.run, socket: engine.socket };
 const submitted = [], preflights = [];
 const savedGraphs = new Map();
@@ -209,6 +210,8 @@ test("API response, real queue, sampler and saved image provenance keep the same
     resolveRepeat: () => ({}), imageDupGuard: { remember() {} }, combinations: () => 1,
     art: runner, imageMeta: new Map(), ledger: [],
     saveImageStore() {}, push() {}, jobs: { snapshot: () => ({}) },
+    /* The minors rule (server/safety): the REAL check, and no library lineage. */
+    safetyRefusal, lineage: () => ({ texts: [], flags: [] }),
   };
   deps.provNote = (_, event) => deps.ledger.push(event);
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

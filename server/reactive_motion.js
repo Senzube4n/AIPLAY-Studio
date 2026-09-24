@@ -397,6 +397,9 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
   const t0 = Date.now();
   const done = await engine.run({
     graph, actor, via: "reactive.motion", clientId: "aiplay-reactive",
+    /* What the source clip and the pictures were made from, for the minors
+     * rule at the engine door (server/safety/lineage.js). Additive only. */
+    safetyContext: o.safetyContext, safetyFlags: o.safetyFlags,
     label: `motion look — ${clip}`, project: "reactive", shot: null,
     adopt: true, timeoutMs: 60 * 60_000, pollMs: 3_000,
   });

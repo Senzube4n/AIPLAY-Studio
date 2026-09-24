@@ -26,7 +26,36 @@ export const STUDIO_OWNED = new Set([
   "--extra-model-paths-config", "--base-directory", "--models-directory", "--user-directory",
   "--disable-auto-launch", "--auto-launch", "--quick-test-for-ci", "--dont-print-server",
   "--tls-keyfile", "--tls-certfile", "--enable-cors-header", "--list-feature-flags",
+  /* The minors rule's backstop always loads: see keepSafetyGate below. */
+  "--whitelist-custom-nodes",
 ]);
+
+/** The Studio's own safety node (server/comfy_nodes/aiplay_safety_gate.py),
+ *  by the name ComfyUI's custom-node loader knows it. */
+export const SAFETY_GATE_MODULE = "aiplay_safety_gate.py";
+
+/**
+ * ⚠ NO SETTING TURNS THE MINORS BACKSTOP OFF, and "Don't load custom node
+ * packs" is a setting. ComfyUI's --disable-all-custom-nodes skips every
+ * custom-node module, the Studio's safety gate included, which would leave a
+ * revealed or pinned port running graphs nobody checked. So when that flag is
+ * in the launch (from the launcher OR copied from the install's own flags),
+ * the gate is whitelisted by name (--whitelist-custom-nodes, which the install
+ * must define), and an install too old to know that flag gets its custom
+ * nodes back instead: the gate loads either way.
+ */
+export function keepSafetyGate(args, cliArgsText) {
+  const a = (args || []).map(String);
+  if (!a.includes("--disable-all-custom-nodes")) return a;
+  const knows = typeof cliArgsText === "string" && cliArgsText.includes("\"--whitelist-custom-nodes\"");
+  if (!knows) return a.filter((f) => f !== "--disable-all-custom-nodes");
+  const i = a.indexOf("--whitelist-custom-nodes");
+  if (i < 0) return [...a, "--whitelist-custom-nodes", SAFETY_GATE_MODULE];
+  let j = i + 1;
+  while (j < a.length && !a[j].startsWith("--")) j++;
+  if (a.slice(i + 1, j).includes(SAFETY_GATE_MODULE)) return a;
+  return [...a.slice(0, j), SAFETY_GATE_MODULE, ...a.slice(j)];
+}
 
 const choice = (id, section, label, help, choices, extra = {}) => ({ id, section, label, help, kind: "choice", choices, ...extra });
 const bool = (id, section, label, flag, help, extra = {}) => ({ id, section, label, help, kind: "bool", flag, ...extra });
@@ -117,7 +146,7 @@ export const COMFY_OPTIONS = [
 
   /* ── custom nodes ────────────────────────────────────────────────────── */
   bool("noCustomNodes", "Custom nodes", "Don't load custom node packs", "--disable-all-custom-nodes",
-    "Studio's music graphs use only ComfyUI's built-in nodes, so this starts faster; your other node packs will not load in Studio's engine."),
+    "Studio's music graphs use only ComfyUI's built-in nodes, so this starts faster; your other node packs will not load in Studio's engine. Studio's own safety node still loads."),
   bool("noApiNodes", "Custom nodes", "Disable API nodes", "--disable-api-nodes", "Also stops the frontend reaching the internet."),
   bool("manager", "Custom nodes", "Enable ComfyUI-Manager", "--enable-manager", ""),
 ];

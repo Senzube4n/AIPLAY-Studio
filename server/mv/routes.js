@@ -1602,7 +1602,10 @@ export function createMvRoutes(deps) {
          * Everything expensive happens inside controlRender, and the first thing
          * it does is measure the clip and refuse by name and number. */
         case "control_render": {
-          const out = await controlRender({ CLIP_DIR: deps.CLIP_DIR }, safe(b.slug), {
+          /* `lineage`: what a library clip was made from, for the minors rule
+           * (server/safety/lineage.js). Optional: a harness without it checks
+           * the prompt and the reference only. */
+          const out = await controlRender({ CLIP_DIR: deps.CLIP_DIR, lineage: deps.lineage }, safe(b.slug), {
             /* `source` is which DOOR the frames come through — the shared clips
              * library, or this shot's own blockout out of the project's assets.
              * One gate behind both: whichever door it came through, the clip is
@@ -2148,6 +2151,9 @@ export function createMvRoutes(deps) {
        * shape changes for any route that does not set it. */
       const out = { error: String(err.message || err) };
       if (err && typeof err.detail === "object" && err.detail) Object.assign(out, err.detail);
+      /* The minors rule answers 422 with its code at every door, this one too:
+       * a board, a sheet, a clip or a control render it refused. */
+      if (err?.safety) return json(res, 422, { ...out, code: err.code, ...(err.hint ? { hint: err.hint } : {}), ...(err.found ? { found: err.found } : {}) }), true;
       return json(res, 400, out), true;
     } finally {
       /* The response is already composed by the time this runs, on both paths —

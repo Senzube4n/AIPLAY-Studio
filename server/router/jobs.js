@@ -25,6 +25,56 @@ import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { RouterError, readCapped, MAX_ASSET_BYTES } from "./client.js";
 import { findAssets, extFor, isAsset } from "./outputs.js";
+import { checkPrompt } from "../safety/minors.js";
+import { NEGATIVE_KEY, isBlob } from "../safety/graph.js";
+import { announceRefusal, safetyError, CODE as SAFETY_CODE, REFUSAL } from "../safety/refusal.js";
+
+/**
+ * THE MINORS RULE ON THE CLOUD PATH, which never touches the engine door.
+ *
+ * A Comfy Router body is a provider's own JSON, and its prompt can sit under
+ * any key: `prompt`, `input.prompt`, `instances[].prompt`, `contents[].parts[].text`,
+ * `messages`, a system instruction... So every string in it counts, except a
+ * key that names a negative prompt, a provider's own safety settings (Gemini's
+ * `safetySettings` enums say HARM_CATEGORY_SEXUALLY_EXPLICIT precisely to
+ * block it), and an inline picture or sound (a data: URI or base64 whose first
+ * bytes are a media file; text padded to LOOK like base64 is read).
+ *
+ * Every kind is read, text models included: a chat model on this path can be
+ * asked for an image tool, an OpenRouter image model is filed as "text", and
+ * whatever a run returns is saved. Only a SOUND model is left alone, and only
+ * when neither its id nor its body asks for a picture or a video. Checked when
+ * a run is added AND again just before it is sent, because runs are kept on
+ * disk and resumed after a restart.
+ */
+const PROVIDER_SAFETY_KEY = /^(safetySettings|safety_settings|safetySetting|safety_identifier|safetyFilterLevel|safety_filter_level|safety_tolerance|moderation|personGeneration|person_generation)$/i;
+export function routerWords(body) {
+  const out = [];
+  const walk = (v, key, depth) => {
+    if (depth > 24) return;
+    if (PROVIDER_SAFETY_KEY.test(key)) return;
+    if (typeof v === "string") {
+      if (!NEGATIVE_KEY.test(key) && !isBlob(v) && v.trim()) out.push(v);
+      return;
+    }
+    if (Array.isArray(v)) { for (const x of v) walk(x, key, depth + 1); return; }
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, k, depth + 1);
+  };
+  walk(body, "", 0);
+  return out;
+}
+/** Does this run make a picture or a video, whatever its catalogue kind says? */
+const VISUAL_ASK = /image|video|picture|photo|visual|vision|img|mv\b/i;
+function asksForPictures(model, body) {
+  if (VISUAL_ASK.test(String(model || ""))) return true;
+  const probe = JSON.stringify({ m: body?.modalities, r: body?.response_modalities, o: body?.output_modalities,
+    f: body?.response_format, t: body?.tools, g: body?.generationConfig?.responseModalities });
+  return /image|video/i.test(probe);
+}
+export function routerVerdict(kind, body, { model = "", prompt = "" } = {}) {
+  if (kind === "audio" && !asksForPictures(model, body)) return { ok: true };
+  return checkPrompt([...routerWords(body), ...(typeof prompt === "string" && prompt.trim() ? [prompt] : [])]);
+}
 
 const KEEP = 300;
 const ACTIVE = new Set(["waiting", "queued", "running", "collecting"]);
@@ -61,7 +111,17 @@ export function createRouterJobs({ client, dir, outDir, fetchImpl = globalThis.f
     loaded = true;
     try { runs = JSON.parse(await readFile(file, "utf8")) || []; } catch { runs = []; }
   }
-  async function save() {
+  /* ONE WRITER AT A TIME. add() saves and then starts a tick that saves too,
+   * and both used the one `runs.json.tmp`: the first rename moved it, and the
+   * second threw ENOENT out of add() for a run that HAD been queued. Each save
+   * now waits for the one before it; a failed save still lets the next run. */
+  let saving = Promise.resolve();
+  function save() {
+    const next = saving.then(writeRuns, writeRuns);
+    saving = next.catch(() => {});
+    return next;
+  }
+  async function writeRuns() {
     await mkdir(dir, { recursive: true });
     const tmp = `${file}.tmp`;
     await writeFile(tmp, JSON.stringify(runs.slice(0, KEEP)), "utf8");
@@ -131,6 +191,15 @@ export function createRouterJobs({ client, dir, outDir, fetchImpl = globalThis.f
     const wait = (sec, fallback = 5) => { r.nextAt = now() + Math.min(30, Math.max(2, sec ?? fallback)) * 1000; };
     try {
       if (r.status === "waiting") {
+        /* ⚠ AGAIN, AT THE LAST STEP: a run added by an older build, or resumed
+         * from disk, is checked before a byte of it leaves this machine. */
+        const verdict = routerVerdict(r.kind, r.body, { model: r.model, prompt: r.prompt });
+        if (!verdict.ok) {
+          announceRefusal({ door: "router.step", via: r.model });
+          fail(r, { type: SAFETY_CODE, message: REFUSAL });
+          r.prompt = "";
+          return;
+        }
         const s = await client.submit(r.model, r.body, r.idem);
         r.requestId = s.json?.request_id;
         if (!r.requestId) throw new RouterError({ status: s.status, type: "internal_error", detail: "no request id in the answer" });
@@ -227,6 +296,12 @@ export function createRouterJobs({ client, dir, outDir, fetchImpl = globalThis.f
      * @param {object} o {model, kind, label, prompt, body}
      */
     async add({ model, kind, label, prompt = "", body }) {
+      /* Refused before the run exists, so nothing of it is written to disk. */
+      const verdict = routerVerdict(kind, body, { model, prompt });
+      if (!verdict.ok) {
+        announceRefusal({ door: "router.run", via: model });
+        throw safetyError({ door: "router.run", hint: verdict.hint, found: verdict.found });
+      }
       await load();
       const r = {
         id: randomUUID().slice(0, 8), idem: randomUUID(), model, kind, label,

@@ -35,8 +35,9 @@
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { buildLaunchArgs, effectiveValues, vendorOf } from "./comfyargs.js";
+import { buildLaunchArgs, effectiveValues, vendorOf, keepSafetyGate } from "./comfyargs.js";
 import { deployStudioNodes } from "./comfy_nodes.js";
+import { backstopEnv } from "./safety/backstop.js";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
@@ -51,12 +52,14 @@ import { writeModelPathsYaml, samePath } from "./localmodels.js";
 export function studioLaunchArgs(tierFlags = config.comfy.flags) {
   let cli = null;
   try { cli = readFileSync(path.join(config.comfyDir, "comfy", "cli_args.py"), "utf8"); } catch { /* no install yet */ }
-  return buildLaunchArgs({
+  /* keepSafetyGate: whatever the options say, the minors backstop node loads
+   * (server/comfyargs.js). */
+  return keepSafetyGate(buildLaunchArgs({
     tierFlags,
     installFlags: config.comfy.extraArgs,
     useInstallFlags: config.comfy.useInstallFlags,
     values: effectiveValues(config.comfy.options, config.comfy.optionsRev, cli, { fix: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend) }),
-  });
+  }), cli);
 }
 
 /**
@@ -213,7 +216,11 @@ export class ComfySupervisor extends EventEmitter {
     this.proc = spawn(config.python, args, {
       cwd: config.comfyDir,
       stdio: ["ignore", "pipe", "pipe"],
-      env: pythonEnv(config.python),
+      /* The safety backstop's address and per-boot token, so the Studio's own
+       * node (server/comfy_nodes/aiplay_safety_gate.py) can ask this Studio
+       * about every graph posted to the engine, including the ones that never
+       * pass through Node. See server/safety/backstop.js. */
+      env: { ...pythonEnv(config.python), ...backstopEnv(config.uiPort) },
     });
     /* IDENTITY, not a port. `engine.isOurs()` is how the rest of the app asks
      * "is the thing on the other end of that socket the child WE started" — the

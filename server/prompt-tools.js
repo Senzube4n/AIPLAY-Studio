@@ -17,6 +17,7 @@
  *
  * Routes: GET/POST /api/gallery, GET/POST /api/enhance.
  */
+import { assertSafe } from "./safety/refusal.js";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -153,6 +154,15 @@ export function createEnhancer({ models, ask, cardBusy = async () => null, ownCh
     // An empty choice forgets Enhance's own model: Simple mode's, then Chat's, decide again.
     choose: (file) => (file ? models.choose(file) : models.clear()),
     async enhance({ field, text = "", style = "", lyrics = "", engine = "yue2" }) {
+      /* ⚠ THE MINORS RULE, BOTH WAYS, ON THE FIELDS THAT BECOME PICTURES. The
+       * words asked for are checked before a model is woken, and the words it
+       * wrote are checked before they are handed back: an enhanced style or
+       * song description becomes a caption, and a caption becomes a cover
+       * prompt. LYRICS are a song, and songs are not checked as content
+       * (docs/SAFETY.md): a lyric line is judged where it becomes a picture,
+       * as a cover hook or a lip-sync shot. Each render door checks again. */
+      const judged = field !== "lyrics";
+      if (judged) assertSafe({ door: "enhance", via: `enhance.${field}`, texts: [String(text || "")] });
       const prompt = enhancePrompt(field, text, { style, lyrics, engine });
       /* NO CHAT MODEL AT ALL is its own answer, said before anything runs.
        * resolve() falls back to a default file name whether or not it exists,
@@ -179,7 +189,9 @@ export function createEnhancer({ models, ask, cardBusy = async () => null, ownCh
       }
       const picked = await models.resolve().catch(() => null);
       const raw = await ask(prompt, { label: `enhance ${field}` });
-      return { text: cleanEnhanced(field, raw), model: picked?.label || picked?.file || null, local };
+      const written = cleanEnhanced(field, raw);
+      if (judged) assertSafe({ door: "enhance", via: `enhance.${field}`, texts: [written] });
+      return { text: written, model: picked?.label || picked?.file || null, local };
     },
   };
 }
@@ -208,7 +220,7 @@ export function createPromptToolRoutes({ json, readBody, gallery, enhancer }) {
         return json(res, 200, { ok: true, ...out }), true;
       }
     } catch (e) {
-      return json(res, e.status || 400, { error: String(e.message || e), ...(e.need ? { need: e.need, apis: e.apis || [] } : {}) }), true;
+      return json(res, e.status || 400, { error: String(e.message || e), ...(e.safety ? { code: e.code, ...(e.hint ? { hint: e.hint } : {}) } : {}), ...(e.need ? { need: e.need, apis: e.apis || [] } : {}) }), true;
     }
     return false;
   };

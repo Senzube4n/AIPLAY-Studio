@@ -87,7 +87,7 @@ const FAST = { POLL_MS: 5, POLL_TIMEOUT_MS: 150, POST_TIMEOUT_MS: 150, MAX_CONSE
  * A ComfyUI that is not there. Records every call so "was anything sent" is a
  * number, and lets each test say how the engine behaves this time.
  */
-function fakeEngine({ historyAfter = 1, completed = true, rejectPost = false, vanish = false, dead = false, outputs = null } = {}) {
+function fakeEngine({ historyAfter = 1, completed = true, rejectPost = false, vanish = false, dead = false, outputs = null, armed = true } = {}) {
   const calls = [];
   let polls = 0;
   const reply = (obj, { ok: isOk = true, status = 200, text = "" } = {}) => ({
@@ -116,6 +116,8 @@ function fakeEngine({ historyAfter = 1, completed = true, rejectPost = false, va
       });
     }
     if (u.includes("/queue")) return reply({ queue_running: vanish ? [] : [[0, "b41cfeed"]], queue_pending: [] });
+    /* The Studio's safety node inside ComfyUI, saying whether it is armed. */
+    if (u.includes("/aiplay/safety_status")) return reply({ armed, node: "aiplay_safety_gate" });
     if (u.includes("/system_stats")) {
       return reply({ system: { comfyui_version: "0.33.0", argv: ["D:\\rig\\ComfyUI\\main.py", "--port", "47821", "--listen", "127.0.0.1"] } });
     }
@@ -552,6 +554,17 @@ console.log("\n  -- the port is not an interface --");
   ok("...and names the mismatch when the engine is another install's",
     id.problems.length > 0 && /--output-directory/.test(id.problems.join(" ")), JSON.stringify(id.problems));
 
+  /* THE MINORS BACKSTOP GATES THE REVEAL: an engine whose safety node is not
+   * armed does not get its port handed out, and nothing is recorded. */
+  {
+    const unarmed = clientOn(fakeEngine({ armed: false }), { port: 47822 });
+    let threw = null;
+    try { await unarmed.reveal({ actor: "user" }); } catch (e) { threw = e; }
+    const st0 = await unarmed.status();
+    ok("an engine whose safety backstop is not armed does not get its port revealed",
+      threw?.reason === "backstop-not-armed" && /safety check/.test(threw.message) && st0.port === null && st0.revealed === false,
+      threw?.message);
+  }
   await c.reveal({ actor: "user" });
   const st2 = await c.status();
   ok("revealed: the number IS returned, because now it is already discoverable",

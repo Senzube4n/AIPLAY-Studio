@@ -94,6 +94,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { config } from "../config.js";
+import { projectRowFingerprint } from "../safety/lineage.js";
 
 /* ─────────────────────────────────────────────────────── refusals */
 
@@ -458,14 +459,19 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
         `The reference picture "${file}" is named by this scene but could not be read `
         + `from the project's assets folder (${code}). Re-render that sheet, `
         + `or restore the file, before lending this shot out.`);
-      refs.push({ name: r.name, sha256, bytes, file: r.file });
+      /* `safety`: two booleans saying whether this picture was made as a
+       * minor and whether as sexual (server/safety/lineage.js). The words that
+       * would say so stay here; the lender's check reads these instead, so a
+       * sexual scene over a picture of a child is refused on BOTH machines. */
+      refs.push({ name: r.name, sha256, bytes, file: r.file, safety: projectRowFingerprint(rowFor(doc, r.name), r.file) });
     }
     if (boardRefIndex >= 0) {
       const { sha256, bytes } = await hashAsset(assetsDir, board.imageFile, "no-refs", (file, code) =>
         `This project renders the storyboard frame as a composition reference `
         + `(brief.boardRef), but "${file}" could not be read from the assets folder (${code}). `
         + `Re-render this scene's storyboard, or switch brief.boardRef off, before lending it out.`);
-      refs.push({ name: "the storyboard frame for this shot", sha256, bytes, file: board.imageFile });
+      refs.push({ name: "the storyboard frame for this shot", sha256, bytes, file: board.imageFile,
+        safety: projectRowFingerprint(board, board.imageFile) });
     }
   }
 
@@ -518,7 +524,7 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
       + `(the workflow's board step), or restore the file, before lending this shot out. `
       + `Sending it without the frame would hand the lender the unguided render, which is the `
       + `one this house has measured coming back with a different performer in it.`);
-    guides.push({ role, sha256, bytes, file: guideFiles[i] });
+    guides.push({ role, sha256, bytes, file: guideFiles[i], safety: projectRowFingerprint(board, guideFiles[i]) });
   }
 
   /* ⚠ THE NAMES COME FROM `resolved`, NOT FROM `refs`. `refs` is empty on the

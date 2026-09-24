@@ -108,6 +108,14 @@ export const EVENT_TYPES = new Set([
    * AUTHORISED — which is the whole point of the object.
    *   data: { planId, itemId, tool, argsHash, ok, asset, ms, approvedBy } */
   "plan_step",
+  /* A REQUEST THIS APP WOULD NOT MAKE. Written when a door refuses sexual
+   * content involving minors (server/safety/refusal.js, docs/SAFETY.md). It
+   * records THAT it happened, where and for whom — never what was asked: no
+   * prompt, no label, no hash of either, because a hash of a short prompt is a
+   * lookup key (see REDACTED_KEYS). Like plan_step it names no artefact and
+   * folds to nothing in foldOrigin.
+   *   data: { code: "minor-sexual", door, via } */
+  "refused",
 ]);
 
 const IPTC = "http://cv.iptc.org/newscodes/digitalsourcetype/";

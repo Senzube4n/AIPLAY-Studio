@@ -251,6 +251,15 @@ carry the token in a file anything can read) or an OS-level rule scoped to a
 process (Windows Firewall does not filter loopback). Neither is worth it today.
 Named so nobody has to rediscover that.
 
+**One rule does not rely on the door alone.** Sexual content involving minors
+is refused by `dispatch()` before anything is recorded or sent, and ComfyUI
+also carries Studio's own node, `server/comfy_nodes/aiplay_safety_gate.py`.
+That node sends every graph posted to the engine, through any port, back to the
+Studio's check. In a ComfyUI started by hand, without the Studio, the node
+does nothing. It loads even when custom node packs are switched off, and
+`reveal` refuses to hand out the port unless the node reports it is armed
+(`GET /aiplay/safety_status`). See [SAFETY.md](SAFETY.md).
+
 ---
 
 ## Known gaps

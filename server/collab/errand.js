@@ -46,6 +46,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { briefFor } from "./order.js";
+import { mergeFingerprints } from "../safety/minors.js";
 
 /** ⚠ THE ERRAND'S ONLY SCENE, AND THE ONE NAME A PLAN ITEM MAY USE. An order
  *  names a scene in somebody else's project; the project built from it has this
@@ -136,6 +137,11 @@ export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {
   }
   const refs = staged.filter((s) => s.role === "ref");
   const guides = staged.filter((s) => s.role === "guide");
+  /* What each picture was made as, two booleans the sender's Studio put on its
+   * row (packet.js). Kept on the rows here so this machine's own render door
+   * judges the scene with them (mv/generate.js castFlags). */
+  const flagOf = (file) => mergeFingerprints(
+    [...(shot.refs || []), ...(shot.guides || [])].find((r) => r?.file === file)?.safety);
 
   const boardId = `bd_${randomUUID().slice(0, 8)}`;
   return {
@@ -206,6 +212,7 @@ export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {
       ...(guides.length > 1
         ? { shotFrames: guides.map((g) => g.name), imageFile: guides[0].name }
         : { imageFile: guides[0]?.name ?? null }),
+      safety: mergeFingerprints(...guides.map((g) => flagOf(g.file))),
       updatedAt: now,
     }],
     characters: refs.map((s, i) => ({
@@ -214,6 +221,7 @@ export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {
       role: "lead",
       description: "",
       imageFile: s.name,
+      safety: flagOf(s.file),
     })),
     backgrounds: [],
     props: [],

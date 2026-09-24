@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { assertSafe } from '../safety/refusal.js';
 export const VIDEO_RECIPE_SCHEMA = {type:'object',required:['engine','prompt','width','height','seconds','steps','guidance','keepAudio'],additionalProperties:false,properties:{
  engine:{type:'string',enum:['h3','ltx']},prompt:{type:'string',minLength:1,maxLength:8000},negative:{type:'string',maxLength:500},
  width:{type:'integer',minimum:256,maximum:3840},height:{type:'integer',minimum:256,maximum:3840},seconds:{type:'number',minimum:1,maximum:20},steps:{type:'integer',minimum:2,maximum:40},guidance:{type:'number',minimum:1,maximum:8},keepAudio:{type:'boolean'},seed:{type:'integer',minimum:0,maximum:4294967295}
@@ -18,6 +19,9 @@ export function normalizeVideoRecipe(input,{rollSeed=true}={}){
   else if(typeof value!=='number'||!Number.isFinite(value)||value<rule.minimum||value>rule.maximum||rule.type==='integer'&&!Number.isInteger(value))fail(`Invalid video setting: ${key}.`);
   out[key]=value;
  }
+ // The minors rule, on pack AND open: one function serves both, so a recipe that pairs a child or
+ // teenager with sexual content can neither be sent nor received. 422 with the one sentence.
+ assertSafe({door:'collab.video-recipe',via:'collab',texts:[out.prompt]});
  // LTX's current unguided path floors both dimensions to multiples of 64.
  if(out.engine==='ltx'&&(out.width%64||out.height%64))fail('LTX recipes need width and height in multiples of 64.');
  if(out.seed===undefined){if(!rollSeed)fail('The recipe has no resolved seed.');out.seed=randomBytes(4).readUInt32LE();}

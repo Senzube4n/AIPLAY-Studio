@@ -355,7 +355,13 @@ export function createEngineRoutes(deps) {
          * which is the entire difference between an invisible bypass and a
          * visible one. Recorded first, and a failed record aborts it. */
         case "reveal": {
-          json(res, 200, await engine.reveal({ actor }));
+          /* Refused, with its sentence, when the engine's minors backstop is
+           * not armed (engine/client.js reveal): a port nobody checks. */
+          try { json(res, 200, await engine.reveal({ actor })); }
+          catch (err) {
+            if (err?.reason !== "backstop-not-armed") throw err;
+            json(res, 409, { error: String(err.message), reason: err.reason });
+          }
           return true;
         }
 
@@ -396,6 +402,12 @@ export function createEngineRoutes(deps) {
       /* A graph this engine cannot run says WHICH of the two ComfyUI save
        * formats it looks like — see record.js. The problems array rides along
        * so a caller can act on it without parsing prose. */
+      /* A refusal of sexual content involving minors is its own answer: 422,
+       * the one sentence and its code, the same as every other door. */
+      if (err?.safety) {
+        json(res, 422, { error: String(err.message), code: err.code, ...(err.hint ? { hint: err.hint } : {}), ...(err.found ? { found: err.found } : {}) });
+        return true;
+      }
       json(res, 400, { error: String(err.message || err), problems: err.problems || undefined });
       return true;
     }

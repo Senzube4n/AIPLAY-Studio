@@ -665,7 +665,13 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     "MAX_BUNDLE_BYTES", "pictureKind", "MIME_FOR", "makeVideoRecipe", "readVideoRecipe", "describeVideoRecipe", "videoRecipeMcpArgs",
     /* Lending for a person with no strong card: the frame grid, the speed-up
      * check, the minutes a day and filing onto a never-rendered scene. */
-    "collabLending"];
+    "collabLending",
+    /* The minors rule (server/safety): the real checks, the real flag reader,
+     * and index.js's own mvRowWords, sliced out of the file below. */
+    "assertSafe", "safetyRefusal", "bodyOfError", "shotFlags", "mvRowWords"];
+  const refusalM = await import("../safety/refusal.js");
+  const rowWordsAt = index.indexOf("function mvRowWords(");
+  const mvRowWords = new Function(`${index.slice(rowWordsAt, index.indexOf("\n}\n", rowWordsAt) + 2)} return mvRowWords;`)();
   /* eslint-disable-next-line no-new-func */
   const run = new Function(...names, `return (async () => { ${body} return { status: 0, body: { error: "the route did not answer" } }; })();`);
 
@@ -753,6 +759,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       sealM.MAX_BUNDLE_BYTES, errandM.pictureKind, errandM.MIME_FOR,
       recipeM.makeVideoRecipe, recipeM.readVideoRecipe, recipeM.describeVideoRecipe, recipeM.videoRecipeMcpArgs,
       lendingDoor,
+      refusalM.assertSafe, refusalM.safetyRefusal, refusalM.bodyOfError, orderM.shotFlags, mvRowWords,
     ).then((r) => r ?? answered);
   };
   const call = (b, headers = { origin: "http://127.0.0.1:4173" }) => callWith(b, {}, headers);
