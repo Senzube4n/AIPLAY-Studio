@@ -41,6 +41,7 @@ globalThis.document = {
 };
 globalThis.window = globalThis;
 globalThis.location = { host: "127.0.0.1:4173", href: "http://127.0.0.1:4173/" };
+globalThis.history = { replaceState() {} };
 globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 globalThis.fetch = () => new Promise(() => {});
 globalThis.WebSocket = function () { return { onmessage: null, onclose: null }; };

@@ -1,17 +1,19 @@
 # Local avatar workshop
 
-The 3D page now loads VRM 1.0 models with MToon materials, existing humanoid bones, expression presets, node constraints and spring-bone hair physics. It uses pinned `@pixiv/three-vrm` 3.5.5, served locally. No CDN is needed.
+The 3D workshop opens inside Studio’s shared sidebar, palette and player. Existing `/avatars.html?id=…` links redirect to `/?view=avatars&avatar=…`; OBS URLs with `overlay=1` remain standalone and transparent. Hidden workshop views pause rendering and voice playback.
+
+The 3D page loads VRM 1.0 models with MToon materials, existing humanoid bones, expression presets, node constraints and spring-bone hair physics. It uses pinned `@pixiv/three-vrm` 3.5.5, served locally. No CDN is needed.
 
 ## Use
 
 1. Use **Try anime sample** for the documented 10.3 MiB reference download, or import a self-contained `.vrm` using **VRM 1.0 workshop**, with the actual source/license. The local preview budget is 64 MiB, 150,000 triangles, 32 materials, 256 skin joints; textures are bounded at 4096 px and 64 megapixels total. Existing World GLB limits are unchanged.
 2. Use **Test movement** to inspect gentle humanoid motion and existing hair springs. This is a procedural review pose, not a generated dance clip. Embedded clips retain their own raw-bone animation.
-3. Choose visible embedded parts, tint materials and test expressions. The five vowel presets are viseme controls; they do not constitute automatic audio lip-sync.
+3. Choose visible embedded parts, tint materials and test expressions. The five vowel presets remain manual expression controls. Voice preview additionally drives `aa` (or `jawOpen`) from a local audio waveform. This is loudness-driven mouth motion, not phoneme recognition.
 4. Save a named look. Choose a saved look to activate it. An open page follows MCP activation and edits unless it has an unsaved local draft.
 5. **Overlay** supplies a local transparent browser-source URL for OBS. It follows the active saved look. This does not start streaming or connect Twitch/Kick.
 6. Export the original model, manifest and active look separately. Looks pin the exact source hash; the source model is never rewritten.
 
-The included workflow supports existing components inside a model. It does not yet fit arbitrary generated hair/outfits or transfer their weights. Rigged VRM models are distinct from static TripoSG geometry. VRM workshop admission does not grant native Agent World admission or bind an AIPlay account. Persona IDs here remain local attribution.
+The included workflow supports existing components inside a model. It does not automatically fit arbitrary generated hair/outfits. The advanced Attachment weights panel can transfer weights to an already aligned part using a local weighted base; see [its limits and requirements](AVATAR_PARTS.md). Rigged VRM models are distinct from static TripoSG geometry. VRM workshop admission does not grant native Agent World admission or bind an AIPlay account. Persona IDs here remain local attribution.
 
 ## MCP
 
@@ -47,4 +49,4 @@ On an existing RTX 4070 Ti SUPER (16 GB), the revised Studio adapter completed t
 
 The original TripoSG Mika source also received a learned 65-joint rig. Its fused limbs, rough surfaces and missing textures remained. It is not the quality baseline for the configurator. Body auto-rigging and making a clean modular anime character are separate production steps.
 
-The next asset milestone is a reusable, weighted body with compatible head, hair and outfit parts, authored facial morphs and explicit spring colliders. Arbitrary part fitting and weight transfer, audio-driven lip-sync, persona ownership binding and Agent World runtime adoption are still outstanding.
+The next asset milestone is a reusable, weighted body with compatible head, hair and outfit parts, authored facial morphs and explicit spring colliders. Arbitrary part fitting, persona ownership binding and Agent World runtime adoption remain outstanding. See [local audio playback](AVATAR_LIPSYNC.md) and [attachment weight transfer](AVATAR_PARTS.md) for the next local workflow pieces and their limits.

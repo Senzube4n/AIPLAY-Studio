@@ -1,57 +1,79 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>3D · AIPlay Studio</title><link rel="stylesheet" href="avatars.css">
-<!-- The ⓘ panel is dressed by info.css, which borrows .fitbadge from
-     modelfit.css so this page cannot colour a readiness verdict differently
-     from the Models screen. Both sheets spell no colour of their own; the
-     tokens they read are aliased onto .a-infohost in avatars.css, because
-     this page carries its own palette rather than styles.css's. -->
+<html lang="en" class="avatar-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D · AIPlay Studio</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="ui.css"><link rel="stylesheet" href="avatars.css">
 <link rel="stylesheet" href="info.css"><link rel="stylesheet" href="modelfit.css">
 <script type="importmap">{"imports":{"three":"/api/avatars/vendor/three.module.js"}}</script>
-</head><body>
-<header><a href="/">AI PLAY <span>STUDIO</span></a><span>3D workshop</span><a href="/?view=workflow">Image to 3D ↗</a></header>
-<main>
-<div class="intro"><div><p class="eyebrow">LOCAL AVATARS</p><h1>3D</h1><p>Configure a local avatar, test expressions and hair, and save looks for your persona.</p></div><span class="chip">UI + MCP</span></div>
-<div id="avatarInfoHost" class="a-infohost"></div>
-<div id="status" role="status" aria-live="polite">Loading your local avatars…</div>
+</head><body class="avatar-workshop">
+<main id="avatarWorkshop">
+<div id="status" class="hint" role="status" aria-live="polite">Loading your local avatars…</div>
 <div class="layout">
-<aside>
-<section><div class="section-heading"><h2>Your characters</h2><button id="refresh" type="button">Refresh</button></div><div id="library"></div><button id="install-example" class="btn2" title="Download the official pixiv reference model (10.3 MiB). VRM Public License 1.0; original usage terms stay embedded.">Try anime sample</button><a class="hint" href="https://vrm.dev/licenses/1.0/" target="_blank" rel="noopener">Sample licence ↗</a></section>
-<details id="import-panel" open><summary>Import a rigged character</summary>
+<aside class="avatar-library">
+<section class="pcard"><div class="section-heading"><h2>Avatars</h2><button class="btn2" id="refresh" type="button">Refresh</button></div><div id="library"></div><button class="btn2" id="install-example" title="Download the official pixiv reference model (10.3 MiB). VRM Public License 1.0; original usage terms stay embedded.">Try anime sample</button><a class="hint" href="https://vrm.dev/licenses/1.0/" target="_blank" rel="noopener">Sample licence ↗</a></section>
+<details id="import-panel" class="pcard more"><summary>Import avatar</summary>
 <form id="import-form">
-<label>Avatar file<input name="file" type="file" accept=".glb,.vrm" required></label>
-<label>Import profile<select name="profile"><option value="world">World GLB</option><option value="vrm">VRM 1.0 workshop</option></select></label>
-<label>Character name<input name="name" required maxlength="100" placeholder="Mika · development body"></label>
-<div class="fields"><label>Source persona ID<input name="persona_id" inputmode="numeric" placeholder="Optional"></label><label>Facing<select name="facing"><option>+Z</option><option>-Z</option><option>+X</option><option>-X</option></select></label></div>
-<label>Rig family / version<input name="skeleton_family" required maxlength="100" placeholder="mika-v1"></label>
-<label>Reference and creation method<textarea name="source" required maxlength="2000" placeholder="Canonical reference, author and method"></textarea></label>
-<label>License / usage provenance<textarea name="license" required maxlength="2000" placeholder="Record the actual source permissions"></textarea></label>
+<label>Avatar file<input class="in2" name="file" type="file" accept=".glb,.vrm" required></label>
+<label>Import profile<select class="sel2" name="profile"><option value="world">World GLB</option><option value="vrm">VRM 1.0 workshop</option></select></label>
+<label>Character name<input class="in2" name="name" required maxlength="100" placeholder="Mika · development body"></label>
+<div class="fields"><label>Source persona ID<input class="in2" name="persona_id" inputmode="numeric" placeholder="Optional"></label><label>Facing<select class="sel2" name="facing"><option>+Z</option><option>-Z</option><option>+X</option><option>-X</option></select></label></div>
+<label>Rig family / version<input class="in2" name="skeleton_family" required maxlength="100" placeholder="mika-v1"></label>
+<label>Reference and creation method<textarea class="in2" name="source" required maxlength="2000" placeholder="Canonical reference, author and method"></textarea></label>
+<label>License / usage provenance<textarea class="in2" name="license" required maxlength="2000" placeholder="Record the actual source permissions"></textarea></label>
 <p class="hint">World GLB: 8 MiB. Local VRM 1.0: 64 MiB.</p>
-<button class="primary" type="submit">Validate and import</button>
+<button class="btn" type="submit">Validate and import</button>
 </form></details>
+<details id="part-panel" class="pcard more"><summary>Attachment weights</summary>
+<p class="hint" title="Transfers nearest-surface skin weights to an already aligned attachment. It does not fit clothing or create hair springs.">Bind an aligned part to a weighted base.</p>
+<span id="part-state" class="chip">Local CPU tool</span>
+<form id="part-form">
+<label>Weighted base<input class="in2" name="reference_path" required placeholder="Absolute .glb or .vrm path"></label>
+<label>Unrigged part<input class="in2" name="target_path" required placeholder="Absolute .glb path"></label>
+<button id="part-inspect" type="button" class="btn2">Inspect files</button>
+<details class="more"><summary>Alignment</summary>
+<label>Transform<textarea class="in2" name="transform" title="16 column-major glTF matrix values. Metres, Y up. Identity preserves your prepared alignment.">[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]</textarea></label>
+<label>Distance limit (m)<input class="in2" name="max_distance" type="number" min="0.001" max="1" step="0.001" value="0.05" required title="Every vertex must be this close to the weighted reference surface."></label>
+</details>
+<label>Part name<input class="in2" name="name" maxlength="100" required></label>
+<label>Source<textarea class="in2" name="source" maxlength="2000" required></textarea></label>
+<label>Licence<textarea class="in2" name="license" maxlength="2000" required></textarea></label>
+<button id="part-submit" class="btn" type="submit" disabled>Transfer weights</button>
+</form>
+<p id="part-note" class="hint" role="status"></p><code id="part-output"></code>
+<details class="more"><summary>Find job</summary><label>Job ID<input class="in2" id="part-job" placeholder="wt_…"></label><button class="btn2" id="part-get" type="button">Check job</button></details>
+</details>
 </aside>
 <div class="workspace">
-<section class="viewport-panel"><div class="section-heading"><div><p class="eyebrow" id="family">LOCAL REVIEW</p><h2 id="character-name">Choose a character</h2></div><span id="review-state" class="chip">Awaiting import</span></div>
+<section class="viewport-panel pcard"><div class="section-heading"><div><p class="eyebrow" id="family">LOCAL REVIEW</p><h2 id="character-name">Choose a character</h2></div><span id="review-state" class="chip">Awaiting import</span></div>
 <div id="viewport"><p id="empty-view">Your character will appear here.<br>Orbit to inspect its silhouette and joints.</p></div>
-<div class="camera-controls"><button data-camera="front">Front</button><button data-camera="side">Side</button><button data-camera="back">Back</button><button data-camera="fit">Fit</button><a id="overlay-open" href="#" target="_blank" rel="noopener" title="Use this local URL as an OBS browser source. Appearance follows the active saved look.">Overlay ↗</a><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
-<div class="camera-controls"><button id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button></div>
-<div class="motion-controls"><label>Motion<select id="motion" disabled><option value="">Rest pose</option></select></label><button id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
+<div class="camera-controls"><button class="btn2" data-camera="front">Front</button><button class="btn2" data-camera="side">Side</button><button class="btn2" data-camera="back">Back</button><button class="btn2" data-camera="fit">Fit</button><a class="btn2" id="overlay-open" href="#" target="_blank" rel="noopener" title="Use this local URL as an OBS browser source. Appearance follows the active saved look.">Overlay ↗</a><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
+<div class="camera-controls"><button class="btn2" id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button></div>
+<div class="motion-controls"><label>Motion<select class="sel2" id="motion" disabled><option value="">Rest pose</option></select></label><button class="btn2" id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select class="sel2" id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
+</section>
+<section id="voice-panel" hidden class="pcard">
+<div class="section-heading"><h2>Voice preview</h2><span id="voice-state" class="chip">Choose audio</span></div>
+<label>Audio<input class="in2" id="voice-file" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm" title="Local audio, up to 32 MiB. Mouth motion follows loudness, not phonemes."></label>
+<div id="voice-name" class="hint">No audio selected</div>
+<div class="camera-controls"><button id="voice-play" class="btn2" disabled>Play voice</button><button id="voice-stop" class="btn2" disabled>Stop voice</button><meter id="voice-level" min="0" max="1" value="0" aria-label="Mouth activity"></meter><output id="voice-clock">0.0 s</output></div>
+<label>Position<input id="voice-time" type="range" min="0" max="1" step="0.1" value="0" disabled></label>
+<p id="voice-note" hidden class="hint warnhint" role="status"></p>
+<details class="more"><summary>MCP session</summary><code id="voice-session"></code></details>
 </section>
 <section id="appearance-panel" hidden class="pcard" data-nav="Appearance">
 <div class="section-heading"><h2>Appearance</h2><span id="appearance-state" class="chip">Embedded defaults</span></div>
-<div class="fields"><label>Saved look<select id="appearance-looks"><option value="">Choose a look</option></select></label><label>Look name<input id="appearance-name" maxlength="80" placeholder="Stage outfit"></label></div>
-<label>Source persona<input id="appearance-persona" inputmode="numeric" placeholder="Optional persona ID" title="Local attribution only; live account binding is a separate platform action."></label>
-<div class="camera-controls"><button id="appearance-new" class="btn2">New look</button><button id="appearance-save" class="btn">Save look</button><button id="appearance-delete" class="btn2">Delete look</button><label><input type="checkbox" id="appearance-springs" checked> Hair physics</label></div>
+<div class="fields"><label>Saved look<select class="sel2" id="appearance-looks"><option value="">Choose a look</option></select></label><label>Look name<input class="in2" id="appearance-name" maxlength="80" placeholder="Stage outfit"></label></div>
+<label>Source persona<input class="in2" id="appearance-persona" inputmode="numeric" placeholder="Optional persona ID" title="Local attribution only; live account binding is a separate platform action."></label>
+<div class="camera-controls"><button class="btn2" id="appearance-new">New look</button><button class="btn" id="appearance-save">Save look</button><button class="btn2" id="appearance-delete">Delete look</button><label><input type="checkbox" id="appearance-springs" checked> Hair physics</label></div>
 <details class="more" open><summary>Parts</summary><div id="appearance-parts" class="appearance-grid"></div></details>
 <details class="more"><summary>Material colours</summary><div id="appearance-colors" class="appearance-grid"></div></details>
 <details id="appearance-expression-group" class="more" open><summary>Expressions</summary><div id="appearance-expressions" class="appearance-grid"></div></details>
-<p class="hint">Looks configure the parts, expressions and spring chains already inside this file.</p>
+
 </section>
-<section id="details" hidden><div class="section-heading"><h2>Asset details</h2><button id="export" class="primary">Prepare handoff</button></div>
+<section id="details" hidden class="pcard"><div class="section-heading"><h2>Asset details</h2><button class="btn" id="export">Prepare handoff</button></div>
 <div id="facts" class="facts"></div><details class="more"><summary>Validation notes</summary><div id="warnings"></div></details>
-<p class="hint">Review joints, attachments and ground contact before exporting.</p>
+
 <div id="downloads"></div><details><summary>Provenance and rig inventory</summary><pre id="metadata"></pre></details>
-<p class="hint">A local persona ID records the intended source. The world verifies ownership and model binding separately during adoption.</p>
+
 </section>
 </div></div>
-</main><script type="module" src="avatars.js"></script></body></html>
+</main>
+<button id="voice-enable-overlay" class="btn2" type="button" hidden title="Click in this browser source to allow audio playback.">Enable audio</button>
+<script type="module" src="ui.js"></script><script type="module" src="avatars.js"></script></body></html>

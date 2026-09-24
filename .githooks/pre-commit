@@ -25,6 +25,40 @@ node scripts/suites_test.mjs || exit 1
 node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-runtime_test.js || exit 1
 node --check web/avatar-runtime.js || exit 1
 node --check web/avatar-appearance.js || exit 1
+node --check web/avatar-shell.js || exit 1
+node --check web/avatar-parts.js || exit 1
+node --check web/avatar-voice.js || exit 1
+node --check web/avatar-lipsync.js || exit 1
+node --check web/avatars.js || exit 1
+node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
+node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1
+# ATTACHMENT WEIGHT TRANSFER, Blender's half. weight_transfer.py imports bpy, so
+# it and its suite live OUTSIDE this Apache-2.0 tree (server/licence_test.js),
+# beside the toolkit's cli.py or in <rig>/blender-toolkit/. The gate finds
+# them with the SAME resolver the service spawns from, config.js
+# weightTransferScriptPath() (AIPLAY_WEIGHT_TRANSFER_SCRIPT),
+# and runs the suite with server/mesh on PYTHONPATH exactly as the service does,
+# so it tests the script Studio would run. No script, no suite beside it, no
+# Blender python, or a suite that skipped for want of bpy: each prints UNRUN and
+# why. Never a silent skip, and never a pass.
+WT_SCRIPT="$(node -e "import('./server/config.js').then(m=>process.stdout.write(m.weightTransferScriptPath()))")" || exit 1
+WT_SUITE="$(dirname "$WT_SCRIPT")/weight_transfer_test.py"
+AVATAR_PY="${AIPLAY_AVATAR_PYTHON:-${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv311/Scripts/python.exe}"
+if [ ! -f "$WT_SCRIPT" ]; then
+  echo "  UNRUN weight transfer, Blender half: no script at $WT_SCRIPT. It imports bpy, so this Apache-2.0 tree ships no copy; set AIPLAY_WEIGHT_TRANSFER_SCRIPT. UNRUN, not a pass."
+elif [ ! -f "$WT_SUITE" ]; then
+  echo "  UNRUN weight transfer, Blender half: no weight_transfer_test.py beside $WT_SCRIPT. UNRUN, not a pass."
+elif [ ! -x "$AVATAR_PY" ]; then
+  echo "  UNRUN weight transfer, Blender half: no Blender python at $AVATAR_PY; set AIPLAY_AVATAR_PYTHON. UNRUN, not a pass."
+else
+  WT_PATH="$(node -e "const p=require('path');process.stdout.write([p.resolve('server/mesh'),process.env.PYTHONPATH].filter(Boolean).join(p.delimiter))")" || exit 1
+  WT_LOG="$(mktemp)"
+  PYTHONPATH="$WT_PATH" "$AVATAR_PY" "$WT_SUITE" > "$WT_LOG" 2>&1; WT_RC=$?
+  cat "$WT_LOG"
+  WT_SKIPPED="$(grep -c "skipped=" "$WT_LOG")"; rm -f "$WT_LOG"
+  [ "$WT_RC" -eq 0 ] || exit 1
+  if [ "$WT_SKIPPED" != "0" ]; then echo "  UNRUN weight transfer, Blender half: the suite skipped (no usable bpy in $AVATAR_PY). UNRUN, not a pass."; fi
+fi
 node --test server/collab/video-recipe_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
@@ -402,9 +436,12 @@ node server/imgdoors_test.js || exit 1
 # Blender by the Foundation's stated position, and this tree is Apache-2.0 and
 # public. The only legal seam is a subprocess. config.js has said so all along;
 # nothing CHECKED it - an earlier branch carried the scan inside a previz test
-# file and the history rewrite dropped the file, guard included. Meanwhile the
-# tree went from one Blender crossing to three (mv/blender.js, mesh/deform.js,
-# mesh/runner.js). Reads files only: no GPU, no network, no engine.
+# file and the history rewrite dropped the file, guard included. The list of
+# Blender crossings (subprocess seams) lives ONCE, in the header of
+# server/licence_test.js; add a new seam there, not here. It also catches
+# mathutils/bmesh, the out-of-tree bpy scripts imported by module name, and a
+# bpy script staged anywhere in the index, vendor/ included. Reads files and
+# `git ls-files` only: no GPU, no network, no engine.
 node server/licence_test.js || exit 1
 # THE FIVE-MINUTE WALL UNDER NINETEEN RENDER HARNESSES. fetch() abandons a
 # request ~305 s after it goes out if no response headers have come back, and a

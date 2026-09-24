@@ -137,6 +137,41 @@ export function whisperPython(choice = config.lyrics?.whisperPython) {
   return process.env.AIPLAY_WHISPER_PYTHON || choice || defaultWhisperPython();
 }
 
+/**
+ * Where the attachment weight-transfer script lives, and why it is not in
+ * server/mesh/. It does `import bpy`, which by the Blender Foundation's stated
+ * position makes it a derivative work of Blender, and this tree is Apache-2.0
+ * and public — the boundary `config.blender` below describes and
+ * server/licence_test.js checks. So it sits outside the tree, as
+ * server/mesh/deform.js's deformScriptPath() does for deform.py, and
+ * server/mesh/avatar-weight-transfer.js spawns it and reads JSON off stdout.
+ * Resolved per call, so a changed environment is read without a restart.
+ */
+export function weightTransferScriptPath() {
+  return outsideTreeScript("AIPLAY_WEIGHT_TRANSFER_SCRIPT", "weight_transfer.py");
+}
+
+/**
+ * The lookup the out-of-tree bpy scripts share. The variable wins when set.
+ * Unset, two places are tried, in order: beside the toolkit's cli.py
+ * (config.blender.previz), where deform.py's default also points, and
+ * <rig>/blender-toolkit/, a local folder for a copy while the GPL toolkit
+ * repository does not publish these scripts yet. The first that holds the
+ * file wins. With neither, the toolkit path comes back, so the sentence the
+ * caller prints names where the script is expected, never a folder in here.
+ */
+function outsideTreeScript(variable, file) {
+  if (process.env[variable]) return process.env[variable];
+  const candidates = [
+    path.join(path.dirname(config.blender.previz), file),
+    path.join(config.rig, "blender-toolkit", file),
+  ];
+  for (const candidate of candidates) {
+    try { if (fs.statSync(candidate).isFile()) return candidate; } catch { /* try the next */ }
+  }
+  return candidates[0];
+}
+
 export const config = {
   rig: RIG,
   dataDir: APPDATA,
@@ -327,9 +362,12 @@ export const config = {
    * ⚠ THIS IS A LICENCE BOUNDARY, not a convenience. Anything that does
    * `import bpy` is, by the Blender Foundation's stated position, a derivative
    * work of Blender and must be GPL-compatible; this tree is Apache-2.0 and
-   * public. So the toolkit is a SUBMODULE, vendor/previz-blender — its own
-   * GPL-3.0-or-later repository, whose .py never enter this Apache tree's
-   * commits (only a gitlink SHA and a URL do). The only thing that crosses
+   * public. So the toolkit is its own GPL-3.0-or-later repository, meant to
+   * sit at vendor/previz-blender as a SUBMODULE, whose .py never enter this
+   * Apache tree's commits (only a gitlink SHA and a URL would). This tree
+   * carries no gitlink for it yet, so a clone there is just an untracked
+   * folder, and server/licence_test.js reads the INDEX, vendor/ included, so
+   * none of its .py can be staged unnoticed. The only thing that crosses
    * back at runtime is a .png and a .json on disk — data, which carries no
    * obligation. The interface is a subprocess and it must stay one. Nothing
    * here imports it, nothing here copies its .py in, and this app writes no

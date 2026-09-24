@@ -50,6 +50,8 @@ import { scoreTools } from "./mcp-music-score.js";
 import { musicAuditionTools } from "./mcp-music-auditions.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
+import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
+import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
 import { videoLoraInput } from "./video-lora-validation.js";
 import { waitForArtJob, emptyResultNote } from "./art-wait.js";
 
@@ -423,6 +425,8 @@ export const TOOLS = [
   ...musicAuditionTools(api),
   ...yueSetupTools(api),
   ...avatarTools(api),
+  ...avatarPlaybackTools(api),
+  ...avatarWeightTransferTools(api),
   ...vfxTools(api, safeName),
   ...dawTools(api, safeName),
   {

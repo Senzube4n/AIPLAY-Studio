@@ -513,6 +513,13 @@ export const ROUTABLE = {
 
   /* avatars */
   avatar_list: null,
+  avatar_playback_sessions: null,
+  avatar_audio_upload: "writes",
+  avatar_playback_command: null,
+  avatar_weight_transfer_status: null,
+  avatar_weight_transfer_inspect: null,
+  avatar_weight_transfer_submit: "writes", // bounded local CPU work creating a new attachment
+  avatar_weight_transfer_get: null,
   avatar_inspect: null,
   avatar_import: null,
   avatar_install_example: null,
