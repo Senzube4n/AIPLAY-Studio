@@ -420,6 +420,34 @@ animated respects `prefers-reduced-motion`.
   hides in its own rule (the `:not(#imgGo)` in the exception list is a leftover
   from before the button moved there). `server/welcome/level_test.js` §9 pins
   the Make buttons.
+- **The Music screen has one "Advanced"**: the level switch (#modeAdv). The
+  fold under the form is **More Options**, and YuE2's melody box is **Melody &
+  score** (#yMusicPlan), named for what it holds. There used to be a second box
+  called "Advanced Options", and a tester looking for the melody never found
+  it. On engines without that box, #melodyPointer at the top of More Options
+  says where it is. Do not name a new box "Advanced …".
+- **A row an engine cannot take is absent, and a row that is shown is sent.**
+  YuE2's rows carry their rule in the markup: `data-python-yue` (the Python
+  kit's alone: key, tempo, meter, "let the planner continue", the cover prime,
+  its precision), `data-no-comfy-yue` (not the ComfyUI build: Guidance),
+  `data-native-gguf` / `data-no-gguf`. `musicEnginePaint()` hides by them and
+  `yueSpec()` / the GGUF branch of `currentSpec()` send by the same rule.
+  `server/music-engine-rows_test.js` runs that code over the real markup for
+  each build and fails if a visible row is dropped, a hidden one is sent, or a
+  build's door would refuse the spec. A row the build takes only sometimes is
+  shown **disabled, with the reason beside it**, and is not sent: Planner
+  temperature on GGUF and ComfyUI while a score is sung as written or Thinking
+  is off (`planDialOff()`, `#yPlanTempNote`).
+- **A Stop stops its own work.** The transcription's Stop (#humCancel) goes to
+  the narrowest door for the step it is on (`humStopPlan()`): this song's
+  separation through `/api/artqueue` (`stop_current` running, `drop` waiting),
+  and SheetSage2 through `/api/cancel` only after a question that names the
+  song, clip or picture jobs that would stop with it. What it says afterwards
+  is read from the door's reply.
+- **Rights words are the catalogue's.** A song, a Models card, the queue line
+  and the receipt under Create read `outputRights` (`chip`, `short`) or a
+  library row's `rights`; the page types no rights word of its own beyond
+  `RIGHTS_WORDS`, the fallback for a row without a chip.
 - **Simple mode** (`.assist-on`, `web/assist.js`) hides every child of the
   form except a short list of exceptions in **one** rule in
   `web/styles.css`. Something the person dropped must stay visible, which
@@ -470,6 +498,7 @@ a comment saying why:
 | `server/mcp-image_test.js` | the Images reference ids |
 | `server/models-screen_test.js` | Unload is always offered |
 | `scripts/trace_load.mjs` | `app.js` evaluates with no top-level throw |
+| `server/music-engine-rows_test.js` | every YuE2 row shown on a build is sent and taken by its door, none hidden is sent; Melody & score, the stem-python row, Jobs "stopping…" / "stopped", the rights chip words |
 | `server/welcome/level_test.js` | the level (fresh Simple, in use Advanced, an unparseable settings.json never written over, Home cards Simple), the rail's Make / More / bottom lists, the phone media rule in `web/shell.css`, the first-run lines, the "Advanced adds" ids (present, and hidden by Simple), the Make buttons |
 
 New web scripts get a `node --check` line in `.githooks/pre-commit`.

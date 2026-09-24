@@ -2043,12 +2043,16 @@ door this is Yvann's audio-reactive video-to-video effect on our own engines.
 Everything below has a door (`API.md`), an MCP tool and a control on the page,
 and each was measured on the 16 GB card this is developed on.
 
-**YuE2 takes direction.** Under *Advanced Options*: **key, tempo and meter**
+**YuE2 takes direction.** Under *More Options*: **key, tempo and meter**
 (an open seed score the planner continues — asked for E minor at 92 in 4/4,
 the score came back with exactly that header and the song followed), and the
 **sampler's dials** (temperature, top-p, top-k, repetition penalty, and the
 planner's own temperature). MCP: `make_song` gained `key`, `bpm`, `meter`,
-`temperature`, `top_p`, `plan_temperature`.
+`temperature`, `top_p`, `plan_temperature`. Key, tempo and meter are the
+Python kit's: the native GGUF runtime and the ComfyUI nodes cannot seed an open
+score, so on those builds the rows are not shown (they used to be, and did
+nothing). The dials reach all three builds; on GGUF as the runtime's own
+`semantic_temperature`, `semantic_top_p` and `abc_temperature`.
 
 **Extend and replace, on both engines.** A YuE2 take extends by replaying its
 own performance behind the words (365 s of wall for 33 s of new song, the
@@ -2060,8 +2064,9 @@ both seams crossfaded. MCP: `extend_song`, `replace_section`.
 **Hum it, or cover it.** A hummed line goes through a pitch tracker (no model)
 and becomes the two-voice score YuE2 sings verbatim; a whole song goes through
 SheetSage2 (a 1.4 GB row on the Models screen) and comes back as a score to
-re-sing under a new style line — a cover with the melody kept. *Voice only*
-transcribes the separated vocal stem instead of the mix, which on the test song
+re-sing under a new style line — a cover with the melody kept. *Read the tune
+from: its separated voice* transcribes the separated vocal stem instead of the
+mix (it starts off until stem separation is set up on the PC), which on the test song
 recovered the right key and tempo where the mix had not. MCP: `hum_to_score`,
 `song_to_score` (with `stem`).
 
@@ -2104,13 +2109,18 @@ choose them, and `make_clip` / `extend_clip` can override per render.
 was clearly fixed, which is also what the publishers' own figures say.
 
 **LoRAs on YuE2 (ComfyUI build) and the fixed Krea 2 shelf.** The LoRA row
-under Advanced Options lists what fits the loaded music model; the
+at the foot of *Melody & score* lists what fits the loaded music model; the
 image LoRA shelf recognises Krea 2 checkpoints again.
 
-**YuE2's rights, as its authors put it.** Beside the unchanged CC BY-NC label,
-the Models card and NOTICE quote the m-a-p authors' statement that individuals
-may use the model and its outputs commercially and only companies should
-license — a discussion comment, dated and sourced, not the licence.
+**YuE2's rights, as its authors put it.** Since 2026-09-24 Studio's label for
+YuE2 follows the m-a-p authors' statement (a discussion comment of 15 September
+2026, dated and sourced): *sellable by individuals · companies need a commercial
+licence*. The licence file shipped with the weights still reads CC BY-NC 4.0,
+and the chip's detail says so and links both. The chip is on the Models card,
+under every YuE2 song's title and on the receipt under Create; the add-ons
+whose own authors said nothing of the kind (the CC BY-NC LoRAs and the
+real-audio tokenizer) keep their not-for-sale answer, and a song that used one
+carries it.
 
 ### What's new (September 2026)
 
@@ -2122,7 +2132,7 @@ just says *YuE2* or *MiniMax*; click it for the full list, ⓘ for the details,
 and **Load** / **Unload** beside it), a **Song | Instrumental** bar, then
 **Lyrics**, **Styles** and **More Options** as cards that fold open, and the
 **song title** last. Everything technical (seed, sampler settings, audio
-reference, score planning) lives under More Options and **Advanced Options**,
+reference, score planning) lives under More Options and, for YuE2, **Melody & score**,
 so a first song is: type, press Create.
 
 - **Reuse a song's lyrics and style.** Drag any song from the Library onto the

@@ -1285,6 +1285,17 @@ node server/music-gguf-input-ui_test.js || exit 1
 node server/music-native-progress-ui_test.js || exit 1
 node server/music-gguf-q8-ui_test.js || exit 1
 node server/music-params-layout_test.js || exit 1
+# EVERY YuE2 ROW THE MUSIC PAGE SHOWS IS ONE THE CHOSEN BUILD TAKES (a new
+# user's report, 2026-09-24: Key, Tempo, Meter and the sampler dials set on
+# YuE2 GGUF and none of it reached the song). The page's own painters and
+# spec builders, sliced out of web/app.js, run over the real Music markup once
+# per YuE2 build with a value in every row: a shown row is sent, a hidden one
+# is not, and the spec passes that build's real door (prepareGgufJob, the
+# ComfyUI validator, the kit's body reads). Plus the example score parses,
+# the refusal hooks offer their setup, the stems python row, the Jobs
+# "stopping…"/"stopped", the transcription's own Stop and the rights words.
+# No server, no GPU, under a second.
+node --test server/music-engine-rows_test.js || exit 1
 # The derivative that makes music LoRA training possible. Skips where the
 # engine's python is absent; a WRONG answer here trains happily on gradients
 # pointing the wrong way, so it is checked rather than trusted.

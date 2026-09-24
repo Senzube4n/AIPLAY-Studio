@@ -607,7 +607,7 @@ export const config = {
      * its strength. buildYue2ComfyGraph splices it as LoraLoaderModelOnly
      * between the checkpoint and the sampler, which patches the NAR, the half
      * ComfyUI exposes as MODEL; the AR arrives as CLIP and has no LoRA path
-     * there. Chosen under the Music tab's Advanced Options; a request may
+     * there. Chosen under the Music tab's Melody & score; a request may
      * name its own (`lora`, `loraStrength` on /api/generate). */
     yue2Lora: null,
     yue2LoraStrength: 1,

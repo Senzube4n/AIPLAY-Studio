@@ -1,7 +1,8 @@
 /* THE RECEIPT UNDER EVERY MAKE BUTTON (UI_PLAN C2), AND WHAT THE MACHINE PICKED.
  *
  * One line under Create, Make image and Render clip saying what pressing it
- * will do: "YuE2 3B · 32 steps · up to 2:30 · about 4:00 · Change". Every
+ * will do: "YuE2 3B · sellable by individuals · 32 steps · up to 2:30 ·
+ * about 4:00 · Change". Every
  * field is READ from the control that owns it, never kept here, and every
  * field names that control: Change switches the screen to Advanced, scrolls to
  * the control and lights it up. server/defaults_test.js checks each id in
@@ -34,6 +35,11 @@ export const RECEIPTS = {
     note: "ctaNote", button: "btnCreate", view: "create",
     fields: [
       { id: "engine", controls: ["musicEngine"] },
+      /* Whether the song may be sold ("sellable by individuals", "not for
+       * sale"): the chosen engine's catalogue words, which app.js
+       * paintMusicRights() writes onto the picker as data-rights-short. The
+       * picker is the control that decides it, so Change leads there. */
+      { id: "rights", controls: ["musicEngine"] },
       { id: "steps", controls: ["ySteps", "qSteps"] },
       { id: "length", controls: ["maxDur"] },
       { id: "estimate", controls: [], estimate: true },
@@ -94,6 +100,7 @@ function fieldText(screen, f) {
     return note && !note.classList.contains("stick") ? estimateOf(note.textContent) : null;
   }
   if (!el) return null;
+  if (f.id === "rights") return el.dataset?.rightsShort || null;
   if (f.id === "engine") {
     const segs = optText(el).split(" — ")[0].split(":")[0].split(" · ");
     /* Music names the model ("YuE2 3B"), and says so when a key pays for it. */
@@ -175,7 +182,9 @@ export function paint(screen) {
     /* The default's sentence only while the control holds that default; once
      * the screen shows another engine it would describe the wrong one. */
     const title = f.id === "engine" && def && engineOf($(owner[0])) === def.value ? def.why
-      : f.estimate ? ($(spec.note)?.textContent || "") : "Change this";
+      : f.estimate ? ($(spec.note)?.textContent || "")
+      : f.id === "rights" ? "Whether you may sell what this model makes: its licence's answer. Change the model to change it."
+      : "Change this";
     parts.push(owner.length
       ? `<button type="button" class="rcf" data-control="${esc(owner.join(" "))}" title="${esc(title)}">${esc(text)}</button>`
       : `<span class="rcf" title="${esc(title)}">${esc(text)}</span>`);

@@ -8,18 +8,26 @@ export function inputSelection({ library, dataUrl, name, path, start, duration }
   return { action: 'prepare', source, start_seconds: offset, duration_seconds: length };
 }
 
+/* A BLANK SEED BOX IS "RANDOM". Both boxes used to open on one fixed number and refuse to
+ * be emptied, so every continuation was the same one. Blank now leaves the seed
+ * out: the server rolls one (server/music-input.js seedValue), and a blank mix
+ * seed follows the composition seed. A number is still honoured exactly. */
 export function continuationSettings({ reference, caption, lyrics, seed, mixSeed, seconds, title }) {
   if (!reference) throw new Error('Prepare or select a ready reference first.');
   if (!caption?.trim()) throw new Error('Describe the music to continue.');
+  const blank = (value) => value === undefined || value === null || String(value).trim() === '';
   const integer = (value, label) => {
+    if (blank(value)) return undefined;
     const n = Number(value);
-    if (value === '' || !Number.isSafeInteger(n) || n < 0 || n > 4294967295) throw new Error(`${label} must be a whole number from 0 to 4294967295.`);
+    if (!Number.isSafeInteger(n) || n < 0 || n > 4294967295) throw new Error(`${label} must be a whole number from 0 to 4294967295, or blank for random.`);
     return n;
   };
   const length = Number(seconds);
   if (seconds === '' || !Number.isFinite(length) || length < .25 || length > 30) throw new Error('Choose between 0.25 and 30 seconds of new audio.');
+  const s = integer(seed, 'Composition seed'), m = integer(mixSeed, 'Mix seed');
   return { action: 'continue', reference_id: reference, caption: caption.trim(), lyrics: lyrics || '[Instrumental]',
-    seed: integer(seed, 'Composition seed'), mix_seed: integer(mixSeed, 'Mix seed'), seconds: length, title: title?.trim() || 'Audio-input continuation' };
+    ...(s === undefined ? {} : { seed: s }), ...(m === undefined ? {} : { mix_seed: m }),
+    seconds: length, title: title?.trim() || 'Audio-input continuation' };
 }
 
 export function musicResultUrl(value) {
@@ -51,8 +59,8 @@ function mountMusicInput(host) {
       <label>Direction<textarea data-mi="caption" rows="3" placeholder="Tempo, key, instruments, where it goes"></textarea></label>
       <label>Lyrics<textarea data-mi="lyrics" rows="2">[Instrumental]</textarea></label>
       <div class="mi-grid"><label>New audio · seconds<input data-mi="seconds" type="number" min="0.25" max="30" step="0.01" value="7.5"></label>
-        <label>Composition seed<input data-mi="seed" type="number" min="0" max="4294967295" step="1" value="418923"></label>
-        <label>Mix seed<input data-mi="mixSeed" type="number" min="0" max="4294967295" step="1" value="418923"></label></div>
+        <label>Composition seed<input data-mi="seed" type="number" min="0" max="4294967295" step="1" placeholder="random"></label>
+        <label>Mix seed<input data-mi="mixSeed" type="number" min="0" max="4294967295" step="1" placeholder="same as composition"></label></div>
       <button type="button" data-mi="continue">Generate</button>
     </fieldset>
     <p data-mi="error" role="alert" hidden></p><div data-mi="result" hidden></div>`;
@@ -97,7 +105,10 @@ function mountMusicInput(host) {
     const box = q('result'); box.replaceChildren(); box.hidden = true;
     const url = musicResultUrl(job.url); if (!url) return;
     box.hidden = false;
-    const p = document.createElement('p'); p.textContent = `Generated: ${job.file}`; box.append(p);
+    /* The seeds actually used, so a random one can be kept: type it back into the box. */
+    const seeds = Number.isInteger(job.seed)
+      ? ` · seed ${job.seed}${Number.isInteger(job.mix_seed) && job.mix_seed !== job.seed ? ` · mix seed ${job.mix_seed}` : ''}` : '';
+    const p = document.createElement('p'); p.textContent = `Generated: ${job.file}${seeds}`; box.append(p);
     const audio = document.createElement('audio'); audio.controls = true; audio.preload = 'none'; audio.src = url; box.append(audio);
     const link = document.createElement('a'); link.href = url; link.download = job.file; link.textContent = 'Download audio'; box.append(link);
     if (host.dataset.daw === 'true' && job.path) {

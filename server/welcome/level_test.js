@@ -350,6 +350,12 @@ ok("every screen with a Simple form has an Advanced tooltip",
   levelState().screens.every((v) => (ADVANCED_ADDS[v] || []).length >= 3 && /^Advanced adds .+\.$/.test(advancedTip(v))));
 const missing = Object.entries(ADVANCED_ADDS).flatMap(([v, rows]) => rows.flatMap((r) => r.ids.filter((id) => !HTML.includes(`id="${id}"`)).map((id) => `${v}:${id}`)));
 ok("every control a tooltip promises is in web/index.html", missing.length === 0, missing.join(", "));
+/* The melody box by the name the page gives it (2026-09-24): a tester hunting
+ * for "the melody box" found only More Options, and Music's Advanced tooltip
+ * never mentioned it. */
+ok("Music's Advanced tooltip names Melody & score and its record button and score box",
+  ADVANCED_ADDS.create.some((r) => /^Melody & score\b/.test(r.say) && ["yMusicPlan", "humRec", "yAbc"].every((id) => r.ids.includes(id)))
+  && /Melody &amp; score/.test(HTML));
 
 /* ...AND IS ONE SIMPLE REALLY HIDES. Pictures and Video share one rule
  * (web/styles.css: `.assist-on > :not(...)`), whose :not() list is what Simple

@@ -327,6 +327,13 @@ function countChars() {
 for (const id of ["caption", "lyrics"]) $(id).addEventListener("input", countChars);
 $("scaffold").addEventListener("input", countChars);
 
+/* The model catalogue's rows by capability id (/api/models), read once by
+ * rightsCatalog() and refreshed by the Models screen. Declared up here, not
+ * beside rightsCatalog(): the music painters read it, and a `let` read
+ * before its line has run throws even under `typeof`. */
+let rightsCatalogCache = null;
+let rightsCatalogAsked = 0;     // when rightsShortOf last asked (ms), for a 30 s retry
+
 /* Is the chosen music engine YuE2-shaped — i.e. does it take a chain-of-thought
  * mode? Read off the capability list /api/status serves, never off the name. */
 function yueEngine() {
@@ -513,8 +520,15 @@ function paintGgufSetup() {
     ggufFoldReady = ready;
     if ("open" in panel) panel.open = !ready;
   }
+  /* The rights words are the catalogue's (musicYue2Gguf outputRights: `short`
+   * on the summary, `chip` in the owner's note under the accept box); the
+   * wording here is only what shows before the catalogue has been read.
+   * typeof: music-gguf-*-ui tests lift this function without the catalogue. */
+  const or = typeof rightsCatalogCache !== "undefined" ? rightsCatalogCache?.musicYue2Gguf?.outputRights : null;
   const sum = $("ggufSetupSum");
-  if (sum) sum.textContent = ready ? `${ggufPrecisionLabel()} installed · terms accepted · individuals may use it commercially (the authors' statement)` : busy ? "installing…" : "not installed";
+  if (sum) sum.textContent = ready ? `${ggufPrecisionLabel()} installed · terms accepted · ${or?.short || "sellable by individuals"} (the authors' statement)` : busy ? "installing…" : "not installed";
+  const chip = $("ggufOwnerChip");
+  if (chip && or?.chip && chip.textContent !== or.chip) chip.textContent = or.chip;
   for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) if ($(id)) {
     $(id).value = ggufPrecision();
     $(id).disabled = ggufSetupAction;
@@ -928,15 +942,34 @@ function musicEnginePaint() {
   if (aceParams) acePaintOptions();
   for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
   const gguf = eng.runtime === "audiocpp";
-  /* Python-kit-only rows stay hidden for the ComfyUI YuE2 engine too. */
-  for (const el of document.querySelectorAll('[data-python-yue]')) el.hidden = !yueParams || gguf || eng.runtime === "comfy";
+  /* Python-kit-only rows stay hidden for the ComfyUI YuE2 engine too: key,
+   * tempo, meter, "let the planner continue" and the cover prime, besides the
+   * precision row. Neither the native runtime nor the ComfyUI nodes take them,
+   * so a row shown there would be a value sent and dropped (or refused).
+   * The cover-prime rows are also Library-song rows, so paintHumRows() owns
+   * them and they are skipped here. */
+  for (const el of document.querySelectorAll('[data-python-yue]:not([data-humsong])')) el.hidden = !yueParams || gguf || eng.runtime === "comfy";
   /* ComfyUI-only rows (the LoRA picker): the Python kit and the native GGUF
    * have no loader. Painted on first show and whenever the checkpoint changes. */
   const comfyYue = yueParams && eng.runtime === "comfy";
   for (const el of document.querySelectorAll('[data-comfy-yue]')) el.hidden = !comfyYue;
+  /* ...and the one row ComfyUI cannot take: Guidance (its graph samples at cfg 1). */
+  for (const el of document.querySelectorAll('[data-no-comfy-yue]')) el.hidden = !yueParams || comfyYue;
   if (comfyYue) musicLoadLoras();
   for (const el of document.querySelectorAll('[data-native-gguf]')) el.hidden = !gguf;
-  for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf;
+  /* ⚠ A data-no-gguf row that is ALSO a YuE2 row keeps its YuE2 rule: a plain
+   * `hidden = gguf` would show it on MiniMax. */
+  for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf || (el.dataset?.engine === "yue2" && !yueParams);
+  /* The melody box is YuE2's; everywhere else one line says where it is. */
+  const pointer = $("melodyPointer");
+  if (pointer) pointer.hidden = yueParams;
+  /* false: visibility only. The Library picker inside is refilled when the
+   * Transcriber changes, not on every status poll (that closed it under the
+   * mouse). */
+  if (typeof paintHumRows === "function") paintHumRows(false);
+  if (typeof paintPlanDial === "function") paintPlanDial();
+  // The receipt's rights word for this engine (web/receipt.js reads it off the picker).
+  if (typeof paintMusicRights === "function") paintMusicRights();
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
   const preview = $("btnPreview");
@@ -1337,7 +1370,7 @@ $("modeAdv")?.addEventListener("click", () => setSimple(false));
  * file only through three page events, so neither module reaches into the
  * other: a snapshot of the form goes out with every message, a form patch comes
  * back from write_song / change_settings, and generate presses Create. */
-/* Simple mode keeps the page on the idea: More Options and Advanced Options
+/* Simple mode keeps the page on the idea: More Options and Melody & score
  * step aside, and Lyrics and Styles fold shut (still there to open and read
  * what the assistant wrote). The song title stays, for the assistant to fill.
  * Leaving Simple mode puts the two boxes back the way they were. */
@@ -2384,6 +2417,11 @@ function currentSpec(preview, mixSeed) {
   }
   const firstLine = $("lyrics").value.trim().split("\n").find((l) => l && !l.startsWith("["));
   if ((state.musicEngines || {})[state.musicEngine]?.runtime === "audiocpp") {
+    /* Performance (temperature, top-p) and Planner (temperature) reach the
+     * native runtime as semantic_temperature / semantic_top_p /
+     * abc_temperature (music-gguf-input.js); blank sends nothing and the
+     * vendor default holds. They used to be shown here and never sent. */
+    const dial = (id) => { const v = String($(id)?.value ?? "").trim(); return v === "" ? undefined : Number(v); };
     return {
       engine: "yue2-gguf",
       title: ($("title").value.trim() || firstLine || "YuE2 GGUF song").slice(0, 60),
@@ -2393,6 +2431,9 @@ function currentSpec(preview, mixSeed) {
       cfgScale: $("yCfg").value.trim() === "" ? undefined : Number($("yCfg").value),
       quantization: ggufPrecision(),
       abc: $("yAbcUse")?.checked ? $("yAbc")?.value.trim() : undefined,
+      temperature: dial("yTemp"), topP: dial("yTopP"),
+      // Not while a score is sung as written, or Thinking is off: the door refuses it then (planDialOff).
+      planTemperature: typeof planDialOff === "function" && planDialOff() ? undefined : dial("yPlanTemp"),
       ...(state.workflowDraft?.lyrics === $("lyrics").value && state.workflowDraft?.engine === state.musicEngine
         ? { allowSectionLabels: state.workflowDraft.allowSectionLabels === true } : {}),
     };
@@ -2443,11 +2484,34 @@ function currentSpec(preview, mixSeed) {
   };
 }
 
+/* THE PLANNER DIAL, ONLY WHILE A SCORE IS BEING PLANNED. On the GGUF and
+ * ComfyUI builds a supplied score is sung as written and Thinking off plans
+ * nothing, and both doors refuse a planner dial then (yue-gguf.js "sampling";
+ * the ComfyUI door's comfy-plan-dials-with-score). The row stays in view,
+ * DISABLED, with the reason beside it, and neither spec sends it: a row that
+ * is shown and enabled is a row that is sent (server/music-engine-rows_test.js).
+ * The Python kit takes the dial either way. */
+function planDialOff() {
+  const eng = state.musicEngines?.[state.musicEngine] || {};
+  if (!Array.isArray(eng.cot) || (eng.runtime !== "audiocpp" && eng.runtime !== "comfy")) return null;
+  if ($("yCot")?.value === "off") return "off while Thinking is off: no score is planned";
+  if ($("yAbcUse")?.checked && String($("yAbc")?.value ?? "").trim()) return "off while your score is used: it is sung as written";
+  return null;
+}
+function paintPlanDial() {
+  const dial = $("yPlanTemp");
+  if (!dial) return;
+  const why = planDialOff();
+  dial.disabled = !!why;
+  const note = $("yPlanTempNote");
+  if (note) { note.hidden = !why; note.textContent = why || ""; }
+}
+
 /* The YuE2 rows in Advanced, and the score panel's "render from this score"
  * — read only when the rows exist in the DOM (index.html data-engine="yue2").
  * A supplied score travels with the slug and version it was loaded from, so
  * the render lands as a child of that version rather than as a new score. */
-/* ── hum a melody (Advanced Options): MediaRecorder → /api/hum → the ABC box ── */
+/* ── hum a melody (Melody & score): MediaRecorder → /api/hum → the ABC box ── */
 let humRecorder = null, humChunks = [];
 function humSay(text) { const n = $("humNote"); if (n) n.textContent = text; }
 async function humSend(blob, name) {
@@ -2462,28 +2526,69 @@ async function humSend(blob, name) {
 /* One sender for every source shape: a recording or a dropped file arrives as
  * a data URL, a library song as its name — which is the shape the vocal-stem
  * option needs, because a stem is filed under the library name. */
+/* THE STEP AND ITS CLOCK. "Listening for the notes…" used to be the whole
+ * story for a hum (seconds) and for a whole song (a demucs split, then a
+ * 1.39 GB SheetSage2 load — minutes), so a tester waited on a line that
+ * never said which. The step is read off the art queue the status poll
+ * already brings: while a stem split of THIS song is running or queued it is
+ * the separation; after it, the transcription. */
+let humRun = null;   // { controller, started, song, stem, file, timer }
+function humStage(run) {
+  const secs = Math.max(0, Math.floor((Date.now() - run.started) / 1000));
+  if (!run.song) return `Reading the notes… ${secs} s`;
+  const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  const art = state.lastStatus?.art;
+  const mine = (j) => j && j.kind === "stems" && j.file === run.file;
+  const separating = run.stem && (mine(art?.current) || (art?.items || []).some(mine));
+  return separating ? `Separating the voice… ${clock}` : `Reading the notes (SheetSage2)… ${clock}`;
+}
+function humBusy(run) {
+  if (humRun?.timer) clearInterval(humRun.timer);
+  humRun = run;
+  if ($("humCancel")) $("humCancel").hidden = !run;
+  if (!run) return;
+  humSay(humStage(run));
+  run.timer = setInterval(() => { if (humRun === run) humSay(humStage(run)); }, 1000);
+}
 async function humSendSource(source) {
-  humSay("Listening for the notes…");
+  /* A hummed line goes to the pitch tracker; a whole song to SheetSage2, which
+   * holds the card for a while and needs the Cover row installed. */
+  const song = $("humEngine")?.value === "song";
+  /* "Its separated voice" follows the stems setup's answer; a caller that
+   * switched the transcriber and sent at once (the Simple remix) must not
+   * read the box before that answer is in. */
+  if (song && source?.library_file && !humStemTouched && humStemReady === null && typeof readStemsReady === "function") await readStemsReady();
+  const stem = song && !!source?.library_file && !!$("humStem")?.checked;
+  const run = { controller: new AbortController(), started: Date.now(), song, stem, file: source?.library_file || null };
+  humBusy(run);
   try {
-    /* A hummed line goes to the pitch tracker; a whole song to SheetSage2, which
-     * holds the card for a while and needs the Cover row installed. */
-    const song = $("humEngine")?.value === "song";
     const r = await (await fetch(song ? "/api/song_to_score" : "/api/hum", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: run.controller.signal,
       body: JSON.stringify(song
         ? { source, mode: $("humMode")?.value || "melody", stem: $("humStem")?.checked && source.library_file ? "vocals" : undefined }
         : { source }),
     })).json();
-    if (r.error) { humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : "")); return false; }
+    if (humRun !== run) return false;          // stopped, or a newer transcription took over
+    humBusy(null);
+    if (r.error) {
+      /* A missing python, module or stem-separation setup comes with the setup
+       * that fixes it (the refusal's `setup` id): the offer, then the sentence. */
+      if (r.setup && typeof offerSetup === "function") offerSetup(r.setup, r.error);
+      humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : ""));
+      return false;
+    }
     if ($("yAbc")) $("yAbc").value = r.abc;
     if ($("yAbcUse")) $("yAbcUse").checked = true;
     // A supplied score needs the chain of thought on; "melody" plans the tune only.
     if ($("yCot") && $("yCot").value === "off") $("yCot").value = "melody";
+    if (typeof paintPlanDial === "function") paintPlanDial();
+    const took = Math.round((Date.now() - run.started) / 1000);
     humSay(r.notes != null
-      ? `${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · the score is in the box below and ticked for Create`
-      : `transcribed (${r.mode}) · ${r.bars ?? "?"} bars · key ${r.key ?? "?"} · ${r.bpm ?? "?"} bpm · the score is in the box below and ticked for Create — for a cover, write the new voice into the style line and press Create`);
+      ? `${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · read in ${took} s · the score is in the box below and ticked for Create`
+      : `transcribed (${r.mode}) · ${r.bars ?? "?"} bars · key ${r.key ?? "?"} · ${r.bpm ?? "?"} bpm · ${took} s · the score is in the box below and ticked for Create — for a cover, write the new voice into the style line and press Create`);
     return true;
-  } catch (e) { humSay(String(e.message || e)); return false; }
+  // A stopped run's Stop button has already said so; anything else is said here.
+  } catch (e) { if (humRun === run) humBusy(null); if (!run.stopped) humSay(String(e.message || e)); return false; }
 }
 $("humRec")?.addEventListener("click", async () => {
   try {
@@ -2508,6 +2613,80 @@ $("humRec")?.addEventListener("click", async () => {
   } catch (e) { humSay(`The microphone could not be opened: ${e.message || e}`); }
 });
 $("humStop")?.addEventListener("click", () => { if (humRecorder && humRecorder.state !== "inactive") humRecorder.stop(); });
+/* STOP A TRANSCRIPTION — ITS OWN WORK, AND NOTHING ELSE WITHOUT ASKING.
+ * The page stops waiting at once. A hum needs nothing more: the pitch tracker
+ * ends by itself within its two-minute cap and its answer is thrown away. A
+ * whole song is work on the server, in two steps, and the Stop goes to the
+ * narrowest door that reaches the step it is on:
+ *   · this song's voice separation, running: the art queue's stop_current,
+ *     which stops the one job in flight — this one — and leaves the queue;
+ *   · the same separation, still waiting: a drop of the song's file, which
+ *     removes every waiting job of that file, so any other one is named first;
+ *   · SheetSage2 reading the notes has no door of its own: /api/cancel is the
+ *     one that stops it, and it also stops the song being made and every
+ *     picture, clip and stem job, so each of those is named in a question
+ *     first, and what it did stop is read back from its reply (artStopped).
+ * It used to post /api/cancel for all of it and ask only about a song, so a
+ * newcomer's "Stop reading the notes" could drop a queued clip unasked. */
+function humStopPlan(run, art, snap) {
+  if (!run?.song) return { door: null, step: "hum", others: [] };
+  const stems = (j) => !!j && j.kind === "stems" && j.file === run.file;
+  const waiting = art?.items || [];
+  if (run.stem && stems(art?.current)) return { door: "/api/artqueue", body: { action: "stop_current" }, step: "separating", others: [] };
+  if (run.stem && waiting.some(stems)) {
+    return { door: "/api/artqueue", body: { action: "drop", file: run.file }, step: "separation-waiting",
+      others: waiting.filter((j) => j.file === run.file && !stems(j)).map((j) => `${j.title || j.file} (${j.kind || "picture"}, waiting)`) };
+  }
+  const others = [];
+  if (snap?.current) others.push(`the song being made${snap.current.title ? ` ("${snap.current.title}")` : ""}`);
+  if (art?.current && !stems(art.current)) others.push(`${art.current.title || art.current.file} (${art.current.kind || "picture"}, in progress)`);
+  const queued = waiting.filter((j) => !stems(j)).length;
+  if (queued) others.push(`${queued} waiting picture, clip or stem job${queued === 1 ? "" : "s"}`);
+  return { door: "/api/cancel", body: null, step: "reading", others };
+}
+/** What the Stop did, in the words of the door's own reply. */
+function humStoppedSentence(plan, r) {
+  if (!plan?.door) return "Stopped.";
+  if (!r || r.error) return `Stopped waiting. Studio did not confirm the stop${r?.error ? ` (${r.error})` : ""}; the Jobs page shows what is still running.`;
+  if (plan.step === "separating") {
+    if (!r.stopped) return "Stopped waiting. The voice separation had just finished, so the note reading may run on in the background; its answer will be ignored.";
+    if (r.kind && r.kind !== "stems") return `Stopped waiting. The voice separation had just finished, and the Stop reached ${r.stopped}, which had started after it.`;
+    return `Stopped. The voice separation ${r.stopping ? "is stopping" : "was stopped"}, so the notes will not be read; nothing else was touched.`;
+  }
+  if (plan.step === "separation-waiting") {
+    const n = Number(r.removed) || 0;
+    return `Stopped. The waiting voice separation was dropped${n > 1 ? `, with ${n - 1} other waiting job${n === 2 ? "" : "s"} of this song` : ""}; nothing else was touched.`;
+  }
+  const a = r.artStopped || {};
+  const bits = ["Stopped reading the notes."];
+  if ((plan.others || []).some((o) => o.startsWith("the song being made"))) bits.push("The song being made was stopped too.");
+  if (a.wasRunning) bits.push(`${a.stopping ? "Stopping" : "Stopped"} ${a.wasRunning}.`);
+  if (a.dropped) bits.push(`Dropped ${a.dropped} waiting job${a.dropped === 1 ? "" : "s"}.`);
+  return bits.join(" ");
+}
+$("humCancel")?.addEventListener("click", async () => {
+  const run = humRun;
+  if (!run) return;
+  const plan = humStopPlan(run, state.lastStatus?.art, state.lastSnap);
+  if (plan.others.length && typeof appConfirm === "function"
+      && !(await appConfirm(`Stopping this transcription also stops: ${plan.others.join("; ")}. Stop all of it?`,
+        { title: "Stop more than the transcription?", ok: "Stop all of it", cancel: "Keep everything running", tone: "danger" }))) return;
+  /* The question can outlast the transcription: an answer that arrived while
+   * it was open is kept, and nothing is stopped. */
+  if (humRun !== run) return;
+  run.stopped = true;
+  humBusy(null);
+  run.controller.abort();
+  let r = null;
+  if (plan.door) {
+    try {
+      r = await (await fetch(plan.door, plan.body
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(plan.body) }
+        : { method: "POST" })).json();
+    } catch { r = null; /* offline: the page has stopped waiting anyway */ }
+  }
+  humSay(humStoppedSentence(plan, r));
+});
 $("humFile")?.addEventListener("change", () => {
   const f = $("humFile").files?.[0];
   if (f) humSend(f, f.name);
@@ -2523,7 +2702,7 @@ function paintCoverPrime() {
   const prime = $("covPrime");
   if (prime) {
     prime.disabled = !state.tokenizerReady;
-    if (!state.tokenizerReady) { prime.value = 0; if ($("covPrimeValue")) $("covPrimeValue").textContent = "off"; }
+    if (!state.tokenizerReady) { prime.value = 0; if ($("covPrimeValue")) $("covPrimeValue").textContent = "off"; if ($("covStemSecs")) $("covStemSecs").textContent = "0 s"; }
     const note = $("covPrimeNote");
     if (note && note.dataset.plain === undefined) note.dataset.plain = note.textContent;
     if (note && !state.tokenizerReady) {
@@ -2547,14 +2726,30 @@ function paintCoverPrime() {
     if ($("covStem")) $("covStem").disabled = prime.disabled;
   }
 }
-/* The song-only rows (library picker, Voice only) show with the whole-song
- * transcriber; the picker is filled from the Library each time it opens. */
-function paintHumRows() {
+/* The song-only rows (library picker, "Read the tune from") show with the
+ * whole-song transcriber; the picker is filled from the Library each time the
+ * transcriber changes (`fill`), not on every status poll. The cover-prime rows
+ * are also the Python kit's alone (data-python-yue): the GGUF and ComfyUI
+ * builds cannot hear a prime, so they are absent there, by the rule yueSpec()
+ * sends by. */
+function paintHumRows(fill = true) {
   const song = $("humEngine")?.value === "song";
-  for (const el of document.querySelectorAll("[data-humsong]")) el.hidden = !song;
+  const eng = state.musicEngines?.[state.musicEngine] || {};
+  const kit = Array.isArray(eng.cot) && eng.runtime !== "audiocpp" && eng.runtime !== "comfy";
+  /* The layer row names the prime's seconds ("Let YuE2 hear the original's
+   * first 8 s, from its …"), so it shows only while there is a prime: at 0,
+   * or without the tokenizer, it read "first 0 s". */
+  const primeOn = !!$("covPrime") && state.tokenizerReady && Number($("covPrime").value) > 0;
+  for (const el of document.querySelectorAll("[data-humsong]")) {
+    el.hidden = !song || (el.hasAttribute("data-python-yue") && !kit) || (el.hasAttribute("data-covstem") && !primeOn);
+  }
+  /* The stems answer is asked when the whole-song rows come on screen (the
+   * transcriber changed), not on every poll. */
+  if (fill && song && typeof readStemsReady === "function") readStemsReady();
+  if (typeof paintHumStem === "function") paintHumStem();
   paintCoverPrime();
   const sel = $("humSong");
-  if (sel && song) {
+  if (sel && song && fill) {
     const cur = sel.value;
     sel.innerHTML = '<option value="">Pick a song to cover…</option>'
       + (state.library || []).filter((t) => /\.(flac|mp3|opus|wav)$/i.test(t.file))
@@ -2569,9 +2764,92 @@ $("humGo")?.addEventListener("click", () => {
   const file = $("humSong")?.value;
   if (file) humSendSource({ library_file: file });
 });
+
+/* "READ THE TUNE FROM: its separated voice" STARTS OFF WHILE STEM SEPARATION
+ * IS NOT SET UP HERE. It used to be ticked by default, so a Library song's
+ * transcription first queued a demucs split — on a PC with no working stems
+ * python that split failed or sat at 0 % while the transcription waited on
+ * it. The answer is the stems setup's own `ready` (POST /api/setup
+ * {action:"status", id:"stems"}); with no such setup on the server, or no
+ * answer, it counts as not ready. Once the person ticks or unticks it, their
+ * choice stands. */
+let humStemReady = null, humStemTouched = false;
+async function readStemsReady() {
+  try {
+    const r = await (await fetch("/api/setup", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "status", id: "stems" }),
+    })).json();
+    // The stems row by its id: a reply that lists several setups must not lend another one's `ready`.
+    const row = (r?.setups || []).find((s) => s.id === "stems");
+    humStemReady = row?.ready === true;
+  } catch { humStemReady = false; }
+  paintHumStem();
+}
+function paintHumStem() {
+  const box = $("humStem"), note = $("humStemNote");
+  if (!box) return;
+  const song = $("humEngine")?.value === "song";
+  if (!humStemTouched) box.checked = humStemReady === true;
+  if (note) {
+    note.hidden = !song || humStemReady !== false || box.checked;
+    note.textContent = "Its separated voice is off: stem separation isn't set up on this PC yet, so the whole mix is read. Set it up in Settings > Songs.";
+  }
+}
+$("humStem")?.addEventListener("change", () => { humStemTouched = true; paintHumStem(); });
+/* A stems setup that finishes — from Settings > Songs, or from the offer a
+ * refusal brings (web/setup-feature.js) — re-reads the answer, so the box and
+ * its note follow at once instead of at the next switch of the transcriber. */
+if (typeof paintSetupButtons === "function") {
+  paintSetupButtons(null, { refresh: () => { if (typeof readStemsReady === "function") readStemsReady(); } }).catch?.(() => {});
+}
+/* The planner dial follows the score box and Thinking as they change, not
+ * only at the next status poll (planDialOff). */
+for (const id of ["yAbcUse", "yCot"]) $(id)?.addEventListener("change", () => { if (typeof paintPlanDial === "function") paintPlanDial(); });
+$("yAbc")?.addEventListener("input", () => { if (typeof paintPlanDial === "function") paintPlanDial(); });
 paintHumRows();
 
-/* ── the YuE2 LoRA picker (Advanced Options, ComfyUI engine only) ────────── */
+/* LOAD AN EXAMPLE: four bars in the planner's own layout, so the two-voice
+ * shape is shown rather than described. Checked against the app's own reader
+ * (server/music-engine-rows_test.js parses it). It fills the box and leaves
+ * "Use this score with Create" as it was: an example is for reading first. */
+const MELODY_EXAMPLE = [
+  "X:1", "T:", "M:4/4", "L:1/32", "Q:1/4=96",
+  'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"',
+  'V: Ins clef=treble name="Ins Melody" snm="Inst."',
+  "K:C", "% verse",
+  "V: Vocal", '"C"E8G8c8G8|"F"A8c8"G"B8G8|"Am"c8B8A8E8|"G"G16z16|',
+  "V: Ins", "C,16G,16|F,16G,16|A,16E,16|G,32|",
+].join("\n") + "\n";
+$("yAbcExample")?.addEventListener("click", async () => {
+  const box = $("yAbc");
+  if (!box) return;
+  if (box.value.trim() && box.value !== MELODY_EXAMPLE
+      && !(await appConfirm("Replace the score in the box with the example?"))) return;
+  box.value = MELODY_EXAMPLE;
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  if ($("yPlanResult")) {
+    $("yPlanResult").textContent = "An example is in the box: the tune on V: Vocal (with its chords), a bass line on V: Ins. "
+      + "Tick \"Use this score with Create\" to hear it sung, or put your own in its place.";
+  }
+});
+
+/* "Use YuE2" (More Options, on the engines without a melody box): the first
+ * YuE2 build that is ready here, in the picker's own order; when none is, the
+ * picker's own answer (chooseMusicModel opens the model window, or native
+ * GGUF's setup). Then the Melody & score box, open. */
+$("melodyUseYue")?.addEventListener("click", async () => {
+  const yue = ["yue2-comfy", "yue2-gguf", "yue2"];
+  const rows = (state.musicModels || []).filter((c) => yue.includes(c.engine));
+  const pick = rows.find((c) => c.available === true) || rows[0];
+  if (!pick) { needModel("music", { title: "YuE2 isn't installed", lead: "YuE2 is the model here that sings a melody you hum.", focus: "musicYue2Gguf" }); return; }
+  await chooseMusicModel(pick.value);
+  if (!yueEngine()) return;                  // the picker offered a download instead
+  const box = $("yMusicPlan");
+  if (box) { box.open = true; box.scrollIntoView({ block: "start", behavior: "smooth" }); }
+});
+
+/* ── the YuE2 LoRA picker (Melody & score, ComfyUI engine only) ──────────── */
 let musicLoraShelfKey = null;
 async function musicLoadLoras(force = false) {
   const sel = $("yLora");
@@ -2639,6 +2917,10 @@ $("yLoraClip")?.addEventListener("change", musicSavePlannerLora);
 $("covPrime")?.addEventListener("input", () => {
   const v = Number($("covPrime").value);
   if ($("covPrimeValue")) $("covPrimeValue").textContent = v ? `${v}s` : "score only";
+  // The layer row names the same seconds: "Let YuE2 hear the original's first 8 s, from its …".
+  if ($("covStemSecs")) $("covStemSecs").textContent = `${v} s`;
+  // ...and shows only while there is a prime (paintHumRows).
+  if (typeof paintHumRows === "function") paintHumRows(false);
 });
 $("yLoraClipStrength")?.addEventListener("input", () => { if ($("yLoraClipStrengthValue")) $("yLoraClipStrengthValue").textContent = (Number($("yLoraClipStrength").value) / 100).toFixed(2); });
 $("yLoraClipStrength")?.addEventListener("change", musicSavePlannerLora);
@@ -2799,22 +3081,35 @@ function aceSpec() {
 function yueSpec() {
   const cot = $("yCot");
   if (!cot) return {};
+  /* WHAT THIS BUILD TAKES, and nothing it would drop. The rows the painter
+   * hides (musicEnginePaint: data-python-yue, data-no-comfy-yue) are the rows
+   * left out here, by the same rule: key / tempo / meter, "let the planner
+   * continue", the cover prime and the precision are the Python kit's alone,
+   * and Guidance is not ComfyUI's (its graph samples at cfg 1). A hidden row
+   * keeps whatever it held, so without this a value typed under one build
+   * rode along, unseen, under the next — to be dropped or refused there.
+   * Read off the capability list, as yueEngine() does, never off the name. */
+  const eng = state.musicEngines?.[state.musicEngine] || {};
+  const kit = Array.isArray(eng.cot) && eng.runtime !== "audiocpp" && eng.runtime !== "comfy";
+  const comfy = Array.isArray(eng.cot) && eng.runtime === "comfy";   // MiniMax runs on ComfyUI too; it has no `cot`
   const cfg = ($("yCfg")?.value ?? "").trim();
   const out = {
     cot: cot.value,
-    cfgScale: cfg === "" ? undefined : Number(cfg),
-    quantization: $("yPrecision")?.value || undefined,
+    cfgScale: cfg === "" || comfy ? undefined : Number(cfg),
+    quantization: kit ? ($("yPrecision")?.value || undefined) : undefined,
     narSteps: $("ySteps")?.value ? Number($("ySteps").value) : undefined,
   };
   /* Key / tempo / meter and the sampler dials: sent only when set, so the
    * GGUF door (which refuses unknown fields) and the vendor defaults hold. */
   const num = (id) => { const v = $(id)?.value; return v === undefined || v === null || String(v).trim() === "" ? undefined : Number(v); };
-  if ($("yKey")?.value.trim()) out.key = $("yKey").value.trim();
-  if (num("yBpm") !== undefined) out.bpm = num("yBpm");
-  if ($("yMeter")?.value) out.meter = $("yMeter").value;
+  if (kit) {
+    if ($("yKey")?.value.trim()) out.key = $("yKey").value.trim();
+    if (num("yBpm") !== undefined) out.bpm = num("yBpm");
+    if ($("yMeter")?.value) out.meter = $("yMeter").value;
+  }
   if (num("yTemp") !== undefined) out.temperature = num("yTemp");
   if (num("yTopP") !== undefined) out.topP = num("yTopP");
-  if (num("yPlanTemp") !== undefined) out.planTemperature = num("yPlanTemp");
+  if (num("yPlanTemp") !== undefined && !(typeof planDialOff === "function" && planDialOff())) out.planTemperature = num("yPlanTemp");
   /* A COVER is the score plus a prime: the score in `abc` came from a library
    * song (the Transcriber set to "Whole song"), and the slider says how many
    * seconds of that song's own performance the model hears first. At 0 nothing
@@ -2824,15 +3119,16 @@ function yueSpec() {
   const use = $("scoreUse");
   if (yueEngine() && $("yAbcUse")?.checked) out.abc = $("yAbc")?.value.trim();
   /* The prime is the Python kit's cover path. YuE2 through ComfyUI sings the
-   * transcribed score and its door refuses coverOf, so it is not sent there
-   * (paintCoverPrime shows the row off, with the reason). */
+   * transcribed score and its door refuses coverOf, and the GGUF build cannot
+   * hear a prime, so it is not sent there (paintHumRows hides the rows there;
+   * paintCoverPrime says why when they show). */
   const primes = state.musicEngines?.[state.musicEngine]?.runtime !== "comfy";
-  if (out.abc && covFile && covSecs > 0 && state.tokenizerReady && primes) {
+  if (kit && out.abc && covFile && covSecs > 0 && state.tokenizerReady && primes) {
     const covStem = $("covStem")?.value || "";
     out.coverOf = { file: covFile, seconds: covSecs, ...(covStem ? { stem: covStem } : {}) };
   }
   // The hum-to-song recipe: with a score, leave it open for the planner.
-  if (out.abc && $("yAbcOpen")?.checked) out.abcOpen = true;
+  if (kit && out.abc && $("yAbcOpen")?.checked) out.abcOpen = true;
   if (state.musicEngines?.[state.musicEngine]?.score && use?.checked && typeof scorePanelSelection === "function") {
     const sel = scorePanelSelection();
     if (sel?.abc?.trim()) Object.assign(out, { abc: sel.abc, scoreSlug: sel.slug || undefined, scoreVersion: sel.version || undefined });
@@ -2959,6 +3255,9 @@ async function generate(preview, mixSeed) {
     }
     /* Said under Create in the server's own words, with Fix where there is one
      * (web/receipt.js); the model window or an alert where that file is absent. */
+    /* A refusal that names a setup (a cover's stem split with no stems python)
+     * offers it, as every door's refusal does; the receipt still says why. */
+    if (j.error && j.setup && typeof offerSetup === "function") offerSetup(j.setup, j.error);
     if (j.error) { if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("ctaNote", j); else failSay(j); return; }
     else state.lastSpec = { ...spec };
     // A start that went through (Create or Preview) clears the last "Couldn't start".
@@ -3055,7 +3354,7 @@ async function runExtend() {
         // Send the edited words. Leaving this out makes the server append its own
         // continuation sections; supplying them means you decide where it goes.
         lyrics: $("lyrics").value,
-        // A longer score for a YuE2 take, when Advanced Options holds one.
+        // A longer score for a YuE2 take, when Melody & score holds one.
         abc: $("yAbcUse")?.checked ? ($("yAbc")?.value.trim() || undefined) : undefined,
         /* Which layer of a recording primes it — the mix unless one is chosen.
          * A take ignores this: its own performance is already the prefix. */
@@ -3064,7 +3363,12 @@ async function runExtend() {
       }),
     }).then((x) => x.json());
     stopTok();
-    if (r.error) { $("xtNote").textContent = r.error; return; }
+    if (r.error) {
+      // A recording's stem, or the tokenizer's python, may need a setup: offer it.
+      if (r.setup && typeof offerSetup === "function") offerSetup(r.setup, r.error);
+      $("xtNote").textContent = r.error;
+      return;
+    }
     stopExtend();
     poll();
   } finally {
@@ -3116,7 +3420,9 @@ $("btnCancel").onclick = () => fetch("/api/cancel", { method: "POST" });
         const j = await r.json().catch(() => ({}));
         const a = j.artStopped || {};
         const bits = [];
-        if (a.wasRunning) bits.push(`stopped ${a.wasRunning}`);
+        /* A separate program (a stem split, a lyric timing) may still be
+         * ending when the reply comes: say "stopping", not "stopped". */
+        if (a.wasRunning) bits.push(a.stopping ? `stopping ${a.wasRunning}…` : `stopped ${a.wasRunning}`);
         if (a.dropped) bits.push(`dropped ${a.dropped}`);
         if ((j.plansPaused || []).some((x) => x.paused)) bits.push("paused the music-video plan (Run carries on)");
         stop.textContent = bits.length ? bits.join(", ") : "nothing was running";
@@ -3391,8 +3697,13 @@ function renderNow(cur, queued = 0) {
     if (noBar) progress.removeAttribute("aria-valuenow");
     else progress.setAttribute("aria-valuenow", String(Math.round(Math.max(0, Math.min(1, cur.overall || 0)) * 100)));
   }
+  /* The rights words are the catalogue's (outputRights.short of the engine's
+   * row), never typed here: this line said "non-commercial" for YuE2 GGUF
+   * after the label had moved to the authors' statement. Left out until the
+   * catalogue has been read. */
+  const rightsWords = typeof rightsShortOf === "function" ? rightsShortOf(MUSIC_CAP["yue2-gguf"]) : null;
   $("nowMeta").textContent = gguf
-    ? `YuE2 GGUF ${cur.quantization === "q8_0" ? "Q8_0" : "Q4_0"} · non-commercial · ${cur.error || GGUF_LABEL[cur.stage] || cur.stageLabel || cur.stage} · seed ${cur.seed}`
+    ? `YuE2 GGUF ${cur.quantization === "q8_0" ? "Q8_0" : "Q4_0"}${rightsWords ? ` · ${rightsWords}` : ""} · ${cur.error || GGUF_LABEL[cur.stage] || cur.stageLabel || cur.stage} · seed ${cur.seed}`
     /* YuE2 through ComfyUI: the graph's own sampler (buildYue2ComfyGraph). */
     : cur.engine === "yue2-comfy"
     ? `YuE2 3B (ComfyUI) · ${cur.scoreSupplied ? `singing your score (${cur.cot || "full"})` : cur.cot === "off" ? "no score plan" : `${cur.cot || "full"} score plan`} · dpm_2 · ${cur.narSteps || 32} steps · seed ${cur.seed}`
@@ -4324,10 +4635,17 @@ async function onRowClick(e) {
 
   const st = e.target.closest("[data-stems]");
   if (st) {
+    /* It used to be fire-and-forget, so a refusal (no stems python, no demucs)
+     * was never seen. Now the lyrics row's shape: a refusal that names a setup
+     * offers it, any other is said; `joined` (a split of this song already
+     * running) and a queued split need no words — the Jobs row shows them. */
     fetch("/api/stems", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "run", file: decodeURIComponent(st.dataset.stems) }),
-    }).then(poll);
+    }).then((r) => r.json()).then((r) => {
+      if (r.error && r.setup && typeof offerSetup === "function") offerSetup(r.setup, r.error);
+      else if (r.error) alert(r.error);
+    }).catch(() => {}).then(poll);
     return;
   }
 
@@ -4457,11 +4775,16 @@ async function onRowClick(e) {
          * the subfolder travels in the name (no "..", not absolute — its two
          * refusals). Best effort: a failed reveal keeps the note. */
         const rel = `${d.subfolder ? d.subfolder + "/" : ""}${d.file}`;
-        $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} — opening the folder.`;
+        /* The file is leaving Studio, so its selling answer goes with the
+         * confirmation: the library row's rights words, when the row has them. */
+        const src = (state.library || []).find((x) => x.file === file);
+        const rights = src?.rights?.short || src?.rights?.label || "";
+        const says = rights ? ` Rights: ${rights}.` : "";
+        $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} — opening the folder.${says}`;
         fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file: rel }) })
           .then((r) => r.json())
-          .then((v) => { if (v.error) $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} (${v.error}).`; })
+          .then((v) => { if (v.error) $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} (${v.error}).${says}`; })
           .catch(() => {});
       })
       .catch((err) => alert(err.message))
@@ -4782,6 +5105,8 @@ function openSong(file) {
   renderMerge(t);
   paintExtend(t);
   paintProvenance(t);
+  // typeof: server/music-native-progress-ui_test.js lifts openSong with only the names it injects.
+  if (typeof paintSongRights === "function") paintSongRights(t);
   $("songPanel").hidden = false;
 }
 
@@ -4799,14 +5124,18 @@ function openSong(file) {
  * showing today's answer for last year's file — that disagreement is the whole
  * reason the class is stamped at generation time.
  */
-let rightsCatalogCache = null;
+/* rightsCatalogCache is declared near the top of this file (before the painters that read it). */
 async function rightsCatalog() {
   if (rightsCatalogCache) return rightsCatalogCache;
+  /* A failed read (a busy or restarting server, an error reply) is NOT kept:
+   * the next caller asks again, rather than the rights words staying blank
+   * until the Models screen happens to reload the catalogue. */
   try {
     const d = await (await fetch("/api/models")).json();
-    rightsCatalogCache = Object.fromEntries((d.capabilities || []).map((c) => [c.id, c]));
-  } catch { rightsCatalogCache = {}; }
-  return rightsCatalogCache;
+    if (!Array.isArray(d?.capabilities)) return {};
+    rightsCatalogCache = Object.fromEntries(d.capabilities.map((c) => [c.id, c]));
+    return rightsCatalogCache;
+  } catch { return {}; }
 }
 
 /**
@@ -4865,14 +5194,50 @@ const RIGHTS_WORDS = {
     line: "Nobody has read the operative text, so Studio makes no claim either way. Read it before you rely on it." },
 };
 
-/** The chip's own words, including the condition count. */
-function rightsChipLabel(cls, conditions) {
+/** The chip's own words, including the condition count. A catalogue row that
+ *  names its own chip (`outputRights.chip`, e.g. YuE2's "Sellable by
+ *  individuals (YuE2 authors' statement, 15 Sep 2026) · companies need a
+ *  commercial licence") is used as written, when its class is the one shown. */
+function rightsChipLabel(cls, conditions, chip = null) {
+  if (chip) return chip;
   const w = RIGHTS_WORDS[cls] || RIGHTS_WORDS.unknown;
   const n = (conditions || []).length;
   if (cls === "yours-with-conditions" && n) {
     return `${w.chip} — ${n} condition${n > 1 ? "s" : ""}`;
   }
   return w.chip;
+}
+
+/** A capability's short rights words ("sellable by individuals"), from the
+ *  catalogue the page already reads; null until it has been read (the read is
+ *  started here, once). Used where a whole chip does not fit: the queue line,
+ *  the receipt under Create. */
+function rightsShortOf(capability) {
+  /* Asked once, and again at most every 30 s while it has not arrived (a
+   * failed read is not cached): /api/models is a heavy read. */
+  if (!rightsCatalogCache && Date.now() - rightsCatalogAsked > 30000) {
+    rightsCatalogAsked = Date.now();
+    rightsCatalog().then(() => { if (typeof paintMusicRights === "function") paintMusicRights(); }).catch(() => {});
+  }
+  const or = rightsCatalogCache?.[capability]?.outputRights;
+  if (!or) return null;
+  /* The server's own rule (models.js rightsWords): its `short`, else the whole
+   * chip with its condition count — "yours to sell — 4 conditions", never a
+   * bare "yours to sell" that drops them. */
+  const words = or.short || rightsChipLabel(or.class, or.conditions, or.chip || null);
+  return words ? String(words).toLowerCase() : null;
+}
+/* The receipt under Create reads its rights word off the engine picker (web/
+ * receipt.js, `data-rights-short`), the control that decides it. */
+function paintMusicRights() {
+  const sel = $("musicEngine");
+  if (!sel?.dataset) return;
+  const short = rightsShortOf(MUSIC_CAP[state.musicEngine] || "");
+  if ((sel.dataset.rightsShort || "") === (short || "")) return;
+  if (short) sel.dataset.rightsShort = short; else delete sel.dataset.rightsShort;
+  /* Repaint the receipt now rather than at the next status. NOT a synthetic
+   * "change" on the picker: that is the person choosing a model, and posts it. */
+  if (typeof globalThis.aiplayReceipts === "function" && state.lastStatus) globalThis.aiplayReceipts(state.lastStatus);
 }
 
 /**
@@ -4883,27 +5248,59 @@ function rightsChipLabel(cls, conditions) {
  * (a checkpoint the user supplied — the honest answer there is "unknown", and
  * the note says why).
  */
-function rightsChipHtml(stamp, cap) {
+function rightsChipHtml(stamp, cap, { label = null, addOns = [], catalog = null } = {}) {
   if (!stamp || !stamp.class) return "";
   const or = cap?.outputRights || null;
   const cls = stamp.class;
   const w = RIGHTS_WORDS[cls] || RIGHTS_WORDS.unknown;
-  const conds = or && or.class === cls ? (or.conditions || []) : [];
+  const same = !!or && or.class === cls;
+  const conds = same ? (or.conditions || []) : [];
+  /* A song that used a stricter add-on (a CC BY-NC LoRA, the real-audio
+   * tokenizer) carries the add-on's class, not its engine's: that is not the
+   * catalogue moving under an old file, and must not read as it. */
+  const raised = (addOns || []).length > 0;
   // The catalogue moved under a file that was already made: say it, don't hide it.
-  const drifted = or && or.class && or.class !== cls;
+  const drifted = or && or.class && or.class !== cls && !raised;
+  /* ...and when the catalogue says WHY it moved (YuE2 now follows its authors'
+   * statement), that reason is the paragraph, not the generic warning. */
+  const changed = drifted && or.changed?.from === cls ? or.changed : null;
+  /* The line under the chip: a label that follows the authors' statement says
+   * so, rather than "the licence says in writing", which the file does not. */
+  /* A label the server chose (a song's `rights.label`, e.g. "Noncommercial
+   * (Studio policy)" for one an add-on raised) is not in this page's words,
+   * and RIGHTS_WORDS' line would then speak for a claim the chip does not make
+   * ("bans commercial use of the material it generates"): under such a label
+   * the page adds no class line of its own, and the add-on sentence, the
+   * licence's quote and its link say it (contracts, open item 3). */
+  const ownWords = !label || label === rightsChipLabel(cls, conds, same ? (or?.chip || null) : null);
+  const line = same && or.basis === "authors-statement"
+    ? "The model's authors said in writing that individuals may sell what it makes and companies need a commercial licence. Studio's label follows that statement; the licence file (below) has not changed."
+    : ownWords ? w.line : null;
+  /* A licence that stops at a border (the H3 family) is "yours to sell" only
+   * outside it: the chip says "Where licensed", and the detail names where. */
+  const excluded = Array.isArray(cap?.region?.excluded) ? cap.region.excluded : [];
+  // The authors' words once: the publisher block repeats the quote when the label follows it.
+  const pubQuote = or?.publisher && or.publisher.said !== or.quote;
   const id = `rd${Math.random().toString(36).slice(2, 9)}`;
   const detail = `
     <div class="rdetail" id="${id}" hidden>
-      <p class="rline">${esc(w.line)}</p>
+      ${line ? `<p class="rline">${esc(line)}</p>` : ""}
+      ${excluded.length ? `<p class="rline">Not licensed in ${excluded.map(esc).join(", ")}: these words hold only outside them.</p>` : ""}
+      ${raised ? `<p class="rline">Made with ${(addOns || []).map((a) => esc(catalog?.[a]?.label || a)).join(" and ")}, whose own licence is stricter than the engine's, so this song carries that answer.</p>` : ""}
       ${conds.length ? `<ul class="rconds">${conds.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
       ${or?.quote ? `<blockquote class="rquote">${esc(or.quote)}</blockquote>
          <p class="rclause">${esc(or.clause || "")}</p>` : ""}
       ${or?.publisher ? `<p class="rpub"><b>What the authors said</b> — ${esc(or.publisher.by)},
-         <a href="${esc(or.publisher.where)}" target="_blank" rel="noopener">discussion</a>, ${esc(or.publisher.on)}:
-         <q>${esc(or.publisher.said)}</q> ${esc(or.publisher.caveat)}${or.publisher.support
+         <a href="${esc(or.publisher.where)}" target="_blank" rel="noopener">discussion</a>, ${esc(or.publisher.on)}${pubQuote
+           ? `: <q>${esc(or.publisher.said)}</q>` : "."} ${esc(or.publisher.caveat)}${or.publisher.support
            ? ` <a href="${esc(or.publisher.support)}" target="_blank" rel="noopener">Support the authors.</a>` : ""}</p>` : ""}
+      ${or?.licenceFile ? `<p class="rlicfile">The licence file still reads ${or.licenceFile.url
+           ? `<a href="${esc(or.licenceFile.url)}" target="_blank" rel="noopener">${esc(or.licenceFile.name)}</a>` : esc(or.licenceFile.name)}.${or.licenceFile.quote
+           ? ` <q>${esc(or.licenceFile.quote)}</q>` : ""}</p>` : ""}
       ${or?.note ? `<p class="rnote">${esc(or.note)}</p>` : ""}
-      ${drifted ? `<p class="rdrift">⚠ This file was made when the licence answer here was
+      ${changed ? `<p class="rdrift">${esc(changed.why)} This file was stamped
+         “${esc(RIGHTS_WORDS[cls]?.chip || cls)}” when it was made; the ledger keeps that, and the label above is today's.</p>`
+        : drifted ? `<p class="rdrift">⚠ This file was made when the licence answer here was
          “${esc(RIGHTS_WORDS[cls]?.chip || cls)}”. The catalogue now reads
          “${esc(RIGHTS_WORDS[or.class]?.chip || or.class)}” — the ledger keeps what was true at the time.</p>` : ""}
       ${stamp.url || or?.url
@@ -4911,8 +5308,14 @@ function rightsChipHtml(stamp, cap) {
         : ""}
       <p class="rnever">Studio never blocks an export on this. It is your call and your file.</p>
     </div>`;
-  return `<span class="rights"><button type="button" class="rchip r-${w.tone}" data-rights="${id}"
-      title="What this model's licence says about selling what you made">${esc(rightsChipLabel(cls, conds))}</button>${detail}</span>`;
+  /* A changed label shows TODAY's words on the chip (the row is computed from
+   * the catalogue); the stamp's older class stays in the paragraph above. */
+  const shown = changed ? or.class : cls;
+  const tone = (RIGHTS_WORDS[shown] || RIGHTS_WORDS.unknown).tone;
+  const base = label || rightsChipLabel(shown, changed ? (or.conditions || []) : conds, same || changed ? (or.chip || null) : null);
+  const chipText = !label && excluded.length ? `Where licensed: ${base.charAt(0).toLowerCase()}${base.slice(1)}` : base;
+  return `<span class="rights"><button type="button" class="rchip r-${tone}" data-rights="${id}"
+      title="What this model's licence says about selling what you made">${esc(chipText)}</button>${detail}</span>`;
 }
 
 /** Chip for an asset, straight from its ledger summary. Empty string when the
@@ -4922,6 +5325,35 @@ async function rightsChipFor(summary) {
   if (!stamp) return "";
   const cat = await rightsCatalog();
   return rightsChipHtml(stamp, stamp.capability ? cat[stamp.capability] : null);
+}
+
+/* MAY THIS SONG BE SOLD — on the song itself, under its title. A finished song
+ * used to show no rights anywhere, so a tester had to guess whether she could
+ * sell one. The
+ * library row's `rights` is computed from today's catalogue (the engine that
+ * made it, raised by any stricter add-on it used; server/index.js), and its
+ * `label` is the chip's words. An older server sends no `rights`: then the
+ * ledger's stamp, the way pictures show theirs. */
+async function paintSongRights(t) {
+  const box = $("spRights");
+  if (!box || !t) return;
+  const file = t.file;
+  box.hidden = true;
+  box.innerHTML = "";
+  let html = "";
+  try {
+    const cat = await rightsCatalog();
+    if (t.rights?.class) {
+      html = rightsChipHtml({ class: t.rights.class, capability: t.rights.capability, url: t.rights.url },
+        cat[t.rights.capability], { label: t.rights.label || null, addOns: t.rights.addOns || t.rights.add_ons || [], catalog: cat });
+    } else {
+      const d = await (await fetch(`/api/provenance?asset=${encodeURIComponent(file)}`)).json();
+      html = await rightsChipFor(d.summary);
+    }
+  } catch { html = ""; }
+  if (state.songFile !== file) return;             // the panel moved on
+  box.innerHTML = html;
+  box.hidden = !html;
 }
 
 /* One delegated listener for every chip on every page — chips are rendered
@@ -6631,6 +7063,8 @@ async function tokenizeCurrent() {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file: t.file }),
     })).json();
+    // A missing module or stems python comes with the setup that fixes it.
+    if (r.error && r.setup && typeof offerSetup === "function") offerSetup(r.setup, r.error);
     if (note) {
       note.textContent = r.error
         ? r.error
@@ -6828,6 +7262,29 @@ $("btnWhisperPy").onclick = async () => {
     b.disabled = false;
   }
 };
+/* The python stem separation runs in, the same door shape as the one above:
+ * POST /api/stems {action:"python", value} checks demucs and torch there and
+ * applies at once (art.js reads config.systemPython at every spawn); empty
+ * goes back to the default. The answer is the server's: its note, whether it
+ * is ready, and that AIPLAY_SYS_PYTHON wins when it is set. The Melody &
+ * score box's "its separated voice" follows the new answer. */
+$("btnStemsPy")?.addEventListener("click", async () => {
+  const b = $("btnStemsPy");
+  b.disabled = true;
+  try {
+    const r = await (await fetch("/api/stems", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "python", value: $("qStemsPy").value.trim() }),
+    })).json();
+    $("stemsPyNote").textContent = r.error || r.stems?.note || "Saved.";
+    $("stemsPyNote").classList.toggle("warn", !!r.error || r.stems?.ready === false);
+    if (typeof readStemsReady === "function") readStemsReady();
+  } catch (e) {
+    $("stemsPyNote").textContent = String(e.message || e);
+  } finally {
+    b.disabled = false;
+  }
+});
 /* Covers live beside the audio as loose PNGs; this puts them INSIDE it.
  *
  * Separate from "draw any missing covers" because it is a different operation
@@ -6900,9 +7357,18 @@ async function loadModels() {
   let d = null;
   try { d = await (await fetch("/api/models")).json(); } catch { /* server busy */ }
   if (!d?.capabilities) return;
+  /* The rights chips read the same rows (rightsCatalog), so the card, the
+   * song panel and the queue line cannot disagree about a label. Every row,
+   * before Music-only narrows the list below. */
+  rightsCatalogCache = Object.fromEntries(d.capabilities.map((c) => [c.id, c]));
   // Music-only lists the two YuE2 builds it can run: native GGUF, and the ComfyUI checkpoint.
   if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy");
   state.models = d;
+  /* WHETHER YOU MAY SELL WHAT IT MAKES, on the card itself: the same chip a
+   * song and a picture carry, opening the licence's own words. A tester read
+   * a card's note pointing at "the rights chip" and found none on it. */
+  const rightsOf = (c) => (c.outputRights?.class
+    ? rightsChipHtml({ class: c.outputRights.class, capability: c.id, url: c.outputRights.url }, c) : "");
 
   const missing = d.capabilities.filter((c) => !c.ready && !c.managedByPackage).length;
   $("modelPip").hidden = missing === 0;
@@ -6929,7 +7395,7 @@ async function loadModels() {
              <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button>`;
       // Required when it is the selected, ready music engine; "one music engine" before one is.
       return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
-      <div class="mhead"><b>${esc(c.label)}</b><span class="badge">${requiredBadge(c) || "optional"}</span><span class="mlic">${esc(c.licence)}</span></div>
+      <div class="mhead"><b>${esc(c.label)}</b><span class="badge">${requiredBadge(c) || "optional"}</span><span class="mlic">${esc(c.licence)}</span>${rightsOf(c)}</div>
       <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
       <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
       <div class="mfoot">${foot}</div>
@@ -6978,6 +7444,7 @@ async function loadModels() {
         : esc(c.label)}</b>
           ${requiredBadge(c) ? `<span class="badge">${requiredBadge(c)}</span>` : ""}
           <span class="mlic">${esc(c.licence)}</span>
+          ${rightsOf(c)}
         </div>
         <p class="mwhy">${esc(c.why)}</p>
         ${c.requires ? `<div class="mreq">
@@ -19587,6 +20054,18 @@ function applyStatus(s) {
   if (s.config?.stems && !state.stemsPainted) {
     state.stemsPainted = true;
     $("qStems").value = s.config.stems.when || "off";
+    /* "stem separation python": the saved choice (null = the default), the
+     * default as the placeholder, and — before anyone types — that the
+     * environment wins when AIPLAY_SYS_PYTHON is set. Older servers send none
+     * of these, and the row then shows its static placeholder. */
+    if ($("qStemsPy")) {
+      $("qStemsPy").value = s.config.stems.systemPython || "";
+      if (s.config.stems.defaultPython) $("qStemsPy").placeholder = s.config.stems.defaultPython;
+    }
+    if (s.config.stems.pythonSource === "env" && $("stemsPyNote")) {
+      $("stemsPyNote").textContent = `AIPLAY_SYS_PYTHON is set, so stem separation runs in ${s.config.stems.python} whatever this field says.`;
+      $("stemsPyNote").classList.add("warn");
+    }
   }
   /* Kept on `state` for the row menu, which has to decide whether to offer
    * "Make a video clip" at all. Unlike the controls below this is re-read on
@@ -20061,14 +20540,24 @@ function paintJobQueue(s) {
   if (!cur && !items.length) { box.innerHTML = ""; return; }
 
   const pct = Math.round((cur?.progress || 0) * 100);
+  /* STOPPING IS A STATE OF ITS OWN. A stem split or a lyric timing is a
+   * separate program; Stop ends its whole process tree, which can take a
+   * moment, and the row used to repaint at once with a fresh "stop" as if
+   * nothing had happened (a tester read that as "it starts again"). While
+   * the server says `stopping`, the row says so and the button is off.
+   * `note` is the runner's own word on what the job is doing ("fetching the
+   * separation model, 336 MB, first run only"; "model 2 of 4"). */
+  const stopping = !!cur?.stopping;
+  const said = stopping ? "stopping…"
+    : `${pct}%${cur?.note ? ` · ${cur.note}` : ""}${cur?.elapsed ? ` · ${jobDur(cur.elapsed * 1000)}` : ""}`;
   box.innerHTML =
-    (cur ? `<div class="qjob running">
+    (cur ? `<div class="qjob running${stopping ? " stopping" : ""}">
         <span class="jobkind">${esc(JOB_LABEL[cur.kind] || cur.kind || "")}</span>
         <span class="jobtitle">${esc(cur.title || cur.file || "")}</span>
         <span class="qbar"><i style="width:${pct}%"></i></span>
-        <span class="jobms">${pct}%${cur.elapsed ? ` · ${jobDur(cur.elapsed * 1000)}` : ""}</span>
-        <button type="button" class="qkill" data-stopcurrent="1"
-          title="Interrupt this render — the queue behind it carries on">stop</button>
+        <span class="jobms" title="${esc(said)}">${esc(said)}</span>
+        <button type="button" class="qkill" data-stopcurrent="1"${stopping ? " disabled" : ""}
+          title="${stopping ? "Stopping — the program is being ended" : "Interrupt this render — the queue behind it carries on"}">${stopping ? "stopping…" : "stop"}</button>
       </div>` : "")
     + items.map((j) => `<div class="qjob">
         <span class="jobkind">${esc(JOB_LABEL[j.kind] || j.kind || "")}</span>
@@ -20123,7 +20612,10 @@ function paintJobs(s) {
     + `${esc(JOB_LABEL[k] || k)}${k === "all" ? "" : ` ${jobs.filter((j) => j.kind === k).length}`}</button>`).join("");
 
   const totalMs = jobs.reduce((n, j) => n + (j.ms || 0), 0);
-  const failed = jobs.filter((j) => j.error).length;
+  /* A job someone stopped carries an error (so a waiter never reads it as a
+   * success) and `cancelled: true`: it says "stopped", not "failed", and it is
+   * not counted with the failures. */
+  const failed = jobs.filter((j) => j.error && !j.cancelled).length;
   const byKind = {};
   for (const j of jobs) {
     const b = byKind[j.kind] || (byKind[j.kind] = { n: 0, ms: 0 });
@@ -20141,13 +20633,14 @@ function paintJobs(s) {
     const view = JOB_VIEW[j.kind] || "create";
     const out = jobOutput(j);
     const when = j.at ? new Date(j.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-    return `<div class="jobrow${j.error ? " bad" : ""}">
+    return `<div class="jobrow${j.error && !j.cancelled ? " bad" : ""}">
       <span class="jobkind">${esc(JOB_LABEL[j.kind] || j.kind)}</span>
       <span class="jobtitle">${esc(j.title || j.file || "—")}</span>
       <span class="jobout">${esc(out)}</span>
       <span class="jobms">${jobDur(j.ms)}</span>
       <span class="jobat">${esc(when)}</span>
-      ${j.error ? `<span class="joberr" title="${esc(j.error)}">failed</span>`
+      ${j.cancelled ? `<span class="jobstopped" title="${esc(j.error || "Stopped before it finished.")}">stopped</span>`
+        : j.error ? `<span class="joberr" title="${esc(j.error)}">failed</span>`
                 : `<a href="#" class="jobgo" data-go="${view}">open ${esc(view)} &rsaquo;</a>`}
     </div>`;
   }).join("");

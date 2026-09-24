@@ -41,6 +41,9 @@ export const ADVANCED_ADDS = {
     { say: "the Lyrics and Styles boxes, written by hand", ids: ["lyricsBox", "stylesBox"] },
     { say: "length, seed, steps and guidance", ids: ["maxDur", "seed", "qSteps", "qCfg"] },
     { say: "the music model and its own settings", ids: ["musicEngine"] },
+    /* A tester looked for the melody box and found only "More Options": it is
+     * YuE2's "Melody & score", and the tooltip names it. */
+    { say: "Melody & score (hum a tune or paste a score for YuE2 to sing)", ids: ["yMusicPlan", "humRec", "yAbc"] },
     { say: "a song dropped in to reuse its words and style", ids: ["songRef"] },
     { say: "Preview, the cheap first pass", ids: ["btnPreview"] },
   ],

@@ -3226,6 +3226,10 @@ details.adv[open] summary::before { content: "▾"; }
    without this it lands under the model name and reads as part of it. Its own
    full-width row, the way the territory warning already gets one. */
 .thanksrow .rights{grid-column:1/-1}
+/* The song panel (under the title) and the Models card (under the name and
+   licence): the chip on its own line, so the opened detail gets the width. */
+.sprights{margin:.35rem 0 .15rem}
+.sprights .rights,.modelcard .mhead .rights{display:block;flex-basis:100%}
 /* (The row is one column at every width now, so the old narrow-window override
    for it has nothing left to do.) */
 
@@ -3884,6 +3888,8 @@ details.adv[open] summary::before { content: "▾"; }
 .jobout{opacity:.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.68rem}
 .jobms,.jobat{font-variant-numeric:tabular-nums;opacity:.6;text-align:right;font-size:.7rem}
 .joberr{color:var(--danger,#e5484d);font-size:.7rem}
+/* A job somebody stopped is not a failure: quiet, not red. */
+.jobstopped{font-size:.7rem;opacity:.7}
 .jobgo{font-size:.7rem;opacity:.75;text-decoration:none;color:var(--accent,#7c5cff)}
 .jobgo:hover{opacity:1;text-decoration:underline}
 
@@ -3914,6 +3920,9 @@ details.adv[open] summary::before { content: "▾"; }
   border:1px solid var(--line,#2a2a2a);border-radius:.35rem;
   background:rgba(255,255,255,.02)}
 .qjob.running{border-color:var(--accent,#7c5cff);background:rgba(124,92,255,.08)}
+.qjob.stopping{opacity:.7}
+/* "12% · model 2 of 4 · 1m 20s" can outgrow its column: cut, with the whole in its title. */
+.qjob .jobms{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .qbar{height:4px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden}
 .qbar i{display:block;height:100%;background:var(--accent,#7c5cff)}
 .qkill{font:inherit;font-size:.7rem;line-height:1;padding:.2rem .4rem;cursor:pointer;

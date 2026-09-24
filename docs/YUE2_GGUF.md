@@ -112,13 +112,15 @@ CUDA compatibility or ability to render.
 | Precision | `q4_0` by default, or optional `q8_0`. Both use F16 VAE; the selected main model must be installed. |
 | CoT | `full` by default; `melody` and `off` are alternatives. |
 | Synthesis / NAR steps | **32** by default. **16** is an experimental faster setting, not a measured quality-equivalent preset. |
-| Seed | **831001** by default; a nonnegative safe integer. It is not a cross-version determinism guarantee. |
+| Seed | Random for each request that names none (it was a fixed 831001, so the same words gave the same song); a nonnegative safe integer. It is not a cross-version determinism guarantee. |
+| Sampler | Optional `temperature` / `topP` (the performance) and `planTemperature` / `planTopP` (the planner), passed to the runtime as `semantic_temperature`, `semantic_top_p`, `abc_temperature`, `abc_top_p`; blank keeps the vendor defaults (1.0 / 0.95 and 0.7 / 0.9). The planner's two are refused with a supplied score or CoT `off`, where the planner does not run; the Music page shows Planner temperature disabled then, with the reason, and does not send it. |
+| Key, tempo, meter | Not on this runtime (it has no open-score option); the Music page hides those rows on GGUF. |
 | Guidance | Optional `cfgScale` / `cfg_scale`, from 0 to 20. |
 | ABC input | Optional notation with CoT `melody` or `full`; no generated editable-score export is provided by this native integration. |
 
 ### Supplied scores and length planning
 
-Open **Music → Score input & length planning** to paste or load a reviewed
+Open **Music → Melody & score** to hum a melody into the box, or paste or load a reviewed
 two-voice `.abc` score. **Check score** validates the supported notation dialect.
 Enable **Use this score with Create** to send that draft through the same native
 ABC input available to MCP. CoT must be `full` or `melody`; choose either this

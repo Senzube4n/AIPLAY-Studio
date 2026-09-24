@@ -13,7 +13,7 @@ process.env.AIPLAY_RIG = path.join(temp, "rig");
 const {
   YUE_GGUF_MODEL, YUE_GGUF_FILES, YUE_GGUF_VARIANTS, ggufFilesFor, YUE_GGUF_RUNTIME, YUE_GGUF_WEIGHTS, MIN_FREE_VRAM_MB,
   yueGgufStatus, validateGgufRequest, buildGgufArgs, runGgufDriver, inspectGgufWav,
-  renderGgufSong, killGgufProcessTree, ggufGenerationWarnings,
+  renderGgufSong, killGgufProcessTree, ggufGenerationWarnings, GGUF_DIALS,
 } = await import("./yue-gguf.js");
 const { killMeshProcessTree } = await import("../mesh/runner.js");
 after(async () => {
@@ -167,9 +167,39 @@ test("default status does not find real native files in isolated temporary rig",
 });
 test("request defaults are explicit; controls preserve multiline Unicode", () => {
   const r = validateGgufRequest(input({ lyrics: "Étoiles\n星の光" }));
-  assert.equal(r.cot, "full"); assert.equal(r.seed, 831001); assert.equal(r.narSteps, 32);
+  assert.equal(r.cot, "full"); assert.equal(r.narSteps, 32);
+  // No seed asked for: a new one each time (it was 831001, the same song for the same words).
+  assert.ok(Number.isSafeInteger(r.seed) && r.seed >= 0 && r.seed < 2 ** 32, String(r.seed));
+  const seeds = new Set(Array.from({ length: 4 }, () => validateGgufRequest(input()).seed));
+  assert.ok(seeds.size > 1, "four seedless requests all rolled the same seed");
+  assert.equal(validateGgufRequest(input({ seed: 831001 })).seed, 831001);
   assert.equal(r.lyrics, "Étoiles\n星の光");
   assert.equal(r.quantization, "q4_0");
+});
+test("the sampler dials reach the runtime by its own names, bounded, and the planner's only when it runs", () => {
+  const r = validateGgufRequest(input({ semantic_temperature: 0.8, semantic_top_p: 0.9, abc_temperature: 1.1, abc_top_p: 0.85 }));
+  const args = buildGgufArgs(r, { ...settings, output: path.join(temp, "song.wav") });
+  for (const value of ["semantic_temperature=0.8", "semantic_top_p=0.9", "abc_temperature=1.1", "abc_top_p=0.85"]) {
+    assert.equal(args[args.indexOf(value) - 1], "--request-option", value);
+  }
+  const none = buildGgufArgs(validateGgufRequest(input()), { ...settings, output: path.join(temp, "song.wav") });
+  assert.ok(!none.some((a) => /^(semantic|abc)_(temperature|top_p)=/.test(a)), "an unset dial keeps the vendor default");
+  for (const bad of [{ semantic_temperature: -0.1 }, { semantic_temperature: 5.1 }, { semantic_top_p: 0 }, { abc_top_p: 1.5 },
+    { abc_temperature: "0.7" }, { semantic_temperature: NaN }, { semantic_top_p: null }]) {
+    assert.throws(() => validateGgufRequest(input(bad)), { refusal: "sampling" }, JSON.stringify(bad));
+  }
+  // With a supplied score, or Thinking off, the planner does not run: said, not dropped.
+  assert.throws(() => validateGgufRequest(input({ abc: "X:1", abc_temperature: 0.9 })), /supplied score the planner does not run/);
+  assert.throws(() => validateGgufRequest(input({ cot: "off", abc_top_p: 0.9 })), /Thinking off the planner does not run/);
+  // The house ending: the door refused before anything was queued.
+  for (const bad of [{ abc: "X:1", abc_temperature: 0.9 }, { cot: "off", abc_top_p: 0.9 }, { semantic_top_p: 2 }]) {
+    assert.throws(() => validateGgufRequest(input(bad)), /Nothing was queued\.$/, JSON.stringify(bad));
+  }
+  // One list: each dial names the page field it comes from, and its bounds.
+  assert.deepEqual(Object.fromEntries(Object.entries(GGUF_DIALS).map(([k, d]) => [k, d.from])),
+    { semantic_temperature: "temperature", semantic_top_p: "topP", abc_temperature: "planTemperature", abc_top_p: "planTopP" });
+  const sung = validateGgufRequest(input({ abc: "X:1", semantic_temperature: 0.9 }));
+  assert.equal(sung.semantic_temperature, 0.9, "the performance dials still apply to a supplied score");
 });
 
 test("precision is a strict Q4/Q8 enum at request, manifest, status and direct argument boundaries", async () => {
@@ -207,7 +237,7 @@ test("native instrumental mode is unsupported; section tags are accepted; ABC ne
   assert.throws(() => validateGgufRequest(input({ abc: "X:1\nK:C\nCDEF", cot: "off" })), { refusal: "request" });
 });
 test("CLI has exact native family/backend, explicit Q4, defaults, and supported controls only", () => {
-  const args = buildGgufArgs(validateGgufRequest(input({ cfg_scale: 1.5, abc: "X:1" })),
+  const args = buildGgufArgs(validateGgufRequest(input({ cfg_scale: 1.5, abc: "X:1", seed: 831001 })),
     { ...settings, output: path.join(temp, "song.wav"), abcFile: path.join(temp, "melody.abc") });
   assert.deepEqual(args.slice(0, 6), ["--task", "gen", "--family", "yue2", "--model", settings.modelDir]);
   for (const value of ["cuda", "yue2.model_gguf=yue2-3b-q4_0.gguf", "yue2.vae_gguf=yue2-vae-f16.gguf",

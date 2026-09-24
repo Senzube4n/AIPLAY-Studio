@@ -766,6 +766,9 @@ export class JobRunner extends EventEmitter {
         style: job.caption, lyrics: job.lyrics, cot: job.cot || "full", seed: job.seed,
         quantization: job.quantization === undefined ? "q4_0" : job.quantization,
         abc: job.abc || null, cfg_scale: job.cfgScale ?? null, narSteps: job.narSteps || 32,
+        /* The sampler dials the door validated (music-gguf-input.js), by the
+         * runtime's own names; absent unless one was set. */
+        ...(job.ggufOptions || {}),
         // ⚠ `system`, not `user` — see the note on the Python path above.
         id: "song", out: runDir, actor: job.actor || "system", via: "jobs.music",
         audioSeconds: job.wantSeconds || null,

@@ -98,7 +98,7 @@ console.log("\n§4  the page, the MCP tool and the doc");
   const app = src("../../web/app.js"), mcp = src("../mcp.js"), router = src("../chat/router.js"), api = src("../../API.md");
   ok("the page offers Extend on a YuE2 take", /\$\("spExtendSec"\)\.hidden = !\(\(t\?\.codes \|\| t\?\.yueDir \|\| state\.tokenizerReady\) && t\?\.durationSeconds\);/.test(app));
   ok("...and lets it start", /if \(!t\.codes && !t\.yueDir && !state\.tokenizerReady\) \{/.test(app));
-  ok("...sending a longer score when Advanced Options holds one", /abc: \$\("yAbcUse"\)\?\.checked \? \(\$\("yAbc"\)\?\.value\.trim\(\) \|\| undefined\) : undefined,/.test(app));
+  ok("...sending a longer score when Melody & score holds one", /abc: \$\("yAbcUse"\)\?\.checked \? \(\$\("yAbc"\)\?\.value\.trim\(\) \|\| undefined\) : undefined,/.test(app));
   ok("extend_song exists, requires file, and forwards every declared parameter",
     /name: "extend_song",/.test(mcp) && /required: \["file"\],/.test(mcp)
     && /fromSeconds: Number\.isFinite\(a\.from_seconds\)/.test(mcp) && /abc: typeof a\.abc === "string"/.test(mcp));

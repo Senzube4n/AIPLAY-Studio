@@ -270,12 +270,16 @@
           <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
           <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
           <label class="chk ggufaccept"><input type="checkbox" id="ggufSetupAccept">
-            <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0, attribution required</a>)<span id="ggufCudaTerms" hidden> and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a></span>.</span>
+            <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">licence file CC BY-NC 4.0, attribution required</a>)<span id="ggufCudaTerms" hidden> and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a></span>.</span>
           </label>
           <!-- What the authors themselves said about commercial use — a sourced,
                dated discussion comment, shown beside the licence rather than in
-               place of it. The Models card quotes it in full (YUE2_PUBLISHER). -->
-          <p class="hint" id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file, which still reads CC BY-NC. The Models card quotes it in full; Studio keeps its not-for-sale label until the licence changes.</p>
+               place of it. Studio's label follows it since 2026-09-24 (the
+               owner's decision); the licence file has not changed. The chip
+               words are the catalogue's (outputRights.chip, server/models.js):
+               paintGgufSetup() writes them into #ggufOwnerChip, and this text
+               is only what shows before the catalogue has been read. -->
+          <p class="hint" id="ggufOwnerNote">Studio's label: <b id="ggufOwnerChip">Sellable by individuals (YuE2 authors' statement, 15 Sep 2026) · companies need a commercial licence</b>. The authors said so in a <a href="https://huggingface.co/m-a-p/YuE2-3B/discussions/5" target="_blank" rel="noopener">discussion comment</a> of 15 September 2026; the licence file shipped with the weights still reads CC BY-NC 4.0. The Models card quotes both.</p>
           <p class="hint"><span id="ggufSetupReq">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them.</span> Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
           <div class="frow">
             <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
@@ -519,11 +523,23 @@
     <details class="adv sbox">
       <summary>More Options</summary>
 
+    <!-- WHERE THE MELODY IS, on the engines that cannot take one. A tester on
+         MiniMax looked here for a way to make a song follow her hum and found
+         nothing, because the box that does it (#yMusicPlan, "Melody & score")
+         is YuE2's and was simply absent. musicEnginePaint() shows this line
+         exactly when that box is hidden; the button switches to a YuE2 build
+         that is ready, or opens the model window when none is. -->
+    <p class="hint" id="melodyPointer" hidden>Want a song to follow a melody you hum? That is YuE2: <button type="button" class="edtool" id="melodyUseYue">Use YuE2</button></p>
+
     <!-- Audio reference. Collapsed by default: it is the most powerful control
          in the panel and also the one most people will never touch, so it must
          not push the Create button off screen for everyone else. -->
     <details class="field aref" id="arefField">
       <summary>Audio reference <span class="sp meta" id="arefState">off</span></summary>
+      <!-- Not a melody control, said where people look for one: the recording
+           seeds the decoder and is re-noised (server/workflow.js), so its
+           sound survives and its tune does not. -->
+      <p class="hint" id="arefWhat">Borrows the sound of a recording, not its tune. To follow your melody, use YuE2 → Melody &amp; score.</p>
       <div class="arefrow">
         <input type="file" id="arefFile" accept="audio/*,.flac,.mp3,.wav,.ogg,.opus,.m4a">
         <button class="btn sm ghost" type="button" id="arefClear" hidden>Remove</button>
@@ -611,8 +627,11 @@
           <option value="off">Off</option>
         </select></span>
 
-        <label for="yCfg" data-engine="yue2" hidden>Guidance</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="Default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
+        <!-- Not on the ComfyUI build: its graph samples at cfg 1 and the
+             YuE2 nodes take no guidance input (server/workflow.js
+             buildYue2ComfyGraph), so a value here would be dropped. -->
+        <label for="yCfg" data-engine="yue2" data-no-comfy-yue hidden>Guidance</label>
+        <span class="pv" data-engine="yue2" data-no-comfy-yue hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="Default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
 
         <label for="yPrecision" data-engine="yue2" data-python-yue hidden>Precision</label>
         <span class="pv" data-engine="yue2" data-python-yue hidden><select id="yPrecision" class="sel2">
@@ -633,13 +652,18 @@
              −14 dB) and is not offered. -->
         <!-- Key, tempo, meter: an OPEN seed score of headers the planner
              continues (server/music/seed.js), so the song is planned in them.
-             Blank means the model decides. Ignored when a score is supplied. -->
-        <label for="yKey" data-engine="yue2" hidden>Key</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yKey" class="sv" placeholder="Auto · e.g. Em" title="ABC key: a letter A–G, optional b or #, optional m for minor. Blank leaves it to the model."></span>
-        <label for="yBpm" data-engine="yue2" hidden>Tempo</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yBpm" class="sv" type="number" min="40" max="240" placeholder="Auto · 40–240" title="Quarter-note BPM for the seed score."></span>
-        <label for="yMeter" data-engine="yue2" hidden>Meter</label>
-        <span class="pv" data-engine="yue2" hidden><select id="yMeter" class="sel2">
+             Blank means the model decides. Ignored when a score is supplied.
+             ONLY THE PYTHON KIT TAKES THEM (data-python-yue): the native GGUF
+             runtime has no open-score option and the ComfyUI nodes cannot seed
+             one, so on those two builds the rows are absent rather than sent
+             and dropped (or refused). server/music-engine-rows_test.js holds
+             every visible YuE2 row against what each build's door accepts. -->
+        <label for="yKey" data-engine="yue2" data-python-yue hidden>Key</label>
+        <span class="pv" data-engine="yue2" data-python-yue hidden><input id="yKey" class="sv" placeholder="Auto · e.g. Em" title="ABC key: a letter A–G, optional b or #, optional m for minor. Blank leaves it to the model."></span>
+        <label for="yBpm" data-engine="yue2" data-python-yue hidden>Tempo</label>
+        <span class="pv" data-engine="yue2" data-python-yue hidden><input id="yBpm" class="sv" type="number" min="40" max="240" placeholder="Auto · 40–240" title="Quarter-note BPM for the seed score."></span>
+        <label for="yMeter" data-engine="yue2" data-python-yue hidden>Meter</label>
+        <span class="pv" data-engine="yue2" data-python-yue hidden><select id="yMeter" class="sel2">
           <option value="">Auto</option><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option>
         </select></span>
         <!-- The sampler's own dials (protocol.py Sampling), vendor defaults
@@ -648,7 +672,7 @@
         <label for="yTemp" data-engine="yue2" hidden>Performance</label>
         <span class="pv" data-engine="yue2" hidden><input id="yTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 1.0" title="The performance sampler's temperature. Lower = steadier, higher = wilder. Vendor default 1.0."> <input id="yTopP" class="sv" type="number" min="0.01" max="1" step="0.01" placeholder="Top-p 0.95" title="Nucleus sampling for the performance. Vendor default 0.95."></span>
         <label for="yPlanTemp" data-engine="yue2" hidden>Planner</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 0.7" title="The score planner's temperature — the composer's creativity. Vendor default 0.7."></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 0.7" title="The score planner's temperature — the composer's creativity. Vendor default 0.7."> <span class="meta" id="yPlanTempNote" hidden></span></span>
         <label for="ySteps" data-engine="yue2" hidden>Steps</label>
         <span class="pv" data-engine="yue2" hidden><select id="ySteps" class="sel2">
           <option value="32">32 (default)</option>
@@ -696,23 +720,18 @@
         <button type="button" class="edtool" id="aCoverClear" hidden>✕ Clear</button>
         <span class="sp meta" id="aCoverState"></span>
       </div>
-      <p class="hint">The song you give becomes the one ACE-Step re-performs in your style and lyrics (ComfyUI's "Set Reference Audio", marked experimental there). The planner is off for a cover. A LoRA carries its own licence; some forbid commercial use.</p>
+      <p class="hint" id="aCoverHint">The song you give becomes a timbre and style reference (experimental: ComfyUI's "Set Reference Audio"), rendered in your style and lyrics; how closely it keeps the melody has not been measured here. The planner is off for a cover. A LoRA carries its own licence; some forbid commercial use.</p>
     </details>
 
+    <!-- MELODY & SCORE (renamed 2026-09-24 from a second "Advanced"). The Music screen's words are
+         one set: "Advanced" is the level switch (#modeAdv, the shell), "More
+         Options" the fold under the form, and this box is named for what it
+         holds, so nobody looks for a melody under a word that means "more
+         settings". It shows for YuE2 only (the one engine that takes a
+         melody); on the others #melodyPointer at the top of More Options
+         says where it is. -->
     <details class="adv sbox" data-engine="yue2" hidden id="yMusicPlan">
-      <summary>Advanced Options</summary>
-      <!-- LoRA, for YuE2 through ComfyUI only (the Python kit and the native
-           GGUF have no loader). The list is /api/loras judged against the
-           chosen checkpoint, so a file trained for another model is shown
-           disabled with its base named rather than hidden. -->
-      <b class="subhead" id="subLora" data-comfy-yue hidden>LoRA</b>
-      <div class="params" data-comfy-yue hidden>
-        <label for="yLora">Audio LoRA</label><span class="pv"><select id="yLora" class="sel2"><option value="">none</option></select></span>
-        <label for="yLoraStrength">Strength</label><span class="pv"><input id="yLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraStrengthValue">1.00</b></span>
-        <label for="yLoraClip">Planner LoRA</label><span class="pv"><select id="yLoraClip" class="sel2"><option value="">none</option></select></span>
-        <label for="yLoraClipStrength">Strength</label><span class="pv"><input id="yLoraClipStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraClipStrengthValue">1.00</b></span>
-      </div>
-      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Audio LoRA patches the audio model; Planner LoRA patches the composer (the half that writes the score and the tokens) — the instrumental planner LoRA from the Models screen goes there, and an Instrumental take picks it by itself. <span id="yLoraShelf"></span></p>
+      <summary>Melody &amp; score</summary>
       <!-- Hum a melody. The recording goes to /api/hum, a pitch tracker in the
            engine's python writes the two-voice score, and it lands in the ABC
            box below with "Use this score" ticked. "Let the planner continue it"
@@ -729,39 +748,59 @@
           <option value="full">Melody and chords</option>
         </select></span>
         <!-- THE COVER CASE: a song already in the Library. Picking one and
-             pressing Transcribe needs no recording and no file; "Voice only"
-             then reads its separated vocal stem (the Studio's own demucs). -->
+             pressing Transcribe needs no recording and no file; "Read the
+             tune from" then says which of it is read (its separated voice
+             needs the Studio's own demucs; the whole mix does not). -->
         <label for="humSong" data-humsong hidden>Library song</label><span class="pv" data-humsong hidden><select id="humSong" class="sel2"><option value="">Pick a song to cover…</option></select> <button type="button" class="edtool" id="humGo" hidden>Transcribe</button></span>
         <!-- THE PRIME. The score above says what the song IS; this says how
              much of how it SOUNDED the model hears before it starts. The
              recording is read into YuE2's own tokens to do it (the Models
              screen's real-audio tokenizer), and none of its audio reaches the
              render. 0 is the score alone, which is the recipe that existed
-             before the tokenizer did. -->
-        <label for="covPrime" data-humsong hidden>Start from the original</label><span class="pv" data-humsong hidden><input id="covPrime" type="range" min="0" max="30" step="1" value="8"><b id="covPrimeValue">8s</b></span>
-        <label for="covStem" data-humsong hidden>Start from its</label><span class="pv" data-humsong hidden><select id="covStem" class="sel2"><option value="">whole mix</option><option value="drums">drums only</option><option value="bass">bass only</option><option value="vocals">voice only</option><option value="other">everything else</option></select></span>
-        <label for="humStem" data-humsong hidden>Voice only</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem" checked> transcribe the separated vocal stem (a library song; demucs runs first if needed)</label></span>
+             before the tokenizer did. The Python kit only (data-python-yue):
+             the GGUF and ComfyUI builds cannot hear a prime. -->
+        <label for="covPrime" data-humsong data-python-yue hidden>Start from the original</label><span class="pv" data-humsong data-python-yue hidden><input id="covPrime" type="range" min="0" max="30" step="1" value="8"><b id="covPrimeValue">8s</b></span>
+        <label for="covStem" data-humsong data-python-yue data-covstem hidden>Let YuE2 hear the original's first <span id="covStemSecs">8 s</span>, from its</label><span class="pv" data-humsong data-python-yue data-covstem hidden><select id="covStem" class="sel2"><option value="">whole mix</option><option value="drums">drums only</option><option value="bass">bass only</option><option value="vocals">voice only</option><option value="other">everything else</option></select></span>
+        <!-- OFF UNTIL STEM SEPARATION IS SET UP (paintHumStem): ticked by
+             default it queued a demucs split on a machine that could not run
+             one, and the transcription waited on it. -->
+        <label for="humStem" data-humsong hidden>Read the tune from</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem"> its separated voice (untick for the whole mix; Studio separates the voice first if needed)</label></span>
       </div>
+      <p class="hint" id="humStemNote" data-humsong hidden></p>
       <div class="chips">
         <button type="button" class="edtool" id="humRec">● Record</button>
         <button type="button" class="edtool" id="humStop" hidden>■ Stop</button>
         <label class="edtool" for="humFile">Choose a file…</label>
         <input type="file" id="humFile" accept="audio/*" hidden>
+        <!-- Stops a transcription in flight (humSendSource): the page stops
+             waiting; for a whole song the separation is stopped or dropped by
+             itself, and SheetSage2 through /api/cancel after a question that
+             names anything else that would stop (humStopPlan). The pitch
+             tracker for a hum ends by itself within seconds. -->
+        <button type="button" class="edtool" id="humCancel" hidden title="Stop reading the notes">■ Stop</button>
         <span class="sp meta" id="humState"></span>
       </div>
+      <p class="hint" id="humHint">Hum: seconds. Whole song: a minute or more, and longer the first time its voice is separated.</p>
       <p class="hint" id="humNote" role="status" aria-live="polite"></p>
-      <p class="hint tipsrc" id="covPrimeNote" data-humsong hidden>How many seconds of the original performance YuE2 hears before it starts — it hears the Studio's reading of them, not the recording, and none of the original audio is in the result. Longer is not better: past a few seconds it re-performs the original's own arrangement instead of yours. 0 uses the score alone. Starting from one layer — its drums for the groove, its voice for the phrasing — sends that layer instead of the mix.</p>
-      <label class="edtool tog" id="yAbcOpenLabel"><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
+      <p class="hint tipsrc" id="covPrimeNote" data-humsong data-python-yue hidden>How many seconds of the original performance YuE2 hears before it starts — it hears the Studio's reading of them, not the recording, and none of the original audio is in the result. Longer is not better: past a few seconds it re-performs the original's own arrangement instead of yours. 0 uses the score alone. Starting from one layer — its drums for the groove, its voice for the phrasing — sends that layer instead of the mix.</p>
+      <label class="edtool tog" id="yAbcOpenLabel" data-python-yue hidden><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
       <b class="subhead" id="subScore">Your own score</b>
+      <!-- Three plain lines, because the box below used to say only "Paste a
+           reviewed YuE2 two-voice ABC score here" and a tester never found
+           out that humming fills it. -->
+      <p class="hint" id="yAbcHow">Easiest: with Transcriber on Hum, press ● Record above, hum, press Stop, and the notes land in this box, ticked for Create.<br>
+        Or paste ABC with two voices: <code>V: Vocal</code> (the sung line) and <code>V: Ins</code> (rests are fine). "Load an example" shows the layout.<br>
+        YuE2 sings a score the way a singer would: the pitches follow it, the timing is looser.</p>
       <div class="params">
         <label for="yPlanBpm">Quarter-note BPM</label><span class="pv"><input class="sv" type="number" id="yPlanBpm" min="20" max="400" value="120"></span>
         <label for="yPlanMeter">Outline meter</label><span class="pv"><select id="yPlanMeter" class="sel2"><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option></select></span>
         <label for="yPlanLength">Target notation length</label><span class="pv"><input id="yPlanLength" type="range" min="5" max="600" step="5" value="180"><b id="yPlanLengthValue">3:00</b></span>
       </div>
       <label class="flabel" for="yAbc">ABC score (optional)</label>
-      <textarea id="yAbc" rows="6" spellcheck="false" maxlength="65536" placeholder="Paste a reviewed YuE2 two-voice ABC score here"></textarea>
+      <textarea id="yAbc" rows="6" spellcheck="false" maxlength="65536" placeholder="Paste a reviewed YuE2 two-voice ABC score here, or hum one with ● Record"></textarea>
       <input type="file" id="yAbcFile" accept=".abc,.txt,text/plain" hidden>
       <div class="chips">
+        <button type="button" class="edtool" id="yAbcExample" title="Put a 4-bar two-voice score in the box (it does not tick Use this score)">Load an example</button>
         <label class="edtool" for="yAbcFile">Load file…</label>
         <button class="edtool" type="button" id="yPlanOutline">Estimate bars</button>
         <button type="button" class="edtool" id="yPlanCheck">Check score</button>
@@ -771,6 +810,20 @@
       </div>
       <p class="hint" id="yPlanResult" role="status" aria-live="polite"></p>
       <label class="edtool tog" id="yAbcUseLabel"><input type="checkbox" id="yAbcUse"> Use this score with Create</label>
+      <!-- LoRA, for YuE2 through ComfyUI only (the Python kit and the native
+           GGUF have no loader). The list is /api/loras judged against the
+           chosen checkpoint, so a file trained for another model is shown
+           disabled with its base named rather than hidden. Last in the box:
+           the box is named for the melody, and a ComfyUI user opening it
+           should meet the melody first. -->
+      <b class="subhead" id="subLora" data-comfy-yue hidden>LoRA</b>
+      <div class="params" data-comfy-yue hidden>
+        <label for="yLora">Audio LoRA</label><span class="pv"><select id="yLora" class="sel2"><option value="">none</option></select></span>
+        <label for="yLoraStrength">Strength</label><span class="pv"><input id="yLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraStrengthValue">1.00</b></span>
+        <label for="yLoraClip">Planner LoRA</label><span class="pv"><select id="yLoraClip" class="sel2"><option value="">none</option></select></span>
+        <label for="yLoraClipStrength">Strength</label><span class="pv"><input id="yLoraClipStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraClipStrengthValue">1.00</b></span>
+      </div>
+      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Audio LoRA patches the audio model; Planner LoRA patches the composer (the half that writes the score and the tokens) — the instrumental planner LoRA from the Models screen goes there, and an Instrumental take picks it by itself. <span id="yLoraShelf"></span></p>
     </details>
 
     <!-- Title last, as on Suno. Metadata only. -->
@@ -1733,6 +1786,10 @@
       </div>
       <h3 class="sidetitle" id="spTitle">—</h3>
       <div class="sidesub" id="spSub"></div>
+      <!-- Whether this song may be sold: the chip for the model that made it
+           (and any add-on that made it stricter), from the library row's
+           `rights`; the chip opens the licence's own words. paintSongRights(). -->
+      <div class="sprights" id="spRights" hidden></div>
       <div class="generation-warnings" id="spWarnings" hidden></div>
 
       <div class="sideact">
@@ -3244,8 +3301,12 @@
       </section>
 
       <section class="pcard" id="about-rights" data-nav="Your rights">
-        <h3>What you make is yours</h3>
-        <p class="pcard-sub">The studio takes no rights over anything you make. Each model&rsquo;s own licence governs what it generates, and each one is listed here.</p>
+        <!-- The headline used to promise "What you make is yours", which a
+             tester read as leave to sell a YuE2 song when that model's own
+             terms decide it. Studio's own part is the first half; the second
+             half is the rule that actually applies. -->
+        <h3>Studio takes no rights in what you make; each model&rsquo;s licence decides whether you can sell it</h3>
+        <p class="pcard-sub">The studio claims nothing over anything you make. Each model&rsquo;s own licence governs what it generates, and each one is listed here with its answer; every song carries the answer of the model that made it (the chip under its title).</p>
         <div id="aboutRights" class="rightslist">Loading&hellip;</div>
         <p class="hint">Live from the model catalogue<!-- web/app.js fills the
           territory span from /api/models and leaves it hidden if that payload
@@ -4715,11 +4776,27 @@
             <button class="btn2" type="button" id="btnSetupLyrics" data-setup-feature="lyrics">Set up timed lyrics</button>
             <select id="qSetupLyricsTorch" data-setup-torch="lyrics" aria-label="PyTorch build for Set up timed lyrics"
               title="PyTorch build for Set up timed lyrics"><option value="auto">Auto</option></select></span>
+
+          <!-- The python stem separation (demucs) runs in, the same shape as the
+               timed-lyrics row above: a field, Use (POST /api/stems
+               {action:"python"}, which checks demucs and torch and applies at
+               once), and one press to build a private one (setup id "stems",
+               web/setup-feature.js). Stem separation's refusals name this label
+               ("stem separation python"), so the words are the server's too.
+               The placeholder is the default the server falls back to. -->
+          <label for="qStemsPy">stem separation python</label>
+          <span class="pv"><input class="line" id="qStemsPy" spellcheck="false" data-setup-python="stems"
+            placeholder="…\Python310\python.exe"> <button class="btn2" type="button" id="btnStemsPy">Use</button>
+            <button class="btn2" type="button" id="btnSetupStems" data-setup-feature="stems">Set up stem separation</button>
+            <select id="qSetupStemsTorch" data-setup-torch="stems" aria-label="PyTorch build for Set up stem separation"
+              title="PyTorch build for Set up stem separation"><option value="auto">Auto</option></select></span>
         </div>
         <p class="hint" id="fmtNote"></p>
         <p class="hint" id="lyricsNote">Timed lyrics are two .lrc files per song (lines and words) for visualisers. Word timing is approximate on sung vocals.</p>
         <p class="hint" id="whisperPyNote">Timed lyrics need faster-whisper and stable-ts in the python above. Leave it empty for the default. Use checks both.</p>
         <p class="hint" id="setupLyricsNote" data-setup-note="lyrics"></p>
+        <p class="hint" id="stemsPyNote">Stem separation (and "its separated voice" when reading a song's tune) needs demucs and PyTorch in the python above. Leave it empty for the default. Use checks both.</p>
+        <p class="hint" id="setupStemsNote" data-setup-note="stems"></p>
         <p class="hint" id="setNote"></p>
       </section>
 

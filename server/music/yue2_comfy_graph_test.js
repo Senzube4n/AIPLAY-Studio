@@ -141,7 +141,7 @@ console.log("\n§4  every hand the LoRA passes through names it");
   ok("...and paints it from /api/loras judged against the checkpoint",
     /fetch\(`\/api\/loras\$\{ck \? `\?for=\$\{encodeURIComponent\(ck\)\}` : ""\}`\)/.test(app));
   ok("...saving a change through the music action", /JSON\.stringify\(\{ action: "lora", value, strength \}\)/.test(app));
-  ok("the picker lives under Advanced Options, ComfyUI-tagged",
+  ok("the picker lives under Melody & score, ComfyUI-tagged",
     /id="yMusicPlan">[\s\S]*?<select id="yLora" class="sel2">/.test(html) && /<div class="params" data-comfy-yue hidden>/.test(html));
   ok("...with a strength control", /<input id="yLoraStrength" type="range" min="0" max="200"/.test(html));
   ok("the API doc says how to name one and what a wrong name gets",

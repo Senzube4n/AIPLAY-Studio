@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { inputSelection, continuationSettings, musicResultUrl } from '../web/music-input-ui.js';
 let count = 0;
 function test(name, run) { run(); count++; console.log(`ok ${name}`); }
@@ -20,8 +21,20 @@ test('continuation exposes both seeds, lyrics, duration, title and explicit read
     seed: 0, mix_seed: 4294967295, seconds: 7.5, title: 'Piano' });
 });
 test('unfinished input, empty caption and invalid seeds cannot queue generation', () => {
-  for (const patch of [{ reference: null }, { caption: '' }, { seed: '' }, { seed: -1 }, { mixSeed: 4294967296 }, { seconds: 31 }])
+  for (const patch of [{ reference: null }, { caption: '' }, { seed: -1 }, { seed: 1.5 }, { seed: 'abc' }, { mixSeed: 4294967296 }, { seconds: 31 }])
     assert.throws(() => continuationSettings({ ...base, ...patch }));
+});
+test('a blank seed box is random: the seed is left out and the server rolls one', () => {
+  const both = continuationSettings({ ...base, seed: '', mixSeed: ' ' });
+  assert.equal(Object.hasOwn(both, 'seed'), false); assert.equal(Object.hasOwn(both, 'mix_seed'), false);
+  const mixOnly = continuationSettings({ ...base, seed: 7, mixSeed: '' });
+  assert.equal(mixOnly.seed, 7); assert.equal(Object.hasOwn(mixOnly, 'mix_seed'), false);
+});
+test('the boxes open empty on "random", never on a fixed number', () => {
+  const src = readFileSync(new URL('../web/music-input-ui.js', import.meta.url), 'utf8');
+  assert.ok(!/418923/.test(src), 'the old fixed seed is gone');
+  assert.match(src, /data-mi="seed" type="number" min="0" max="4294967295" step="1" placeholder="random">/);
+  assert.match(src, /data-mi="mixSeed" type="number" min="0" max="4294967295" step="1" placeholder="same as composition">/);
 });
 test('audio results cannot load arbitrary remote or script URLs', () => {
   assert.equal(musicResultUrl('/api/audio/Piano%20song.flac'), '/api/audio/Piano%20song.flac');

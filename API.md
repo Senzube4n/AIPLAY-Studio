@@ -171,10 +171,20 @@ Submit `POST /api/generate` with native-specific fields:
 }
 ```
 
-`caption` and nonempty `lyrics` are required. `cot` is `full` (default),
+`caption` and nonempty `lyrics` are required. `seed` is optional: without one
+each request rolls its own (0 to 2^32 − 1), as every other engine does; it used
+to be 831001 every time. `cot` is `full` (default),
 `melody` or `off`; `narSteps` defaults to 32 (16 is experimental), with an
 integer API range of 1–256. Optional `cfgScale` is finite, 0–20; optional `abc`
-is text up to 64 KiB and requires CoT `melody` or `full`. Lyrics may carry
+is text up to 64 KiB and requires CoT `melody` or `full`. The sampler's dials
+use the Python kit's names and reach the runtime by its own: `temperature`
+(0–5) and `topP` (0.01–1) become `semantic_temperature` / `semantic_top_p`
+(the performance; vendor defaults 1.0 / 0.95), and `planTemperature` (0–5) /
+`planTopP` (0.01–1) become `abc_temperature` / `abc_top_p` (the planner; 0.7 /
+0.9). Blank leaves the vendor default. The planner does not run with a supplied
+`abc` or with `cot: "off"`, so its two dials are refused there by sentence
+(`reason: "sampling"`) rather than dropped. `key`, `bpm`, `meter` and `abcOpen`
+are the Python kit's only: this runtime has no open-score option. Lyrics may carry
 section tags (`[Verse]`, `[Chorus]`, …), YuE2's own lyric format;
 `allowSectionLabels` is still accepted but no longer needed. Unknown options,
 instrumentals, previews, audio references and duration/Python runtime controls
@@ -307,6 +317,14 @@ score planner. Out-of-range values are refused with `reason: "sampling"` or
 `"seed"`. MCP: the same on `make_song` as `key`, `bpm`, `meter`, `temperature`,
 `top_p`, `plan_temperature`.
 
+Which build takes which: `key`, `bpm`, `meter`, `abcOpen` and `coverOf` are the
+Python kit's (`engine: "yue2"`) alone; the dials reach all three builds (native
+GGUF as its own request options, above; ComfyUI through its nodes). The Music
+page shows a row only on a build that takes it (`data-python-yue` rows are the
+kit's; Guidance is not shown on ComfyUI, whose graph samples at cfg 1), and
+sends only what it shows — `server/music-engine-rows_test.js` holds each
+visible row against each build's door.
+
 ### `POST /api/song_to_score`
 `{ "source": { "path" | "library_file" | "data_url" … }, "mode": "melody" }` — a
 finished song, transcribed by SheetSage2 (ComfyUI's own audio-encoder node, core from
@@ -324,8 +342,13 @@ MCP: `song_to_score`, then `make_song`.
 `{ "source": { "path": "C:\\…\\hum.wav" } }` — or `{ "library_file": "…" }`, or
 `{ "data_url": "data:audio/webm;base64,…", "name": "hum.webm" }` — plus optional `bpm`
 and `key`. A pitch tracker in the engine's python (no model, no card) turns one
-hummed voice, 1–60 s, into the two-voice ABC score YuE2 takes verbatim. Answers
-`abc`, `bpm`, `key`, `notes`, `bars`, `seconds`. Send the score to `/api/generate`
+hummed voice, 1–60 s, into the two-voice ABC score YuE2 takes verbatim, in
+seconds (pYIN at hop 512). Each bar is spelled against
+the key signature, with `=`, `^` or `_` wherever the sounding pitch needs one
+(an accidental holds to the end of its bar in this dialect), lengths are the
+dialect's own multipliers (tied where needed), and the silence before the
+first note is trimmed. Answers
+`abc`, `bpm`, `key`, `notes`, `bars`, `seconds`, `leadIn` (the seconds trimmed). Send the score to `/api/generate`
 as `abc` with `cot` melody or full; add `"abcOpen": true` to leave the score open so
 the planner continues the hummed bars into a whole song (the driver's `--abc-open`).
 Same-origin local JSON only (`403` otherwise): it runs the engine's python on a
@@ -571,8 +594,12 @@ With no picture model on the disk no cover is queued and the cover row says
 same rows, with Change and, on a saved one, *Let Studio pick*.
 
 ### The cover, on the page
-Advanced Options → *Hum a melody, or cover a song* → transcriber *Whole song*:
-pick a **Library song**, leave **Voice only** ticked, press **Transcribe**. The
+Melody & score → *Hum a melody, or cover a song* → transcriber *Whole song*:
+pick a **Library song**, choose what to **Read the tune from** (*its separated
+voice*, which needs stem separation set up — it starts unticked until it is —
+or the whole mix), press **Transcribe**. The status line names the step and its
+clock ("Separating the voice… 0:42", "Reading the notes (SheetSage2)… 0:12"),
+and ■ Stop ends it (for a whole song through `POST /api/cancel`). The
 score lands in the box, ticked for Create; write the new singer into the style
 line ("male lead vocal, warm baritone…"), keep or change the words, press
 Create. The same words and tune, a new voice. Over MCP: `song_to_score`

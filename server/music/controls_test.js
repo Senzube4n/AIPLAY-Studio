@@ -60,9 +60,15 @@ console.log("\n§3  the tab, the tool and the doc");
 {
   const html = src("../../web/index.html"), app = src("../../web/app.js"), mcp = src("../mcp.js"), api = src("../../API.md");
   for (const id of ["yKey", "yBpm", "yMeter", "yTemp", "yTopP", "yPlanTemp"]) ok(`the tab has #${id}`, new RegExp(`id="${id}"`).test(html));
-  ok("...on YuE2 rows only", /<label for="yKey" data-engine="yue2" hidden>Key<\/label>/.test(html));
+  /* Key, tempo and meter are the Python kit's alone since 2026-09-24: the GGUF
+   * runtime and the ComfyUI nodes cannot seed an open score, so the rows are
+   * tagged data-python-yue and yueSpec() sends them only there. */
+  ok("...on YuE2 rows only, and only the Python kit's", /<label for="yKey" data-engine="yue2" data-python-yue hidden>Key<\/label>/.test(html));
+  /* The planner dial also waits for a planner: on GGUF and ComfyUI it is off
+   * while a score is sung as written (planDialOff, server/music-engine-rows_test.js). */
   ok("yueSpec sends each only when set",
-    /if \(\$\("yKey"\)\?\.value\.trim\(\)\) out\.key = \$\("yKey"\)\.value\.trim\(\);/.test(app) && /if \(num\("yPlanTemp"\) !== undefined\) out\.planTemperature = num\("yPlanTemp"\);/.test(app));
+    /if \(\$\("yKey"\)\?\.value\.trim\(\)\) out\.key = \$\("yKey"\)\.value\.trim\(\);/.test(app)
+    && /if \(num\("yPlanTemp"\) !== undefined && !\(typeof planDialOff === "function" && planDialOff\(\)\)\) out\.planTemperature = num\("yPlanTemp"\);/.test(app));
   ok("make_song declares key, bpm, meter, temperature, top_p, plan_temperature",
     /key: \{ type: "string", description: "YuE2 only, without abc/.test(mcp) && /bpm: \{ type: "integer", minimum: 40, maximum: 240/.test(mcp)
     && /meter: \{ type: "string", enum: \["4\/4", "3\/4", "6\/8", "2\/4"\]/.test(mcp) && /plan_temperature: \{ type: "number", minimum: 0, maximum: 5/.test(mcp));

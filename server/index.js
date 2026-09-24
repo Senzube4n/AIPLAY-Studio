@@ -4684,7 +4684,7 @@ const server = http.createServer(async (req, res) => {
         const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, {
-            error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another under Advanced Options, or choose none.`,
+            error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
             engine: musicEngine, reason: "lora-missing",
           });
         }
@@ -4711,7 +4711,7 @@ const server = http.createServer(async (req, res) => {
         }
         if (clipName && !onShelf(clipName)) {
           return json(res, 400, {
-            error: `The planner LoRA ${bareName(clipName)} is not in a loras folder. Pick another under Advanced Options, or choose none.`,
+            error: `The planner LoRA ${bareName(clipName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
             engine: musicEngine, reason: "lora-missing",
           });
         }
@@ -4795,11 +4795,11 @@ const server = http.createServer(async (req, res) => {
      */
     /* A hummed melody → the two-voice score YuE2 takes verbatim. CPU only:
      * ffmpeg converts the recording, the engine's python runs a pitch tracker
-     * (server/music/hum.js). The answer is ABC for Advanced Options or for
+     * (server/music/hum.js). The answer is ABC for Melody & score or for
      * make_song's `abc`, plus what was heard. */
     /* A finished song → the two-voice score YuE2 sings from: SheetSage2 as
      * ComfyUI's own audio-encoder node (server/music/cover.js). Holds the card
-     * for the transcription. The answer is ABC for Advanced Options or for
+     * for the transcription. The answer is ABC for Melody & score or for
      * make_song's `abc`; the cover itself is then an ordinary render under a
      * new style line. */
     if (p === "/api/song_to_score" && req.method === "POST") {

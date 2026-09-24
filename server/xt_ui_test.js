@@ -56,9 +56,18 @@ console.log("\n§3  the GGUF setup card");
   ok("the card is a details that folds", /<details class="infopanel ggufbox" id="ggufSetup" hidden/.test(html) && /<summary><b>Native YuE2 GGUF · optional setup<\/b> <span class="meta" id="ggufSetupSum"><\/span><\/summary>/.test(html));
   ok("...folded once installed, opened while there is something to do, set only when the answer changes",
     /const ready = !!selected\?\.ready && !busy;/.test(app) && /if \(ggufFoldReady !== ready\) \{/.test(app) && /if \("open" in panel\) panel\.open = !ready;/.test(app));
-  ok("...with a summary that says what is installed and what the authors said", /installed · terms accepted · individuals may use it commercially \(the authors' statement\)/.test(app));
-  ok("the accept line is one sentence", /I accept the YuE2 model terms \(<a [^>]*>CC BY-NC 4\.0, attribution required<\/a>\)<span id="ggufCudaTerms" hidden> and the native runtime's <a [^>]*>NVIDIA CUDA licence<\/a><\/span>\./.test(html));
-  ok("the authors' statement sits beside the licence, dated and caveated", /id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file/.test(html));
+  /* Owner decision of 2026-09-24: YuE2's label follows its authors' statement
+   * ("Sellable by individuals … · companies need a commercial licence"); the
+   * words come from the catalogue row (outputRights.short / .chip), and the
+   * page's own text is only what shows before the catalogue is read. */
+  ok("...with a summary that says what is installed and the catalogue's rights words",
+    /installed · terms accepted · \$\{or\?\.short \|\| "sellable by individuals"\} \(the authors' statement\)/.test(app)
+    && /rightsCatalogCache\?\.musicYue2Gguf\?\.outputRights/.test(app));
+  ok("the accept line is one sentence, about the weights' licence file", /I accept the YuE2 model terms \(<a [^>]*>licence file CC BY-NC 4\.0, attribution required<\/a>\)<span id="ggufCudaTerms" hidden> and the native runtime's <a [^>]*>NVIDIA CUDA licence<\/a><\/span>\./.test(html));
+  ok("the owner's note shows Studio's label, links the authors' comment and says the licence file has not changed",
+    /id="ggufOwnerNote">Studio's label: <b id="ggufOwnerChip">Sellable by individuals \(YuE2 authors' statement, 15 Sep 2026\) · companies need a commercial licence<\/b>\. The authors said so in a <a href="https:\/\/huggingface\.co\/m-a-p\/YuE2-3B\/discussions\/5"[^>]*>discussion comment<\/a> of 15 September 2026; the licence file shipped with the weights still reads CC BY-NC 4\.0\./.test(html)
+    && !/keeps its not-for-sale label/.test(html));
+  ok("...and the chip words in it are the catalogue's once read", /if \(chip && or\?\.chip && chip\.textContent !== or\.chip\) chip\.textContent = or\.chip;/.test(app));
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);

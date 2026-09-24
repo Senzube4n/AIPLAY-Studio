@@ -36,7 +36,10 @@ await test("defaults select native GGUF Q4 without Python duration/rung or API f
   assert.equal(job.engine, "yue2-gguf"); assert.equal(job.actor, "agent:test");
   assert.equal(job.model, "YuE2 GGUF Q4"); assert.equal(job.experimental, true);
   assert.equal(job.quantization, "q4_0"); assert.equal(job.cot, "full");
-  assert.equal(job.seed, 831001); assert.equal(job.narSteps, 32);
+  // No seed asked for: an integer rolled per request, never the old fixed 831001.
+  assert.ok(Number.isSafeInteger(job.seed) && job.seed >= 0 && job.seed < 2 ** 32, String(job.seed));
+  assert.notEqual(atBoundary(valid()).seed === job.seed && atBoundary(valid()).seed === job.seed, true, "three seedless requests rolled one seed");
+  assert.equal(job.narSteps, 32); assert.equal(Object.hasOwn(job, "ggufOptions"), false);
   assert.equal(job.cfgScale, undefined); assert.equal(job.abc, undefined);
   assert.equal(job.instrumental, false); assert.equal(job.preview, false); assert.equal(job.allowSectionLabels, false);
   assert.equal(job.title, "Sing softly"); assert.deepEqual(body, valid());
@@ -115,6 +118,19 @@ await test("ABC is bounded text and cannot be combined with cot off", () => {
     refuses(valid({ abc }), /abc/i);
   }
   assert.equal(atBoundary(valid({ abc: "a".repeat(65536) })).abc.length, 65536);
+});
+
+await test("the Performance and Planner dials pass, by the runtime's names; blank keeps the default", () => {
+  const job = atBoundary(valid({ temperature: 0.8, topP: 0.9, planTemperature: 1.1, planTopP: 0.85 }));
+  assert.deepEqual(job.ggufOptions, { semantic_temperature: 0.8, semantic_top_p: 0.9, abc_temperature: 1.1, abc_top_p: 0.85 });
+  for (const blank of [undefined, null, ""]) assert.equal(Object.hasOwn(atBoundary(valid({ temperature: blank })), "ggufOptions"), false);
+  refuses(valid({ temperature: 6 }), /sampler dial/);
+  refuses(valid({ topP: 0 }), /sampler dial/);
+  refuses(valid({ temperature: "0.8" }), /sampler dial/);
+  // The planner does not run under a supplied score: the page's own words, not a silent drop.
+  refuses(valid({ abc: "X:1\nK:C\nC|", planTemperature: 0.9 }), /supplied score the planner does not run/);
+  refuses(valid({ cot: "off", planTopP: 0.9 }), /Thinking off/);
+  assert.equal(atBoundary(valid({ abc: "X:1\nK:C\nC|", temperature: 0.9 })).ggufOptions.semantic_temperature, 0.9);
 });
 
 await test("section tags are accepted without any opt-in, and the old flag still works", () => {
@@ -292,7 +308,9 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   const specStart = src.indexOf("function currentSpec("), specEnd = src.indexOf("/* The YuE2 rows", specStart);
   const generateStart = src.indexOf("async function generate("), generateEnd = src.indexOf("/* Takes per generation", generateStart);
   assert.ok(specStart >= 0 && specEnd > specStart && generateStart >= 0 && generateEnd > generateStart);
-  const values = { title: "夜の歌", lyrics: "Étoiles, guidez-moi\nこんにちは 🌙", seed: "17", yCot: "full", ySteps: "16", yCfg: "2.5" };
+  // The Performance / Planner rows are read on this engine now (a blank one sends nothing).
+  const values = { title: "夜の歌", lyrics: "Étoiles, guidez-moi\nこんにちは 🌙", seed: "17", yCot: "full", ySteps: "16", yCfg: "2.5",
+    yTemp: "0.8", yTopP: "", yPlanTemp: "" };
   const elements = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
   elements.btnCreate = { disabled: false }; elements.btnPreview = { disabled: false };
   elements.yAbcUse = { checked: false }; elements.yAbc = { value: "" }; elements.scoreUse = { checked: false };
@@ -324,6 +342,8 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   for (const { body, prepared } of requests) {
     assert.equal(body.engine, "yue2-gguf"); assert.equal(body.quantization, "q4_0");
     assert.equal(prepared.cfgScale, 2.5); assert.equal(prepared.narSteps, 16);
+    assert.deepEqual(prepared.ggufOptions, { semantic_temperature: 0.8 }, "the set dial reaches the runtime; the blank ones stay default");
+    assert.equal(Object.hasOwn(body, "topP"), false, "a blank dial is not sent");
     assert.equal(prepared.caption, "Café nocturne — 柔らかなピアノ");
     assert.equal(prepared.lyrics, values.lyrics);
     for (const key of ["reusesConditioning", "maxDuration", "wantSeconds", "mixSeed", "audioRef", "rung", "offloadAr", "maxTokens"]) {
