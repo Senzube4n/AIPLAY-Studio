@@ -33,6 +33,7 @@ import { writeFile, readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
 import { getSecret } from "./secrets.js";
+import { CLOUD_CARD_PLACE, HOSTED_KEY_PLACE } from "./cloud-switch.js";
 
 const LEDGER = path.join(config.paths.appData, "spend.json");
 
@@ -250,12 +251,22 @@ export function estimateUsd(seconds, providerName = config.api?.provider) {
  * rather than an invented percentage.
  */
 export async function generateViaApi(spec, { onStage = () => {}, signal } = {}) {
+  /* THE SWITCH AND THIS SONG'S OWN YES, checked here as well as at the door
+   * (server/cloud-switch.js): with the hosted engine off, or for a song
+   * nobody confirmed as a paid run, nothing reaches a provider. Before the
+   * key is even read. */
+  if (!config.api?.enabled) {
+    throw new Error(`The hosted engine is switched off, so nothing was sent. Switch it on in ${CLOUD_CARD_PLACE} to pay for a song.`);
+  }
+  if (spec?.paidConfirmed !== true) {
+    throw new Error("This song was not confirmed as a paid run, so nothing was sent. Every hosted song is confirmed on its own.");
+  }
   const providerName = config.api?.provider || "fal";
   const provider = PROVIDERS[providerName];
   if (!provider) throw new Error(`Unknown provider "${providerName}".`);
 
   const key = await getSecret(provider.keyName);
-  if (!key) throw new Error(`No ${provider.label} key is saved. Add one in Settings → API mode.`);
+  if (!key) throw new Error(`No ${provider.label} key is saved. Add your own in ${HOSTED_KEY_PLACE}.`);
 
   // The cap is checked HERE, immediately before spending, not only in the UI.
   // An overnight batch queues once and runs for hours; a check that happened at

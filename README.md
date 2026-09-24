@@ -45,15 +45,33 @@ this same app, **not a separate GitHub repository or edition**. To make songs
 with native YuE2 GGUF you do not need ComfyUI, Python, MiniMax or any image and
 video models.
 
-**No graphics card, or want hosted models?** The launcher's **Use Comfy API**
-mode (new) runs image, video, audio, 3D and text models on Comfy's cloud through
-[Comfy Router](https://docs.comfy.org/development/comfy-router/quickstart), with
-your own Comfy API key. It needs no ComfyUI and no card, and **every run uses
-Comfy credits**, so it asks before each one. Full Studio and Music only never
-spend Comfy credits; Full Studio's separate API mode, off until you switch it on
-in Settings, bills your own fal.ai or MiniMax key. Get a Comfy API key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
-choose **Use Comfy API** in the launcher, and paste the key on the page. Or run
-`npm run start:cloud`.
+**No strong graphics card?** Two ways, in this order:
+
+1. **Ask a friend with a strong card to render for you.** It is free. In Full
+   Studio, add each other once on **Collab**, then press **Ask friend** beside a
+   scene (Workflow → Video clips) and send them the sealed file it makes; they
+   send the finished clip back as a file for you to look at before you keep it.
+   Nothing connects to anybody: you pass the files on however you already send
+   files. It lends video scenes, not songs, and a real two-PC round trip has not
+   been acceptance-tested yet. See [Ask a friend to render](docs/FRIEND_RENDERING.md)
+   and [Collab](docs/COLLAB.md).
+2. **Or pay for a service with your own key.** Both are off until you switch
+   them on, and every paid run asks first. Studio uses only a key typed into
+   Studio on your Windows account, never one from another program or an
+   environment variable, and each key card says when it was saved and by which
+   copy of Studio.
+   - **Songs:** Full Studio's hosted engine runs MiniMax Music 3 on your own
+     fal.ai key, with a monthly cap. Paste the key in **Settings → No strong
+     graphics card? → Hosted engine**.
+   - **Pictures, clips, sound and 3D:** the launcher's **Use Comfy API** mode
+     runs hosted models through
+     [Comfy Router](https://docs.comfy.org/development/comfy-router/quickstart)
+     on your own Comfy API key and credits, with no ComfyUI and no card. Get a
+     key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
+     choose **Use Comfy API** in the launcher and paste it on the page, or run
+     `npm run start:cloud`. That mode has no Music, Workflow or Collab screen,
+     so a music video still needs Full Studio. Full Studio and Music only never
+     spend Comfy credits.
 
 ## YuE2 music-only quickstart
 
@@ -154,7 +172,7 @@ render; an API model never needs to.
 
 - **Nothing leaves your machine.** No account, no key, no credits. The only
   network use is downloading models (straight from their publishers), the
-  Community screen, API mode if you switch it on yourself, and the launcher's
+  Community screen, the hosted engine if you switch it on yourself, and the launcher's
   Use Comfy API mode, which sends your prompts and pictures to Comfy and the
   model's provider and spends your Comfy credits.
 - **Every render is recorded.** The model, prompt, seed and settings behind
@@ -189,7 +207,7 @@ replaces torch, CUDA or ROCm.
 | **NVIDIA** | Everything. Use the portable `ComfyUI_windows_portable_nvidia.7z` (not `_cu126`) or a source install with a `+cu130` torch. |
 | **AMD Radeon** | Native YuE2 GGUF (Vulkan), YuE2, ACE-Step 1.5, MiniMax Music 3 and images through ComfyUI, Reactive, the DAW and compositor. MiniMax needs Studio's default launch flags (below). The 3D stack needs CUDA. |
 | **Intel Arc** | Native YuE2 GGUF (Vulkan), and ComfyUI with an XPU torch. |
-| **No GPU** | Native YuE2 GGUF on the CPU build, the DAW and the compositor. [API mode](docs/DEEP_DIVE.md#no-gpu-api-mode) can drive a hosted MiniMax Music 3 with your own key. |
+| **No GPU** | Native YuE2 GGUF on the CPU build, the DAW and the compositor. For video clips (here, or on any card too small for them), first ask a friend with a strong card to render them for you (**Collab**, free). Then, paid on your own key: [the hosted engine](docs/DEEP_DIVE.md#no-gpu-api-mode) for MiniMax Music 3 songs, or the launcher's **Use Comfy API** mode. |
 
 **Default ComfyUI launch flags:** `--use-pytorch-cross-attention --disable-cuda-graphs`.
 They fixed MiniMax Music 3's broken audio on an RX 9060 XT, and they replace any other

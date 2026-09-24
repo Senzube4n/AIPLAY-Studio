@@ -473,7 +473,7 @@ test("routes: a rebound page (foreign Host) reaches nothing; the page's own JSON
   });
   const hit = async (req, u) => { await routes(req, {}, new URL(`http://x${u}`)); return out.pop()?.status; };
   const evil = { host: "evil.example:4173", origin: "http://evil.example:4173", "x-aiplay-actor": "x", "content-type": "application/json" };
-  const run = { model: "bfl/flux-2-pro", raw: { prompt: "spend" } };
+  const run = { model: "bfl/flux-2-pro", raw: { prompt: "spend" }, confirmSpend: true };
   assert.equal(await hit({ method: "POST", headers: evil, _body: run }, "/api/router/run"), 403, "no paid run");
   assert.equal(await hit({ method: "POST", headers: evil, _body: { action: "key", key: "attacker-key-0123456789" } }, "/api/router"), 403, "no key swap");
   assert.equal(await hit({ method: "GET", headers: { host: "evil.example:4173", "x-aiplay-actor": "x" } }, "/api/router/runs"), 403, "no run list");
@@ -481,6 +481,14 @@ test("routes: a rebound page (foreign Host) reaches nothing; the page's own JSON
   assert.equal(await hit({ method: "POST", headers: { host: LOCAL, origin: `http://${LOCAL}`, "content-type": "text/plain" }, _body: run }, "/api/router/run"), 403,
     "the page's own origin still has to declare JSON: a no-cors text/plain POST is what a cross-site page can send");
   assert.deepEqual([spent, keys, listed], [[], [], []], "nothing ran, nothing was saved, nothing was read");
+  /* The page's own JSON, but without this run's own yes: refused, nothing sent
+   * (server/cloud-switch.js: every paid run is confirmed on its own). */
+  const unasked = { model: run.model, raw: run.raw };
+  for (const confirmSpend of [undefined, false, "true", 1]) {
+    assert.equal(await hit({ method: "POST", headers: { host: LOCAL, origin: `http://${LOCAL}`, "content-type": "application/json" },
+      _body: { ...unasked, ...(confirmSpend === undefined ? {} : { confirmSpend }) } }, "/api/router/run"), 409, `confirmSpend ${confirmSpend}: refused`);
+  }
+  assert.deepEqual(spent, [], "an unconfirmed run spends nothing");
   assert.equal(await hit({ method: "POST", headers: { host: LOCAL, origin: `http://${LOCAL}`, "content-type": "application/json" }, _body: run }, "/api/router/run"), 200);
   assert.equal(await hit({ method: "POST", headers: { host: "[::1]:4173", origin: "http://[::1]:4173", "content-type": "application/json" }, _body: run }, "/api/router/run"), 200,
     "the page opened at [::1] is the page");

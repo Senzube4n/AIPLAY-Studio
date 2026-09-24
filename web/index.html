@@ -2851,8 +2851,10 @@
         <div class="ag-cardhead">
           <div>
             <h2 id="agCloudTitle">Cloud models</h2>
-            <p class="ag-sub">Keys are encrypted on this machine and sent only to the provider they belong to.
-              Local models stay available in every menu.</p>
+            <p class="ag-sub">Only keys typed into Studio on this Windows account are used, never one from another
+              program or an environment variable; each key says when it was saved and by which copy of Studio.
+              They stay on this machine, encrypted with Windows DPAPI when it can (each key says so), and are sent
+              only to the provider they belong to. Local models stay available in every menu.</p>
           </div>
           <span class="ag-count" id="agConnected"></span>
         </div>
@@ -3344,12 +3346,19 @@
       <header class="page-head">
         <h2>Comfy API</h2>
         <p>Hosted image, video, audio, 3D and text models, run with your Comfy API key and credits.</p>
+        <!-- Said plainly, because Use Comfy API hides the Workflow: a music
+             video is made in Full Studio's Workflow, and without a strong card a
+             friend renders its scenes (Collab), before any paid route. The
+             sentence is the server's (GET /api/cloud comfy.note, worded for the
+             mode this page is open in); web/router.js paints it here. -->
+        <p class="hint" id="rtNoMv"><b>Music videos are made in Full Studio's Workflow.</b> Without a strong
+          graphics card, ask a friend on Collab to render the scenes (free).</p>
       </header>
       <nav class="pnav" aria-label="Comfy API sections"></nav>
 
       <section class="pcard" id="router-key" data-nav="Key">
         <h3>Key</h3>
-        <p class="pcard-sub">Kept encrypted on this computer and sent only to Comfy.</p>
+        <p class="pcard-sub" id="rtKeySub">Kept on this computer and sent only to Comfy.</p>
         <div class="rtkey">
           <span class="chip busy" id="rtKeyChip">Checking…</span>
           <input class="line" id="rtKey" type="password" autocomplete="off" spellcheck="false" placeholder="comfyui-…" aria-label="Comfy API key" hidden>
@@ -3357,6 +3366,7 @@
           <button class="btn2" id="rtKeyChange" type="button" hidden>Change</button>
           <button class="btn2 danger" id="rtKeyForget" type="button" hidden>Forget</button>
         </div>
+        <p class="hint" id="rtKeySaid" hidden></p>
         <p class="hint" id="rtKeyHint">Get a key and credits at <a href="https://platform.comfy.org/profile/api-keys" target="_blank" rel="noopener">platform.comfy.org</a>.</p>
       </section>
 
@@ -4784,45 +4794,85 @@
         </details>
       </section>
 
-      <!-- API mode. Off by default and loudly optional: the one place where
-           something leaves the machine and costs per song. It states the trade
-           and cannot switch itself on. -->
-      <section class="pcard" id="set-hosted" data-nav="Hosted engine">
-        <h3>Hosted engine</h3>
-        <p class="pcard-sub">For machines that cannot run MiniMax Music 3 locally. Uses your own API key; nothing goes through AI PLAY.</p>
-        <label class="ovstage apihead">
-          <input type="checkbox" id="apiEnabled">
-          <span>Use a hosted engine instead of my GPU</span>
-          <em id="apiState"></em>
-        </label>
-        <p class="hint warnhint" id="apiTradeoff">Costs money per song, and audio reference stops working.</p>
+      <!-- NO STRONG GRAPHICS CARD? Friend first, then your own key (the owner,
+           2026-09-24). One card, in that order. The paid half is off by
+           default, every paid run asks first, and nothing switches to it
+           behind the person's back. The order and its sentences come from
+           GET /api/cloud (server/cloud-switch.js); web/cloudswitch.js only
+           shows them. The Hosted engine's own controls kept every id they had
+           (#set-hosted, #apiEnabled, #apiBody, #apiKey…); the key field now
+           comes first and is never hidden behind the switch. -->
+      <section class="pcard" id="set-hosted" data-nav="No strong graphics card?">
+        <h3>No strong graphics card?</h3>
+        <p class="pcard-sub">Two ways to make what this PC can't, in this order. Nothing here is on until you choose it.</p>
 
-        <div class="apibody" id="apiBody" hidden>
+        <div class="cloudstep" id="cloudFriend">
+          <h4><span class="cloudnum">1</span> Ask a friend with a strong card to render for you</h4>
+          <p class="hint" id="cloudFriendHow">Free: a friend with a strong card renders your music video's scenes
+            on their PC.</p>
+          <p class="hint" id="cloudFriendNote" hidden></p>
+          <button class="btn sm" type="button" id="cloudFriendGo">Open Collab</button>
+          <details class="more" id="cloudFriendMore"><summary>More: setting it up, and what it cannot do yet</summary>
+            <p class="hint" id="cloudFriendLimits">Both of you run Full Studio and add each other once on Collab.</p>
+          </details>
+        </div>
+
+        <div class="cloudstep" id="cloudPaid">
+          <h4><span class="cloudnum">2</span> Or pay for a service with your own key</h4>
+          <p class="hint" id="cloudPaidHow">Off until you switch it on. Every paid run asks first and says what it
+            costs. Studio uses only a key typed into Studio, never one from another program.</p>
+
+          <h5 class="cloudsvc">Hosted engine <em>songs · MiniMax Music 3</em></h5>
+          <p class="hint">For machines that cannot run MiniMax Music 3 locally. Uses your own API key; nothing goes through AI PLAY.</p>
+          <p class="hint warnhint" id="cloudHostedNote" hidden></p>
+          <div class="apibody" id="apiBody">
+            <div class="params">
+              <label for="apiProvider">provider</label>
+              <span class="pv"><select id="apiProvider" class="sel2 sm"></select></span>
+
+              <label for="apiKey">your API key</label>
+              <span class="pv">
+                <input class="line sm" id="apiKey" type="password" autocomplete="off"
+                       spellcheck="false" placeholder="paste, then Save">
+                <button class="btn sm" type="button" id="apiKeySave">Save</button>
+                <button class="btn sm ghost" type="button" id="apiKeyClear">Forget</button>
+              </span>
+
+              <label for="apiCap">monthly cap</label>
+              <span class="pv">
+                <input class="line sm num" id="apiCap" inputmode="decimal"><b>USD</b>
+                <button class="btn sm ghost" type="button" id="apiCapSave">Set</button>
+              </span>
+            </div>
+
+            <p class="hint" id="apiKeyState"></p>
+            <div class="apimeter" id="apiMeter" hidden>
+              <div class="apibar"><span id="apiBarFill"></span></div>
+              <p class="hint" id="apiSpend"></p>
+            </div>
+            <p class="hint" id="apiProvNote"></p>
+          </div>
+          <label class="ovstage apihead">
+            <input type="checkbox" id="apiEnabled">
+            <span>Use a hosted engine instead of my GPU</span>
+            <em id="apiState"></em>
+          </label>
+          <p class="hint warnhint" id="apiTradeoff">Costs money per song, and audio reference stops working. Each song asks first.</p>
+
+          <h5 class="cloudsvc">Comfy API <em>pictures, clips, sound, 3D · Comfy credits</em></h5>
+          <p class="hint" id="cloudComfyState">Checking…</p>
           <div class="params">
-            <label for="apiProvider">provider</label>
-            <span class="pv"><select id="apiProvider" class="sel2 sm"></select></span>
-
-            <label for="apiKey">API key</label>
+            <label for="cloudComfyKey">your Comfy API key</label>
             <span class="pv">
-              <input class="line sm" id="apiKey" type="password" autocomplete="off"
-                     spellcheck="false" placeholder="paste, then Save">
-              <button class="btn sm" type="button" id="apiKeySave">Save</button>
-              <button class="btn sm ghost" type="button" id="apiKeyClear">Forget</button>
-            </span>
-
-            <label for="apiCap">monthly cap</label>
-            <span class="pv">
-              <input class="line sm num" id="apiCap" inputmode="decimal"><b>USD</b>
-              <button class="btn sm ghost" type="button" id="apiCapSave">Set</button>
+              <input class="line sm" id="cloudComfyKey" type="password" autocomplete="off"
+                     spellcheck="false" placeholder="comfyui-…, then Save">
+              <button class="btn sm" type="button" id="cloudComfySave">Save</button>
+              <button class="btn sm ghost" type="button" id="cloudComfyForget">Forget</button>
             </span>
           </div>
-
-          <p class="hint" id="apiKeyState"></p>
-          <div class="apimeter" id="apiMeter" hidden>
-            <div class="apibar"><span id="apiBarFill"></span></div>
-            <p class="hint" id="apiSpend"></p>
-          </div>
-          <p class="hint" id="apiProvNote"></p>
+          <p class="hint" id="cloudComfyNote">It runs in the launcher's own <b>Use Comfy API</b> mode, outside a music video.</p>
+          <p class="hint">Get a key and credits at
+            <a href="https://platform.comfy.org/profile/api-keys" target="_blank" rel="noopener">platform.comfy.org</a>.</p>
         </div>
       </section>
 

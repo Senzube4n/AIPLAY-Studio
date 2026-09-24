@@ -135,7 +135,11 @@ function connectedBody(p, busy) {
   }
   const u = p.usage;
   const usage = u ? `${u.calls} request${u.calls === 1 ? "" : "s"} · ${tokens(u.input)} tokens in · ${tokens(u.output)} out` : "No requests yet";
-  const where = p.custom ? p.base : p.hint ? `Key ${p.hint}${p.protection === "dpapi" ? " · encrypted with Windows DPAPI" : ""}` : "";
+  /* "Using the key …abcd saved on 21 Sep 2026 by another copy of Studio": the
+   * server's sentence (server/secrets.js), so a key saved by another copy on
+   * this Windows account is shown as that. Replace key / Disconnect beside it. */
+  const keyWords = (p.said || `Key ${p.hint}`).replace(/\.$/, "");
+  const where = p.custom ? p.base : p.hint ? `${keyWords}${p.protection === "dpapi" ? " · encrypted with Windows DPAPI" : p.protection ? " · not encrypted: plain text in your Studio profile" : ""}` : "";
   return `
     <div class="ag-grid">
       <label class="ag-field wide"><span>Model <i>oldest → newest${list && !list.error ? ` · ${list.length}` : ""}</i></span>${select}</label>

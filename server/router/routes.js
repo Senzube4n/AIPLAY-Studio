@@ -162,6 +162,13 @@ export function createRouterRoutes({ json, readBody, config, sameOriginLocalJson
         const model = String(b.model || "");
         if (!validModelId(model)) { json(res, 400, { error: "Pick a model." }); return true; }
         if (!(await secrets.has(KEY_NAME))) { json(res, 400, { error: "Save your Comfy API key first." }); return true; }
+        /* EVERY RUN ASKED FOR ON ITS OWN (server/cloud-switch.js). The page
+         * sends confirmSpend only after its "Use Comfy credits?" box said
+         * Run; a script has to say it too. Without it nothing is sent. */
+        if (b.confirmSpend !== true) {
+          json(res, 409, { error: `Running ${labelOf(model)} uses credits from your Comfy account. Nothing was sent: confirm this run first (confirmSpend: true).`, reason: "confirm-spend" });
+          return true;
+        }
         let body;
         if (b.simple && featuredById(model)?.adapter) {
           body = buildSimple(model, b.simple, b.files || {});

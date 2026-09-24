@@ -54,6 +54,8 @@ import { paintLocal, initLocal } from "./modellocal.js";
 import { mountInfo } from "./info.js";
 import { appConfirm, appPrompt, appAlert } from "./dialog.js";
 import { showRouter } from "./router.js";
+/* No strong card: friend first, then your own key; and every paid run's own yes. */
+import { confirmPaidRun, paintCloudCard } from "./cloudswitch.js";
 import { openModelPicker } from "./modelpick.js";
 /* [Set up timed lyrics]: the one-click setups (server/setup/). Its calls below are typeof-guarded for the lanes that lift app.js functions. */
 import { paintSetupButtons, offerSetup } from "./setup-feature.js";
@@ -617,8 +619,8 @@ function needModel(kind, o = {}) {
     title: o.title || "That music model isn't installed",
     lead: o.lead || "Download it here, or pick one that fits this machine.",
     focus: o.focus,
-    apiLabel: "Use the MiniMax API instead",
-    onApi: () => { setView("settings"); $("apiEnabled")?.scrollIntoView({ block: "center", behavior: "smooth" }); },
+    apiLabel: "Pay per song with your own fal.ai key instead",
+    onApi: () => { setView("settings"); $("apiKey")?.scrollIntoView({ block: "center", behavior: "smooth" }); $("apiKey")?.focus?.(); },
     onSetup: (id) => {
       if (id !== "musicYue2Gguf") return false;
       state.musicEngine = "yue2-gguf";
@@ -706,7 +708,7 @@ async function chooseMusicModel(value) {
     /* Put every picker back on what is really selected, then offer the model. */
     document.querySelectorAll("#musicEngine, #modelMusicPick").forEach((s) => { s.dataset.sig = ""; paintMusicModelSelect(s); s.value = musicModelValue(); });
     needModel("music", c.api
-      ? { title: `${c.label} needs an API key`, lead: "Add a key in Settings, API mode, or pick a model that runs on this machine.", focus: null }
+      ? { title: `${c.label} needs your own key`, lead: `Paste your own key in ${c.keyPlace || "Settings"} (every song asks before it is billed), or pick a model that runs on this machine.`, focus: null }
       : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
     return;
   }
@@ -2035,9 +2037,7 @@ async function rerollMix(file) {
   }
   if (!t.caption) { $("ctaNote").textContent = "That track has no stored style, so it cannot be re-rolled."; return; }
 
-  await fetch("/api/generate", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  const rerollBody = (extra) => JSON.stringify({
       title: t.title,
       caption: t.caption,
       lyrics: t.lyrics || "",
@@ -2051,8 +2051,18 @@ async function rerollMix(file) {
       model: t.model,
       instrumental: t.instrumental,
       reusesConditioning: true,
-    }),
-  }).catch(() => {});
+      ...extra,
+    });
+  const post = (extra) => fetch("/api/generate", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: rerollBody(extra),
+  }).then((r) => r.json()).catch(() => ({}));
+  let rr = await post({});
+  /* A re-roll on the hosted engine is a new paid song: asked, like Create. */
+  if (rr.reason === "confirm-spend" && typeof confirmPaidRun === "function") {
+    if (!(await confirmPaidRun(rr))) return;
+    rr = await post({ confirmSpend: true });
+  }
+  if (rr.error) { $("ctaNote").textContent = rr.error; return; }
   $("ctaNote").textContent = `Re-rolling “${t.title}” — same take, new render (~4× faster).`;
   poll();
 }
@@ -2888,7 +2898,19 @@ async function generate(preview, mixSeed) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(spec),
     });
-    const j = await r.json();
+    let j = await r.json();
+    /* PAID ONLY ON A YES. With the hosted engine on, the server refuses a song
+     * until this press says it may bill (server/cloud-switch.js); the question
+     * is the server's sentence, and the takes below ride on the same yes. */
+    let paidOk = false;
+    if (j.reason === "confirm-spend" && typeof confirmPaidRun === "function") {
+      if (!(await confirmPaidRun(j, { takes: n }))) return;
+      paidOk = true;
+      j = await (await fetch("/api/generate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...spec, confirmSpend: true }),
+      })).json();
+    }
     /* Said under Create in the server's own words, with Fix where there is one
      * (web/receipt.js); the model window or an alert where that file is absent. */
     if (j.error) { if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("ctaNote", j); else failSay(j); return; }
@@ -2903,6 +2925,7 @@ async function generate(preview, mixSeed) {
           ...spec,
           seed: Math.floor(Math.random() * 4294967296),
           title: `${spec.title} · take ${i + 1}`,
+          ...(paidOk ? { confirmSpend: true } : {}),
         }),
       }).catch(() => {});
     }
@@ -17739,8 +17762,11 @@ async function loadApiMode() {
   if (state.musicModels?.length) { paintMusicModelSelect($("musicEngine")); paintMusicPill(); }
 
   $("apiEnabled").checked = !!d.enabled;
-  $("apiBody").hidden = !d.enabled;
-  $("apiState").textContent = d.enabled ? "On: billed to you" : "Off: uses your GPU";
+  /* Never hidden behind the switch: pasting your own key is the first step,
+   * switching it on the second (No strong graphics card?, step 2). */
+  $("apiBody").hidden = false;
+  if (typeof paintCloudCard === "function" && state.view === "settings") paintCloudCard({ setView });
+  $("apiState").textContent = d.enabled ? "On: billed to you, each song asks first" : "Off: nothing is billed";
 
   const sel = $("apiProvider");
   if (sel.options.length !== Object.keys(d.providers).length) {
@@ -17774,7 +17800,11 @@ async function loadApiMode() {
       + `That is the encryption doing its job — it is tied to your Windows account and this PC, `
       + `so a copied or restored file will not open. Paste it again.`;
   } else {
-    $("apiKeyState").innerHTML = `Key ${esc(key.hint || "")} saved. ${esc(key.protection || "")}`;
+    /* "Using the key …abcd saved on 21 Sep 2026 [by another copy of Studio]":
+     * a key saved earlier on this Windows account is shown, not silently
+     * reused. Replace = paste a new one and Save; Forget removes it. */
+    $("apiKeyState").innerHTML = `${esc(key.said || `Key ${key.hint || ""} saved.`)} ${esc(key.protection || "")} `
+      + "To replace it, paste a new one and press Save.";
   }
 
   const sp = d.spend || {};
@@ -17807,7 +17837,7 @@ function applyApiConstraints() {
   const note = $("arefState");
   if (note) {
     note.textContent = on
-      ? "unavailable in API mode — hosted engines take text only"
+      ? "unavailable with the hosted engine on — it takes text only"
       : (state.aref?.name ? "on" : "off");
   }
 }
@@ -17833,8 +17863,7 @@ $("apiKeySave").onclick = async () => {
   // share away from being public, and the server already has it.
   $("apiKey").value = "";
   if (r.method === "file-permissions") {
-    alert("Saved, but this machine has no OS keystore available, so it is protected by file permissions rather than encryption. "
-        + "Anyone who can read your user profile can read the key.");
+    alert(`Saved, but not encrypted. ${r.status?.protection || "It is kept as plain text on this computer."}`);
   }
 };
 $("apiKeyClear").onclick = () => apiPost({ action: "clearKey", provider: $("apiProvider").value });
@@ -18527,7 +18556,15 @@ const ovPost = (body) =>
   fetch("/api/batch", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body) })
     .then((r) => r.json())
-    .then((s) => { if (s?.error) { alert(s.error); return; } applyBatch(s); })
+    .then(async (s) => {
+      /* A night on the paid hosted engine is asked for once, with the whole
+       * night's estimate (server/cloud-switch.js), and never assumed. */
+      if (s?.reason === "confirm-spend" && !body.confirmSpend && typeof confirmPaidRun === "function") {
+        if (await confirmPaidRun(s)) return ovPost({ ...body, confirmSpend: true });
+        return;
+      }
+      if (s?.error) { alert(s.error); return; } applyBatch(s);
+    })
     .catch(() => {});
 
 /* Snapshot references and model choices as well as the prompt. The backend

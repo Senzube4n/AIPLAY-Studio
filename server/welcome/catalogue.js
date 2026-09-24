@@ -47,6 +47,8 @@ import { LAYER_TYPES } from "../vfx/store.js";
  * figures in the quality block are that same arithmetic rather than a second
  * copy of a table, so they follow the sigma shift if it is ever re-measured. */
 import { commitSigma, COMPARE_CONFIGS } from "../videolab/catalog.js";
+/* No strong card? Friend first, then your own key: the order is one list. */
+import { NO_STRONG_CARD } from "../cloud-switch.js";
 
 /* ── counts, spelled ─────────────────────────────────────────────────────────
  *
@@ -435,6 +437,11 @@ const START = [
     detail: "Generate a look, then open it in the editor — layers, curves, cutout, type. The original is never overwritten." },
   { what: "Make it move", where: "Video, then Studio",
     detail: "Render a clip or two, drop them on the timeline over the song, switch on the karaoke overlay, press Export." },
+  /* THE WEAK-CARD ANSWER, in the owner's order: a friend's card before any
+   * paid route (2026-09-24). Read from server/cloud-switch.js, so this page,
+   * Settings and cloud_status cannot put them the other way round. */
+  { what: "No strong graphics card?", where: NO_STRONG_CARD.map((w) => w.where).join(", then "),
+    detail: NO_STRONG_CARD.map((w, i) => `${i + 1}. ${w.title}. ${w.how}`).join(" ") },
   { what: "Or hand the whole thing to an assistant", where: "Agent",
     detail: "Paste the MCP snippet into your assistant's config. After that, \"make me a music video\" is a sentence rather than a project." },
 ];
@@ -523,7 +530,9 @@ const TABS = [
       + "run on Comfy's cloud through Comfy Router with your own Comfy API key. Nothing runs on this "
       + "machine, so it needs no ComfyUI and no graphics card, and every run costs Comfy credits, which "
       + "is why it lives in its own mode and asks before each run. Featured models have a short form; "
-      + "every other model gets a form built from its published fields, or its raw JSON.",
+      + "every other model gets a form built from its published fields, or its raw JSON.\n"
+      + "It is the paid way, and the second one: without a strong card, ask a friend with one to render "
+      + "for you first (Collab, free).",
     makes: ["Pictures, clips, sound and speech from hosted models", "3D models from a description", "Answers from hosted language models"],
     start: "Save your Comfy API key, pick a kind and a model, and press Run.",
     needs: [],
@@ -531,7 +540,8 @@ const TABS = [
     cant:
       "It spends real credits and cannot quote a price before a run; the Router reports a cost after "
       + "some runs and not others, and your Comfy workspace has the full usage. Results are downloaded "
-      + "as they finish, because their links expire within a day.",
+      + "as they finish, because their links expire within a day. It cannot make a music video: the mode "
+      + "has no Music, Workflow or Collab screen, and its results do not reach a project's scenes.",
   },
   {
     id: "musiclab", icon: "♫", name: "Music Lab", group: "make",
@@ -884,14 +894,15 @@ const TABS = [
     id: "settings", icon: "⚙", name: "Settings", group: "run",
     lead:
       "Cover-art style, output formats, folders, the graphics-memory tier for smaller cards, your own "
-      + "ComfyUI workflows, and the opt-in API mode that rents a cloud model under a monthly spending cap.",
+      + "ComfyUI workflows, and \"No strong graphics card?\": a friend who renders for you first, then an "
+      + "opt-in paid service on your own key under a monthly spending cap.",
     makes: ["A studio that behaves the way you work"],
     start: "Set the output folder first; everything else has a working default.",
     needs: [],
     cant:
       "Changing the memory tier restarts the engine and clears the cached take, so the next re-roll costs "
-      + "a full render — it says so before it does it. API mode spends real money, which is exactly why "
-      + "the cap exists.",
+      + "a full render — it says so before it does it. The paid service spends real money, which is exactly why "
+      + "every paid song asks first and the cap exists.",
   },
   {
     id: "mcp", icon: "◆", name: "Agent", group: "run",

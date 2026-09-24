@@ -66,6 +66,7 @@ import { welcomeTools } from "./mcp-welcome.js";
 /* The Models screen's hardware answer: which of these an agent's user can
  * actually run, and what to fetch first. */
 import { modelTools } from "./mcp-models.js";
+import { cloudTools } from "./mcp-cloud.js";
 import { collabTools } from "./mcp-collab.js";
 import { workspaceTools } from "./mcp-workspace.js";
 import { excludedTerritoriesText } from "./models.js";
@@ -405,6 +406,7 @@ export const TOOLS = [
    * recommends a 43 GB video engine to an 8 GB card, politely and with
    * complete confidence. */
   ...modelTools(api),
+  ...cloudTools(api),
   ...collabTools(api, safeName),
   ...workspaceTools(api, safeName),
   ...musicInputTools(api),
@@ -578,6 +580,7 @@ export const TOOLS = [
         ace_cfg: { type: "number", minimum: 0.1, maximum: 20, description: "ace-step15 only: sampler guidance. Omit for the template value (1 on turbo)." },
         planner: { type: "boolean", description: "ace-step15 only: let the language model plan the song first (generate_audio_codes). Default on; off by default with a LoRA (ACE-Step's LoRA card advises the DiT alone) and always off for a cover." },
         cover_song: { type: "string", description: "ace-step15 only: a Library file name (list_songs) to cover — ACE-Step re-performs it in this caption and lyrics (ComfyUI's Set Reference Audio, experimental there)." },
+        confirm_spend: { type: "boolean", description: "PAID SONGS ONLY. With the hosted engine switched on (cloud_status), a MiniMax Music 3 song bills the person's own key and is refused until this is true; the refusal says what it would cost and which key it bills. Pass true ONLY after the person agreed to pay for THIS song in the conversation, never on your own. Ignored for local engines." },
       },
       additionalProperties: false,
     },
@@ -626,6 +629,8 @@ export const TOOLS = [
         aceCfg: Number.isFinite(a.ace_cfg) ? a.ace_cfg : undefined,
         aceCodes: typeof a.planner === "boolean" ? a.planner : undefined,
         aceCover: typeof a.cover_song === "string" && a.cover_song ? { song: safeName(a.cover_song, "song") } : undefined,
+        /* Exactly true or absent: the door reads confirmSpend === true and nothing looser. */
+        confirmSpend: a.confirm_spend === true ? true : undefined,
       });
       /* /api/generate refuses with its own sentence (fp8 on an older card, a preview that does not exist); relay it whole
        * rather than answering "job_id: null" and leaving the agent to guess. */
@@ -2257,6 +2262,7 @@ export const TOOLS = [
           },
           additionalProperties: false,
         },
+        confirm_spend: { type: "boolean", description: "MUSIC with the paid hosted engine switched on only: every song of the night bills the person's own key, and the run is refused with the night's estimate until this is true. Pass true ONLY after the person agreed to that estimate." },
       },
       additionalProperties: false,
     },
@@ -2270,6 +2276,7 @@ export const TOOLS = [
         action: "start",
         kind: a.kind, name: a.name, takes: a.takes, cap: a.cap,
         items: a.items, stages: a.stages,
+        confirmSpend: a.confirm_spend === true ? true : undefined,
       });
       if (r.error) throw new Error(r.error);
       return r;

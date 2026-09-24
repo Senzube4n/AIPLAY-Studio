@@ -74,6 +74,9 @@ export const ROUTABLE = {
   models_for_this_machine: null,
   /* Reads what a one-click setup would build and how its job is going. */
   setup_status: null,
+  /* No strong card? Friend first, then the person's own key: a read. Its twin
+   * set_cloud is withheld below, because it decides whether songs bill. */
+  cloud_status: null,
   studio_status: null,
   engine_status: null,
   engine_activity: null,
@@ -589,6 +592,7 @@ export const WITHHELD = {
   set_music_engine: "changes a persistent app setting the person set on the Music page, and can switch paid API mode on",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",
+  set_cloud: "switches a PAID service on, or raises its monthly cap: it decides whether songs bill the person's own key, and that is the person's decision on the Settings page (No strong graphics card?)",
   studio_welcome: "drives the first-run window",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
   make_song: "the chat has its own make_song with a written caption guide",

@@ -243,6 +243,10 @@ export function createCloud({ config, secrets, fetch: doFetch = globalThis.fetch
         id: p.id, name: p.name, company: p.company, keyUrl: p.keyUrl, keyHint: p.keyHint,
         custom: !!p.custom, keyOptional: !!p.keyOptional,
         connected, hint: st?.hint || null, protection: st?.method || null,
+        /* When it was saved and by which copy of Studio: a key another copy saved
+         * on this Windows account is shown as that, not silently reused
+         * (server/secrets.js secretStatus). */
+        said: st?.said || null, savedHere: st?.savedHere ?? null, savedAt: st?.savedAt || null,
         base: p.custom ? baseOf(p) : null,
         model: config.llm.models[p.id] || null,
         usage: u[p.id] || null,

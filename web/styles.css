@@ -1807,6 +1807,21 @@ details.adv[open] summary::before { content: "▾"; }
 }
 .apibar span.hot { background: var(--warn); }
 
+/* "No strong graphics card?": two numbered steps, the friend first. The
+   Hosted engine's key field sits inside step 2 before its switch, so the
+   .apibody rule above loses its top rule there. */
+.cloudstep { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.cloudstep h4 { display: flex; align-items: center; gap: 8px; margin-top: 0; color: var(--ink); font-size: 13px; }
+.cloudnum {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  font-size: 11px; font-weight: 700; background: var(--primary); color: var(--on);
+}
+.cloudsvc { margin: 14px 0 4px; font-size: 12px; font-weight: 600; }
+.cloudsvc em { color: var(--ghost); font-style: normal; font-weight: 400; margin-left: 6px; }
+.cloudstep .apibody { margin-top: 6px; padding-top: 0; border-top: 0; }
+.cloudstep .pv { display: flex; align-items: center; gap: 6px; }
+.cloudstep .pv .line { flex: 1 1 auto; min-width: 0; }
+
 /* A control that is off because the chosen engine cannot do it — not because
    something failed. Dimmed, still readable, reason in the summary. */
 .aref.disabled { opacity: .5; }

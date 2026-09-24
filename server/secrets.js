@@ -24,15 +24,48 @@
  * IN EITHER CASE the plaintext is never logged, never written to the sidecar,
  * never sent to the browser, and never leaves this process except in the
  * Authorization header of a request to the provider the user chose.
+ *
+ * ONLY KEYS TYPED INTO STUDIO. This store is the one place a paid key comes
+ * from (the owner, 2026-09-24: "input their own api key dont use existing
+ * keys"). Nothing in server/, launcher/ or scripts/ reads a key from another
+ * program's settings or from an environment variable: the names below such as
+ * "FAL_KEY" are this file's own record names, not variables, and an exported
+ * FAL_KEY or OPENAI_API_KEY is never looked at. The AIPLAY_ variables near the
+ * paid path are the person's own switches and are listed in docs/DEEP_DIVE.md
+ * ("Your own key, and only yours").
+ *
+ * ONE STORE PER WINDOWS ACCOUNT, NOT PER COPY. ~/.aiplay-studio is shared by
+ * every Studio folder on this account, so a key saved by another copy is still
+ * the person's own. Each record notes when and from which Studio folder it was
+ * saved, and secretStatus() says so, so the page SHOWS a reused key ("Using
+ * the key saved on 21 Sep 2026 by another copy of Studio") rather than using
+ * it silently.
  */
 import { spawn } from "node:child_process";
 import { readFile, writeFile, mkdir, chmod, unlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import { keySentence } from "./cloud-switch.js";
 
 const STORE = path.join(config.paths.appData, "secrets.json");
 const WIN = process.platform === "win32";
+/* This copy of Studio: the folder above server/. Written beside each saved key
+ * so a key another copy saved can be told apart and shown as such. */
+const STUDIO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const samePath = (a, b) => WIN
+  ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+  : path.resolve(a) === path.resolve(b);
+/* Where the store is, said without the Windows user name: the status reaches
+ * the page, cloud_status and so whatever model the in-app chat runs on. The
+ * home folder is written the way the person would type it. */
+function shownPath(p) {
+  const home = os.homedir();
+  const inHome = WIN ? p.toLowerCase().startsWith(home.toLowerCase() + path.sep) : p.startsWith(home + path.sep);
+  return inHome ? (WIN ? "%USERPROFILE%" : "~") + p.slice(home.length) : p;
+}
+const STORE_SHOWN = shownPath(STORE);
 
 /** Run PowerShell with the SCRIPT base64-encoded in argv and the SECRET on
  *  stdin.
@@ -132,7 +165,7 @@ export async function setSecret(name, value) {
       payload = v;
     }
   }
-  store[name] = { method, value: payload, hint: v.slice(-4), at: Date.now() };
+  store[name] = { method, value: payload, hint: v.slice(-4), at: Date.now(), from: STUDIO_ROOT };
   await writeStore(store);
   return { stored: true, method };
 }
@@ -161,17 +194,33 @@ export async function getSecret(name) {
  */
 export async function secretStatus(name) {
   const rec = (await readStore())[name];
-  if (!rec) return { set: false, method: null, hint: null };
+  if (!rec) return { set: false, method: null, hint: null, said: keySentence(null) };
   const usable = rec.method !== "dpapi" || (await getSecret(name)) !== null;
-  return {
+  const out = {
     set: true,
     usable,
     method: rec.method,
+    /* True only when DPAPI really encrypted it. The page says "encrypted"
+     * from this and from nothing else. */
+    encrypted: rec.method === "dpapi",
     hint: rec.hint ? `…${rec.hint}` : null,
+    savedAt: Number.isFinite(rec.at) ? new Date(rec.at).toISOString() : null,
+    /* false: another copy of Studio on this Windows account saved it. null: a
+     * record from before this was noted. */
+    savedHere: typeof rec.from === "string" ? samePath(rec.from, STUDIO_ROOT) : null,
+    /* That copy's folder NAME only ("AIPLAYStudio-main"), never its full path. */
+    savedBy: typeof rec.from === "string" && !samePath(rec.from, STUDIO_ROOT) ? path.basename(rec.from) || null : null,
+    where: STORE_SHOWN,
     protection: rec.method === "dpapi"
       ? "Encrypted with Windows DPAPI, tied to your Windows account and this machine. A copy of the file is useless anywhere else."
-      : "Stored in a file only your user account can read. That is file permissions, not encryption.",
+      : WIN
+        ? `Not encrypted: it is stored as plain text in ${STORE_SHOWN}. Your Windows account, this PC's administrators and any program you run can read it.`
+        : `Not encrypted: it is stored as plain text in ${STORE_SHOWN}, readable only by your user account (file permissions 0600) and any program you run as you.`,
   };
+  /* "Using the key …abcd saved on 21 Sep 2026 by another copy of Studio on
+   * this Windows account." The one sentence every key card shows. */
+  out.said = keySentence(out);
+  return out;
 }
 
 /** Is a secret saved under this name? Reads the store only — no decryption,

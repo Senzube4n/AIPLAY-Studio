@@ -212,9 +212,10 @@ Three network exceptions exist and all three
 are named where they live: model downloads go straight to the publisher (Studio
 hosts no weights and mirrors none; the native runtime is an attributed AIPlay
 package on GitHub), the Community screen is a window onto a
-website and is the only screen that wants a connection, and **API mode** is an
-opt-in switch for machines that cannot run the music model — off by default, and
-it cannot switch itself on.
+website and is the only screen that wants a connection, and **the hosted engine**
+(Settings → No strong graphics card?) is an opt-in switch for machines that
+cannot run the music model — off by default, it cannot switch itself on, and
+every paid song asks first.
 
 **Every render is written down before it is asked for.** On 2026-09-02 the output
 folder held 426 files written since the previous noon, and **424 of them had no
@@ -1475,6 +1476,18 @@ slow app with no explanation is worse than a failure.
 
 ## No GPU? API mode
 
+**Ask a friend first.** Without a strong graphics card, the first answer is a
+friend who has one: on **Collab** you add each other once, press **Ask friend**
+beside a scene (Workflow → Video clips) and send them the sealed file it makes;
+they send the finished clip back as a file for you to look at before you keep
+it. It is free, nothing connects to anybody, both of you run Full Studio, and it
+lends video scenes, not songs. A real two-PC round trip has not been
+acceptance-tested yet ([Collab](COLLAB.md),
+[Ask a friend to render](FRIEND_RENDERING.md)). A paid
+service on your own key is the second answer. Both live on one Settings card,
+**No strong graphics card?**, in that order; `cloud_status` gives an agent the
+same answer.
+
 Studio can drive a **hosted** MiniMax Music 3 instead of a local one, for
 machines that cannot run the model. Same model, someone else's hardware, **your**
 API key — Studio calls the provider directly from your machine, so nothing is
@@ -1485,23 +1498,57 @@ studio timeline, overnight runs.
 
 Two things do change, and Studio says both in the UI rather than in a footnote:
 
-- **It costs money per song.** About $0.36 for three minutes. Overnight runs are
-  the feature most worth having and the one most able to run up a bill
-  unattended, so there is a **hard monthly cap** — default $20 — checked
-  immediately before every call, not just when a batch is queued.
+- **It costs money per song, and every song asks first.** About $0.36 for three
+  minutes. With the hosted engine on, a song is refused until that song's own
+  confirmation says yes: the question names the cost, the key it bills and how
+  much of the month's cap is spent. An overnight run on the hosted engine is
+  asked for once, with the whole night's estimate. There is also a **hard
+  monthly cap** — default $20 — checked immediately before every call, not just
+  when a batch is queued. Nothing ever switches to a paid service on its own.
 - **Audio reference and music input stop working.** Both encode a real recording
   into the model's own latent; hosted endpoints take text and return audio, with
   no latent to hand them. The control is disabled and labelled, not left to fail
   at submit.
 
-Your key is stored with **Windows DPAPI**, tied to your Windows account and that
-machine — a copied `secrets.json` is inert anywhere else. It is write-only across
-Studio's own HTTP boundary: the browser is told a key exists, how it is
-protected, and its last four characters, never the key. On platforms without
-DPAPI it falls back to a `0600` file and says so plainly, because file
-permissions are not encryption.
+Your key is stored with **Windows DPAPI** when DPAPI works, tied to your Windows
+account and that machine — a copied `secrets.json` is inert anywhere else. It is
+write-only across Studio's own HTTP boundary: the browser is told a key exists,
+how it is protected, when it was saved and its last four characters, never the
+key. If DPAPI fails, or on platforms without it, the key is kept as plain text in
+`secrets.json` and the card says so, with where the file is and who can read it,
+because file permissions are not encryption.
 
 Off by default, and it cannot switch itself on.
+
+### Your own key, and only yours
+
+Studio uses a key only if you typed it into Studio: the Hosted engine's key and
+the Comfy API key on the **No strong graphics card?** card (or the Comfy API
+page), and the Agent page's language-model keys. Nothing reads a key from another
+program's settings or from an environment variable — an exported `FAL_KEY`,
+`MINIMAX_API_KEY` or `OPENAI_API_KEY` is never looked at. (`FAL_KEY` is also the
+name Studio's own store files the fal key under; that is a record name, not a
+variable.)
+
+The store is `%USERPROFILE%\.aiplay-studio\secrets.json`, one per Windows
+account, so every Studio folder on the account shares it. A key saved by another
+copy of Studio is still yours, and it is shown rather than silently reused:
+"Using the key …abcd saved on 21 Sep 2026 by another copy of Studio on this
+Windows account", with Replace and Forget beside it.
+
+The `AIPLAY_` variables near the paid path are switches you set yourself, and
+none of them carries a key:
+
+| variable | what it does |
+|---|---|
+| `AIPLAY_CLOUD_ONLY=1` | starts the Comfy API mode (the launcher's **Use Comfy API**, or `npm run start:cloud`) |
+| `AIPLAY_FAL_BASE`, `AIPLAY_MINIMAX_BASE` | where hosted-music requests go, for a local mock or a relay you run; your key goes there too, so point them only at something you control |
+| `AIPLAY_APPDATA` | where settings and `secrets.json` live (tests use it to stay off your real profile) |
+
+The one credential Studio's own code reads from outside itself is Hugging Face's
+login for the gated LTX 2.5 download: `scripts/fetch_ltx25.py`, which you run by
+hand after `hf auth login`, asks `huggingface_hub` for the token that login
+stored. It downloads, it bills nothing, and nothing in the running Studio uses it.
 
 ## Settings that are not up for negotiation
 

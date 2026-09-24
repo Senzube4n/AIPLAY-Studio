@@ -40,6 +40,7 @@ import {
   H3_RAM_FLOOR_GB, H3_ASK_A_FRIEND,
 } from "./h3tier.js";
 import { musicDefault } from "./music-default.js";
+import { NO_STRONG_CARD, NO_STRONG_CARD_VIDEO_LINE } from "./cloud-switch.js";
 
 /* ── the five answers ──────────────────────────────────────────────────────
  *
@@ -698,10 +699,17 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
     notes.push({
       slot: "video",
       headline: "No video engine is recommended for this machine.",
+      /* What to do instead, in the owner's order: a friend's card, then a
+       * paid service on your own key (server/cloud-switch.js); the paid half
+       * makes clips in another launch mode, not a music video's scenes.
+       * web/modelfit.js turns `instead` into buttons. The Instead line
+       * names the friend, so the H3 sentence drops its own copy. */
       detail: [
-        ...(family.length ? [`${family.map((v) => v.cap.label).join(" and ")}: ${voice.fit.why}`] : []),
+        ...(family.length ? [`${family.map((v) => v.cap.label).join(" and ")}: ${voice.fit.why.replace(H3_ASK_A_FRIEND, "").trim()}`] : []),
         ...rest,
+        `Instead: ${NO_STRONG_CARD_VIDEO_LINE}`,
       ].join(" "),
+      instead: NO_STRONG_CARD.map((w) => ({ id: w.id, title: w.title, where: w.where, view: w.view, paid: w.paid })),
     });
   }
 

@@ -739,6 +739,11 @@ node server/style-tags_test.js || exit 1
 node server/roulette_test.js || exit 1
 node server/prompt-tools_test.js || exit 1
 node --test server/apimode-picker_test.js || exit 1
+# No strong card? Friend first, then your own key: no paid run starts without its
+# own confirmation, none starts with the switch off, and no key is read that
+# the person did not type into Studio (server/cloud-switch.js).
+node --test server/cloud-confirm_test.js || exit 1
+node --check web/cloudswitch.js || exit 1
 node --test server/library-batch_test.js || exit 1
 node --test server/ace-step_test.js || exit 1
 node --test server/simple-remix_test.js || exit 1

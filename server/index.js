@@ -49,7 +49,7 @@ import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-
 import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
-import { BatchRunner } from "./batch.js";
+import { BatchRunner, plannedSongs } from "./batch.js";
 import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
@@ -63,6 +63,7 @@ import { createCatalog } from "./router/catalog.js";
 import { createRouterJobs } from "./router/jobs.js";
 import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
+import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
@@ -1697,9 +1698,11 @@ async function musicModelChoices(cat) {
         value: `minimax-music3:api:${name}`, engine: "minimax-music3", precision: null, api: name,
         label: `MiniMax Music 3 · API (${prov.label.split(" — ")[0]})`,
         available: !!key.usable,
-        note: key.usable ? `billed per song${prov.verified ? "" : " · untested adapter"}`
-          : key.set ? "saved key cannot be read here, save it again in Settings → API mode"
-          : "add a key in Settings → API mode",
+        /* Where the key goes, in the words on screen (one copy: cloud-switch.js). */
+        keyPlace: HOSTED_KEY_PLACE,
+        note: key.usable ? `billed per song, asks each time${prov.verified ? "" : " · untested adapter"}`
+          : key.set ? `saved key cannot be read here, paste it again in ${HOSTED_KEY_PLACE}`
+          : `needs your own key · ${HOSTED_KEY_PLACE}`,
       });
     }
   }
@@ -1779,6 +1782,37 @@ function modelGroupOf(c) {
   if (c.makes === "picture" || c.id === "imageCutout" || c.id === "upscale") return "images";
   if (/^(video|pose|interpolate)/.test(c.id)) return "video";
   return "music";
+}
+
+/** The hosted engine's switch, provider and cap, from POST /api/apimode
+ *  {action:"config"} and POST /api/cloud {action:"set"}: one writer, so the
+ *  Settings card and set_cloud cannot clamp differently. */
+async function applyApiConfig(b) {
+  const patch = {};
+  if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+  if (typeof b.provider === "string" && PROVIDERS[b.provider]) patch.provider = b.provider;
+  if (Number.isFinite(b.monthlyCapUsd)) {
+    // Clamped rather than free-form: a typo'd extra zero is the exact
+    // accident the cap exists to prevent.
+    patch.monthlyCapUsd = Math.min(Math.max(b.monthlyCapUsd, 0), 1000);
+  }
+  Object.assign(config.api, patch);
+  await saveApiSettings();
+  musicChoicesCache.at = 0;
+  return { ok: true, api: config.api, spend: await spendSummary() };
+}
+
+/** What a hosted song would cost and which key it would bill: the words of the
+ *  paid-run question (server/cloud-switch.js paidRefusal). */
+async function hostedQuote(seconds) {
+  const name = PROVIDERS[config.api.provider] ? config.api.provider : "fal";
+  const prov = PROVIDERS[name];
+  return {
+    provider: name, name: prov.label.split(" — ")[0], label: prov.label, seconds,
+    usd: estimateUsd(seconds, name),
+    key: await secretStatus(prov.keyName).catch(() => ({ set: false })),
+    spend: await spendSummary(),
+  };
 }
 
 /** API mode's switch, provider and cap, kept in settings.json and read back
@@ -2575,6 +2609,34 @@ const routerRoutes = config.cloudOnly ? createRouterRoutes({
   jobs: routerJobs,
 }) : null;
 const chatRoutes = createChatRoutes({ json, readBody, config, cloud, gpu: gpuStatus });
+/* No strong graphics card? Friend first, then your own key (server/
+ * cloud-switch.js): GET /api/cloud reads the order, the paid switch and both
+ * keys; POST sets the switch through applyApiConfig, the same writer as POST
+ * /api/apimode, and saves or forgets the Comfy key with the Comfy page's own
+ * free check. Mounted in every mode: saving a key spends nothing, and the
+ * Comfy key is still only USED by the launcher's Use Comfy API mode. */
+const cloudRoutes = createCloudRoutes({
+  json, readBody, config, sameOriginLocalJson,
+  hosted: {
+    status: async () => {
+      const st = await apiStatus();
+      const prov = PROVIDERS[st.provider] || PROVIDERS.fal;
+      return { ...st, key: await secretStatus(prov.keyName).catch(() => ({ set: false })) };
+    },
+    configure: (patch) => applyApiConfig(patch),
+  },
+  comfy: {
+    status: () => secretStatus(ROUTER_KEY).catch(() => ({ set: false })),
+    save: async (key) => {
+      if (!/^\S{16,400}$/.test(key)) return { error: "That does not look like a Comfy API key." };
+      try { await routerClient.listModels({ key }); }
+      catch (e) { return { error: e.type === "unauthorized" ? "Comfy did not accept that key." : e.message }; }
+      dropRouterKey();
+      try { return await setSecret(ROUTER_KEY, key); } finally { dropRouterKey(); }
+    },
+    forget: async () => { dropRouterKey(); try { await clearSecret(ROUTER_KEY); } finally { dropRouterKey(); } },
+  },
+});
 
 /* Saved galleries (styles, lyrics, Simple descriptions, chat prompts) and the
  * Enhance button (server/prompt-tools.js). Enhance asks its own chosen model —
@@ -2741,6 +2803,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (routerRoutes && (p === "/api/router" || p.startsWith("/api/router/"))) {
       if (await routerRoutes(req, res, url)) return;
+    }
+    if (p === "/api/cloud") {
+      if (await cloudRoutes(req, res, url)) return;
     }
     if (p === "/api/gallery" || p === "/api/enhance") {
       if (await promptToolRoutes(req, res, url)) return;
@@ -2982,12 +3047,27 @@ const server = http.createServer(async (req, res) => {
     // Overnight batches. The plan lives on the server and on disk, so closing the
     // browser -- or losing it to a crash -- does not touch a run in progress.
     if (p === "/api/batch" && req.method === "POST") {
+      /* A night of renders, which with the hosted engine on is a night of
+       * bills: only Studio's page and local clients start or steer one. */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Overnight runs are only queued from Studio's own page or a local client." });
       const b = await readBody(req);
       try {
         /* The actor is taken from the REQUEST, not from the body: a caller must
          * not be able to claim to be a human. Every picture the run makes is
          * then stamped with it. */
-        if (b.action === "start") return json(res, 200, batch.start({ ...b, actor: prov.actorFrom(req) }));
+        if (b.action === "start") {
+          /* A music night with the hosted engine on bills every song: asked
+           * once, with the night's estimate, and carried on each job as
+           * paidConfirmed (server/cloud-switch.js). Never assumed. */
+          const paidNight = (b.kind || "music") === "music" && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: null });
+          const night = paidNight ? plannedSongs(b) : null;
+          /* No idea with a style: nothing to pay for, and start() says so. */
+          if (paidNight && b.confirmSpend !== true && night.songs) {
+            const refusal = paidRefusal(await hostedQuote(night.longestSeconds), { songs: night.songs });
+            return json(res, refusal.status, refusal.body);
+          }
+          return json(res, 200, batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true }));
+        }
         if (b.action === "pause") return json(res, 200, batch.pause());
         if (b.action === "resume") return json(res, 200, batch.resume());
         if (b.action === "stop") return json(res, 200, batch.stop());
@@ -3764,6 +3844,17 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      /* PAID, SO ASKED FOR EVERY TIME (server/cloud-switch.js). With the hosted
+       * engine switched on, a MiniMax song bills the person's own key: it is
+       * queued only when THIS request carries confirmSpend: true, and the
+       * refusal says what it would cost and which key it would bill. The job
+       * carries paidConfirmed, which the runner checks again before it sends. */
+      const paidSong = hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: musicEngine });
+      if (paidSong && body.confirmSpend !== true) {
+        const refusal = paidRefusal(await hostedQuote(Math.min(Math.max(Number(body.maxDuration) || 240, 30), 300)));
+        return json(res, refusal.status, refusal.body);
+      }
+
       /* ── YuE2: the second kind of job. ─────────────────────────────────
        * Same door for the browser and for MCP's make_song, so an agent's song
        * and a typed one take the identical path and file the same way. The
@@ -4193,6 +4284,7 @@ const server = http.createServer(async (req, res) => {
          * nothing can claim "user" through the header. Rides the job so the
          * ledger's generate event carries it when the song lands. */
         actor: prov.actorFrom(req),
+        ...(paidSong ? { paidConfirmed: true } : {}),
         ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}),
         /* Derived here rather than in the browser, so an overnight run, an API
          * caller and the Create form all get the same treatment. The client's
@@ -5647,6 +5739,17 @@ const server = http.createServer(async (req, res) => {
                + "Only tracks generated after the capture update can be.",
         });
       }
+      /* A continuation always renders on this PC's Music 3: the hosted engine
+       * cannot resume from a take's codes. With it switched on, say so here
+       * instead of queueing a job that can only fail (the runner refuses a
+       * requiresLocal job with the switch on, and sends nothing). */
+      if (hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: null })) {
+        return json(res, 409, {
+          error: `${replacing ? "Replace" : "Extend"} always renders on this PC's own Music 3, and the paid hosted engine is switched on, so nothing was queued or sent. `
+               + `Switch the hosted engine off in ${CLOUD_CARD_PLACE}, then try again.`,
+          reason: "hosted-on",
+        });
+      }
       // Resume from a POINT, not from the end. Replaying a whole trajectory
       // leaves the model exactly where it chose to stop, so the next token is
       // end-of-audio and nothing is generated. Default to 80% through, which
@@ -5685,6 +5788,9 @@ const server = http.createServer(async (req, res) => {
         extendedFrom: file,
         resumeFrames,
         replaceTo,
+        /* The hosted engine cannot continue a song from its codes: with it
+         * switched on this fails in words, and no paid request is sent. */
+        requiresLocal: true,
       });
       await trackReplacement(job, replacing);
       return json(res, 200, {
@@ -6632,7 +6738,8 @@ const server = http.createServer(async (req, res) => {
      */
     if (p === "/api/music" && req.method === "POST") {
       /* Every action here chooses what runs or saves a file name (the model,
-       * its build, the LoRAs, "auto"): Studio's own page or a local client
+       * its build, the LoRAs, "auto"), and its "model" action switches the
+       * paid hosted engine on or off: Studio's own page or a local client
        * only, asked before the body is read (cross-origin-doors_test.js). */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Music settings are only accepted from Studio's own page or a local client." });
       const b = await readBody(req);
@@ -6789,9 +6896,9 @@ const server = http.createServer(async (req, res) => {
         if (choice.engine === "minimax-music3") {
           const want = !!choice.api;
           if (want !== !!config.api.enabled || (want && config.api.provider !== choice.api)) {
-            config.api.enabled = want;
-            if (want) config.api.provider = choice.api;
-            await saveApiSettings();
+            /* The switch's one writer (applyApiConfig), as for /api/apimode and
+             * /api/cloud. Switching it on bills nothing: each song still asks. */
+            await applyApiConfig({ enabled: want, ...(want ? { provider: choice.api } : {}) });
           }
         }
         musicChoicesCache.at = 0;
@@ -7049,6 +7156,10 @@ const server = http.createServer(async (req, res) => {
      * cost this month. Never the key itself.
      */
     if (p === "/api/apimode" && req.method !== "POST") {
+      /* The keys' status says where the key file is and which copy of Studio
+       * saved each key: this machine's own page and local clients only, the
+       * same Host check as GET /api/cloud. */
+      if (!localUiHost(req, config.uiPort)) return json(res, 403, { error: "Only Studio on this machine may read its paid services." });
       const st = await apiStatus();
       st.protection = protectionAvailable();
       st.keys = {};
@@ -7088,20 +7199,7 @@ const server = http.createServer(async (req, res) => {
       /* Toggling the mode and the cap. Both live in settings.json rather than in
        * memory: an overnight run that starts under one cap and continues under
        * another after a restart would make the ceiling meaningless. */
-      if (b.action === "config") {
-        const patch = {};
-        if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
-        if (typeof b.provider === "string" && PROVIDERS[b.provider]) patch.provider = b.provider;
-        if (Number.isFinite(b.monthlyCapUsd)) {
-          // Clamped rather than free-form: a typo'd extra zero is the exact
-          // accident the cap exists to prevent.
-          patch.monthlyCapUsd = Math.min(Math.max(b.monthlyCapUsd, 0), 1000);
-        }
-        Object.assign(config.api, patch);
-        await saveApiSettings();
-        musicChoicesCache.at = 0;
-        return json(res, 200, { ok: true, api: config.api, spend: await spendSummary() });
-      }
+      if (b.action === "config") return json(res, 200, await applyApiConfig(b));
 
       /* A cheap "is this key real" check. Deliberately does NOT generate — the
        * point is to fail for free rather than to spend money finding out. */

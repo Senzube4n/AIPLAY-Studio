@@ -60,8 +60,16 @@ test("a 422 names the field fal refused", async () => {
 test("the Music picker offers hosted Music 3, and choosing it sets API mode", () => {
   const index = src("./index.js"), app = src("../web/app.js");
   assert.match(index, /value: `minimax-music3:api:\$\{name\}`/);
-  assert.match(index, /add a key in Settings → API mode/);
-  assert.match(index, /config\.api\.enabled = want;[\s\S]{0,80}await saveApiSettings\(\);/);
+  /* No key saved: the paid row says so, and names the place by its real label
+   * (there is no "API mode" section in Settings). */
+  assert.ok(index.includes("`needs your own key · ${HOSTED_KEY_PLACE}`"));
+  assert.match(src("./cloud-switch.js"), /export const HOSTED_KEY_PLACE = `\$\{CLOUD_CARD_PLACE\} → Hosted engine`;/);
+  assert.match(src("./cloud-switch.js"), /export const CLOUD_CARD_PLACE = "Settings → No strong graphics card\?";/);
+  assert.doesNotMatch(index, /Settings → API mode/);
+  /* Choosing the hosted row switches API mode on through the switch's one
+   * writer, which saves it (applyApiConfig → saveApiSettings). */
+  assert.match(index, /await applyApiConfig\(\{ enabled: want, \.\.\.\(want \? \{ provider: choice\.api \} : \{\}\) \}\);/);
+  assert.match(index, /async function applyApiConfig\(b\) \{[\s\S]{0,600}Object\.assign\(config\.api, patch\);\n\s+await saveApiSettings\(\);/);
   assert.match(app, /if \(e === "minimax-music3" && state\.apiMode\?\.enabled\) return `\$\{e\}:api:/,
     "the picker shows the hosted row as current while API mode is on");
   assert.match(app, /state\.apiMode \? "MiniMax · API"|state\.apiMode\?\.enabled \? "MiniMax · API"/);

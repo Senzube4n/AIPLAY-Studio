@@ -122,6 +122,20 @@ function expectedStages(chain, job) {
   return out;
 }
 
+/** How many songs start() would plan for these ideas, and the longest one
+ *  asked for: the words of the paid-night question (/api/batch, server/
+ *  cloud-switch.js), counted by this file's own limits rather than a copy. */
+export function plannedSongs({ items, takes, cap } = {}) {
+  const ideas = (items || []).filter((it) => it && String(it.caption || "").trim()).slice(0, MAX_ITEMS);
+  if (!ideas.length) return { songs: 0, longestSeconds: 0 };
+  const t = clamp(takes ?? 3, 1, MAX_TAKES);
+  const c = clamp(cap ?? ideas.length * t, 1, MAX_CAP);
+  return {
+    songs: Math.min(c, ideas.length * t),
+    longestSeconds: Math.max(...ideas.map((it) => clamp(it.maxDuration ?? 240, 30, 300))),
+  };
+}
+
 export class BatchRunner extends EventEmitter {
   constructor(jobs, { postBusy, renderMedia } = {}) {
     super();
@@ -195,7 +209,7 @@ export class BatchRunner extends EventEmitter {
     return out;
   }
 
-  start({ items, takes, cap, name, stages, kind: k, actor }) {
+  start({ items, takes, cap, name, stages, kind: k, actor, paidConfirmed = false }) {
     /* Refuse rather than overwrite.
      *
      * `this.run` was assigned unconditionally, so pressing Start during a live
@@ -272,6 +286,11 @@ export class BatchRunner extends EventEmitter {
       items: clean,
       takes: t,
       cap: c,
+      /* The person's yes to a paid night: /api/batch sets it only from the
+       * request's own confirmSpend, after telling them what the run would
+       * cost on the hosted engine (server/cloud-switch.js). Without it, a
+       * song that would reach the hosted engine is refused by the runner. */
+      paidConfirmed: paidConfirmed === true,
       /**
        * What runs AFTER each song in this run.
        *
@@ -489,6 +508,7 @@ export class BatchRunner extends EventEmitter {
       audioRef: item.audioRef,
       audioRefDenoise: item.audioRefDenoise,
       batchId: r.id,
+      paidConfirmed: r.paidConfirmed === true,
       /* The stage chain travels WITH the job.
        *
        * index.js used to read it back off the live run when a song landed — but

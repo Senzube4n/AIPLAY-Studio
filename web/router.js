@@ -51,7 +51,8 @@ function paintOffMode() {
     note.id = "rtOffMode";
     $("router").querySelector(".page-head")?.after(note);
   }
-  note.textContent = "This page runs in the launcher's Use Comfy API mode. Full Studio never spends Comfy credits.";
+  note.textContent = "This page runs in the launcher's Use Comfy API mode. Full Studio never spends Comfy credits. "
+    + "Your Comfy API key can also be saved or forgotten in Settings → No strong graphics card?.";
 }
 
 /* ── the key ─────────────────────────────────────────────────────────── */
@@ -62,6 +63,15 @@ function paintKey(k) {
   chip.className = `chip ${k?.set ? (k.usable === false ? "warn" : "ok") : "warn"}`;
   chip.textContent = k?.set ? (k.usable === false ? "Key needs saving again" : `Key saved ${k.hint || ""}`.trim()) : "No key yet";
   chip.title = k?.protection || "";
+  /* Said only when true (server/secrets.js): "encrypted" when DPAPI really
+   * encrypted it, otherwise where the key is and who can read it. And a key
+   * another copy of Studio saved is shown as that, with its date. */
+  if ($("rtKeySub")) {
+    $("rtKeySub").textContent = !k?.set ? "Kept on this computer and sent only to Comfy."
+      : k.encrypted ? "Kept encrypted on this computer and sent only to Comfy."
+      : `${k.protection || "Not encrypted on this computer."} Sent only to Comfy.`;
+  }
+  if ($("rtKeySaid")) { $("rtKeySaid").textContent = k?.set ? (k.said || "") : ""; $("rtKeySaid").hidden = !k?.set; }
   const editing = !k?.set || k.usable === false || st.editKey;
   $("rtKey").hidden = !editing;
   $("rtKeySave").hidden = !editing;
@@ -373,6 +383,9 @@ async function run() {
   const ok = await appConfirm(`Run ${m.label} on Comfy's cloud? This uses credits from your Comfy account.${policy}`,
     { title: "Use Comfy credits?", ok: "Run", cancel: "Not now" });
   if (!ok) return;
+  /* This run's own yes, which the server now requires (routes.js): the box
+   * above is the only place it is set. */
+  payload.confirmSpend = true;
   st.busy = true;
   paintRunButton();
   try {
@@ -506,6 +519,12 @@ export function initRouter() {
 /** Called by setView each time the page opens. */
 export async function showRouter() {
   initRouter();
+  /* "Music videos are made in Full Studio's Workflow…": the server's sentence
+   * for the mode this page is open in (GET /api/cloud comfy.note). The page
+   * keeps its written placeholder if the read fails. */
+  fetch("/api/cloud").then((r) => (r.ok ? r.json() : null)).then((d) => {
+    if (d?.comfy?.note && $("rtNoMv")) $("rtNoMv").textContent = d.comfy.note;
+  }).catch(() => {});
   try {
     const r = await api("/api/router");
     paintKey(r.key);

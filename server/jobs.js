@@ -86,6 +86,18 @@ export class JobRunner extends EventEmitter {
     decode: "Decoding the WAV",
     saving: "Saving the WAV",
   };
+  /* What a song hears when the hosted switch is on and nobody confirmed it as
+   * a paid run: a Create, an overnight song queued before the switch went on,
+   * or any other path. Worded for all of them. A static, like the constants
+   * above, for the lifted-class lane. */
+  static UNCONFIRMED_PAID = "The hosted engine is on, but this song was not confirmed as a paid run, "
+    + "so no request was sent and nothing was billed. Start it again and confirm the cost when "
+    + "Studio asks, or pick a music model that runs on this PC.";
+  /* A job only this PC's engine can do (a continuation, an audio-input song,
+   * an audiobook bed) while the hosted switch is on. */
+  static LOCAL_ONLY = "This job renders only on this PC's own music engine, and the paid hosted engine "
+    + "was switched on before it started, so no API request was sent and nothing was billed. Switch "
+    + "the hosted engine off in Settings → No strong graphics card?, then start it again.";
   static isStandaloneEngine(value) { return value === "yue2" || value === "yue2-gguf"; }
   static isKnownEngine(value) {
     return value == null || value === "minimax-music3" || value === "yue2-comfy" || value === "ace-step15" || JobRunner.isStandaloneEngine(value);
@@ -275,7 +287,22 @@ export class JobRunner extends EventEmitter {
 
     if (config.api?.enabled && job.requiresLocal) {
       job.state = "failed";
-      job.error = "This audio-input continuation requires local Music3. Hosted API mode was enabled before it started; no API request was sent.";
+      job.error = JobRunner.LOCAL_ONLY;
+      job.finishedAt = Date.now();
+      this.history.unshift(job);
+      this.current = null;
+      this.emit("update", this.snapshot());
+      queueMicrotask(() => { this.#pump().catch(() => {}); });
+      return;
+    }
+    /* PAID ONLY WHEN THIS SONG SAID SO. A song queued for the local engine
+     * must not turn into a bill because the hosted switch went on while it
+     * waited, and no path that forgot to ask may reach the provider
+     * (server/cloud-switch.js). The door sets paidConfirmed from the request's
+     * own confirmSpend; nothing else does. */
+    if (config.api?.enabled && (!job.engine || job.engine === "minimax-music3") && job.paidConfirmed !== true) {
+      job.state = "failed";
+      job.error = JobRunner.UNCONFIRMED_PAID;
       job.finishedAt = Date.now();
       this.history.unshift(job);
       this.current = null;

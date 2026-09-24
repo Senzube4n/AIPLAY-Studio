@@ -214,6 +214,17 @@ The following body describes **MiniMax Music 3**, not native YuE2:
 Only `caption` is required. Jobs queue and run **one at a time** — asking for four
 takes costs time, not memory.
 
+**Paid, so asked every time.** With the hosted engine switched on (Settings → No strong
+graphics card?), a MiniMax Music 3 song bills the person's own key. It is refused with
+`409 {reason: "confirm-spend", error, paid: {usdEach, usdTotal, runs, key, keySavedAt, spentUsd, capUsd}}`
+until the same request carries `"confirmSpend": true` — exactly `true`; the `error` is the
+sentence to show the person. With no key saved: `400 {reason: "needs-key"}`. Nothing is sent
+either way. MCP `make_song` takes `confirm_spend`; pass it only after the person agreed to pay
+for that song. A MiniMax continuation (`/api/extend`, `/api/replace`) never goes to the hosted engine:
+with it switched on, the door answers `409 {reason: "hosted-on"}` and queues nothing.
+`POST /api/music` (every action, including `model`, which can switch the hosted engine on or off)
+is same-origin JSON only, and `GET /api/apimode` answers only on this machine's own host.
+
 **YuE2 through ComfyUI** (`"engine": "yue2-comfy"`) adds `cot` (`full` | `melody` | `off`),
 `narSteps`, and a LoRA: `"lora": "<file in models/loras>"` with `"loraStrength": 1`
 (−4 to 4). Omit `lora` to use the Music page's saved choice, send `""` for none. A name
@@ -634,7 +645,9 @@ part of your film). Design and the owner's answers: `docs/COLLAB.md`.
 
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
-`resume`, `stop`, `clear`.
+`resume`, `stop`, `clear`. Same-origin JSON only. With the hosted engine on, a music
+run is refused with the whole night's estimate (`reason: "confirm-spend"`) until `start`
+carries `"confirmSpend": true` (MCP `overnight_start`: `confirm_spend`).
 
 Round-robin by design: take 1 of every idea, then take 2. A run that only gets
 60% through overnight leaves you covered on every idea rather than twenty takes
@@ -675,6 +688,28 @@ memory tier (restarts the engine and clears the AR cache).
 `ws://127.0.0.1:4173/live` pushes `{ type: "state", current, queue, history, run }`
 on every transition. It carries **job state only, no library** — merge it into
 what you already hold rather than replacing.
+
+---
+
+## No strong graphics card? (`/api/cloud`)
+
+Friend first, then your own key. One answer for the Settings card and `cloud_status`:
+`ways` in order (asking a friend on Collab, then a paid service on the person's own key),
+the hosted engine's switch, cap and spend, and the Comfy API key's status. Keys are never
+returned; a key's status says when it was saved and whether another copy of Studio on this
+Windows account saved it (`savedHere: false`, and the sentence in `said`). Studio reads no
+key from an environment variable or another program. Implemented in `server/cloud-switch.js`.
+
+| Route | What it does |
+|---|---|
+| `GET /api/cloud` | `order`, `ways`, `friend` {available, note}, `hosted` {on, runsHere, note, provider, capUsd, spend, key, keySaid}, `comfy` {key, keySaid, note}; this machine's own host only |
+| `POST /api/cloud {action:"set", on?, monthlyCapUsd?, provider?}` | the hosted engine's switch, cap (0–1000) and provider; the same writer as `POST /api/apimode {action:"config"}` |
+| `POST /api/cloud {action:"comfyKey", key}` | check the Comfy API key with Comfy's free model list, then save it |
+| `POST /api/cloud {action:"forgetComfyKey"}` | delete the saved Comfy API key |
+
+Every POST is same-origin JSON. MCP: `cloud_status` (a read the in-app chat may use) and
+`set_cloud` (withheld from the chat: it decides whether songs bill). A Comfy API run
+(`POST /api/router/run`, Use Comfy API mode only) likewise needs `"confirmSpend": true`.
 
 ---
 
