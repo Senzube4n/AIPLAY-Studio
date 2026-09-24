@@ -167,9 +167,11 @@ export function attachmentFitScriptPath() {
 /**
  * The lookup the out-of-tree bpy scripts share. The variable wins when set.
  * Unset, two places are tried, in order: beside the toolkit's cli.py
- * (config.blender.previz), where deform.py's default also points, and
- * <rig>/blender-toolkit/, a local folder for a copy while the GPL toolkit
- * repository does not publish these scripts yet. The first that holds the
+ * (config.blender.previz), where deform.py's default also points and where
+ * the GPL toolkit repository keeps these scripts (previz/; the URL, and
+ * whether it is public yet, are in server/mesh/previz-toolkit.js), and
+ * <rig>/blender-toolkit/, a local folder
+ * for a copy outside any clone. The first that holds the
  * file wins. With neither, the toolkit path comes back, so the sentence the
  * caller prints names where the script is expected, never a folder in here.
  */

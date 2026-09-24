@@ -9,6 +9,7 @@ import validator from 'gltf-validator';
 import {config, weightTransferScriptPath} from '../config.js';
 import {normalizeActor} from '../provenance.js';
 import {readGlb, assertSkinned} from './glb.js';
+import {toolkitScriptHelp} from './previz-toolkit.js';
 
 export const WEIGHT_TRANSFER_LIMITS = Object.freeze({bytes:128*1024*1024, timeoutMs:300000, vertices:200000, joints:256});
 const marker='WEIGHT_TRANSFER_RESULT_JSON:';
@@ -18,7 +19,7 @@ const marker='WEIGHT_TRANSFER_RESULT_JSON:';
 // unirig_adapter from this folder, which is why the spawn puts this folder on
 // PYTHONPATH — the script resolves its stdlib-only helper from outside the tree.
 const meshDir=path.dirname(fileURLToPath(import.meta.url));
-const scriptMissing=script=>fault(`The weight-transfer script is not at ${script}. It imports bpy, so this Apache-2.0 tree ships no copy of it, and the GPL Blender toolkit does not publish it yet either. Put a local copy of weight_transfer.py there, or point AIPLAY_WEIGHT_TRANSFER_SCRIPT at one; nothing is downloaded automatically.`,503);
+const scriptMissing=script=>fault(`The weight-transfer script is not at ${script}. It imports bpy, so this Apache-2.0 tree ships no copy of it. ${toolkitScriptHelp('weight_transfer.py',['AIPLAY_WEIGHT_TRANSFER_SCRIPT'])}`,503);
 const isFileSync=file=>{try{return statSync(file).isFile();}catch{return false;}};
 const jobPattern=/^wt_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const hashPattern=/^[a-f0-9]{64}$/;

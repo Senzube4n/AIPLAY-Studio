@@ -11,7 +11,13 @@ import {glbDoc,packGlb} from './fixtures.js';
 import {createWeightTransferService,createWeightTransferRoutes,runWeightPython} from './avatar-weight-transfer.js';
 import {config,weightTransferScriptPath} from '../config.js';
 import {avatarWeightTransferTools} from '../mcp-avatar-weight-transfer.js';
+import {PREVIZ_TOOLKIT_REPO,PREVIZ_TOOLKIT_PUBLIC,toolkitScriptHelp} from './previz-toolkit.js';
 
+// Where the toolkit keeps a script, told honestly: "publishes" only once the
+// repository is public, "not public yet" until then, never the old "does not
+// publish it yet".
+const toolkitSentence=(text,file)=>text.includes(PREVIZ_TOOLKIT_REPO)&&text.includes('previz/'+file)&&!/not publish/.test(text)
+  &&(PREVIZ_TOOLKIT_PUBLIC?/publishes it/.test(text)&&!/not public/.test(text):/not public yet/.test(text)&&!/publishes it/.test(text));
 let count=0;async function test(name,fn){await fn();console.log('ok '+name);count++;}
 const directory=await mkdtemp(path.join(os.tmpdir(),'aiplay weight transfer '));
 const reference=path.join(directory,'weighted reference.glb'),target=path.join(directory,'unrigged target.glb');
@@ -153,7 +159,12 @@ try{
   });
   await test('a missing script is a 503 setup sentence and nothing is spawned',async()=>{
     const absent=path.join(directory,'no toolkit here','weight_transfer.py');process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=absent;
-    const sentence=e=>e.status===503&&e.message.includes(absent)&&/imports bpy/.test(e.message)&&/Apache-2\.0 tree ships no copy/.test(e.message)&&/AIPLAY_WEIGHT_TRANSFER_SCRIPT/.test(e.message);
+    // ...and it says where the toolkit keeps the script, and the one remedy
+    // that works here: the variable is set and wins, so a clone or
+    // AIPLAY_PREVIZ would change nothing and is not offered.
+    const sentence=e=>e.status===503&&e.message.includes(absent)&&/imports bpy/.test(e.message)&&/Apache-2\.0 tree ships no copy/.test(e.message)
+      &&/AIPLAY_WEIGHT_TRANSFER_SCRIPT names that path, and a set variable wins/.test(e.message)&&/or unset it/.test(e.message)
+      &&toolkitSentence(e.message,'weight_transfer.py')&&!/AIPLAY_PREVIZ|Clone that/.test(e.message);
     try{
       let spawned=0;await assert.rejects(runWeightPython('python',[],{spawnImpl:()=>{spawned++;return fakeChild();}}),sentence);assert.equal(spawned,0);
       // Refused BEFORE any write: no snapshot folder from inspect (a leaked
@@ -161,6 +172,7 @@ try{
       const jobs=path.join(directory,'no-script'),recorded=[];
       const s=createWeightTransferService({directory:jobs,python:process.execPath,run:()=>{throw Error('must not run');},record:async e=>recorded.push(e)});
       const status=await s.status();assert.equal(status.available,false);assert.match(status.reason,/AIPLAY_WEIGHT_TRANSFER_SCRIPT/);
+      assert.ok(status.reason.includes(PREVIZ_TOOLKIT_REPO),'the panel and the status tool say where to get the script');
       await assert.rejects(s.inspect({reference_path:reference}),sentence);
       await assert.rejects(s.submit(input,'agent:parts'),sentence);
       const left=await readdir(jobs).catch(e=>{if(e.code==='ENOENT')return [];throw e;});
@@ -168,6 +180,29 @@ try{
       // and the refusal released the one-job reservation
       process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=stubScript;assert.equal((await s.status()).available,true);
     }finally{process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=stubScript;}
+  });
+  await test('unset, the 503 sends the clone to where Studio looks, or to AIPLAY_PREVIZ',async()=>{
+    const priorRig=config.rig,priorPreviz=config.blender.previz,clone=path.join(directory,'a clone');
+    delete process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT;config.rig=path.join(directory,'an empty rig');config.blender.previz=path.join(clone,'previz','cli.py');
+    try{
+      const expected=path.join(clone,'previz','weight_transfer.py');assert.equal(weightTransferScriptPath(),expected);
+      const sentence=e=>e.status===503&&e.message.includes(expected)&&toolkitSentence(e.message,'weight_transfer.py')
+        &&e.message.includes(`Clone that repository to ${clone} `)&&e.message.includes(`so that ${path.join('previz','cli.py')} sits directly in that folder`)
+        &&/set AIPLAY_PREVIZ to the previz\/cli\.py of a clone elsewhere/.test(e.message)&&/set AIPLAY_WEIGHT_TRANSFER_SCRIPT to the script itself/.test(e.message);
+      await assert.rejects(runWeightPython('python',[],{spawnImpl:()=>{throw Error('must not spawn');}}),sentence);
+      const s=createWeightTransferService({directory:path.join(directory,'unset'),python:process.execPath,run:()=>{throw Error('must not run');},record:async()=>{}});
+      const status=await s.status();assert.equal(status.available,false);assert.ok(status.reason.includes(`Clone that repository to ${clone} `),status.reason);
+    }finally{config.rig=priorRig;config.blender.previz=priorPreviz;process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=stubScript;}
+  });
+  await test('the sentence and the guide say the same about whether the toolkit is public',async()=>{
+    for(const published of [true,false]){
+      const text=toolkitScriptHelp('weight_transfer.py',['AIPLAY_WEIGHT_TRANSFER_SCRIPT'],{published});
+      assert.ok(text.includes(PREVIZ_TOOLKIT_REPO)&&text.includes('previz/weight_transfer.py'),text);
+      assert.equal(/not public yet/.test(text),!published,text);assert.equal(/publishes it/.test(text),published,text);
+    }
+    const guide=await readFile(new URL('../../docs/AVATAR_PARTS.md',import.meta.url),'utf8');
+    assert.ok(guide.includes(PREVIZ_TOOLKIT_REPO),'the guide names the toolkit');
+    assert.equal(/not public yet/.test(guide),!PREVIZ_TOOLKIT_PUBLIC,'docs/AVATAR_PARTS.md and PREVIZ_TOOLKIT_PUBLIC disagree about whether the link opens for everyone');
   });
   await test('PYTHONPATH carries server/mesh so the outside script still finds unirig_adapter',async()=>{
     const prior=process.env.PYTHONPATH;process.env.PYTHONPATH=path.join(directory,'caller path');let options;

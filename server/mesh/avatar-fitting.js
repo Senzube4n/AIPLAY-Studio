@@ -9,6 +9,7 @@ import validator from 'gltf-validator';
 import {config,weightTransferScriptPath,attachmentFitScriptPath} from '../config.js';
 import {normalizeActor} from '../provenance.js';
 import {readGlb,assertSkinned} from './glb.js';
+import {toolkitScriptHelp} from './previz-toolkit.js';
 
 export const FITTING_LIMITS=Object.freeze({bytes:64*1024*1024,timeoutMs:300000,clearance:[0,.03],max_displacement:[.001,.2],max_scale_change:[1,3]});
 export const FITTING_DEFAULTS=Object.freeze({alignment:'bounds',clearance:.006,max_displacement:.1,max_scale_change:2});
@@ -20,12 +21,14 @@ export const FITTING_DEFAULTS=Object.freeze({alignment:'bounds',clearance:.006,m
 // weight-transfer service runs, the second for the stdlib-only unirig_adapter.
 const meshDir=path.dirname(fileURLToPath(import.meta.url)),marker='AVATAR_FITTING_RESULT_JSON:';
 const isFileSync=file=>{try{return statSync(file).isFile();}catch{return false;}};
-const scriptMissing=(script,name,variable)=>fault(`Fitting needs ${name} at ${script}. It imports bpy, so this Apache-2.0 tree ships no copy of it, and the GPL Blender toolkit does not publish it yet either. Put a local copy there, or point ${variable} at one; nothing is downloaded automatically.`,503);
+const scriptMissing=(script,name,variables)=>fault(`Fitting needs ${name} at ${script}. It imports bpy, so this Apache-2.0 tree ships no copy of it. ${toolkitScriptHelp(name,variables)}`,503);
 /** Both out-of-tree scripts the fitter needs, or the 503 sentence for the first one missing. */
 export function fittingScripts(){
   const fit=attachmentFitScriptPath(),transfer=weightTransferScriptPath();
-  if(!isFileSync(fit))throw scriptMissing(fit,'attachment_fit.py','AIPLAY_ATTACHMENT_FIT_SCRIPT');
-  if(!isFileSync(transfer))throw scriptMissing(transfer,'weight_transfer.py','AIPLAY_WEIGHT_TRANSFER_SCRIPT');
+  // The variables in the order config.js reads them: unset, the fitter follows
+  // weight_transfer.py, so a stale transfer variable is the one to name.
+  if(!isFileSync(fit))throw scriptMissing(fit,'attachment_fit.py',['AIPLAY_ATTACHMENT_FIT_SCRIPT','AIPLAY_WEIGHT_TRANSFER_SCRIPT']);
+  if(!isFileSync(transfer))throw scriptMissing(transfer,'weight_transfer.py',['AIPLAY_WEIGHT_TRANSFER_SCRIPT']);
   return {fit,transfer};
 }
 const hash=b=>createHash('sha256').update(b).digest('hex');

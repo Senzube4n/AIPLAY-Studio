@@ -32,18 +32,50 @@ The helper scripts import `bpy`: `weight_transfer.py` directly, and the fitter
 `attachment_fit.py` through `weight_transfer`. By the Blender Foundation's
 stated position that makes them derivative works of Blender, and this repository
 is Apache-2.0, so it ships no copy of either script or of their test suites,
-`weight_transfer_test.py` and `attachment_fit_test.py`. Their home is the GPL
-Blender toolkit, beside the deformation cross-check's `deform.py`, but the
-toolkit does not publish them yet, so for now these features need a local copy
-of all four files in one folder. Studio finds the transfer script through
-`AIPLAY_WEIGHT_TRANSFER_SCRIPT`; unset, it looks next to the toolkit's `cli.py`,
-then in `<rig>/blender-toolkit/`. The fitter is looked for beside it, or at
-`AIPLAY_ATTACHMENT_FIT_SCRIPT`. Studio spawns both with the transfer script's
-folder and `server/mesh` on `PYTHONPATH`, so the fitter loads that same
-`weight_transfer` and both can import `unirig_adapter`. Without a script, the
-panel's status reads "Setup needed", and Inspect and Submit return a 503
-sentence naming the variable before anything is written or recorded; nothing is
-downloaded.
+`weight_transfer_test.py` and `attachment_fit_test.py`. All four live, under
+GPL-3.0-or-later, in the GPL Blender toolkit
+[AIPLAY-previz-blender](https://github.com/Senzube4n/AIPLAY-previz-blender), in
+its `previz/` folder beside the deformation cross-check's `deform.py`. That
+repository is not public yet: until it is, the link opens only for people it
+has been shared with, and the 503 sentence below says so too
+(`PREVIZ_TOOLKIT_PUBLIC` in `server/mesh/previz-toolkit.js`; a test keeps this
+paragraph and that flag in step). Keep the four together: the fitter imports
+`weight_transfer`, and its suite loads `weight_transfer_test.py` from its own
+folder.
+
+Point Studio at them in one of three ways:
+
+- **Clone the toolkit into `vendor/previz-blender` in the Studio folder.** With
+  nothing set, Studio looks beside the toolkit's `cli.py`, which defaults to
+  `vendor/previz-blender/previz/cli.py`, so the clone is found as it is. From a
+  ZIP instead of `git clone`, unpack it so that this `previz/cli.py` exists (a
+  GitHub ZIP adds one folder level). The previz blockouts use the same clone,
+  and both a Setup.exe reinstall and the launcher's Update keep the folder.
+- **Clone it anywhere and set `AIPLAY_PREVIZ`** to the clone's
+  `previz/cli.py`. Studio then looks in that `previz/` folder.
+- **Set `AIPLAY_WEIGHT_TRANSFER_SCRIPT`** to a `weight_transfer.py`. The fitter
+  is looked for beside it, or at `AIPLAY_ATTACHMENT_FIT_SCRIPT`.
+
+A set variable wins over any clone, so a variable left pointing at a missing
+file must be fixed or unset; the 503 sentence then names that variable and
+offers nothing else. With none of these, Studio also tries
+`<rig>/blender-toolkit/`. Restart Studio after changing an environment variable.
+Studio spawns both scripts with the transfer script's folder and `server/mesh`
+on `PYTHONPATH`, so the fitter loads that same `weight_transfer` and both can
+import `unirig_adapter`, a stdlib-only helper that stays in this tree. Without a
+script, the panel's status reads "Setup needed", and Inspect and Submit return a
+503 sentence, before anything is written or recorded, that names the toolkit's
+address, the script's `previz/` path and the one remedy that would take effect:
+the variable that decided the path when one is set, otherwise the clone folder
+Studio looks in, `AIPLAY_PREVIZ` and the script's own variable. The status tools
+(`avatar_weight_transfer_status`, `avatar_fitting_status`) return the same
+sentence. Nothing is downloaded.
+
+To run the scripts' own suites (11 and 5 tests), use the same Blender Python with
+the toolkit's `previz/` folder and this repository's `server/mesh` on
+`PYTHONPATH`; the toolkit README has the command lines. The pre-commit hook runs
+both through the same resolvers and prints UNRUN, never a pass, when a script,
+its suite or the interpreter is missing.
 
 ## Fit, preview, import
 
@@ -185,19 +217,20 @@ to an avatar automatically, and no live persona/account binding is granted.
 
 ## Direct CLI
 
-Run the script from wherever `AIPLAY_WEIGHT_TRANSFER_SCRIPT` points, with this
-repository's `server/mesh` folder on `PYTHONPATH`. First inspect the selected base:
+Run the script from the toolkit clone's `previz/` folder (or wherever
+`AIPLAY_WEIGHT_TRANSFER_SCRIPT` points), with this repository's `server/mesh`
+folder on `PYTHONPATH`. First inspect the selected base:
 
 ```text
-python /absolute/toolkit/weight_transfer.py --inspect-reference /absolute/base.glb
+python /absolute/previz-blender/previz/weight_transfer.py --inspect-reference /absolute/base.glb
 ```
 
 The explicit helper also supports `--reference-mesh-node` and
 `--reference-primitive`. The fitting helper accepts:
 
 ```text
-python /absolute/toolkit/attachment_fit.py --reference /absolute/base.vrm --target /absolute/outfit.glb --inspect
-python /absolute/toolkit/attachment_fit.py --reference /absolute/base.vrm --target /absolute/outfit.glb --output /absolute/fitted.glb --options '{"expected_skeleton":"HASH","reference_mesh_node":0,"reference_primitive":3,"alignment":"bounds","clearance":0.006,"max_displacement":0.1,"max_scale_change":2}'
+python /absolute/previz-blender/previz/attachment_fit.py --reference /absolute/base.vrm --target /absolute/outfit.glb --inspect
+python /absolute/previz-blender/previz/attachment_fit.py --reference /absolute/base.vrm --target /absolute/outfit.glb --output /absolute/fitted.glb --options '{"expected_skeleton":"HASH","reference_mesh_node":0,"reference_primitive":3,"alignment":"bounds","clearance":0.006,"max_displacement":0.1,"max_scale_change":2}'
 ```
 
 Its result marker is `AVATAR_FITTING_RESULT_JSON:`; refusals return exit code 2
@@ -206,7 +239,7 @@ and preserve an existing output. Use the service for persistence and byte pins.
 Then use its `skeleton` value and the deliberately chosen alignment:
 
 ```text
-python /absolute/toolkit/weight_transfer.py --reference /absolute/base.glb --target /absolute/outfit.glb --output /absolute/prepared-outfit.glb --expected-skeleton SHA256_FROM_INSPECTION --transform "[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]" --max-distance 0.02 --mode nearest-surface
+python /absolute/previz-blender/previz/weight_transfer.py --reference /absolute/base.glb --target /absolute/outfit.glb --output /absolute/prepared-outfit.glb --expected-skeleton SHA256_FROM_INSPECTION --transform "[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]" --max-distance 0.02 --mode nearest-surface
 ```
 
 On Windows, invoke the selected Python with the PowerShell call operator `&`.

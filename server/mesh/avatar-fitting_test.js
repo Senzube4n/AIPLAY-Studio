@@ -9,8 +9,15 @@ import path from 'node:path';
 import http from 'node:http';
 import {glbDoc,packGlb} from './fixtures.js';
 import {createAvatarFittingService,createAvatarFittingRoutes,runFittingPython,FITTING_DEFAULTS} from './avatar-fitting.js';
-import {attachmentFitScriptPath,weightTransferScriptPath} from '../config.js';
+import {config,attachmentFitScriptPath,weightTransferScriptPath} from '../config.js';
 import {avatarFittingTools} from '../mcp-avatar-fitting.js';
+import {PREVIZ_TOOLKIT_REPO,PREVIZ_TOOLKIT_PUBLIC} from './previz-toolkit.js';
+
+// Where the toolkit keeps a script, told honestly: "publishes" only once the
+// repository is public, "not public yet" until then, never the old "does not
+// publish it yet".
+const toolkitSentence=(text,file)=>text.includes(PREVIZ_TOOLKIT_REPO)&&text.includes('previz/'+file)&&!/not publish/.test(text)
+  &&(PREVIZ_TOOLKIT_PUBLIC?/publishes it/.test(text)&&!/not public/.test(text):/not public yet/.test(text)&&!/publishes it/.test(text));
 
 const temp=await mkdtemp(path.join(os.tmpdir(),'studio-fitting-')),digest=b=>createHash('sha256').update(b).digest('hex');
 const base=packGlb(glbDoc({skinned:true})),part=packGlb(glbDoc()),avatarId='av_'+randomUUID(),signature='c'.repeat(64),events=[];
@@ -84,20 +91,45 @@ try{
     assert.equal(invocation.options.shell,false);
   });
   await test('a missing fitter or weight-transfer script is a 503 before anything is written or recorded',async()=>{
-    const absent=path.join(temp,'no toolkit here');
-    for(const [fit,transfer,variable] of [[path.join(absent,'attachment_fit.py'),transferScript,'AIPLAY_ATTACHMENT_FIT_SCRIPT'],[fitScript,path.join(absent,'weight_transfer.py'),'AIPLAY_WEIGHT_TRANSFER_SCRIPT']]){
-      useScripts(fit,transfer);
+    const absent=path.join(temp,'no toolkit here'),clone=path.join(temp,'a clone'),priorRig=config.rig,priorPreviz=config.blender.previz;
+    const setEnv=(key,value)=>{if(value===undefined)delete process.env[key];else process.env[key]=value;};
+    // Every sentence names where the toolkit keeps the missing script, and
+    // offers only a remedy that takes effect: a set variable wins (config.js),
+    // and unset the fitter follows weight_transfer.py, so a clone or
+    // AIPLAY_PREVIZ is offered only when no variable is set.
+    const staleTransfer=path.join(absent,'weight_transfer.py');
+    const cases=[
+      {name:'a stale fitter variable',fit:path.join(absent,'attachment_fit.py'),transfer:transferScript,missing:'attachment_fit.py',at:absent,variable:'AIPLAY_ATTACHMENT_FIT_SCRIPT',
+        says:[/AIPLAY_ATTACHMENT_FIT_SCRIPT names that path, and a set variable wins/],never:/AIPLAY_PREVIZ|Clone that/},
+      {name:'a stale transfer variable',fit:fitScript,transfer:staleTransfer,missing:'weight_transfer.py',at:absent,variable:'AIPLAY_WEIGHT_TRANSFER_SCRIPT',
+        says:[/AIPLAY_WEIGHT_TRANSFER_SCRIPT names that path, and a set variable wins/],never:/AIPLAY_PREVIZ|Clone that/},
+      {name:'an unset fitter beside a stale transfer variable',fit:undefined,transfer:staleTransfer,missing:'attachment_fit.py',at:absent,variable:'AIPLAY_WEIGHT_TRANSFER_SCRIPT',
+        says:[/With AIPLAY_ATTACHMENT_FIT_SCRIPT unset, attachment_fit\.py is looked for beside the file AIPLAY_WEIGHT_TRANSFER_SCRIPT names/,`(${staleTransfer})`,
+          /point AIPLAY_WEIGHT_TRANSFER_SCRIPT at the same script/,/set AIPLAY_ATTACHMENT_FIT_SCRIPT to attachment_fit\.py itself/],never:/AIPLAY_PREVIZ|Clone that/},
+      {name:'nothing set',fit:undefined,transfer:undefined,missing:'attachment_fit.py',at:path.join(clone,'previz','attachment_fit.py'),variable:'AIPLAY_ATTACHMENT_FIT_SCRIPT',
+        says:[`Clone that repository to ${clone} `,/set AIPLAY_PREVIZ to the previz\/cli\.py of a clone elsewhere/,/set AIPLAY_ATTACHMENT_FIT_SCRIPT to the script itself/],never:/names that path/},
+    ];
+    for(const c of cases){
+      setEnv('AIPLAY_ATTACHMENT_FIT_SCRIPT',c.fit);setEnv('AIPLAY_WEIGHT_TRANSFER_SCRIPT',c.transfer);
+      config.rig=path.join(temp,'an empty rig');config.blender.previz=path.join(clone,'previz','cli.py');
       try{
-        const sentence=e=>e.status===503&&e.message.includes(absent)&&/imports bpy/.test(e.message)&&/Apache-2\.0 tree ships no copy/.test(e.message)&&e.message.includes(variable);
+        const said=text=>{
+          assert.ok(text.includes(c.at)&&/imports bpy/.test(text)&&/Apache-2\.0 tree ships no copy/.test(text),`${c.name}: ${text}`);
+          assert.ok(toolkitSentence(text,c.missing),`${c.name}: where the toolkit keeps it: ${text}`);
+          for(const part of c.says)assert.ok(typeof part==='string'?text.includes(part):part.test(text),`${c.name}: ${part}: ${text}`);
+          assert.doesNotMatch(text,c.never,`${c.name}: a remedy that would not take effect`);return true;};
+        const sentence=e=>e.status===503&&said(e.message);
         let spawned=0;await assert.rejects(runFittingPython('python',[],{spawnImpl:()=>{spawned++;return fakeChild();}}),sentence);assert.equal(spawned,0);
-        const jobs='no-script-'+variable,before=events.length,refused=make(jobs,{run:async()=>{throw Error('must not run');}});
-        const status=await refused.status();assert.equal(status.available,false);assert.ok(status.reason.includes(variable),status.reason);
+        const jobs='no-script-'+cases.indexOf(c),before=events.length,refused=make(jobs,{run:async()=>{throw Error('must not run');}});
+        // The panel and avatar_fitting_status show this same sentence.
+        const status=await refused.status();assert.equal(status.available,false);assert.ok(status.reason.includes(c.variable),status.reason);
+        assert.ok(status.reason.includes(PREVIZ_TOOLKIT_REPO),'the panel and the status tool say where the toolkit is');said(status.reason);
         await assert.rejects(refused.inspect({avatar_id:avatarId,target_data_base64:part.toString('base64')}),sentence);
         await assert.rejects(refused.submit(request()),sentence);
         const left=await readdir(path.join(temp,jobs)).catch(e=>{if(e.code==='ENOENT')return [];throw e;});
         assert.deepEqual(left,[],'a refused call left files behind');assert.equal(events.length,before,'a refused call wrote provenance');
         useScripts(fitScript,transferScript);assert.equal((await refused.status()).available,true,'the refusal kept the job reservation');
-      }finally{useScripts(fitScript,transferScript);}
+      }finally{useScripts(fitScript,transferScript);config.rig=priorRig;config.blender.previz=priorPreviz;}
     }
   });
   console.log(`${tests} fitting service checks passed`);

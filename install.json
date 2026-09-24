@@ -1,5 +1,5 @@
 {
-  "about": "What AIPLAY Studio Setup.exe unpacks from this repository's main branch. Everything else in the repository (docs, examples, the website's banners, notes) never reaches an install. Add a line here when a new top-level folder or file is needed at run time; the installer reads this file from the zip it downloads, so it never has to be rebuilt for it. `preserve` names folders inside those that hold the person's own files (custom workflows): a reinstall or an update copies them across instead of replacing them.",
+  "about": "What AIPLAY Studio Setup.exe unpacks from this repository's main branch. Everything else in the repository (docs, examples, the website's banners, notes) never reaches an install. Add a line here when a new top-level folder or file is needed at run time; the installer reads this file from the zip it downloads, so it never has to be rebuilt for it. `preserve` names folders in the app that hold the person's own files (custom workflows, a clone of the GPL Blender toolkit): a reinstall or an update copies them across instead of replacing them.",
   "include": [
     "server",
     "web",
@@ -21,6 +21,7 @@
     "NOTICE*"
   ],
   "preserve": [
-    "workflows/custom"
+    "workflows/custom",
+    "vendor/previz-blender"
   ]
 }
