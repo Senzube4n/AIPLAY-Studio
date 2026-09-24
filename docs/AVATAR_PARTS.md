@@ -1,8 +1,10 @@
-# Local avatar parts and weight transfer
+# Local avatar parts: fitting and weight transfer
 
-Studio can prepare an **already aligned attachment** using an existing weighted
-base. The operation copies interpolated weights from nearby reference triangles;
-it does not generate a body, invent a skeleton, repair fused legs, create facial
+Studio can fit a compatible unrigged GLB part to a selected avatar, preview the
+prepared result, then import it into that avatar's wardrobe. The advanced
+weight-transfer operation also supports an **already aligned attachment** using
+an existing weighted base. Both copy interpolated weights from nearby triangles.
+They do not generate a body, invent a skeleton, repair fused legs, create facial
 expressions, retopologize hair, or add spring physics. The output remains a local
 GLB requiring visual review before admission to a compatible part library.
 
@@ -26,31 +28,100 @@ never silently replaced. Restart Studio after changing the environment variable.
 There is no automatic package installation or mutation of an existing Python
 environment.
 
-The transfer script itself, `weight_transfer.py`, imports `bpy`. By the Blender
-Foundation's stated position that makes it a derivative work of Blender, and this
-repository is Apache-2.0, so it ships no copy of the script or of its test suite,
-`weight_transfer_test.py`. Their home is the GPL Blender toolkit, beside the
-deformation cross-check's `deform.py`, but the toolkit does not publish them
-yet, so for now this feature needs a local copy. Studio finds the script through
+The helper scripts import `bpy`: `weight_transfer.py` directly, and the fitter
+`attachment_fit.py` through `weight_transfer`. By the Blender Foundation's
+stated position that makes them derivative works of Blender, and this repository
+is Apache-2.0, so it ships no copy of either script or of their test suites,
+`weight_transfer_test.py` and `attachment_fit_test.py`. Their home is the GPL
+Blender toolkit, beside the deformation cross-check's `deform.py`, but the
+toolkit does not publish them yet, so for now these features need a local copy
+of all four files in one folder. Studio finds the transfer script through
 `AIPLAY_WEIGHT_TRANSFER_SCRIPT`; unset, it looks next to the toolkit's `cli.py`,
-then in `<rig>/blender-toolkit/`. Studio spawns it with `server/mesh` on
-`PYTHONPATH` so it can import `unirig_adapter`. Without the script, the
-panel's status reads "Setup needed", and Inspect and Submit return the same 503
-sentence naming that variable before anything is written or recorded; nothing is
+then in `<rig>/blender-toolkit/`. The fitter is looked for beside it, or at
+`AIPLAY_ATTACHMENT_FIT_SCRIPT`. Studio spawns both with the transfer script's
+folder and `server/mesh` on `PYTHONPATH`, so the fitter loads that same
+`weight_transfer` and both can import `unirig_adapter`. Without a script, the
+panel's status reads "Setup needed", and Inspect and Submit return a 503
+sentence naming the variable before anything is written or recorded; nothing is
 downloaded.
 
-## Inputs and limits
+## Fit, preview, import
 
-- One self-contained GLB weighted base with exactly one skin, unique joint
-  names, explicit inverse bind matrices and a default scene containing the full
-  skeleton. Default transforms must represent its bind rest pose.
+Choose an avatar, upload an unrigged self-contained GLB part, and inspect it.
+Select the corresponding reference surface by its material name: a shirt should
+use a matching shirt/body region, rather than the entire avatar. **Bounds** finds
+a uniform scale and aligns bounding-box centres. **Keep** uses the existing
+placement. Neither mode rotates the target or infers anatomical correspondence.
+Both need compatible, already oriented geometry in the same rest pose.
+
+Surface fitting projects vertices to the nearest reference triangle plus an
+outward clearance along its interpolated normal. This supports close-fitting
+parts with corresponding shapes, not arbitrary garment reconstruction.
+
+| Setting | Default | Allowed | Meaning |
+| --- | --- | --- | --- |
+| `clearance` | 0.006 m | 0–0.03 m | Outward distance from the selected surface |
+| `max_displacement` | 0.1 m | 0.001–0.2 m | Maximum per-vertex correction **after** global alignment |
+| `max_scale_change` | 2 | 1–3 | Factor; 2 permits uniform scale 0.5–2 |
+
+Every vertex must satisfy the displacement limit. A collapsed/reversed triangle,
+extreme area change, or orientation disagreement refuses the whole operation.
+These checks do not detect every possible intersection. Fitting changes positions
+and normals and removes stale tangents so viewers can derive their tangent frame.
+UV/colour attributes, used material settings and embedded texture bytes remain
+unchanged. Unused resources are removed from the prepared part.
+
+Fit completion is a prepared preview. Importing into the wardrobe and selecting
+the part for a look remain explicit actions. Review rest alignment, shoulder/hip
+bends, twisting, clipping and all intended motions before use.
+
+`POST /api/avatar-fitting` uses these actions:
+
+| Action | Fields | Result |
+| --- | --- | --- |
+| `status` | None | Interpreter, defaults, limits and running state |
+| `inspect` | `avatar_id`; optional one of `target_data_base64`, `target_path` | Source/target hashes, immutable `target_id`, `skeleton`, named `reference_surfaces` and bounds |
+| `submit` | Avatar id and `source_sha256`, target id and `target_sha256`, `expected_skeleton`, `reference_mesh_node`, `reference_primitive`, all four fitting settings, `name`, `source`, `license` | Job `id`, initially `running` |
+| `get` | Job `id` | `running`, `complete`, `failed` or `interrupted` |
+
+The four settings are `alignment`, `clearance`, `max_displacement` and
+`max_scale_change`. Source surfaces are identified by the returned mesh-node and
+primitive pair. Inspection snapshots uploaded bytes. Submission verifies both
+hashes, uses the selected imported avatar, and never rereads a user-selected path.
+The fitting API accepts 64 MiB files. Targets must use embedded resources; paths
+must be absolute local GLB paths and uploads must be canonical base64.
+
+Tools `avatar_fitting_status`, `avatar_fitting_inspect`, `avatar_fitting_submit`
+and `avatar_fitting_get` use the same HTTP actions. MCP inspection accepts a local
+path; the UI uses uploads. A completed job returns `result.output`,
+`result.files.glb` (controlled preview URL), `vertices`, `joints`, `fit`, output
+`sha256` and validation counts. After review, pass that output path to
+`avatar_wardrobe_import` and select the part for the desired look.
+
+The routes independently enforce Studio's loopback Host/port and same origin.
+Each job snapshots inputs, checks hashes, records delegate/edit provenance, and
+spawns Python without a shell, with a five-minute timeout and a one-MiB log cap.
+One fitting job runs at a time. The job receipt, skin data, output provenance and
+Khronos validation must pass before completion. Polling and preview fetches
+recheck output hashes. Interrupted jobs are not silently retried. Input files are
+untouched; no live persona/account binding is granted.
+
+## Shared inputs and explicit weight-transfer limits
+
+- One self-contained GLB/VRM weighted base with unique raw joint names, explicit
+  inverse binds and a default scene containing the complete skeleton. Multiple
+  skins use a canonical union of their joints. The chosen source surface is
+  sampled in its actual default skin pose. If vertices move more than 5 mm from
+  the raw exported rest coordinates, the source is refused as a posed mesh.
 - One unrigged GLB attachment with one mesh node. Multiple material primitives
   are supported; join separate attachment objects before using this first
   version. UVs, vertex attributes, embedded texture bytes and material settings
-  remain unchanged.
+  remain unchanged in explicit transfer. Fitting updates positions/normals as
+  described above.
 - Explicit 16-number, column-major glTF alignment matrix. Coordinates use +Y up
   and metres. The transform places the target into the reference's world space;
-  it includes the target's existing node transforms. There is no automatic fit.
+  it includes the target's existing node transforms. This advanced operation
+  does not automatically fit; use the separate fitting workflow for that.
 - Explicit maximum surface distance, greater than zero and at most one metre.
   **Every vertex** must meet the limit. One unmatched vertex rejects the entire
   transfer. A small distance does not prove the nearest surface is anatomically
@@ -69,14 +140,20 @@ vertex's complete weights. At most four influences are retained and normalized.
 If this would discard more than 10% of a vertex's interpolated weight, the whole
 operation is refused. Degenerate reference triangles are refused.
 
-All reference joint nodes and their ancestor hierarchy are retained, including
+All reference skin joints and their ancestor hierarchy are retained, including
 joints unused by the attachment. The helper does not substitute a root bone.
 Inverse bind matrices are calculated for the aligned target's rest transform.
 The skeleton fingerprint covers joint ordering, names, parents and rest matrices,
 independent of unrelated GLB node indices. Only that exact base is accepted after
 inspection; similar bone names do not establish compatibility.
 
-## UI, API and MCP
+`extras.aiplayWeightTransfer` records the exact reference hash and
+`baseJointNodes` in output skin-slot order. Raw names and world rest transforms
+are retained. VRM node constraints are not duplicated in the output. Wardrobe
+checks its mapping against the exact source, then binds to the avatar's original
+bones so the avatar remains the single owner of constraints, springs and motion.
+
+## Advanced weight-transfer UI, API and MCP
 
 The advanced local 3D workshop can use `POST /api/avatar-weight-transfer`:
 
@@ -115,6 +192,17 @@ repository's `server/mesh` folder on `PYTHONPATH`. First inspect the selected ba
 python /absolute/toolkit/weight_transfer.py --inspect-reference /absolute/base.glb
 ```
 
+The explicit helper also supports `--reference-mesh-node` and
+`--reference-primitive`. The fitting helper accepts:
+
+```text
+python /absolute/toolkit/attachment_fit.py --reference /absolute/base.vrm --target /absolute/outfit.glb --inspect
+python /absolute/toolkit/attachment_fit.py --reference /absolute/base.vrm --target /absolute/outfit.glb --output /absolute/fitted.glb --options '{"expected_skeleton":"HASH","reference_mesh_node":0,"reference_primitive":3,"alignment":"bounds","clearance":0.006,"max_displacement":0.1,"max_scale_change":2}'
+```
+
+Its result marker is `AVATAR_FITTING_RESULT_JSON:`; refusals return exit code 2
+and preserve an existing output. Use the service for persistence and byte pins.
+
 Then use its `skeleton` value and the deliberately chosen alignment:
 
 ```text
@@ -128,6 +216,35 @@ CLI protects the skeleton and output paths; use the service when byte-hash pins,
 job persistence and the Studio provenance ledger are required.
 
 ## Measured verification and remaining quality work
+
+The real `VRM1_Constraint_Twist_Sample` has three skins and a 154-joint union.
+Its original shirt supplied a local-only fixture: weights removed, uniform scale
+changed to 1.12 and translation offset applied. Fitting recovered scale
+0.8928572, applied 6 mm clearance, and produced 717 vertices / 1,210 triangles.
+Maximum surface correction was 6.041 mm. Used texture bytes and the original
+sample attribution were retained. This is a sample-derived garment, not evidence
+of arbitrary generated outfit quality.
+
+Real MCP stdio calls against Studio completed inspection, submit/poll, preview
+download, wardrobe import and selection for a dedicated acceptance look. The CPU
+helper took 1.328 seconds; the validated job completed in 1.736 seconds on the
+tested machine. Output was 289,140 bytes, one 2 MP texture, 154 joints, zero
+Khronos errors and one warning. Wardrobe checked the exact source mapping, rest
+transforms and inverse binds.
+
+Blender 4.2 imported the fitted shirt and rebound it to the original avatar
+armature. Rotating its left shoulder by 0.55 radians moved 197 shirt vertices
+over 1 mm, maximum 0.1663 m. Rest/posed renders showed the shoulder following
+without gross separation in that pose. Plain glTF import does not evaluate VRM
+node constraints; this check poses a directly weighted parent chain. The Studio
+VRM runtime evaluates the full source constraint/spring system.
+
+Run `node server/mesh/avatar-fitting_test.js` for service/API/MCP checks and the
+configured bpy Python on `attachment_fit_test.py`, beside the script outside
+this repository and with the same `PYTHONPATH`, for geometry, refusal limits,
+reversed orientation, resource compaction and actual imported deformation. The
+test explicitly skips when bpy is unavailable, and the pre-commit gate prints
+UNRUN, never a pass, when the script, the suite or a Blender Python is missing.
 
 The Python suite includes a weighted planar base and a UV/textured attachment,
 both with non-identity scene transforms. The attachment sits 0.02 m above the

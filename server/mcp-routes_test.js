@@ -80,7 +80,7 @@ function ok(label, cond, detail = "") {
 const MCP_FILES = [
   "server/mcp.js",
   "server/mcp-audio.js",
-  "server/mcp-avatars.js", "server/mcp-avatar-appearance.js", "server/mcp-avatar-playback.js", "server/mcp-avatar-weight-transfer.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
+  "server/mcp-avatars.js", "server/mcp-avatar-appearance.js", "server/mcp-avatar-playback.js", "server/mcp-avatar-weight-transfer.js", "server/mcp-avatar-fitting.js", "server/mcp-avatar-wardrobe.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-music-input.js",
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
@@ -97,7 +97,7 @@ const ROUTE_FILES = [
   "server/videolab/routes.js", "server/daw/ear.js", "server/engine/routes.js",
   "server/llm/routes.js", "server/mv/routes.js", "server/welcome/routes.js",
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",
-  "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-playback.js", "server/mesh/avatar-weight-transfer.js",
+  "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-playback.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
   "server/music/artifacts.js", "server/music/listening-lab.js",
 ];
@@ -381,7 +381,9 @@ for (const [f, src] of routeSource) {
 // Factory instances mounted in index.js dispatch in their own modules, rather
 // than through an imported namespace. Read their actual comparisons too; a
 // mounted URL alone does not prove that its create/accept/etc actions exist.
-for (const [route, moduleFile, factory, method] of [
+for (const [route, moduleFile, factory, method, mountingFile = "server/index.js"] of [
+  ["/api/avatar-fitting", "server/mesh/avatar-fitting.js", "createAvatarFittingRoutes", "avatarFittingRoutes(req"],
+  ["/api/avatars/wardrobe", "server/mesh/avatar-wardrobe.js", "createAvatarWardrobeRoutes", "wardrobe(req", "server/mesh/avatar.js"],
   ["/api/images/ai-edit", "server/image-editor.js", "createImageEditor", "imageEditor.request"],
   ["/api/avatar-weight-transfer", "server/mesh/avatar-weight-transfer.js", "createWeightTransferRoutes", "weightTransferRoutes(req"],
   ["/api/collab/plan", "server/collab/planning.js", "createCollabPlanningRoutes", "collabPlanningRoutes(req"],
@@ -390,7 +392,7 @@ for (const [route, moduleFile, factory, method] of [
   ["/api/music-artifacts", "server/music/artifacts.js", "createMusicArtifactRoutes", "musicArtifactRoutes(req"],
   ["/api/music-listening-lab", "server/music/listening-lab.js", "createListeningLabRoutes", "listeningLabRoutes(req"],
 ]) {
-  const indexSource = routeSource.get("server/index.js");
+  const indexSource = routeSource.get(mountingFile);
   const mounted = indexSource.includes(factory) && indexSource.includes(method) && exactPaths.has(route);
   ok(`${route} delegates to its expected factory handler`, mounted);
   if (!mounted) continue;

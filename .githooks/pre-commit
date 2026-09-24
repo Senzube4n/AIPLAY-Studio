@@ -32,33 +32,41 @@ node --check web/avatar-lipsync.js || exit 1
 node --check web/avatars.js || exit 1
 node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
 node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1
-# ATTACHMENT WEIGHT TRANSFER, Blender's half. weight_transfer.py imports bpy, so
-# it and its suite live OUTSIDE this Apache-2.0 tree (server/licence_test.js),
-# beside the toolkit's cli.py or in <rig>/blender-toolkit/. The gate finds
-# them with the SAME resolver the service spawns from, config.js
-# weightTransferScriptPath() (AIPLAY_WEIGHT_TRANSFER_SCRIPT),
-# and runs the suite with server/mesh on PYTHONPATH exactly as the service does,
-# so it tests the script Studio would run. No script, no suite beside it, no
-# Blender python, or a suite that skipped for want of bpy: each prints UNRUN and
-# why. Never a silent skip, and never a pass.
-WT_SCRIPT="$(node -e "import('./server/config.js').then(m=>process.stdout.write(m.weightTransferScriptPath()))")" || exit 1
-WT_SUITE="$(dirname "$WT_SCRIPT")/weight_transfer_test.py"
+node --test server/mesh/avatar-fitting_test.js server/mesh/avatar-fitting-ui_test.js server/mesh/avatar-wardrobe_test.js server/mesh/avatar-wardrobe-runtime_test.js server/mesh/avatar-wardrobe-ui_test.js || exit 1
+# THE BLENDER HALVES: weight transfer and attachment fitting. weight_transfer.py
+# imports bpy, and attachment_fit.py imports weight_transfer, so both scripts
+# and their suites live OUTSIDE this Apache-2.0 tree (server/licence_test.js),
+# beside the toolkit's cli.py or in <rig>/blender-toolkit/. The gate finds them
+# with the SAME resolvers the services spawn from, config.js
+# weightTransferScriptPath() and attachmentFitScriptPath()
+# (AIPLAY_WEIGHT_TRANSFER_SCRIPT, AIPLAY_ATTACHMENT_FIT_SCRIPT), and runs each
+# suite with the weight-transfer folder and server/mesh on PYTHONPATH exactly as
+# the services do, so it tests the scripts Studio would run. No script, no suite
+# beside it, no Blender python, or a suite that skipped for want of bpy: each
+# prints UNRUN and why. Never a silent skip, and never a pass.
 AVATAR_PY="${AIPLAY_AVATAR_PYTHON:-${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv311/Scripts/python.exe}"
-if [ ! -f "$WT_SCRIPT" ]; then
-  echo "  UNRUN weight transfer, Blender half: no script at $WT_SCRIPT. It imports bpy, so this Apache-2.0 tree ships no copy; set AIPLAY_WEIGHT_TRANSFER_SCRIPT. UNRUN, not a pass."
-elif [ ! -f "$WT_SUITE" ]; then
-  echo "  UNRUN weight transfer, Blender half: no weight_transfer_test.py beside $WT_SCRIPT. UNRUN, not a pass."
-elif [ ! -x "$AVATAR_PY" ]; then
-  echo "  UNRUN weight transfer, Blender half: no Blender python at $AVATAR_PY; set AIPLAY_AVATAR_PYTHON. UNRUN, not a pass."
-else
-  WT_PATH="$(node -e "const p=require('path');process.stdout.write([p.resolve('server/mesh'),process.env.PYTHONPATH].filter(Boolean).join(p.delimiter))")" || exit 1
-  WT_LOG="$(mktemp)"
-  PYTHONPATH="$WT_PATH" "$AVATAR_PY" "$WT_SUITE" > "$WT_LOG" 2>&1; WT_RC=$?
-  cat "$WT_LOG"
-  WT_SKIPPED="$(grep -c "skipped=" "$WT_LOG")"; rm -f "$WT_LOG"
-  [ "$WT_RC" -eq 0 ] || exit 1
-  if [ "$WT_SKIPPED" != "0" ]; then echo "  UNRUN weight transfer, Blender half: the suite skipped (no usable bpy in $AVATAR_PY). UNRUN, not a pass."; fi
-fi
+WT_SCRIPT="$(node -e "import('./server/config.js').then(m=>process.stdout.write(m.weightTransferScriptPath()))")" || exit 1
+AF_SCRIPT="$(node -e "import('./server/config.js').then(m=>process.stdout.write(m.attachmentFitScriptPath()))")" || exit 1
+blender_half() { # label, script, suite file beside it, variable that points at the script
+  bh_suite="$(dirname "$2")/$3"
+  if [ ! -f "$2" ]; then
+    echo "  UNRUN $1, Blender half: no script at $2. It imports bpy, so this Apache-2.0 tree ships no copy; set $4. UNRUN, not a pass."; return 0
+  elif [ ! -f "$bh_suite" ]; then
+    echo "  UNRUN $1, Blender half: no $3 beside $2. UNRUN, not a pass."; return 0
+  elif [ ! -x "$AVATAR_PY" ]; then
+    echo "  UNRUN $1, Blender half: no Blender python at $AVATAR_PY; set AIPLAY_AVATAR_PYTHON. UNRUN, not a pass."; return 0
+  fi
+  bh_path="$(BH_WT="$WT_SCRIPT" node -e "const p=require('path');process.stdout.write([p.dirname(p.resolve(process.env.BH_WT)),p.resolve('server/mesh'),process.env.PYTHONPATH].filter(Boolean).join(p.delimiter))")" || return 1
+  bh_log="$(mktemp)"
+  PYTHONPATH="$bh_path" "$AVATAR_PY" "$bh_suite" > "$bh_log" 2>&1; bh_rc=$?
+  cat "$bh_log"
+  bh_skipped="$(grep -c "skipped=" "$bh_log")"; rm -f "$bh_log"
+  [ "$bh_rc" -eq 0 ] || return 1
+  if [ "$bh_skipped" != "0" ]; then echo "  UNRUN $1, Blender half: the suite skipped (no usable bpy in $AVATAR_PY). UNRUN, not a pass."; fi
+  return 0
+}
+blender_half "weight transfer" "$WT_SCRIPT" weight_transfer_test.py AIPLAY_WEIGHT_TRANSFER_SCRIPT || exit 1
+blender_half "attachment fitting" "$AF_SCRIPT" attachment_fit_test.py AIPLAY_ATTACHMENT_FIT_SCRIPT || exit 1
 node --test server/collab/video-recipe_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1

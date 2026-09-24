@@ -8,6 +8,35 @@ const materialList = object => Array.isArray(object.material) ? object.material 
 const unit = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 const indexKey = value => /^(0|[1-9][0-9]*)$/.test(String(value));
 
+const disposedScenes = new WeakSet();
+/** The viewer owns one independent GLTF load, including decoded image bitmaps. */
+export function disposeAvatarScene(root) {
+  if (!root || disposedScenes.has(root)) return;
+  disposedScenes.add(root);
+  const geometries = new Set(), materials = new Set(), textures = new Set(), skeletons = new Set(), images = new Set();
+  const remember = value => {
+    for (const texture of Array.isArray(value) ? value : [value]) if (texture?.isTexture) {
+      textures.add(texture);
+      if (typeof texture.source?.data?.close === 'function') images.add(texture.source.data);
+    }
+  };
+  root.traverse(object => {
+    if (object.geometry) geometries.add(object.geometry);
+    if (object.skeleton) skeletons.add(object.skeleton);
+    for (const material of materialList(object)) if (material) {
+      materials.add(material);
+      for (const value of Object.values(material)) remember(value);
+      // MToon's texture getters are non-enumerable; sampler storage is here.
+      for (const uniform of Object.values(material.uniforms || {})) remember(uniform.value);
+    }
+  });
+  for (const value of skeletons) value.dispose();
+  for (const value of geometries) value.dispose();
+  for (const value of materials) value.dispose();
+  for (const value of textures) value.dispose();
+  for (const value of images) value.close();
+}
+
 /**
  * Presentation on the original loaded objects, with no mesh rebinding or file changes.
  * Call update AFTER an embedded clip's mixer. The viewer owns resource disposal.

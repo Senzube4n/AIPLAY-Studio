@@ -31,6 +31,15 @@
  *
  *     server/mesh/avatar-weight-transfer.js  runWeightPython()  spawns a bpy script
  *
+ * A fifth came one commit later with main's avatar fitting (298a6f4), by the
+ * same road: attachment_fit.py does `import weight_transfer` and takes bpy's
+ * types back from it without ever spelling bpy, which is why the module-name
+ * rule below exists. It and its suite moved out beside weight_transfer.py,
+ * and config.js attachmentFitScriptPath() (AIPLAY_ATTACHMENT_FIT_SCRIPT) finds
+ * it:
+ *
+ *     server/mesh/avatar-fitting.js          runFittingPython() spawns a bpy script
+ *
  * Subprocess seams are fine. Seams with nobody watching for the day one of them
  * becomes an import is the thing this file is for.
  *

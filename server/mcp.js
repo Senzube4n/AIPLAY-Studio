@@ -52,6 +52,8 @@ import { yueSetupTools } from "./mcp-yue-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
 import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
+import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
+import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
 import { waitForArtJob, emptyResultNote } from "./art-wait.js";
 
@@ -427,6 +429,8 @@ export const TOOLS = [
   ...avatarTools(api),
   ...avatarPlaybackTools(api),
   ...avatarWeightTransferTools(api),
+  ...avatarWardrobeTools(api),
+  ...avatarFittingTools(api),
   ...vfxTools(api, safeName),
   ...dawTools(api, safeName),
   {

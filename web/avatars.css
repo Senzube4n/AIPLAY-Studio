@@ -59,3 +59,10 @@ body.avatar-overlay #avatarWorkshop #status.error { display: block; position: fi
 body.avatar-overlay #voice-enable-overlay:not([hidden]) { display: block; position: fixed; top: 12px; left: 12px; z-index: 3; background: var(--raise); border-color: var(--primary); }
 
 #part-output { display: block; overflow-wrap: anywhere; font: 11px var(--mono); color: var(--faint); }
+#avatarWorkshop .wardrobe-list { display: grid; gap: 8px; margin-top: 14px; }
+#avatarWorkshop .wardrobe-item { display: flex; align-items: center; gap: 10px; border: 1px solid var(--hair); border-radius: 8px; padding: 10px; }
+#avatarWorkshop .wardrobe-item label { display: flex; flex: 1; flex-direction: row; align-items: center; margin: 0; }
+#avatarWorkshop .wardrobe-item .hint { color: var(--ghost); }
+#avatarWorkshop #wardrobe-context { flex: 1; }
+#avatarWorkshop #fitting-job { overflow-wrap: anywhere; font: 11px var(--mono); }
+body.avatar-overlay #wardrobe-panel, body.avatar-overlay #fitting-panel { display: none; }

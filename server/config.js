@@ -152,6 +152,19 @@ export function weightTransferScriptPath() {
 }
 
 /**
+ * The attachment fitter, attachment_fit.py, does `import weight_transfer` and
+ * takes bpy's own types back from it, so it is Blender-derived the same way and
+ * stays out of this tree with it (server/licence_test.js). Its suite also loads
+ * weight_transfer_test.py from its own folder, so the three belong together:
+ * unset, the fitter is looked for beside whichever weight_transfer.py
+ * weightTransferScriptPath() found, not by a second search.
+ */
+export function attachmentFitScriptPath() {
+  return process.env.AIPLAY_ATTACHMENT_FIT_SCRIPT
+    || path.join(path.dirname(weightTransferScriptPath()), "attachment_fit.py");
+}
+
+/**
  * The lookup the out-of-tree bpy scripts share. The variable wins when set.
  * Unset, two places are tried, in order: beside the toolkit's cli.py
  * (config.blender.previz), where deform.py's default also points, and

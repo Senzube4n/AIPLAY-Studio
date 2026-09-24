@@ -2,14 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
-import { VRMExpression, VRMExpressionManager, VRMExpressionMaterialColorBind,
+import { MToonMaterial, VRMExpression, VRMExpressionManager, VRMExpressionMaterialColorBind,
   VRMExpressionMorphTargetBind, VRMSpringBoneManager, VRMSpringBoneJoint, VRMHumanoid } from '@pixiv/three-vrm';
 
 // Browser import-map URLs resolve to the same pinned modules in this Node test.
 const source = (await readFile(new URL('../../web/avatar-runtime.js', import.meta.url), 'utf8'))
   .replace("from 'three'", `from '${import.meta.resolve('three')}'`)
   .replace("from '/api/avatars/vendor/three-vrm.module.js'", `from '${import.meta.resolve('@pixiv/three-vrm')}'`);
-const { createAvatarRuntime, createAvatarLoaderPlugin } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { createAvatarRuntime, createAvatarLoaderPlugin, disposeAvatarScene } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+
+test('viewer disposal releases real MToon sampler textures and shared images once', () => {
+  const scene = new THREE.Group(), material = new MToonMaterial(), map = new THREE.Texture(), shade = new THREE.Texture();
+  let closed = 0, mapDisposed = 0, shadeDisposed = 0;
+  const image = { close() { closed++; } }; map.source.data = image; shade.source.data = image;
+  material.map = map; material.normalMap = map; material.shadeMultiplyTexture = shade;
+  assert.equal(Object.values(material).includes(map), false);
+  map.addEventListener('dispose', () => mapDisposed++); shade.addEventListener('dispose', () => shadeDisposed++);
+  scene.add(new THREE.Mesh(new THREE.BoxGeometry(), [material, material.clone()]));
+  disposeAvatarScene(scene); disposeAvatarScene(scene);
+  assert.equal(mapDisposed, 1); assert.equal(shadeDisposed, 1); assert.equal(closed, 1);
+});
 
 const close = (actual, expected, epsilon = 1e-7) => assert.ok(Math.abs(actual - expected) < epsilon, `${actual} != ${expected}`);
 function fixture() {

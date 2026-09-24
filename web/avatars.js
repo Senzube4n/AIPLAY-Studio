@@ -1,5 +1,8 @@
 import { mountAvatarParts } from './avatar-parts.js';
-import { createAvatarRuntime, createAvatarLoaderPlugin } from './avatar-runtime.js';
+import { mountAvatarWardrobeUI } from './avatar-wardrobe-ui.js';
+import { captureAvatarRestPose } from './avatar-wardrobe.js';
+import { mountAvatarFitting } from './avatar-fitting.js';
+import { createAvatarRuntime, createAvatarLoaderPlugin, disposeAvatarScene as dispose } from './avatar-runtime.js';
 import { mountAvatarVoice } from './avatar-voice.js';
 import { mountAvatarAppearance } from './avatar-appearance.js';
 import { workshopRoute, workshopStudioUrl } from './avatar-shell.js';
@@ -8,7 +11,7 @@ import { GLTFLoader } from '/api/avatars/vendor/loaders/GLTFLoader.js';
 import { OrbitControls } from '/api/avatars/vendor/controls/OrbitControls.js';
 const $=id=>document.getElementById(id),status=(message,error=false)=>{$('status').textContent=message;$('status').className=error?'error':'';};
 const api=async body=>{const r=await fetch('/api/avatars',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);const data=await r.json();if(!r.ok)throw Error(data.error||`HTTP ${r.status}`);return data;};
-let runtime=null,appearance=null,voice=null;
+let runtime=null,appearance=null,voice=null,wardrobe=null,fitting=null,restoreRestPose=null;
 let selected=null,epoch=0,model=null,mixer=null,clips=[],action=null,playing=false,helper=null,renderer=null,controls=null,scene=null,camera=null;
 const workshop = workshopRoute(location.href), overlayMode = workshop.overlay;
 let activeView = true;
@@ -34,26 +37,27 @@ function initViewer(){
   scene.add(new THREE.HemisphereLight(0xeaf3ff,0x4d566a,2.4));const key=new THREE.DirectionalLight(0xffeedb,3);key.position.set(3,5,4);scene.add(key);const fill=new THREE.DirectionalLight(0xa5c8ff,1.8);fill.position.set(-4,2,-3);scene.add(fill);
   if(!overlayMode)scene.add(new THREE.GridHelper(6,30,0x68857e,0x334455));
   new ResizeObserver(()=>{const w=viewport.clientWidth,h=viewport.clientHeight;if(!w||!h)return;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();if(model)cameraView('fit');}).observe(viewport);
-  let last=performance.now();renderer.setAnimationLoop(now=>{const dt=Math.min((now-last)/1000,.05);last=now;if(document.hidden || !activeView)return;if(playing&&mixer){mixer.update(dt*Number($('speed').value));updateTime();}voice?.update(dt);runtime?.update(dt);controls.update();renderer.render(scene,camera);});
+  let last=performance.now();renderer.setAnimationLoop(now=>{const dt=Math.min((now-last)/1000,.05);last=now;if(document.hidden || !activeView)return;if(playing&&mixer){mixer.update(dt*Number($('speed').value));updateTime();}voice?.update(dt);runtime?.update(dt);wardrobe?.update();controls.update();renderer.render(scene,camera);});
 }
-function dispose(root){root?.traverse(o=>{o.geometry?.dispose();for(const m of (Array.isArray(o.material)?o.material:[o.material]))if(m){for(const t of Object.values(m))if(t?.isTexture){t.dispose();t.source?.data?.close?.();}m.dispose();}});}
 function cameraView(view){if(!camera)return;const facing=selected?.coordinates.facing||'+Z';let theta={'+Z':0,'-Z':Math.PI,'+X':Math.PI/2,'-X':-Math.PI/2}[facing];if(view==='side')theta+=Math.PI/2;if(view==='back')theta+=Math.PI;if(view==='fit')theta+=.3;const distance=radius*Math.max(1,1/camera.aspect);camera.position.copy(center).add(new THREE.Vector3(Math.sin(theta)*distance,.1*distance,Math.cos(theta)*distance));controls.target.copy(center);controls.update();}
 function updateTime(){const t=action?.time||0;$('time').value=String(t);$('time-label').textContent=`${t.toFixed(2)} s`;}
-function setMotion(index){mixer?.stopAllAction();action=null;model?.traverse(o=>{if(o.isSkinnedMesh)o.skeleton.pose();});if(index!==''){action=mixer.clipAction(clips[Number(index)]);action.reset().play();mixer.update(0);$('time').max=String(clips[Number(index)].duration);$('time').disabled=false;$('play').disabled=false;}else{$('time').disabled=true;$('play').disabled=true;}playing=false;$('play').textContent='Play';updateTime();}
+function setMotion(index){mixer?.stopAllAction();action=null;restoreRestPose?.();runtime?.vrm?.springBoneManager?.reset();if(index!==''){action=mixer.clipAction(clips[Number(index)]);action.reset().play();mixer.update(0);$('time').max=String(clips[Number(index)].duration);$('time').disabled=false;$('play').disabled=false;}else{$('time').disabled=true;$('play').disabled=true;}playing=false;$('play').textContent='Play';updateTime();}
 function showFacts(row){const i=row.inspection;$('facts').replaceChildren();for(const [value,label] of [[i.triangles.toLocaleString(),'triangles'],[i.joints,'joints'],[(i.bytes/1024/1024).toFixed(2)+' MiB','file size'],[i.clips.length,'own clips']]){const el=document.createElement('div');el.className='fact';const b=document.createElement('strong');b.textContent=value;const s=document.createElement('span');s.textContent=label;el.append(b,s);$('facts').append(el);} $('warnings').replaceChildren();for(const message of new Set(i.validation.warnings)){const p=document.createElement('p');p.textContent=message;$('warnings').append(p);} $('metadata').textContent=JSON.stringify({source:row.source,license:row.license,persona:row.personaAttribution,coordinates:row.coordinates,skeletonFamily:row.skeletonFamily,sha256:i.sha256,joints:i.jointNames,clips:i.clips,anchors:i.anchors,validation:i.validation},null,2);}
 async function select(id){
-  const token=++epoch;playing=false;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;$('appearance-panel').hidden=true;$('pose-test').disabled=true;$('pose-test').textContent='Test movement';if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
+  const token=++epoch;playing=false;wardrobe?.dispose();wardrobe=null;fitting?.dispose();fitting=null;$('wardrobe-panel').hidden=true;$('fitting-panel').hidden=true;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;$('appearance-panel').hidden=true;$('pose-test').disabled=true;$('pose-test').textContent='Test movement';if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
   try{
     const row=await api({action:'inspect',id});if(token!==epoch)return;
     selected=row;playing=false;$('character-name').textContent=row.name;$('family').textContent=row.skeletonFamily;$('review-state').textContent='Needs visual review';$('details').hidden=false;showFacts(row);
     for(const b of $('library').querySelectorAll('button'))b.setAttribute('aria-current',String(b.dataset.id===id));
     initViewer();const gltf=await new GLTFLoader().register(createAvatarLoaderPlugin).loadAsync(row.files.glb);if(token!==epoch){dispose(gltf.scene);return;}
     mixer?.stopAllAction();if(model){mixer?.uncacheRoot(model);scene.remove(model);dispose(model);}if(helper){scene.remove(helper);helper.dispose();}
-    model=gltf.scene;runtime=createAvatarRuntime(gltf);const applyLook=runtime.apply.bind(runtime);runtime.apply=settings=>{applyLook(settings);voice?.captureBaseline();};scene.add(model);model.updateMatrixWorld(true);clips=gltf.animations;mixer=new THREE.AnimationMixer(model);helper=new THREE.SkeletonHelper(model);helper.visible=$('skeleton').checked;scene.add(helper);
+    model=gltf.scene;restoreRestPose=captureAvatarRestPose(model);runtime=createAvatarRuntime(gltf);const applyLook=runtime.apply.bind(runtime);runtime.apply=settings=>{applyLook(settings);voice?.captureBaseline();};scene.add(model);model.updateMatrixWorld(true);clips=gltf.animations;mixer=new THREE.AnimationMixer(model);helper=new THREE.SkeletonHelper(model);helper.visible=$('skeleton').checked;scene.add(helper);
     const box=new THREE.Box3().setFromObject(model);box.getCenter(center);radius=Math.max(box.getSize(new THREE.Vector3()).length()*1.3,1);cameraView('fit');
     $('motion').replaceChildren(new Option('Rest pose',''));clips.forEach((c,i)=>$('motion').add(new Option(`${c.name} · ${c.duration.toFixed(2)} s`,String(i))));$('motion').disabled=false;setMotion('');$('empty-view').hidden=true;$('export').disabled=false;
     $('pose-test').disabled=!runtime.vrm;
-    const mounted=await mountAvatarAppearance({row,runtime,api,status,isCurrent:()=>token===epoch});if(token!==epoch){mounted?.dispose();return;}appearance=mounted;
+    const nextWardrobe=mountAvatarWardrobeUI({row,gltf,load:url=>new GLTFLoader().loadAsync(url),isCurrent:()=>token===epoch});wardrobe=nextWardrobe;
+    fitting=mountAvatarFitting({row,isCurrent:()=>token===epoch,onPrepared:part=>nextWardrobe.importPart(part)});
+    const mounted=await mountAvatarAppearance({row,runtime,api,status,isCurrent:()=>token===epoch,onLook:look=>{void nextWardrobe.setLook(look);}});if(token!==epoch){mounted?.dispose();return;}appearance=mounted;
     try{const nextVoice=await mountAvatarVoice({row,runtime,isCurrent:()=>token===epoch});if(token!==epoch){nextVoice?.dispose();return;}voice=nextVoice;voice?.setActive(activeView);}catch(e){if(token!==epoch)return;$('voice-panel').hidden=false;$('voice-state').textContent='Audio unavailable';$('voice-note').textContent=e.message;$('voice-note').hidden=false;}
     $('wireframe').dispatchEvent(new Event('change'));$('overlay-open').href=`/avatars.html?id=${id}&overlay=1`;const url=new URL(location.href);url.searchParams.set('id',id);history.replaceState(null,'',url);if(workshop.embedded)parent.postMessage({type:'aiplay-avatar-selection',id},location.origin);status(row.inspection.profile==='vrm'?'VRM ready':'Skin verified');
   }catch(e){if(token===epoch)status(e.message,true);}
@@ -66,7 +70,7 @@ $('motion').onchange=()=>{runtime?.setPreviewMotion(false);$('pose-test').textCo
 $('import-form').elements.file.onchange=event=>{if(event.target.files[0]?.name.toLowerCase().endsWith('.vrm'))$('import-form').elements.profile.value='vrm';};
 $('pose-test').onclick=()=>{if(!runtime?.vrm)return;playing=false;$('play').textContent='Play';runtime.setPreviewMotion(!runtime.previewMotion);$('pose-test').textContent=runtime.previewMotion?'Stop movement':'Test movement';};
 $('play').onclick=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';playing=!playing;$('play').textContent=playing?'Pause':'Play';};
-$('time').oninput=()=>{playing=false;$('play').textContent='Play';if(action){action.time=Number($('time').value);mixer.update(0);updateTime();}};
+$('time').oninput=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';playing=false;$('play').textContent='Play';if(action){action.time=Number($('time').value);mixer.update(0);updateTime();}};
 $('skeleton').onchange=()=>{if(helper)helper.visible=$('skeleton').checked;};
 $('wireframe').onchange=()=>model?.traverse(o=>{for(const m of Array.isArray(o.material)?o.material:[o.material])if(m)m.wireframe=$('wireframe').checked;});
 for(const b of document.querySelectorAll('[data-camera]'))b.onclick=()=>cameraView(b.dataset.camera);

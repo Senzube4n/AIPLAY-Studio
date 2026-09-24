@@ -48,6 +48,40 @@
 <div class="camera-controls"><button class="btn2" id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button></div>
 <div class="motion-controls"><label>Motion<select class="sel2" id="motion" disabled><option value="">Rest pose</option></select></label><button class="btn2" id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select class="sel2" id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
 </section>
+<section id="wardrobe-panel" hidden class="pcard">
+<div class="section-heading"><h2>Wardrobe</h2><span id="wardrobe-state" class="chip">Loading</span></div>
+<div class="camera-controls"><span id="wardrobe-context" class="hint">Base outfit</span><button id="wardrobe-save" class="btn" disabled>Save outfit</button><button id="wardrobe-reset" class="btn2" disabled>Reset preview</button></div>
+<div id="wardrobe-list" class="wardrobe-list"></div>
+<p id="wardrobe-note" hidden class="hint warnhint" role="status"></p>
+<details id="wardrobe-import" class="more"><summary>Add prepared part</summary>
+<form id="wardrobe-form">
+<label>Part file<input id="wardrobe-file" class="in2" name="file" type="file" accept=".glb" required title="A weighted GLB prepared for this exact avatar, up to 32 MiB."></label>
+<div class="fields"><label>Name<input class="in2" name="name" required maxlength="100"></label><label>Slot<select class="sel2" name="slot"><option value="outfit">Outfit</option><option value="hair">Hair</option><option value="head">Head</option><option value="accessory">Accessory</option></select></label></div>
+<label>Source<input class="in2" name="source" required maxlength="2000" title="Model author and creation method."></label>
+<label>Licence<input class="in2" name="license" required maxlength="2000" title="Permission to use this model."></label>
+<button id="wardrobe-import-submit" class="btn" type="submit">Add to wardrobe</button>
+</form></details>
+</section>
+<section id="fitting-panel" hidden class="pcard">
+<div class="section-heading"><h2>Fit a part</h2><span id="fitting-state" class="chip">Choose a part</span></div>
+<form id="fitting-form">
+<label>Unrigged part<input class="in2" name="file" type="file" accept=".glb" required title="Separate body, clothing or accessory geometry in a compatible rest pose."></label>
+<button id="fitting-inspect" class="btn2" type="button">Inspect part</button>
+<div class="fields"><label>Base surface<select class="sel2" name="reference_node" disabled title="Choose the body mesh this part should follow."></select></label><label>Name<input class="in2" name="name" maxlength="100" required></label></div>
+<label>Slot<select class="sel2" name="slot" title="Choose where this part belongs in the wardrobe."><option value="outfit">Outfit</option><option value="hair">Hair</option><option value="head">Head</option><option value="body">Body</option><option value="shoes">Shoes</option><option value="accessory">Accessory</option></select></label>
+<label>Source<input class="in2" name="source" maxlength="2000" required></label>
+<label>Licence<input class="in2" name="license" maxlength="2000" required></label>
+<details class="more"><summary>Fit settings</summary><div id="fitting-settings" class="fields">
+<label>Alignment<select class="sel2" name="alignment" title="Keep the supplied orientation. Bounds adjusts uniform scale and position to the selected reference surface."><option value="bounds">Match bounds</option><option value="keep">Keep alignment</option></select></label>
+<label>Clearance (m)<input class="in2" name="clearance" type="number" min="0" max="0.03" step="0.001" value="0.006" required title="Offset the fitted surface slightly to reduce overlap."></label>
+<label>Move limit (m)<input class="in2" name="max_displacement" type="number" min="0.001" max="0.2" step="0.001" value="0.1" required title="Maximum surface correction after alignment. Large changes need a better input mesh."></label>
+<label>Scale limit<input class="in2" name="max_scale_change" type="number" min="1" max="3" step="0.1" value="2" required title="A limit of 2 allows half to double the original size."></label>
+</div></details>
+<div class="camera-controls"><button id="fitting-submit" class="btn" type="submit" disabled>Prepare fit</button><button id="fitting-add" class="btn2" type="button" disabled>Add to wardrobe</button></div>
+</form>
+<p id="fitting-note" hidden class="hint warnhint" role="status"></p>
+<details class="more"><summary>Job details</summary><code id="fitting-job"></code><div id="fitting-result" class="hint"></div></details>
+</section>
 <section id="voice-panel" hidden class="pcard">
 <div class="section-heading"><h2>Voice preview</h2><span id="voice-state" class="chip">Choose audio</span></div>
 <label>Audio<input class="in2" id="voice-file" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm" title="Local audio, up to 32 MiB. Mouth motion follows loudness, not phonemes."></label>
