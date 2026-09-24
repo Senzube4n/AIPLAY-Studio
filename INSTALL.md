@@ -12,14 +12,22 @@ API** (cloud models on your own Comfy key; every run uses Comfy credits; no
 ComfyUI needed, or `npm run start:cloud`). Downloading the app does not install
 every AI model.
 
-For native lyric-to-song generation, install **Node.js 20+ and Studio**. You do
-**not** need ComfyUI, Python, MiniMax or any image/video model.
+For native lyric-to-song generation, install **Studio** (Setup.exe brings
+Node.js 20+ when this PC has none). You do **not** need ComfyUI, Python,
+MiniMax or any image/video model.
 
-1. Install [Node.js](https://nodejs.org), then download Studio from
-   [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
+1. Download and run **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
+   Windows may say “Windows protected your PC” because the installer is not
+   signed yet: click **More info**, then **Run anyway**. It asks for a build and
+   a folder (the defaults are right), and installs Studio plus, when this PC has
+   no Node.js 20+, a private copy of it. No admin prompt. Section 3 says exactly
+   what it does.
+   *For developers:* install [Node.js](https://nodejs.org), then download the
+   source from [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
    using **Code → Download ZIP**, or [download the ZIP directly](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
    Unblock the ZIP in Windows Properties before extracting if Windows requires it.
-2. Double-click **`AIPLAY Studio.exe`** and choose **Music only**. Or run these from the extracted folder:
+2. Start **AIPLAY Studio** (the shortcut Setup made, or **`AIPLAY Studio.exe`** in the
+   folder) and choose **Music only**. Or run these from the extracted source folder:
 
    ```text
    npm ci --omit=dev
@@ -61,8 +69,11 @@ Studio runs the interface and the queue; ComfyUI runs the models. You install
 ComfyUI yourself. That split is deliberate — ComfyUI is gigabytes of Python
 before a single model weight, and it updates on its own schedule.
 
-So the install is three things, in order: **Node.js**, then **ComfyUI**, then
-**Studio**. Perhaps twenty minutes of your attention, and then a long download
+The short way is two steps: **Setup.exe** installs Studio (and Node.js when the
+PC has none), then the launcher installs the engine, ComfyUI and PyTorch, when
+you answer *What should Studio run on?*; models come next, from the Models
+screen. By hand, the install is three things, in order: **Node.js**, then
+**ComfyUI**, then **Studio**. Perhaps twenty minutes of your attention, and then a long download
 you can leave running. Once it is done, the first song takes about five minutes:
 measured on a 16 GB RTX 4070 Ti SUPER, 0.07 s for the launcher's checks, ~15 s
 for the engine to start, and 264 s to render 4 min 22 s of audio from the caption
@@ -86,7 +97,7 @@ Other platforms are covered at the end, honestly.
 |---|---|
 | **An NVIDIA or AMD graphics card.** 6 GB of VRAM minimum, 12 GB recommended. | The music model's first stage needs a GPU device: CUDA on NVIDIA, or ROCm on AMD (a ROCm torch presents the card as `cuda:0`). There is no CPU fallback — it stops with `Expected a cuda device, but got: cpu`. Intel and Apple graphics will not run this. The AMD path is measured on one card — see [NVIDIA, AMD, Intel or CPU](README.md#nvidia-amd-intel-or-cpu). |
 | **16 GB of system RAM**, 32 GB recommended. | On smaller cards the model is streamed out of system RAM, so RAM does the work VRAM cannot. |
-| **Free disk space.** 12 GB for music alone. About 62 GB if you eventually want every feature. | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
+| **Free disk space.** About 12 GB for music alone (MiniMax Music 3). About 66 GB more for music videos (MiniMax H3 and its reference build), and about 326 GB if you downloaded every model in the catalogue (a file two features share counted once). | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
 | **Node.js 20 or newer.** | Studio's server is written in it. |
 | **A ComfyUI install.** | Studio drives one. It does not contain one. |
 
@@ -114,9 +125,15 @@ You want `v20` or higher. Anything older and Studio will not start.
 
 **Easiest: let the launcher do it.** Start `AIPLAY Studio.exe`. If it finds no
 ComfyUI it asks *What should Studio run on?* (NVIDIA / AMD / Intel Arc / CPU
-only) and installs its own ComfyUI with the right PyTorch into
-`%USERPROFILE%\.aiplay-studio\engine`. If that fails it cleans up and asks
-again with the exact error. Skip to step 3 if you use it.
+only) and installs its own ComfyUI (v0.36.0, the version this Studio is tested
+with) with the right PyTorch into `%USERPROFILE%\.aiplay-studio\engine`, plus
+the three Python packages Studio itself uses there (OpenCV, librosa, soundfile;
+if only those fail, the engine is kept and the launcher's "Studio's own
+packages" row has **Try again**). Nothing outside Studio's folder changes: the
+Python it fetches gets no ~/.local/bin copy and no registry entry. If the
+install fails it removes the half-built engine, keeps what it downloaded so the
+next try is quicker, and asks again with the exact error. Models come next,
+from the Models screen. Skip to step 3 if you use it.
 
 Or install ComfyUI yourself — Studio then drives the copy you already have and
 never changes it.
@@ -218,7 +235,9 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 
 ### The easy way: AIPLAY Studio Setup.exe
 
-Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest)**, run it, pick Senzu's build (the original, and the
+Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it (Windows may say
+“Windows protected your PC” because it is not signed yet: click **More info**,
+then **Run anyway**), pick Senzu's build (the original, and the
 default) or Bucky's, and press **Install**. It shows how far apart the two are
 (ahead / behind) before you choose. It then:
 
@@ -439,6 +458,15 @@ Some things worth knowing before you click:
   16 GB card it says three models; on an 8 GB card it says two and explains, per
   row, why video is not among them. On a machine with no NVIDIA card it says so
   and refuses to recommend anything, rather than guessing.
+- **Timed lyrics set themselves up.** Press **Set up timed lyrics** (Settings >
+  Songs, or on the timed lyrics row of the Models screen). Studio builds a
+  private Python 3.12 in `%USERPROFILE%\.aiplay-studio\venvs\lyrics` with the
+  PyTorch that fits your card (CUDA 12.6 on NVIDIA, the CPU build otherwise;
+  the choice beside the button changes it) and faster-whisper and stable-ts,
+  checks both import, and only then makes it the timed lyrics python. The button
+  says the download size before anything starts (roughly 2.6 GB on NVIDIA, an
+  estimate); no system Python is needed. Already working, it installs nothing
+  and says so. The manual lines in the table above still work if you prefer them.
 - **The pip half has its own script.** Some capabilities need a Python package
   that Studio cannot fetch — two of them ARE the package rather than a file, and
   audio reference wants one on top of its weights. The table above names each

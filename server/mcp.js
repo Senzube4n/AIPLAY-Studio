@@ -50,6 +50,8 @@ import { audioTools } from "./mcp-audio.js";
 import { scoreTools } from "./mcp-music-score.js";
 import { musicAuditionTools } from "./mcp-music-auditions.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
+/* One-click setups (timed lyrics): server/setup/, the [Set up timed lyrics] button's door. */
+import { setupTools } from "./mcp-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
 import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
@@ -427,6 +429,7 @@ export const TOOLS = [
   ...scoreTools(api),
   ...musicAuditionTools(api),
   ...yueSetupTools(api),
+  ...setupTools(api),
   ...avatarTools(api),
   ...avatarPlaybackTools(api),
   ...avatarWeightTransferTools(api),

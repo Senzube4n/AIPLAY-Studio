@@ -4620,12 +4620,19 @@
                applies at once: the old way, AIPLAY_WHISPER_PYTHON, reached the
                server only after the launcher itself was restarted. -->
           <label for="qWhisperPy">timed lyrics python</label>
-          <span class="pv"><input class="line" id="qWhisperPy" spellcheck="false"
-            placeholder="…\aiplay-whisper\venv\Scripts\python.exe"> <button class="btn2" type="button" id="btnWhisperPy">Use</button></span>
+          <span class="pv"><input class="line" id="qWhisperPy" spellcheck="false" data-setup-python="lyrics"
+            placeholder="…\aiplay-whisper\venv\Scripts\python.exe"> <button class="btn2" type="button" id="btnWhisperPy">Use</button>
+            <!-- No python yet? One press builds a private one (web/setup-feature.js, POST /api/setup).
+                 The choice beside it is the PyTorch build that setup installs; its
+                 words and "Auto"'s reason come from the server's status. -->
+            <button class="btn2" type="button" id="btnSetupLyrics" data-setup-feature="lyrics">Set up timed lyrics</button>
+            <select id="qSetupLyricsTorch" data-setup-torch="lyrics" aria-label="PyTorch build for Set up timed lyrics"
+              title="PyTorch build for Set up timed lyrics"><option value="auto">Auto</option></select></span>
         </div>
         <p class="hint" id="fmtNote"></p>
         <p class="hint" id="lyricsNote">Timed lyrics are two .lrc files per song (lines and words) for visualisers. Word timing is approximate on sung vocals.</p>
         <p class="hint" id="whisperPyNote">Timed lyrics need faster-whisper and stable-ts in the python above. Leave it empty for the default. Use checks both.</p>
+        <p class="hint" id="setupLyricsNote" data-setup-note="lyrics"></p>
         <p class="hint" id="setNote"></p>
       </section>
 

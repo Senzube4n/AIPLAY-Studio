@@ -491,16 +491,21 @@ footer a{color:var(--faint)}
   <h2>Install</h2>
   <p class="lede">For native music, start with <strong>Node.js 20+ and Studio</strong>.
      No ComfyUI setup, Python environment or unrelated model download.</p>
+  <p><strong>On Windows:</strong> <a href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe">download
+     AIPLAY Studio Setup.exe</a> and run it. It installs Studio, plus a private Node.js 20+ when this PC has none, with no
+     admin prompt. Windows may say “Windows protected your PC” because the installer is not signed yet: click
+     <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
   <p><strong>Same public GitHub, two launch modes.</strong> YuE2 music-only is part of AIPLAY Studio,
      not a separate repository. You download the app, then only the models you choose.</p>
+  <p>Source code (for developers):</p>
 
 <pre>git clone https://github.com/Senzube4n/AIPLAY-Studio.git
 cd AIPLAY-Studio
 npm ci --omit=dev
 npm run start:music</pre>
 
-  <p>Or <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip">download and extract the ZIP</a>
-     and double-click <strong>AIPLAY Studio.exe</strong> on Windows and choose <strong>Music only</strong>.
+  <p>Or <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip">download and extract the source ZIP</a>
+     (for developers; it needs Node.js installed by hand). Either way, start <strong>AIPLAY Studio.exe</strong> and choose <strong>Music only</strong>.
      In <strong>Models</strong>, explicitly install <strong>YuE2 GGUF Q4 or Q8</strong> and its native runtime,
      then enter a style and lyrics in <strong>Music</strong> and press <strong>Create</strong>. The installer shows the download total
      and notices; unavailable or unverified packages must not appear ready.</p>

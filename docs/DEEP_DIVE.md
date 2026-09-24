@@ -42,20 +42,29 @@ was measured on a real machine, and the scripts that measured them ship in
 ComfyUI, it asks **What should Studio run on?** — **NVIDIA**, **AMD**, **Intel Arc**
 or **CPU only** (the card it detected is marked). Pick one and Studio installs
 its own ComfyUI into `%USERPROFILE%\.aiplay-studio\engine` — nothing else on the
-PC is touched, and an existing ComfyUI is never modified:
+PC is touched (uv's Python is installed with no ~/.local/bin copy and no
+registry entry), and an existing ComfyUI is never modified:
 
-1. a standalone Python (via [uv](https://github.com/astral-sh/uv), so no system Python is needed);
-2. the latest ComfyUI release;
+1. a standalone Python (via [uv](https://github.com/astral-sh/uv), pinned and
+   checked against its published SHA-256, kept in `.aiplay-studio\tools\uv`;
+   so no system Python is needed);
+2. ComfyUI **v0.36.0**, the version this Studio is tested with
+   (`server/setup/pins.js`); a newer upstream release is not taken until that
+   pin changes;
 3. PyTorch for your choice, using **the exact command in that ComfyUI's own
    README** — CUDA 13.0 for NVIDIA (CUDA 12.6 on Python 3.12 for GTX 10-series and
    older), AMD's ROCm packages on Windows with only your card's kernels where the
    README's table names it (an RX 9060 XT gets `device-gfx1200`), ROCm 7.2 on
    Linux, XPU for Intel Arc, the CPU build otherwise;
-4. ComfyUI's requirements, then a check that PyTorch can see the card, and a
-   test start of ComfyUI (`--quick-test-for-ci`).
+4. ComfyUI's requirements, then Studio's own packages (OpenCV, librosa,
+   soundfile, pinned to the torch and numpy just installed), then a check that
+   PyTorch can see the card, and a test start of ComfyUI (`--quick-test-for-ci`).
+   If only Studio's packages fail, the engine is kept and the launcher's
+   "Studio's own packages" row offers **Try again**.
 
-**If any step fails**, the partial install and its download cache are deleted,
-and the launcher asks again showing the exact error (for example pip's own
+**If any step fails**, the half-built engine folder is deleted and its download
+cache is kept (so the next try does not fetch the same gigabytes again), and
+the launcher asks again showing the exact error (for example pip's own
 message). A folder the installer did not create is never deleted or reused.
 Measured on a clean profile: CPU install, 5 min 52 s, 2.1 GB, Studio then started
 on it. `node scripts/install-engine.mjs --backend amd --gpu-name "AMD Radeon RX
@@ -1406,7 +1415,7 @@ and documented there. It opens as its own page rather than a tab, because it own
 a window's worth of chrome and its own transport.
 
 It needs three Python packages Studio can only partly check for you: numpy (which
-it probes), plus SciPy and soundfile (which it cannot) — python -m pip install scipy soundfile, in the same system Python. Fifty `daw_*` MCP tools, and a census
+it probes), plus SciPy and soundfile (which it cannot), installed with the engine's own python, not a system Python: `"<engine python>" -m pip install scipy soundfile` (the path under the launcher's "ComfyUI install" row; an engine Studio installed already has both). Fifty `daw_*` MCP tools, and a census
 fails the build if a DAW route ships without one.
 
 ---

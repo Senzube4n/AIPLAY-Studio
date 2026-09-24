@@ -600,8 +600,11 @@ const TABS = [
       "Two more Python packages, which Studio cannot check for you. SciPy: imported at the top of the "
       + "render engine, the drum synth, the effects rack and the mastering chain, so nothing bounces "
       + "without it. And soundfile, which the sampled instruments and the mastered bounce read their "
-      + "audio through. One line covers both — python -m pip install scipy soundfile — and it goes in "
-      + "the same system Python as numpy above.",
+      + "audio through. One line covers both, run with the engine's own python rather than a system "
+      + "Python on PATH: \"<engine python>\" -m pip install scipy soundfile, where <engine python> is the "
+      + "path shown under the launcher's \"ComfyUI install\" row (…\\venv\\Scripts\\python.exe in an "
+      + "engine Studio installed, python_embeded\\python.exe in the portable ComfyUI). An engine Studio "
+      + "installs for you comes with both.",
     /* The O(prefix) fact, in the same voice as the sentence above it. It is
      * the one thing about this screen that reads as a bug until it is named:
      * rack.chain_graph renders from absolute sample 0 every time — the rule
@@ -702,8 +705,11 @@ const TABS = [
       "Two more Python packages, which Studio cannot check for you: OpenCV (the cv2 module) and Pillow "
       + "(the PIL module). The render engine imports both at the top of the file, so no frame is drawn "
       + "without them. SciPy joins them inside a few effects — the curve interpolator and the tracker's "
-      + "match step. One line covers all three — python -m pip install opencv-python pillow scipy — and "
-      + "it goes in the same system Python as the two above.",
+      + "match step. One line covers all three, run with the engine's own python rather than a system "
+      + "Python on PATH: \"<engine python>\" -m pip install opencv-python-headless pillow scipy, where "
+      + "<engine python> is the path shown under the launcher's \"ComfyUI install\" row "
+      + "(…\\venv\\Scripts\\python.exe in an engine Studio installed, python_embeded\\python.exe in the "
+      + "portable ComfyUI). An engine Studio installs for you comes with all three.",
     cant:
       "Renders are CPU work — plan for a second or more per frame at 1080p with heavy effects. 3D layers "
       + "are flat cards drawn in stack order, so two of them never slice through each other per pixel. "

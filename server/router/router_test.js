@@ -605,7 +605,9 @@ test("AIPLAY_CLOUD_ONLY turns on Comfy API mode: no ComfyUI, and music-only stil
 
 test("the launcher offers it as a third, new, credit-spending mode", () => {
   const html = read("launcher/index.html"), mjs = read("launcher/launcher.mjs");
-  assert.match(html, /id="mode-cloud"[\s\S]*?Use Comfy API <span class="tagnew">New<\/span>[\s\S]*?<span class="tagcredit">Requires credits<\/span>[\s\S]*?data-launch="cloud"/);
+  /* Relabelled 2026-09-24 (owner: a friend's card first, paid Comfy API second):
+   * the heading says whose key and that it costs, where it said "New". */
+  assert.match(html, /id="mode-cloud"[\s\S]*?Use Comfy API <span class="tagcredit">your own key, paid<\/span>[\s\S]*?<span class="tagcredit">Requires credits<\/span>[\s\S]*?data-launch="cloud"/);
   assert.match(html, /for \(const m of \["full", "music", "cloud"\]\)/);
   assert.match(mjs, /if \(!\["full", "music", "cloud"\]\.includes\(mode\)\)/);
   assert.match(mjs, /mode === "cloud" \? path\.join\("scripts", "start-cloud\.mjs"\)/);

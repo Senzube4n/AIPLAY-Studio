@@ -73,6 +73,9 @@
     border: 1px solid rgba(255, 92, 92, .35); color: var(--ink); font-family: var(--mono); font-size: 12px;
     white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
   .iok { margin: 10px 0 0; color: var(--ok); font-size: 13px; }
+  .iok.warn { color: var(--warn); }   /* installed, but Studio's own packages did not all go in */
+  .suggest { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--dim); }
+  .suggest b { color: var(--ink); }
   @media (max-width: 560px) { .choices { grid-template-columns: 1fr; } }   /* .card's display:flex must not beat it */
   html, body { margin: 0; height: 100%; }
   body {
@@ -277,11 +280,12 @@
 
     <!-- Shown when this machine has no ComfyUI. One question, then Studio
          installs its own ComfyUI with the right PyTorch (scripts/install-engine.mjs).
-         A failed install is cleaned up and the question comes back with the error. -->
+         A failed install removes the half-built engine, keeps what it downloaded
+         (so the next try is quicker), and the question comes back with the error. -->
     <article class="card setup" id="setupCard" hidden>
       <div>
         <h3 id="setupTitle">What should Studio run on?</h3>
-        <p class="sub" id="setupSub">No ComfyUI was found on this PC. Pick your hardware and Studio installs everything it needs, into its own folder.</p>
+        <p class="sub" id="setupSub">No ComfyUI was found on this PC. Pick your hardware and Studio installs the engine (ComfyUI and PyTorch); models come next, from the Models screen.</p>
       </div>
       <div class="choices" id="setupChoices">
         <button class="choice" type="button" data-backend="nvidia"><b>NVIDIA</b><small>GeForce RTX / GTX · CUDA</small></button>
@@ -324,6 +328,21 @@
       <div class="actions"><button class="btn" type="button" data-launch="music" disabled>Launch Music only</button></div>
     </article>
 
+    <!-- A weak or missing graphics card: a friend's card FIRST (Collab, in Full
+         Studio: a sealed file, no server, no cost), Comfy API second (the
+         person's own key, paid). Shown only when the system check says so
+         (launcher/checks.mjs cardAdvice); every mode stays as it was. -->
+    <article class="card" id="friendCard" hidden>
+      <div>
+        <h3>Weak or no graphics card?</h3>
+        <p class="sub" id="friendWhy"></p>
+      </div>
+      <ol class="suggest">
+        <li><b>Ask a friend with a strong card to render for you.</b> <span id="friendText"></span></li>
+        <li><b>Or use Comfy API</b> (your own key, paid). <span id="friendCloud"></span></li>
+      </ol>
+    </article>
+
     <!-- Comfy API: hosted models on the user's own Comfy key and credits
          (server/router/). Needs no ComfyUI. The only mode that spends money,
          so the card says so before anything else. -->
@@ -331,7 +350,7 @@
       <div class="mode-head">
         <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.2 9.1 4.5 4.5 0 0 0 7 18z"/></svg></div>
         <div>
-          <h3>Use Comfy API <span class="tagnew">New</span></h3>
+          <h3>Use Comfy API <span class="tagcredit">your own key, paid</span></h3>
           <p class="sub" data-f="note">Cloud models on your Comfy API key. No ComfyUI needed.</p>
         </div>
       </div>
@@ -400,6 +419,8 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let studio = { state: "idle" };
 let check = null;
+/* "Try again" beside Studio's own packages: its state, from the launcher. */
+let pkgRetry = { state: "idle", message: null };
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {
@@ -418,7 +439,10 @@ function paintCheck() {
       <span class="k">${esc(i.label)}</span>
       <span class="v" title="${esc(i.value)}">${esc(i.value)}${i.detail ? `<span class="d">${esc(i.detail)}</span>` : ""}</span>
       ${i.pick ? `<button class="btn ghost pick" type="button" data-pick="${esc(i.pick)}">Change…</button>` : ""}
+      ${i.retry ? `<button class="btn ghost pick" type="button" data-retry="${esc(i.retry)}"${pkgRetry.state === "running" ? " disabled" : ""}>${
+        pkgRetry.state === "running" ? "Installing…" : esc(i.retryLabel || "Try again")}</button>` : ""}
     </div>`).join("")
+    + (pkgRetry.message ? `<p class="note">${esc(pkgRetry.message)}</p>` : "")
     + (check.setupError ? `<p class="note">${esc(check.setupError)}</p>` : "")
     + (check.notes || []).map((n) => `<p class="note">${esc(n)}</p>`).join("");
   for (const m of ["full", "music", "cloud"]) {
@@ -430,13 +454,17 @@ function paintCheck() {
     w.hidden = !info.warn;
     w.textContent = info.warn || "";
   }
+  /* The server's advice for a weak or missing card (launcher/checks.mjs). */
+  const adv = check.cardAdvice;
+  $("friendCard").hidden = !adv;
+  if (adv) { $("friendWhy").textContent = adv.why; $("friendText").textContent = adv.friend; $("friendCloud").textContent = adv.cloud; }
   paintButtons();
   paintSetup();
 }
 async function loadCheck(refresh) {
   $("btnRecheck").disabled = true;
   if (refresh) $("checkRows").innerHTML = `<div class="skeleton">Re-reading the graphics card and PyTorch build (a few seconds)…</div>`;
-  try { check = await api(`/api/check${refresh ? "?refresh=1" : ""}`); paintCheck(); }
+  try { check = await api(`/api/check${refresh ? "?refresh=1" : ""}`); if (check.pkgRetry) pkgRetry = check.pkgRetry; paintCheck(); }
   catch { $("checkRows").innerHTML = `<div class="skeleton">The system check failed. Is the launcher console still open?</div>`; }
   finally { $("btnRecheck").disabled = false; }
 }
@@ -464,17 +492,20 @@ function paintSetup() {
     : s === "failed" ? "The install did not finish — choose again"
     : s === "done" ? "Engine installed" : "What should Studio run on?";
   $("setupSub").textContent = running ? "Downloads can take a while. The log shows every step."
-    : s === "failed" ? "Everything it downloaded was removed, so the next try starts clean. The exact error:"
+    : s === "failed" ? "The half-built engine was removed; what it downloaded is kept, so the next try is quicker. The exact error:"
     : s === "done" ? ""
     : check?.gpuName
-      ? `No ComfyUI was found on this PC. Detected: ${check.gpuName}. Pick your hardware and Studio installs everything it needs, into its own folder.`
-      : "No ComfyUI was found and the graphics card could not be read. Pick your hardware and Studio installs everything it needs, into its own folder.";
+      ? `No ComfyUI was found on this PC. Detected: ${check.gpuName}. Pick your hardware and Studio installs the engine (ComfyUI and PyTorch); models come next, from the Models screen.`
+      : "No ComfyUI was found and the graphics card could not be read. Pick your hardware and Studio installs the engine (ComfyUI and PyTorch); models come next, from the Models screen.";
   $("setupProgress").hidden = !running;
-  $("setupBar").style.width = `${Math.round(((install.n || 0) / (install.of || 9)) * 100)}%`;
-  $("setupStep").textContent = running ? `Step ${install.n || 0} of ${install.of || 9}: ${install.step || "Starting"}` : "";
+  $("setupBar").style.width = `${Math.round(((install.n || 0) / (install.of || 10)) * 100)}%`;
+  $("setupStep").textContent = running ? `Step ${install.n || 0} of ${install.of || 10}: ${install.step || "Starting"}` : "";
   $("setupErr").hidden = s !== "failed";
   $("setupErr").textContent = s === "failed" ? `${install.errorStep ? `[${install.errorStep}] ` : ""}${install.error || ""}` : "";
   $("setupOk").hidden = s !== "done";
+  /* Installed, but Studio's own packages did not all go in: the server's sentence. */
+  $("setupOk").textContent = s === "done" && install.warning ? `Installed. Launch Full Studio below. ${install.warning}` : "Installed. Launch Full Studio below.";
+  $("setupOk").classList.toggle("warn", s === "done" && !!install.warning);
   if (running) $("logBox").open = true;
 }
 
@@ -554,6 +585,17 @@ document.addEventListener("click", async (e) => {
       else if (!r.cancelled) { await loadCheck(true); return; }
     } finally { p.disabled = false; p.textContent = "Change…"; }
   }
+});
+/* Studio's own packages, into the engine Studio installed: the server's
+ * install-engine.mjs --studio-packages. Deletes nothing; the engine keeps working either way. */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-retry]");
+  if (!b || b.disabled) return;
+  if (!confirm("Install Studio's own packages (OpenCV, librosa and soundfile) into Studio's engine?\n\n"
+    + "They are pinned to the PyTorch and numpy already there, so neither changes. Nothing is removed.")) return;
+  b.disabled = true;
+  const r = await api("/api/install", { retry: b.dataset.retry });
+  if (r.error) { alert(r.error); b.disabled = false; }
 });
 $("btnStop").onclick = () => api("/api/stop", {});
 $("btnOpen").onclick = () => api("/api/open", {});
@@ -679,6 +721,10 @@ async function checkAlive() {
     if (studio.state === "stopped" || studio.state === "ready") loadCheck(false);
   });
   ev.addEventListener("log", (m) => addLog(JSON.parse(m.data)));
+  ev.addEventListener("pkgretry", (m) => {
+    pkgRetry = JSON.parse(m.data);
+    if (pkgRetry.state === "done" || pkgRetry.state === "failed") loadCheck(true); else paintCheck();
+  });
   ev.addEventListener("install", (m) => {
     install = JSON.parse(m.data);
     paintSetup();

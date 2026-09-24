@@ -554,8 +554,23 @@ const INDEX = read("server/index.js");
   const check = run.indexOf("whisperPythonMissing(config.lyrics.python)");
   const queue = run.indexOf('kind: "lrc"');
   ok("POST /api/lyrics run refuses a missing whisper python before it queues the job",
-    check > 0 && queue > check && /if \(noPython\) return json\(res, 400, \{ error: noPython \}\)/.test(run),
+    check > 0 && queue > check && /if \(noPython\) return json\(res, 400, \{ error: noPython,/.test(run),
     run.slice(0, 400));
+  ok("  the refusal carries setup: \"lyrics\" only when AIPLAY_WHISPER_PYTHON is unset (a build would not be used)",
+    /\{ error: noPython, \.\.\.\(process\.env\.AIPLAY_WHISPER_PYTHON \? \{\} : \{ setup: "lyrics" \}\) \}/.test(run), run.slice(0, 600));
+  ok("  and the text says which two packages the button installs, not \"both\"",
+    missingPythonMessage("C:\\x\\python.exe", { platform: "win32", env: false }).includes("builds a private Python with faster-whisper and stable-ts"));
+  /* The refusal names the one-click setup, so the page can offer [Set up timed
+   * lyrics] beside the sentence; the id is the recipe server/setup/venv.js runs. */
+  const { SETUP_FEATURE, SETUP_BUTTON } = await import("./lrc.js");
+  const { RECIPE_IDS } = await import("./setup/venv.js");
+  ok("  and carries the setup id, which is a recipe the setup door runs",
+    SETUP_FEATURE === "lyrics" && RECIPE_IDS.includes(SETUP_FEATURE));
+  const easy = missingPythonMessage("C:\\Users\\Zoe\\aiplay-whisper\\venv\\Scripts\\python.exe", { platform: "win32", env: false });
+  ok("  and the sentence offers the button before the pasted commands",
+    easy.indexOf(SETUP_BUTTON) > 0 && easy.indexOf(SETUP_BUTTON) < easy.indexOf("-m pip install"), easy);
+  ok("  but not when AIPLAY_WHISPER_PYTHON wins over whatever the button would choose",
+    !missingPythonMessage("C:\\py\\python.exe", { platform: "win32", env: true }).includes(SETUP_BUTTON));
 }
 
 /* ═══ 5. the real ArtRunner, a real lrc job, no python ═════════════════ */

@@ -791,6 +791,14 @@ node server/art_cache_test.js || exit 1
 # server/ and scripts/ path off `import.meta.url).pathname`. The python half
 # skips only where no python runs at all.
 node server/lrc_test.js || exit 1
+# ONE-CLICK TIMED LYRICS: [Set up timed lyrics] builds a private Python with the
+# kept uv (server/setup/venv.js). A fake uv (a Node script) records what it is
+# told: the CUDA 12.6 index on NVIDIA and the CPU index otherwise, the setting
+# written only after the both-modules probe passed, a working setup a no-op,
+# network paths and foreign folders refused, the cache kept on failure, a long
+# job answering its request at once, the door's guard and size cap, and the MCP
+# tools (setup_feature withheld from the chat). No network, no Python, no GPU.
+node server/setup_venv_test.js || exit 1
 # WHO MAY OPEN THE DOORS THAT CHOOSE WHAT RUNS HERE. A cross-site no-cors POST
 # (text/plain, no preflight) moved the rig Studio launches, the output and
 # models folders, switched paid API mode on with its cap at $1000, stored its

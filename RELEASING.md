@@ -45,6 +45,12 @@ that file, publishing the new installer is part of finishing the work:
    The tag is `setup-v<SetupVersion>`. `gh` publishes to the repository of the
    current clone; add `--repo owner/name` to be explicit.
 
+   **The README's Download button depends on this.** It links
+   `releases/latest/download/AIPLAY.Studio.Setup.exe`: GitHub stores the asset
+   with its spaces turned into dots, and `latest` means the newest release that
+   is not a pre-release. So keep the file name, and publish anything else (the
+   YuE2 runtime packages) as a **pre-release**, or the button stops working.
+
 Each repository publishes its own copy. Both copies install either build: the
 installer shows Senzu's build (the original) and Bucky's, with how far apart they
 are, and the person picks.

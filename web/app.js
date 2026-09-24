@@ -55,6 +55,8 @@ import { mountInfo } from "./info.js";
 import { appConfirm, appPrompt, appAlert } from "./dialog.js";
 import { showRouter } from "./router.js";
 import { openModelPicker } from "./modelpick.js";
+/* [Set up timed lyrics]: the one-click setups (server/setup/). Its calls below are typeof-guarded for the lanes that lift app.js functions. */
+import { paintSetupButtons, offerSetup } from "./setup-feature.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -4312,7 +4314,11 @@ async function onRowClick(e) {
     fetch("/api/lyrics", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "run", file: decodeURIComponent(lr.dataset.lrc) }),
-    }).then((r) => r.json()).then((r) => { if (r.error) alert(r.error); }).then(poll);
+    }).then((r) => r.json()).then((r) => {
+      /* A missing timed-lyrics python comes with the setup that makes one. */
+      if (r.error && r.setup && typeof offerSetup === "function") offerSetup(r.setup, r.error);
+      else if (r.error) alert(r.error);
+    }).then(poll);
     return;
   }
 
@@ -4557,14 +4563,21 @@ async function runBatch(kind) {
   } else if (kind === "stems" || kind === "lrc") {
     // Queued one by one: each waits for an idle card, exactly as from the row menu.
     const errors = [];
+    /* The refusal that came WITH a setup (a missing timed-lyrics python), not
+     * whichever error was first: a song with no lyrics refuses before the
+     * python is checked, and must not headline the offer. */
+    let setupRefusal = null;
     for (const file of files) {
       const r = await fetch(kind === "stems" ? "/api/stems" : "/api/lyrics", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "run", file }),
       }).then((x) => x.json()).catch((err) => ({ error: err.message }));
       if (r?.error) errors.push(r.error);
+      if (r?.setup && !setupRefusal) setupRefusal = r;
     }
-    if (errors.length) alert(`${errors.length} of ${songs} were not queued: ${errors[0]}`);
+    if (setupRefusal && typeof offerSetup === "function") {
+      offerSetup(setupRefusal.setup, setupRefusal.error, { lead: `${errors.length} of ${songs} were not queued.` });
+    } else if (errors.length) alert(`${errors.length} of ${songs} were not queued: ${errors[0]}`);
   }
   poll();
 }
@@ -6797,6 +6810,8 @@ async function loadModels() {
   paintFit(d);
   paintLocal(d);
   paintModelMusicPanel();
+  /* A [Set up …] button on the rows a one-click setup serves (web/setup-feature.js). */
+  if (typeof paintSetupButtons === "function") paintSetupButtons($("modelList"), { refresh: loadModels });
 
   /* The native GGUF install is not a ModelManager download, so no "update"
    * push arrives while it runs. Poll instead, only while one is running and

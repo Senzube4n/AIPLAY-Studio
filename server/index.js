@@ -228,6 +228,11 @@ import { createChatModels } from "./chat/models.js";
 import { createQwenModel, engineBusy } from "./chat/loop.js";
 import { createGallery, createEnhancer, createPromptToolRoutes } from "./prompt-tools.js";
 import { createMusicInputRoutes } from "./music-input.js";
+/* One-click setups: a private Python per feature (timed lyrics), built with the
+ * kept uv, and Studio's own packages again in an engine Studio installed. */
+import { createSetupRunner } from "./setup/venv.js";
+import { createEnginePackagesRunner } from "./setup/engine-packages.js";
+import { createSetupRoutes, oneRunner } from "./setup/routes.js";
 import { createMusicPlanRoutes } from "./music-plan.js";
 import { createAvatarRoutes, createAvatarService } from "./mesh/avatar.js";
 import { fit, rungArgs, fp8Allowed, maxTokensFor, GENERATION_CAP_SECONDS, CONTEXT_SECONDS } from "./music/yue_fit.js";
@@ -2285,6 +2290,37 @@ async function trackReplacement(job, replacing) {
   if (replacing) await auditions.observe(jobs.snapshot());
 }
 const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance: prov });
+/* POST /api/setup (server/setup/). A finished build is chosen through the same
+ * two fields as Settings > Songs > "timed lyrics python", and only after the
+ * both-modules probe passed there; the answer is that door's own verdict.
+ * With AIPLAY_WHISPER_PYTHON set the environment names the interpreter and
+ * wins over the field, so a build would change nothing: it is refused up
+ * front, in the same words Settings uses. */
+const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: oneRunner(createSetupRunner({
+  appData: config.dataDir,
+  vendor: () => gpuStatus()?.vendor || vendorOf(config.gpu, config.torchBackend),
+  probe: (py, mods) => probeOne(py, mods),
+  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : null),
+  blockedBy: (id) => (id === "lyrics" && process.env.AIPLAY_WHISPER_PYTHON
+    ? `AIPLAY_WHISPER_PYTHON is set, so timed lyrics run in ${config.lyrics.python} whatever Studio builds. `
+      + "Install faster-whisper and stable-ts there, or remove the variable and start Studio again to use the button."
+    : null),
+  save: async (id, py) => {
+    if (id !== "lyrics") return null;
+    config.lyrics.whisperPython = py;
+    config.lyrics.python = whisperPython();
+    packageCache = null;
+    await savePrefs();
+    const got = await probeOne(config.lyrics.python, LYRICS_MODULES).catch(() => ({}));
+    return pythonVerdict({ python: config.lyrics.python, chosen: config.lyrics.whisperPython,
+      modules: Object.fromEntries(LYRICS_MODULES.map((m) => [m, !!got[m]])) });
+  },
+}), createEnginePackagesRunner({
+  appData: config.dataDir,
+  rig: () => config.rig,
+  python: () => config.python,
+  probe: (py, mods) => probeOne(py, mods),
+})) });
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
 const listeningRuntime = createListeningLabRuntime({ config, library,
   shelf: async () => scanBases(await modelBases()), probe: probeModel, engine: engineDoor });
@@ -2573,6 +2609,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/music-input") {
       if (await musicInputRoutes(req, res, url)) return;
+    }
+    if (p === "/api/setup") {
+      if (await setupRoutes(req, res, url)) return;
     }
     if (p === "/api/music-plan") {
       if (await musicPlanRoutes(req, res, url)) return;
@@ -5453,7 +5492,10 @@ const server = http.createServer(async (req, res) => {
         const tok = await tokenizerStatus();
         if (!tok.ready) {
           return json(res, 400, {
-            error: "This track has no saved performance. Download the YuE2 real-audio tokenizer from the Models screen and any recording can be continued.",
+            /* One plain sentence. Every MiniMax take made on an engine Studio
+             * installed lands here: the codes capture is one of the rig's
+             * app patches, which that engine does not ship (server/setup/pins.js). */
+            error: "This track has no saved performance, so continuing it needs the YuE2 real-audio tokenizer: download it on the Models screen, and any recording can be continued.",
             reason: "tokenizer-missing", missing: tok.missing,
           });
         }
@@ -10639,7 +10681,9 @@ const server = http.createServer(async (req, res) => {
          * that dies at once: a missing whisper python is the usual first
          * failure on a new machine, and the sentence says how to make it. */
         const noPython = whisperPythonMissing(config.lyrics.python);
-        if (noPython) return json(res, 400, { error: noPython });
+        /* The page offers [Set up timed lyrics] with this refusal, unless
+         * AIPLAY_WHISPER_PYTHON names the interpreter: a build would not be used. */
+        if (noPython) return json(res, 400, { error: noPython, ...(process.env.AIPLAY_WHISPER_PYTHON ? {} : { setup: "lyrics" }) });
         art.request({ file, title: m.title, kind: "lrc", lyrics: lyr, force: true });
         return json(res, 200, { ok: true, ...art.status() });
       }

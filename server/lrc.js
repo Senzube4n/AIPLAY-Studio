@@ -146,6 +146,20 @@ function elsewhere(py, env) {
     : ` Or, if you already have a python with them, choose it in ${SETTING_WORDS}; that takes effect at once.`;
 }
 
+/** THE BUTTON THAT MAKES THE INTERPRETER (server/setup/venv.js, POST
+ *  /api/setup { action: "run", id: SETUP_FEATURE }). The refusal on "Time the
+ *  lyrics" carries this id so the page can offer it, and every sentence below
+ *  names it first: it needs no Python on PATH and no pasted command. */
+export const SETUP_FEATURE = "lyrics";
+export const SETUP_BUTTON = "Set up timed lyrics";
+
+/** The one-click way, unless AIPLAY_WHISPER_PYTHON names the interpreter:
+ *  then the environment wins over what the button would choose, and offering
+ *  it would be a dead end. */
+const setupHint = (env) => (env ? ""
+  : `The easy way: press ${SETUP_BUTTON} in Settings > Songs (or on the timed lyrics row of the Models screen), `
+    + "and Studio builds a private Python with faster-whisper and stable-ts; no system Python is needed. By hand: ");
+
 /** What a person does when the interpreter Studio runs is not there. */
 export function missingPythonMessage(py, { platform = process.platform, env = fromEnv(py) } = {}) {
   const venv = venvOf(py, platform);
@@ -154,14 +168,14 @@ export function missingPythonMessage(py, { platform = process.platform, env = fr
     : `Install ${PYTHON_MIN} there, then${installBlock(py, { platform })}`;
   return `Timed lyrics has no Python to run: ${py} does not exist. `
     + `Studio runs timed lyrics only in that interpreter, not the python you type at a prompt. `
-    + `${make}${elsewhere(py, env)}`;
+    + `${setupHint(env)}${make}${elsewhere(py, env)}`;
 }
 
 /** A python that is there but lacks a module timed lyrics imports. */
 export function missingModuleMessage(py, modules, { platform = process.platform, env = fromEnv(py) } = {}) {
   const names = modules.map((m) => PIP_NAME[m] || m);
   return `Timed lyrics: ${names.join(" and ")} ${names.length > 1 ? "are" : "is"} not installed in ${py}. `
-    + `Install what timed lyrics needs${installBlock(py, { platform })}${elsewhere(py, env)}`;
+    + `${setupHint(env)}Install what timed lyrics needs${installBlock(py, { platform })}${elsewhere(py, env)}`;
 }
 
 /** pip's name for each module lrc.py imports. Typing the import name at pip

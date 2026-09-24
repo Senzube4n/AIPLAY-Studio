@@ -10,11 +10,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip"><b>Download</b></a>
+  <a href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe"><b>Download for Windows</b></a>
   &nbsp;·&nbsp; <a href="#yue2-music-only-quickstart">Quickstart</a>
   &nbsp;·&nbsp; <a href="INSTALL.md">Full install</a>
   &nbsp;·&nbsp; <a href="docs/YUE2_GGUF.md">YuE2 guide</a>
   &nbsp;·&nbsp; <a href="docs/DEEP_DIVE.md">How it works</a>
+  &nbsp;·&nbsp; <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip">Source code (for developers)</a>
+</p>
+
+<p align="center">
+  Windows may say “Windows protected your PC” because the installer is not signed yet: click <b>More info</b>, then <b>Run anyway</b>.
 </p>
 
 <p align="center">
@@ -56,14 +61,20 @@ Works on **Windows x64 with any card**: setup picks audio.cpp's CUDA build on
 NVIDIA, its official Vulkan build on AMD and Intel, and its CPU build when there
 is no graphics card at all.
 
-**You need:** [Node.js 20 or newer](https://nodejs.org). On NVIDIA you also need
+**You need:** Windows x64. Setup.exe brings its own Node.js 20 or newer when the PC has none; from the
+source ZIP you install [Node.js 20 or newer](https://nodejs.org) yourself. On NVIDIA you also need
 a CUDA 13.3-compatible driver and, if it is missing, the
 [Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 The Vulkan and CPU builds bring their own.
 
-1. **Download and extract** the [Studio ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
-   Open the extracted folder, not the ZIP viewer.
-2. **Double-click `AIPLAY Studio.exe`** (or `AIPLAY Studio.cmd`) and choose
+1. **Download and run [AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
+   Windows may say “Windows protected your PC” because the installer is not
+   signed yet: click **More info**, then **Run anyway**. It asks for a build and
+   a folder; the defaults are right. No admin prompt.
+   (Developers: the [source ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip) works too; open the extracted folder,
+   not the ZIP viewer.)
+2. **Start AIPLAY Studio** from the shortcut Setup made (it is `AIPLAY Studio.exe`;
+   from the ZIP, double-click that file or `AIPLAY Studio.cmd`) and choose
    **Music only**. The first run installs what the app needs, then opens Studio
    in your browser. Keep the launcher running while you work.
 3. Go to **Models → Review Q4 / Q8 setup** and pick **Q4_0** (smaller, the

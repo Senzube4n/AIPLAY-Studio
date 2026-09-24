@@ -72,6 +72,8 @@ export const ROUTABLE = {
   studio_screen_info: null,
   studio_showcase: null,
   models_for_this_machine: null,
+  /* Reads what a one-click setup would build and how its job is going. */
+  setup_status: null,
   studio_status: null,
   engine_status: null,
   engine_activity: null,
@@ -585,6 +587,7 @@ export const WITHHELD = {
   set_video_engine: "changes a persistent app setting the person set on the Video page",
   set_image_engine: "changes a persistent app setting the person set on the Images page",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
+  setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",
   studio_welcome: "drives the first-run window",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
   make_song: "the chat has its own make_song with a written caption guide",
