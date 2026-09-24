@@ -84,5 +84,5 @@ export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()
   await refresh();
   if(!current())return {dispose(){live=false;}};
   host.hidden=false;timer=setInterval(poll,2000);
-  return {dispose(){const ownsPanel=current();live=false;clearInterval(timer);if(ownsPanel)host.hidden=true;}};
+  return {snapshot:()=>({look:look?structuredClone(look):null,dirty,busy}),dispose(){const ownsPanel=current();live=false;clearInterval(timer);if(ownsPanel)host.hidden=true;}};
 }

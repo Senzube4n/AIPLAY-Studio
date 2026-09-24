@@ -166,5 +166,5 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
     for (const slot of value.slots) { const option=documentRef.createElement('option'); option.value=slot; option.textContent=slot; form.elements.slot.append(option); }
     form.elements.slot.value='outfit';
   }).catch(error => { if(live && isCurrent()) note(error.message); });
-  return {setLook, importPart, update:() => preview.update(), dispose() {live = false; context++; clearTimer(timer); preview.dispose();}};
+  return {setLook, importPart, snapshot:()=>({selection:selection?structuredClone(selection):null,dirty,busy:busy||previewing}),update:() => preview.update(), dispose() {live = false; context++; clearTimer(timer); preview.dispose();}};
 }

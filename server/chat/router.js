@@ -542,6 +542,8 @@ export const ROUTABLE = {
   avatar_appearance_activate: null,
 
   avatar_export: null,
+  avatar_outfit_export: 'writes',
+  avatar_outfit_get: null,
 };
 
 /**

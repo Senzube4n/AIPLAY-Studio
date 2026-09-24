@@ -183,6 +183,34 @@ polling revalidates it. A restart never silently retries an interrupted job.
 Original input files are never changed. The result is not installed or attached
 to an avatar automatically, and no live persona/account binding is granted.
 
+## Export a saved outfit
+
+Save the appearance and wardrobe selection, then choose **Export outfit** in
+the wardrobe panel. **Download outfit** produces one `.aiplay-avatar.json`
+package containing the composed VRM, saved appearance and declared part credits.
+**Download VRM** provides the composed model separately. Export does not activate
+the saved look or modify the original avatar or part files.
+
+The composer appends admitted part geometry, materials and embedded textures to
+the VRM and binds it to the original joints. Original VRM expressions, springs,
+constraints and binary resources remain intact. Appearance settings are stored
+separately in the package; they are not baked into the VRM. Up to eight compatible
+parts and 64 MiB of combined model data are supported. This operation creates no
+new rig, facial expressions or hair physics.
+
+`avatar_outfit_export` uses the same handler as `POST /api/avatars/handoff` with
+`action: "prepare"`, `id`, `sha256`, `look_id`, `expected_look_revision` and
+`expected_wardrobe_revision`. Use `avatar_outfit_get` with `export_id` to read its
+immutable receipt and download locations. Revision checks refuse a changed or
+unsaved selection. Downloads are loopback-only and checked against stored hashes.
+
+The World importer has narrower admission rules: currently it accepts only an
+append-only outfit based on the reviewed VRM Consortium sample, up to 16 MiB.
+World verifies the original model and added resources independently. Part credits
+are uploader declarations, not verified license grants. Import selects the asset
+and look for review; binding it to a persona is a separate action. A successful
+Studio export alone does not establish World admission or multiplayer acceptance.
+
 ## Direct CLI
 
 Run the script from wherever `AIPLAY_WEIGHT_TRANSFER_SCRIPT` points, with this

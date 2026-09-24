@@ -29,10 +29,12 @@ node --check web/avatar-shell.js || exit 1
 node --check web/avatar-parts.js || exit 1
 node --check web/avatar-voice.js || exit 1
 node --check web/avatar-lipsync.js || exit 1
+node --check web/avatar-handoff.js || exit 1
 node --check web/avatars.js || exit 1
 node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
 node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1
 node --test server/mesh/avatar-fitting_test.js server/mesh/avatar-fitting-ui_test.js server/mesh/avatar-wardrobe_test.js server/mesh/avatar-wardrobe-runtime_test.js server/mesh/avatar-wardrobe-ui_test.js || exit 1
+node --test server/mesh/avatar-composition_test.js server/mesh/avatar-handoff_test.js || exit 1
 # THE BLENDER HALVES: weight transfer and attachment fitting. weight_transfer.py
 # imports bpy, and attachment_fit.py imports weight_transfer, so both scripts
 # and their suites live OUTSIDE this Apache-2.0 tree (server/licence_test.js),
