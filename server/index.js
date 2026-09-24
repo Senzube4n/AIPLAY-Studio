@@ -1908,6 +1908,9 @@ async function renderTimeline(name, { fade = 0, beatZoom = 0, beatsFile = null }
 
 const mvRoutes = createMvRoutes({
   json, readBody, library, art, beatsFor, LRC_DIR, CLIP_DIR, IMAGE_DIR, COVER_DIR,
+  /* Whether LTX's weights are on disk: "hybrid" sends a scene with no cast
+   * there only when they are (server/mv/shot.js). */
+  ltxReady: () => videoReady("ltx").ready,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
    *
    * `provenance` is the same module every other surface writes through, so a
@@ -5559,7 +5562,8 @@ const server = http.createServer(async (req, res) => {
                 /* The defaults are the SCENE's own, so an order with nothing
                  * typed into it asks for what this machine would have made. */
                 seed: Number.isInteger(b.seed) ? b.seed : Math.floor(Math.random() * 4294967296),
-                steps: Number.isInteger(b.steps) ? b.steps : (docO.brief?.videoSteps ?? 8),
+                steps: Number.isInteger(b.steps) ? b.steps
+                  : Number.isInteger(shotO.steps) ? shotO.steps : (docO.brief?.videoSteps ?? 8),
                 engineMode: String(b.engineMode || shotO.engineMode || "hybrid"),
               },
               returnTo: { fp: meO.fp, nickname: String(b.nickname || "") },
@@ -6036,6 +6040,17 @@ const server = http.createServer(async (req, res) => {
        * which is outside this change. `stopAll()` itself is left alone: as the
        * engine-wide sledgehammer reached from the Engine panel it is honest
        * about what it does. It is just not what a Stop button may mean. */
+      /* THE RAIL'S STOP ALSO PAUSES A RUNNING WORKFLOW PLAN, first
+       * (server/mv/routes.js pauseRunningPlans): otherwise the clip cancelled
+       * below fails its plan item and the plan walks on to the next one. In
+       * flight is three queues, and that button reads all three: the plan
+       * runner here, the app's queues and the engine below. Only the rail's
+       * Stop asks for it (?plans=1): the Music screen's Cancel and the Chat's
+       * Cancel post this route to stop a song or a picture, and a night of
+       * approved plan items is not theirs to touch. Paused, not cancelled, so
+       * Run on the Plan card carries on. */
+      const plansPaused = url.searchParams.get("plans") === "1"
+        ? await mvRoutes.pauseRunningPlans().catch(() => []) : [];
       await jobs.cancel();
       const wasRunning = art.status().art?.current?.title ?? null;
       /* Every distinct file once: drop() is keyed on file and removes every job
@@ -6055,7 +6070,7 @@ const server = http.createServer(async (req, res) => {
         interrupted: stops.some((s) => s.stopped === true),
         engineCancelled: stops.filter((s) => s.stopped === true).length,
       };
-      return json(res, 200, { ...jobs.snapshot(), artStopped });
+      return json(res, 200, { ...jobs.snapshot(), artStopped, plansPaused });
     }
 
     // Community feed. Proxied so the UI never talks to aiplay directly (CORS, and

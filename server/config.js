@@ -1908,6 +1908,11 @@ export const config = {
   h3.turboBuilds = { three, four, eight };
   h3.stepDefaults = { fast: three ? 3 : four ? 4 : standard, standard, best: 20 };
   h3.steps = standard;
+  /* The step count of the REFERENCE speed-up file on this disk (8, 4, or null
+   * when none is), for a music-video scene with cast pictures: its matched
+   * default is this file's count, which can be 8 where standard is 4
+   * (server/mv/clipsteps.js defaultClipSteps). */
+  h3.refTurboSteps = stepsOnDisk(h3.refTurboLora);
 }
 
 /* THE CARD TIERS' SIZES in H3's list, from server/h3tier.js (the one source),
@@ -1941,6 +1946,7 @@ config.video.engines.fasth3 = {
   ditRef: null,
   // A distillation already: none of H3's turbo LoRAs load on top of it.
   turboLora: null, turboLora4: null, turboLora3: null, refTurboLora: null, refTurboLora4: null,
+  refTurboSteps: null,
   turboMaxSteps: 0, turbo4MaxSteps: 0, turbo3MaxSteps: 0, turboShiftByLora: {},
   bridge: "off",
   // The trained schedule: 8 steps, res_multistep, video shift 10 (not H3's 12).

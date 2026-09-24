@@ -47,6 +47,19 @@ flagged in the file itself as well as here:
   from the engine, never restated, so it cannot drift. This makes the module
   server-only; the website's version was importable from client code too.
 
+- **`segmentation.js` keeps the website's defaults; Studio passes its own
+  longest scene, then closes the holes a shorter one opens.** `maxClipSec: 15`
+  is Seedance's audio limit and runs past anything the H3 lab measured, so
+  `routes.js` `segment()` sends the brief's default (`sizes.js sceneCutFor`:
+  8 s at full size, 5 s at the smaller sizes and High, 15 s for an LTX project)
+  unless the caller sends a number, from 1 to 15. A shorter cap makes two of the
+  port's rare cases common, and each left song with no scene (black in the
+  export): a line longer than the cap lost its tail, and a breath between two
+  windows fell between them. `cutfill.js closeCutHoles` runs on every cut and
+  fixes both (a long line is split into back-to-back scenes, a breath is held
+  through within the cap). The port itself is unchanged, and `resnapSegment`
+  still caps a hand-retimed scene at 15 s.
+
 - **`mvStages.js` stayed pure.** The website reads the stage from
   `creator_projects.metadata.mvStage` (jsonb); here the same string lands in
   `<outputDir>/mv/<slug>/project.json`. `stageOf()` does not care which, which is

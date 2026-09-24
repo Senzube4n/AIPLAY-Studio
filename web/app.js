@@ -3081,12 +3081,15 @@ $("btnCancel").onclick = () => fetch("/api/cancel", { method: "POST" });
       const before = stop.textContent;
       stop.textContent = "stopping…";
       try {
-        const r = await fetch("/api/cancel", { method: "POST" });
+        // ?plans=1: this button (and only this one) also pauses a running
+        // music-video plan, so it cannot start its next scene; Run carries on.
+        const r = await fetch("/api/cancel?plans=1", { method: "POST" });
         const j = await r.json().catch(() => ({}));
         const a = j.artStopped || {};
         const bits = [];
         if (a.wasRunning) bits.push(`stopped ${a.wasRunning}`);
         if (a.dropped) bits.push(`dropped ${a.dropped}`);
+        if ((j.plansPaused || []).some((x) => x.paused)) bits.push("paused the music-video plan (Run carries on)");
         stop.textContent = bits.length ? bits.join(", ") : "nothing was running";
       } catch {
         stop.textContent = "could not stop";

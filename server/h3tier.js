@@ -50,8 +50,10 @@
  * THE VIDEO SCREEN STARTS AT THE TIER (2026-09-24). Its size chips and its
  * first size come from h3Status() (web/vidfit.js shows them), and /api/video
  * gives a render that names no size the tier's size (h3StartSize). Every other
- * size stays under Advanced. The Workflow screen's scenes still render at the
- * project's own size, so the sentences below speak of the Video screen only:
+ * size stays under Advanced. The Workflow screen's scenes render at the
+ * project's own size, which a NEW music video starts at from this table too
+ * (server/mv/sizes.js sizeChoices, the brief's size control), and a project
+ * keeps what it stored. So the sentences below speak of the Video screen only:
  * h3SetSizeByHand (the name kept for its importers), h3TierSummary(), fit.js's
  * FIT_STATES.smaller line, the models_for_this_machine description and Home's
  * first-run video line (server/welcome/firstrun.js, "smaller").

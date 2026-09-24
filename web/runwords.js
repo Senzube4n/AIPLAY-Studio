@@ -8,8 +8,7 @@
  * moves into the row's tooltip instead of disappearing: the name is still what
  * the provenance ledger and an agent use.
  *
- * WIRING IS THE NEXT WAVE'S. The feed is renderRail() in web/mv.js, which that
- * wave owns; the change there is one line, the <b> in `.feedhead`:
+ * WIRED in renderRail() in web/mv.js, the <b> in `.feedhead`:
  *   const w = runWords(r);  →  <b title="${esc(w.title)}">${esc(w.text)}</b>
  * server/welcome/level_test.js holds this file to every tool noteRun writes,
  * so a new kind of run cannot reach the feed as snake_case.
@@ -59,13 +58,17 @@ const WORDS = {
   regen_stale: "Rendered the scenes that changed",
   mv_regen_stale: "Rendered the scenes that changed",
   import_clip: (r) => `Brought in a clip for ${scene(r)}`,
+  /* server/mv/generate.js: a clip still rendering (or still queued) past the
+   * two-hour wait, and one of those that then did not land. */
+  clip_late: (r) => `Still waiting on ${scene(r)}`,
+  clip_late_lost: (r) => `Lost the late render of ${scene(r)}`,
   build_timeline: "Built the timeline",
   read_timeline: "Read the timeline",
   render_video: "Rendered the video",
   studio_bounce: "Exported from Studio",
   plan_propose: "Proposed a plan",
   plan_discard: "Discarded a plan",
-  plan_run: "Started the plan",
+  plan_run: "Finished the plan",
   plan_step: "Ran a step of the plan",
 };
 

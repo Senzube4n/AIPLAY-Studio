@@ -127,6 +127,20 @@ const rowFor = (doc, name) =>
  * separate places used to spell it as a bare 9. */
 export const REF_CAP = 9;
 
+/* IS LTX ON THIS PC? A FACT, INJECTED. "hybrid" sends a scene with no cast to
+ * LTX, and a newcomer cannot download LTX (its repo is gated), so on a fresh
+ * install every cast-less scene went to an engine that is not there. This file
+ * stays pure: the server hands in a probe (server/mv/routes.js, from index.js's
+ * videoReady("ltx")), and with none installed, as in a test or a script, LTX
+ * counts as ready, which is how hybrid behaved before. `opts.ltxReady` on one
+ * call beats both. */
+let ltxProbe = null;
+export function setLtxReady(fn) { ltxProbe = typeof fn === "function" ? fn : null; }
+export function ltxReadyNow() {
+  if (!ltxProbe) return true;
+  try { return ltxProbe() !== false; } catch { return true; }
+}
+
 /* ─────────────────────────────────────────────────────── the resolution */
 
 /**
@@ -251,8 +265,15 @@ export function resolveShot(doc, segmentId, opts = {}) {
    * stopped re-routing the engine), and the attachment follows THE ENGINE THAT
    * WILL ACTUALLY RUN. `brief.castRefs: false` still switches pictures off
    * everywhere, which is the only thing it ever claimed to do. */
+  /* ⚠ AND HYBRID'S CHEAP BRANCH ONLY WHEN IT IS THERE. A scene with no cast
+   * goes to LTX when LTX is on this PC; otherwise to H3, the engine that is,
+   * and the shot says so (warning "ltx-not-here") rather than sending the
+   * render to weights that do not exist. An explicit "ltx" is left alone: a
+   * person who named the engine gets it, or its own missing-model refusal. */
+  const ltxHere = typeof opts.ltxReady === "boolean" ? opts.ltxReady : ltxReadyNow();
+  const castless = !(castRefs > 0 && refsWanted);
   const engine = mode === "h3" ? "h3" : mode === "ltx" ? "ltx"
-    : (castRefs > 0 && refsWanted ? "h3" : "ltx");
+    : (!castless ? "h3" : ltxHere ? "ltx" : "h3");
   // H3 is the only engine with a <Picture N> input, so refs can only be honoured
   // there. Asking for LTX is therefore also asking to drop them.
   const useRefs = engine === "h3" && refsWanted && refs.length > 0;
@@ -316,6 +337,14 @@ export function resolveShot(doc, segmentId, opts = {}) {
    * reach the video model" for the take record and the map. */
   const refsSent = useRefs && refs.length > 0;
   const warnings = [];
+  if (mode === "hybrid" && castless && !ltxHere) {
+    warnings.push({
+      kind: "ltx-not-here",
+      names: [],
+      why: "this scene carries no cast, so hybrid would render it on LTX, but LTX is not on this PC: "
+        + "it renders on H3 instead, which takes longer. Choose h3 in the brief to make that the rule for every scene.",
+    });
+  }
   if (refs.length && !useRefs) {
     warnings.push({
       kind: "named-but-not-sent",
