@@ -56,7 +56,10 @@ export const ADVANCED_ADDS = {
     { say: "steps and the quality chips", ids: ["vidSteps", "vidQualityRow"] },
     { say: "size and length", ids: ["vidSize", "vidSecs"] },
     { say: "the engine, its files and LoRAs", ids: ["vidEngine", "vidModel", "vidLoras"] },
-    { say: "attention and the speed switches", ids: ["vidAttn"] },
+    /* FastH3's Advanced label is config's (h3tier.js H3_MORE_MOTION), not retyped. */
+    { say: `attention, sparse attention and ${config.video.engines.fasth3?.advanced?.label || "FastH3"}`,
+      ids: ["vidAttn", "vidSparse", "vidMoreMotion"] },
+    { say: "what a size needs on this card's graphics memory", ids: ["vidFitNote"] },
     { say: "an end frame, reference pictures and sound", ids: ["vidTo", "vidRefWrap", "vidSndWrap"] },
     { say: "the Video Lab: sizes and side-by-side tests", ids: ["vidLab"] },
   ],

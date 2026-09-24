@@ -3,7 +3,11 @@
  *
  * `start` runs the APPROVED items in array order and returns immediately. Every
  * other verb here is about stopping: pause lets the render in flight finish,
- * resume carries on from where it stopped, stop cancels the plan.
+ * resume carries on from where it stopped, stop cancels the plan (and the
+ * route cancels the clip in flight with it, server/mv/routes.js stopClipsOf).
+ * The rail's Stop PAUSES a plan (pause with byStop): it cancels the render in
+ * flight, so the item that render belonged to is approved again and Run
+ * carries on from it; nothing the person approved is thrown away.
  *
  * ── THE INVARIANT THIS FILE IS ──────────────────────────────────────────────
  *
@@ -259,6 +263,29 @@ export function createPlanRunner(deps = {}) {
           if (error) {
             item.status = "failed";
             item.error = error;
+            /* STOPPED WHILE IT RAN. Stop now cancels the clip in flight, so its
+             * failure lands here on a plan that is already cancelled, and the
+             * halt below would turn "stopped" back into "paused". The plan
+             * stays what the person made it. */
+            if (plan.state === "cancelled") {
+              item.error = `stopped while it ran: ${error}`;
+              return { halted: true, cancelled: true, failed: true };
+            }
+            /* PAUSED BY THE STOP BUTTON WHILE IT RAN. The rail's Stop cancels
+             * every render in flight and pauses the plan; the render this item
+             * was waiting on is one of them. The person approved this item and
+             * nobody un-approved it, so it goes back to approved: Run renders it
+             * again, and the plan carries on from here. */
+            if (plan.state === "paused" && plan.pausedByStop) {
+              item.status = "approved";
+              item.error = null;
+              item.stoppedAt = now();
+              delete item.startedAt;
+              delete item.finishedAt;
+              plan.note = `Paused by the Stop button, which cancelled the render of ${id} (${tool}). `
+                + "It is approved again, and everything approved stays approved: press Run to carry on.";
+              return { halted: true, failed: false };
+            }
             /* ⚠ NOTHING ELSE IS TOUCHED. Every remaining approved item stays
              * approved: a person approved those arguments and a different
              * item's failure did not un-approve them. */
@@ -293,7 +320,7 @@ export function createPlanRunner(deps = {}) {
           },
         });
 
-        if (after.halted) { terminal = "paused"; break; }
+        if (after.halted) { terminal = after.cancelled ? "cancelled" : "paused"; break; }
       }
     } catch (err) {
       /* A throw out of the loop itself (the document vanished, the store
@@ -370,6 +397,7 @@ export function createPlanRunner(deps = {}) {
         }
         plan.state = "running";
         plan.note = resume ? "resumed" : "started";
+        delete plan.pausedByStop;
         if (!plan.startedAt) plan.startedAt = now();
         return { approved: approved.length };
       });
@@ -387,12 +415,24 @@ export function createPlanRunner(deps = {}) {
      * a nearly-complete H3 clip throws away twenty minutes for nothing, and
      * there is no cancel path from here into art.js anyway.
      */
-    async pause(slug, planId) {
+    async pause(slug, planId, { note = null, byStop = false } = {}) {
       const r = await edit(slug, planId, (plan) => {
+        /* Already pausing (the plan card's Pause) with its render still in
+         * flight: the Stop button cancels that render too, so its item must
+         * go back to approved the same way. */
+        if (byStop && plan.state === "paused" && inFlight.has(slug)) {
+          plan.pausedByStop = true;
+          if (note) plan.note = note;
+          return { changed: true, state: "paused" };
+        }
         if (plan.state !== "running") return { changed: false, state: plan.state };
         plan.state = "paused";
-        plan.note = "pausing — the render in flight will finish first, then the run stops. "
-          + "The rest stay approved.";
+        /* `byStop`: the caller is cancelling the render in flight (the
+         * rail's Stop, server/mv/routes.js pauseRunningPlans), so the walk
+         * puts that item back to approved instead of failing it. */
+        if (byStop) plan.pausedByStop = true;
+        plan.note = note || ("pausing — the render in flight will finish first, then the run stops. "
+          + "The rest stay approved.");
         return { changed: true, state: "paused" };
       });
       const f = inFlight.get(slug);
@@ -404,12 +444,22 @@ export function createPlanRunner(deps = {}) {
       return this.start(slug, planId, { resume: true });
     },
 
+    /** Replace the plan's note: a caller that learns what really happened
+     *  after it changed the plan's state (a Stop, once the clip in flight
+     *  has been reached or not) writes it here rather than guessing first. */
+    async note(slug, planId, text) {
+      return edit(slug, planId, (plan) => { plan.note = String(text || ""); return { note: plan.note }; });
+    },
+
     /**
-     * Stop cancels the PLAN. It does not cancel the render in flight — there is
-     * no cancel path into art.js from here, and the note says so rather than
-     * letting a button imply a capability the code has not got.
+     * Stop cancels the PLAN. The render in flight is not this file's to
+     * cancel: there is no path into art.js from here. The plan card's Stop
+     * (server/mv/routes.js) cancels it with stopClipsOf and then writes what
+     * really happened through note(); called alone, the note still says the
+     * clip finishes, because then it does. The rail's Stop does not come
+     * here: it pauses (pause with byStop), so no approval is lost.
      */
-    async stop(slug, planId) {
+    async stop(slug, planId, { note = null } = {}) {
       return edit(slug, planId, (plan) => {
         plan.state = "cancelled";
         plan.finishedAt = now();
@@ -421,10 +471,10 @@ export function createPlanRunner(deps = {}) {
             skipped.push(it.id);
           }
         }
-        plan.note = inFlight.has(slug)
+        plan.note = note || (inFlight.has(slug)
           ? "Stopped. The clip already on the GPU finishes — there is no way to cancel a render "
             + "in flight from here."
-          : "Stopped.";
+          : "Stopped.");
         return { skipped };
       });
     },

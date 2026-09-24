@@ -336,6 +336,18 @@ node server/mv/blockout_test.js || exit 1
 # per-take evidence — including that a take from before this feature admits it
 # has none rather than borrowing the row's current prompt.
 node server/mv/shot_test.js || exit 1
+# THE MUSIC VIDEO FOLLOWS THE CARD: one size list read from server/h3tier.js
+# (renderSize, the collab packet and order, set_brief, the MCP enum and the
+# brief all read it), only the two shapes that render, a new video starting at
+# its card's size (RAM counted) with the cut following the brief and saying where
+# its number comes from, the cut leaving no sung second without a picture (real
+# songs' line timings), default steps matched to the files on disk but never
+# lent from them, hybrid sending a cast-less scene to LTX only when LTX is here,
+# the plan card's Stop cancelling the clip in flight and saying what it reached
+# (stand-in engine door, nothing real is touched), the rail's Stop pausing a plan
+# with its approvals kept, a clip past the two-hour wait filed when it lands, and
+# one id per element on the Workflow page. In process, temp dir, no GPU. ~2s.
+node server/mv/cardfit_test.js || exit 1
 # THE THINGS THE BOARDS DO NOT CARRY: the name-word scan over DECLARED assets
 # (a board whose text names a prop it references nowhere), pinned against
 # LOOSENING - a loose any-word match reads "the gold line slides lower" as
@@ -737,6 +749,23 @@ node server/fit_test.js || exit 1
 # lab's VRAM fit against its seven capped runs, the 17k+5 frame grid against
 # workflow.js, the RAM warning, and that every H3-family Models row reads it.
 node server/h3tier_test.js || exit 1
+# THE VIDEO SCREEN FOLLOWS THE CARD (the H3 lab's #1, #2, #4-#7; UI_PLAN C3):
+# what a size needs against the card, the size chips and start size per card,
+# sol-attn on the Fast setting only (the lab's A3 node), FastH3 Advanced-only on
+# Kitchen, the engine asked for sol-attn before it is sent, ComfyUI failures in
+# words, the render plan's said changes, web/vidfit.js holding no opinion and
+# run on three machines, and the Video Lab mirroring the form's controls.
+node --test server/vidfit_test.js || exit 1
+# REFERENCES ON AN ENGINE THAT IGNORES THEM (UI_PLAN E4): one server sentence,
+# shown in the reference slots and said by make_clip; such a clip is refused,
+# never rendered without them; a tag nothing answers leaves the description.
+node --test server/video-refs_test.js || exit 1
+# A FAILED CLIP IN WORDS, through the real ArtRunner with the engine door
+# stubbed: a submission ComfyUI refused before it ran (client.js throws) and a
+# run that failed while rendering both become the sentence, the engine's text
+# kept on the row, for a waiter, in lastError and the log; the card's memory
+# and the PC's are two different sentences. Temp folders, no engine.
+node --test server/video-fail_test.js || exit 1
 # ...AND THE HALF OF IT A PERSON ACTUALLY SEES. fit.js can be perfectly right
 # and the Models screen still recommend nothing, silently: the block only
 # appears because app.js imports web/modelfit.js, calls paintFit AFTER the list

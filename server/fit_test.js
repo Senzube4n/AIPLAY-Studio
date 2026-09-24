@@ -216,9 +216,9 @@ console.log("\n── 5. the H3 edges ──────────────
       note: out.notes.find((n) => n.slot === "video") || null };
   };
   const e832 = edge({ name: "NVIDIA GeForce RTX 3060 Ti", totalMb: 8188, usedMb: 0 }, 32659);
-  ok("8 GB card, 32 GB RAM: H3 IS recommended, at its smaller size, with the size to set by hand",
+  ok("8 GB card, 32 GB RAM: H3 IS recommended, at its smaller size, which the Video screen starts at",
     e832.fit.state === "smaller" && e832.pick?.id === "video" && /960x544/.test(e832.pick.why)
-      && /does not pick this size for you yet/.test(e832.pick.why));
+      && /The Video screen starts H3 clips at 960x544/.test(e832.pick.why));
   const e88 = edge({ name: "NVIDIA GeForce RTX 3060 Ti", totalMb: 8188, usedMb: 0 }, 8192);
   ok("8 GB card, 8 GB RAM: under H3's 16 GB RAM floor, refused, and nothing picked",
     e88.fit.state === "wont-run" && /8 GB of RAM/.test(e88.fit.why) && !e88.pick);

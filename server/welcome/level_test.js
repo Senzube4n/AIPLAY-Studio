@@ -449,11 +449,11 @@ for (const [name, machine] of Object.entries(MACHINES)) {
     ok(`${name}: the video line names the engine and its territory clause`,
       /^Video clips on /.test(r.lines[2]) && /leaves out some countries/.test(r.lines[2]), r.lines[2]);
     /* A size the tier table measured for this card (server/h3tier.js), which
-     * nothing sets yet: the line names it and says it is set by hand. */
+     * the Video screen starts at: the line names it and says so. */
     if (videoPick.fit?.state === "smaller") {
       const h = videoPick.fit.h3 || {};
-      ok(`${name}: a smaller card's line names the measured size and says Studio does not set it yet`,
-        r.lines[2].includes(`${h.width}x${h.height}`) && /does not set for you yet/.test(r.lines[2]) && !/gets a smaller/.test(r.lines[2]), r.lines[2]);
+      ok(`${name}: a smaller card's line names the measured size and says the Video screen starts there`,
+        r.lines[2].includes(`${h.width}x${h.height}`) && /the Video screen starts there/.test(r.lines[2]) && !/gets a smaller/.test(r.lines[2]), r.lines[2]);
     }
     if (machine.gpu?.vendor && machine.gpu.vendor !== "nvidia") {
       ok(`${name}: a card of a make nobody has rendered video on says "not yet tried"`, /not yet (been )?tried/.test(r.lines[2]), r.lines[2]);

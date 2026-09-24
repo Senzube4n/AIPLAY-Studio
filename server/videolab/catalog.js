@@ -618,12 +618,17 @@ export const KNOBS = [
   },
 
   /* ── steps and length, which belong to the render rather than the engine ─── */
+  /* `formControl`: the Video screen's own control for this value. The Lab shows
+   * that control's value and a way to it rather than a second control (UI_PLAN
+   * C3: one step control and one audio control on the screen); video_settings
+   * still reads and sets the row. */
   {
     id: "steps",
     label: "Steps",
     applies: "h3",
     kind: "number", min: 2, max: 40, step: 1,
     path: ["video", "engines", "h3", "steps"],
+    formControl: "vidSteps",
     /* EACH MEASUREMENT WITH ITS SCOPE, as config.js's `steps` note gives them.
      * This used to call 20 on the bare model "11 m 00 s, and visibly the
      * best", but that verdict was the turbo LoRA run AT 20 (2026-08-18); only
@@ -639,7 +644,8 @@ export const KNOBS = [
       + "loaded, and the 'visibly the best' once quoted with it was that LoRA-at-20 render. The one "
       + "A/B of the bare model against a turbo build (arm H vs C, one shot, reference path) found it "
       + "about equal to the ref2v 8-step at 2.4x the time. The bands between the builds are the ones "
-      + "with no good answer.",
+      + "with no good answer. A clip made on the Video screen follows that screen's own step slider; "
+      + "this is the default only for a render that names none (make_clip without quality, the API).",
     cite: DOCS.directing,
   },
   {
@@ -673,9 +679,25 @@ export const KNOBS = [
     applies: "h3",
     kind: "bool", onValue: true, offValue: false,
     path: ["video", "engines", "h3", "dropAudio"],
+    formControl: "vidAudio",
     effect:
       "H3 always renders sound whether or not you keep it, so keeping it is free. Discard it for "
-      + "clips that sit under a song you already made — that song is the audio.",
+      + "clips that sit under a song you already made — that song is the audio. A clip made on the Video "
+      + "screen follows its own H3 audio control; this is the default only for a render that names none.",
+    cite: DOCS.config,
+  },
+
+  /* ── sparse attention, the Fast setting's measured speed-up ──────────────── */
+  {
+    id: "sparse_attention",
+    label: "Sparse attention (Fast setting)",
+    applies: "h3",
+    kind: "enum", options: ["sol-attn", "off"],
+    path: ["video", "engines", "h3", "sparse"],
+    formControl: "vidSparse",
+    /* Both halves are config's (h3tier.js H3_SOL_ATTN, the one copy): the
+     * note the switch's tooltip shows, then the recipe in words. */
+    effect: [config.video.engines.h3?.solAttn?.note, config.video.engines.h3?.solAttn?.recipe].filter(Boolean).join(" "),
     cite: DOCS.config,
   },
 
@@ -808,6 +830,9 @@ export function knobRows(engineKey) {
       value: knobValue(k),
       effect: k.effect, cite: k.cite,
       path: k.path.join("."),
+      /* The Video screen's own control for this value (UI_PLAN C3), or null:
+       * the Lab mirrors that control instead of drawing a second one. */
+      formControl: k.formControl || null,
       /* Where a row parks a value it will put back. Null on most rows; a row
        * that has one is a row that touches a field the render does not read,
        * and both hands should be able to see that rather than infer it. */

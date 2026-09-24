@@ -266,7 +266,9 @@ import {
   scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor } from "./fit.js";
-import { h3Status } from "./h3tier.js";
+import { h3Status, h3StartSize } from "./h3tier.js";
+/* The Video screen's sentences and the one plan behind a render (UI_PLAN C3/E4, the H3 lab's #5-#7). */
+import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote } from "./video-plain.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
 import { createPromptStore } from "./prompts.js";
@@ -2000,6 +2002,9 @@ const mvRoutes = createMvRoutes({
   /* What a library clip or picture was made from, for the minors rule: a
    * control render's driving clip is judged with its own history. */
   lineage,
+  /* Whether LTX's weights are on disk: "hybrid" sends a scene with no cast
+   * there only when they are (server/mv/shot.js). */
+  ltxReady: () => videoReady("ltx").ready,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
    *
    * `provenance` is the same module every other surface writes through, so a
@@ -2652,7 +2657,9 @@ const avatarFittingRoutes = createAvatarFittingRoutes({json,directory:path.join(
  * every other clip maker tags one, and /api/clips shows the group without
  * knowing this subsystem exists. */
 const videoLabRoutes = createVideoLabRoutes({
-  json, readBody, art,
+  /* The guard POST /api/video uses: a comparison switches the engine and
+   * queues renders, and set_knob saves video settings. */
+  json, readBody, art, sameOriginLocalJson,
   rememberClip: (name, renderSeconds, meta) => {
     if (!name) return;
     if (renderSeconds) clipTimes.set(name, renderSeconds);
@@ -3148,6 +3155,23 @@ const server = http.createServer(async (req, res) => {
                * Video screen's picker judges against and /api/video checks: null
                * means this engine takes none, and the picker hides. */
               loraBase: e.loraBase ?? null,
+              /* An engine offered under Advanced only (FastH3): its label and
+               * note there. The Video screen's main list leaves it out unless
+               * it is the saved choice, which keeps rendering on it. */
+              advanced: e.advanced ?? null,
+              /* H3's sparse attention on the Fast setting (config.js solAttn):
+               * the saved choice and its measured note, for the Advanced switch. */
+              sparse: e.solAttn ? { value: e.sparse ?? "off", options: ["sol-attn", "off"], note: e.solAttn.note } : null,
+              /* The reference slots' sentence on an engine that takes no
+               * references (server/video-plain.js), null on H3. */
+              refsIgnored: refsIgnored(k, e.label),
+              /* Whether H3's card tiers (the size chips, the start size, the
+               * RAM line, More motion) are about this engine: the server's
+               * call, so the page never decides it from a label. */
+              h3Tiers: isH3Family(k),
+              /* The Fast chip's note, which follows the disk and the saved
+               * sparse attention (sol-attn makes Fast slightly softer). */
+              fastNote: fastNote(e),
             }])),
             seconds: videoEngine().seconds,
             width: videoEngine().width, height: videoEngine().height,
@@ -3155,9 +3179,16 @@ const server = http.createServer(async (req, res) => {
              * clip it is offered at, the need table for that size, the fit's
              * inputs and the RAM warning. From the same readings as `gpu` and
              * `ram` below; arithmetic only, cheap enough to poll. */
-            h3: h3Status({ gpu: gpuStatus(), ram: ramStatus() }) },
+            h3: (() => {
+              const h = h3Status({ gpu: gpuStatus(), ram: ramStatus() });
+              /* The Video screen's start size for this card and, where H3 is
+               * not offered, its one sentence (friend first, own key second). */
+              return { ...h, start: h3StartSize(h), notOffered: h3NotOfferedLine(h) };
+            })() },
           tier: comfy.tier || "auto",
           tiers: Object.entries(config.vramTiers).map(([k, v]) => ({ id: k, label: v.label, note: v.note })),
+          /* Said beside every tier: it restarts the engine for every model, video included. */
+          tierScope: config.vramTierScope,
           // The two provenance toggles (display + Tier-2 record). Tier 1 has
           // no setting to report because it has no setting.
           provenance: { ...config.provenance },
@@ -5702,7 +5733,8 @@ const server = http.createServer(async (req, res) => {
                 /* The defaults are the SCENE's own, so an order with nothing
                  * typed into it asks for what this machine would have made. */
                 seed: Number.isInteger(b.seed) ? b.seed : Math.floor(Math.random() * 4294967296),
-                steps: Number.isInteger(b.steps) ? b.steps : (docO.brief?.videoSteps ?? 8),
+                steps: Number.isInteger(b.steps) ? b.steps
+                  : Number.isInteger(shotO.steps) ? shotO.steps : (docO.brief?.videoSteps ?? 8),
                 engineMode: String(b.engineMode || shotO.engineMode || "hybrid"),
               },
               returnTo: { fp: meO.fp, nickname: String(b.nickname || "") },
@@ -6197,6 +6229,17 @@ const server = http.createServer(async (req, res) => {
        * which is outside this change. `stopAll()` itself is left alone: as the
        * engine-wide sledgehammer reached from the Engine panel it is honest
        * about what it does. It is just not what a Stop button may mean. */
+      /* THE RAIL'S STOP ALSO PAUSES A RUNNING WORKFLOW PLAN, first
+       * (server/mv/routes.js pauseRunningPlans): otherwise the clip cancelled
+       * below fails its plan item and the plan walks on to the next one. In
+       * flight is three queues, and that button reads all three: the plan
+       * runner here, the app's queues and the engine below. Only the rail's
+       * Stop asks for it (?plans=1): the Music screen's Cancel and the Chat's
+       * Cancel post this route to stop a song or a picture, and a night of
+       * approved plan items is not theirs to touch. Paused, not cancelled, so
+       * Run on the Plan card carries on. */
+      const plansPaused = url.searchParams.get("plans") === "1"
+        ? await mvRoutes.pauseRunningPlans().catch(() => []) : [];
       await jobs.cancel();
       const wasRunning = art.status().art?.current?.title ?? null;
       /* Every distinct file once: drop() is keyed on file and removes every job
@@ -6216,7 +6259,7 @@ const server = http.createServer(async (req, res) => {
         interrupted: stops.some((s) => s.stopped === true),
         engineCancelled: stops.filter((s) => s.stopped === true).length,
       };
-      return json(res, 200, { ...jobs.snapshot(), artStopped });
+      return json(res, 200, { ...jobs.snapshot(), artStopped, plansPaused });
     }
 
     // Community feed. Proxied so the UI never talks to aiplay directly (CORS, and
@@ -6481,7 +6524,19 @@ const server = http.createServer(async (req, res) => {
 
     /** Video clips — enable flag and manual trigger. */
     if (p === "/api/video" && req.method === "POST") {
-      const b = await readBody(req);
+      /* A DOOR THAT CHOOSES WHAT RUNS: the engine, and a render. Studio's own
+       * page or a local client only (sameOriginLocalJson, which the page's,
+       * make_clip's and the Video Lab's posts all satisfy), and a body capped
+       * before it is parsed: a request is a description and a few names. */
+      if (!sameOriginLocalJson(req)) {
+        return json(res, 403, { error: "Video settings and renders are only accepted from Studio's own page or a local client." });
+      }
+      let b;
+      try { b = await readBody(req, 1024 * 1024); }
+      catch (err) {
+        return json(res, err.tooBig ? 413 : 400, { error: err.tooBig
+          ? `A video request is at most 1 MB (${err.message}). Nothing was queued.` : "could not read that body as JSON" });
+      }
       if (b.action === "enable") {
         config.video.enabled = !!b.value;
         // Switching the model off must not leave `when` pointing at a mode that
@@ -6574,6 +6629,24 @@ const server = http.createServer(async (req, res) => {
           extensionSeconds: Number((ext / (probe.fps || 24)).toFixed(2)),
           ...art.status(),
         });
+      }
+      /* THE PLAN WITHOUT THE RENDER (server/video-plain.js videoPlan): what a
+       * `create` with this body would run on this card, the size, the steps,
+       * sparse attention, what the size needs, and every warning or refusal it
+       * would carry. Stages nothing and queues nothing, and answers with video
+       * switched off too. The Video screen's Advanced line and make_clip's
+       * check_only read it, so both say what a render does before it is asked
+       * for. Reference names are counted, not staged. */
+      if (b.action === "check") {
+        const gate = await videoWeightsGate();
+        if (gate.error) return json(res, 200, { ok: false, refusal: gate.error, warnings: [] });
+        /* Frames and a control video are named, not staged: the plan only
+         * needs to know they ride. */
+        const plan = videoPlan(b, { engineKey: gate.engine, eng: videoEngine(gate.engine),
+          h3: h3Status({ gpu: gpuStatus(), ram: ramStatus() }),
+          framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
+          control: !!(b.sourceVideo || b.source_video) });
+        return json(res, 200, { ok: !plan.refusal, engine: gate.engine, enabled: !!config.video.enabled, ...plan });
       }
       if (b.action === "create") {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
@@ -6757,21 +6830,20 @@ const server = http.createServer(async (req, res) => {
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
-        /* References are an H3 capability — the ref2va conditioning path does
-         * not exist in the LTX graph. Refusing beats silently rendering
-         * without them, which would look like the model ignoring the user. */
-        /* References stay H3-only, but the reason is now the MODEL, not this
-         * route: every LTX node that takes an image pins it to a frame index —
-         * there is no non-frame-pinned reference input anywhere in the LTX
-         * family, and the one IC-LoRA that adds it is 2.3-only and gated. The
-         * message points at the real substitute rather than just saying no. */
-        if ((refImages.length || refAudios.length) && eng !== "h3") {
-          return json(res, 400, {
-            error: eng === "fasth3"
-              ? "References need MiniMax H3. FastH3 was distilled without them; switch the engine to MiniMax H3 for this clip."
-              : "References need MiniMax H3 — LTX has no reference input (a model limit, not a setting). On LTX: compose the identity still first (Images can edit with references), then use it as the opening frame.",
-          });
-        }
+        /* THE PLAN (server/video-plain.js videoPlan), on the references that
+         * really staged. References are an H3 capability: FastH3 was distilled
+         * without them, and every LTX node that takes an image pins it to a
+         * frame index. So on those a clip WITH references is refused, in the
+         * sentence the Video screen's reference slots and make_clip show,
+         * rather than rendered without them. A <Picture n> / <Audio n> nothing
+         * answers is taken out of the description and said, never sent as
+         * plain words; a Fast render with references runs the reference
+         * build's own step count; a render naming no size gets this card's
+         * size. Each change is a warning in the reply. */
+        const plan = videoPlan({ ...b, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
+          h3: h3Status({ gpu: gpuStatus(), ram: ramStatus() }), framed: !!(firstFrame || lastFrame),
+          control: !!control.video });
+        if (plan.refusal) return json(res, 400, { error: plan.refusal.error, reason: plan.refusal.reason });
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
          * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
          * the vocal while the output plays the real track (measured r=0.984
@@ -6802,7 +6874,8 @@ const server = http.createServer(async (req, res) => {
             engine: eng,
             /* Undefined unless something was named — see videoModelPatch. */
             models: picked.models || undefined,
-            prompt,
+            // The plan's: unanswered reference tags taken out (and said).
+            prompt: plan.prompt,
             firstFrame,
             lastFrame,
             // Only meaningful on the guided path, which needs both ends. The
@@ -6833,17 +6906,24 @@ const server = http.createServer(async (req, res) => {
              * four explicitly — so the default path had never once run. The
              * first caller to omit them was an MCP client, and all four of its
              * clips failed validation before a single frame was rendered. */
-            seconds: Math.min(Math.max(Number(b.seconds) || videoEngine(eng).seconds, 1), 20),
+            /* The plan's, which clamps as this did and, for a render that names
+             * no size, starts at this card's tier (and says so). */
+            seconds: plan.seconds,
             /* 3840, not 1920. Native resolution retains detail an upscaler can
              * only invent, so the ceiling is the hardware's rather than a round
              * number's — and the honest limit here is TIME and free system RAM,
              * not VRAM: both engines stream weights from pinned host memory.
              * The render deadline already scales with pixels x frames, so a big
              * ask gets a big budget instead of being killed mid-render. */
-            width: Math.min(Math.max(Number(b.width) || videoEngine(eng).width, 256), 3840),
-            height: Math.min(Math.max(Number(b.height) || videoEngine(eng).height, 256), 3840),
-            // A fixed-schedule distillation (FastH3) records the steps it will run.
-            steps: videoEngine(eng).fixedSteps || Math.min(Math.max(Number(b.steps) || videoEngine(eng).steps || 20, 2), 40),
+            width: plan.width,
+            height: plan.height,
+            // A fixed-schedule distillation (FastH3) records the steps it will run;
+            // the reference path runs its build's own count (the plan says so).
+            steps: videoEngine(eng).fixedSteps || plan.steps,
+            /* H3's sparse attention for this render ("sol-attn" | "off"); unset
+             * means the saved setting. art.js videoSparse() decides with the
+             * engine's answer, and the graph takes it on the Fast setting only. */
+            sparse: b.sparse === "sol-attn" || b.sparse === "off" ? b.sparse : undefined,
             keepAudio: b.keepAudio !== false,
             // FastH3's dense attention backend; anything else means its default.
             attention: b.attention === "kitchen" || b.attention === "pytorch" ? b.attention : undefined,
@@ -6868,7 +6948,7 @@ const server = http.createServer(async (req, res) => {
           },
         });
         if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
-        return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
+        return json(res, 200, { ok: true, id, job: job && { id: job.id }, warnings: plan.warnings, ...art.status() });
       }
 
       if (b.action === "engine") {

@@ -23,7 +23,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { config } from "./config.js";
+import { config, loraStepsOf } from "./config.js";
 /* Data only — the catalogue's `gated` flag and the engine->capability map.
  * models.js imports config.js and nothing else from this tree, so there is
  * no cycle here. */
@@ -1850,6 +1850,55 @@ export function h3TurboLoraFor(eng, { steps, refs = false } = {}) {
   return { turbo, use4, use3, lora: lora ?? null };
 }
 
+/**
+ * WHICH SPARSE ATTENTION A RENDER CARRIES, if any: the node-81 recipe or null.
+ *
+ *   FastH3   its own VSA (config `sparseAttention`), always: it was trained
+ *            against it.
+ *   H3       sol-attn (config `solAttn`, h3tier.js H3_SOL_ATTN) on the Fast
+ *            setting's plain path only: the TaoMate 3-step file, text or
+ *            frames, where the H3 lab measured it (1.15x on the wall, a
+ *            slightly softer picture). Standard, Best, the reference path, a
+ *            continuation and video-to-video stay dense: none of them was
+ *            measured with it. `sparse` is the per-render choice ("sol-attn"
+ *            | "off"); unset reads the saved setting (config `sparse`).
+ *   LTX      none.
+ *
+ * One reader for the graph below and for /api/video's check, so the page says
+ * what the graph does.
+ */
+export function h3SparseFor(eng, { steps, refs = false, sparse, continuation = false, control = false } = {}) {
+  if (eng?.sparseAttention) return eng.sparseAttention;
+  const want = sparse ?? eng?.sparse ?? "off";
+  if (want !== "sol-attn" || !eng?.solAttn || continuation || control) return null;
+  const { turbo, use3, lora } = h3TurboLoraFor(eng, { steps, refs });
+  return turbo && use3 && !!lora && lora === eng.turboLora3 ? eng.solAttn : null;
+}
+
+/**
+ * THE STEP COUNT A REFERENCE RENDER RUNS, matched to the file that loads.
+ *
+ * The Fast chip is 3 steps, for TaoMate, which is fl2v-only; with references
+ * the 4-step reference build loads instead, a distillation made for another
+ * count (config.js turboLora4: "a different one used wrongly"). So in the
+ * Fast band (at or under turbo4MaxSteps, where that 4-step build is the file
+ * that loads) a count BELOW the loaded file's own is raised to it, and the
+ * caller says so: the Video screen before the render, /api/video and
+ * make_clip in the reply. Nothing else moves: the 6-7 band on the 8-step
+ * file and 8 on a 4-step file keep the page's own ⚠, a count at or above
+ * the file's is left alone, and the text/frames path is untouched.
+ *
+ * @returns {{steps:number, asked:number, raised:boolean, lora:string|null, made:number|null}}
+ */
+export function h3MatchedSteps(eng, { steps, refs = false } = {}) {
+  const asked = Number(steps ?? eng?.steps);
+  if (!refs || !Number.isFinite(asked)) return { steps: asked, asked, raised: false, lora: null, made: null };
+  const { turbo, use4, lora } = h3TurboLoraFor(eng, { steps: asked, refs: true });
+  const made = turbo && lora ? loraStepsOf(lora) : null;
+  const raised = use4 && Number.isFinite(made) && made > asked;
+  return { steps: raised ? made : asked, asked, raised, lora: lora ?? null, made: made ?? null };
+}
+
 /** LightX2V's turbo Comfy recipe uses Euler; quality and TaoMate retain
  * their measured sampler. A saved explicit sampler always wins. */
 export function h3SamplerFor(eng, opts = {}) {
@@ -1923,7 +1972,12 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * config: art.js videoAttention() decides (H3 through h3Attention(), "ck" or null;
                                 * FastH3 from its per-render picker, always a node); a caller that says nothing
                                 * gets no node. */
-                               attention = null }) {
+                               attention = null,
+                               /* H3's sparse attention for THIS render: "sol-attn" | "off", or
+                                * undefined for the saved setting. Only the Fast setting takes
+                                * it (h3SparseFor); art.js videoSparse() turns it into "off"
+                                * where the engine lacks the node. FastH3 ignores it. */
+                               sparse = undefined }) {
   const v = { ...config.video, ...(config.video.engines[engine] || config.video.engines.h3), ...(models || {}) };
   /* A distillation with a trained schedule runs at that schedule whatever the
    * slider says: FastH3 is 8 steps, and 20 of them is not a better FastH3. */
@@ -2078,7 +2132,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const sampler = h3SamplerFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const shiftV = shift.video, shiftA = shift.audio;
-  /* SPARSE ATTENTION, FastH3 only (config `sparseAttention`). ComfyUI's templates chain
+  /* SPARSE ATTENTION: FastH3's VSA always, H3's sol-attn on the Fast setting only
+   * (h3SparseFor, above; config `sparseAttention` / `solAttn`). ComfyUI's templates chain
    * shift -> ModelAttentionBackend -> BlockSparseAttention; here the dense backend is
    * node 85 below, the one H3 uses, before the shift. The shift copies transformer_options
    * through, and BlockSparseAttention wraps whatever override is on the model when it is
@@ -2086,15 +2141,21 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * is the same. 81 MUST follow the shift: it turns start/end_percent into sigmas from the
    * model's model_sampling at patch time. The dense backend is the one the person picked
    * (art.js videoAttention() always names one for FastH3), never the launcher's flag. */
-  const sparse = v.sparseAttention || null;
-  const sparseNodes = sparse ? {
+  /* One node 81 per graph: an engine with its own (FastH3) never takes H3's.
+   * VSA and SLA take a keep percentage, sol-attn a tau (the node's DynamicCombo
+   * children, addressed dotted as ref_images' are). */
+  const sparseCfg = h3SparseFor(v, { steps: steps ?? v.steps, refs: onRefPath, sparse,
+    continuation: !!cont, control: !!(controlVideo && controlPatch) });
+  const sparseNodes = sparseCfg ? {
     81: { class_type: "BlockSparseAttention", inputs: { model: ["6", 0],
-      selection: sparse.method, "selection.keep_percent": sparse.keepPercent,
-      start_percent: sparse.startPercent, end_percent: sparse.endPercent, dense_blocks: "",
-      min_tokens: sparse.minTokens, extra_tokens: sparse.extraTokens,
-      sink_conditioning: sparse.sinkConditioning, verbose: false } },
+      selection: sparseCfg.method,
+      ...(sparseCfg.keepPercent != null ? { "selection.keep_percent": sparseCfg.keepPercent } : {}),
+      ...(sparseCfg.tau != null ? { "selection.tau": sparseCfg.tau } : {}),
+      start_percent: sparseCfg.startPercent, end_percent: sparseCfg.endPercent, dense_blocks: "",
+      min_tokens: sparseCfg.minTokens, extra_tokens: sparseCfg.extraTokens,
+      sink_conditioning: sparseCfg.sinkConditioning, verbose: false } },
   } : {};
-  const SAMPLE_MODEL = sparse ? ["81", 0] : ["6", 0];
+  const SAMPLE_MODEL = sparseCfg ? ["81", 0] : ["6", 0];
   /* ── VIDEO-TO-VIDEO ──────────────────────────────────────────────────────
    *
    * A control video drives the render frame by frame instead of one opening

@@ -25,6 +25,10 @@ import {
 } from "./store.js";
 import { lrcToLines } from "./lyricLines.js";
 import { segmentSong, resnapSegment, computeCoverage } from "./segmentation.js";
+/* Studio's own pass over the port's cut: a line longer than the longest scene
+ * is split rather than losing its tail, and a breath between two scenes is
+ * closed, so no sung second is left without a picture (cutfill.js). */
+import { closeCutHoles } from "./cutfill.js";
 import { generateAsset, generateClip, pickTake, buildTimeline, crimeBoard } from "./generate.js";
 import { readTimeline } from "./timeline_read.js";
 import { regenStale } from "./regen.js";
@@ -49,7 +53,18 @@ import { meshAsset, rigAsset, meshCatalogue } from "../mesh/asset.js";
  * together rather than discovering the second one months later. */
 import { controlCatalogue, controlRender } from "./control.js";
 import { shotPlan } from "./moves.js";
-import { shotRecord, applyShotEdit, findSegment } from "./shot.js";
+import { shotRecord, applyShotEdit, findSegment, setLtxReady, ltxReadyNow } from "./shot.js";
+/* THE MUSIC VIDEO FOLLOWS THE CARD: the size list and the default longest
+ * scene (sizes.js), the matched step count (clipsteps.js), and the card
+ * reading they are judged against (gpu.js, the reading the status bar takes). */
+import {
+  sizeChoices, sceneCutFor, aspectNote, sizeOfBrief, MV_SIZE_IDS, MV_ASPECTS, MV_CLIP_CEILING_SEC,
+} from "./sizes.js";
+/* What LTX really renders a size at (it floors each side to a multiple of 64),
+ * the function the graph itself asks, so the brief can say it. */
+import { videoSizeFor } from "../workflow.js";
+import { stepChoices } from "./clipsteps.js";
+import { gpuStatus, ramStatus } from "../gpu.js";
 /* THE PLAN OBJECT — set up · go through · approve or change · start.
  *
  * plan.js is pure and knows nothing about a request or a disk; planrun.js owns
@@ -76,7 +91,7 @@ import { SPENDING_ACTIONS, CONTROL_VIA, CONTROL_TOOLS, controlMeasuredFrom } fro
  * server/mv/control.js's dispatch, which is the one door. */
 import { engine } from "../engine/client.js";
 import {
-  createPlanRunner, toolTable, loopbackApi, plannableFrom, isRunning, runState,
+  createPlanRunner, toolTable, loopbackApi, plannableFrom, isRunning, runState, anyRunning,
   PLAN_ACTOR,
 } from "./planrun.js";
 
@@ -213,6 +228,59 @@ function renderPrompt(doc, segmentId, promptSource, prompt) {
 
 export function createMvRoutes(deps) {
   const { json, readBody, library, art, beatsFor, LRC_DIR } = deps;
+
+  /* WHAT THIS CARD AND THIS DISK GIVE A PROJECT. `cardReading` is injectable so
+   * a test can be any card; the server's is the reading the status bar takes.
+   * `ltxReady` (index.js passes videoReady("ltx")) decides where "hybrid"
+   * sends a scene with no cast: LTX only when LTX is on this PC (shot.js).
+   * Cached for five seconds, because a plan prices every scene through it. */
+  const cardReading = typeof deps.cardReading === "function"
+    ? deps.cardReading : () => ({ gpu: gpuStatus(), ram: ramStatus() });
+  if (typeof deps.ltxReady === "function") {
+    let at = 0, last = true;
+    setLtxReady(() => {
+      if (Date.now() - at > 5000) { at = Date.now(); last = deps.ltxReady() !== false; }
+      return last;
+    });
+  }
+  /** The block the brief's controls are drawn from, and mv_open_project returns. */
+  const cardFit = (doc) => {
+    if (doc?.kind === "audiobook") return null;
+    const ltxHere = ltxReadyNow();
+    const sizes = sizeChoices(cardReading());
+    /* WHAT LTX MAKES OF EACH SIZE. H3 renders the size it is given; LTX floors
+     * each side to a multiple of 64, so 960x544 comes out 960x512. Said on the
+     * size itself, for a project whose scenes can land on LTX. */
+    for (const c of sizes.choices) {
+      const l = videoSizeFor("ltx", c.width, c.height);
+      c.ltx = l.width !== c.width || l.height !== c.height ? { width: l.width, height: l.height } : null;
+      c.ltxLine = c.ltx ? `LTX renders this size at ${l.width}x${l.height}: it floors each side to a multiple of 64.` : null;
+    }
+    const cut = sceneCutFor(doc?.brief);
+    const used = doc?.cutUsed || null;
+    return {
+      sizes,
+      size: sizeOfBrief(doc?.brief).id,
+      aspectNote: aspectNote(doc?.brief),
+      /* The default longest scene and where it comes from, and a sentence when
+       * the scenes on file were cut at another default (the size or the
+       * engine changed after the cut). A number the person typed is theirs. */
+      cut: {
+        maxClipSec: cut.maxClipSec, why: cut.why, hardCeilingSec: MV_CLIP_CEILING_SEC,
+        madeWithSec: used?.maxClipSec ?? null,
+        note: used && !used.chosen && doc?.segments?.length && used.maxClipSec !== cut.maxClipSec
+          ? `These scenes were cut with a ${used.maxClipSec} s longest scene; with this brief the default is `
+            + `${cut.maxClipSec} s. Cut the song again on Upload & analyze to follow it (boards and clips made `
+            + "so far are then marked stale)."
+          : null,
+      },
+      steps: stepChoices(),
+      ltxReady: ltxHere,
+      hybridLine: ltxHere
+        ? "hybrid: H3 for scenes with cast, LTX for the rest"
+        : "hybrid: LTX is not on this PC, so every scene renders on H3 (scenes without cast too)",
+    };
+  };
 
   /* ══════════════════════════════════════════════════════════════════════════
    * THE PLAN OBJECT — the seam
@@ -361,7 +429,9 @@ export function createMvRoutes(deps) {
    * actually runs.
    */
   const planRunner = createPlanRunner({
-    tools: toolTable(loopbackApi({ port: config.uiPort })),
+    /* `deps.planTools` is a test's table, so a plan can run without posting
+     * to a real server on this machine's port. */
+    tools: deps.planTools ?? toolTable(loopbackApi({ port: config.uiPort })),
     updateProject,
     noteRun,
     provenance: prov,
@@ -506,6 +576,97 @@ export function createMvRoutes(deps) {
     };
   }
 
+  /**
+   * THIS PROJECT'S CLIPS, OUT OF THE APP'S QUEUE AND OFF THE ENGINE.
+   *
+   * A clip job is named `clip:mv_<slug>_<segment id>_<time>` (generate.js),
+   * so the project's own segment ids pick out its jobs and nobody else's.
+   * Waiting ones are dropped (generate.js's wait notices a dropped job). The
+   * one rendering is cancelled by the engine's run id, the way the rail's
+   * Stop cancels its own (index.js /api/cancel): the art queue runs one job
+   * at a time, so while it is ours the engine's one art.* run is ours too. A
+   * job the art queue has taken but not yet handed to the engine (art.js may
+   * first unload the music model) is asked about again, once a second for up
+   * to ten seconds, so a Stop pressed in that gap still lands; past that the
+   * answer says the clip could not be reached rather than claiming it was.
+   */
+  async function stopClipsOf(slug, doc) {
+    /* The engine door, injectable so a test never reaches a real engine. */
+    const door = deps.engineDoor ?? engine;
+    const prefixes = (doc?.segments || []).map((sg) => `clip:mv_${slug}_${sg.id}_`);
+    const ours = (f) => prefixes.some((p) => String(f || "").startsWith(p));
+    let dropped = 0, cancelled = 0, was = null;
+    for (const f of [...new Set((art?.queue || []).map((j) => j.file))]) {
+      if (ours(f)) dropped += art.drop(f).removed || 0;
+    }
+    for (let tries = 0; tries < 10; tries++) {
+      const cur = art?.status?.().art?.current;
+      if (!cur || !ours(cur.file)) break;
+      was = cur.title || cur.file;
+      const live = await door.status().catch(() => ({ running: [] }));
+      const mine = (live.running || []).filter((x) => String(x.via || "").startsWith("art."));
+      if (mine.length) {
+        const stops = await Promise.all(mine.map((x) => door.cancelRun({ runId: x.runId }).catch(() => ({}))));
+        cancelled += stops.filter((x) => x.stopped === true).length;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, deps.stopRetryMs ?? 1000));
+    }
+    return { dropped, cancelled, was };
+  }
+
+  /** The plan card's Stop, in one sentence, from what stopClipsOf really did
+   *  and what the plan was running. Never "cancelled" unless it was. */
+  function stopWords(c, tool) {
+    if (!c) return "";
+    const isClip = !tool || /clip|regen/.test(String(tool));
+    const bits = [];
+    if (c.cancelled) bits.push(`The clip it was rendering${c.was ? ` (${c.was})` : ""} is cancelled on the graphics card.`);
+    else if (c.was) bits.push(`The clip being handed to the graphics card (${c.was}) could not be reached in time, so it renders to the end.`);
+    if (c.dropped) bits.push(c.dropped === 1 ? "Its clip waiting in the queue is taken off it."
+      : `Its ${c.dropped} clips waiting in the queue are taken off it.`);
+    if (!c.cancelled && !c.was && !c.dropped) {
+      bits.push(isClip ? "No clip of this project was waiting or rendering."
+        : `The item it was running (${tool}) is not a clip, so it finishes; nothing after it runs.`);
+    }
+    return bits.join(" ");
+  }
+
+  /**
+   * THE RAIL'S STOP REACHES A WORKFLOW PLAN, AND PAUSES IT. index.js
+   * /api/cancel calls this, only when the rail's Stop asks (?plans=1), before
+   * it cancels the art queue, so a plan whose clip is stopped does not start
+   * its next item. The Music screen's Cancel and the Chat's Cancel post the
+   * same route without asking: they do not pause a plan themselves (a plan
+   * whose clip they cancel stops on that failure, as it always has).
+   *
+   * ⚠ PAUSED, NOT CANCELLED. A plan can hold a night of approvals; one press
+   * to kill a render must not throw them away. The item whose render is
+   * cancelled goes back to approved (planrun.js, pause with byStop), so Run on
+   * the Plan card carries on from it. The plan card's own Stop is the one
+   * that cancels a plan.
+   */
+  async function pauseRunningPlans() {
+    const out = [];
+    for (const slug of anyRunning()) {
+      const planId = runState(slug)?.planId;
+      if (!planId) continue;
+      try {
+        const r = await planRunner.pause(slug, planId, {
+          byStop: true,
+          /* Written before the cancel, so it claims nothing about it; the
+           * walk says which item's render was cancelled once it knows. */
+          note: "Paused by the Stop button. A render it cancelled goes back to approved, and "
+            + "everything approved stays approved: press Run to carry on.",
+        });
+        out.push({ slug, planId, paused: !!r?.changed });
+      } catch (err) {
+        out.push({ slug, planId, error: String(err?.message || err) });
+      }
+    }
+    return out;
+  }
+
   /** Shared by the GUI and MCP: attach a library track and read its timing. */
   async function analyze(slug) {
     return updateProject(slug, async (doc) => {
@@ -561,7 +722,19 @@ export function createMvRoutes(deps) {
   async function segment(slug, options = {}) {
     return updateProject(slug, (doc) => {
       if (!doc.totalDurationSec) throw new Error("Analyze the song first.");
-      const segs = segmentSong(doc.lyricLines, doc.totalDurationSec, options);
+      /* The longest scene defaults to the brief's (sizes.js sceneCutFor: 8 s
+       * at full size, 5 s at the smaller sizes and High, 15 s for an LTX
+       * project), not the website segmenter's 15 s everywhere, which was a
+       * video vendor's audio limit and runs past anything H3 was measured at.
+       * A number sent wins. Then cutfill.js makes sure a shorter scene never
+       * costs picture: a long line is split, a breath is closed. */
+      const cutOpts = { maxClipSec: sceneCutFor(doc.brief).maxClipSec, ...options };
+      const segs = closeCutHoles(segmentSong(doc.lyricLines, doc.totalDurationSec, cutOpts),
+        doc.lyricLines, cutOpts);
+      /* Which longest scene this cut used, and whether a person chose it, so
+       * the brief can say when a later size or engine change moved the default
+       * away from the scenes on file (cardFit.cut.note). */
+      doc.cutUsed = { maxClipSec: cutOpts.maxClipSec, chosen: options.maxClipSec !== undefined };
       /* ⚠ Upstream deletes and re-inserts every segment without touching the
        * boards and clips that point at them, which silently orphans the whole
        * chain whenever anyone re-segments after a script exists. Version the
@@ -682,6 +855,12 @@ export function createMvRoutes(deps) {
         // Audiobook docs have no segments array at all — guard, don't assume.
         coverage: doc.segments?.length
           ? computeCoverage(doc.segments, doc.totalDurationSec) : [],
+        /* The sizes this card reaches and Studio's pick, the default longest
+         * scene, the step choices worded from the disk, and where hybrid
+         * sends a cast-less scene. The page draws the brief from it and an
+         * agent reads it here (mv_open_project); the judgements are all made
+         * on this side. */
+        cardFit: cardFit(doc),
       });
       return true;
     }
@@ -771,7 +950,12 @@ export function createMvRoutes(deps) {
       switch (action) {
         case "create": {
           const kind = b.kind === "audiobook" ? "audiobook" : "mv";
-          const doc = await createProject(b.title || "Untitled", kind);
+          /* A NEW VIDEO STARTS AT THE CARD'S SIZE: the size of the card's H3
+           * tier (sizes.js, from h3tier.js). Shown and changeable in the
+           * brief; no reading, or a card H3 is not offered on, keeps full. */
+          const pick = kind === "mv" ? sizeChoices(cardReading()).cardPick : null;
+          const doc = await createProject(b.title || "Untitled", kind,
+            pick ? { brief: { qualityMode: pick } } : {});
           return json(res, 200, { ok: true, slug: doc.slug, project: doc }), true;
         }
 
@@ -831,6 +1015,13 @@ export function createMvRoutes(deps) {
           const opts = {};
           for (const k of ["maxClipSec", "minClipSec", "leadInSec", "instrumentalGapSec"]) {
             if (Number.isFinite(b[k])) opts[k] = Number(b[k]);
+          }
+          /* REFUSED, NOT CLAMPED. A scene longer than the ceiling renders at
+           * the ceiling (generate.js), so the rest of it would have no picture;
+           * a longest scene under a second is not a scene. */
+          if (opts.maxClipSec !== undefined && !(opts.maxClipSec >= 1 && opts.maxClipSec <= MV_CLIP_CEILING_SEC)) {
+            throw new Error(`maxClipSec must be from 1 to ${MV_CLIP_CEILING_SEC} seconds: ${MV_CLIP_CEILING_SEC} s is the `
+              + "longest one clip renders, and a longer scene would leave the rest of it without a picture.");
           }
           const doc = await segment(safe(b.slug), opts);
           return json(res, 200, {
@@ -943,18 +1134,21 @@ export function createMvRoutes(deps) {
                * project that names it must not be refused (INSTALLER_PLAN S5). */
               imageEngine: ["flux2", "ideogram", "checkpoint", "qwen-image-2.1"],
               baseScale: ["auto", "full"],
-              qualityMode: ["budget", "recommended", "high"],
-              /* ⚠ MATCHES THE CONTROL, which offers five. An earlier draft of
-               * this list had two and would have rejected three values the UI
-               * has always sent — validation that refuses the app's own
-               * dropdown is worse than none. */
-              aspectRatio: ["16:9", "9:16", "1:1", "4:3", "21:9"],
+              /* The size list (sizes.js): the card tiers and the two older sizes. */
+              qualityMode: MV_SIZE_IDS,
+              /* ⚠ MATCHES THE CONTROL, which offers two now. It offered five,
+               * and 1:1, 4:3 and 21:9 were accepted here and then rendered as
+               * 16:9 1344x768 by renderSize without a word. Validation that
+               * accepts a shape the renderer cannot make is the same lie as
+               * one that refuses the app's own dropdown. */
+              aspectRatio: MV_ASPECTS,
             };
             for (const k of allowed) {
               if (!b.brief || b.brief[k] === undefined) continue;
               const v = b.brief[k];
               if (ENUMS[k] && v !== null && !ENUMS[k].includes(String(v))) {
-                throw new Error(`brief.${k} must be one of ${ENUMS[k].join(", ")} — got ${JSON.stringify(v)}`);
+                throw new Error(`brief.${k} must be one of ${ENUMS[k].join(", ")} — got ${JSON.stringify(v)}`
+                  + (k === "aspectRatio" ? ". Studio renders only these two shapes." : ""));
               }
               if (k === "videoSteps" && v !== null
                   && (!Number.isInteger(Number(v)) || Number(v) < 2 || Number(v) > 40)) {
@@ -2064,9 +2258,9 @@ export function createMvRoutes(deps) {
            *
            * pause lets the render in flight finish, exactly as batch.js does:
            * killing a nearly-complete H3 clip throws away twenty minutes for
-           * nothing, and there is no cancel path into the renderer from here
-           * anyway. stop cancels the PLAN and says so rather than letting a
-           * button imply a capability the code has not got. */
+           * nothing. stop cancels the PLAN and this project's clip in flight
+           * (stopClipsOf), and its note says what was really reached: a clip
+           * that could not be, or a picture item, is said to finish. */
           const slug = safe(b.slug);
           if (!slug) throw new Error("bad slug");
           const op = String(b.op ?? "start");
@@ -2102,10 +2296,31 @@ export function createMvRoutes(deps) {
             note = "Pausing. The render in flight finishes first, then the run stops; "
               + "the rest stay approved and resume carries on from there.";
           } else {
-            const r = await planRunner.stop(slug, cur0.id);
-            note = `Stopped — ${r.skipped.length} item${r.skipped.length === 1 ? "" : "s"} skipped. `
-              + "A clip already on the GPU still finishes: there is no cancel path into the "
-              + "renderer from here.";
+            /* STOP MEANS NOW, and in flight is three queues. The plan is
+             * marked stopped FIRST, so the runner cannot start its next item
+             * when the clip it is waiting on fails; then this project's clip
+             * is taken out of the app's queue and, if it is rendering,
+             * cancelled on the engine by its run id. Pause is the one that
+             * lets a render finish. */
+            const walking = isRunning(slug);
+            /* The item in flight, so the sentence can say a picture or a
+             * Blender pass finishes (only clips can be cancelled from here). */
+            const itemId = runState(slug)?.itemId;
+            const tool = itemId ? (cur0.items || []).find((i) => i.id === itemId)?.tool ?? null : null;
+            const r = await planRunner.stop(slug, cur0.id, walking ? {
+              note: "Stopping: everything still approved is skipped, and this project's clip is being "
+                + "taken off the queue and the graphics card.",
+            } : {});
+            const c = walking ? await stopClipsOf(slug, doc0) : null;
+            const said = stopWords(c, tool);
+            /* WRITTEN AFTER, FROM WHAT HAPPENED: the note above is only ever
+             * seen for the few seconds stopClipsOf takes. */
+            if (walking) {
+              await planRunner.note(slug, cur0.id, `Stopped. Everything still approved is skipped. ${said}`)
+                .catch(() => {});
+            }
+            note = `Stopped — ${r.skipped.length} item${r.skipped.length === 1 ? "" : "s"} skipped.`
+              + (said ? ` ${said}` : "");
           }
           /* Serialised, because the runner is ALREADY WALKING behind the start
            * above and a raw read here lands on top of its first write. */
@@ -2163,5 +2378,5 @@ export function createMvRoutes(deps) {
     }
   }
 
-  return { handle, analyze, segment };
+  return { handle, analyze, segment, pauseRunningPlans };
 }

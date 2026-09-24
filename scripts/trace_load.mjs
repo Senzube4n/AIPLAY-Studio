@@ -94,6 +94,13 @@ try {
    * failure that hides every other failure. */
   await import(new URL("../web/engine.js", import.meta.url));
   console.log("engine.js evaluated and mounted with NO top-level throw");
+  /* THE VIDEO SCREEN'S CARD MODULE. Its own <script> as well, booting on
+   * import, and app.js calls into it with every status, so a throw here would
+   * leave the size chips, the fit line and the RAM note silently absent. */
+  await import(new URL("../web/vidfit.js", import.meta.url));
+  if (typeof globalThis.aiplayVidFit !== "function") throw new Error("vidfit.js did not register aiplayVidFit");
+  globalThis.aiplayVidFit({ config: { video: {} }, art: {} });
+  console.log("vidfit.js evaluated, booted and took a status with NO top-level throw");
 } catch (e) {
   console.log("TOP-LEVEL THROW:\n");
   console.log(e && e.stack ? e.stack.split("\n").slice(0, 8).join("\n") : String(e));

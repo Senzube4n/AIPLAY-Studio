@@ -22,7 +22,10 @@
  * clip render was "a pure function of prompt, size, engine, seconds, seed and a
  * list of pictures". It is not, and the claim cost real fidelity:
  *
- *   steps      generate.js sends `doc.brief.videoSteps` (default 8), and the
+ *   steps      generate.js sends `doc.brief.videoSteps` (default: the count
+ *              matched to the speed-up files on the OWNER's disk, which says
+ *              nothing about the lender's, so a lend left on default asks for
+ *              the usual 8; see DEFAULT_STEPS), and the
  *              step count SELECTS THE DISTILLATION LoRA in workflow.js — 4 and
  *              8 are different turbo LoRAs and 20 is the bare model with none.
  *              Projects on this disk are split 4 / 8 / 20 (porcelain is at 20).
@@ -60,6 +63,10 @@
  * First, this module is allowed to import node builtins and ../config.js and
  * nothing else — it must not drag the MV routes, the store, the art queue or
  * the library into the code path that answers a stranger's network request.
+ * (Two pure helpers are the exception: ../mv/sizes.js, one list, because a
+ * copy of a list is the drift this paragraph warns about, reading only
+ * ../h3tier.js, pure too; and ../safety/lineage.js, the minors fingerprint a
+ * lender's check reads, which reads only ../safety/minors.js.)
  * Second, a packet is a WIRE FORMAT: a packet written last month has to still
  * mean what it said, and it says a finished string rather than a recipe for
  * one, so a later change to clipPrompt cannot retroactively change what a
@@ -95,6 +102,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { projectRowFingerprint } from "../safety/lineage.js";
+import { renderSizeOf } from "../mv/sizes.js";
 
 /* ─────────────────────────────────────────────────────── refusals */
 
@@ -168,27 +176,31 @@ const declaredKind = (doc, name) =>
  * a render this house has never run. */
 const REF_CAP = 9;
 
-/* What a Studio renders at when the packet does not say. Mirrors the default in
- * server/mv/generate.js's request build, and it is only used to decide whether
- * `note` has to warn a human that this project is NOT at the default. */
+/* What a lend asks for when the owner's brief names no count, and what `note`
+ * compares against to warn a human that this scene is NOT at it.
+ *
+ * ⚠ NOT THE OWNER'S MATCHED COUNT. At home a brief left on default runs the
+ * count the speed-up files on the OWNER's disk were made for
+ * (server/mv/clipsteps.js). That count describes the wrong machine for a lend:
+ * a borrower with no H3 files at all works out 4, and a lender with the 8-step
+ * reference file would then run a scene with cast on its 4-step file, a
+ * downgrade nobody chose. So a lend left on default asks for the usual 8, as
+ * it always has, and the lender's own accept check (lending.js speedUpCheck)
+ * says when 8 does not match the files on the lender's PC. An owner who wants
+ * another count names it in the brief or pins it on the order. */
 const DEFAULT_STEPS = 8;
 
 /**
- * The delivered size, per quality tier. A copy of renderSize() in
- * server/mv/generate.js, and the reason its numbers look wrong is worth
- * repeating here where a lender will read them: ⚠ LTX floors each axis to
- * floor(n / 64) * 64, so the tall pair is 1088 and not 1080 — asking for 1080
- * silently returns 1024. Those 8 rows are generated content, not padding. A
- * lender who "corrects" the height to 1080 returns a smaller render than the
- * owner asked for.
+ * The delivered size, per quality tier: server/mv/sizes.js, the one list
+ * generate.js renders from too (it used to be a copy here, and a copy of a
+ * list that grew the card tiers would have sent lenders the old sizes). The
+ * reason its numbers look wrong is worth repeating here where a lender will
+ * read them: ⚠ LTX floors each axis to floor(n / 64) * 64, so the tall pair is
+ * 1088 and not 1080 — asking for 1080 silently returns 1024. Those 8 rows are
+ * generated content, not padding. A lender who "corrects" the height to 1080
+ * returns a smaller render than the owner asked for.
  */
-function renderSize(doc) {
-  const budget = doc.brief?.qualityMode === "budget";
-  const hi = doc.brief?.qualityMode === "high";
-  return (doc.brief?.aspectRatio === "9:16")
-    ? (budget ? [480, 864] : hi ? [1088, 1920] : [768, 1344])
-    : (budget ? [864, 480] : hi ? [1920, 1088] : [1344, 768]);
-}
+const renderSize = (doc) => renderSizeOf(doc?.brief);
 
 /**
  * Hash one asset file and measure it.

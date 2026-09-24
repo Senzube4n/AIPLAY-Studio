@@ -43,7 +43,7 @@
  * persistence is the routes' job and execution is planrun.js's.
  */
 import { randomUUID } from "node:crypto";
-import { resolveShot, findSegment } from "./shot.js";
+import { resolveShot, findSegment, ltxReadyNow } from "./shot.js";
 import { renderSize, crimeBoard } from "./generate.js";
 import { videoSizeFor } from "../workflow.js";
 import { measuredMinutesPerClip, scanStale } from "./regen.js";
@@ -52,6 +52,7 @@ import {
   CONTROL_TOOLS, controlMinutes,
   tableMinutes, flatMinutes, humanMinutes, stepClassOf, trapBand, loadedLoraSteps,
 } from "./plancost.js";
+import { clipStepsFor } from "./clipsteps.js";
 
 export const PLAN_V = 1;
 
@@ -261,8 +262,12 @@ export function qualityLine(doc) {
    * h3 under hybrid — the expensive branch is the one whose size matters. */
   const engineForSize = mode === "ltx" ? "ltx" : "h3";
   const size = videoSizeFor(engineForSize, w, h);
-  const steps = brief.videoSteps ?? null;
   const castRefs = brief.castRefs !== false;
+  /* "default" is priced as what it RUNS: the count the speed-up files on this
+   * disk were made for (clipsteps.js defaultClipSteps), as generate.js sends
+   * it. Read as null it used to be classed as the bare 20-step model. */
+  const stepsSet = brief.videoSteps ?? null;
+  const steps = clipStepsFor(brief, { refs: castRefs && mode !== "ltx" });
   const stepClass = stepClassOf(steps, { refs: castRefs });
 
   const traps = [];
@@ -280,10 +285,13 @@ export function qualityLine(doc) {
     traps.push({
       kind: "hybrid-routes-on-cast",
       level: "info",
-      msg: "hybrid sends any scene carrying a named CHARACTER to H3 and everything else to LTX. "
-        + "One imported character can therefore qualify every scene for the expensive path and "
-        + "turn a twenty-minute render into an overnight one — read the per-item engine below, "
-        + "it is resolveShot's own answer and not a guess.",
+      msg: (ltxReadyNow()
+        ? "hybrid sends any scene carrying a named CHARACTER to H3 and everything else to LTX. "
+          + "One imported character can therefore qualify every scene for the expensive path and "
+          + "turn a twenty-minute render into an overnight one"
+        : "hybrid sends a scene with no cast to LTX only when LTX is on this PC, and it is not, so "
+          + "every scene renders on H3, the expensive path")
+        + " — read the per-item engine below, it is resolveShot's own answer and not a guess.",
       cite: "DIRECTING.md §4",
     });
   }
@@ -335,10 +343,18 @@ export function qualityLine(doc) {
     seconds: 5, pass: engineForSize === "ltx" ? "two" : undefined,
   });
 
-  const stepWords = steps == null ? "default steps" : `${steps} steps`;
+  const stepWords = stepsSet == null ? `${steps} steps (the default for the files on this PC)` : `${steps} steps`;
+  /* HYBRID SAYS WHAT IT DOES HERE: LTX takes the cast-less scenes only when it
+   * is on this PC (shot.js), and those scenes come out at LTX's own size,
+   * floored to 64 (960x544 renders 960x512), which is said beside H3's. */
+  const ltxHere = ltxReadyNow();
+  const ltxSize = mode === "hybrid" && ltxHere ? videoSizeFor("ltx", w, h) : null;
+  const ltxDiffers = ltxSize && (ltxSize.width !== size.width || ltxSize.height !== size.height);
   const line = [
-    mode === "hybrid" ? "hybrid (H3 where there is cast, LTX elsewhere)" : mode.toUpperCase(),
-    `${size.width}x${size.height}`,
+    mode === "hybrid"
+      ? (ltxHere ? "hybrid (H3 where there is cast, LTX elsewhere)" : "hybrid (LTX is not on this PC, so H3 for every scene)")
+      : mode.toUpperCase(),
+    `${size.width}x${size.height}` + (ltxDiffers ? ` (LTX scenes ${ltxSize.width}x${ltxSize.height})` : ""),
     stepWords,
     `references ${castRefs && mode !== "ltx" ? "ON" : "OFF"}`,
   ].join(" · ")
@@ -349,7 +365,7 @@ export function qualityLine(doc) {
     width: size.width, height: size.height,
     requested: { width: w, height: h },
     quantised: size.quantised, grid: size.grid,
-    steps, stepClass, castRefs,
+    steps, stepsSet, stepClass, castRefs,
     aspectRatio: brief.aspectRatio ?? null,
     qualityMode: brief.qualityMode ?? null,
     baseScale: brief.baseScale ?? null,
@@ -419,7 +435,7 @@ function perClipTable(doc, project) {
     .map((s) => Number(s.durationSec)).filter((n) => Number.isFinite(n) && n > 0);
   return tableMinutes({
     engine: project.engineForSize,
-    steps: doc.brief?.videoSteps ?? null,
+    steps: clipStepsFor(doc.brief, { refs: doc.brief?.castRefs !== false && project.engineForSize !== "ltx" }),
     refs: doc.brief?.castRefs !== false,
     width: project.width, height: project.height,
     seconds: avg.length ? avg.reduce((a, b) => a + b, 0) / avg.length : 5,
@@ -519,7 +535,7 @@ function estimateFor(doc, item, quality, measuredFor, project, measuredControl =
   }
   return tableMinutes({
     engine: quality.engine,
-    steps: doc.brief?.videoSteps ?? null,
+    steps: clipStepsFor(doc.brief, { refs: !!quality.useRefs }),
     refs: doc.brief?.castRefs !== false,
     width: quality.width, height: quality.height,
     seconds: quality.durationSec,

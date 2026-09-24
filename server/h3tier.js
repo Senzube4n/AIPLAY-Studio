@@ -47,13 +47,21 @@
  * The fit covers 7,040 to 57,456 tokens; longer clips at full size are
  * extrapolation, and the estimate says so (`inFittedRange`).
  *
- * NOTHING PICKS THE SIZE YET. The Video and Workflow screens still start at
- * 1344x768; wiring them to the tier is the next change. Until it lands every
- * sentence here that names a smaller size says how to set it by hand
- * (h3SetSizeByHand), and none claims Studio does it. When the wiring lands,
- * that function, h3TierSummary(), fit.js's FIT_STATES.smaller line, the
- * models_for_this_machine description and Home's first-run video line
- * (server/welcome/firstrun.js, "smaller") are the five places to reword.
+ * THE VIDEO SCREEN STARTS AT THE TIER (2026-09-24). Its size chips and its
+ * first size come from h3Status() (web/vidfit.js shows them), and /api/video
+ * gives a render that names no size the tier's size (h3StartSize). Every other
+ * size stays under Advanced. The Workflow screen's scenes render at the
+ * project's own size, which a NEW music video starts at from this table too
+ * (server/mv/sizes.js sizeChoices, the brief's size control), and a project
+ * keeps what it stored. So the sentences below speak of the Video screen only:
+ * h3SetSizeByHand (the name kept for its importers), h3TierSummary(), fit.js's
+ * FIT_STATES.smaller line, the models_for_this_machine description and Home's
+ * first-run video line (server/welcome/firstrun.js, "smaller").
+ *
+ * h3SizeFit() is the "this size needs about X GB free; you have Y" line the
+ * Video screen's Advanced size row and make_clip's check read: the fit above,
+ * for whatever size and length is asked, snapped to the grids the engine works
+ * on. The page never compares the two numbers itself.
  */
 
 /** The fitted line, and the one number added on top of it. */
@@ -68,6 +76,8 @@ export const H3_FIT = Object.freeze({
 
 /** H3's frame rate. The frame grid (17k + 5) is counted in these. */
 export const H3_FPS = 24;
+/** The pixel grid H3 works on: a side counts in steps of this (w/32 in the token count). */
+export const H3_GRID = 32;
 
 /** The only system RAM H3 was ever measured with. Every run filled it. The
  *  rows print it as the recommended RAM, and only it earns a recommendation. */
@@ -91,10 +101,58 @@ export const H3_AMD_NOTE = "No H3 render has been tested on an AMD card yet.";
 export const H3_ASK_A_FRIEND = "Ask a friend with a bigger machine to render it: Ask friend on the Video screen, "
   + "or on a scene in Workflow, prepares the recipe for their card.";
 
-/** How to set a tier's size until the Video screen does it (see the header). */
+/**
+ * THE LAB'S OTHER TWO VERDICTS, one copy each: config.js (h3.solAttn,
+ * fasth3.advanced), the Video screen's tooltips, the Video Lab's row and
+ * make_clip's descriptions all read these, so no second copy of a number or a
+ * sentence can drift from the lab (mcp.js imports this file and not config.js).
+ *
+ * Sol-attn (arm A3 against A: 1344x768, 8 s, one 16 GB card, TaoMate 3-step,
+ * text to video): ComfyUI 0.36's own BlockSparseAttention after the sigma
+ * shift, tau 1.3, dense for the first 20% of the schedule, only above 12,288
+ * video tokens. Step 1 stays dense, steps 2 and 3 run 1.54x faster, so the
+ * sampler is 1.26x and the whole clip 1.15x faster, for a slightly softer,
+ * paler picture. NOT tried: other sizes (960x544 included), the rank-19
+ * TaoMate file, the 4- and 8-step builds, the reference path, continuations
+ * and video-to-video. The graph gives it to the Fast setting's plain path only
+ * (workflow.js h3SparseFor); the size and the file are said, not refused.
+ */
+export const H3_SOL_ATTN = (() => {
+  const r = { method: "sol-attn", tau: 1.3, startPercent: 0.2, endPercent: 1,
+    minTokens: 12288, extraTokens: 256, sinkConditioning: "exact_kv_and_rows" };
+  /* What it was measured at: a render at another size is said to be untried. */
+  const at = { width: 1344, height: 768, seconds: 8 };
+  const gain = "about 1.15x faster per clip, slightly softer picture";
+  return Object.freeze({
+    ...r,
+    measuredAt: Object.freeze(at),
+    gain,
+    note: `Sol-attn sparse attention on the Fast setting: ${gain}; measured on a ${H3_LAB_CARD_GB} GB card at `
+      + `${at.width}x${at.height} for ${at.seconds} s, not yet tried at other sizes or with the 0.18 GB TaoMate `
+      + "file. Standard, Best, references, continuations and video-to-video always run dense attention.",
+    /* The recipe in words, for the Video Lab's row, from the numbers above. */
+    recipe: `ComfyUI's own BlockSparseAttention in ${r.method} mode, after the sigma shift: tau ${r.tau}, dense for `
+      + `the first ${Math.round(r.startPercent * 100)}% of the schedule, only above ${r.minTokens.toLocaleString("en-US")} `
+      + `video tokens. The H3 lab (2026-09-24) measured the sampler 1.26x and the whole clip 1.15x faster at `
+      + `${at.width}x${at.height}, ${at.seconds} s (22.5 s saved on a 172 s clip).`,
+  });
+})();
+
+/** FastH3's place: Advanced only (the lab's #4), in the owner's words. */
+export const H3_MORE_MOTION = Object.freeze({
+  label: "More motion (FastH3, experimental)",
+  note: "More camera motion. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; "
+    + "check the take.",
+  /* The lab ran FastH3 on text prompts only. Frames are accepted and said. */
+  framesUntried: "FastH3 was only tried on text to video: an opening or closing picture is accepted, but not "
+    + "yet tried with it, so check the take.",
+});
+
+/** Where a tier's size is set: the Video screen starts at it (see the header).
+ *  The name is older than the wiring and kept for its importers. */
 export function h3SetSizeByHand(tier) {
-  return `Studio does not pick this size for you yet: on the Video screen choose size "custom…", `
-    + `type ${tier.width} x ${tier.height}, and keep the length at ${tier.maxSeconds} s or under.`;
+  return `The Video screen starts H3 clips at ${tier.width}x${tier.height}, ${tier.maxSeconds} s or under, `
+    + "on this card; every other size stays under Advanced.";
 }
 
 /**
@@ -109,6 +167,8 @@ export const H3_TIERS = Object.freeze([
   Object.freeze({
     id: "full", minGb: 12, label: "Full size",
     plain: "Full quality: 1344x768, measured up to 8 s",
+    /* The Video screen's chip for this tier (web/vidfit.js shows it as sent). */
+    chip: "Full · 1344x768",
     width: 1344, height: 768, maxSeconds: 8, measured: true, experimental: false,
     evidence: "Measured with the Fast setting (TaoMate 3-step): up to 9.4 s on a 16 GB card, and under a "
       + "12 GB cap, where 1344x768 for 8 s came out bit-identical to the 16 GB render in the same 172 s. "
@@ -121,6 +181,7 @@ export const H3_TIERS = Object.freeze([
   Object.freeze({
     id: "small", minGb: 8, label: "Smaller size",
     plain: "Smaller size: 960x544, 5 s",
+    chip: "Smaller card · 960x544, 5 s",
     width: 960, height: 544, maxSeconds: 5, measured: true, experimental: false,
     evidence: "Measured with the Fast setting (TaoMate 3-step) under an 8 GB cap on a 16 GB card: 960x544 "
       + "for 5 s fit, about 100 s a clip there, and 1344x768 for 8 s did not. The 8-step Standard setting "
@@ -129,6 +190,7 @@ export const H3_TIERS = Object.freeze([
   Object.freeze({
     id: "preview", minGb: 6, label: "Preview",
     plain: "Preview only: 832x480, 5 s (experimental, not proven)",
+    chip: "Preview · 832x480, experimental",
     width: 832, height: 480, maxSeconds: 5, measured: false, experimental: true,
     evidence: "Experimental, not proven: under a 6 GB cap 832x480 for 5 s went over by 631 MiB with a "
       + "2.6 GB desktop counted, and should fit with less running on the card. Close GPU-heavy apps or "
@@ -335,7 +397,7 @@ export function h3TierTable(tier) {
 /** One line for a Models row: every tier, from this table. */
 export function h3TierSummary() {
   const [full, small, preview] = H3_TIERS;
-  return `The size that fits depends on the card; set it on the Video screen: ${full.minGb} GB and up, ${full.width}x${full.height}, `
+  return `The size that fits depends on the card, and the Video screen starts at it: ${full.minGb} GB and up, ${full.width}x${full.height}, `
     + `measured up to ${full.maxSeconds} s; ${small.minGb} to ${full.minGb - 1} GB, `
     + `${small.width}x${small.height} for ${small.maxSeconds} s (measured under a memory cap); `
     + `${preview.minGb} to ${small.minGb - 1} GB, an experimental ${preview.width}x${preview.height} preview `
@@ -360,6 +422,73 @@ export function h3Requires(note = "", { path = null } = {}) {
     ramRecGb: H3_RAM_MEASURED_GB,
     note: [h3TierSummary(), note].filter(Boolean).join(" "),
   };
+}
+
+/**
+ * WHAT THIS SIZE NEEDS, AND WHAT THE CARD HAS. The Video screen's Advanced line
+ * ("this size needs about X GB free; you have Y") and make_clip's check, for
+ * any size and length: snapped to the grids the engine works on (sides to 32,
+ * frames up to 17k + 5), then the fit above plus its margin. `over` is the
+ * judgement, made here so no page compares the two numbers itself. `vramMb`
+ * is the card's total (gpu.js totalMb): the desktop's share is not known, so
+ * the sentence says the desktop uses some of it rather than subtracting a guess.
+ */
+export function h3SizeFit({ width, height, seconds, frames } = {}, { vramMb = null } = {}) {
+  const w = Number(width), h = Number(height);
+  if (!(w > 0 && h > 0) || (frames == null && !(Number(seconds) > 0))) return null;
+  /* Counted the way h3Tokens counts an unsnapped size: each side UP to the
+   * 32-pixel grid, so a request never reads as cheaper than it is. */
+  const up32 = (px) => Math.max(32, Math.ceil(px / 32) * 32);
+  const s = { ...snapH3({ width: w, height: h, frames, seconds }), width: up32(w), height: up32(h) };
+  const e = h3Estimate({ width: s.width, height: s.height, frames: s.frames });
+  const gb = (mib) => Math.round((mib / 1024) * 10) / 10;
+  const cardMb = Number(vramMb) > 0 ? Number(vramMb) : null;
+  const over = cardMb !== null && e.withMarginMiB > cardMb;
+  const snapped = s.width !== w || s.height !== h;
+  const sentence = `This size needs about ${gb(e.withMarginMiB)} GB free on the graphics card`
+    + (cardMb !== null ? `; you have ${h3CardGb(cardMb)} GB, and the desktop uses some of it.` : "; the card could not be read.")
+    + (over ? " It will not fit here: pick a smaller size or a shorter clip." : "")
+    + (snapped ? ` Counted as ${s.width}x${s.height}, on H3's 32-pixel grid.` : "")
+    + (e.inFittedRange ? "" : " This size is outside the sizes the fit was measured on, so the figure is a guess.");
+  return {
+    width: s.width, height: s.height, frames: s.frames, seconds: s.seconds, snapped,
+    tokens: e.tokens, needMiB: e.needMiB, withMarginMiB: e.withMarginMiB,
+    needGb: gb(e.withMarginMiB), haveGb: cardMb !== null ? h3CardGb(cardMb) : null,
+    over, inFittedRange: e.inFittedRange, sentence,
+    scope: `The lab's fit over ${H3_FIT.runs} capped runs of the Fast setting, each within ${H3_FIT.maxErrorMiB} MiB, `
+      + `plus about ${H3_FIT.marginMiB} MiB of margin; measured on a ${H3_LAB_CARD_GB} GB card.`,
+  };
+}
+
+/**
+ * What a size chip says when it shortens the clip: the tier's length is the
+ * longest MEASURED (or, for the preview, offered) there, so a chip that cuts
+ * a longer length says so rather than moving the slider in silence.
+ */
+export function h3LengthLine(t) {
+  if (!t?.width || !t?.maxSeconds) return null;
+  const a = /^(8|11|18)$/.test(String(t.minGb)) ? "an" : "a";
+  return t.measured
+    ? `The length went down to ${t.maxSeconds} s, the longest measured to fit at ${t.width}x${t.height} on ${a} `
+      + `${t.minGb} GB card; a longer clip is untested there, not forbidden.`
+    : `The length went down to ${t.maxSeconds} s, the length the experimental ${t.width}x${t.height} preview `
+      + "is offered at; it has not been seen to fit yet.";
+}
+
+/**
+ * The size a render that names none starts at on this card: a SMALLER card's
+ * tier size and longest measured length. Null where the engine's own size
+ * stands: a full-size card (its default is the person's; the Video Lab sets
+ * it), an unread card (no size is chosen), or H3 not offered. The page only
+ * applies what it is sent. The Video screen opens on it and /api/video gives
+ * it to a render that names no size, and both say so, in words that follow
+ * `measured` (the preview has not been seen to fit).
+ */
+export function h3StartSize(h3) {
+  const t = h3?.tier;
+  if (!t?.width || !t?.height || !h3?.offered || t.id === "full") return null;
+  return { tier: t.id, width: t.width, height: t.height, maxSeconds: t.maxSeconds, chip: t.chip || t.label,
+    measured: !!t.measured, lengthSaid: h3LengthLine(t) };
 }
 
 /**
@@ -388,8 +517,20 @@ export function h3Status({ gpu = null, ram = null } = {}) {
     amdNote,
     fit: H3_FIT,
     fps: H3_FPS,
+    /* The Video screen's custom size boxes step on it. */
+    grid: H3_GRID,
     table: h3TierTable(tier),
     tiers: H3_TIERS.map(({ evidence, caveat, ...rest }) => rest),
+    /* The Video screen's size chips: this card's tier and the smaller ones, the
+     * first of them the start size. An unread card gets every tier and no
+     * start; a card H3 is not offered on gets none. */
+    /* `title` is the chip's tooltip (the tier's plain line, which names the
+     * length); `lengthSaid` is what the page shows when the chip shortened
+     * the clip. */
+    choices: (vramMb === null ? H3_TIERS.filter((x) => x.id !== "none")
+      : offered ? H3_TIERS.filter((x) => x.id !== "none" && x.minGb <= tier.minGb) : [])
+      .map((x) => ({ id: x.id, chip: x.chip || x.label, width: x.width, height: x.height, maxSeconds: x.maxSeconds,
+        experimental: x.experimental, measured: x.measured, title: x.plain, lengthSaid: h3LengthLine(x) })),
   };
 }
 

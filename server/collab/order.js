@@ -45,6 +45,7 @@ import { assertSafe } from "../safety/refusal.js";
  * shared with the Plan card's floor note and the lender's accept check
  * (lending.js speedUpCheck), so the three cannot disagree about a render. */
 import { trapBand } from "../mv/plancost.js";
+import { MV_SIZES, MV_ASPECTS, MV_SIZE_DEFAULT, renderSizeOf } from "../mv/sizes.js";
 
 export const ORDER_V = 1;
 
@@ -125,9 +126,12 @@ function looksLikePicture(buf) {
 export const PROMPT_CAP = 8000;
 const LABEL_CAP = 200;
 
-/** The six sizes this app can render. A packet asking for anything else cannot
- *  be reproduced here, and is refused rather than rendered at another size. */
-const SIZES = Object.freeze([[864, 480], [1344, 768], [1920, 1088], [480, 864], [768, 1344], [1088, 1920]]);
+/** The sizes this app can render, in both shapes, read off server/mv/sizes.js
+ *  (it was six typed pairs, which would have refused a friend's order at a card
+ *  tier's 960x544). A packet asking for anything else cannot be reproduced here,
+ *  and is refused rather than rendered at another size. */
+const SIZES = Object.freeze(MV_ASPECTS.flatMap((aspect) => MV_SIZES.map((sz) =>
+  renderSizeOf({ qualityMode: sz.id, aspectRatio: aspect }))));
 
 /**
  * A shot packet, checked as far as this module needs it — which is further than
@@ -394,16 +398,18 @@ export function orderPlanItem(orderDoc, slug, segment) {
  * (server/mv/generate.js, and a second identical copy in packet.js) reads
  * `brief.qualityMode` and `brief.aspectRatio` — it does not read a width and a
  * height. So a packet asking for 1920x1088 is honoured by setting
- * `qualityMode: "high"`, and a size that is not one of the six pairs those two
+ * `qualityMode: "high"`, and a size that is not one of the pairs those two
  * dials produce cannot be reproduced at all and is refused rather than rendered
- * at a different size than the Accept card promised.
+ * at a different size than the Accept card promised. The pairs are read off
+ * server/mv/sizes.js, the list renderSize itself reads, so an order for a card
+ * tier (960x544, 832x480) inverts as surely as the three older sizes did.
  */
 export function briefFor(orderDoc) {
   const { width, height } = orderDoc.shot;
-  const TABLE = [
-    [864, 480, "budget", "16:9"], [1344, 768, null, "16:9"], [1920, 1088, "high", "16:9"],
-    [480, 864, "budget", "9:16"], [768, 1344, null, "9:16"], [1088, 1920, "high", "9:16"],
-  ];
+  const TABLE = MV_ASPECTS.flatMap((aspect) => MV_SIZES.map((sz) => {
+    const [w, h] = renderSizeOf({ qualityMode: sz.id, aspectRatio: aspect });
+    return [w, h, sz.id === MV_SIZE_DEFAULT ? null : sz.id, aspect];
+  }));
   const hit = TABLE.find((r) => r[0] === width && r[1] === height);
   if (!hit) {
     throw refuse("size-unreproducible", `This order asks for ${width}x${height}, and this Studio's renders are sized by two dials rather than by a number: the sizes it can make are ${TABLE.map((r) => `${r[0]}x${r[1]}`).join(", ")}. Rendering a different size than the order says would be a take that does not fit the scene it was asked for.`);

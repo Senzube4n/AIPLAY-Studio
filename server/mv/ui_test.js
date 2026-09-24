@@ -1418,6 +1418,13 @@ for (const [label, stillOpen, why] of STILL_OPEN) {
     `this gap reads as CLOSED, which is good news — delete the entry from STILL_OPEN.\n          ${why}`);
 }
 
+/* DEVELOPMENT TEXT OFF THE NEWCOMER PATH (UI_PLAN B4). Publish and Complete
+ * opened a card naming a planning file that is not in this repository; they are
+ * off the rail until they are built (server/mv/cardfit_test.js pins the rail).
+ * Comments are not rendered, so they are stripped before the check. */
+ok("no rendered stage text names MV_FORK_PLAN",
+  !/MV_FORK_PLAN/.test(UI.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1")));
+
 console.log(`\n  ${pass} passed, ${failures.length} failed`);
 console.log(`        (no human control, by name: ${Object.keys(NO_UI).join(", ")})\n`);
 console.log(`        (reachable by nobody: ${Object.keys(ORPHANS).join(", ")})\n`);

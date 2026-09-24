@@ -983,6 +983,12 @@
       <label class="flabel" for="vidEngine">Engine</label>
       <select id="vidEngine" class="sel2"></select>
       <p class="hint" id="vidEngineNote"></p>
+      <!-- FastH3 left the main list (the H3 lab, 2026-09-24): an Advanced
+           switch over the same engine choice, its label and tooltip the
+           server's (config.js fasth3.advanced). web/vidfit.js. -->
+      <label class="ovstage" id="vidMoreMotionRow" hidden>
+        <input type="checkbox" id="vidMoreMotion"><span id="vidMoreMotionL"></span>
+      </label>
     </div>
 
     <!-- ENGINE SETTINGS — the files the engine loads, and COLLAPSED BY DEFAULT.
@@ -1084,6 +1090,12 @@
         <option value="pytorch">PyTorch</option>
         <option value="kitchen">Kitchen INT8</option>
       </select></span>
+      <!-- H3's sparse attention on the Fast setting (sol-attn or off): the
+           options, the saved value and the tooltip's numbers are the server's
+           (config.js solAttn); changing it saves video_settings'
+           sparse_attention. web/vidfit.js. -->
+      <label for="vidSparse" id="vidSparseL" hidden>sparse attention</label>
+      <span class="pv" id="vidSparseW" hidden><select id="vidSparse" class="sel2"></select></span>
       <label for="vidSize">size</label>
       <span class="pv"><!-- Populated per engine: H3 native 1344x768 is not a legal LTX size,
            and LTX quantises to a 32px latent grid after halving. -->
@@ -1109,6 +1121,21 @@
     </div>
     <p class="hint">H3 always renders sound whether or not you want it, so keeping
       it is free. Clips made under a song discard it — that song is the audio.</p>
+    <!-- "This size needs about X GB free; you have Y" and what the render will
+         change, from POST /api/video check (server/video-plain.js). Advanced
+         only: Simple hides it with the rest of the form. web/vidfit.js. -->
+    <p class="hint" id="vidFitNote" hidden></p>
+
+    <!-- THE CARD'S SIZE (the H3 lab's #5). This card's tier and the smaller
+         ones as plain chips that write the size and length above, starting on
+         the tier; the list under "size" keeps every other size. Where H3 is not
+         offered, the server's one sentence instead: a friend first, your own
+         key second. Shown in Simple too (styles.css). web/vidfit.js. -->
+    <div class="field" id="vidTierRow" hidden>
+      <label class="flabel">Size for this card</label>
+      <div class="seg" id="vidTierChips" role="group" aria-label="Size for this card"></div>
+      <p class="hint" id="vidTierNote" hidden></p>
+    </div>
 
     <!-- ─── FRAMES ─── pictures pinned AT a moment of the clip. One field per
          input, each dropdown sharing its row with its "Use a file…" button;
@@ -1189,6 +1216,10 @@
     <div class="field" id="vidRefWrap" hidden>
       <label class="flabel">References
         <span class="sp meta">up to 9 pictures + 3 sounds &middot; optional</span></label>
+      <!-- The server's sentence when the engine ignores references (FastH3,
+           LTX): the slots stay in view while anything is attached, and Render
+           is refused rather than dropping them. web/vidfit.js. -->
+      <p class="hint warnhint" id="vidRefIgnored" hidden></p>
       <p class="hint">Call them by name in the description, e.g. &ldquo;the figure from <b>&lt;Picture&nbsp;1&gt;</b> sings <b>&lt;Audio&nbsp;1&gt;</b>&rdquo;. Click one to insert its tag.</p>
       <div id="vidRefDrop"></div>
       <div class="framepick">
@@ -1282,6 +1313,11 @@
         <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models. To send reference pictures, use Music video → Video clips → Ask friend, which carries them.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
+      <!-- At render time: the RAM warning under 32 GB (server/h3tier.js), and
+           the last failed render in words with the engine's text behind
+           Details (server/video-plain.js). web/vidfit.js. -->
+      <p class="hint warnhint" id="vidRamNote" hidden></p>
+      <div class="vidfail" id="vidFail" hidden></div>
     </div>
 
   </section>
@@ -5305,6 +5341,10 @@
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
 <script type="module" src="receipt.js"></script>
+<!-- The Video screen follows the card: size chips, what a size needs, sparse
+     attention, More motion, the reference and RAM lines (web/vidfit.js; every
+     judgement and sentence is the server's). -->
+<script type="module" src="vidfit.js"></script>
   <!-- The full picture behind a reference thumbnail. At BODY level and fixed,
        because the form column it belongs to is overflow-y:auto and would clip
        anything bigger than the 88x50 thumb — which is the entire point. -->

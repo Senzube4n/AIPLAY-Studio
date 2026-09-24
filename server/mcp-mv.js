@@ -40,6 +40,11 @@
  * every table built afterwards is stamped from `liveSets` at build time. That
  * matters because mvTools() is also called by server/mv/planrun.js on every
  * plan run, not just once at MCP boot. */
+/* THE SIZE LIST AND THE TWO SHAPES, from their one source (server/mv/sizes.js,
+ * pure: it reads only server/h3tier.js), so this enum cannot drift from what
+ * renderSize makes. Not a copy; an import. */
+import { MV_SIZE_IDS, MV_ASPECTS, MV_CLIP_CEILING_SEC, sizeEnumText, cardTierText, cutDefaultText } from "./mv/sizes.js";
+
 let liveSets = null;          // the toolkit's list, once the studio has said it
 let liveSetsRun = null;       // one fetch per process, however many tables are built
 const pendingSceneArgs = [];  // schema objects still waiting for it
@@ -193,7 +198,7 @@ export function mvTools(api, safeName) {
   return [
     {
       name: "mv_create_project",
-      description: "Start a music-video project. A project owns the song, its scene cut, the brief, the cast, the boards and every clip — the metadata that makes later regeneration exact.",
+      description: "Start a music-video project. A project owns the song, its scene cut, the brief, the cast, the boards and every clip — the metadata that makes later regeneration exact. A new project starts at the size this PC's graphics card reaches (" + cardTierText() + "); mv_open_project's cardFit says which and why, and mv_set_brief quality changes it.",
       inputSchema: { type: "object", required: ["title"], properties: { title: { type: "string" } }, additionalProperties: false },
       async run(a) { const r = await mv({ action: "create", title: a.title }); return { slug: r.slug }; },
     },
@@ -205,7 +210,7 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_open_project",
-      description: "The full project document: song, brief, segments, characters, backgrounds, boards, clips with their takes, and the derived stage. Read this before acting — it is the ground truth every other tool writes into.",
+      description: "The full project document: song, brief, segments, characters, backgrounds, boards, clips with their takes, and the derived stage. Read this before acting — it is the ground truth every other tool writes into. `cardFit` is what this PC gives the project: the sizes (each with whether this card reaches it, what LTX makes of it, and Studio's pick, plus the RAM warning when there is one), the default longest scene for the cut and where that number comes from (with a note when the scenes on file were cut at another default), the step choices worded from the speed-up files on disk, and whether hybrid can send cast-less scenes to LTX here.",
       inputSchema: { type: "object", required: ["slug"], properties: { slug: { type: "string" } }, additionalProperties: false },
       async run(a) { return api("GET", `/api/mv/project/${encodeURIComponent(safeName(a.slug, "project"))}`); },
     },
@@ -289,7 +294,7 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_segment",
-      description: "Cut the analyzed song into scenes with the website's exact segmenter: lyric lines are never split, instrumental gaps become their own scenes, everything lands between 4 and 15 seconds. DESTRUCTIVE: re-segmenting versions the set and marks existing boards/clips stale.",
+      description: "Cut the analyzed song into scenes with the website's segmenter: scenes snap to whole lyric lines, and instrumental gaps become their own scenes. The longest scene defaults to the brief's (" + cutDefaultText() + "; mv_open_project cardFit.cut says the number and where it comes from). A line longer than the longest scene is the one thing split, into back-to-back scenes, and a short breath between two scenes is held through, so no sung second is left without a picture. max_clip_sec overrides the default, from 1 to " + MV_CLIP_CEILING_SEC + " s (refused past that: a longer scene would render short). DESTRUCTIVE: re-segmenting versions the set and marks existing boards/clips stale.",
       inputSchema: {
         type: "object", required: ["slug"],
         properties: {
@@ -332,21 +337,27 @@ export function mvTools(api, safeName) {
         properties: {
           slug: { type: "string" },
           medium: { type: "string" }, tone: { type: "string" }, narrative: { type: "string" },
-          aspect_ratio: { type: "string", enum: ["16:9", "9:16", "1:1", "4:3", "21:9"] },
+          aspect_ratio: { type: "string", enum: [...MV_ASPECTS],
+            description: "The two shapes the renderer makes. 1:1, 4:3 and 21:9 are refused: they used to be accepted and rendered 16:9." },
           free_text: { type: "string" }, direction_summary: { type: "string" },
-          quality: { type: "string", enum: ["budget", "recommended", "high"],
-            description: "budget 864x480, recommended 1344x768 (H3 native), high 1920x1088. "
-              + "high on LTX costs about 3 minutes for a 5-second clip; on H3 about 28." },
+          quality: { type: "string", enum: [...MV_SIZE_IDS],
+            description: `The render size: ${sizeEnumText()}. recommended, small and preview are the H3 card `
+              + `tiers (${cardTierText()}); a new project starts at its card's tier, `
+              + "and mv_open_project cardFit.sizes says which this card reaches. "
+              + "high on LTX costs about 3 minutes for a 5-second clip; on H3 about 11 at 4 steps "
+              + "(the two shipped films, on a 16 GB card), and more at 8 or 20 steps." },
           video_engine: { type: "string", enum: ["h3", "ltx", "hybrid"],
             description: "hybrid (default) renders a scene on h3 when it carries cast or prop "
-              + "references and on ltx otherwise — this was always the de-facto behaviour. "
+              + "references and on ltx otherwise, when LTX is on this PC; without LTX every scene "
+              + "renders on h3 and the shot says so (cardFit.ltxReady). "
               + "ltx is ~7x faster and the one whose licence has no territory clause, and asking "
               + "for it explicitly now DROPS references rather than being overridden by them. "
               + "h3 is the only engine that takes reference images." },
           video_steps: { type: "integer",
-            description: "Sampling steps per clip. Default 8. Setting 4 selects H3's 4-step "
-              + "distillation — workflow.js picks the LoRA by step count, so a 4-step build is "
-              + "no longer run at 8, which is what it was doing. Cheap-H3 experiment." },
+            description: "Sampling steps per clip. Left unset, each scene runs at the count "
+              + "the speed-up files on this PC were made for, with and without cast pictures "
+              + "(mv_open_project cardFit.steps; it was a literal 8). Setting 4 selects H3's 4-step "
+              + "distillation — workflow.js picks the LoRA by step count." },
           base_scale: { type: "string", enum: ["auto", "full"],
             description: "LTX only, and only affects UNGUIDED clips. auto samples at half the "
               + "delivered size and upscales x2 in latent space, which is where faces go soft. "
@@ -1652,7 +1663,7 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_plan_run",
-      description: "START. op \"start\" runs the approved items in order and RETURNS IMMEDIATELY — poll mv_plan_read. \"pause\" lets the render in flight finish and then stops, leaving the rest approved; \"resume\" carries on from there; \"stop\" cancels the plan and marks everything still approved as skipped.\n\nRefuses to start with nothing approved, and refuses while another plan is running anywhere — there is one GPU. On a failure the default policy stops the run and leaves every remaining approved item APPROVED: nothing is un-approved by somebody else's failure, and starting again is a deliberate act.\n\nEach item is executed by calling the tool it names, with the arguments the human approved. Each execution is recorded in the project's provenance ledger with the plan id, the item id, and the id of the `choice` event that authorised it — so \"a human decided\" and \"a machine executed\" are two records with an explicit join, not one record pretending to be both.",
+      description: "START. op \"start\" runs the approved items in order and RETURNS IMMEDIATELY — poll mv_plan_read. \"pause\" lets the render in flight finish and then stops, leaving the rest approved; \"resume\" carries on from there; \"stop\" cancels the plan, marks everything still approved as skipped, and cancels this project's clip in flight (taken off the app's queue, and cancelled on the graphics card if it is rendering); the plan's note then says what was really reached, and a picture or Blender item in flight finishes. The Studio's own Stop button pauses a running plan instead, keeping every approval.\n\nRefuses to start with nothing approved, and refuses while another plan is running anywhere — there is one GPU. On a failure the default policy stops the run and leaves every remaining approved item APPROVED: nothing is un-approved by somebody else's failure, and starting again is a deliberate act.\n\nEach item is executed by calling the tool it names, with the arguments the human approved. Each execution is recorded in the project's provenance ledger with the plan id, the item id, and the id of the `choice` event that authorised it — so \"a human decided\" and \"a machine executed\" are two records with an explicit join, not one record pretending to be both.",
       inputSchema: {
         type: "object", required: ["slug", "op"],
         properties: {

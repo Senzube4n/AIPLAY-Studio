@@ -257,8 +257,11 @@ export async function updateProject(slug, fn) {
   });
 }
 
-export async function createProject(title, kind = "mv") {
+/* `brief` (optional) is laid over a new video's blank brief: the routes pass
+ * the card's size (server/mv/sizes.js), worked out when the project is made. */
+export async function createProject(title, kind = "mv", { brief = null } = {}) {
   const doc = blankProject(title, kind);
+  if (brief && doc.brief) Object.assign(doc.brief, brief);
   // Two projects called "Neon" must not become one folder. The suffix is only
   // added on a real collision so the common case stays readable.
   let slug = doc.slug, n = 2;

@@ -20,7 +20,8 @@ import http from "node:http";
 import { URL, fileURLToPath } from "node:url";
 import path from "node:path";
 import { realpathSync } from "node:fs";
-import { h3Brief } from "./h3tier.js";
+/* h3tier.js is pure (no config.js): the lab's words for FastH3 and sol-attn, one copy. */
+import { h3Brief, H3_SOL_ATTN, H3_MORE_MOTION } from "./h3tier.js";
 import { vfxTools } from "./mcp-vfx.js";
 import { dawTools } from "./mcp-daw.js";
 // Video Workflow tools (FORK — see FORK_DELTA.md).
@@ -2889,11 +2890,16 @@ export const TOOLS = [
       + "pinned to a frame — the model recasts the subject wherever the words put it, which "
       + "is how you keep one character across many shots. ⚠ H3's licence grants NO rights "
       + "in " + H3_EXCLUDED + " — where that applies, stay on LTX.\n"
-      + "  • FastH3 — H3 distilled to 8 fixed steps (quality and steps do not apply). Takes "
-      + "first_frame/last_frame, no references; `attention` picks the dense attention under its "
-      + "sparse attention. Same licence and territory clause as H3.\n\n"
+      + "  • FastH3 — H3 distilled to 8 fixed steps (quality and steps do not apply), the Video screen's "
+      + `Advanced "${H3_MORE_MOTION.label}": ${H3_MORE_MOTION.note} ${H3_MORE_MOTION.framesUntried} `
+      + "first_frame/last_frame are accepted (the reply warns), references are refused; `attention` picks "
+      + "the dense attention under its sparse attention. Same licence and territory clause as H3.\n\n"
       + "Passing an engine-specific input while the other engine is selected is REFUSED "
-      + "rather than silently ignored; pass `engine` to switch first. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
+      + "rather than silently ignored; pass `engine` to switch first. The reply's `warnings` say "
+      + "everything the render changed from the request (the card's size when none was named, the "
+      + "reference build's step count, a <Picture n> nothing answers taken out of the words) and the "
+      + "RAM warning. `check_only` returns that plan, and what the size needs on this card, without "
+      + "rendering. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -2901,7 +2907,7 @@ export const TOOLS = [
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
         quality: { type: "string", enum: ["fast", "best"],
-          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
+          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
@@ -2932,7 +2938,9 @@ export const TOOLS = [
         bridge_alpha: { type: "number", minimum: 0, maximum: 1, description: "H3 only: the bridge's blend strength for this render. Publishers recommend 0.10–0.15; 0 bypasses." },
         loras: { type: "array", maxItems: 8, description: "Custom video LoRAs in order, from list_loras. Known wrong architectures and missing files are refused. Engine speed adapters load automatically and must not be listed again. Unrecognized bases remain unverified.", items: { type: "object", required: ["name"], properties: { name: { type: "string" }, strength: { type: "number", minimum: -4, maximum: 4, default: 1 } }, additionalProperties: false } },
         seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
-        attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it. H3 decides its own; LTX has none. Default: pytorch." },
+        attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it (PyTorch where it does not). H3 decides its own; LTX has none. Default: kitchen, the one the H3 lab timed FastH3 with." },
+        sparse: { type: "string", enum: ["sol-attn", "off"], description: "H3 only: sparse attention on the fast setting (the 3-step build, no references), the Video screen's Advanced \"Sparse attention\" switch. " + H3_SOL_ATTN.note + " Default: the saved setting (video_settings sparse_attention), sol-attn unless changed; name it only to differ for this render." },
+        check_only: { type: "boolean", description: "Render nothing: return what this call WOULD render on this card (engine, size, seconds, steps, sparse attention), what the size needs (\"needs about X GB free; you have Y\"), every warning, or the refusal. The Video screen's Advanced line reads the same answer." },
         timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
       },
       additionalProperties: false,
@@ -2940,7 +2948,8 @@ export const TOOLS = [
     async run(a) {
       const loras = videoLoraInput(a.loras);
       let st = await api("GET", "/api/status");
-      if (!st.config?.video?.enabled) {
+      // A check renders nothing, so it answers with video switched off too.
+      if (!st.config?.video?.enabled && a.check_only !== true) {
         throw new Error("Video is switched off. Call set_video_enabled with enabled:true to enable it before rendering.");
       }
       /* ENGINE FIRST, because the engine decides which of the inputs below are
@@ -2949,6 +2958,11 @@ export const TOOLS = [
        * engine selected throws HERE with the fix in the message — the route
        * would refuse it anyway, and an agent that cannot see why is stuck. */
       if (a.engine && a.engine !== st.config?.video?.engine) {
+        /* A check changes nothing, the saved engine included. */
+        if (a.check_only === true) {
+          throw new Error(`check_only reads the selected engine (${st.config?.video?.engine}) and switches nothing; `
+            + `call set_video_engine with "${a.engine}" first, or leave engine out.`);
+        }
         const sw = await api("POST", "/api/video", { action: "engine", value: a.engine });
         if (sw.error) throw new Error(sw.error);
         st = await api("GET", "/api/status");
@@ -2959,20 +2973,26 @@ export const TOOLS = [
       const engine = st.config?.video?.engine;
       const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song;
       /* The refusals name the engine that IS selected: with three engines,
-       * "but LTX is selected" was false on FastH3. */
+       * "but LTX is selected" was false on FastH3. The reference sentence is
+       * the server's (server/video-plain.js refsIgnored, sent per engine on
+       * /api/status), the one the Video screen's reference slots show, with
+       * this tool's own way out after it. */
       const engLabel = st.config?.video?.engines?.[engine]?.label || engine || "another engine";
-      if (wantsRefs && engine !== "h3") {
-        throw new Error(`Named references (<Picture n> / <Audio n>) need MiniMax H3, but ${engLabel} is selected. Pass engine:"h3"`
+      const said = st.config?.video?.engines?.[engine]?.refsIgnored;
+      if (wantsRefs && engine !== "h3" && said) {
+        throw new Error(`${said} ${engLabel} is selected: pass engine:"h3"`
           + (engine === "ltx" ? ", or use first_frame/last_frame/mid_frames, which is how LTX takes pictures."
-            : `, or on ${engLabel} use first_frame/last_frame, which it takes; it was distilled without references.`));
+            : "."));
       }
+      /* A Studio whose status carries no sentence refuses at the door, in its own words. */
       // Soundtrack works on BOTH engines: LTX freezes the audio latent, H3
       // freezes AND anchors it (the lip-sync pair). No guard on this axis.
       if (Array.isArray(a.mid_frames) && a.mid_frames.length && engine !== "ltx") {
         throw new Error(`mid_frames (pass-through pictures) are an LTX feature, and ${engLabel} is selected. Pass engine:"ltx"`
-          + (engine === "h3" ? ", or on H3 use ref_images." : `, or on ${engLabel} use first_frame/last_frame.`));
+          + (engine === "h3" ? ", or on H3 use ref_images." : "."));
       }
-      const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
+      const before = a.check_only === true ? new Set()
+        : new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
       /* `quality` is the semantic dial; `steps` is the escape hatch and wins.
        * The mapping lives in the server rather than in the caller's head, or
        * here, because which step counts are MATCHED depends on the disk:
@@ -3008,6 +3028,8 @@ export const TOOLS = [
         bridgeAlpha: Number.isFinite(a.bridge_alpha) ? a.bridge_alpha : undefined,
         // FastH3's per-render pick; the route keeps only "pytorch" | "kitchen".
         attention: a.attention === "kitchen" || a.attention === "pytorch" ? a.attention : undefined,
+        // H3's sparse attention on the fast setting; the route keeps only these two.
+        sparse: a.sparse === "sol-attn" || a.sparse === "off" ? a.sparse : undefined,
         loras,
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
@@ -3042,13 +3064,33 @@ export const TOOLS = [
         body.audioTrack = { name: safeName(a.soundtrack_song, "song"),
                             start: Number.isFinite(a.soundtrack_start) ? a.soundtrack_start : 0 };
       }
+      /* THE PLAN, NOT THE RENDER: the same answer the Video screen's Advanced
+       * line shows (server/video-plain.js videoPlan, POST /api/video check). */
+      if (a.check_only === true) {
+        const c = await api("POST", "/api/video", { ...body, action: "check" });
+        if (c.error) throw new Error(c.error);
+        return {
+          would_render: !c.refusal, engine: c.engine ?? null,
+          refusal: c.refusal ? (c.refusal.error || c.refusal) : null,
+          width: c.width ?? null, height: c.height ?? null, seconds: c.seconds ?? null, steps: c.steps ?? null,
+          sparse: c.sparse ?? null,
+          vram: c.fit ? { needs_about_gb: c.fit.needGb, card_gb: c.fit.haveGb, fits: !c.fit.over, says: c.fit.sentence, measured: c.fit.scope } : null,
+          warnings: (c.warnings || []).map((w) => w.text),
+          /* Caveats that change nothing (sparse attention at a size the lab never tried it at). */
+          notes: (c.notes || []).map((w) => w.text),
+        };
+      }
       const r = await api("POST", "/api/video", body);
       if (r.error) throw new Error(r.error);
       const settled = await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video", r.job?.id);
       const after = (await api("GET", "/api/clips")).clips || [];
       const made = after.filter((c) => !before.has(c.name)).map((c) => c.name);
+      /* What the render changed from the request, and the RAM warning: the
+       * door's own sentences (video-plain.js), the ones the page shows. */
+      const warnings = (r.warnings || []).map((w) => w.text).filter(Boolean);
       // Its own failure has already thrown; see emptyResultNote in art-wait.js.
-      return { clips: made, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips") };
+      return { clips: made, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
+        ...(warnings.length ? { warnings } : {}) };
     },
   },
 

@@ -30,7 +30,9 @@ import { config } from "./config.js";
 import { qwenImageGraph, QWEN_IMAGE_PRESET } from "./qwen-image.js";
 import { qwenImageStatus } from "./qwen-status.js";
 import { resolvePick } from "./modelpick.js";
-import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph, h3SparseFor } from "./workflow.js";
+/* An engine failure as a sentence, the raw text behind Details (the Video screen's). */
+import { plainVideoFailure } from "./video-plain.js";
 import { joinClips } from "./clipjoin.js";
 import { runLrc, LRC_SCRIPT } from "./lrc.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
@@ -184,6 +186,24 @@ export function attentionOptions(info) {
   if (Array.isArray(spec[0])) return spec[0].map(String);
   if (spec[0] === "COMBO" && Array.isArray(spec[1]?.options)) return spec[1].options.map(String);
   return [];
+}
+
+/**
+ * The methods BlockSparseAttention offers, from an /object_info answer, or
+ * null when the node is not there at all. Its `selection` is a DynamicCombo
+ * (ComfyUI 0.36 comfy_extras/nodes_sparse_attention.py: sol-attn, sla, vsa),
+ * reported as [type, { options: [{ key, inputs }] }]; a plain combo list is
+ * read too. A node whose options cannot be read counts as offering what it
+ * was built with, [] meaning "present, unknown".
+ */
+export function sparseMethods(info) {
+  const node = info?.BlockSparseAttention;
+  if (!node) return null;
+  const spec = node.input?.required?.selection;
+  if (!Array.isArray(spec)) return [];
+  if (Array.isArray(spec[0])) return spec[0].map(String);
+  const opts = spec[1]?.options;
+  return Array.isArray(opts) ? opts.map((o) => String(typeof o === "object" && o ? (o.key ?? o.name ?? "") : o)).filter(Boolean) : [];
 }
 
 export function graphHash(graph) {
@@ -524,6 +544,7 @@ export class ArtRunner extends EventEmitter {
       /* A restarted engine may be a different ComfyUI (an update, another
        * launch flag), so what it offers is asked again, not remembered. */
       this.#ckOffered = undefined;
+      this.#sparseOffered = undefined;
     });
   }
 
@@ -531,6 +552,9 @@ export class ArtRunner extends EventEmitter {
 
   /* undefined = not asked this boot; true/false = the engine's own answer. */
   #ckOffered;
+  /* The same for BlockSparseAttention's methods: undefined = not asked, null =
+   * no node, [] = a node whose options could not be read, else the list. */
+  #sparseOffered;
 
   /* Files refused under the minors rule, remembered briefly so a caller that
    * starts waiting AFTER request() returned (MV's awaitArt) still hears the
@@ -617,6 +641,43 @@ export class ArtRunner extends EventEmitter {
       return (await this.#kitchenOffered()) ? "ck" : "pytorch";
     }
     return this.h3Attention();
+  }
+
+  /**
+   * H3's sparse attention for one render: "sol-attn" or "off" (FastH3 and LTX:
+   * undefined, the graph decides; FastH3 always runs its own VSA).
+   *
+   * The person's per-render choice, else the saved one (config `sparse`), and
+   * sol-attn only where the RUNNING engine has the node and the mode: a node
+   * type or a DynamicCombo key the engine does not have fails the whole prompt
+   * at validation, so asking would be a render that never starts. The node
+   * itself runs dense on a card without the sol_attn kernel. Asked once per
+   * engine boot, and only for a render whose graph would carry it (the Fast
+   * setting's plain path, workflow.js h3SparseFor): a Standard, Best,
+   * reference, continuation or video-to-video render never takes it, so it
+   * neither asks nor gets a note. Where the graph would have carried it and
+   * the engine cannot, the job says so (`sparseNote`, the clip's metadata).
+   */
+  async videoSparse(job) {
+    const name = job.engine || config.video.engine;
+    if (name !== "h3") return undefined;
+    const want = job.sparse ?? config.video.engines.h3?.sparse ?? "off";
+    if (want !== "sol-attn") return "off";
+    const eng = { ...config.video, ...config.video.engines.h3, ...(job.models || {}) };
+    const refs = (Array.isArray(job.refImages) && job.refImages.some(Boolean))
+      || (Array.isArray(job.refAudios) && job.refAudios.some((a) => a && a.name));
+    const would = h3SparseFor(eng, { steps: job.steps ?? eng.steps, refs, sparse: want,
+      continuation: !!job.continueFrom?.file, control: !!(job.controlVideo && job.controlPatch) });
+    if (!would) return "off";
+    if (this.#sparseOffered === undefined) {
+      try { this.#sparseOffered = sparseMethods(await engineDoor.objectInfo("BlockSparseAttention")); }
+      catch { this.#sparseOffered = null; }
+    }
+    const m = this.#sparseOffered;
+    const ok = Array.isArray(m) && (m.length === 0 || m.includes("sol-attn"));
+    if (!ok) job.sparseNote = "This clip ran dense attention: the Fast setting's sparse attention (sol-attn) needs "
+      + "ComfyUI's BlockSparseAttention in sol-attn mode, which this engine does not have (0.36 or newer has it).";
+    return ok ? "sol-attn" : "off";
   }
 
   /** Idempotent, lazy, and never fatal — progress is a nicety, not the work. */
@@ -788,6 +849,11 @@ export class ArtRunner extends EventEmitter {
            * be the one place the uncut text lived, and it now clears on the
            * next success (art-wait.js ownFailure reads this first). */
           ...(i < 20 && j.error && String(j.error).length > 200 ? { fullError: String(j.error).slice(0, 4000) } : {}),
+          /* A render failure said in words (a clip's, video-plain.js): the raw
+           * engine text beside it, for the page's Details, and the whole of
+           * both in fullError for a waiter (art-wait.js reads it first). */
+          ...(i < 20 && j.error && j.errorDetail ? { detail: String(j.errorDetail).slice(0, 4000), errorReason: j.errorReason || null,
+            fullError: `${String(j.error)} Details: ${String(j.errorDetail)}`.slice(0, 4000) } : {}),
         })),
         stats: this.stats || {},
         nextTitles: this.queue.slice(0, 3).map((j) => ({ kind: j.kind, title: j.title })),
@@ -1074,6 +1140,9 @@ export class ArtRunner extends EventEmitter {
               cacheHit: job.cacheHit || null,
               // The wordless minors fingerprint (server/safety/lineage.js).
               safety: job.safety || null,
+              /* The sparse attention the graph carried, and why not where
+               * sol-attn was asked for and the engine could not take it. */
+              sparse: job.sparseRan ?? null, sparseNote: job.sparseNote || null,
               at: Date.now(),
             },
           });
@@ -1177,7 +1246,11 @@ export class ArtRunner extends EventEmitter {
           job.safetyContext = null;
         }
         if (!this.done.includes(job)) this.done.unshift(job);
-        this.lastError = err?.safety ? String(err.message || err) : `${job.title}: ${String(err.message || err)}`;
+        this.lastError = err?.safety ? String(err.message || err) : `${job.title}: ${String(err.message || err)}`
+          /* A failure said in words keeps the engine's own text beside it, so
+           * the log and Settings' last error are not left with the sentence
+           * alone. A minors refusal is the sentence alone: no title, no details. */
+          + (job.errorDetail ? ` Details: ${String(job.errorDetail).slice(0, 600)}` : "");
         console.error(`  [${job.kind}] ${this.lastError}`);
         /* ⚠ Announce the failure, or an Overnight row waits forever.
          *
@@ -1722,6 +1795,10 @@ export class ArtRunner extends EventEmitter {
        * JavaScript, the later simply wins (fasth3_test.js guards it). FastH3's
        * per-render pick is read inside videoAttention(). */
       attention: await this.videoAttention(job),
+      /* H3's sol-attn on the Fast setting (workflow.js h3SparseFor), after the
+       * engine was asked whether it has the node (videoSparse). Named here for
+       * the reason the warning above gives. */
+      sparse: await this.videoSparse(job),
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.
       keepAudio: job.keepAudio ?? !job.file.startsWith("clip:"),
@@ -1732,6 +1809,9 @@ export class ArtRunner extends EventEmitter {
      * key for the render index above — and why it is the same thing ComfyUI's
      * own cache is keyed on. */
     const key = graphHash(graph);
+    /* Which sparse attention the graph really carries (node 81), for the
+     * clip's metadata: sol-attn on H3's Fast setting, vsa on FastH3. */
+    job.sparseRan = graph?.["81"]?.inputs?.selection || null;
 
     // Generous: a clip is ~25 s warm but the first one after a music render pays
     // to load 29 GB of weights back in.
@@ -1768,6 +1848,25 @@ export class ArtRunner extends EventEmitter {
        * ledger with its own record — which is exactly right. The prefix bump
        * below changes the graph, so the two attempts are genuinely different
        * renders and recording one for both would be the lie. */
+      /* A SENTENCE, the raw text behind Details (server/video-plain.js). The
+       * person read ComfyUI's JSON here, 900 characters of it. The raw text
+       * rides on the job as `errorDetail`; status() carries it on the newest
+       * rows, art-wait.js hands both to an agent, and the log and lastError
+       * keep it too. Both ways a render fails go through it: a run that
+       * finished badly, and a submission the engine refused before it ran
+       * (engine/client.js THROWS "ComfyUI rejected the job: ..." for a
+       * /prompt 400, a missing file or a value not in a list). */
+      const failed = (raw, runId) => {
+        const said = plainVideoFailure(raw);
+        if (runId && !job.runId) job.runId = runId;
+        /* The minors refusal from the engine's own check (the backstop node
+         * inside ComfyUI) is already the one sentence: it is said as itself,
+         * never as "a file or option it does not have". */
+        if (String(raw).includes(REFUSAL)) return new Error(REFUSAL);
+        job.errorDetail = said.detail || null;
+        job.errorReason = said.reason;
+        return new Error(said.sentence);
+      };
       const done = await engineDoor.run({
       private: job.private === true,
         graph, actor: job.actor, via: "art.clip",
@@ -1778,10 +1877,15 @@ export class ArtRunner extends EventEmitter {
         // entirely on the cache-hit path — neither name is knowable from here
         // before the POST, so the join is index.js's `generate` seam and runId.
         adopt: false,
+      }).catch((err) => {
+        /* ⚠ The engine door's minors refusal travels UNCHANGED: its `safety`
+         * flag is what wipes the job's words below and answers 422. */
+        if (err?.safety) throw err;
+        throw failed(String(err?.message || err), err?.runId);
       });
       job.runId = done.runId;
       if (done.status !== "completed") {
-        throw new Error(done.error || `the engine did not finish (${done.status})`);
+        throw failed(done.error || `the engine did not finish (${done.status})`);
       }
       // SaveVideo reports under `images` with animated:true, not a `videos` key —
       // the client normalises both into one list, so this no longer has to care.

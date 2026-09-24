@@ -87,12 +87,12 @@ function videoPickSentence(pick, cap, gpu) {
   if (f.state === "fits") return `${head}: this PC is at or above the recommended size.`;
   if (f.state === "streams") return `${head}: this PC is above the minimum and under the recommendation, so they run slower.`;
   /* A size the card was measured to fit (server/h3tier.js): read off the row,
-   * never worked out here. Nothing sets that size yet (h3tier.js
-   * h3SetSizeByHand), so the sentence says so rather than "gets". */
+   * never worked out here. The Video screen starts at it (web/vidfit.js,
+   * h3tier.js h3StartSize), so the sentence says where it is set. */
   if (f.state === "smaller") {
     const h = f.h3 || {};
     const size = h.width && h.height ? ` (${h.width}x${h.height}${h.maxSeconds ? `, up to ${h.maxSeconds} s` : ""})` : "";
-    return `${head}: this card fits a smaller size${size}, which Studio does not set for you yet; Models says how.`;
+    return `${head}: this card fits a smaller size${size}, and the Video screen starts there.`;
   }
   if (!gpu) return `${head}: Studio could not read the card, so it cannot tell whether they run.`;
   return `${head}: not yet tried on a card like this one.`;
