@@ -148,6 +148,12 @@ node server/music/yue_fit_test.js || exit 1
 # job pump, MCP schema, Music tab — names it, because one silent list is how
 # the audio reference was dead on arrival. No GPU, no ComfyUI, milliseconds.
 node server/music/yue2_comfy_graph_test.js || exit 1
+# A SUPPLIED SCORE ON YuE2 THROUGH COMFYUI IS SUNG OR REFUSED, NEVER DROPPED:
+# the validator row by row, the real /api/generate branch sliced and run with
+# the real jobs.js graph call behind it (every score reaches node 5 or nothing
+# is queued), the assistant skipping rows this engine refuses, and the page
+# not sending the cover prime here. No GPU, no ComfyUI, milliseconds.
+node server/music/yue2-comfy-input_test.js || exit 1
 # THE LORA SHELF READS TENSORS, NOT FILENAMES: a Krea 2 LoRA (diffusers
 # spelling) is recognised and fits the Krea 2 DiT (ComfyUI spelling), which
 # now carries a variant so loraFits can compare; and `for=` finds a bare DiT

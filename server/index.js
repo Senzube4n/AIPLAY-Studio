@@ -312,6 +312,7 @@ import { cudaCapability } from "./mesh/runner.js";
 import { refuseLyrics, yueStatus, YUE_MODEL } from "./music/yue.js";
 import { yueGgufStatus } from "./music/yue-gguf.js";
 import { prepareGgufJob } from "./music-gguf-input.js";
+import { yue2ComfyFields } from "./music/yue2-comfy-input.js";
 import { GgufSetup } from "./music/gguf-setup.js";
 /* Where a YuE2 render lands its score: the run folder is adopted by its
  * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
@@ -1434,6 +1435,11 @@ jobs.on("update", async (snap) => {
               scoreSupplied: !!job.abc }
           : isYueComfy
           ? { runtime: "comfy", checkpoint: job.yue2Checkpoint || null, cot: job.cot || "full",
+              scoreSupplied: !!job.abc, sampling: job.sampling || null, planSampling: job.planSampling || null,
+              /* The saved score version it was sung from, as written (this
+               * build makes no score of its own to adopt, unlike the Python
+               * kit's `score` below, which is the version its run wrote). */
+              scoreFrom: job.scoreSlug ? (job.scoreVersion ? `${job.scoreSlug}/${job.scoreVersion}` : job.scoreSlug) : null,
               narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null,
               lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null }
           : isYue
@@ -1490,6 +1496,10 @@ jobs.on("update", async (snap) => {
     } : {}),
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
+      /* Sung from a score you supplied (hummed, pasted, transcribed), not
+       * from the model's own plan. The version it came from is in the ledger
+       * (params.scoreFrom); the ♪ badge's scoreSlug stays the Python kit's. */
+      scoreSupplied: !!job.abc,
       lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
       /* The planner's LoRA beside the audio one — including the one the
        * Instrumental switch picks by itself, which is why this matters more
@@ -4356,10 +4366,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       /* YuE2 through ComfyUI: the refusals that cost nothing. */
-      let yueLora = null, yueLoraStrength = 1, yueLoraClip = null, yueLoraClipStrength = 1, yueSheet = null, yueCheckpoint = null;
+      let yueLora = null, yueLoraStrength = 1, yueLoraClip = null, yueLoraClipStrength = 1, yueSheet = null, yueCheckpoint = null, yueComfy = null;
       if (musicEngine === "yue2-comfy") {
         if (body.preview) {
           return json(res, 400, { error: "YuE2 has no preview pass: every render is the full model. Press Create instead.", engine: musicEngine, reason: "no-preview" });
+        }
+        /* THE SCORE AND THE DIALS (server/music/yue2-comfy-input.js). A
+         * supplied score is carried to the graph; what the graph cannot do
+         * (an open score, a key/tempo/meter seed, the cover prime) is refused
+         * by sentence. The first version read `abc` only for the Python kit,
+         * so a hummed score was accepted here and never sung. */
+        try {
+          yueComfy = yue2ComfyFields(body, { cot: ["full", "melody", "off"].includes(body.cot) ? body.cot : "full" });
+        } catch (e) {
+          return json(res, e.status || 400, { error: e.message, engine: "yue2-comfy", reason: e.reason });
         }
         if (body.checkpoint !== undefined && (typeof body.checkpoint !== "string" || !body.checkpoint.trim() || /[/\\]|\.\./.test(body.checkpoint))) {
           return json(res, 400, { error: "Choose an installed YuE2 checkpoint filename.", reason: "checkpoint" });
@@ -4406,7 +4426,11 @@ const server = http.createServer(async (req, res) => {
         const onShelf = (n) => /\.safetensors$/i.test(n) && shelf.some((f) => f.folder === "loras" && f.name === n);
         const askedClip = body.loraClip === undefined ? config.music.yue2LoraClip : body.loraClip;
         let clipName = typeof askedClip === "string" && askedClip.trim() ? path.basename(askedClip.trim()) : null;
-        if (!clipName && body.loraClip === undefined && body.instrumental && onShelf(INSTRUMENTAL_PLANNER_LORA)) {
+        /* Not beside a supplied score: the planner does not run then (node 4
+         * is left out), so the reason for the pick is gone, and the same
+         * language model would sing the score through an adapter nobody has
+         * measured there. A planner LoRA the request names is still honoured. */
+        if (!clipName && body.loraClip === undefined && body.instrumental && !yueComfy.abc && onShelf(INSTRUMENTAL_PLANNER_LORA)) {
           clipName = INSTRUMENTAL_PLANNER_LORA;
         }
         if (clipName && !onShelf(clipName)) {
@@ -4430,6 +4454,11 @@ const server = http.createServer(async (req, res) => {
           yue2Checkpoint: yueCheckpoint,
           lora: yueLora, loraStrength: yueLoraStrength,
           loraClip: yueLoraClip, loraClipStrength: yueLoraClipStrength,
+          /* The pump hands these three to buildYue2ComfyGraph (jobs.js); the
+           * score's lineage rides only with a score, as on the Python kit. */
+          abc: yueComfy.abc, sampling: yueComfy.sampling, planSampling: yueComfy.planSampling,
+          scoreSlug: yueComfy.abc && typeof body.scoreSlug === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(body.scoreSlug) ? body.scoreSlug : null,
+          scoreVersion: yueComfy.abc && typeof body.scoreVersion === "string" && /^[\w.-]{1,40}$/.test(body.scoreVersion) ? body.scoreVersion : null,
         } : {}),
         /* WHO asked, stamped at the API boundary (provenance.js). The browser
          * carries no actor header → "user"; MCP always sends agent:<name>;

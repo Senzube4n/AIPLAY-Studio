@@ -181,8 +181,10 @@ console.log("\n§  the planner's LoRA: the other half, on the clip wire");
   ok("the route reads loraClip the way it reads lora, and refuses a name off the shelf",
     /const askedClip = body\.loraClip === undefined \? config\.music\.yue2LoraClip : body\.loraClip;/.test(index)
     && /The planner LoRA \$\{bareName\(clipName\)\} is not in a loras folder/.test(index));
-  ok("...picks the instrumental planner LoRA for an instrumental when it is on a shelf and nothing was named",
-    /if \(!clipName && body\.loraClip === undefined && body\.instrumental && onShelf\(INSTRUMENTAL_PLANNER_LORA\)\)/.test(index)
+  /* Not beside a supplied score (Tika R2b): no planner runs then, so nothing
+   * is picked; yue2-comfy-input_test §3 runs the route to prove both ways. */
+  ok("...picks the instrumental planner LoRA for an instrumental when it is on a shelf, nothing was named and no score was supplied",
+    /if \(!clipName && body\.loraClip === undefined && body\.instrumental && !yueComfy\.abc && onShelf\(INSTRUMENTAL_PLANNER_LORA\)\)/.test(index)
     && /if \(body\.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA\) yueSheet = "\[instrumental\]";/.test(index)
     && /lyrics: yueSheet \?\? \(body\.lyrics \|\| ""\)\.trim\(\),/.test(index));
   ok("...and names it on the job, which the pump hands to the graph",
@@ -236,6 +238,72 @@ console.log("\n§  a recording's codes in front of the sampler, through our own 
     /finally:\n\s+model\.encode_token_weights = original/.test(node));
   ok("...and refusing a replay that leaves no room rather than truncating it silently",
     /leave no \n?\s*"?f?"?room for new music/.test(node) || /room for new music/.test(node));
+}
+
+console.log("\n§  a supplied score is sung as written: no planner, the text on node 5 (Tika R2b, 2026-09-24)");
+{
+  /* The route used to read `abc` only for the Python kit, and the graph always
+   * wired node 4's own plan into node 5, so a hummed score on this engine was
+   * accepted and never sung. ComfyUI's YuE2GenerateMusic takes the score as a
+   * plain string; so does our AiplayYuE2Continue. */
+  const base = { caption: "c", lyrics: "l", seed: 7, cot: "melody", maxDuration: 60, steps: 32, checkpoint: "yue2_3b_bf16.safetensors" };
+  const score = "X:1\nT:hum\nM:4/4\nL:1/8\nK:G\nV:1\n|: GABc d2 B2 :|\n";
+  const g = buildYue2ComfyGraph({ ...base, abc: score });
+  ok("with a score there is no node 4", !("4" in g));
+  eq("node 5 is ComfyUI's own music node", g[5]?.class_type, "YuE2GenerateMusic");
+  eq("...and its abc is the score's text, not a wire", g[5]?.inputs.abc, score);
+  eq("...in the asked mode (melody)", g[5]?.inputs.mode, "melody");
+  eq("full stays full", buildYue2ComfyGraph({ ...base, cot: "full", abc: score })[5]?.inputs.mode, "full");
+  ok("no input anywhere still points at node 4",
+    !JSON.stringify(Object.values(g).map((n) => n.inputs)).includes('["4",'));
+  const cont = buildYue2ComfyGraph({ ...base, abc: score, codes: "D:/out/yue2/tok_abc123" });
+  ok("the continue node takes the score the same way",
+    cont[5]?.class_type === "AiplayYuE2Continue" && cont[5]?.inputs.abc === score && cont[5]?.inputs.mode === "melody" && !("4" in cont));
+  const plain = buildYue2ComfyGraph(base);
+  eq("without a score node 4 plans, as before", plain[4]?.class_type, "YuE2GenerateABC");
+  eq("...and node 5 reads its plan", plain[5]?.inputs.abc, ["4", 0]);
+  eq("a blank score is no score", buildYue2ComfyGraph({ ...base, abc: "  \n" })[5]?.inputs.abc, ["4", 0]);
+  let threw = null;
+  try { buildYue2ComfyGraph({ ...base, cot: "off", abc: score }); } catch (e) { threw = e; }
+  ok("a score with the plan off is refused by the builder too, never rendered without it",
+    threw && /chain of thought/.test(threw.message), threw ? threw.message : "no throw");
+  eq("with the plan off and no score, node 5 gets no abc (unchanged)", buildYue2ComfyGraph({ ...base, cot: "off" })[5]?.inputs.abc, "");
+}
+
+console.log("\n§  the sampler dials land on nodes 4 and 5; absent dials keep the vendor defaults");
+{
+  const base = { caption: "c", lyrics: "l", seed: 7, cot: "full", maxDuration: 60, steps: 32, checkpoint: "yue2_3b_bf16.safetensors" };
+  const d = buildYue2ComfyGraph(base);
+  eq("node 5 defaults: 1.0 / 0.95 / 100 / 1.2",
+    [d[5].inputs.temperature, d[5].inputs.top_p, d[5].inputs.top_k, d[5].inputs.repetition_penalty], [1.0, 0.95, 100, 1.2]);
+  eq("node 4 defaults: 0.7 / 0.9 / 30 / 1.005",
+    [d[4].inputs.temperature, d[4].inputs.top_p, d[4].inputs.top_k, d[4].inputs.repetition_penalty], [0.7, 0.9, 30, 1.005]);
+  const g = buildYue2ComfyGraph({ ...base,
+    sampling: { temperature: 0.8, top_p: 0.9, top_k: 50, repetition_penalty: 1.1 },
+    planSampling: { temperature: 0.5, top_p: 0.85 } });
+  eq("sampling lands on node 5",
+    [g[5].inputs.temperature, g[5].inputs.top_p, g[5].inputs.top_k, g[5].inputs.repetition_penalty], [0.8, 0.9, 50, 1.1]);
+  eq("planSampling lands on node 4, top_k and the penalty untouched",
+    [g[4].inputs.temperature, g[4].inputs.top_p, g[4].inputs.top_k, g[4].inputs.repetition_penalty], [0.5, 0.85, 30, 1.005]);
+  const half = buildYue2ComfyGraph({ ...base, sampling: { temperature: 0 } });
+  eq("one dial moves one input (temperature 0 is a value, not a default)",
+    [half[5].inputs.temperature, half[5].inputs.top_p], [0, 0.95]);
+  const cont = buildYue2ComfyGraph({ ...base, codes: "x", sampling: { top_p: 0.5 } });
+  eq("the continue node takes the dials too", cont[5].inputs.top_p, 0.5);
+}
+
+console.log("\n§  the pump names the score and the dials, or the route's validation reaches nothing");
+{
+  const jobs = src("../jobs.js");
+  ok("jobs.js hands abc, sampling and planSampling to buildYue2ComfyGraph",
+    /abc: job\.abc,\n\s+sampling: job\.sampling,\n\s+planSampling: job\.planSampling,\n\s+prefix: "aiplay",\n\s+\}\) : buildGraph\(\{/.test(jobs));
+  const index = src("../index.js");
+  ok("the route enqueues them from the validator",
+    /abc: yueComfy\.abc, sampling: yueComfy\.sampling, planSampling: yueComfy\.planSampling,/.test(index));
+  ok("the ledger row says whether a score was supplied, and which dials",
+    /runtime: "comfy", checkpoint: job\.yue2Checkpoint \|\| null, cot: job\.cot \|\| "full",\n\s+scoreSupplied: !!job\.abc, sampling: job\.sampling \|\| null, planSampling: job\.planSampling \|\| null,/.test(index));
+  ok("the page no longer refuses a score on yue2-comfy when loading a request",
+    !/cannot accept a supplied score/.test(src("../../web/app.js")));
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);

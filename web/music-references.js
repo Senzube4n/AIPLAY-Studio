@@ -19,8 +19,8 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
     </section><section class="mr-card mr-wide"><h3>3 · Review your music brief</h3>
     <label>Style and instrumentation<textarea data-mr="style" rows="3" maxlength="4000" placeholder="Describe the music you want. Model suggestions are not applied automatically."></textarea></label>
     <div class="mr-row"><label>Lyrics<textarea data-mr="lyrics" rows="5" maxlength="16000"></textarea></label><label>Reference notes<textarea data-mr="notes" rows="5" maxlength="4000"></textarea></label></div>
-    <div class="mr-row"><label>Engine<select data-mr="engine"><option value="yue2">YuE2 · Python</option><option value="yue2-gguf">YuE2 · native GGUF</option><option value="yue2-comfy">YuE2 · Comfy (brief only)</option></select></label><label>Seed<input data-mr="seed" type="number" min="0" max="4294967295" step="1" value="0"></label></div>
-    <label class="mr-check"><input data-mr="useScore" type="checkbox">Use the validated melody score (Python/native backend)</label>
+    <div class="mr-row"><label>Engine<select data-mr="engine"><option value="yue2">YuE2 · Python</option><option value="yue2-gguf">YuE2 · native GGUF</option><option value="yue2-comfy">YuE2 · Comfy</option></select></label><label>Seed<input data-mr="seed" type="number" min="0" max="4294967295" step="1" value="0"></label></div>
+    <label class="mr-check"><input data-mr="useScore" type="checkbox">Use the validated melody score</label>
     <label class="mr-check"><input data-mr="instrumental" type="checkbox">Instrumental · empty lyrics required (Python/Comfy brief only)</label>
     <label class="mr-check"><input data-mr="labels" type="checkbox">Allow section tags in lyrics</label>
     <div class="mr-row"><button type="button" data-mr="save" disabled>Save brief</button><button type="button" data-mr="draft" disabled>Review request</button><button type="button" data-mr="load" disabled>Load reviewed request into Create</button></div>

@@ -1013,6 +1013,9 @@ function musicEnginePaint() {
      * this engine does not have from staying open across a switch. */
     if (!eng.score) scorePanel.open = false;
   }
+  /* The Transcriber's "Start from the original" row says off, with the
+   * reason, on an engine that cannot prime (YuE2 through ComfyUI). */
+  if (typeof paintCoverPrime === "function") paintCoverPrime();
 
   /* The configuration ladder. Engines without one keep the box hidden rather
    * than showing "no limitations", which would itself be a claim. */
@@ -2510,11 +2513,10 @@ $("humFile")?.addEventListener("change", () => {
   if (f) humSend(f, f.name);
   $("humFile").value = "";
 });
-/* The song-only rows (library picker, Voice only) show with the whole-song
- * transcriber; the picker is filled from the Library each time it opens. */
-function paintHumRows() {
-  const song = $("humEngine")?.value === "song";
-  for (const el of document.querySelectorAll("[data-humsong]")) el.hidden = !song;
+/* "Start from the original" (#covPrime) and its layer (#covStem), painted on
+ * their own: the engine painter repaints this on every status, and must not
+ * rebuild the Library picker under an open dropdown the way paintHumRows does. */
+function paintCoverPrime() {
   /* The prime needs the real-audio tokenizer; without it the row still shows,
    * at 0 and disabled, with the reason — a control that vanishes teaches
    * nobody what would bring it back. */
@@ -2523,11 +2525,34 @@ function paintHumRows() {
     prime.disabled = !state.tokenizerReady;
     if (!state.tokenizerReady) { prime.value = 0; if ($("covPrimeValue")) $("covPrimeValue").textContent = "off"; }
     const note = $("covPrimeNote");
+    if (note && note.dataset.plain === undefined) note.dataset.plain = note.textContent;
     if (note && !state.tokenizerReady) {
       note.textContent = "Starting from the original needs the YuE2 real-audio tokenizer — download it on the Models screen. "
         + "Without it a cover is the transcribed score performed in your style, which is the recipe that existed before.";
     }
+    /* YuE2 through ComfyUI cannot prime (yueSpec does not send it there, and
+     * its door refuses it): the row shows off, with the reason, and keeps its
+     * value for when the Python kit is chosen again. */
+    const eng = state.musicEngines?.[state.musicEngine];
+    if (eng?.runtime === "comfy" && Array.isArray(eng.cot)) {
+      prime.disabled = true;
+      if ($("covPrimeValue")) $("covPrimeValue").textContent = "off";
+      if (note) note.textContent = `${eng.label || "YuE2 through ComfyUI"} sings the transcribed score in your style; `
+        + "starting from the original's own opening needs the YuE2 Python kit.";
+    } else if (state.tokenizerReady) {
+      const v = Number(prime.value);
+      if ($("covPrimeValue")) $("covPrimeValue").textContent = v ? `${v}s` : "score only";
+      if (note) note.textContent = note.dataset.plain;
+    }
+    if ($("covStem")) $("covStem").disabled = prime.disabled;
   }
+}
+/* The song-only rows (library picker, Voice only) show with the whole-song
+ * transcriber; the picker is filled from the Library each time it opens. */
+function paintHumRows() {
+  const song = $("humEngine")?.value === "song";
+  for (const el of document.querySelectorAll("[data-humsong]")) el.hidden = !song;
+  paintCoverPrime();
   const sel = $("humSong");
   if (sel && song) {
     const cur = sel.value;
@@ -2798,7 +2823,11 @@ function yueSpec() {
   const covSecs = Number($("covPrime")?.value ?? 0);
   const use = $("scoreUse");
   if (yueEngine() && $("yAbcUse")?.checked) out.abc = $("yAbc")?.value.trim();
-  if (out.abc && covFile && covSecs > 0 && state.tokenizerReady) {
+  /* The prime is the Python kit's cover path. YuE2 through ComfyUI sings the
+   * transcribed score and its door refuses coverOf, so it is not sent there
+   * (paintCoverPrime shows the row off, with the reason). */
+  const primes = state.musicEngines?.[state.musicEngine]?.runtime !== "comfy";
+  if (out.abc && covFile && covSecs > 0 && state.tokenizerReady && primes) {
     const covStem = $("covStem")?.value || "";
     out.coverOf = { file: covFile, seconds: covSecs, ...(covStem ? { stem: covStem } : {}) };
   }
@@ -3363,7 +3392,7 @@ function renderNow(cur, queued = 0) {
     ? `YuE2 GGUF ${cur.quantization === "q8_0" ? "Q8_0" : "Q4_0"} · non-commercial · ${cur.error || GGUF_LABEL[cur.stage] || cur.stageLabel || cur.stage} · seed ${cur.seed}`
     /* YuE2 through ComfyUI: the graph's own sampler (buildYue2ComfyGraph). */
     : cur.engine === "yue2-comfy"
-    ? `YuE2 3B (ComfyUI) · ${cur.cot === "off" ? "no score plan" : `${cur.cot || "full"} score plan`} · dpm_2 · ${cur.narSteps || 32} steps · seed ${cur.seed}`
+    ? `YuE2 3B (ComfyUI) · ${cur.scoreSupplied ? `singing your score (${cur.cot || "full"})` : cur.cot === "off" ? "no score plan" : `${cur.cot || "full"} score plan`} · dpm_2 · ${cur.narSteps || 32} steps · seed ${cur.seed}`
     : yue
     ? `${cur.stageLabel || "YuE2"} · ${cur.rung?.label || "Standard"}${cur.quantization === "fp8" ? " · 8-bit AR" : ""} · seed ${cur.seed}`
     : cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
@@ -20253,7 +20282,6 @@ mountMusicPlan();
 mountMusicWorkflows({ onLoadRequest: async (prepared) => {
   const request = prepared?.request || prepared;
   if (!request || !["yue2", "yue2-gguf", "yue2-comfy"].includes(request.engine)) throw new Error("Choose a supported YuE2 engine first.");
-  if (request.abc && request.engine === "yue2-comfy") throw new Error("This ComfyUI workflow cannot accept a supplied score. Choose Python YuE2 or native GGUF.");
   const precision = request.quantization || (request.engine === "yue2-gguf" ? "q4_0" : "none");
   const durationMax = state.musicEngines?.[request.engine]?.maxDuration || 300;
   if (request.maxDuration !== undefined && (!Number.isFinite(request.maxDuration)

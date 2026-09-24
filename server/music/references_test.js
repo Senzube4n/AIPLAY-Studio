@@ -124,7 +124,7 @@ test("vision uses IMAGE contact sheet, engine provenance and does not overwrite 
   assert.match((await service.request({ action: "get", referenceId: row.id, preview: true })).reference.contactSheetDataUrl, /^data:image\/jpeg;base64,/);
 });
 
-test("transcription uses the exact staged region and score request refuses unsupported Comfy", async t => {
+test("transcription uses the exact staged region and a score request prepares on every YuE2 build", async t => {
   const abc = ['X:1', 'T:', 'M:4/4', 'L:1/16', 'Q:1/4=120',
     'V: Vocal clef=treble name="Vocal Melody" snm="Vocal"',
     'V: Ins clef=treble name="Ins Melody" snm="Inst."', 'K:C', '% verse',
@@ -133,7 +133,12 @@ test("transcription uses the exact staged region and score request refuses unsup
   let row = await edit(service, await ready(service));
   await service.request({ action: "transcribe", referenceId: row.id, expectedRevision: row.revision, mode: "melody" }, { actor: "user" }); row = await service.settled(row.id);
   assert.equal(received.actor, "user"); assert.equal(path.basename(received.source.path), "region.wav"); assert.equal(received.mode, "melody");
-  await assert.rejects(service.request({ action: "prepare_request", referenceId: row.id, expectedRevision: row.revision, reviewed: true, useScore: true, engine: "yue2-comfy" }), /Python or GGUF/);
+  /* ComfyUI's YuE2GenerateMusic takes the score as text (Tika R2b, 2026-09-24): the
+   * prepared request carries it, and no abcOpen (that build sings it as written). */
+  row = (await service.request({ action: "prepare_request", referenceId: row.id, expectedRevision: row.revision, reviewed: true, useScore: true, engine: "yue2-comfy" })).reference;
+  assert.equal(row.prepared.request.engine, "yue2-comfy"); assert.equal(row.prepared.request.abc, abc); assert.equal(row.prepared.request.cot, "melody");
+  assert.equal(row.prepared.request.abcOpen, undefined); assert.equal(row.prepared.makeSongArguments.abc, abc); assert.equal(row.prepared.makeSongArguments.abc_open, undefined);
+  assert.deepEqual((await service.request({ action: "capabilities" })).scoreEngines, ["yue2", "yue2-comfy", "yue2-gguf"]);
   const request = (await service.request({ action: "prepare_request", referenceId: row.id, expectedRevision: row.revision, reviewed: true, useScore: true, engine: "yue2-gguf" })).reference.prepared.request;
   assert.equal(request.abc, abc); assert.equal(request.cot, "melody"); assert.equal(request.abcOpen, undefined);
   let newer = (await service.request({ action: "get", referenceId: row.id })).reference;

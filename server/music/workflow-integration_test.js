@@ -9,6 +9,7 @@ import os from "node:os";
 import { createListeningLab, listeningPairRequests } from "./listening-lab.js";
 import { createListeningLabRuntime } from "./lab-runtime.js";
 import { buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA } from "../workflow.js";
+import { yue2ComfyFields } from "./yue2-comfy-input.js";
 
 // Git may check these sources out as CRLF on Windows. Normalize only line endings
 // so executable-boundary markers behave identically in a checkout and a worktree.
@@ -90,7 +91,7 @@ function createRouteHarness() {
     { folder: "loras", name: "mine.safetensors" },
     { folder: "loras", name: INSTRUMENTAL_PLANNER_LORA },
   ];
-  const scope = { path, INSTRUMENTAL_PLANNER_LORA,
+  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields,
     config: { music: { yue2Checkpoint: "global-wrong.safetensors", yue2Lora: "saved-wrong.safetensors",
       yue2LoraClip: INSTRUMENTAL_PLANNER_LORA, engines: { "yue2-comfy": { maxDuration: 300 } }, precision: "int8" }, audioRef: { denoise: .5 } },
     scanBases: async () => shelf, modelBases: async () => [], probeModel: async file => ({ family: file === "reviewed" ? "yue2" : "flux" }),

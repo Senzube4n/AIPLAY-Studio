@@ -102,8 +102,17 @@ export function normalizeLanguage(v) {
 
 /* Which settings each kind of music model has. The rest used to be "changed"
  * in the reply and ignored by the page. */
-const ONLY_ON = { key: ["ace", "yue"], tempo: ["ace", "yue"], meter: ["ace", "yue"], language: ["ace"], thinking: ["yue"] };
-const engineKind = (id) => (id === "ace-step15" ? "ace" : /^yue2/.test(str(id)) ? "yue" : "other");
+/* YuE2 through ComfyUI plans from nothing or sings a given score: it cannot
+ * seed a key, tempo or meter and has no Guidance setting, and its door
+ * refuses them by sentence (server/music/yue2-comfy-input.js), so they are
+ * skipped here, not filled. A CLEAR still goes through (CLEAR_ON): clearing
+ * them is what that refusal asks for, and the rows keep values carried over
+ * from the Python kit. */
+const ONLY_ON = { key: ["ace", "yue"], tempo: ["ace", "yue"], meter: ["ace", "yue"], language: ["ace"], thinking: ["yue", "yue-comfy"],
+  guidance: ["ace", "yue", "other"] };
+const CLEAR_ON = { key: ["yue-comfy"], tempo: ["yue-comfy"], meter: ["yue-comfy"], guidance: ["yue-comfy"] };
+const blank = (v) => v === null || (typeof v === "string" && !v.trim());
+const engineKind = (id) => (id === "ace-step15" ? "ace" : id === "yue2-comfy" ? "yue-comfy" : /^yue2/.test(str(id)) ? "yue" : "other");
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 const bool = (v) => v === true || v === "true" || v === 1 || v === "1" || v === "yes";
 
@@ -162,13 +171,13 @@ export function createMusicTools() {
         seed: { type: "integer", note: "A fixed seed, to repeat a result." },
         random_seed: { type: "boolean", note: "true = a new seed every time." },
         instrumental: { type: "boolean", note: "true for no vocals, false for a song with vocals." },
-        key: { type: "string", note: "YuE2 and ACE-Step. Like Em, G, Bb, F#m (or E minor). Empty lets the model decide." },
-        tempo: { type: "integer", note: "YuE2 and ACE-Step. Beats per minute, 40 to 240." },
-        meter: { type: "string", note: "YuE2 and ACE-Step. 4/4, 3/4, 6/8 or 2/4." },
+        key: { type: "string", note: "ACE-Step and the YuE2 Python kit. Like Em, G, Bb, F#m (or E minor). Empty lets the model decide (and clears it on any YuE2)." },
+        tempo: { type: "integer", note: "ACE-Step and the YuE2 Python kit. Beats per minute, 40 to 240. Empty clears it." },
+        meter: { type: "string", note: "ACE-Step and the YuE2 Python kit. 4/4, 3/4, 6/8 or 2/4. Empty clears it." },
         language: { type: "string", note: "ACE-Step only. The lyrics' language code: en, es, fr, de, it, pt, ru, bg, ja, ko, zh…" },
         thinking: { type: "string", note: "YuE2 only. full, melody or off — how much it plans before singing." },
         steps: { type: "integer", note: "YuE2: 32 or 16 (16 is faster, measured the same). MiniMax: quality 6 to 30." },
-        guidance: { type: "number", note: "How strictly it follows the style, e.g. 1.0 to 3.0." },
+        guidance: { type: "number", note: "How strictly it follows the style, e.g. 1.0 to 3.0. Empty returns to the model's default. Not on YuE2 through ComfyUI." },
         clear_remix: { type: "boolean", note: "true = stop using an attached song as a remix source (for a fresh original)." },
         music_model: { type: "string", note: "Switch the music model: its engine (ace-step15, yue2-gguf, yue2-comfy, minimax-music3) or its name from MUSIC MODELS. Installed ones only." },
       },
@@ -179,7 +188,8 @@ export function createMusicTools() {
         /* What this model has: with no screen (a script) everything is allowed. */
         let kind = screen ? engineKind(screen.engine_id) : null;
         const skipped = [];
-        const has = (k) => !kind || !ONLY_ON[k] || ONLY_ON[k].includes(kind) || (skipped.push(k), false);
+        const has = (k, v) => !kind || !ONLY_ON[k] || ONLY_ON[k].includes(kind)
+          || (CLEAR_ON[k]?.includes(kind) && blank(v)) || (skipped.push(k), false);
         if (a.music_model !== undefined && str(a.music_model).trim()) {
           const want = str(a.music_model).trim().toLowerCase();
           const all = Array.isArray(screen?.music_models) ? screen.music_models : [];
@@ -211,14 +221,16 @@ export function createMusicTools() {
           if (l === null) throw new Error(`language "${str(a.language).trim()}" is not one ACE-Step sings — use one of ${ACE_LANGUAGES.join(", ")}.`);
           set("language", l, `language ${l || "default"}`);
         }
-        if (a.key !== undefined && has("key")) {
+        if (a.key !== undefined && has("key", a.key)) {
           const k = normalizeKey(a.key);
           if (k === null) throw new Error(`key "${str(a.key).trim()}" is not a key — use a letter A to G, optional b or #, optional m for minor (Em, F#m, Bb).`);
           set("key", k, k ? `key ${k}` : "key decided by the model");
         }
         const tempo = num(a.tempo);
-        if (tempo !== null && has("tempo")) set("tempo", Math.max(40, Math.min(240, Math.round(tempo))), `${Math.round(tempo)} BPM`);
-        if (a.meter !== undefined && has("meter")) {
+        /* Empty clears it (it used to read as 0 and land on 40 BPM). */
+        if (a.tempo !== undefined && blank(a.tempo)) { if (has("tempo", a.tempo)) set("tempo", "", "tempo decided by the model"); }
+        else if (tempo !== null && has("tempo", a.tempo)) set("tempo", Math.max(40, Math.min(240, Math.round(tempo))), `${Math.round(tempo)} BPM`);
+        if (a.meter !== undefined && has("meter", a.meter)) {
           const m = str(a.meter).trim();
           if (m && !["4/4", "3/4", "6/8", "2/4"].includes(m)) throw new Error("meter must be 4/4, 3/4, 6/8 or 2/4.");
           set("meter", m, m ? `meter ${m}` : "meter decided by the model");
@@ -231,7 +243,8 @@ export function createMusicTools() {
         const steps = num(a.steps);
         if (steps !== null) set("steps", Math.round(steps), `${Math.round(steps)} steps`);
         const g = num(a.guidance);
-        if (g !== null) set("guidance", Math.max(0, Math.min(20, g)), `guidance ${g}`);
+        if (a.guidance !== undefined && blank(a.guidance)) { if (has("guidance", a.guidance)) set("guidance", "", "guidance at the model's default"); }
+        else if (g !== null && has("guidance", a.guidance)) set("guidance", Math.max(0, Math.min(20, g)), `guidance ${g}`);
         if (a.clear_remix !== undefined && bool(a.clear_remix)) set("remix", null, "remix cleared");
         const notHere = skipped.length ? `${skipped.join(", ")} ${skipped.length === 1 ? "is" : "are"} not a setting on ${screen?.engine || "this music model"}` : "";
         if (!changed.length) throw new Error(notHere ? `Nothing changed: ${notHere}.` : "Give at least one setting to change.");

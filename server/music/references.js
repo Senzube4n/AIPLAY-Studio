@@ -165,7 +165,7 @@ export function createMusicReferences({ config, engine, songToScore, runner = ru
     const unknown = Object.keys(body).filter(k => k !== "action" && !fields[body.action].includes(k));
     if (unknown.length) throw fault(`Unsupported reference fields: ${unknown.join(", ")}.`);
     if (body.action === "capabilities") return { ok: true, limits: REFERENCE_LIMITS, cpuPreparation: true,
-      preparedEngines: ["yue2", "yue2-comfy", "yue2-gguf"], scoreEngines: ["yue2", "yue2-gguf"], visual: await visionCapability(), note: NOTE };
+      preparedEngines: ["yue2", "yue2-comfy", "yue2-gguf"], scoreEngines: ["yue2", "yue2-comfy", "yue2-gguf"], visual: await visionCapability(), note: NOTE };
     if (body.action === "list") {
       const names = await readdir(directory).catch(() => []), references = [];
       for (const id of names.filter(n => ID.test(n)).slice(-100)) { try { references.push(await publicRow(await load(id))); } catch { /* incomplete row */ } }
@@ -264,7 +264,8 @@ export function createMusicReferences({ config, engine, songToScore, runner = ru
       const seed = number(body.seed, 0, 0, 4294967295, "seed", true);
       let abc;
       if (body.useScore) {
-        if (engineName === "yue2-comfy") throw fault("Supplied scores require the Python or GGUF YuE2 backend in this Studio workflow. Choose one before preparing the request.");
+        /* All three YuE2 builds sing a supplied score: ComfyUI's YuE2GenerateMusic
+         * takes it as text (server/music/yue2-comfy-input.js, Tika R2b). */
         if (!row.score?.abc || !checkScore(row.score.abc).ok) throw fault("No validated score is available. Transcribe/review the score, or prepare without it.");
         if (cot === "off" || cot !== row.score.mode) throw fault("Keep the transcription's full/melody mode when using its score.");
         abc = row.score.abc;

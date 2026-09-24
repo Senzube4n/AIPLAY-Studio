@@ -270,9 +270,21 @@ export function buildYue2ComfyGraph({
    * those codes as the sampler's prefix — ComfyUI's stock node has no prefix
    * input, and its token generation is sealed inside the text encoder. */
   codes = null, primeSeconds = 8,
+  /* A SUPPLIED SCORE (a hummed melody, a pasted or transcribed one): node 5
+   * sings it as written and the planner (node 4) is left out, since it has no
+   * score input of its own. Both music nodes take the text as a plain string.
+   * The sampler dials override the nodes' defaults: `sampling` node 5's
+   * (temperature, top_p, top_k, repetition_penalty), `planSampling` node 4's
+   * (temperature, top_p). server/music/yue2-comfy-input.js validates all three. */
+  abc = null, sampling = null, planSampling = null,
   prefix = "aiplay",
 }) {
   const plan = cot !== "off";
+  const score = typeof abc === "string" && abc.trim() !== "" ? abc : null;
+  /* The door refuses this with its own sentence; a caller that skipped the
+   * door fails here rather than rendering without the score. */
+  if (score && !plan) throw new Error("A supplied score needs the chain of thought on (full or melody); nothing was rendered.");
+  const pick = (o, k, d) => (o && typeof o[k] === "number" && Number.isFinite(o[k]) ? o[k] : d);
   /* TWO LoRA DOORS, one per half of the model. The audio LoRA rides between
    * the checkpoint and the sampler on the MODEL wire only —
    * LoraLoaderModelOnly, the node H3's turbo LoRAs load through — which
@@ -292,6 +304,10 @@ export function buildYue2ComfyGraph({
   const clipWire = useClipLora ? ["3", 1] : ["1", 1];
   const mode = cot === "melody" ? "melody" : "full";
   const s = Number(seed) || 0;
+  const performance = {
+    temperature: pick(sampling, "temperature", 1.0), top_p: pick(sampling, "top_p", 0.95),
+    top_k: pick(sampling, "top_k", 100), repetition_penalty: pick(sampling, "repetition_penalty", 1.2),
+  };
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
     ...(useLora ? {
@@ -300,12 +316,12 @@ export function buildYue2ComfyGraph({
     ...(useClipLora ? {
       3: { class_type: "LoraLoader", inputs: { model: ["1", 0], clip: ["1", 1], lora_name: loraClip, strength_model: 0, strength_clip: clipStrength } },
     } : {}),
-    ...(plan ? {
+    ...(plan && !score ? {
       4: {
         class_type: "YuE2GenerateABC",
         inputs: {
           clip: clipWire, style: caption, lyrics, seed: s, mode,
-          max_abc_tokens: 8192, temperature: 0.7, top_p: 0.9, top_k: 30,
+          max_abc_tokens: 8192, temperature: pick(planSampling, "temperature", 0.7), top_p: pick(planSampling, "top_p", 0.9), top_k: 30,
           repetition_penalty: 1.005, penalty_window: 100,
         },
       },
@@ -317,17 +333,17 @@ export function buildYue2ComfyGraph({
        * refuses a replay that leaves no room. */
       class_type: "AiplayYuE2Continue",
       inputs: {
-        clip: clipWire, style: caption, lyrics, abc: plan ? ["4", 0] : "", seed: s, mode: plan ? mode : "off",
+        clip: clipWire, style: caption, lyrics, abc: score ?? (plan ? ["4", 0] : ""), seed: s, mode: plan ? mode : "off",
         codes_dir: String(codes), prime_seconds: Number(primeSeconds) || 0,
         new_duration: Number(maxDuration) || 240,
-        temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
+        ...performance,
       },
     } : {
       class_type: "YuE2GenerateMusic",
       inputs: {
-        clip: clipWire, style: caption, lyrics, abc: plan ? ["4", 0] : "", seed: s, mode,
+        clip: clipWire, style: caption, lyrics, abc: score ?? (plan ? ["4", 0] : ""), seed: s, mode,
         max_duration: Number(maxDuration) || 240,
-        temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
+        ...performance,
       },
     },
     6: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } },

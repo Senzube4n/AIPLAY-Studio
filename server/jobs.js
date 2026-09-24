@@ -347,6 +347,12 @@ export class JobRunner extends EventEmitter {
         loraStrength: job.loraStrength,
         loraClip: job.loraClip,
         loraClipStrength: job.loraClipStrength,
+        /* The supplied score and the sampler dials. Before these three were
+         * named here the route took a hummed score, queued the song, and the
+         * graph sang the planner's own plan instead. */
+        abc: job.abc,
+        sampling: job.sampling,
+        planSampling: job.planSampling,
         prefix: "aiplay",
       }) : buildGraph({
         tiledVae: await this.#hasTiledAudioDecode(),
@@ -1186,6 +1192,10 @@ export class JobRunner extends EventEmitter {
         generationLimits: j.generationLimits ?? null,
         warnings: Array.isArray(j.warnings) ? j.warnings : [],
       } : {}),
+      /* YuE2 through ComfyUI: the plan mode the page's progress line names
+       * (it read `cot` and always found none), and whether a supplied score
+       * is being sung. The flag, never the score text: every poll carries it. */
+      ...(j.engine === "yue2-comfy" ? { cot: j.cot || "full", scoreSupplied: !!j.abc } : {}),
       wantSeconds: j.wantSeconds ?? null, audioSeconds: j.audioSeconds ?? null,
       rung: j.rung ? { id: j.rung.id, label: j.rung.label } : null,
       quantization: j.quantization || null,

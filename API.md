@@ -259,10 +259,17 @@ skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 The composer has its own door: `"loraClip": "<file in models/loras>"` with
 `"loraClipStrength": 1` patches the autoregressive half (ComfyUI's CLIP side) through
 LoraLoader on the clip wire, the audio model untouched — the catalogued instrumental
-planner LoRA goes there, and with `"instrumental": true` and nothing named it is used by
-itself when it is on a shelf, the sheet becoming `[instrumental]`. Same refusal for a
+planner LoRA goes there, and with `"instrumental": true`, nothing named and no `abc` it is
+used by itself when it is on a shelf, the sheet becoming `[instrumental]`. Same refusal for a
 name off the shelf; `{"action":"planner-lora"}` saves the page's choice; `GET /api/status`
 reports both under `config.musicYue2LoraClip` / `…Strength`.
+A supplied score (`"abc"`, up to 64 KiB, with `cot` `full` or `melody`) is sung as written:
+the planner is left out and the text goes to YuE2GenerateMusic. `temperature`, `topP`,
+`topK`, `repetitionPenalty` and, without a score, `planTemperature` / `planTopP` reach the
+nodes. What this graph cannot do is refused with one sentence and nothing queued (`400`,
+`engine: "yue2-comfy"`): `abcOpen` (`comfy-open-score`), `key` / `bpm` / `meter`
+(`comfy-seed-score`), `coverOf` (`comfy-cover-prime`), a `cfgScale` other than 1
+(`comfy-guidance`), and planner dials with no planner running.
 
 **ACE-Step 1.5 through ComfyUI** (`"engine": "ace-step15"`) renders the chosen DiT
 (`POST /api/music {"action":"model","value":"ace-step15:<file>"}`) with ComfyUI's own
@@ -794,8 +801,8 @@ asynchronous preparation or model analysis. `preview:true` includes the contact
 sheet. `prepare_request` requires `reviewed:true`; returns an HTTP generation
 request and its equivalent typed `make_song` arguments, but submits neither.
 Vision analysis uses an installed Qwen3-VL through the engine door; transcription
-uses SheetSage2. A score requires Python YuE2 or native GGUF, while a brief-only
-request can also use ComfyUI. Native GGUF currently requires lyrics.
+uses SheetSage2. A score works on all three YuE2 builds (Python, ComfyUI and native
+GGUF). Native GGUF currently requires lyrics.
 
 Source evidence, suggestions and edited briefs remain separate. This is not
 native YuE2 multimodal input or guaranteed audiovisual synchronization. See
