@@ -49,6 +49,9 @@ export const RECEIPTS = {
     note: "imgNote", button: "imgGo", view: "images",
     fields: [
       { id: "engine", controls: ["imgEngine"] },
+      /* "Fast draft" while Qwen's turbo chip is on and not greyed; nothing
+       * otherwise (the chip's row is hidden on other engines). */
+      { id: "draft", controls: ["imgDraft"] },
       { id: "size", controls: ["imgSize", "imgW", "imgH"] },
       { id: "steps", controls: ["imgSteps"] },
       { id: "count", controls: ["imgCount"] },
@@ -101,6 +104,7 @@ function fieldText(screen, f) {
   }
   if (!el) return null;
   if (f.id === "rights") return el.dataset?.rightsShort || null;
+  if (f.id === "draft") return el.checked && !el.disabled ? "Fast draft" : null;
   if (f.id === "engine") {
     const segs = optText(el).split(" — ")[0].split(":")[0].split(" · ");
     /* Music names the model ("YuE2 3B"), and says so when a key pays for it. */

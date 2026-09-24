@@ -354,6 +354,22 @@ p.hint.open, div.hint.open { cursor: pointer; }
 .ctatog input { margin: 0; flex: 0 0 auto; }
 .ctatog:hover { color: var(--ink); }
 
+/* ── Fast draft (Qwen Image 2.1), beside it ────────────────────────────────
+ * The chip, or "Get Fast draft" when its LoRA is not on disk; the numbers
+ * under it in Advanced only; the reason on its own line when a base-only
+ * choice greys a ticked chip, and in Simple (no hover there) an unticked one
+ * too (.quiet: the reason for a chip nobody ticked, hidden in Advanced, where
+ * the chip's tooltip says it). */
+.draftrow { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; }
+.draftrow[hidden], .draftrow > [hidden] { display: none; }
+.draftrow .draftchip { margin-right: auto; }
+.draftrow .draftchip.off { opacity: .55; cursor: default; }
+.draftrow .linkbtn { margin: 8px 2px 0; font-size: 12px; }
+.draftrow .hint { flex: 1 0 100%; margin: 2px 2px 0 24px; }
+.assist-on #imgDraftNums { display: none !important; }
+.draftrow #imgDraftWhy.quiet { display: none; }
+.assist-on .draftrow #imgDraftWhy.quiet:not([hidden]) { display: block; }
+
 /* ── Create, with its other ways to render in a drawer ─────────────────────
  * One control: Create fills the row, the arrow is welded to its right end,
  * and the drawer pops UPWARD because the button is pinned to the foot of a

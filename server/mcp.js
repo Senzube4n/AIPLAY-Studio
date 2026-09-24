@@ -2279,7 +2279,7 @@ export const TOOLS = [
           description: "The ideas. For music: caption (the style) plus optional title/lyrics/instrumental/"
             + "maxDuration. For image and video: prompt (a template) plus optional engine/checkpoint/"
             + "negative/width/height/steps/cfg/count, and seconds on video. Images also preserve persona, ordered refImages, "
-            + "native model filenames, refSizing/refResolution/transparent and sampler/LoRA choices. Omitted image engine uses Qwen Image 2.1; "
+            + "native model filenames, refSizing/refResolution/transparent, Qwen's Fast draft and sampler/LoRA choices. Omitted image engine uses Qwen Image 2.1; "
             + "each take uses the normal image readiness and reference checks.",
           items: {
             type: "object",
@@ -2296,6 +2296,7 @@ export const TOOLS = [
               refImages: { type: "array", maxItems: 10, items: { type: "string" }, description: "Ordered image filenames, plus any saved persona references (10 combined maximum)." },
               refSizing: { type: "string", enum: ["reference", "custom"] },
               refResolution: { type: "integer", minimum: 0, maximum: 4096 }, transparent: { type: "boolean" },
+              draft: { type: "boolean", description: "Qwen Image 2.1 only: Fast draft (make_image's draft) for every take of this idea." },
               sampler: { type: "string" }, scheduler: { type: "string" }, clipSkip: { type: "integer" },
               loras: { type: "array", maxItems: 8, items: { type: "object", required: ["name"], properties: {
                 name: { type: "string" }, strength: { type: "number" }, clipStrength: { type: "number" },
@@ -2611,7 +2612,9 @@ export const TOOLS = [
       + "from image 2\", \"same figure as image 1 but seen from behind\". This is how you "
       + "iterate a character toward a target or keep one consistent across pictures. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.\n\n"
       + "Qwen Image defaults to 25 steps, CFG 1, Euler/simple. A negative needs CFG greater than 1. "
-      + "Qwen Image uses a noncommercial research license and has no measured speed promise here. "
+      + "Qwen Image uses a noncommercial research license. `draft: true` is its Fast draft: about 3x quicker "
+      + "(measured 3.1 s against 11.2 s at 1024 warm), for storyboards, thumbnails and ideas; it may garble small text "
+      + "and add extra faces or fingers, so leave it off for lettering, crowds, close hands, two-reference style edits and finals. "
       + "zimage-base and checkpoint also support negatives; reference images require Qwen Image 2.1 or FLUX.2.",
     inputSchema: {
       type: "object",
@@ -2641,6 +2644,17 @@ export const TOOLS = [
         ref_sizing: { type: "string", enum: ["reference", "custom"], description: "Qwen only: reference (default) matches the resized first reference geometry; custom uses width/height and may shift an edit." },
         ref_resolution: { type: "integer", minimum: 0, maximum: 4096, description: "Qwen only: reference resize area target, default 1024; rounded up to 32. Zero keeps the source size, rounded to 32, and can need substantial memory." },
         transparent: { type: "boolean", description: "Qwen only: request native RGBA transparency and preserve alpha in PNG output. Without it, references with transparency are flattened onto white." },
+        draft: { type: "boolean",
+          description: "Qwen Image 2.1 only: FAST DRAFT. Viggle's turbo LoRA at 1.0, 5 steps on its own schedule, euler, CFG 1, "
+            + "no negative. Measured about 3x quicker warm (3.1 s against 11.2 s at 1024; batch of 4 3.8x); a new prompt still "
+            + "pays the text encode (about 2x), and switching between a draft and a full render costs a model re-patch "
+            + "(+8.8 s into a draft, +2.5 s back), so group drafts. For storyboards, board thumbnails and ideas: it may garble "
+            + "small text and, in crowds or close hands, add extra faces or fingers; not for finals, lettering or two-reference "
+            + "style edits (a two-reference edit measured only 2.3x and judges preferred the full render). "
+            + "Refused (with the reason) on any other engine, and with transparent, more than 3 references (a persona's "
+            + "count), cfg above 1, a negative, steps other than 5, or a canvas above about 2 MP (measured up to 1920x1088; "
+            + "8192 latent tokens, so ref_resolution up to 1440). Needs the Fast draft LoRA (0.68 GB, Models row "
+            + "imageQwenFastDraft); qwen_image_status reports `draft.ready`." },
         ref_alpha: { type: "string", enum: ["white", "keep"], description: "Qwen only: white flattens a reference with transparency onto white, keep sends its alpha. Default follows transparent. keep on an opaque request can return a transparent picture." },
         width: { type: "integer" },
         height: { type: "integer" },
@@ -2715,6 +2729,9 @@ export const TOOLS = [
         ...(a.engine ? { engine: a.engine } : {}), quality: a.quality, checkpoint: a.checkpoint,
         negative: a.negative, cfg: a.cfg,
         refSizing: a.ref_sizing, refResolution: a.ref_resolution, transparent: a.transparent, refAlpha: a.ref_alpha,
+        /* Fast draft. Sent only when given, so the route's own default (off)
+         * decides otherwise; the route refuses it off Qwen with a sentence. */
+        draft: typeof a.draft === "boolean" ? a.draft : undefined,
         count: a.count, width: a.width, height: a.height,
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
         clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
@@ -2775,6 +2792,7 @@ export const TOOLS = [
          * there, so this picture can be made again. */
         ...(r.prompt ? { prompt: r.prompt, prompt_choices: r.promptChoices, combinations: r.combinations } : {}),
         seed: r.seed,
+        ...(r.draft ? { draft: true } : {}),
         ...(r.note ? { note: r.note } : {}),
         /* Reached with its OWN failure already thrown by the wait, so never "the
          * last error": that is the queue's, a stranger's. art-wait.js says why. */

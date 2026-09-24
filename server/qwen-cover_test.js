@@ -15,7 +15,7 @@ process.env.AIPLAY_MODELS_DIR = path.join(temp, "models");
 const { config } = await import("./config.js");
 const { ArtRunner } = await import("./art.js");
 const { engine } = await import("./engine/client.js");
-const { QWEN_IMAGE_FILES, qwenImageGraph, QWEN_IMAGE_PRESET } = await import("./qwen-image.js");
+const { QWEN_IMAGE_FILES, qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings } = await import("./qwen-image.js");
 const { applyPersona, personaFits } = await import("./personas.js");
 const { safetyRefusal } = await import("./safety/refusal.js");
 const original = { run: engine.run, socket: engine.socket };
@@ -192,7 +192,7 @@ test("API response, real queue, sampler and saved image provenance keep the same
   const deps = {
     p: "/api/image", req: { method: "POST" }, res: {}, config, path,
     json: (_, status, body) => ({ status, body }),
-    qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
+    qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
     qwenImageStatus: async () => ({ ready: true }),
     hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
     personas: { get: async () => null }, applyPersona, personaFits,
@@ -255,6 +255,80 @@ test("API response, real queue, sampler and saved image provenance keep the same
     delete replayGraphs[1][id].inputs.filename_prefix;
   }
   assert.deepEqual(replayGraphs[0], replayGraphs[1], "replay changes only output prefixes, never sampling/conditioning");
+});
+
+/* FAST DRAFT through the real runner and the production route and completion
+ * handler: the LoRA graph is what reaches the engine, readiness is asked for a
+ * draft, the picture's row and the ledger line both say draft with the LoRA,
+ * and the runner remembers what the next Qwen render follows (the estimate). */
+test("a Fast draft renders the LoRA graph and its picture and ledger line say so", async () => {
+  readiness = { ready: true };
+  const source = await readFile(new URL("./index.js", import.meta.url), "utf8");
+  const routeStart = source.indexOf('if (p === "/api/image" && req.method === "POST")');
+  const routeEnd = source.indexOf('if (p === "/api/', routeStart + 20);
+  const eventStart = source.indexOf('art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpoint, runId })');
+  const eventEnd = source.indexOf('/* A stage that failed', eventStart);
+  const deps = {
+    p: "/api/image", req: { method: "POST" }, res: {}, config, path,
+    json: (_, status, body) => ({ status, body }),
+    qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
+    qwenImageStatus: async () => ({ ready: true }),
+    hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
+    personas: { get: async () => null }, applyPersona, personaFits,
+    stageQwenReferences: async (names) => names,
+    imageEditor: { flattenReferences: async (references) => references.map((row) => row.name) },
+    COVER_DIR: path.join(config.outputDir, "covers"), IMAGE_DIR: path.join(config.outputDir, "images"),
+    pendingImagePrompt: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(), pendingImagePrivate: new Map(),
+    prov: { actorFrom: () => "agent:draft-test", sha256hex: () => "fixture-prompt-hash" },
+    resolveRepeat: () => ({}), imageDupGuard: { remember() {} }, combinations: () => 1,
+    art: runner, imageMeta: new Map(), ledger: [],
+    saveImageStore() {}, push() {}, jobs: { snapshot: () => ({}) },
+    safetyRefusal, lineage: () => ({ texts: [], flags: [] }),
+  };
+  deps.provNote = (_, event) => deps.ledger.push(event);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const bindings = `const { ${Object.keys(deps).join(", ")}, readBody }=deps;`;
+  const runRoute = new AsyncFunction("deps", `${bindings} ${source.slice(routeStart, routeEnd)}`);
+  const onCoverHandler = new Function("deps", `${bindings} ${source.slice(eventStart, eventEnd)}`);
+  onCoverHandler(deps);
+  const renderOf = async (body) => {
+    const result = await runRoute({ ...deps, readBody: async () => ({ action: "create", dedupe: false, ...body }) });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    const file = `image:${result.body.id}`;
+    const event = await new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); runner.off("cover", onCover); runner.off("failed", onFailure); };
+      const onCover = (value) => { if (value.file === file) { cleanup(); resolve(value); } };
+      const onFailure = (value) => { if (value.file === file) { cleanup(); reject(new Error(value.error)); } };
+      const timer = setTimeout(() => { cleanup(); reject(new Error("Image did not finish")); }, 8000);
+      runner.on("cover", onCover); runner.on("failed", onFailure);
+    });
+    return { result, event, graph: submitted.at(-1), row: deps.imageMeta.get(event.covers[0]), line: deps.ledger.at(-1) };
+  };
+
+  const draft = await renderOf({ prompt: "board 3: the harbor at night", seed: 77, draft: true });
+  assert.equal(draft.result.body.draft, true);
+  assert.equal(preflights.at(-1).draft, true, "the runner's own readiness check is a draft check");
+  assert.equal(draft.graph[5].class_type, "LoraLoaderModelOnly");
+  assert.equal(draft.graph[5].inputs.lora_name, QWEN_DRAFT.lora);
+  assert.equal(draft.graph[8].class_type, "SamplerCustomAdvanced");
+  assert.equal(draft.graph[82].inputs.noise_seed, 77, "the recorded seed is the one that sampled");
+  assert.equal(draft.row.draft, true);
+  assert.equal(draft.row.lora, QWEN_DRAFT.lora);
+  assert.equal(draft.row.loraStrength, 1);
+  assert.equal(draft.row.steps, 5);
+  assert.equal(draft.row.cfg, 1);
+  assert.equal(draft.row.sigmas, "1.0, 0.9334, 0.8572, 0.6668, 0.4001, 0");
+  assert.equal(draft.line.data.model, "qwen-image-2.1", "still Qwen Image 2.1: the rights follow the model");
+  assert.equal(draft.line.data.draft, true);
+  assert.equal(draft.line.data.lora, QWEN_DRAFT.lora);
+  assert.deepEqual(runner.lastQwen && { draft: runner.lastQwen.draft, key: typeof runner.lastQwen.key }, { draft: true, key: "string" });
+
+  const full = await renderOf({ prompt: "board 3: the harbor at night", seed: 78 });
+  assert.equal(full.graph[8].class_type, "KSampler");
+  assert.ok(!("draft" in full.row), "a full render's row has no draft field");
+  assert.ok(!("lora" in full.row));
+  assert.ok(!("draft" in full.line.data), "nor its ledger line");
+  assert.equal(runner.lastQwen.draft, false);
 });
 
 test("song covers retain stable filename mixing while video and SFX preserve explicit seeds", () => {

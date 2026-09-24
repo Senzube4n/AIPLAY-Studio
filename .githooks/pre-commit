@@ -1307,6 +1307,11 @@ node server/music/train_test.js || exit 1
 node --test server/music/train-ui_test.js server/overnight-image_test.js || exit 1
 # Qwen native graphs/readiness, frozen Collab previews, and reactive reference anchors.
 node --test server/qwen-api_test.js server/qwen-image_test.js server/qwen-modelpick_test.js server/qwen-models_test.js server/qwen-status_test.js server/collab/preview_test.js server/collab/ui_test.js server/reactive_profile_test.js || exit 1
+# FAST DRAFT for Qwen Image 2.1 (Viggle's turbo LoRA, arm C of the 2026-09-24
+# A/B): the one sigma helper against the three measured schedules, the graph
+# node for node, every base-only refusal, readiness for the LoRA, the ~3 s /
+# ~12 s estimate, and the Pictures chip's gating sliced out of web/app.js.
+node --test server/qwen-draft_test.js || exit 1
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/sparsectrl_pairs_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/sparsectrl_lifecycle_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/yue2_continue_test.py || exit 1; fi

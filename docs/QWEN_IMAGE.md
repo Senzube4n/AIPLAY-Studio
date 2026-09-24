@@ -51,6 +51,70 @@ and hand back a transparent picture. With Transparent on, references keep their
 alpha. Existing per-image privacy blur remains available in the library and
 through `image_set_blur`; it is independent of model selection.
 
+## Fast draft
+
+**Fast draft** is an optional 0.68 GB add-on: Viggle's v0.2 turbo LoRA (rank 128)
+on the same Qwen Image 2.1 files. It renders in 5 steps on its own schedule
+instead of 25. Get it from Models (row *Images — Fast draft for Qwen Image 2.1*).
+On Pictures a chip reading **Fast draft · about 3× quicker · may garble small
+text** then appears under the Make button, in Simple and Advanced. Without the
+LoRA the same place offers **Get Fast draft (0.68 GB)**. `make_image` takes it as
+`draft: true`, and so do Overnight image items.
+
+Use it for storyboards, board thumbnails and ideas. It is off by default; the
+full render stays the default and is the one for lettering, crowds, close hands,
+two-reference style edits and finals.
+
+Measured on 2026-09-24 on a 16 GB card, warm, in a blind A/B of five arms and
+302 renders:
+
+| Job | Full render | Fast draft |
+|---|---:|---:|
+| 1024², same prompt | 11.2 s | 3.1 s |
+| 1024², a new prompt (pays the text encode) | 22.9 s | 12.2 s |
+| 4 × 1344×768 | 45.4 s | 12.1 s |
+| 1920×1088 | 27.2 s | 6.7 s |
+| One-reference edit, 1344×768 | 15.7 s | 3.9 s |
+| Two-reference edit, 1024² | 20.8 s | 9.1 s (only 2.3×) |
+
+Where it fails: small text (a mirrored R, a reversed E), neon and stencil
+lettering, and at 1 megapixel fused fingers or a melted face in a crowd. On the
+two-reference edit both judges ranked it below the full render (it took the
+second picture's grey background), so ticking it with two references shows a
+note saying so. Skin is not waxy. Across 17 prompts the two blind judges put it
+level with or ahead of the full render on 8 and 3. The same five steps without
+the LoRA came last on 16 of 17, so the LoRA is what makes it work.
+
+**Switching costs time.** The draft and the full render share one copy of the
+model in VRAM, so every switch re-patches it: +8.8 s into a draft and +2.5 s
+back into a full render. A draft right after a full render takes about 12 s.
+Group drafts together (seed variations, a batch of 4): expect about 3 s straight
+after a draft of the same words, about 12 s otherwise, and about 37 s when Qwen
+is not loaded. Overnight's plan costs every draft take at about 12 s at 1024²
+(a night goes round its ideas, so each take is a new prompt). No screen shows a
+per-picture estimate; the render queue uses these numbers only to size its own
+time limit.
+
+What Studio builds: the stock `LoraLoaderModelOnly` at strength 1.0, then
+`SamplerCustomAdvanced` with `BasicGuider` (CFG 1, no negative), `KSamplerSelect`
+euler, `RandomNoise` and `ManualSigmas`. The sigmas are Viggle's raw nodes 1.0,
+0.875, 0.75, 0.5, 0.25 through the dynamic shift (mu from 0.5 at 256 tokens to
+0.9 at 8192), then a final 0. At 1024² that is `1.0, 0.9334, 0.8572, 0.6668,
+0.4001, 0`. References take the same edit path as the full render. A
+reference-sized edit sizes its schedule from the reference size (1024², so the
+1024² schedule); the A/B sized its one-reference edits from the real 1344×768
+reference, whose schedule differs from that by at most 0.0008.
+
+These stay on the full render and are refused, with the reason, for a draft:
+transparent output, masked edits (the editor), more than 3 references (a
+character's pictures count; Viggle's own examples use 3, Studio measured 1 and
+2), CFG above 1, a negative prompt, a step count other than 5, and a canvas past
+8,192 latent tokens (about 2 MP: 1920×1088 was the largest measured, 2048×1024 is
+the edge, and a reference size of 1440 the largest square), where the shift
+formula would extrapolate. Provenance records `draft: true` and the LoRA on the
+picture and in the ledger. The LoRA is under the Qwen Research License like the
+base, so a draft is marked not for sale like every Qwen picture.
+
 ## Layered image editor
 
 The canvas previews the actual composed document. Qwen freezes that composition

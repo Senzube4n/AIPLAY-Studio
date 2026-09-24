@@ -16437,6 +16437,7 @@ function imgQwenShape() {
   $("imgAdvToggle").parentElement.hidden = !advanced;
   $("imgAdvToggle").parentElement.previousElementSibling.hidden = !advanced;
   if (!advanced) $("imgAdv").hidden = true;
+  imgDraftPaint();                               // Fast draft follows the same choices
   imgQueueGate();
 }
 /* ⚠ `refs` IS A BUCKET, NOT A COUNT, and that is what stops this screen from
@@ -16452,6 +16453,8 @@ function imgQwenShape() {
 function imgQwenQuery() {
   const refs = imgRefs.length || ($("imgPersona").value ? 1 : 0);
   const query = new URLSearchParams({ refs: refs ? "1" : "0", transparent: String($("imgTransparent").checked) });
+  /* A draft is checked as a draft: its LoRA and nodes join `ready`. */
+  if (typeof imgDraftOn === "function" && imgDraftOn()) query.set("draft", "true");
   if ($("imgEngine").value === "checkpoint") {
     const pick = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
     if (pick?.dit) query.set("dit", pick.dit);
@@ -16494,6 +16497,7 @@ async function imgQwenCheck() {
     if (request !== imgQwenRequest) return false;
     imgQwenStatus = status;
     imgQwenStatusKey = key;
+    imgDraftPaint();                             // every answer carries Fast draft's own
     /* Ready is a green chip and nothing else. Otherwise the chip names the
      * problem and the note says what to do about it. */
     const parts = [];
@@ -16595,6 +16599,153 @@ $("imgQwenModels").onclick = () => setView("models");
 $("imgRefSizing").onchange = imgQwenShape;
 $("imgTransparent").onchange = imgQwenCheck;
 for (const id of ["imgEncoder", "imgVae"]) $(id).addEventListener("change", imgQwenCheck);
+
+/* ── FAST DRAFT (Qwen Image 2.1) ───────────────────────────────────────────
+ * Viggle's turbo LoRA on the same model: 5 steps on its own schedule instead of
+ * 25, measured about 3x quicker, and worse at small text and at extra faces or
+ * fingers — so a draft for boards and ideas, never the default. One plain chip
+ * (#imgDraft, in .ctawrap so Simple keeps it and its assistant can tick it),
+ * shown only on Qwen Image 2.1 and only when its LoRA is on disk; otherwise
+ * "Get Fast draft (0.68 GB)" opens that Models row. The chip's own words carry
+ * the trade ("about 3× quicker · may garble small text"), so no one has to
+ * hover to learn it. A base-only choice greys it with the reason and the
+ * render goes out as a full one. While it is on, the steps and CFG sliders show
+ * its numbers, locked, and give back what they held when it goes off.
+ *
+ * The greyed CASES and the numbers mirror the server's QWEN_DRAFT (qwen-image.js),
+ * which refuses the same cases with its own sentences; server/qwen-draft_test.js
+ * diffs the two, because the browser cannot import a server module. */
+function imgDraftSpec() {
+  return {
+    steps: 5, cfg: 1, maxRefs: 3, maxTokens: 8192, capability: "imageQwenFastDraft",
+    tip: "About 3× quicker in a run of drafts (a new prompt is about 2×); may garble small text and add extra faces or fingers. "
+      + "For drafts, boards and ideas; not for finals, lettering or two-reference style edits.",
+    reasons: {
+      transparent: "Fast draft is off: a transparent picture needs the full render.",
+      refs: "Fast draft is off: it takes up to 3 reference pictures, a character's included.",
+      cfg: "Fast draft is off: CFG above 1 needs the full render.",
+      negative: "Fast draft is off: a negative prompt needs the full render.",
+      size: "Fast draft is off: it was measured up to about 2 MP (1920 × 1088); a larger picture needs the full render.",
+    },
+    /* Not a refusal: a ticked draft with two or more references still runs. */
+    twoRefs: "Two references: Fast draft measured only about 2× quicker here, and blind judges preferred the full render for a two-reference style edit. Use the full render for the final.",
+  };
+}
+var imgDraftHeld = null;          // { steps, cfg } the sliders held before the chip locked them
+var imgPersonaRefCount = {};      // character name -> how many reference pictures it brings
+var imgDraftWatch = null;         // the poll that waits for a Fast draft download
+/** Reference pictures this render carries: the page's own and a character's. */
+function imgDraftRefCount() {
+  return imgRefs.length + ((imgPersonaRefCount || {})[$("imgPersona")?.value] || 0);   // var: may run before its line at boot
+}
+/** Latent tokens of the canvas a draft would sample, as the server sizes it:
+ *  the page sends refResolution 1024, so a reference-sized edit is 1024². */
+function imgDraftTokens() {
+  const hasRefs = imgRefs.length > 0 || !!$("imgPersona")?.value;
+  if (hasRefs && $("imgRefSizing")?.value === "reference") return 64 * 64;
+  const custom = $("imgSize")?.value === "custom";
+  const [w, h] = custom ? [Number($("imgW")?.value) || 1024, Number($("imgH")?.value) || 1024]
+    : String($("imgSize")?.value || "1024x1024").split("x").map(Number);
+  const side = (v) => Math.ceil(Math.min(4096, Math.max(256, Math.round(v || 1024))) / 32) * 32;
+  return Math.round(side(h) / 16) * Math.round(side(w) / 16);
+}
+/** Why Fast draft cannot go with this render right now, or "". */
+function imgDraftBlocked() {
+  const spec = imgDraftSpec(), R = spec.reasons;
+  /* The LoRA is on disk but this ComfyUI lacks a node the draft graph needs:
+   * said here, on the chip, rather than as a red Qwen light after ticking it. */
+  const missing = imgQwenStatus?.draft?.missingNodes || [];
+  if (missing.length) return `Fast draft needs a newer ComfyUI (missing ${missing.join(", ")}). Update ComfyUI, restart, then check again.`;
+  if ($("imgTransparent")?.checked) return R.transparent;
+  if (imgDraftRefCount() > spec.maxRefs) return R.refs;
+  if (Number($("imgCfg")?.value) > spec.cfg) return R.cfg;
+  if (String($("imgNeg")?.value || "").trim()) return R.negative;
+  if (imgDraftTokens() > spec.maxTokens) return R.size;
+  return "";
+}
+/** Fast draft goes with this render: ticked, offered, and not greyed. */
+function imgDraftOn() {
+  const box = $("imgDraft");
+  return !!box && box.checked && !box.disabled && !$("imgDraftRow").hidden && !$("imgDraftChip").hidden
+    && imgEffectiveEngine() === "qwen-image-2.1";
+}
+function imgDraftLock(on, qwen) {
+  const steps = $("imgSteps"), cfg = $("imgCfg"), spec = imgDraftSpec();
+  if (on) {
+    if (!imgDraftHeld) imgDraftHeld = { steps: steps.value, cfg: cfg.value };
+    steps.value = spec.steps; $("imgStepsV").textContent = String(spec.steps);
+    cfg.value = spec.cfg; $("imgCfgV").textContent = String(spec.cfg);
+    steps.disabled = cfg.disabled = true;
+    steps.title = cfg.title = "Fast draft always renders 5 steps at CFG 1. Turn it off to set these.";
+    /* The reason the Simple assistant reads for a locked field (assist.js). */
+    steps.dataset.why = cfg.dataset.why = "Fast draft is on: it always renders 5 steps at CFG 1. Turn Fast draft off to set these.";
+  } else if (imgDraftHeld) {
+    /* Given back only on Qwen (another engine has just set its own defaults),
+     * and only where the lock's own number is still there: a value written
+     * since (the assistant setting CFG 3, which is what greyed the chip) is
+     * kept, not reverted under a message that names it. */
+    if (qwen) {
+      if (Number(steps.value) === spec.steps) { steps.value = imgDraftHeld.steps; $("imgStepsV").textContent = steps.value; }
+      if (Number(cfg.value) === spec.cfg) { cfg.value = imgDraftHeld.cfg; $("imgCfgV").textContent = cfg.value; }
+    }
+    steps.disabled = cfg.disabled = false;
+    steps.title = cfg.title = "";
+    delete steps.dataset.why; delete cfg.dataset.why;
+    imgDraftHeld = null;
+  }
+}
+function imgDraftPaint() {
+  const row = $("imgDraftRow");
+  if (!row) return;
+  const qwen = imgEffectiveEngine() === "qwen-image-2.1";
+  /* The server's own answer, carried by every Qwen readiness check. Until the
+   * first one arrives nothing is promised either way. */
+  const st = imgQwenStatus?.draft || null;
+  const have = !!st?.fileReady;
+  row.hidden = !qwen || !st;
+  $("imgDraftChip").hidden = !have;
+  $("imgDraftGet").hidden = have || !st;
+  if (st && !have) $("imgDraftGet").textContent = `Get Fast draft (${((st.bytes || 679604800) / 1e9).toFixed(2)} GB)`;
+  const why = qwen && have ? imgDraftBlocked() : "";
+  const box = $("imgDraft");
+  box.disabled = !!why;
+  /* What the Simple assistant is told for a greyed chip (assist.js readFields). */
+  if (why) box.dataset.why = why; else delete box.dataset.why;
+  $("imgDraftChip").classList.toggle("off", !!why);
+  $("imgDraftChip").title = why || imgDraftSpec().tip;
+  const on = imgDraftOn();
+  /* One line under the chip. A greyed chip's reason: always once it was
+   * ticked, and in Simple (no hover there) even unticked, via .quiet in
+   * ui.css. A ticked draft with two or more references: the caution. */
+  const note = why || (on && imgDraftRefCount() >= 2 ? imgDraftSpec().twoRefs : "");
+  const whyEl = $("imgDraftWhy");
+  whyEl.hidden = !note;
+  whyEl.textContent = note;
+  whyEl.classList.toggle("quiet", !!why && !box.checked);
+  /* The number behind the chip, whenever it is offered (Advanced only: CSS
+   * hides it under .assist-on). */
+  $("imgDraftNums").hidden = !(qwen && have);
+  imgDraftLock(on, qwen);
+}
+$("imgDraft").onchange = () => { imgDraftPaint(); imgQwenCheck(); };
+/* The size decides whether a draft is inside its measured ~2 MP. */
+$("imgSize").addEventListener("change", () => imgDraftPaint());
+for (const id of ["imgW", "imgH"]) $(id).addEventListener("input", () => imgDraftPaint());
+$("imgDraftGet").onclick = () => {
+  const st = imgQwenStatus?.draft || {};
+  offerModel({ needsModel: st.capability || imgDraftSpec().capability, error: "Fast draft isn't installed yet." });
+  /* Look again while it downloads, so the chip appears on its own. */
+  clearInterval(imgDraftWatch);
+  let tries = 0;
+  imgDraftWatch = setInterval(async () => {
+    if (++tries > 240) { clearInterval(imgDraftWatch); return; }       // 20 minutes
+    try {
+      const d = await (await fetch("/api/models")).json();
+      const row = (d.capabilities || []).find((c) => c.id === (st.capability || imgDraftSpec().capability));
+      if (row?.ready) { clearInterval(imgDraftWatch); imgQwenCheck(); }
+    } catch { /* Studio restarting: try again next tick */ }
+  }, 5000);
+};
 
 function imgRefsPaint() {
   const eng = imgEffectiveEngine();
@@ -17212,6 +17363,8 @@ async function imgLoadPersonas() {
     const d = await (await fetch(`/api/personas?for=${encodeURIComponent(eng)}`)).json();
     rows = d.personas || []; fits = d.fits || null;
   } catch { /* leave the picker empty */ }
+  /* Their pictures count toward Fast draft's three references. */
+  imgPersonaRefCount = Object.fromEntries(rows.map((x) => [x.name, (x.refImages || []).length]));
   const cur = $("imgPersona").value;
   $("imgPersona").innerHTML = '<option value="">Character…</option>'
     + rows.map((x) => `<option value="${esc(x.name)}"${x.name === cur ? " selected" : ""}>${esc(x.name)}</option>`).join("");
@@ -17471,6 +17624,9 @@ $("imgGo").onclick = async () => {
         ...(effective === "qwen-image-2.1" ? {
           refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
           cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",
+          /* Fast draft: only when the chip is ticked, offered and not greyed;
+           * the steps slider already reads its 5. */
+          ...(imgDraftOn() ? { draft: true } : {}),
         } : {}),
         /* Anima samples with whatever pair is chosen (er_sde / simple unless changed). */
         ...($("imgEngine").value === "anima" && $("imgSampler").value ? { sampler: $("imgSampler").value, scheduler: $("imgSched").value } : {}),
@@ -19062,6 +19218,15 @@ function ovMediaCost(idea, kind) {
   if (kind === "image") {
     if ((idea.effectiveEngine || idea.engine || "qwen-image-2.1") === "qwen-image-2.1") {
       const refs = (idea.refImages?.length || 0) + (idea.persona ? 1 : 0);
+      if (idea.draft === true) {
+        /* FAST DRAFT, MEASURED (2026-09-24, the numbers in server/art.js
+         * QWEN_DRAFT_SECONDS, which qwen-draft_test.js diffs against these):
+         * 3.1 s a megapixel of batch, 3 s a reference, and 9 s for the text
+         * encode of a new prompt. A night goes round the ideas, so every take
+         * is costed as a new prompt: ~12 s at 1024², not the 3 s of a repeat. */
+        const draftMp = Math.max((idea.width || 1024) * (idea.height || 1024), refs ? (idea.refResolution || 1024) ** 2 : 0) / 1048576;
+        return 3.1 * draftMp * (idea.count || 1) + refs * 3 + 9;
+      }
       const pixels = Math.max(mp, refs ? (idea.refResolution || 2048) ** 2 / 1048576 : 0);
       // Unmeasured planning allowance, matching the backend's provisional model.
       return 120 + 2 * (idea.steps || 25) * (idea.count || 1) * pixels * (idea.cfg > 1 ? 2 : 1) + refs * 45;
@@ -19130,7 +19295,9 @@ function ovPaintPlan(total) {
       <div><span>total</span><b>${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}</b></div>`;
     $("ovEst").textContent =
       `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`
-      + (ov.kind === "image" && ov.ideas.some((it) => (it.effectiveEngine || it.engine || "qwen-image-2.1") === "qwen-image-2.1")
+      /* Fast draft ideas are costed from measurements; only a full Qwen render
+       * still carries the unmeasured allowance. */
+      + (ov.kind === "image" && ov.ideas.some((it) => (it.effectiveEngine || it.engine || "qwen-image-2.1") === "qwen-image-2.1" && it.draft !== true)
         ? " · Qwen time is an unmeasured planning estimate." : "");
     $("ovStart").disabled = !ov.ideas.length || tight;
     return;
@@ -19279,6 +19446,8 @@ function ovImageIdea(prompt) {
     ...(effective === "qwen-image-2.1" ? {
       refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
       cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",
+      /* Every take of this idea a Fast draft, when the chip is on. */
+      ...(typeof imgDraftOn === "function" && imgDraftOn() ? { draft: true } : {}),
     } : {}),
     ...(engine === "zimage-base" ? { negative: $("imgNeg").value.trim(), cfg: Number($("imgCfg").value) || 4 } : {}),
   };

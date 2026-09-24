@@ -417,6 +417,28 @@ ok("...and every one of them is NAMED in run(), not just declared", unforwarded.
 
 console.log(`        census: ${routeFields.length} route fields — ${routeFields.join(", ")}`);
 
+/* FAST DRAFT: the plain control (the Pictures chip), the number behind it and
+ * the tool, moving together. The route reads b.draft, so the census above
+ * already demands make_image declare and send it; these pin its shape and that
+ * the readiness tool can ask about it too. */
+console.log("\n  -- Fast draft (Qwen Image 2.1) --");
+ok("make_image declares draft as a boolean", mk.inputSchema.properties.draft?.type === "boolean");
+ok("...its description names the measured speed, what it garbles and the base-only cases",
+  /3\.1 s against 11\.2 s/.test(mk.inputSchema.properties.draft.description)
+  && /small text/.test(mk.inputSchema.properties.draft.description)
+  && /transparent, more than 3 references/.test(mk.inputSchema.properties.draft.description));
+ok("...and run() sends it only when given", /draft: typeof a\.draft === "boolean" \? a\.draft : undefined/.test(runSrc));
+ok("the route refuses it off Qwen by the server's own sentence, before any engine check",
+  /if \(b\.draft === true && engine !== QWEN_IMAGE_ENGINE\) return json\(res, 400, \{ error: QWEN_DRAFT\.refusals\.engine/.test(imgRouteSrc));
+ok("...reads what the graph samples rather than the KSampler it may not have",
+  /const sampled = qwenImageSettings\(graph\);\s*b\.steps = sampled\.steps; b\.cfg = sampled\.cfg;/.test(imgRouteSrc));
+const qstat = byName.get("qwen_image_status");
+ok("qwen_image_status can ask for a draft, and forwards it", qstat?.inputSchema?.properties?.draft?.type === "boolean"
+  && /draft: a\.draft/.test(String(qstat.run)));
+ok("the readiness route passes draft=true through", /if \(url\.searchParams\.get\("draft"\) === "true"\) options\.draft = true;/.test(idx));
+const overnight = byName.get("overnight_start");
+ok("Overnight image items keep it too", overnight?.inputSchema?.properties?.items?.items?.properties?.draft?.type === "boolean");
+
 /* ── the negative-prompt rule, in three places, kept identical ─────────────
  *
  * Whether an engine can honour a negative prompt is ONE fact — does the

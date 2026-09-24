@@ -89,11 +89,12 @@ export function workspaceTools(api, safeName) {
     },
     {
       name: "qwen_image_status",
-      description: "Read Qwen Image 2.1 readiness, installed native weights, runtime nodes and supported reference/alpha capabilities. No download or generation. Use download_model for the catalogue weights and make_image for text/reference generation.",
-      inputSchema: { type: "object", properties: { dit: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" }, refs: { type: "integer", minimum: 0, maximum: 10 }, transparent: { type: "boolean" } }, additionalProperties: false },
+      description: "Read Qwen Image 2.1 readiness, installed native weights, runtime nodes and supported reference/alpha capabilities. No download or generation. Use download_model for the catalogue weights and make_image for text/reference generation. "
+        + "Every answer carries `draft`: whether make_image's Fast draft can run (its LoRA on disk, its nodes in ComfyUI) and its numbers; `draft: true` here makes `ready` answer for a draft render.",
+      inputSchema: { type: "object", properties: { dit: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" }, refs: { type: "integer", minimum: 0, maximum: 10 }, transparent: { type: "boolean" }, draft: { type: "boolean" } }, additionalProperties: false },
       async run(a = {}) {
         const q = new URLSearchParams();
-        for (const [key, value] of Object.entries({ dit: a.dit, encoder: a.encoder, vae: a.vae, refs: a.refs, transparent: a.transparent })) if (value !== undefined) q.set(key, String(value));
+        for (const [key, value] of Object.entries({ dit: a.dit, encoder: a.encoder, vae: a.vae, refs: a.refs, transparent: a.transparent, draft: a.draft })) if (value !== undefined) q.set(key, String(value));
         return await api("GET", `/api/images/qwen-status${q.size ? `?${q}` : ""}`);
       },
     },

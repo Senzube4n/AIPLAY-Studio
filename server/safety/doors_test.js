@@ -117,6 +117,14 @@ section("graphs: negatives are not intent, songs are not pictures, hidden prompt
   ok("Qwen keeps both prompts on ONE node; its negative_prompt is still not intent", checkGraph(qw).ok);
   const qwBad = qwenImageGraph({ prompt: "toddler naked", negative: "", seed: 1, width: 1024, height: 1024, steps: 4, cfg: 1 });
   ok("...and its positive prompt is", checkGraph(qwBad).ok === false);
+  /* FAST DRAFT is a render door too: the same TextEncodeQwenImage21 under a LoRA
+   * and a custom sampler. Its ManualSigmas text and the unguided negative must not
+   * make a clean draft unverifiable, and its positive is read like any other. */
+  const qwDraft = qwenImageGraph({ prompt: "a storyboard frame of a harbor at night", seed: 1, draft: true });
+  ok("a clean Qwen Fast draft passes the door (not refused, not unverifiable)", checkGraph(qwDraft).ok, JSON.stringify(checkGraph(qwDraft)));
+  const qwDraftBad = qwenImageGraph({ prompt: "toddler naked", seed: 1, draft: true, refImages: ["ref.png"] });
+  ok("...and a draft's positive prompt is refused at the door", checkGraph(qwDraftBad).ok === false && checkGraph(qwDraftBad).code === checkGraph(qwBad).code,
+    "the same minors verdict as the full render, not an unverifiable graph");
 
   const ltx = workflow.videoGraphLtx({ prompt: "a nude adult dancer on a stage", seed: 1, seconds: 3, width: 768, height: 512 });
   ok("LTX's house negative (it says \"childish\") does not refuse an adult render", checkGraph(ltx).ok);

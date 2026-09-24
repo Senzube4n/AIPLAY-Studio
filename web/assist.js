@@ -81,7 +81,10 @@ export function readFields(root) {
       id: el.id, label: labelFor(root, el), type: t === "search" ? "text" : t,
       value: t === "checkbox" ? el.checked : el.value,
       hidden: el.hidden || !!(h && h !== root && root.contains(h)),
-      ...(el.disabled ? { fixed: true } : {}),
+      /* A field the page locked for a reason of its own says so in data-why
+       * (Fast draft's chip and the sliders it locks), so the assistant can
+       * give that reason instead of "fixed by this engine". */
+      ...(el.disabled ? { fixed: true, ...(el.dataset?.why ? { why: String(el.dataset.why).slice(0, 240) } : {}) } : {}),
     };
     if (t === "select") {
       f.options = [...el.options].slice(0, 40).map((o) => ({ v: o.value, t: o.textContent.trim().slice(0, 80),

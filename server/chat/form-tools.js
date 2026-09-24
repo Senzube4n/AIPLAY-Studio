@@ -33,6 +33,10 @@ const KIND = {
       "anime, 3D…). Concrete nouns and visible details, not feelings. Put words that must appear in the",
       "picture in quotes. Pick an engine that suits the look (anime → an anime model when installed) and a",
       "size that suits the shot (portrait for a person, wide for a landscape).",
+      "FAST DRAFT (imgDraft, Qwen Image 2.1 only, when it is on the screen): about 3x quicker, but it may garble",
+      "small text and add extra faces or fingers. Tick it for drafts, storyboards, thumbnails and quick variations;",
+      "leave it off for words in the picture, crowds, close hands, two-reference style edits and a final picture.",
+      "If it is marked fixed, tell them the reason given beside it; it is not the engine.",
     ],
   },
   video: {
@@ -91,6 +95,9 @@ const falsy = (v) => /^(0|false|no|off|unchecked|untick(ed)?)$/i.test(str(v).tri
 /** One requested value, checked against the field it is for. Returns the value the page should set. */
 export function checkValue(field, value) {
   const v = str(value).trim();
+  /* `why`: the page's own reason for a locked field (web/assist.js reads
+   * data-why), e.g. Fast draft greyed by Transparent; the engine is not it. */
+  if (field.fixed && field.why) throw new Error(`${field.id} cannot be changed right now (now ${str(field.value)}): ${str(field.why)}`);
   if (field.fixed) throw new Error(`${field.id} is fixed by this engine (now ${str(field.value)}); choose another engine to change it.`);
   if (field.type === "select") {
     const opts = Array.isArray(field.options) ? field.options : [];
@@ -190,7 +197,7 @@ export function describeScreen(f, kind = f?.kind) {
   const clip = (s, n) => { const t = str(s).replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
   const lines = [];
   const fields = Array.isArray(f.fields) ? f.fields.slice(0, 90) : [];
-  const shown = (x) => (x.hidden ? " (hidden)" : x.fixed ? " (fixed by this engine)" : "");
+  const shown = (x) => (x.hidden ? " (hidden)" : x.fixed ? (x.why ? ` (fixed: ${clip(x.why, 200)})` : " (fixed by this engine)") : "");
   lines.push("FIELDS (id · label · value):");
   for (const x of fields) {
     let line = `- ${x.id} · ${clip(x.label, 50) || "?"}${shown(x)} · `;

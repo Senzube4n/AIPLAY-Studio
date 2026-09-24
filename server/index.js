@@ -43,7 +43,7 @@ import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
  * of an image/video MODEL throughout this file, and a bare import would be
  * shadowed inside the very handlers that need the door. */
 import { engine as engineDoor } from "./engine/client.js";
-import { qwenImageGraph, QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings } from "./qwen-image.js";
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
@@ -501,6 +501,7 @@ async function renderMediaForBatch(kind, item, take, actor) {
         dit: item.dit, ditEngine: item.ditEngine, encoder: item.encoder, vae: item.vae,
         quality: item.quality, persona: item.persona, refImages: item.refImages,
         refSizing: item.refSizing, refResolution: item.refResolution, transparent: item.transparent,
+        draft: item.draft,
         sampler: item.sampler, scheduler: item.scheduler, clipSkip: item.clipSkip, loras: item.loras,
         /* No seed on purpose. Every take rolls its own, and the duplicate guard
          * catches a repeat that slips through anyway — which is the whole
@@ -704,7 +705,11 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
                * this is the field that actually identifies the weights. */
               checkpoint: checkpoint ?? null,
               seed: seed ?? null,
-              runId: runId ?? null },
+              runId: runId ?? null,
+              /* FAST DRAFT, said in the ledger as well as on the row: the same
+               * model with Viggle's turbo LoRA on it. Only on a draft, so every
+               * other line keeps the shape the chain already has. */
+              ...(imageOptions?.draft ? { draft: true, lora: imageOptions.lora ?? null } : {}) },
     });
   }
   pendingImagePrompt.delete(file);
@@ -8167,6 +8172,9 @@ const server = http.createServer(async (req, res) => {
       if (!Number.isInteger(refs) || refs < 0 || refs > 10) return json(res, 400, { ready: false, filesReady: false, runtimeReady: false, missingFiles: [], missingNodes: [], totalBytes: 0, error: "refs must be an integer from 0 to 10." });
       options.refImages = Array.from({ length: refs }, (_, i) => `reference-${i + 1}.png`);
       options.transparent = url.searchParams.get("transparent") === "true";
+      /* Fast draft: `ready` then covers its LoRA and nodes too. Every answer
+       * carries `draft` (its own readiness) whether or not this asked. */
+      if (url.searchParams.get("draft") === "true") options.draft = true;
       options.count = 4; // includes the latent batch node available to the UI
       return json(res, 200, await qwenImageStatus({ options }));
     }
@@ -8254,10 +8262,19 @@ const server = http.createServer(async (req, res) => {
       if (!b.engine && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const engine = b.engine || config.image.engine;
       if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
+      /* FAST DRAFT (QWEN_DRAFT in qwen-image.js): Viggle's 5-step turbo LoRA on
+       * Qwen Image 2.1, about 3x quicker and worse at small text. Refused, never
+       * ignored, on any other engine; the base-only cases (transparent, more
+       * than 3 references, CFG above 1, a negative, other step counts, a canvas
+       * above the measured ~2 MP) are
+       * refused by the graph builder below with its own sentences. */
+      if (b.draft !== undefined && typeof b.draft !== "boolean") return json(res, 400, { error: QWEN_DRAFT.refusals.type });
+      if (b.draft === true && engine !== QWEN_IMAGE_ENGINE) return json(res, 400, { error: QWEN_DRAFT.refusals.engine, draftRefused: "engine" });
       if (engine === QWEN_IMAGE_ENGINE) {
         try {
           const graph = qwenImageGraph({ ...b, prompt: b.prompt || "readiness check", seed: b.seed ?? 0 });
-          b.steps = graph[8].inputs.steps; b.cfg = graph[8].inputs.cfg;
+          const sampled = qwenImageSettings(graph);
+          b.steps = sampled.steps; b.cfg = sampled.cfg;
           b.count = graph[7]?.inputs.batch_size || graph[7]?.inputs.amount || 1;
           if (graph[7]?.class_type === "EmptyLatentImage") { b.width = graph[7].inputs.width; b.height = graph[7].inputs.height; }
           b.refSizing = b.refSizing ?? "reference"; b.refResolution = graph[4].inputs.resolution;
@@ -8270,7 +8287,11 @@ const server = http.createServer(async (req, res) => {
           b.refAlpha = b.refAlpha ?? (b.transparent ? "keep" : "white");
           if (!["white", "keep"].includes(b.refAlpha)) throw new TypeError("refAlpha must be white or keep.");
           const readiness = await qwenImageStatus({ options: { ...b, prompt: "readiness check", seed: b.seed ?? 0 } });
-          if (!readiness.ready) return json(res, 400, { ...readiness, ...(readiness.missingFiles?.length ? { needsModel: QWEN_IMAGE_ENGINE } : {}) });
+          /* needsModel opens that Models row: Fast draft's own when its LoRA is
+           * the only file missing (the Qwen row would read "installed"). */
+          const loraOnly = readiness.missingFiles?.length > 0 && readiness.draft?.lora != null
+            && readiness.missingFiles.every((name) => name === readiness.draft.lora);
+          if (!readiness.ready) return json(res, 400, { ...readiness, ...(readiness.missingFiles?.length ? { needsModel: loraOnly ? QWEN_DRAFT.capability : QWEN_IMAGE_ENGINE } : {}) });
         } catch (err) { return json(res, 400, { error: err.message }); }
       }
       if (engine === "anima") {
@@ -8434,6 +8455,11 @@ const server = http.createServer(async (req, res) => {
           const own = b.refImages ?? [];
           if (!Array.isArray(own)) throw new Error("refImages must be an array of image filenames.");
           const personaRefs = personaUsed?.refImages || [];
+          /* A character's pictures count toward Fast draft's three, and the
+           * refusal comes before anything is copied. */
+          if (b.draft === true && personaRefs.length + own.length > QWEN_DRAFT.maxRefs) {
+            return json(res, 400, { error: QWEN_DRAFT.refusals.refs, draftRefused: "refs" });
+          }
           const staged = await stageQwenReferences([...personaRefs, ...own], {
             inputDir: config.inputDir, coverDir: COVER_DIR, imageDir: IMAGE_DIR,
             flatten: b.refAlpha === "white" ? imageEditor.flattenReferences : null,
@@ -8519,6 +8545,10 @@ const server = http.createServer(async (req, res) => {
           refSizing: engine === QWEN_IMAGE_ENGINE ? b.refSizing : undefined,
           refResolution: engine === QWEN_IMAGE_ENGINE ? b.refResolution : undefined,
           transparent: engine === QWEN_IMAGE_ENGINE ? b.transparent : undefined,
+          /* Fast draft rides to art.js's qwenOptions and on to the picture's
+           * provenance (draft: true and the LoRA). Absent unless asked for, so
+           * every other render's job is unchanged. */
+          ...(engine === QWEN_IMAGE_ENGINE && b.draft === true ? { draft: true } : {}),
           // One text encode serves up to four pictures — see coverGraph.
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
           width: Math.min(Math.max(Number(b.width) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),
@@ -8583,7 +8613,7 @@ const server = http.createServer(async (req, res) => {
         negative: shot.video.negative || "", seed: shot.seed,
         width: shot.video.width, height: shot.video.height,
         steps: shot.video.steps, cfg: shot.video.cfg, refImages,
-        ...(engine === QWEN_IMAGE_ENGINE ? { refSizing: b.refSizing, refResolution: b.refResolution, transparent: b.transparent, dit: b.dit, encoder: b.encoder, vae: b.vae } : {}),
+        ...(engine === QWEN_IMAGE_ENGINE ? { refSizing: b.refSizing, refResolution: b.refResolution, transparent: b.transparent, dit: b.dit, encoder: b.encoder, vae: b.vae, draft: b.draft === true } : {}),
       };
       let dupNote = null;
       if (dedupe) {
@@ -8614,6 +8644,7 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 200, {
         ok: true, id, job: job && { id: job.id }, seed: shot.seed,
+        ...(shot.video.draft ? { draft: true } : {}),
         /* The expansion travels back so the screen and an MCP caller both see
          * WHAT WAS ACTUALLY ASKED, not the template. `promptChoices` fed back
          * into a later call reproduces this exact prompt. */

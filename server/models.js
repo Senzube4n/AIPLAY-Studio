@@ -1916,6 +1916,53 @@ export const CATALOG = [
     },
   },
   {
+    /* FAST DRAFT FOR QWEN IMAGE 2.1 — Viggle's v0.2 5-step turbo LoRA, the
+     * rank-128 cut (the r256 is 1.36 GB and was not needed). A LoRA on the
+     * qwen-image-2.1 row's own files, not a model of its own: no `makes`, so
+     * it never appears as a picture engine, and `addonFor` names the row it
+     * needs. Read off HuggingFace 2026-09-24 at commit 2b85c1fc; the file on
+     * the lab rig matched the LFS sha256 below.
+     *
+     * MEASURED 2026-09-24 (lab/qwen_turbo: 302 renders, five arms, two blind
+     * judges), through the stock LoraLoaderModelOnly at 1.0 with five
+     * ManualSigmas, euler, CFG 1 — what server/qwen-image.js builds. */
+    id: "imageQwenFastDraft",
+    group: "images",
+    addonFor: "qwen-image-2.1",
+    label: "Images — Fast draft for Qwen Image 2.1 (Viggle turbo LoRA)",
+    why: "About 3x quicker Qwen Image 2.1 pictures for storyboards, board thumbnails and ideas: 5 steps instead of 25. It may garble small text and, in crowds or close hands, add extra faces or fingers, so the full render stays the default and is the one for lettering, two-reference style edits and finals.",
+    licence: "Qwen Research License Agreement — research and evaluation only, like the Qwen Image 2.1 it patches; commercial use requires a separate licence",
+    home: "https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo",
+    outputRights: {
+      class: "not-for-sale",
+      sellable: false,
+      quote: '"Non-Commercial" shall mean for research or evaluation purposes only.',
+      clause: "Qwen Research License Agreement §1(i), with §2(a)-(b) limiting use to noncommercial purposes; the LoRA is a derivative of Qwen-Image-2.1 and its NOTICE ships it under the same agreement",
+      url: "https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo/blob/2b85c1fcb7b2584c4133fe0c547ec968ff2ae20e/LICENSE",
+      conditions: [
+        "Use is limited to research or evaluation, exactly as for Qwen Image 2.1 itself. Commercial use requires a separate licence from Qwen.",
+        "Redistributing the LoRA requires a copy of the agreement, notices on modified files, and the §3(c) Qwen copyright notice in a Notice file; using its outputs to train a model you release requires \"Built with Qwen\" (§4(b)).",
+      ],
+      note: "A patch on Qwen Image 2.1's weights, not a model of its own: a Fast draft is a Qwen Image 2.1 picture, and Studio marks it not for sale as it marks every Qwen picture.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Viggle/Qwen-Image-2.1-viggle-turbo/resolve/2b85c1fcb7b2584c4133fe0c547ec968ff2ae20e/Qwen-Image-2.1-viggle-turbo-v0.2-5step-lora-r128.safetensors`,
+        dest: M("loras/Qwen-Image-2.1-viggle-turbo-v0.2-5step-lora-r128.safetensors"),
+        bytes: 679_604_800,
+        sha256: "7096a791d0f19cd083a8d2984b4524398d1d6bdd4e720c303ed17200df83ae2b" },
+    ],
+    note: "0.68 GB, one file in models/loras. Needs Qwen Image 2.1 (the row above): it rides on that model's own files and adds the Fast draft chip on Pictures. "
+      + "Measured 2026-09-24 on a 16 GB card at 1024²: 3.1 s a picture warm against the full render's 11.2 s; batch of 4 at 1344x768 12.1 s against 45.4 s; 1920x1088 6.7 s against 27.2 s; one-reference edit 3.9 s against 15.7 s; two-reference edit only 9.1 s against 20.8 s (2.3x), and both judges preferred the full render there. "
+      + "A new prompt still pays the text encode (12.2 s against 22.9 s, about 2x), and switching between a draft and a full render costs a model re-patch each way (+8.8 s into a draft, +2.5 s into a full render), so group drafts together. "
+      + "Where it fails: small text (a mirrored R, a reversed E), neon and stencil lettering, and at 1 megapixel fused fingers or a melted face in a crowd; two blind judges put it level with or ahead of the full render on 3 and 8 of 17 prompts. Skin is not waxy. "
+      + "Base only: transparent output, masked edits, more than 3 references, CFG above 1, negative prompts and canvases above about 2 MP (measured up to 1920x1088).",
+    requires: {
+      experimental: true,
+      note: "Rides on Qwen Image 2.1 and needs what it needs. Peak VRAM measured the same as the full render (about 15.5 GB of 16 GB, staged): it saves time, not memory.",
+    },
+  },
+  {
     /* KREA 2 TURBO — the 12B open-weights image model, in Comfy-Org's int8
      * repack, run by ComfyUI's own Krea2 model class (a Qwen3-VL 4B encoder
      * read as CLIP type "krea2", the Qwen image VAE). Read off HuggingFace
@@ -3431,6 +3478,10 @@ export class ModelManager extends EventEmitter {
         // silently answers "no" on one of the two shapes it will be handed is
         // the subtraction's failure wearing a different hat.
         makes: cap.makes || null,
+        /* The row this one only makes sense beside (a LoRA on another row's
+         * model, like Fast draft on Qwen Image 2.1). Null for every model of
+         * its own. */
+        addonFor: cap.addonFor || null,
         label: cap.label,
         why: cap.why,
         licence: cap.licence,

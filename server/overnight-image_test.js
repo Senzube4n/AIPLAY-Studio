@@ -16,7 +16,7 @@ const dispatchStart = index.indexOf("async function renderMediaForBatch(");
 const dispatchEnd = index.indexOf("const batch = new BatchRunner", dispatchStart);
 assert.ok(dispatchStart > 0 && dispatchEnd > dispatchStart);
 
-function imageForm(engine = "qwen-image-2.1", effective = engine) {
+function imageForm(engine = "qwen-image-2.1", effective = engine, { draft } = {}) {
   const fields = {
     imgEngine: engine, imgCkpt: "chosen.safetensors", imgSize: "custom", imgW: "4096", imgH: "1024",
     imgSteps: "25", imgCount: "2", imgPersona: "Lead", imgCfg: "2", imgNeg: "blur",
@@ -28,6 +28,9 @@ function imageForm(engine = "qwen-image-2.1", effective = engine) {
   const context = vm.createContext({
     $: (id) => ({ value: fields[id] || "", checked: id === "imgTransparent", hidden: false }),
     imgEffectiveEngine: () => effective, imgRefs: refs, imgLoraStack: loras,
+    /* The Fast draft chip, only when a test puts it on the page: the idea
+     * reads it typeof-guarded, so a harness without it sends no draft. */
+    ...(draft === undefined ? {} : { imgDraftOn: () => draft }),
   });
   vm.runInContext(`${app.slice(uiStart, uiEnd)}; globalThis.idea = ovImageIdea('a {red|blue} coat');`, context);
   return { idea: JSON.parse(JSON.stringify(context.idea)), refs, loras };
@@ -94,9 +97,20 @@ test("picked native Qwen companions survive, while ordinary checkpoint LoRAs kee
   assert.equal(cleaned.clipSkip, 2);
 });
 
+test("Qwen's Fast draft chip reaches every take; off, or on another engine, nothing is sent", async () => {
+  const on = cleanMediaItem(imageForm("qwen-image-2.1", "qwen-image-2.1", { draft: true }).idea, "image");
+  assert.equal(on.draft, true);
+  const { request } = await dispatch(on);
+  assert.equal(request.body.draft, true, "forwarded to /api/image, which judges it per take");
+  assert.equal(imageForm("qwen-image-2.1", "qwen-image-2.1", { draft: false }).idea.draft, undefined);
+  assert.equal(imageForm("flux2", "flux2", { draft: true }).idea.draft, undefined, "only a Qwen idea carries it");
+  const plain = await dispatch(cleanMediaItem(imageForm().idea, "image"));
+  assert.equal(Object.hasOwn(plain.request.body, "draft"), false);
+});
+
 test("invalid refs/options are refused before persistence and image readiness errors remain visible", async () => {
   for (const invalid of [{ refImages: Array(11).fill("x.png") }, { refImages: [null] }, { refImages: ["../x.png"] },
-    { refImages: "x.png" }, { transparent: "true" }, { refResolution: Infinity }, { loras: [{ name: "x", strength: NaN }] }]) {
+    { refImages: "x.png" }, { transparent: "true" }, { draft: "true" }, { refResolution: Infinity }, { loras: [{ name: "x", strength: NaN }] }]) {
     assert.throws(() => cleanMediaItem({ prompt: "x", ...invalid }, "image"));
   }
   await assert.rejects(dispatch(cleanMediaItem({ prompt: "x" }, "image"), { error: "Qwen runtime not ready" }), /Qwen runtime not ready/);
@@ -167,5 +181,5 @@ test("a step that finished before the dispatcher listened is read from its own r
 
 test("MCP overnight items declare every added render field", () => {
   const schema = TOOLS.find((tool) => tool.name === "overnight_start").inputSchema.properties.items.items.properties;
-  for (const key of ["dit", "ditEngine", "encoder", "vae", "quality", "persona", "refImages", "refSizing", "refResolution", "transparent", "sampler", "scheduler", "clipSkip", "loras"]) assert.ok(schema[key], key);
+  for (const key of ["dit", "ditEngine", "encoder", "vae", "quality", "persona", "refImages", "refSizing", "refResolution", "transparent", "draft", "sampler", "scheduler", "clipSkip", "loras"]) assert.ok(schema[key], key);
 });

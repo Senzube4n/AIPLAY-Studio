@@ -92,6 +92,12 @@ export function cleanMediaItem(it, kind) {
     if (typeof it.transparent !== "boolean") throw new Error("Image transparent must be a boolean.");
     item.transparent = it.transparent;
   }
+  /* Qwen's Fast draft, kept like transparent: /api/image refuses it per take
+   * on another engine or beside a base-only choice, in its own words. */
+  if (it.draft !== undefined) {
+    if (typeof it.draft !== "boolean") throw new Error("Image draft must be a boolean.");
+    item.draft = it.draft;
+  }
   for (const key of ["clipSkip", "refResolution"]) {
     if (it[key] !== undefined) {
       if (!Number.isFinite(it[key])) throw new Error(`Image ${key} must be a finite number.`);

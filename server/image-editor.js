@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, unlink } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { qwenReferenceCandidates } from "./qwen-status.js";
+import { QWEN_DRAFT } from "./qwen-image.js";
 
 const SCRIPT = fileURLToPath(new URL("./image_editor.py", import.meta.url));
 const ENGINE = "qwen-image-2.1";
@@ -12,6 +13,10 @@ const MODES = new Set(["edit", "style", "inpaint"]);
 export function editorOptions(body) {
   const allowed = new Set(["action", "documentId", "source", "mode", "prompt", "refImages", "selection",
     "steps", "cfg", "seed", "refResolution", "transparent", "dit", "encoder", "vae"]);
+  /* Fast draft is a Pictures setting. Masked edits are base-only, and edit and
+   * style edits were not what the draft was judged on, so the editor says so
+   * rather than calling the field unsupported. */
+  if (body.draft !== undefined) throw new Error(QWEN_DRAFT.refusals.masked);
   const unsupported = Object.keys(body).filter(key => !allowed.has(key));
   if (unsupported.length) throw new Error(`Unsupported editor fields: ${unsupported.join(", ")}.`);
   const mode = body.mode ?? "edit";

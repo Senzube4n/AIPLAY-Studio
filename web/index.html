@@ -1641,6 +1641,26 @@
         title="Dropped: the prompt, the negative, every text node, the prompt hash and the label stay out of the ledger, no graph is filed, and the engine's own metadata chunk is stripped from the PNG. Kept: the picture, its seed, model and date, and its AI-generated mark. New renders only: it cannot be applied to pictures already made."><input
         id="imgPrivate" type="checkbox"> Don&rsquo;t record the prompt</label>
 
+      <!-- FAST DRAFT (Qwen Image 2.1): Viggle's turbo LoRA, 5 steps instead of
+           25. A plain chip beside the other render toggle, so Simple mode keeps
+           it (.ctawrap is one of the things Simple keeps) and the Simple
+           assistant can set it (it reads every checkbox in the form). Shown
+           only on Qwen Image 2.1: with its LoRA on disk the chip, without it
+           "Get Fast draft", which opens that Models row. The chip's own words
+           carry the trade, visible without hovering (touch screens and Simple
+           never see a tooltip). A base-only choice greys it with the reason
+           (web/app.js imgDraftPaint). The numbers are Advanced only
+           (#imgDraftNums; hidden under .assist-on). -->
+      <div class="draftrow" id="imgDraftRow" hidden>
+        <label class="tog ctatog draftchip" for="imgDraft" id="imgDraftChip"
+          title="About 3&times; quicker in a run of drafts (a new prompt is about 2&times;); may garble small text and add extra faces or fingers. For drafts, boards and ideas; not for finals, lettering or two-reference style edits."><input
+          id="imgDraft" type="checkbox"> Fast draft &middot; about 3&times; quicker &middot; may garble small text</label>
+        <button class="linkbtn" type="button" id="imgDraftGet" hidden
+          title="A 0.68 GB add-on for Qwen Image 2.1: about 3&times; quicker drafts. Opens its row in Models.">Get Fast draft (0.68 GB)</button>
+        <span class="hint dim" id="imgDraftNums" hidden>Fast draft: turbo LoRA 1.0 &middot; 5 steps on its own schedule &middot; euler &middot; CFG 1 &middot; measured up to 1920 &times; 1088</span>
+        <span class="hint warnhint" id="imgDraftWhy" hidden></span>
+      </div>
+
       <!-- WHAT IS ACTUALLY HAPPENING, and a way out of it.
            A render passes through four states the screen never showed —
            waiting for the engine, queued behind music, loading the weights,

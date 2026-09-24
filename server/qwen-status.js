@@ -7,7 +7,7 @@ import { CATALOG } from "./models.js";
 import { modelBases } from "./modelpick.js";
 import { scanBases } from "./localmodels.js";
 import { engine as defaultEngine } from "./engine/client.js";
-import { QWEN_IMAGE_FILES, qwenImageGraph } from "./qwen-image.js";
+import { QWEN_IMAGE_FILES, QWEN_DRAFT, qwenImageGraph } from "./qwen-image.js";
 
 export const QWEN_IMAGE_ENGINE = "qwen-image-2.1";
 
@@ -18,17 +18,33 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
   engine = defaultEngine, scan = scanBases, bases = modelBases,
   catalog = CATALOG } = {}) {
   const cap = catalog.find((row) => row.id === QWEN_IMAGE_ENGINE);
+  const draftCap = catalog.find((row) => row.id === QWEN_DRAFT.capability);
   const out = { ready: false, filesReady: false, runtimeReady: false,
     missingFiles: [], missingNodes: [], error: null,
     totalBytes: (cap?.files || []).reduce((sum, file) => sum + file.bytes, 0) };
-  let graph;
+  /* FAST DRAFT'S OWN ANSWER, given with every check: the page shows its chip
+   * only when this is ready, and "Get Fast draft" (the Models row named here)
+   * when the LoRA is not on disk. When the request itself is a draft
+   * (options.draft), `ready` above requires it too. */
+  out.draft = { capability: QWEN_DRAFT.capability, lora: QWEN_DRAFT.lora,
+    bytes: (draftCap?.files || []).reduce((sum, file) => sum + file.bytes, 0) || QWEN_DRAFT.bytes,
+    ready: false, fileReady: false, runtimeReady: false, missingNodes: [],
+    steps: QWEN_DRAFT.steps, cfg: QWEN_DRAFT.cfg, sampler: QWEN_DRAFT.sampler, strength: QWEN_DRAFT.strength,
+    maxRefs: QWEN_DRAFT.maxRefs };
+  let graph, draftGraph, loraName;
   try {
     const selected = {};
     for (const [key, name] of Object.entries(QWEN_IMAGE_FILES)) {
       selected[key] = options[key] || config.modelOverrides?.[name] || name;
       if (path.basename(selected[key]) !== selected[key]) throw new Error("Select model filenames from the model shelf, not paths.");
     }
-    graph = qwenImageGraph({ prompt: "readiness check", ...options, ...selected });
+    loraName = config.modelOverrides?.[QWEN_DRAFT.lora] || QWEN_DRAFT.lora;
+    if (path.basename(loraName) !== loraName) throw new Error("Select model filenames from the model shelf, not paths.");
+    /* The plainest draft this selection can make: which nodes and which LoRA
+     * a draft needs, whatever else the request asked for. */
+    draftGraph = qwenImageGraph({ prompt: "readiness check", ...selected, draft: true, draftLora: loraName });
+    graph = qwenImageGraph({ prompt: "readiness check", ...options, ...selected,
+      ...(options.draft === true ? { draftLora: loraName } : {}) });
   } catch (err) { out.error = err.message; return out; }
   const required = [...new Set(Object.values(graph).map((node) => node.class_type))];
   const [shelfResult, runtimeResult] = await Promise.allSettled([
@@ -45,18 +61,33 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
     { name: graph[2].inputs.clip_name, folders: ["text_encoders", "clip"], node: "CLIPLoader", input: "clip_name" },
     { name: graph[3].inputs.vae_name, folders: ["vae"], node: "VAELoader", input: "vae_name" },
   ];
-  for (const file of selected) {
-    const expected = cap?.files.find((row) => path.basename(row.dest) === file.name)?.bytes;
-    const candidates = shelf.filter((row) => row.name === file.name && file.folders.includes(row.folder));
-    let present = candidates.some((row) => expected ? row.bytes === expected : row.bytes > 0);
+  /* Present: on a shelf the engine reads, at the catalogue's byte count for a
+   * stock file, and in the loader's own list when the engine answered. */
+  const onShelf = (file, row = cap) => {
+    const expected = row?.files.find((f) => path.basename(f.dest) === file.name)?.bytes;
+    const candidates = shelf.filter((f) => f.name === file.name && file.folders.includes(f.folder));
+    let present = candidates.some((f) => expected ? f.bytes === expected : f.bytes > 0);
     const available = info?.[file.node]?.input?.required?.[file.input]?.[0];
     if (Array.isArray(available) && !available.includes(file.name)) present = false;
-    if (!present) out.missingFiles.push(file.name);
+    return present;
+  };
+  for (const file of selected) {
+    if (!onShelf(file)) out.missingFiles.push(file.name);
   }
+  const loraFile = { name: loraName, folders: ["loras"], node: "LoraLoaderModelOnly", input: "lora_name" };
+  out.draft.lora = loraName;
+  out.draft.fileReady = onShelf(loraFile, draftCap);
+  out.draft.missingNodes = info ? [...new Set(Object.values(draftGraph).map((node) => node.class_type))].filter((name) => !info[name]) : [];
+  out.draft.runtimeReady = !!info && out.draft.missingNodes.length === 0;
+  if (options.draft === true && !out.draft.fileReady) out.missingFiles.push(loraName);
   out.filesReady = out.missingFiles.length === 0;
   out.ready = out.filesReady && out.runtimeReady;
+  out.draft.ready = out.draft.fileReady && out.draft.runtimeReady
+    && out.missingFiles.filter((name) => name !== loraName).length === 0;
   const problems = [];
-  if (!out.filesReady) problems.push(`Missing or incomplete Qwen Image files: ${out.missingFiles.join(", ")}. Choose Download in Models when ready.`);
+  const baseMissing = out.missingFiles.filter((name) => name !== loraName);
+  if (baseMissing.length) problems.push(`Missing or incomplete Qwen Image files: ${baseMissing.join(", ")}. Choose Download in Models when ready.`);
+  if (options.draft === true && !out.draft.fileReady) problems.push(`Fast draft needs its LoRA (${loraName}, ${(out.draft.bytes / 1e9).toFixed(2)} GB). Download "Fast draft" in Models, or turn Fast draft off.`);
   if (runtimeResult.status === "rejected") problems.push(`Cannot verify the ComfyUI runtime: ${runtimeResult.reason?.message || "engine unavailable"}.`);
   else if (!out.runtimeReady) problems.push(`ComfyUI is missing ${out.missingNodes.join(", ")}. Qwen Image 2.1 needs a compatible runtime; this check does not update it.`);
   if (shelfResult.status === "rejected") problems.push(`Cannot inspect the model shelf: ${shelfResult.reason?.message || "unavailable"}.`);
