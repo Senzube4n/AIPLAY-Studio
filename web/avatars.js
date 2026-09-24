@@ -2,6 +2,7 @@ import { mountAvatarParts } from './avatar-parts.js';
 import { mountAvatarWardrobeUI } from './avatar-wardrobe-ui.js';
 import { captureAvatarRestPose } from './avatar-wardrobe.js';
 import { mountAvatarFitting } from './avatar-fitting.js';
+import { mountAvatarHandoff } from './avatar-handoff.js';
 import { createAvatarRuntime, createAvatarLoaderPlugin, disposeAvatarScene as dispose } from './avatar-runtime.js';
 import { mountAvatarVoice } from './avatar-voice.js';
 import { mountAvatarAppearance } from './avatar-appearance.js';
@@ -11,7 +12,7 @@ import { GLTFLoader } from '/api/avatars/vendor/loaders/GLTFLoader.js';
 import { OrbitControls } from '/api/avatars/vendor/controls/OrbitControls.js';
 const $=id=>document.getElementById(id),status=(message,error=false)=>{$('status').textContent=message;$('status').className=error?'error':'';};
 const api=async body=>{const r=await fetch('/api/avatars',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);const data=await r.json();if(!r.ok)throw Error(data.error||`HTTP ${r.status}`);return data;};
-let runtime=null,appearance=null,voice=null,wardrobe=null,fitting=null,restoreRestPose=null;
+let runtime=null,appearance=null,voice=null,wardrobe=null,fitting=null,handoff=null,restoreRestPose=null;
 let selected=null,epoch=0,model=null,mixer=null,clips=[],action=null,playing=false,helper=null,renderer=null,controls=null,scene=null,camera=null;
 const workshop = workshopRoute(location.href), overlayMode = workshop.overlay;
 let activeView = true;
@@ -44,6 +45,7 @@ function updateTime(){const t=action?.time||0;$('time').value=String(t);$('time-
 function setMotion(index){mixer?.stopAllAction();action=null;restoreRestPose?.();runtime?.vrm?.springBoneManager?.reset();if(index!==''){action=mixer.clipAction(clips[Number(index)]);action.reset().play();mixer.update(0);$('time').max=String(clips[Number(index)].duration);$('time').disabled=false;$('play').disabled=false;}else{$('time').disabled=true;$('play').disabled=true;}playing=false;$('play').textContent='Play';updateTime();}
 function showFacts(row){const i=row.inspection;$('facts').replaceChildren();for(const [value,label] of [[i.triangles.toLocaleString(),'triangles'],[i.joints,'joints'],[(i.bytes/1024/1024).toFixed(2)+' MiB','file size'],[i.clips.length,'own clips']]){const el=document.createElement('div');el.className='fact';const b=document.createElement('strong');b.textContent=value;const s=document.createElement('span');s.textContent=label;el.append(b,s);$('facts').append(el);} $('warnings').replaceChildren();for(const message of new Set(i.validation.warnings)){const p=document.createElement('p');p.textContent=message;$('warnings').append(p);} $('metadata').textContent=JSON.stringify({source:row.source,license:row.license,persona:row.personaAttribution,coordinates:row.coordinates,skeletonFamily:row.skeletonFamily,sha256:i.sha256,joints:i.jointNames,clips:i.clips,anchors:i.anchors,validation:i.validation},null,2);}
 async function select(id){
+  handoff?.dispose();handoff=null;
   const token=++epoch;playing=false;wardrobe?.dispose();wardrobe=null;fitting?.dispose();fitting=null;$('wardrobe-panel').hidden=true;$('fitting-panel').hidden=true;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;$('appearance-panel').hidden=true;$('pose-test').disabled=true;$('pose-test').textContent='Test movement';if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
   try{
     const row=await api({action:'inspect',id});if(token!==epoch)return;
@@ -58,6 +60,7 @@ async function select(id){
     const nextWardrobe=mountAvatarWardrobeUI({row,gltf,load:url=>new GLTFLoader().loadAsync(url),isCurrent:()=>token===epoch});wardrobe=nextWardrobe;
     fitting=mountAvatarFitting({row,isCurrent:()=>token===epoch,onPrepared:part=>nextWardrobe.importPart(part)});
     const mounted=await mountAvatarAppearance({row,runtime,api,status,isCurrent:()=>token===epoch,onLook:look=>{void nextWardrobe.setLook(look);}});if(token!==epoch){mounted?.dispose();return;}appearance=mounted;
+    handoff=mountAvatarHandoff({row,isCurrent:()=>token===epoch,getContext:()=>({appearance:appearance?.snapshot(),wardrobe:nextWardrobe.snapshot()})});
     try{const nextVoice=await mountAvatarVoice({row,runtime,isCurrent:()=>token===epoch});if(token!==epoch){nextVoice?.dispose();return;}voice=nextVoice;voice?.setActive(activeView);}catch(e){if(token!==epoch)return;$('voice-panel').hidden=false;$('voice-state').textContent='Audio unavailable';$('voice-note').textContent=e.message;$('voice-note').hidden=false;}
     $('wireframe').dispatchEvent(new Event('change'));$('overlay-open').href=`/avatars.html?id=${id}&overlay=1`;const url=new URL(location.href);url.searchParams.set('id',id);history.replaceState(null,'',url);if(workshop.embedded)parent.postMessage({type:'aiplay-avatar-selection',id},location.origin);status(row.inspection.profile==='vrm'?'VRM ready':'Skin verified');
   }catch(e){if(token===epoch)status(e.message,true);}

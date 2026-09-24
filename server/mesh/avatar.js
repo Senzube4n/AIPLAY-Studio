@@ -9,7 +9,8 @@ import { deformReport } from './deform.js';
 import { createExampleInstaller, AVATAR_EXAMPLE } from './avatar-example.js';
 import { createAppearanceService } from './appearance.js';
 import { createAvatarPlaybackRoutes } from './avatar-playback.js';
-import { createAvatarWardrobeRoutes } from './avatar-wardrobe.js';
+import { createAvatarWardrobe, createAvatarWardrobeRoutes } from './avatar-wardrobe.js';
+import { createAvatarHandoffRoutes } from './avatar-handoff.js';
 import { VRM_LIMITS, VRM_EXTENSIONS, inspectVrmDocument } from './vrm-profile.js';
 
 export const AVATAR_LIMITS = Object.freeze({ bytes: 8*1024*1024, triangles: 30000, materials: 4, joints: 96, textureSide: 1024, texturePixels: 4*1024*1024 });
@@ -188,6 +189,8 @@ export function createAvatarRoutes({directory,json,provenance}) {
   const installExample=createExampleInstaller(service);
   const appearance=createAppearanceService({directory:path.join(directory,'looks'),inspectAsset:service.file,record:event=>provenance.append('library',event)});
   const wardrobe=createAvatarWardrobeRoutes({directory:path.join(directory,'wardrobe'),inspectAsset:service.file,inspectLook:(id,lookId)=>appearance.get(id,lookId),json,provenance});
+  const handoff=createAvatarHandoffRoutes({directory:path.join(directory,'handoffs'),inspectAsset:service.file,appearance,
+    wardrobe:createAvatarWardrobe({directory:path.join(directory,'wardrobe'),inspectAsset:service.file,inspectLook:(id,lookId)=>appearance.get(id,lookId)}),json,provenance});
   const vendor=new Map([
     ['three.module.js','build/three.module.js'],['three.core.js','build/three.core.js'],
     ['loaders/GLTFLoader.js','examples/jsm/loaders/GLTFLoader.js'],['controls/OrbitControls.js','examples/jsm/controls/OrbitControls.js'],
@@ -201,6 +204,7 @@ export function createAvatarRoutes({directory,json,provenance}) {
       res.setHeader('Cache-Control','private, no-store'); res.setHeader('X-Content-Type-Options','nosniff');
       if(await playback(req,res,url))return true;
       if(await wardrobe(req,res,url))return true;
+      if(await handoff(req,res,url))return true;
       if(req.method==='GET'&&['/api/avatars/vendor/three-vrm.module.js','/api/avatars/vendor/three-vrm-LICENSE'].includes(url.pathname)) {
         const name=url.pathname.endsWith('LICENSE')?'LICENSE':'lib/three-vrm.module.js';
         const bytes=await readFile(fileURLToPath(new URL(`../../node_modules/@pixiv/three-vrm/${name}`,import.meta.url)));

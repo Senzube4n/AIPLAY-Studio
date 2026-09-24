@@ -1,10 +1,12 @@
 import { avatarAppearanceTools } from './mcp-avatar-appearance.js';
+import { avatarHandoffTools } from './mcp-avatar-handoff.js';
 /** One HTTP contract for the avatar UI and agents. */
 export function avatarTools(api) {
   const post=body=>api('POST','/api/avatars',body);
   const identity={type:'object',required:['id'],properties:{id:{type:'string',description:'Local av_ id returned by avatar_import or avatar_list.'}},additionalProperties:false};
   return [
     ...avatarAppearanceTools(api),
+    ...avatarHandoffTools(api),
     {name:'avatar_install_example',description:'Download and import the curated official anime VRM reference (10.3 MiB, hash pinned, VRM Public License 1.0 with embedded usage terms). Reuses an exact installed copy. This is a sample with expressions and hair springs, not a custom persona model or live account binding.',inputSchema:{type:'object',properties:{},additionalProperties:false},run:()=>post({action:'install_example'})},
     {name:'avatar_list',description:'List local reviewed/imported 3D avatar assets and native-world budgets. Local persona attribution is not account ownership or an installed world binding.',inputSchema:{type:'object',properties:{},additionalProperties:false},run:()=>api('GET','/api/avatars')},
     {name:'avatar_import',description:'Import a local self-contained rigged GLB for visual review. Runs Khronos validation and actual skin-data checks; preserves textures/embedded clips. Does not generate a mesh, retarget Senzu clips or bind a live persona. Review deformation and identity in previewUrl before handing off.',inputSchema:{type:'object',required:['path','name','source','license','skeleton_family','facing'],properties:{
