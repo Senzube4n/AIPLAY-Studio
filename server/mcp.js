@@ -20,6 +20,7 @@ import http from "node:http";
 import { URL, fileURLToPath } from "node:url";
 import path from "node:path";
 import { realpathSync } from "node:fs";
+import { h3Brief } from "./h3tier.js";
 import { vfxTools } from "./mcp-vfx.js";
 import { dawTools } from "./mcp-daw.js";
 // Video Workflow tools (FORK — see FORK_DELTA.md).
@@ -469,6 +470,11 @@ export const TOOLS = [
            * disk, else 4, and is the default a render with no quality gets. */
           h3_quality_steps: st.config?.video?.engines?.h3?.stepDefaults ?? null,
           h3_turbo_builds: st.config?.video?.engines?.h3?.turboBuilds ?? null,
+          /* H3's tier for this card (server/h3tier.js), BRIEF: the size and
+           * longest measured clip, whether it is recommended, the RAM and AMD
+           * warnings. The need table and every tier stay in /api/status and
+           * models_for_this_machine: this tool is called often. */
+          h3_card_tier: h3Brief(st.config?.video?.h3),
         },
       };
     },

@@ -182,6 +182,12 @@ export const VRAM_MODES = new Set(["--gpu-only", "--highvram", "--normalvram", "
  * and the "soft crash". Normal mode keeps a model resident exactly as long as
  * there is room for it, which is all --highvram was ever buying. It stays in
  * Advanced for anyone who runs one model forever on a server card.
+ *
+ * ⚠ THE 12 GB LINE AND H3 (lab, 2026-09-24). H3 rendered bit-identical under a
+ * 12 GB cap, but that run used --lowvram. What this function gives a real
+ * 12 GB card, normal mode, was never run at 12 GB. The flags are unchanged
+ * until it is; server/h3tier.js carries the same caveat in its tier sentence
+ * and config.js's Auto note says it to the person.
  */
 export function autoVramFlags(totalMb) {
   const gb = Number(totalMb) / 1024;

@@ -340,8 +340,11 @@ export const config = {
    * minimum-VRAM claim from this; the community beta settles it.
    */
   vramTiers: {
-    auto:   { label: "Auto", flags: autoVramFlags(saved.gpu?.totalMb), note: "From your card: under 12 GB streams from RAM, 12 to 16 GB runs normal, over 16 GB keeps models on the card." },
-    high:   { label: "16 GB or more", flags: ["--async-offload", "4"], note: "Keeps the model resident. Fastest." },
+    auto:   { label: "Auto", flags: autoVramFlags(saved.gpu?.totalMb), note: "From your card: under 12 GB streams weights from system RAM (low VRAM); 12 GB and up runs normal mode, which keeps a model on the card while there is room and moves it off when the next one needs it. An unread card stays on low VRAM. H3's 12 GB result was measured in low-VRAM mode; normal mode on a 12 GB card is untested." },
+    /* The same flags Auto gives 12 GB and up (comfyargs.js autoVramFlags), so
+     * the same words: it was "Keeps the model resident", which is --highvram's
+     * promise, not normal mode's. */
+    high:   { label: "16 GB or more", flags: ["--async-offload", "4"], note: "Normal mode, the same as Auto on 12 GB and up: keeps a model on the card while there is room and moves it off when the next one needs it. Fastest." },
     mid:    { label: "12 GB", flags: ["--lowvram", "--async-offload", "4"], note: "Verified bit-identical to the fast path." },
     low:    { label: "8 GB", flags: ["--lowvram", "--async-offload", "2"], note: "More streaming from system RAM. Roughly 2× slower." },
     /* ⚠ `--novram` is INCOMPATIBLE with this model and must never come back.
@@ -1237,7 +1240,7 @@ export const config = {
      * The reference path is left alone: this file was not trained on ref2va. */
     turboLora3: pick("loras",
       "taomate_h3_3step_comfy.safetensors",
-      // Kijai's rank-19 average of the same LoRA (191 MB against 2.48 GB): the
+      // Kijai's rank-19 average of the same LoRA (182 MB against 2.48 GB): the
       // small alternative, taken when the full conversion is not on disk.
       "minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),

@@ -685,6 +685,11 @@ node server/videolab/store_test.js || exit 1
 # developer's machine — it passed 46/46 against the reintroduced defect until
 # it parsed the source instead.
 node server/fit_test.js || exit 1
+# H3'S CARD TIERS (server/h3tier.js), the one source for which size and length
+# H3 is offered at on a 12, 8, 6 GB card: the boundaries on real readings, the
+# lab's VRAM fit against its seven capped runs, the 17k+5 frame grid against
+# workflow.js, the RAM warning, and that every H3-family Models row reads it.
+node server/h3tier_test.js || exit 1
 # ...AND THE HALF OF IT A PERSON ACTUALLY SEES. fit.js can be perfectly right
 # and the Models screen still recommend nothing, silently: the block only
 # appears because app.js imports web/modelfit.js, calls paintFit AFTER the list

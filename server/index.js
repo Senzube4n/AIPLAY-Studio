@@ -201,6 +201,7 @@ import {
   scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES } from "./fit.js";
+import { h3Status } from "./h3tier.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
 import { createPromptStore } from "./prompts.js";
@@ -2837,7 +2838,12 @@ const server = http.createServer(async (req, res) => {
               loraBase: e.loraBase ?? null,
             }])),
             seconds: videoEngine().seconds,
-            width: videoEngine().width, height: videoEngine().height },
+            width: videoEngine().width, height: videoEngine().height,
+            /* H3's tier for THIS card (server/h3tier.js): the size and longest
+             * clip it is offered at, the need table for that size, the fit's
+             * inputs and the RAM warning. From the same readings as `gpu` and
+             * `ram` below; arithmetic only, cheap enough to poll. */
+            h3: h3Status({ gpu: gpuStatus(), ram: ramStatus() }) },
           tier: comfy.tier || "auto",
           tiers: Object.entries(config.vramTiers).map(([k, v]) => ({ id: k, label: v.label, note: v.note })),
           // The two provenance toggles (display + Tier-2 record). Tier 1 has

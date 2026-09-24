@@ -11,9 +11,15 @@
  * So `fitFor` and `recommendFor` take a machine-shaped OBJECT rather than
  * calling gpuStatus() themselves, and this suite hands them three:
  *
- *   1. THIS RIG            16 GB card, 32 GB RAM — everything runs, one thing streams.
- *   2. AN 8 GB CARD        16 GB RAM — no video at all, and it has to say so.
+ *   1. THIS RIG            16 GB card, 32 GB RAM — everything runs, H3 at full size.
+ *   2. AN 8 GB CARD        16 GB RAM — H3 is offered at its smaller size (960x544,
+ *                          5 s) with the RAM warning, and NOT recommended: the lab
+ *                          measured the size, but only ever with 32 GB of RAM.
  *   3. NO NVIDIA CARD      nvidia-smi returns nothing. "Cannot tell", never "no".
+ *   4. A 4 GB CARD         under every H3 tier — no video at all, and it has to say so.
+ *   5. THE H3 EDGES        an 8 GB card with 32 GB of RAM (recommended at the smaller
+ *                          size), 8 GB of RAM (under the floor), a 6 GB card (the
+ *                          unproven preview), an AMD card, no card with 16 GB.
  *
  * The capabilities are built from the real CATALOG with every file marked
  * ABSENT, because the interesting reader is the one who has just installed and
@@ -85,6 +91,9 @@ const MACHINES = {
     { name: "NVIDIA GeForce RTX 3060 Ti", totalMb: 8188, usedMb: 700, note: "driver" },
     { totalMb: 16310, usedMb: 9000 }),
   noCard: readMachine(null, { totalMb: 32659, usedMb: 12000 }),
+  tiny: readMachine(
+    { name: "NVIDIA GeForce GTX 1650", totalMb: 4096, usedMb: 300, note: "driver" },
+    { totalMb: 16310, usedMb: 6000 }),
 };
 
 const rec = {};
@@ -122,8 +131,11 @@ ok("...and a 12 GB card still does not",
 console.log("\n── 1. this rig: 16 GB card, 32 GB RAM ──────────────────────────");
 
 ok("the music engine fits", fitOf("rig", "engine") === "fits");
-ok("H3 runs but streams — 16 GB is its minimum, 24 GB its recommendation",
-  fitOf("rig", "video") === "streams", fitOf("rig", "video"));
+/* It said "streams" while H3's row claimed a 16 GB minimum and 24 GB
+ * recommendation. The lab rendered full size bit-identically under a 12 GB
+ * cap, so a 16 GB card is simply full size now (server/h3tier.js). */
+ok("H3 fits at full size — the lab measured 12 GB and up at full quality",
+  fitOf("rig", "video") === "fits", fitOf("rig", "video"));
 ok("Z-Image fits", fitOf("rig", "imageZImage") === "fits");
 ok("a video engine IS recommended", !!pickOf("rig", "video"));
 ok("...and it is the one Studio can download, not the gated one",
@@ -142,21 +154,42 @@ ok("the headline names the card and the download size",
 
 console.log("\n── 2. an 8 GB card, 16 GB RAM ──────────────────────────────────");
 
-ok("H3 will not run — 8 GB against a 16 GB minimum",
-  fitOf("small", "video") === "wont-run", fitOf("small", "video"));
-ok("LTX will not run either", fitOf("small", "videoLtx") === "wont-run");
-ok("NO video engine is recommended", pickOf("small", "video") === null);
-ok("...and that refusal is explained rather than left as a gap",
-  rec.small.out.notes.some((n) => n.slot === "video" && /No video engine/.test(n.headline)));
+/* This section used to assert "H3 will not run — 8 GB against a 16 GB
+ * minimum" and "NO video engine is recommended". Both were the catalogue's
+ * guess; the H3 lab measured 960x544 for 5 s fitting an 8 GB cap. The refusal
+ * checks moved to the 4 GB card below, where they are still true. */
+ok("H3 runs at a smaller size on 8 GB, not 'below the minimum'",
+  fitOf("small", "video") === "smaller", fitOf("small", "video"));
+ok("...and says which size, and that full size needs a bigger card",
+  /960x544/.test(rec.small.capabilities.find((c) => c.id === "video").fit.why)
+    && /full size needs/.test(rec.small.capabilities.find((c) => c.id === "video").fit.why));
+ok("...with the RAM warning, because this machine has 16 GB and H3 was measured with 32",
+  /only measured with 32 GB of RAM/.test(rec.small.capabilities.find((c) => c.id === "video").fit.warning || ""));
+ok("LTX will not run", fitOf("small", "videoLtx") === "wont-run");
+/* Offered on the row, not put in the download set: 16 GB of RAM is half of
+ * what H3 filled in every run, and nobody has tried it (INSTALLER_PLAN step 12
+ * makes the same cut). The 8 GB card with 32 GB of RAM below IS recommended. */
+ok("NO video engine is recommended with 16 GB of RAM, although the row offers H3",
+  pickOf("small", "video") === null && pickOf("small", "video-fast") === null);
+ok("...and the note says it is offered and why it is not recommended",
+  rec.small.out.notes.some((n) => n.slot === "video" && /No video engine/.test(n.headline)
+    && /960x544/.test(n.detail) && /not recommended: under the 32 GB of RAM/.test(n.detail)));
 ok("music still runs, by streaming from RAM", fitOf("small", "engine") === "streams");
 ok("...and is still recommended, because the app does not work without it",
   !!pickOf("small", "music"));
 ok("an image engine is still recommended", !!pickOf("small", "image"));
-ok("the 8 GB machine is quoted a SMALLER download than the 16 GB one",
-  rec.small.out.missingBytes < rec.rig.out.missingBytes,
-  `${(rec.small.out.missingBytes / 1e9).toFixed(1)} GB vs ${(rec.rig.out.missingBytes / 1e9).toFixed(1)} GB`);
-ok("...which is the whole point: the three machines get three different answers",
+ok("the three machines get three different answers",
   new Set([rec.rig.out.headline, rec.small.out.headline, rec.noCard.out.headline]).size === 3);
+
+console.log("\n── 4. a 4 GB card, 16 GB RAM ───────────────────────────────────");
+
+ok("H3 is not offered under 6 GB", fitOf("tiny", "video") === "wont-run", fitOf("tiny", "video"));
+ok("NO video engine is recommended", pickOf("tiny", "video") === null && pickOf("tiny", "video-fast") === null);
+ok("...and that refusal is explained rather than left as a gap, pointing to a friend's card first",
+  rec.tiny.out.notes.some((n) => n.slot === "video" && /No video engine/.test(n.headline) && /Ask a friend/.test(n.detail)));
+ok("the 4 GB machine is quoted a SMALLER download than the 16 GB one",
+  rec.tiny.out.missingBytes < rec.rig.out.missingBytes,
+  `${(rec.tiny.out.missingBytes / 1e9).toFixed(1)} GB vs ${(rec.rig.out.missingBytes / 1e9).toFixed(1)} GB`);
 
 console.log("\n── 3. no NVIDIA card ───────────────────────────────────────────");
 
@@ -172,6 +205,38 @@ ok("the headline refuses to recommend rather than guessing",
   rec.noCard.out.headline);
 ok("...while still reporting the one number it does know",
   /32 GB of system RAM/.test(rec.noCard.out.headline));
+
+console.log("\n── 5. the H3 edges ─────────────────────────────────────────────");
+{
+  const edge = (gpu, ramMb) => {
+    const machine = readMachine(gpu, { totalMb: ramMb, usedMb: 0 });
+    const capabilities = freshInstall().map((c) => ({ ...c, fit: fitFor(c.requires, machine) }));
+    const out = recommendFor({ capabilities, machine, disk: { freeBytes: 900e9 } });
+    return { fit: capabilities.find((c) => c.id === "video").fit, out, pick: out.picks.find((p) => p.slot === "video") || null,
+      note: out.notes.find((n) => n.slot === "video") || null };
+  };
+  const e832 = edge({ name: "NVIDIA GeForce RTX 3060 Ti", totalMb: 8188, usedMb: 0 }, 32659);
+  ok("8 GB card, 32 GB RAM: H3 IS recommended, at its smaller size, with the size to set by hand",
+    e832.fit.state === "smaller" && e832.pick?.id === "video" && /960x544/.test(e832.pick.why)
+      && /does not pick this size for you yet/.test(e832.pick.why));
+  const e88 = edge({ name: "NVIDIA GeForce RTX 3060 Ti", totalMb: 8188, usedMb: 0 }, 8192);
+  ok("8 GB card, 8 GB RAM: under H3's 16 GB RAM floor, refused, and nothing picked",
+    e88.fit.state === "wont-run" && /8 GB of RAM/.test(e88.fit.why) && !e88.pick);
+  const e128 = edge({ name: "NVIDIA GeForce RTX 4070", totalMb: 12282, usedMb: 0 }, 8192);
+  ok("12 GB card, 8 GB RAM: refused on RAM, not 'Runs, slower' (it used to be recommended 68 GB)",
+    e128.fit.state === "wont-run" && !e128.pick && e128.out.missingBytes < 30e9,
+    `${e128.fit.state}, ${(e128.out.missingBytes / 1e9).toFixed(1)} GB`);
+  const e6 = edge({ name: "NVIDIA GeForce RTX 2060", totalMb: 6144, usedMb: 0 }, 32659);
+  ok("6 GB card: the preview is 'Cannot tell', never a chip that says it runs, and is not recommended",
+    e6.fit.state === "unknown" && /experimental preview/.test(e6.fit.why) && !e6.pick
+      && /preview has not been seen to fit/.test(e6.note?.detail || ""));
+  const eAmd = edge({ name: "AMD Radeon RX 9060 XT", totalMb: 16368, usedMb: 0, vendor: "amd" }, 32659);
+  ok("AMD 16 GB card: H3 is not 'Fits' (no AMD render tested) and not recommended",
+    eAmd.fit.state === "unknown" && eAmd.fit.warning && /AMD/.test(eAmd.fit.warning) && !eAmd.pick);
+  const eNo16 = edge(null, 16310);
+  ok("no card, 16 GB RAM: 'Cannot tell' with the RAM warning, and H3 is not the video pick",
+    eNo16.fit.state === "unknown" && /only measured with 32 GB of RAM/.test(eNo16.fit.why) && !eNo16.pick);
+}
 
 /* A machine with no card but genuinely too little RAM is still answerable, and
  * answering it is not a guess: the RAM floor is missed whatever the card is. */

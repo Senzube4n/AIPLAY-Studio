@@ -328,17 +328,39 @@ ok("8 GB: a byte total is stated", /to download/.test(small.html));
 ok("8 GB: the required music engine is picked whatever it scores",
   /class="fitslot">music</.test(small.html));
 
-/* THE ONE THAT MATTERS. A card under H3's floor must be told so in numbers it
- * can check, not with a bare "no". */
+/* THE ONE THAT MATTERS. An 8 GB card used to be told "needs 16 GB of VRAM,
+ * you have 8" for H3. The H3 lab (2026-09-24) measured 960x544 for 5 s
+ * fitting an 8 GB cap, so the badge now names the SIZE it runs at, in the
+ * server's words, and the RAM warning is a visible line, not a hover. */
 const h3Badge = small.badges.get("video");
-ok("8 GB: the video row's badge names both numbers",
-  /needs 16 GB of VRAM, you have 8/.test(h3Badge), h3Badge);
+ok("8 GB: the video row's badge names the size it runs at",
+  /960x544, 5 s/.test(h3Badge) && !/needs 16 GB/.test(h3Badge), h3Badge);
 ok("8 GB: that badge uses the server's chip word",
-  h3Badge.includes(FIT_STATES["wont-run"].chip), h3Badge);
-ok("8 GB: it is toned as a refusal, not as an unknown",
-  /fit-bad/.test(h3Badge), h3Badge);
+  h3Badge.includes(FIT_STATES["smaller"].chip), h3Badge);
+ok("8 GB: it is toned as a cost, not as a refusal",
+  /fit-warn/.test(h3Badge) && !/fit-bad/.test(h3Badge), h3Badge);
 ok("8 GB: the full reason is available on hover rather than lost",
   /title="[^"]{40,}"/.test(h3Badge));
+ok("8 GB, 16 GB of RAM: the RAM warning is a visible line under the badge",
+  /class="fitwarn">⚠ H3 was only measured with 32 GB of RAM/.test(h3Badge), h3Badge);
+ok("8 GB: the TaoMate rows say the same as the model they load into",
+  small.badges.get("videoH3Turbo3Small") === h3Badge && small.badges.get("videoH3Turbo3") === h3Badge);
+
+/* A card under every H3 tier is still refused, in numbers it can check. */
+const tiny = render(readMachine({ name: "NVIDIA GeForce GTX 1650", totalMb: 4096, usedMb: 300 }, { totalMb: 16384, usedMb: 6000 }));
+const tinyBadge = tiny.badges.get("video");
+ok("4 GB: the video row's badge names the printed minimum, the preview floor and the card",
+  /needs 8 GB of VRAM \(6 for an experimental preview\), you have 4/.test(tinyBadge), tinyBadge);
+ok("4 GB: that badge uses the server's chip word, toned as a refusal",
+  tinyBadge.includes(FIT_STATES["wont-run"].chip) && /fit-bad/.test(tinyBadge), tinyBadge);
+
+/* The unproven 6 GB preview: "Cannot tell", never a chip that says it runs. */
+const six = render(readMachine({ name: "NVIDIA GeForce RTX 2060", totalMb: 6144, usedMb: 300 }, { totalMb: 32659, usedMb: 6000 }));
+const sixBadge = six.badges.get("video");
+ok("6 GB: the preview badge is 'Cannot tell' with the size and 'not proven', not 'Runs'",
+  sixBadge.includes(FIT_STATES["unknown"].chip) && /832x480, 5 s · experimental preview, not proven/.test(sixBadge)
+    && !sixBadge.includes(FIT_STATES["smaller"].chip), sixBadge);
+ok("6 GB: and H3 is not in the picks at the top", !/class="fitslot">video</.test(six.html));
 
 /* ── the 24 GB card ────────────────────────────────────────────────────── */
 const big = render(bigMachine);
@@ -349,6 +371,8 @@ ok("24 GB: H3 fits outright", FIT_STATES["fits"].chip && big.badges.get("video")
   big.badges.get("video"));
 ok("24 GB: a fitting row still shows its evidence",
   /24 GB card, 64 GB RAM/.test(big.badges.get("video")), big.badges.get("video"));
+ok("24 GB: the Fast setting's pick shows a slot word a person reads, not the id 'video-fast'",
+  /class="fitslot">fast video</.test(big.html) && !/class="fitslot">video-fast</.test(big.html));
 ok("24 GB: the gated engine is reported and never recommended",
   /cannot download it for you/.test(big.html) && !/class="fitslot">video<\/span>\s*<b>[^<]*LTX/.test(big.html),
   "LTX 2.5 has no button; naming it as a pick is the dead end this feature exists to remove");

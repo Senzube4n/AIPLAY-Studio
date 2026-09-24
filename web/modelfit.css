@@ -123,7 +123,11 @@ summary.fithead:hover h3 { color: var(--primary); }
 }
 
 /* ── the per-row badge ──────────────────────────────────────────────────── */
-.fitbadgeslot { display: inline-flex; flex-basis: 100%; }
+.fitbadgeslot { display: inline-flex; flex-basis: 100%; flex-wrap: wrap; row-gap: 4px; }
+/* The verdict's warning (H3's RAM and AMD sentences), on its own line under the badge. */
+.fitwarn { flex-basis: 100%; font-size: 11px; line-height: 1.45; color: var(--warn); }
+/* The same warning in the model picker window (web/modelpick.js), under the chip. */
+.mpick .mp-warn { font-size: 11px; line-height: 1.45; color: var(--warn); }
 .fitbadge {
   display: inline-flex;
   align-items: baseline;

@@ -35,41 +35,72 @@ import path from "node:path";
 import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel } from "./models.js";
 import { config } from "./config.js";
 import { SETTING_WORDS } from "./lrc.js";
+import {
+  h3TierFor, h3Status, h3SetSizeByHand, H3_VRAM_OFFERED_GB, H3_VRAM_MIN_GB, H3_VRAM_FULL_GB, H3_RAM_MEASURED_GB,
+  H3_RAM_FLOOR_GB, H3_ASK_A_FRIEND,
+} from "./h3tier.js";
 
-/* ── the four answers ──────────────────────────────────────────────────────
+/* ── the five answers ──────────────────────────────────────────────────────
  *
- * Deliberately four and not three. "Runs" and "does not run" is the split
- * people expect, and it is wrong on this engine: every `--lowvram` tier works
- * by keeping less of the model resident and STREAMING the rest from system
- * RAM, so between comfortable and impossible there is a wide band where the
- * thing genuinely works and is genuinely slower. Collapsing that band into
- * "no" would refuse work most of these cards can do; collapsing it into "yes"
- * is how somebody ends up watching a progress bar for thirteen minutes with no
+ * Deliberately more than two. "Runs" and "does not run" is the split people
+ * expect, and it is wrong on this engine: every `--lowvram` tier works by
+ * keeping less of the model resident and STREAMING the rest from system RAM,
+ * so between comfortable and impossible there is a wide band where the thing
+ * genuinely works and is genuinely slower. Collapsing that band into "no"
+ * would refuse work most of these cards can do; collapsing it into "yes" is
+ * how somebody ends up watching a progress bar for thirteen minutes with no
  * idea that is not normal (which is measured, on Z-Image, in models.js).
  *
- * The fourth is `unknown`, and it is not a euphemism for no. */
+ * `smaller` is the H3 family's (server/h3tier.js): a card under full size gets
+ * a smaller picture and a shorter clip instead of the same clip slowly.
+ * `unknown` is not a euphemism for no.
+ *
+ * `rank` is served with the rest (/api/models `fitStates`), so the page sorts
+ * by the server's order instead of keeping a copy of it: least restrictive
+ * first, and the recommendation ranks with the same numbers (FIT_RANK). */
 export const FIT_STATES = {
   "fits": {
     tone: "ok",
     chip: "Fits your machine",
-    line: "At or above what the publisher recommends, on both the card and system RAM.",
+    /* "the recommendation", not "the publisher's": H3's is what Studio's own
+     * lab measured (12 GB card, 32 GB of RAM), and no publisher wrote it. */
+    line: "At or above the recommendation the row states, on both the card and system RAM.",
+    rank: 0,
   },
   "streams": {
     tone: "warn",
     chip: "Runs, slower",
     line: "Above the minimum but under the recommendation. It runs by streaming weights "
         + "from system RAM instead of holding them on the card — that works, and it costs time.",
+    rank: 1,
   },
-  "wont-run": {
-    tone: "bad",
-    chip: "Below the minimum",
-    line: "Under the publisher's stated floor. Studio will still download it if you ask; "
-        + "it is likely to fail at load or crawl.",
+  /* H3 ONLY, for now (server/h3tier.js). A card under what full size needs does
+   * not have to stream the same clip slowly: H3's memory follows picture size
+   * times clip length, so a smaller card gets a smaller clip that fits. That is
+   * neither "Runs, slower" nor "Below the minimum", and calling it either told
+   * an 8 GB owner something the lab measured to be false. Only MEASURED sizes
+   * get this chip; the unproven 6 GB preview is `unknown`. */
+  "smaller": {
+    tone: "warn",
+    chip: "Runs at a smaller size",
+    line: "The card is under what full size needs; a smaller picture and a shorter clip were "
+        + "measured to fit a card this size. The row names the size. Studio does not pick it for you "
+        + "yet: set it on the Video screen.",
+    rank: 2,
   },
   "unknown": {
     tone: "unknown",
     chip: "Cannot tell",
-    line: "No GPU reading available on this machine, so nothing is claimed either way.",
+    line: "Nothing is claimed either way: the card could not be read, or nobody has run this on a "
+        + "card like it yet. The row says which.",
+    rank: 3,
+  },
+  "wont-run": {
+    tone: "bad",
+    chip: "Below the minimum",
+    line: "Under the stated floor. Studio will still download it if you ask; "
+        + "it is likely to fail at load or crawl.",
+    rank: 4,
   },
 };
 
@@ -119,6 +150,7 @@ export function readMachine(gpu, ram) {
           name: gpu.name,
           vramGb: gb(gpu.totalMb),
           vramExactGb: exactGb(gpu.totalMb),
+          vramMb: Number(gpu.totalMb),   // the raw reading, for h3tier.js, which rounds it the same way
           usedGb: Number.isFinite(gpu.usedMb) ? exactGb(gpu.usedMb) : null,   // null: not readable, never "0 used"
           /* Carried because a recommendation that ignores it recommends an
            * engine that is broken on the card in front of it — see
@@ -144,6 +176,132 @@ export function readMachine(gpu, ram) {
         + "It returned nothing here — so this is an AMD, Intel or Apple machine, or the driver is not "
         + "installed. Every VRAM answer below is therefore 'cannot tell' rather than 'no'. ComfyUI "
         + "itself may still run: check what your card is and compare it against the numbers each row states.",
+    /* WHAT H3 DOES ON THIS MACHINE: its tier, the need table for the tier's
+     * size and the RAM warning, from the same reading as everything above
+     * (server/h3tier.js). The Models screen and models_for_this_machine both
+     * carry `machine`, so neither has to work a tier out for itself. */
+    h3: h3Status({ gpu: haveGpu ? gpu : null, ram }),
+  };
+}
+
+/**
+ * H3 AND THE ROWS THAT ONLY RUN WITH IT (TaoMate, the reference build, FastH3).
+ *
+ * Their rows carry `requires.h3Tiers`, and the verdict is the card's TIER from
+ * server/h3tier.js rather than a floor: H3's memory follows picture size times
+ * clip length, so an 8 GB card does not "fail at load or crawl", it renders
+ * 960x544 for 5 s (measured under a cap). Every H3-family row gets the same
+ * answer on one machine, because the tier belongs to the card, not the row:
+ * a TaoMate row that disagreed with the model it loads into was the defect.
+ *
+ * RAM: A FLOOR AT 16 GB, A WARNING UNDER 32. H3 was only ever measured with
+ * 32 GB of RAM, and filled it; nobody has run it with less. Under 16 GB it is
+ * not offered (the row prints 16 as its minimum, so the printed number is the
+ * enforced one). From 16 to 31 GB the verdict carries the lab's sentence, a
+ * full-size card is "Runs, slower" instead of "Fits", and it is offered but
+ * not recommended.
+ *
+ * OFFERED IS NOT RECOMMENDED. `recommendable: false` keeps a row out of
+ * recommendFor's picks while its chip still says what the card would get:
+ * the unproven 6 GB preview, an AMD card (no H3 render tested) and a machine
+ * under 32 GB of RAM (h3tier.js decides, `notRecommended` says why). The
+ * preview and AMD are "Cannot tell", never a chip that says it runs.
+ *
+ * `short` is the badge's tail when the generic one would mislead (it would
+ * quote a recommendation where the answer is a size); `warning` is the RAM
+ * and AMD sentences, which the Models screen shows under the badge. `why`
+ * quotes the row's own path's evidence (FastH3 and the reference path were
+ * not measured where the Fast setting was), so those rows may differ in
+ * words while every H3-family row gets the same state.
+ */
+function h3Fit(req, machine) {
+  const g = machine.gpu;
+  const t = h3TierFor({
+    vramMb: g ? (g.vramMb ?? g.vramGb * 1024) : null,
+    ramGb: machine.ram.totalGb,
+    vendor: g?.vendor || null,
+    path: req.h3Path || null,
+  });
+  const warning = [t.ramWarning, t.amdNote].filter(Boolean).join(" ") || null;
+  const common = {
+    needVramGb: Number(req.vramMinGb ?? 0), recVramGb: Number(req.vramRecGb ?? 0),
+    needRamGb: Number(req.ramMinGb ?? 0), recRamGb: Number(req.ramRecGb ?? 0),
+    yourVramGb: g ? g.vramGb : null,
+    yourRamGb: machine.ram.totalGb,
+    note: req.note || null,
+    h3: {
+      tier: t.id, label: t.label, width: t.width, height: t.height,
+      maxSeconds: t.maxSeconds, measured: t.measured, experimental: t.experimental,
+      recommend: t.recommend,
+    },
+    warning,
+    short: null,
+    recommendable: t.recommend,
+  };
+  /* The sentence, why it is not recommended, then the warnings — the AMD note
+   * only where the AMD sentence has not already said it in other words. */
+  const tailOf = (s) => [s, t.notRecommended, t.ramWarning, t.notRecommendedFor === "amd" ? null : t.amdNote]
+    .filter(Boolean).join(" ");
+  const ramShort = t.ramWarning ? ` · ${machine.ram.totalGb} GB RAM, measured with ${H3_RAM_MEASURED_GB}` : "";
+  const size = `${t.width}x${t.height}`;
+
+  /* Decided first, and without the card: RAM this far under what H3 filled is
+   * not offered whatever the card is. Not a warning: the refusal is the message. */
+  if (t.ramBelowFloor) {
+    return {
+      ...common, state: "wont-run", warning: null, recommendable: false,
+      why: `This machine has ${machine.ram.totalGb} GB of RAM. H3 is offered from ${H3_RAM_FLOOR_GB} GB: it was only `
+        + `ever measured with ${H3_RAM_MEASURED_GB} GB, and filled it, and nothing with less was tried. `
+        + H3_ASK_A_FRIEND,
+    };
+  }
+  if (!g) {
+    return {
+      ...common, state: "unknown",
+      why: tailOf(`${t.evidence} This machine has ${machine.ram.totalGb} GB of RAM.`),
+    };
+  }
+  if (t.id === "none") {
+    /* Not offered, so no RAM or AMD caveat: they qualify a render that will not happen. */
+    return {
+      ...common, state: "wont-run", warning: null, recommendable: false,
+      /* The printed minimum (the smallest measured size) and the preview floor, both. */
+      short: `needs ${H3_VRAM_MIN_GB} GB of VRAM (${H3_VRAM_OFFERED_GB} for an experimental preview), you have ${t.cardGb}`,
+      why: `Your ${g.name} has ${t.cardGb} GB, under the ${H3_VRAM_OFFERED_GB} GB H3 needs even for a preview. `
+        + t.evidence,
+    };
+  }
+  /* The tier's size for this card, as the sentence says it. */
+  const sizeLine = t.id === "full"
+    ? `full size, ${size}, measured up to ${t.maxSeconds} s`
+    : `${size} for ${t.maxSeconds} s${t.experimental ? ", as an experimental preview" : ""}`;
+  if (t.amdNote) {
+    return {
+      ...common, state: "unknown",
+      short: `${size}${t.experimental ? ", experimental" : ""} · no AMD render tested`,
+      why: tailOf(`Your ${g.name} has ${t.cardGb} GB: on an NVIDIA card that size gets H3 at ${sizeLine}. `
+        + `Studio cannot tell what an AMD card does with it. ${t.evidence}`),
+    };
+  }
+  if (t.experimental) {
+    return {
+      ...common, state: "unknown",
+      short: `${size}, ${t.maxSeconds} s · experimental preview, not proven${ramShort}`,
+      why: tailOf(`Your ${g.name} has ${t.cardGb} GB: H3 is offered here only as an experimental preview, `
+        + `${size} for ${t.maxSeconds} s. ${t.evidence} ${h3SetSizeByHand(t)}`),
+    };
+  }
+  if (t.id === "full") {
+    const why = tailOf(`Your ${g.name} (${t.cardGb} GB) renders H3 at ${sizeLine}. ${t.evidence}`);
+    return t.ramWarning
+      ? { ...common, state: "streams", short: `${size}${ramShort}`, why }
+      : { ...common, state: "fits", why };
+  }
+  return {
+    ...common, state: "smaller",
+    short: `${size}, ${t.maxSeconds} s${ramShort}`,
+    why: tailOf(`Your ${g.name} has ${t.cardGb} GB: H3 fits here at a smaller size, ${sizeLine}; full size `
+      + `needs ${H3_VRAM_FULL_GB} GB. ${t.evidence} ${h3SetSizeByHand(t)}`),
   };
 }
 
@@ -160,6 +318,7 @@ export function readMachine(gpu, ram) {
  */
 export function fitFor(requires, machine) {
   const req = requires || {};
+  if (req.h3Tiers) return h3Fit(req, machine);
   if (req.experimental) return {state:"unknown",why:"Experimental native build: a minimum hardware floor has not been established.",
     note:req.note||null,needVramGb:null,recVramGb:null,needRamGb:null,recRamGb:null,
     yourVramGb:machine.gpu?.vramGb??null,yourRamGb:machine.ram.totalGb};
@@ -277,7 +436,29 @@ const AMD_MUSIC_WARNING =
 
 /** Least restrictive first. The order the catalogue's own classes imply. */
 const RIGHTS_RANK = { "unrestricted": 0, "yours-with-conditions": 1, "unknown": 2, "not-for-sale": 3 };
-const FIT_RANK = { "fits": 0, "streams": 1, "unknown": 2, "wont-run": 3 };
+/* From FIT_STATES, so the page and the recommendation rank alike: a known
+ * smaller size above "cannot tell", below anything that runs full size. */
+const FIT_RANK = Object.fromEntries(Object.entries(FIT_STATES).map(([k, v]) => [k, v.rank]));
+
+/* THE FAST SETTING'S FILE, found by a field on the row (`fastPathFor`), not by
+ * id here. Rows that speed up an engine name it; the one marked `newInstalls`
+ * is what a machine holding neither gets (the 182 MB rank-19 TaoMate, measured
+ * equal to the 2.48 GB conversion). One already on disk always wins, and the
+ * newInstalls one first among those: the 2.48 GB row counts the small file as
+ * present (its `alt`), so after a new install fetches the small file both
+ * rows read ready, and the pick must name the one that was fetched.
+ * `fastNote` is the plain sentence the pick shows; the row's `why` keeps the
+ * details (rank 19, who made it). */
+const FAST_PATHS = CATALOG.filter((c) => c.fastPathFor)
+  .map((c) => ({ id: c.id, for: c.fastPathFor, newInstalls: !!c.newInstalls, note: c.fastNote || "" }));
+
+/** The territory sentence a region-locked pick's reason ends with. */
+function regionLine(cap) {
+  return cap.region
+    ? ` ⚠ Licensed only outside ${cap.region.excluded.join(", ")} — the download asks you to `
+      + "confirm you are outside those territories, and the licence is between you and the publisher."
+    : "";
+}
 
 /**
  * Bytes for a set of capabilities, counting each FILE once.
@@ -453,14 +634,19 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
   const videos = VIDEO_IDS.map(withFit).filter(Boolean);
   /* Between two video rows that are equally ready and equally fitting, the
    * engine selected in settings wins before size does: FastH3 is 1 GB smaller
-   * than H3 but unmeasured here, and a fresh install's default is H3. */
+   * than H3 but experimental (measured 2026-09-24: slower than H3's Fast
+   * setting, good on 1 of 3 prompts), and a fresh install's default is H3. */
   const chosenVideo = MODEL_TO_CAPABILITY[config.video.engine];
   const videoRank = (a, b) => {
     if (a.cap.ready !== b.cap.ready || FIT_RANK[a.fit.state] !== FIT_RANK[b.fit.state]) return rank(a, b);
     if ((a.cap.id === chosenVideo) !== (b.cap.id === chosenVideo)) return a.cap.id === chosenVideo ? -1 : 1;
     return rank(a, b);
   };
-  const fetchable = videos.filter((v) => !v.cap.gated && v.fit.state !== "wont-run").sort(videoRank);
+  /* `recommendable: false` (the H3 family's unproven preview, AMD, under 32 GB
+   * of RAM; see h3Fit) is offered on its row and never picked here. */
+  const fetchable = videos
+    .filter((v) => !v.cap.gated && v.fit.state !== "wont-run" && v.fit.recommendable !== false)
+    .sort(videoRank);
   const gatedOnes = videos.filter((v) => v.cap.gated);
 
   if (fetchable.length) {
@@ -477,16 +663,39 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
       region: best.cap.region || null,
       why: `The video engine Studio can fetch for you${others.length ? ` (over ${others.join(", ")})` : ""}. `
          + best.fit.why
-         + (best.cap.region
-             ? ` ⚠ Licensed only outside ${best.cap.region.excluded.join(", ")} — the download asks you to `
-               + "confirm you are outside those territories, and the licence is between you and the publisher."
-             : ""),
+         + regionLine(best.cap),
     });
+    /* The file that turns on the Video screen's Fast setting for that engine:
+     * the one on disk if either is, else the one marked for new installs. */
+    const fast = FAST_PATHS.filter((f) => f.for === best.cap.id)
+      .map((f) => ({ ...f, e: withFit(f.id) })).filter((f) => f.e);
+    const chosen = fast.find((f) => f.e.cap.ready && f.newInstalls) || fast.find((f) => f.e.cap.ready)
+      || fast.find((f) => f.newInstalls) || fast[0];
+    if (chosen) {
+      const { cap, fit } = chosen.e;
+      picks.push({
+        /* The slot id stays machine-readable; `slotLabel` is what a person reads. */
+        slot: "video-fast", slotLabel: "fast video", id: cap.id, label: cap.label, fit, ready: cap.ready,
+        bytes: cap.totalBytes, licence: cap.licence,
+        outputRights: cap.outputRights || null, region: cap.region || null,
+        why: `${cap.ready ? "Already on disk. " : ""}Turns on the Video screen's Fast setting (three steps) `
+           + `for ${best.cap.label.split("—").pop().trim()}.${chosen.note ? ` ${chosen.note}` : ""}${regionLine(cap)}`,
+      });
+    }
   } else if (videos.length) {
+    /* The H3 family shares one verdict (the tier is the card's, not the row's),
+     * so it is said once for all of them, not once per row, in the words of
+     * the engine selected in settings (else the first). */
+    const family = videos.filter((v) => v.fit.h3);
+    const voice = family.find((v) => v.cap.id === chosenVideo) || family[0];
+    const rest = videos.filter((v) => !v.fit.h3).map((v) => `${v.cap.label}: ${v.fit.why}`);
     notes.push({
       slot: "video",
       headline: "No video engine is recommended for this machine.",
-      detail: videos.map((v) => `${v.cap.label}: ${v.fit.why}`).join(" "),
+      detail: [
+        ...(family.length ? [`${family.map((v) => v.cap.label).join(" and ")}: ${voice.fit.why}`] : []),
+        ...rest,
+      ].join(" "),
     });
   }
 

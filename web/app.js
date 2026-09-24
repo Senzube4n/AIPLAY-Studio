@@ -7049,7 +7049,7 @@ function vidPaint() {
     $("vidQFast").hidden = qs.fast === qs.standard;
     $("vidQualityNote").textContent = qs.fast === 3
       ? "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time."
-      : "Install the TaoMate 3-step row on the Models screen and Fast drops to 3 steps.";
+      : "Install the Fast setting for H3 on the Models screen (a 182 MB file) and Fast drops to 3 steps.";
   }
 
   /* Loop only makes sense with an opening picture — the trick IS reusing that

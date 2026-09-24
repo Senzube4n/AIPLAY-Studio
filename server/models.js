@@ -61,6 +61,11 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { config } from "./config.js";
 import { folderGroup } from "./localmodels.js";
+/* H3's card tiers: the requirement numbers on every H3-family row, and the
+ * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
+import {
+  h3Requires, H3_AMD_NOTE, H3_TIERS, H3_VRAM_FULL_GB, H3_LAB_CARD_GB, H3_RAM_FLOOR_GB, H3_RAM_MEASURED_GB,
+} from "./h3tier.js";
 
 const HF = "https://huggingface.co";
 
@@ -497,6 +502,17 @@ const H3_SHARED_FILES = [
     amd: { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors`,
       dest: M("text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"), bytes: 27141342152,
       alt: ["qwen3vl_32b_minimax_h3-int4_convrot.safetensors"] } },
+  /* ⚠ STILL THE fp16 VIDEO VAE, although config.js loads the int8 one first
+   * when it is present (a912a39: about 12% a clip). Checked 2026-09-24: the
+   * rig's int8 file is 3,171,670,912 bytes, dated 2026-08-17, a month before
+   * any official one existed (the 08-17 hunt cast its VAEs locally; see the H3
+   * row's OFFICIAL FILES note). Comfy-Org published an int8 under the SAME name
+   * on 2026-09-15 (revision 7a2065e37f5f, 2,811,065,184 bytes, sha256
+   * 52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e): a
+   * different file, never rendered here. So the 12% and the quality check
+   * belong to a file nobody can download, and new installs keep the fp16 until
+   * one clip is rendered with the published int8. It is listed under the H3
+   * row's other builds meanwhile. */
   { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors`,
     dest: M("vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496,
     alt: ["minimax_h3_video_vae_int8_convrot.safetensors"] },
@@ -667,6 +683,11 @@ export const CATALOG = [
       note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
     },
     required: false,
+    /* Turns on the Video screen's Fast setting for H3 (fit.js recommendFor).
+     * Not `newInstalls`: the rank-19 row below is what a new install gets.
+     * `fastNote` is the plain sentence the recommendation shows. */
+    fastPathFor: "video",
+    fastNote: "Measured 2026-09-24: the same picture and speed as the 182 MB file new installs get.",
     files: [
       { url: `${HF}/Robert1212star/TaoMate-H3-3Step-ComfyUI/resolve/6897eea8f92ca8a1d511612dbf3ea51a63399cc4/taomate_h3_3step_comfy.safetensors`,
         dest: M("loras/taomate_h3_3step_comfy.safetensors"),
@@ -674,8 +695,10 @@ export const CATALOG = [
         sha256: "c1c057121a5ebf77d708b8a5c331ebb78416b90775df465c02a4fa48688315cb",
         alt: ["minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors"] },
     ],
-    note: "2.48 GB, one file in models/loras. The 3-step build threshold in the Video panel decides when it loads. Its shift is unmeasured: the base 12/3 rendered clean here. Kijai's 191 MB rank-19 average of the same LoRA counts as present (the next row).",
-    requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32, note: "The same H3 render, three steps of it." },
+    note: "2.48 GB, one file in models/loras. The 3-step build threshold in the Video panel decides when it loads. Its shift is unmeasured: the base 12/3 rendered clean here. "
+      + "Measured 2026-09-24 against Kijai's 182 MB rank-19 average of the same LoRA (the next row), on a 16 GB card at 1344x768, 8 s: the same speed (119.1 s against 120.0 s in the sampler) and, by two judges, the same picture. "
+      + "Either file turns on Fast; new installs are offered the small one, and it counts as present here. With both on disk this one loads first.",
+    requires: h3Requires("The same H3 render, three steps of it."),
   },
   {
     id: "videoH3FunControl",
@@ -723,14 +746,21 @@ export const CATALOG = [
     note: "2.3 GB, one file in models/model_patches, loaded by ModelPatchLoader and applied by "
       + "MiniMaxH3FunControlNetApply. Needs ComfyUI 0.35 or newer \u2014 this rig runs 0.36. The 4.22 GB bf16 "
       + "conversion of the same patch counts as present if you already have it.",
-    requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32,
-                note: "The same H3 render with a control video alongside it; the patch is resident for the whole pass." },
+    /* NOT h3Requires(): a control video riding along with H3 was never run at
+     * a smaller size, so this row keeps full size's floor while H3 itself
+     * offers a smaller size on 8 to 11 GB cards, and says why. The numbers are
+     * h3tier.js's own (full size, the lab's card, the RAM floor, the RAM the
+     * lab measured with), so they move with H3's. */
+    requires: { vramMinGb: H3_VRAM_FULL_GB, vramRecGb: H3_LAB_CARD_GB, ramMinGb: H3_RAM_FLOOR_GB, ramRecGb: H3_RAM_MEASURED_GB,
+                note: "The same H3 render with a control video alongside it; the patch is resident for the whole pass. "
+                  + `Stays at ${H3_VRAM_FULL_GB} GB although H3 itself offers ${H3_TIERS[1].width}x${H3_TIERS[1].height} on `
+                  + `${H3_TIERS[1].minGb} to ${H3_VRAM_FULL_GB - 1} GB cards: a control video riding along has not been measured at the smaller size.` },
   },
 
   {
     id: "videoH3Turbo3Small",
-    label: "Video clips — TaoMate 3-step, rank-19 average (H3, small)",
-    why: "The same 3-step distillation averaged down to rank 19 by Kijai: 191 MB instead of 2.48 GB. Unmeasured here against the full conversion — the Models page keeps both so the comparison can be made on this machine.",
+    label: "Video clips — Fast setting for H3 (TaoMate 3-step, 182 MB)",
+    why: "The same 3-step distillation averaged down to rank 19 by Kijai: 182 MB instead of 2.48 GB. Measured 2026-09-24 against the full conversion on a 16 GB card at 1344x768, 8 s: the same speed (120.0 s against 119.1 s in the sampler) and, by two judges, the same picture; only small textures differ. It did not save RAM.",
     licence: "MiniMax H3 Community Licence (derived from H3)",
     home: "https://huggingface.co/Kijai/MiniMax-H3_comfy",
     region: {
@@ -750,14 +780,21 @@ export const CATALOG = [
       note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
     },
     required: false,
+    /* Turns on the Video screen's Fast setting for H3, and it is the one NEW
+     * installs are recommended (fit.js recommendFor): same speed and picture
+     * as the 2.48 GB conversion, 2.30 GB less to fetch (lab, 2026-09-24).
+     * config.js's pick order is left alone; both give the same picture. */
+    fastPathFor: "video",
+    newInstalls: true,
+    fastNote: "Measured 2026-09-24: the same picture and speed as the 2.48 GB TaoMate file, in a 182 MB download.",
     files: [
       { url: `${HF}/Kijai/MiniMax-H3_comfy/resolve/098f8c48fccead9a93191c166ca31a130659d3bd/loras/minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors`,
         dest: M("loras/minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors"),
         bytes: 181_697_688,
         sha256: "de9663d974a884b477556748239c6f28239f7ca1825be270f98f023ff5dab6a7" },
     ],
-    note: "191 MB, one file in models/loras. Taken by the 3-step path only when the full conversion is absent (config turboLora3 order).",
-    requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32, note: "The same H3 render, three steps of it." },
+    note: "182 MB, one file in models/loras. The one new installs are offered for the Fast setting. Loaded by the 3-step path when the full conversion is absent (config turboLora3 order); with both on disk the full one loads, which gives the same picture.",
+    requires: h3Requires("The same H3 render, three steps of it."),
   },
   {
     /* CONDITIONING BRIDGES FOR H3 — two 5120→h→h→5120 MLPs that rewrite the
@@ -1482,11 +1519,12 @@ export const CATALOG = [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors`,
         dest: M("loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"), bytes: 1956192992 },
     ],
-    note: "43 GB (56 GB on AMD, which gets the int8 text encoder) — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step.",
-    requires: {
-      vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
-      note: "The heaviest capability in Studio by a wide margin. Never runs while music is generating.",
-    },
+    note: "43 GB (56 GB on AMD, which gets the int8 text encoder) — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
+      + H3_AMD_NOTE,
+    /* The card decides the size, not a floor (server/h3tier.js, from the H3
+     * lab of 2026-09-24): this row used to say 16 GB minimum, which told a
+     * 12 GB owner "below the minimum" for a card measured bit-identical. */
+    requires: h3Requires("The heaviest capability in Studio by a wide margin. Never runs while music is generating."),
     variants: [
       { label: "DiT FL2VA pruned int8 convrot, official (offered)", bytes: 20970379616, note: "Measured 08-24: a class above the third-party int4 prune — real prompt-following close-ups — at ~15% more render time." },
       { label: "DiT FL2VA pruned int4 convrot (third-party)", bytes: 11337536848, note: "What this rig originally measured. Visibly worse than the official int8; kept as a fallback for small disks." },
@@ -1496,12 +1534,13 @@ export const CATALOG = [
       { label: "Text encoder nvfp4 awq, official", bytes: 15690000000, note: "What the ComfyUI templates name. Blackwell-native; not measured here." },
       { label: "Text encoder int8 convrot, official", bytes: 27141342152, note: "Nearly twice the size." },
       { label: "Video VAE fp16, official (offered)", bytes: 5207808496 },
+      { label: "Video VAE int8 convrot, official (Comfy-Org, 2026-09-15; not offered yet)", bytes: 2811065184, note: "The name config.js loads first. Not the 3.17 GB int8 this rig measured (about 12% a clip) under the same name, and never rendered here; the download stays fp16 until it is." },
       { label: "Audio VAE fp32, official (offered)", bytes: 605254808 },
     ],
   },
   {
     id: "videoFastH3",
-    label: "Video clips — FastH3 (8 steps)",
+    label: "Video clips — FastH3 (8 steps, experimental)",
     why: "FastVideo's 8-step distillation of MiniMax H3: text or opening and closing pictures to a clip with sound, in 8 steps and no speed-up LoRA. It uses H3's text encoder and VAEs, so with H3 installed only the model file is new. No references; those stay on H3.",
     licence: "MiniMax H3 Community Licence (derived from H3)",
     home: "https://huggingface.co/FastVideo/FastVideo-FastH3-Comfy",
@@ -1531,11 +1570,15 @@ export const CATALOG = [
         alt: ["fastvideo_fasth3_8step_v2_pruned_bf16.safetensors"] },
       ...H3_SHARED_FILES,
     ],
-    note: "22.1 GB on a machine that already has H3; 42 GB without it (55 GB on AMD, which gets the int8 text encoder). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. Render speed and quality not measured here.",
-    requires: {
-      vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
-      note: "The same size of model as H3, run for 8 steps. Never runs while music is generating.",
-    },
+    note: "22.1 GB on a machine that already has H3; 42 GB without it (55 GB on AMD, which gets the int8 text encoder). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
+      + "⚠ Experimental. Measured 2026-09-24 on a 16 GB card against H3's Fast setting (TaoMate 3-step): about 1.4x the wait at 1344x768, 8 s (236 s against 172 s); more camera motion, and good on 1 of 3 prompts, "
+      + "while the others showed a recurring white blob and a subject changing colour, so check each take. VSA made it about 1.45x faster than dense on the whole clip. "
+      + H3_AMD_NOTE,
+    /* The same tiers as H3: under an 8 GB cap its DiT phase was within 50 MiB
+     * of TaoMate's at 960x544 (measured); at full size under 16 GB that is a
+     * prediction, and the "fasth3" path makes the verdict say so. */
+    requires: h3Requires("The same size of model as H3, run for 8 steps. Never runs while music is generating.",
+      { path: "fasth3" }),
     variants: [
       { label: "DiT 8-step v2 pruned int8 convrot (offered)", bytes: 22128378696 },
       { label: "DiT 8-step v2 pruned bf16", bytes: 44079246824, note: "Twice the download; not measured here." },
@@ -1578,10 +1621,13 @@ export const CATALOG = [
         dest: M("loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"), bytes: 1956193000 },
     ],
     note: "23 GB, optional. Shares the text encoder and VAEs with the video capability, so install that first.",
-    requires: {
-      vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
-      note: "Same weight class as the H3 video capability; the two never load together.",
-    },
+    /* H3's tiers. Measured under an 8 GB cap: the 8-step reference path with
+     * one picture fit at 960x544, 5 s, with only 314 MiB to spare (lab L8r);
+     * several pictures and the song under the clip were never capped, and it
+     * was never run at 1344x768 under a cap. The "refs" path quotes that
+     * instead of the Fast setting's measurement. */
+    requires: h3Requires("Same weight class as the H3 video capability; the two never load together. "
+      + "Reference pictures add memory.", { path: "refs" }),
   },
   {
     id: "imageCutout",

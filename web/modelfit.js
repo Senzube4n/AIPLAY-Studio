@@ -67,6 +67,9 @@ const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1
  */
 function tail(fit) {
   if (!fit) return "";
+  /* The server's own tail, where the generic pairs below would mislead: H3's
+   * answer on a smaller card is a SIZE, not a recommendation it is under. */
+  if (fit.short) return fit.short;
   if (fit.needVramGb == null) return fit.why || "";
   const you = fit.yourVramGb;
   const ram = fit.yourRamGb;
@@ -103,10 +106,19 @@ function badge(fit, states) {
   const s = states?.[fit.state];
   if (!s) return "";
   const t = tail(fit);
-  /* The tone is the server's too — four states map to four colours there, and
-   * a fifth state added in fit.js arrives here already knowing how to look. */
+  /* The tone is the server's too — five states map to four colours there, and
+   * a sixth state added in fit.js arrives here already knowing how to look. */
   return `<span class="fitbadge fit-${esc(s.tone)}" title="${esc(fit.why || s.line)}"
     ><b>${esc(s.chip)}</b>${t ? `<span>${esc(t)}</span>` : ""}</span>`;
+}
+
+/**
+ * The verdict's warning, in full, under a row's badge: H3's "only measured
+ * with 32 GB of RAM" and "no AMD render tested yet". Too long for a chip and
+ * too important for a hover, so it is a line of its own. The server's words.
+ */
+function warnLine(fit) {
+  return fit?.warning ? `<span class="fitwarn">⚠ ${esc(fit.warning)}</span>` : "";
 }
 
 /** One pick in the block at the top. */
@@ -115,7 +127,7 @@ function pickRow(p, states) {
   return `
     <div class="fitpick">
       <div class="fitpickhead">
-        <span class="fitslot">${esc(p.slot)}</span>
+        <span class="fitslot">${esc(p.slotLabel || p.slot)}</span>
         <b>${esc(p.label)}</b>
         ${badge(p.fit, states)}
         <span class="fitsize">${p.ready ? "already on disk" : gb(p.bytes)}</span>
@@ -237,7 +249,7 @@ export function paintFit(d, root = document) {
       /* Into the head row, beside the licence, where the eye already goes. */
       (card.querySelector(".mhead") || card).appendChild(slot);
     }
-    slot.innerHTML = badge(c.fit, states);
+    slot.innerHTML = badge(c.fit, states) + warnLine(c.fit);
   }
 }
 
