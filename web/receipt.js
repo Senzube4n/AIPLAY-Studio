@@ -61,7 +61,11 @@ export const RECEIPTS = {
     note: "vidEst", button: "vidCreate", view: "video",
     fields: [
       { id: "engine", controls: ["vidEngine"] },
-      { id: "steps", controls: ["vidSteps"] },
+      /* Keep my character first: while it shows and carries the server's
+       * words (data-receipt, video-plain.js character.receipt: "keeps Mira: 2
+       * pictures + 8 steps + song (lip-sync)"), they are this field; with
+       * none, the slider's "N steps". Change leads to both. */
+      { id: "steps", controls: ["vidCharacter", "vidSteps"] },
       { id: "length", controls: ["vidSecs"] },
       { id: "size", controls: ["vidSize", "vidW", "vidH"] },
       { id: "estimate", controls: [], estimate: true },
@@ -97,7 +101,11 @@ export function estimateOf(text) {
 }
 
 function fieldText(screen, f) {
-  const el = f.controls.map($).find((x) => applies(x, rootOf(screen)));
+  /* A control that is a slot for the server's words (data-receipt="", Keep my
+   * character) steps aside while the slot is empty, and supplies them while
+   * it holds some. */
+  const el = f.controls.map($).find((x) => applies(x, rootOf(screen)) && x.dataset?.receipt !== "");
+  if (el?.dataset?.receipt) return el.dataset.receipt;
   if (f.estimate) {
     const note = $(RECEIPTS[screen].note);
     return note && !note.classList.contains("stick") ? estimateOf(note.textContent) : null;
@@ -388,6 +396,9 @@ if (typeof document !== "undefined") {
         const n = $(r.note);
         if (n) mo.observe(n, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["class"] });
       }
+      /* ...and when a control's server words change (data-receipt, written by
+       * web/vidfit.js after each check). */
+      for (const id of ids) { const c = $(id); if (c) mo.observe(c, { attributes: true, attributeFilter: ["data-receipt"] }); }
     }
     imgShown = $("imgEngine")?.value ?? null;   // what the page opened on
     paintAll();

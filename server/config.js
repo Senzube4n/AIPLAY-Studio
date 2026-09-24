@@ -1394,9 +1394,12 @@ export const config = {
      * MV pipeline never read this default: it sends its own 8
      * (mv/generate.js). */
     steps: 4,
-    /* Auto follows the publisher's Euler recipe for the LightX2V turbo
-     * builds, retaining res_multistep for the measured bare/3-step paths.
-     * An explicit Video Lab sampler remains an override for every path. */
+    /* Auto, per path (workflow.js h3SamplerFor, 2026-09-24): res_multistep on
+     * the reference path (pictures or sounds attached), measured there by Hex
+     * Appeal's final cut and the REWIND A/B's winning arm; Euler on the
+     * first/last-frame LightX2V turbo builds, the publisher's recipe, not
+     * measured here; res_multistep for the bare model and TaoMate 3-step. An
+     * explicit Video Lab sampler remains an override for every path. */
     sampler: "auto",
     scheduler: "simple",
 

@@ -1899,10 +1899,33 @@ export function h3MatchedSteps(eng, { steps, refs = false } = {}) {
   return { steps: raised ? made : asked, asked, raised, lora: lora ?? null, made: made ?? null };
 }
 
-/** LightX2V's turbo Comfy recipe uses Euler; quality and TaoMate retain
- * their measured sampler. A saved explicit sampler always wins. */
+/**
+ * THE STEP COUNT KEEPING A CHARACTER RUNS AT ON THIS DISK: the reference
+ * speed-up file's own count (8 or 4, config.js refTurboSteps), else Standard.
+ * One answer for /api/status (per engine `referenceSteps`), videoPlan (a
+ * render with references that names no count) and the music video's
+ * clipsteps.js. The REWIND A/B (2026-09-24, DIRECTING.md §2) kept its
+ * character on the 8-step reference build at 8.
+ */
+export function referenceSteps(eng) {
+  if (eng?.refTurboSteps === 8 || eng?.refTurboSteps === 4) return eng.refTurboSteps;
+  return eng?.stepDefaults?.standard ?? eng?.steps ?? null;
+}
+
+/**
+ * The sampler under "auto", per path. A saved explicit sampler always wins.
+ *
+ *   reference path  res_multistep, measured: Hex Appeal's 31 v2 scenes and the
+ *                   REWIND A/B's winning arm (2026-09-24). Euler reached it with
+ *                   88056dc (2026-09-21) as the publisher's recipe, never
+ *                   measured here.
+ *   fl2v turbo      LightX2V's 4/8-step builds: Euler, their published Comfy
+ *                   recipe (not measured here).
+ *   TaoMate 3-step, the bare model: res_multistep, their measured sampler.
+ */
 export function h3SamplerFor(eng, opts = {}) {
   if (eng.sampler && eng.sampler !== "auto") return eng.sampler;
+  if (opts.refs) return "res_multistep";
   const { turbo, use3, lora } = h3TurboLoraFor(eng, opts);
   const actualThreeStep = use3 && lora !== eng.turboLora4;
   return turbo && !actualThreeStep ? "euler" : "res_multistep";

@@ -453,6 +453,10 @@ animated respects `prefers-reduced-motion`.
   `web/styles.css`. Something the person dropped must stay visible, which
   is why `#imgRefWrap` and `#vidFromField` are in that list. Add exceptions
   **before** `:not(.ctawrap):not(.infopanel)`: a test pins that ending.
+  Video's Simple shows *Keep my character* and *Song under the clip* besides
+  the size chips and starting frame, because a person's identity and lip-sync
+  are the two things a newcomer cannot recover afterwards (REWIND A/B,
+  DIRECTING.md §2).
 - **The Music model bar**: the About button sits absolutely over the row's
   left edge, so the row reserves that space and the model name ends in an
   ellipsis. Load / Unload show for every ComfyUI model, greyed out with the

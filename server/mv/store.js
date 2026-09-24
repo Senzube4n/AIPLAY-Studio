@@ -107,6 +107,14 @@ export function blankProject(title, kind = "mv") {
        * anatomy faults would be taught to the clip as intention. Worth turning
        * on only when the boards have been looked at and are good. */
       boardRef: false,
+      /* THE SONG UNDER EVERY SCENE'S CLIP ("Song under the clip: always"), Hex
+       * Appeal's setting and where new projects start since 2026-09-24. The
+       * REWIND A/B (same seeds, two blind judges; DIRECTING.md §2) put it
+       * under every reference shot and the sung line followed the words;
+       * "auto" puts it only under boards marked as sung (lipSync), which only
+       * an agent sets. Its render-time cost was never measured on its own.
+       * An older project keeps what it stored (no value reads as auto). */
+      songConditioning: "always",
       /* WHICH IMAGE MODEL DRAWS THE SHEETS AND BOARDS.
        *
        * null keeps the library-wide cover default (config.art.engine: your

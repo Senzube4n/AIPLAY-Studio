@@ -29,12 +29,29 @@
  *                     warning, from h3tier.js.
  *   failures          ComfyUI's error JSON becomes a sentence; the raw text
  *                     stays behind Details.
+ *   keeping a         the REWIND A/B (2026-09-24, DIRECTING.md §2): a person
+ *   character         stays the same from clip to clip with 1-3 pictures of
+ *                     them, the reference build's own step count and, for a
+ *                     singer, the song under the clip. `character` says what
+ *                     a render keeps (the Video screen's Keep my character
+ *                     line and receipt, make_clip's reply); a saved character
+ *                     (persona) is bound into the words here; a render with
+ *                     references that names no step count runs the reference
+ *                     build's own (workflow.js referenceSteps); the `runs`
+ *                     note names the build, steps, sampler and decoder. The
+ *                     measured setup is a constant (KEEP_MEASURED), apart
+ *                     from what this disk can run, so a 4-step-only disk is
+ *                     said to run an unmeasured setup; Song under the clip's
+ *                     words follow the engine (songUnderSay: lip-sync on H3,
+ *                     measured not to follow on LTX).
  *
  * Imports only data and pure helpers; no I/O.
  */
 import { CLOUD_CARD_PLACE, LENDING_UNTRIED } from "./cloud-switch.js";
 import { h3SizeFit, h3StartSize, H3_VRAM_OFFERED_GB, H3_RAM_FLOOR_GB, H3_SOL_ATTN, H3_MORE_MOTION } from "./h3tier.js";
-import { h3MatchedSteps, h3SparseFor } from "./workflow.js";
+import { h3MatchedSteps, h3SparseFor, h3SamplerFor, h3TurboLoraFor, referenceSteps } from "./workflow.js";
+import { loraStepsOf } from "./config.js";
+import { bindPersonaForClip, promptNames } from "./personas.js";
 
 /* ── which engines the card tiers are about ───────────────────────────────── */
 
@@ -199,6 +216,160 @@ export function plainVideoFailure(raw) {
       : "The video engine stopped without saying why." };
 }
 
+/* ── keeping a character ──────────────────────────────────────────────────── */
+
+/** The refusal for a saved character that is not on the shelf (reason "persona"). */
+export function personaUnknown(name) {
+  return `No saved character called "${name}". Pictures → Character… (or list_personas) shows the saved ones.`;
+}
+
+/** Which build a render loads, in words: "the 8-step reference build", "the
+ *  TaoMate 3-step build", "the bare model" (workflow.js h3TurboLoraFor, the
+ *  graph's own rule; the file's count is read off its name). */
+function buildWords(eng, { steps, refs }) {
+  const { turbo, lora } = h3TurboLoraFor(eng, { steps, refs });
+  if (!turbo || !lora) return "the bare model";
+  if (!refs && lora === eng.turboLora3) return "the TaoMate 3-step build";
+  const made = loraStepsOf(lora);
+  const n = Number.isFinite(made) ? `${made}-step ` : "";
+  return refs ? `the ${n}reference build` : `the ${n}turbo build`;
+}
+
+/** The video decoder a render loads, short: the request's own (Engine
+ *  settings, `videoVae`) when it names one, else the engine's. */
+function decoderWords(b, eng) {
+  const file = b.videoVae && b.videoVae !== "auto" ? String(b.videoVae) : String(eng.videoVae || "");
+  const m = /(int8|int4|fp8|fp16|bf16|fp32)/i.exec(file);
+  return m ? m[1].toLowerCase() : file.replace(/\.[a-z0-9]+$/i, "") || "the engine's";
+}
+
+/* THE MEASURED SETUP for keeping a character (the REWIND A/B, 2026-09-24,
+ * DIRECTING.md §2): the ref2v 8-step v1.0 reference build at 8 steps, with
+ * res_multistep, the fp16 video decoder and the song under the clip. A
+ * constant, apart from workflow.js referenceSteps (the count THIS disk runs):
+ * the Models screen's "Video references" fetches only the 4-step v0.1 file,
+ * and on that disk keeping a character runs a setup nobody measured, which
+ * the words say rather than calling it measured. */
+export const KEEP_MEASURED = Object.freeze({
+  steps: 8,
+  decoder: "fp16",
+  file: "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+});
+
+/** Does this disk load the measured reference build at its own count? */
+export function measuredBuildHere(eng) {
+  const file = String(eng?.refTurboLora || "").split(/[\\/]/).pop();
+  return eng?.refTurboSteps === KEEP_MEASURED.steps && file === KEEP_MEASURED.file;
+}
+
+/** The sentence for a saved character's pictures that could not be staged
+ *  (/api/video create, warning "persona-missing"). */
+export function personaMissing(name, lost) {
+  return `${lost} of ${name}'s pictures could not be found and ${lost === 1 ? "was" : "were"} left out.`;
+}
+
+/**
+ * SONG UNDER THE CLIP, per engine: the words beside the label (`meta`) and the
+ * line under the picker (`hint`), which the Video screen writes from each
+ * check (web/vidfit.js) so the page never promises lip-sync the engine does
+ * not give. Lip-sync was measured on H3's reference path, with pictures of the
+ * singer (the REWIND A/B, 2026-09-24); on H3's text path it is untested; on
+ * LTX mouths were measured not to follow (r +0.034, n = 18,
+ * docs/ENGINE_TRAPS.md).
+ */
+export function songUnderSay(engineKey, { label = engineKey, pictures = 0 } = {}) {
+  if (engineKey === "h3") {
+    return pictures > 0
+      ? { meta: "lip-sync · optional", hint: "The mouth follows this stretch of the song (measured with pictures of the "
+          + "singer): it sits under the clip while it renders. Set “start at” to where the sung line begins." }
+      : { meta: "lip-sync with pictures · optional", hint: "With pictures of the singer (Keep my character) the mouth "
+          + "follows this stretch of the song (measured); from words alone lip-sync is untested. Set “start at” to where "
+          + "the sung line begins." };
+  }
+  if (engineKey === "ltx") {
+    return { meta: "optional", hint: "The clip plays this stretch of the song, but mouths do not follow it on LTX (measured "
+      + "on 18 clips). Set “start at” to where it should begin." };
+  }
+  return { meta: "optional", hint: `The clip plays this stretch of the song; lip-sync on ${label} was never measured. `
+    + "Set “start at” to where it should begin." };
+}
+
+/**
+ * THE FAST CHIP WHILE A CHARACTER IS KEPT (/api/status per engine `keepFast`):
+ * the count the reference path really runs for Fast (the TaoMate 3-step build
+ * is text-only, so a reference render in the Fast band loads the reference
+ * build and runs its count, workflow.js h3MatchedSteps) and the chip's words.
+ * null where there are no chips.
+ */
+export function keepFast(eng) {
+  if (!eng?.stepDefaults || eng.fixedSteps) return null;
+  const fast = Number(eng.stepDefaults.fast);
+  const { steps } = h3MatchedSteps(eng, { steps: fast, refs: true });
+  if (!Number.isFinite(steps)) return null;
+  return { steps, note: `Fast with a character: ${steps} steps on ${buildWords(eng, { steps, refs: true })}`
+    + (fast === 3 ? " (the TaoMate 3-step build takes no pictures)" : "")
+    + `. Keeping a character was measured at ${KEEP_MEASURED.steps} steps on the ${KEEP_MEASURED.steps}-step reference build.` };
+}
+
+/**
+ * What a render keeps of a person, and the one line that says so. One copy of
+ * each sentence; the Video screen (web/vidfit.js) and make_clip show them.
+ *
+ *   receipt  a saved character that rides is named ("keeps Mira: …"); pictures
+ *            without one are what they are ("2 reference pictures"), and
+ *            pictures the words never name are said ("not named"), because a
+ *            picture the words never name barely shapes the clip.
+ *   hint     the one line Simple shows, by priority: the person's own pictures
+ *            the words never name, then a saved character the words never
+ *            name, then the song for a singer; the missing measured build is
+ *            said after any of them.
+ */
+function characterSay({ eng, pictures, own, ownUnnamed, audios, persona, bound, steps, song, prompt, characters }) {
+  const keeps = pictures > 0;
+  const who = persona && bound?.used > 0 ? persona.name : null;
+  const measured = KEEP_MEASURED.steps;
+  const here = measuredBuildHere(eng);
+  const build = buildWords(eng, { steps, refs: true });
+  const s = pictures === 1 ? "" : "s";
+  const notNamed = !ownUnnamed.length ? ""
+    : who || ownUnnamed.length < own ? `, ${ownUnnamed.length} not named` : ", not named";
+  const receipt = keeps
+    ? `${who ? `keeps ${who}: ${pictures} picture${s}` : `${pictures} reference picture${s}`}${notNamed} + ${steps} steps`
+      + (!here ? ` (measured with ${measured}, not on this PC)` : steps < measured ? ` (measured with ${measured})` : "")
+      + (song ? " + song (lip-sync)" : "")
+    : `${audios ? "no pictures" : "text only"} · ${steps} steps` + (song ? " · song under the clip" : "");
+  const saved = Array.isArray(characters) ? characters.filter((c) => c && c.name) : [];
+  const namedHere = !keeps ? saved.find((c) => promptNames(prompt, c.name)) : null;
+  const first = ownUnnamed[0];
+  const lead = !keeps ? null
+    : ownUnnamed.length
+      ? `Name ${ownUnnamed.length === 1 ? "the picture" : "each picture"} in the words ("<Picture ${first}> is Mira."), `
+        + "then write that name where they act (\"Mira runs…\"): a picture the words never name barely shapes the clip."
+    : who && !bound.named
+      ? `The words never name ${who}: write ${who} where they act ("${who} runs…") so the pictures attach to that person.`
+    : !song ? "If they sing, choose Song under the clip (lip-sync) and where the sung line starts."
+    : null;
+  const missing = keeps && !here
+    ? `Keeping a character was measured on the ${measured}-step reference build, which is not on this PC: this runs ${build}.`
+    : null;
+  const hint = keeps
+    ? [lead, missing].filter(Boolean).join(" ") || null
+    : namedHere
+      ? `No picture of ${namedHere.name} rides: ${namedHere.name} can look different from clip to clip. Pick `
+        + `${namedHere.name} under Keep my character.`
+    : song
+      ? "Lip-sync was measured with pictures of the singer; without them it is untested, and their face can change "
+        + "from clip to clip."
+    : saved.length
+      ? "No reference picture: a person in this clip can look different from clip to clip. No one in the shot? Text "
+        + "only is fine, and so is Fast. To keep someone, pick a saved character or drop 1–3 pictures of them here."
+      : "No reference picture: a person in this clip can look different from clip to clip. No one in the shot? Text "
+        + "only is fine, and so is Fast. To keep someone, drop 1–3 pictures of them here (tight, one person, a plain "
+        + "dark background), or save a character on Pictures.";
+  return { keeps, pictures, persona: who, unnamed: ownUnnamed.length, steps, measuredSteps: measured, measuredHere: here,
+    song, receipt, hint };
+}
+
 /* ── the plan ─────────────────────────────────────────────────────────────── */
 
 const num = (v) => (v === undefined || v === null || v === "" ? NaN : Number(v));
@@ -214,37 +385,60 @@ const aN = (n) => (/^(8|11|18)\b/.test(String(n)) ? "an" : "a");
  *   h3        /api/status's config.video.h3 block (h3tier.js h3Status)
  *   framed    an opening or closing picture rides with the render
  *   control   a control video drives it (video-to-video)
+ *   persona   a saved character (personas.js row), or {name, missing:true}
+ *             for a name the shelf does not have; its pictures ride after
+ *             b.refImages, bound in the words (bindPersonaForClip)
+ *   characters the saved characters with pictures, [{name, pictures}], only
+ *             for the Keep line's hint ("pick X")
  *
- * Returns { refusal, prompt, width, height, seconds, steps, sparse, fit,
- * warnings, notes }: `refusal` ({error, reason}) when the request must not
- * render, the values the job carries otherwise, `warnings` [{id, text}] that
- * the reply and the page show, and `notes` [{id, text}], caveats that change
- * nothing (the Advanced line and check_only show them; a render's reply does
- * not repeat them). Nothing in it is silent: every value it changes from the
- * request has a warning saying so.
+ * Returns { refusal, prompt, refImages, width, height, seconds, steps, sparse,
+ * sampler, fit, character, songLine, warnings, notes }: `refusal` ({error,
+ * reason}) when the request must not render, the values the job carries
+ * otherwise (refImages with the character's pictures after the request's),
+ * `character` what the render keeps of a person (H3 only, null elsewhere),
+ * `songLine` Song under the clip's words for this engine ({meta, hint},
+ * songUnderSay), `warnings` [{id, text}]
+ * that the reply and the page show, and `notes` [{id, text}], caveats that
+ * change nothing (the Advanced line and check_only show them; a render's reply
+ * does not repeat them). Nothing in it is silent: every value it changes from
+ * the request has a warning saying so.
  */
-export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = false, control = false } = {}) {
+export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = false, control = false, persona = null, characters = [] } = {}) {
   const label = eng.label || engineKey;
   const family = isH3Family(engineKey);
   const warnings = [], notes = [];
-  const pictures = Array.isArray(b.refImages) ? Math.min(b.refImages.filter(Boolean).length, 9) : 0;
-  const audios = Array.isArray(b.refAudios) ? Math.min(b.refAudios.filter(Boolean).length, 3) : 0;
   const refsRide = engineKey === "h3";
 
-  /* References on an engine without them: refused, by the one sentence. */
-  if ((pictures || audios) && !refsRide) {
-    return { refusal: { error: refsIgnored(engineKey, label), reason: "refs-ignored" }, warnings, notes };
+  /* A saved character the shelf does not have: refused by name. */
+  if (persona?.missing) {
+    return { refusal: { error: personaUnknown(persona.name), reason: "persona" }, warnings, notes, character: null, sampler: null,
+      songLine: songUnderSay(engineKey, { label }) };
+  }
+  /* A saved character's pictures ride after the request's own, each bound in
+   * the words as "<Picture N> is Name." (personas.js bindPersonaForClip). */
+  const bound = persona && refsRide ? bindPersonaForClip(persona, { prompt: b.prompt, refImages: b.refImages }) : null;
+  const refList = bound ? bound.refImages : Array.isArray(b.refImages) ? b.refImages.filter(Boolean) : [];
+  const pictures = Math.min(refList.length, 9);
+  const audios = Array.isArray(b.refAudios) ? Math.min(b.refAudios.filter(Boolean).length, 3) : 0;
+  /* Song under the clip, in this engine's words (the label and the line under it). */
+  const songLine = songUnderSay(engineKey, { label, pictures });
+
+  /* References on an engine without them: refused, by the one sentence. A
+   * saved character is references, so it is refused the same way. */
+  if ((pictures || audios || persona) && !refsRide) {
+    return { refusal: { error: refsIgnored(engineKey, label), reason: "refs-ignored" }, warnings, notes, character: null, sampler: null,
+      songLine };
   }
 
   /* Tags nothing answers: out of the words, and said. */
-  let prompt = String(b.prompt || "").trim();
+  let prompt = String(bound ? bound.prompt : b.prompt || "").trim();
   const loose = unresolvedRefTags(prompt, { pictures, audios, refsRide });
   if (loose.length) {
     prompt = withoutTags(prompt, loose);
     warnings.push({ id: "tags", text: refTagSentence(loose, { engineLabel: label, refsRide }) });
     if (!prompt) {
       return { refusal: { error: "Describe the clip first: the description held only reference tags that nothing "
-        + "attached answers.", reason: "empty" }, warnings, notes };
+        + "attached answers.", reason: "empty" }, warnings, notes, songLine };
     }
   }
 
@@ -281,10 +475,17 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
       + `${cut ? ` for ${seconds} s` : ""}, ${why} (${start.chip}). Name a width and height to choose another.` });
   }
 
-  /* Steps: a fixed schedule records its own; the reference path in the Fast
-   * band runs the loaded file's count when asked for fewer (said). */
+  /* Steps: a fixed schedule records its own; a render with references that
+   * names no count runs the reference build's own (referenceSteps: 8 where the
+   * 8-step reference file is on disk, the REWIND A/B's setting); the reference
+   * path in the Fast band runs the loaded file's count when asked for fewer
+   * (said). A count the request names is kept, and the notes say when it is
+   * under the one keeping a character was measured at. */
   const askedSteps = num(b.steps);
-  let steps = eng.fixedSteps || Math.min(Math.max(Number.isFinite(askedSteps) && askedSteps > 0 ? askedSteps : (eng.steps || 20), 2), 40);
+  const refsOn = engineKey === "h3" && !!(pictures || audios);
+  const unnamed = eng.steps || 20;
+  let steps = eng.fixedSteps || Math.min(Math.max(Number.isFinite(askedSteps) && askedSteps > 0 ? askedSteps
+    : (refsOn && referenceSteps(eng)) || unnamed, 2), 40);
   if (engineKey === "h3" && (pictures || audios)) {
     const m = h3MatchedSteps(eng, { steps, refs: true });
     if (m.raised) {
@@ -322,5 +523,58 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
   if (fit?.over) warnings.push({ id: "fit", text: fit.sentence });
   if (family && h3?.ramWarning) warnings.push({ id: "ram", text: h3.ramWarning });
 
-  return { refusal: null, prompt, width, height, seconds, steps, sparse, fit, warnings, notes };
+  /* KEEPING A CHARACTER, on H3 (the only engine with a picture input). The
+   * song flag is the soundtrack the render carries (`audioTrack`), or `song:
+   * true` from the Video screen's check, whose upload lives in the page. */
+  let character = null, sampler = null;
+  if (engineKey === "h3") {
+    const song = !!(b.audioTrack?.name || b.song === true);
+    const measured = KEEP_MEASURED.steps;
+    sampler = h3SamplerFor(eng, { steps, refs: refsOn });
+    /* The person's own pictures (numbered first) that the words never name:
+     * a picture the words never name barely shapes the clip, so the receipt
+     * and the Keep line say it (the A/B's winning arm named every picture). */
+    const own = Math.min(bound ? refList.length - bound.used : refList.length, 9);
+    const ownUnnamed = [];
+    for (let i = 1; i <= own; i++) if (!new RegExp(`<\\s*Picture\\s+${i}\\s*>`, "i").test(prompt)) ownUnnamed.push(i);
+    character = characterSay({ eng, pictures, own, ownUnnamed, audios, persona, bound, steps, song, prompt, characters });
+    if (bound && bound.extra > 0) {
+      const total = Number.isFinite(persona.pictures) ? persona.pictures : (persona.refImages || []).filter(Boolean).length;
+      warnings.push({ id: "persona-pictures", text: bound.room > 0
+        ? `${persona.name} has ${total} pictures; a clip takes the first ${Math.min(bound.room, total)} (the measured setup `
+          + "is 1–3 of one character)."
+        : `${persona.name}'s pictures do not ride: ${pictures} reference pictures are attached already, the most a clip takes.` });
+    }
+    const decoder = decoderWords(b, eng);
+    notes.push({ id: "runs", text: `Runs: ${buildWords(eng, { steps, refs: refsOn })} · ${steps} steps · ${sampler} sampler · `
+      + `${decoder} video decoder.` });
+    if (pictures > 3) {
+      notes.push({ id: "pictures", text: `${pictures} reference pictures ride. The measured setup is 1–3 per character (face for `
+        + "a close-up; body + face for a medium; body + side + face for action); a fourth of one person was never tried, "
+        + "and neither was its cost (up to three, each extra picture adds about 9 s at 8 steps, fitted on four clips with "
+        + "1–3 pictures on a 16 GB card)." });
+    }
+    if (bound && bound.used > 0 && !bound.named) {
+      notes.push({ id: "persona-unnamed", text: `The description never names ${persona.name}: write ${persona.name} where they `
+        + `act ("${persona.name} runs…") so the pictures attach to that person.` });
+    }
+    if (character.keeps && (steps < measured || !character.measuredHere)) {
+      notes.push({ id: "steps-measured", text: `Keeping a character was measured on the ${measured}-step reference build at `
+        + `${measured} steps; this runs ${steps} on ${buildWords(eng, { steps, refs: true })}`
+        + (character.measuredHere ? "." : `. That file (${KEEP_MEASURED.file}, in models/loras) is not on this PC, and `
+          + "the Models screen does not fetch it yet.") });
+    }
+    if (character.keeps && decoder !== KEEP_MEASURED.decoder) {
+      notes.push({ id: "decoder", text: `The measured setup used the ${KEEP_MEASURED.decoder} video decoder; this runs `
+        + `${decoder} (the decoder was not isolated in that test). Engine settings → Video VAE can pick an `
+        + `${KEEP_MEASURED.decoder} file.` });
+    }
+    if (audios) {
+      notes.push({ id: "audio-ref", text: "A sound reference (<Audio n>) shapes the clip's own sound, and the clip re-sings it "
+        + "in its own time; for a mouth that follows your song, use Song under the clip instead." });
+    }
+  }
+
+  return { refusal: null, prompt, refImages: refList, width, height, seconds, steps, sparse, sampler, fit, character, songLine,
+    warnings, notes };
 }

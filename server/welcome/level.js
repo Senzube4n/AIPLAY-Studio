@@ -63,7 +63,9 @@ export const ADVANCED_ADDS = {
     { say: `attention, sparse attention and ${config.video.engines.fasth3?.advanced?.label || "FastH3"}`,
       ids: ["vidAttn", "vidSparse", "vidMoreMotion"] },
     { say: "what a size needs on this card's graphics memory", ids: ["vidFitNote"] },
-    { say: "an end frame, reference pictures and sound", ids: ["vidTo", "vidRefWrap", "vidSndWrap"] },
+    /* Not the song under the clip or Keep my character: Simple shows both
+     * since 2026-09-24 (the REWIND A/B, DIRECTING.md §2). */
+    { say: "an end frame, and the References box: pictures and sounds by tag", ids: ["vidTo", "vidRefWrap"] },
     { say: "the Video Lab: sizes and side-by-side tests", ids: ["vidLab"] },
   ],
 };

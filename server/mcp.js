@@ -504,6 +504,10 @@ export const TOOLS = [
            * pick() found): standard is 8 only where both 8-step files are on
            * disk, else 4, and is the default a render with no quality gets. */
           h3_quality_steps: st.config?.video?.engines?.h3?.stepDefaults ?? null,
+          /* The number behind "keep my character": the reference build's own
+           * step count (workflow.js referenceSteps), which a render with
+           * references or a persona and no quality runs. */
+          h3_reference_steps: st.config?.video?.engines?.h3?.referenceSteps ?? null,
           h3_turbo_builds: st.config?.video?.engines?.h3?.turboBuilds ?? null,
           /* H3's tier for this card (server/h3tier.js), BRIEF: the size and
            * longest measured clip, whether it is recommended, the RAM and AMD
@@ -2430,8 +2434,9 @@ export const TOOLS = [
     name: "list_personas",
     description:
       "Saved characters: name, description and the reference pictures that show what they look like. "
-      + "Pass `for` (an engine) and each says whether it can be used — references are FLUX.2-only, so a "
-      + "persona on any other engine is refused rather than silently ignored. Not a LoRA and not training: "
+      + "Pass `for` (an engine) and each says whether it can be used — usable on Qwen Image 2.1 and FLUX.2 "
+      + "pictures and on MiniMax H3 clips (make_clip `persona`), so a persona on any other engine is refused "
+      + "rather than silently ignored. Not a LoRA and not training: "
       + "this is the reference-image path remembered, so identity holds well but can drift over a long series.",
     inputSchema: {
       type: "object",
@@ -2449,7 +2454,8 @@ export const TOOLS = [
     description:
       "Create or update a character. Saving the same NAME twice edits one character rather than making two. "
       + "Give it reference pictures (names from list_images), a description, or both — the pictures carry the "
-      + "face, the words carry what a picture cannot show. Use make_image with `persona` to put them in a scene.",
+      + "face, the words carry what a picture cannot show. Use make_image with `persona` to put them in a scene. "
+      + "For clips, 1–3 tight pictures of one person on a plain dark background keep them best; make_clip takes the first 3.",
     inputSchema: {
       type: "object", required: ["name"],
       properties: {
@@ -2949,11 +2955,11 @@ export const TOOLS = [
       + "studio_status and change it with set_video_engine.\n"
       + "  • LTX 2.5 — fast. Takes EXACT frames: `first_frame`, `last_frame`, `mid_frames` "
       + "(pictures the clip passes through), `loop`. Also takes `soundtrack_song`: the "
-      + "finished clip PLAYS that stretch of the song and the picture is invented to fit it, "
-      + "which is the tool for a performance shot.\n"
+      + "finished clip plays that stretch; mouths were measured not to follow it on LTX "
+      + "(r +0.034, n=18, docs/ENGINE_TRAPS.md).\n"
       + "  • MiniMax H3 — slower, and the only engine that takes NAMED REFERENCES. Pass "
-      + "`ref_images` / `ref_song`, then call them in the prompt: \"the figure from "
-      + "<Picture 1> performs the song from <Audio 1> on a rooftop\". A reference is not "
+      + "`ref_images` (or `persona`), then name them in the prompt: \"<Picture 1> is Mira. "
+      + "Mira sings on a rooftop at dusk\", with `soundtrack_song` for the song. A reference is not "
       + "pinned to a frame — the model recasts the subject wherever the words put it, which "
       + "is how you keep one character across many shots. ⚠ H3's licence grants NO rights "
       + "in " + H3_EXCLUDED + " — where that applies, stay on LTX.\n"
@@ -2961,6 +2967,15 @@ export const TOOLS = [
       + `Advanced "${H3_MORE_MOTION.label}": ${H3_MORE_MOTION.note} ${H3_MORE_MOTION.framesUntried} `
       + "first_frame/last_frame are accepted (the reply warns), references are refused; `attention` picks "
       + "the dense attention under its sparse attention. Same licence and territory clause as H3.\n\n"
+      + "KEEPING A CHARACTER (measured 2026-09-24, same seeds, two blind judges): on MiniMax H3 a person who "
+      + "must look the same as in other clips needs 1–3 tight pictures of them, one person on a plain dark "
+      + "background (`persona`, or `ref_images` with '<Picture 1> is Name.' written in the prompt), their "
+      + "name where they act, and the reference build's own step count (leave quality and steps unset: 8 "
+      + "where the 8-step reference file is on disk). If they sing, add `soundtrack_song` and "
+      + "`soundtrack_start` (where the sung line starts): the song sits under the clip and the mouth follows "
+      + "the words. `ref_song` (<Audio 1>) is a different input: the clip re-sings it in its own time. "
+      + "From words alone the person changes between clips (hair, mask, costume); that is fine for shots "
+      + "with no one in them. The reply's `character` says what this render keeps.\n\n"
       + "Passing an engine-specific input while the other engine is selected is REFUSED "
       + "rather than silently ignored; pass `engine` to switch first. The reply's `warnings` say "
       + "everything the render changed from the request (the card's size when none was named, the "
@@ -2974,7 +2989,7 @@ export const TOOLS = [
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
         quality: { type: "string", enum: ["fast", "best"],
-          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
+          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. With references or a persona and no quality, the reference build's own count runs (studio_status video.h3_reference_steps). All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
@@ -2994,9 +3009,10 @@ export const TOOLS = [
         loop: { type: "boolean", description: "Seamless loop: reuses the opening picture as the closing one so the clip cuts to its own start." },
         ref_images: { type: "array", items: { type: "string" }, maxItems: 9,
           description: "Image names (from list_images or covers) the prompt refers to as <Picture 1>… in this order. H3 only." },
-        ref_song: { type: "string", description: "A library song file (from list_songs) the prompt refers to as <Audio 1>. H3 only." },
+        persona: { type: "string", description: "A saved character by name (list_personas). Up to 3 of its pictures ride as references after any ref_images, each bound in the prompt as '<Picture N> is <name>.', and its description joins the prompt. H3 only (refused on LTX and FastH3). Write the name where they act." },
+        ref_song: { type: "string", description: "A library song file (from list_songs) the prompt refers to as <Audio 1>. H3 only. Re-sung in the clip's own time; not lip-sync (use soundtrack_song)." },
         ref_song_start: { type: "integer", description: "Where the 10-second reference window starts, in seconds. Default 0." },
-        soundtrack_song: { type: "string", description: "A library song file the clip is generated ON — the finished clip PLAYS this exact segment (frozen audio latent). Works on both engines; on H3 it also anchors the audio so the model reads the vocal while inventing the picture, which is the tool for lip-synced performance shots WITH character references." },
+        soundtrack_song: { type: "string", description: "A library song file the clip is generated ON — the finished clip PLAYS this exact segment (frozen audio latent). Works on both engines; on H3 it also anchors the audio so the model reads the vocal while inventing the picture, which is the tool for lip-synced performance shots WITH character references: the mouth follows the song (measured with pictures of the singer; untested from words alone; on LTX mouths do not follow it); start it where the sung line starts. check_only says it for this engine (soundtrack)." },
         soundtrack_start: { type: "integer", description: "Where the soundtrack segment starts, in seconds. Default 0." },
         negative: { type: "string", description: "What to avoid. LTX only — H3 has no negative prompt." },
         guidance: { type: "number", description: "How literally to follow the prompt (1-8). LTX only." },
@@ -3038,7 +3054,7 @@ export const TOOLS = [
         throw new Error(`Video models are not installed: ${(st.config.video.missing || []).join(", ")}`);
       }
       const engine = st.config?.video?.engine;
-      const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song;
+      const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song || !!a.persona;
       /* The refusals name the engine that IS selected: with three engines,
        * "but LTX is selected" was false on FastH3. The reference sentence is
        * the server's (server/video-plain.js refsIgnored, sent per engine on
@@ -3123,6 +3139,9 @@ export const TOOLS = [
       if (Array.isArray(a.ref_images) && a.ref_images.length) {
         body.refImages = a.ref_images.slice(0, 9).map((n) => safeName(n, "image"));
       }
+      /* A saved character: the server resolves it, binds its pictures after
+       * ref_images and checks the words and pictures before staging. */
+      if (typeof a.persona === "string" && a.persona.trim()) body.persona = String(a.persona);
       if (a.ref_song) {
         body.refAudios = [{ name: safeName(a.ref_song, "song"),
                             start: Number.isFinite(a.ref_song_start) ? a.ref_song_start : 0 }];
@@ -3145,6 +3164,14 @@ export const TOOLS = [
           warnings: (c.warnings || []).map((w) => w.text),
           /* Caveats that change nothing (sparse attention at a size the lab never tried it at). */
           notes: (c.notes || []).map((w) => w.text),
+          /* What this render keeps of a person (video-plain.js character). */
+          keeps_character: c.character?.keeps ?? null,
+          character: c.character?.receipt ?? null,
+          character_hint: c.character?.hint ?? null,
+          sampler: c.sampler ?? null,
+          /* What the song under the clip does on this engine (video-plain.js
+           * songUnderSay): lip-sync on H3 with pictures, not on LTX. */
+          soundtrack: c.songLine?.hint ?? null,
         };
       }
       const r = await api("POST", "/api/video", body);
@@ -3157,7 +3184,8 @@ export const TOOLS = [
       const warnings = (r.warnings || []).map((w) => w.text).filter(Boolean);
       // Its own failure has already thrown; see emptyResultNote in art-wait.js.
       return { clips: made, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
-        ...(warnings.length ? { warnings } : {}) };
+        ...(warnings.length ? { warnings } : {}),
+        ...(r.character ? { character: r.character.receipt, character_hint: r.character.hint ?? undefined } : {}) };
     },
   },
 

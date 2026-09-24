@@ -1096,6 +1096,18 @@
         camera move — H3 holds a simple shot far better than a busy one.</p>
     </div>
 
+    <!-- KEEP MY CHARACTER (the REWIND A/B, 2026-09-24): pictures of the person, the reference build's
+         own step count, and the song under the clip for a singer. One list of pictures with References
+         below (state.refImages); a saved character is resolved and bound by the server (persona).
+         Every sentence here is the server's (video-plain.js character), written by web/vidfit.js. -->
+    <div class="field" id="vidKeepField" hidden>
+      <label class="flabel" for="vidCharacter">Keep my character <span class="sp meta">optional</span></label>
+      <select id="vidCharacter" class="sel2" data-receipt=""><option value="">No saved character</option></select>
+      <div id="vidKeepDrop"></div>
+      <div class="midprev" id="vidKeepPrev" hidden></div>
+      <p class="hint" id="vidKeepNote" hidden></p>
+    </div>
+
     <!-- THE SIMPLE WAY. Three words instead of a step count, and every count
          is the server's (/api/status stepDefaults, resolved by config.js from
          what is on disk): Fast is 3 on the TaoMate build where it is
@@ -1268,12 +1280,12 @@
          order shown. Clicking a reference inserts its tag at the caret. -->
     <div class="field" id="vidRefWrap" hidden>
       <label class="flabel">References
-        <span class="sp meta">up to 9 pictures + 3 sounds &middot; optional</span></label>
+        <span class="sp meta">pictures + sounds &middot; optional</span></label>
       <!-- The server's sentence when the engine ignores references (FastH3,
            LTX): the slots stay in view while anything is attached, and Render
            is refused rather than dropping them. web/vidfit.js. -->
       <p class="hint warnhint" id="vidRefIgnored" hidden></p>
-      <p class="hint">Call them by name in the description, e.g. &ldquo;the figure from <b>&lt;Picture&nbsp;1&gt;</b> sings <b>&lt;Audio&nbsp;1&gt;</b>&rdquo;. Click one to insert its tag.</p>
+      <p class="hint">Pictures: the model recasts what they show wherever the words put it. Name each one (&ldquo;<b>&lt;Picture&nbsp;1&gt;</b> is Mira.&rdquo;) and then use the name (&ldquo;Mira runs&hellip;&rdquo;). For one character, 1&ndash;3 tight pictures on a plain dark background (face; body + face; body + side + face). Sounds (<b>&lt;Audio&nbsp;1&gt;</b>) shape the clip's own sound and are re-sung; for lip-sync to your song use Song under the clip. Click one to insert its tag.</p>
       <div id="vidRefDrop"></div>
       <div class="framepick">
         <button class="edtool" type="button" id="vidRefImgPick" hidden>Add a picture&hellip;</button>
@@ -1285,30 +1297,34 @@
            library files itself. -->
       <div class="pickrow">
         <select id="vidRefSong" class="sel2">
-          <option value="">Add a song from the library&hellip;</option>
+          <option value="">Add a sound reference (re-sung)&hellip;</option>
         </select>
         <button class="edtool" type="button" id="vidRefAudPick">Add audio&hellip;</button>
         <input type="file" id="vidRefAudFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
       </div>
       <div class="midprev" id="vidRefImgPrev" hidden></div>
       <div id="vidRefAudPrev" hidden></div>
-      <p class="hint" id="vidRefCostNote" hidden>References ride through every sampling
-        step, so expect the render noticeably slower. Only ten seconds of each audio
-        reference are used &mdash; set where that window starts.</p>
+      <p class="hint" id="vidRefCostNote" hidden>References make the render slower: up to three
+        pictures, each extra one adds about 9 s at 8 steps (fitted on four clips on a 16 GB card).
+        Only ten seconds of each sound reference are used; set where that window starts.</p>
       <p class="hint warnhint" id="vidRefTagNote" hidden></p>
     </div>
 
-    <!-- ─── Soundtrack — LTX's frozen-audio path (the vendor's ia2v flow). ───
+    <!-- ─── Song under the clip — the frozen-audio path, both engines. ───
          The audio latent is pinned with a zero noise mask, so the finished
          clip PLAYS this exact segment and the picture is generated against it.
          Measured: output audio == the VAE round trip of the segment
-         (mel r=0.995). Hidden under H3, which invents its own audio. -->
+         (mel r=0.995). On H3 it is also anchored at frame 0, so the model
+         hears the vocal: it is the lip-sync door (the REWIND A/B, 2026-09-24).
+         A sound reference (<Audio n>, References) is a different input and
+         is re-sung. Simple shows it. The words beside the label and under the
+         picker are the server's per engine (video-plain.js songUnderSay,
+         written by web/vidfit.js): mouths do not follow the song on LTX. -->
     <div class="field" id="vidSndWrap" hidden>
-      <label class="flabel" for="vidSndSong">Soundtrack
-        <span class="sp meta">optional</span></label>
+      <label class="flabel" for="vidSndSong">Song under the clip <span class="sp meta" id="vidSndMeta">optional</span></label>
       <div class="pickrow">
         <select id="vidSndSong" class="sel2">
-          <option value="">No soundtrack &mdash; the engine makes its own</option>
+          <option value="">No song: the engine makes its own sound</option>
         </select>
         <button class="edtool" type="button" id="vidSndPick">Use a file&hellip;</button>
         <input type="file" id="vidSndFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
@@ -1318,9 +1334,8 @@
           value="0" id="vidSndStart"> s</label>
         <span class="who" id="vidSndWho"></span>
       </div>
-      <p class="hint">The finished file plays this exact stretch of the song &mdash;
-        the picture is invented to fit it. Describe someone or something making the
-        sound: a singer at a microphone, hands on a piano, a band on stage.</p>
+      <p class="hint" id="vidSndHint">The finished clip plays this stretch of the song. Set
+        &ldquo;start at&rdquo; to where the sung line begins.</p>
     </div>
 
     <div class="vsec">Fine tuning</div>

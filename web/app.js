@@ -7639,11 +7639,21 @@ function vidWH() {
  * build. A literal 8 here opened a Models-screen install, which has the 4-step
  * files alone, on a 4-step LoRA run at 8 steps. The fallbacks serve an engine
  * that sends none (LTX, which hides the chips): 4 is matched on every disk
- * that has any H3 turbo file. */
-function vidQualitySteps(eng) {
+ * that has any H3 turbo file.
+ *
+ * KEEPING A CHARACTER (a saved character or reference pictures on H3),
+ * Standard is the reference build's own count instead, the server's
+ * `referenceSteps` (8 where the 8-step reference file is on disk): the REWIND
+ * A/B kept its character on that build at that count (2026-09-24). Fast is
+ * the count the reference path really runs for Fast, the server's
+ * `keepFast.steps` (the TaoMate 3-step build takes no pictures, so the
+ * reference build loads at its own count); where that is Standard's count,
+ * Fast hides as two chips doing one thing. */
+function vidQualitySteps(eng, keeping = false) {
   const d = eng?.stepDefaults || {};
-  const standard = Number(d.standard) || 4;
-  return { fast: Number(d.fast) || standard, standard, best: Number(d.best) || 20 };
+  const standard = (keeping && Number(eng?.referenceSteps)) || Number(d.standard) || 4;
+  const fast = (keeping ? Number(eng?.keepFast?.steps) : Number(d.fast)) || standard;
+  return { fast, standard, best: Number(d.best) || 20 };
 }
 
 function vidPaint() {
@@ -7660,6 +7670,18 @@ function vidPaint() {
     state.vidStepsOpened = true;
     $("vidSteps").value = String(vidQualitySteps(eng).standard);
   }
+
+  /* KEEP MY CHARACTER: a saved character or reference pictures on H3. The
+   * slider follows Standard across the switch only when it sits on the old
+   * Standard; a count the person chose stays theirs, and the server's
+   * "steps-measured" note says what the character was measured at. Every name
+   * here is optional-chained: vidPaint's lines are lifted and run alone. */
+  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0);
+  if (eng.stepDefaults && state.vidKeeping !== undefined && state.vidKeeping !== keeping) {
+    const was = vidQualitySteps(eng, state.vidKeeping).standard, now = vidQualitySteps(eng, keeping).standard;
+    if (+$("vidSteps").value === was && was !== now) $("vidSteps").value = String(now);
+  }
+  state.vidKeeping = keeping;
 
   // Painted once; after that the select is left alone so it cannot fight a change.
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
@@ -7723,7 +7745,7 @@ function vidPaint() {
     ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
     : eng.fixedSteps
     ? "H3 distilled to " + eng.fixedSteps + " fixed steps, with sound; references need MiniMax H3."
-    : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references — pictures and sounds the description can call by name.";
+    : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references: pictures that keep a person the same from clip to clip.";
   // LTX has no single step count — it is baked into two fixed sigma schedules.
   // FastH3 has one, and it is fixed (eng.fixedSteps): no slider for either.
   const noSteps = cur === "ltx" || !!eng.fixedSteps;
@@ -7744,7 +7766,7 @@ function vidPaint() {
   const qRow = $("vidQualityRow");
   if (qRow) {
     qRow.hidden = noSteps;
-    const qs = vidQualitySteps(eng);
+    const qs = vidQualitySteps(eng, keeping);
     const stNow = +$("vidSteps").value;
     for (const b of qRow.querySelectorAll("[data-vq]")) {
       const want = qs[b.dataset.vq];
@@ -7754,10 +7776,13 @@ function vidPaint() {
     }
     const build = (n) => n === 3 ? "The TaoMate 3-step build" : "The " + n + "-step turbo build";
     /* On the 3-step build the chip's title is the server's note, which says
-     * what the saved sparse attention does to it (fastNote, video-plain.js). */
-    $("vidQFast").title = (qs.fast === 3 && eng.fastNote) || build(qs.fast);
-    qRow.querySelector('[data-vq="standard"]').title = build(qs.standard)
-      + (qs.standard === 8 ? "" : ": the 8-step files are not on this disk");
+     * what the saved sparse attention does to it (fastNote, video-plain.js).
+     * While a character is kept it is the server's keepFast note instead: the
+     * TaoMate claim is about the text path, which a kept character never takes. */
+    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
+    qRow.querySelector('[data-vq="standard"]').title = keeping
+      ? (qs.standard === 8 ? "The 8-step reference build, at its own count" : "The " + qs.standard + "-step reference build, at its own count")
+      : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step files are not on this disk");
     /* Where Fast would be the same number as Standard (no TaoMate build, and
      * no 4-step build under an 8-step Standard) it is two chips doing one
      * thing, lit together. Fast shows only when it is really faster; the "!"
@@ -7765,8 +7790,9 @@ function vidPaint() {
     $("vidQFast").hidden = qs.fast === qs.standard;
     /* The server's words (video-plain.js fastNote): they follow the disk and
      * the saved sparse attention, which makes Fast slightly softer, so this
-     * line can no longer promise "as sharp as the 8-step build" while it runs. */
-    $("vidQualityNote").textContent = eng.fastNote || "";
+     * line can no longer promise "as sharp as the 8-step build" while it runs.
+     * While a character is kept, keepFast's words, and none while Fast hides. */
+    $("vidQualityNote").textContent = keeping ? ((qs.fast !== qs.standard && eng.keepFast?.note) || "") : (eng.fastNote || "");
   }
 
   /* Loop only makes sense with an opening picture — the trick IS reusing that
@@ -7799,6 +7825,10 @@ function vidPaint() {
    * engine, with the server's sentence saying this one ignores them
    * (#vidRefIgnored, web/vidfit.js), so nothing is dropped out of sight. */
   $("vidRefWrap").hidden = cur !== "h3" && !((state.refImages || []).length + (state.refAudios || []).length);
+  /* Keep my character follows the same rule: H3, or something chosen or
+   * attached, in which case the server's refusal shows in #vidKeepNote. */
+  { const kf = $("vidKeepField");
+    if (kf) kf.hidden = cur !== "h3" && !($("vidCharacter")?.value || (state.refImages || []).length); }
   /* Ask friend explains itself before anyone clicks: a recipe is H3 or LTX. */
   if ($("vidAskFriend")) {
     const recipeOk = recipeEngineOk(cur);
@@ -7806,9 +7836,10 @@ function vidPaint() {
     const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
     $("vidAskFriend").title = recipeOk ? `Prepare a text-only recipe for a friend using their default models. To send reference pictures, use ${wfName} → Video clips → Ask friend, which carries them.` : recipeEngineRefusal();
   }
-  /* The soundtrack works on BOTH engines now — LTX freezes the audio latent,
-   * H3 freezes it AND anchors it so the model can read the vocal (the lip-sync
-   * pair). The section shows everywhere. */
+  /* The song under the clip works on BOTH engines — LTX freezes the audio
+   * latent, H3 freezes it AND anchors it so the model can read the vocal: on
+   * H3 it is the lip-sync door (the REWIND A/B, 2026-09-24). The section shows
+   * everywhere, Simple included. */
   $("vidSndWrap").hidden = false;
   const sndPicked = state.sndUpload || $("vidSndSong").value;
   $("vidSndRow").hidden = !sndPicked;
@@ -7853,11 +7884,11 @@ function vidPaint() {
   /* ANY song can lend its sound as a reference — unlike the frame dropdowns,
    * no cover is needed. This select is an action, not a state: picking adds a
    * chip and it snaps back to the placeholder, so no value to preserve. */
-  $("vidRefSong").innerHTML = '<option value="">Add a song from the library…</option>'
+  $("vidRefSong").innerHTML = '<option value="">Add a sound reference (re-sung)…</option>'
     + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
   // The soundtrack select IS state (like vidFrom), so its value is preserved.
   const curSnd = $("vidSndSong").value;
-  $("vidSndSong").innerHTML = '<option value="">No soundtrack — the engine makes its own</option>'
+  $("vidSndSong").innerHTML = '<option value="">No song: the engine makes its own sound</option>'
     + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
   $("vidSndSong").value = curSnd;
 
@@ -7912,7 +7943,9 @@ function vidPaint() {
    * the bare model. With the 8-step file, 6-7 is the band between the two
    * builds (`betweenBuilds`). No step count known (a status without
    * loraSteps) names no build and warns about none. */
-  const hasRefs = ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+  /* A kept character counts: a saved character's pictures ride on the
+   * reference path too, so its files are the ones that load. */
+  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
   /* LTX and a fixed-schedule engine (FastH3, eng.fixedSteps) load no turbo
    * build, so they name no path and warn about none. */
   const fixedPath = cur === "ltx" || !!eng.fixedSteps;
@@ -7929,6 +7962,11 @@ function vidPaint() {
     : " · full-model path";
   const mismatch = !fixedPath && midFile !== null && midFile < 8 && st > midFile && st > t4 && st <= t8;
   const betweenBuilds = !fixedPath && midFile === 8 && st > t4 && st < 8;
+  /* While Keep my character carries the server's receipt, its words name the
+   * pictures and the steps, so the estimate drops the reference build's name
+   * rather than saying it twice; "references ride along" stays, because the
+   * receipt does not say what they cost in time. */
+  const keepSaid = keeping && !!$("vidCharacter")?.dataset?.receipt;
 
   $("vidEst").textContent = on
     ? "about " + fmt(secs) + " once the engine is idle · " + frames + " frames at " + fps + " fps"
@@ -7939,11 +7977,11 @@ function vidPaint() {
       + (mismatch ? " · ⚠ no " + (hasRefs ? "reference " : "") + "build for " + st + " steps on this disk: use "
           + fourFile + " (the " + fourFile + "-step build) or 13+ (the bare model)" : "")
       + (betweenBuilds ? " · ⚠ between the " + fourFile + "-step and 8-step builds: use " + fourFile + " or 8" : "")
-      + stepPath
+      + (keepSaid ? "" : stepPath)
       // Reference tokens are attended on every step, so they cost time. One
       // measured point: one picture at 864x480x124 added ~10% — more and
       // larger references cost more.
-      + (cur === "h3" && ((state.refImages || []).length + (state.refAudios || []).length)
+      + (cur === "h3" && (keeping || (state.refAudios || []).length)
           ? " · references ride along, expect it slower" : "")
       + (cur === "ltx" && sndPicked ? " · the finished clip plays your chosen audio" : "")
     : "switch video on in Settings first";
@@ -7962,7 +8000,7 @@ for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
     // The same numbers the chips are lit and labelled by: the server's.
-    const steps = vidQualitySteps(eng)[b.dataset.vq];
+    const steps = vidQualitySteps(eng, !!state.vidKeeping)[b.dataset.vq];
     $("vidSteps").value = String(steps);
     vidPaint();
   };
@@ -8519,11 +8557,85 @@ function paintRefs() {
       <button class="midx" type="button" data-refaudx="${i}" title="Remove">✕</button>
     </div>`).join("");
   picDrops.ref?.paint();
+  paintKeepStrip();
   $("vidRefAudPick").hidden = auds.length >= REF_AUD_MAX;
   $("vidRefSong").hidden = auds.length >= REF_AUD_MAX;
   $("vidRefClear").hidden = !(imgs.length || auds.length);
   $("vidRefCostNote").hidden = !(imgs.length || auds.length);
   paintRefTagNote();
+  /* A picture added or removed decides whether this clip keeps a character
+   * (vidPaint's `keeping`: the Standard chip, the estimate), so repaint. */
+  if (typeof vidPaint === "function") vidPaint();
+}
+
+/* KEEP MY CHARACTER'S STRIP: the pictures this render keeps, in the order the
+ * server numbers them: the ones dropped here or under References first (they
+ * are one list, state.refImages; ✕ removes one), then up to three of the saved
+ * character's, which the server binds after them (personas.js
+ * bindPersonaForClip), read-only. A preview only: the words about it are the
+ * server's (#vidKeepNote, web/vidfit.js). */
+function paintKeepStrip() {
+  const box = $("vidKeepPrev");
+  if (!box) return;
+  const imgs = state.refImages || [];
+  const who = (state.vidCharacters || []).find((x) => x.name === $("vidCharacter")?.value) || null;
+  const cand = typeof imgRefCandidates === "function" ? imgRefCandidates() : [];
+  const urlOf = (n) => cand.find((c) => c.name === n)?.url || `/api/image/${encodeURIComponent(n)}`;
+  /* How many of the character's pictures ride is the server's (clipPictures). */
+  const room = Math.max(0, Math.min(Number(state.vidClipPictures) || 0, REF_IMG_MAX - imgs.length));
+  const mine = imgs.map((m, i) => `<figure class="midthumb"><img src="${esc(m.url)}" alt="" title="&lt;Picture ${i + 1}&gt;">
+      <figcaption><button class="midx" type="button" data-keepx="${i}" title="Remove">✕</button></figcaption></figure>`);
+  /* A picture uploaded on Pictures lives in ComfyUI's input folder under an
+   * aiplay_frame_ name that no library route serves: its place shows the
+   * character's name instead of a broken image. */
+  const theirs = (who?.refImages || []).slice(0, room).map((n, i) => {
+    const title = `&lt;Picture ${imgs.length + i + 1}&gt; ${esc(who.name)}`;
+    return /^aiplay_frame_/.test(n) && !cand.some((c) => c.name === n)
+      ? `<figure class="midthumb"><div class="keepph" title="${title} (uploaded on Pictures; no preview here)">${esc(who.name)}</div></figure>`
+      : `<figure class="midthumb"><img src="${esc(urlOf(n))}" alt="" title="${title}"></figure>`;
+  });
+  box.innerHTML = [...mine, ...theirs].join("");
+  box.hidden = !(mine.length + theirs.length);
+  picDrops.keep?.paint();
+}
+
+/* THE SAVED CHARACTERS FOR KEEP MY CHARACTER: the ones with pictures, from the
+ * same shelf as Pictures' Character… (/api/personas, judged for H3). Never
+ * picks one by itself, even when the description names someone: the server's
+ * line says so instead. Run when the Video screen opens and whenever the
+ * Pictures shelf changes (imgLoadPersonas). */
+async function vidLoadCharacters() {
+  const sel = $("vidCharacter");
+  if (!sel) return;
+  let rows = [];
+  let d = null;
+  try { d = await (await fetch("/api/personas?for=h3")).json(); } catch { return; }
+  rows = (d?.personas || []).filter((x) => (x.refImages || []).length);
+  state.vidCharacters = rows;
+  state.vidClipPictures = d?.clipPictures ?? null;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">No saved character</option>'
+    + rows.map((x) => `<option value="${esc(x.name)}">${esc(x.name)} · ${x.refImages.length} picture${x.refImages.length === 1 ? "" : "s"}</option>`).join("");
+  /* A character that is gone from the shelf stays chosen, so the server can
+   * say it is gone rather than the page dropping it unsaid. */
+  if (cur && !rows.some((x) => x.name === cur)) sel.insertAdjacentHTML("beforeend", `<option value="${esc(cur)}">${esc(cur)}</option>`);
+  sel.value = cur;
+  paintKeepStrip();
+}
+if ($("vidCharacter")) {
+  $("vidCharacter").onchange = () => { paintKeepStrip(); vidPaint(); };
+  $("vidKeepField").addEventListener("click", (e) => {
+    const x = e.target.closest("[data-keepx]");
+    if (!x) return;
+    const [gone] = (state.refImages || []).splice(Number(x.dataset.keepx), 1);
+    if (gone) URL.revokeObjectURL(gone.url);
+    paintRefs();
+  });
+  /* The server's receipt arriving (web/vidfit.js, after each check) changes
+   * what the estimate leaves to it, so the estimate is written again. */
+  if (typeof MutationObserver === "function") {
+    new MutationObserver(() => vidPaint()).observe($("vidCharacter"), { attributes: true, attributeFilter: ["data-receipt"] });
+  }
 }
 
 /* Say when the description names a reference that is not attached — the render
@@ -8590,8 +8702,9 @@ $("vidRefAudPrev").addEventListener("input", (e) => {
 });
 $("vidPrompt").addEventListener("input", paintRefTagNote);
 
-/* Soundtrack — one audio, LTX only. The select is state (like vidFrom); an
- * uploaded file WINS over it and the button doubles as the clear control. */
+/* Song under the clip — one audio, both engines; on H3 it is the lip-sync
+ * door. The select is state (like vidFrom); an uploaded file WINS over it and
+ * the button doubles as the clear control. */
 $("vidSndSong").onchange = () => {
   if ($("vidSndSong").value && state.sndUpload) {
     state.sndUpload = null;
@@ -8708,8 +8821,8 @@ function videoFriendRecipe() {
    * recipe is text only (collab/video-recipe.js refuses files by design), and
    * a person holding reference pictures was told to remove them and nothing
    * else — while Workflow's Ask friend packs a scene with its pictures. */
-  if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
-    throw new Error(`This Ask friend sends text only: remove frames, references, soundtrack and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow"} → Video clips → Ask friend, which carries them.`);
+  if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || $("vidCharacter")?.value || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
+    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow"} → Video clips → Ask friend, which carries them.`);
   if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
@@ -8743,7 +8856,7 @@ $("cbUseVideo")?.addEventListener("click",async()=>{
   $("vidSecs").value=String(v.seconds); $("vidSteps").value=String(v.steps); $("vidGuide").value=String(v.guidance);
   $("vidAudio").value=v.keepAudio?"1":"0"; $("vidLoop").checked=false;
   $("vidSize").value="custom"; $("vidW").value=String(v.width); $("vidH").value=String(v.height);
-  for(const id of ["vidFrom","vidTo","vidSndSong"])$(id).value="";
+  for(const id of ["vidFrom","vidTo","vidSndSong","vidCharacter"])if($(id))$(id).value="";
   if(state.frameUploads){delete state.frameUploads.vidFrom;delete state.frameUploads.vidTo;}
   state.midFrames=[];state.refImages=[];state.refAudios=[];state.sndUpload=null;
   for(const id of ["vidModel","vidEncoder","vidVideoVae","vidAudioVae"])if($(id))$(id).value="auto";
@@ -8810,11 +8923,16 @@ $("vidCreate").onclick = async () => {
         refImages: (state.refImages || []).length ? state.refImages.map((m) => m.name) : undefined,
         refAudios: (state.refAudios || []).length
           ? state.refAudios.map((a) => ({ name: a.name, start: a.start || 0 })) : undefined,
+        /* Keep my character: a saved character by name. The server resolves
+         * it, binds each of its pictures as "<Picture N> is Name." after the
+         * ones above, and checks the words and pictures before anything is
+         * staged; never picked by this page on its own. */
+        persona: $("vidCharacter")?.value || undefined,
         /* H3's sparse attention on the Fast setting, named only while the
          * switch differs from the saved setting (web/vidfit.js); absent, the
          * saved setting applies and no default is sent as a request. */
         sparse: typeof globalThis.aiplayVidSparse === "function" ? globalThis.aiplayVidSparse() : undefined,
-        /* Soundtrack — both engines take it now. */
+        /* Song under the clip — both engines; on H3 the lip-sync door. */
         audioTrack: (state.sndUpload || $("vidSndSong").value)
           ? { name: state.sndUpload?.name || $("vidSndSong").value,
               start: Math.max(0, +$("vidSndStart").value || 0) }
@@ -17373,6 +17491,8 @@ async function imgLoadPersonas() {
   $("imgPersonaNote").hidden = !(bad && rows.length);
   if (bad && rows.length) $("imgPersonaNote").textContent = `Characters need reference images — ${fits.why}.`;
   $("imgPersonaDel").hidden = !$("imgPersona").value;
+  /* The same shelf feeds Video's Keep my character. */
+  if (typeof vidLoadCharacters === "function") vidLoadCharacters();
 }
 
 $("imgPersona").onchange = () => { $("imgPersonaDel").hidden = !$("imgPersona").value; imgQwenCheck(); };
@@ -18888,7 +19008,7 @@ function setView(name, options) {
   if (name === "thanks") loadThanks();
   // Same catalogue, filled the first time the About page is opened.
   if (name === "about") { loadAboutRights(); loadAboutReport(); loadVersion(); }
-  if (name === "video") { vidPaint(); loadClips(); }
+  if (name === "video") { vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is
    * how two views start disagreeing about what exists. */
@@ -20954,6 +21074,18 @@ mountMusicPlan();
   picDrops.ref = mountPicDrop($("vidRefDrop"), {
     zone: "Drop pictures here to use them as references", multiple: true,
     strip: $("vidRefImgPrev"),   // its Clear also clears the sounds, so it stays outside
+    candidates: imgRefCandidates, beforeMenu: loadGallery,
+    blocked: () => ((state.refImages || []).length >= REF_IMG_MAX ? `That is all ${REF_IMG_MAX}` : ""),
+    onPick: async (c) => addRefImages([await asFile(c)]),
+    onFiles: (files) => addRefImages(files),
+  });
+  /* KEEP MY CHARACTER'S BOX: the same list as References (state.refImages),
+   * so a picture dropped here is a reference, shown under References too. A
+   * box of its own wins over dropAnywhere, so a picture dropped anywhere else
+   * on the panel is still the starting frame. */
+  picDrops.keep = mountPicDrop($("vidKeepDrop"), {
+    zone: "Drop 1–3 pictures of them here", multiple: true,
+    strip: $("vidKeepPrev"),
     candidates: imgRefCandidates, beforeMenu: loadGallery,
     blocked: () => ((state.refImages || []).length >= REF_IMG_MAX ? `That is all ${REF_IMG_MAX}` : ""),
     onPick: async (c) => addRefImages([await asFile(c)]),

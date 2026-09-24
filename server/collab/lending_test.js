@@ -193,8 +193,12 @@ test("4: packet.js's song rule is generate.js's, character for character", async
   const squash = (x) => String(x).replace(/\s+/g, " ").trim();
   const gen = /const songConditioned = ([\s\S]*?);/.exec(await src("../mv/generate.js"))?.[1];
   const pkt = /const songUnderClip = ([\s\S]*?);/.exec(await src("./packet.js"))?.[1];
-  assert.ok(gen && pkt, "both expressions are found");
+  /* The third copy: mv/shot.js says the same rule on the shot before anything
+   * is spent (songUnder, songLine; 2026-09-24). */
+  const shot = /const songUnderClip = ([\s\S]*?);/.exec(await src("../mv/shot.js"))?.[1];
+  assert.ok(gen && pkt && shot, "all three expressions are found");
   assert.equal(squash(pkt), squash(gen));
+  assert.equal(squash(shot), squash(gen));
 });
 
 test("4: the order's own sentence says lip-sync does not travel, and the returned take's notes repeat it", () => {

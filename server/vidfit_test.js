@@ -343,7 +343,8 @@ test("§5 the plan: steps and sparse attention", () => {
     const page = plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 5, steps },
       { engineKey: "h3", eng, h3: status(16, 32) });
     assert.deepEqual(page.warnings, [], `the page's default body at ${steps} steps carries no warning`);
-    assert.deepEqual(page.notes, []);
+    /* Only the "runs" line, the numbers behind the render (2026-09-24). */
+    assert.deepEqual(page.notes.map((n) => n.id), ["runs"]);
   }
   /* Sol-attn at a size the lab never tried it at: a caveat on the Advanced line, not a warning. */
   const small = plain.videoPlan({ prompt: "a lamp", width: 960, height: 544, seconds: 5, steps: 3 }, { engineKey: "h3", eng, h3: status(8, 32) });
@@ -351,8 +352,8 @@ test("§5 the plan: steps and sparse attention", () => {
   assert.equal(small.warnings.length, 0);
   assert.equal(small.notes.find((n) => n.id === "sparse-untried")?.text,
     "Sparse attention runs on this clip; it was measured at 1344x768 only, so its speed and look at 960x544 are not yet tried.");
-  assert.deepEqual(plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 }, { engineKey: "h3", eng, h3: status(16, 32) }).notes,
-    [], "at the measured size: nothing to add");
+  assert.deepEqual(plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 }, { engineKey: "h3", eng, h3: status(16, 32) }).notes
+    .filter((n) => n.id !== "runs"), [], "at the measured size: nothing to add but the runs line");
   assert.equal(plain.videoPlan({ prompt: "a lamp", steps: 3, sparse: "sol-attn" }, { engineKey: "h3", eng, h3: null, control: true }).sparse,
     "off", "video-to-video stays dense");
   const fast = plain.videoPlan({ prompt: "a lamp", steps: 3 }, { engineKey: "h3", eng, h3: null });
@@ -387,7 +388,7 @@ test("§5 the door renders the plan and says it; make_clip carries sparse and ch
   assert.match(index, /width: plan\.width,\n\s+height: plan\.height,/);
   assert.match(index, /steps: videoEngine\(eng\)\.fixedSteps \|\| plan\.steps,/);
   assert.match(index, /sparse: b\.sparse === "sol-attn" \|\| b\.sparse === "off" \? b\.sparse : undefined,/);
-  assert.match(index, /return json\(res, 200, \{ ok: true, id, job: job && \{ id: job\.id \}, warnings: plan\.warnings, \.\.\.art\.status\(\) \}\);/);
+  assert.match(index, /return json\(res, 200, \{ ok: true, id, job: job && \{ id: job\.id \}, warnings: plan\.warnings, \.\.\.art\.status\(\),\s+character: plan\.character \?\? null, sampler: plan\.sampler \?\? null \}\);/);
   assert.match(index, /sparse: e\.solAttn \? \{ value: e\.sparse \?\? "off", options: \["sol-attn", "off"\], note: e\.solAttn\.note \} : null,/);
   assert.match(index, /advanced: e\.advanced \?\? null,/);
   assert.match(index, /h3Tiers: isH3Family\(k\),/, "which engines the tiers are about is the server's call");
@@ -437,7 +438,7 @@ test("§6 the page holds no opinion: no threshold, no size, no prose in web/vidf
     .map((m) => m[0].slice(1, -1)).filter((t) => t.length >= 50 && !t.includes("${"));
   assert.deepEqual(strings.filter((s) => /[a-z] [a-z]+ [a-z]+ [a-z]+ [a-z]/.test(s)), [], "every sentence comes off the wire");
   for (const f of ["h3.notOffered", "h3.choices", "h3.start", "h3?.ramWarning", "refsIgnored", "r.fit?.sentence", "e.advanced.label", "sp.note",
-    "?.h3Tiers", "c?.lengthSaid", "st.lengthSaid", "r.notes"]) {
+    "?.h3Tiers", "c?.lengthSaid", "st.lengthSaid", "r.notes", "r.character"]) {
     assert.ok(code.includes(f), `reads ${f} from the server`);
   }
   assert.doesNotMatch(code, /MiniMax H3/, "which engines the tiers cover is not decided from a label in the page");
@@ -456,8 +457,9 @@ test("§6 the page holds no opinion: no threshold, no size, no prose in web/vidf
     "the Graphics memory note says it restarts the engine for every model");
   /* Overnight's "clips made with" list: FastH3 by its Advanced label, and out unless saved. */
   assert.match(app, /esc\(e\.advanced\?\.label \|\| e\.label\) \+ "<\/option>"\)\.join\(""\);\n\s+\}\n[^\n]*\n\s+for \(const o of \$\("ovEngine"\)\.options\) o\.hidden = !!s\.config\.video\.engines\?\.\[o\.value\]\?\.advanced && o\.value !== s\.config\.video\.engine;/);
-  /* The Fast chip's note is the server's, and never promises "as sharp" on its own. */
-  assert.match(app, /\$\("vidQualityNote"\)\.textContent = eng\.fastNote \|\| "";/);
+  /* The Fast chip's note is the server's, and never promises "as sharp" on its
+   * own; while a character is kept it is the server's keepFast words instead. */
+  assert.match(app, /\$\("vidQualityNote"\)\.textContent = keeping \? \(\(qs\.fast !== qs\.standard && eng\.keepFast\?\.note\) \|\| ""\) : \(eng\.fastNote \|\| ""\);/);
   assert.doesNotMatch(strip(app), /as sharp as the 8-step build/, "no second copy of the note in the page's code");
   /* Render: asks first where H3 is not offered, and names sparse only when it differs from the saved one. */
   assert.match(app, /if \(typeof globalThis\.aiplayVidAsk === "function" && !\(await globalThis\.aiplayVidAsk\(appConfirm\)\)\) return;\n[\s\S]{0,900}?const \[width, height\] = vidWH\(\);\n\s+\$\("vidCreate"\)\.disabled = true;/,

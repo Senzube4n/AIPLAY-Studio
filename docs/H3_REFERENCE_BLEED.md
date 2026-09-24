@@ -306,6 +306,12 @@ path's warm cast and 2× churn, the prompt's own softness, and the untagged
 BT.601 colour in the file. Contact sheets and crops: the session's
 scratchpad, `ab_h3_sheet.jpg` and `ab_h3_zoom_*.png`.
 
+Superseded for new music-video projects on 2026-09-24: the REWIND A/B put the song
+under every reference shot (DIRECTING.md §2), and new projects start on Song under
+the clip: always. The sampler on the reference path is res_multistep again. (The
+detail column above is not seconds: arm D's 199 against arm A's 189 is no measure of
+what the song costs to render, which has never been measured on its own.)
+
 ## The three repos
 
 Read-only evaluation, nothing installed.

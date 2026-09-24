@@ -530,5 +530,37 @@ ok("...and no stray control byte crept into the source",
     b5.staleRefs === false, JSON.stringify(b5));
 }
 
+/* ── THE SONG UNDER THE CLIP, said on the shot (2026-09-24) ───────────────
+ * A new project starts on Song under the clip "always" (store.js, the REWIND
+ * A/B), so a ticked character with a sheet goes to H3 with its picture named
+ * first and the song under the clip; an "auto" brief on a board not marked as
+ * sung says, before anything is spent, that the mouth will not follow. */
+{
+  const { blankProject } = await import("./store.js");
+  const fresh = () => ({ ...blankProject("Rewind"), styleBible: "Anime night", song: { file: "song.flac" },
+    characters: [{ id: "c1", name: "Senzu", imageFile: "senzu.png", takes: [] }], backgrounds: [], props: [],
+    segments: [{ id: "s1_0", index: 0, startSec: 0, endSec: 4, durationSec: 4, kind: "lyrical", mode: "generate", thesisLine: "I miss her" }],
+    boards: [{ id: "bd1", segmentId: "s1_0", segmentIndex: 0, shots: [{ action: "Senzu sings the line to camera" }],
+      characterRefs: ["Senzu"], backgroundRefs: [], propRefs: [], refProminence: {}, imageFile: null, takes: [] }],
+    clips: [] });
+  const r1 = resolveShot(fresh(), "s1_0", { ltxReady: true });
+  ok("a new project's scene with a ticked character goes to H3 with its picture",
+    r1.engine === "h3" && r1.useRefs === true && r1.refsSent === true, JSON.stringify({ engine: r1.engine, useRefs: r1.useRefs }));
+  ok("...its prompt names the picture first after the style", r1.prompt.startsWith("Anime night. <Picture 1> is Senzu."), r1.prompt.slice(0, 80));
+  ok("...and the song is under the clip, said in the brief's words",
+    r1.songUnder === true && /^song under this clip: the brief puts it under every scene/.test(r1.songLine), r1.songLine);
+  const auto = fresh();
+  auto.brief.songConditioning = "auto";
+  const r2 = resolveShot(auto, "s1_0", { ltxReady: true });
+  ok("an auto brief on a board not marked as sung: no song, and the shot says the mouth will not follow",
+    r2.songUnder === false && /^no song under this clip: Song under the clip is auto/.test(r2.songLine), r2.songLine);
+  auto.boards[0].lipSync = true;
+  ok("...a board marked as sung has it", resolveShot(auto, "s1_0", { ltxReady: true }).songLine === "song under this clip: this board sings (lip-sync)");
+  const none = fresh();
+  none.song = null;
+  ok("...and with no song attached, the shot says so", resolveShot(none, "s1_0").songUnder === false
+    && resolveShot(none, "s1_0").songLine === "no song attached to this project");
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

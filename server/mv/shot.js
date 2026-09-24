@@ -278,6 +278,24 @@ export function resolveShot(doc, segmentId, opts = {}) {
   // there. Asking for LTX is therefore also asking to drop them.
   const useRefs = engine === "h3" && refsWanted && refs.length > 0;
 
+  /* IS THE SONG UNDER THIS CLIP? generate.js's rule, character for character
+   * (collab/lending_test holds the three copies to one text): LTX always; H3
+   * off the reference path, where the board sings, or where the brief puts it
+   * under every scene. Said on the shot (`songUnder`, `songLine`) before
+   * anything is spent, because a singing mouth follows the words only when the
+   * song is under the clip (the REWIND A/B, 2026-09-24, DIRECTING.md §2). */
+  const songUnderClip = engine === "ltx" || !useRefs || Boolean(board?.lipSync)
+    || doc.brief?.songConditioning === "always";
+  const songUnder = !!doc.song?.file && songUnderClip;
+  const songLine = !doc.song?.file ? "no song attached to this project"
+    : engine === "ltx" ? "song under this clip (LTX always hears it; its mouths do not follow it, measured)"
+    : !useRefs ? "song under this clip (text path, no pictures)"
+    : board?.lipSync ? "song under this clip: this board sings (lip-sync)"
+    : doc.brief?.songConditioning === "always"
+      ? "song under this clip: the brief puts it under every scene, so a singing mouth follows the words"
+    : "no song under this clip: Song under the clip is auto and this board is not marked as sung, so a mouth "
+      + "here will not follow the words";
+
   /* THE STORYBOARD AS A REFERENCE (not a first frame), OPT-IN PER PROJECT.
    *
    * A FIRST FRAME is a pin: LTX's ImgToVideoInplace writes the picture into
@@ -388,6 +406,7 @@ export function resolveShot(doc, segmentId, opts = {}) {
     refCap: REF_CAP,
 
     engineMode: mode, useRefs, engine,
+    songUnder, songLine,
     boardRefIndex, opensOn, guideMode,
     keyframes: keyframes ? keyframes.length : 0,
 

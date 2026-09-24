@@ -501,10 +501,10 @@ Without ffmpeg the new frames come back as the clip and its record's
 
 ### `POST /api/video` · `{ "action": "check" }` and what `create` says back
 `{ "action": "check", "prompt", "width", "height", "seconds", "steps",
-"refImages", "refAudios", "sparse", "fromCover" | "fromUpload" | "toCover" | "toUpload" | "framed",
+"refImages", "refAudios", "persona", "song", "sparse", "fromCover" | "fromUpload" | "toCover" | "toUpload" | "framed",
 "sourceVideo" }` — the plan a `create` with the same body would render on this
 card (server/video-plain.js `videoPlan`), without staging or queueing
-anything: `engine`, `width`, `height`, `seconds`, `steps`, `sparse`,
+anything: `engine`, `width`, `height`, `seconds`, `steps`, `sparse`, `sampler`,
 `fit` (`sentence` "This size needs about X GB free on the graphics card; you
 have Y GB…", `needGb`, `haveGb`, `over`, `scope`), `warnings` `[{id, text}]`,
 `notes` `[{id, text}]` (caveats that change nothing: `sparse-untried`, sol-attn
@@ -532,6 +532,42 @@ clip's status row carries the sentence as `error`, the engine's own text as
 The door takes Studio's own page or a local client only, with a 1 MB body, and
 so does `POST /api/videolab`. MCP: `make_clip` `check_only` (with `notes`),
 `sparse`, and its reply's `warnings`.
+
+**Keeping a character** (the REWIND A/B, 2026-09-24, DIRECTING.md §2). `create`
+and `check` take `"persona": "<saved character>"`: it is resolved before the
+safety check (so the check sees its pictures and words), up to three of its
+pictures ride after `refImages`, each bound in the prompt as "<Picture N> is
+Name.", and its description follows as "Name: description.". A name the shelf does
+not have is refused with `reason: "persona"`; on FastH3 or LTX a persona is
+refused like any reference (`refs-ignored`). A render with references that names
+no `steps` runs the reference build's own count, `referenceSteps` (sent per
+engine on `/api/status`; 8 where the 8-step reference file is on disk). `check`
+takes `"song": true` for a song the page holds (`create` reads `audioTrack`).
+Both replies carry `sampler` (res_multistep on the reference path) and
+`character`: `{ keeps, pictures, persona, unnamed, steps, measuredSteps,
+measuredHere, song, receipt, hint }` on H3 (null elsewhere), where `receipt` is
+the Video screen's words ("keeps Mira: 3 pictures + 8 steps + song (lip-sync)";
+pictures without a saved character are "2 reference pictures", and pictures the
+words never tag are "not named") and `hint` the Keep row's line (name the
+pictures, name the character, the song for a singer, then whether the measured
+build is on this PC). `measuredSteps` is the measured setup's count, a
+constant 8 (video-plain.js `KEEP_MEASURED`: the ref2v 8-step v1.0 build),
+apart from what this disk runs; `measuredHere` says whether that build is on
+this PC. Every reply also carries `songLine` `{ meta, hint }`: Song under the
+clip's words for this engine (lip-sync on H3 with pictures; on LTX mouths were
+measured not to follow). Warnings: `persona-pictures` (more than three: a clip
+takes the first three) and `persona-missing` (`create` only: a picture among
+those that ride could not be found). Notes: `runs` (the build, steps, sampler
+and video decoder), `pictures` (more than three reference pictures),
+`persona-unnamed` (the words never name the character), `steps-measured`
+(fewer steps than, or another build than, the one keeping a character was
+measured on), `decoder` (the measured setup used the fp16 decoder) and
+`audio-ref` (a sound reference re-sings; lip-sync is the song under the clip).
+`/api/status` sends per engine `referenceSteps` and `keepFast` `{ steps, note
+}` (the Fast chip while a character is kept). MCP: `make_clip` `persona`, and
+its reply's `character` and `character_hint` (`check_only` adds
+`keeps_character`, `sampler` and `soundtrack`); `studio_status`
+`video.h3_reference_steps`.
 
 ### The conditioning bridge on `POST /api/video`
 `create` and `extend` both take `"bridge": "<adapter file>" | "off"` and
@@ -562,6 +598,7 @@ the reply carries `stem: { file, path, made }`. Refused with `reason:
 
 ### Steering the defaults from an agent
 Every render setting has a tool: `make_clip` (`quality` fast|best, `steps`,
+`persona` (Keep my character; its reply says what it keeps in `character`),
 `bridge`, `bridge_alpha`, `sparse`, `check_only`), `video_settings` (every Video Lab knob, including
 `turbo3_max_steps`, `turbo_shift_video`, `bridge_adapter`, `bridge_alpha`, `sparse_attention`),
 `set_video_engine`, `set_image_engine` (the persistent automatic song-cover

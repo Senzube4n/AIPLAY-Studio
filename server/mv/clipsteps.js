@@ -12,6 +12,7 @@
 import { config } from "../config.js";
 import { COST_ROWS } from "./plancost.js";
 import { H3_LAB_CARD_GB } from "../h3tier.js";
+import { h3MatchedSteps, referenceSteps } from "../workflow.js";
 
 /**
  * Matched to the speed-up files on this disk. It was a literal 8, so a machine set up from the
@@ -26,20 +27,50 @@ import { H3_LAB_CARD_GB } from "../h3tier.js";
  *                          that count; standard when there is none.
  *
  * generate.js sends it and the plan prices it, so both name the same number.
- * LTX ignores the step count.
+ * LTX ignores the step count. With cast pictures the answer is workflow.js
+ * referenceSteps, the same one /api/status and the Video screen's Keep my
+ * character read (read live, so a test that moves refTurboSteps moves it).
  */
 export function defaultClipSteps({ refs = false } = {}) {
   const h3 = config.video?.engines?.h3 ?? {};
   const standard = Number.isFinite(h3.stepDefaults?.standard) ? h3.stepDefaults.standard
     : Number.isFinite(h3.steps) ? h3.steps : 8;
-  if (refs && (h3.refTurboSteps === 8 || h3.refTurboSteps === 4)) return h3.refTurboSteps;
+  if (refs) return referenceSteps(h3) ?? standard;
   return standard;
 }
 
+/** The count the brief names, as a number, or null. */
+const briefSteps = (brief) => (Number.isFinite(brief?.videoSteps) ? Number(brief.videoSteps) : null);
+
+/** A count the brief names that runs the reference build below its own count
+ *  (the Fast band, workflow.js h3MatchedSteps): Hex Appeal v1 ran 3 steps on
+ *  the 4-step reference file and came back "burned" (the REWIND CONFIGS). */
+function raisedOnRefs(brief, refs) {
+  const asked = briefSteps(brief);
+  if (!refs || asked === null) return null;
+  const m = h3MatchedSteps(config.video?.engines?.h3 ?? {}, { steps: asked, refs: true });
+  return m.raised ? m : null;
+}
+
 /** The brief value if it names a count (a number, as generate.js has always
- *  read it), else the matched default above. */
+ *  read it), else the matched default above. A scene with cast pictures never
+ *  runs below the loaded reference file's own count: the brief's 3 becomes the
+ *  4-step file's 4, and clipStepsNote says so on the shot. */
 export function clipStepsFor(brief, { refs = false } = {}) {
-  return Number.isFinite(brief?.videoSteps) ? Number(brief.videoSteps) : defaultClipSteps({ refs });
+  const asked = briefSteps(brief);
+  if (asked === null) return defaultClipSteps({ refs });
+  const m = raisedOnRefs(brief, refs);
+  return m ? m.steps : asked;
+}
+
+/** The sentence when clipStepsFor raised the brief's count on a scene with
+ *  cast pictures (videoPlan's "steps" warning, in the music video's words),
+ *  else null. */
+export function clipStepsNote(brief, { refs = false } = {}) {
+  const m = raisedOnRefs(brief, refs);
+  if (!m) return null;
+  return `With cast pictures this scene runs ${m.steps} steps, not the brief's ${m.asked}: the reference build that `
+    + `loads is ${m.made === 8 ? "an" : "a"} ${m.made}-step file, and it runs at its own step count.`;
 }
 
 /** Is any H3 speed-up file on this disk? The rule server/fit.js's videoSteps

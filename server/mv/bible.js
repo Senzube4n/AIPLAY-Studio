@@ -13,7 +13,7 @@
  * Without this file the pipeline had a working spine and a hollow middle.
  */
 import { readProject, updateProject, noteRun, assetComplete } from "./store.js";
-import { markStale, markBoardRefsChanged } from "./shot.js";
+import { markStale, markBoardRefsChanged, resolveShot } from "./shot.js";
 
 const rid = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -51,7 +51,7 @@ export function bibleSpec(doc) {
           backgroundRefs: ["names from backgrounds[]"],
           propRefs: ["names from props[] — declare the car in EVERY scene it appears in"],
           crowd: "true when the frame holds unnamed people beyond the named cast — a festival crowd, a street, a room of strangers. Without it the prompt states the exact number of people and caps the shot at the named cast.",
-          lipSync: "true ONLY when a mouth in frame is singing THIS scene's line. It freezes the song under the render so the lips match; on every other scene it buys nothing and costs render time. Most scenes of a music video are not singing.",
+          lipSync: "true when a mouth in frame sings THIS scene's line. Projects on Song under the clip \"always\" (new projects since 2026-09-24) put the song under every scene anyway; lipSync is what makes a scene sing on an \"auto\" project.",
           refProminence: { "<name>": 0.5 },
         }],
       },
@@ -136,7 +136,11 @@ export async function commitBible(slug, bible) {
           characterRefs: (b.characterRefs || []).map(norm), backgroundRefs: (b.backgroundRefs || []).map(norm),
           propRefs: (b.propRefs || []).map(norm),
           crowd: !!b.crowd,
-          /* ⚠ READ IN generate.js AND WRITTEN NOWHERE UNTIL NOW. The song is
+          /* (2026-09-24: new projects start on songConditioning "always",
+           * store.js blankProject, the REWIND A/B; the expression below is
+           * unchanged, and lipSync still decides on an "auto" project.)
+           *
+           * ⚠ READ IN generate.js AND WRITTEN NOWHERE UNTIL NOW. The song is
            * frozen under an H3 render when `engine === "ltx" || !useRefs ||
            * Boolean(board?.lipSync) || brief.songConditioning === "always"`,
            * and that third clause was dead: no writer carried the flag, so the
@@ -377,6 +381,28 @@ export function lintProject(doc) {
   const scenesOf = (u) => `${u.scenes.slice(0, 6).join(", ")}${u.scenes.length > 6 ? ", …" : ""}`;
   for (const u of found) {
     if (u.kind !== "namedNotReferenced") continue;
+    /* A CHARACTER NAMED AND NOT TICKED: one line per board, each with its fix.
+     * The REWIND A/B (2026-09-24, DIRECTING.md §2) measured what the words
+     * alone give: another hair colour, another mask, another coat from clip to
+     * clip. The fix ticks the name on that board (set_shot keeps the board's
+     * other references), so it is one click on the page and one call for an
+     * agent (mv_lint maps it to mv_set_shot). Backgrounds and props keep the
+     * per-asset line below. */
+    if (u.assetKind === "character") {
+      u.scenes.forEach((n, i) => {
+        const b = (doc.boards || []).find((x) => x.segmentId === u.segmentIds?.[i]);
+        if (!b) return;
+        issues.push({
+          level: "warn", where: `scene ${n}`,
+          msg: `Names ${u.name} in its words but does not tick ${u.name} as cast, so the clip gets no picture of `
+            + `${u.name} and invents them from the words: another face, hair or costume from shot to shot.`
+            + (u.hasSheet ? "" : ` ${u.name} has no rendered sheet yet either.`),
+          fix: { label: `Tick ${u.name}`, action: "set_shot", segmentId: b.segmentId,
+                 refs: [...(b.characterRefs || []), ...(b.backgroundRefs || []), ...(b.propRefs || []), u.name] },
+        });
+      });
+      continue;
+    }
     push("warn", u.name,
       `Named in the text of ${u.scenes.length} board${u.scenes.length === 1 ? "" : "s"} (${scenesOf(u)}) `
       + `and referenced by none of them. It is declared as a ${u.assetKind}`
@@ -393,6 +419,55 @@ export function lintProject(doc) {
       + `render its sheet, and list it in propRefs. (Wordlist heuristic: it knows eight vehicle words and `
       + `nothing else, so an undeclared guitar or suitcase is invisible to it.)`);
     break;
+  }
+
+  /* TICKED CAST WHOSE PICTURES WILL NOT BE SENT. The default brief (hybrid,
+   * castRefs unset) sends them: resolveShot routes a scene with resolved cast
+   * to H3 with its pictures. The only ways out are an explicit setting, said
+   * here with the fix, or a missing sheet, said per scene above. */
+  const castBoards = (doc.boards || []).filter((b) => b.characterRefs?.length);
+  const ltx = String(doc.brief?.videoEngine || "").toLowerCase() === "ltx";
+  const off = doc.brief?.castRefs === false;
+  if (castBoards.length && (ltx || off)) {
+    const reason = [ltx ? "the engine is set to LTX, which takes no pictures" : null,
+      off ? "cast pictures are switched off" : null].filter(Boolean).join(", and ");
+    /* Switching an LTX project costs something the person chose LTX to avoid,
+     * so the line says the trade before the one click (never picked
+     * silently): hybrid renders the cast scenes on MiniMax H3, about 7x slower
+     * than LTX (mv_set_brief video_engine), under a licence with a territory
+     * clause. */
+    issues.push({
+      level: "warn", where: "brief",
+      msg: `${castBoards.length} board(s) tick cast, but ${reason}, so no clip is given their pictures and faces `
+        + "can change from shot to shot."
+        + (ltx ? " Switching to hybrid renders those scenes on MiniMax H3: about 7x slower than LTX, and H3's licence "
+          + "grants no rights in its excluded territories (studio_status). Where that applies, keep LTX." : ""),
+      fix: { label: ltx ? "Render cast scenes on H3 (hybrid)" : "Send cast pictures", action: "set_brief",
+             brief: { ...(ltx ? { videoEngine: "hybrid" } : {}), ...(off ? { castRefs: true } : {}) } },
+    });
+  }
+
+  /* SUNG WITHOUT THE SONG, on "auto" projects only (new projects start on
+   * "always"). The words say someone sings, the scene would render with no
+   * song under it (shot.js songUnder, generate.js's rule), so the mouth cannot
+   * follow the words. A lyrical scene with no board sings by construction
+   * (clipPrompt: "sings the line"). */
+  if (doc.song?.file && doc.brief?.songConditioning !== "always") {
+    const SING = ["sing", "sings", "singing", "sang", "sung"];
+    for (const seg of scenes) {
+      const board = (doc.boards || []).find((b) => b.segmentId === seg.id);
+      const sings = board ? SING.some((w) => saidWords(boardSays(board)).has(w)) : seg.kind === "lyrical";
+      if (!sings) continue;
+      let rec = null;
+      try { rec = resolveShot(doc, seg.id); } catch { rec = null; }
+      if (!rec || rec.songUnder !== false) continue;
+      issues.push({
+        level: "warn", where: `scene ${seg.index + 1}`,
+        msg: "The words say someone sings, but Song under the clip is auto and this board is not marked as sung: "
+          + "no song goes under the clip, so the mouth will not follow the words.",
+        fix: { label: "Put the song under every scene", action: "set_brief", brief: { songConditioning: "always" } },
+      });
+    }
   }
   return issues;
 }
@@ -532,13 +607,16 @@ export function undeclaredRecurring(doc) {
     for (const a of assets) {
       if (refs.has(lcName(a.name))) continue;
       if (!namesAsset(said, a.name)) continue;
-      if (!named.has(a.name)) named.set(a.name, { asset: a, scenes: [] });
+      if (!named.has(a.name)) named.set(a.name, { asset: a, scenes: [], segmentIds: [] });
       named.get(a.name).scenes.push(sceneNo(b));
+      /* Beside the scene number, the board's segment, so a fix can name the
+       * board it ticks (lintProject; the crime board keeps reading scenes). */
+      named.get(a.name).segmentIds.push(b.segmentId);
     }
   }
-  for (const { asset, scenes } of named.values()) {
+  for (const { asset, scenes, segmentIds } of named.values()) {
     out.push({ kind: "namedNotReferenced", name: asset.name, word: asset.name,
-               assetKind: asset.kind, hasSheet: asset.has, scenes });
+               assetKind: asset.kind, hasSheet: asset.has, scenes, segmentIds });
   }
 
   /* ── (2) the wordlist heuristic, for the thing with no row at all ──────── */

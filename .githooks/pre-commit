@@ -779,6 +779,8 @@ node --test server/vidfit_test.js || exit 1
 # shown in the reference slots and said by make_clip; such a clip is refused,
 # never rendered without them; a tag nothing answers leaves the description.
 node --test server/video-refs_test.js || exit 1
+# KEEP MY CHARACTER (the REWIND A/B, 2026-09-24): res_multistep on the reference path, the reference build's own step count, a saved character bound before the safety check, the Keep row shown in Simple in the server's words, make_clip persona.
+node --test server/keep-character_test.js || exit 1
 # A FAILED CLIP IN WORDS, through the real ArtRunner with the engine door
 # stubbed: a submission ComfyUI refused before it ran (client.js throws) and a
 # run that failed while rendering both become the sentence, the engine's text

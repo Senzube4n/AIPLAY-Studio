@@ -2701,6 +2701,10 @@ details.adv[open] summary::before { content: "▾"; }
 #imgRefHover span{display:block;margin-top:5px;font-size:11px;color:var(--dim);
   max-width:318px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .midthumb{margin:0;width:88px}
+/* Keep my character's strip: a saved character's picture uploaded on Pictures
+ * has no library route, so its place shows the character's name. */
+.midthumb .keepph{width:88px;height:50px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+  background:var(--raise);font-size:.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .midthumb img{width:88px;height:50px;object-fit:cover;border-radius:6px;
   border:1px solid var(--edge);display:block}
 .midthumb figcaption{display:flex;align-items:center;justify-content:space-between;
@@ -5519,8 +5523,11 @@ button, input, select, textarea { font-family: inherit; }
 .asmode.seg.modebar button[data-m="simple"][aria-pressed="true"] {
   background: linear-gradient(135deg, hsla(195,100%,60%,.22), hsla(320,100%,70%,.18));
 }
-/* Simple: the Advanced form steps aside; the Make button and its progress stay. */
-.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(#vidTierRow):not(.ctawrap):not(.infopanel) { display: none !important; }
+/* Simple: the Advanced form steps aside; the Make button and its progress stay,
+ * and so do Video's Keep my character and Song under the clip: a person's
+ * identity and lip-sync are what a newcomer cannot recover afterwards (the
+ * REWIND A/B, 2026-09-24, DIRECTING.md §2). */
+.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(#vidTierRow):not(#vidKeepField):not(#vidSndWrap):not(.ctawrap):not(.infopanel) { display: none !important; }
 .assist {
   flex: none; display: flex; flex-direction: column; gap: 4px; padding: 3px; margin-bottom: 10px;
   background: var(--raise); border: 1px solid var(--hair); border-radius: 18px;

@@ -354,5 +354,86 @@ console.log("\n  the lipSync flag survives commitBible");
     "the board editor sends no lipSync key, so an unconditional !! turns singing off on every Save");
 }
 
+/* ── KEEP THE CHARACTER, in the lint (the REWIND A/B, 2026-09-24) ─────────
+ *
+ * From words alone the lead came back with another hair colour, another mask
+ * and another coat from shot to shot; with his pictures he matched in all
+ * four. So the lint says, per board, when the words name a character the board
+ * does not tick, with a fix that ticks it (set_shot, keeping the board's other
+ * references); says when the brief will not send the ticked cast's pictures;
+ * and, on an "auto" project, says when the words sing and no song goes under
+ * the clip. Props and backgrounds keep their per-asset line (the metronome case
+ * above is unchanged). */
+console.log("\n  the lint keeps the character");
+{
+  const { lintProject } = await import("./bible.js");
+  const { applyShotEdit } = await import("./shot.js");
+  const seg = (i, kind = "lyrical") => ({ id: `s_${i}`, index: i, startSec: i * 4, endSec: i * 4 + 4, durationSec: 4,
+    kind, mode: "generate", thesisLine: "I miss her" });
+  const project = (over = {}) => ({
+    styleBible: "Anime night", lookBible: "cold cyan", story: { logline: "a thief runs" },
+    brief: { videoEngine: null, songConditioning: "always" }, song: { file: "song.flac" },
+    characters: [{ id: "c1", name: "Senzu", imageFile: "senzu.png" }, { id: "c2", name: "Rin", imageFile: "rin.png" }],
+    backgrounds: [{ id: "g1", name: "Harbour", imageFile: "harbour.png" }],
+    props: [{ id: "p1", name: "The Metronome", imageFile: "m.png" }],
+    segments: [seg(0), seg(1)],
+    boards: [
+      board(0, { refs: { characterRefs: ["Rin"], backgroundRefs: ["Harbour"] },
+        shots: [{ action: "Senzu vaults the rail while Rin watches from the dock" }] }),
+      board(1, { refs: { characterRefs: ["Senzu"] }, shots: [{ action: "Senzu turns to camera under the lamp" }] }),
+    ],
+    clips: [], ...over,
+  });
+  const d = project();
+  const tick = lintProject(d).filter((i) => i.fix?.action === "set_shot");
+  ok("a character named in a board's words and not ticked: one line for that board, with a fix",
+    tick.length === 1 && tick[0].where === "scene 1"
+      && /^Names Senzu in its words but does not tick Senzu as cast, so the clip gets no picture of Senzu and invents them from the words/.test(tick[0].msg),
+    JSON.stringify(tick));
+  ok("...the fix ticks the name and keeps the board's other references",
+    JSON.stringify(tick[0]?.fix) === JSON.stringify({ label: "Tick Senzu", action: "set_shot", segmentId: "s_0", refs: ["Rin", "Harbour", "Senzu"] }),
+    JSON.stringify(tick[0]?.fix));
+  applyShotEdit(d, tick[0].fix.segmentId, { refs: tick[0].fix.refs });
+  ok("...and applying it clears the line", !lintProject(d).some((i) => i.fix?.action === "set_shot"));
+  const noSheet = project({ characters: [{ id: "c1", name: "Senzu", imageFile: null }, { id: "c2", name: "Rin", imageFile: "rin.png" }] });
+  ok("...and says when the character has no sheet yet either",
+    lintProject(noSheet).some((i) => i.fix?.action === "set_shot" && / Senzu has no rendered sheet yet either\.$/.test(i.msg)));
+  ok("a prop keeps its one per-asset line (no fix)",
+    lintProject(project({ boards: [board(0, { refs: { characterRefs: ["Senzu"] }, shots: [{ action: "Senzu winds the metronome on the desk" }] })] }))
+      .some((i) => i.where === "The Metronome" && /^Named in the text of 1 board/.test(i.msg) && !i.fix));
+
+  const off = (brief) => lintProject(project({ brief: { songConditioning: "always", ...brief } })).find((i) => i.where === "brief" && i.fix?.action === "set_brief");
+  const ltx = off({ videoEngine: "ltx" });
+  ok("ticked cast on an LTX project: the pictures will not be sent, said once, with the fix and its trade",
+    /^2 board\(s\) tick cast, but the engine is set to LTX, which takes no pictures, so no clip is given their pictures/.test(ltx?.msg || "")
+      && / Switching to hybrid renders those scenes on MiniMax H3: about 7x slower than LTX, and H3's licence grants no rights in its excluded territories \(studio_status\)\. Where that applies, keep LTX\.$/.test(ltx?.msg || "")
+      && JSON.stringify(ltx?.fix) === JSON.stringify({ label: "Render cast scenes on H3 (hybrid)", action: "set_brief", brief: { videoEngine: "hybrid" } }),
+    JSON.stringify(ltx));
+  const refsOff = off({ castRefs: false });
+  ok("...and with cast pictures switched off", /but cast pictures are switched off,/.test(refsOff?.msg || "")
+    && JSON.stringify(refsOff?.fix?.brief) === JSON.stringify({ castRefs: true }), JSON.stringify(refsOff));
+  ok("...and not on the default brief, which sends them", !off({}));
+
+  const sung = (brief) => lintProject(project({ brief, boards: [
+    board(0, { refs: { characterRefs: ["Senzu", "Rin"] }, shots: [{ action: "Senzu sings the line to Rin" }] }),
+    board(1, { refs: { characterRefs: ["Senzu"] }, shots: [{ action: "Senzu turns to camera under the lamp" }] }),
+  ] })).filter((i) => i.fix?.brief?.songConditioning === "always");
+  const auto = sung({ songConditioning: "auto" });
+  ok("an auto project whose board sings with no song under the clip: said on that scene, with the fix",
+    auto.length === 1 && auto[0].where === "scene 1"
+      && auto[0].msg === "The words say someone sings, but Song under the clip is auto and this board is not marked as sung: no song goes under the clip, so the mouth will not follow the words."
+      && auto[0].fix.label === "Put the song under every scene" && auto[0].fix.action === "set_brief", JSON.stringify(auto));
+  ok("...an older project with no value reads as auto", sung({}).length === 1);
+  ok("...a board marked as sung has the song under it", lintProject(project({ brief: { songConditioning: "auto" }, segments: [seg(0)],
+    boards: [{ ...board(0, { refs: { characterRefs: ["Senzu"] }, shots: [{ action: "Senzu sings" }] }), lipSync: true }] }))
+    .every((i) => i.fix?.brief?.songConditioning !== "always"));
+  /* A lyrical scene with no board sings by construction ("sings the line"). */
+  ok("...and a lyrical scene with no board, on auto, is said too", lintProject(project({ brief: { songConditioning: "auto" }, segments: [seg(0), seg(1)],
+    boards: [{ ...board(0, { refs: { characterRefs: ["Senzu"] }, shots: [{ action: "Senzu sings" }] }), lipSync: true }] }))
+    .some((i) => i.where === "scene 2" && i.fix?.brief?.songConditioning === "always"));
+  ok("...and an \"always\" project (new projects) gives neither the sung line nor the pictures line",
+    sung({ songConditioning: "always" }).length === 0 && !off({}));
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

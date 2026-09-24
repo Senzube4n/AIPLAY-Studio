@@ -357,7 +357,8 @@ export function mvTools(api, safeName) {
             description: "Sampling steps per clip. Left unset, each scene runs at the count "
               + "the speed-up files on this PC were made for, with and without cast pictures "
               + "(mv_open_project cardFit.steps; it was a literal 8). Setting 4 selects H3's 4-step "
-              + "distillation — workflow.js picks the LoRA by step count." },
+              + "distillation — workflow.js picks the LoRA by step count. With cast pictures a count "
+              + "under the reference build's own is raised to it, and mv_shot says so." },
           base_scale: { type: "string", enum: ["auto", "full"],
             description: "LTX only, and only affects UNGUIDED clips. auto samples at half the "
               + "delivered size and upscales x2 in latent space, which is where faces go soft. "
@@ -371,7 +372,7 @@ export function mvTools(api, safeName) {
               + "Suggested first value: 30, which is roughly one H3 clip at 1080p — an agent may "
               + "spend one expensive mistake unattended, never two." },
           song_conditioning: { type: "string", enum: ["auto", "always"],
-            description: "Whether the song under each scene is frozen into an H3 REFERENCE render (it always is on LTX, and on H3 without references). auto (default): only where a board sings. always: every scene — what a singer's video wants, since the lips only move to a song the render can hear. Costs nothing extra; the clip's own audio is dropped either way." },
+            description: "Song under the clip: whether the song under each scene is frozen into an H3 REFERENCE render (it always is on LTX, and on H3 without references). always (new projects since 2026-09-24, Hex Appeal's setup): the song sits under every scene's clip, so sung shots follow the words (REWIND A/B, DIRECTING.md §2). auto: only boards with lipSync. Its render-time cost was never measured on its own. A close face that is not singing can open its mouth over a vocal: keep \"mouth closed\" in its words and check it. The clip's own audio is dropped either way." },
           cast_refs: { type: "boolean",
             description: "Default true. Reference pictures keep a face identical across scenes, "
               + "but they are H3-only, so at high quality they are the difference between a 5-hour "
@@ -1260,7 +1261,7 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_generate_clip",
-      description: "Render one scene's clip: its cast rides as H3 named references and the scene's stretch of the real song is frozen in (the output plays it; a lyrical shot lip-syncs it). Blocks 2-5 min. Calling again on the same scene is a REGENERATE — a new seed, the old take kept.",
+      description: "Render one scene's clip. Its ticked cast rides as H3 named references (\"<Picture N> is Name.\") at the reference build's own step count. The song goes under the clip where the brief's Song under the clip is \"always\" (new projects) or the board sings (lipSync), so a singing mouth follows the words; the clip's own audio is dropped and the song is laid in the cut. mv_shot says before you spend whether the song is under this scene. Blocks 2-7 min. Calling again on the same scene is a REGENERATE — a new seed, the old take kept.",
       inputSchema: {
         type: "object", required: ["slug", "segment"],
         properties: {
@@ -1303,7 +1304,9 @@ export function mvTools(api, safeName) {
         + "warns nowhere else, which is the most common reason a clip ignores its board. Also the "
         + "engine that choice implies, and every take with the prompt and references that made "
         + "THAT take rather than the row's latest. `drift` says what has changed under the take "
-        + "currently playing: a re-picked face, an added or removed reference, an edited prompt.",
+        + "currently playing: a re-picked face, an added or removed reference, an edited prompt. "
+        + "And whether the song is under this clip (`songLine`, `songUnder`) and its step count "
+        + "(`steps`, with `stepsNote` when cast pictures raised the brief's count).",
       inputSchema: {
         type: "object", required: ["slug", "segment"],
         properties: {
@@ -1759,7 +1762,7 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_set_board",
-      description: "Upsert ONE storyboard without re-authoring the bible: segmentId + {boardPrompt, grade, shots[], characterRefs, backgroundRefs, propRefs, refProminence}. propRefs is not optional decoration — an object listed in props[] but not in the propRefs of the scenes it appears in is re-invented in each of them. Same validation as mv_set_bible; an existing clip for that scene is marked stale.",
+      description: "Upsert ONE storyboard without re-authoring the bible: segmentId + {boardPrompt, grade, shots[], characterRefs, backgroundRefs, propRefs, refProminence, crowd, lipSync}. propRefs is not optional decoration — an object listed in props[] but not in the propRefs of the scenes it appears in is re-invented in each of them. Same validation as mv_set_bible; an existing clip for that scene is marked stale.",
       inputSchema: {
         type: "object", required: ["slug", "segmentId", "board"],
         properties: { slug: { type: "string" }, segmentId: { type: "string" }, board: { type: "object" } },
@@ -1769,9 +1772,21 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_lint",
-      description: "The free pre-flight: what would waste GPU if rendered now — boards referencing nothing, sheets not rendered, scenes without boards (they fall back to a generic performance shot), thin shot actions, clips stale against newer boards. Run before spending on sheets or clips.",
+      description: "The free pre-flight: what would waste GPU if rendered now — boards referencing nothing, sheets not rendered, scenes without boards (they fall back to a generic performance shot), thin shot actions, clips stale against newer boards, a character named in a board's words but not ticked as its cast (the clip then invents them), ticked cast whose pictures the brief will not send, and sung scenes with no song under the clip. Run before spending on sheets or clips. Issues with a `fix` are one call away: its `tool` with its `args`.",
       inputSchema: { type: "object", required: ["slug"], properties: { slug: { type: "string" } }, additionalProperties: false },
-      async run(a) { const r = await mv({ action: "lint", slug: a.slug }); return r.issues; },
+      async run(a) {
+        const r = await mv({ action: "lint", slug: a.slug });
+        /* The route's fix, in this toolkit's spelling: set_shot is mv_set_shot
+         * (segment, refs), set_brief is mv_set_brief with its snake_case keys. */
+        const SNAKE = { videoEngine: "video_engine", castRefs: "cast_refs", songConditioning: "song_conditioning" };
+        const snake = (o = {}) => Object.fromEntries(Object.entries(o).map(([k, v]) => [SNAKE[k] || k, v]));
+        return (r.issues || []).map((i) => (!i.fix ? i : {
+          ...i,
+          fix: i.fix.action === "set_shot"
+            ? { label: i.fix.label, tool: "mv_set_shot", args: { slug: a.slug, segment: i.fix.segmentId, refs: i.fix.refs } }
+            : { label: i.fix.label, tool: "mv_set_brief", args: { slug: a.slug, ...snake(i.fix.brief) } },
+        }));
+      },
     },
     {
       name: "ab_set_cast",

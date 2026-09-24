@@ -979,13 +979,13 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
       /* THE SONG UNDER THE CLIP — frozen into the AV latent and anchored on
        * the conditioning at frame 0 (workflow.js, "SOUNDTRACK"), on BOTH
        * engines. On LTX it is the parity path and stays. On H3's reference
-       * path it now travels only where someone sings on camera: every
-       * cond_audio row is attended on every step of every block, the clip's
-       * own audio is discarded anyway (`keepAudio` below), and the promo's
-       * clips were rendered with a full song frozen under three references
-       * that never open their mouths — a cost nothing had measured. A brief
-       * can ask for it back with `songConditioning: "always"`; the A/B that
-       * decides the default has an arm for exactly that. */
+       * path it travels where the brief's `songConditioning` is "always" or
+       * the board sings (lipSync). NEW projects start on "always" since
+       * 2026-09-24 (store.js blankProject): the REWIND A/B put the song under
+       * every reference shot and the sung line followed the words (DIRECTING.md
+       * §2). An older project keeps what it stored (no value reads as "auto").
+       * The song's own render-time cost was never measured alone; the clip's
+       * own audio is discarded either way (`keepAudio` below). */
       audioTrack: (doc.song?.file && songConditioned)
         ? { name: await stageSongForComfy(doc.song.file), start: seg.startSec }
         : undefined,

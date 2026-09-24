@@ -303,6 +303,14 @@ console.log("\n  -- 4. default steps are the matched count for the files on disk
       /matched reference build, the one to use with cast references/.test(c88.options.find((o) => o.value === "8").label)
       && c88.defaultWithRefs === 8 && c88.defaultWithoutRefs === 8);
     ok("a brief that names a count wins", clipsteps.clipStepsFor({ videoSteps: 20 }, { refs: true }) === 20);
+    /* ...except below the reference file's own count with cast pictures: the
+     * brief's 3 ran Hex Appeal v1 on the 4-step file at three steps, "burned"
+     * (the REWIND CONFIGS, 2026-09-24). The shot says so. */
+    ok("a brief's 3 with cast pictures runs the 4-step reference file's own 4, and the shot says so",
+      clipsteps.clipStepsFor({ videoSteps: 3 }, { refs: true }) === 4
+      && /^With cast pictures this scene runs 4 steps, not the brief's 3/.test(clipsteps.clipStepsNote({ videoSteps: 3 }, { refs: true }) || ""));
+    ok("...the text path keeps the brief's 3, unsaid",
+      clipsteps.clipStepsFor({ videoSteps: 3 }, { refs: false }) === 3 && clipsteps.clipStepsNote({ videoSteps: 3 }, { refs: false }) === null);
 
     /* The plan prices "default" as what runs, not as the bare 20-step model. */
     disk(4, 4);
@@ -336,6 +344,9 @@ console.log("\n  -- 4. default steps are the matched count for the files on disk
   ok("generate.js sends the matched count, and no literal 8, for a brief on default",
     /steps: clipStepsFor\(doc\.brief, \{ refs: useRefs \}\)/.test(gen) && !/: 8,\s*$/m.test(gen));
   ok("the lender's packet does not read this disk's count", !/clipStepsFor|clipsteps/.test(code(read("server/collab/packet.js"))));
+  const routes = code(read("server/mv/routes.js"));
+  ok("every shot a route returns carries the steps generate.js sends (withRenderFacts)",
+    (routes.match(/shot: withRenderFacts\(doc, shotRecord\(/g) || []).length === 4 && !/shot: shotRecord\(/.test(routes));
 }
 
 /* ═══════════════════════════════════════════════ 5. hybrid and LTX here */
@@ -785,6 +796,14 @@ console.log("\n  -- 8. the page: no planning-file stages, and every id once --")
   const clash = [...count.keys()].filter((id) => htmlIds.has(id));
   ok("...and none of them is already an id in index.html", clash.length === 0, clash.join(", "));
   ok("the brief's Song under the clip has its own id", /id="wfSongCond"/.test(page) && /\$\("wfSongCond"\)\.value/.test(page));
+  ok("new projects put the song under every scene (Hex Appeal's setup; the REWIND A/B, 2026-09-24)",
+    store.blankProject("x", "mv").brief.songConditioning === "always"
+    && /\["always", "always: every scene hears the song, so a singing mouth follows the words/.test(page));
+  ok("the shot inspector says whether the song is under the clip, and its steps",
+    /<span><b>song<\/b> \$\{esc\(sh\.songLine \|\| ""\)\}<\/span>/.test(page) && /<span><b>steps<\/b> \$\{esc\(sh\.steps \?\? "\?"\)\}<\/span>/.test(page));
+  ok("a lint issue with a fix is one button, posted as the route action it names",
+    /data-lintfix="\$\{idx\}">\$\{esc\(i\.fix\.label\)\}<\/button>/.test(page)
+    && /await api\(\{ action: i\.fix\.action, slug: wf\.slug, segmentId: i\.fix\.segmentId, refs: i\.fix\.refs, brief: i\.fix\.brief \}\);/.test(page));
   ok("...and the song picker's handler is the only one on wfSong",
     (page.match(/on\("wfSong", /g) || []).length === 1 && !/\$\("wfSong"\)\.value/.test(page));
   ok("the brief has a size control that saves qualityMode", /id="wfQuality"/.test(page) && /qualityMode: \$\("wfQuality"\)/.test(page));

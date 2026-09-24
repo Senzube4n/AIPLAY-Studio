@@ -63,7 +63,7 @@ import {
 /* What LTX really renders a size at (it floors each side to a multiple of 64),
  * the function the graph itself asks, so the brief can say it. */
 import { videoSizeFor } from "../workflow.js";
-import { stepChoices } from "./clipsteps.js";
+import { stepChoices, clipStepsFor, clipStepsNote } from "./clipsteps.js";
 import { gpuStatus, ramStatus } from "../gpu.js";
 /* THE PLAN OBJECT — set up · go through · approve or change · start.
  *
@@ -204,6 +204,19 @@ const readRole = (v) => {
  * owns that vocabulary and this route does not get to invent a fourth word in
  * it. The response says what was ASKED for, so the two are readable together.
  */
+/**
+ * The shot record with the render facts generate.js will send beside it: the
+ * step count (clipsteps.js, the one number generate.js sends and plan.js
+ * prices) and, when a scene with cast pictures raises the brief's count to the
+ * reference file's own, the sentence saying so. `songUnder` / `songLine`
+ * come from resolveShot itself. One wrapper, so every door that returns a
+ * shot says the same number.
+ */
+function withRenderFacts(doc, rec) {
+  const refs = !!rec?.useRefs;
+  return { ...rec, steps: clipStepsFor(doc.brief, { refs }), stepsNote: clipStepsNote(doc.brief, { refs }) };
+}
+
 function renderPrompt(doc, segmentId, promptSource, prompt) {
   const src = promptSource === undefined || promptSource === null ? null : String(promptSource);
   /* No promptSource is exactly today's behaviour, bit for bit: a string renders
@@ -1110,8 +1123,12 @@ export function createMvRoutes(deps) {
                               * board sings or where the brief says "always" — and
                               * until 2026-09-19 nothing could say it: the Hex Appeal
                               * video's 44 close-ups of a singer rendered with no
-                              * song under them and no lipsync. "auto" is the old
-                              * behaviour, "always" every scene. */
+                              * song under them and no lipsync. "always" puts it
+                              * under every scene and is where NEW projects start
+                              * since 2026-09-24 (store.js blankProject; the REWIND
+                              * A/B, DIRECTING.md §2); "auto" (or a brief with no
+                              * value, every older project) only under a board that
+                              * sings (lipSync). */
                              "songConditioning",
                              /* THE SPEND METER'S BUDGET, and it ships OFF.
                               *
@@ -1514,7 +1531,7 @@ export function createMvRoutes(deps) {
           if (!doc) return json(res, 404, { error: "no such project" }), true;
           return json(res, 200, {
             ok: true,
-            shot: shotRecord(doc, b.segmentId),
+            shot: withRenderFacts(doc, shotRecord(doc, b.segmentId)),
             /* The names a human may tick, with whether each can actually be
              * carried. The page must not have to re-derive this — a picker that
              * offers a name with no sheet is the silent drop one step earlier. */
@@ -1558,7 +1575,7 @@ export function createMvRoutes(deps) {
            * sees the new prompt and the drift it just created without a second
            * round trip — which is what makes "and see what that changed" true
            * for an agent as well as for the page. */
-          return json(res, 200, { ok: true, changed, shot: shotRecord(doc, b.segmentId), project: doc }), true;
+          return json(res, 200, { ok: true, changed, shot: withRenderFacts(doc, shotRecord(doc, b.segmentId)), project: doc }), true;
         }
 
         case "generate_clip":
@@ -1612,7 +1629,7 @@ export function createMvRoutes(deps) {
           const row = doc.clips.find((c) => c.segmentId === seg?.id);
           return json(res, 200, { ok: true, clip: row?.clipFile, takes: row?.takes, project: doc,
                                   promptSource: b.promptSource ?? null,
-                                  shot: shotRecord(doc, segmentId), stage: stageOfDoc(doc) }), true;
+                                  shot: withRenderFacts(doc, shotRecord(doc, segmentId)), stage: stageOfDoc(doc) }), true;
         }
 
         case "regen_by_clip_id": {
@@ -1637,7 +1654,7 @@ export function createMvRoutes(deps) {
           const row = doc.clips.find((c) => c.id === b.clipId);
           return json(res, 200, { ok: true, clip: row?.clipFile, takes: row?.takes,
                                   promptSource: b.promptSource ?? null,
-                                  shot: shotRecord(doc, row0.segmentId) }), true;
+                                  shot: withRenderFacts(doc, shotRecord(doc, row0.segmentId)) }), true;
         }
 
         case "build_timeline": {

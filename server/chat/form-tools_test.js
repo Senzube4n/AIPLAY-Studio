@@ -119,6 +119,13 @@ test("the assistant is handed the prompting rules of the model on the screen", a
   assert.match(img("checkpoint"), /none chosen yet/);
   const vid = (eng) => guideLines("video", [{ id: "vidEngine", value: eng }]).join("\n");
   assert.match(vid("h3"), /HOW TO PROMPT MiniMax H3:[\s\S]*<Picture 1>/);
+  /* Keeping a person and making them sing (the REWIND A/B, 2026-09-24): the
+   * guide and the Video assistant's own craft both say it. */
+  assert.match(vid("h3"), /To keep a person the same across clips: 1–3 tight pictures of them/);
+  assert.match(vid("h3"), /To make them sing in time: the song under the clip/);
+  assert.match(formIntro("video").join("\n"), /KEEPING A PERSON\. If the clip shows someone who must look the same as in other clips, set vidCharacter to/);
+  assert.match(formIntro("video").join("\n"), /never claim it is kept without\npictures\./);
+  assert.doesNotMatch(formIntro("image").join("\n"), /KEEPING A PERSON/, "the Pictures assistant has its own character picker");
   assert.match(vid("ltx"), /HOW TO PROMPT LTX 2\.5:[\s\S]*about 200 words/);
   assert.match(vid("ltx"), /Always:[\s\S]*Say what IS in the frame/, "the repo's measured rules for every model");
   assert.ok(VIDEO_GUIDES.h3 && VIDEO_GUIDES.ltx);

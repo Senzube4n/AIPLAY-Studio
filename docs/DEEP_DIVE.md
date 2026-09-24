@@ -411,6 +411,12 @@ last frame, which is what a seamless loop wants. If you go and fetch LTX by hand
 Studio renders on it — the engine resolves to weights that are present, preferring
 your setting.
 
+**Keeping a character.** On the Video screen, *Keep my character* takes a saved
+character or 1–3 pictures of them and runs the reference build at its own step
+count; on MiniMax H3, with pictures of the singer, *Song under the clip* is
+lip-sync (on LTX mouths do not follow it). Measured 2026-09-24 (DIRECTING.md §2):
+without pictures a person changes from clip to clip.
+
 The full suite also offers a separate **Python YuE2** integration. Its editable
 scores, memory figures and duration controls below do **not** describe native
 GGUF. **MiniMax
@@ -1063,7 +1069,9 @@ face across a three-minute video. References are dropped in order of
 *prominence* when a scene names more than the engine can take. A cast row can
 also carry a **mesh** and, where the machine allows it, a **rig** — see *A
 picture becomes a 3D model* above; a mesh does not replace the sheet, because
-the clip engine takes pictures.
+the clip engine takes pictures. New projects put the song under every scene
+(Song under the clip: always), so sung shots follow the words, and the lint
+offers a one-click tick where a board names a character it does not carry.
 
 Also here: a **crime board** view of the whole production, **b-roll** scenes fed
 from your own clip library, per-scene **regeneration** that keeps every earlier

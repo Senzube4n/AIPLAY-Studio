@@ -1408,7 +1408,10 @@ function renderBrief() {
       ${/* ⚠ ITS OWN ID. It was "wfSong", the Upload & analyze song picker's id,
           so changing it posted attach_song with "always" as the file. */""}
       <span class="pv"><label class="hint">Song under the clip <select id="wfSongCond" class="sel2">
-        ${[["auto", "auto — only where a board sings"], ["always", "always — every scene hears the song (lipsync)"]]
+        ${/* The words only; the id and the values are kept. New projects start
+            * on "always" (store.js blankProject, the REWIND A/B of 2026-09-24). */""}
+        ${[["always", "always: every scene hears the song, so a singing mouth follows the words on H3 (Hex Appeal's setup; new projects start here). A close face that is not singing may open its mouth: keep “mouth closed” in its words"],
+           ["auto", "auto: only boards marked as sung (lipSync; an agent sets it)"]]
           .map(([v, t]) => `<option value="${v}"${(b.songConditioning || "auto") === v ? " selected" : ""}>${t}</option>`).join("")}
       </select></label></span>
     </div>
@@ -2417,7 +2420,13 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
             * further down. It is the field that decides whether a change to the
             * board or the bible can reach this scene at all. */""}
         <span><b>prompt</b> ${esc(SOURCE_WHY[sh.promptSource] || sh.promptSource || "unknown")}</span>
+        ${/* The server's words (shot.js songLine, clipsteps.js): is the song under
+            * this clip, so a singing mouth follows it, and the step count
+            * generate.js will send. */""}
+        <span><b>song</b> ${esc(sh.songLine || "")}</span>
+        <span><b>steps</b> ${esc(sh.steps ?? "?")}</span>
       </div>
+      ${sh.stepsNote ? `<p class="hint">${esc(sh.stepsNote)}</p>` : ""}
 
       ${staleLine}${ltxLine}${missing}${dropped}${warned}
       <p class="hint"><b>${sh.refsSent ? "What the model is handed" : "What resolved"}</b>, in this
@@ -2734,7 +2743,7 @@ function renderAssets(kind) {
   }).join("");
   const HEAD = { characters: "Characters", backgrounds: "Backgrounds", props: "Props" };
   const HINT = {
-    characters: "The people the video reuses. A character with a picture holds its identity across every shot, because the clip engine takes it as a named reference. The description is editable in place — it saves when you click away.",
+    characters: "The people the video reuses. A ticked character with a picture keeps its identity in H3 clips, because the clip engine takes it as a named reference. Kept best (Hex Appeal; REWIND A/B, 2026-09-24): 1–3 tight crops of one view each on a near-black card, one row per view (Name, Name body, Name side); Import brings in your own crop. The description is editable in place and saves when you click away.",
     backgrounds: "The places the video returns to. Descriptions save when you click away.",
     /* PROPS ARE CAST, and until now this page never said so — props could be
      * declared in the bible and ticked on a board, and there was no card, no
@@ -4733,9 +4742,27 @@ function wire(view) {
     if (host) {
       api({ action: "lint", slug: wf.slug }).then((r) => {
         host.innerHTML = r.issues.length
-          ? `<ul class="lintlist">${r.issues.map((i) => `<li class="lint-${i.level}">
-              ${i.level === "error" ? "✖" : "⚠"} <b>${esc(i.where)}</b> ${esc(i.msg)}</li>`).join("")}</ul>`
+          ? `<ul class="lintlist">${r.issues.map((i, idx) => `<li class="lint-${i.level}">
+              ${i.level === "error" ? "✖" : "⚠"} <b>${esc(i.where)}</b> ${esc(i.msg)}${i.fix
+                ? ` <button class="edtool sm" type="button" data-lintfix="${idx}">${esc(i.fix.label)}</button>` : ""}</li>`).join("")}</ul>`
           : `<p class="hint">✓ Nothing wrong — sheets, boards and references all line up.</p>`;
+        /* A FIX IS ONE CLICK: the server wrote it (bible.js lintProject) as an
+         * existing route action, set_shot (tick the name, keeping the board's
+         * other references) or set_brief. The page adds no judgement of its own. */
+        for (const btn of host.querySelectorAll("[data-lintfix]")) {
+          btn.onclick = async () => {
+            const i = r.issues[Number(btn.dataset.lintfix)];
+            if (!i?.fix) return;
+            btn.disabled = true;
+            try {
+              await api({ action: i.fix.action, slug: wf.slug, segmentId: i.fix.segmentId, refs: i.fix.refs, brief: i.fix.brief });
+              await loadProject();
+            } catch (e) {
+              btn.disabled = false;
+              btn.title = explain(e);
+            }
+          };
+        }
       }).catch(() => { host.innerHTML = ""; });
     }
   }

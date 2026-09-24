@@ -645,7 +645,9 @@ export const KNOBS = [
       + "A/B of the bare model against a turbo build (arm H vs C, one shot, reference path) found it "
       + "about equal to the ref2v 8-step at 2.4x the time. The bands between the builds are the ones "
       + "with no good answer. A clip made on the Video screen follows that screen's own step slider; "
-      + "this is the default only for a render that names none (make_clip without quality, the API).",
+      + "this is the default only for a render that names none (make_clip without quality, the API). "
+      + "With reference pictures it is the reference build's own count instead (8 where the 8-step "
+      + "reference file is on disk).",
     cite: DOCS.directing,
   },
   {
@@ -655,10 +657,11 @@ export const KNOBS = [
     kind: "enum", options: ["auto", "res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "ddim"],
     path: ["video", "engines", "h3", "sampler"],
     effect:
-      "Auto uses Euler for the LightX2V 4/8-step turbo builds, following their published ComfyUI "
-      + "recipe, and res_multistep for the bare quality model and the measured TaoMate 3-step "
-      + "path. An explicit sampler overrides both. Earlier local measurements used res_multistep; "
-      + "Euler's effect on this rig's image quality has not yet been measured.",
+      "Auto uses res_multistep on the reference path (pictures or sounds attached), measured: Hex "
+      + "Appeal's final cut and the REWIND A/B's winning arm, 2026-09-24. It uses Euler for the "
+      + "first/last-frame LightX2V 4/8-step turbo builds, following their published recipe (not "
+      + "measured here), and res_multistep for the bare model and TaoMate 3-step. An explicit "
+      + "sampler overrides every path.",
     cite: DOCS.bleed,
   },
   {

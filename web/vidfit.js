@@ -29,6 +29,15 @@
  *                        picks the same (hidden) option of #vidEngine.
  *   References           #vidRefIgnored: the server's sentence when the engine
  *                        ignores them and some are attached.
+ *   Keep my character    #vidKeepNote: the server's line (video-plain.js
+ *                        character.hint), or its refusal (no such character, an
+ *                        engine without references); #vidCharacter carries the
+ *                        server's receipt (character.receipt) for web/receipt.js.
+ *                        The check names the saved character and says whether a
+ *                        song sits under the clip (#vidSndRow shows exactly then).
+ *   Song under the clip  #vidSndMeta and #vidSndHint: the server's words for
+ *                        this engine (video-plain.js songUnderSay): lip-sync on
+ *                        H3 with pictures, measured not to follow on LTX.
  *   At render time       #vidRamNote (under 32 GB of RAM) and #vidFail, the last
  *                        failed render in words, the engine's text under
  *                        Details.
@@ -188,6 +197,11 @@ async function check() {
     refImages: refNames("#vidRefImgPrev [data-refname]"),
     refAudios: [...document.querySelectorAll("#vidRefAudPrev [data-refname]")]
       .map((e) => ({ name: e.dataset.refname, start: Number(e.dataset.refstart) || 0 })),
+    persona: $("vidCharacter")?.value || undefined,
+    song: $("vidSndRow") && !$("vidSndRow").hidden ? true : undefined,
+    /* The decoder picked under Engine settings, so the Advanced "Runs" line
+     * names the one this render loads (the same rule as the render's own). */
+    videoVae: videoVaeChosen(),
   };
   const mine = ++asked;
   let r;
@@ -209,6 +223,42 @@ async function check() {
   note.textContent = lines.join(" ");
   note.title = r.fit?.scope || "";
   note.hidden = !lines.length;
+  paintKeep(r);
+  paintSong(r);
+}
+
+/* The decoder Engine settings names for this render, or undefined for the
+ * engine's own: app.js vidModelChoice's rule (a visible, non-auto choice). */
+function videoVaeChosen() {
+  const el = $("vidVideoVae");
+  return el && !el.closest?.("[hidden]") && el.value && el.value !== "auto" ? el.value : undefined;
+}
+
+/* Song under the clip, in the server's words for this engine: the label's
+ * "lip-sync" only where mouths follow the song (H3), the line under it. */
+function paintSong(r) {
+  const s = r?.songLine;
+  if (!s) return;
+  const meta = $("vidSndMeta"), hint = $("vidSndHint");
+  if (meta && typeof s.meta === "string") meta.textContent = s.meta;
+  if (hint && typeof s.hint === "string") hint.textContent = s.hint;
+}
+
+/* Keep my character, in the server's words: its line under the row, its
+ * receipt on the select (web/receipt.js reads data-receipt), and its refusal
+ * when the character or the engine cannot keep anyone. */
+function paintKeep(r) {
+  const note = $("vidKeepNote"), sel = $("vidCharacter");
+  if (!note) return;
+  const refused = r.refusal && (r.refusal.reason === "refs-ignored" || r.refusal.reason === "persona")
+    && typeof r.refusal.error === "string" ? r.refusal.error : "";
+  const say = refused || r.character?.hint || "";
+  note.textContent = say;
+  note.hidden = !say;
+  note.classList?.toggle("warnhint", !!refused);
+  /* An empty slot ("") lets the receipt fall back to the slider's steps. */
+  const want = r.character?.receipt && !refused ? r.character.receipt : "";
+  if (sel?.dataset && sel.dataset.receipt !== want) sel.dataset.receipt = want;
 }
 
 /* ── sparse attention, More motion, FastH3's attention ──────────────── */
@@ -351,7 +401,8 @@ if (typeof document !== "undefined") {
   globalThis.aiplayVidFit = onStatus;
   globalThis.aiplayVidSparse = sparseToSend;
   globalThis.aiplayVidAsk = askBeforeRender;
-  const WATCH = new Set(["vidSize", "vidW", "vidH", "vidSecs", "vidSteps", "vidPrompt", "vidEngine", "vidSparse", "vidFrom", "vidTo"]);
+  const WATCH = new Set(["vidSize", "vidW", "vidH", "vidSecs", "vidSteps", "vidPrompt", "vidEngine", "vidSparse", "vidFrom", "vidTo",
+    "vidCharacter", "vidSndSong", "vidSndStart", "vidVideoVae"]);
   const boot = () => {
     const again = (e) => {
       const id = e.target?.id;
@@ -372,6 +423,13 @@ if (typeof document !== "undefined") {
       if (sel) new MutationObserver(() => { startAtTier(); paintTiers(); }).observe(sel, { childList: true });
       const refs = new MutationObserver(() => { paintRefLine(); schedule(); });
       for (const id of ["vidRefImgPrev", "vidRefAudPrev"]) if ($(id)) refs.observe($(id), { childList: true });
+      /* A song file picked by upload shows #vidSndRow without an input event. */
+      const row = $("vidSndRow");
+      if (row) {
+        let was = row.hidden;
+        new MutationObserver(() => { if (row.hidden !== was) { was = row.hidden; schedule(); } })
+          .observe(row, { attributes: true, attributeFilter: ["hidden"] });
+      }
     }
     paintAll();
   };

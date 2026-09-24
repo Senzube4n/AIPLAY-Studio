@@ -50,13 +50,15 @@ console.log("\n§1  the simple way on the Video screen");
    * steps. Now config.js resolves stepDefaults from what pick() found, the
    * status sends them, and app.js reads them through one function. That
    * function is lifted out and run here with only the names it reads. */
-  const qsSrc = /\nfunction vidQualitySteps\(eng\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
+  /* Keep my character adds an optional second argument (2026-09-24): the
+   * one-argument answer is unchanged. */
+  const qsSrc = /\nfunction vidQualitySteps\(eng(?:, keeping = false)?\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
   const vidQualitySteps = (() => { try { return new Function(qsSrc + "return vidQualitySteps;")(); } catch { return () => ({}); } })();
   ok("the status sends the disk's step defaults, its builds and each file's step count",
     /stepDefaults: e\.stepDefaults \?\? null,/.test(index) && /turboBuilds: e\.turboBuilds \?\? null,/.test(index)
     && /loraSteps: Object\.fromEntries\(\["turboLora", "turboLora4", "turboLora3", "refTurboLora", "refTurboLora4"\]\s*\.map\(\(k\) => \[k, loraStepsOf\(e\[k\]\)\]\)\)/.test(index));
   ok("the chips and their click read vidQualitySteps, not literals",
-    /const want = qs\[b\.dataset\.vq\];/.test(app) && /const steps = vidQualitySteps\(eng\)\[b\.dataset\.vq\];/.test(app)
+    /const want = qs\[b\.dataset\.vq\];/.test(app) && /const steps = vidQualitySteps\(eng(?:, !!state\.vidKeeping)?\)\[b\.dataset\.vq\];/.test(app)
     && /small\.textContent = want \+ " steps";/.test(app) && !/eng\.turbo3Ready \? 3 : 8/.test(app));
   ok("...and Fast hides where it would equal Standard",
     /\$\("vidQFast"\)\.hidden = qs\.fast === qs\.standard;/.test(app));
@@ -169,10 +171,12 @@ console.log("\n§1  the simple way on the Video screen");
   const lines = /\n  const hasRefs = [\s\S]*?\n  const betweenBuilds = [^\n]*\n/.exec(app)?.[0] || "";
   const paint = (d, st, refs) => {
     try {
-      return new Function("state", "eng", "cur", "st", "t4", "t8",
+      /* `keeping` is vidPaint's own (a picture or a saved character on H3,
+       * 2026-09-24): a reference picture here keeps. */
+      return new Function("state", "eng", "cur", "st", "t4", "t8", "keeping",
         lines + "return { stepPath, mismatch, betweenBuilds };")(
         { refImages: refs ? ["x.png"] : [], refAudios: [] }, { loraSteps: d.loraSteps, turbo3MaxSteps: d.turbo3MaxSteps },
-        "h3", st, d.turbo4MaxSteps, d.turboMaxSteps);
+        "h3", st, d.turbo4MaxSteps, d.turboMaxSteps, !!refs);
     } catch (e) { return { error: String(e) }; }
   };
   const has8 = paint(rig, 8, true), lack8 = paint(shop, 8, true), six = paint(rig, 6, true);

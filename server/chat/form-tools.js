@@ -47,6 +47,15 @@ const KIND = {
       "A busy shot with many actions comes out as mush. To make a clip that starts from a picture, choose",
       "it in the starting-frame dropdown (a cover from the Library); a seamless loop ends where it starts.",
       "Keep length and size modest unless they ask: longer and bigger clips take much longer.",
+      /* The REWIND A/B of 2026-09-24 (DIRECTING.md §2): the two things a newcomer
+       * cannot recover afterwards, so the assistant raises them. */
+      "KEEPING A PERSON. If the clip shows someone who must look the same as in other clips, set vidCharacter to",
+      "their saved character (its options list them). With none saved, tell them 1–3 pictures of that person keep",
+      "them the same (the Keep my character box takes them) and ask for them; never claim it is kept without",
+      "pictures. Name each dropped picture in the description (\"<Picture 1> is Mira.\") and the character where",
+      "they act. If they sing, set vidSndSong to the song and vidSndStart to where the sung line starts: on MiniMax",
+      "H3 with pictures of the singer that is lip-sync (on LTX mouths do not follow it). A sound reference re-sings",
+      "instead. Shots with no one in them need neither, and Fast is fine for them.",
     ],
   },
 };

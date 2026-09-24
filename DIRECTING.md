@@ -169,6 +169,57 @@ shadow", and hold it clear of the body.
 
 ## 2. Reference images
 
+### What keeps a character from clip to clip (measured 2026-09-24)
+
+Four REWIND shots were rendered at the same seeds with the same anime scene words, and only the
+configuration changed. Two blind judges ranked three unlabelled versions of each.
+
+**From words alone** (text-to-video, the 3-step build) the lead changed from clip to clip: auburn
+spiky hair for dark curls, a full-face horned mask for the half-mask, a red coat lining, the wrong
+back emblem. The fight did not land (the shadows stood still and dissolved). A sung line barely moved
+the mouth and then opened it where nothing was sung. That configuration placed last in 7 of 8
+rankings and never first.
+
+**With Hex Appeal's setup** the lead matched his reference in all four shots, the fight read as a
+fight, and the sung line followed the words: the mouth opens on "I", narrows on "miss", opens wide on
+"her". The setup:
+- **1–3 tight pictures** of the character, one panel each, native aspect, on a near-black card, each
+  named: "<Picture 1> is Senzu. <Picture 2> is Senzu profile." Close-up: the face. Head turn: face +
+  profile. Medium: the body view nearest the camera angle + face. Action: body + side + face. **Never
+  four.** Black held for every scene, sunset and sea included.
+- **The reference build's own count:** the ref2v 8-step build at 8 steps.
+- **res_multistep** (simple scheduler, no CFG, shift 12/3).
+- **The song under the clip** (`audioTrack`: frozen as the soundtrack and read by the model from frame
+  0). That is lip-sync. `<Audio 1>` is a different input: the clip re-sings it in its own time.
+
+What it did not fix: **detail**. The text takes were the sharpest pictures in the test, 2–3.5x on the
+edge measure in the two wides (partly because the reference arms drew them back-lit), and where the
+framing matched the two were equal.
+
+**Comfy Kitchen attention costs nothing:** frame sharpness within 4%, the sampler about 2x faster,
+37–47% off the clip. A reference clip at 1344×768 took 304–390 s for 141–175 frames on a 16 GB card,
+about 2.1–2.6x a 3-step text take. Every one of those clips carried the song, so the song's own
+render-time cost has never been measured alone.
+
+**Not isolated:** the sampler (the winning arm ran res_multistep; euler had been the default since
+2026-09-21 without a measurement) and the video decoder (fp16 in the winning arm; int8, measured 12%
+faster on 2026-09-23, is the default). Studio now runs res_multistep on the reference path. The
+decoder stays int8 until one clip compares them.
+
+Traps from the same test:
+- White trousers appeared in 4 of 12 takes because no prompt named the trousers. Name the costume
+  pieces the pictures do not show.
+- "No wake" asked for a wake (a negation is a request, §3). Describe the water instead.
+- One clip carries one song window, so only its first slot is in sync.
+- Over a vocal, a close face that is not singing can open its mouth (one of two arms did). Keep
+  "mouth closed" in its words and check it.
+
+Where it lives: the Video screen's **Keep my character** and **Song under the clip** (lip-sync on H3); new
+Music video projects put the song under every scene, and the lint ticks cast named in a board's
+words; make_clip `persona` / `ref_images` + `soundtrack_song`.
+
+### What a reference picture must be
+
 **A reference must contain the subject and NOTHING else.**
 Twice a reference taught the render something nobody meant:
 - a boat with its name burned into the transom → garbled text on every hull
@@ -845,6 +896,10 @@ strength or seed to say whether it recurs.
 ---
 
 ## 6. The song
+
+**The song under the clip is the lip-sync door on H3** (§2, 2026-09-24): frozen under the render
+and read by the model from frame 0, so a singing mouth follows the words. A sound reference
+(`<Audio 1>`) re-sings instead, in the clip's own time.
 
 **MiniMax Music 3 is the only thing in the stack that sings.** The DAW is
 instrumental — its synths render and its choir row refuses to — and the two TTS

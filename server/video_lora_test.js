@@ -62,7 +62,7 @@ test("LTX: both passes sample through the LoRAs", () => {
   assert.deepEqual(guided[15].inputs.model, ["90", 0], "the single-pass guided run too");
 });
 
-test("H3 user LoRAs preserve turbo Euler, quality sampling and every conditioning mode", () => {
+test("H3 user LoRAs preserve the turbo sampler, quality sampling and every conditioning mode", () => {
   const models = { sampler: "auto", turboLora: "fl8.safetensors", turboLora4: "fl4.safetensors", refTurboLora: "ref8.safetensors", refTurboLora4: "ref4.safetensors" };
   const modes = [
     {}, { firstFrame: "first.png" }, { firstFrame: "first.png", loop: true },
@@ -73,7 +73,10 @@ test("H3 user LoRAs preserve turbo Euler, quality sampling and every conditionin
   ];
   for (const steps of [4, 8, 20]) for (const mode of modes) {
     const g = videoGraphH3({ ...base, ...mode, steps, models, loras: [A, B] });
-    assert.equal(g[9].inputs.sampler_name, steps <= 8 ? "euler" : "res_multistep");
+    /* Euler on the first/last-frame turbo builds only; the reference path runs
+     * res_multistep, measured (the REWIND A/B, 2026-09-24). */
+    const onRefPath = !!(mode.refImages || mode.refAudios);
+    assert.equal(g[9].inputs.sampler_name, steps <= 8 && !onRefPath ? "euler" : "res_multistep");
     assert.equal(g[7].class_type, "BasicGuider");
     assert.deepEqual(g[7].inputs.model, ["6", 0]);
     assert.deepEqual(g[8].inputs.model, ["6", 0]);

@@ -143,11 +143,11 @@ try {
     eq("refs @8: the ref2v 8-step build loads", g[18]?.inputs?.lora_name, R8);
     eq("refs @8: the reference node is there", g[5].class_type, "MiniMaxH3ReferenceToVideo");
     eq("refs @8: its shift is the table's row for THAT LoRA", g[6].inputs.shift_video, 12);
-    eq("refs @8: Euler also reaches the reference graph", g[9].inputs.sampler_name, "euler");
+    eq("refs @8: the reference path runs res_multistep, measured (REWIND A/B, 2026-09-24)", g[9].inputs.sampler_name, "res_multistep");
     const g4 = build({ steps: 4, refImages: ["ref.png"] });
     eq("refs @4: the ref2v 4-step build", g4[18]?.inputs?.lora_name, R4);
     eq("refs @4: retains ref2v's 12/3 shift, distinct from fl2v", `${g4[6].inputs.shift_video}/${g4[6].inputs.shift_audio}`, "12/3");
-    eq("refs @4: Euler with guidance-free BasicGuider", `${g4[9].inputs.sampler_name}/${g4[7].class_type}`, "euler/BasicGuider");
+    eq("refs @4: res_multistep with guidance-free BasicGuider", `${g4[9].inputs.sampler_name}/${g4[7].class_type}`, "res_multistep/BasicGuider");
   }
   {
     const g = build({ steps: 20 });

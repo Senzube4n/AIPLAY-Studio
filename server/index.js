@@ -294,8 +294,9 @@ import {
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
 import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
 /* The Video screen's sentences and the one plan behind a render (UI_PLAN C3/E4, the H3 lab's #5-#7). */
-import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote } from "./video-plain.js";
-import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
+import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast } from "./video-plain.js";
+import { createPersonaStore, applyPersona, personaFits, bindPersonaForClip, stagePersonaForClip, CLIP_PERSONA_PICTURES } from "./personas.js";
+import { referenceSteps } from "./workflow.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
 import { createPromptStore } from "./prompts.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
@@ -965,6 +966,17 @@ const imageDupGuard = createDuplicateGuard({ limit: 500 });
 /* The character shelf. Beside the image store, because a persona is about the
  * pictures and travels with them. */
 const personas = createPersonaStore(path.join(config.outputDir, "images", "_personas.json"));
+/* A SAVED CHARACTER IN A CLIP (the Video screen's Keep my character, make_clip
+ * `persona`): the row, {name, missing:true} for a name the shelf does not have
+ * (the plan refuses it by name, reason "persona"), or null when none is named. */
+async function clipPersona(name) {
+  if (name === undefined || name === null || String(name).trim() === "") return null;
+  return (await personas.get(String(name).trim())) || { name: String(name).trim(), missing: true };
+}
+/* The saved characters with pictures, for the Keep line's "pick X" hint. */
+async function clipCharacters() {
+  return (await personas.list()).filter((x) => x.refImages?.length).map((x) => ({ name: x.name, pictures: x.refImages.length }));
+}
 /* Templates worth keeping. Beside the personas for the same reason: both are
  * about making the next picture, and both are a few kilobytes of text. */
 const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_prompts.json"));
@@ -3411,6 +3423,14 @@ const server = http.createServer(async (req, res) => {
                * surface keeps a literal 8 that a Models-screen install (4-step
                * files only) would run as a 4-step LoRA at 8 steps. */
               stepDefaults: e.stepDefaults ?? null,
+              /* Keep my character's step count: the reference build's own
+               * (workflow.js referenceSteps), a sibling of stepDefaults so its
+               * {fast, standard, best} shape stays as mcp-steer_test pins it. */
+              referenceSteps: e.stepDefaults ? referenceSteps(e) : null,
+              /* Fast while a character is kept: the count the reference path
+               * really runs (TaoMate is text-only) and the chip's words
+               * (video-plain.js keepFast), H3 only. */
+              keepFast: k === "h3" ? keepFast(e) : null,
               turboBuilds: e.turboBuilds ?? null,
               /* The step count each resolved file was distilled for, by slot
                * (config.js loraStepsOf), so the screen names "the 4-step
@@ -7016,6 +7036,7 @@ const server = http.createServer(async (req, res) => {
         /* Frames and a control video are named, not staged: the plan only
          * needs to know they ride. */
         const plan = videoPlan(b, { engineKey: gate.engine, eng: videoEngine(gate.engine),
+          persona: await clipPersona(b.persona), characters: await clipCharacters(),
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
           framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
           control: !!(b.sourceVideo || b.source_video) });
@@ -7035,18 +7056,29 @@ const server = http.createServer(async (req, res) => {
         catch (err) { return json(res, 400, { error: err.message }); }
         const prompt = String(b.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe the clip first." });
-        /* ⚠ THE MINORS RULE, before anything is staged: the prompt, with the
-         * stored prompts of every library picture or clip it is handed (the
-         * opening and closing frames, the waypoints, the references, the
-         * driving video) as context. */
+        /* A SAVED CHARACTER, resolved FIRST, so the check below sees what will
+         * really be sent: its pictures in the lineage, its words bound into the
+         * prompt ("<Picture N> is Name." and its fragment, personas.js
+         * bindPersonaForClip). A name the shelf does not have is refused by
+         * name before anything is staged. */
+        const persona = await clipPersona(b.persona);
+        if (persona?.missing) return json(res, 400, { error: personaUnknown(persona.name), reason: "persona" });
+        const boundPrompt = persona ? bindPersonaForClip(persona, { prompt, refImages: b.refImages }).prompt : prompt;
+        /* ⚠ THE MINORS RULE, before anything is staged: the prompt with the
+         * character's words bound in, with the stored prompts of every library
+         * picture or clip it is handed (the opening and closing frames, the
+         * waypoints, the character's pictures, the references, the driving
+         * video) as context. The check moved after the character's resolution;
+         * it is not skipped. */
         const clipLineage = lineage([
           b.fromCover, b.toCover,
           ...(Array.isArray(b.midUploads) ? b.midUploads : []),
+          ...(persona?.refImages || []),
           ...(Array.isArray(b.refImages) ? b.refImages : []),
           b.sourceVideo || b.source_video,
         ]);
         {
-          const refused = safetyRefusal({ door: "api.video.create", actor: prov.actorFrom(req), texts: [prompt],
+          const refused = safetyRefusal({ door: "api.video.create", actor: prov.actorFrom(req), texts: [boundPrompt],
             context: clipLineage.texts, flags: clipLineage.flags });
           if (refused) return json(res, 422, refused);
         }
@@ -7139,7 +7171,7 @@ const server = http.createServer(async (req, res) => {
           control.start = num(b.controlStart ?? b.control_start, 0, 0, 1);
           control.end = num(b.controlEnd ?? b.control_end, 1, 0, 1);
         }
-        let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack;
+        let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack, personaStaged = null, personaLost = 0;
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -7159,9 +7191,16 @@ const server = http.createServer(async (req, res) => {
            * <Picture 1>…, audio it can call <Audio 1>…. Staged like the frames;
            * a bad name drops that reference rather than failing the clip. */
           const wantedRefs = Array.isArray(b.refImages) ? b.refImages.slice(0, 9) : [];
-          refImages = (await Promise.all(wantedRefs.map(async (v) => {
-            try { return staged(v) || await stageFrame(v); } catch { return undefined; }
-          }))).filter(Boolean);
+          /* One resolver for every reference picture: a name /api/frame minted
+           * (already in ComfyUI's input folder: a picture uploaded on Pictures,
+           * which is what a character saved from uploads holds), else a library
+           * picture copied there. */
+          const stageRef = async (v) => { try { return staged(v) || await stageFrame(v); } catch { return undefined; } };
+          refImages = (await Promise.all(wantedRefs.map(stageRef))).filter(Boolean);
+          /* The character's pictures, staged the same way and only the ones
+           * that can ride (personas.js stagePersonaForClip); one that cannot be
+           * found drops out and the reply says so (persona-missing). */
+          ({ persona: personaStaged, lost: personaLost } = await stagePersonaForClip(persona, { own: refImages.length, stage: stageRef }));
           /* Ref audio: an upload this server named, or a song straight out of
            * the library. A library file is copied into ComfyUI's input dir the
            * same way a cover is — content of the graph, not a path, so the
@@ -7190,9 +7229,11 @@ const server = http.createServer(async (req, res) => {
               return name ? { name, start } : undefined;
             } catch { return undefined; }
           }))).filter(Boolean);
-          /* SOUNDTRACK (LTX) — one audio the clip is generated ON: its latent
-           * is frozen during sampling and the output's sound IS this segment.
-           * Staged exactly like a reference audio. */
+          /* SONG UNDER THE CLIP, both engines — one audio the clip is generated
+           * ON: its latent is frozen during sampling and the output's sound IS
+           * this segment; on H3 it is also anchored at frame 0, so the model
+           * hears the vocal (frozen + anchored = lip-sync). Staged exactly like
+           * a reference audio. */
           if (b.audioTrack && b.audioTrack.name) {
             const start = Math.min(Math.max(Number(b.audioTrack.start) || 0, 0), 7200);
             try {
@@ -7214,9 +7255,17 @@ const server = http.createServer(async (req, res) => {
          * build's own step count; a render naming no size gets this card's
          * size. Each change is a warning in the reply. */
         const plan = videoPlan({ ...b, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
+          persona: personaStaged,
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }), framed: !!(firstFrame || lastFrame),
           control: !!control.video });
         if (plan.refusal) return json(res, 400, { error: plan.refusal.error, reason: plan.refusal.reason });
+        /* What the render really carries: the request's references, then the
+         * character's (bound in plan.prompt). A character picture that could
+         * not be found is said, not dropped unsaid. */
+        refImages = plan.refImages || refImages;
+        if (persona && personaLost > 0) {
+          plan.warnings.push({ id: "persona-missing", text: personaMissing(persona.name, personaLost) });
+        }
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
          * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
          * the vocal while the output plays the real track (measured r=0.984
@@ -7264,7 +7313,7 @@ const server = http.createServer(async (req, res) => {
             controlStrength: control.strength,
             controlStart: control.start,
             controlEnd: control.end,
-            // LTX only — the clip is generated ON this audio (frozen latent).
+            // Song under the clip, both engines (H3: frozen + anchored = lip-sync).
             audioTrack,
             /* ⚠ Defaults come from the ENGINE, not from `config.video`.
              *
@@ -7321,7 +7370,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
         if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
-        return json(res, 200, { ok: true, id, job: job && { id: job.id }, warnings: plan.warnings, ...art.status() });
+        return json(res, 200, { ok: true, id, job: job && { id: job.id }, warnings: plan.warnings, ...art.status(),
+          character: plan.character ?? null, sampler: plan.sampler ?? null });
       }
 
       if (b.action === "engine") {
@@ -8756,6 +8806,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         personas: eng ? rows.map((x) => ({ ...x, fits: personaFits(eng) })) : rows,
         ...(eng ? { engine: eng, fits: personaFits(eng) } : {}),
+        /* In a clip, how many of a character's pictures ride (personas.js). */
+        ...(eng === "h3" ? { clipPictures: CLIP_PERSONA_PICTURES } : {}),
       });
     }
 
