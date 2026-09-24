@@ -120,7 +120,7 @@ console.log("\n§4  every hand the LoRA passes through names it");
     /lora: job\.lora \|\| null, loraStrength: job\.lora \? \(job\.loraStrength \?\? 1\) : null \}/.test(index));
   ok("the library row records it — BOTH doors, the planner's included",
     /lora: job\.lora \|\| null, loraStrength: job\.lora \? \(job\.loraStrength \?\? 1\) : null,/.test(index)
-    && /loraClip: job\.loraClip \|\| null, loraClipStrength: job\.loraClip \? \(job\.loraClipStrength \?\? 1\) : null,\n\s+rights: "CC BY-NC 4\.0/.test(index)
+    && /loraClip: job\.loraClip \|\| null, loraClipStrength: job\.loraClip \? \(job\.loraClipStrength \?\? 1\) : null,\n\s+rights: songRights\(\{ engine: "yue2-comfy", lora: job\.lora, loraClip: job\.loraClip \}\)\.label,/.test(index)
     && /loraClip: j\.loraClip \?\? null, loraClipStrength: j\.loraClip \? \(j\.loraClipStrength \?\? 1\) : null,/.test(src("../jobs.js")));
   ok("the FLAC tags name it", /\{ lora: `\$\{job\.lora\} @ \$\{job\.loraStrength \?\? 1\}` \}/.test(index));
   ok("the warm-up loads the same LoRA the song will use",

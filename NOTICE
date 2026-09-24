@@ -33,13 +33,11 @@ in the app.
 
     YuE2 GGUF Q4 / optional Q8 (experimental)
                             CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms on NVIDIA only
-                            Output rights: NOT FOR SALE — conservative Studio
-                            noncommercial classification; output scope is not
-                            resolved by this label (Creative Commons
-                            Attribution-NonCommercial 4.0 International §2(a)(1)
-                            (Scope — License grant), as shipped with the
-                            weights)
-                            https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
+                            Output rights: SELLABLE BY INDIVIDUALS (YuE2
+                            authors' statement, 15 Sep 2026); companies need a
+                            commercial licence; licence file CC BY-NC 4.0
+                            https://huggingface.co/m-a-p/YuE2-3B/discussions/5
+                            Licence file: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
                             Publisher's stated intent (a43992899 (Multimodal Art
                             Projection org), 2026-09-15; a discussion comment,
                             not the licence): "If you are individual content
@@ -117,13 +115,11 @@ in the app.
 
     YuE2 3B for ComfyUI (int8)
                             CC BY-NC 4.0 (weights)
-                            Output rights: NOT FOR SALE — conservative Studio
-                            noncommercial classification; output scope is not
-                            resolved by this label (Creative Commons
-                            Attribution-NonCommercial 4.0 International §2(a)(1)
-                            (Scope — License grant), as shipped with the
-                            weights)
-                            https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
+                            Output rights: SELLABLE BY INDIVIDUALS (YuE2
+                            authors' statement, 15 Sep 2026); companies need a
+                            commercial licence; licence file CC BY-NC 4.0
+                            https://huggingface.co/m-a-p/YuE2-3B/discussions/5
+                            Licence file: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
                             Publisher's stated intent (a43992899 (Multimodal Art
                             Projection org), 2026-09-15; a discussion comment,
                             not the licence): "If you are individual content
@@ -142,14 +138,6 @@ in the app.
                             (Scope — License grant), as shipped with the
                             weights)
                             https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
-                            Publisher's stated intent (a43992899 (Multimodal Art
-                            Projection org), 2026-09-15; a discussion comment,
-                            not the licence): "If you are individual content
-                            creators, musicians, researchers, you can use the
-                            model and outputs whatever you want. Even making
-                            money from the outputs. Only companies should pay
-                            for the commercial license."
-                            https://huggingface.co/m-a-p/YuE2-3B/discussions/5
 
     YuE2 real-audio NAR LoRA (ComfyUI)
                             CC BY-NC 4.0 (weights, derived from YuE2-3B)
@@ -160,14 +148,6 @@ in the app.
                             (Scope — License grant), as shipped with the
                             weights)
                             https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
-                            Publisher's stated intent (a43992899 (Multimodal Art
-                            Projection org), 2026-09-15; a discussion comment,
-                            not the licence): "If you are individual content
-                            creators, musicians, researchers, you can use the
-                            model and outputs whatever you want. Even making
-                            money from the outputs. Only companies should pay
-                            for the commercial license."
-                            https://huggingface.co/m-a-p/YuE2-3B/discussions/5
 
     YuE2 real-audio tokenizer (head + MERT-v2-FullSong)
                             CC BY-NC 4.0 (head from YuE2-3B; MERT-v2-FullSong)
@@ -178,14 +158,6 @@ in the app.
                             (Scope — License grant), as shipped with the
                             weights)
                             https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
-                            Publisher's stated intent (a43992899 (Multimodal Art
-                            Projection org), 2026-09-15; a discussion comment,
-                            not the licence): "If you are individual content
-                            creators, musicians, researchers, you can use the
-                            model and outputs whatever you want. Even making
-                            money from the outputs. Only companies should pay
-                            for the commercial license."
-                            https://huggingface.co/m-a-p/YuE2-3B/discussions/5
 
     ACE-Step 1.5 turbo (ComfyUI)
                             MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)
@@ -194,13 +166,11 @@ in the app.
                             https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE
 
     YuE2 3B                 CC BY-NC 4.0 (weights)
-                            Output rights: NOT FOR SALE — conservative Studio
-                            noncommercial classification; output scope is not
-                            resolved by this label (Creative Commons
-                            Attribution-NonCommercial 4.0 International §2(a)(1)
-                            (Scope — License grant), as shipped with the
-                            weights)
-                            https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
+                            Output rights: SELLABLE BY INDIVIDUALS (YuE2
+                            authors' statement, 15 Sep 2026); companies need a
+                            commercial licence; licence file CC BY-NC 4.0
+                            https://huggingface.co/m-a-p/YuE2-3B/discussions/5
+                            Licence file: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
                             Publisher's stated intent (a43992899 (Multimodal Art
                             Projection org), 2026-09-15; a discussion comment,
                             not the licence): "If you are individual content

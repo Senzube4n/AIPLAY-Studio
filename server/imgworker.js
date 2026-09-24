@@ -28,9 +28,13 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class ImgWorker {
-  constructor(python, { onLog = () => {} } = {}) {
+  /* `script` is imgworker.py; a test passes a stand-in so a worker that dies
+   * on a missing module can be driven without a python. */
+  constructor(python, { onLog = () => {}, script = path.join(__dirname, "imgworker.py") } = {}) {
     this.python = python;
     this.onLog = onLog;
+    this.script = script;
+    this.stderrTail = "";
     this.proc = null;
     this.buf = "";
     this.next = 1;
@@ -44,7 +48,8 @@ export class ImgWorker {
   start() {
     if (this.ready) return this.ready;
     this.ready = new Promise((resolve, reject) => {
-      const proc = spawn(this.python, [path.join(__dirname, "imgworker.py")], { windowsHide: true });
+      const proc = spawn(this.python, [this.script], { windowsHide: true });
+      this.stderrTail = "";
       this.proc = proc;
       let settled = false;
       proc.stdout.on("data", (d) => {
@@ -61,18 +66,30 @@ export class ImgWorker {
           if (w) { this.pending.delete(msg.id); w.resolve(msg); }
         }
       });
-      proc.stderr.on("data", (d) => this.onLog(`[imgworker] ${String(d).trim().slice(0, 400)}`));
+      proc.stderr.on("data", (d) => {
+        this.onLog(`[imgworker] ${String(d).trim().slice(0, 400)}`);
+        /* The last few KB are kept for the error a death rejects with: a
+         * worker whose `import imagetools` fails on a missing cv2 dies before
+         * its handshake, and "exited (1)" alone told the person nothing. The
+         * door reads `err.stderr` for the module (engineModuleRefusal). */
+        this.stderrTail = (this.stderrTail + d).slice(-4096);
+      });
       /* ⚠ A DEAD WORKER MUST REJECT EVERY WAITER. Without this the caller's
        * promise never settles and the request hangs until the browser gives
        * up — the failure mode that looks like the studio freezing. */
       const die = (why) => {
         this.proc = null; this.ready = null;
-        for (const [, w] of this.pending) w.reject(new Error(`image worker ${why}`));
+        const stderr = this.stderrTail;
+        const last = stderr.trim().split(/\r?\n/).pop() || "";
+        const fail = () => Object.assign(new Error(`image worker ${why}${last ? `: ${last.slice(0, 300)}` : ""}`), { stderr });
+        for (const [, w] of this.pending) w.reject(fail());
         this.pending.clear();
-        if (!settled) { settled = true; reject(new Error(`image worker ${why}`)); }
+        if (!settled) { settled = true; reject(fail()); }
       };
       proc.on("error", (err) => die(`could not start: ${err.message}`));
-      proc.on("exit", (code) => die(`exited (${code})`));
+      /* 'close', not 'exit': 'exit' can come before the last of stderr has
+       * been read, and the tail is what says which module was missing. */
+      proc.on("close", (code) => die(`exited (${code})`));
     });
     return this.ready;
   }
@@ -94,7 +111,10 @@ export class ImgWorker {
         this.pending.delete(id); clearTimeout(t); reject(err);
       }
     });
-    if (reply.ok === false) throw new Error(reply.error || "image worker refused the job");
+    /* The engine's own sentence; a lazy import that failed inside it (scipy
+     * for curves) reads "ModuleNotFoundError: No module named 'scipy'", which
+     * the door turns into the engine-package refusal. */
+    if (reply.ok === false) throw Object.assign(new Error(reply.error || "image worker refused the job"), { stderr: reply.error || "" });
     return reply;
   }
 

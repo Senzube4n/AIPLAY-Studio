@@ -121,6 +121,18 @@ test("the update check asks GitHub about the base this build contains, and never
     assert.ok(seen.some((u) => /\/compare\/[0-9a-f]{7,}\.\.\.main/.test(u)), "compared against the commit this build contains");
     assert.equal(r.upstream.ahead, 3);
     assert.match(updateSentence(r), /3 commits on the original you do not have/);
+    assert.match(updateSentence(r), /3 commits on the original you do not have[^]*\. Stop Studio, then press Update at the bottom of the launcher window\.$/,
+      "behind, the sentence says what to press, where");
+    // One if/else chain: only the behind case gets the launcher step, and the
+    // "not a commit GitHub knows" line is for a base GitHub could not compare.
+    assert.equal(updateSentence({ ok: true, upstream: { head: "abc1234", ahead: 0 } }, { fork: false }), "Up to date.",
+      "up to date says only that");
+    assert.equal(updateSentence({ ok: true, upstream: { head: "abc1234", ahead: 0 } }, { fork: true }), "Up to date with the original.");
+    assert.equal(updateSentence({ ok: true, upstream: { head: "abc1234", ahead: null } }, { fork: false }),
+      "The original is at abc1234; this build's base is not a commit GitHub knows.",
+      "an unknown base names the original's head and no Update step");
+    assert.equal(updateSentence({ ok: true, upstream: { head: "abc1234", ahead: 1, newest: "fix" } }, { fork: false }),
+      "1 commit on the original you do not have, newest: fix. Stop Studio, then press Update at the bottom of the launcher window.");
     assert.deepEqual(r.upstream.titles, ["three", "two", "one"], "newest first, one line each");
     const cached = await checkUpdates();
     assert.equal(cached.cached, true, "an hour's cache, so opening a screen costs nothing");

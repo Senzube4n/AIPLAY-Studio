@@ -34,8 +34,10 @@ import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogr
 /* An engine failure as a sentence, the raw text behind Details (the Video screen's). */
 import { plainVideoFailure } from "./video-plain.js";
 import { joinClips } from "./clipjoin.js";
-import { runLrc, LRC_SCRIPT } from "./lrc.js";
+import { runLrc, LRC_SCRIPT, stderrTail } from "./lrc.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
+import { killProcessTree } from "./proctree.js";
+import { demucsMeter, stemsPipLine, STEMS_SETTING_WORDS, STEMS_SETUP_BUTTON, stemsPythonEpoch, demucsEnv } from "./music/stems.js";
 /* The ledger, imported HERE and not only at the API seam in index.js: a clip
  * served from the engine's cache is a fact only the renderer can know, and it
  * is gone by the time the completion event is handled. */
@@ -503,20 +505,63 @@ export function refusalCard(buf) {
   return isRefusalCard(pngLumaStats(buf));
 }
 
+/**
+ * The kinds that run a PROGRAM of their own (demucs, whisper) instead of a
+ * graph on the engine. Two things follow, and both were missing (Tika's
+ * report, 2026-09-24):
+ *
+ *  - Stop has to reach the program. Every Stop used to go to ComfyUI, which was
+ *    never running these, so a separation ran on to the end after Stop and the
+ *    Jobs row came straight back. The runner keeps the child on the job and
+ *    kills its whole tree (server/proctree.js).
+ *  - They do not wait for the engine to be ready. demucs never talks to
+ *    ComfyUI, so in Music-only mode (no ComfyUI) a separation queued for ever.
+ *    Music still comes first: nothing here starts while a song is running or
+ *    waiting.
+ */
+export const SUBPROCESS_KINDS = new Set(["stems", "lrc"]);
+
+/** What a job the person stopped reads, in the Jobs list and to its waiters.
+ *  Non-null on purpose: art-wait.js and index.js standing() read a job with an
+ *  error as not-a-success, and a stopped job is not one. */
+export const STOPPED_ERROR = "Stopped before it finished (you pressed Stop).";
+
+/** A failure a separation meets when this python's PyTorch has no kernels for
+ *  the card (an RTX 50 under a CUDA 12.6-or-older build prints both lines). */
+const CUDA_ARCH_RE = /no kernel image is available|is not compatible with the current PyTorch installation|CUDA error: invalid device function/i;
+
 export class ArtRunner extends EventEmitter {
   /**
    * @param {import("./comfy.js").ComfySupervisor} comfy
    * @param {import("./jobs.js").JobRunner} jobs   consulted for idleness only
    */
-  constructor(comfy, jobs, { qwenStatus = qwenImageStatus } = {}) {
+  /**
+   * `spawnPython(python, args, opts)` replaces the spawn of the stems and
+   * timed-lyrics interpreters when given. Tests pass a fake python (a Node
+   * script) through it; nothing else does.
+   */
+  constructor(comfy, jobs, { qwenStatus = qwenImageStatus, spawnPython = null } = {}) {
     super();
     this.comfy = comfy;
     this.jobs = jobs;
     this.qwenStatus = qwenStatus;
+    this.spawnPython = typeof spawnPython === "function" ? spawnPython : null;
     this.queue = [];
     this.current = null;
     this.done = [];
     this.lastError = null;
+    this.lastRefusal = null;
+    /* The job a refusal was about, when there is one: a second separation of a
+     * song already being separated is refused, and the caller joins this. */
+    this.lastRefusalJob = null;
+    /* Set for this session when a separation met a card its PyTorch cannot run
+     * (see CUDA_ARCH_RE): { python, epoch, why }. Later separations go straight
+     * to the processor instead of failing first, but ONLY in that python and
+     * only until the stems python may have changed (stemsPythonEpoch(): a
+     * setup finishing, or a new choice in Settings). A venv rebuilt in place
+     * with a PyTorch that runs on the card must not stay on the processor for
+     * the rest of the session. Not saved; the "stems" setup saves `stems.device`. */
+    this.stemsOnCpu = null;
     this.enabled = config.art.enabled;
     this.paused = false;
     this.#timer = null;
@@ -756,21 +801,194 @@ export class ArtRunner extends EventEmitter {
    * the work queued behind it. Interrupting ComfyUI is the whole mechanism —
    * the job's own awaiter then fails down the same path any dead render takes,
    * and the runner picks up the next item by itself. */
+  /* A job that runs a program of its own (SUBPROCESS_KINDS) is stopped by
+   * killing that program's whole tree: ComfyUI never had it, so interrupting
+   * the engine did nothing and the Jobs row came straight back (Tika's report).
+   *
+   *   → { stopped: title|null, kind, queued, killed, stopping }
+   * `killed` is true when the tree is gone before the reply; `stopping` is true
+   * while the program has not yet closed (the row then reads "stopping…"). */
   async stopCurrent() {
-    const was = this.current?.title || null;
-    if (!was) return { stopped: null, queued: this.queue.length };
-    /* Never throws — the client reports rather than raising, because Comfy
-     * already being gone is a perfectly good outcome for "stop it": the job's
-     * awaiter then fails down the same path any dead render takes, and the
-     * ledger keeps the interrupted run's record with status "error". */
-    await engineDoor.interrupt();
-    return { stopped: was, queued: this.queue.length };
+    const job = this.current;
+    const none = { stopped: null, kind: null, queued: this.queue.length, killed: false, stopping: false };
+    if (!job) return none;
+    try {
+      if (SUBPROCESS_KINDS.has(job.kind)) {
+        const r = await this.#stopChild(job);
+        return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: r.killed, stopping: r.stopping };
+      }
+      /* AN ENGINE RENDER: cancelled BY RUN ID, and only a run of this queue's
+       * own (its `via` starts with "art."; the queue renders one job at a time,
+       * so that is this job's render, or an orphan of an earlier one nobody
+       * waits on). Only a cancel the door confirms marks the job stopped: an
+       * untargeted /interrupt answers {stopped:true} whatever ComfyUI was
+       * running, and a job marked "stopping" on that word could render on to
+       * the end with its Stop button disabled, then have a real failure
+       * reported as the Stop sentence (review, 2026-09-24). */
+      const live = await engineDoor.status().catch(() => ({ running: [] }));
+      const mine = (live?.running || []).filter((r) => String(r.via || "").startsWith("art."));
+      if (mine.length) {
+        const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId }).catch(() => ({ stopped: false }))));
+        if (stops.some((s) => s?.stopped === true) && this.current === job) {
+          job.cancelled = true; job.stopping = true; this.emit("update");
+        }
+      } else {
+        /* Not on the engine yet (a preflight, a model load), or a door that
+         * keeps no record: the old way, an interrupt, and the job is NOT
+         * marked. Never throws: Comfy already being gone is a perfectly good
+         * outcome for "stop it", and the job's awaiter then fails down the same
+         * path any dead render takes. */
+        await engineDoor.interrupt();
+      }
+      return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length,
+        killed: false, stopping: this.current === job && !!job.stopping };
+    } catch {
+      return { ...none, stopped: job.title || null, kind: job.kind || null };
+    }
+  }
+
+  /**
+   * STOP WHAT IS MINE: every queued art job, then the running one. The Stop
+   * button's half for art (/api/cancel), moved here from index.js, which used
+   * to reach into this queue itself and could not reach a program at all.
+   *
+   *   - queued jobs are dropped (they were never sent anywhere);
+   *   - a running program (stems, timed lyrics) has its tree killed;
+   *   - an engine render is cancelled through the door, BY RUN ID, and only a
+   *     run whose `via` starts with "art." — a chat turn or a gate render
+   *     queued beside it is somebody else's work and keeps its place (the
+   *     reason /api/cancel never calls stopAll(), measured 2026-09-05).
+   *
+   *   → { dropped, wasRunning, kind, killed, stopping, interrupted, engineCancelled }
+   * Never throws: a Stop button must not fail because a status read did.
+   */
+  async stopMine() {
+    const out = { dropped: 0, wasRunning: null, kind: null, killed: false, stopping: false, interrupted: false, engineCancelled: 0 };
+    try {
+      const queued = this.queue;
+      this.queue = [];
+      /* Each dropped job is SAID to have stopped, the way a stopped running job
+       * is: a waiter polling for it reads "stopped", and a listener (an
+       * Overnight row, an image or clip waiter, ensureStem) ends at once
+       * instead of waiting out its own deadline. They were never started, so
+       * they join no history row. */
+      for (const j of queued) {
+        j.cancelled = true;
+        j.error = STOPPED_ERROR;
+        try { this.emit("failed", { file: j.file, kind: j.kind, owner: j.owner || null, error: STOPPED_ERROR, runId: null, cancelled: true }); }
+        catch { /* a listener's fault must not keep the rest of the Stop from happening */ }
+      }
+      out.dropped = queued.length;
+      if (queued.length) this.emit("update");
+      const job = this.current;
+      out.wasRunning = job?.title || null;
+      out.kind = job?.kind || null;
+      if (job && SUBPROCESS_KINDS.has(job.kind)) {
+        const r = await this.#stopChild(job);
+        out.killed = r.killed;
+        out.stopping = r.stopping;
+      }
+      /* The door's own record of who is running what. An orphaned render (its
+       * waiter gave up) is still ours, so this is asked whatever is current. */
+      const live = await engineDoor.status().catch(() => ({ running: [] }));
+      const mine = (live?.running || []).filter((r) => String(r.via || "").startsWith("art."));
+      const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId }).catch(() => ({ stopped: false }))));
+      out.engineCancelled = stops.filter((s) => s?.stopped === true).length;
+      out.interrupted = out.engineCancelled > 0;
+      if (out.interrupted && job && !SUBPROCESS_KINDS.has(job.kind) && this.current === job) {
+        job.cancelled = true; job.stopping = true; out.stopping = true;
+        this.emit("update");
+      }
+    } catch { /* what was done is reported; the rest is not a reason to fail the button */ }
+    return out;
+  }
+
+  /** The running job, or a waiting one, with this file and kind; else null.
+   *  A running job that is being stopped does not count: it is going. */
+  findJob(file, kind) {
+    const c = this.current;
+    if (c && c.file === file && c.kind === kind && !c.cancelled) return c;
+    return this.queue.find((j) => j.file === file && j.kind === kind) || null;
+  }
+
+  /* Kill a running program's tree and wait a moment for it to close.
+   * → { killed, stopping }. A job that has not started its program yet is
+   * only marked: #runChild and the lyrics launcher refuse to start it. */
+  async #stopChild(job) {
+    job.cancelled = true;
+    const child = job.child;
+    if (!child) { this.emit("update"); return { killed: false, stopping: false }; }
+    job.stopping = true;
+    this.emit("update");
+    const closed = new Promise((resolve) => {
+      if (job.child !== child) return resolve();
+      child.once("close", () => resolve());
+    });
+    const killed = await killProcessTree(child).catch(() => false);
+    await Promise.race([closed, new Promise((r) => setTimeout(r, 1500))]);
+    const stopping = job.child === child;
+    return { killed: killed || !stopping, stopping };
+  }
+
+  /* Keep the program on its job, and let go of it when it closes. A Stop that
+   * arrived while it was being started is carried out at once. */
+  #adopt(job, proc) {
+    job.child = proc;
+    const gone = () => {
+      if (job.child === proc) job.child = null;
+      if (job.stopping) { job.stopping = false; this.emit("update"); }
+    };
+    proc.once?.("close", gone);
+    proc.once?.("error", () => { if (proc.pid === undefined) gone(); });
+    if (job.cancelled) killProcessTree(proc).catch(() => {});
+    return proc;
+  }
+
+  /**
+   * Run one program to its end: { code, signal, stderr, stdout, spawnError }.
+   * Resolves on 'close' (its output is complete), or 3 s after 'exit' when a
+   * grandchild holds the pipes open, or at once when it could not start.
+   * `onOutput(text)` sees stderr and stdout as they come.
+   */
+  #runChild(job, start, { onOutput = null } = {}) {
+    return new Promise((resolve) => {
+      const r = { code: null, signal: null, stderr: "", stdout: "", spawnError: null };
+      let settled = false, grace = null;
+      const finish = () => { if (!settled) { settled = true; clearTimeout(grace); resolve(r); } };
+      if (job.cancelled) {
+        r.spawnError = Object.assign(new Error("stopped before it started"), { code: "STOPPED" });
+        return finish();
+      }
+      let proc;
+      try { proc = start(); } catch (e) { r.spawnError = e; return finish(); }
+      this.#adopt(job, proc);
+      const take = (key, cap) => (d) => {
+        const s = String(d);
+        r[key] = (r[key] + s).slice(-cap);
+        if (onOutput) { try { onOutput(s, key); } catch { /* a meter never fails the run */ } }
+      };
+      proc.stderr?.setEncoding?.("utf8");
+      proc.stdout?.setEncoding?.("utf8");
+      proc.stderr?.on("data", take("stderr", 64_000));
+      /* Read stdout too: demucs prints its "bag of N models" line there, and a
+       * pipe nobody reads fills and stalls the program. */
+      proc.stdout?.on("data", take("stdout", 16_000));
+      proc.on("error", (e) => { r.spawnError = e; if (proc.pid === undefined) finish(); });
+      proc.on("exit", (code, signal) => { r.code = code; r.signal = signal; grace = setTimeout(finish, 3000); });
+      proc.on("close", (code, signal) => { if (r.code === null && r.signal === null) { r.code = code; r.signal = signal; } finish(); });
+    });
   }
 
   async stopAll() {
     const dropped = this.queue.length;
     const wasRunning = this.current?.title || null;
     this.queue = [];
+    /* A running program of its own (demucs, whisper) is not on the engine, so
+     * the interrupt below never reached it: Battery Safe said "stopped" while
+     * a separation kept the card busy. Its tree is killed too; what this
+     * method returns is unchanged. */
+    const cur = this.current;
+    if (cur && SUBPROCESS_KINDS.has(cur.kind)) await this.#stopChild(cur).catch(() => {});
     /* Two halves and both are needed: clearing OUR queue (above) stops what has
      * not been submitted, interrupting stops what is rendering, and clearing
      * ComfyUI's own queue catches what it accepted but has not started. */
@@ -798,7 +1016,10 @@ export class ArtRunner extends EventEmitter {
         // Offline engine work remains queued, with an explicit reason. Once
         // ready, Qwen's file/node preflight either dispatches or records a
         // normal failed-job event; an unavailable model is never substituted.
+        /* Only a job that needs the engine waits for it: stems and timed
+         * lyrics run their own program and start without it. */
         deferred: this.queue.length > 0 && !this.current && !this.paused && !this.comfy.ready
+          && this.queue.some((j) => !SUBPROCESS_KINDS.has(j.kind))
           ? { reason: "engine", message: "Waiting for the image engine to start; model readiness has not been verified." }
           : null,
         // `kind` is reported so the UI can name the stage that is actually
@@ -813,9 +1034,16 @@ export class ArtRunner extends EventEmitter {
            * strangers. */
           id: this.current.id,
           file: this.current.file, title: this.current.title, kind: this.current.kind,
-          // Real per-step progress from the engine, not a timer.
+          // Real per-step progress from the engine, not a timer. For stems,
+          // demucs's own bars on stderr (music/stems.js demucsMeter).
           progress: this.progress,
           elapsed: this.startedAt ? Math.round((Date.now() - this.startedAt) / 1000) : 0,
+          /* Stop was pressed and the program has not closed yet: the row
+           * says "stopping…" rather than offering Stop again. */
+          stopping: !!this.current.stopping,
+          /* What the bar alone cannot say: "fetching the separation model,
+           * 336 MB, first run only", "model 2 of 4". */
+          note: this.current.note || null,
         },
         queuedKinds: this.queue.reduce((m, j) => (m[j.kind] = (m[j.kind] || 0) + 1, m), {}),
         // The mini queue's ETA inputs: what this session actually measured.
@@ -845,6 +1073,8 @@ export class ArtRunner extends EventEmitter {
             : (j.startedAt && j.finishedAt) ? j.finishedAt - j.startedAt : null,
           at: j.finishedAt || j.at || null,
           error: j.error ? String(j.error).slice(0, 200) : null,
+          /* Stopped by the person, not failed: the row reads "stopped". */
+          cancelled: !!j.cancelled,
           /* The whole failure, for the newest rows only: `lastError` used to
            * be the one place the uncut text lived, and it now clears on the
            * next success (art-wait.js ownFailure reads this first). */
@@ -893,7 +1123,22 @@ export class ArtRunner extends EventEmitter {
      * with the one sentence rather than its generic "not queued" 409. */
     this.lastRefusalCode = null;
     this.lastRefusalBody = null;
+    this.lastRefusalJob = null;
     if (!file) return this.#refuse("nothing to render — no file was named");
+    /* ONE SEPARATION PER SONG AT A TIME, force or not. `force` exists so a
+     * caller can queue a second cover of the same song; for stems it made a
+     * Transcribe with "Voice only", a Create "Start from its voice", Tokenize
+     * and the row's "Separate stems" each queue their own demucs run of the
+     * same file (Tika's report), and the running one was never checked at all.
+     * The refusal names the job, and the callers join it (music/stems.js
+     * ensureStem, /api/stems). */
+    if (kind === "stems") {
+      const already = this.findJob(file, "stems");
+      if (already) {
+        this.lastRefusalJob = already;
+        return this.#refuse(`${already.title || file} is already being separated`);
+      }
+    }
     /* `enabled` is the COVER ART setting, and it used to gate every kind.
      *
      * That made one dropdown labelled "Cover art" a silent master switch over
@@ -1015,6 +1260,17 @@ export class ArtRunner extends EventEmitter {
     return null;
   }
 
+  /* The index of the next job that may start now, or -1. Music first: nothing
+   * starts while a song is running or waiting. Then the engine: a job that
+   * renders on it waits until it is ready, while a program of its own
+   * (SUBPROCESS_KINDS) does not, so a separation queued behind a cover still
+   * runs while ComfyUI is down (Music-only mode has none at all). */
+  #nextRunnable() {
+    if (this.jobs?.current || (this.jobs?.queue?.length || 0) > 0) return -1;
+    if (this.comfy?.ready) return this.queue.length ? 0 : -1;
+    return this.queue.findIndex((j) => SUBPROCESS_KINDS.has(j.kind));
+  }
+
   #schedule() {
     if (this.#timer) return;
     this.#timer = setTimeout(() => {
@@ -1044,11 +1300,13 @@ export class ArtRunner extends EventEmitter {
      * and music is not waiting". */
     if (this.current || this.paused) return;
     if (this.queue.length === 0) return;
-    if (!this.idle) return this.#schedule();      // music is busy; check back
+    if (this.#nextRunnable() < 0) return this.#schedule();   // music is busy (or the engine is not up); check back
 
     while (this.queue.length) {
-      if (!this.idle || this.paused) break;       // yield to music
-      const job = this.queue.shift();
+      if (this.paused) break;
+      const at = this.#nextRunnable();
+      if (at < 0) break;                          // yield to music
+      const [job] = this.queue.splice(at, 1);
       this.current = job;
       this.progress = 0;
       this.startedAt = Date.now();
@@ -1062,9 +1320,12 @@ export class ArtRunner extends EventEmitter {
         console.log(`  [art] unloading ${this.jobs.loaded.key} before the ${job.kind || "image"} job`);
         await this.jobs.unloadModels().catch(() => {});
       }
-      this.jobs.artResident = true;
+      /* A program of its own puts nothing into the engine and reports no
+       * progress over its socket: neither the resident flag nor the socket. */
+      const ownProgram = SUBPROCESS_KINDS.has(job.kind);
+      if (!ownProgram) this.jobs.artResident = true;
       job.startedAt = this.startedAt;
-      this.#connect();
+      if (!ownProgram) this.#connect();
       this.emit("update");
       try {
         if (job.kind === "stems") {
@@ -1222,6 +1483,8 @@ export class ArtRunner extends EventEmitter {
          * could report it. */
         job.finishedAt = Date.now();
         job.durationMs = job.startedAt ? job.finishedAt - job.startedAt : null;
+        /* A Stop that came too late to matter: the work finished and is kept. */
+        job.cancelled = false; job.stopping = false;
         /* A success clears the queue's last failure. It used to stay until a
          * restart (the 2026-09-23 audit): Settings and studio_status kept
          * reporting a failure the next render had already put right. Each
@@ -1231,6 +1494,28 @@ export class ArtRunner extends EventEmitter {
       } catch (err) {
         job.finishedAt = Date.now();
         job.durationMs = job.startedAt ? job.finishedAt - job.startedAt : null;
+        /* A minors refusal is never read as a Stop, even when Stop was pressed
+         * at the same moment: it takes the refusal path below, which blanks
+         * the job's words before it is listed, logged or announced. */
+        if (job.cancelled && !err?.safety) {
+          /* STOPPED, NOT FAILED. The person pressed Stop: the row reads
+           * "stopped", the queue's last failure is left alone (nothing went
+           * wrong), and the event says `cancelled` so a waiter (ensureStem, an
+           * Overnight row) ends at once instead of reporting a fault. The error
+           * stays non-null: to art-wait.js and index.js standing() a stopped
+           * job is not a success. Nothing re-queues it. */
+          job.stopping = false;
+          job.error = STOPPED_ERROR;
+          if (!this.done.includes(job)) this.done.unshift(job);
+          console.log(`  [${job.kind}] ${job.title}: stopped (you pressed Stop)`);
+          this.emit("failed", {
+            file: job.file, kind: job.kind, owner: job.owner || null,
+            error: job.error, runId: job.runId ?? null, cancelled: true,
+          });
+          continue;
+        }
+        /* ...and its row reads as the refusal it is, not as "stopped". */
+        job.cancelled = false; job.stopping = false;
         job.error = String(err.message || err);
         /* ⚠ A MINORS REFUSAL AT THE ENGINE DOOR LEAVES NO WORDS BEHIND. A
          * picture's title is the first 48 characters of its prompt, and this
@@ -1277,7 +1562,7 @@ export class ArtRunner extends EventEmitter {
          * session's hardware and settings rather than guessed — a budget video
          * and a native one differ 7x, and the average follows what the user is
          * actually rendering tonight. (FORK — see FORK_DELTA.md.) */
-        if (this.startedAt && !job.preflightFailed) {
+        if (this.startedAt && !job.preflightFailed && !job.cancelled) {
           const secs = (Date.now() - this.startedAt) / 1000;
           this.stats = this.stats || {};
           const s = this.stats[job.kind] || { n: 0, avg: 0 };
@@ -2130,30 +2415,111 @@ export class ArtRunner extends EventEmitter {
    * poor trade for a few megabytes. Measured: ~12 s for a 30 s track, four stems
    * totalling ~4 MB.
    */
+  /*
+   * 2026-09-24 (Tika's report: "0% for four minutes, nothing in the log, Stop
+   * does nothing, it starts again"). The program is kept on the job so Stop can
+   * kill its tree; demucs's own progress bars are read off stderr; the start is
+   * logged with the interpreter; and each way it fails has its own sentence
+   * instead of "demucs failed — see the console" over a console that said
+   * nothing (the stderr tail was printed on the 'exit' path only, and a
+   * missing interpreter takes the 'error' path).
+   */
   async #separate(job) {
     const src = path.join(config.outputDir, job.file);
     const outRoot = path.join(config.outputDir, "stems");
     await mkdir(outRoot, { recursive: true });
+    const model = config.stems.model;
+    const python = config.systemPython;
 
-    const args = ["-m", "demucs", "-n", config.stems.model, "--flac", "-o", outRoot];
-    if (config.stems.twoStems) args.push("--two-stems", "vocals");
-    args.push(src);
+    const run = async (cpu) => {
+      const args = ["-m", "demucs", "-n", model, "--flac", "-o", outRoot];
+      if (config.stems.twoStems) args.push("--two-stems", "vocals");
+      /* "cpu" is saved by the stems setup when this card failed its tensor
+       * test; stemsOnCpu is this session's own finding (below). */
+      if (cpu) args.push("-d", "cpu");
+      args.push(src);
+      const meter = demucsMeter({ model });
+      const note = (n) => (cpu && n ? `${n} · on the processor` : cpu ? "on the processor" : n);
+      job.note = note(null);
+      /* Detached on POSIX, so the tree kill reaches demucs's process group;
+       * Windows walks the tree with taskkill instead. The environment puts an
+       * AIPLAY_FFMPEG folder on PATH: demucs 4.1 writes FLAC through the
+       * program named plain "ffmpeg" (music/stems.js demucsEnv). */
+      const env = demucsEnv();
+      const opts = { windowsHide: true, detached: process.platform !== "win32", ...(env ? { env } : {}) };
+      return this.#runChild(job,
+        () => (this.spawnPython ? this.spawnPython(config.systemPython, args, opts) : spawn(config.systemPython, args, opts)),
+        { onOutput: (text, stream) => {
+          const got = meter.feed(text, stream);
+          if (!got) return;
+          if (this.current === job) this.progress = got.progress;
+          job.note = note(got.note);
+          this.emit("update");
+        } });
+    };
 
-    const code = await new Promise((resolve) => {
-      const proc = spawn(config.systemPython, args, { windowsHide: true });
-      let err = "";
-      proc.stderr.on("data", (d) => (err += d));
-      proc.on("exit", (c) => { if (c) console.error(`  [stems] ${err.slice(-400)}`); resolve(c); });
-      proc.on("error", () => resolve(1));
-    });
-    if (code !== 0) throw new Error("demucs failed — see the console");
+    /* The setup's saved verdict counts only for the python it was measured on
+     * (stems.devicePython; none recorded = an older save, applied as before),
+     * and this session's own finding only for its python and epoch. */
+    const cpuSaved = config.stems.device === "cpu"
+      && (!config.stems.devicePython || config.stems.devicePython === python);
+    const known = this.stemsOnCpu;
+    const cpuSession = !!known && known.python === python && known.epoch === stemsPythonEpoch();
+    console.log(`  [stems] separating ${job.title} with ${python} (${model}${cpuSaved || cpuSession ? ", on the processor" : ""})`);
+    let r = await run(cpuSaved || cpuSession);
+    /* A Stop too late to matter (it finished anyway) keeps the work. */
+    if (job.cancelled && r.code !== 0) throw new Error(STOPPED_ERROR);
+    const said = (res) => stderrTail(res.stderr, 12);
+    const logTail = (res) => {
+      const tail = said(res);
+      console.error(`  [stems] ${python} ${res.spawnError ? `could not start (${res.spawnError.code || res.spawnError.message})` : res.signal ? `was stopped by ${res.signal}` : `exited ${res.code}`}`
+        + (tail.length ? `; its stderr ended:\n    ${tail.join("\n    ")}` : ""));
+    };
+    /* THE CARD ITS PYTORCH CANNOT RUN. A CUDA build without this card's
+     * kernels (an RTX 50 under CUDA 12.6 or older) fails on the first tensor.
+     * The separation is run again on the processor, and so is every later one
+     * in this python until it may have changed; the stems setup is what fixes
+     * it for good. */
+    if (!r.spawnError && r.code !== 0 && !cpuSaved && !cpuSession && CUDA_ARCH_RE.test(r.stderr)) {
+      logTail(r);
+      const why = said(r).reverse().find((l) => CUDA_ARCH_RE.test(l)) || "no kernel image for this card";
+      this.stemsOnCpu = { python, epoch: stemsPythonEpoch(), why };
+      console.error(`  [stems] this python's PyTorch cannot run on the card (${why}); separating ${job.title} on the processor instead`);
+      r = await run(true);
+      if (job.cancelled && r.code !== 0) throw new Error(STOPPED_ERROR);
+    }
+    if (r.spawnError) {
+      logTail(r);
+      if (r.spawnError.code === "ENOENT") {
+        throw new Error(`The stem separation python is not at ${python}. Set it in ${STEMS_SETTING_WORDS}, or press "${STEMS_SETUP_BUTTON}".`);
+      }
+      throw new Error(`Could not start the stem separation python ${python} (${r.spawnError.code || r.spawnError.message}).`);
+    }
+    if (r.code !== 0) {
+      logTail(r);
+      if (/No module named ['"]?demucs\b/.test(r.stderr)) {
+        throw new Error(`${python} has no demucs (No module named 'demucs'). Press "${STEMS_SETUP_BUTTON}", or run: ${stemsPipLine(python)}`);
+      }
+      /* demucs 4.1 raises this after every model has run, when it comes to
+       * write the FLAC files and finds no ffmpeg (the doors' preflight says it
+       * before anything is queued; a job queued without one lands here). */
+      if (/requires ffmpeg to be installed/.test(r.stderr)) {
+        throw new Error(`demucs separated the song but could not write its FLAC files: the demucs in ${python} writes them with ffmpeg, and none was found on PATH or in AIPLAY_FFMPEG. `
+          + "Put ffmpeg on PATH, or name it in AIPLAY_FFMPEG, then start Studio again.");
+      }
+      const last = said(r).at(-1) || "it printed nothing";
+      throw new Error(r.signal && r.code === null
+        ? `demucs was stopped by ${r.signal}: ${last}`
+        : `demucs stopped with exit code ${r.code}: ${last}`);
+    }
 
     // demucs writes <out>/<model>/<track name without extension>/<stem>.flac
+    // (the model it was run with: a Settings change mid-run must not move the folder)
     const stem = job.file.replace(/\.(flac|mp3|opus|wav)$/i, "");
-    const dir = path.join(outRoot, config.stems.model, stem);
+    const dir = path.join(outRoot, model, stem);
     try {
       const names = await readdir(dir);
-      return names.filter((n) => n.endsWith(".flac")).map((n) => `${config.stems.model}/${stem}/${n}`);
+      return names.filter((n) => n.endsWith(".flac")).map((n) => `${model}/${stem}/${n}`);
     } catch {
       throw new Error("demucs wrote nothing where expected");
     }
@@ -2203,7 +2569,15 @@ export class ArtRunner extends EventEmitter {
         python: config.lyrics.python,
         // The interpreter scripts/extras_setup.mjs tells people to install
         // into; server/docs_test.js pairs that claim with this spawn.
-        launch: (argv, opts) => spawn(config.lyrics.python, argv, opts),
+        /* The program is kept on the job, so Stop kills its tree the way it
+         * kills a separation's (it had the same hole: whisper ran on after
+         * Stop). A stopped job starts nothing more, and that includes runLrc's
+         * second, CPU run after a GPU crash. Detached on POSIX for the group kill. */
+        launch: (argv, opts) => {
+          if (job.cancelled) throw Object.assign(new Error("stopped before it started"), { code: "STOPPED" });
+          const o = { ...opts, detached: process.platform !== "win32" };
+          return this.#adopt(job, this.spawnPython ? this.spawnPython(config.lyrics.python, argv, o) : spawn(config.lyrics.python, argv, o));
+        },
         script: LRC_SCRIPT,
         args,
         env: { ...process.env, AIPLAY_WHISPER_MODEL: config.lyrics.model },

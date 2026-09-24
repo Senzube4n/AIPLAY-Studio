@@ -93,6 +93,28 @@ const ACTOR = "agent:" + ((process.env.AIPLAY_AGENT || "mcp")
 /* ────────────────────────────────────────────────────────────── HTTP */
 
 /**
+ * ONE SENTENCE FOR A REFUSAL, the way an agent needs it.
+ *
+ * A door that says "this machine is not ready" answers 409 with the sentence
+ * and, when one button would fix it, `setup`: the id POST /api/setup
+ * {action:"run", id} takes. The page turns that into an Install dialog; an
+ * agent only gets the words, so the id is appended in words it can act on —
+ * never run: setup_feature downloads gigabytes, so it waits for the person's
+ * yes. `needsModel` (a catalogue row to download) keeps song_to_score's
+ * existing suffix. Everything else the body carries stays on the thrown error
+ * as `.cause.refusal` (and the HTTP status as `.cause.status`).
+ */
+export function refusalText(r) {
+  if (!r || typeof r !== "object") return String(r ?? "");
+  let text = String(r.error || "");
+  if (typeof r.setup === "string" && r.setup && !text.includes(`"${r.setup}"`)) {
+    text += ` Setup id: ${r.setup}. Call setup_feature {"id":"${r.setup}"} once the person agrees.`;
+  }
+  if (r.needsModel) text += ` (needsModel: ${r.needsModel})`;
+  return text;
+}
+
+/**
  * Call the Studio API.
  *
  * Uses node:http rather than fetch for one reason: a render can take minutes and
@@ -125,8 +147,15 @@ function api(method, path, body, timeoutMs = 120_000, media = null) {
           const text = Buffer.concat(chunks).toString("utf8");
           let parsed;
           try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 400) }; }
+          /* The refusal's own words, plus the setup id or model row that
+           * would fix it (refusalText), and the whole body kept on the error
+           * as its cause ({status, refusal}): a 409's setup/pip/python used to
+           * be dropped here. A safety 422 carries no setup, so its sentence
+           * reaches the agent unchanged (server/safety/doors_test pins this
+           * line's shape). */
           if (res.statusCode >= 400) {
-            reject(new Error(parsed?.error || `HTTP ${res.statusCode}`));
+            reject(new Error(parsed?.error ? refusalText(parsed) : `HTTP ${res.statusCode}`,
+              { cause: { status: res.statusCode, refusal: parsed } }));
             return;
           }
           resolve(parsed);
@@ -501,7 +530,18 @@ export const TOOLS = [
     description:
       "Every finished track, newest first: file name, title, length, and whether it already "
       + "has cover art, stems, timed lyrics or a video clip. Also returns generation warnings when recorded; "
-      + "an empty warning list does not certify lyric coverage or audio quality. Use the `file` value with the other tools.",
+      + "an empty warning list does not certify lyric coverage or audio quality. Use the `file` value with the other tools. "
+      + "`rights` says whether the song may be sold, worked out from the model catalogue as it is now: "
+      + "{ class (unrestricted | yours-with-conditions | not-for-sale | unknown), sellable, label, short, capability, "
+      + "licence, url, basis (licence | authors-statement | imported), add_ons (catalogue rows the song used that made it "
+      + "stricter), changed? (when the label moved, from what and why) }. YuE2 songs read \"Sellable by individuals (YuE2 "
+      + "authors' statement, 15 Sep 2026) · companies need a commercial licence\"; the licence file still reads CC BY-NC 4.0. "
+      + "A YuE2 song that used a not-for-sale add-on reads not-for-sale instead, and add_ons names it: a Mothersuperior "
+      + "LoRA (the instrumental planner LoRA included), or the real-audio tokenizer (a cover of a recording, a continued "
+      + "or section-replaced recording). An imported file with no engine reads basis \"imported\": Studio did not make it. "
+      + "`tagged`: true once the file's own tags (AI disclosure, attribution) were written, false while that is owed "
+      + "(a FLAC or MP3 is re-tagged by its next cover pass; a native YuE2 WAV is not retried automatically), "
+      + "null for songs from before this was recorded.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "integer", description: "How many to return (default 30)." } },
@@ -516,6 +556,13 @@ export const TOOLS = [
         has_lyrics: !!t.lrc, clip: t.clip || null,
         warnings: Array.isArray(t.warnings) ? t.warnings : [],
         generation_limits: t.generationLimits ?? null,
+        rights: t.rights && typeof t.rights === "object" ? {
+          class: t.rights.class, sellable: t.rights.sellable ?? null, label: t.rights.label ?? null,
+          short: t.rights.short ?? null, capability: t.rights.capability ?? null, licence: t.rights.licence ?? null,
+          url: t.rights.url ?? null, basis: t.rights.basis ?? null, add_ons: t.rights.addOns || [],
+          ...(t.rights.changed ? { changed: t.rights.changed } : {}),
+        } : null,
+        tagged: t.tagged ?? null,
       }));
     },
   },
@@ -536,7 +583,7 @@ export const TOOLS = [
       + "section tags on their own lines, the format YuE2 is trained on. YuE2 writes an editable score before the audio; length follows the "
       + "lyrics and the score, not max_seconds — max_seconds is a WISH there, which picks the "
       + "memory configuration and, past 360 s, raises the sampler's stop as an attempt.\n"
-      + "YuE2 GGUF: optional native audio.cpp backend, Q4_0 default or optional Q8_0. Install the chosen precision explicitly; never silently substitute. Non-commercial weights. "
+      + "YuE2 GGUF: optional native audio.cpp backend, Q4_0 default or optional Q8_0. Install the chosen precision explicitly; never silently substitute. Selling: the YuE2 authors say individuals may sell what it makes and companies need a commercial licence (15 Sep 2026); the weights' licence file reads CC BY-NC 4.0. "
       + "No duration wish, preview, audio reference, editable-score export or Python FP8 settings. "
       + "8 GB and 6 GB support is not established; test your hardware before relying on it.\n"
       + "Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
@@ -548,7 +595,7 @@ export const TOOLS = [
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
         lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (every engine). If you write them, write like a person: everyday words, concrete people, places and events, no forced rhymes, a plain repeating chorus, and none of the stock AI images (rooms, doors, floors, ceilings, seams, dreams, skies, neon, echoes, whispers, shadows, embers, souls, fire/desire)." },
         title: { type: "string" },
-        instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet — except on yue2-comfy with the instrumental planner LoRA on a loras shelf (Models screen), where the planner is patched to write a sectioned instrumental and the sheet becomes [instrumental] (its card: ended on its own 8 times out of 9)." },
+        instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet — except on yue2-comfy with the instrumental planner LoRA on a loras shelf (Models screen), where the planner is patched to write a sectioned instrumental and the sheet becomes [instrumental] (its card: ended on its own 8 times out of 9). That LoRA is Mothersuperior's CC BY-NC weights, so a song made with it is labelled not for sale (list_songs add_ons names it)." },
         seed: { type: "integer", description: "For repeatability, keep the model, precision, settings and all inputs the same; identical output is not guaranteed." },
         max_seconds: { type: "integer", description: "MiniMax: a ceiling, 30-300. YuE2: a wish, 30-600; the model may finish early or run long." },
         cot: { type: "string", enum: ["full", "melody", "off"], description: "YuE2 only. full = plan the whole score then sing (default); melody = plan the tune only; off = no plan. Ignored on MiniMax." },
@@ -571,7 +618,7 @@ export const TOOLS = [
         checkpoint: { type: "string", description: "yue2-comfy only: pin an installed YuE2 checkpoint for this request without changing the Music page selection." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
         lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy and ace-step15. 1 = as trained. Omit for the Music page's saved strength." },
-        lora_clip: { type: "string", description: "yue2-comfy only: a PLANNER LoRA filename in models/loras — patches the composer (the AR half, ComfyUI's CLIP side) rather than the audio model; the catalogued instrumental planner LoRA (ar_lora_inst_v3abc_comfyui.safetensors) is the one that exists. Omit for the Music page's saved choice; \"\" for none. With `instrumental` and nothing named, the instrumental planner LoRA is used when it is on a shelf." },
+        lora_clip: { type: "string", description: "yue2-comfy only: a PLANNER LoRA filename in models/loras — patches the composer (the AR half, ComfyUI's CLIP side) rather than the audio model; the catalogued instrumental planner LoRA (ar_lora_inst_v3abc_comfyui.safetensors) is the one that exists. Omit for the Music page's saved choice; \"\" for none. With `instrumental` and nothing named, the instrumental planner LoRA is used when it is on a shelf. A catalogued Mothersuperior LoRA (this one included) is CC BY-NC, so the song it makes is labelled not for sale, whatever YuE2's own label says." },
         lora_clip_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained (its card's setting). Omit for the saved strength." },
         cover_of: { type: "string", description: "COVER A REAL SONG (yue2, the Python kit, with the real-audio tokenizer installed): a library file name whose recording this performs. Send its score in `abc` as well — run song_to_score on the same file — and say the words in `lyrics` or set `instrumental`. The recording is read into YuE2's own tokens (once, kept) and the first seconds of it prime the render; the model then performs the SCORE in `caption`'s style. None of the original audio reaches the result, and the rights in the song it covers stay yours to clear." },
         cover_seconds: { type: "integer", minimum: 1, maximum: 30, description: "How many seconds of the original performance prime the render. Default 8. Longer is worse, not better: the tokenizer's codes are flatter than the model's own, so a long prime walks the sampler off its distribution and re-renders the original's arrangement under a caption asking for a different one." },
@@ -1032,16 +1079,16 @@ export const TOOLS = [
       + "recommended for covers; full: chords too). Then make_song with engine yue2 (or yue2-comfy), cot "
       + "melody, `abc` = that score, NEW lyrics if you like, and a NEW style line — 'male lead vocal' "
       + "where the original had a woman — and the melody is kept while everything else is re-rendered. "
-      + "Pass the recording as source {path | library_file | data_url}. Needs the catalogue's "
+      + "Pass the recording as source {path | library_file | data_url}, or just `library_file` for a song in the library. Needs the catalogue's "
       + "'Cover — SheetSage2 song-to-score' row installed (a 1.4 GB file); refused with needsModel "
       + "otherwise. Holds the card for the transcription. For a single hummed voice use hum_to_score, "
       + "which needs no model. The original song's rights are the caller's to check.",
     inputSchema: {
       type: "object",
-      required: ["source"],
       properties: {
         source: { type: "object", additionalProperties: true,
           description: "{ path: absolute local file } | { library_file: a name in the library } | { data_url: base64 audio, name? }" },
+        library_file: { type: "string", description: "A song in the library (list_songs), the same as source {library_file}. Give this or source." },
         mode: { type: "string", enum: ["melody", "full"], description: "melody (default, for covers) or full (melody and chords)." },
         stem: { type: "string", enum: ["mix", "vocals"],
           description: "vocals: transcribe the SEPARATED VOICE instead of the mix (library_file sources only) — the Studio's own demucs separation runs first when it is not on disk, about a minute. On a mix the transcriber can file the tune under the accompaniment; the stem gives it the melody that was sung. Default mix." },
@@ -1049,8 +1096,9 @@ export const TOOLS = [
       additionalProperties: false,
     },
     async run(a) {
-      const r = await api("POST", "/api/song_to_score", { source: a.source, mode: a.mode, stem: a.stem === "vocals" ? "vocals" : undefined });
-      if (r?.error) throw new Error(r.error + (r.needsModel ? ` (needsModel: ${r.needsModel})` : ""));
+      if (a.source === undefined && !a.library_file) throw new Error("Give source {path | library_file | data_url}, or library_file.");
+      const r = await api("POST", "/api/song_to_score", { source: a.source ?? (a.library_file ? { library_file: safeName(a.library_file, "song") } : undefined), mode: a.mode, stem: a.stem === "vocals" ? "vocals" : undefined });
+      if (r?.error) throw new Error(refusalText(r));
       return r;
     },
   },
@@ -1060,26 +1108,27 @@ export const TOOLS = [
     description:
       "Turn a hummed (or whistled, or sung) melody into the two-voice ABC score YuE2 takes verbatim: "
       + "a pitch tracker in the engine's own python, no model, no card. Pass the recording as source "
-      + "{path | library_file | data_url} — the three shapes music_input_prepare takes; an agent cannot "
-      + "record, so name a file. One to sixty seconds, one voice, nothing behind it. Returns `abc` plus "
+      + "{path | library_file | data_url} — the three shapes music_input_prepare takes — or just "
+      + "`library_file` for a song in the library; an agent cannot record, so name a file. One to sixty seconds, one voice, nothing behind it. Returns `abc` plus "
       + "the tempo, key, note and bar counts. Then make_song with engine yue2 (or yue2-comfy), cot "
       + "melody or full, `abc` = that score, and either `abc_open: true` — the planner continues the "
       + "hummed bars into a whole song — or omit it to sing exactly those bars. Tempo and key are "
       + "estimated from the recording and can be overridden.",
     inputSchema: {
       type: "object",
-      required: ["source"],
       properties: {
         source: { type: "object", additionalProperties: true,
           description: "{ path: absolute local file } | { library_file: a name in the library } | { data_url: base64 audio, name? }" },
+        library_file: { type: "string", description: "A song in the library (list_songs), the same as source {library_file}. Give this or source." },
         bpm: { type: "number", minimum: 40, maximum: 240, description: "Quarter-note tempo to quantise to; omit to beat-track the recording (falls back to 100)." },
         key: { type: "string", description: "ABC key such as Em, G, Bb; omit to estimate it." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      const r = await api("POST", "/api/hum", { source: a.source, bpm: a.bpm, key: a.key });
-      if (r?.error) throw new Error(r.error);
+      if (a.source === undefined && !a.library_file) throw new Error("Give source {path | library_file | data_url}, or library_file.");
+      const r = await api("POST", "/api/hum", { source: a.source ?? (a.library_file ? { library_file: safeName(a.library_file, "song") } : undefined), bpm: a.bpm, key: a.key });
+      if (r?.error) throw new Error(refusalText(r));
       return r;
     },
   },
@@ -3522,6 +3571,73 @@ export const TOOLS = [
       const r = await api("POST", "/api/lyrics", a.python === undefined ? { action: "python" } : { action: "python", value: a.python });
       if (r?.error) throw new Error(r.error);
       return r.lyrics;
+    },
+  },
+
+  {
+    name: "separate_stems",
+    description: "Split a library song into its four stems — vocals, drums, bass, other — with demucs (htdemucs_ft), "
+      + "the Studio's own separation: the Separate stems button on a song. It is queued behind music like cover art "
+      + "and returns at once with a job id; list_songs shows has_stems when it lands. htdemucs_ft runs four models in "
+      + "turn: measured here at about 12 s for a 30 s track on the graphics card; on a processor it is slower, by an "
+      + "amount not measured. The first run also fetches 336 MB of separation weights. A "
+      + "song that is already being separated is joined rather than queued twice. When the stem separation python "
+      + "lacks demucs or PyTorch it is refused at once by sentence, with setup id \"stems\": call setup_feature "
+      + "{\"id\":\"stems\"} once the person agrees, or name their own python with stems_python. stop_generation stops it.",
+    inputSchema: {
+      type: "object",
+      required: ["file"],
+      properties: { file: { type: "string", description: "The library file name (from list_songs)." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/stems", { action: "run", file: safeName(a.file, "song") });
+      if (r?.error) throw new Error(refusalText(r));
+      return {
+        job_id: r.jobId ?? null, joined: !!r.joined,
+        note: r.joined ? "This song was already being separated; that job is the one to wait for."
+          : "Queued. It starts when the music queue is empty; list_songs shows has_stems when it lands.",
+      };
+    },
+  },
+
+  {
+    name: "stop_generation",
+    description: "Stop what is generating for this person — the Stop button: the song rendering now and the songs "
+      + "queued behind it, the pictures, stems and timed lyrics queued behind those, and the one running among them. "
+      + "Other work on the engine (a chat turn, a friend's render, a gate run) keeps its place. Returns the song "
+      + "queue as it stands and art_stopped: how many queued jobs were dropped, what was running, and whether it is "
+      + "still stopping (a separation's process can take a moment to end; the Jobs page says \"stopping\" until it has).",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() {
+      const r = await api("POST", "/api/cancel", {});
+      if (r?.error) throw new Error(refusalText(r));
+      return {
+        art_stopped: r.artStopped ?? null,
+        current: r.current ? { id: r.current.id, title: r.current.title, state: r.current.state } : null,
+        queued: Array.isArray(r.queue) ? r.queue.length : 0,
+      };
+    },
+  },
+
+  {
+    name: "stems_python",
+    description: "Which Python stem separation (and the audio-reference encoder) run in, and whether it can: demucs "
+      + "needs demucs AND PyTorch in THAT interpreter, not the python on PATH. With no `python`, reports the "
+      + "interpreter, where it came from (the default, Settings, or AIPLAY_SYS_PYTHON), and whether both import. With "
+      + "`python` (the full path to an existing python.exe or bin/python), makes it the one stem separation uses, at "
+      + "once and across restarts: the same field as Settings > Songs > stem separation python. \"\" goes back to the "
+      + "default. AIPLAY_SYS_PYTHON, when set, still wins, and the answer says so. setup_feature {\"id\":\"stems\"} "
+      + "builds one instead.",
+    inputSchema: {
+      type: "object",
+      properties: { python: { type: "string", maxLength: 1024, description: "Optional: the full path of the python to use from now on; \"\" for the default." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/stems", a.python === undefined ? { action: "python" } : { action: "python", value: a.python });
+      if (r?.error) throw new Error(refusalText(r));
+      return r.stems;
     },
   },
 

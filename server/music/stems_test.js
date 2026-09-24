@@ -19,6 +19,9 @@ function ok(label, cond, detail = "") {
   if (cond) { pass++; console.log(`  ok    ${label}`); }
   else { failures.push(label); console.log(`  FAIL  ${label}${detail ? `\n          ${detail}` : ""}`); }
 }
+/* The stems python is not what §2 is about: every fake queue is paired with a
+ * preflight that says yes (stems_stop_test.js covers the real one). */
+const OK = async () => ({ ok: true });
 const eq = (label, got, want) => ok(label, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
 const src = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
@@ -37,12 +40,12 @@ console.log("\n§2  the wait, against a fake queue");
     const have = fake();
     const p = vocalStemPath("have.flac", { outputDir: dir });
     fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, "x");
-    const r0 = await ensureVocalStem("have.flac", { art: have, outputDir: dir });
+    const r0 = await ensureVocalStem("have.flac", { art: have, outputDir: dir, preflight: OK });
     ok("an existing stem comes back at once, without a job", r0.made === false && r0.path === p && have.requests.length === 0);
     // missing stem: request, then the event releases
     const q = fake();
     const p2 = vocalStemPath("make.flac", { outputDir: dir });
-    const pending = ensureVocalStem("make.flac", { art: q, outputDir: dir, timeoutMs: 5000 });
+    const pending = ensureVocalStem("make.flac", { art: q, outputDir: dir, timeoutMs: 5000, preflight: OK });
     await new Promise((r) => setTimeout(r, 10));
     eq("a missing stem queues a stems job for that file", [q.requests.length, q.requests[0]?.file, q.requests[0]?.kind], [1, "make.flac", "stems"]);
     q.emit("stems", { file: "other.flac", stems: ["x"] });
@@ -53,16 +56,16 @@ console.log("\n§2  the wait, against a fake queue");
     ok("...leaving no listener behind", q.listenerCount("stems") === 0);
     // empty separation
     const e = fake();
-    const pe = ensureVocalStem("empty.flac", { art: e, outputDir: dir, timeoutMs: 5000 });
+    const pe = ensureVocalStem("empty.flac", { art: e, outputDir: dir, timeoutMs: 5000, preflight: OK });
     await new Promise((r) => setTimeout(r, 10));
     e.emit("stems", { file: "empty.flac", stems: [] });
     ok("an empty separation refuses by sentence", await pe.then(() => false, (err) => /produced no stems/.test(err.message)));
     // refused queue
     const n = Object.assign(new EventEmitter(), { request: () => null });
-    ok("a queue that refuses is a refusal", await ensureVocalStem("no.flac", { art: n, outputDir: dir }).then(() => false, (err) => /refused to separate/.test(err.message)));
+    ok("a queue that refuses is a refusal", await ensureVocalStem("no.flac", { art: n, outputDir: dir, preflight: OK }).then(() => false, (err) => /refused to separate/.test(err.message)));
     // timeout
     const t = fake();
-    ok("a timeout refuses by sentence", await ensureVocalStem("slow.flac", { art: t, outputDir: dir, timeoutMs: 30 }).then(() => false, (err) => /did not finish within/.test(err.message)));
+    ok("a timeout refuses by sentence", await ensureVocalStem("slow.flac", { art: t, outputDir: dir, timeoutMs: 30, preflight: OK }).then(() => false, (err) => /did not finish within/.test(err.message)));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 

@@ -61,7 +61,7 @@ import {
   vramCardGib, PIPELINE_RESERVE_GIB,
   verifyArtifacts, ARTIFACTS, hoistPythonError, explainExit, PY_ERROR_RE,
   runYueDriver, killYueProcessTree, renderSong, DRIVER, DRIVER_ENV, THIRD_DOOR,
-  YUE_MODEL, YUE_CAP, YUE2_RIGHTS, catalogueRights, weightFiles,
+  YUE_MODEL, YUE_CAP, YUE2_RIGHTS, YUE2_LICENCE_READ, catalogueRights, weightFiles,
 } from "./yue.js";
 import { killMeshProcessTree } from "../mesh/runner.js";
 import { CATALOG, MODEL_TO_CAPABILITY } from "../models.js";
@@ -790,13 +790,19 @@ console.log("\nTHE RECORD, AND THE DOOR IT ADMITS TO BEING");
     d.wouldRefuse === null || (typeof d.wouldRefuse.code === "string" && d.wouldRefuse.why.length > 0),
     JSON.stringify(d.wouldRefuse)?.slice(0, 200));
 
-  /* ⚠ THE LICENCE REACHES THE OUTPUT HERE, unlike every other model in this
-   * tree — CC BY-NC's only grant that could cover a recording is "for
-   * NonCommercial purposes only" — so the verdict travels in every row. */
-  ok("the weights' licence travels in the record", d.record.rights.class === "not-for-sale",
+  /* THE RIGHTS TRAVEL IN EVERY ROW. Since 2026-09-24 the label follows the
+   * YuE2 authors' statement (sellable by individuals; companies need a
+   * commercial licence), and the licence file's own grant — "for
+   * NonCommercial purposes only" — rides beside it, verbatim, so neither can
+   * be read without the other. */
+  ok("the label travels in the record, and says whose words it follows",
+    d.record.rights.class === "yours-with-conditions" && d.record.rights.basis === "authors-statement",
     d.record.rights.class);
-  ok("...with the operative sentence verbatim rather than our summary",
-    /NonCommercial purposes only/.test(d.record.rights.quote), d.record.rights.quote?.slice(0, 80));
+  ok("...quoting the authors verbatim rather than our summary",
+    /Even making money from the outputs\./.test(d.record.rights.quote), d.record.rights.quote?.slice(0, 80));
+  ok("...with the licence file's operative sentence beside it",
+    /NonCommercial purposes only/.test(d.record.rights.licenceFile?.quote || "")
+    && d.record.rights.licenceFile?.name === "CC BY-NC 4.0", JSON.stringify(d.record.rights.licenceFile)?.slice(0, 120));
   ok("...and the record says WHICH file the verdict came from",
     /models\.js|yue\.js/.test(d.record.rightsSource || ""), d.record.rightsSource);
 
@@ -810,18 +816,24 @@ console.log("\nTHE RECORD, AND THE DOOR IT ADMITS TO BEING");
   if (cat) {
     ok("the catalogue's verdict is the one the record carries",
       d.record.rights === cat && /models\.js/.test(d.record.rightsSource), d.record.rightsSource);
-    ok("...and this file's independent reading of the same LICENSE agrees with it",
-      YUE2_RIGHTS.class === cat.class && YUE2_RIGHTS.sellable === cat.sellable,
-      `yue.js says ${YUE2_RIGHTS.class}, models.js says ${cat.class}`);
-    ok("...and both quote the same operative grant",
-      /NonCommercial purposes only/.test(cat.quote) && /NonCommercial purposes only/.test(YUE2_RIGHTS.quote));
+    ok("...and YUE2_RIGHTS, which the GGUF door carries, IS that row",
+      YUE2_RIGHTS === cat, `yue.js says ${YUE2_RIGHTS.class}, models.js says ${cat.class}`);
+    /* The independent reading of the FILE is kept, and the row must quote the
+     * file the way it reads: the grant this file quotes sits inside the
+     * catalogue's licenceFile quote, word for word. */
+    ok("...and this file's independent reading of the same LICENSE agrees with the row's licenceFile",
+      YUE2_LICENCE_READ.class === "not-for-sale" && typeof cat.licenceFile?.quote === "string"
+      && cat.licenceFile.quote.includes(YUE2_LICENCE_READ.quote),
+      `licenceFile quote: ${cat.licenceFile?.quote?.slice(0, 80)}`);
+    ok("...and the change is recorded, not silent",
+      cat.changed?.from === "not-for-sale" && cat.changed?.on === "2026-09-24", JSON.stringify(cat.changed));
     ok("...so stampRights fills outputRights from the row rather than from here",
       d.record.outputRights === undefined, JSON.stringify(d.record.outputRights));
   } else {
     ok("with no catalogue row the record sets outputRights itself — `unknown` would be worse",
       d.record.outputRights?.class === "not-for-sale", JSON.stringify(d.record.outputRights));
     ok("...and an admission that the conservative reading is a reading, not a verdict",
-      /not a verdict/.test(YUE2_RIGHTS.note));
+      /not a verdict/.test(YUE2_LICENCE_READ.note));
   }
 }
 {

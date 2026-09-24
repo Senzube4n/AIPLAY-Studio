@@ -42,6 +42,7 @@ import os
 import struct
 import sys
 import tempfile
+import time
 
 import av
 
@@ -49,6 +50,31 @@ import av
 # is always a full URI from this vocabulary — the form Google, Meta and the
 # C2PA action schema all read.
 IPTC_DST = "http://cv.iptc.org/newscodes/digitalsourcetype/"
+
+
+def replace_retrying(src: str, dst: str, tries: int = 12) -> None:
+    """os.replace, but survivable on Windows — server/fs-atomic.js's rule.
+
+    Replacing a file there fails (PermissionError, winerror 5 or 32) while
+    anyone holds the target open: a player still streaming the song, the
+    search indexer, antivirus. Those let go in milliseconds, so the same short
+    backoff as the Node side: 12 retries, min(10*(i+1), 120) ms each, about
+    0.8 s. Anything still failing after that is raised unchanged, and the
+    temporary copy is removed so a failed pass leaves nothing behind.
+    """
+    for i in range(tries + 1):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as exc:
+            transient = isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in (5, 32)
+            if not transient or i >= tries:
+                try:
+                    os.unlink(src)
+                except OSError:
+                    pass
+                raise
+        time.sleep(min(0.01 * (i + 1), 0.12))
 
 
 def probe(path: str) -> float:
@@ -248,7 +274,7 @@ def tag(path: str, meta: dict) -> float:
     # re-tagging pass silently restamps every old track as "just now" and
     # scrambles the library's chronology. That is exactly what the first cover
     # backfill did to eleven tracks here.
-    os.replace(tmp, path)
+    replace_retrying(tmp, path)
     os.utime(path, (stamp.st_atime, stamp.st_mtime))
     return probe(path)
 

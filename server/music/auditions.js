@@ -3,6 +3,8 @@
 import { mkdir, readFile, writeFile, rename, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
+/* The sidecar's rights words, from the catalogue at write time (library rows recompute them). */
+import { songRights, songRightsStamp } from "../models.js";
 import { randomUUID, randomInt, createHash } from "node:crypto";
 
 const active = new Set(["submitting", "queued", "generating", "composing", "cancelling"]);
@@ -54,16 +56,23 @@ export function createAuditionSourceInspector({ library, outputDir, yueReady, mi
 export async function finishReplacement({ job, receipt: h, library, store, append, hashFile, modelName }) {
   const isYue = job.engine === "yue2", at = isYue ? (job.fromSeconds || 0) : (job.resumeFrames || 0) / 25;
   const base = { rawFile: h.file, runId: job.runId ?? null, seed: h.seed, engine: job.engine || "minimax-music3" };
+  /* A replaced stretch of a RECORDING was read through the real-audio
+   * tokenizer, whose weights are not for sale: both files keep the marker
+   * songRights() reads, and the ledger row says so. */
+  const tokenized = job.tokenized ? { tokenized: job.tokenized } : {};
+  const stamp = songRightsStamp({ engine: base.engine, ...tokenized });
+  const words = songRights({ engine: "yue2", ...tokenized }).label;
   try {
     await store.result(job.id, { ...base, state: "composing" });
     library.remember(h.file, { title: h.title, caption: job.caption, lyrics: job.lyrics, seed: h.seed,
       engine: base.engine, model: job.model, steps: h.steps, durationSeconds: h.audioSeconds,
-      ...(isYue ? { yueDir: job.yue?.dir ?? null, cot: job.cot, quantization: job.quantization, rights: "CC BY-NC 4.0 — not for sale" } : { codes: h.codes }),
-      extendedFrom: job.extendedFrom, createdAt: Date.now() });
+      ...(isYue ? { yueDir: job.yue?.dir ?? null, cot: job.cot, quantization: job.quantization, rights: words } : { codes: h.codes }),
+      ...tokenized, extendedFrom: job.extendedFrom, createdAt: Date.now() });
     await append({ actor: job.actor, type: "generate", asset: h.file,
       data: { model: modelName, modelVersion: isYue ? "3B" : job.model || "int8", seed: h.seed,
         runId: job.runId ?? null, extendedFrom: job.extendedFrom, op: "replace-render",
-        params: { fromSeconds: at, toSeconds: job.replaceTo, cot: job.cot ?? null, narSteps: job.narSteps ?? null } } });
+        params: { fromSeconds: at, toSeconds: job.replaceTo, cot: job.cot ?? null, narSteps: job.narSteps ?? null },
+        ...(stamp ? { outputRights: stamp } : {}) } });
     const composed = await library.replaceSection(job.extendedFrom, h.file, at, job.replaceTo, { from: isYue ? at : 0, report: true });
     if (!composed?.file || !(composed.seconds > 0)) throw new Error("The replacement compositor returned no measured song.");
     const warnings = composed.shortfallSeconds > 0
@@ -72,8 +81,8 @@ export async function finishReplacement({ job, receipt: h, library, store, appen
       seed: h.seed, caption: job.caption, lyrics: job.lyrics, model: job.model, steps: h.steps, engine: base.engine,
       extendedFrom: job.extendedFrom, joinedAt: at, replacedTo: job.replaceTo,
       durationSeconds: composed.seconds, effectiveReplacedTo: composed.effectiveTo, shortfallSeconds: composed.shortfallSeconds,
-      replacementRaw: h.file, replacementRunId: base.runId, warnings, createdAt: Date.now(),
-      ...(isYue ? { rights: "CC BY-NC 4.0 — not for sale" } : {}) });
+      replacementRaw: h.file, replacementRunId: base.runId, warnings, createdAt: Date.now(), ...tokenized,
+      ...(isYue ? { rights: words } : {}) });
     await append({ actor: job.actor, type: "edit", asset: composed.file,
       data: { op: "replace-section", model: modelName, derivedFrom: h.file, original: job.extendedFrom,
         runId: base.runId, seed: h.seed, requestedFrom: at, requestedTo: job.replaceTo,

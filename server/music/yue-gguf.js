@@ -8,8 +8,24 @@ import * as provenance from "../provenance.js";
 import { TOOL, normalizeActor } from "../provenance.js";
 import { killMeshProcessTree, sha256File } from "../mesh/runner.js";
 import { YUE2_RIGHTS, refuseLyrics } from "./yue.js";
+import { outputRightsFor, rightsStampFor } from "../models.js";
 
 export const YUE_GGUF_MODEL = "yue2-gguf";
+
+/* THE RIGHTS A GGUF RENDER CARRIES: the catalogue's own row for this engine
+ * (musicYue2Gguf: the authors' statement, with its weights-vs-native-code
+ * note), and yue.js's reading of the licence file only when there is none. */
+function ggufRights() {
+  const r = outputRightsFor(YUE_GGUF_MODEL);
+  return r?.class && r.class !== "unknown" ? r : YUE2_RIGHTS;
+}
+/* The record's copy is the claim, not the whole page: the ledger appends the
+ * record twice per render (delegate, generate), and the verbatim quotes and
+ * notes stay in the catalogue, as models.js rightsStampFor says they must. */
+export function rightsForRecord(r) {
+  return { class: r.class, sellable: r.sellable ?? null, chip: r.chip || null, basis: r.basis || "licence", url: r.url || null,
+    ...(r.licenceFile ? { licenceFile: { name: r.licenceFile.name, url: r.licenceFile.url || null } } : {}) };
+}
 export const MIN_FREE_VRAM_MB = null; // Native peak memory has not been measured.
 export const killGgufProcessTree = killMeshProcessTree;
 export const YUE_GGUF_RUNTIME = Object.freeze({
@@ -216,7 +232,7 @@ export async function yueGgufStatus({ settings = SETTINGS(), statFn = stat, quan
   }));
   return { enabled: !!settings.enabled, installed: why.length === 0, cli, cliPresent,
     modelDir, threads: settings.threads, quantization, modelFile: variant.modelFile, weights, why, runtime: YUE_GGUF_RUNTIME,
-    rights: YUE2_RIGHTS, experimental: true, minimumVramMb: MIN_FREE_VRAM_MB };
+    rights: ggufRights(), experimental: true, minimumVramMb: MIN_FREE_VRAM_MB };
 }
 
 const FIELDS = new Set(["style", "lyrics", "cot", "seed", "narSteps", "cfg_scale", "abc", "id",
@@ -509,7 +525,7 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   const record = { runId, actor, via, appVersion: TOOL, model: YUE_GGUF_MODEL, models: [YUE_GGUF_MODEL],
     project: r.project ?? null, subject: r.subject ?? null, runtime: { ...YUE_GGUF_RUNTIME, backend, version: rt.version, cli: settings.cli, threads: settings.threads },
     weights: status.weights, quantization: r.quantization, modelFile: status.modelFile,
-    outputRights: YUE2_RIGHTS, rights: YUE2_RIGHTS, dir, generationLimits,
+    outputRights: rightsStampFor(YUE_GGUF_MODEL), rights: rightsForRecord(ggufRights()), dir, generationLimits,
     args: { style: r.style, lyricsChars: r.lyrics.length, lyricsSha256: digestText(r.lyrics), cot: r.cot,
       seed: r.seed, quantization: r.quantization, num_inference_steps: r.narSteps, cfg_scale: r.cfg_scale ?? null,
       abcChars: r.abc?.length ?? 0, abcSha256: r.abc ? digestText(r.abc) : null,
@@ -593,7 +609,7 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
     return { ok: true, runId, status: "completed", out: output, dir, receipt, ...audio, sha256, elapsedSec,
       quantization: r.quantization, modelFile: status.modelFile, generationLimits, warnings,
       realtimeRatio: elapsedSec ? audio.audioSeconds / elapsedSec : null,
-      rights: YUE2_RIGHTS, record: data, ledger: { delegate, generate } };
+      rights: ggufRights(), record: data, ledger: { delegate, generate } };
   } catch (error) {
     error.runId = runId;
     error.dir = dir;

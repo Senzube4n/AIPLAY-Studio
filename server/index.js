@@ -49,6 +49,7 @@ import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-
 import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
+import { isNativeLibraryWav } from "./library-wav.js";
 import { BatchRunner, plannedSongs } from "./batch.js";
 import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
@@ -65,7 +66,7 @@ import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf } from "./models.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -302,6 +303,9 @@ import { createMusicInputRoutes } from "./music-input.js";
  * kept uv, and Studio's own packages again in an engine Studio installed. */
 import { createSetupRunner } from "./setup/venv.js";
 import { createEnginePackagesRunner } from "./setup/engine-packages.js";
+/* Read through the namespace, not by name: engineModuleRefusal (lane D) is
+ * called only when the module carries it, so this file loads either way. */
+import * as enginePackages from "./setup/engine-packages.js";
 import { createSetupRoutes, oneRunner } from "./setup/routes.js";
 import { createMusicPlanRoutes } from "./music-plan.js";
 import { createAvatarRoutes, createAvatarService } from "./mesh/avatar.js";
@@ -352,12 +356,18 @@ import { quarantineTake } from "./collab/quarantine.js";
 /* One reading of a Range header for the take door and /api/clip; each used to
  * carry its own copy, and both misread a suffix range. */
 import { byteRange } from "./byterange.js";
+/* The audio door's sender: closes the song's handle when the player hangs up. */
+import { sendFile } from "./sendfile.js";
 import { scanInbox } from "./collab/inbox.js";
 import { createProject as createMvProject, updateProject as updateMvProject } from "./mv/store.js";
 import { anyRunning as plansRunningNow } from "./mv/planrun.js";
 import { readProject as readMvProject, assetsDir as mvAssetsDir } from "./mv/store.js";
 import { songToScore } from "./music/cover.js";
 import { ensureVocalStem, ensureStem, STEMS } from "./music/stems.js";
+/* The stems preflight and its cache (lane C), and the stems-python choice in
+ * config.js (lane C), read through namespaces for the same reason. */
+import * as stemsLib from "./music/stems.js";
+import * as configLib from "./config.js";
 import { seedScore } from "./music/seed.js";
 import { appVersion, versionLine } from "./version.js";
 import { checkUpdates, lastCheck, updateSentence } from "./updates.js";
@@ -551,6 +561,12 @@ art.on("cover", async ({ file, covers, thumbs, runId }) => {
  * second pass never drops a field the first one set.
  */
 async function embedCover(file, coverName) {
+  /* ⚠ A NATIVE YuE2 WAV CANNOT HOLD A PICTURE. RIFF INFO has no image field
+   * (library-wav.js says so in its first line), so "embedding" the cover
+   * rewrote a 30 MB WAV to add nothing — and on a song somebody was playing,
+   * failed with EPERM and a warning on the console. The cover is already in
+   * the sidecar; nothing is written here. */
+  if (isNativeLibraryWav(file)) return { ok: true, cover: false, skipped: "native-wav" };
   const m = library.meta.get(file) || {};
   const meta = {
     title: m.title, caption: m.caption, lyrics: m.lyrics,
@@ -560,9 +576,14 @@ async function embedCover(file, coverName) {
     date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
     // The re-tag must not drop the marker or the record the first pass wrote.
     ...(await songProvMeta(file)),
+    ...songCredit(file),
   };
   const res = await library.tagFile(file, meta, path.join(COVER_DIR, coverName));
   if (res?.cover) library.remember(file, { coverEmbedded: true });
+  /* This pass rewrites every tag the first one wrote, so it also settles a
+   * first pass that failed (tagPending). */
+  if (res?.ok === true) library.remember(file, { taggedAt: Date.now(), tagPending: null });
+  else if (res?.ok === false) console.error(`  cover embed for ${file} left the tags as they were: ${res.error || "no reason given"}`);
   return res;
 }
 art.on("stems", ({ file, stems }) => {
@@ -1182,13 +1203,15 @@ async function videoWeightsGate() {
  * which on this stack is the difference between fused CUDA kernels and a
  * silently 5x slower app.
  */
-const SYSTEM_PYTHON = process.env.AIPLAY_SYS_PYTHON
-  || path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "python.exe");
+/* ⚠ NO SECOND COPY OF THE STEMS PYTHON. A constant here used to hold the
+ * Python310 default, and the Models screen named it as "the python" even after
+ * Settings (or AIPLAY_SYS_PYTHON) had chosen another: config.systemPython is
+ * the interpreter art.js spawns, so it is the one probed and the one named. */
 let packageCache = null;
 // Each package is probed in the interpreter that RUNS it, or the answer is about
 // nothing: demucs runs from config.systemPython (art.js), faster_whisper from
-// config.lyrics.python (art.js), and those may differ from each other and from
-// SYSTEM_PYTHON. The Models screen once reported faster_whisper present in an
+// config.lyrics.python (art.js), and those may differ from each other. The
+// Models screen once reported faster_whisper present in an
 // interpreter that never launches it. `probed` says which python answered.
 //
 // BOTH modules lrc.py imports, in the lyrics interpreter. Probing only
@@ -1197,7 +1220,7 @@ let packageCache = null;
 // written out here because welcome/catalogue_test.js reads these literals; it
 // must equal the catalogue's `needsModules` for "lyrics", which lrc_test.js pins.
 const PACKAGE_PROBES = () => {
-  const sys = config.systemPython || SYSTEM_PYTHON;
+  const sys = config.systemPython;
   const groups = new Map();
   const add = (py, m) => groups.set(py, [...(groups.get(py) || []), m]);
   for (const m of ["demucs", "torch", "av", "numpy"]) add(sys, m);
@@ -1372,7 +1395,11 @@ jobs.on("update", async (snap) => {
           codes: chained || h.codes,
           ...(isYueExt ? {
             engine: "yue2", yueDir: job.yue?.dir ?? null, cot: job.cot || "full",
-            quantization: job.quantization || "none", rights: "CC BY-NC 4.0 — not for sale",
+            quantization: job.quantization || "none",
+            rights: songRights({ engine: "yue2", tokenized: job.tokenized || null }).label,
+            /* A continued RECORDING was read through the real-audio tokenizer
+             * (not for sale); songRights() finds that by this marker. */
+            ...(job.tokenized ? { tokenized: job.tokenized } : {}),
           } : {}),
           extendedFrom: job.extendedFrom,
           // WHERE the model rejoined, so this take's own new material can later
@@ -1389,9 +1416,13 @@ jobs.on("update", async (snap) => {
           /* `runId` is the EXTENSION's render, which is the only one that
             * happened here — the join itself is a splice on disk, not a
             * render. Saying so beats leaving the field out. */
-          data: { model: "MiniMax-Music3", modelVersion: job.model || "int8",
+          /* The engine that rendered the new part: this said MiniMax-Music3
+           * for a YuE2 continuation too, so the ledger stamped a YuE2 join
+           * with MiniMax's rights. A tokenized recording's join says so. */
+          data: { model: modelName, modelVersion: isYueExt ? "3B" : (job.model || "int8"),
                   op: "extend-join", extendedFrom: job.extendedFrom, joinedAt: at,
-                  runId: job.runId ?? null },
+                  runId: job.runId ?? null,
+                  ...songOutputRights({ engine: job.engine, tokenized: job.tokenized }) },
         });
       }
     } catch (err) {
@@ -1459,6 +1490,9 @@ jobs.on("update", async (snap) => {
          * A local render's runId leads to the graph, both cfgs, the model
          * files and the wall time. */
         runId: job.runId ?? null,
+        /* Stricter than the model when an add-on made it so (a Mothersuperior
+         * LoRA, the tokenizer): the ledger and the library row then agree. */
+        ...songOutputRights({ engine: job.engine || "minimax-music3", lora: job.lora, loraClip: job.loraClip, tokenized: job.tokenized }),
       },
     });
   }
@@ -1489,7 +1523,9 @@ jobs.on("update", async (snap) => {
         artifactSource: job.artifactSource, artifactSourceRunId: job.artifactSourceRunId } : {}),
       scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
       durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
-      rights: "CC BY-NC 4.0 — not for sale",
+      /* The words at write time, from the catalogue (models.js songRights);
+       * library rows recompute them, so a later change still reaches this song. */
+      rights: songRights({ engine: job.engine, tokenized: job.tokenized || null }).label,
     } : {}),
     ...(isAce ? {
       aceDit: job.aceDit || null, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature,
@@ -1507,12 +1543,17 @@ jobs.on("update", async (snap) => {
        * Instrumental switch picks by itself, which is why this matters more
        * than the line above it. */
       loraClip: job.loraClip || null, loraClipStrength: job.loraClip ? (job.loraClipStrength ?? 1) : null,
-      rights: "CC BY-NC 4.0 — not for sale",
+      rights: songRights({ engine: "yue2-comfy", lora: job.lora, loraClip: job.loraClip }).label,
     } : {}),
     /* WHICH RECORDING THIS IS A COVER OF. Lineage only — nothing splices on
      * it, unlike extendedFrom — and the rights in the song it covers stay the
      * caller's to clear, which no field here can do for them. */
     ...(job.coverOf ? { coverOf: job.coverOf, coverSeconds: job.fromSeconds || null, tokenized: job.tokenized || null } : {}),
+    /* A continued or section-replaced RECORDING, and any take extended from
+     * one, was read through the real-audio tokenizer too, and its weights are
+     * not for sale: songRights() finds that by this marker. It used to be kept
+     * for covers only, so those songs read "Sellable by individuals". */
+    ...(job.tokenized && !job.coverOf ? { tokenized: job.tokenized } : {}),
     caption: job.caption,
     // Kept so the song panel can show what actually produced the track. It is in
     // the FLAC tags too, but reading tags back per row would mean a subprocess
@@ -1555,9 +1596,23 @@ jobs.on("update", async (snap) => {
         // Tier-1 marker specifics + (toggle-governed) Tier-2 ledger summary.
         ...(await songProvMeta(h.file)),
       };
+    /* The model's credit line (YuE2: the authors, the statement, the licence
+     * file) rides in the file itself as ATTRIBUTION/COPYRIGHT (ICOP on a WAV). */
+    Object.assign(meta, songCredit(h.file));
     const info = await library.tagFile(h.file, meta);
     if (info?.seconds) library.remember(h.file, { durationSeconds: Math.round(info.seconds) });
-  } catch { /* never lose a track over a tag */ }
+    if (info?.ok !== true) throw new Error(info?.error || "the tagger gave no answer (is the engine's python there?)");
+    library.remember(h.file, { taggedAt: Date.now(), tagPending: null });
+  } catch (err) {
+    /* ⚠ NEVER LOSE A TRACK OVER A TAG — BUT SAY SO. This used to be an
+     * empty catch, so a locked file (the audio door's leak, antivirus) left a
+     * song with no AI disclosure and no attribution in its tags and nobody was
+     * told. It is logged, and the sidecar remembers it: list_songs reports
+     * `tagged: false` until a later pass (the cover's) writes them. */
+    const why = String(err?.message || err).slice(0, 300);
+    console.error(`  tags not written for ${h.file}: ${why}`);
+    library.remember(h.file, { tagPending: { at: Date.now(), error: why } });
+  }
 
   filedMusicJobs.add(job.id);
 
@@ -2386,6 +2441,176 @@ async function readBody(req, maxBytes = 0) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 }
 
+/* ── REFUSALS THAT CARRY THEIR REMEDY ─────────────────────────────────────
+ *
+ * 409 means "this machine is not ready": a python, a module or a model is
+ * missing. The sentence says what and where; when one button would fix THIS
+ * machine the reply also names it (`setup`, the id POST /api/setup takes),
+ * so the page can offer an Install dialog (offerSetup) and an agent can name
+ * setup_feature, instead of both being handed a bare sentence — which is how a
+ * person ended up hunting for the engine's venv to pip into by hand. Every door
+ * that relays an error from hum.js, tokenize.js, stems.js or a python spawn
+ * spreads refusalFields(e): only the keys the error actually carries. */
+const REFUSAL_KEYS = ["setup", "pip", "python", "module", "reason"];
+function refusalFields(e) {
+  const out = {};
+  if (!e || typeof e !== "object") return out;
+  for (const k of REFUSAL_KEYS) if (typeof e[k] === "string" && e[k]) out[k] = e[k];
+  return out;
+}
+/** The error's own HTTP status when it names one (400-599), else the door's. */
+function refusalStatus(e, fallback) {
+  const n = Number(e?.status);
+  return Number.isInteger(n) && n >= 400 && n <= 599 ? n : fallback;
+}
+/** A stem that could not be made. A refusal (409: no demucs here, a stopped
+ *  separation) says its own sentence and carries its setup id; any other
+ *  failure says which stem. */
+function stemFailure(e, stem, extra = {}) {
+  if (refusalStatus(e, 0) === 409) return { status: 409, body: { error: e.message, ...extra, ...refusalFields(e) } };
+  return { status: 500, body: { error: `The ${stem} stem could not be separated: ${e?.message || e}`, ...extra, reason: "stem-failed" } };
+}
+/**
+ * A python that died on a missing module, as a refusal (setup/engine-packages.js
+ * engineModuleRefusal): which module, the pip line for THAT python, and the
+ * "studio-packages" setup id when Studio installed that engine itself. Null
+ * when the text names no missing module (or before that helper exists), and
+ * the caller keeps its own sentence.
+ */
+async function moduleRefusal(stderr, feature, python = config.python) {
+  const read = enginePackages.engineModuleRefusal;
+  if (typeof read !== "function") return null;
+  const r = await read({ stderr: String(stderr || ""), feature, rig: config.rig, python }).catch(() => null);
+  return r ? Object.assign(new Error(r.message), r) : null;
+}
+/** An image-editor door's failure: a missing-module refusal speaks for itself
+ *  (409, with its setup id); anything else keeps the door's own sentence. */
+function imageFailure(res, err, status, error) {
+  if (refusalStatus(err, 0) === 409) return json(res, 409, { error: err.message, ...refusalFields(err) });
+  return json(res, status, { error });
+}
+/** The warm image worker's failure as a refusal when it names a missing
+ *  module: a worker that died on `import imagetools` (cv2) carries its stderr
+ *  tail, a lazy import inside the engine (scipy) its own sentence. An error
+ *  that is already a refusal, or names no module, comes back as it was. */
+async function imageRefusal(err) {
+  if (refusalStatus(err, 0) === 409) return err;
+  return (await moduleRefusal(err?.stderr || err?.message, "The image editor", config.python)) || err;
+}
+
+/* ── STEM SEPARATION'S PYTHON ─────────────────────────────────────────────
+ *
+ * config.systemPython is the interpreter art.js spawns for demucs (and the
+ * audio-reference encoder). Settings > Songs > "stem separation python" and the
+ * stems setup choose it through chooseStemsPython(); AIPLAY_SYS_PYTHON still
+ * wins when set. The resolution itself (env, then saved, then the Python310
+ * default) is config.js's (lane C); until it is there, the same order is kept
+ * here with the interpreter Studio started with as the default. */
+const BOOT_SYSTEM_PYTHON = config.systemPython;
+const STEMS_MODULES = ["demucs", "torch"];
+const stemsPythonSource = () => (typeof configLib.systemPythonSource === "function"
+  ? configLib.systemPythonSource()
+  : process.env.AIPLAY_SYS_PYTHON ? "env" : config.stems?.systemPython ? "saved" : "default");
+const defaultStemsPython = () => (typeof configLib.defaultSystemPython === "function" ? configLib.defaultSystemPython() : null);
+/** Can stem separation run here? C1's preflight: demucs and torch in the stems
+ *  python, cached 30 s, a missing file answered without spawning. */
+async function stemsReady() {
+  if (typeof stemsLib.stemsPreflight !== "function") return { ok: true, python: config.systemPython };
+  return stemsLib.stemsPreflight();
+}
+/** Choose the stems python (a path, or null for the default), at once and across restarts. */
+async function chooseStemsPython(value) {
+  config.stems.systemPython = value || null;
+  config.systemPython = typeof configLib.systemPython === "function"
+    ? configLib.systemPython(config.stems.systemPython)
+    : (process.env.AIPLAY_SYS_PYTHON || config.stems.systemPython || BOOT_SYSTEM_PYTHON);
+  packageCache = null; // the Models screen probes the new interpreter on its next read
+  if (typeof stemsLib.clearStemsPreflight === "function") stemsLib.clearStemsPreflight();
+  await savePrefs();
+}
+/** The stems setup (setup/venv.js RECIPES.stems) would change nothing while
+ *  AIPLAY_SYS_PYTHON names the interpreter: refused up front, in the words
+ *  Settings uses. */
+function stemsBlockedBy(id) {
+  if (id !== "stems" || !process.env.AIPLAY_SYS_PYTHON) return null;
+  return `AIPLAY_SYS_PYTHON is set, so stems run in ${config.systemPython} whatever Studio builds. `
+    + "Install demucs there, or remove the variable and start Studio again to use the button.";
+}
+/** A finished stems build becomes the stem separation python the way the
+ *  Settings field chooses one, and the preflight's cache is cleared so the
+ *  next Separate stems sees it at once. */
+async function saveStemsBuild(py) {
+  await chooseStemsPython(py);
+  return { note: `Stem separation now runs in ${py}.` };
+}
+/**
+ * POST /api/stems {action:"python"}: Settings > Songs > "stem separation
+ * python" and the stems_python tool, the twin of /api/lyrics "python". No
+ * `value` reports; a path chooses it (at once: art.js reads
+ * config.systemPython at every spawn); "" or null goes back to the default.
+ * The answer probes demucs and PyTorch in THAT python. Setting it names a
+ * program Studio will run, so only Studio's page or a local client may.
+ */
+async function answerStemsPython(req, res, b) {
+  if (b.value !== undefined) {
+    if (!sameOriginLocalJson(req)) {
+      return json(res, 403, { error: "Choosing the stem separation python requires a same-origin local JSON request." });
+    }
+    // Explorer's "Copy as path" wraps the path in quotes; take it as pasted.
+    const raw = b.value === null ? "" : String(b.value).trim().replace(/^"(.*)"$/, "$1").trim();
+    if (raw) {
+      /* A UNC or device path (\\server\share, \\?\, \\.\) would run a
+       * program off another machine. A python lives on a local disk. */
+      if (/^[\\/]{2}/.test(raw)) {
+        return json(res, 400, { error: "Choose a python on this computer's own disk, not a network or device path." });
+      }
+      if (!path.isAbsolute(raw) || /[\r\n\0]/.test(raw) || raw.length > 1024) {
+        return json(res, 400, { error: `Give the full path to the python, for example ${defaultStemsPython() || "C:\\Users\\you\\AppData\\Local\\Programs\\Python\\Python310\\python.exe"}.` });
+      }
+      let st = null;
+      try { st = await stat(raw); } catch { /* answered below */ }
+      if (!st?.isFile()) return json(res, 400, { error: `There is no file at ${raw}.` });
+    }
+    await chooseStemsPython(raw ? path.resolve(raw) : null);
+  }
+  return json(res, 200, { ok: true, stems: await stemsVerdict() });
+}
+/** What Settings, the stems_python tool and a finished setup say about it. */
+async function stemsVerdict() {
+  const py = config.systemPython;
+  let there = false;
+  try { there = (await stat(py)).isFile(); } catch { /* answered below */ }
+  const got = there ? await probeOne(py, STEMS_MODULES).catch(() => ({})) : {};
+  const modules = Object.fromEntries(STEMS_MODULES.map((m) => [m, !!got[m]]));
+  const ready = STEMS_MODULES.every((m) => modules[m]);
+  const source = stemsPythonSource();
+  const missing = STEMS_MODULES.filter((m) => !modules[m]).map((m) => (m === "torch" ? "PyTorch" : m));
+  const note = !there
+    ? `There is no python at ${py}. Press "Set up stem separation", or name your own python here.`
+    : ready ? `Stem separation runs in ${py}: demucs and PyTorch both import.`
+    : `${py} lacks ${missing.join(" and ")}. Press "Set up stem separation", or install into it: "${py}" -m pip install demucs`;
+  return {
+    python: py, chosen: config.stems?.systemPython || null, source, defaultPython: defaultStemsPython(),
+    modules, ready,
+    note: source === "env" ? `${note} AIPLAY_SYS_PYTHON names this python, so the field and a Studio-built python are not used while it is set.` : note,
+  };
+}
+/** The credit line a song's own tags carry (models.js songRights): the
+ *  engine's attribution — YuE2's names the authors and the licence file — and
+ *  a not-for-sale add-on's licence. Nothing for an engine that asks for none. */
+function songCredit(file) {
+  const r = songRights(library.meta.get(file) || {}, { parentOf: (f2) => library.meta.get(f2) });
+  return r.attribution ? { attribution: r.attribution } : {};
+}
+
+/** The ledger's rights for a song when an add-on made it stricter than its
+ *  model (models.js songRightsStamp), as a generate event's `outputRights`;
+ *  nothing otherwise, and provenance.js stamps the model's own row. */
+function songOutputRights(meta) {
+  const stamp = songRightsStamp(meta || {}, { parentOf: (f2) => library.meta.get(f2) });
+  return stamp ? { outputRights: stamp } : {};
+}
+
 /* The close handler for an engine that speaks {ok:false, error} on STDOUT and
  * then exits 1 (imgdoc.py, imgexport.py — both wrap main in exactly that).
  * Rejecting on the exit code before reading stdout is how the CLI's full
@@ -2397,9 +2622,19 @@ function engineClose(resolve, reject, so, se, code, tailBytes = 400) {
   if (code === 0 && tail) return resolve(tail);
   try {
     const r = JSON.parse(tail);
-    if (r && r.ok === false && r.error) return reject(new Error(r.error));
+    if (r && r.ok === false && r.error) {
+      /* The engine's own sentence comes first; a lazy import that failed
+       * inside it (scipy for curves) still becomes the refusal. */
+      const said = new Error(r.error);
+      return void moduleRefusal(r.error, "The image editor", config.python).then((m) => reject(m || said), () => reject(said));
+    }
   } catch { /* no JSON on stdout — the engine died before answering */ }
-  reject(new Error(se.trim().slice(-tailBytes) || `exit ${code}`));
+  /* A crash on a missing module (cv2, scipy…) becomes the engine-package
+   * refusal: status 409, the pip line for the python that ran, and Studio's
+   * Install setup id when it built that engine. Every caller is an image-editor
+   * door, and imageFailure() passes those fields on. */
+  const plain = new Error(se.trim().slice(-tailBytes) || `exit ${code}`);
+  moduleRefusal(se, "The image editor", config.python).then((r) => reject(r || plain), () => reject(plain));
 }
 
 /* The studio runs unattended for hours. A single unhandled rejection anywhere
@@ -2508,12 +2743,13 @@ const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, run
   appData: config.dataDir,
   vendor: () => gpuStatus()?.vendor || vendorOf(config.gpu, config.torchBackend),
   probe: (py, mods) => probeOne(py, mods),
-  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : null),
+  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : id === "stems" ? config.systemPython : null),
   blockedBy: (id) => (id === "lyrics" && process.env.AIPLAY_WHISPER_PYTHON
     ? `AIPLAY_WHISPER_PYTHON is set, so timed lyrics run in ${config.lyrics.python} whatever Studio builds. `
       + "Install faster-whisper and stable-ts there, or remove the variable and start Studio again to use the button."
-    : null),
+    : stemsBlockedBy(id)),
   save: async (id, py) => {
+    if (id === "stems") return saveStemsBuild(py);
     if (id !== "lyrics") return null;
     config.lyrics.whisperPython = py;
     config.lyrics.python = whisperPython();
@@ -3074,7 +3310,9 @@ const server = http.createServer(async (req, res) => {
           paths: { outputDir: config.outputDir, rig: config.rig },
           siteSessions: config.community.sessions,
           output: config.output,
-          stems: config.stems,
+          /* The stems python beside the setting, as Settings > Songs shows it:
+           * the one that runs, where it came from, and the default. */
+          stems: { ...config.stems, python: config.systemPython, pythonSource: stemsPythonSource(), defaultPython: defaultStemsPython() },
           lyrics: {
             when: config.lyrics.when, model: config.lyrics.model,
             // Settings > Songs shows the interpreter that will run, and the one
@@ -3349,7 +3587,7 @@ const server = http.createServer(async (req, res) => {
          * the single definition in fit.js. web/modelfit.js renders these and
          * writes none of its own; server/modelfit_test.js fails if it starts. */
         fitStates: FIT_STATES,
-        python: { path: SYSTEM_PYTHON, packages: pkgs, probed: probedBy },
+        python: { path: config.systemPython, packages: pkgs, probed: probedBy },
         /* The models folder, every folder the engine loads from, and what is in
          * them — so a file the catalogue does not name is still visible, and can
          * stand in for one it does. */
@@ -3563,6 +3801,11 @@ const server = http.createServer(async (req, res) => {
             cfg: m.cfg, shift: config.sampling.shift, model: m.model || "int8",
             date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
             ...(await songProvMeta(src)),
+            /* ⚠ THE CREDIT TRAVELS WITH THE EXPORT. The conversion writes a
+             * fresh container, and this re-tag used to carry no attribution,
+             * so an MP3 or FLAC of a YuE2 song left Studio without the model's
+             * name or its licence in COPYRIGHT/ATTRIBUTION. */
+            ...songCredit(src),
           };
           const tagRes = await library.tagFile(rel, meta);
           embedded = tagRes?.ok ? "tags" : null;
@@ -3798,7 +4041,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, out);
       } catch (err) {
         if (err?.safety) return json(res, 422, bodyOfError(err));
-        return json(res, 400, { error: String(err.message || err) });
+        /* The drum stem's refusal (no demucs here) keeps its 409 and setup id. */
+        return json(res, refusalStatus(err, 400), { error: String(err.message || err), ...refusalFields(err) });
       }
     }
 
@@ -4236,7 +4480,8 @@ const server = http.createServer(async (req, res) => {
               const got = await ensureStem(coverFile, coverStem, { art, outputDir: config.outputDir, actor: prov.actorFrom(req) });
               coverSource = got.path;
             } catch (e) {
-              return json(res, 500, { error: `The ${coverStem} stem could not be separated: ${e?.message || e}`, engine: musicEngine, reason: "stem-failed" });
+              const fail = stemFailure(e, coverStem, { engine: musicEngine });
+              return json(res, fail.status, fail.body);
             }
           }
           const busy = await engineDoor.status().then((s) => (s.running || []).length > 0).catch(() => true);
@@ -4245,7 +4490,7 @@ const server = http.createServer(async (req, res) => {
             coverCodes = r.dir;
             coverTokenized = { frames: r.frames, seconds: r.seconds, device: r.device, cached: !!r.cached, stem: coverStem };
           } catch (e) {
-            return json(res, e?.status || 500, { error: e?.message || String(e), engine: musicEngine, reason: e?.reason || "tokenizer-failed" });
+            return json(res, e?.status || 500, { error: e?.message || String(e), engine: musicEngine, reason: e?.reason || "tokenizer-failed", ...refusalFields(e) });
           }
           /* The render is prime + new, so the memory plan and the sampler's
            * stop are sized on the total rather than on the new part alone. */
@@ -4558,7 +4803,14 @@ const server = http.createServer(async (req, res) => {
      * make_song's `abc`; the cover itself is then an ordinary render under a
      * new style line. */
     if (p === "/api/song_to_score" && req.method === "POST") {
-      const b = await readBody(req);
+      /* It runs the transcriber on a path the body names and can start a
+       * separation: only Studio's own page or a local client may ask. */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Song to score is only accepted from Studio's own page or a local client." });
+      let b;
+      try { b = await readBody(req, 72 * 1024 * 1024); } catch (err) {
+        if (err.tooBig) return json(res, 413, { error: `That song is too large to send (${err.message}). Send a library song by name (source.library_file) or a path on this PC instead.` });
+        return json(res, 400, { error: "could not read that body as JSON" });
+      }
       try {
         let source = b.source;
         let stemUsed = null;
@@ -4580,7 +4832,7 @@ const server = http.createServer(async (req, res) => {
         const r = await songToScore({ source, mode: b.mode || "melody", engine: engineDoor, actor: prov.actorFrom(req) });
         return json(res, 200, { ok: true, ...r, ...(stemUsed ? { stem: stemUsed } : {}) });
       } catch (e) {
-        return json(res, e?.status || 400, { error: e?.message || String(e), ...(e?.needsModel ? { needsModel: e.needsModel } : {}) });
+        return json(res, e?.status || 400, { error: e?.message || String(e), ...(e?.needsModel ? { needsModel: e.needsModel } : {}), ...refusalFields(e) });
       }
     }
 
@@ -4799,7 +5051,8 @@ const server = http.createServer(async (req, res) => {
           const got = await ensureStem(file, stem, { art, outputDir: config.outputDir, actor: prov.actorFrom(req) });
           source = got.path;
         } catch (e) {
-          return json(res, 500, { error: `The ${stem} stem could not be separated: ${e?.message || e}`, reason: "stem-failed" });
+          const fail = stemFailure(e, stem);
+          return json(res, fail.status, fail.body);
         }
       }
       try {
@@ -4809,7 +5062,7 @@ const server = http.createServer(async (req, res) => {
           device: r.device, cached: !!r.cached, timing: r.timing ?? null, distinctCodes: r.distinctCodes ?? null,
         });
       } catch (e) {
-        return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed" });
+        return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed", ...refusalFields(e) });
       }
     }
 
@@ -5897,12 +6150,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/hum" && req.method === "POST") {
-      const b = await readBody(req);
+      /* The pitch tracker runs the engine's python on a path the body names:
+       * only Studio's own page or a local client may ask (a page elsewhere
+       * could POST text/plain and have it read any file on this PC). */
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Hum to score is only accepted from Studio's own page or a local client." });
+      /* A recording arrives as a data URL: the 50 MB the tracker accepts is
+       * about 67 MB of base64, so 72 MB, refused WHILE reading, before
+       * JSON.parse can hold a heap's worth of string. */
+      let b;
+      try { b = await readBody(req, 72 * 1024 * 1024); } catch (err) {
+        if (err.tooBig) return json(res, 413, { error: `That recording is too large to send (${err.message}). Hum to score reads one to sixty seconds of one voice.` });
+        return json(res, 400, { error: "could not read that body as JSON" });
+      }
       try {
         const r = await transcribeHum({ source: b.source, bpm: b.bpm, key: b.key });
         return json(res, 200, { ok: true, ...r });
       } catch (e) {
-        return json(res, e?.status || 400, { error: e?.message || String(e) });
+        /* A missing module (librosa, scipy…) comes back with its setup id and
+         * pip line (hum.js HumRefusal), so the page offers the Install button. */
+        return json(res, e?.status || 400, { error: e?.message || String(e), ...refusalFields(e) });
       }
     }
 
@@ -5967,6 +6233,9 @@ const server = http.createServer(async (req, res) => {
           wantSeconds: want, rung, fitCeiling: chosen.ceiling, maxTokens: maxTokensFor(want),
           instrumental: !!meta.instrumental, preview: false, model: "YuE2 3B",
           extendFrom: yueDir, fromSeconds: fromSec, extendedFrom: file,
+          /* Continuing a cover or a continued recording replays codes that
+           * came through the tokenizer: the marker travels with them. */
+          ...(meta.tokenized ? { tokenized: meta.tokenized } : {}),
           replaceTo,
         });
         await trackReplacement(job, replacing);
@@ -6017,13 +6286,14 @@ const server = http.createServer(async (req, res) => {
             const got = await ensureStem(file, tokStem, { art, outputDir: config.outputDir, actor: prov.actorFrom(req) });
             tokSource = got.path;
           } catch (e) {
-            return json(res, 500, { error: `The ${tokStem} stem could not be separated: ${e?.message || e}`, reason: "stem-failed" });
+            const fail = stemFailure(e, tokStem);
+            return json(res, fail.status, fail.body);
           }
         }
         const busy = await engineDoor.status().then((s) => (s.running || []).length > 0).catch(() => true);
         let tok2;
         try { tok2 = await tokenizeTrack({ source: tokSource, device: busy ? "cpu" : null }); }
-        catch (e) { return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed" }); }
+        catch (e) { return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed", ...refusalFields(e) }); }
         const dur = meta.durationSeconds || tok2.seconds || 0;
         const fromSec = Number.isFinite(b.fromSeconds)
           ? Math.max(1, Math.min(b.fromSeconds, Math.max(1, dur - 1)))
@@ -6241,23 +6511,38 @@ const server = http.createServer(async (req, res) => {
       const plansPaused = url.searchParams.get("plans") === "1"
         ? await mvRoutes.pauseRunningPlans().catch(() => []) : [];
       await jobs.cancel();
-      const wasRunning = art.status().art?.current?.title ?? null;
-      /* Every distinct file once: drop() is keyed on file and removes every job
-       * carrying it, so a `for` over the queue itself would skip entries as it
-       * shortened. */
-      let dropped = 0;
-      for (const f of [...new Set(art.queue.map((j) => j.file))]) dropped += art.drop(f).removed;
       /* A Stop button must never fail because a status read did. Nothing to
        * cancel is the right answer when the door cannot say what is running. */
       const live = await engineDoor.status().catch(() => ({ running: [] }));
-      /* The person's own song-to-score transcription (a remix's first step,
-       * music.cover) is theirs to stop too; it used to run on to the end. */
-      const mine = (live.running || []).filter((r) => String(r.via || "").startsWith("art.") || r.via === "music.cover");
-      const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId })));
-      const artStopped = {
-        dropped, wasRunning,
-        interrupted: stops.some((s) => s.stopped === true),
-        engineCancelled: stops.filter((s) => s.stopped === true).length,
+      /* ⚠ STOP NOW REACHES THE STEM SPLITTER. art.stopMine() drops the art
+       * queue and stops the running job itself: demucs and the lyrics timer
+       * are processes Studio starts, which no engine interrupt ever reached,
+       * so a separation ran on to the end while the button said "stopped".
+       * It kills the process tree, and reports `stopping` until it is gone.
+       * The engine runs it cancels (via "art.") add into interrupted and
+       * engineCancelled below. */
+      let artStopped, mine;
+      if (typeof art.stopMine === "function") {
+        artStopped = await art.stopMine();
+        /* The person's own song-to-score transcription (a remix's first step,
+         * music.cover) is not an art job; it is stopped here. */
+        mine = (live.running || []).filter((r) => r.via === "music.cover");
+      } else {
+        /* Until art.js carries stopMine (lane C): the queue drop and the door
+         * runs by hand, as before. Every distinct file once: drop() is keyed on
+         * file and removes every job carrying it. */
+        const wasRunning = art.status().art?.current?.title ?? null;
+        let dropped = 0;
+        for (const f of [...new Set(art.queue.map((j) => j.file))]) dropped += art.drop(f).removed;
+        artStopped = { dropped, wasRunning, interrupted: false, engineCancelled: 0 };
+        mine = (live.running || []).filter((r) => String(r.via || "").startsWith("art.") || r.via === "music.cover");
+      }
+      const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId }).catch(() => ({}))));
+      const stoppedHere = stops.filter((s) => s?.stopped === true).length;
+      artStopped = {
+        ...artStopped,
+        interrupted: !!artStopped?.interrupted || stoppedHere > 0,
+        engineCancelled: (Number(artStopped?.engineCancelled) || 0) + stoppedHere,
       };
       return json(res, 200, { ...jobs.snapshot(), artStopped, plansPaused });
     }
@@ -6470,8 +6755,11 @@ const server = http.createServer(async (req, res) => {
          */
         if (b.action === "embed") {
           const rows = await library.list();
+          /* MP3 cannot take the picture this way, and a native YuE2 WAV cannot
+           * take one at all: both are left alone rather than rewritten for
+           * nothing and counted as failures. */
           const todo = rows.filter((t) => t.cover && !t.coverEmbedded
-            && !/\.mp3$/i.test(t.file));
+            && !/\.mp3$/i.test(t.file) && !isNativeLibraryWav(t.file));
           res.writeHead(200, { "Content-Type": "application/json" });
           let done = 0, failed = 0;
           for (const t of todo) {
@@ -6481,6 +6769,7 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({
             ok: true, done, failed,
             skippedMp3: rows.filter((t) => t.cover && /\.mp3$/i.test(t.file)).length,
+            skippedNativeWav: rows.filter((t) => t.cover && isNativeLibraryWav(t.file)).length,
             library: await library.list(),
           }));
         }
@@ -6501,7 +6790,10 @@ const server = http.createServer(async (req, res) => {
      * delay music: both wait for the generation queue to empty.
      */
     if (p === "/api/stems" && req.method === "POST") {
-      const b = await readBody(req);
+      let b;
+      try { b = await readBody(req, 1024 * 1024); } catch (err) {
+        return json(res, err.tooBig ? 413 : 400, { error: err.tooBig ? `That request is too large (${err.message}).` : "could not read that body as JSON" });
+      }
       if (b.action === "when") {
         if (!["off", "all", "starred", "liked"].includes(b.value)) {
           return json(res, 400, { error: "Must be off, all, starred or liked." });
@@ -6510,14 +6802,46 @@ const server = http.createServer(async (req, res) => {
         savePrefs();
         return json(res, 200, { ok: true, stems: config.stems });
       }
+      /* WHICH PYTHON SEPARATES STEMS: Settings > Songs > "stem separation
+       * python" and the stems_python tool (answerStemsPython, above). */
+      if (b.action === "python") return answerStemsPython(req, res, b);
+      /* SEPARATE ONE SONG. This runs demucs, so only Studio's page or a local
+       * client may ask (the page, daw/refprofile.js and MCP all send local
+       * JSON). Four answers and never ok after a refusal:
+       *   409 — this machine cannot separate yet (the preflight: no python, no
+       *         demucs or no PyTorch), before anything is queued (a missing
+       *         file within a second, an import probe a few), with setup "stems";
+       *   200 joined — the song is already being separated: that job, not a
+       *         second one (a second Voice-only or Separate press used to queue
+       *         another copy of the same four-minute run);
+       *   200 — queued;
+       *   409 refused — the queue said no, and why. */
       if (b.action === "run") {
+        if (!sameOriginLocalJson(req)) {
+          return json(res, 403, { error: "Separating stems runs a program on this machine, so it needs a same-origin local JSON request." });
+        }
         const file = String(b.file || "");
         if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
           return json(res, 400, { error: "bad file" });
         }
+        const pre = await stemsReady();
+        if (!pre?.ok) {
+          return json(res, pre?.status || 409, {
+            error: pre?.error || "Stem separation cannot run on this machine yet.",
+            ...(pre?.setup ? { setup: pre.setup } : {}),
+            python: pre?.python || config.systemPython,
+            reason: pre?.reason || "stems-not-ready",
+            ...(pre?.pip ? { pip: pre.pip } : {}),
+          });
+        }
+        const running = typeof art.findJob === "function" ? art.findJob(file, "stems") : null;
+        if (running) return json(res, 200, { ok: true, joined: true, jobId: running.id ?? null, ...art.status() });
         const m = library.meta.get(file) || {};
-        art.request({ file, title: m.title, kind: "stems", force: true });
-        return json(res, 200, { ok: true, ...art.status() });
+        const job = art.request({ file, title: m.title, kind: "stems", force: true, actor: prov.actorFrom(req) });
+        if (!job) {
+          return json(res, 409, { error: art.lastRefusal || "The queue did not take the separation.", reason: "refused", ...art.status() });
+        }
+        return json(res, 200, { ok: true, jobId: job.id ?? null, ...art.status() });
       }
       return json(res, 400, { error: "Unknown action." });
     }
@@ -8661,7 +8985,7 @@ const server = http.createServer(async (req, res) => {
           });
           return json(res, 200, JSON.parse(line));
         } catch (err) {
-          return json(res, 503, { error: `The layer document is not readable: ${err.message}` });
+          return imageFailure(res, err, 503, `The layer document is not readable: ${err.message}`);
         }
       }
 
@@ -8776,7 +9100,7 @@ const server = http.createServer(async (req, res) => {
           warnings: r.warnings?.length ? r.warnings : undefined,
         });
       } catch (err) {
-        return json(res, 400, { error: String(err.message || err) });
+        return imageFailure(res, err, 400, String(err.message || err));
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -8850,7 +9174,7 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 200, JSON.parse(line));
       } catch (err) {
-        return json(res, 503, { error: `Could not read the capabilities: ${err.message}` });
+        return imageFailure(res, err, 503, `Could not read the capabilities: ${err.message}`);
       }
     }
 
@@ -8966,7 +9290,7 @@ const server = http.createServer(async (req, res) => {
                                 quality: r.quality, ignored: r.ignored,
                                 provenance: r.provenance ?? null });
       } catch (err) {
-        return json(res, 400, { error: String(err.message || err) });
+        return imageFailure(res, err, 400, String(err.message || err));
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9059,7 +9383,7 @@ const server = http.createServer(async (req, res) => {
         if (r.ok === false) return json(res, 400, { error: r.error || "the type could not be measured" });
         return json(res, 200, { ok: true, ...r });
       } catch (err) {
-        return json(res, 400, { error: `measure failed: ${err.message}` });
+        return imageFailure(res, err, 400, `measure failed: ${err.message}`);
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9119,7 +9443,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ...rep, ok: true, clean: rep.ok === true,
                                 says, notes: r.notes || undefined });
       } catch (err) {
-        return json(res, 400, { error: `check failed: ${err.message}` });
+        return imageFailure(res, err, 400, `check failed: ${err.message}`);
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9308,7 +9632,7 @@ const server = http.createServer(async (req, res) => {
         if (r.ok === false) return json(res, 400, { error: r.error || "the styles could not be described" });
         return json(res, 200, { ok: true, ...r });
       } catch (err) {
-        return json(res, 400, { error: `describe-styles failed: ${err.message}` });
+        return imageFailure(res, err, 400, `describe-styles failed: ${err.message}`);
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9374,7 +9698,7 @@ const server = http.createServer(async (req, res) => {
         delete r.out;
         return json(res, 200, { ok: true, name: outName, ...r });
       } catch (err) {
-        return json(res, 400, { error: `svg export failed: ${err.message}` });
+        return imageFailure(res, err, 400, `svg export failed: ${err.message}`);
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9435,7 +9759,7 @@ const server = http.createServer(async (req, res) => {
         }
         return json(res, 200, r);
       } catch (err) {
-        return json(res, 400, { error: `the document shelf failed: ${err.message}` });
+        return imageFailure(res, err, 400, `the document shelf failed: ${err.message}`);
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9530,7 +9854,9 @@ const server = http.createServer(async (req, res) => {
           layers: after.layers ?? null, doc: after.doc ?? null,
         });
       } catch (err) {
-        return json(res, 400, { error: String(err.message || err) });
+        /* A missing module (the warm worker's, or imgdoc's 409) keeps its
+         * setup id and pip line; anything else keeps its own sentence. */
+        return imageFailure(res, await imageRefusal(err), 400, String(err.message || err));
       }
     }
 
@@ -9561,7 +9887,7 @@ const server = http.createServer(async (req, res) => {
         });
         return json(res, 200, r);
       } catch (err) {
-        return json(res, 400, { error: `the document edit failed: ${err.message}` });
+        return imageFailure(res, err, 400, `the document edit failed: ${err.message}`);
       } finally {
         unlink(jobPath).catch(() => {});
       }
@@ -9951,7 +10277,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, name: outName, ...note });
       } catch (err) {
         await unlink(tmp).catch(() => {});
-        return json(res, 400, { error: `could not create that image: ${err.message}` });
+        return imageFailure(res, err, 400, `could not create that image: ${err.message}`);
       }
     }
 
@@ -10057,7 +10383,9 @@ const server = http.createServer(async (req, res) => {
         res.end(png);
         return undefined;
       } catch (err) {
-        return json(res, 400, { error: String(err.message || err) });
+        /* The first image-editor call a newcomer makes: a worker that died
+         * on a missing cv2 said "image worker exited (1)" and nothing else. */
+        return imageFailure(res, await imageRefusal(err), 400, String(err.message || err));
       } finally {
         unlink(out).catch(() => {});
       }
@@ -10199,7 +10527,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: true, name: outName, layers: layers.length,
             clipped: true, warnings: r.warnings?.length ? r.warnings : undefined });
         } catch (err) {
-          return json(res, 400, { error: `composite failed: ${err.message}` });
+          return imageFailure(res, err, 400, `composite failed: ${err.message}`);
         } finally {
           unlink(jobPath).catch(() => {});
         }
@@ -11416,7 +11744,13 @@ const server = http.createServer(async (req, res) => {
           proc.on("exit", (code) => resolve({ code, so, se }));
           proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
         });
-        if (r.code !== 0) return json(res, 500, { error: r.se.slice(-200) || "could not make a poster" });
+        if (r.code !== 0) {
+          /* A missing module (OpenCV, most often) is a refusal with its pip line
+           * and, for Studio's own engine, the Install button's setup id. */
+          const refusal = await moduleRefusal(r.se, "Clip posters", config.python);
+          if (refusal) return json(res, 409, { error: refusal.message, ...refusalFields(refusal) });
+          return json(res, 500, { error: r.se.slice(-200) || "could not make a poster" });
+        }
       }
 
       let buf;
@@ -11644,28 +11978,14 @@ const server = http.createServer(async (req, res) => {
       const base = { "Content-Type": type, "Accept-Ranges": "bytes",
         "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox" };
 
-      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
-      if (m) {
-        // An open-ended "bytes=N-" is the common case while scrubbing.
-        let start = m[1] ? Number(m[1]) : 0;
-        let end = m[2] ? Number(m[2]) : size - 1;
-        if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
-          res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` });
-          return res.end();
-        }
-        end = Math.min(end, size - 1);
-        res.writeHead(206, {
-          ...base,
-          "Content-Range": `bytes ${start}-${end}/${size}`,
-          "Content-Length": end - start + 1,
-        });
-        if (req.method === "HEAD") return res.end();
-        return createReadStream(full, { start, end }).pipe(res);
-      }
-
-      res.writeHead(200, { ...base, "Content-Length": size });
-      if (req.method === "HEAD") return res.end();
-      return createReadStream(full).pipe(res);
+      /* ⚠ THROUGH sendFile, WHICH LETS GO OF THE FILE WHEN THE PLAYER DOES.
+       * This door used to `.pipe(res)` a bare read stream, and a player that
+       * hung up early (seek, pause, next track) left the song open inside
+       * Studio: Windows then refused the tag rewrite's rename over it, and the
+       * cover embed failed with EPERM (server/sendfile.js; audio-door_test.js
+       * aborts a range request and watches the handle close). Ranges are read
+       * by byteRange, so `bytes=-N` is now the last N bytes. */
+      return sendFile(req, res, full, { size, headers: base });
     }
 
     // ---- static ---------------------------------------------------------

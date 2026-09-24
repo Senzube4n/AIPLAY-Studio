@@ -24,7 +24,7 @@ const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 export const GGUF_REQUIREMENTS=Object.freeze({platform:'win32',arch:'x64',
   vcRedistUrl:'https://aka.ms/vc14/vc_redist.x64.exe',
   driver:'NVIDIA driver compatible with CUDA 13.3. Lower-VRAM hardware remains experimental.'});
-export const GGUF_LICENCE=Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT. CUDA: NVIDIA proprietary runtime terms.',
+export const GGUF_LICENCE=Object.freeze({label:'YuE2 weights: licence file CC BY-NC 4.0; the authors say individuals may sell what it makes (15 Sep 2026) and companies need a commercial licence. Native code: Apache-2.0/MIT. CUDA: NVIDIA proprietary runtime terms.',
   url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF',
   cudaUrl:'https://docs.nvidia.com/cuda/eula/index.html'});
 /* ONE ENGINE, THREE RUNTIMES — the card picks which one is downloaded.
@@ -42,11 +42,11 @@ export const RUNTIME_KINDS=Object.freeze({
     requirements:GGUF_REQUIREMENTS,licence:GGUF_LICENCE}),
   vulkan:Object.freeze({label:'Vulkan (AMD, Intel or NVIDIA)',manifest:'yue-runtime-manifest-vulkan.json',backend:'vulkan',
     requirements:Object.freeze({platform:'win32',arch:'x64',driver:'Any current AMD, Intel or NVIDIA graphics driver (they include Vulkan). The Visual C++ runtime ships inside the archive.'}),
-    licence:Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT (official audio.cpp v0.8.1 release).',
+    licence:Object.freeze({label:'YuE2 weights: licence file CC BY-NC 4.0; the authors say individuals may sell what it makes (15 Sep 2026) and companies need a commercial licence. Native code: Apache-2.0/MIT (official audio.cpp v0.8.1 release).',
       url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF'})}),
   cpu:Object.freeze({label:'CPU only',manifest:'yue-runtime-manifest-cpu.json',backend:'cpu',
     requirements:Object.freeze({platform:'win32',arch:'x64',driver:'No graphics card needed. Much slower than a GPU. The Visual C++ runtime ships inside the archive.'}),
-    licence:Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT (official audio.cpp v0.8.1 release).',
+    licence:Object.freeze({label:'YuE2 weights: licence file CC BY-NC 4.0; the authors say individuals may sell what it makes (15 Sep 2026) and companies need a commercial licence. Native code: Apache-2.0/MIT (official audio.cpp v0.8.1 release).',
       url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF'})}),
 });
 /** Pure: which runtime to install. An explicit choice wins; otherwise the card decides. */

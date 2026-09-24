@@ -145,6 +145,40 @@ export function whisperPython(choice = config.lyrics?.whisperPython) {
 }
 
 /**
+ * The stem separation python when nothing names another: python.org's per-user
+ * 3.10 folder. The literal this file has carried since the first public commit;
+ * it is only the last resort now.
+ */
+export function defaultSystemPython(home = os.homedir()) {
+  return path.join(home, "AppData", "Local", "Programs", "Python", "Python310", "python.exe");
+}
+
+/**
+ * The interpreter stem separation (demucs) and the audio-reference encoder
+ * (scripts/dav_encode.py) run: AIPLAY_SYS_PYTHON, else the one chosen in
+ * Settings > Songs > "stem separation python" (prefs.stems.systemPython, or the
+ * "stems" setup when it finishes), else the Python310 default.
+ *
+ * WHY A SETTING AT ALL (Tika's report, 2026-09-24). The default was the only
+ * way in besides an environment variable, so the Models row's remedy
+ * ("python -m pip install demucs") installed into whatever `python` was on
+ * PATH, never the interpreter Studio runs. Same rule as whisperPython() above:
+ * the environment wins, a saved choice needs no restart because art.js reads
+ * config.systemPython at every spawn, and Settings says when the environment
+ * is overriding the field.
+ */
+export function systemPython(choice = config.stems?.systemPython) {
+  return process.env.AIPLAY_SYS_PYTHON || choice || defaultSystemPython();
+}
+
+/** Where systemPython() got its answer: "env" (AIPLAY_SYS_PYTHON), "saved" (a
+ *  choice in Settings or the stems setup) or "default" (Python310). */
+export function systemPythonSource(choice = config.stems?.systemPython) {
+  if (process.env.AIPLAY_SYS_PYTHON) return "env";
+  return choice ? "saved" : "default";
+}
+
+/**
  * Where the attachment weight-transfer script lives, and why it is not in
  * server/mesh/. It does `import bpy`, which by the Blender Foundation's stated
  * position makes it a derivative work of Blender, and this tree is Apache-2.0
@@ -380,9 +414,12 @@ export const config = {
    * pip resolve demucs' or ctranslate2's torch requirement inside it is how you
    * end up with a silently 5x slower app. Verified after installing demucs:
    * system python stayed at 2.5.1+cu121 and the venv at 2.13.0+cu130.
+   *
+   * A plain string, recomputed by systemPython() once the saved prefs are read
+   * (below) and by whoever changes `stems.systemPython`. Everything that spawns
+   * it reads this field at spawn time, so a change needs no restart.
    */
-  systemPython: process.env.AIPLAY_SYS_PYTHON
-    || path.join(os.homedir(), "AppData", "Local", "Programs", "Python", "Python310", "python.exe"),
+  systemPython: process.env.AIPLAY_SYS_PYTHON || defaultSystemPython(),
 
   /**
    * BLENDER, and the previz toolkit that drives it. Both OPTIONAL — every
@@ -671,7 +708,8 @@ export const config = {
        * Music (YuE2)" template takes, and the one a ComfyUI Desktop install
        * already has. No Python kit, no second runtime: the job runs through the
        * engine door like MiniMax does. Same weights as `yue2`, so the same
-       * CC BY-NC rights row. */
+       * rights row (models.js: the authors' statement of 15 Sep 2026; the
+       * licence file still reads CC BY-NC 4.0). */
       "yue2-comfy": {
         label: "YuE2 3B (ComfyUI)",
         runtime: "comfy",
@@ -846,6 +884,20 @@ export const config = {
     // Four stems rather than vocals/no-vocals. The two-stem mode is faster but
     // it is the lyric-alignment use case, not the "remix this" one.
     twoStems: false,
+    /* The interpreter a person chose in Settings > Songs > "stem separation
+     * python" (or the "stems" setup chose when it finished), saved as
+     * prefs.stems.systemPython; null when nobody chose. `config.systemPython`
+     * is what actually runs (see systemPython()). */
+    systemPython: null,
+    /* null (demucs picks: the card when PyTorch can use it) or "cpu". Set by the
+     * "stems" setup when its PyTorch cannot run a tensor op on this card (an
+     * RTX 50 with a CUDA 12.6-or-older build is the case that motivated it);
+     * art.js #separate then passes `-d cpu`. Running the setup again re-tests. */
+    device: null,
+    /* The interpreter `device` was measured on. A "cpu" verdict about one
+     * python says nothing about the next one chosen, so #separate applies it
+     * only while config.systemPython is this path (or when none was recorded). */
+    devicePython: null,
   },
 
   /**
@@ -2007,13 +2059,13 @@ const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
 const OK_PYTHON_PATH = (v) => v === null
   || (typeof v === "string" && v.length > 0 && v.length <= 1024 && !/[\r\n\0]/.test(v) && path.isAbsolute(v));
 config.music.engines["yue2-gguf"] = {
-  label: "YuE2 GGUF · Q4 / Q8 · non-commercial",
+  label: "YuE2 GGUF · Q4 / Q8 · sellable by individuals",
   runtime: "audiocpp", capability: "musicYue2Gguf",
   audioReference: false, sectionTags: true, instrumentalToggle: false,
   score: false, warmCache: false, emergentLength: true,
   cot: ["full", "melody", "off"], renderPath: true, durationLadder: false,
   experimental: true,
-  note: "Native Q4 (default, smaller) or optional Q8 (higher precision), both with F16 VAE. Choose and install weights in Models. No Python or ComfyUI required. Higher precision is not a guarantee of better audio. Non-commercial weights; attribution required. Duration is not guaranteed.",
+  note: "Native Q4 (default, smaller) or optional Q8 (higher precision), both with F16 VAE. Choose and install weights in Models. No Python or ComfyUI required. Higher precision is not a guarantee of better audio. Licence file CC BY-NC 4.0; the authors say individuals may sell what it makes and companies need a commercial licence; attribution required. Duration is not guaranteed.",
 };
 /* THE LEVEL EVERY MAKE SCREEN OPENS ON (UI_PLAN E1, the owner's decision of
  * 2026-09-24): a NEW install opens Music, Pictures and Video on Simple; an
@@ -2071,6 +2123,9 @@ export const PREF_PATHS = [
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],
+  ["stems", "systemPython", OK_PYTHON_PATH],
+  ["stems", "device", (v) => v === null || v === "cpu"],
+  ["stems", "devicePython", OK_PYTHON_PATH],
   ["lyrics", "when", OK_WHEN],
   ["lyrics", "whisperPython", OK_PYTHON_PATH],
   ["output", "format", (v) => ["flac", "mp3", "opus"].includes(v)],
@@ -2226,6 +2281,8 @@ if (typeof saved.prefs?.tier === "string" && config.vramTiers[saved.prefs.tier])
 }
 /* The whisper interpreter, now that a saved choice may have been read. */
 config.lyrics.python = whisperPython();
+/* The stem separation interpreter, likewise. */
+config.systemPython = systemPython();
 /* Music-only runs native YuE2 GGUF, or YuE2 through ComfyUI when this machine
  * has a ComfyUI install and a YuE2 checkpoint (decided at startup, index.js). */
 /* A saved engine it cannot run is swapped for this session only (overrideForSession):

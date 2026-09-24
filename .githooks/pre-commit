@@ -217,6 +217,25 @@ node server/music/score_daw_test.js || exit 1
 # "stems" event (a fake queue in the lane), an existing stem skips the job,
 # refusals are sentences; the door, the tool, the page and the doc.
 node server/music/stems_test.js || exit 1
+# STOP THAT STOPS THE STEM SPLITTER (a new user's report, 2026-09-24: "0% for
+# four minutes, Stop does nothing, and it starts again"). The real ArtRunner
+# runs a FAKE python (a Node script that prints demucs's tqdm bars and sleeps):
+# a missing python refused in under a second with setup "stems", one
+# separation per song (a second one joins), real progress, Stop kills the
+# whole process tree within 2 s and nothing is queued again; the same for
+# timed lyrics. Wall clock (~30 s), no Python, no GPU.
+node server/stems_stop_test.js || exit 1
+# THE STEM SEPARATION PYTHON AS A SETTING: AIPLAY_SYS_PYTHON, then the saved
+# choice, then Python310, with the source flag Settings shows; a bad saved
+# value is dropped at boot. Fresh processes, a temp settings.json.
+node server/system-python_test.js || exit 1
+# THE STEM DOORS: /api/stems run (guarded, 409 with setup "stems" before
+# anything is queued, a running separation JOINED, never ok after a refusal),
+# the python action, /api/cancel through art.stopMine (and the rail's plan
+# pause), refusals that keep their setup id, /api/hum's 403/413 before parsing,
+# and a python that died on a missing module becoming the engine-package
+# refusal. Real route text sliced out of index.js; no server, no python.
+node --test server/stems-door_test.js || exit 1
 # KREA 2 TURBO AS AN IMAGE ENGINE: the vendor's 8-step recipe pinned node by
 # node; the door refuses refs and negatives (cfg 1); every engine list, the
 # catalogue row with its hashes, the page's table and option, the tool's enum.
@@ -894,6 +913,12 @@ node server/setup/engine-refusal_test.js || exit 1
 # action), /api/settings (and its network/device path refusal), /api/apimode,
 # /api/generate, and /api/audio's sandbox header. Temp folders, no server.
 node --test server/cross-origin-doors_test.js || exit 1
+# THE AUDIO DOOR LETS GO OF THE SONG WHEN THE PLAYER DOES (the EPERM on a
+# cover embed): the real /api/audio route with a client that hangs up after
+# its first chunk; the read stream closes, the file can be renamed over on
+# win32, the old .pipe(res) shape is the control; 206/416/HEAD and a suffix
+# range still answer as the player needs. Loopback only, no Studio.
+node --test server/audio-door_test.js || exit 1
 # THE PREVIEW CACHE KEY, against real files in a temp directory. The cache was
 # keyed on the root comp's updatedAt alone, so an edit inside a CHILD comp
 # repainted the parent and its cached frames went on being served. No python and

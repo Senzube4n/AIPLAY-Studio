@@ -148,8 +148,23 @@ export const ROUTABLE = {
   set_video_enabled: "writes",
   studio_api_reference: null,
   import_local_media: "writes",
+  /* Free, and on purpose: the pitch tracker READS one recording on the
+   * processor (1 to 60 s of voice, a few seconds of work) and answers with a
+   * score. It writes nothing, holds no card and spends nothing. The door itself
+   * is sameOriginLocalJson, so only Studio's page and local clients (this chat
+   * goes through MCP) reach it. */
   hum_to_score: null,
   song_to_score: "gpu",
+  /* demucs over a library song: the card (measured here at about 12 s for a
+   * 30 s track; a processor is slower and was not measured) and four new
+   * files beside the song. A refusal names setup id "stems", which the chat
+   * may not run (setup_feature is withheld below). */
+  separate_stems: "gpu",
+  /* The Stop button. It runs nothing, but it ends the person's own render and
+   * drops the queue behind it. The gate word is "writes" (the contract's); the
+   * card's sentence is its own, COST_TEXT_BY_TOOL below, because "it writes a
+   * NEW FILE into your library" is false for Stop. */
+  stop_generation: "writes",
   replace_section: "gpu",
   get_beats: null,
   music_plan: null, // arithmetic/ABC validation only; never saves or generates audio
@@ -563,6 +578,7 @@ export const WITHHELD = {
   enhance_description: "the chat already turns an idea into a song; rewriting the idea through a second model adds nothing",
   enhance_model: "which model Enhance uses is a setting for a person, chosen in Settings",
   timed_lyrics_python: "names a program Studio will execute; a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
+  stems_python: "names a program Studio will execute (stem separation and the audio-reference encoder); a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",
@@ -648,6 +664,12 @@ export const COST_TEXT = {
   destroys: "nothing to run, but it REMOVES work that already exists and cannot be undone from here",
 };
 
+/** A tool whose gate's sentence would be false for it gets its own. The gate
+ *  word still decides whether and how the chat asks; only the words change. */
+export const COST_TEXT_BY_TOOL = {
+  stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
+};
+
 /* ─────────────────────────────────────────────── the flat-argument rule
  *
  * A 4B emits flat JSON. Nested objects and arrays inside `args` are a measured
@@ -668,6 +690,11 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 const JSON_ARGUMENT_TOOLS = new Set([
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
+  /* The score tools take `source` as an object and the note editor takes an
+   * array of notes; without these three the chat could not reach them at all
+   * ("turn my hum into a score" went to score_* tools). hum_to_score and
+   * song_to_score also take a flat `library_file`, which a 4B sends best. */
+  "hum_to_score", "song_to_score", "daw_edit_notes",
 ]);
 
 export function callableShape(schema) {
@@ -733,7 +760,7 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     args,
     spends: !!gate,
     gate: gate || null,
-    cost: gate ? COST_TEXT[gate] : undefined,
+    cost: gate ? (COST_TEXT_BY_TOOL[tool.name] || COST_TEXT[gate]) : undefined,
     routed: true,
     run: (a) => {
       const decoded = { ...a };

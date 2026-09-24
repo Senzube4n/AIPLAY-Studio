@@ -237,7 +237,10 @@ test("rework is the default; a failed separation ends the wait; the assistant se
   const art = new EventEmitter(); art.queue = []; art.current = null;
   art.request = (job) => { setTimeout(() => art.emit("failed", { file: job.file, kind: "stems", error: "demucs crashed" }), 20); return job; };
   const t0 = Date.now();
-  await assert.rejects(ensureVocalStem("song.flac", { art, outputDir: "C:/nowhere-aiplay", timeoutMs: 60000 }), /separation of song\.flac failed: demucs crashed/);
+  /* The preflight is injected: the default one asks this PC's stems python
+   * for demucs, and a machine without one would fail here for a reason this
+   * case is not about. */
+  await assert.rejects(ensureVocalStem("song.flac", { art, outputDir: "C:/nowhere-aiplay", timeoutMs: 60000, preflight: async () => ({ ok: true }) }), /separation of song\.flac failed: demucs crashed/);
   assert.ok(Date.now() - t0 < 5000, "not the fifteen-minute wait");
   const app = src("../web/app.js");
   assert.match(app, /scores\[file\] = \$\("yAbc"\)\?\.value/, "one transcription per song");

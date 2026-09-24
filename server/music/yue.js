@@ -1133,13 +1133,18 @@ export function catalogueRights() { return cap(YUE_CAP)?.outputRights || null; }
  * Derivatives") — YuE2's never mentions output at all.
  *
  * It is KEPT rather than deleted because two independent readings agreeing is
- * evidence, and `yue_test.js` asserts the agreement: if somebody later softens
- * the catalogue row to `unknown` or `yours-with-conditions`, that lane fails and
- * a human decides, instead of a ledger row quietly changing what it promises a
- * user about selling their song. The row is the one the record carries; this is
- * the corroboration.
+ * evidence, and `yue_test.js` asserts the agreement: the catalogue row's
+ * `licenceFile` must quote the same grant this reading quotes, so the file
+ * cannot be misquoted beside the label without that lane failing.
+ *
+ * ⚠ WHAT CHANGED ON 2026-09-24, and why this is not a softened reading. A human
+ * decided (the owner): Studio's LABEL for a YuE2 song now follows the authors'
+ * statement of 15 Sep 2026 — sellable by individuals, companies need a
+ * commercial licence — and the row says so in `basis: "authors-statement"`.
+ * This reading of the FILE is unchanged, and it is still the right answer to
+ * "what does the licence file say"; it is no longer the label's source.
  */
-export const YUE2_RIGHTS = {
+export const YUE2_LICENCE_READ = {
   class: "not-for-sale",
   sellable: false,
   quote: "produce, reproduce, and Share Adapted Material for NonCommercial purposes only",
@@ -1154,6 +1159,14 @@ export const YUE2_RIGHTS = {
   attribution: "YuE2 (YuE2-3B, YuE2-Vae) — https://huggingface.co/m-a-p/YuE2-3B. The weight "
     + "licence requires identifying the model and its source repository.",
 };
+
+/**
+ * THE RIGHTS EVERY YuE2 RECORD CARRIES: the catalogue row (models.js
+ * musicYue2 — the authors' statement, with the licence file beside it), and
+ * this file's own reading only when there is no row. yue-gguf.js imports this
+ * name, so the GGUF door's records and receipts say what the Models card says.
+ */
+export const YUE2_RIGHTS = catalogueRights() || YUE2_LICENCE_READ;
 
 /* ───────────────────────────────────────── the render, with its record */
 
@@ -1399,24 +1412,25 @@ export async function renderSong({
     /* ⚠ THE RIGHTS VERDICT IS THE CATALOGUE'S WHEN THERE IS A ROW, and this
      * module's own read of the LICENSE only when there is not.
      *
-     * `server/models.js`'s `musicYue2` row is the first `not-for-sale` entry in
-     * the catalogue and its reasoning runs to a page — where the reach of "for
+     * `server/models.js`'s `musicYue2` row (the first `not-for-sale` entry in
+     * the catalogue until 2026-09-24, the authors' statement since) carries
+     * reasoning that runs to a page — where the reach of "for
      * NonCommercial purposes only" sits, why `unknown` would be the wrong answer
      * rather than the modest one, and the YuE v1 route for somebody who needs to
      * sell. That is where every other rights verdict in this app lives and it is
      * not this door's to relitigate; `MODEL_TO_CAPABILITY["yue2"]` already
      * bridges to it, so stampRights() fills the field from the row.
      *
-     * `YUE2_RIGHTS` below stays as an INDEPENDENT read of the same licence file
-     * on this disk, and `yue_test.js` fails if the two verdicts ever disagree —
-     * which is the only thing a second reading is good for. */
+     * `YUE2_LICENCE_READ` stays as an INDEPENDENT read of the same licence file
+     * on this disk, and `yue_test.js` fails if the row's `licenceFile` ever
+     * quotes it differently — which is the only thing a second reading is good for. */
     ...(catalogueRights() ? {} : {
       /* No row: set it explicitly, because provenance.js:278 fills only an
        * undefined and `unknown` would be a worse answer than the one this file
        * can prove from the text beside the weights. */
-      outputRights: { class: YUE2_RIGHTS.class, capability: null, url: YUE2_RIGHTS.url },
+      outputRights: { class: YUE2_LICENCE_READ.class, capability: null, url: YUE2_LICENCE_READ.url },
     }),
-    rights: catalogueRights() || YUE2_RIGHTS,
+    rights: catalogueRights() || YUE2_LICENCE_READ,
     rightsSource: catalogueRights()
       ? `server/models.js — ${YUE_CAP}.outputRights`
       : "server/music/yue.js — read from models/YuE2-3B/LICENSE on this disk",

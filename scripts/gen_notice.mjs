@@ -68,6 +68,21 @@ const RIGHTS_WORD = {
   "unknown": "UNVERIFIED — the licence text has not been read",
 };
 
+/* A label that follows the model authors' own statement rather than the
+ * licence file (YuE2 since 2026-09-24): printed in the row's own words, from
+ * its chip — "Sellable by individuals (YuE2 authors' statement, 15 Sep 2026)
+ * · companies need a commercial licence" becomes "SELLABLE BY INDIVIDUALS
+ * (YuE2 authors' statement, 15 Sep 2026); companies need a commercial
+ * licence" — and the licence file's name after it, because it has not changed. */
+function rightsLine(or) {
+  if (or.basis === "authors-statement" && or.chip && or.short && or.chip.toLowerCase().startsWith(or.short.toLowerCase())) {
+    const said = or.chip.slice(or.short.length).trim().replace(/\s·\s/g, "; ");
+    return `Output rights: ${or.short.toUpperCase()} ${said}${or.licenceFile?.name ? `; licence file ${or.licenceFile.name}` : ""}`;
+  }
+  const word = RIGHTS_WORD[or.class] || RIGHTS_WORD.unknown;
+  return `Output rights: ${word}${or.clause ? ` (${or.clause})` : ""}`;
+}
+
 const NAME_COL = 24;
 const wrap = (text, width, indent) => {
   const out = [];
@@ -89,9 +104,9 @@ function body() {
     const ind = `    ${" ".repeat(NAME_COL)}`;
     const or = cap.outputRights;
     if (or) {
-      const word = RIGHTS_WORD[or.class] || RIGHTS_WORD.unknown;
-      lines.push(`${ind}${wrap(`Output rights: ${word}${or.clause ? ` (${or.clause})` : ""}`, 76 - NAME_COL, ind)}`);
+      lines.push(`${ind}${wrap(rightsLine(or), 76 - NAME_COL, ind)}`);
       if (or.url) lines.push(`${ind}${or.url}`);
+      if (or.licenceFile?.url && or.licenceFile.url !== or.url) lines.push(`${ind}Licence file: ${or.licenceFile.url}`);
       /* The publisher's stated intent, when there is one: a discussion comment
        * beside the licence, never in place of it. */
       if (or.publisher) {

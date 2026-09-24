@@ -22,6 +22,7 @@ import { mkdtemp, mkdir, writeFile, readFile, stat, unlink, rm } from "node:fs/p
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { sendFile } from "./sendfile.js";
 
 const INDEX = readFileSync(new URL("./index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
@@ -190,7 +191,7 @@ test("POST /api/settings: foreign requests change nothing, network and device pa
 test("/api/audio: the Comfy API's folder is not reachable, and every file is served sandboxed and unsniffed", async () => {
   const MIME = new Function(`${/const MIME = \{[\s\S]*?\n\};/.exec(INDEX)[0]}\nreturn MIME;`)();
   const body = slice('if (p.startsWith("/api/audio/")) {', "\n    }\n\n    // ---- static");
-  const run = new AsyncFunction("p", "req", "res", "json", "path", "config", "stat", "MIME", "createReadStream", `${body}\nreturn { fellThrough: true };`);
+  const run = new AsyncFunction("p", "req", "res", "json", "path", "config", "stat", "MIME", "createReadStream", "sendFile", `${body}\nreturn { fellThrough: true };`);
   await mkdir(path.join(config.outputDir, "router"), { recursive: true });
   const svg = "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>";
   await writeFile(path.join(config.outputDir, "router", "v.svg"), svg);
@@ -201,7 +202,7 @@ test("/api/audio: the Comfy API's folder is not reachable, and every file is ser
     res.writeHead = (status, head) => { res.status = status; res.head = head; };
     res.resume();
     const done = new Promise((ok) => res.on("finish", ok));
-    const r = await run(p, { method: "GET", headers }, res, json, path, config, stat, MIME, createReadStream);
+    const r = await run(p, { method: "GET", headers }, res, json, path, config, stat, MIME, createReadStream, sendFile);
     if (r?.code) return { status: r.code, head: {} };
     await done;
     return res;
@@ -217,4 +218,45 @@ test("/api/audio: the Comfy API's folder is not reachable, and every file is ser
     assert.equal(r.head["X-Content-Type-Options"], "nosniff", `${p} ${status}: never sniffed into HTML`);
   }
   assert.equal((await get("/api/audio/song.mp3", { range: "bytes=0-9" })).head["Accept-Ranges"], "bytes", "scrubbing still works");
+});
+
+/* THE SCORE DOORS run a python on a path the body names: the pitch tracker
+ * (hum.js, the engine's python) and the song transcriber (which can start a
+ * demucs separation first). readBody parses a text/plain body, so without the
+ * guard any page could have Studio read a file on this PC. Each door is the
+ * real route text; the guard is asked before the body is read. */
+test("POST /api/hum and /api/song_to_score: refused before the body is read, from anywhere but Studio's page or a local client", async () => {
+  const hum = new AsyncFunction("req", "res", "json", "readBody", "transcribeHum", "refusalFields", "sameOriginLocalJson",
+    `${slice('if (p === "/api/hum" && req.method === "POST") {', "\n    }\n\n    /* /api/replace")}\nreturn { fellThrough: true };`);
+  const toScore = new AsyncFunction("req", "res", "json", "readBody", "sameOriginLocalJson", "ensureVocalStem", "songToScore",
+    "art", "config", "engineDoor", "prov", "path", "refusalFields",
+    `${slice('if (p === "/api/song_to_score" && req.method === "POST") {', "\n    }\n\n    /* THE TOKENIZER ON ITS OWN")}\nreturn { fellThrough: true };`);
+  const prov = { actorFrom: () => "agent:test" };
+  const doors = [
+    ["/api/hum", (req, readBody, ran) => hum(req, null, json, readBody, async () => { ran.push("tracker"); return { abc: "X:1" }; }, () => ({}), sameOriginLocalJson)],
+    ["/api/song_to_score", (req, readBody, ran) => toScore(req, null, json, readBody, sameOriginLocalJson, async () => { ran.push("stem"); return {}; },
+      async () => { ran.push("transcriber"); return { abc: "X:1" }; }, {}, { stems: {} }, {}, prov, path, () => ({}))],
+  ];
+  for (const [door, call] of doors) {
+    for (const [what, req] of FOREIGN) {
+      let reads = 0; const ran = [];
+      const r = await call(req, async () => { reads++; return { source: { path: "C:/Users/someone/private.wav" } }; }, ran);
+      assert.equal(r?.code, 403, `${door}, ${what}: 403`);
+      assert.match(r.body.error, /only accepted from Studio's own page or a local client/, `${door}, ${what}`);
+      assert.equal(reads, 0, `${door}, ${what}: the body was never read`);
+      assert.deepEqual(ran, [], `${door}, ${what}: no python ran`);
+    }
+    for (const [what, req] of [["Studio's page", PAGE], ["MCP / chat (no Origin)", LOCAL]]) {
+      const ran = [];
+      const r = await call(req, async () => ({ source: { path: "C:/h.wav" } }), ran);
+      assert.equal(r?.code, 200, `${door}, ${what} gets through: ${JSON.stringify(r)}`);
+      assert.equal(ran.length, 1, `${door}, ${what}: it ran`);
+    }
+  }
+});
+
+test("POST /api/song_to_score caps its body like /api/hum: 413 before JSON.parse", async () => {
+  const body = slice('if (p === "/api/song_to_score" && req.method === "POST") {', "\n    }\n\n    /* THE TOKENIZER ON ITS OWN");
+  assert.match(body, /b = await readBody\(req, 72 \* 1024 \* 1024\)/);
+  assert.match(body, /if \(err\.tooBig\) return json\(res, 413,/);
 });

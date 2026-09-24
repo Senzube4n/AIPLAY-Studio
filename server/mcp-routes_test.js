@@ -749,5 +749,60 @@ if (unresolvedActions.length) {
   for (const u of unresolvedActions) console.log(`       ${u}`);
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * THE STEM SPLITTER, THE STOP BUTTON AND THE SONG LIST, named (2026-09-24).
+ *
+ * separate_stems and stop_generation are new tools for things the page already
+ * did (Separate stems, Stop) and nothing an agent could reach; stems_python is
+ * Settings' new field. The census above already resolves them; these lines pin
+ * WHICH door and which word, so a later rename of either end fails by name.
+ * list_songs is run for real against a fake Studio, because the rights shape
+ * is the part an agent reads and a static read of run() cannot show it.
+ * ────────────────────────────────────────────────────────────────────────── */
+console.log("\n  -- the stem splitter, the Stop button and the song list --");
+{
+  const one = (name) => analysed.find((t) => t.name === name)?.calls || [];
+  const posts = (name, route, action) => one(name).some((c) => c.method === "POST" && c.path === route && (!action || c.actions.includes(action)));
+  ok("separate_stems posts { action: \"run\" } to /api/stems, and that door handles it",
+    posts("separate_stems", "/api/stems", "run") && actionsByPath.get("/api/stems")?.has("run"), JSON.stringify(one("separate_stems")));
+  ok("stems_python posts { action: \"python\" } to /api/stems, and that door handles it",
+    posts("stems_python", "/api/stems", "python") && actionsByPath.get("/api/stems")?.has("python"), JSON.stringify(one("stems_python")));
+  ok("stop_generation posts to /api/cancel, a door that exists", posts("stop_generation", "/api/cancel") && servesPath("/api/cancel"),
+    JSON.stringify(one("stop_generation")));
+  const routerSrc = read("server/chat/router.js");
+  ok("...and each has its chat-router line", /\n  separate_stems: "gpu",/.test(routerSrc)
+    && /\n  stop_generation: "writes",/.test(routerSrc) && /\n  stems_python: "/.test(routerSrc));
+
+  const http = await import("node:http");
+  const { spawn } = await import("node:child_process");
+  const row = {
+    file: "aiplay_yue2_gguf_x.wav", title: "X", durationSeconds: 30, engine: "yue2-gguf", quantization: "q4_0",
+    stems: null, warnings: [], generationLimits: null, tagged: false,
+    rights: { class: "yours-with-conditions", sellable: true, label: "Sellable by individuals (YuE2 authors' statement, 15 Sep 2026) · companies need a commercial licence",
+      short: "sellable by individuals", capability: "musicYue2Gguf", licence: "CC BY-NC 4.0 (weights)", url: "https://huggingface.co/m-a-p/YuE2-3B/discussions/5",
+      basis: "authors-statement", addOns: [], changed: { from: "not-for-sale", on: "2026-09-24", why: "w" } },
+  };
+  const server = http.createServer((req, res) => {
+    res.writeHead(req.url === "/api/status" ? 200 : 404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(req.url === "/api/status" ? { library: [row] } : { error: "not here" }));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const mcpUrl = new URL("./mcp.js", import.meta.url).href;
+  const child = spawn(process.execPath, ["--input-type=module", "-e",
+    `const { TOOLS } = await import(${JSON.stringify(mcpUrl)}); console.log(JSON.stringify(await TOOLS.find((t) => t.name === "list_songs").run({})));`],
+    { env: { ...process.env, AIPLAY_URL: `http://127.0.0.1:${server.address().port}` } });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  const code = await new Promise((r) => child.on("close", r));
+  server.close();
+  let listed = null;
+  try { listed = JSON.parse(out.trim().split(/\r?\n/).pop())[0]; } catch { /* reported below */ }
+  ok("list_songs returns each song's rights, snake_case, and whether its tags were written",
+    code === 0 && listed?.rights?.class === "yours-with-conditions" && listed.rights.sellable === true
+    && Array.isArray(listed.rights.add_ons) && listed.rights.basis === "authors-statement"
+    && /^Sellable by individuals/.test(listed.rights.label) && listed.rights.changed?.from === "not-for-sale"
+    && listed.tagged === false, out.slice(0, 400));
+}
+
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

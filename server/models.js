@@ -467,14 +467,21 @@ const ZIMAGE_AE = {
  * use the model and its outputs as they like, money included, and that only
  * companies should pay for a commercial licence. It is a discussion comment,
  * not the licence file, which still reads CC BY-NC 4.0 — and the thread's
- * next replies ask whether it is official. So it is shown, sourced and dated,
- * and the conservative label stays until the licence itself changes. */
+ * next replies ask whether it is official. So it is shown, sourced and dated.
+ *
+ * ⚠ SINCE 2026-09-24 STUDIO'S LABEL FOLLOWS IT (owner's decision). YuE2's
+ * songs are "sellable by individuals; companies need a commercial licence",
+ * which is what the authors wrote, and every surface that shows the label also
+ * says the licence file still reads CC BY-NC 4.0. The reading of the file
+ * itself is kept, verbatim, in `licenceFile` below and in server/music/yue.js
+ * (YUE2_LICENCE_READ), so the day the two are compared again nothing has to
+ * be re-read from memory. */
 const YUE2_PUBLISHER = {
   said: "If you are individual content creators, musicians, researchers, you can use the model and outputs whatever you want. Even making money from the outputs.\n\nOnly companies should pay for the commercial license.",
   by: "a43992899 (Multimodal Art Projection org)",
   where: "https://huggingface.co/m-a-p/YuE2-3B/discussions/5",
   on: "2026-09-15",
-  caveat: "A discussion comment, edited 2026-09-15, not the licence file, which still reads CC BY-NC 4.0; the thread's next replies ask whether it is official and what a company's licence would cover. Studio keeps its conservative label until the licence changes.",
+  caveat: "A discussion comment, edited 2026-09-15, not the licence file, which still reads CC BY-NC 4.0; the thread's next replies ask whether it is official and what a company's licence would cover. Studio's label follows this statement (since 2026-09-24) and shows the licence file beside it.",
   support: "https://buymeacoffee.com/ruibin",
 };
 
@@ -483,6 +490,71 @@ const YUE2_GRANT = {
   clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
   url: "https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE",
 };
+
+/**
+ * WHAT STUDIO SAYS ABOUT SELLING A YuE2 SONG, from 2026-09-24 (owner's
+ * decision): the authors' statement, with the licence file beside it.
+ *
+ * Every YuE2 row that renders a song carries this one object (musicYue2 and
+ * musicYue2Comfy through its getter; musicYue2Gguf with its own note), so the
+ * three can never drift. `quote` is the authors' sentence verbatim, because
+ * that is now the operative text for the label; `licenceFile` keeps the CC
+ * BY-NC 4.0 grant verbatim, because it has not changed and a reader must be
+ * able to see both. `changed` says what the label was before and why it
+ * moved, so a ledger stamped "not-for-sale" before today is explained rather
+ * than contradicted.
+ *
+ * NOT shared with the add-ons: the Mothersuperior LoRAs and tokenizer are
+ * another author's weights, and m-a-p's statement is about YuE2 (see
+ * YUE2_LICENCE_FILE_RIGHTS below).
+ */
+const YUE2_AUTHORS_RIGHTS = {
+  class: "yours-with-conditions",
+  sellable: true,
+  basis: "authors-statement",
+  chip: "Sellable by individuals (YuE2 authors' statement, 15 Sep 2026) · companies need a commercial licence",
+  short: "sellable by individuals",
+  quote: YUE2_PUBLISHER.said,
+  clause: "Discussion comment by a43992899 (Multimodal Art Projection org), m-a-p/YuE2-3B discussion #5, 15 Sep 2026",
+  url: "https://huggingface.co/m-a-p/YuE2-3B/discussions/5",
+  conditions: [
+    "Individuals (content creators, musicians, researchers) may use the model and what it makes as they like, money included — the authors' words.",
+    "Companies need a commercial licence from the authors.",
+  ],
+  licenceFile: {
+    name: "CC BY-NC 4.0",
+    quote: YUE2_GRANT.quote,
+    clause: YUE2_GRANT.clause,
+    url: YUE2_GRANT.url,
+    note: "The licence file shipped with the weights still reads CC BY-NC 4.0.",
+  },
+  publisher: YUE2_PUBLISHER,
+  attribution: "YuE2-3B by Multimodal Art Projection (m-a-p), https://huggingface.co/m-a-p/YuE2-3B. Sellable by individuals (authors' statement, 15 Sep 2026); companies need a commercial licence. Weights licence file: CC BY-NC 4.0.",
+  changed: {
+    from: "not-for-sale",
+    on: "2026-09-24",
+    why: "Studio's label now follows the YuE2 authors' statement of 15 Sep 2026.",
+  },
+  note: "Studio's label follows what the model's authors wrote on the model page on 15 Sep 2026: individuals may sell what it makes, and companies need a commercial licence from them. It is a discussion comment, not the licence file, which still reads CC BY-NC 4.0 and has not changed; a company, or anyone who wants the file's own terms to settle it, should ask the authors. Attribution is required either way.",
+};
+
+/**
+ * The label the YuE2 add-ons keep: the licence file's, as every YuE2 row read
+ * before 2026-09-24. A frozen copy rather than a getter, so the authors'
+ * statement about YuE2 does not quietly reach weights that other people
+ * trained (Mothersuperior's LoRAs and tokenizer head). Their authors have said
+ * nothing about selling, so the conservative reading stands for them.
+ */
+const YUE2_LICENCE_FILE_RIGHTS = Object.freeze({
+  class: "not-for-sale",
+  sellable: false,
+  ...YUE2_GRANT,
+  conditions: Object.freeze([
+    "§3(a)(1) — if you Share the weights, modified or not, you must keep the creator identification, the copyright notice, the notices referring to this licence and to its disclaimer of warranties, and a link to the material, and indicate whether you changed it. Studio Shares nothing: the download goes straight to m-a-p and the licence is between you and them.",
+    "Scope — the vendor's LICENSE applies CC BY-NC to the checkpoint weights only. What you may do with the inference CODE is the Apache-2.0 answer and a different question from what you may do with a song.",
+  ]),
+  note: "The weights are licensed for noncommercial use. Studio conservatively labels results noncommercial / not for sale; this is not a legal determination that every output inherits the checkpoint licence. Native runtime/code licences do not expand the rights granted for the weights. Review the publisher terms for your intended use.",
+});
 
 /* H3's text encoder and two VAEs. FastH3 loads the same three, so both rows
  * name the same files and a machine holding one engine fetches only the other
@@ -605,10 +677,12 @@ export const CATALOG = [
       {label:"Q8_0 (optional)",bytes:4531969109,note:"Larger native transformer plus the same decoder and sidecars. Quality, speed and VRAM have not been benchmarked; not a promise of better audio."},
     ],
     home: "https://huggingface.co/audio-cpp/Yue2-3B-GGUF",
+    /* The same weights as musicYue2, so the same label (the authors'
+     * statement); only the note differs, because this row also ships native
+     * code under its own licences. */
     outputRights: {
-      class: "not-for-sale", sellable: false, ...YUE2_GRANT, publisher: YUE2_PUBLISHER,
-      conditions: ["Use the weights only for noncommercial purposes under their licence; preserve required attribution when sharing weights or derivatives."],
-      note: "Model weights and native code have different licences. Studio marks this engine's results noncommercial as a conservative policy; it does not decide copyright or the licence status of every generated output. Review the publisher's terms for your use.",
+      ...YUE2_AUTHORS_RIGHTS,
+      note: "Model weights and native code have different licences. The native audio.cpp code (Apache-2.0/MIT) neither widens nor narrows what the weights allow. Studio's label for the songs follows the YuE2 authors' statement of 15 Sep 2026 (individuals may sell; companies need a commercial licence); the weights' licence file still reads CC BY-NC 4.0. Attribution is required either way.",
     },
     requires: {experimental:true,vramMinGb:null,vramRecGb:null,ramMinGb:null,ramRecGb:null,
       note:"Windows x64. NVIDIA: CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. AMD and Intel: the official audio.cpp Vulkan build, which needs only a current graphics driver; no card: the CPU build (slow). Vulkan and CPU speed and memory are not measured here. Q4 only, CUDA: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
@@ -636,7 +710,7 @@ export const CATALOG = [
       conditions: [
         "The score is a transcription of a recording you supply. That recording's own rights are yours to check before you cover it; nothing here changes who wrote the song.",
       ],
-      note: "A score, not a song: what you can do with the cover is decided by the YuE2 row that renders it and by the original song's rights. Studio keeps the same conservative noncommercial label on the transcriber's own weights.",
+      note: "A score, not a song: what you can do with the cover is decided by the YuE2 row that renders it and by the original song's rights. Studio keeps a conservative noncommercial label on the transcriber's own weights.",
     },
     required: false,
     files: [
@@ -900,7 +974,7 @@ export const CATALOG = [
         bytes: 3_960_938_800,
         sha256: "96fe199377309001ed8cd26a944baeee8cc31a20ba7c36d1d3c0a7e1f4149db6" },
     ],
-    note: "3.96 GB, one checkpoint file in models/checkpoints. The bf16 build (7.8 GB) renders a 30-second song in about 24 s warm on a 16 GB RX 9060 XT (measured 2026-09-16); the int8 build's speed and quality on AMD are not yet measured here. ⚠ CC BY-NC: you may not sell what this makes.",
+    note: "3.96 GB, one checkpoint file in models/checkpoints. The bf16 build (7.8 GB) renders a 30-second song in about 24 s warm on a 16 GB RX 9060 XT (measured 2026-09-16); the int8 build's speed and quality on AMD are not yet measured here. Selling: the YuE2 authors say individuals may sell what it makes and companies need a commercial licence (15 Sep 2026); the licence file still reads CC BY-NC 4.0.",
     requires: {
       vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
       note: "Not yet measured for the int8 build. ComfyUI stages the 3B language model and the audio model with dynamic VRAM, so a smaller card streams more from system RAM and is slower rather than refused.",
@@ -927,7 +1001,9 @@ export const CATALOG = [
     label: "YuE2 instrumental planner LoRA (ComfyUI)",
     why: "YuE2 through ComfyUI writes a real instrumental — sectioned, and ending on purpose — instead of planning a vocal staff and singing at random. Patches the composer only; the audio model stays the checkpoint's.",
     licence: "CC BY-NC 4.0 (weights, derived from YuE2-3B) — run by ComfyUI's own LoRA loader",
-    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    /* Detached from musicYue2's getter on 2026-09-24: that row now follows
+     * m-a-p's statement about YuE2, and these are another author's weights. */
+    outputRights: YUE2_LICENCE_FILE_RIGHTS,
     required: false,
     files: [
       { url: `${HF}/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/947f2f4b28978b2b6c3e316e6a87925c76bf3c4b/ar_lora_inst_v3abc_comfyui.safetensors`,
@@ -953,7 +1029,9 @@ export const CATALOG = [
     label: "YuE2 real-audio NAR LoRA (ComfyUI)",
     why: "The acoustic model adapted to real recordings' tokens — the other half of the real-audio tokenizer, and the author's companion to the instrumental planner for production sound.",
     licence: "CC BY-NC 4.0 (weights, derived from YuE2-3B) — run by ComfyUI's own LoRA loader",
-    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    /* Detached from musicYue2's getter on 2026-09-24: that row now follows
+     * m-a-p's statement about YuE2, and these are another author's weights. */
+    outputRights: YUE2_LICENCE_FILE_RIGHTS,
     required: false,
     files: [
       { url: `${HF}/Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4/resolve/e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5/nar_lora_joint_v4_comfyui.safetensors`,
@@ -990,10 +1068,16 @@ export const CATALOG = [
      * files hashed here from a download at that revision). The head's fp32
      * safetensors is listed; its .pt and bf16 twins are not. */
     id: "musicYue2Tokenizer",
+    /* A song read through this tokenizer (a cover primed from a recording, a
+     * continued recording) carries `tokenized` in its sidecar, and this is how
+     * songRights() knows the song used this row's weights. */
+    songAddOn: "tokenized",
     label: "YuE2 real-audio tokenizer (head + MERT-v2-FullSong)",
     why: "Continue any recording with YuE2, not only its own takes: the audio is read back into the model's semantic codes first. Also what a planner LoRA of your own would be trained on.",
     licence: "CC BY-NC 4.0 (head from YuE2-3B; MERT-v2-FullSong) — Mothersuperior's head and m-a-p's MERT-v2-FullSong, both non-commercial, run by the engine's python",
-    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    /* Detached like the two LoRAs above: the authors' statement is about
+     * YuE2, not about this head or MERT-v2-FullSong. */
+    outputRights: YUE2_LICENCE_FILE_RIGHTS,
     required: false,
     files: [
       { url: `${HF}/Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4/resolve/e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5/tokenizer_head_joint_v4.safetensors`,
@@ -1124,7 +1208,15 @@ export const CATALOG = [
      * both, so the row states both rather than picking the friendlier one. */
     licence: "CC BY-NC 4.0 (weights) — Apache-2.0 inference code, MIT community node pack",
 
-    /* 🔴 THE FIRST `not-for-sale` ROW IN THIS CATALOGUE, which is why the
+    /* ⚠ CHANGED 2026-09-24 (owner's decision): the label now follows the YuE2
+     * authors' statement of 15 Sep 2026, YUE2_AUTHORS_RIGHTS above —
+     * "sellable by individuals; companies need a commercial licence" — with
+     * the licence file's grant kept verbatim beside it in `licenceFile`. The
+     * reading below is still the reading of that FILE, and it is why the
+     * file is shown next to the label rather than dropped. It is kept, not
+     * rewritten, so the change is visible as a change.
+     *
+     * 🔴 THE FIRST `not-for-sale` ROW IN THIS CATALOGUE (until 2026-09-24), which is why the
      * reasoning is written out rather than assumed: the "not for sale" marker
      * in scripts/models_table.mjs and the "bad" chip in web/app.js have both
      * existed unused since they were written, and this is the row that lights
@@ -1152,17 +1244,7 @@ export const CATALOG = [
      * silent — rule 2 of the block above cuts both ways, and repeating a
      * plausible permission is the same failure as repeating a plausible
      * restriction. A user who needs commercial has the v1 route in `note`. */
-    outputRights: {
-      class: "not-for-sale",
-      sellable: false,
-      ...YUE2_GRANT,
-      publisher: YUE2_PUBLISHER,
-      conditions: [
-        "§3(a)(1) — if you Share the weights, modified or not, you must keep the creator identification, the copyright notice, the notices referring to this licence and to its disclaimer of warranties, and a link to the material, and indicate whether you changed it. Studio Shares nothing: the download goes straight to m-a-p and the licence is between you and them.",
-        "Scope — the vendor's LICENSE applies CC BY-NC to the checkpoint weights only. What you may do with the inference CODE is the Apache-2.0 answer and a different question from what you may do with a song.",
-      ],
-      note: "The weights are licensed for noncommercial use. Studio conservatively labels results noncommercial / not for sale; this is not a legal determination that every output inherits the checkpoint licence. Native runtime/code licences do not expand the rights granted for the weights. Review the publisher terms for your intended use.",
-    },
+    outputRights: YUE2_AUTHORS_RIGHTS,
 
     /* ⚠ DELIBERATELY NO `region` FIELD, and this is not a shortcut.
      *
@@ -1249,7 +1331,7 @@ export const CATALOG = [
        * "the weights are present and the right size", and a runner must fetch
        * the repo's small files with them. */
     ],
-    note: "7.79 GB, 7.26 GB of it the transformer. A second engine with an editable-score step, not a replacement: MEASURED here 2026-09-11 at 167.0 s of 48 kHz 24-bit stereo in 399.6 s end to end — 2.39x realtime, against MiniMax Music 3's 1.53x on the same card (config.js, music.engines['minimax-music3'].realtimeRatio). The stages were 281.0 s of semantic sampling (4177 tokens, 14.87 tok/s), 106.3 s of NAR and 5.7 s of VAE, plus 6.6 s to load the weights warm; execution eager, attention sdpa, one CFG branch. Planning the ABC score costs nothing when you supply one. ⚠ Lyrics must carry NO bracketed section labels: MEASURED on the MiniMax engine, which SANG “[verse]” — three tracks were rejected for it and one ran 202 s instead of 64 s carrying the brackets — and nothing measured makes YuE2 different, so the same rule holds here until something does. It runs in its own interpreter rather than in ComfyUI, and on Windows it needs PYTHONUTF8=1 set before that interpreter starts, because the vendor writes its plan with no encoding argument and CJK lyrics hit cp1252 and raise. ⚠ CC BY-NC: you may not sell what this one makes — the rights chip has the sentence and the alternative.",
+    note: "7.79 GB, 7.26 GB of it the transformer. A second engine with an editable-score step, not a replacement: MEASURED here 2026-09-11 at 167.0 s of 48 kHz 24-bit stereo in 399.6 s end to end — 2.39x realtime, against MiniMax Music 3's 1.53x on the same card (config.js, music.engines['minimax-music3'].realtimeRatio). The stages were 281.0 s of semantic sampling (4177 tokens, 14.87 tok/s), 106.3 s of NAR and 5.7 s of VAE, plus 6.6 s to load the weights warm; execution eager, attention sdpa, one CFG branch. Planning the ABC score costs nothing when you supply one. ⚠ Lyrics must carry NO bracketed section labels: MEASURED on the MiniMax engine, which SANG “[verse]” — three tracks were rejected for it and one ran 202 s instead of 64 s carrying the brackets — and nothing measured makes YuE2 different, so the same rule holds here until something does. It runs in its own interpreter rather than in ComfyUI, and on Windows it needs PYTHONUTF8=1 set before that interpreter starts, because the vendor writes its plan with no encoding argument and CJK lyrics hit cp1252 and raise. Selling: the YuE2 authors say individuals may sell what it makes and companies need a commercial licence (15 Sep 2026); the licence file still reads CC BY-NC 4.0 — the rights chip has both.",
     requires: {
       /* The 24 GB card and the 24 GB of host RAM are the VENDOR's
        * recommendation, and `fitFor()` already words `vramRecGb` as
@@ -3040,6 +3122,123 @@ export function rightsStampFor(model) {
     capability: (key === "checkpoint" ? null : MODEL_TO_CAPABILITY[key]) || null,
     url: r.url || null,
   };
+}
+
+/** Least restrictive first. A song's add-ons can only move it right. The one
+ *  ranking in the server: fit.js orders its picks by it too (rightsRank). */
+export const RIGHTS_ORDER = Object.freeze(["unrestricted", "yours-with-conditions", "unknown", "not-for-sale"]);
+
+/** A class's place in RIGHTS_ORDER. A class this file does not know ranks as
+ *  `unknown`, never as unrestricted: a mistyped class must not make a song or
+ *  a pick look freer than it is. */
+export function rightsRank(cls) {
+  const i = RIGHTS_ORDER.indexOf(cls);
+  return i >= 0 ? i : RIGHTS_ORDER.indexOf("unknown");
+}
+
+/** The words a rights row is shown with: its own chip, or the class's. */
+export function rightsWords(r) {
+  const cls = OUTPUT_RIGHTS_CLASSES[r?.class] ? r.class : "unknown";
+  const n = Array.isArray(r?.conditions) ? r.conditions.length : 0;
+  const label = r?.chip
+    || OUTPUT_RIGHTS_CLASSES[cls].chip + (cls === "yours-with-conditions" && n ? ` — ${n} condition${n === 1 ? "" : "s"}` : "");
+  return { label, short: r?.short || label.toLowerCase() };
+}
+
+/**
+ * WHAT A FINISHED SONG MAY BE SOLD FOR, worked out from the catalogue as it
+ * is today — never from the words a sidecar stored when the song was made.
+ *
+ * The engine that rendered it picks the row (MODEL_TO_CAPABILITY, the same
+ * bridge the ledger stamps with). An add-on the song used can only make the
+ * answer stricter: a LoRA whose file is a catalogue row's file (meta.lora /
+ * meta.loraClip), or a row that names the sidecar key it leaves
+ * (`songAddOn`, the real-audio tokenizer's "tokenized"). The strictest class
+ * wins, in RIGHTS_ORDER; `addOns` names the rows that raised it.
+ *
+ * A take with no engine of its own (a MiniMax extension, which records only
+ * its parent) follows `extendedFrom` through `parentOf`, a few hops at most.
+ * Anything still unnamed is `unknown`: not a verdict, the honest answer.
+ */
+export function songRights(meta = {}, { parentOf = null, catalog = CATALOG } = {}) {
+  let engine = meta?.engine || null;
+  for (let at = meta, hops = 0; !engine && at?.extendedFrom && parentOf && hops < 4; hops++) {
+    at = parentOf(at.extendedFrom) || null;
+    engine = at?.engine || null;
+  }
+  const key = String(engine || "").trim().toLowerCase();
+  const capId = MODEL_TO_CAPABILITY[key] || null;
+  const engineRow = capId ? catalog.find((c) => c.id === capId) || null : null;
+  let row = engineRow?.outputRights ? engineRow : null;
+  let r = row ? row.outputRights : UNRECOGNISED_RIGHTS;
+  const rank = rightsRank;
+
+  const loras = [meta?.lora, meta?.loraClip]
+    .filter((v) => typeof v === "string" && v)
+    .map((v) => path.basename(v.split(" @ ")[0].trim()).toLowerCase());
+  const addOns = [];
+  const used = [];
+  for (const cap of catalog) {
+    if (!cap?.outputRights || cap === engineRow) continue;
+    const byFile = loras.length && [...(cap.files || []), ...(cap.defaultFiles || [])]
+      .some((f) => loras.includes(path.basename(String(f?.dest || f?.url || "")).toLowerCase()));
+    const bySidecar = typeof cap.songAddOn === "string" && meta?.[cap.songAddOn] != null && meta[cap.songAddOn] !== false;
+    if (!byFile && !bySidecar) continue;
+    used.push(cap);
+    if (rank(cap.outputRights.class) > rank(r.class)) {
+      addOns.push(cap.id);
+      row = cap;
+      r = cap.outputRights;
+    }
+  }
+  /* A FILE SOMEBODY IMPORTED, with no engine named: Studio did not make it
+   * and has read nothing about it, so the class stays `unknown`. But "Rights
+   * unverified" on a person's own recording read as Studio doubting her song;
+   * the basis and the words say why there is no verdict instead. */
+  const imported = !engine && meta?.imported === true && !addOns.length;
+  const { label, short } = imported
+    ? { label: "Imported file · not made in Studio", short: "imported" }
+    : rightsWords(r);
+  /* THE CREDIT LINES THE FILE'S TAGS CARRY (tag_audio.py writes them as
+   * ATTRIBUTION and COPYRIGHT; the native WAV as ICOP): the engine row's own
+   * attribution (YuE2's names the authors and the licence file), and for each
+   * catalogued add-on the song used, its attribution or — for a not-for-sale
+   * one — its licence and label, so a file that leaves Studio says why it may
+   * not be sold. Empty for engines whose licence asks for none. */
+  const credit = (cap) => cap?.outputRights?.attribution
+    || (cap?.outputRights?.class === "not-for-sale"
+      ? `${cap.label}: ${String(cap.licence || "see its licence").split(" — ")[0]} — ${rightsWords(cap.outputRights).label}. ${cap.outputRights.url || ""}`.trim()
+      : null);
+  const credits = [engineRow, ...used].map(credit).filter(Boolean);
+  return {
+    class: r.class,
+    sellable: r.sellable ?? null,
+    label,
+    short,
+    capability: row?.id || null,
+    engineCapability: capId,
+    licence: row?.licence || null,
+    url: r.url || null,
+    basis: imported ? "imported" : r.basis || (r.class === "unknown" ? null : "licence"),
+    addOns,
+    ...(r.changed ? { changed: r.changed } : {}),
+    ...(credits.length ? { attribution: [...new Set(credits)].join("\n") } : {}),
+  };
+}
+
+/**
+ * THE LEDGER'S STAMP FOR A SONG, when it differs from its model's.
+ *
+ * provenance.js stamps a generate event with its model's row (rightsStampFor)
+ * and keeps an `outputRights` the caller supplies. A song that used a
+ * not-for-sale add-on (a catalogued LoRA, the real-audio tokenizer) is
+ * stricter than its model, and without this the ledger said "yours to sell"
+ * while the library row said "not for sale". Null when no add-on raised it:
+ * the model's own stamp is then the right one, and the ledger stays as small.
+ */
+export function songRightsStamp(meta = {}, opts = {}) {
+  const r = songRights(meta, opts);
+  return r.addOns.length ? { class: r.class, capability: r.capability, url: r.url, addOns: r.addOns } : null;
 }
 
 /**

@@ -97,6 +97,9 @@ export function lastCheck() {
   return cache ? { ...cache, cached: true } : null;
 }
 
+/** The next step when a newer build exists: the launcher's own button. */
+export const UPDATE_HOW = "Stop Studio, then press Update at the bottom of the launcher window.";
+
 /**
  * One sentence for a screen. Written here rather than in three front ends, so
  * the launcher, About and any agent say the same thing.
@@ -107,7 +110,12 @@ export function updateSentence(r, v = appVersion()) {
   const bits = [];
   const up = r.upstream;
   if (up?.ahead === 0) bits.push(v.fork ? "Up to date with the original." : "Up to date.");
-  else if (up?.ahead > 0) bits.push(`${up.ahead} commit${up.ahead === 1 ? "" : "s"} on the original you do not have${up.newest ? `, newest: ${up.newest}` : ""}.`);
+  /* Behind: the count, then what to DO about it, in the words the launcher
+   * uses. Both front ends show this sentence, and a count with no next step
+   * left a person re-downloading the zip. Update replaces the app files only;
+   * songs, settings, models and the engine stay where they are. One chain:
+   * the "not a commit GitHub knows" line is for ahead === null only. */
+  else if (up?.ahead > 0) bits.push(`${up.ahead} commit${up.ahead === 1 ? "" : "s"} on the original you do not have${up.newest ? `, newest: ${up.newest}` : ""}.`, UPDATE_HOW);
   else if (up?.head) bits.push(`The original is at ${up.head}; this build's base is not a commit GitHub knows.`);
   if (r.fork && !r.fork.current) bits.push(`Your own repository has ${r.fork.head}, which this build is not.`);
   return bits.join(" ") || "Nothing to report.";

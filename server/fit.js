@@ -32,7 +32,7 @@
  * that struggles.
  */
 import path from "node:path";
-import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel } from "./models.js";
+import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, rightsRank } from "./models.js";
 import { config } from "./config.js";
 import { SETTING_WORDS } from "./lrc.js";
 import {
@@ -436,8 +436,8 @@ const AMD_MUSIC_WARNING =
   + "with PyTorch attention and CUDA graphs off (--use-pytorch-cross-attention --disable-cuda-graphs, "
   + "Studio's default) fixes it; this launch does not use both.";
 
-/** Least restrictive first. The order the catalogue's own classes imply. */
-const RIGHTS_RANK = { "unrestricted": 0, "yours-with-conditions": 1, "unknown": 2, "not-for-sale": 3 };
+/* Least restrictive first: models.js rightsRank, the one ranking (a class it
+ * does not know ranks as "unknown"). */
 /* From FIT_STATES, so the page and the recommendation rank alike: a known
  * smaller size above "cannot tell", below anything that runs full size. */
 const FIT_RANK = Object.fromEntries(Object.entries(FIT_STATES).map(([k, v]) => [k, v.rank]));
@@ -471,7 +471,7 @@ function rankPick(a, b) {
   if (a.cap.ready !== b.cap.ready) return a.cap.ready ? -1 : 1;
   const f = FIT_RANK[a.fit.state] - FIT_RANK[b.fit.state];
   if (f) return f;
-  const r = (RIGHTS_RANK[a.cap.outputRights?.class] ?? 2) - (RIGHTS_RANK[b.cap.outputRights?.class] ?? 2);
+  const r = rightsRank(a.cap.outputRights?.class) - rightsRank(b.cap.outputRights?.class);
   if (r) return r;
   return (a.cap.totalBytes || 0) - (b.cap.totalBytes || 0);
 }
@@ -736,7 +736,7 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
     const best = usableImages[0];
     const rights = best.cap.outputRights?.class;
     const beaten = usableImages.slice(1)
-      .filter((i) => (RIGHTS_RANK[i.cap.outputRights?.class] ?? 2) > (RIGHTS_RANK[rights] ?? 2))
+      .filter((i) => rightsRank(i.cap.outputRights?.class) > rightsRank(rights))
       .map((i) => `${i.cap.label} (${i.cap.outputRights?.class})`);
     picks.push({
       slot: "image", id: best.cap.id, label: best.cap.label, fit: best.fit, ready: best.cap.ready,

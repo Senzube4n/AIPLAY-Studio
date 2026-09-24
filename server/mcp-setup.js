@@ -20,19 +20,27 @@ export function setupTools(api) {
       name: "setup_feature",
       description: "Set up something Studio needs, with no system Python and no command prompt. "
         + "`lyrics` (timed lyrics): builds a private Python 3.12 environment in Studio's data folder with the kept, "
-        + "checksum-checked uv, installs PyTorch (CUDA 12.6 on an NVIDIA card, the CPU build otherwise; `torch` overrides) "
-        + "and faster-whisper plus stable-ts, checks both import, and only then makes it the timed lyrics python (the same "
-        + "setting as timed_lyrics_python). `studio-packages`: installs Studio's own OpenCV, librosa and soundfile again "
-        + "into an engine Studio installed, pinned to its torch and numpy (refused for any other ComfyUI). "
+        + "checksum-checked uv, installs PyTorch (CUDA 12.6 on an NVIDIA card, 12.8 on an RTX 50, the CPU build otherwise; "
+        + "`torch` overrides) and faster-whisper plus stable-ts, checks both import, and only then makes it the timed lyrics "
+        + "python (the same setting as timed_lyrics_python). `stems` (stem separation, and the audio-reference encoder that "
+        + "shares its python): the same private Python 3.12 with demucs, numpy, av and safetensors; `auto` builds PyTorch for "
+        + "CUDA 12.8 (RTX 50 included; 12.6 on a card older than sm_70) on an NVIDIA card when the drive has room for it and "
+        + "the CPU build otherwise, and setup_status says which, why and how big. Every CUDA build is proven with a real "
+        + "tensor op on the card; when the card fails it, the python is still chosen and separation runs on the processor. "
+        + "demucs writes FLAC with ffmpeg, which no setup installs (setup_status ffmpegFound). `studio-packages`: installs "
+        + "Studio's own OpenCV, librosa and soundfile again into an engine Studio installed, pinned to its torch and numpy "
+        + "(refused for any other ComfyUI). "
         + "Read setup_status first: it gives this machine's download and disk size and the exact sentence the button shows; "
         + "tell the person and get their agreement before calling this. Returns at once with the job's state; poll "
-        + "setup_status for progress. Already working, it installs nothing and says so; when it would change nothing "
-        + "(AIPLAY_WHISPER_PYTHON is set, or the engine is not Studio's) it refuses with the reason.",
+        + "setup_status for progress. Already working, it installs nothing and says so, unless its PyTorch fails on the "
+        + "card, is the CPU build where auto offers a CUDA one (setup_status onProcessor), or `torch` names another build: "
+        + "then it builds Studio's own. When it would change nothing (AIPLAY_WHISPER_PYTHON or AIPLAY_SYS_PYTHON is set, "
+        + "or the engine is not Studio's) it refuses with the reason.",
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", enum: SETUP_IDS, description: "Which setup: lyrics, or studio-packages." },
-          torch: { type: "string", enum: TORCH_CHOICES, description: "Optional, lyrics only. auto (default) follows the graphics card; cu126 or cpu chooses the PyTorch build." },
+          id: { type: "string", enum: SETUP_IDS, description: "Which setup: lyrics, stems, or studio-packages." },
+          torch: { type: "string", enum: TORCH_CHOICES, description: "Optional, lyrics and stems only. auto (default) follows the graphics card (and, for stems, the free space on the drive); cu126, cu128 (CUDA 12.8, for an RTX 50) or cpu chooses the PyTorch build, and a python already there with another build is replaced." },
         },
         required: ["id"],
         additionalProperties: false,
@@ -46,7 +54,9 @@ export function setupTools(api) {
     {
       name: "setup_status",
       description: "What each one-click setup would do (folder, Python, PyTorch build and the sentence for each choice, "
-        + "packages, download and disk sizes), whether the feature already works on this machine, why a setup would be "
+        + "packages, download and disk sizes; for stems also freeGb and needGb, the drive's free space and what each "
+        + "build needs, and ffmpegFound), whether the feature already works on this machine (ready) and whether it works "
+        + "only on the processor while a GPU build is on offer (onProcessor), why a setup would be "
         + "refused, and the state of its job: step, the last lines of output and the final sentence. Reads only.",
       inputSchema: {
         type: "object",

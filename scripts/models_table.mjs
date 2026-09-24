@@ -175,6 +175,20 @@ const FLAGS = [
       + `weights' licence. Review the source terms and output scope: ${c.outputRights.url}.`).join(" "),
   },
   {
+    /* A LABEL THAT FOLLOWS THE AUTHORS' OWN STATEMENT rather than the licence
+     * file (YuE2 since 2026-09-24, the owner's decision). The row's licence
+     * cell still names the file (CC BY-NC 4.0), so without this marker the
+     * table would say non-commercial while the app says sellable. The words
+     * are the row's own chip; the file stays named beside it. */
+    key: "sellable by individuals",
+    has: (c) => c.outputRights?.basis === "authors-statement",
+    heading: "⚠ **sellable by individuals**",
+    body: (caps) => caps.map((c) =>
+      `**${modelName(c.label)}.** ${c.outputRights.chip}. The licence file shipped with the weights still reads `
+      + `${c.outputRights.licenceFile?.name || licenceName(c.licence)}; Studio's label follows the authors' statement: `
+      + `${c.outputRights.url}.`).join(" "),
+  },
+  {
     /* `pip` on a row with no files means there is nothing to download at all;
      * `+pip` means the weights ARE a download and a python package is needed on
      * top of them. Two different first minutes, so two different markers. */

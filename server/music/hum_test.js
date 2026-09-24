@@ -91,11 +91,15 @@ console.log("\n§2  the wiring names the field at every hand");
     /abcOpen: !!abcOpen && !!abc && cot !== "off",/.test(yue) && /\.\.\.\(args\.abcOpen \? \["--abc-open"\] : \[\]\),/.test(yue));
   ok("the job pump passes it", /abcOpen: !!job\.abcOpen,/.test(jobs));
   ok("/api/generate accepts abcOpen with a score", /abcOpen: !!abc && \(body\.abcOpen === true \|\| seeded\),/.test(index));
-  ok("/api/hum exists and answers the tracker's refusals with its status",
+  ok("/api/hum exists and answers the tracker's refusals with its status and their setup fields",
     /p === "\/api\/hum" && req\.method === "POST"/.test(index)
-    && /return json\(res, e\?\.status \|\| 400, \{ error: e\?\.message \|\| String\(e\) \}\);/.test(index));
-  ok("hum_to_score exists, requires source, and forwards every declared parameter",
-    /name: "hum_to_score",/.test(mcp) && /required: \["source"\],/.test(mcp) && /\{ source: a\.source, bpm: a\.bpm, key: a\.key \}/.test(mcp));
+    && /return json\(res, e\?\.status \|\| 400, \{ error: e\?\.message \|\| String\(e\), \.\.\.refusalFields\(e\) \}\);/.test(index));
+  ok("...and caps the recording's body before it is parsed",
+    /b = await readBody\(req, 72 \* 1024 \* 1024\)/.test(index) && /if \(err\.tooBig\) return json\(res, 413,/.test(index));
+  ok("hum_to_score exists, takes source or a flat library_file, and forwards every declared parameter",
+    /name: "hum_to_score",/.test(mcp) && /library_file: \{ type: "string"/.test(mcp)
+    && /\{ source: a\.source \?\? \(a\.library_file \? \{ library_file: safeName\(a\.library_file, "song"\) \} : undefined\), bpm: a\.bpm, key: a\.key \}/.test(mcp)
+    && /Give source \{path \| library_file \| data_url\}, or library_file\./.test(mcp));
   ok("make_song declares abc_open and forwards it", /abc_open: \{ type: "boolean"/.test(mcp) && /abcOpen: a\.abc_open === true \? true : undefined,/.test(mcp));
   ok("the chat router lists the tool as free", /hum_to_score: null,/.test(router));
   ok("the page has the record, stop, file and open-score controls under Advanced Options",

@@ -1,9 +1,11 @@
 /** Native YuE2 library metadata. Bounded RIFF INFO, lossless streaming copy,
  * no Python/ffmpeg. Only the queue's copied WAV is tagged; its receipt master
  * remains unchanged. No cover embedding is claimed. */
-import { open, rename, unlink, utimes } from "node:fs/promises";
+import { open, unlink, utimes } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { inspectGgufWav } from "./music/yue-gguf.js";
+import { renameAtomic } from "./fs-atomic.js";
+import { outputRightsFor } from "./models.js";
 
 const LIMIT = 64 * 1024;
 const PREFIX = "http://cv.iptc.org/newscodes/digitalsourcetype/";
@@ -13,8 +15,11 @@ const clean = (value, max = 2000) => String(value ?? "").replace(/\0/g, "").slic
 
 function record(raw) {
   const generator = clean(raw.generator || "YuE2-3B (native audio.cpp)", 240);
+  /* The credit line the catalogue gives this engine's songs (models.js), so
+   * ICOP says what the rights chip says; the licence file's name rides in it. */
   const attribution = clean(Array.isArray(raw.attribution) ? raw.attribution.join("\n")
-    : raw.attribution || "YuE2-3B — CC BY-NC 4.0; non-commercial use, attribution required.");
+    : raw.attribution || outputRightsFor("yue2-gguf").attribution
+      || "YuE2-3B by Multimodal Art Projection (m-a-p), https://huggingface.co/m-a-p/YuE2-3B. Weights licence file: CC BY-NC 4.0; attribution required.");
   return {
     title: clean(raw.title || "Untitled", 240), generator, attribution,
     digitalSourceType: String(raw.digitalSourceType || "").startsWith(PREFIX)
@@ -114,7 +119,10 @@ export async function tagNativeWav(file, raw = {}) {
       const verified = await readNativeWavTags(temporary);
       if (verified.seconds !== audio.audioSeconds || !verified.digitalSourceType || !verified.attribution) throw new Error("Native WAV metadata verification failed.");
       await input.close();
-      await rename(temporary, file);
+      /* Retried on EPERM/EBUSY/EACCES for about 0.8 s (server/fs-atomic.js):
+       * a player, the indexer or antivirus holding the song for a moment used
+       * to cost the tags and the cover with "EPERM: operation not permitted". */
+      await renameAtomic(temporary, file);
       await utimes(file, stamp.atime, stamp.mtime);
       return verified;
     } finally {

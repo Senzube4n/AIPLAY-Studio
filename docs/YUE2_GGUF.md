@@ -189,11 +189,14 @@ project; its bundled third-party components retain their own terms. A permissive
 runtime licence does not change the model licence.
 
 The [original YuE2 model licence](https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE)
-applies **CC BY-NC 4.0 to the weights**. Studio retains a conservative
-**noncommercial / not-for-sale** output label. Whether particular generated
-audio is covered adapted material is not resolved here: the label is neither
-commercial clearance nor an assertion that all outputs automatically fall under
-the weight licence. Review the source terms before distribution.
+applies **CC BY-NC 4.0 to the weights**. Since 2026-09-24 Studio's output label
+follows the model authors' own statement of 15 Sep 2026
+([discussion #5](https://huggingface.co/m-a-p/YuE2-3B/discussions/5)):
+**sellable by individuals; companies need a commercial licence**. That statement
+is a discussion comment, not the licence file, which has not changed.
+Whether particular generated audio is covered adapted material is not resolved
+here: the label is neither legal advice nor a change to the weight licence.
+Review the source terms before distribution; a company should ask the authors.
 
 Keep model/source attribution, AI disclosure and creator credits. Studio records
 delegation before generation, validates the WAV and records its digest and

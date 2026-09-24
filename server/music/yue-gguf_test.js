@@ -146,7 +146,7 @@ test("full exact-size preset is installed but hashes are only declared", async (
   const status = await yueGgufStatus({ settings, statFn: fakeStat });
   assert.equal(status.installed, true); assert.equal(status.weights.length, 6);
   assert.ok(status.weights.every((f) => f.hashVerified === false && f.bytes === f.declaredBytes));
-  assert.equal(status.rights.class, "not-for-sale"); assert.equal(status.rights.sellable, false);
+  assert.equal(status.rights.class, "yours-with-conditions"); assert.equal(status.rights.sellable, true); assert.match(status.rights.chip, /Sellable by individuals/);
   assert.ok(status.weights.filter((f) => f.gitBlob).every((f) => !f.declaredSha256));
 });
 test("each missing, truncated, or directory-valued preset member refuses installation", async () => {

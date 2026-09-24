@@ -67,6 +67,7 @@ import { jsonAfter } from "../mv/blender.js";
 import { referenceSafe } from "../mv/blender.js";
 import { readGlbFile, assertSkinned, plausiblyHumanoid } from "./glb.js";
 import { assertDeforms } from "./deform.js";
+import { killProcessTree } from "../proctree.js";
 
 /**
  * ONE SENTENCE, CARRIED INTO EVERY RECORD THIS MODULE WRITES.
@@ -602,20 +603,11 @@ export function meshPythonForArgs(args) {
     ? config.mesh.unirigPython : config.mesh.python;
 }
 
-/** Stop only the process tree owned by this invocation, including UniRig stages. */
-export function killMeshProcessTree(proc) {
-  if (!Number.isInteger(proc?.pid) || proc.pid <= 0) return Promise.resolve(false);
-  if (process.platform !== "win32") {
-    try { process.kill(-proc.pid, "SIGKILL"); return Promise.resolve(true); }
-    catch (e) { return Promise.resolve(e.code === "ESRCH"); }
-  }
-  return new Promise((resolve) => {
-    const killer = spawn(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
-      ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    killer.once("error", () => resolve(false));
-    killer.once("close", (code) => resolve(code === 0 || proc.exitCode !== null));
-  });
-}
+/** Stop only the process tree owned by this invocation, including UniRig stages.
+ *  The one implementation lives in server/proctree.js (the art queue's Stop
+ *  uses it too); this name stays for yue-gguf.js, yue.js, score/sheet.js and
+ *  their tests, which import it from here. */
+export const killMeshProcessTree = killProcessTree;
 
 export function runMeshCli(args, { timeoutMs = 20 * 60e3, cwd = null } = {}) {
   const py = meshPythonForArgs(args);

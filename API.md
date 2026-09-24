@@ -116,7 +116,10 @@ because browser FLAC decoding proved unreliable.
 
 ### `GET /api/audio/NAME`
 The audio itself, **with HTTP range support** (206). Native YuE2 WAV files are
-served as `audio/wav`; seeking depends on range support.
+served as `audio/wav`; seeking depends on range support. `bytes=-N` is the last
+N bytes. A player that hangs up early (a seek, a pause, the next track) releases
+the file at once, so a later tag or cover rewrite is not refused with `EPERM`
+on Windows (server/sendfile.js).
 
 ---
 
@@ -309,7 +312,10 @@ score planner. Out-of-range values are refused with `reason: "sampling"` or
 finished song, transcribed by SheetSage2 (ComfyUI's own audio-encoder node, core from
 0.35) into the two-voice score YuE2 sings from. `melody` (default) keeps the tune,
 `full` keeps the chords too. Needs the catalogue's "Cover — SheetSage2 song-to-score"
-row installed, else `400` with `needsModel: "coverSheetSage2"`. Holds the card for the
+row installed, else `400` with `needsModel: "coverSheetSage2"`. Same-origin local JSON only
+(`403` otherwise), and the body is capped at 72 MB (`413`). With `"stem": "vocals"`,
+a machine that cannot separate stems answers `409` with `setup: "stems"` (see
+Refusals below). Holds the card for the
 transcription. Then `/api/generate` with that `abc`, `cot: "melody"` and a NEW style
 line is the cover: the melody is kept, the voice and the arrangement are re-rendered.
 MCP: `song_to_score`, then `make_song`.
@@ -322,7 +328,11 @@ hummed voice, 1–60 s, into the two-voice ABC score YuE2 takes verbatim. Answer
 `abc`, `bpm`, `key`, `notes`, `bars`, `seconds`. Send the score to `/api/generate`
 as `abc` with `cot` melody or full; add `"abcOpen": true` to leave the score open so
 the planner continues the hummed bars into a whole song (the driver's `--abc-open`).
-MCP: `hum_to_score`, then `make_song` with `abc` and `abc_open`.
+Same-origin local JSON only (`403` otherwise): it runs the engine's python on a
+path the body names. The body is capped at 72 MB (`413` above it). A python missing a module the
+tracker needs answers `409` with `module`, `pip` and, for an engine Studio
+installed, `setup: "studio-packages"`. MCP: `hum_to_score` (`source`, or a flat
+`library_file`), then `make_song` with `abc` and `abc_open`.
 
 ### `POST /api/extend`
 ```jsonc
@@ -719,7 +729,41 @@ Round-robin by design: take 1 of every idea, then take 2. A run that only gets
 of the first and none of the rest.
 
 ### `POST /api/cancel`
-Interrupts the job in flight.
+The Stop button: cancels the song in flight and the queued songs, drops the
+queued pictures, stems and timed lyrics, and stops the one of those that is
+running — including a demucs or lyrics process, whose whole process tree is
+ended. Other engine work (a chat turn, a friend's render) keeps its place. Answers
+the song queue plus `artStopped`: `{ dropped, wasRunning, kind, killed, stopping,
+interrupted, engineCancelled }`; `stopping` stays true until the process is gone.
+MCP: `stop_generation`.
+
+### `POST /api/stems`
+```jsonc
+{ "action": "run", "file": "aiplay_00021.flac" }   // same-origin local JSON only
+{ "action": "python" }                              // report
+{ "action": "python", "value": "C:\\…\\python.exe" } // choose; "" or null = default
+{ "action": "when", "value": "off|all|starred|liked" }
+```
+`run` separates one song into vocals, drums, bass and other (demucs htdemucs_ft,
+behind music on the art queue). It answers `200 { ok, jobId }`, or
+`200 { ok, joined: true, jobId }` when that song is already being separated, or
+`409`, before anything is queued, when the stem separation python lacks demucs
+or PyTorch (a missing python is refused within a second; the import check takes a
+few seconds at most, and counts as missing after ten) (`reason` `stems-python-missing` |
+`stems-demucs-missing` | `stems-torch-missing`, `python`, `pip`, and
+`setup: "stems"` unless `AIPLAY_SYS_PYTHON` names the python), or `409` with
+`reason: "refused"` when the queue said no. `python` is Settings > Songs >
+"stem separation python": `{ ok, stems: { python, chosen, source, defaultPython,
+modules: { demucs, torch }, ready, note } }`. MCP: `separate_stems`,
+`stems_python`, `setup_feature {"id":"stems"}`.
+
+### Refusals: `409` and `setup`
+`409` means this machine is not ready (a python, a module or a model is
+missing). The body is `{ error, setup?, python?, pip?, module?, needsModel?,
+reason? }`: the sentence's first line says what is missing and where; `setup`,
+when present, is the id `POST /api/setup {"action":"run","id":…}` takes to fix
+it (`stems`, `studio-packages`, `lyrics`). The page offers that as an Install
+button; MCP tools append the id to the error for the agent to ask about.
 
 ---
 
