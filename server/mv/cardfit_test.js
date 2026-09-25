@@ -431,7 +431,8 @@ const door = {
 };
 
 let reading = { gpu: { totalMb: 8188, vendor: "nvidia" }, ram: { totalMb: 32768 } };
-/* The plan's tool: a clip that waits until the test says how it ended. */
+/* The plan's tool: a clip that waits until the test says how it ended. Each
+ * call is a new settleClip, so a wait can tell the next call from the last. */
 let settleClip = null;
 const planTools = {
   mv_generate_clip: { run: () => new Promise((resolve, reject) => { settleClip = { resolve, reject }; }) },
@@ -462,6 +463,24 @@ const writeDoc = (slug, doc) => {
   writeFileSync(path.join(OUT, "mv", slug, "project.json"), JSON.stringify({ ...doc, slug }, null, 2));
 };
 const readDoc = (slug) => JSON.parse(readFileSync(path.join(OUT, "mv", slug, "project.json"), "utf8"));
+/* A read that waits its turn behind every write in flight: store.js's own
+ * queue, with a mutator that writes nothing (routes.js readSerialised). A raw
+ * read polled beside a writer makes its rename fail with EPERM on Windows. */
+const docNow = (slug) => store.updateProject(slug, () => false);
+/* WAIT FOR THE THING, NOT FOR A NUMBER OF MILLISECONDS. A fixed sleep loses
+ * its race when the pre-commit gate runs heavy lanes beside this one: a 60 ms
+ * settle read a plan still `running` on 2026-09-25, in a suite that passed
+ * 6/6 alone. `pred` is polled until it holds or `timeout` passes; either way
+ * the caller then asserts on the real state, so a wait that runs out still
+ * fails with it. */
+async function until(pred, { timeout = 5000, step = 10 } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    if (await pred()) return true;
+    if (Date.now() - t0 >= timeout) return false;
+    await new Promise((r) => setTimeout(r, step));
+  }
+}
 
 console.log("\n  -- 3b. the routes: create, read, brief, cut --");
 {
@@ -559,7 +578,13 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
     writeDoc(slug, doc);
     return p;
   };
-  const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+  /* The plan's tool was called again: the item it names is in flight, and
+   * settleClip is its own, not the last item's. */
+  const nextCall = (last) => until(() => settleClip && settleClip !== last);
+  /* The walk is over. The runner drops its in-flight entry in a finally and
+   * queues its last write (a plan's `done`) in the same tick, so a docNow read
+   * after this sees it. */
+  const walked = (slug) => until(() => !planrun.isRunning(slug));
   const reset = () => { art.current = null; art.queue = []; door.running = []; door.cancelled = []; };
 
   /* A. The clip is on the engine and the next one is waiting: both reached. */
@@ -567,9 +592,10 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
   const p = planOn("stopme", ["mv_generate_clip"], [
     { tool: "mv_generate_clip", args: { slug: "stopme", segment: "s1_0" } },
     { tool: "mv_generate_clip", args: { slug: "stopme", segment: "s1_1" } }]);
+  let last = settleClip;
   const start = await post({ action: "plan_run", slug: "stopme", planId: p.id, op: "start" });
   ok("the plan starts", start.code === 200, JSON.stringify(start.body).slice(0, 200));
-  await settle(30);
+  await nextCall(last);
   art.current = { file: "clip:mv_stopme_s1_0_abc", title: "Stop Me · scene 1" };
   art.queue = [{ file: "clip:mv_stopme_s1_1_def" }, { file: "clip:mv_other_s1_1_x" }];
   door.running = [{ runId: "run-art", via: "art.clip" }, { runId: "run-chat", via: "chat.turn" }];
@@ -582,8 +608,8 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
     art.queue.length === 1 && art.queue[0].file === "clip:mv_other_s1_1_x" && /Its clip waiting in the queue is taken off it/.test(stop.body?.note || ""),
     JSON.stringify(art.queue));
   settleClip?.reject(new Error("the engine did not finish (interrupted)"));
-  await settle();
-  const after = readDoc("stopme").plans[0];
+  await walked("stopme");
+  const after = (await docNow("stopme")).plans[0];
   ok("the plan stays STOPPED, not paused, when its cancelled clip fails", after.state === "cancelled", after.state);
   ok("...the running item says it was stopped while it ran", /stopped while it ran/.test(after.items[0].error || ""), after.items[0].error);
   ok("...the next one was never started", after.items[1].status === "skipped");
@@ -593,8 +619,9 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
   /* B. The clip was taken by the app's queue but never reached the engine. */
   reset();
   const pb = planOn("stopmiss", ["mv_generate_clip"], [{ tool: "mv_generate_clip", args: { slug: "stopmiss", segment: "s1_0" } }]);
+  last = settleClip;
   await post({ action: "plan_run", slug: "stopmiss", planId: pb.id, op: "start" });
-  await settle(30);
+  await nextCall(last);
   art.current = { file: "clip:mv_stopmiss_s1_0_abc", title: "Stop Miss · scene 1" };
   const miss = await post({ action: "plan_run", slug: "stopmiss", planId: pb.id, op: "stop" });
   ok("a clip that could not be reached on the engine is never called cancelled",
@@ -602,50 +629,60 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
     && door.cancelled.length === 0, miss.body?.note);
   ok("...and the plan's saved note says the same", /could not be reached in time/.test(readDoc("stopmiss").plans[0].note || ""));
   settleClip?.reject(new Error("done elsewhere"));
-  await settle();
+  /* Over before the next plan starts: there is one GPU, so a walk still going
+   * here makes C's start refuse. */
+  await walked("stopmiss");
 
   /* C. The plan is drawing a picture: nothing here can cancel that. */
   reset();
   const pc = planOn("stoppic", ["mv_generate_asset", "mv_generate_clip"], [
     { tool: "mv_generate_asset", args: { slug: "stoppic", target: "character", id: "c1" } },
     { tool: "mv_generate_clip", args: { slug: "stoppic", segment: "s1_0" } }]);
+  last = settleClip;
   await post({ action: "plan_run", slug: "stoppic", planId: pc.id, op: "start" });
-  await settle(30);
+  await nextCall(last);
   const pic = await post({ action: "plan_run", slug: "stoppic", planId: pc.id, op: "stop" });
   ok("a picture item in flight is said to finish, and nothing after it runs",
     /The item it was running \(mv_generate_asset\) is not a clip, so it finishes; nothing after it runs/.test(pic.body?.note || ""), pic.body?.note);
   settleClip?.resolve({ ok: true });
-  await settle();
-  ok("...and the clip after it was skipped", readDoc("stoppic").plans[0].items[1].status === "skipped");
+  await walked("stoppic");
+  ok("...and the clip after it was skipped", (await docNow("stoppic")).plans[0].items[1].status === "skipped");
 
   /* D. The rail's Stop: it PAUSES the plan and keeps every approval. */
   reset();
   const pd = planOn("pauseme", ["mv_generate_clip"], [
     { tool: "mv_generate_clip", args: { slug: "pauseme", segment: "s1_0" } },
     { tool: "mv_generate_clip", args: { slug: "pauseme", segment: "s1_1" } }]);
+  last = settleClip;
   await post({ action: "plan_run", slug: "pauseme", planId: pd.id, op: "start" });
-  await settle(30);
+  await nextCall(last);
   const paused = await mv.pauseRunningPlans();
   ok("the rail's Stop reaches a running plan", paused.length === 1 && paused[0].slug === "pauseme" && paused[0].paused === true,
     JSON.stringify(paused));
   settleClip?.reject(new Error("interrupted"));
-  await settle();
-  const dp = readDoc("pauseme").plans[0];
+  await walked("pauseme");
+  const dp = (await docNow("pauseme")).plans[0];
   ok("...and PAUSES it, not cancels it", dp.state === "paused", dp.state);
   ok("...the item whose render it cancelled is approved again, so Run renders it",
     dp.items[0].status === "approved" && !dp.items[0].error && dp.items[1].status === "approved",
     JSON.stringify(dp.items.map((i) => [i.status, i.error])));
   ok("...and the note names the item whose render was cancelled, and says to press Run",
     /Paused by the Stop button, which cancelled the render of \S+ \(mv_generate_clip\)\. It is approved again[\s\S]*press Run to carry on/.test(dp.note || ""), dp.note);
+  last = settleClip;
   const resumed = await post({ action: "plan_run", slug: "pauseme", planId: pd.id, op: "resume" });
-  await settle(30);
+  await nextCall(last);
   ok("Run carries on from the stopped item", resumed.code === 200 && readDoc("pauseme").plans[0].items[0].status === "running",
     JSON.stringify(resumed.body).slice(0, 200));
+  last = settleClip;
+  last?.resolve({ ok: true });
+  /* The second clip answered only once it is in flight: answered before its
+   * call, the resolve landed on the first clip's settled promise and the
+   * second waited forever, a plan left `running`. */
+  await nextCall(last);
   settleClip?.resolve({ ok: true });
-  await settle();
-  settleClip?.resolve({ ok: true });
-  await settle();
-  ok("...to the end", readDoc("pauseme").plans[0].state === "done", readDoc("pauseme").plans[0].state);
+  await walked("pauseme");
+  const end = (await docNow("pauseme")).plans[0];
+  ok("...to the end", end.state === "done", end.state);
 
   const index = read("server/index.js");
   ok("/api/cancel pauses a plan only when asked (?plans=1), and BEFORE it cancels the art",
@@ -685,14 +722,16 @@ console.log("\n  -- 7. a clip past the wait is filed when it lands; a dropped or
   ok("...and the project says so in its Activity",
     readDoc("late").runs.some((r) => r.tool === "clip_late" && /still waiting in the queue/.test(r.outcome)));
   /* Now it lands. */
+  const linesBefore = (await docNow("late")).runs.length;
   art.queue = art.queue.filter((j) => j.file !== job.file);
   art.done.unshift(job);
   art.emit("clip", { file: job.file, clip: "late_scene.mp4", seconds: 9000 });
-  await new Promise((r) => setTimeout(r, 80));
-  const d = readDoc("late");
+  /* Filed in one write with its Activity line, so a new line is the write. */
+  await until(async () => (await docNow("late")).runs.length > linesBefore);
+  const d = await docNow("late");
   const row = d.clips.find((c) => c.segmentId === "s1_0");
   ok("when it lands it is filed onto the scene, a take like any other",
-    row?.clipFile === "late_scene.mp4" && row.status === "done" && row.takes.length === 1, JSON.stringify(row).slice(0, 200));
+    row?.clipFile === "late_scene.mp4" && row.status === "done" && row.takes.length === 1, JSON.stringify(row ?? null).slice(0, 200));
   ok("...and the Activity line says it landed after the wait",
     d.runs.some((r) => r.tool === "generate_clip" && /landed after the 2-hour wait/.test(r.outcome)));
 
@@ -700,18 +739,22 @@ console.log("\n  -- 7. a clip past the wait is filed when it lands; a dropped or
   art.queue = []; art.current = null; art.done = []; art.requests = [];
   let heard2 = null;
   const late2 = generateClip(deps, "late", { segmentId: "s1_0", seed: 8 }).catch((e) => { heard2 = e; });
-  await new Promise((r) => setTimeout(r, 10));
+  /* Wait for its request: under load a 10 ms sleep found none. The next poll
+   * lands before the 40 ms wait (which starts at the request) runs out, so
+   * art.current is set in time. */
+  await until(() => art.requests.length > 0);
   const job2 = art.requests[art.requests.length - 1];
   art.queue = art.queue.filter((j) => j.file !== job2.file);
   art.current = job2;
   await late2;
   ok("a clip on the engine past the wait is said to be still rendering",
     /Scene 1 is still rendering after 2 hours/.test(heard2?.message || ""), heard2?.message);
+  const linesBefore2 = (await docNow("late")).runs.length;
   art.done.unshift(job2);
   art.current = null;
   art.emit("failed", { file: job2.file, error: "out of memory" });
-  await new Promise((r) => setTimeout(r, 80));
-  const lost = readDoc("late").runs.find((r) => r.tool === "clip_late_lost");
+  await until(async () => (await docNow("late")).runs.length > linesBefore2);
+  const lost = (await docNow("late")).runs.find((r) => r.tool === "clip_late_lost");
   ok("...and when it then fails, the Activity line is its own: lost, not still waiting",
     lost && /was not filed \(out of memory\)/.test(lost.outcome), JSON.stringify(lost));
 
