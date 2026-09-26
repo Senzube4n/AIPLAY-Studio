@@ -390,6 +390,7 @@ import { landVideoReturn, listVideoQuarantine, videoQuarantineClip, reviewVideoR
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
 import { imageIdFromArtFile, recentImageOutcome, recordImageOutcome } from "./collab/image-lifecycle.js";
+import { recordVideoFailure, videoIdFromArtFile } from "./collab/video-lifecycle.js";
 import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrderFiles } from "./collab/errand.js";
 import { describePacket as describeAnyPacket } from "./collab/packet.js";
 import { speaks, stamp as collabStamp, describeStamp } from "./collab/compat.js";
@@ -752,16 +753,11 @@ art.on("cover", ({ file, covers, durationMs }) => {
   if (imageId && covers?.includes(`${imageId}.png`))
     noteCollabImageOutcome(file, { type: "complete", cover: `${imageId}.png`, durationMs });
 });
-art.on("failed", ({ file, kind, cancelled, durationMs }) => {
+art.on("failed", ({ file, kind, cancelled, durationMs, runId }) => {
   if (kind === "cover") noteCollabImageOutcome(file, { type: "failed", cancelled: cancelled === true, durationMs });
-  const match = kind === "video" && /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
-  if (match) void (async () => {
-    const dir = path.join(config.outputDir, "collab");
-    const row = await book.findOrder({ outDir: dir, id: match[1], side: "in" });
-    if (row?.jobType === "video" && ["queued", "rendering"].includes(row.state))
-      await book.transitionOrderState({ outDir: dir, id: match[1], from: row.state, to: "failed",
-        patch: { renderStatus: cancelled ? "stopped" : "failed", renderFailedAt: Date.now() } });
-  })().catch((error) => console.error(`[collab video] Could not record render failure: ${error.message}`));
+  if (kind === "video") void recordVideoFailure({
+    book, outDir: path.join(config.outputDir, "collab"), file, kind, cancelled, durationMs, runId,
+  }).catch((error) => console.error(`[collab video] Could not record render failure: ${error.message}`));
 });
 /* A stage that failed is a stage that FINISHED, as far as the display goes.
  *
@@ -807,15 +803,20 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
   if (friendJob && clip) void (async () => {
     const dir = path.join(config.outputDir, "collab");
     const row = await book.findOrder({ outDir: dir, id: friendJob[1], side: "in" });
-    if (!row || row.jobType !== "video" || !["queued", "rendering"].includes(row.state)) return;
+    if (!row || row.jobType !== "video" || !["queued", "rendering"].includes(row.state)
+        || row.renderStatus === "complete") return;
     if (clip !== `collab_${friendJob[1]}.mp4`) {
       await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: "failed",
+        expected: { renderStatus: row.renderStatus },
         patch: { renderStatus: "wrong-output", renderFailedAt: Date.now(),
+          renderRunMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null,
+          renderRunId: runId ?? null,
           note: "The engine served a cached library clip rather than this order's own output; no return can be sealed." } });
       return;
     }
     const bytes = await readFile(path.join(CLIP_DIR, clip));
-    await book.fillOrderRow({ outDir: dir, id: friendJob[1], patch: {
+    await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: row.state,
+      expected: { renderStatus: row.renderStatus }, patch: {
       renderStatus: "complete", renderCompletedAt: Date.now(), renderClip: clip,
       renderSha256: createHash("sha256").update(bytes).digest("hex"), renderRunId: runId ?? null,
       /* `seconds` is ArtRunner's render clock, not request-to-finish queue time. */
@@ -7694,6 +7695,12 @@ const server = http.createServer(async (req, res) => {
         const file = String(b.file || "");
         if (!file) return json(res, 400, { error: "give a file" });
         const r = art.drop(file);
+        /* drop() removes a waiting job without an ArtRunner terminal event.
+         * Release this friend's reservation as a stopped, zero-time attempt. */
+        if (r.removed && videoIdFromArtFile(file)) await recordVideoFailure({
+          book, outDir: path.join(config.outputDir, "collab"), file,
+          kind: "video", cancelled: true, durationMs: null,
+        });
         return json(res, 200, { ok: true, ...r, ...art.status() });
       }
       if (b.action === "stop_current") {

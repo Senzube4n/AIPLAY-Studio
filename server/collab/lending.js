@@ -320,12 +320,15 @@ export function estimateImageJob(imageOrder) {
  * because an accepted scene will spend this card whether or not it has
  * started. An older unrendered errand is not counted until it renders —
  * otherwise one plan nobody approved would shrink every later day for good.
+ * A failed or stopped H3 attempt with a runner clock counts its measured time;
+ * a job stopped while still queued has no clock and spent no render time.
  */
 export async function lentToday({ rows = [], readProject, fp, now = Date.now(), except = null } = {}) {
   const since = startOfDay(now);
   const who = String(fp || "").toLowerCase();
-  const out = { measuredMinutes: 0, rendered: 0, withWait: 0, pendingMinutes: 0, pending: 0,
-    pendingVideo: 0, pendingImages: 0, pendingImageMinutes: 0, unpriced: 0, untimed: 0, untimedMinutes: 0 };
+  const out = { measuredMinutes: 0, rendered: 0, failedVideoRuns: 0, withWait: 0,
+    pendingMinutes: 0, pending: 0, pendingVideo: 0, pendingImages: 0,
+    pendingImageMinutes: 0, unpriced: 0, untimed: 0, untimedMinutes: 0 };
   for (const row of rows) {
     if (!row || String(row.from?.fp || "").toLowerCase() !== who) continue;
     if (row.jobType === "video") {
@@ -344,6 +347,14 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
             const estimate = Number(row.renderEstimatedMinutes);
             if (Number.isFinite(estimate) && estimate > 0) out.untimedMinutes += estimate;
           }
+        }
+        continue;
+      }
+      if (row.state === "failed" && ["failed", "stopped", "wrong-output"].includes(row.renderStatus)) {
+        if (Number(row.renderFailedAt) >= since
+            && typeof row.renderRunMs === "number" && Number.isFinite(row.renderRunMs) && row.renderRunMs >= 0) {
+          out.measuredMinutes += row.renderRunMs / 60000;
+          out.failedVideoRuns++;
         }
         continue;
       }
@@ -431,7 +442,10 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
  *  Friends row show. Composed here, so the page only displays it. */
 export function usedSentence(used) {
   const parts = [];
-  let rendered = used.rendered ? used.measuredMinutes + " min timed on this card today" : "nothing rendered for them yet today";
+  let rendered = used.rendered || used.failedVideoRuns
+    ? used.measuredMinutes + " min timed on this card today" : "nothing rendered for them yet today";
+  if (used.failedVideoRuns) rendered += " (" + used.failedVideoRuns + " failed or stopped video "
+    + (used.failedVideoRuns === 1 ? "attempt" : "attempts") + " included)";
   if (used.withWait) rendered += " (" + (used.withWait === 1 ? "one render was" : used.withWait + " renders were")
     + " timed from request to finish, so that includes waiting in the queue)";
   if (used.untimed) rendered += "; " + used.untimed + " render attempt" + (used.untimed === 1 ? " has" : "s have")

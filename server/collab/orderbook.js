@@ -190,9 +190,10 @@ export async function fillOrderRow({ outDir, id, side = "in", patch } = {}) {
 }
 
 /** Change an order state only if it still has the state this caller observed.
- * The read and write share the orderbook's one writer queue, so concurrent
- * render presses cannot both claim one accepted image job. */
-export async function transitionOrderState({ outDir, id, side = "in", from, to, patch = {} } = {}) {
+ * `expected` also protects fields such as renderStatus when the state stays
+ * queued on completion. The read and write share the orderbook's one writer
+ * queue, so concurrent render outcomes cannot overwrite one another. */
+export async function transitionOrderState({ outDir, id, side = "in", from, to, patch = {}, expected = null } = {}) {
   if (!ORDER_STATES.includes(String(from)) || !ORDER_STATES.includes(String(to))) {
     throw refuse("bad-state", "An order transition needs two known states.");
   }
@@ -201,6 +202,8 @@ export async function transitionOrderState({ outDir, id, side = "in", from, to, 
     const row = await readRow(file);
     if (!row) throw refuse("no-such-order", `Order ${id} is not in this machine's book.`, 404);
     if (row.state !== from) throw refuse("order-state-changed", `Order ${id} is now ${row.state}; another request already changed it.`, 409);
+    if (expected && Object.entries(expected).some(([key, value]) => row[key] !== value))
+      throw refuse("order-state-changed", `Order ${id}'s render record changed; this outcome was not written over it.`, 409);
     const next = { ...row, ...patch, state: to, stateAt: Date.now() };
     await writeAtomic(file, next);
     return next;

@@ -468,6 +468,29 @@ test("8: standalone H3 jobs reserve allowance at accept and completed jobs use r
     "keep the reserved estimate, never request-to-finish time, when an older completion has no render clock");
 });
 
+test("8: failed H3 runs count measured time, while a queued cancellation spends no render time", async () => {
+  const job = { id: "o_" + "f".repeat(12), job: { engine: "h3", width: 1280, height: 704, seconds: 5, steps: 20 } };
+  const peer = { fp: FP, nickname: "Friend", lendMinutesPerDay: 1 };
+  const readProject = async () => { throw new Error("Standalone video has no movie project"); };
+  const base = { jobType: "video", from: { fp: FP }, state: "failed",
+    landedAt: DAY - 60 * 60_000, renderEstimatedMinutes: 8 };
+  const failed = { ...base, id: "o_" + "a".repeat(12), renderStatus: "failed",
+    renderFailedAt: DAY - 100, renderRequestedAt: DAY - 50 * 60_000, renderRunMs: 90_000 };
+  const stopped = { ...base, id: "o_" + "b".repeat(12), renderStatus: "stopped",
+    renderFailedAt: DAY - 90, renderRunMs: null };
+  const wrongOutput = { ...base, id: "o_" + "c".repeat(12), renderStatus: "wrong-output",
+    renderFailedAt: DAY - 80, renderRunMs: 30_000 };
+  const yesterday = { ...failed, id: "o_" + "d".repeat(12), renderFailedAt: L.startOfDay(DAY) - 100 };
+  const used = await L.lentToday({ rows: [failed, stopped, wrongOutput, yesterday],
+    readProject, fp: FP, now: DAY });
+  assert.deepEqual([used.measuredMinutes, used.failedVideoRuns, used.pending], [2, 2, 0]);
+  assert.match(L.usedSentence(used), /2 min timed on this card today \(2 failed or stopped video attempts included\)/);
+  const next = await L.budgetCheckVideoJob({ peer, orderDoc: job, rows: [failed, stopped, wrongOutput, yesterday],
+    readProject, now: DAY });
+  assert.deepEqual([next.over, next.reason, next.total], [true, "budget-spent",
+    Math.round((2 + next.thisOne) * 10) / 10]);
+});
+
 test("8: simultaneous H3 landings cannot both spend the same remaining allowance", async () => {
   const outDir = await mkdtemp(path.join(tmpdir(), "aiplay-video-allowance-"));
   try {
