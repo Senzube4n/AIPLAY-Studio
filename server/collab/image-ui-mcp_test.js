@@ -9,6 +9,27 @@ const html = readFileSync(new URL("../../web/index.html", import.meta.url), "utf
 const routeSource = readFileSync(new URL("../index.js", import.meta.url), "utf8");
 const collabSource = source.slice(source.indexOf("const cb = (body)"), source.indexOf("function paintExtend(t)"));
 const picturesSource = source.slice(source.indexOf("function imageFriendJob()"), source.indexOf('$("imgGo").onclick', source.indexOf("function imageFriendJob()")));
+const videoSource = source.slice(source.indexOf("function videoFriendRecipe()"), source.indexOf('$("cbUseVideo")', source.indexOf("function videoFriendRecipe()")));
+
+function videoFixture() {
+  const nodes = new Map(), views = [];
+  const node = (id) => {
+    if (!nodes.has(id)) nodes.set(id, { value: "", checked: false, textContent: "", handlers: {},
+      addEventListener(event, handler) { this.handlers[event] = handler; } });
+    return nodes.get(id);
+  };
+  for (const [id, value] of Object.entries({
+    vidFrom: "", vidTo: "", vidCharacter: "", vidSndSong: "", vidPrompt: "  An adult dancer  ",
+    vidSecs: "1", vidSteps: "20", vidGuide: "1", vidNeg: "", vidAudio: "0",
+    vidSeed: "42", vidSparse: "off", vidPin: "70",
+  })) node(id).value = value;
+  const state = { video: { engine: "h3", engines: { h3: { sparse: "off", bridge: "off", attention: "ck", blockCache: false } } },
+    frameUploads: {}, midFrames: [], refImages: [], refAudios: [], sndUpload: null };
+  const context = vm.createContext({ $: node, state, vidWH: () => [256, 256],
+    vidModelChoice: () => ({}), vidLoraStack: [], setView: (name, options) => views.push({ name, options }) });
+  vm.runInContext(videoSource, context);
+  return { node, state, views, context, press: () => node("vidAskFriend").handlers.click() };
+}
 
 function pictureFixture() {
   const nodes = new Map(), views = [];
@@ -522,4 +543,148 @@ test("concurrent image submissions have distinct IDs before output and private p
     Date: { now: () => 123456789 } }));
   assert.notEqual(ids[0], ids[1], "two submissions in the same millisecond need separate output keys");
   for (const id of ids) assert.match(id, /^i[a-z0-9]+$/, "IDs must remain safe image file names");
+});
+
+test("Video hands one exact H3 render job to Collab without queueing it", () => {
+  const f = videoFixture(); f.press();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.views)), [{ name: "collab", options: { videoRecipe: {
+    engine: "h3", prompt: "An adult dancer", width: 256, height: 256, seconds: 1,
+    steps: 20, guidance: 1, negative: "", keepAudio: false, seed: 42,
+    sparse: "off", attention: "ck", blockCache: false, bridge: "off", bridgeAlpha: 0,
+    guideStrength: 0.7, refImages: [], refAudios: [], midUploads: [], loras: [], loop: false,
+  } } }]);
+  assert.match(html.match(/<button[^>]*id="vidAskFriend"[^>]*>[^<]*/)?.[0] || "", /Ask friend/);
+});
+
+test("Video refuses every visible setting this first friend job cannot preserve", () => {
+  for (const [change, wanted] of [
+    [(f) => { f.state.video.engine = "ltx"; }, /MiniMax H3/],
+    [(f) => { f.node("vidNeg").value = "blur"; }, /negative prompt/],
+    [(f) => { f.node("vidSteps").value = "4"; }, /20 steps/],
+    [(f) => { f.node("vidGuide").value = "3"; }, /guidance to 1/],
+    [(f) => { f.node("vidSparse").value = "sol-attn"; }, /sparse attention/],
+    [(f) => { f.state.video.engines.h3.bridge = "bridge"; }, /bridge/],
+    [(f) => { f.state.video.engines.h3.blockCache = true; }, /block cache/],
+    [(f) => { f.node("vidPin").value = "60"; }, /70%/],
+    [(f) => { f.node("vidFrom").value = "frame.png"; }, /text only/],
+    [(f) => { f.context.vidLoraStack.push("custom"); }, /custom LoRAs/],
+  ]) {
+    const f = videoFixture(); change(f); f.press();
+    assert.equal(f.views.length, 0);
+    assert.match(f.node("clipNote").textContent, wanted);
+  }
+});
+
+test("Collab video preview shows exact settings and packs only the frozen token", async () => {
+  const f = collabFixture();
+  const draft = { engine: "h3", prompt: "A dancer", width: 256, height: 256, seconds: 1,
+    steps: 20, guidance: 1, keepAudio: false, seed: 42, negative: "", sparse: "off",
+    attention: "ck", blockCache: false, bridge: "off", bridgeAlpha: 0, guideStrength: 0.7,
+    refImages: [], refAudios: [], midUploads: [], loras: [], loop: false };
+  await f.run(`paintCollab(false, null, ${JSON.stringify(draft)})`);
+  assert.equal(f.node("cbKind").value, "video-job");
+  assert.equal(f.node("cbTo").value, "");
+  assert.ok(!f.calls.some((c) => ["preview", "pack", "video_render"].includes(c.body?.action)));
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
+  const packet = { kind: "job-order", jobType: "video", id: "o_0123456789ab",
+    job: { ...draft, modelPolicy: "receiver-local-base", type: "video", references: [] } };
+  f.context.respond = (url, body) => body?.action === "preview"
+    ? { previewId: "sealed-video-1", to: f.peer, packet }
+    : body?.action === "pack" ? { file: "video.aiplay", to: f.peer } : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.find((c) => c.body?.action === "preview").body)),
+    { action: "preview", kind: "video-job", to: f.peer.fp, video: draft });
+  assert.match(f.node("cbPreviewSettings").textContent, /256 × 256.*1s.*20 steps.*guidance 1.*seed 42.*local H3 weights.*idle unknown/);
+  assert.equal(f.node("cbPack").disabled, false);
+  await f.fire("cbPack");
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.find((c) => c.body?.action === "pack").body)),
+    { action: "pack", previewId: "sealed-video-1" });
+});
+
+test("an incomplete video preview cannot arm Prepare", async () => {
+  const f = collabFixture();
+  await f.run("paintCollab(false, null, {engine:'h3',prompt:'Dancer'})");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
+  f.context.respond = (url, body) => body?.action === "preview"
+    ? { previewId: "incomplete", to: f.peer, packet: { kind: "job-order", jobType: "video", id: "o_0123456789ab", job: { prompt: "Dancer" } } }
+    : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /did not include the exact signed H3 job/);
+  await f.fire("cbPack");
+  assert.ok(!f.calls.some((c) => c.body?.action === "pack"));
+});
+
+test("incoming video requires separate review, digest-bound acceptance, render and return presses", async () => {
+  const f = collabFixture(), digest = "d".repeat(64);
+  const videoJob = { id: "o_0123456789ab", job: {
+    prompt: "An adult dancer", width: 256, height: 256, seconds: 1,
+    steps: 20, guidance: 1, seed: 42, keepAudio: false,
+  } };
+  let state = "new";
+  f.context.respond = (url, body) => {
+    if (body?.action === "open") return { kind: "job-order", file: "friend.aiplay",
+      from: f.peer, videoJob, packet: videoJob };
+    if (body?.action === "video_accept") {
+      if (body.seen !== true) return { reason: "not-seen", from: f.peer, videoJob,
+        reviewDigest: digest, readiness: { ready: false } };
+      if (body.expectedDigest !== digest) return { error: "Wrong review digest" };
+      state = "landed"; return { ok: true, note: "Accepted locally" };
+    }
+    if (body?.action === "video_render") { state = "queued"; return { ok: true, note: "Queued" }; }
+    if (body?.action === "orders") return { orders: state === "new" ? []
+      : [{ id: videoJob.id, jobType: "video", state, renderStatus: state === "queued" ? "complete" : null }] };
+    if (body?.action === "video_send_back") return { ok: true, file: "video-return.aiplay" };
+    return f.defaults(url, body);
+  };
+  await f.run('openCollabFile("friend.aiplay")');
+  assert.equal(f.node("cbVideoFace").hidden, false);
+  assert.equal(f.node("cbVideoPrompt").textContent, "An adult dancer");
+  assert.ok(!f.calls.some((c) => ["video_accept", "video_render", "video_send_back"].includes(c.body?.action)));
+  await f.fire("cbVideoAccept");
+  assert.ok(!f.calls.some((c) => c.body?.action === "video_accept" && c.body.seen === true));
+  await f.fire("cbVideoReview");
+  assert.equal(f.node("cbVideoAccept").hidden, false);
+  assert.equal(f.calls.filter((c) => c.body?.action === "video_accept").length, 1);
+  await f.fire("cbVideoAccept");
+  assert.equal(f.calls.find((c) => c.body?.action === "video_accept" && c.body.seen === true).body.expectedDigest, digest);
+  assert.equal(f.node("cbVideoRender").hidden, false);
+  assert.ok(!f.calls.some((c) => c.body?.action === "video_render"));
+  await f.fire("cbVideoRender");
+  assert.equal(f.calls.filter((c) => c.body?.action === "video_render").length, 1);
+  assert.equal(f.node("cbVideoSendBack").hidden, false);
+  await f.fire("cbVideoSendBack");
+  assert.equal(f.calls.filter((c) => c.body?.action === "video_send_back").length, 1);
+});
+
+test("typed MCP video tools use the same signed job and consent routes", async () => {
+  const calls = [];
+  const tools = collabTools(async (...args) => { calls.push(args); return { ok: true, previewId: "p1" }; }, (s) => s);
+  const by = (name) => tools.find((entry) => entry.name === name);
+  const preview = by("collab_video_job_preview");
+  assert.ok(preview);
+  assert.equal(preview.inputSchema.additionalProperties, false);
+  for (const prohibited of ["path", "url", "model", "graph", "lora", "negative", "sparse", "reference"])
+    assert.equal(Object.hasOwn(preview.inputSchema.properties, prohibited), false, prohibited);
+  await preview.run({ to: "ab".repeat(16), prompt: "Dancer", width: 256, height: 256,
+    seconds: 1, steps: 20, guidance: 1, keepAudio: false, seed: 42 });
+  assert.equal(calls[0][2].kind, "video-job");
+  assert.equal(calls[0][2].video.seed, 42);
+  assert.equal(calls[0][2].video.sparse, "off");
+  const accept = by("collab_video_accept");
+  await assert.rejects(accept.run({ file: "signed.aiplay", seen: true }), /review_digest/);
+  await accept.run({ file: "signed.aiplay", seen: true, review_digest: "f".repeat(64) });
+  assert.deepEqual(calls[1], ["POST", "/api/collab", { action: "video_accept",
+    file: "signed.aiplay", seen: true, expectedDigest: "f".repeat(64) }]);
+  for (const [name, action, input] of [
+    ["collab_video_render", "video_render", { id: "o_0123456789ab" }],
+    ["collab_video_send_back", "video_send_back", { id: "o_0123456789ab" }],
+    ["collab_video_review_return", "video_review_return", { from: "b".repeat(32), file: "file.mp4" }],
+    ["collab_video_adopt", "video_adopt", { from: "b".repeat(32), file: "file.mp4" }],
+    ["collab_video_drop", "video_drop", { from: "b".repeat(32), file: "file.mp4" }],
+  ]) {
+    assert.ok(by(name));
+    await by(name).run(input);
+    assert.equal(calls.at(-1)[2].action, action);
+  }
 });

@@ -410,11 +410,11 @@ test("movie handoff overrides a different project selected in Collab", async () 
 });
 
 
-test("standalone video handoff keeps its recipe separate from movie orders",async()=>{
- const f=fixture(); const video={engine:"ltx",prompt:"Moonlight",width:1280,height:704,seconds:5,steps:8,guidance:3,keepAudio:false,seed:42};
+test("standalone Video handoff keeps its signed job separate from movie orders",async()=>{
+ const f=fixture(); const video={engine:"h3",prompt:"Moonlight",width:1280,height:704,seconds:5,steps:20,guidance:3,keepAudio:false,seed:42};
  f.context.recipe=video;await f.run("paintCollab(false,null,recipe)");f.node("cbTo").value=f.peer.fp;
- assert.equal(f.node("cbKind").value,"video-recipe");
- assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-recipe",to:f.peer.fp,video});
+ assert.equal(f.node("cbKind").value,"video-job");
+ assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-job",to:f.peer.fp,video});
  assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
 });
 
@@ -547,9 +547,9 @@ test("the Workflow view listens for the project Collab asks it to open", () => {
   assert.match(source, /if \(name === "workflow"\) wfOpen\(\);/, "the view change is what loads it");
 });
 
-test("each Ask friend names the other: Video's is text only, Workflow's carries the pictures", () => {
+test("each Ask friend names the other: standalone Video is text only, Workflow carries pictures", () => {
   const mv = readFileSync(new URL("../../web/mv.js", import.meta.url), "utf8");
-  assert.match(html, /id="vidAskFriend" title="[^"]*Music video → Video clips → Ask friend, which carries them/);
+  assert.match(html, /id="vidAskFriend" title="[^"]*Workflow → Video clips → Ask friend/);
   /* The page's own sentences name the screen by the rail's label (cbScreen),
    * typeof-guarded because vidPaint and videoFriendRecipe are lifted alone. */
   assert.match(source, /use \$\{typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow"\} → Video clips → Ask friend, which carries them\.`\);/);

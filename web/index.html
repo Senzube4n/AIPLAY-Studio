@@ -1407,7 +1407,7 @@
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
-        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a text-only recipe for a friend using their default models. To send reference pictures, use Music video → Video clips → Ask friend, which carries them.">Ask friend</button>
+        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Workflow → Video clips → Ask friend.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
       <!-- At render time: the RAM warning under 32 GB (server/h3tier.js), and
@@ -2155,6 +2155,19 @@
             </div>
           </div>
 
+          <div id="cbVideoFace" hidden>
+            <b class="subhead" id="cbVideoWho">Video render request</b>
+            <p class="hint" id="cbVideoSettings"></p>
+            <pre id="cbVideoPrompt" class="cbopened"></pre>
+            <p class="hint" id="cbVideoNote" role="status">Review the full prompt and settings.</p>
+            <div class="chips">
+              <button class="btn sm primary" type="button" id="cbVideoReview">Review acceptance</button>
+              <button class="btn sm primary" type="button" id="cbVideoAccept" hidden>Accept job</button>
+              <button class="btn sm primary" type="button" id="cbVideoRender" hidden>Render video</button>
+              <button class="btn sm" type="button" id="cbVideoSendBack" hidden>Prepare return</button>
+            </div>
+          </div>
+
           <div id="cbReturnFace" hidden>
             <b class="subhead" id="cbReturnWho">Returned scene</b>
             <div class="chips"><button class="btn sm primary" type="button" id="cbReceiveBtn">Check return</button></div>
@@ -2197,6 +2210,11 @@
           <b class="subhead">Returned images</b>
           <div id="cbImages" class="cblist"></div>
           <p class="hint warnhint">Preview each image before keeping or discarding it.</p>
+        </section>
+        <section id="cbVideosWrap" hidden class="cbsection">
+          <b class="subhead">Returned videos</b>
+          <div id="cbVideos" class="cblist"></div>
+          <p class="hint">Play each checked clip before keeping it in Clips.</p>
         </section>
       </div>
 
@@ -2255,11 +2273,13 @@
               <option value="resources">what this Studio can do</option>
               <option value="order">one scene for them to RENDER, and send back</option>
               <option value="video-recipe">video recipe (from Video)</option>
+              <option value="video-job">H3 video job (from Video)</option>
               <option value="image-job">Qwen image job (from Pictures)</option>
             </select></span>
           </div>
           <div id="cbRecipientStatus" class="chips" role="status" aria-live="polite"></div>
           <p class="hint" id="cbImageJobNote" hidden></p>
+          <p class="hint" id="cbVideoJobNote" hidden></p>
           <div class="params" id="cbSegmentRow">
             <label for="cbSegment">Which scene</label><span class="pv"><select id="cbSegment" class="sel2"><option value="">Loading scenes…</option></select></span>
           </div>

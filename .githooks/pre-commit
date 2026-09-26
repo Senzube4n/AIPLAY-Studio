@@ -84,6 +84,9 @@ blender_half() { # label, script, suite file beside it, variable that points at 
 blender_half "weight transfer" "$WT_SCRIPT" weight_transfer_test.py AIPLAY_WEIGHT_TRANSFER_SCRIPT || exit 1
 blender_half "attachment fitting" "$AF_SCRIPT" attachment_fit_test.py AIPLAY_ATTACHMENT_FIT_SCRIPT || exit 1
 node --test server/collab/video-recipe_test.js || exit 1
+# Signed standalone H3 render jobs: exact wire, receiver consent, independent
+# MP4 checks, two-profile courier, quarantine/adoption and replay.
+node --test server/collab/video-job_test.js server/collab/video_two_profile_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_studio_persistence.mjs || exit 1

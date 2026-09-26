@@ -269,3 +269,28 @@ export async function reconcileImageReturn({ outDir, id, entry, state, note = nu
     return next;
   });
 }
+
+/** Standalone video uses the same one-write return reconciliation as images.
+ * A replay can repair an interrupted orderbook write without duplicating its
+ * history or changing an already adopted result back to returned. */
+export async function reconcileVideoReturn({ outDir, id, entry, state, note = null } = {}) {
+  if (!entry || entry.kind !== "video" || typeof entry.file !== "string" || !entry.file
+      || !["returned", "refused", "adopted"].includes(state)) {
+    throw refuse("bad-video-return", "A video return needs its file and a final order state.");
+  }
+  return enqueue(async () => {
+    const file = rowPath(outDir, "out", String(id));
+    const row = await readRow(file);
+    if (!row || row.jobType !== "video") throw refuse("no-such-order", `Video return ${id} has no sent video order.`, 404);
+    const returns = Array.isArray(row.returns) ? row.returns : [];
+    const already = returns.some((item) => item?.kind === "video" && item.file === entry.file);
+    const nextState = row.state === "adopted" ? "adopted" : state;
+    const nextNote = nextState === "adopted" ? row.note : note;
+    if (already && row.state === nextState && (nextNote === null || nextNote === row.note)) return row;
+    const next = { ...row, returns: already ? returns : [...returns, { at: Date.now(), ...entry }],
+      state: nextState, stateAt: Date.now() };
+    if (nextNote !== null) next.note = String(nextNote).slice(0, 400);
+    await writeAtomic(file, next);
+    return next;
+  });
+}

@@ -6181,14 +6181,16 @@ $("cbGoFriends")?.addEventListener("click", () => setCbTab("Friends"));
  * still holds it. Any row click, tab change or repaint clears the stamp. */
 function disarmCollab() {
   const card = $("cbFileCard");
-  if (card) { delete card.dataset.armed; delete card.dataset.imageArmed; delete card.dataset.imageArmedDigest; }
+  if (card) { delete card.dataset.armed; delete card.dataset.imageArmed; delete card.dataset.imageArmedDigest; delete card.dataset.videoArmed; delete card.dataset.videoArmedDigest; }
   if (cbOpenedImage) delete cbOpenedImage.reviewDigest;
+  if (cbOpenedVideoJob) delete cbOpenedVideoJob.reviewDigest;
   if ($("cbAcceptYes")) $("cbAcceptYes").hidden = true;
   if ($("cbImageAccept")) $("cbImageAccept").hidden = true;
+  if ($("cbVideoAccept")) $("cbVideoAccept").hidden = true;
   if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
 }
 
-let collabVideoDraft = null, collabImageDraft = null, collabImageRefPreviews = [], cbOpenedVideo = null, cbOpenedImage = null;
+let collabVideoDraft = null, collabImageDraft = null, collabImageRefPreviews = [], cbOpenedVideo = null, cbOpenedVideoJob = null, cbOpenedImage = null;
 let collabPainted = false;
 async function paintCollab(force = false, scene = null, videoRecipe = null, imageJob = null, imageRefPreviews = []) {
   const first = !collabPainted;
@@ -6229,7 +6231,7 @@ async function paintCollab(force = false, scene = null, videoRecipe = null, imag
   await loadCollabPlan(true);
   paintCbKind();
   if (scene) selectCollabScene(scene);
-  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-recipe"; paintCbKind(); $("cbTo")?.focus?.(); }
+  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-job"; paintCbKind(); $("cbTo")?.focus?.(); }
   if (imageJob) {
     collabImageDraft = imageJob;
     collabImageRefPreviews = imageRefPreviews;
@@ -6300,7 +6302,7 @@ function paintCbRecipientStatus() {
   const kind = $("cbKind")?.value || "shot";
   const peer = cbPeers.find((p) => p.fp === $("cbTo")?.value && cbCanReceive(p, kind));
   const host = $("cbRecipientStatus");
-  if ($("cbPreview")) $("cbPreview").disabled = !peer || (kind === "image-job" && !collabImageDraft);
+  if ($("cbPreview")) $("cbPreview").disabled = !peer || (kind === "image-job" && !collabImageDraft) || (kind === "video-job" && !collabVideoDraft);
   if (!host) return;
   if (!peer) {
     host.innerHTML = '<span class="chip warn">Choose a friend</span>';
@@ -6317,7 +6319,7 @@ function paintCbRecipientStatus() {
     if (Number.isFinite(vram) && vram > 0) parts.push(`<span class="chip">${(vram / 1024).toFixed(1)} GB VRAM</span>`);
     else parts.push('<span class="chip warn">VRAM unknown</span>');
     const ready = Array.isArray(card.ready) ? card.ready : [];
-    const engine = kind === "video-recipe" ? collabVideoDraft?.engine : kind === "order" ? $("cbEngineMode")?.value : "";
+    const engine = kind === "video-recipe" || kind === "video-job" ? collabVideoDraft?.engine : kind === "order" ? $("cbEngineMode")?.value : "";
     const capability = kind === "image-job" ? "qwen-image-2.1" : engine === "ltx" ? "videoLtx" : engine === "h3" ? "video" : "";
     const capabilityLabel = kind === "image-job" ? "Qwen Image 2.1" : String(engine || "").toUpperCase();
     if (capability) parts.push(`<span class="chip ${ready.includes(capability) ? "ok" : "warn"}" title="Downloaded catalogue models on this friend's last card only; current readiness is unknown.">${capabilityLabel} ${ready.includes(capability) ? "listed" : "not listed"}</span>`);
@@ -6467,13 +6469,13 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
-  cbOpenedResources = null; cbOpenedVideo = null; cbOpenedImage = null;
+  cbOpenedResources = null; cbOpenedVideo = null; cbOpenedVideoJob = null; cbOpenedImage = null;
   if ($("cbUseVideo")) $("cbUseVideo").hidden = true;
   if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
   if ($("cbFile")) $("cbFile").value = r.file || file || "";
-  for (const face of ["cbOrderFace", "cbImageFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
+  for (const face of ["cbOrderFace", "cbImageFace", "cbVideoFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
   if (card) card.hidden = false;
   if (r.error) {
     /* A refusal is a row state with one remedy, not a dead end. */
@@ -6499,11 +6501,26 @@ async function openCollabFile(file) {
     paintIncomingImageJob(r.imageJob.job, r.packet?.job?.references || []);
     await paintImageCardStatus();
     paintIncomingImageReferenceState();
+  } else if (r.kind === "job-order" && r.videoJob?.job) {
+    cbOpenedVideoJob = { file: r.file || file, id: r.videoJob.id, signerFp: r.from?.fp,
+      orderKey: JSON.stringify(r.videoJob), reviewDigest: null };
+    $("cbVideoFace").hidden = false;
+    $("cbVideoWho").textContent = `${r.from?.nickname || r.from?.fp?.slice(0, 8) || "A friend"} asks for an H3 video`;
+    const j = r.videoJob.job;
+    $("cbVideoSettings").textContent = `${j.width} × ${j.height} · ${j.seconds}s · ${j.steps} steps · guidance ${j.guidance} · seed ${j.seed} · ${j.attention === "ck" ? "CK" : "PyTorch"} attention · generated audio ${j.keepAudio ? "kept" : "off"} · local H3 weights`;
+    $("cbVideoPrompt").textContent = j.prompt;
+    $("cbVideoNote").textContent = "Review this exact prompt and your local H3 model. Accepting does not render.";
+    await paintVideoCardStatus();
   } else if (r.kind === "job-return" && r.packet?.jobType === "image") {
     if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
     if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished image has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
     if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned image";
     if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the signed image against your request before keeping it.";
+  } else if (r.kind === "job-return" && r.packet?.jobType === "video") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished video has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned video";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Verify the signed MP4 against your exact request, then watch it in quarantine.";
   } else if (r.kind === "return") {
     if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
     if ($("cbReturnWho")) $("cbReturnWho").innerHTML = `A finished scene has come back from ${who}`;
@@ -6616,6 +6633,23 @@ async function paintImageCardStatus() {
   else $("cbImageNote").textContent = "Inspect the prompt and every reference before accepting.";
   paintIncomingImageReferenceState();
 }
+async function paintVideoCardStatus() {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "orders", side: "in" });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.error) { $("cbVideoNote").textContent = r.error; return; }
+  const row = (r.orders || []).find((order) => order.id === opened.id && order.jobType === "video");
+  $("cbVideoReview").hidden = !!row;
+  $("cbVideoRender").hidden = row?.state !== "landed";
+  $("cbVideoSendBack").hidden = !(row?.state === "queued" && row?.renderStatus === "complete");
+  if (row?.state === "landed") $("cbVideoNote").textContent = "Accepted. Press Render video when this machine is ready.";
+  else if (row?.state === "queued") $("cbVideoNote").textContent = row.renderStatus === "complete" ? "Finished here. Prepare the signed return." : "Waiting or rendering on this machine.";
+  else if (row?.state === "rendering") $("cbVideoNote").textContent = "Queue receipt uncertain; no duplicate render is allowed.";
+  else if (row?.state === "failed") $("cbVideoNote").textContent = "Render failed. Review the queue; this order cannot rerun without a new signed request.";
+  else if (row?.state === "rendered") $("cbVideoNote").textContent = "The signed return is ready under accepted jobs.";
+  else if (row) $("cbVideoNote").textContent = `Job ${row.state}.`;
+}
 $("cbSaveResources")?.addEventListener("click", async () => {
   const card = cbOpenedResources;
   if (!card || card.file !== $("cbFile")?.value) return;
@@ -6710,9 +6744,13 @@ function paintCbKind() {
   show("cbMine", kind === "resources");
   show("cbNumbers", kind === "order");
   show("cbImageJobNote", kind === "image-job");
+  show("cbVideoJobNote", kind === "video-job");
   if (kind === "image-job") $("cbImageJobNote").textContent = collabImageDraft
     ? `Qwen Image 2.1 · one image · ${collabImageDraft.refs.length} reference${collabImageDraft.refs.length === 1 ? "" : "s"}; preview and prepare one file per friend.`
     : "Choose a Qwen image in Pictures, then press Ask friend.";
+  if (kind === "video-job") $("cbVideoJobNote").textContent = collabVideoDraft
+    ? "H3 text-to-video · one sealed job per friend; your friend reviews, accepts and renders separately."
+    : "Choose a text-only H3 clip in Video, then press Ask friend.";
   paintCbRecipients();
   invalidateCbPreview();
 }
@@ -6915,6 +6953,7 @@ $("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return pai
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
   if (kind === "video-recipe") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
+  if (kind === "video-job") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
   if (kind === "image-job") return {kind,to:$("cbTo")?.value,image:collabImageDraft};
   return {
     slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
@@ -6944,7 +6983,8 @@ $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
   const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
   if (body.kind === "image-job" && !body.image) { cbSay("Start in Pictures and press Ask friend to choose a Qwen image job."); return; }
-  if (!["resources", "video-recipe", "image-job"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  if (body.kind === "video-job" && !body.video) { cbSay("Start in Video and press Ask friend to choose an H3 clip."); return; }
+  if (!["resources", "video-recipe", "video-job", "image-job"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
   $("cbPreview").disabled = true;
   $("cbPackNote").textContent = "Reading the exact outgoing contents…";
   const r = await cb({ action: "preview", ...body });
@@ -6959,12 +6999,24 @@ $("cbPreview")?.addEventListener("click", async () => {
     $("cbPackNote").textContent = "The frozen image preview did not include the exact job and reference hashes. Update Studio and preview again.";
     return;
   }
+  if (body.kind === "video-job" && (packet.kind !== "job-order" || packet.jobType !== "video"
+      || !/^o_[0-9a-f]{12}$/.test(String(packet.id || ""))
+      || imageJob.engine !== "h3" || imageJob.modelPolicy !== "receiver-local-base"
+      || typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
+      || !["seed", "width", "height", "seconds", "steps", "guidance"].every((key) => Number.isFinite(imageJob[key]))
+      || imageJob.steps !== 20 || imageJob.guidance !== 1 || typeof imageJob.keepAudio !== "boolean"
+      || !["ck", "pytorch"].includes(imageJob.attention) || imageJob.blockCache !== false
+      || !Array.isArray(imageJob.references)
+      || imageJob.references.length || !Array.isArray(imageJob.loras) || imageJob.loras.length)) {
+    $("cbPackNote").textContent = "The frozen video preview did not include the exact signed H3 job. Update Studio and preview again.";
+    return;
+  }
   cbPreparedPreview = { id: r.previewId, key };
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
-  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${body.kind === "image-job" ? "Qwen Image 2.1 image job" : r.describes || body.kind}`;
-  $("cbPreviewPrompt").textContent = body.kind === "image-job" ? imageJob.prompt || "" : shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
-  $("cbPreviewSettings").textContent = body.kind === "image-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.steps} steps · CFG ${imageJob.cfg} · seed ${imageJob.seed} · ${imageJob.references.length} included references · friend's local Qwen base model · idle unknown` : body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
+  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${body.kind === "image-job" ? "Qwen Image 2.1 image job" : body.kind === "video-job" ? "MiniMax H3 video job" : r.describes || body.kind}`;
+  $("cbPreviewPrompt").textContent = body.kind === "image-job" || body.kind === "video-job" ? imageJob.prompt || "" : shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
+  $("cbPreviewSettings").textContent = body.kind === "video-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.seconds}s · ${imageJob.steps} steps · guidance ${imageJob.guidance} · seed ${imageJob.seed} · ${imageJob.attention === "ck" ? "CK" : "PyTorch"} attention · audio ${imageJob.keepAudio ? "keep" : "off"} · friend's local H3 weights · idle unknown` : body.kind === "image-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.steps} steps · CFG ${imageJob.cfg} · seed ${imageJob.seed} · ${imageJob.references.length} included references · friend's local Qwen base model · idle unknown` : body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
     ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
     : r.note || "Review the full contents below.";
   $("cbPreviewManifest").innerHTML = body.kind === "image-job"
@@ -6992,7 +7044,8 @@ $("cbPack")?.addEventListener("click", async () => {
   cbPreparedPreview = null;
   if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
   const packedDescription = packedRequest.kind === "image-job"
-    ? `One Qwen Image 2.1 job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}` : r.describes;
+    ? `One Qwen Image 2.1 job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}`
+    : packedRequest.kind === "video-job" ? `One MiniMax H3 video job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}` : r.describes;
   if (note) note.textContent = `Prepared · ${packedDescription} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
   showHandoff(r.file, packedDescription);
   const assigned = cbAssignedReview?.rows[cbAssignedReview.at];
@@ -7217,7 +7270,13 @@ async function paintOutbox() {
     returned: "came back — waiting for you under “What arrived”",
     adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
   };
-  host.innerHTML = rows.map((o) => o.jobType === "image" ? `
+  host.innerHTML = rows.map((o) => o.jobType === "video" ? `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>H3 video · seed ${esc(String(o.videoJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
+      ${collabFileControls(o.file)}
+    </div>` : o.jobType === "image" ? `
     <div class="cbpeer" data-file="${esc(o.file || "")}">
       <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
       <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
@@ -7256,7 +7315,18 @@ async function paintErrands() {
       readyImages = new Set((images.images || []).map((image) => image.name));
     } catch { /* Unknown is not ready. The next refresh can check again. */ }
   }
-  host.innerHTML = rows.map((o) => o.jobType === "image" ? `
+  host.innerHTML = rows.map((o) => o.jobType === "video" ? `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>H3 video · seed ${esc(String(o.videoJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(String(o.videoJob?.job?.width ?? "?"))} × ${esc(String(o.videoJob?.job?.height ?? "?"))} · ${esc(String(o.videoJob?.job?.seconds ?? "?"))}s</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "accepted")}</span>
+      ${o.state === "landed" ? '<button class="btn sm cbvidrender" type="button">Render video</button>' : ""}
+      ${o.state === "queued" && o.renderStatus === "complete" ? '<button class="btn sm cbvidsend" type="button">Prepare return</button>' : ""}
+      ${o.state === "rendered" ? '<button class="btn sm ghost cbvidlocate" type="button">Show prepared return</button>' : ""}
+      ${["queued", "rendering"].includes(o.state) && o.renderStatus !== "complete" ? '<button class="btn sm ghost cbvidcheck" type="button">Refresh status</button>' : ""}
+      ${o.state === "failed" ? '<span class="cbres warn">Render failed; request a new signed job to retry.</span>' : ""}
+    </div>` : o.jobType === "image" ? `
     <div class="cbpeer" data-id="${esc(o.id)}">
       <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
       <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
@@ -7282,7 +7352,7 @@ async function paintErrands() {
 }
 
 async function paintTakes() {
-  const host = $("cbTakes"), wrap = $("cbTakesWrap"), imageHost = $("cbImages"), imageWrap = $("cbImagesWrap");
+  const host = $("cbTakes"), wrap = $("cbTakesWrap"), imageHost = $("cbImages"), imageWrap = $("cbImagesWrap"), videoHost = $("cbVideos"), videoWrap = $("cbVideosWrap");
   if (!host) return;
   const r = await cb({ action: "quarantine" });
   if (cbListError("Returned takes", r)) return;
@@ -7330,7 +7400,46 @@ async function paintTakes() {
       </div>`;
     }).join("");
   }
+  if (videoHost) {
+    const videos = Array.isArray(r.videos) ? r.videos : [];
+    if (videoWrap) videoWrap.hidden = !videos.length;
+    videoHost.innerHTML = videos.map((video) => {
+      const good = video.v === 1 && typeof video.from === "string" && typeof video.file === "string";
+      const playable = good && video.ok && !video.adopted;
+      const preview = `/api/collab-video/${encodeURIComponent(video.from || "")}/${encodeURIComponent(video.file || "")}`;
+      return `<div class="cbpeer" data-from="${esc(video.from || "")}" data-file="${esc(video.file || "")}">
+        <b>${esc(video.orderId || "Returned video")}</b>
+        <code>${esc(String(video.from || "").slice(0, 8))}</code>
+        <span class="${video.ok ? "ok" : "warn"}">${video.adopted ? "kept" : video.ok ? "checked" : esc(video.reason || "refused")}</span>
+        <span class="cbres">${esc(video.why || "")}</span>
+        ${good ? `<details><summary>Prompt and model</summary><pre class="cbopened">${esc(video.prompt || "")}</pre><span class="cbres">${esc(video.record?.modelVersion || video.record?.model || "Model unknown")} · rights ${esc(video.record?.outputRights?.class || "unknown")}</span></details>` : ""}
+        ${playable ? `<video class="cbtakevid" controls playsinline preload="none" src="${esc(preview)}"></video><button class="btn sm cbvideoadopt" type="button" disabled title="Play this checked video first">Keep video</button>` : ""}
+        ${good && !video.adopted ? '<button class="btn sm ghost cbvideodrop" type="button">Throw it away</button>' : ""}
+      </div>`;
+    }).join("");
+  }
 }
+$("cbVideos")?.addEventListener("playing", (ev) => {
+  const row = ev.target?.closest?.(".cbpeer");
+  if (row) { row.dataset.played = "1"; const button = row.querySelector(".cbvideoadopt"); if (button) button.disabled = false; }
+}, true);
+$("cbVideos")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest?.(".cbpeer");
+  if (!row) return;
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  if (ev.target.classList.contains("cbvideoadopt")) {
+    if (row.dataset.played !== "1") { cbSay("Play this video before keeping it."); return; }
+    const r = await cb({ action: "video_adopt", ...body });
+    cbSay(r.error || `Kept in Clips as ${r.name}.`);
+    if (!r.error) await paintTakes();
+  } else if (ev.target.classList.contains("cbvideodrop")) {
+    const go = await cbConfirm({ title: "Throw away this returned video?", body: "This removes it from quarantine. It has not been added to Clips.", yes: "Throw it away" });
+    if (!go) return;
+    const r = await cb({ action: "video_drop", ...body });
+    cbSay(r.error || "Returned video removed.");
+    if (!r.error) await paintTakes();
+  }
+});
 /* Media events do not bubble, so the list listens in the capture phase: a row
  * whose take has started playing is a row somebody has watched.
  * ⚠ "playing", NOT "play". "play" fires the moment the button is pressed,
@@ -7497,6 +7606,49 @@ $("cbImageSendBack")?.addEventListener("click", async () => {
   } finally { button.disabled = false; }
 });
 
+$("cbVideoReview")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_accept", file: opened.file });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.reason !== "not-seen" || !r.videoJob?.job) { $("cbVideoNote").textContent = r.error || r.note || "Could not review this job."; return; }
+  if (r.from?.fp !== opened.signerFp || r.videoJob.id !== opened.id || JSON.stringify(r.videoJob) !== opened.orderKey || !/^[0-9a-f]{64}$/.test(String(r.reviewDigest || ""))) {
+    await openCollabFile(opened.file);
+    $("cbVideoNote").textContent = "The signed file or signer changed. Review this job again.";
+    return;
+  }
+  opened.reviewDigest = r.reviewDigest;
+  if (card) { card.dataset.videoArmed = opened.file; card.dataset.videoArmedDigest = r.reviewDigest; }
+  $("cbVideoAccept").hidden = false;
+  $("cbVideoNote").textContent = `${r.readiness?.ready ? "H3 appears ready here." : "H3 is missing files here; install them before rendering."} Accept records consent only.`;
+});
+$("cbVideoAccept")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.videoArmed !== opened.file || card?.dataset.videoArmedDigest !== opened.reviewDigest) {
+    cbSay("Review this exact signed video job before accepting it."); disarmCollab(); return;
+  }
+  const r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Accepted locally; no render queued.";
+  if (!r.error) { disarmCollab(); await paintVideoCardStatus(); await paintErrands(); }
+});
+$("cbVideoRender")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_render", id: opened.id });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Queued on this machine.";
+  await paintVideoCardStatus(); await paintErrands();
+});
+$("cbVideoSendBack")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_send_back", id: opened.id });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Signed MP4 return prepared.";
+  if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished H3 video sealed for your friend"); await paintErrands(); }
+});
+
 $("cbReceiveBtn")?.addEventListener("click", async () => {
   const r = await cb({ action: "receive", file: $("cbFile")?.value.trim() });
   cbSay(r.error || r.note || "");
@@ -7545,6 +7697,18 @@ $("cbImages")?.addEventListener("error", (ev) => {
 $("cbErrands")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
   if (row && await collabFileAction(ev)) return;
+  if (row && ev.target.classList.contains("cbvidcheck")) { await paintErrands(); await paintVideoCardStatus(); return; }
+  if (row && ev.target.classList.contains("cbvidrender")) {
+    const r = await cb({ action: "video_render", id: row.dataset.id });
+    cbSay(r.error || r.note || "H3 video queued locally.");
+    await paintErrands(); await paintVideoCardStatus(); return;
+  }
+  if (row && (ev.target.classList.contains("cbvidsend") || ev.target.classList.contains("cbvidlocate"))) {
+    const r = await cb({ action: "video_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Signed H3 video return prepared.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished H3 video sealed for your friend"); await paintErrands(); }
+    return;
+  }
   if (row && ev.target.classList.contains("cbimgcheck")) { await paintErrands(); return; }
   if (row && ev.target.classList.contains("cbimglocate")) {
     const r = await cb({ action: "image_send_back", id: row.dataset.id });
@@ -9513,6 +9677,24 @@ function videoFriendRecipe() {
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
 }
+function videoFriendJob() {
+  const video = videoFriendRecipe();
+  if (!video.prompt.trim()) throw new Error("Describe the clip before asking a friend to render it.");
+  if (video.engine !== "h3") throw new Error("Friend render jobs currently support MiniMax H3 text-to-video. Select H3 first.");
+  if (video.steps !== 20) throw new Error("Set H3 to 20 steps for this base-only friend job. Faster steps load a different turbo LoRA.");
+  if (video.guidance !== 1) throw new Error("Set guidance to 1 before asking a friend; the H3 graph does not use the Video guidance slider.");
+  if (video.negative.trim()) throw new Error("Clear the negative prompt before sending an H3 friend job; H3's built-in graph does not use it.");
+  if (($("vidSparse")?.value || state.video?.engines?.h3?.sparse || "off") !== "off") throw new Error("Turn H3 sparse attention off before sending this friend job.");
+  if (state.video?.engines?.h3?.bridge && state.video.engines.h3.bridge !== "off") throw new Error("Turn the H3 conditioning bridge off before sending this friend job.");
+  if (state.video?.engines?.h3?.blockCache === true) throw new Error("Turn H3 block cache off before sending this base-only friend job.");
+  if (Math.abs((+$('vidPin').value / 100) - 0.7) > 0.00001) throw new Error("Set frame guide strength to 70% before sending this text-only job.");
+  const backend = state.video?.engines?.h3?.attention
+    ? ($("vidAttn")?.value || state.video.engines.h3.attention) : "pytorch";
+  const attention = backend === "kitchen" ? "ck" : backend;
+  if (!["ck", "pytorch"].includes(attention)) throw new Error("Choose CK or PyTorch H3 attention before sending this friend job.");
+  return { ...video, prompt: video.prompt.trim(), negative: "", sparse: "off", attention, blockCache: false, bridge: "off", bridgeAlpha: 0, guideStrength: 0.7,
+    refImages: [], refAudios: [], midUploads: [], loras: [], loop: false };
+}
 /* A recipe carries MiniMax H3 or LTX settings (server/collab/video-recipe.js,
  * whose enum is the wire format a friend's Studio reads). Any other engine is
  * refused on the page, by name and with the way out, instead of reaching the
@@ -9526,7 +9708,7 @@ function recipeEngineRefusal() {
 }
 $("vidRecipeClear")?.addEventListener("click",()=>{state.videoRecipeLoaded=false;$("vidRecipeClear").hidden=true;$("clipNote").textContent="Recipe mode cleared.";});
 $("vidAskFriend")?.addEventListener("click",()=>{
-  try {const videoRecipe=videoFriendRecipe();setView("collab",{videoRecipe});}
+  try {const videoRecipe=videoFriendJob();setView("collab",{videoRecipe});}
   catch(e){$("clipNote").textContent=e.message;}
 });
 $("cbUseVideo")?.addEventListener("click",async()=>{

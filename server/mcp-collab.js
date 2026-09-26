@@ -53,6 +53,31 @@ export function collabTools(api, safeName) {
       async run(a){const video=normalizeVideoRecipe(a.video);const r=await api("POST","/api/collab",{action:"preview",kind:"video-recipe",to:String(a.to||""),video});if(r?.error)throw new Error(r.error);return r;}
     },
     {
+      name: "collab_video_job_preview",
+      description: "Preview one signed standalone MiniMax H3 base-only 20-step text-to-video render job for a verified friend. Freezes exact prompt, seed, size, seconds, CK/PyTorch attention and generated-audio choice. Guidance must stay at 1 because H3 ignores that Video slider. Faster H3 steps load turbo LoRAs and are refused here, as are references, negative prompts, custom models/LoRAs, sparse attention, block cache and bridges. The friend's installed base weights may differ; readiness and idle state are not live here. Review the frozen preview, then collab_pack. Packing writes a local file and sends or renders nothing.",
+      inputSchema: { type: "object", required: ["to", "prompt", "width", "height", "seconds", "steps", "guidance", "keepAudio"], additionalProperties: false, properties: {
+        to: { type: "string", description: "Verified friend's fingerprint from collab_roster." },
+        prompt: { type: "string", minLength: 1, maxLength: 8000 },
+        width: { type: "integer", minimum: 256, maximum: 3840, multipleOf: 32 },
+        height: { type: "integer", minimum: 256, maximum: 3840, multipleOf: 32 },
+        seconds: { type: "number", minimum: 1, maximum: 20 },
+        steps: { type: "integer", const: 20 },
+        guidance: { type: "number", const: 1 },
+        keepAudio: { type: "boolean" },
+        attention: { type: "string", enum: ["ck", "pytorch"], description: "Chosen H3 backend. Defaults to PyTorch; CK requires support on the receiver." },
+        seed: { type: "integer", minimum: 0, maximum: 4294967295, description: "Omit to roll once in the frozen preview." },
+      } },
+      async run(a) {
+        const video = { engine: "h3", prompt: a.prompt, width: a.width, height: a.height,
+          seconds: a.seconds, steps: a.steps, guidance: a.guidance, keepAudio: a.keepAudio,
+          ...(a.seed === undefined ? {} : { seed: a.seed }), negative: "", sparse: "off", attention: a.attention || "pytorch",
+          blockCache: false, bridge: "off", bridgeAlpha: 0, guideStrength: 0.7, refImages: [], refAudios: [], midUploads: [], loras: [], loop: false };
+        const r = await api("POST", "/api/collab", { action: "preview", kind: "video-job", to: String(a.to || ""), video });
+        if (r?.error) throw new Error(r.error);
+        return r;
+      },
+    },
+    {
       name: "collab_image_preview",
       description: "Preview one standalone Qwen Image 2.1 job for one verified lender or collaborator. Uses the receiver's default Qwen model, 25 steps, CFG 1, Euler/simple and one image. Up to three ordered reference images may be included by their Studio-issued names, never by a local path or URL. The preview freezes the resolved seed, prompt, settings and reference hashes for this recipient; review them, then call collab_pack with its previewId. Packing writes one sealed file for manual handoff and does not send it, start a render or report the friend's live idle state. Repeat preview and pack for each recipient.",
       inputSchema: { type: "object", required: ["to", "prompt", "width", "height"], additionalProperties: false, properties: {
@@ -431,6 +456,55 @@ function collabControlTools(api, safeName) {
         }
         return a.seen === false && response?.reason === "not-seen" ? checkedReviewPictures(response) : response;
       },
+    },
+    {
+      name: "collab_video_accept",
+      description: "Review and then explicitly accept one signed H3 video job. First call with seen:false to get the exact prompt, model rights/readiness and reviewDigest. Only after review, call seen:true with that digest. Accepting records consent; it does not queue a render. The sender's signature, verified role and expiry are enforced again.",
+      inputSchema: { type: "object", required: ["file", "seen"], additionalProperties: false, properties: {
+        file: { type: "string" }, seen: { type: "boolean" }, review_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      } },
+      async run(a) {
+        if (a.seen === true && !/^[0-9a-f]{64}$/.test(String(a.review_digest || ""))) throw new Error("Pass review_digest from this exact signed video job before accepting.");
+        try { return await api("POST", "/api/collab", { action: "video_accept", file: String(a.file || ""), seen: a.seen === true,
+          ...(a.seen === true ? { expectedDigest: a.review_digest } : {}) }); }
+        catch (error) {
+          if (a.seen !== false || error?.cause?.status !== 409 || error.cause.refusal?.reason !== "not-seen") throw error;
+          return error.cause.refusal;
+        }
+      },
+    },
+    {
+      name: "collab_video_render",
+      description: "Explicitly queue one accepted standalone H3 video job on this machine. Rechecks local H3 readiness, plan settings and peer permission; no engine substitution, no automatic retry and no render on open/accept.",
+      inputSchema: { type: "object", required: ["id"], additionalProperties: false, properties: { id: { type: "string", pattern: "^o_[0-9a-f]{12}$" } } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_render", id: String(a.id || "") }); },
+    },
+    {
+      name: "collab_video_send_back",
+      description: "Seal the finished, checked H3 MP4 and its model/rights record to the original sender. Writes a local .aiplay return file for manual handoff; sends no message.",
+      inputSchema: { type: "object", required: ["id"], additionalProperties: false, properties: { id: { type: "string", pattern: "^o_[0-9a-f]{12}$" } } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_send_back", id: String(a.id || "") }); },
+    },
+    {
+      name: "collab_video_review_return",
+      description: "Read the checked local MP4 path, hash, measured dimensions/frames, full prompt and model rights from video quarantine. Review that file before adopting. This is read-only and returns no large base64 payload.",
+      inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: {
+        from: { type: "string", pattern: "^[0-9a-f]{32}$" },
+        file: { type: "string", pattern: "^peer_[0-9a-f]{32}_o_[0-9a-f]{12}_[0-9a-f]{64}\\.mp4$" },
+      } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_review_return", from: String(a.from || ""), file: String(a.file || "") }); },
+    },
+    {
+      name: "collab_video_adopt",
+      description: "Add one checked, reviewed peer MP4 to the Clips library with signed model rights/provenance. Refused returns cannot be overridden. Replays are idempotent.",
+      inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: { from: { type: "string" }, file: { type: "string" } } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_adopt", from: String(a.from || ""), file: String(a.file || "") }); },
+    },
+    {
+      name: "collab_video_drop",
+      description: "Discard one unadopted returned MP4 from video quarantine at the user's request.",
+      inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: { from: { type: "string" }, file: { type: "string" } } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_drop", from: String(a.from || ""), file: String(a.file || "") }); },
     },
     {
       name: "collab_image_render",

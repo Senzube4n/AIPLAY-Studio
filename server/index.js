@@ -380,9 +380,12 @@ import { resourceCard, readResourceCard, describeResources, ageOf } from "./coll
 import { creditRollup, creditLines } from "./collab/credit.js";
 import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn, shotFlags } from "./collab/order.js";
 import { makeImageJob, readImageJob, readStoredImageJob, compactImageJob, describeImageJob, IMAGE_JOB_REF_CAP, IMAGE_JOB_REF_BYTES_CAP } from "./collab/image-job.js";
+import { makeVideoJob, readVideoJob, readStoredVideoJob, compactVideoJob, describeVideoJob } from "./collab/video-job.js";
 import { measureImageJobReferences } from "./collab/image-reference.js";
 import { makeImageReturn, readImageReturn } from "./collab/image-return.js";
 import { landImageReturn, listImageQuarantine, imageQuarantinePicture, adoptImageReturn, dropImageReturn } from "./collab/image-quarantine.js";
+import { makeVideoReturn, readVideoReturn, VIDEO_RETURN_BYTES_CAP } from "./collab/video-return.js";
+import { landVideoReturn, listVideoQuarantine, videoQuarantineClip, adoptVideoReturn, dropVideoReturn } from "./collab/video-quarantine.js";
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
 import { imageIdFromArtFile, recentImageOutcome, recordImageOutcome } from "./collab/image-lifecycle.js";
@@ -750,6 +753,14 @@ art.on("cover", ({ file, covers }) => {
 });
 art.on("failed", ({ file, kind, cancelled }) => {
   if (kind === "cover") noteCollabImageOutcome(file, { type: "failed", cancelled: cancelled === true });
+  const match = kind === "video" && /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
+  if (match) void (async () => {
+    const dir = path.join(config.outputDir, "collab");
+    const row = await book.findOrder({ outDir: dir, id: match[1], side: "in" });
+    if (row?.jobType === "video" && ["queued", "rendering"].includes(row.state))
+      await book.transitionOrderState({ outDir: dir, id: match[1], from: row.state, to: "failed",
+        patch: { renderStatus: cancelled ? "stopped" : "failed", renderFailedAt: Date.now() } });
+  })().catch((error) => console.error(`[collab video] Could not record render failure: ${error.message}`));
 });
 /* A stage that failed is a stage that FINISHED, as far as the display goes.
  *
@@ -791,6 +802,23 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
   if (clip && (seconds || meta)) saveClipStore();
+  const friendJob = /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
+  if (friendJob && clip) void (async () => {
+    const dir = path.join(config.outputDir, "collab");
+    const row = await book.findOrder({ outDir: dir, id: friendJob[1], side: "in" });
+    if (!row || row.jobType !== "video" || !["queued", "rendering"].includes(row.state)) return;
+    if (clip !== `collab_${friendJob[1]}.mp4`) {
+      await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: "failed",
+        patch: { renderStatus: "wrong-output", renderFailedAt: Date.now(),
+          note: "The engine served a cached library clip rather than this order's own output; no return can be sealed." } });
+      return;
+    }
+    const bytes = await readFile(path.join(CLIP_DIR, clip));
+    await book.fillOrderRow({ outDir: dir, id: friendJob[1], patch: {
+      renderStatus: "complete", renderCompletedAt: Date.now(), renderClip: clip,
+      renderSha256: createHash("sha256").update(bytes).digest("hex"), renderRunId: runId ?? null,
+    } });
+  })().catch((error) => console.error(`[collab video] Could not record completed clip: ${error.message}`));
   // Generated-media registration: a rendered clip is ai-generated video.
   if (clip) {
     provNote("library", {
@@ -5416,6 +5444,29 @@ const server = http.createServer(async (req, res) => {
       return res.end(picture.bytes);
     }
 
+    if (p.startsWith("/api/collab-video/") && req.method === "GET") {
+      if (String(req.headers["sec-fetch-site"] || "") !== "same-origin") return json(res, 403, { error: "Returned videos play only on this Studio's Collab screen.", reason: "not-same-origin" });
+      const parts = p.slice("/api/collab-video/".length).split("/");
+      if (parts.length !== 2) return json(res, 400, { error: "Choose one returned video.", reason: "file" });
+      let fromFp, name;
+      try { [fromFp, name] = parts.map(decodeURIComponent); }
+      catch { return json(res, 400, { error: "The video address is invalid.", reason: "file" }); }
+      let clip;
+      try { clip = await videoQuarantineClip({ outDir: path.join(config.outputDir, "collab"), fromFp, file: name }); }
+      catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason }); }
+      const size = clip.bytes.length;
+      const base = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+      const range = byteRange(req.headers.range, size);
+      if (range?.unsatisfiable) { res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` }); return res.end(); }
+      if (range) {
+        const { start, end } = range;
+        res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
+        return res.end(clip.bytes.subarray(start, end + 1));
+      }
+      res.writeHead(200, { ...base, "Content-Length": size });
+      return res.end(clip.bytes);
+    }
+
     if (p === "/api/collab" && req.method === "POST") {
       /* ⚠ THE ONE DOOR IN THIS FILE THAT IS GATED, AND WHY IT HAD TO BE. There
        * are more than fifty `readBody(req)` sites here and almost none of them
@@ -5537,7 +5588,164 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: true, ...(await scanInbox({ outDir })) });
         }
         if (action === "quarantine") {
-          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }), images: await listImageQuarantine({ outDir }) });
+          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }), images: await listImageQuarantine({ outDir }), videos: await listVideoQuarantine({ outDir }) });
+        }
+
+        /* Standalone Video gets a real signed render order. Accepting merely
+         * records consent; only video_render may spend the receiver's GPU. */
+        if (action === "video_accept") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Choose the signed video job first.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const reviewDigest = createHash("sha256").update(read.blob).digest("hex");
+          if (b.seen === true && b.expectedDigest !== reviewDigest) return json(res, 409, { error: "The signed file changed after review. Open it again before accepting.", reason: "review-changed" });
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({ blob: read.blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((peer) => peer.fp === envelope.from) || null;
+              if (!sender) { const e = new Error("The video job signer is not on your roster."); e.reason = "unknown-sender"; throw e; }
+              return sender.sign;
+            } });
+          if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify the sender and give them a render role first.", reason: "role" });
+          let packet;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); }
+          catch { return json(res, 400, { error: "The video job is not readable JSON.", reason: "bad-packet" }); }
+          const order = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
+          if (order.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer.", reason: "return-address" });
+          const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
+          const readiness = videoReady("h3");
+          if (b.seen !== true) return json(res, 409, { error: "Review the complete job and this machine's H3 readiness, then accept explicitly. Accepting does not render.", reason: "not-seen",
+            from: { fp: sender.fp, nickname: sender.nickname }, videoJob: order, reviewDigest,
+            describes: describeVideoJob(order), readiness, outputRights: model?.outputRights ?? null });
+          const row = await book.landOrderRow({ outDir, row: { id: order.id, at: order.at, expires: order.expires,
+            from: { fp: sender.fp, nickname: sender.nickname, role: sender.role }, jobType: "video",
+            videoJob: compactVideoJob(order), returnTo: order.returnTo, reviewDigest,
+            state: "landed", consentAt: Date.now(), landedAt: Date.now() } });
+          return json(res, 200, { ok: true, order: order.id, state: row.state,
+            note: "Accepted for review. No video has been queued; Render is a separate press." });
+        }
+
+        if (action === "video_render") {
+          const id = String(b.id || "");
+          const row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "video") return json(res, 404, { error: "No accepted video job has that id.", reason: "no-such-order" });
+          if (row.state !== "landed") return json(res, 409, { error: `Video job ${id} is ${row.state}; it cannot be queued again.`, reason: "already-rendering" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const sender = peers.find((peer) => peer.fp === row.from?.fp);
+          if (!sender?.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "The sender no longer has a verified render role.", reason: "role" });
+          const order = readStoredVideoJob(row.videoJob, { now: Date.now(), myFp: me.fp });
+          if (order.returnTo.fp !== sender.fp || !config.video.enabled) return json(res, 409, { error: "The accepted order changed or Video is disabled on this machine.", reason: "video-disabled" });
+          if (assignedTo("video")) return json(res, 409, { error: "A custom Video workflow is active; this job needs the built-in H3 graph. Unassign it and review again.", reason: "workflow-incompatible" });
+          const readiness = videoReady("h3");
+          if (!readiness.ready) return json(res, 409, { error: "MiniMax H3 is not ready on this machine.", reason: "model-not-ready", readiness });
+          const j = order.job;
+          if (Number(videoEngine("h3")?.fps) !== 24) return json(res, 409, {
+            error: "This machine's H3 graph is not set to 24 fps. It would change the signed video contract; nothing was queued.",
+            reason: "settings-incompatible" });
+          if ((await art.videoAttention({ engine: "h3", attention: j.attention })) !== j.attention) return json(res, 409, {
+            error: "This machine cannot run the signed H3 attention backend. Nothing was queued.",
+            reason: "attention-incompatible" });
+          const plan = videoPlan({ prompt: j.prompt, seed: j.seed, width: j.width, height: j.height,
+            seconds: j.seconds, steps: j.steps, guidance: j.guidance, sparse: "off", keepAudio: j.keepAudio },
+            { engineKey: "h3", eng: videoEngine("h3"),
+              h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
+              framed: false, control: false });
+          if (plan.refusal || plan.prompt !== j.prompt || plan.width !== j.width || plan.height !== j.height || plan.seconds !== j.seconds || plan.steps !== j.steps || plan.sparse !== "off") return json(res, 409, {
+            error: plan.refusal?.error || "This machine would change a signed Video setting. Nothing was queued.",
+            reason: plan.refusal?.reason || "settings-incompatible", plan });
+          const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
+          const eng = videoEngine("h3");
+          await book.transitionOrderState({ outDir, id, from: "landed", to: "rendering", patch: {
+            renderRequestedAt: Date.now(), renderStatus: "requested", renderModel: String(eng.dit || "minimax-h3"),
+            renderRights: model?.outputRights ?? { class: "unknown", why: "No local model rights record was found." },
+          } });
+          let queued;
+          try {
+            queued = art.request({ actor: "script:collab-video", file: `clip:collab_${id}`,
+              title: `Friend video ${id}`, kind: "video", force: true, seed: j.seed,
+              video: { engine: "h3", prompt: j.prompt, seconds: j.seconds, width: j.width, height: j.height,
+                steps: j.steps, guidance: j.guidance, keepAudio: j.keepAudio, negative: "", sparse: "off",
+                attention: j.attention, blockCache: false, bridge: "off", bridgeAlpha: 0, loras: [], refImages: [], refAudios: [],
+                firstFrame: null, lastFrame: null, midFrames: [], audioTrack: null,
+              } });
+          } catch (e) { return json(res, 409, { error: `The video queue's outcome is uncertain: ${e.message}. Do not press Render again.`, reason: "render-uncertain" }); }
+          if (!queued) {
+            await book.transitionOrderState({ outDir, id, from: "rendering", to: "landed", patch: { renderStatus: "refused" } });
+            return json(res, 422, art.lastRefusalBody || { error: "The local Video queue refused this prompt.", reason: "render-refused" });
+          }
+          await book.transitionOrderState({ outDir, id, from: "rendering", to: "queued", patch: { queuedAt: Date.now(), artJobId: queued.id } });
+          return json(res, 200, { ok: true, order: id, state: "queued", job: queued.id,
+            note: "Queued locally after explicit receiver consent. No result has been sent." });
+        }
+
+        if (action === "video_send_back") {
+          const id = String(b.id || "");
+          let row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "video") return json(res, 404, { error: "No accepted video job has that id.", reason: "no-such-order" });
+          const returnNameOK = (name) => new RegExp(`^video-return-${id}-[0-9a-f]{8}\\.aiplay$`).test(String(name || ""));
+          if (row.state === "returning") {
+            if (!returnNameOK(row.videoReturnFile)) return json(res, 409, {
+              error: "The prepared return name changed; nothing was re-sealed.", reason: "return-changed" });
+            const file = path.join(outDir, "out", row.videoReturnFile);
+            const prior = await readFile(file).catch((e) => { if (e.code === "ENOENT") return null; throw e; });
+            if (prior && createHash("sha256").update(prior).digest("hex") !== row.videoReturnSha256)
+              return json(res, 409, { error: "The prepared return changed; nothing was re-sealed.", reason: "return-changed" });
+            if (prior) {
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+                patch: { renderedAt: Date.now() } });
+              return json(res, 200, { ok: true, replay: true, order: id, state: "rendered",
+                file, name: row.videoReturnFile, bytes: prior.length });
+            }
+            /* The atomic book claim happened, but no output file was published.
+             * Re-sealing the same checked clip is safe: no render is repeated
+             * and the receiver de-duplicates by order and content hash. */
+            row = await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+              patch: { videoReturnFile: null, videoReturnSha256: null } });
+          }
+          if (row.state === "rendered" && row.videoReturnFile) {
+            if (!returnNameOK(row.videoReturnFile)) return json(res, 409, {
+              error: "The prepared return name changed; nothing was re-sealed.", reason: "return-changed" });
+            const file = path.join(outDir, "out", row.videoReturnFile);
+            const bytes = await readFile(file).catch(() => null);
+            if (bytes && createHash("sha256").update(bytes).digest("hex") === row.videoReturnSha256) return json(res, 200, { ok: true, replay: true, order: id, file, name: row.videoReturnFile, bytes: bytes.length });
+            return json(res, 409, { error: "The prepared return changed or disappeared. Its state needs review; nothing was sealed again.", reason: "return-changed" });
+          }
+          if (row.state !== "queued" || row.renderStatus !== "complete" || !row.renderClip) return json(res, 409, { error: "This job has no completed, recorded clip to return.", reason: "not-rendered" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const peer = peers.find((item) => item.fp === row.from?.fp);
+          if (!peer?.verified || !["lender", "collaborator"].includes(peer.role)) return json(res, 403, { error: "The borrower is no longer a verified rendering friend.", reason: "role" });
+          const order = readStoredVideoJob(row.videoJob);
+          if (order.returnTo.fp !== peer.fp || row.renderClip !== `collab_${id}.mp4`) return json(res, 409, { error: "The recorded clip or return address changed.", reason: "render-record-mismatch" });
+          const bytes = await readFile(path.join(CLIP_DIR, row.renderClip)).catch(() => null);
+          if (!bytes || bytes.length > VIDEO_RETURN_BYTES_CAP || createHash("sha256").update(bytes).digest("hex") !== row.renderSha256) return json(res, 409, { error: "The rendered MP4 changed, is missing or exceeds 64 MiB.", reason: "render-output-changed" });
+          const meta = clipMeta.get(row.renderClip);
+          const j = order.job;
+          if (!meta || meta.engine !== "h3" || meta.prompt !== j.prompt || meta.seed !== j.seed || meta.width !== j.width || meta.height !== j.height || meta.clipSeconds !== j.seconds || meta.steps !== j.steps || meta.guidance !== j.guidance || meta.firstFrame || meta.refImages || meta.refAudios || meta.audioTrack || meta.loras || meta.bridge !== "off" || meta.bridgeAlpha !== 0 || meta.sparse === "sol-attn" || meta.blockCache !== false || meta.attention !== j.attention) return json(res, 409, { error: "The renderer's clip record differs from the signed job. No return was sealed.", reason: "render-record-mismatch" });
+          const { type: _videoType, ...recordSettings } = j;
+          const record = { ...recordSettings, model: "minimax-h3", modelVersion: row.renderModel || "minimax-h3", modelSha256: null,
+            outputRights: row.renderRights || { class: "unknown", why: "No local rights record was found." } };
+          const payload = await makeVideoReturn({ orderDoc: order, fromFp: me.fp, resultBytes: bytes, record, now: Date.now() });
+          const { signPrivate } = await collabPrivateKeys({ appData });
+          const blob = sealTo({ payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
+            toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+            toFp: peer.fp, fromFp: me.fp, signPrivate });
+          const name = `video-return-${id}-${randomUUID().replaceAll("-", "").slice(0, 8)}.aiplay`;
+          const dest = path.join(outDir, "out", name);
+          const digest = createHash("sha256").update(blob).digest("hex");
+          await book.transitionOrderState({ outDir, id, from: "queued", to: "returning", patch: { videoReturnFile: name, videoReturnSha256: digest, returnRequestedAt: Date.now() } });
+          await mkdir(path.dirname(dest), { recursive: true });
+          try { await writeFile(dest, blob, { flag: "wx" });
+            await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered", patch: { renderedAt: Date.now() } }); }
+          catch (e) { return json(res, 409, { error: `Return publication was interrupted: ${e.message}. Review the order before retrying.`, reason: "return-uncertain" }); }
+          return json(res, 200, { ok: true, order: id, state: "rendered", file: dest, name, bytes: blob.length,
+            to: { fp: peer.fp, nickname: peer.nickname }, note: "Prepared the signed MP4 return. Hand this sealed file to the friend; their Studio will quarantine it." });
         }
 
         /* A standalone image job has its own consent and queue. It never enters
@@ -6162,6 +6370,19 @@ const server = http.createServer(async (req, res) => {
           try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
             return json(res, 400, { error: "That bundle opened but what is inside it is not a packet.", reason: "bad-packet" });
           }
+          if (packet?.kind === "job-return" && packet?.jobType === "video") {
+            const videoReturn = readVideoReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: videoReturn.orderId, side: "out" });
+            if (!sent || sent.jobType !== "video" || sent.to?.fp !== sender.fp || videoReturn.to !== me.fp) return json(res, 400, { error: "This video answers no job sent to this verified friend.", reason: "return-unknown-order" });
+            const landed = await landVideoReturn({ outDir, payload: videoReturn,
+              orderDoc: sent.videoJob, orderToFp: sent.to.fp, fromFp: sender.fp, toFp: me.fp, now: Date.now() });
+            await book.reconcileVideoReturn({ outDir, id: sent.id,
+              entry: { ok: landed.ok, reason: landed.reason, file: landed.file, kind: "video" },
+              state: landed.adopted ? "adopted" : landed.ok ? "returned" : "refused", note: landed.why });
+            return json(res, landed.ok ? 200 : 400, { ok: landed.ok, video: landed, reason: landed.reason,
+              note: landed.ok ? "The MP4 passed the signed-order and independent decode checks. Review it in quarantine before keeping it."
+                : `${landed.why} The MP4 remains in video quarantine for review or deletion.` });
+          }
           if (packet?.kind === "job-return" && packet?.jobType === "image") {
             const imageReturn = readImageReturn(packet).doc;
             const imageOrderRow = await book.findOrder({ outDir, id: imageReturn.orderId, side: "out" });
@@ -6212,6 +6433,15 @@ const server = http.createServer(async (req, res) => {
             mime: "image/png", b64: picture.bytes.toString("base64") });
         }
 
+        if (action === "video_review_return") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const clip = await videoQuarantineClip({ outDir, fromFp, file });
+          return json(res, 200, { ok: true, from: fromFp, file, sha256: clip.row.sha256,
+            bytes: clip.bytes.length, measured: clip.row.measured, prompt: clip.row.prompt,
+            record: clip.row.record, path: path.join(outDir, "video-quarantine", fromFp, file),
+            note: "Read-only checked local MP4 for review; no adoption occurred." });
+        }
+
         if (action === "image_adopt") {
           const fromFp = String(b.from || ""), file = String(b.file || "");
           const kept = await adoptImageReturn({ outDir, imageDir: IMAGE_DIR, fromFp, file, now: Date.now(),
@@ -6240,6 +6470,26 @@ const server = http.createServer(async (req, res) => {
         }
         if (action === "image_drop") {
           const dropped = await dropImageReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") });
+          return json(res, 200, { ok: true, ...dropped });
+        }
+
+        if (action === "video_adopt") {
+          const kept = await adoptVideoReturn({ outDir, clipDir: CLIP_DIR,
+            fromFp: String(b.from || ""), file: String(b.file || ""), now: Date.now(),
+            persistMetadata: async ({ name, metadata }) => { clipMeta.set(name, metadata); saveClipStore(); },
+          });
+          if (!kept.replay) provNote("library", { actor: prov.actorFrom(req), type: "import",
+            asset: `clips/${kept.name}`, data: { source: "peer-video", peer: kept.row.from,
+              orderId: kept.row.orderId, model: kept.metadata.model, modelVersion: kept.metadata.modelVersion,
+              modelSha256: kept.metadata.modelSha256, outputRights: kept.metadata.outputRights,
+              seed: kept.metadata.seed } });
+          await book.reconcileVideoReturn({ outDir, id: kept.row.orderId,
+            entry: { ok: true, reason: null, file: kept.name, kind: "video" }, state: "adopted" });
+          return json(res, 200, { ok: true, name: kept.name, metadata: kept.metadata,
+            replay: kept.replay, note: "Added the reviewed MP4 to the Clips library with its peer provenance." });
+        }
+        if (action === "video_drop") {
+          const dropped = await dropVideoReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") });
           return json(res, 200, { ok: true, ...dropped });
         }
 
@@ -6414,7 +6664,7 @@ const server = http.createServer(async (req, res) => {
             b.kind = frozen.payload.kind; b.to = frozen.peer.fp;
           }
           const kind = String(b.kind || "");
-          if (!["shot", "project", "resources", "order", "video-recipe", "image-job", "job-order"].includes(kind)) {
+          if (!["shot", "project", "resources", "order", "video-recipe", "image-job", "video-job", "job-order"].includes(kind)) {
             return json(res, 400, { error: "Unknown Collab package kind.", reason: "kind" });
           }
           const { peers } = await collabRoster.roster({ appData });
@@ -6498,6 +6748,11 @@ const server = http.createServer(async (req, res) => {
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
               jobType: "image", imageJob: compactImageJob(packet), file: wrote.file,
             } });
+            if (packet.kind === "job-order" && packet.jobType === "video") await book.rememberOrder({ outDir, row: {
+              id: packet.id, at: packet.at, expires: packet.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              jobType: "video", videoJob: compactVideoJob(packet), file: wrote.file,
+            } });
             return json(res, 200, { ok: true, ...wrote, kind, previewId: b.previewId,
               ...(kind === "order" || kind === "job-order" ? { order: packet.id } : {}),
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role }, describes: frozen.describes,
@@ -6554,6 +6809,27 @@ const server = http.createServer(async (req, res) => {
               describes: describeImageJob(orderI),
               note: "One Qwen base image with these exact settings and included references. The friend must review and explicitly accept; preparing does not transmit or render.",
             });
+          }
+          if (kind === "video-job") {
+            if (action !== "preview") return json(res, 400, { error: "Preview the exact video request before preparing it.", reason: "preview-required" });
+            const video = b.video;
+            if (!video || typeof video !== "object" || Array.isArray(video)) return json(res, 400, { error: "Choose the video prompt and settings first.", reason: "video" });
+            const allowed = ["engine", "prompt", "width", "height", "seconds", "steps", "guidance", "negative", "keepAudio", "seed", "sparse", "attention", "blockCache", "bridge", "bridgeAlpha", "guideStrength", "refImages", "refAudios", "audioTrack", "fromCover", "toCover", "fromUpload", "toUpload", "midUploads", "persona", "loop", "loras", "models", "sourceVideo"];
+            if (Object.keys(video).some((key) => !allowed.includes(key))) return json(res, 400, { error: "This video request has settings the friend job cannot reproduce.", reason: "settings-incompatible" });
+            for (const key of ["refImages", "refAudios", "midUploads", "loras"]) if (video[key] !== undefined && (!Array.isArray(video[key]) || video[key].length)) return json(res, 400, { error: `${key} cannot travel in this text-to-video job.`, reason: "references-unsupported" });
+            for (const key of ["audioTrack", "fromCover", "toCover", "fromUpload", "toUpload", "persona", "sourceVideo", "models"]) if (video[key]) return json(res, 400, { error: `${key} cannot travel in this text-to-video job.`, reason: "references-unsupported" });
+            if (video.loop || video.engine !== "h3" || video.steps !== 20 || video.guidance !== 1 || video.negative !== "" || video.sparse !== "off" || !["ck", "pytorch"].includes(video.attention) || video.blockCache !== false || video.bridge !== "off" || video.bridgeAlpha !== 0 || video.guideStrength !== 0.7) return json(res, 400, { error: "This base-only friend job needs H3 at 20 steps, default guidance 1, CK or PyTorch attention, and no negative prompt, sparse attention, block cache, bridge or guide. Clear unsupported settings before preview.", reason: "settings-incompatible" });
+            /* A saved bridge can affect the normal Video button even when its
+             * render request omits a bridge field. Refuse it at this boundary. */
+            if (config.video.engines.h3?.bridge && config.video.engines.h3.bridge !== "off") return json(res, 409, { error: "The saved H3 conditioning bridge is enabled. Turn it off before asking a friend for the same text-to-video clip.", reason: "settings-incompatible" });
+            if (config.video.engines.h3?.blockCache === true) return json(res, 409, { error: "The saved H3 block cache is enabled. Turn it off before asking for a base-only friend clip.", reason: "settings-incompatible" });
+            const meV = await collabIdentity({ appData });
+            const orderV = makeVideoJob({ prompt: video.prompt, seed: video.seed === undefined ? Math.floor(Math.random() * 4294967296) : video.seed,
+              width: video.width, height: video.height, seconds: video.seconds, steps: video.steps,
+              guidance: video.guidance, keepAudio: video.keepAudio, attention: video.attention,
+              returnTo: { fp: meV.fp, nickname: String(b.nickname || "").slice(0, 40) }, now: Date.now() });
+            return previewFor(orderV, `video-${orderV.id}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+              describes: describeVideoJob(orderV), note: "Exact H3 text-to-video settings are frozen for this friend. They must review, accept and separately render. No file is sent automatically." });
           }
           if (kind === "video-recipe") {
             if (action !== "preview") return json(res,400,{error:"Preview this recipe before preparing it.",reason:"preview-required"});
@@ -6757,12 +7033,25 @@ const server = http.createServer(async (req, res) => {
             if (imageOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The image job asks this machine to return the result to somebody other than its signer.", reason: "return-address" });
             await measureImageJobReferences(imageOrder.job.references);
           }
+          let videoOrder = null;
+          if (packet?.kind === "job-order" && packet?.jobType === "video") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before reviewing their video job.", reason: "role" });
+            videoOrder = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
+            if (videoOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The video job return address differs from its signer.", reason: "return-address" });
+          }
           let imageReturnPreview = null;
           if (packet?.kind === "job-return" && packet?.jobType === "image") {
             if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before receiving an image return.", reason: "role" });
             imageReturnPreview = readImageReturn(packet).doc;
             const sent = await book.findOrder({ outDir, id: imageReturnPreview.orderId, side: "out" });
             if (!sent || sent.jobType !== "image" || sent.to?.fp !== sender.fp || imageReturnPreview.to !== me.fp) return json(res, 400, { error: "This image return does not answer a job sent to this verified friend.", reason: "return-unknown-order" });
+          }
+          let videoReturnPreview = null;
+          if (packet?.kind === "job-return" && packet?.jobType === "video") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before reviewing their video return.", reason: "role" });
+            videoReturnPreview = readVideoReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: videoReturnPreview.orderId, side: "out" });
+            if (!sent || sent.jobType !== "video" || sent.to?.fp !== sender.fp || videoReturnPreview.to !== me.fp) return json(res, 400, { error: "This video return does not answer a job sent to this verified friend.", reason: "return-unknown-order" });
           }
           /* Their build, recorded on their row: a caption, never a gate. */
           if (packet?.by) await collabRoster.setBuild({ appData, fp: sender.fp, by: packet.by }).catch(() => {});
@@ -6776,24 +7065,29 @@ const server = http.createServer(async (req, res) => {
             ...(imageOrder ? { imageJob: { ...imageOrder, job: { ...imageOrder.job,
               references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
               prompt: imageOrder.job.prompt } : {}),
+            ...(videoOrder ? { videoJob: videoOrder, prompt: videoOrder.job.prompt,
+              reviewDigest: createHash("sha256").update(blob).digest("hex") } : {}),
             ...(imageReturnPreview ? { imageReturn: { ...imageReturnPreview,
               result: { ...imageReturnPreview.result, b64: "[picture bytes]" } } } : {}),
+            ...(videoReturnPreview ? { videoReturn: { ...videoReturnPreview,
+              result: { ...videoReturnPreview.result, b64: "[video bytes]" } } } : {}),
             /* The prompt as its own field: a screen must be able to show it
              * whole and unstyled rather than trimmed into a sentence. */
             ...(packet?.kind === "order" ? { prompt: String(packet.shot?.prompt || "") } : {}),
             /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
              * packet" and the four words a person is being asked to agree to
              * were only ever visible after they had already agreed. */
-            describes: imageReturnPreview ? `A returned ${imageReturnPreview.record.width}×${imageReturnPreview.record.height} PNG for image job ${imageReturnPreview.orderId}, made with ${imageReturnPreview.record.model}. Receive it into quarantine before keeping it.`
-              : imageOrder ? describeImageJob(imageOrder) : videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
+            describes: videoReturnPreview ? `A returned ${videoReturnPreview.record.width}×${videoReturnPreview.record.height} MP4 for video job ${videoReturnPreview.orderId}. Receive it into quarantine before keeping it.`
+              : imageReturnPreview ? `A returned ${imageReturnPreview.record.width}×${imageReturnPreview.record.height} PNG for image job ${imageReturnPreview.orderId}, made with ${imageReturnPreview.record.model}. Receive it into quarantine before keeping it.`
+              : videoOrder ? describeVideoJob(videoOrder) : imageOrder ? describeImageJob(imageOrder) : videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
               : packet?.kind === "order" ? describeOrder(packet, Date.now())
                 : packet?.kind === "return" ? `A finished take for scene ${packet.segmentId} of order ${packet.orderId}, rendered on ${packet.record?.model || "their machine"}. Press Receive to check it against what you ordered.`
                   : describeAnyPacket(packet),
             /* A returned PNG can be 64 MiB. Opening is only a review step;
              * the verified bytes remain in the sealed file until Receive.
              * Sending their base64 back in JSON freezes the Collab screen. */
-            packet: imageReturnPreview ? { ...packet,
-              result: { ...packet.result, b64: "[picture bytes]" } } : packet,
+            packet: imageReturnPreview || videoReturnPreview ? { ...packet,
+              result: { ...packet.result, b64: videoReturnPreview ? "[video bytes]" : "[picture bytes]" } } : packet,
             /* Said every time rather than once in a manual: opening is not
              * accepting, and nothing has been rendered. */
             note: "Read and verified. Nothing has been rendered: turning this into work is a separate press on the Collab screen.",

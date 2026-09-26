@@ -787,6 +787,11 @@ export class ArtRunner extends EventEmitter {
   async videoAttention(job) {
     const name = job.engine || config.video.engine;
     if (name === "ltx") return null;
+    /* A signed standalone peer job names its backend. The receiver preflights
+     * CK support before queueing, so an unavailable backend is never silently
+     * substituted after the lender consents to the exact job. */
+    if (name === "h3" && job.attention === "pytorch") return "pytorch";
+    if (name === "h3" && (job.attention === "ck" || job.attention === "kitchen")) return (await this.#kitchenOffered()) ? "ck" : "pytorch";
     const eng = config.video.engines[name];
     if (eng?.sparseAttention) {
       const want = job.attention ?? eng.attention;
@@ -840,6 +845,7 @@ export class ArtRunner extends EventEmitter {
    * custom node. Where it would and cannot, the job says so (blockCacheNote).
    */
   async videoBlockCache(job) {
+    if (job.blockCache === false) return false;
     const name = job.engine || config.video.engine;
     const eng = { ...config.video, ...(config.video.engines[name] || {}), ...(job.models || {}) };
     if (eng.blockCache !== true) return false;
@@ -1548,6 +1554,7 @@ export class ArtRunner extends EventEmitter {
               /* The sparse attention the graph carried, and why not where
                * sol-attn was asked for and the engine could not take it. */
               sparse: job.sparseRan ?? null, sparseNote: job.sparseNote || null,
+              attention: job.attentionRan ?? null,
               /* Whether H3's block cache ran, and why not where it was asked for. */
               blockCache: !!job.blockCacheRan, blockCacheNote: job.blockCacheNote || null,
               at: Date.now(),
@@ -2236,6 +2243,8 @@ export class ArtRunner extends EventEmitter {
         console.warn(`[art] custom video workflow "${customVideo}" did not load (${err.message}) — using the built-in graph`);
       }
     }
+    const attention = graph ? null : await this.videoAttention(job);
+    job.attentionRan = attention;
     if (!graph) graph = videoGraph({
       // Which engine. Carried on the job so a clip queued while LTX was selected
       // still renders with LTX even if the setting changed while it waited.
@@ -2279,7 +2288,7 @@ export class ArtRunner extends EventEmitter {
        * ONE `attention:` key in this object: a second one is not an error in
        * JavaScript, the later simply wins (fasth3_test.js guards it). FastH3's
        * per-render pick is read inside videoAttention(). */
-      attention: await this.videoAttention(job),
+      attention,
       /* H3's sol-attn on the Fast setting (workflow.js h3SparseFor), after the
        * engine was asked whether it has the node (videoSparse). Named here for
        * the reason the warning above gives. */
