@@ -8,7 +8,7 @@ The 3D page loads VRM 1.0 models with MToon materials, existing humanoid bones, 
 
 1. Use **Try anime sample** for the documented 10.3 MiB reference download, or import a self-contained `.vrm` using **VRM 1.0 workshop**, with the actual source/license. The local preview budget is 64 MiB, 150,000 triangles, 32 materials, 256 skin joints; textures are bounded at 4096 px and 64 megapixels total. Existing World GLB limits are unchanged.
 2. Use **Test movement** to inspect gentle humanoid motion and existing hair springs. This is a procedural review pose, not a generated dance clip. Embedded clips retain their own raw-bone animation.
-3. Choose visible embedded parts, tint materials and test expressions. The five vowel presets remain manual expression controls. Voice preview additionally drives `aa` (or `jawOpen`) from a local audio waveform. This is loudness-driven mouth motion, not phoneme recognition.
+3. Choose visible embedded parts, tint materials and test expressions. The five vowel presets remain manual expression controls. Voice preview additionally drives `aa` (or `jawOpen`) from a local audio waveform. **Cue expression** can show a lip-sync-safe embedded expression briefly without saving it to the look. This is loudness-driven mouth motion, not phoneme recognition.
 4. Save a named look. Choose a saved look to activate it. An open page follows MCP activation and edits unless it has an unsaved local draft.
 5. **Overlay** supplies a local transparent browser-source URL for OBS. It follows the active saved look. This does not start streaming or connect Twitch/Kick.
 6. Export the original model, manifest and active look separately. Looks pin the exact source hash; the source model is never rewritten.
@@ -33,7 +33,7 @@ Runtime acceptance uses the official [VRM1 Constraint Twist Sample](https://gith
 
 This reference has 36,470 triangles, 154 unique skin joints, 18 expression presets, 22 spring chains and 13 colliders. It is a clean functional baseline, not the pink-haired design or a clothing library. The original Mika experiment still needs geometry, topology and material repair.
 
-The recovered web configurator has 30 Quaternius-derived parts, but no facial morphs or spring hair. Its assembly concept can be reused; silently substituting a root bone for missing joints cannot. The web Agent World currently uses a fixed character body and still needs owner-scoped per-persona model resolution and a compatible VRM runtime before these looks can be installed there.
+The recovered web configurator has 30 Quaternius-derived parts, but no facial morphs or spring hair. Its assembly concept can be reused; silently substituting a root bone for missing joints cannot. Agent World has a separate owner-scoped outfit import, persona binding and VRM actor path in its own repository, activated on DEV on 24 September 2026. Studio export is still only a candidate: World rechecks the account, persona and exact package. Authenticated multi-user/browser acceptance and production activation have not been verified. See [Export a saved outfit](AVATAR_PARTS.md#export-a-saved-outfit).
 
 ## Local learned rigging
 
