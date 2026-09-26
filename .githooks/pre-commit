@@ -87,7 +87,7 @@ blender_half "attachment fitting" "$AF_SCRIPT" attachment_fit_test.py AIPLAY_ATT
 node --test server/collab/video-recipe_test.js || exit 1
 # Signed standalone H3 render jobs: exact wire, receiver consent, independent
 # MP4 checks, two-profile courier, quarantine/adoption and replay.
-node --test server/collab/video-job_test.js server/collab/video_two_profile_test.js || exit 1
+node --test server/collab/video-job_test.js server/collab/video_two_profile_test.js server/collab/video-lifecycle_test.js server/art_failure_clock_test.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_studio_persistence.mjs || exit 1
@@ -302,7 +302,7 @@ node --test server/collab/two_profile_test.js || exit 1
 # scene never rendered here, a refused take watched by name only, lip-sync said
 # not to travel, the minutes a day read at accept, and the speed-up file a
 # lender lacks named before the yes. CPU only; the disk is handed in.
-node --test server/collab/lending_test.js || exit 1
+node --test server/collab/lending_test.js server/collab/cross-kind-budget_test.js || exit 1
 # ANIMATEDIFF ON THE APACHE-2.0 PIECES: the graph's shape (our schedule node,
 # our sliding ControlNet loader, the v3 module and adapter, Small depth by
 # licence, the decoded strengths), the schedule on the bars, and the gate
@@ -1347,7 +1347,7 @@ node --test server/music/train-ui_test.js server/overnight-image_test.js || exit
 node --test server/qwen-api_test.js server/qwen-image_test.js server/qwen-modelpick_test.js server/qwen-models_test.js server/qwen-status_test.js server/collab/preview_test.js server/collab/ui_test.js server/reactive_profile_test.js || exit 1
 # Signed standalone Qwen jobs: exact frozen wire, two-profile consent and replay,
 # return decode/quarantine, one atomic render claim, and page/MCP reachability.
-node --test server/collab/image-job_test.js server/collab/image-reference_test.js server/collab/image-return_test.js server/collab/image-quarantine_test.js server/collab/image_two_profile_test.js server/collab/image-orderbook_test.js server/collab/image-lifecycle_test.js server/collab/image-retry_test.js server/collab/image-ui-mcp_test.js server/collab/image-mcp-review_test.js server/collab/image-provenance_test.js server/collab/image-render-integrity_test.js || exit 1
+node --test server/collab/image-job_test.js server/collab/image-reference_test.js server/collab/image-return_test.js server/collab/image-quarantine_test.js server/collab/image_two_profile_test.js server/collab/image-orderbook_test.js server/collab/image-lifecycle_test.js server/collab/image-retry_test.js server/collab/image-ui-mcp_test.js server/collab/image-mcp-review_test.js server/collab/image-provenance_test.js server/collab/image-render-integrity_test.js server/collab/image-budget_test.js || exit 1
 # FAST DRAFT for Qwen Image 2.1 (Viggle's turbo LoRA, arm C of the 2026-09-24
 # A/B): the one sigma helper against the three measured schedules, the graph
 # node for node, every base-only refusal, readiness for the LoRA, the ~3 s /
