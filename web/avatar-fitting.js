@@ -18,10 +18,42 @@ export async function avatarLocalPost(url, body, {signal} = {}) {
 
 export function mountAvatarFitting({row, onPrepared, isCurrent = () => true,
   api = body => avatarLocalPost('/api/avatar-fitting', body), documentRef = document,
-  setTimer = setTimeout, clearTimer = clearTimeout} = {}) {
+  setTimer = setTimeout, clearTimer = clearTimeout,
+  storage = (() => { try { return globalThis.localStorage; } catch { return null; } })()} = {}) {
   const $ = id => documentRef.getElementById(id), form = $('fitting-form');
+  const slots = ['outfit','hair','head','body','shoes','accessory'];
+  const fitId = /^fit_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const storageKey = `aiplay.avatar-fitting.v1:${row.id}:${row.inspection.sha256}`;
   let live = true, busy = false, ready = false, version = 0, inspection = null, job = null, submitted = null, timer;
   const current = token => live && isCurrent() && token === version;
+  const forget = id => {
+    try {
+      const saved = JSON.parse(storage?.getItem(storageKey) || 'null');
+      if (!id || saved?.job_id === id) storage?.removeItem(storageKey);
+    } catch { try { storage?.removeItem(storageKey); } catch {} }
+  };
+  const savedJob = () => {
+    try {
+      const saved = JSON.parse(storage?.getItem(storageKey) || 'null');
+      if (!saved) return null;
+      if (saved.avatar_id === row.id && saved.source_sha256 === row.inspection.sha256 && fitId.test(saved.job_id) && slots.includes(saved.slot)) return saved;
+    } catch {}
+    forget(); return null;
+  };
+  const remember = (id, slot) => {
+    if (!fitId.test(id) || !slots.includes(slot)) return;
+    try { storage?.setItem(storageKey, JSON.stringify({job_id:id, avatar_id:row.id, source_sha256:row.inspection.sha256, slot})); } catch {}
+  };
+  const validateJob = (next, id) => {
+    if (!next || next.id !== id || next.avatar_id !== row.id || next.source_sha256 !== row.inspection.sha256)
+      throw Object.assign(Error('This fit belongs to another avatar or an older avatar file.'), {status:409});
+    if (!['running','complete','failed','interrupted'].includes(next.state)) throw Error('Fitting job returned an unknown state.');
+    if (['running','complete'].includes(next.state) && ['name','source','license'].some(key => typeof next[key] !== 'string' || !next[key].trim()))
+      throw Error('Fitting job metadata is incomplete.');
+    if (next.state === 'complete' && (!next.result?.output || !Number.isInteger(next.result.vertices) || !Number.isInteger(next.result.joints)))
+      throw Error('Fitting result is incomplete.');
+    return next;
+  };
   const note = (message = '', error = false) => {
     $('fitting-note').textContent = message;
     $('fitting-note').hidden = !message;
@@ -31,6 +63,7 @@ export function mountAvatarFitting({row, onPrepared, isCurrent = () => true,
     $('fitting-inspect').disabled = busy || !ready || job?.state === 'running';
     $('fitting-submit').disabled = busy || !inspection || job?.state === 'running';
     $('fitting-add').disabled = busy || job?.state !== 'complete';
+    $('fitting-find').disabled = busy;
     form.elements.reference_node.disabled = busy || !inspection;
   };
   const work = async task => {
@@ -51,8 +84,17 @@ export function mountAvatarFitting({row, onPrepared, isCurrent = () => true,
       if(!current(token)) return;
       if(busy) { schedulePoll(id, token); return; }
       void work(async nextToken => {
-        try { display(await api({action:'get', id}), nextToken); }
-        catch(error) { if(current(token) && job?.id===id && job.state==='running') schedulePoll(id, token); throw error; }
+        try { await fetchJob(id, submitted?.slot, nextToken); }
+        catch(error) {
+          if (current(token) && job?.id===id && job.state==='running') {
+            if ([404,409].includes(error.status)) {
+              forget(id); job = null; submitted = null; $('fitting-state').textContent = 'Fit unavailable';
+              note(error.message, true); paint(); return;
+            }
+            schedulePoll(id, token);
+          }
+          throw error;
+        }
       });
     }, 1200);
   }
@@ -64,9 +106,11 @@ export function mountAvatarFitting({row, onPrepared, isCurrent = () => true,
   function display(next, token) {
     if (!current(token)) return;
     job = next; $('fitting-job').textContent = next.id;
+    $('fitting-find-id').value = next.id;
     $('fitting-state').textContent = next.state === 'complete' ? 'Ready to review' : next.state === 'running' ? 'Preparing fit' : 'Fit stopped';
     if (next.error) note(next.error, true);
     else if(next.state === 'running') note();
+    if (next.state !== 'complete') $('fitting-result').textContent = '';
     if (next.state === 'complete') {
       const result = next.result;
       $('fitting-result').textContent = `${result.vertices.toLocaleString()} vertices · ${result.joints} joints`;
@@ -75,6 +119,18 @@ export function mountAvatarFitting({row, onPrepared, isCurrent = () => true,
     clearTimer(timer);
     if (next.state === 'running') schedulePoll(next.id, token);
     paint();
+  }
+  async function fetchJob(id, slot, token) {
+    const next = validateJob(await api({action:'get', id}), id);
+    if (!current(token)) return;
+    if (next.state === 'running' || next.state === 'complete') {
+      if (!slots.includes(slot)) throw Error('Choose a part slot before reopening this fit.');
+      submitted = Object.freeze({name:next.name, source:next.source, license:next.license, slot});
+      remember(id, slot);
+    } else {
+      forget(id); submitted = null;
+    }
+    display(next, token);
   }
   $('fitting-inspect').onclick = () => {
     if(!live || !isCurrent() || busy || !ready || job?.state==='running') return;
@@ -117,25 +173,53 @@ export function mountAvatarFitting({row, onPrepared, isCurrent = () => true,
         name:form.elements.name.value.trim(), source:form.elements.source.value.trim(), license:form.elements.license.value.trim()};
       if(!input.name || input.name.length>80) throw Error('Use a part name up to 80 characters.');
       const slot=form.elements.slot.value;
-      if(!['outfit','hair','head','body','shoes','accessory'].includes(slot)) throw Error('Choose a part slot.');
+      if(!slots.includes(slot)) throw Error('Choose a part slot.');
       submitted = Object.freeze({...input,slot}); job = null; note(); $('fitting-state').textContent = 'Preparing fit';
-      display(await api({action:'submit', ...input}), token);
+      const next = await api({action:'submit', ...input});
+      if (!fitId.test(next?.id)) throw Error('Fitting job returned an invalid ID.');
+      validateJob(next, next.id);
+      remember(next.id, slot);
+      if (!current(token)) return;
+      display(next, token);
     });
   };
+  $('fitting-find').onclick = () => work(async token => {
+    const id = $('fitting-find-id').value.trim();
+    if (!fitId.test(id)) throw Error('Paste a valid fitting job ID.');
+    const saved = savedJob();
+    const slot = saved?.job_id === id ? saved.slot : form.elements.slot.value;
+    await fetchJob(id, slot, token);
+  });
   $('fitting-add').onclick = () => work(async token => {
     if (job?.state !== 'complete' || !submitted) return;
     await onPrepared({path:job.result.output, name:submitted.name, slot:submitted.slot, source:submitted.source, license:submitted.license});
-    if (current(token)) { $('fitting-state').textContent = 'Added to wardrobe'; note('Select the part to preview it.'); job = null; }
+    if (current(token)) { forget(job.id); $('fitting-state').textContent = 'Added to wardrobe'; note('Select the part to preview it.'); job = null; paint(); }
   });
   form.elements.name.maxLength=80;
   $('fitting-panel').hidden = false; paint();
   $('fitting-state').textContent = 'Checking local tools';
-  void api({action:'status'}).then(value => {
-    if (!live || !isCurrent()) return;
-    ready = value.available;
-    $('fitting-state').textContent = ready ? 'Choose a part' : 'Setup needed';
-    if (!ready) note(value.reason, true);
-    paint();
-  }).catch(error => { if (live && isCurrent()) { note(error.message,true); $('fitting-state').textContent = 'Unavailable'; } });
+  const initialToken = version;
+  void (async () => {
+    try {
+      const value = await api({action:'status'});
+      if (!current(initialToken)) return;
+      ready = value.available;
+      $('fitting-state').textContent = ready ? 'Choose a part' : 'Setup needed';
+      if (!ready) note(value.reason, true);
+      paint();
+    } catch(error) {
+      if (current(initialToken)) { note(error.message,true); $('fitting-state').textContent = 'Unavailable'; }
+    }
+    if (!current(initialToken)) return;
+    const saved = savedJob();
+    if (!saved) return;
+    try { await fetchJob(saved.job_id, saved.slot, initialToken); }
+    catch(error) {
+      if (current(initialToken)) {
+        if ([404,409].includes(error.status)) forget(saved.job_id);
+        $('fitting-state').textContent = 'Check job'; note(error.message, true); paint();
+      }
+    }
+  })();
   return {dispose() { live = false; version++; clearTimer(timer); }};
 }
