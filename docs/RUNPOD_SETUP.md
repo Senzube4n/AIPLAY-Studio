@@ -81,6 +81,15 @@ The same window has **Create or manage a RunPod Pod**. Add a restricted RunPod A
 
 Creating a Pod is a reviewed paid action: choose the GPU, cloud tier and persistent disk, review the current estimated GPU hourly price, and explicitly acknowledge that billing begins before the create button is enabled. The current wizard creates the standard `runpod/comfyui:cuda12.8` image with only worker HTTP port 8787 exposed. Storage is billed separately and may continue after compute is stopped.
 
+The MCP surface exposes the same local worker, account, workflow, job and Pod
+routes (see [MCP workflow control](MCP_WORKFLOWS.md)). MCP Pod creation requires
+`CREATE PAID POD`; starting a stopped Pod requires `START PAID POD` after the
+hourly price is reviewed. The server checks both phrases, including for raw
+HTTP callers. The MCP asset uploader accepts absolute local reference paths up
+to **64 MiB** per file so the MCP process does not buffer the browser route's
+512 MiB maximum. Its result is an asset name for a job's node/input binding;
+workflow preview itself never starts a render.
+
 Use a Pod terminal or SSH session from the RunPod Connect panel to run the bootstrap command shown in the setup window. It installs Node.js and the AIPLAY worker under `/workspace`, checks that ComfyUI actually listens on `127.0.0.1:8188` and no public address, creates a private worker token, adds a ComfyUI restart hook, starts the worker, and prints the connection URL and token. If the check fails, restart ComfyUI with `--listen 127.0.0.1 --port 8188` and rerun the bootstrap. The script is safe to run again and preserves the token. Model files are still a separate step because their licenses, access gates, size and required nodes vary by model.
 
 For a first image, select the checkpoint shown under **Model on the Pod**, keep the default remote CFG 6, choose a small size and render. For a first video, keep **512 × 320 · cheapest test**, use a short duration, and render. Results appear in the normal Images or Clips library after their hashes are verified and the files are downloaded to the PC. The normal render buttons resume an active matching remote job after a page reload.

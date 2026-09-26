@@ -71,6 +71,7 @@ import { welcomeTools } from "./mcp-welcome.js";
  * actually run, and what to fetch first. */
 import { modelTools } from "./mcp-models.js";
 import { cloudTools } from "./mcp-cloud.js";
+import { runpodTools } from "./mcp-runpod.js";
 import { collabTools } from "./mcp-collab.js";
 import { communityTools } from "./mcp-community.js";
 import { standRigPsdTools } from "./mcp-standrig-psd.js";
@@ -442,6 +443,7 @@ export const TOOLS = [
    * complete confidence. */
   ...modelTools(api),
   ...cloudTools(api),
+  ...runpodTools(api),
   ...collabTools(api, safeName),
   ...communityTools(api),
   ...standRigPsdTools(api),

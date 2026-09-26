@@ -86,7 +86,7 @@ const MCP_FILES = [
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
   "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
-  "server/mcp-setup.js",
+  "server/mcp-setup.js", "server/mcp-runpod.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
   "server/daw/mcp-refprofile.js", "server/daw/mcp-voicelab.js",
 ];
@@ -95,7 +95,7 @@ const MCP_FILES = [
  * mounts the rest; these are the mounted ones, from its own import list. */
 const ROUTE_FILES = [
   "server/index.js", "server/standrig/routes.js", "server/vfx/routes.js", "server/score/routes.js", "server/daw/routes.js",
-  "server/videolab/routes.js", "server/daw/ear.js", "server/engine/routes.js",
+  "server/videolab/routes.js", "server/daw/ear.js", "server/engine/routes.js", "server/engine/remote-routes.js",
   "server/llm/routes.js", "server/mv/routes.js", "server/welcome/routes.js",
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",
   "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/pngtuber.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",

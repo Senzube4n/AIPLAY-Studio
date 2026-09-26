@@ -110,6 +110,10 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
   }
   return {
     status: async () => ({ configured: !!(await key()) }), connect, disconnect, overview, create,
-    start: id => setRunning(id, true), stop: id => setRunning(id, false),
+    start: (id, confirm) => {
+      if (confirm !== "START PAID POD") throw new Error("Review the hourly price and confirm paid Pod startup.");
+      return setRunning(id, true);
+    },
+    stop: id => setRunning(id, false),
   };
 }

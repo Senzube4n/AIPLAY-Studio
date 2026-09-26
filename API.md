@@ -998,6 +998,29 @@ Source evidence, suggestions and edited briefs remain separate. This is not
 native YuE2 multimodal input or guaranteed audiovisual synchronization. See
 [workflow status and limits](docs/YUE2_NEXT_WORKFLOWS.md).
 
+### RunPod GPU mode (`/api/runpod`)
+
+These local routes are available only in the launcher's RunPod GPU mode.
+`GET /api/runpod` reports the authenticated worker connection and durable
+local jobs; `GET /api/runpod/models` reads its node/model inventory.
+`POST /api/runpod/connect` saves a worker URL and token, while
+`POST /api/runpod/workflow` builds a template graph without rendering.
+`POST /api/runpod/assets?name=...` uploads raw reference bytes;
+`POST /api/runpod/jobs` queues a graph and optional asset bindings, recording
+the request's `agent:*` actor before dispatch. `POST /api/runpod/jobs/ID/cancel`
+requests a scoped cancellation. Poll `/api/runpod` for the final state.
+
+`GET /api/runpod/account` checks account-key presence;
+`GET /api/runpod/account/overview` lists balance, current spend, Pods and live
+GPU price estimates. `POST /api/runpod/account/connect` verifies and saves a
+RunPod API key, and `/disconnect` removes it. `POST /api/runpod/account/pods`
+requires `confirm: "CREATE PAID POD"`. A stopped Pod's
+`POST /api/runpod/account/pods/ID/start` requires
+`confirm: "START PAID POD"`; `/stop` stops its compute. These confirmation
+phrases are checked by the server for UI, MCP and raw HTTP alike. Neither
+saved credential is returned by status or overview. The typed `runpod_*` MCP
+tools cover these routes, with asset upload limited to 64 MiB per call.
+
 `server/mcp.js` exposes typed tools over these same handlers. See the
 [MCP workflow map](docs/MCP_WORKFLOWS.md) for editor candidate review, Qwen
 references/alpha, Reactive profiles and source timing, training regions, and

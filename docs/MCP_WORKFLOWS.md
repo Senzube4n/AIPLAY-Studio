@@ -25,6 +25,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Reviewed outgoing bundles | `collab_resources`, `collab_preview`, `collab_pack`, `collab_send_back`, `collab_orders`, `collab_credit` |
 | Incoming work and returned takes | `collab_inbox`, `collab_open`, `collab_accept`, `collab_receive`, `collab_quarantine`, `collab_adopt`, `collab_drop`, `collab_set_resources`, `collab_free` |
 | Standalone Qwen image lending | `collab_image_preview`, `collab_pack`, `collab_open`, `collab_image_accept`, `collab_image_render`, `collab_image_send_back`, `collab_image_receive`, `collab_quarantine`, `collab_image_review_return`, `collab_image_adopt`, `collab_image_drop` |
+| RunPod GPU mode | `runpod_status`, `runpod_worker_connect`, `runpod_models`, `runpod_workflow_preview`, `runpod_upload_asset`, `runpod_submit_job`, `runpod_cancel_job`; `runpod_account_status`, `runpod_account_connect`, `runpod_account_overview`, `runpod_account_disconnect`, `runpod_pod_create`, `runpod_pod_start`, `runpod_pod_stop` |
 | Other existing JSON API operations | `studio_api_reference` searches API.md; `studio_api_request` calls an existing `/api/` endpoint when no typed tool covers it |
 
 `community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
@@ -33,6 +34,17 @@ checked. It gives listings, not the radio's current track, song queue, votes,
 reactions, authenticated viewers or a realtime event stream. Building those
 for external sites needs a separate AIPLAY.live API with its own access rules;
 Studio's loopback API must not be exposed as a public server.
+
+RunPod tools call the launcher's **RunPod GPU mode** only. Account and worker
+credentials stay in Studio's local secret store and are redacted from MCP
+results. Review live hourly prices through `runpod_account_overview` before a
+paid Pod action; creation and startup require their exact confirmation phrases
+at the server. `runpod_upload_asset` transfers an explicitly named absolute
+local image/audio/video/latent/NumPy file to the worker, capped at **64 MiB**
+per MCP call; the browser's separate upload accepts larger files. Its returned
+content-addressed `asset` can be bound to a workflow node and input when calling
+`runpod_submit_job`. A queued job is paid GPU work even when an account key is
+not involved in that particular HTTP call.
 
 ## Image edit review
 

@@ -33,7 +33,12 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
         const b = JSON.parse((await readBody(req)).toString("utf8")); sendJSON(res, 201, await account.create(b));
       } else {
         const power = /^\/api\/runpod\/account\/pods\/([a-zA-Z0-9_-]+)\/(start|stop)$/.exec(url.pathname);
-        if (req.method === "POST" && power) sendJSON(res, 200, await account[power[2]](power[1]));
+        if (req.method === "POST" && power) {
+          if (power[2] === "start") {
+            const b = JSON.parse((await readBody(req)).toString("utf8"));
+            sendJSON(res, 200, await account.start(power[1], b.confirm));
+          } else sendJSON(res, 200, await account.stop(power[1]));
+        }
         else {
           const c = await client();
           if (req.method === "GET" && url.pathname === "/api/runpod") sendJSON(res, 200, c.status());

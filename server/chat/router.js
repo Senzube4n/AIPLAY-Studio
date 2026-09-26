@@ -677,6 +677,9 @@ for (const t of MCP_TOOLS) {
   if (t.name.startsWith("ab_") && !(t.name in WITHHELD)) {
     WITHHELD[t.name] = "the audiobook surface is a whole workflow of its own and has had no pass for chat";
   }
+  if (t.name.startsWith("runpod_")) {
+    WITHHELD[t.name] = "RunPod GPU mode includes paid Pod controls, remote file transfer and arbitrary graphs; the in-app chat has no route-specific review for this surface. Use its panel or external MCP.";
+  }
 }
 
 /** How the confirm card explains each kind of gate. */

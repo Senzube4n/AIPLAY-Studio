@@ -92,7 +92,9 @@ test("creation refuses an existing Pod name before sending another paid mutation
 
 test("start and stop use scoped Pod mutations", async () => {
   const r = rig(); await r.account.connect(KEY);
-  assert.equal((await r.account.start("pod1")).pod.status, "RUNNING");
+  assert.throws(() => r.account.start("pod1"), /confirm paid Pod startup/);
+  assert.equal(r.calls.filter(call => call.query.includes("podResume")).length, 0);
+  assert.equal((await r.account.start("pod1", "START PAID POD")).pod.status, "RUNNING");
   assert.equal(r.calls.at(-1).variables.input.gpuCount, 1);
   assert.equal((await r.account.stop("pod1")).pod.status, "EXITED");
   assert.deepEqual(r.calls.at(-1).variables.input, { podId: "pod1" });
