@@ -7,7 +7,7 @@ The 3D page loads VRM 1.0 models with MToon materials, existing humanoid bones, 
 ## Use
 
 1. Use **Check source** to inspect a local GLB/VRM before rigging or import. It reports exact mesh-node, material, image, skin and VRM metadata without saving the file. This cannot detect fused limbs or grade visual quality. Then use **Try anime sample** for the documented 10.3 MiB reference download, or import a self-contained `.vrm` using **VRM 1.0 workshop**, with the actual source/license. The local preview budget is 64 MiB, 150,000 triangles, 32 materials, 256 skin joints; textures are bounded at 4096 px and 64 megapixels total. Existing World GLB limits are unchanged.
-2. Use **Test movement** to inspect gentle humanoid motion and existing hair springs. This is a procedural review pose, not a generated dance clip. Embedded clips retain their own raw-bone animation.
+2. Use **Test movement** on a VRM to inspect gentle humanoid motion and existing hair springs. On an imported World GLB, choose **Joint**, **Axis** and **Bend** to temporarily rotate one existing bone up to 45 degrees. Reset restores its loaded rest pose. The moving vertices let you inspect weights without changing the file or authoring an animation. Embedded clips retain their own raw-bone animation; selecting one clears a joint bend.
 3. Choose visible embedded parts, tint materials and test expressions. The five vowel presets remain manual expression controls. Voice preview additionally drives `aa` (or `jawOpen`) from a local audio waveform. **Cue expression** can show a lip-sync-safe embedded expression briefly without saving it to the look. This is loudness-driven mouth motion, not phoneme recognition.
 4. Save a named look. Choose a saved look to activate it. An open page follows MCP activation and edits unless it has an unsaved local draft.
 5. **Overlay** supplies a local transparent browser-source URL for OBS. It follows the active saved look. This does not start streaming or connect Twitch/Kick.
@@ -26,6 +26,8 @@ Image and audio files remain browser `File`/object URLs; Studio does not upload 
 `avatar_install_example` installs the hash-pinned reference on explicit request. `avatar_import` accepts `profile: "vrm"` for this runtime; `world` remains the default. `avatar_list`, `avatar_inspect` and `avatar_export` remain available.
 
 `avatar_source_preflight` reads an absolute local `.glb` or `.vrm` up to 64 MiB through the same loopback route as the Check source button. It returns structural facts and preparation steps without writing an avatar, using the GPU or asserting that skinning deforms well. A GLB may pass Khronos validation while still lacking material, texture, modular geometry and skin data.
+
+`avatar_playback_sessions` finds an open local preview. `avatar_playback_command` accepts `joint_pose` with a `node_index` from `avatar_inspect.inspection.jointNames`, `axis` (`x`, `y` or `z`) and `degrees` (-45 to 45), or `joint_reset`. The imported source hash and preview capability are checked on each command. `applied_revision` confirms the browser applied the requested pose; it does not certify deformation quality. No joint bend is saved into the GLB or a look.
 
 - `avatar_appearance_inventory`: exact mesh/material indices, morph names, expression presets and spring availability.
 - `avatar_appearance_list/get`: saved looks for a source asset.

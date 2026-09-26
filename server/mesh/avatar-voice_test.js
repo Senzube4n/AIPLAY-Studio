@@ -15,7 +15,7 @@ const loaded = (revision = 1, extra = {}) => ({revision, desired: {audio_id:AUDI
 // DOM and transport boundary. Requests and media actions remain observable;
 // tests never replace the controller with a mock that would hide its races.
 function browser(t, options = {}) {
-  const elements = new Map(), requests = [], media = [], contexts = [], intervals = new Map(), cues = [], motions = [], resets = [];
+  const elements = new Map(), requests = [], media = [], contexts = [], intervals = new Map(), cues = [], motions = [], poses = [], resets = [];
   let nextTimer = 0, controller, current = true;
   let session = {revision:0, desired:{audio_id:null, url:null, name:null, bytes:0, playing:false, time:0, load_revision:0, seek_revision:0}};
   const node = id => { if (!elements.has(id)) elements.set(id, {hidden:id==='voice-cue-row', disabled:false, value:id==='voice-cue-expression'?'':'0', textContent:'', className:'',children:[],append(option){this.children.push(option);if(this.children.length===1)this.value=option.value;}}); return elements.get(id); };
@@ -66,11 +66,12 @@ function browser(t, options = {}) {
   const expressionManager = {getExpression:name => values.has(name) ? {} : null,
     getValue:name => values.get(name), setValue:(name, value) => values.set(name, value)};
   return {
-    node, requests, media, contexts, intervals, document, values, cues, motions, resets,
+    node, requests, media, contexts, intervals, document, values, cues, motions, poses, resets,
     async mount() { controller = await mountAvatarVoice({row:{id:ID, inspection:{sha256:'a'.repeat(64),profile:options.vrm?'vrm':'world'}},
       runtime:{vrm:{expressionManager},setExpressionCue(name){cues.push(['set',name]);return true;},clearExpressionCue(){cues.push(['clear']);}}, isCurrent:() => current,
-      ...(options.motion?{onMotion:(desired,revision)=>{motions.push([structuredClone(desired),revision]);return options.motionFailure!==true;},
-        onSessionReset:()=>resets.push('reset')}: {})}); return controller; },
+      ...(options.motion?{onMotion:(desired,revision)=>{motions.push([structuredClone(desired),revision]);return options.motionFailure!==true;}}: {}),
+      ...(options.pose?{onJointPose:(desired,revision)=>{poses.push([structuredClone(desired),revision]);return options.poseFailure!==true;}}:{}),
+      ...((options.motion||options.pose)?{onSessionReset:()=>resets.push('reset')}: {})}); return controller; },
     session(value) { session = structuredClone(value); },
     stale() { current = false; },
     metadata(duration = 8) { media[0].duration = duration; media[0].dispatchEvent(new Event('loadedmetadata')); },
@@ -180,6 +181,19 @@ test('motion commands reach the same preview, acknowledge application and leave 
   await f.tick();assert.equal(f.requests.at(-1).applied_revision,2);
   await voice.motionCommand('motion_pause');
   assert.equal(f.requests.at(-1).op,'motion_pause');
+});
+
+test('joint bends reach the browser, retry failed application, and acknowledge only after display',async t=>{
+  const options={pose:true,poseFailure:true},f=browser(t,options),voice=await f.mount();
+  assert.deepEqual(f.requests[0].capabilities,{audio:true,lip_sync:true,joint_pose:true});
+  const joint_pose={node_index:2,axis:'z',degrees:25};
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,joint_pose,joint_pose_revision:1}});
+  await f.tick();await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.poseFailure=false;await f.tick();await f.tick();
+  assert.deepEqual(f.poses.at(-1),[joint_pose,1]);assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.media[0].playCalls,0);
+  await voice.jointPoseCommand('joint_reset');assert.equal(f.requests.at(-1).op,'joint_reset');
 });
 
 test('failed motion application is retried and never acknowledged early',async t=>{
