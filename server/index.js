@@ -6290,7 +6290,8 @@ const server = http.createServer(async (req, res) => {
               ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
             if (overrides.length && b.anyway !== true) return { refusal: {
               error: overrides.map((item) => item.why).join(" ")
-                + " Review these checks and explicitly choose Accept anyway to reserve this scene.",
+                + " It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)"
+                + (busyOverride ? ", and your friend's scene waits its turn behind what is running" : "") + ".",
               reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
             } };
             return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
