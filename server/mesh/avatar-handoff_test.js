@@ -28,15 +28,21 @@ async function fixture(t,compose) {
     changeLook(){look={...look,revision:3};},changePart(){part.row.license='Changed provenance';}};
 }
 test('saved outfit export packages actual parts, look settings and immutable downloads without changing active state',async t=>{
-  const f=await fixture(t),before=JSON.stringify([f.look,f.selected]);
+  const f=await fixture(t);
+  f.look.settings={hidden_nodes:[7],material_colors:{0:[.8,.2,.1,1]},expressions:{happy:1},spring_enabled:false};
+  const before=JSON.stringify([f.look,f.selected]);
   const a=await f.service.prepare(f.request,'agent:export-test'),b=await f.service.prepare(f.request);
   assert.equal(a.id,b.id);assert.equal(a.worldCandidate,false);assert.equal(f.events[0].actor,'agent:export-test');
+  assert.deepEqual(a.appearanceDelivery,{package:true,vrm:false});
   assert.equal(a.worldPreflight.candidate,false);
   assert.match(a.worldPreflight.reasons.join(' '),/sample VRM/);
   const bundle=JSON.parse((await f.service.file(a.id,'outfit.aiplay-avatar.json')).bytes);
   assert.equal(bundle.schema,'aiplay.avatar-outfit.v1');assert.equal(bundle.parts[0].license,'CC0');assert.deepEqual(bundle.appearance.settings,f.look.settings);
   assert.equal(hash(Buffer.from(bundle.data_base64,'base64')),bundle.sha256);
-  assert.equal(hash((await f.service.file(a.id,'outfit.vrm')).bytes),bundle.sha256);
+  const model=(await f.service.file(a.id,'outfit.vrm')).bytes;
+  assert.equal(hash(model),bundle.sha256);
+  assert.deepEqual(model,Buffer.concat([Buffer.from('the immutable base'),Buffer.from('fitted part')]));
+  assert.deepEqual((await f.service.get(a.id)).appearanceDelivery,{package:true,vrm:false});
   assert.equal(JSON.stringify([f.look,f.selected]),before);
 });
 test('stale pins and changed state during composition refuse export before writing a snapshot',async t=>{
@@ -67,10 +73,11 @@ test('reusing an existing export revalidates its package as well as its VRM',asy
 
 test('older immutable receipts cannot retain an optimistic World candidate flag',async t=>{
   const f=await fixture(t),out=await f.service.prepare(f.request),location=path.join(f.directory,out.id,'manifest.json');
-  const old=JSON.parse(await readFile(location,'utf8'));delete old.worldPreflight;old.worldCandidate=true;
+  const old=JSON.parse(await readFile(location,'utf8'));delete old.worldPreflight;delete old.appearanceDelivery;old.worldCandidate=true;
   await writeFile(location,JSON.stringify(old));
   const current=await f.service.get(out.id);
   assert.equal(current.worldCandidate,false);
+  assert.deepEqual(current.appearanceDelivery,{package:true,vrm:false});
   assert.match(current.worldPreflight.reasons.join(' '),/sample VRM/);
 });
 
@@ -134,12 +141,24 @@ test('outfit export explains World preflight findings without claiming admission
   const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected,previewValid:true}}),
     documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:async()=>response});
   await nodes['outfit-export'].onclick();
+  const [worldPackage,rawVrm]=nodes['outfit-downloads'].children;
+  assert.equal(worldPackage.textContent,'World package');
+  assert.equal(worldPackage.className,'btn');
+  assert.match(worldPackage.title,/saved look/);
+  assert.equal(rawVrm.textContent,'VRM · rig + parts');
+  assert.match(rawVrm.title,/Saved visibility, tint and expression settings are in the World package only/);
   assert.match(nodes['outfit-note'].textContent,/World model limit is 16 MiB.*\(\+1 more\)/);
   assert.match(nodes['outfit-note'].title,/World needs a saved part/);
   response.worldPreflight={candidate:true,reasons:[]};
   await nodes['outfit-export'].onclick();
   assert.match(nodes['outfit-note'].textContent,/Import in World to verify/);
   mounted.dispose();
+});
+
+test('MCP export and get tell agents which download retains saved appearance',()=>{
+  const tools=avatarHandoffTools(async()=>({}));
+  assert.match(tools.find(tool=>tool.name==='avatar_outfit_export').description,/World package contains the saved appearance/);
+  assert.match(tools.find(tool=>tool.name==='avatar_outfit_get').description,/standalone VRM does not/);
 });
 
 test('disposing an old mount cannot clear controls or links owned by its replacement',async t=>{

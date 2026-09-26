@@ -13,6 +13,9 @@ const lookId = /^look_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{1
 const exportId = /^outfit_[a-f0-9]{64}$/;
 const sha = /^[a-f0-9]{64}$/;
 const files = {'outfit.vrm':'model/gltf-binary','outfit.aiplay-avatar.json':'application/json; charset=utf-8','manifest.json':'application/json; charset=utf-8'};
+// The portable VRM contains the original rig plus admitted parts. Look controls
+// remain separate so VRM expressions, springs and original resources stay intact.
+const appearanceDelivery = Object.freeze({package:true,vrm:false});
 const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 const identity = row => `outfit_${hash(Buffer.from(JSON.stringify({bundleSha256:row.bundleSha256,avatarId:row.avatarId,lookId:row.lookId,lookRevision:row.lookRevision,wardrobeRevision:row.wardrobeRevision})))}`;
 const fields = (value, allowed) => {
@@ -84,7 +87,7 @@ export function createAvatarHandoff({directory, inspectAsset, appearance, wardro
       const names=await readdir(directory);
       const manifest={schema:1,id,avatarId:input.id,baseSha256:input.sha256,sha256:composed.sha256,bytes:composed.bytes.length,
         bundleSha256:hash(bundleBytes),name,lookId:input.look_id,lookRevision:input.expected_look_revision,wardrobeRevision:input.expected_wardrobe_revision,
-        parts:bundle.parts,inspection:composed.manifest,review:'needs_visual_review',
+        parts:bundle.parts,inspection:composed.manifest,review:'needs_visual_review',appearanceDelivery,
         worldCandidate:worldPreflight.candidate,worldPreflight,
         files:{bundle:`/api/avatars/handoff/${id}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/${id}/outfit.vrm`,manifest:`/api/avatars/handoff/${id}/manifest.json`}};
       if(!names.includes(id)) {
@@ -122,9 +125,9 @@ export function createAvatarHandoff({directory, inspectAsset, appearance, wardro
       const [modelBytes,bundleBytes]=await Promise.all(['outfit.vrm','outfit.aiplay-avatar.json'].map(name=>readFile(path.join(directory,id,name))));
       if(hash(modelBytes)!==row.sha256||hash(bundleBytes)!==row.bundleSha256)throw fail('Outfit export bytes changed.',409);
       const worldPreflight=previewWorldAvatarOutfit({baseSha256:row.baseSha256,modelBytes,packageBytes:bundleBytes.length,parts:row.parts});
-      return {...row,worldCandidate:worldPreflight.candidate,worldPreflight};
+      return {...row,appearanceDelivery,worldCandidate:worldPreflight.candidate,worldPreflight};
     }
-    return row;
+    return {...row,appearanceDelivery};
   }
   async function file(id,name) {
     if(!Object.hasOwn(files,name)) throw fail('Unknown outfit export file.',404);

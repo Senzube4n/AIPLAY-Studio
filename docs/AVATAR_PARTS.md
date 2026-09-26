@@ -218,10 +218,12 @@ to an avatar automatically, and no live persona/account binding is granted.
 ## Export a saved outfit
 
 Save the appearance and wardrobe selection, then choose **Export outfit** in
-the wardrobe panel. **Download outfit** produces one `.aiplay-avatar.json`
+the wardrobe panel. **World package** downloads one `.aiplay-avatar.json`
 package containing the composed VRM, saved appearance and declared part credits.
-**Download VRM** provides the composed model separately. Export does not activate
-the saved look or modify the original avatar or part files.
+**VRM · rig + parts** provides the composed model separately. The World package
+is the primary handoff when the recipient needs the saved look. The export receipt
+and MCP results expose `appearanceDelivery` (`package: true`, `vrm: false`).
+Export does not activate the saved look or modify the original avatar or part files.
 
 The composer appends admitted part geometry, materials and embedded textures to
 the VRM and binds it to the original joints. Original VRM expressions, springs,

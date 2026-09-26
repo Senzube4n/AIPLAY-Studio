@@ -24,10 +24,13 @@ export function mountAvatarHandoff({row,getContext,isCurrent=()=>true,documentRe
       if(!live||!isCurrent())return;
       const now=getContext();
       if(JSON.stringify(outfitExportRequest(row,now.appearance,now.wardrobe))!==JSON.stringify(body)) throw Error('The preview changed. Export the saved outfit again.');
-      for(const [key,label,name] of [['bundle','Download outfit','outfit.aiplay-avatar.json'],['vrm','Download VRM','outfit.vrm']]) {
+      for(const [key,label,name,hint] of [
+        ['bundle','World package','outfit.aiplay-avatar.json','Includes the saved look, rigged model and selected parts for World import.'],
+        ['vrm','VRM · rig + parts','outfit.vrm','The standalone VRM includes the original rig and selected parts. Saved visibility, tint and expression settings are in the World package only.'],
+      ]) {
         const url=result.files?.[key];
         if(typeof url!=='string'||!/^\/api\/avatars\/handoff\/outfit_[a-f0-9]{64}\/(outfit\.vrm|outfit\.aiplay-avatar\.json)$/.test(url)) throw Error('Invalid outfit download.');
-        const link=documentRef.createElement('a');link.className='btn2';link.href=url;link.download=name;link.textContent=label;downloads.append(link);
+        const link=documentRef.createElement('a');link.className=key==='bundle'?'btn':'btn2';link.href=url;link.download=name;link.textContent=label;link.title=hint;downloads.append(link);
       }
       const reasons=Array.isArray(result.worldPreflight?.reasons)?result.worldPreflight.reasons:[];
       const candidate=result.worldPreflight?.candidate??result.worldCandidate;
