@@ -113,6 +113,7 @@ export const ROUTABLE = {
   collab_free: null,
   collab_orders: null,
   collab_video_preview: null,
+  collab_image_preview: null,
   collab_preview: null, // local snapshot; packing is a separate explicit write
   collab_add_peer: "writes",
   /* collab_set_role, collab_verify and collab_set_lend_minutes: WITHHELD below. */
@@ -122,6 +123,13 @@ export const ROUTABLE = {
   collab_open: null,
   collab_inbox: null,
   collab_quarantine: null,
+  collab_image_accept: "writes", // stages a reviewed peer job's references locally
+  collab_image_render: "gpu", // explicitly spends this machine's card
+  collab_image_send_back: "writes", // prepares a signed file for manual handoff
+  collab_image_receive: "writes", // validates and files a returned PNG in quarantine
+  collab_image_review_return: null, // reads the checked PNG as native image content
+  collab_image_adopt: "writes", // adds a peer PNG to Pictures
+  collab_image_drop: "destroys", // removes a quarantined PNG
   collab_accept: "writes",
   collab_send_back: "writes",
   collab_receive: "writes",
@@ -539,6 +547,7 @@ export const ROUTABLE = {
   standrig_control: "writes", // transient play, pause, reset or demo command
   avatar_list: null,
   avatar_playback_sessions: null,
+  avatar_cue_inventory: null,
   avatar_audio_upload: "writes",
   avatar_playback_command: null,
   avatar_weight_transfer_status: null,

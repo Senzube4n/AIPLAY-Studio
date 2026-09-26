@@ -1638,6 +1638,7 @@
       <div class="ctawrap">
       <div class="cta">
         <button class="btn primary wide" type="button" id="imgGo">Make image</button>
+        <button class="btn2" type="button" id="imgAskFriend" title="Prepare one Qwen image job per verified friend; rendering starts on their machine only after they accept it.">Ask friend</button>
       </div>
       <!-- PRIVATE: the render happens and is recorded; the WORDS are not kept.
            ⚠ IT IS A PROPERTY OF THE RENDER, so it lives with the button that
@@ -1992,6 +1993,9 @@
         #collab #cbPreviewPictures figure { margin:0; max-width:180px; }
         #collab #cbPreviewPictures img { width:100%; max-height:150px; object-fit:contain; }
         #collab #cbPreviewPictures figcaption { font-size:12px; overflow-wrap:anywhere; }
+        #collab #cbImageRefs figure { margin:0; max-width:180px; overflow-wrap:anywhere; }
+        #collab #cbImageRefs figcaption { font-size:12px; }
+        #collab .cbreturnedimage { display:block; width:min(100%,360px); max-height:360px; object-fit:contain; margin:10px 0; border-radius:8px; background:#111; }
         #collab #cbOutgoingPreview { border:1px solid var(--primary); }
         #collab #cbPreviewPrompt { font-family:var(--sans); font-size:14px; line-height:1.6; }
         #collab .cbboard { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:20px 0; }
@@ -2071,10 +2075,25 @@
             <p class="hint"><b>Read it first.</b> An order carries the sentence your machine will be asked to draw, and the pictures it will draw from. Saying yes turns it into a project here with a plan that is <b>proposed</b> &mdash; nothing renders until you approve it: <b data-screen="workflow">Workflow</b> &rarr; the &ldquo;Order &hellip; from <i>their name</i>&rdquo; project &rarr; the <b>Plan</b> card (<b>Open its plan in <span data-screen="workflow">Workflow</span></b> below takes you there). If your card is busy or their minutes for today are used, pressing <b>Yes &mdash; take the job</b> asks you first, and <b>Accept anyway</b> is your answer.</p>
           </div>
 
+          <div id="cbImageFace" hidden>
+            <b class="subhead" id="cbImageWho">A friend asks for one image</b>
+            <p class="hint" id="cbImageSettings"></p>
+            <pre id="cbImagePrompt" class="cbopened"></pre>
+            <div id="cbImageRefs" class="chips"></div>
+            <p class="hint" id="cbImageNote" role="status">Inspect the prompt and every reference before accepting.</p>
+            <div class="chips">
+              <button class="btn sm primary" type="button" id="cbImageReview">Review acceptance</button>
+              <button class="btn sm primary" type="button" id="cbImageAccept" hidden>Accept image job</button>
+              <button class="btn sm primary" type="button" id="cbImageRender" hidden>Render image</button>
+              <button class="btn sm ghost" type="button" id="cbImageCheck" hidden>Check result</button>
+              <button class="btn sm" type="button" id="cbImageSendBack" hidden disabled>Send image back</button>
+            </div>
+          </div>
+
           <div id="cbReturnFace" hidden>
             <b class="subhead" id="cbReturnWho">A finished scene has come back</b>
             <div class="chips"><button class="btn sm primary" type="button" id="cbReceiveBtn">Check it against what I asked for</button></div>
-            <p class="hint">This machine measures the file itself and checks it against the order you sent &mdash; the seed, the steps, the size and the length the engine really renders. It waits in quarantine until you keep it; one that fails a check can be watched and kept anyway.</p>
+            <p class="hint" id="cbReturnHint">Check the returned file against your order before keeping it.</p>
           </div>
 
           <div id="cbReadFace" hidden>
@@ -2089,13 +2108,19 @@
         <div id="cbErrandsWrap" hidden>
           <b class="subhead">What you agreed to render for friends</b>
           <div id="cbErrands" class="cblist"></div>
-          <p class="hint">When the render is done, <b>Send the take back</b> seals it for them. An order carries four words &mdash; the scene, the seed, the steps and the engine &mdash; with no graph, no tool name and no path in it.</p>
+            <p class="hint">Each result gets its own return file.</p>
         </div>
 
         <div id="cbTakesWrap" hidden>
           <b class="subhead">Finished scenes waiting for you to keep or throw away</b>
           <div id="cbTakes" class="cblist"></div>
           <p class="hint">Keeping one files it as a take <b>nobody has picked</b>, carrying their model and their licence rather than yours &mdash; on its scene even if you never rendered that scene here. Choose it in <b data-screen="workflow">Workflow</b> &rarr; <b>Video clips</b> &rarr; <b>Inspect&hellip;</b>. Watch a take before you keep it (nothing is loaded until you press play); <b>Keep anyway&hellip;</b> is for one that failed a check and is still what you wanted, or one this browser cannot play, kept unseen after you say so.</p>
+        </div>
+
+        <div id="cbImagesWrap" hidden>
+          <b class="subhead">Images friends sent back</b>
+          <div id="cbImages" class="cblist"></div>
+          <p class="hint">Preview each result before keeping or discarding it.</p>
         </div>
 
         <details class="adv">
@@ -2149,8 +2174,10 @@
 
         <div id="cbSendForm">
           <b class="subhead">Review one outgoing package</b>
-          <div class="params">
+          <div class="params" id="cbProjectRow">
             <label for="cbProject">Project</label><span class="pv"><select id="cbProject" class="sel2"></select></span>
+          </div>
+          <div class="params">
             <label for="cbTo">Send to</label><span class="pv"><select id="cbTo" class="sel2"></select></span>
             <label for="cbKind">What to send</label><span class="pv"><select id="cbKind" class="sel2">
               <option value="shot">one scene, for them to look at</option>
@@ -2158,9 +2185,11 @@
               <option value="resources">what this Studio can do</option>
               <option value="order">one scene for them to RENDER, and send back</option>
               <option value="video-recipe">video recipe (from Video)</option>
+              <option value="image-job">Qwen image job (from Pictures)</option>
             </select></span>
           </div>
           <div id="cbRecipientStatus" class="chips" role="status" aria-live="polite"></div>
+          <p class="hint" id="cbImageJobNote" hidden></p>
           <div class="params" id="cbSegmentRow">
             <label for="cbSegment">Which scene</label><span class="pv"><select id="cbSegment" class="sel2"><option value="">Loading scenes…</option></select></span>
           </div>

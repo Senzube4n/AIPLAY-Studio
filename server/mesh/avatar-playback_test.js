@@ -14,16 +14,75 @@ import {glbDoc,packGlb} from './fixtures.js';
 const avatarId='av_12345678-1234-1234-1234-123456789abc';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const clip=Buffer.from('RIFF0000WAVEfmt test data');
-async function setup(t){
+async function setup(t,{vrm=false}={}){
  const directory=await mkdtemp(path.join(os.tmpdir(),'avatar-playback-'));t.after(()=>rm(directory,{recursive:true,force:true}));
- let clock=100000,bytes=Buffer.from('exact source avatar');const ledger={dir:path.join(directory,'ledger')};
- const options={directory,now:()=>clock,inspectAsset:async id=>({row:{id,inspection:{sha256:sha(bytes)}},bytes}),record:event=>provenance.append(ledger,event)};
+ const doc=glbDoc({skinned:true});
+ doc.extensions={VRMC_vrm:{expressions:{preset:{aa:{morphTargetBinds:[{node:0,index:0,weight:1}]},happy:{morphTargetBinds:[{node:0,index:1,weight:1}]},blink:{morphTargetBinds:[]}},custom:{sharedMouth:{morphTargetBinds:[{node:0,index:0,weight:1}]},blocksMouth:{overrideMouth:'block',morphTargetBinds:[]}}}}};
+ let clock=100000,bytes=vrm?packGlb(doc):Buffer.from('exact source avatar');const ledger={dir:path.join(directory,'ledger')};
+ const options={directory,now:()=>clock,inspectAsset:async id=>({row:{id,inspection:{sha256:sha(bytes),profile:vrm?'vrm':'world'}},bytes}),record:event=>provenance.append(ledger,event)};
  const service=createAvatarPlayback(options),session_id=randomUUID();
  const registration={session_id,id:avatarId,sha256:sha(bytes),capabilities:{audio:true,lip_sync:true}};
  const upload=()=>service.upload({name:'voice.wav',data_base64:clip.toString('base64')},'agent:test');
  const command=(op,args={})=>service.command({session_id,command_id:randomUUID(),op,...args},'agent:test');
  return {directory,ledger,service,options,registration,session_id,upload,command,tick:value=>{clock+=value;},change:()=>{bytes=Buffer.from('new avatar');}};
 }
+
+test('VRM cues are inventory validated, bounded, retry safe, transient and independent of audio',async t=>{
+ const f=await setup(t,{vrm:true});
+ await f.service.register({...f.registration,capabilities:{audio:false,lip_sync:false}});
+ const inventory=await f.service.cueInventory({id:avatarId,sha256:f.registration.sha256});
+ assert.deepEqual(inventory.expressions.map(item=>item.name),['happy','blink']);
+ for(const expression of ['aa','sharedMouth','blocksMouth','invented'])await assert.rejects(f.command('cue',{expression,duration_ms:3000}),{status:422});
+ for(const duration_ms of [0,249,10001,1.5])await assert.rejects(f.command('cue',{expression:'happy',duration_ms}),{status:400});
+ const command_id=randomUUID(),request={session_id:f.session_id,command_id,op:'cue',expression:'happy',duration_ms:3000};
+ const first=await f.service.command(request);assert.equal(first.revision,1);
+ assert.equal(first.desired.cue.durationMs,3000);assert.equal(first.desired.cue.expiresAt,null);
+ assert.equal(first.desired.audio_revision,0);
+ assert.deepEqual(await f.service.command(request),first);
+ await assert.rejects(f.service.command({...request,duration_ms:4000}),{status:409});
+ f.tick(3001);
+ assert.equal((await f.service.sessions()).sessions[0].desired.cue.revision,1,'an unobserved cue remains pending');
+ const seen=await f.service.heartbeat({session_id:f.session_id,applied_revision:1,status:{phase:'empty',time:0,duration:null}});
+ assert.equal(seen.desired.cue.expiresAt,106001);
+ f.tick(3001);
+ assert.equal((await f.service.sessions()).sessions[0].desired.cue,null);
+ assert.equal((await f.service.command(request)).desired.cue,null,'retry must not resurrect an expired cue');
+ const next=await f.command('cue',{expression:'blink',duration_ms:250});assert.equal(next.revision,2);
+ const cleared=await f.command('clear_cue');assert.equal(cleared.desired.cue,null);
+ assert.equal(cleared.desired.audio_id,null);assert.equal(cleared.revision,3);
+ await assert.rejects(f.service.cueInventory({id:avatarId,sha256:'0'.repeat(64)}),{status:409});
+ assert.equal((await provenance.verify(f.ledger)).ok,true);
+});
+
+test('a 250 ms cue survives the browser polling interval and expires after acknowledgment',async t=>{
+ const f=await setup(t,{vrm:true});await f.service.register(f.registration);
+ await f.command('cue',{expression:'happy',duration_ms:250});
+ f.tick(1000);
+ const pending=(await f.service.sessions()).sessions[0];
+ assert.equal(pending.desired.cue.expression,'happy');
+ assert.equal(pending.desired.cue.expiresAt,null);
+ const seen=await f.service.heartbeat({session_id:f.session_id,applied_revision:1,status:{phase:'empty',time:0,duration:null}});
+ assert.equal(seen.desired.cue.expiresAt,101250);
+ f.tick(251);
+ assert.equal((await f.service.sessions()).sessions[0].desired.cue,null);
+});
+
+test('generic GLB and arbitrary cue fields cannot enter preview state',async t=>{
+ const f=await setup(t);await f.service.register(f.registration);
+ await assert.rejects(f.service.cueInventory({id:avatarId,sha256:f.registration.sha256}),{status:422});
+ await assert.rejects(f.command('cue',{expression:'happy',duration_ms:3000}),{status:422});
+ await assert.rejects(f.command('clear_cue',{expression:'happy'}),{status:400});
+ assert.equal((await f.service.sessions()).sessions[0].revision,0);
+});
+
+test('loading audio during an active expression cue preserves both intents',async t=>{
+ const f=await setup(t,{vrm:true});await f.service.register(f.registration);
+ const cued=await f.command('cue',{expression:'happy',duration_ms:3000});
+ const audio=await f.upload(),loaded=await f.command('load',{audio_id:audio.audio_id});
+ assert.deepEqual(loaded.desired.cue,cued.desired.cue);
+ assert.equal(loaded.desired.audio_id,audio.audio_id);
+ const playing=await f.command('play');assert.equal(playing.desired.playing,true);assert.deepEqual(playing.desired.cue,cued.desired.cue);
+});
 
 test('desired playback survives reload, coalesces load then play, and separates request from browser acknowledgement',async t=>{
  const f=await setup(t);let session=await f.service.register(f.registration,'user');assert.equal(session.revision,0);
@@ -121,6 +180,11 @@ test('real guarded HTTP routes and MCP control playback with byte ranges and val
  const command={session_id,command_id:randomUUID(),op:'load',audio_id:audio.audio_id};
  const loaded=await run('avatar_playback_command',command);assert.equal(loaded.desired.url,audio.url);assert.equal(loaded.desired.playing,false);
  assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'command',...command}});
+ await assert.rejects(run('avatar_cue_inventory',{id:f.row.id,sha256:f.row.inspection.sha256}),{status:422});
+ assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'cue_inventory',id:f.row.id,sha256:f.row.inspection.sha256}});
+ const cueCommand={session_id,command_id:randomUUID(),op:'cue',expression:'happy',duration_ms:3000};
+ await assert.rejects(run('avatar_playback_command',cueCommand),{status:422});
+ assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'command',...cueCommand}});
  assert.equal((await run('avatar_playback_sessions')).sessions[0].revision,1);
  for(const [range,start,end] of [['bytes=2-6',2,6],['bytes=-5',clip.length-5,clip.length-1],['bytes=4-',4,clip.length-1]]){
   const response=await fetch(f.base+audio.url,{headers:{Range:range}});assert.equal(response.status,206);assert.equal(response.headers.get('Content-Range'),`bytes ${start}-${end}/${clip.length}`);assert.deepEqual(Buffer.from(await response.arrayBuffer()),clip.subarray(start,end+1));

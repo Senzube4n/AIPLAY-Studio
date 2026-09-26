@@ -1316,6 +1316,9 @@ node server/music/train_test.js || exit 1
 node --test server/music/train-ui_test.js server/overnight-image_test.js || exit 1
 # Qwen native graphs/readiness, frozen Collab previews, and reactive reference anchors.
 node --test server/qwen-api_test.js server/qwen-image_test.js server/qwen-modelpick_test.js server/qwen-models_test.js server/qwen-status_test.js server/collab/preview_test.js server/collab/ui_test.js server/reactive_profile_test.js || exit 1
+# Signed standalone Qwen jobs: exact frozen wire, two-profile consent and replay,
+# return decode/quarantine, one atomic render claim, and page/MCP reachability.
+node --test server/collab/image-job_test.js server/collab/image-reference_test.js server/collab/image-return_test.js server/collab/image-quarantine_test.js server/collab/image_two_profile_test.js server/collab/image-orderbook_test.js server/collab/image-lifecycle_test.js server/collab/image-retry_test.js server/collab/image-ui-mcp_test.js server/collab/image-mcp-review_test.js server/collab/image-provenance_test.js server/collab/image-render-integrity_test.js || exit 1
 # FAST DRAFT for Qwen Image 2.1 (Viggle's turbo LoRA, arm C of the 2026-09-24
 # A/B): the one sigma helper against the three measured schedules, the graph
 # node for node, every base-only refusal, readiness for the LoRA, the ~3 s /

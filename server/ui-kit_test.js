@@ -180,7 +180,7 @@ test("'don't record the prompt' sits with the Make button, not in the reference 
   const wrap = HTML.slice(HTML.indexOf('<div class="field" id="imgRefWrap">'), HTML.indexOf('id="imgRefEngineNote"'));
   assert.doesNotMatch(wrap, /id="imgPrivate"/, "it is not a property of the references, and it pushed the drop box down");
   const cta = HTML.slice(HTML.indexOf('<button class="btn primary wide" type="button" id="imgGo">'));
-  assert.match(cta.slice(0, 1600), /class="tog ctatog"[\s\S]*id="imgPrivate"/);
+  assert.match(cta.slice(0, 2400), /class="tog ctatog"[\s\S]*id="imgPrivate"/);
   // One line with the detail in the tooltip, not a paragraph under the tick.
   assert.doesNotMatch(HTML, /id="imgPrivateNote"/);
   assert.match(read("web/ui.css"), /\.ctatog \{/);

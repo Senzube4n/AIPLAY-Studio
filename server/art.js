@@ -27,7 +27,7 @@ import { stripPngText } from "./pngtext.js";
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
-import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET, QWEN_IMAGE_FILES } from "./qwen-image.js";
 import { qwenImageStatus } from "./qwen-status.js";
 import { resolvePick } from "./modelpick.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph, h3SparseFor } from "./workflow.js";
@@ -1659,7 +1659,7 @@ export class ArtRunner extends EventEmitter {
      * an entire batch's art to one bad JSON file would be a poor trade. The
      * reason is logged where it will be read. */
     let graph = null;
-    const customCover = assignedTo("cover");
+    const customCover = job.collabImageBase ? null : assignedTo("cover");
     if (customCover) {
       try {
         graph = await buildCustom(customCover, {
@@ -1709,13 +1709,31 @@ export class ArtRunner extends EventEmitter {
      * reads this, so "my own model" must not be filed as the stock one. */
     job._paintedWith = engine === "checkpoint" ? (ckpt || null) : (ownDit || null);
     if (!graph && engine === "qwen-image-2.1") {
+      if (job.collabImageBase) {
+        if (!Array.isArray(job.collabRefHashes) || job.collabRefHashes.length !== (job.refImages || []).length) {
+          throw new Error("A peer image job has no complete staged reference fingerprint.");
+        }
+        for (let i = 0; i < job.collabRefHashes.length; i++) {
+          const name = String(job.refImages[i] || "");
+          if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(name)) throw new Error("A peer image reference name changed before rendering.");
+          const current = await readFile(path.join(config.inputDir, name));
+          if (createHash("sha256").update(current).digest("hex") !== job.collabRefHashes[i]) {
+            throw new Error(`Peer image reference ${i + 1} changed while waiting in the render queue.`);
+          }
+        }
+      }
       const qwenOptions = {
         prompt, negative: job.negative, seed: job.seed, width: job.width, height: job.height,
         steps: job.steps, cfg: job.cfg, count: job.count, prefix: PREFIX,
         sampler: job.sampler, scheduler: job.scheduler,
         refImages: job.refImages, refSizing: job.refSizing, refResolution: job.refResolution,
         transparent: job.transparent, thumbSize: config.art.thumbSize,
-        dit: ownDit, encoder: ownEncoder, vae: ownVae,
+        /* The peer contract records stock Qwen base files. Do not let a
+         * machine-local override make readiness check different files from
+         * the graph whose result will be returned to the sender. */
+        dit: job.collabImageBase ? QWEN_IMAGE_FILES.dit : ownDit,
+        encoder: job.collabImageBase ? QWEN_IMAGE_FILES.encoder : ownEncoder,
+        vae: job.collabImageBase ? QWEN_IMAGE_FILES.vae : ownVae,
         /* Fast draft: the turbo LoRA and its 5-step schedule (qwen-image.js
          * QWEN_DRAFT). Readiness below then also requires the LoRA on disk. */
         ...(job.draft === true ? { draft: true } : {}),
@@ -1735,6 +1753,8 @@ export class ArtRunner extends EventEmitter {
       job._qwenKey = qwenRenderKey({ prompt, negative: job.negative, refImages: job.refImages,
         refResolution: graph[4].inputs.resolution, encoder: graph[2].inputs.clip_name });
       job._imageOptions = { steps: sampled.steps, cfg: sampled.cfg,
+        sampler: sampled.sampler, scheduler: sampled.scheduler,
+        count: graph[7]?.inputs?.batch_size || graph[7]?.inputs?.amount || 1,
         /* PROVENANCE: a draft says so on the picture's row, with the LoRA and
          * its strength, so "what made this" never reads as the full render.
          * Absent on a final, whose row is unchanged. */
@@ -1939,8 +1959,17 @@ export class ArtRunner extends EventEmitter {
            * app's own XMP disclosure is deliberately kept: this is privacy about
            * the words somebody typed, never about hiding what made a picture. */
           if (job.private) {
-            await stripPngText(landed).catch((err) =>
-              console.warn(`[art] private render: could not strip metadata from ${name} (${err.message})`));
+            if (job.collabImageBase) {
+              const stripped = await stripPngText(landed);
+              if (stripped.skipped) throw new Error("A private peer image was not a PNG whose metadata could be stripped.");
+            } else {
+              await stripPngText(landed).catch((err) =>
+                console.warn(`[art] private render: could not strip metadata from ${name} (${err.message})`));
+            }
+          }
+          if (job.collabImageBase && suffix === "") {
+            job._imageOptions = { ...(job._imageOptions || {}),
+              outputSha256: createHash("sha256").update(await readFile(landed)).digest("hex") };
           }
           names.push(name);
         }

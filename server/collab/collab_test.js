@@ -430,7 +430,7 @@ console.log("\n§6  the doors: shared API checks and explicit MCP intents");
 
   ok("...and the keys are made when it is opened, not at boot",
     // Scene context is passed only when Collab opens; no identity is minted at boot.
-    /if \(name === "collab"\) paintCollab\(false, collabScene, options\?\.videoRecipe\);/.test(app));
+    /if \(name === "collab"\) paintCollab\(false, collabScene, options\?\.videoRecipe, options\?\.imageJob, options\?\.imageRefPreviews\);/.test(app));
 }
 
 console.log("\n\u00a76b  the errand: a friend's order becomes a project that renders what was asked");
@@ -589,12 +589,12 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   const lendingDoor = { ...lendingM,
     speedUpForOrder: (o) => lendingM.speedUpForOrder(o, FOUR_STEP_ONLY),
     speedUpCheck: (a) => lendingM.speedUpCheck(a, FOUR_STEP_ONLY) };
-  const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM] = [
+  const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM, imageQuarM] = [
     await import("./identity.js"), await import("./seal.js"),
     await import("./roster.js"), await import("./packet.js"),
     await import("./resources.js"), await import("./credit.js"),
     await import("./order.js"), await import("./free.js"), await import("./orderbook.js"),
-    await import("./errand.js"), await import("./quarantine.js"), await import("./inbox.js"),
+    await import("./errand.js"), await import("./quarantine.js"), await import("./inbox.js"), await import("./image-quarantine.js"),
   ];
   /* What the machine is doing, so a pin can move it. */
   const machineState = {
@@ -654,7 +654,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * text with only what it is entitled to. */
     "makeOrder", "readOrder", "orderPlanItem", "describeOrder", "makeReturn",
     "machineBusy", "readWorkload", "book", "errandDoc", "errandTitle", "stageOrderFiles",
-    "adoptReturn", "dropReturn", "landReturn", "listQuarantine", "scanInbox",
+    "adoptReturn", "dropReturn", "landReturn", "listQuarantine", "scanInbox", "listImageQuarantine",
     "createMvProject", "updateMvProject", "plansRunningNow",
     /* ⚠ NOT `models` AGAIN. It is injected further up, and a duplicate
      * parameter name is legal here — the LAST one wins, silently, which is how
@@ -744,7 +744,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       (f) => stat(f),
       orderM.makeOrder, orderM.readOrder, orderM.orderPlanItem, orderM.describeOrder, orderM.makeReturn,
       freeM.machineBusy, freeM.readWorkload, bookM, errandM.errandDoc, errandM.errandTitle, errandM.stageOrderFiles,
-      quarM.adoptReturn, quarM.dropReturn, quarM.landReturn, quarM.listQuarantine, inboxM.scanInbox,
+      quarM.adoptReturn, quarM.dropReturn, quarM.landReturn, quarM.listQuarantine, inboxM.scanInbox, imageQuarM.listImageQuarantine,
       /* Narrow stand-ins: enough to walk the branch, too little to hide a
        * mistake. `fetch` is a PARAMETER here, which shadows the global — the
        * route's loopback call must not leave this process. */

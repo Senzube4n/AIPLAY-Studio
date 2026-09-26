@@ -5998,14 +5998,16 @@ $("cbGoFriends")?.addEventListener("click", () => setCbTab("Friends"));
  * still holds it. Any row click, tab change or repaint clears the stamp. */
 function disarmCollab() {
   const card = $("cbFileCard");
-  if (card) delete card.dataset.armed;
+  if (card) { delete card.dataset.armed; delete card.dataset.imageArmed; delete card.dataset.imageArmedDigest; }
+  if (cbOpenedImage) delete cbOpenedImage.reviewDigest;
   if ($("cbAcceptYes")) $("cbAcceptYes").hidden = true;
+  if ($("cbImageAccept")) $("cbImageAccept").hidden = true;
   if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
 }
 
-let collabVideoDraft = null, cbOpenedVideo = null;
+let collabVideoDraft = null, collabImageDraft = null, collabImageRefPreviews = [], cbOpenedVideo = null, cbOpenedImage = null;
 let collabPainted = false;
-async function paintCollab(force = false, scene = null, videoRecipe = null) {
+async function paintCollab(force = false, scene = null, videoRecipe = null, imageJob = null, imageRefPreviews = []) {
   const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
@@ -6045,6 +6047,12 @@ async function paintCollab(force = false, scene = null, videoRecipe = null) {
   paintCbKind();
   if (scene) selectCollabScene(scene);
   if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-recipe"; paintCbKind(); $("cbTo")?.focus?.(); }
+  if (imageJob) {
+    collabImageDraft = imageJob;
+    collabImageRefPreviews = imageRefPreviews;
+    collabTabChosen = true;
+    setCbTab("Send"); $("cbKind").value = "image-job"; paintCbKind(); $("cbTo")?.focus?.();
+  }
 }
 
 function selectCollabScene({slug, segmentId}) {
@@ -6109,7 +6117,7 @@ function paintCbRecipientStatus() {
   const kind = $("cbKind")?.value || "shot";
   const peer = cbPeers.find((p) => p.fp === $("cbTo")?.value && cbCanReceive(p, kind));
   const host = $("cbRecipientStatus");
-  if ($("cbPreview")) $("cbPreview").disabled = !peer;
+  if ($("cbPreview")) $("cbPreview").disabled = !peer || (kind === "image-job" && !collabImageDraft);
   if (!host) return;
   if (!peer) {
     host.innerHTML = '<span class="chip warn">Choose a friend</span>';
@@ -6127,8 +6135,9 @@ function paintCbRecipientStatus() {
     else parts.push('<span class="chip warn">VRAM unknown</span>');
     const ready = Array.isArray(card.ready) ? card.ready : [];
     const engine = kind === "video-recipe" ? collabVideoDraft?.engine : kind === "order" ? $("cbEngineMode")?.value : "";
-    const capability = engine === "ltx" ? "videoLtx" : engine === "h3" ? "video" : "";
-    if (capability) parts.push(`<span class="chip ${ready.includes(capability) ? "ok" : "warn"}" title="Downloaded catalogue models only. Custom models are not listed.">${engine.toUpperCase()} ${ready.includes(capability) ? "listed" : "not listed"}</span>`);
+    const capability = kind === "image-job" ? "qwen-image-2.1" : engine === "ltx" ? "videoLtx" : engine === "h3" ? "video" : "";
+    const capabilityLabel = kind === "image-job" ? "Qwen Image 2.1" : String(engine || "").toUpperCase();
+    if (capability) parts.push(`<span class="chip ${ready.includes(capability) ? "ok" : "warn"}" title="Downloaded catalogue models on this friend's last card only; current readiness is unknown.">${capabilityLabel} ${ready.includes(capability) ? "listed" : "not listed"}</span>`);
     else parts.push(`<span class="chip" title="Downloaded catalogue models on their last card.">${ready.length} models listed</span>`);
   }
   parts.push('<span class="chip warn" title="Collab has no remote presence or queue connection. Ask your friend before counting on their card.">Idle unknown</span>');
@@ -6275,13 +6284,13 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
-  cbOpenedResources = null; cbOpenedVideo = null;
+  cbOpenedResources = null; cbOpenedVideo = null; cbOpenedImage = null;
   if ($("cbUseVideo")) $("cbUseVideo").hidden = true;
   if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
   if ($("cbFile")) $("cbFile").value = r.file || file || "";
-  for (const face of ["cbOrderFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
+  for (const face of ["cbOrderFace", "cbImageFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
   if (card) card.hidden = false;
   if (r.error) {
     /* A refusal is a row state with one remedy, not a dead end. */
@@ -6299,9 +6308,24 @@ async function openCollabFile(file) {
   if (r.kind === "order") {
     if ($("cbOrderFace")) $("cbOrderFace").hidden = false;
     if ($("cbOrderWho")) $("cbOrderWho").innerHTML = `${who} is asking this computer to render one scene`;
+  } else if (r.kind === "job-order" && r.imageJob?.job) {
+    cbOpenedImage = { file: r.file || file, id: r.imageJob.id, signerFp: r.from?.fp,
+      orderKey: JSON.stringify(r.imageJob), referenceCount: r.imageJob.job.references.length };
+    $("cbImageFace").hidden = false;
+    $("cbImageWho").textContent = `${r.from?.nickname || r.from?.fp?.slice(0, 8) || "A friend"} asks for an image`;
+    paintIncomingImageJob(r.imageJob.job, r.packet?.job?.references || []);
+    await paintImageCardStatus();
+    paintIncomingImageReferenceState();
+  } else if (r.kind === "job-return" && r.packet?.jobType === "image") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished image has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned image";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the signed image against your request before keeping it.";
   } else if (r.kind === "return") {
     if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
     if ($("cbReturnWho")) $("cbReturnWho").innerHTML = `A finished scene has come back from ${who}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check it against what I asked for";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the returned file against your order before keeping it.";
   } else {
     if ($("cbReadFace")) $("cbReadFace").hidden = false;
     if ($("cbReadWho")) $("cbReadWho").innerHTML = `${who} sent you something to look at`;
@@ -6332,6 +6356,82 @@ Custom LoRAs and conditioning bridge off. Review before rendering.`;
       if ($("cbSaveResources")) $("cbSaveResources").hidden = false;
     }
   }
+}
+function paintIncomingImageJob(job, references) {
+  $("cbImageSettings").textContent = `${job.width} × ${job.height} · ${job.steps} steps · CFG ${job.cfg} · seed ${job.seed} · ${job.references.length} references · receiver's local Qwen base model`;
+  $("cbImagePrompt").textContent = job.prompt;
+  $("cbImageRefs").innerHTML = references.map((ref, i) => {
+    const meta = job.references[i];
+    if (!meta || meta.sha256 !== ref.sha256 || !["image/png", "image/jpeg", "image/webp"].includes(ref.mime) || typeof ref.b64 !== "string")
+      return `<figure><figcaption class="warn">Reference ${i + 1} could not be shown. Do not accept until it opens correctly.</figcaption></figure>`;
+    return `<figure><img loading="eager" decoding="async" data-cb-image-reference="${i + 1}" src="data:${ref.mime};base64,${ref.b64}" alt="Reference ${i + 1}" style="max-width:180px;max-height:150px;object-fit:contain"><figcaption>Reference ${i + 1} · ${Number(meta.bytes).toLocaleString()} bytes<br><code>${esc(meta.sha256)}</code></figcaption></figure>`;
+  }).join("") || '<span class="hint">No reference pictures.</span>';
+}
+function imageReferencesShown(opened) {
+  if (!opened || cbOpenedImage !== opened) return false;
+  const images = [...($('cbImageRefs')?.querySelectorAll('img[data-cb-image-reference]') || [])];
+  return images.length === opened.referenceCount && images.every((image) => image.complete
+    && image.naturalWidth > 0 && image.naturalHeight > 0 && image.dataset.cbRefFailed !== "1");
+}
+function paintIncomingImageReferenceState() {
+  const opened = cbOpenedImage, refs = $('cbImageRefs');
+  if (!opened || !refs || $('cbImageFace')?.hidden) return;
+  const images = [...refs.querySelectorAll('img[data-cb-image-reference]')];
+  const ready = imageReferencesShown(opened);
+  const review = $('cbImageReview'), accept = $('cbImageAccept'), note = $('cbImageNote');
+  if (review && !review.hidden) review.disabled = !ready || !!opened.reviewBusy;
+  if (accept && !accept.hidden) accept.disabled = !ready || !!opened.acceptBusy;
+  if ((!review?.hidden || !accept?.hidden) && !ready) {
+    const failed = images.length !== opened.referenceCount
+      || images.some((image) => image.dataset.cbRefFailed === "1" || (image.complete && !image.naturalWidth));
+    note.textContent = failed
+      ? "A reference could not be shown; reopen the file before accepting."
+      : "Waiting for reference pictures to load.";
+    opened.refLoadNotice = true;
+  } else if (ready && opened.refLoadNotice) {
+    note.textContent = "Inspect the prompt and every reference before accepting.";
+    opened.refLoadNotice = false;
+  }
+}
+for (const event of ['load', 'error']) $('cbImageRefs')?.addEventListener(event, (ev) => {
+  if (ev.target?.dataset?.cbImageReference === undefined) return;
+  if (event === 'error') ev.target.dataset.cbRefFailed = "1";
+  paintIncomingImageReferenceState();
+}, true);
+async function imageResultReady(imageId) {
+  if (typeof imageId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(imageId)) return false;
+  try {
+    const r = await (await fetch("/api/images")).json();
+    return Array.isArray(r.images) && r.images.some((image) => image.name === `${imageId}.png`);
+  } catch { return false; }
+}
+async function paintImageCardStatus() {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "orders", side: "in" });
+  if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.error) { $("cbImageNote").textContent = `Could not check this job: ${r.error}`; return; }
+  const row = (r.orders || []).find((order) => order.id === opened.id && order.jobType === "image");
+  opened.imageState = row?.state || null;
+  $("cbImageReview").hidden = !!row;
+  $("cbImageRender").hidden = !["landed", "failed"].includes(row?.state);
+  $("cbImageRender").textContent = row?.state === "failed" ? "Retry image render" : "Render image";
+  $("cbImageCheck").hidden = !["queued", "rendering", "failed"].includes(row?.state);
+  $("cbImageSendBack").hidden = true;
+  $("cbImageSendBack").disabled = true;
+  if (row?.state === "queued" && await imageResultReady(row.imageId)) {
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageSendBack").hidden = false;
+    $("cbImageSendBack").disabled = false;
+    $("cbImageNote").textContent = "Result ready; review it, then send back the sealed file.";
+  } else if (row?.state === "landed") $("cbImageNote").textContent = "Accepted; press Render image when ready.";
+  else if (row?.state === "queued") $("cbImageNote").textContent = "Rendering or waiting in the local queue.";
+  else if (row?.state === "rendering") $("cbImageNote").textContent = "Queue receipt uncertain; check the local queue before recovery.";
+  else if (row?.state === "failed") $("cbImageNote").textContent = "Render failed; check the queue, then retry if needed.";
+  else if (row?.state === "rendered") $("cbImageNote").textContent = "Return file ready in accepted jobs below.";
+  else if (row) $("cbImageNote").textContent = `Job ${row.state}; check the accepted-job list.`;
+  else $("cbImageNote").textContent = "Inspect the prompt and every reference before accepting.";
+  paintIncomingImageReferenceState();
 }
 $("cbSaveResources")?.addEventListener("click", async () => {
   const card = cbOpenedResources;
@@ -6421,10 +6521,15 @@ $("cbPeers")?.addEventListener("change", async (ev) => {
 function paintCbKind() {
   const kind = $("cbKind")?.value || "shot";
   const show = (id, on) => { const el = $(id); if (el) el.hidden = !on; };
+  show("cbProjectRow", kind === "shot" || kind === "project" || kind === "order");
   show("cbSegmentRow", kind === "shot" || kind === "order");
   show("cbNoteRow", kind === "resources");
   show("cbMine", kind === "resources");
   show("cbNumbers", kind === "order");
+  show("cbImageJobNote", kind === "image-job");
+  if (kind === "image-job") $("cbImageJobNote").textContent = collabImageDraft
+    ? `Qwen Image 2.1 · one image · ${collabImageDraft.refs.length} reference${collabImageDraft.refs.length === 1 ? "" : "s"}; preview and prepare one file per friend.`
+    : "Choose a Qwen image in Pictures, then press Ask friend.";
   paintCbRecipients();
   invalidateCbPreview();
 }
@@ -6597,6 +6702,7 @@ $("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return pai
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
   if (kind === "video-recipe") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
+  if (kind === "image-job") return {kind,to:$("cbTo")?.value,image:collabImageDraft};
   return {
     slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
@@ -6624,25 +6730,40 @@ for (const id of ["cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
 $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
   const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
-  if (!["resources", "video-recipe"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  if (body.kind === "image-job" && !body.image) { cbSay("Start in Pictures and press Ask friend to choose a Qwen image job."); return; }
+  if (!["resources", "video-recipe", "image-job"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
   $("cbPreview").disabled = true;
   $("cbPackNote").textContent = "Reading the exact outgoing contents…";
   const r = await cb({ action: "preview", ...body });
   paintCbRecipients();
   if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
   if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
-  cbPreparedPreview = { id: r.previewId, key };
   const packet = r.packet || {}, shot = packet.video || packet.shot || packet, order = packet.order || {};
+  const imageJob = packet.job || {};
+  if (body.kind === "image-job" && (typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
+      || !Array.isArray(imageJob.references) || imageJob.references.length !== body.image.refs.length
+      || imageJob.references.some((ref) => !ref.sha256 || !Number.isSafeInteger(ref.bytes)))) {
+    $("cbPackNote").textContent = "The frozen image preview did not include the exact job and reference hashes. Update Studio and preview again.";
+    return;
+  }
+  cbPreparedPreview = { id: r.previewId, key };
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
-  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${r.describes || body.kind}`;
-  $("cbPreviewPrompt").textContent = shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
-  $("cbPreviewSettings").textContent = body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
+  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${body.kind === "image-job" ? "Qwen Image 2.1 image job" : r.describes || body.kind}`;
+  $("cbPreviewPrompt").textContent = body.kind === "image-job" ? imageJob.prompt || "" : shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
+  $("cbPreviewSettings").textContent = body.kind === "image-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.steps} steps · CFG ${imageJob.cfg} · seed ${imageJob.seed} · ${imageJob.references.length} included references · friend's local Qwen base model · idle unknown` : body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
     ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
     : r.note || "Review the full contents below.";
-  $("cbPreviewManifest").innerHTML = manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
+  $("cbPreviewManifest").innerHTML = body.kind === "image-job"
+    ? imageJob.references.map((f, i) => `<div class="cbmanifestrow"><b>Reference ${i + 1}</b><span>${Number(f.bytes).toLocaleString()} bytes · included</span><code>${esc(f.sha256)}</code></div>`).join("") || '<p class="hint">No reference pictures.</p>'
+    : manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
   const pictures = manifest.filter((f) => typeof f.file === "string" && !/[\\/]/.test(f.file) && /\.(png|jpe?g|webp)$/i.test(f.file));
-  $("cbPreviewPictures").innerHTML = body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
+  $("cbPreviewPictures").innerHTML = body.kind === "image-job" && imageJob.references.length
+    ? imageJob.references.map((f, i) => {
+      const preview = body.image.refs[i] === collabImageRefPreviews[i]?.name ? collabImageRefPreviews[i] : null;
+      return `<figure>${preview ? `<img loading="lazy" decoding="async" src="${esc(preview.url)}" alt="Reference ${i + 1}">` : ""}<figcaption><b>Included reference ${i + 1}</b><br>Local view · sealed bytes checked by hash below</figcaption></figure>`;
+    }).join("")
+    : body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
   $("cbPreviewPacket").textContent = JSON.stringify(packet, (k, v) => k === "b64" ? "[picture bytes listed above]" : v, 2);
   $("cbPack").disabled = false;
   $("cbPackNote").textContent = "Preview ready. Preparing a file does not deliver it or start a remote render.";
@@ -6657,8 +6778,10 @@ $("cbPack")?.addEventListener("click", async () => {
   const r = await cb({ action: "pack", previewId: preview.id });
   cbPreparedPreview = null;
   if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
-  if (note) note.textContent = `Prepared · ${r.describes} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
-  showHandoff(r.file, r.describes);
+  const packedDescription = packedRequest.kind === "image-job"
+    ? `One Qwen Image 2.1 job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}` : r.describes;
+  if (note) note.textContent = `Prepared · ${packedDescription} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
+  showHandoff(r.file, packedDescription);
   const assigned = cbAssignedReview?.rows[cbAssignedReview.at];
   if (assigned && cbAssignedReview.key === cbAssignedDraftKey() && packedRequest.kind === "order"
       && packedRequest.slug === cbPlan?.slug && packedRequest.to === assigned.fp && packedRequest.segmentId === assigned.segmentId) {
@@ -6823,6 +6946,28 @@ function showHandoff(file, what) {
   box.dataset.file = file || "";
   if ($("cbHandoffWhat")) $("cbHandoffWhat").textContent = `${what || "Your sealed file"} — ${file || ""}`;
 }
+function collabFileControls(file) {
+  return typeof file === "string" && file
+    ? `<span class="cbres" title="${esc(file)}">Prepared file: <code>${esc(file.split(/[\\/]/).pop())}</code></span><div class="chips"><button class="btn sm ghost cbfile-reveal" type="button">Show file</button><button class="btn sm ghost cbfile-copy" type="button">Copy location</button></div>`
+    : '<span class="cbres warn">This older record has no saved file path. Check the Collab out folder.</span>';
+}
+async function collabFileAction(event) {
+  const button = event.target?.closest?.("button");
+  if (!button?.classList?.contains || (!button.classList.contains("cbfile-reveal") && !button.classList.contains("cbfile-copy"))) return false;
+  const file = button.closest(".cbpeer")?.dataset.file || "";
+  if (!file) { cbSay("The prepared file path is unavailable. Check the Collab out folder."); return true; }
+  if (button.classList.contains("cbfile-copy")) {
+    try { await navigator.clipboard.writeText(file); cbSay("Prepared file location copied."); }
+    catch { cbSay(`Could not copy the path. Prepared file: ${file}`); }
+  } else {
+    const rel = file.replace(/^.*[\\/]collab[\\/]/, "collab/").replace(/\\/g, "/");
+    const r = await fetch("/api/reveal", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: rel }),
+    }).then((x) => x.json()).catch(() => ({ error: "could not open the file" }));
+    if (r.error) cbSay(r.error);
+  }
+  return true;
+}
 $("cbReveal")?.addEventListener("click", async () => {
   const file = $("cbHandoff")?.dataset.file || "";
   const rel = file.replace(/^.*[\\/]collab[\\/]/, "collab/").replace(/\\/g, "/");
@@ -6855,7 +7000,13 @@ async function paintOutbox() {
     returned: "came back — waiting for you under “What arrived”",
     adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
   };
-  host.innerHTML = rows.map((o) => `
+  host.innerHTML = rows.map((o) => o.jobType === "image" ? `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
+      ${collabFileControls(o.file)}
+    </div>` : `
     <div class="cbpeer">
       <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
@@ -6863,6 +7014,7 @@ async function paintOutbox() {
       <span class="cbres">project ${esc(o.slug || "?")}</span>
     </div>`).join("");
 }
+$("cbOutbox")?.addEventListener("click", collabFileAction);
 
 $("cbFree")?.addEventListener("click", async () => {
   const n = $("cbFreeNote");
@@ -6880,7 +7032,27 @@ async function paintErrands() {
   if (cbListError("Accepted jobs", r)) return;
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
-  host.innerHTML = rows.map((o) => `
+  let readyImages = new Set();
+  if (rows.some((o) => o.jobType === "image" && o.state === "queued" && o.imageId)) {
+    try {
+      const images = await (await fetch("/api/images")).json();
+      readyImages = new Set((images.images || []).map((image) => image.name));
+    } catch { /* Unknown is not ready. The next refresh can check again. */ }
+  }
+  host.innerHTML = rows.map((o) => o.jobType === "image" ? `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(String(o.imageJob?.job?.width ?? "?"))} × ${esc(String(o.imageJob?.job?.height ?? "?"))} · ${esc(String(o.imageJob?.job?.references?.length ?? 0))} references</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "accepted")}</span>
+      ${o.state === "landed" ? '<button class="btn sm cbimgrender" type="button">Render image</button>' : ""}
+      ${o.state === "failed" ? '<button class="btn sm cbimgrender" data-retry="true" type="button">Retry image render</button>' : ""}
+      ${o.state === "rendering" ? '<span class="cbres warn">Queue receipt uncertain. This job is locked against duplicate renders; check the local queue before recovering it.</span>' : ""}
+      ${o.state === "failed" ? '<span class="cbres warn">Local render failed. Check the Images queue and model status before explicitly retrying; no return was sent.</span>' : ""}
+      ${o.state === "rendered" ? '<button class="btn sm ghost cbimglocate" type="button">Show prepared return</button>' : ""}
+      ${o.state === "queued" && readyImages.has(`${o.imageId}.png`) ? '<button class="btn sm cbimgsend" type="button">Send image back</button>' : ""}
+      ${["queued", "rendering", "failed"].includes(o.state) && !readyImages.has(`${o.imageId}.png`) ? '<button class="btn sm ghost cbimgcheck" type="button">Refresh status</button>' : ""}
+    </div>` : `
     <div class="cbpeer" data-id="${esc(o.id)}" data-slug="${esc(o.slug || "")}">
       <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
@@ -6893,7 +7065,7 @@ async function paintErrands() {
 }
 
 async function paintTakes() {
-  const host = $("cbTakes"), wrap = $("cbTakesWrap");
+  const host = $("cbTakes"), wrap = $("cbTakesWrap"), imageHost = $("cbImages"), imageWrap = $("cbImagesWrap");
   if (!host) return;
   const r = await cb({ action: "quarantine" });
   if (cbListError("Returned takes", r)) return;
@@ -6922,6 +7094,25 @@ async function paintTakes() {
       ${t.adopted ? "" : '<button class="btn sm ghost cbdrop" type="button">Throw it away</button>'}
     </div>`;
   }).join("");
+  if (imageHost) {
+    const images = Array.isArray(r.images) ? r.images : [];
+    if (imageWrap) imageWrap.hidden = !images.length;
+    imageHost.innerHTML = images.map((image) => {
+      const goodRow = image.v === 1 && typeof image.from === "string" && typeof image.file === "string";
+      const preview = `/api/collab-image/${encodeURIComponent(image.from || "")}/${encodeURIComponent(image.file || "")}`;
+      const ready = goodRow && image.ok === true && !image.adopted;
+      return `<div class="cbpeer" data-from="${esc(image.from || "")}" data-file="${esc(image.file || "")}">
+        <b>${esc(image.orderId || "Returned image")}</b>
+        <code>${esc(String(image.from || "").slice(0, 8))}</code>
+        <span class="${image.ok ? "ok" : "warn"}">${image.adopted ? "kept" : image.ok ? "checked" : esc(image.reason || "refused")}</span>
+        <span class="cbres">${esc(image.why || "")}</span>
+        ${goodRow ? `<details><summary>Job and model</summary><pre class="cbopened">${esc(image.prompt || "")}</pre><span class="cbres">${esc(image.record?.modelVersion || image.record?.model || "Model unknown")} · seed ${esc(String(image.record?.seed ?? "?"))} · rights ${esc(image.record?.outputRights?.class || "unknown")}</span></details>` : ""}
+        ${ready ? `<button class="btn sm ghost cbimagepreview" type="button">Preview image</button><img class="cbreturnedimage" alt="Returned image for ${esc(image.orderId || "this job")}" data-src="${esc(preview)}" hidden>` : ""}
+        ${ready ? '<button class="btn sm cbimageadopt" type="button" disabled title="Preview this checked image first">Keep image</button>' : ""}
+        ${goodRow && !image.adopted ? '<button class="btn sm ghost cbimagedrop" type="button">Throw it away</button>' : ""}
+      </div>`;
+    }).join("");
+  }
 }
 /* Media events do not bubble, so the list listens in the capture phase: a row
  * whose take has started playing is a row somebody has watched.
@@ -7017,14 +7208,146 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
   await refreshCollab();
 });
 
+$("cbImageReview")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  if (!imageReferencesShown(opened)) { paintIncomingImageReferenceState(); return; }
+  opened.reviewBusy = true;
+  paintIncomingImageReferenceState();
+  try {
+    const r = await cb({ action: "image_accept", file: opened.file });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    if (r.reason !== "not-seen" || !r.imageJob?.job) { $("cbImageNote").textContent = r.error || r.note || "Could not review this image job."; return; }
+    if (r.from?.fp !== opened.signerFp || r.imageJob.id !== opened.id
+        || JSON.stringify(r.imageJob) !== opened.orderKey) {
+      await openCollabFile(opened.file);
+      $("cbImageNote").textContent = "This file or its signer changed since it was opened. Review the new sender, prompt and references before accepting.";
+      return;
+    }
+    if (!imageReferencesShown(opened)) { paintIncomingImageReferenceState(); return; }
+    if (!/^[0-9a-f]{64}$/.test(String(r.reviewDigest || ""))) {
+      $("cbImageNote").textContent = "The server did not bind this review to the sealed file. Update Studio and review it again before accepting.";
+      return;
+    }
+    opened.reviewDigest = r.reviewDigest;
+    if (card) { card.dataset.imageArmed = opened.file; card.dataset.imageArmedDigest = r.reviewDigest; }
+    $("cbImageAccept").hidden = false;
+    $("cbImageNote").textContent = "The server checked this exact sealed file and its references again. Accept stages them locally; it still does not render.";
+  } finally { opened.reviewBusy = false; paintIncomingImageReferenceState(); }
+});
+$("cbImageAccept")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.imageArmed !== opened.file
+      || !/^[0-9a-f]{64}$/.test(String(opened.reviewDigest || ""))
+      || card.dataset.imageArmedDigest !== opened.reviewDigest || !imageReferencesShown(opened)) {
+    cbSay("Review this exact image job again before accepting it.");
+    disarmCollab(); return;
+  }
+  opened.acceptBusy = true;
+  paintIncomingImageReferenceState();
+  try {
+    const r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Accepted locally. Rendering is a separate press.";
+    if (!r.error) { disarmCollab(); await paintImageCardStatus(); await paintErrands(); }
+  } finally { opened.acceptBusy = false; paintIncomingImageReferenceState(); }
+});
+$("cbImageRender")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const button = $("cbImageRender"); button.disabled = true;
+  try {
+    const r = await cb({ action: "image_render", id: opened.id,
+      ...(opened.imageState === "failed" ? { retry: true } : {}) });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Queued here. Check the result before sending it back.";
+    if (!r.error) { await paintImageCardStatus(); await paintErrands(); }
+  } finally { button.disabled = false; }
+});
+$("cbImageCheck")?.addEventListener("click", async () => { await paintImageCardStatus(); await paintErrands(); });
+$("cbImageSendBack")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value || $("cbImageSendBack").disabled) return;
+  const button = $("cbImageSendBack"); button.disabled = true;
+  try {
+    const r = await cb({ action: "image_send_back", id: opened.id });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Finished image sealed for manual handoff.";
+    if (!r.error && r.file) {
+      setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend");
+      await paintErrands();
+    }
+  } finally { button.disabled = false; }
+});
+
 $("cbReceiveBtn")?.addEventListener("click", async () => {
   const r = await cb({ action: "receive", file: $("cbFile")?.value.trim() });
   cbSay(r.error || r.note || "");
   await refreshCollab();
 });
 
+$("cbImages")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row) return;
+  if (ev.target.classList.contains("cbimagepreview")) {
+    const image = row.querySelector(".cbreturnedimage");
+    if (!image) return;
+    image.hidden = false;
+    image.src = image.dataset.src;
+    ev.target.textContent = "Previewing…";
+    return;
+  }
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  if (ev.target.classList.contains("cbimageadopt")) {
+    if (row.dataset.viewed !== "1") { cbSay("Preview the returned image before keeping it."); return; }
+    const r = await cb({ action: "image_adopt", ...body });
+    cbSay(r.error || `Kept in Pictures as ${r.name}.`);
+    if (!r.error) await paintTakes();
+  } else if (ev.target.classList.contains("cbimagedrop")) {
+    const go = await cbConfirm({ title: "Throw away this returned image?", body: "This removes it from quarantine. It has not been added to Pictures.", yes: "Throw it away" });
+    if (!go) return;
+    const r = await cb({ action: "image_drop", ...body });
+    cbSay(r.error || "Returned image removed.");
+    if (!r.error) await paintTakes();
+  }
+});
+$("cbImages")?.addEventListener("load", (ev) => {
+  const row = ev.target.closest?.(".cbpeer");
+  if (row && ev.target.classList?.contains("cbreturnedimage")) {
+    row.dataset.viewed = "1";
+    const button = row.querySelector(".cbimagepreview");
+    if (button) button.textContent = "Image shown";
+    const keep = row.querySelector(".cbimageadopt");
+    if (keep) { keep.disabled = false; keep.title = "Keep the reviewed image in Pictures"; }
+  }
+}, true);
+$("cbImages")?.addEventListener("error", (ev) => {
+  if (ev.target.classList?.contains("cbreturnedimage")) cbSay("This browser could not show the returned image. It has not been kept.");
+}, true);
+
 $("cbErrands")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
+  if (row && await collabFileAction(ev)) return;
+  if (row && ev.target.classList.contains("cbimgcheck")) { await paintErrands(); return; }
+  if (row && ev.target.classList.contains("cbimglocate")) {
+    const r = await cb({ action: "image_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Prepared image return found.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend"); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgrender")) {
+    const r = await cb({ action: "image_render", id: row.dataset.id,
+      ...(ev.target.dataset.retry === "true" ? { retry: true } : {}) });
+    cbSay(r.error || r.note || "Image queued on this computer. Check its result before sending it back.");
+    if (!r.error) { await paintErrands(); await paintImageCardStatus(); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgsend")) {
+    const r = await cb({ action: "image_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Finished image sealed for manual handoff.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend"); await paintErrands(); }
+    return;
+  }
   if (row && ev.target.classList.contains("cbopenplan")) { cbOpenProject(row.dataset.slug); return; }
   if (!row || !ev.target.classList.contains("cbsend")) return;
   const r = await cb({ action: "send_back", id: row.dataset.id });
@@ -17787,6 +18110,47 @@ function ckptOptions(list, selected) {
   }
 }
 
+/* A standalone friend job is deliberately narrower than Make image. Every
+ * setting it cannot reproduce on the receiver is refused here, never dropped
+ * while changing views. References are ordered server-issued names only; their
+ * bytes are frozen, hashed and included by the Collab preview on the server. */
+function imageFriendJob() {
+  if ($("imgEngine").value !== "qwen-image-2.1") throw new Error("Ask friend currently supports Qwen Image 2.1. Choose it above first.");
+  const prompt = $("imgPrompt").value.trim();
+  if (!prompt) throw new Error("Describe the image before asking a friend.");
+  if ($("imgPrivate").checked) throw new Error("Don't record the prompt is on. Sending this job reveals its words to your friend; turn that switch off first.");
+  if ($("imgPersona").value) throw new Error("This job cannot expand a saved character yet. Add up to three of its reference images directly, then ask again.");
+  if (imgRefs.length > 3) throw new Error("A friend job can carry up to three reference images. Remove the extras first.");
+  if (imgRefs.length && $("imgRefSizing").value !== "custom") throw new Error("Set canvas to ‘Use the size above’ for a friend job. Matching a reference's shape is not in this job format.");
+  if ($("imgTransparent").checked) throw new Error("Transparent backgrounds are not in this friend job format. Turn Transparent off first.");
+  if (imgDraftOn()) throw new Error("Fast draft is not in this friend job format. Turn it off to send a full Qwen render.");
+  if (Number($("imgCount").value) !== 1) throw new Error("A friend job makes one image. Set ‘how many’ to 1; prepare another file for each additional image.");
+  if (Number($("imgSteps").value) !== 25) throw new Error("A friend job uses Qwen's 25-step full render. Set steps to 25 first.");
+  if (Number($("imgCfg").value) !== 1 || $("imgNeg").value.trim()) throw new Error("A friend job uses CFG 1 with no negative prompt. Set CFG to 1 and clear Avoid first.");
+  const [width, height] = $("imgSize").value === "custom"
+    ? [Number($("imgW").value), Number($("imgH").value)]
+    : $("imgSize").value.split("x").map(Number);
+  if (![width, height].every((n) => Number.isInteger(n) && n >= 256 && n <= 4096)) throw new Error("Choose a valid canvas size before asking a friend.");
+  if (![[1024, 1024], [1344, 768], [768, 1344]].some(([w, h]) => w === width && h === height))
+    throw new Error("A friend job supports 1024 × 1024, 1344 × 768 or 768 × 1344. Choose Custom for the wide or tall size.");
+  const refs = imgRefs.map((r) => r.name);
+  if (refs.some((name) => typeof name !== "string" || !name || name === "." || name === ".." || /[\\/]/.test(name))) throw new Error("A reference is missing its Studio-issued name. Add it again before asking a friend.");
+  const seedText = $("imgSeed").value.trim();
+  const seed = seedText === "" ? undefined : Number(seedText);
+  if (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 4294967295)) throw new Error("Seed must be a whole number from 0 through 4294967295.");
+  return { prompt, negative: "", width, height, steps: 25, cfg: 1, ...(seed === undefined ? {} : { seed }), refs };
+}
+$("imgAskFriend")?.addEventListener("click", () => {
+  try {
+    const imageJob = imageFriendJob();
+    const imageRefPreviews = imgRefs.map(({ name, url }) => ({ name, url }));
+    setView("collab", { imageJob, imageRefPreviews });
+  } catch (e) {
+    $("imgNote").textContent = e.message || String(e);
+    $("imgNote").classList.add("stick");
+  }
+});
+
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
   if (!prompt) { $("imgPrompt").focus(); return; }
@@ -19031,7 +19395,7 @@ function setView(name, options) {
   $("imgPanel").hidden = name !== "images";
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
-  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe);
+  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe, options?.imageJob, options?.imageRefPreviews);
   if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models

@@ -3,11 +3,13 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, readdir, unlink, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
+import { readGlb } from './glb.js';
 
-export const PLAYBACK_LIMITS = Object.freeze({audioBytes: 32 * 1024 * 1024, totalBytes: 256 * 1024 * 1024, audioFiles: 64, sessions: 32, sessionMs: 30000, audioMs: 24 * 60 * 60 * 1000});
+export const PLAYBACK_LIMITS = Object.freeze({audioBytes: 32 * 1024 * 1024, totalBytes: 256 * 1024 * 1024, audioFiles: 64, sessions: 32, sessionMs: 30000, audioMs: 24 * 60 * 60 * 1000, cueMinMs: 250, cueMaxMs: 10000});
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const audioPattern = /^au_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
+const mouthNames = new Set(['aa','ih','ou','ee','oh','jawopen']);
 const mime = {'.wav':'audio/wav','.mp3':'audio/mpeg','.ogg':'audio/ogg','.oga':'audio/ogg','.opus':'audio/ogg','.flac':'audio/flac','.m4a':'audio/mp4','.aac':'audio/aac','.webm':'audio/webm'};
 const queues = new Map();
 const fail = (message,status=400) => Object.assign(new Error(message),{status});
@@ -19,6 +21,25 @@ function aid(value) { if(typeof value!=='string'||!audioPattern.test(value))thro
 function sourceIdentity(input) { if(typeof input.id!=='string'||!/^av_[a-f0-9-]{36}$/.test(input.id)||typeof input.sha256!=='string'||!hashPattern.test(input.sha256))throw fail('Avatar id and source hash are required.'); }
 function number(value,label,max=86400) { if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>max)throw fail(`Invalid ${label}.`);return value; }
 function revision(value) { if(!Number.isSafeInteger(value)||value<0)throw fail('Invalid applied revision.');return value; }
+function cueExpressions(row,bytes) {
+  if(row.inspection?.profile!=='vrm')throw fail('Expression cues require an imported VRM avatar.',422);
+  const glb=readGlb(bytes);
+  if(!glb.ok)throw fail('Avatar VRM expressions could not be read.',422);
+  const groups=glb.json?.extensions?.VRMC_vrm?.expressions;
+  if(!object(groups))throw fail('Avatar has no embedded VRM expressions.',422);
+  const all=[...Object.entries(groups.preset||{}),...Object.entries(groups.custom||{})];
+  if(all.length>256)throw fail('Avatar has too many expressions.',422);
+  const mouthTargets=new Set(all.filter(([name])=>mouthNames.has(name.toLowerCase()))
+    .flatMap(([,entry])=>(entry?.morphTargetBinds||[]).map(bind=>`${bind.node}:${bind.index}`)));
+  const result=[];
+  for(const [name,entry] of all) {
+    if(!name||name.length>100||['__proto__','prototype','constructor'].includes(name)||result.some(item=>item.name===name))throw fail('Invalid VRM expression inventory.',422);
+    if(mouthNames.has(name.toLowerCase())||!object(entry)||!['none',undefined].includes(entry.overrideMouth))continue;
+    if((entry.morphTargetBinds||[]).some(bind=>mouthTargets.has(`${bind.node}:${bind.index}`)))continue;
+    result.push({name,isBinary:entry.isBinary===true});
+  }
+  return result;
+}
 async function serial(key,work) { const prior=queues.get(key)||Promise.resolve(),next=prior.catch(()=>{}).then(work);queues.set(key,next);try{return await next;}finally{if(queues.get(key)===next)queues.delete(key);} }
 async function atomic(file,value) { const temp=`${file}.${randomUUID()}.tmp`;try{await writeFile(temp,JSON.stringify(value),{flag:'wx'});await rename(temp,file);}finally{await unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});} }
 
@@ -28,10 +49,10 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
   const sessionPath=id=>path.join(sessionsDir,`${sid(id)}.json`),audioPath=id=>path.join(audioDir,`${aid(id)}.json`),binaryPath=id=>path.join(audioDir,`${aid(id)}.bin`);
   async function prepare(){await Promise.all([mkdir(sessionsDir,{recursive:true}),mkdir(audioDir,{recursive:true})]);}
   async function read(file,label){try{return JSON.parse(await readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')throw fail(`${label} not found.`,404);throw error;}}
-  async function source(input){sourceIdentity(input);const {row,bytes}=await inspectAsset(input.id);if(row?.id!==input.id||row.inspection?.sha256!==input.sha256||digest(bytes)!==input.sha256)throw fail('Avatar source changed; reload the preview.',409);}
+  async function source(input){sourceIdentity(input);const {row,bytes}=await inspectAsset(input.id);if(row?.id!==input.id||row.inspection?.sha256!==input.sha256||digest(bytes)!==input.sha256)throw fail('Avatar source changed; reload the preview.',409);return {row,bytes};}
   async function session(id){const row=await read(sessionPath(id),'Preview session');if(row.session_id!==id)throw fail('Session identity mismatch.',409);if(row.expiresAt<=now())throw fail('Preview session expired; open or refresh its browser window.',410);return row;}
   async function audio(id){const row=await read(audioPath(id),'Audio');if(row.audio_id!==id)throw fail('Audio identity mismatch.',409);if(row.expiresAt<=now())throw fail('Local audio expired; choose the file again.',410);return row;}
-  const publicSession=row=>{const {commands,...result}=row;return structuredClone(result);};
+  const publicSession=row=>{const {commands,...result}=row;const copy=structuredClone(result);if(Number.isFinite(copy.desired.cue?.expiresAt)&&copy.desired.cue.expiresAt<=now())copy.desired.cue=null;return copy;};
   async function event(op,actor,asset,data){await record({type:op==='audio_upload'?'import':op==='playback_command'?'preset_apply':'edit',actor,asset,data:{op,...data}});}
   async function entries(dir,pattern){let names;try{names=await readdir(dir);}catch(error){if(error.code==='ENOENT')return [];throw error;}return names.filter(name=>name.endsWith('.json')&&pattern.test(name.slice(0,-5)));}
   async function cleanup(actor){
@@ -59,7 +80,7 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
       if(previous&&(previous.id!==request.id||previous.sha256!==request.sha256))throw fail('Session belongs to another avatar; use a new session id.',409);
       if(!previous&&(await entries(sessionsDir,uuid)).length>=PLAYBACK_LIMITS.sessions)throw fail('Too many active preview sessions.',409);
       const row=previous||{session_id:request.session_id,id:request.id,sha256:request.sha256,revision:0,applied_revision:0,
-        desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0},status:{phase:'empty',time:0,duration:null},commands:[]};
+        desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,audio_revision:0,cue:null},status:{phase:'empty',time:0,duration:null},commands:[]};
       row.capabilities=request.capabilities;row.expiresAt=now()+PLAYBACK_LIMITS.sessionMs;
       await event('playback_register',actor,`avatar/${row.id}/playback/${row.session_id}`,{session_id:row.session_id,avatarId:row.id,sha256:row.sha256,capabilities:row.capabilities});
       await atomic(sessionPath(row.session_id),row);return publicSession(row);
@@ -70,6 +91,11 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
     return serial(lock,async()=>{const row=await session(request.session_id);if(request.applied_revision<row.applied_revision||request.applied_revision>row.revision)throw fail('Applied revision is stale or ahead of playback state.',409);
       const changed=row.applied_revision!==request.applied_revision||row.status.phase!==reported.phase||(row.status.error||'')!==(reported.error||'');
       row.applied_revision=request.applied_revision;row.status=reported;row.expiresAt=now()+PLAYBACK_LIMITS.sessionMs;
+      // Start the displayed lifetime only after the browser has seen the cue.
+      // A 250 ms MCP cue must survive the one-second heartbeat interval.
+      if(row.desired.cue&&row.desired.cue.expiresAt===null&&request.applied_revision>=row.desired.cue.revision){
+        row.desired.cue.expiresAt=now()+row.desired.cue.durationMs;
+      }
       if(changed)await event('playback_heartbeat',actor,`avatar/${row.id}/playback/${row.session_id}`,{session_id:row.session_id,avatarId:row.id,applied_revision:row.applied_revision,status:reported});
       await atomic(sessionPath(row.session_id),row);return publicSession(row);});
   }
@@ -78,6 +104,7 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
     for(const name of await entries(sessionsDir,uuid)){try{result.push(publicSession(await session(name.slice(0,-5))));}catch(error){if(error.status!==410&&error.status!==404)throw error;}}
     return {sessions:result.sort((a,b)=>a.session_id.localeCompare(b.session_id))};
   }
+  async function cueInventory(input){fields(input,['id','sha256'],'cue inventory');const {row,bytes}=await source(input);return {id:row.id,sha256:input.sha256,expressions:cueExpressions(row,bytes)};}
   async function upload(input,actor='system'){
     fields(input,['name','data_base64'],'audio upload');const request=structuredClone(input);
     if(typeof request.name!=='string'||!request.name.trim()||request.name.length>160||/[\\/\u0000-\u001f]/.test(request.name)||!mime[path.extname(request.name).toLowerCase()])throw fail('Use an audio filename with a supported extension.');
@@ -94,35 +121,42 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
     });
   }
   async function command(input,actor='system'){
-    fields(input,['session_id','command_id','op','audio_id','seconds'],'playback command');const request=structuredClone(input);sid(request.session_id);if(request.command_id!==undefined)sid(request.command_id);
-    if(!['load','play','pause','stop','seek'].includes(request.op))throw fail('Unknown playback command.');
+    fields(input,['session_id','command_id','op','audio_id','seconds','expression','duration_ms'],'playback command');const request=structuredClone(input);sid(request.session_id);if(request.command_id!==undefined)sid(request.command_id);
+    if(!['load','play','pause','stop','seek','cue','clear_cue'].includes(request.op))throw fail('Unknown playback command.');
     if(request.op==='load')aid(request.audio_id);else if(request.audio_id!==undefined)throw fail('Only load accepts an audio id.');
     if(request.op==='seek')number(request.seconds,'seek time');else if(request.seconds!==undefined)throw fail('Only seek accepts seconds.');
-    const identity=digest(Buffer.from(JSON.stringify({op:request.op,audio_id:request.audio_id,seconds:request.seconds})));
+    if(request.op==='cue'){
+      if(typeof request.expression!=='string'||!request.expression.length||request.expression.length>100||!Number.isSafeInteger(request.duration_ms)||request.duration_ms<PLAYBACK_LIMITS.cueMinMs||request.duration_ms>PLAYBACK_LIMITS.cueMaxMs)throw fail('Cue requires an embedded expression and duration from 250 to 10000 ms.');
+    }else if(request.expression!==undefined||request.duration_ms!==undefined)throw fail('Only cue accepts an expression and duration.');
+    const identity=digest(Buffer.from(JSON.stringify({op:request.op,audio_id:request.audio_id,seconds:request.seconds,expression:request.expression,duration_ms:request.duration_ms})));
     return serial(lock,async()=>{
-      const row=await session(request.session_id);await source(row);
+      const row=await session(request.session_id);const asset=await source(row);
       const previous=request.command_id&&row.commands.find(entry=>entry.id===request.command_id);
       if(previous){if(previous.identity!==identity)throw fail('Command id was already used with different arguments.',409);return publicSession(row);}
       if(request.command_id&&row.commands.length>=4096)throw fail('Session command history is full; register a new preview session.',409);
-      if(!row.capabilities.audio)throw fail('This preview cannot play audio.',409);
+      if(request.op==='cue'&&!cueExpressions(asset.row,asset.bytes).some(item=>item.name===request.expression))throw fail('Expression is not available for a lip-sync-safe cue.',422);
+      if(!['cue','clear_cue'].includes(request.op)&&!row.capabilities.audio)throw fail('This preview cannot play audio.',409);
       const next=row.revision+1;if(!Number.isSafeInteger(next))throw fail('Playback revision exhausted.',409);
-      if(request.op==='load'){
-        const clip=await audio(request.audio_id);row.desired={audio_id:clip.audio_id,url:clip.url,name:clip.name,bytes:clip.bytes,playing:false,time:0,load_revision:next,seek_revision:next};
+      if(request.op==='cue')row.desired.cue={expression:request.expression,durationMs:request.duration_ms,expiresAt:null,revision:next};
+      else if(request.op==='clear_cue')row.desired.cue=null;
+      else if(request.op==='load'){
+        const clip=await audio(request.audio_id);row.desired={audio_id:clip.audio_id,url:clip.url,name:clip.name,bytes:clip.bytes,playing:false,time:0,load_revision:next,seek_revision:next,audio_revision:next,cue:row.desired.cue||null};
       }else{
         if(!row.desired.audio_id)throw fail('Load local audio before controlling playback.',409);
         await audio(row.desired.audio_id);
         if(request.op==='play')row.desired.playing=true;
         if(request.op==='pause'||request.op==='stop')row.desired.playing=false;
         if(request.op==='seek'||request.op==='stop'){row.desired.time=request.op==='seek'?request.seconds:0;row.desired.seek_revision=next;}
+        row.desired.audio_revision=next;
       }
       row.revision=next;
       if(request.command_id)row.commands.push({id:request.command_id,identity});
-      await event('playback_command',actor,`avatar/${row.id}/playback/${row.session_id}`,{op:'playback_command',command:request.op,command_id:request.command_id||null,session_id:row.session_id,avatarId:row.id,revision:next,audio_id:row.desired.audio_id,...(request.seconds===undefined?{}:{seconds:request.seconds})});
+      await event('playback_command',actor,`avatar/${row.id}/playback/${row.session_id}`,{op:'playback_command',command:request.op,command_id:request.command_id||null,session_id:row.session_id,avatarId:row.id,revision:next,audio_id:row.desired.audio_id,...(request.seconds===undefined?{}:{seconds:request.seconds}),...(request.expression===undefined?{}:{expression:request.expression,duration_ms:request.duration_ms})});
       await atomic(sessionPath(row.session_id),row);return publicSession(row);
     });
   }
   async function media(id){const row=await audio(id),file=binaryPath(id),info=await stat(file);if(!info.isFile()||info.size!==row.bytes||digest(await readFile(file))!==row.sha256)throw fail('Local audio changed; upload it again.',409);return {row,file};}
-  return {register,heartbeat,sessions,upload,command,media};
+  return {register,heartbeat,sessions,cueInventory,upload,command,media};
 }
 
 /** Mounted only after avatar.js's same-origin loopback guard has succeeded. */
@@ -152,6 +186,7 @@ export function createAvatarPlaybackRoutes({directory,inspectAsset,json,provenan
     if(action==='register')result=await service.register(args,actor);
     else if(action==='heartbeat')result=await service.heartbeat(args,actor);
     else if(action==='sessions'){fields(args,[],'sessions');result=await service.sessions();}
+    else if(action==='cue_inventory')result=await service.cueInventory(args);
     else if(action==='upload')result=await service.upload(args,actor);
     else if(action==='command')result=await service.command(args,actor);
     else throw fail('Unknown playback action.');

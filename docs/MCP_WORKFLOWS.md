@@ -14,6 +14,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
 | Layer editing and preview | `image_documents`, `document_edit`, `image_document_preview`, `image_tools_catalog`, `image_capabilities` |
 | StandRig 2D performer | `image_standrig_psd_export` for a saved layered document; `standrig_status`, `standrig_parameters`, `standrig_control` for the local StandRig bridge |
+| 3D avatar preview and expression cues | `avatar_list`, `avatar_cue_inventory`, `avatar_playback_sessions`, `avatar_audio_upload`, `avatar_playback_command`; cue an embedded VRM expression for 250–10,000 ms in a live preview, then it restores the saved look |
 | AI edit, style transfer, selected-area repair | `image_ai_edit_create`, `image_ai_edit_status`, `image_ai_edit_accept`, `image_ai_edit_undo`, `image_ai_edit_discard` |
 | Per-image privacy blur | `image_set_blur` with `blur:true` or `false` |
 | Reactive video | `reactive_status`, `reactive_render`, then `vfx_render_status`; compositions remain editable through `vfx_*` |
@@ -23,6 +24,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Public community discovery | `community_feed`: the Community page's public live-session, upcoming-event, station, recent-track and article listings |
 | Reviewed outgoing bundles | `collab_resources`, `collab_preview`, `collab_pack`, `collab_send_back`, `collab_orders`, `collab_credit` |
 | Incoming work and returned takes | `collab_inbox`, `collab_open`, `collab_accept`, `collab_receive`, `collab_quarantine`, `collab_adopt`, `collab_drop`, `collab_set_resources`, `collab_free` |
+| Standalone Qwen image lending | `collab_image_preview`, `collab_pack`, `collab_open`, `collab_image_accept`, `collab_image_render`, `collab_image_send_back`, `collab_image_receive`, `collab_quarantine`, `collab_image_review_return`, `collab_image_adopt`, `collab_image_drop` |
 | Other existing JSON API operations | `studio_api_reference` searches API.md; `studio_api_request` calls an existing `/api/` endpoint when no typed tool covers it |
 
 `community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
@@ -96,9 +98,19 @@ planned owner changes. Reading or saving a plan never dispatches another job.
 `collab_verify` records a user's completed word check and requires explicit
 `verified` plus `words_matched:true` for a grant. Peer content cannot supply that
 authorization. Opening a bundle returns untrusted peer data. Accepting a reviewed
-order creates a proposed plan; plan approval and rendering remain separate.
+movie-scene order creates a proposed plan; plan approval and rendering remain
+separate. Accepting a standalone image job only stages its references;
+`collab_image_render` is a second explicit GPU action. It supports one Qwen base
+image with up to three included references and fixed settings; see
+[FRIEND_RENDERING.md](FRIEND_RENDERING.md#standalone-qwen-image-jobs).
+Only a confirmed failed or stopped image render accepts an explicit
+`collab_image_render({id, retry:true})`; an unanswered queue receipt remains
+locked. Review a returned PNG with `collab_image_review_return({from,file})`,
+which emits native MCP image content from the checked quarantine bytes.
 Packing and sending back create local sealed files and open no network connection.
-Adoption files an unselected take; it does not replace the current scene choice.
+Movie adoption files an unselected take; it does not replace the current scene
+choice. Image adoption adds a checked, reviewed PNG to Pictures with its peer
+model and rights record.
 
 ## Music workflows
 
