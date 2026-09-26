@@ -80,7 +80,7 @@ function ok(label, cond, detail = "") {
 const MCP_FILES = [
   "server/mcp.js", "server/mcp-standrig.js", "server/mcp-standrig-psd.js", "server/mcp-community.js",
   "server/mcp-audio.js",
-  "server/mcp-avatars.js", "server/mcp-avatar-handoff.js", "server/mcp-avatar-appearance.js", "server/mcp-avatar-playback.js", "server/mcp-avatar-weight-transfer.js", "server/mcp-avatar-fitting.js", "server/mcp-avatar-wardrobe.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
+  "server/mcp-avatars.js", "server/mcp-avatar-handoff.js", "server/mcp-avatar-appearance.js", "server/mcp-avatar-playback.js", "server/mcp-pngtuber.js", "server/mcp-avatar-weight-transfer.js", "server/mcp-avatar-fitting.js", "server/mcp-avatar-wardrobe.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-cloud.js", "server/mcp-music-input.js",
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
@@ -98,7 +98,7 @@ const ROUTE_FILES = [
   "server/videolab/routes.js", "server/daw/ear.js", "server/engine/routes.js",
   "server/llm/routes.js", "server/mv/routes.js", "server/welcome/routes.js",
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",
-  "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
+  "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/pngtuber.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
   "server/music/artifacts.js", "server/music/listening-lab.js",
   "server/setup/routes.js", "server/cloud-switch.js",

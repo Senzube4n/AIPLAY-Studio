@@ -9,6 +9,7 @@ import { deformReport } from './deform.js';
 import { createExampleInstaller, AVATAR_EXAMPLE } from './avatar-example.js';
 import { createAppearanceService } from './appearance.js';
 import { createAvatarPlaybackRoutes } from './avatar-playback.js';
+import { createPngtuberRoutes } from './pngtuber.js';
 import { createAvatarWardrobe, createAvatarWardrobeRoutes } from './avatar-wardrobe.js';
 import { createAvatarHandoffRoutes } from './avatar-handoff.js';
 import { VRM_LIMITS, VRM_EXTENSIONS, inspectVrmDocument } from './vrm-profile.js';
@@ -186,6 +187,7 @@ function localRequest(req) {
 export function createAvatarRoutes({directory,json,provenance}) {
   const service=createAvatarService({directory,record:event=>provenance.append('library',event)});
   const playback=createAvatarPlaybackRoutes({directory:path.join(directory,'playback'),inspectAsset:service.file,json,provenance});
+  const pngtuber=createPngtuberRoutes({json});
   const installExample=createExampleInstaller(service);
   const appearance=createAppearanceService({directory:path.join(directory,'looks'),inspectAsset:service.file,record:event=>provenance.append('library',event)});
   const wardrobe=createAvatarWardrobeRoutes({directory:path.join(directory,'wardrobe'),inspectAsset:service.file,inspectLook:(id,lookId)=>appearance.get(id,lookId),json,provenance});
@@ -203,6 +205,7 @@ export function createAvatarRoutes({directory,json,provenance}) {
       localRequest(req);
       res.setHeader('Cache-Control','private, no-store'); res.setHeader('X-Content-Type-Options','nosniff');
       if(await playback(req,res,url))return true;
+      if(await pngtuber(req,res,url))return true;
       if(await wardrobe(req,res,url))return true;
       if(await handoff(req,res,url))return true;
       if(req.method==='GET'&&['/api/avatars/vendor/three-vrm.module.js','/api/avatars/vendor/three-vrm-LICENSE'].includes(url.pathname)) {

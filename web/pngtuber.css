@@ -1,0 +1,29 @@
+body.pngtuber { overflow: auto; }
+#pngtuber { padding: 24px; }
+#pngtuber .page-head { display: flex; align-items: center; gap: 12px; }
+#pngtuber .page-head p { margin-right: auto; }
+#pngtuber .page-head .btn2 { white-space: nowrap; text-decoration: none; }
+.pn-layout { display: grid; grid-template-columns: minmax(240px,300px) minmax(0,1fr); gap: 16px; align-items: stretch; }
+.pn-setup h3 { margin: 0 0 12px; font: 600 16px var(--disp); }
+.pn-setup label { display: grid; gap: 5px; margin: 12px 0; color: var(--faint); font-size: 12px; }
+.pn-setup input[type=file] { min-width: 0; width: 100%; padding: 8px; font-size: 11px; }
+.pn-setup input[type=range] { width: 100%; accent-color: var(--primary); }
+.pn-setup hr { border: 0; border-top: 1px solid var(--hair); margin: 20px 0; }
+.pn-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.pn-actions .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.pn-detail { margin: 0 0 10px; line-height: 1.45; overflow-wrap: anywhere; }
+#pn-level { width: 90px; }
+#pn-stage { margin-top: 18px; }
+.pn-capture-hint { max-width: 32ch; margin: 9px 0 0; line-height: 1.45; }
+.pn-preview { min-height: 550px; padding: 12px; }
+.pn-canvas { position: relative; width: 100%; height: 100%; min-height: 520px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--hair); border-radius: 10px; background: radial-gradient(ellipse at 50% 35%,var(--raise),var(--rail)); }
+.pn-canvas img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.pn-canvas[data-talking="true"] #pn-idle-frame, .pn-canvas[data-talking="false"] #pn-talking-frame { visibility: hidden; }
+#pn-empty { color: var(--ghost); font-size: 12px; }
+#pn-edit { position: fixed; top: 12px; left: 12px; z-index: 4; }
+body.pngtuber.pn-stage { background: transparent; overflow: hidden; }
+body.pngtuber.pn-stage #pngtuber, body.pngtuber.pn-stage .pn-layout, body.pngtuber.pn-stage .pn-preview, body.pngtuber.pn-stage .pn-canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; min-height: 0; max-width: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+body.pngtuber.pn-stage .page-head, body.pngtuber.pn-stage .pnav, body.pngtuber.pn-stage .pn-setup, body.pngtuber.pn-stage #pn-empty { display: none; }
+body.pngtuber.pn-stage #pn-edit { opacity: 0; transition: opacity .12s; }
+body.pngtuber.pn-stage #pn-edit:hover, body.pngtuber.pn-stage #pn-edit:focus-visible { opacity: 1; }
+@media (max-width: 740px) { #pngtuber { padding: 14px; } #pngtuber .page-head { flex-wrap: wrap; } .pn-layout { grid-template-columns: 1fr; } .pn-preview { min-height: 400px; } .pn-canvas { min-height: 370px; } }

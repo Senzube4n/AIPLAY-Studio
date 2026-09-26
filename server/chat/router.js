@@ -550,6 +550,9 @@ export const ROUTABLE = {
   avatar_cue_inventory: null,
   avatar_audio_upload: "writes",
   avatar_playback_command: null,
+  pngtuber_sessions: null,
+  pngtuber_talk: null, // transient frame cue in one live browser preview
+  pngtuber_clear_talk: null,
   avatar_weight_transfer_status: null,
   avatar_weight_transfer_inspect: null,
   avatar_weight_transfer_submit: "writes", // bounded local CPU work creating a new attachment

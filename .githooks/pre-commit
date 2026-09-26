@@ -29,10 +29,14 @@ node --check web/avatar-shell.js || exit 1
 node --check web/avatar-parts.js || exit 1
 node --check web/avatar-voice.js || exit 1
 node --check web/avatar-lipsync.js || exit 1
+node --check web/pngtuber.js || exit 1
+node --check web/pngtuber-level.js || exit 1
 node --check web/avatar-handoff.js || exit 1
 node --check web/avatars.js || exit 1
 node --check web/standrig.js || exit 1
 node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
+node --test server/mesh/pngtuber_test.js || exit 1
+node --test server/mesh/pngtuber-browser_test.js || exit 1
 node --test server/standrig/connector_test.js || exit 1
 node --test server/standrig/psd-export_test.js || exit 1
 node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1

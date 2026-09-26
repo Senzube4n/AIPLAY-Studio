@@ -15,6 +15,12 @@ The 3D page loads VRM 1.0 models with MToon materials, existing humanoid bones, 
 
 The included workflow supports existing components inside a model. It does not automatically fit arbitrary generated hair/outfits. The advanced Attachment weights panel can transfer weights to an already aligned part using a local weighted base; see [its limits and requirements](AVATAR_PARTS.md). Rigged VRM models are distinct from static TripoSG geometry. VRM workshop admission does not grant native Agent World admission or bind an AIPlay account. Persona IDs here remain local attribution.
 
+## PNGtuber overlay
+
+The Workshop's **PNGtuber** link opens `/pngtuber.html`. Select an idle and talking PNG/WebP, then use a local microphone or audio file. RMS with hysteresis switches frames; **Stage view** removes the controls in the same tab for capture. OBS should capture that browser window. A separate OBS browser source cannot inherit the tab's file object URLs; files and any audio permission must be chosen again inside that source, and OBS file-picker and microphone behavior still needs real-world acceptance. Browser autoplay and microphone permission can block audio until clicked there. Refreshing the page clears file selections; navigating Back from the browser cache keeps them but stops mic/audio until clicked again. This page does not connect to a streaming platform.
+
+Image and audio files remain browser `File`/object URLs; Studio does not upload or persist them. A small in-memory control lease carries only current frame/source status and an agent cue. `pngtuber_sessions` discovers a live Preview or Stage tab after both frames are selected; `pngtuber_talk` requests the talking frame for 250–10,000 ms and `pngtuber_clear_talk` cancels it. The server refuses a talk cue before the browser confirms a visible preview, or while the tab is hidden. The browser acknowledges the revision before a cue's lifetime begins. These MCP controls do not grant microphone access, choose local files, start audio, or prove pixels reached a stream. The route is under the same loopback Host and Origin guard as the 3D avatar controls and expires after 30 seconds without a browser heartbeat.
+
 ## MCP
 
 `avatar_install_example` installs the hash-pinned reference on explicit request. `avatar_import` accepts `profile: "vrm"` for this runtime; `world` remains the default. `avatar_list`, `avatar_inspect` and `avatar_export` remain available.
