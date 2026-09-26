@@ -98,7 +98,7 @@ test('hair parts disclose inherited spring coverage without implying new physics
   {...part('hair-old'),name:'Old hair',slot:'hair',source:'artist',license:'CC0'});
  await f.ui.setLook(null);
  const items=f.get('wardrobe-list').children;
- assert.equal(items[2].children[2].textContent,'Spring-linked');assert.match(items[2].children[2].title,/existing base spring joints/);
+ assert.equal(items[2].children[2].textContent,'Spring-linked');assert.match(items[2].children[2].title,/joints moved by existing base springs/);
  assert.equal(items[3].children[2].textContent,'No spring link');assert.match(items[3].children[2].title,/at least 5% weight/);
  assert.equal(items[4].children[2].textContent,'Motion unverified');
  f.ui.dispose();

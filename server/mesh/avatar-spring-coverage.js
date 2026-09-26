@@ -10,10 +10,18 @@ export function inspectPartSpringCoverage(base,part,binary,bindings){
   const springs=Array.isArray(base.extensionsUsed)&&base.extensionsUsed.includes('VRMC_springBone')&&extension?.specVersion==='1.0'?extension.springs:null;
   if(Array.isArray(springs)&&springs.length>256)return {mode:'unverified',baseSpringChains:springs.length,springLinkedJoints:0,springLinkedVertices:0,minimumWeight:MIN_VISIBLE_WEIGHT};
   const chains=Array.isArray(springs)?springs.filter(chain=>Array.isArray(chain?.joints)&&chain.joints.length):[];
-  const springNodes=new Set();
+  // A spring rotates its child bones too. Hair weighted to a child joint can
+  // move with the spring even when none of its vertices names the spring joint
+  // directly. The base skeleton was already checked by inspectWardrobePart.
+  const springNodes=new Set(),pending=[];
   for(const chain of chains){
     if(!Array.isArray(chain?.joints))continue;
-    for(const joint of chain.joints)if(Number.isInteger(joint?.node)&&base.nodes?.[joint.node])springNodes.add(joint.node);
+    for(const joint of chain.joints)if(Number.isInteger(joint?.node)&&base.nodes?.[joint.node])pending.push(joint.node);
+  }
+  while(pending.length){
+    const node=pending.pop();if(springNodes.has(node))continue;
+    springNodes.add(node);
+    for(const child of base.nodes[node].children||[])if(Number.isInteger(child)&&base.nodes[child])pending.push(child);
   }
   const linkedNodes=new Set();let weightedVertices=0;
   for(const binding of bindings){

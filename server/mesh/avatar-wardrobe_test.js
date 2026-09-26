@@ -62,6 +62,17 @@ test('hair import and list expose actual inherited spring coverage, never invent
   assert.equal(unadvertised.motion.mode,'none');
 });
 
+test('hair weighted to a spring descendant is linked, but an ancestor weight is not',async()=>{
+  const springAt=node=>model(j=>{j.extensionsUsed=['VRMC_springBone'];j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node}]}]}};});
+  const weightedTo=index=>model((j,bin)=>{for(let vertex=0;vertex<8;vertex++)bin.writeUInt8(index,288+vertex*4);});
+  const child=weightedTo(2),parent=weightedTo(1),base=springAt(2);
+  const linked=await inspectWardrobePart(child,base,hash(base));
+  assert.deepEqual(linked.motion,{mode:'base_springs',baseSpringChains:1,springLinkedJoints:1,springLinkedVertices:8,minimumWeight:.05});
+  const reverse=springAt(3),unlinked=await inspectWardrobePart(parent,reverse,hash(reverse));
+  assert.equal(unlinked.motion.mode,'none');
+  assert.equal(unlinked.motion.springLinkedVertices,0);
+});
+
 test('stale concurrent selections, duplicate slots and caller mutation do not overwrite saved state',async t=>{
   const f=await fixture(t),a=await f.import(),b=await f.import({name:'Other coat'}),input={id:ID,sha256:f.sha256,expected_revision:0,part_ids:[a.id]};
   const save=f.service.select(input);input.part_ids.push(b.id);await save;
