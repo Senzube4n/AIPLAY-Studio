@@ -11,7 +11,7 @@ import { createAvatarRoutes } from './avatar.js';
 import { avatarTools } from '../mcp-avatars.js';
 import * as provenance from '../provenance.js';
 
-async function setup(t) {
+async function setup(t,{spring=false}={}) {
   const directory=await mkdtemp(path.join(os.tmpdir(),'avatar-appearance-http-'));
   const ledgerScope={dir:path.join(directory,'ledger')};
   const events=[];
@@ -29,8 +29,16 @@ async function setup(t) {
   doc.materials=[{name:'Fabric',pbrMetallicRoughness:{baseColorFactor:[.3,.5,.7,1],metallicFactor:0,roughnessFactor:.6}}];
   doc.meshes[0].primitives[0].material=0;
   doc.nodes.push({name:'Accessory',mesh:0,skin:0});doc.scenes[0].nodes.push(4);
+  if(spring){
+    const humanoid=['hips','spine','head','leftUpperArm','leftLowerArm','leftHand','rightUpperArm','rightLowerArm','rightHand','leftUpperLeg','leftLowerLeg','leftFoot','rightUpperLeg','rightLowerLeg','rightFoot'];
+    const assigned=[1,2,3];
+    while(assigned.length<humanoid.length){const next=doc.nodes.length;assigned.push(next);doc.nodes.push({name:`human_${humanoid[assigned.length-1]}`});doc.nodes[1].children.push(next);}
+    doc.extensionsUsed=['VRMC_vrm','VRMC_springBone'];
+    doc.extensions={VRMC_vrm:{specVersion:'1.0',meta:{name:'Motion fixture',authors:['Test']},humanoid:{humanBones:Object.fromEntries(humanoid.map((name,index)=>[name,{node:assigned[index]}]))}},
+      VRMC_springBone:{specVersion:'1.0',springs:[{name:'Hair sway',joints:[{node:3}]}]}};
+  }
   const bytes=packGlb(doc);
-  const row=await call({action:'import',data_base64:bytes.toString('base64'),name:'HTTP fixture',source:'Procedural fixture',license:'Test only',skeleton_family:'qa-three-joints',facing:'+Z'});
+  const row=await call({action:'import',...(spring?{profile:'vrm'}:{}),data_base64:bytes.toString('base64'),name:'HTTP fixture',source:'Procedural fixture',license:'Test only',skeleton_family:'qa-three-joints',facing:'+Z'});
   const request=(settings={})=>({action:'appearance_save',id:row.id,sha256:row.inspection.sha256,expected_revision:0,name:'First look',settings});
   return {directory,ledgerScope,events,base,post,call,row,bytes,request};
 }
@@ -96,6 +104,9 @@ test('HTTP and registered MCP tools preserve the same settings and revision conf
   const tools=avatarTools(async(method,route,body)=>{calls.push({method,route,body});assert.equal(route,'/api/avatars');return f.call(body);});
   const run=(name,args)=>tools.find(tool=>tool.name===`avatar_appearance_${name}`).run(args);
   const inventory=await run('inventory',{id});
+  const motion=await tools.find(tool=>tool.name==='avatar_motion_audit').run({id});
+  assert.deepEqual(motion,{avatarId:id,sha256:inventory.sha256,status:'no_springs',minimumWeight:.05,declaredChains:0,linkedChains:0,colliders:0,chains:[],meshes:[]});
+  assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars',body:{action:'motion_audit',id}});
   const {action,...request}=f.request({hidden_nodes:[4],material_colors:{'0':[.8,.6,.4,1]}});
   const saved=await run('save',request);
   assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars',body:{...request,action:'appearance_save'}});
@@ -111,11 +122,24 @@ test('HTTP and registered MCP tools preserve the same settings and revision conf
   assert.equal((await f.post({...edit,path:'C:/not-an-appearance.glb'})).response.status,400);
 });
 
+test('motion audit reads hash-pinned spring weights through HTTP and MCP',async t=>{
+  const f=await setup(t,{spring:true}),id=f.row.id;
+  const result=await f.call({action:'motion_audit',id});
+  assert.equal(result.sha256,f.row.inspection.sha256);
+  assert.equal(result.status,'linked');
+  assert.equal(result.linkedChains,1);
+  assert.equal(result.chains[0].weightedVertices,4);
+  assert.deepEqual(result.chains[0].meshNodes,[0,4]);
+  const tool=avatarTools(async(_method,_route,body)=>f.call(body)).find(entry=>entry.name==='avatar_motion_audit');
+  assert.deepEqual(await tool.run({id}),result);
+  assert.deepEqual(await readFile(path.join(f.directory,id,'avatar.glb')),f.bytes);
+});
+
 test('all appearance actions and download routes retain loopback origin and Host gating',async t=>{
   const f=await setup(t),id=f.row.id;
   const saved=await f.call(f.request());
   const requests=[
-    {action:'appearance_inventory',id},{action:'appearance_list',id},{action:'appearance_get',id,look_id:saved.id},
+    {action:'appearance_inventory',id},{action:'motion_audit',id},{action:'appearance_list',id},{action:'appearance_get',id,look_id:saved.id},
     f.request(),{action:'appearance_activate',id,look_id:saved.id,sha256:saved.sha256},
     {action:'appearance_active',id},{action:'appearance_delete',id,look_id:saved.id,sha256:saved.sha256,expected_revision:1},
   ];
@@ -135,7 +159,7 @@ test('source tampering returns conflicts through every appearance read, mutation
   await f.call({action:'appearance_activate',id,look_id:saved.id,sha256:saved.sha256});
   await writeFile(path.join(f.directory,id,'avatar.glb'),Buffer.concat([f.bytes,Buffer.from('changed')]));
   for(const request of [
-    {action:'appearance_inventory',id},{action:'appearance_list',id},{action:'appearance_get',id,look_id:saved.id},
+    {action:'appearance_inventory',id},{action:'motion_audit',id},{action:'appearance_list',id},{action:'appearance_get',id,look_id:saved.id},
     f.request(),{action:'appearance_activate',id,look_id:saved.id,sha256:saved.sha256},
     {action:'appearance_active',id},{action:'appearance_delete',id,look_id:saved.id,sha256:saved.sha256,expected_revision:1},{action:'export',id},
   ])assert.equal((await f.post(request)).response.status,409,request.action);
@@ -216,4 +240,26 @@ test('a successful save followed by failed activation retries as an edit and res
   assert.equal(saves.length,2);
   assert.equal(saves[1].look_id,'look-1');
   assert.equal(saves[1].expected_revision,1);
+});
+
+test('UI motion check reports linked geometry and discards a late result after avatar change',async()=>{
+  const pending=deferred();
+  const f=uiFixture({motion_audit:()=>pending.promise});await f.mounted;
+  const checking=f.node('appearance-motion-check').onclick();
+  assert.equal(f.node('appearance-motion-state').textContent,'Checking…');
+  assert.equal(f.node('appearance-motion-check').disabled,true);
+  pending.resolve({avatarId:'avatar',sha256:'a'.repeat(64),status:'linked',declaredChains:2,linkedChains:1,
+    chains:[{name:'Hair',weightedVertices:12,rigidMeshes:0,joints:[{name:'Hair root'}]}],
+    meshes:[{name:'Hair mesh',kind:'skinned',weightedVertices:12,vertices:40}]});
+  await checking;
+  assert.equal(f.node('appearance-motion-state').textContent,'1/2 chains linked');
+  assert.equal(f.node('appearance-motion-details').hidden,false);
+  assert.equal(f.node('appearance-motion-list').children.length,2);
+  assert.equal(f.node('appearance-motion-check').disabled,false);
+  const late=deferred(),stale=uiFixture({motion_audit:()=>late.promise});await stale.mounted;
+  const request=stale.node('appearance-motion-check').onclick();
+  stale.setCurrent(false);
+  late.resolve({avatarId:'avatar',sha256:'a'.repeat(64),status:'no_springs',chains:[],meshes:[]});
+  await request;
+  assert.equal(stale.node('appearance-motion-state').textContent,'Checking…');
 });

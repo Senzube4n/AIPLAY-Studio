@@ -29,7 +29,8 @@ node --check worker/runpod-worker.js || exit 1
 # *_test.{js,mjs,py} on disk must appear in this file or be exempted BY NAME
 # with a reason in the script. ~0.1 s.
 node scripts/suites_test.mjs || exit 1
-node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-runtime_test.js || exit 1
+node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-motion-audit_test.js server/mesh/avatar-runtime_test.js || exit 1
+node --check server/mesh/avatar-motion-audit.js || exit 1
 node --check web/avatar-runtime.js || exit 1
 node --check web/avatar-appearance.js || exit 1
 node --check web/avatar-shell.js || exit 1

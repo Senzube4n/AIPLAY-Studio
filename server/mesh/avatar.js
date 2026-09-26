@@ -239,6 +239,7 @@ export function createAvatarRoutes({directory,json,provenance}) {
       if(action==='install_example') result=await installExample(actor);
       else if(action==='source_preflight') result=await inspectAvatarSource(input);
       else if(action==='appearance_inventory') result=await appearance.inventory(b.id);
+      else if(action==='motion_audit') result=await appearance.motion(b.id);
       else if(action==='appearance_list') result=await appearance.list(b.id);
       else if(action==='appearance_get') result=await appearance.get(b.id,b.look_id);
       else if(action==='appearance_save') result=await appearance.save(input,actor);

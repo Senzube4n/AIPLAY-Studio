@@ -97,7 +97,7 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
         if (motion?.mode === 'base_springs' && motion.springLinkedVertices > 0) {
           motionBadge.className += ' linked';
           motionBadge.textContent = 'Spring-linked';
-          motionBadge.title = `${motion.springLinkedVertices} vertices have at least 5% weight on ${motion.springLinkedJoints} existing base spring joints. Movement needs Hair physics on; this part adds no new springs.`;
+          motionBadge.title = `${motion.springLinkedVertices} vertices have at least 5% weight on ${motion.springLinkedJoints} existing base spring joints. Movement needs Spring motion on; this part adds no new springs.`;
         } else if (motion?.mode === 'none') {
           motionBadge.textContent = 'No spring link';
           motionBadge.title = 'No vertices have at least 5% weight on an existing base spring joint. This part follows ordinary rig movement.';
