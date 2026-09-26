@@ -85,7 +85,8 @@ test("verified friends without a role can receive resources and received cards c
   f.peer.role = "none"; await f.run("paintPeers()");
   assert.equal(f.node("cbPreview").disabled, true);
   f.node("cbKind").value = "resources"; f.run("paintCbKind()");
-  assert.equal(f.node("cbTo").value, f.peer.fp);
+  assert.equal(f.node("cbTo").value, "", "outgoing packages do not silently choose the first friend");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
   assert.equal(f.node("cbPreview").disabled, false);
   f.context.respond = (url, body) => body?.action === "open" ? { file: "card.aiplay", kind: "resources", from: f.peer, packet: card } : f.defaults(url, body);
   await f.run('openCollabFile("card.aiplay")');
@@ -93,6 +94,27 @@ test("verified friends without a role can receive resources and received cards c
   await f.fire("cbSaveResources");
   const saved = f.calls.find((c) => c.body?.action === "set_resources");
   assert.deepEqual(saved.body, { action: "set_resources", fp: f.peer.fp, resources: card });
+});
+
+test("recipient choice shows only advertised capacity and leaves live idle unknown", async () => {
+  const f = fixture();
+  f.peer.resources = { at: Date.now(), gpu: { vramMb: 12288 }, ready: ["videoLtx"] };
+  f.peer.resourcesSaid = "1 hour ago";
+  await f.run("paintPeers()");
+  assert.equal(f.node("cbPreview").disabled, true);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /Choose a friend/);
+  f.node("cbTo").value = f.peer.fp;
+  f.node("cbKind").value = "video-recipe";
+  f.run('collabVideoDraft = { engine: "ltx" }; paintCbKind()');
+  await f.fire("cbTo", "change");
+  assert.equal(f.node("cbPreview").disabled, false);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /12\.0 GB VRAM/);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /LTX listed/);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /Idle unknown/);
+  f.run('collabVideoDraft = { engine: "h3" }; paintCbRecipientStatus()');
+  assert.match(f.node("cbRecipientStatus").innerHTML, /H3 not listed/);
+  f.node("cbTo").value = ""; await f.fire("cbTo", "change");
+  assert.equal(f.node("cbPreview").disabled, true);
 });
 
 test("reviewed preview token is required for prepare and changing inputs disarms it", async () => {

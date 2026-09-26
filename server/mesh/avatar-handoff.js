@@ -4,6 +4,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {mkdir, readFile, readdir, writeFile, rename, rm} from 'node:fs/promises';
 import {composeAvatarVrm, COMPOSITION_LIMITS} from './avatar-composition.js';
 import {WARDROBE_LIMITS} from './avatar-wardrobe.js';
+import {previewWorldAvatarOutfit} from './avatar-world-preflight.js';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const fail = (message, status=400) => Object.assign(new Error(message), {status});
@@ -11,7 +12,6 @@ const avatarId = /^av_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{1
 const lookId = /^look_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const exportId = /^outfit_[a-f0-9]{64}$/;
 const sha = /^[a-f0-9]{64}$/;
-const seedSha = '12c2b97e95e700783a6a550dc0eee2d7880aeedccef9ae67bc4c5a2f0f2631a2';
 const files = {'outfit.vrm':'model/gltf-binary','outfit.aiplay-avatar.json':'application/json; charset=utf-8','manifest.json':'application/json; charset=utf-8'};
 const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 const identity = row => `outfit_${hash(Buffer.from(JSON.stringify({bundleSha256:row.bundleSha256,avatarId:row.avatarId,lookId:row.lookId,lookRevision:row.lookRevision,wardrobeRevision:row.wardrobeRevision})))}`;
@@ -77,6 +77,7 @@ export function createAvatarHandoff({directory, inspectAsset, appearance, wardro
         data_base64:composed.bytes.toString('base64'),appearance:{name,settings:before.look?.settings || {hidden_nodes:[],material_colors:{},expressions:{},spring_enabled:true}},
         parts:parts.map(({sha256,name,slot,source,license})=>({sha256,name,slot,source,license}))};
       const bundleBytes=Buffer.from(JSON.stringify(bundle));
+      const worldPreflight=previewWorldAvatarOutfit({baseSha256:input.sha256,modelBytes:composed.bytes,packageBytes:bundleBytes.length,parts:bundle.parts});
       const context={bundleSha256:hash(bundleBytes),avatarId:input.id,lookId:input.look_id,lookRevision:input.expected_look_revision,wardrobeRevision:input.expected_wardrobe_revision};
       const id=identity(context), target=path.join(directory,id);
       await mkdir(directory,{recursive:true});
@@ -84,7 +85,7 @@ export function createAvatarHandoff({directory, inspectAsset, appearance, wardro
       const manifest={schema:1,id,avatarId:input.id,baseSha256:input.sha256,sha256:composed.sha256,bytes:composed.bytes.length,
         bundleSha256:hash(bundleBytes),name,lookId:input.look_id,lookRevision:input.expected_look_revision,wardrobeRevision:input.expected_wardrobe_revision,
         parts:bundle.parts,inspection:composed.manifest,review:'needs_visual_review',
-        worldCandidate:input.sha256===seedSha && composed.bytes.length<=16*1024*1024,
+        worldCandidate:worldPreflight.candidate,worldPreflight,
         files:{bundle:`/api/avatars/handoff/${id}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/${id}/outfit.vrm`,manifest:`/api/avatars/handoff/${id}/manifest.json`}};
       if(!names.includes(id)) {
         if(names.filter(n=>exportId.test(n)).length>=64) throw fail('The local outfit export shelf is full (64 files).',409);
@@ -115,6 +116,14 @@ export function createAvatarHandoff({directory, inspectAsset, appearance, wardro
     try {row=JSON.parse(await readFile(path.join(directory,id,'manifest.json'),'utf8'));}
     catch(e){if(e.code==='ENOENT')throw fail('Outfit export not found.',404);throw e;}
     if(row.id!==id || !sha.test(row.sha256) || !sha.test(row.bundleSha256) || identity(row)!==id) throw fail('Outfit export identity changed.',409);
+    // Exports prepared by an older Studio may carry the optimistic boolean.
+    // Recheck their immutable downloads without rewriting the original receipt.
+    if(!row.worldPreflight){
+      const [modelBytes,bundleBytes]=await Promise.all(['outfit.vrm','outfit.aiplay-avatar.json'].map(name=>readFile(path.join(directory,id,name))));
+      if(hash(modelBytes)!==row.sha256||hash(bundleBytes)!==row.bundleSha256)throw fail('Outfit export bytes changed.',409);
+      const worldPreflight=previewWorldAvatarOutfit({baseSha256:row.baseSha256,modelBytes,packageBytes:bundleBytes.length,parts:row.parts});
+      return {...row,worldCandidate:worldPreflight.candidate,worldPreflight};
+    }
     return row;
   }
   async function file(id,name) {

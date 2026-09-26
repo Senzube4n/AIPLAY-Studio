@@ -32,7 +32,7 @@ test('cancelling a pending preview keeps the current outfit even when no replace
 });
 
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
-function node(){return {children:[],textContent:'',hidden:false,disabled:false,value:'',files:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=[...items];}};}
+function node(){return {children:[],attributes:{},textContent:'',hidden:false,disabled:false,value:'',files:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=[...items];},setAttribute(name,value){this.attributes[name]=value;},getAttribute(name){return this.attributes[name];}};}
 function uiFixture({load=async()=>({scene:{traverse(){}}}),respond}={}){
  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,node());return elements.get(id);};
  const documentRef={hidden:false,getElementById:get,createElement:()=>node()};
@@ -72,4 +72,21 @@ test('late named-look selection cannot overwrite a new base outfit context',asyn
 test('MCP selection polling does not replace an unsaved local draft',async()=>{
  const f=uiFixture();await f.ui.setLook(null);f.checkbox(0).checked=true;f.checkbox(0).onchange();await flush();
  const before=f.calls.length;await f.poll();assert.equal(f.calls.length,before);assert.equal(f.get('wardrobe-state').textContent,'Unsaved outfit');f.ui.dispose();
+});
+
+test('category browser previews prepared parts and removing one category preserves others',async()=>{
+ const f=uiFixture();f.parts.push({...part('hair-a'),name:'Long hair',slot:'hair',source:'artist',license:'CC0'});
+ await f.ui.setLook(null);
+ const categories=()=>f.get('wardrobe-categories').children;
+ assert.deepEqual(categories().map(button=>button.textContent),['All','Outfit','Hair']);
+ f.checkbox(0).checked=true;f.checkbox(0).onchange();await flush();
+ categories().find(button=>button.textContent==='Hair').onclick();
+ assert.equal(f.get('wardrobe-list').children.length,1);
+ assert.equal(categories().find(button=>button.textContent==='Hair').getAttribute('aria-pressed'),'true');
+ f.checkbox(0).checked=true;f.checkbox(0).onchange();await flush();
+ assert.deepEqual(f.replaced.at(-1),['coat-a','hair-a']);
+ f.get('wardrobe-clear').onclick();await flush();
+ assert.deepEqual(f.replaced.at(-1),['coat-a']);
+ await f.get('wardrobe-save').onclick();
+ assert.deepEqual(f.calls.find(call=>call.action==='select').part_ids,['coat-a']);f.ui.dispose();
 });

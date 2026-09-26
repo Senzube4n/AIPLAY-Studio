@@ -242,6 +242,11 @@ World verifies the original model and added resources independently. Part credit
 are uploader declarations, not verified license grants. Import selects the asset
 and look for review; binding it to a persona is a separate action. A successful
 Studio export alone does not establish World admission or multiplayer acceptance.
+The export receipt includes `worldPreflight` with local size, part-count, mesh,
+triangle and texture-budget findings; `worldCandidate` mirrors its basic verdict.
+This is a preview, not an acceptance receipt. World checks the actual bytes,
+account and persona again when the package is imported and bound. The Studio
+`avatar_outfit_export` and `avatar_outfit_get` MCP tools return the same findings.
 
 ## Direct CLI
 

@@ -32,12 +32,15 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
   const $ = id => documentRef.getElementById(id), form = $('wardrobe-form');
   const preview = createWardrobePreview({runtime, load});
   let live = true, context = 0, lookId = null, lookName = '', version = 0, selection = null,
-    parts = [], draft = [], dirty = false, busy = false, previewing = false, previewValid = false, polling = false;
+    parts = [], draft = [], slots = [], category = 'all', dirty = false, busy = false, previewing = false, previewValid = false, polling = false;
+  const slotNames = {hair:'Hair',head:'Head',body:'Body',outfit:'Outfit',shoes:'Shoes',accessory:'Accessories'};
   const current = token => live && isCurrent() && token === context;
   const note = (message = '') => { $('wardrobe-note').textContent = message; $('wardrobe-note').hidden = !message; };
   const paint = () => {
     $('wardrobe-save').disabled = busy || previewing || !dirty || !previewValid;
     $('wardrobe-reset').disabled = busy || !selection || (!dirty && previewValid);
+    $('wardrobe-clear').disabled = busy || !draft.some(id => category === 'all' || parts.find(part => part.id === id)?.slot === category);
+    for (const button of $('wardrobe-categories').children) button.disabled = busy;
     $('wardrobe-import-submit').disabled = busy;
     $('wardrobe-context').textContent = lookName || 'Base outfit';
     $('wardrobe-state').textContent = previewing ? 'Loading parts' : selection && !previewValid ? 'Preview unavailable' : dirty ? 'Unsaved outfit' : draft.length ? `${draft.length} equipped` : 'Base model';
@@ -55,25 +58,45 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
     } catch (error) { if (current(token) && ticket === version) note(error.message); }
     finally { if (current(token) && ticket === version) { previewing = false; paint(); } }
   }
+  function changeDraft(next) {
+    if (next.length === draft.length && next.every(id => draft.includes(id))) return;
+    draft = next; dirty = true; note(); void show(draft); draw(); paint();
+  }
+  function drawCategories() {
+    const host = $('wardrobe-categories'); host.replaceChildren();
+    const available = [...new Set([...slots, ...parts.map(part => part.slot)])];
+    for (const slot of ['all', ...available]) {
+      const button = documentRef.createElement('button'); button.type = 'button'; button.className = 'btn2 sm';
+      button.textContent = slot === 'all' ? 'All' : slotNames[slot] || slot;
+      button.setAttribute('aria-pressed', String(category === slot));
+      button.title = slot === 'all' ? 'Show every prepared part.' : `Show ${button.textContent.toLowerCase()} prepared for this rig.`;
+      button.disabled = busy;
+      button.onclick = () => { if (!live || !isCurrent() || busy) return; category = slot; draw(); paint(); };
+      host.append(button);
+    }
+  }
   function draw() {
+    drawCategories();
     $('wardrobe-list').replaceChildren();
-    if (!parts.length) {
-      const empty = documentRef.createElement('p'); empty.className = 'hint'; empty.textContent = 'Add a prepared part or fit one below.';
+    const visible = category === 'all' ? parts : parts.filter(part => part.slot === category);
+    if (!visible.length) {
+      const empty = documentRef.createElement('p'); empty.className = 'hint'; empty.textContent = category === 'all' ? 'Add a prepared part or fit one below.' : `No ${slotNames[category]?.toLowerCase() || category} parts yet. Add or fit one below.`;
       $('wardrobe-list').append(empty);
     }
-    for (const part of parts) {
-      const line = documentRef.createElement('div'); line.className = 'wardrobe-item';
+    for (const part of visible) {
+      const line = documentRef.createElement('div'); line.className = `wardrobe-item${draft.includes(part.id) ? ' selected' : ''}`;
+      line.title = `Source: ${part.source}\nLicence: ${part.license}`;
       const label = documentRef.createElement('label'), check = documentRef.createElement('input'), name = documentRef.createElement('span');
       check.type = 'checkbox'; check.checked = draft.includes(part.id); check.disabled = busy; check.title = 'Preview this part. Save outfit to keep the selection.';
       name.textContent = part.name; label.append(check, name);
-      const slot = documentRef.createElement('span'); slot.className = 'hint'; slot.textContent = part.slot; slot.title = `${part.source}\n${part.license}`;
+      const slot = documentRef.createElement('span'); slot.className = 'hint'; slot.textContent = slotNames[part.slot] || part.slot;
       check.onchange = () => {
         if (!live || !isCurrent() || busy) return;
         const next = new Set(draft);
         if(check.checked && part.slot !== 'accessory') for(const previous of parts) if(previous.slot === part.slot) next.delete(previous.id);
         check.checked ? next.add(part.id) : next.delete(part.id);
         if (next.size > 8) { check.checked = false; note('Choose up to eight parts.'); return; }
-        draft = [...next]; dirty = true; note(); void show(draft); draw(); paint();
+        changeDraft([...next]);
       };
       const remove = documentRef.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove';
       remove.className = 'btn sm'; remove.disabled = busy || draft.includes(part.id);
@@ -150,6 +173,10 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
     catch (error) { if (current(token)) note(error.message); }
     finally { if (current(token)) { busy = false; draw(); paint(); } }
   };
+  $('wardrobe-clear').onclick = () => {
+    if (!live || !isCurrent() || busy) return;
+    changeDraft(draft.filter(id => category !== 'all' && parts.find(part => part.id === id)?.slot !== category));
+  };
   const timer = setTimer(async () => {
     if (!live || !isCurrent() || documentRef.hidden || dirty || busy || polling || previewing || !selection) return;
     const token = context; polling = true;
@@ -162,6 +189,7 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
   $('wardrobe-panel').hidden = false;
   void api({action:'inventory',id:row.id}).then(value => {
     if (!live || !isCurrent()) return;
+    slots = value.slots; draw(); paint();
     form.elements.slot.replaceChildren();
     for (const slot of value.slots) { const option=documentRef.createElement('option'); option.value=slot; option.textContent=slot; form.elements.slot.append(option); }
     form.elements.slot.value='outfit';

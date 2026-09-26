@@ -2160,6 +2160,7 @@
               <option value="video-recipe">video recipe (from Video)</option>
             </select></span>
           </div>
+          <div id="cbRecipientStatus" class="chips" role="status" aria-live="polite"></div>
           <div class="params" id="cbSegmentRow">
             <label for="cbSegment">Which scene</label><span class="pv"><select id="cbSegment" class="sel2"><option value="">Loading scenes…</option></select></span>
           </div>
@@ -2182,7 +2183,7 @@
             <p class="hint">Left alone, an order carries the project&rsquo;s own settings. Pin one and their machine is asked for exactly that.</p>
           </details>
 
-          <div class="chips"><button class="btn sm primary" type="button" id="cbPreview">Preview package</button><button class="btn sm" type="button" id="cbPack" disabled>Prepare reviewed file</button></div>
+          <div class="chips"><button class="btn sm primary" type="button" id="cbPreview" disabled>Preview package</button><button class="btn sm" type="button" id="cbPack" disabled>Prepare reviewed file</button></div>
           <p class="hint" id="cbPackNote" role="status">Preview the current contents before preparing a file.</p>
           <p class="hint">Render orders include the resolved prompt, required pictures and pinned settings for one scene. A scene for viewing contains picture metadata; check the manifest for what is included. Project documents include an asset manifest, without media or a shared-editing import.</p>
 

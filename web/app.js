@@ -6105,15 +6105,44 @@ function cbListError(label, r) {
 function cbCanReceive(p, kind) {
   return p.verified && (kind === "resources" || p.role === "collaborator" || (kind !== "project" && p.role === "lender"));
 }
+function paintCbRecipientStatus() {
+  const kind = $("cbKind")?.value || "shot";
+  const peer = cbPeers.find((p) => p.fp === $("cbTo")?.value && cbCanReceive(p, kind));
+  const host = $("cbRecipientStatus");
+  if ($("cbPreview")) $("cbPreview").disabled = !peer;
+  if (!host) return;
+  if (!peer) {
+    host.innerHTML = '<span class="chip warn">Choose a friend</span>';
+    return;
+  }
+  const card = peer.resources;
+  const parts = [];
+  if (!card) parts.push('<span class="chip warn" title="Ask this friend to send a hardware card before relying on their model list.">No hardware card</span>');
+  else {
+    const age = peer.resourcesSaid || "age unknown";
+    const ageLabel = age.length > 25 ? "age unknown" : age;
+    parts.push(`<span class="chip" title="Last card: ${esc(age)}. This is not a live reading.">Card ${esc(ageLabel)}</span>`);
+    const vram = Number(card.gpu?.vramMb);
+    if (Number.isFinite(vram) && vram > 0) parts.push(`<span class="chip">${(vram / 1024).toFixed(1)} GB VRAM</span>`);
+    else parts.push('<span class="chip warn">VRAM unknown</span>');
+    const ready = Array.isArray(card.ready) ? card.ready : [];
+    const engine = kind === "video-recipe" ? collabVideoDraft?.engine : kind === "order" ? $("cbEngineMode")?.value : "";
+    const capability = engine === "ltx" ? "videoLtx" : engine === "h3" ? "video" : "";
+    if (capability) parts.push(`<span class="chip ${ready.includes(capability) ? "ok" : "warn"}" title="Downloaded catalogue models only. Custom models are not listed.">${engine.toUpperCase()} ${ready.includes(capability) ? "listed" : "not listed"}</span>`);
+    else parts.push(`<span class="chip" title="Downloaded catalogue models on their last card.">${ready.length} models listed</span>`);
+  }
+  parts.push('<span class="chip warn" title="Collab has no remote presence or queue connection. Ask your friend before counting on their card.">Idle unknown</span>');
+  host.innerHTML = parts.join("");
+}
 function paintCbRecipients() {
   const kind = $("cbKind")?.value || "shot", to = $("cbTo");
   const peers = cbPeers.filter((p) => cbCanReceive(p, kind)), selected = to?.value;
   if (to) {
-    to.innerHTML = peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="">No verified friend with permission for this package</option>';
+    to.innerHTML = '<option value="">Choose a friend</option>' + (peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="" disabled>No verified friend with permission</option>');
     if (peers.some((p) => p.fp === selected)) to.value = selected;
   }
   if ($("cbNobody")) $("cbNobody").hidden = !!peers.length;
-  if ($("cbPreview")) $("cbPreview").disabled = !peers.length;
+  paintCbRecipientStatus();
 }
 
 async function paintPeers() {
@@ -6558,6 +6587,7 @@ function cbPreviewPlannedScene(kind) {
   setCbTab("Send"); $("cbKind").value = kind; paintCbKind(); $("cbSegment").value = shot.segmentId;
   // Never silently retain another friend's selection when the planned owner cannot receive this kind.
   $("cbTo").value = cbPeers.some((p) => p.fp === shot.owner && cbCanReceive(p, kind)) ? shot.owner : "";
+  paintCbRecipientStatus();
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 }
 $("cbShotPreview")?.addEventListener("click", () => cbPreviewPlannedScene("shot"));
@@ -6586,9 +6616,10 @@ function invalidateCbPreview() {
   if ($("cbOutgoingPreview")) $("cbOutgoingPreview").hidden = true;
   if ($("cbPackNote")) $("cbPackNote").textContent = "Preview the current contents before preparing a file.";
 }
-for (const id of ["cbTo", "cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
+$("cbTo")?.addEventListener("change", () => { paintCbRecipientStatus(); invalidateCbPreview(); });
+for (const id of ["cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
   $(id)?.addEventListener("input", invalidateCbPreview);
-  $(id)?.addEventListener("change", invalidateCbPreview);
+  $(id)?.addEventListener("change", () => { if (id === "cbEngineMode") paintCbRecipientStatus(); invalidateCbPreview(); });
 }
 $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
@@ -6724,6 +6755,7 @@ for (const id of ["cbDraftResult", "cbDraftSaved"]) $(id)?.addEventListener("cli
   const button = ev.target.closest(".cbdraftpick"); if (!button) return;
   $("cbKind").value = "order"; paintCbKind();
   $("cbTo").value = button.dataset.to; $("cbSegment").value = button.dataset.segment;
+  paintCbRecipientStatus();
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 });
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {createHash} from 'node:crypto';
@@ -31,6 +31,8 @@ test('saved outfit export packages actual parts, look settings and immutable dow
   const f=await fixture(t),before=JSON.stringify([f.look,f.selected]);
   const a=await f.service.prepare(f.request,'agent:export-test'),b=await f.service.prepare(f.request);
   assert.equal(a.id,b.id);assert.equal(a.worldCandidate,false);assert.equal(f.events[0].actor,'agent:export-test');
+  assert.equal(a.worldPreflight.candidate,false);
+  assert.match(a.worldPreflight.reasons.join(' '),/sample VRM/);
   const bundle=JSON.parse((await f.service.file(a.id,'outfit.aiplay-avatar.json')).bytes);
   assert.equal(bundle.schema,'aiplay.avatar-outfit.v1');assert.equal(bundle.parts[0].license,'CC0');assert.deepEqual(bundle.appearance.settings,f.look.settings);
   assert.equal(hash(Buffer.from(bundle.data_base64,'base64')),bundle.sha256);
@@ -63,6 +65,15 @@ test('reusing an existing export revalidates its package as well as its VRM',asy
   await assert.rejects(f.service.prepare(f.request),/bytes changed/);
 });
 
+test('older immutable receipts cannot retain an optimistic World candidate flag',async t=>{
+  const f=await fixture(t),out=await f.service.prepare(f.request),location=path.join(f.directory,out.id,'manifest.json');
+  const old=JSON.parse(await readFile(location,'utf8'));delete old.worldPreflight;old.worldCandidate=true;
+  await writeFile(location,JSON.stringify(old));
+  const current=await f.service.get(out.id);
+  assert.equal(current.worldCandidate,false);
+  assert.match(current.worldPreflight.reasons.join(' '),/sample VRM/);
+});
+
 test('oversized saved selections are refused before any part is loaded or composed',async t=>{
   const f=await fixture(t);let reads=0,compositions=0;
   const parts=Array.from({length:3},(_,i)=>({id:`part_${i}`,inspection:{bytes:24*1024*1024}}));
@@ -87,6 +98,7 @@ test('MCP calls execute actual route handlers with the same revisions and actor'
   const api=async(method,url,body)=>{const req=Readable.from([Buffer.from(JSON.stringify(body))]);req.method=method;req.headers={'content-type':'application/json'};const res={};assert.equal(await route(req,res,new URL(url,'http://127.0.0.1')),true);return res.value;};
   const tools=avatarHandoffTools(api),out=await tools.find(t=>t.name==='avatar_outfit_export').run(f.request);
   assert.equal((await tools.find(t=>t.name==='avatar_outfit_get').run({export_id:out.id})).sha256,out.sha256);assert.equal(f.events[0].actor,'agent:mcp-outfit');
+  assert.deepEqual((await tools.find(t=>t.name==='avatar_outfit_get').run({export_id:out.id})).worldPreflight,out.worldPreflight);
   const req=Readable.from([Buffer.alloc(4097)]);req.method='POST';req.headers={'content-type':'application/json'};
   await assert.rejects(route(req,{},new URL('http://127.0.0.1/api/avatars/handoff')),/too large/);
 });
@@ -112,6 +124,21 @@ test('disposing the owning panel clears already prepared links, note and click h
   const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected}}),documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:async()=>({worldCandidate:true,files:{bundle:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.vrm`}})});
   await nodes['outfit-export'].onclick();assert.equal(nodes['outfit-downloads'].children.length,2);
   mounted.dispose();assert.equal(nodes['outfit-downloads'].children.length,0);assert.equal(nodes['outfit-export'].disabled,true);assert.equal(nodes['outfit-export'].onclick,null);assert.equal(nodes['outfit-note'].hidden,true);
+});
+
+test('outfit export explains World preflight findings without claiming admission',async t=>{
+  const f=await fixture(t),nodes=Object.fromEntries(['outfit-export','outfit-note','outfit-downloads'].map(id=>[id,{children:[],replaceChildren(){this.children=[];},append(v){this.children.push(v);}}]));
+  const response={worldCandidate:false,worldPreflight:{candidate:false,reasons:['World model limit is 16 MiB.','World needs a saved part.']},
+    files:{bundle:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.vrm`}};
+  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected}}),
+    documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:async()=>response});
+  await nodes['outfit-export'].onclick();
+  assert.match(nodes['outfit-note'].textContent,/World model limit is 16 MiB.*\(\+1 more\)/);
+  assert.match(nodes['outfit-note'].title,/World needs a saved part/);
+  response.worldPreflight={candidate:true,reasons:[]};
+  await nodes['outfit-export'].onclick();
+  assert.match(nodes['outfit-note'].textContent,/Import in World to verify/);
+  mounted.dispose();
 });
 
 test('disposing an old mount cannot clear controls or links owned by its replacement',async t=>{

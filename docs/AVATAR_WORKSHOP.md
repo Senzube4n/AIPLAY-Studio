@@ -43,6 +43,8 @@ The adapter verifies the tested upstream source contracts and PyTorch version, p
 
 Body skinning does not author hair spring chains or facial blendshapes. Those remain explicit authored data in the VRM baseline. [UniMate](https://github.com/Friedrich-M/UniMate) targets motion on already rigged assets; its public README still advertises pretrained checkpoints as forthcoming at the time of this work. No UniMate generation button is offered.
 
+The [SkinTokens/TokenRig successor to UniRig](https://github.com/VAST-AI-Research/SkinTokens) is a candidate for a separate local comparison, not an installed Studio backend. Its published CLI accepts a mesh and can transfer the original texture and scale; the upstream prerequisites specify at least 14 GB NVIDIA VRAM, Python 3.11, CUDA 12.1 and FlashAttention. The local 16 GB card meets the stated memory floor, but the Windows dependency path and actual peak memory have not been validated here. Before offering it in Studio, run the same textured reference and Mika meshes through both riggers in an isolated environment, validate GLB skinning and textures, inspect limb deformation in motion, and record elapsed time and peak VRAM. A better predicted rig would still not repair Mika's fused geometry or author hair springs and facial expressions.
+
 ## Measured local rigging result
 
 On an existing RTX 4070 Ti SUPER (16 GB), the revised Studio adapter completed the upstream giraffe through extraction, skeleton, skinning and merge in 83.125 seconds of run stages, plus prerequisite probing. The result has 41 joints and 14,885 exported vertices with embedded textures; binary skin validation passed. This is one measured run, not a speed or memory guarantee.
