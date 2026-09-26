@@ -200,15 +200,25 @@ test("sealed standalone Video job crosses two profiles, returns a checked MP4, a
     const quarantine = (await request(borrower, { action: "quarantine" })).body.videos;
     assert.equal(quarantine.length, 1);
     assert.equal(quarantine[0].adopted, false);
+    const unreviewed = await request(borrower, { action: "video_adopt", from: lenderMe.fp, file: quarantine[0].file });
+    assert.equal(unreviewed.status, 409, "direct API adoption cannot skip return review");
+    assert.equal(unreviewed.body.reason, "video-review-required");
     const checked = await request(borrower, { action: "video_review_return", from: lenderMe.fp, file: quarantine[0].file });
     assert.equal(checked.status, 200, JSON.stringify(checked.body));
     assert.equal(checked.body.sha256, sha(bytes));
-    const adopted = await request(borrower, { action: "video_adopt", from: lenderMe.fp, file: quarantine[0].file });
+    assert.match(checked.body.reviewReceipt, /^[0-9a-f]{48}$/);
+    const stale = await request(borrower, { action: "video_adopt", from: lenderMe.fp, file: quarantine[0].file,
+      reviewReceipt: "0".repeat(48) });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.reason, "video-review-required");
+    const adopted = await request(borrower, { action: "video_adopt", from: lenderMe.fp, file: quarantine[0].file,
+      reviewReceipt: checked.body.reviewReceipt });
     assert.equal(adopted.status, 200, JSON.stringify(adopted.body));
     assert.equal(adopted.body.metadata.source, "peer-video");
     assert.equal(adopted.body.metadata.peer.orderId, packed.body.order);
     assert.deepEqual(await readFile(path.join(borrower.output, "clips", adopted.body.name)), bytes);
-    assert.equal((await request(borrower, { action: "video_adopt", from: lenderMe.fp, file: quarantine[0].file })).body.replay, true);
+    assert.equal((await request(borrower, { action: "video_adopt", from: lenderMe.fp, file: quarantine[0].file,
+      reviewReceipt: checked.body.reviewReceipt })).body.replay, true);
     assert.equal((await request(borrower, { action: "receive", file: returned.body.name })).body.video.replay, true);
     const order = (await request(borrower, { action: "orders", side: "out" })).body.orders.find((r) => r.id === packed.body.order);
     assert.equal(order.state, "adopted");

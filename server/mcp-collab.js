@@ -487,7 +487,7 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_video_review_return",
-      description: "Read the checked local MP4 path, hash, measured dimensions/frames, full prompt and model rights from video quarantine. Review that file before adopting. This is read-only and returns no large base64 payload.",
+      description: "Inspect the checked local MP4 path, hash, measured dimensions/frames, full prompt and model rights. Returns a receipt bound to these bytes for a later explicit adopt; it does not add the clip to the library.",
       inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: {
         from: { type: "string", pattern: "^[0-9a-f]{32}$" },
         file: { type: "string", pattern: "^peer_[0-9a-f]{32}_o_[0-9a-f]{12}_[0-9a-f]{64}\\.mp4$" },
@@ -497,8 +497,11 @@ function collabControlTools(api, safeName) {
     {
       name: "collab_video_adopt",
       description: "Add one checked, reviewed peer MP4 to the Clips library with signed model rights/provenance. Refused returns cannot be overridden. Replays are idempotent.",
-      inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: { from: { type: "string" }, file: { type: "string" } } },
-      async run(a) { return await api("POST", "/api/collab", { action: "video_adopt", from: String(a.from || ""), file: String(a.file || "") }); },
+      inputSchema: { type: "object", required: ["from", "file", "review_receipt"], additionalProperties: false, properties: {
+        from: { type: "string", pattern: "^[0-9a-f]{32}$" }, file: { type: "string" },
+        review_receipt: { type: "string", pattern: "^[0-9a-f]{48}$", description: "Exact reviewReceipt returned by collab_video_review_return for this MP4." },
+      } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_adopt", from: String(a.from || ""), file: String(a.file || ""), reviewReceipt: String(a.review_receipt || "") }); },
     },
     {
       name: "collab_video_drop",

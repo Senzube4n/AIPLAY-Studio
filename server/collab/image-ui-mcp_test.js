@@ -575,6 +575,31 @@ test("Video refuses every visible setting this first friend job cannot preserve"
   }
 });
 
+test("Video Ask friend advertises only signed H3 render jobs", () => {
+  assert.match(source, /const h3Job = cur === "h3";\s*\$\("vidAskFriend"\)\.disabled = !h3Job;/);
+  assert.match(source, /Send a signed 20-step H3 text-to-video job/);
+  assert.match(source, /Friend render jobs currently use MiniMax H3\. Select H3 to ask a friend\./);
+});
+
+test("Video playback obtains a server review receipt before Keep can adopt", async () => {
+  const f = collabFixture();
+  const button = { disabled: true };
+  const row = { dataset: { from: "b".repeat(32), file: "peer.mp4" },
+    querySelector: () => button };
+  const target = { closest: () => row, classList: { contains: (name) => name === "cbvideoadopt" } };
+  f.context.respond = (url, body) => body?.action === "video_review_return"
+    ? { ok: true, reviewReceipt: "c".repeat(48) }
+    : body?.action === "video_adopt" ? { ok: true, name: "peer.mp4" }
+      : f.defaults(url, body);
+  await f.node("cbVideos").handlers.click({ target });
+  assert.ok(!f.calls.some((call) => call.body?.action === "video_adopt"));
+  await f.node("cbVideos").handlers.playing({ target });
+  assert.equal(button.disabled, false);
+  assert.equal(row.dataset.reviewReceipt, "c".repeat(48));
+  await f.node("cbVideos").handlers.click({ target });
+  assert.equal(f.calls.find((call) => call.body?.action === "video_adopt").body.reviewReceipt, "c".repeat(48));
+});
+
 test("Collab video preview shows exact settings and packs only the frozen token", async () => {
   const f = collabFixture();
   const draft = { engine: "h3", prompt: "A dancer", width: 256, height: 256, seconds: 1,
@@ -680,11 +705,15 @@ test("typed MCP video tools use the same signed job and consent routes", async (
     ["collab_video_render", "video_render", { id: "o_0123456789ab" }],
     ["collab_video_send_back", "video_send_back", { id: "o_0123456789ab" }],
     ["collab_video_review_return", "video_review_return", { from: "b".repeat(32), file: "file.mp4" }],
-    ["collab_video_adopt", "video_adopt", { from: "b".repeat(32), file: "file.mp4" }],
+    ["collab_video_adopt", "video_adopt", { from: "b".repeat(32), file: "file.mp4", review_receipt: "c".repeat(48) }],
     ["collab_video_drop", "video_drop", { from: "b".repeat(32), file: "file.mp4" }],
   ]) {
     assert.ok(by(name));
     await by(name).run(input);
     assert.equal(calls.at(-1)[2].action, action);
+    if (action === "video_adopt") {
+      assert.ok(by(name).inputSchema.required.includes("review_receipt"));
+      assert.equal(calls.at(-1)[2].reviewReceipt, "c".repeat(48));
+    }
   }
 });

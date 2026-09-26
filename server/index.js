@@ -381,11 +381,12 @@ import { creditRollup, creditLines } from "./collab/credit.js";
 import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn, shotFlags } from "./collab/order.js";
 import { makeImageJob, readImageJob, readStoredImageJob, compactImageJob, describeImageJob, IMAGE_JOB_REF_CAP, IMAGE_JOB_REF_BYTES_CAP } from "./collab/image-job.js";
 import { makeVideoJob, readVideoJob, readStoredVideoJob, compactVideoJob, describeVideoJob } from "./collab/video-job.js";
+import { receiverBaseH3Models } from "./collab/video-render-profile.js";
 import { measureImageJobReferences } from "./collab/image-reference.js";
 import { makeImageReturn, readImageReturn } from "./collab/image-return.js";
 import { landImageReturn, listImageQuarantine, imageQuarantinePicture, adoptImageReturn, dropImageReturn } from "./collab/image-quarantine.js";
 import { makeVideoReturn, readVideoReturn, VIDEO_RETURN_BYTES_CAP } from "./collab/video-return.js";
-import { landVideoReturn, listVideoQuarantine, videoQuarantineClip, adoptVideoReturn, dropVideoReturn } from "./collab/video-quarantine.js";
+import { landVideoReturn, listVideoQuarantine, videoQuarantineClip, reviewVideoReturn, adoptVideoReturn, dropVideoReturn } from "./collab/video-quarantine.js";
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
 import { imageIdFromArtFile, recentImageOutcome, recordImageOutcome } from "./collab/image-lifecycle.js";
@@ -5651,18 +5652,20 @@ const server = http.createServer(async (req, res) => {
           if ((await art.videoAttention({ engine: "h3", attention: j.attention })) !== j.attention) return json(res, 409, {
             error: "This machine cannot run the signed H3 attention backend. Nothing was queued.",
             reason: "attention-incompatible" });
+          const eng = videoEngine("h3");
+          const renderModels = receiverBaseH3Models(eng, config.video);
           const plan = videoPlan({ prompt: j.prompt, seed: j.seed, width: j.width, height: j.height,
             seconds: j.seconds, steps: j.steps, guidance: j.guidance, sparse: "off", keepAudio: j.keepAudio },
-            { engineKey: "h3", eng: videoEngine("h3"),
+            { engineKey: "h3", eng: { ...config.video, ...eng, ...renderModels },
               h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
               framed: false, control: false });
           if (plan.refusal || plan.prompt !== j.prompt || plan.width !== j.width || plan.height !== j.height || plan.seconds !== j.seconds || plan.steps !== j.steps || plan.sparse !== "off") return json(res, 409, {
             error: plan.refusal?.error || "This machine would change a signed Video setting. Nothing was queued.",
             reason: plan.refusal?.reason || "settings-incompatible", plan });
           const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
-          const eng = videoEngine("h3");
           await book.transitionOrderState({ outDir, id, from: "landed", to: "rendering", patch: {
-            renderRequestedAt: Date.now(), renderStatus: "requested", renderModel: String(eng.dit || "minimax-h3"),
+            renderRequestedAt: Date.now(), renderStatus: "requested", renderModel: String(renderModels.dit || "minimax-h3"),
+            renderModels,
             renderRights: model?.outputRights ?? { class: "unknown", why: "No local model rights record was found." },
           } });
           let queued;
@@ -5672,6 +5675,7 @@ const server = http.createServer(async (req, res) => {
               video: { engine: "h3", prompt: j.prompt, seconds: j.seconds, width: j.width, height: j.height,
                 steps: j.steps, guidance: j.guidance, keepAudio: j.keepAudio, negative: "", sparse: "off",
                 attention: j.attention, blockCache: false, bridge: "off", bridgeAlpha: 0, loras: [], refImages: [], refAudios: [],
+                models: renderModels, collabVideoBase: true,
                 firstFrame: null, lastFrame: null, midFrames: [], audioTrack: null,
               } });
           } catch (e) { return json(res, 409, { error: `The video queue's outcome is uncertain: ${e.message}. Do not press Render again.`, reason: "render-uncertain" }); }
@@ -6435,11 +6439,12 @@ const server = http.createServer(async (req, res) => {
 
         if (action === "video_review_return") {
           const fromFp = String(b.from || ""), file = String(b.file || "");
-          const clip = await videoQuarantineClip({ outDir, fromFp, file });
+          const clip = await reviewVideoReturn({ outDir, fromFp, file });
           return json(res, 200, { ok: true, from: fromFp, file, sha256: clip.row.sha256,
             bytes: clip.bytes.length, measured: clip.row.measured, prompt: clip.row.prompt,
             record: clip.row.record, path: path.join(outDir, "video-quarantine", fromFp, file),
-            note: "Read-only checked local MP4 for review; no adoption occurred." });
+            reviewReceipt: clip.receipt,
+            note: "Checked local MP4 for review; its receipt is bound to these exact bytes. No adoption occurred." });
         }
 
         if (action === "image_adopt") {
@@ -6475,7 +6480,7 @@ const server = http.createServer(async (req, res) => {
 
         if (action === "video_adopt") {
           const kept = await adoptVideoReturn({ outDir, clipDir: CLIP_DIR,
-            fromFp: String(b.from || ""), file: String(b.file || ""), now: Date.now(),
+            fromFp: String(b.from || ""), file: String(b.file || ""), reviewReceipt: String(b.reviewReceipt || ""), now: Date.now(),
             persistMetadata: async ({ name, metadata }) => { clipMeta.set(name, metadata); saveClipStore(); },
           });
           if (!kept.replay) provNote("library", { actor: prov.actorFrom(req), type: "import",

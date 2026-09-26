@@ -107,9 +107,28 @@ export async function videoQuarantineClip({ outDir, fromFp, file } = {}) {
   return { bytes, row };
 }
 
-export async function adoptVideoReturn({ outDir, clipDir, fromFp, file, now = Date.now(), persistMetadata = null, measure = measureVideo } = {}) {
+/** Issued only after the caller asks to inspect this exact checked MP4. The
+ * sidecar stores a hash, so a quarantine listing cannot itself authorize an
+ * adoption. A new review invalidates an older receipt. */
+export async function reviewVideoReturn({ outDir, fromFp, file, now = Date.now() } = {}) {
+  return enqueue(async () => {
+    const clip = await videoQuarantineClip({ outDir, fromFp, file });
+    if (clip.row.adopted) throw refuse("already-adopted", "This returned video is already in Clips.", 409);
+    const receipt = randomBytes(24).toString("hex");
+    const p = paths(outDir, fromFp, file);
+    await writeRow(p.sidecar, { ...clip.row, review: {
+      sha256: clip.row.sha256, tokenSha256: hash(receipt), at: now,
+    } });
+    return { ...clip, receipt };
+  });
+}
+
+export async function adoptVideoReturn({ outDir, clipDir, fromFp, file, reviewReceipt, now = Date.now(), persistMetadata = null, measure = measureVideo } = {}) {
   return enqueue(async () => {
     const { p, row } = await readRow(outDir, fromFp, file);
+    if (!/^[0-9a-f]{48}$/.test(String(reviewReceipt || "")) || row.review?.sha256 !== row.sha256
+        || row.review?.tokenSha256 !== hash(reviewReceipt))
+      throw refuse("video-review-required", "Review this checked video first, then use its exact review receipt to keep it.", 409);
     if (!row.ok) throw refuse("return-refused", "This video failed its checks and cannot be adopted.");
     const bytes = await boundedRead(p.clip, VIDEO_RETURN_BYTES_CAP);
     if (bytes.length !== row.bytes || hash(bytes) !== row.sha256) throw refuse("result-hash", "The video changed after review.");

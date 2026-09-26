@@ -7419,17 +7419,27 @@ async function paintTakes() {
     }).join("");
   }
 }
-$("cbVideos")?.addEventListener("playing", (ev) => {
+$("cbVideos")?.addEventListener("playing", async (ev) => {
   const row = ev.target?.closest?.(".cbpeer");
-  if (row) { row.dataset.played = "1"; const button = row.querySelector(".cbvideoadopt"); if (button) button.disabled = false; }
+  if (!row || row.dataset.reviewPending || row.dataset.reviewReceipt) return;
+  row.dataset.reviewPending = "1";
+  try {
+    const r = await cb({ action: "video_review_return", from: row.dataset.from, file: row.dataset.file });
+    if (r.error || !/^[0-9a-f]{48}$/.test(String(r.reviewReceipt || ""))) { cbSay(r.error || "Could not review this video."); return; }
+    row.dataset.played = "1";
+    row.dataset.reviewReceipt = r.reviewReceipt;
+    const button = row.querySelector(".cbvideoadopt");
+    if (button) button.disabled = false;
+  } catch (error) { cbSay(error.message || "Could not review this video.");
+  } finally { delete row.dataset.reviewPending; }
 }, true);
 $("cbVideos")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest?.(".cbpeer");
   if (!row) return;
   const body = { from: row.dataset.from, file: row.dataset.file };
   if (ev.target.classList.contains("cbvideoadopt")) {
-    if (row.dataset.played !== "1") { cbSay("Play this video before keeping it."); return; }
-    const r = await cb({ action: "video_adopt", ...body });
+    if (row.dataset.played !== "1" || !row.dataset.reviewReceipt) { cbSay("Play this video before keeping it."); return; }
+    const r = await cb({ action: "video_adopt", ...body, reviewReceipt: row.dataset.reviewReceipt });
     cbSay(r.error || `Kept in Clips as ${r.name}.`);
     if (!r.error) await paintTakes();
   } else if (ev.target.classList.contains("cbvideodrop")) {
@@ -8663,12 +8673,14 @@ function vidPaint() {
    * attached, in which case the server's refusal shows in #vidKeepNote. */
   { const kf = $("vidKeepField");
     if (kf) kf.hidden = cur !== "h3" && !($("vidCharacter")?.value || (state.refImages || []).length); }
-  /* Ask friend explains itself before anyone clicks: a recipe is H3 or LTX. */
+  /* This button sends a signed H3 render order, not a text-only recipe. */
   if ($("vidAskFriend")) {
-    const recipeOk = recipeEngineOk(cur);
-    $("vidAskFriend").disabled = !recipeOk;
+    const h3Job = cur === "h3";
+    $("vidAskFriend").disabled = !h3Job;
     const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
-    $("vidAskFriend").title = recipeOk ? `Prepare a text-only recipe for a friend using their default models. To send reference pictures, use ${wfName} → Video clips → Ask friend, which carries them.` : recipeEngineRefusal();
+    $("vidAskFriend").title = h3Job
+      ? `Send a signed 20-step H3 text-to-video job for a friend to review and render. For scenes with pictures, use ${wfName} → Video clips → Ask friend.`
+      : "Friend render jobs currently use MiniMax H3. Select H3 to ask a friend.";
   }
   /* The song under the clip works on BOTH engines — LTX freezes the audio
    * latent, H3 freezes it AND anchors it so the model can read the vocal: on

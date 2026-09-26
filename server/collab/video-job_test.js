@@ -7,6 +7,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { landOrderRow, transitionOrderState, findOrder } from "./orderbook.js";
+import { receiverBaseH3Models } from "./video-render-profile.js";
+import { config } from "../config.js";
+import { ArtRunner } from "../art.js";
 
 const borrower = "a".repeat(32), lender = "b".repeat(32);
 const now = 1_800_000_000_000;
@@ -86,6 +89,42 @@ test("the built-in H3 graph encodes the exact frame/fps/audio contract checked o
     width: 256, height: 256, steps: 4, keepAudio: false });
   assert.equal(Object.values(turbo).some((node) => /LoraLoader/i.test(node.class_type)), true,
     "a 4-step graph uses a different turbo LoRA and must not be called base-only");
+});
+
+test("queued receiver-local base graph stays bare and unchanged after H3 settings change", () => {
+  const eng = config.video.engines.h3;
+  const before = { ...eng }, beforeCrf = config.video.saveCrf;
+  try {
+    eng.turboMaxSteps = 20;
+    const opts = { prompt: "An adult dancer", seed: 42, seconds: 1, width: 256,
+      height: 256, steps: 20, keepAudio: false, bridge: "off", bridgeAlpha: 0,
+      sparse: "off", blockCache: false, attention: "pytorch", prefix: "clips/clip" };
+    assert.ok(videoGraphH3(opts)["18"], "a saved turbo threshold of 20 normally loads a LoRA");
+    const models = receiverBaseH3Models(eng, config.video);
+    const art = new ArtRunner(null, null);
+    const job = art.request({ file: "clip:collab_test", title: "Friend clip", kind: "video", force: true,
+      seed: 42, video: { ...opts, engine: "h3", models, collabVideoBase: true } });
+    assert.ok(job);
+    art.queue.length = 0; // release ArtRunner's deferred-engine poll in this no-engine test
+    assert.equal(job.models.turboMaxSteps, 19);
+    const graph = videoGraphH3({ ...opts, models: job.models });
+    assert.equal(graph["18"], undefined, "the accepted base order never loads a turbo LoRA");
+    assert.equal(graph["14"].inputs.fps, 24);
+    const asQueued = JSON.stringify(graph);
+    Object.assign(eng, { dit: "later-different.safetensors", textEncoder: "later-text.safetensors",
+      videoVae: "later-video.safetensors", audioVae: "later-audio.safetensors",
+      fps: 30, sampler: "euler", scheduler: "normal", shiftVideo: 5, shiftAudio: 8,
+      turboMaxSteps: 40, sparseAttention: { method: "vsa" }, sparseAll: true,
+      blockCache: true });
+    config.video.saveCrf = 33;
+    assert.equal(JSON.stringify(videoGraphH3({ ...opts, models: job.models })), asQueued,
+      "a changed video_settings file cannot mutate the queued graph");
+    assert.equal(job.models.dit, before.dit, "the receipt keeps the model that was queued");
+  } finally {
+    for (const key of Object.keys(eng)) if (!Object.hasOwn(before, key)) delete eng[key];
+    Object.assign(eng, before);
+    config.video.saveCrf = beforeCrf;
+  }
 });
 
 test("two render presses cannot claim the same accepted video order", async () => {

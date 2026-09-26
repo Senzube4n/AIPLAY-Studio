@@ -2228,7 +2228,9 @@ export class ArtRunner extends EventEmitter {
      * prompt. This is what the event reads. */
     job.usedPrompt = prompt;
     let graph = null;
-    const customVideo = assignedTo("video");
+    /* The receiver accepted a signed built-in graph. A custom workflow chosen
+     * while this job waits behind music cannot replace its model contract. */
+    const customVideo = job.collabVideoBase ? null : assignedTo("video");
     if (customVideo) {
       try {
         graph = await buildCustom(customVideo, {
