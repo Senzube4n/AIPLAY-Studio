@@ -93,6 +93,7 @@ export async function inspectWardrobePart(bytes,baseBytes,baseHash){
 
 export function createAvatarWardrobe({directory,inspectAsset,inspectLook,record=async()=>{}}){
   if(typeof inspectAsset!=='function')throw new TypeError('inspectAsset is required.');
+  const motionCache=new Map();
   const dir=id=>path.join(directory,checked(id,avatarPattern,'avatar id'));
   const partPath=(id,part)=>path.join(dir(id),checked(part,partPattern,'part id')+'.json');
   const binaryPath=(id,part)=>path.join(dir(id),checked(part,partPattern,'part id')+'.glb');
@@ -101,11 +102,30 @@ export function createAvatarWardrobe({directory,inspectAsset,inspectLook,record=
   async function source(id,hash){checked(id,avatarPattern,'avatar id');const result=await inspectAsset(id);if(!Buffer.isBuffer(result.bytes)||result.row.id!==id||result.row.inspection.sha256!==digest(result.bytes)||(hash!==undefined&&pin(hash)!==result.row.inspection.sha256))throw fault('Base avatar changed; reload its imported version.',409);return result;}
   async function context(id,look){contextId(look);if(look!==null&&look!==undefined){if(!inspectLook)throw fault('Named look context is unavailable.',409);await inspectLook(id,look);}}
   async function read(file){try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')throw fault('Wardrobe record not found.',404);throw e;}}
-  async function part(id,partId,hash){const row=await read(partPath(id,partId));if(row.schema!==1||row.id!==partId||row.avatarId!==id||row.baseSha256!==hash)throw fault('Part source identity changed.',409);return row;}
+  async function part(id,partId,hash,baseBytes){
+    const row=await read(partPath(id,partId));if(row.schema!==1||row.id!==partId||row.avatarId!==id||row.baseSha256!==hash)throw fault('Part source identity changed.',409);
+    // Earlier inspections counted only direct spring-joint weights. Recheck
+    // those hair parts once per process so an inherited child-bone link is not
+    // displayed as absent. This is a read-only projection of the original row.
+    if(row.slot!=='hair'||row.motionReviewVersion===2||row.inspection?.motion?.mode!=='none'||!row.inspection.motion.baseSpringChains)return row;
+    const key=`${id}/${partId}/${row.sha256}/${hash}`;
+    if(!motionCache.has(key)){
+      const pending=(async()=>{
+        const bytes=await readFile(binaryPath(id,partId));
+        if(bytes.length!==row.inspection.bytes||digest(bytes)!==row.sha256)throw fault('Part bytes changed; import the file again.',409);
+        const model=readGlb(bytes),base=readGlb(baseBytes||(await source(id,hash)).bytes);
+        if(!model.ok||!base.ok)throw fault('Part or base GLB changed; reload the avatar.',409);
+        return inspectPartSpringCoverage(base.json,model.json,model.binData,row.inspection.bindings);
+      })();
+      motionCache.set(key,pending);
+      pending.catch(()=>{if(motionCache.get(key)===pending)motionCache.delete(key);});
+    }
+    return {...row,motionReviewVersion:2,inspection:{...row.inspection,motion:await motionCache.get(key)}};
+  }
   async function names(id){try{return await readdir(dir(id));}catch(e){if(e.code==='ENOENT')return [];throw e;}}
   async function inventory({id}){const {row,bytes}=await source(id),j=readGlb(bytes).json,graph=baseSkeleton(j);return {avatarId:id,sha256:row.inspection.sha256,joints:graph.joints.map(index=>({index,name:j.nodes[index].name})),slots:WARDROBE_SLOTS,limits:WARDROBE_LIMITS};}
-  async function list({id}){const {row}=await source(id);const files=(await names(id)).filter(name=>partPattern.test(name.replace(/\.json$/,''))&&name.endsWith('.json'));return {avatarId:id,sha256:row.inspection.sha256,parts:await Promise.all(files.map(name=>part(id,name.slice(0,-5),row.inspection.sha256)))};}
-  async function file({id,part_id}){const base=await source(id),row=await part(id,part_id,base.row.inspection.sha256),bytes=await readFile(binaryPath(id,part_id));if(bytes.length!==row.inspection.bytes||digest(bytes)!==row.inspection.sha256)throw fault('Part bytes changed; import the file again.',409);return {row,bytes};}
+  async function list({id}){const {row,bytes}=await source(id);const files=(await names(id)).filter(name=>partPattern.test(name.replace(/\.json$/,''))&&name.endsWith('.json'));return {avatarId:id,sha256:row.inspection.sha256,parts:await Promise.all(files.map(name=>part(id,name.slice(0,-5),row.inspection.sha256,bytes)))};}
+  async function file({id,part_id}){const base=await source(id),row=await part(id,part_id,base.row.inspection.sha256,base.bytes),bytes=await readFile(binaryPath(id,part_id));if(bytes.length!==row.inspection.bytes||digest(bytes)!==row.inspection.sha256)throw fault('Part bytes changed; import the file again.',409);return {row,bytes};}
   async function importPart(input,actor='system'){
     fields(input,['id','sha256','name','slot','source','license','data_base64','bytes','path']);if(input.bytes!==undefined&&!Buffer.isBuffer(input.bytes))throw fault('Internal part bytes must be a Buffer.');const request={...structuredClone({...input,bytes:undefined}),...(input.bytes===undefined?{}:{bytes:Buffer.from(input.bytes)})};
     const id=checked(request.id,avatarPattern,'avatar id'),hash=pin(request.sha256),name=text(request.name,'Part name',80),origin=text(request.source,'Source',2000),license=text(request.license,'License',2000);
@@ -116,13 +136,13 @@ export function createAvatarWardrobe({directory,inspectAsset,inspectLook,record=
     if(request.data_base64!==undefined){const value=request.data_base64;if(typeof value!=='string'||!value.length||value.length>Math.ceil(WARDROBE_LIMITS.bytes/3)*4||value.length%4||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw fault('Invalid base64 part upload.',413);bytes=Buffer.from(value,'base64');if(bytes.toString('base64')!==value)throw fault('Invalid base64 part upload.');}
     if(request.path!==undefined){if(typeof request.path!=='string'||!path.isAbsolute(request.path)||path.extname(request.path).toLowerCase()!=='.glb'||request.path.includes('\0'))throw fault('Use an absolute local GLB path.');const info=await stat(request.path);if(!info.isFile()||info.size>WARDROBE_LIMITS.bytes)throw fault('Part exceeds 32 MiB.',413);bytes=await readFile(request.path);}
     return serial(path.resolve(dir(id)),async()=>{const base=await source(id,hash);if((await list({id})).parts.length>=64)throw fault('An avatar can hold 64 imported parts.',409);const inspection=await inspectWardrobePart(bytes,base.bytes,hash),partId=`part_${randomUUID()}`;
-      const row={schema:1,id:partId,avatarId:id,baseSha256:hash,sha256:inspection.sha256,name,slot:request.slot,source:origin,license,inspection,createdAt:new Date().toISOString(),actor,files:{glb:`/api/avatars/wardrobe/file/${id}/${partId}`}};
+      const row={schema:1,id:partId,avatarId:id,baseSha256:hash,sha256:inspection.sha256,name,slot:request.slot,source:origin,license,inspection,motionReviewVersion:2,createdAt:new Date().toISOString(),actor,files:{glb:`/api/avatars/wardrobe/file/${id}/${partId}`}};
       await mkdir(dir(id),{recursive:true});await record({type:'import',actor,asset:`avatar/${id}/parts/${partId}`,data:{op:'wardrobe_import',avatarId:id,partId,baseSha256:hash,sha256:inspection.sha256,source:origin,license}});
       await writeFile(binaryPath(id,partId),bytes,{flag:'wx'});try{await atomic(partPath(id,partId),row);}catch(e){await unlink(binaryPath(id,partId));throw e;}return structuredClone(row);
     });
   }
   async function selection({id,look_id=null}){const base=await source(id);await context(id,look_id);let row;try{row=await read(selectionPath(id,look_id));}catch(e){if(e.status!==404)throw e;return {schema:1,id,sha256:base.row.inspection.sha256,look_id,revision:0,part_ids:[],parts:[]};}
-    if(row.id!==id||row.sha256!==base.row.inspection.sha256||row.look_id!==look_id)throw fault('Wardrobe selection source changed.',409);return {...row,parts:await Promise.all(row.part_ids.map(partId=>part(id,partId,row.sha256)))};}
+    if(row.id!==id||row.sha256!==base.row.inspection.sha256||row.look_id!==look_id)throw fault('Wardrobe selection source changed.',409);return {...row,parts:await Promise.all(row.part_ids.map(partId=>part(id,partId,row.sha256,base.bytes)))};}
   async function select(input,actor='system'){fields(input,['id','sha256','look_id','expected_revision','part_ids']);const request=structuredClone(input),id=checked(request.id,avatarPattern,'avatar id');pin(request.sha256);contextId(request.look_id);
     if(!Number.isSafeInteger(request.expected_revision)||request.expected_revision<0||request.expected_revision>=Number.MAX_SAFE_INTEGER)throw fault('Expected revision is required.');
     if(!Array.isArray(request.part_ids)||request.part_ids.length>8||new Set(request.part_ids).size!==request.part_ids.length)throw fault('Select up to eight distinct parts.');request.part_ids.forEach(value=>checked(value,partPattern,'part id'));

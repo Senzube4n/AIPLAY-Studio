@@ -73,6 +73,22 @@ test('hair weighted to a spring descendant is linked, but an ancestor weight is 
   assert.equal(unlinked.motion.springLinkedVertices,0);
 });
 
+test('older saved hair reports refresh on read without rewriting imported files',async t=>{
+  const f=await fixture(t),base=model(j=>{j.extensionsUsed=['VRMC_springBone'];j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node:2}]}]}};});
+  f.replace(base);
+  const child=model((j,bin)=>{for(let vertex=0;vertex<8;vertex++)bin.writeUInt8(2,288+vertex*4);});
+  const imported=await f.import({name:'Older hair',slot:'hair',bytes:child});
+  const file=path.join(f.directory,ID,`${imported.id}.json`),old=JSON.parse(await readFile(file,'utf8'));
+  delete old.motionReviewVersion;old.inspection.motion={...old.inspection.motion,mode:'none',springLinkedJoints:0,springLinkedVertices:0};
+  await writeFile(file,JSON.stringify(old,null,2));const original=await readFile(file);
+  const listed=(await f.service.list({id:ID})).parts[0];
+  assert.equal(listed.inspection.motion.mode,'base_springs');assert.equal(listed.inspection.motion.springLinkedVertices,8);
+  assert.equal((await f.service.file({id:ID,part_id:imported.id})).row.inspection.motion.mode,'base_springs');
+  assert.deepEqual(await readFile(file),original);
+  await f.service.select({id:ID,sha256:hash(base),expected_revision:0,part_ids:[imported.id]});
+  assert.equal((await f.service.selection({id:ID})).parts[0].inspection.motion.mode,'base_springs');
+});
+
 test('stale concurrent selections, duplicate slots and caller mutation do not overwrite saved state',async t=>{
   const f=await fixture(t),a=await f.import(),b=await f.import({name:'Other coat'}),input={id:ID,sha256:f.sha256,expected_revision:0,part_ids:[a.id]};
   const save=f.service.select(input);input.part_ids.push(b.id);await save;
