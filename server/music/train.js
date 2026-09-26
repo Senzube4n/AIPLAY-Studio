@@ -127,6 +127,26 @@ export async function probeTrainAudio(file, { runner = promisify(execFile), ffpr
   return duration;
 }
 
+/** ffprobe's source duration can outlive the audio FFmpeg actually decodes.
+ * Refuse a truncated extracted WAV before the costly YuE2 tokenizer reads it.
+ * One 25 Hz semantic frame covers ordinary sample/timestamp rounding. */
+export async function verifyTrainSliceAudio(slice, settings, probeOptions) {
+  const expected = Number(settings?.seconds);
+  if (!Number.isFinite(expected) || expected < SECONDS_MIN || expected > SECONDS_MAX) {
+    throw refuse("slice-duration", `Choose a ${SECONDS_MIN}–${SECONDS_MAX}s training region before extracting audio.`, 422);
+  }
+  let actual;
+  try { actual = await probeTrainAudio(slice, probeOptions); }
+  catch (error) {
+    throw refuse("slice-duration", `The extracted training audio for the ${expected.toFixed(2)}s region could not be measured: ${error.message}`, 422);
+  }
+  if (actual < SECONDS_MIN || actual > SECONDS_MAX || Math.abs(actual - expected) > 1 / 25 + 1e-6) {
+    throw refuse("slice-duration",
+      `The extracted training audio is ${actual.toFixed(2)}s; the selected region is ${expected.toFixed(2)}s. The source may end early or decode incompletely. Choose an earlier or shorter region.`, 422);
+  }
+  return actual;
+}
+
 export function trainSliceArgs(source, target, settings) {
   return ["-v", "error", "-y", "-ss", String(settings.startSeconds ?? 0), "-i", source,
     "-t", String(settings.seconds), "-map", "0:a:0", "-ac", "2", "-ar", "44100", target];

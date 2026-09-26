@@ -5166,6 +5166,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 409, { error: "The training recording changed while extracting its region. No training was started." });
         }
 
+        try { await train.verifyTrainSliceAudio(slice, set); }
+        catch (e) { return json(res, e.status || 422, { error: e.message, reason: e.reason || "slice-duration" }); }
+
         /* Reading the audio into codes is itself a minute or two of work, and it
          * is CACHED by the decoded bytes — so re-training the same song with
          * different settings does not pay for it twice. */
