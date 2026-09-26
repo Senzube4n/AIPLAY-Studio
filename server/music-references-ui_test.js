@@ -4,7 +4,7 @@ import { mountMusicReferences } from "../web/music-references.js";
 
 async function harness(t, { visual = false, handoff = null, preparedRequest = null } = {}) {
   const elements = {}, calls = [], loaded = [];
-  function element() { return { value: "", textContent: "", dataset: {}, disabled: false, checked: false, handlers: {}, children: [],
+  function element() { return { value: "", textContent: "", dataset: {}, disabled: false, checked: false, files: [], handlers: {}, children: [],
     addEventListener(k, fn) { this.handlers[k] = fn; }, append(el) { this.children.push(el); }, replaceChildren() { this.children = []; }, removeAttribute(k) { delete this[k]; } }; }
   const root = { dataset: {}, classList: { add() {} }, ownerDocument: { createElement: element },
     querySelector(selector) { const name = /"([^"]+)"/.exec(selector)[1]; return elements[name] ??= element(); },
@@ -12,8 +12,11 @@ async function harness(t, { visual = false, handoff = null, preparedRequest = nu
   let row = { id: "mr_fixture", revision: 1, state: "ready", source: { file: "source.wav" }, evidence: { startSeconds: 4, seconds: 8, hasAudio: true, timestamps: [] }, brief: { style: "Piano", lyrics: "Morning arrives", notes: "source notes" }, warnings: [] };
   if (preparedRequest) row.prepared = { request: preparedRequest };
   const fetch = async (url, opts = {}) => {
-    const body = opts.body ? JSON.parse(opts.body) : null; calls.push({ url, body }); let value;
+    const body = opts.headers?.["Content-Type"] === "application/json" ? JSON.parse(opts.body) : null;
+    calls.push({ url, body, upload: opts.body, headers: opts.headers }); let value;
     if (url === "/api/status") value = { library: [{ file: "source.wav", title: "Reference track" }] };
+    else if (url === "/api/clips") value = { clips: [{ name: "import_voice.wav" }, { name: "clip.mp4" }] };
+    else if (url === "/api/studio/import") value = { ok: true, name: "import_voice.wav", kind: "audio" };
     else if (body.action === "capabilities") value = { visual: { available: visual, models: ["qwen3vl_4b.safetensors"], reason: "Local engine unavailable." } };
     else if (body.action === "list") value = { references: [row] };
     else {
@@ -38,6 +41,22 @@ test("manual reference brief works without VLM and loading is an explicit compos
   assert.deepEqual(h.calls.filter(c => c.body?.action === "prepare_request")[0].body, { action: "prepare_request", referenceId: "mr_fixture", expectedRevision: 2, reviewed: true, engine: "yue2", seed: 0, useScore: false, instrumental: false, allowSectionLabels: false });
   await h.fire("load"); assert.equal(h.loaded[0].caption, "Quiet strings");
   assert.ok(h.calls.every(c => c.url !== "/api/generate"));
+});
+
+test("browser import hands clip audio to CPU reference preparation", async t => {
+  const h = await harness(t);
+  const file = { name: "voice.wav", size: 1024 };
+  h.elements.uploadFile.files = [file]; h.fire("uploadFile", "change");
+  await h.fire("upload");
+  const upload = h.calls.find(c => c.url === "/api/studio/import");
+  assert.equal(upload.upload, file);
+  assert.equal(upload.headers["X-Name"], "voice.wav");
+  assert.equal(h.elements.kind.value, "clip-audio");
+  assert.equal(h.elements.file.value, "import_voice.wav");
+  assert.equal(h.elements.player.src, "/api/clip/import_voice.wav");
+  await h.fire("prepare");
+  const prepared = h.calls.find(c => c.body?.action === "prepare").body;
+  assert.deepEqual([prepared.kind, prepared.location, prepared.file], ["audio", "clips", "import_voice.wav"]);
 });
 
 test("editing after review disables the previously prepared request", async t => {

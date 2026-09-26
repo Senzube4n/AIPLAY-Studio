@@ -141,7 +141,10 @@ model and rights record.
   idempotency key only for retrying the same request. `collab_plan` action
   `set_music_cue` attaches a variant to an episode or scene locally.
 - `music_reference_prepare` makes bounded CPU evidence from a library recording
-  or clip. Poll `music_reference_status`; `music_reference_analyze_visual` and
+  or clip. To start from a local file, call `import_local_media` with
+  `destination:"studio"`, then prepare its returned name with `location:"clips"`
+  and `kind:"audio"` or `kind:"video"`. Poll `music_reference_status`;
+  `music_reference_analyze_visual` and
   `music_reference_transcribe` are separate optional GPU actions. Save reviewed
   text with `music_reference_update_brief`, correct ABC with
   `music_reference_update_score`, then call `music_reference_prepare_request`.

@@ -983,9 +983,15 @@ episode or scene using the plan's `expectedRevision`. This is a local plan link.
 
 `POST /api/music-references` actions `capabilities`, `list`, `prepare`, `get`,
 `analyze_visual`, `transcribe`, `update_brief`, `update_score`, `prepare_request`
-produce a reviewed music draft. Prepare takes a local library `file`, `kind`
-(`audio` or `video`), `startSeconds`, `seconds` (up to 120), and `maxFrames`
-(up to six). Sources are bounded to 512 MiB; remote URLs are not accepted.
+produce a reviewed music draft. Prepare takes a bare local `file`, `kind`
+(`audio` or `video`), optional `location` (`library` for audio by default,
+`clips` for imported audio or video), `startSeconds`, `seconds` (up to 120),
+and `maxFrames` (up to six). The browser can import audio/video to the clip bin
+through `/api/studio/import`; MCP can use `import_local_media` with
+`destination:"studio"`, then prepare the returned filename with
+`location:"clips"`. The workflow's browser import and `import_local_media`
+limit uploads to 256 MiB; existing
+library/bin sources can be up to 512 MiB. Remote URLs are not accepted.
 Subsequent edits require `referenceId` and `expectedRevision`. Poll `get` after
 asynchronous preparation or model analysis. `preview:true` includes the contact
 sheet. `prepare_request` requires `reviewed:true`; returns an HTTP generation

@@ -10,11 +10,12 @@ export function musicReferenceTools(api) {
   return [
     tool("music_reference_capabilities", "Inspect local reference preparation and installed vision-language support. No models load or download. Qwen Image generation is separate from Qwen3-VL visual description.", {}, [], () => send("capabilities")),
     tool("music_reference_list", "List saved local reference briefs and their provenance; no generation.", {}, [], () => send("list")),
-    tool("music_reference_prepare", "Prepare a bounded local library audio/video region on CPU. Saves source hash, measured beat evidence when available, and timestamped video frames. Returns a reference ID; poll status. No model download, cloud upload or song generation.", {
-      kind: { type: "string", enum: ["audio", "video"] }, file: { type: "string", description: "Bare audio library filename or video filename from clips library; no paths/URLs." },
+    tool("music_reference_prepare", "Prepare a bounded local audio/video region on CPU. Audio can come from the Music library or Studio clip bin; video comes from the clip bin. Import local audio/video with import_local_media destination studio, then pass its returned name with location clips. Saves source hash, measured beat evidence when available, and timestamped video frames. Returns a reference ID; poll status. No model download, cloud upload or song generation.", {
+      kind: { type: "string", enum: ["audio", "video"] }, file: { type: "string", description: "Bare filename from the chosen library/bin; no paths/URLs." },
+      location: { type: "string", enum: ["library", "clips"], description: "Audio defaults to library; video requires clips. Use clips for imported audio." },
       startSeconds: { type: "number", minimum: 0, maximum: 86400 }, seconds: { type: "number", minimum: .25, maximum: 120 },
       maxFrames: { type: "integer", minimum: 1, maximum: 6 } }, ["kind", "file"],
-      a => send("prepare", { kind: a.kind, file: a.file, startSeconds: a.startSeconds, seconds: a.seconds, maxFrames: a.maxFrames })),
+      a => send("prepare", { kind: a.kind, file: a.file, location: a.location, startSeconds: a.startSeconds, seconds: a.seconds, maxFrames: a.maxFrames })),
     tool("music_reference_status", "Read one reference and optional timestamped contact sheet; preparation/analysis are asynchronous. Model suggestions are separate from the reviewed brief.", { ...id, preview: { type: "boolean" } }, ["referenceId"],
       a => send("get", { referenceId: a.referenceId, preview: a.preview })),
     tool("music_reference_analyze_visual", "Explicitly run the installed local Qwen3-VL model on the prepared contact sheet through Studio's engine queue. Uses GPU when configured, never downloads/uploads. Describes sampled visible events and suggests music; no song is generated. Poll status.", {
