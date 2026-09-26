@@ -818,6 +818,8 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
     await book.fillOrderRow({ outDir: dir, id: friendJob[1], patch: {
       renderStatus: "complete", renderCompletedAt: Date.now(), renderClip: clip,
       renderSha256: createHash("sha256").update(bytes).digest("hex"), renderRunId: runId ?? null,
+      /* `seconds` is ArtRunner's render clock, not request-to-finish queue time. */
+      renderRunMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null,
     } });
   })().catch((error) => console.error(`[collab video] Could not record completed clip: ${error.message}`));
   // Generated-media registration: a rendered clip is ai-generated video.
@@ -5623,15 +5625,49 @@ const server = http.createServer(async (req, res) => {
           if (order.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer.", reason: "return-address" });
           const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
           const readiness = videoReady("h3");
+          const reviewMinutes = b.seen !== true ? await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() }) : null;
           if (b.seen !== true) return json(res, 409, { error: "Review the complete job and this machine's H3 readiness, then accept explicitly. Accepting does not render.", reason: "not-seen",
             from: { fp: sender.fp, nickname: sender.nickname }, videoJob: order, reviewDigest,
-            describes: describeVideoJob(order), readiness, outputRights: model?.outputRights ?? null });
-          const row = await book.landOrderRow({ outDir, row: { id: order.id, at: order.at, expires: order.expires,
+            describes: describeVideoJob(order), readiness, outputRights: model?.outputRights ?? null,
+            minutes: reviewMinutes.why, overBudget: reviewMinutes.over,
+            readinessNote: "Model and engine readiness are checked again when Render is pressed; accepting only reserves this friend's daily allowance." });
+          if (await book.findOrder({ outDir, id: order.id, side: "in" })) return json(res, 409, {
+            error: `Video job ${order.id} was already accepted on this machine. It cannot reserve or render twice.`, reason: "already-landed" });
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          /* A signed job may be accepted before its model/engine is installed;
+           * that is consent, not a promise of GPU availability. Every unreadable
+           * LOCAL queue and a paused queue still block acceptance. Render makes
+           * the full engine/readiness check when it can actually spend GPU time. */
+          if (busy.busy && ["art-paused", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          const busyOverride = busy.busy && busy.reason !== "engine-unreachable" ? { reason: busy.reason, why: busy.why } : null;
+          /* Price and land within one orderbook writer turn. Two concurrent
+           * accepts must see each other's reservations before either can spend
+           * the same remaining daily minutes. */
+          const landed = await book.landOrderRowChecked({ outDir, row: { id: order.id, at: order.at, expires: order.expires,
             from: { fp: sender.fp, nickname: sender.nickname, role: sender.role }, jobType: "video",
             videoJob: compactVideoJob(order), returnTo: order.returnTo, reviewDigest,
-            state: "landed", consentAt: Date.now(), landedAt: Date.now() } });
-          return json(res, 200, { ok: true, order: order.id, state: row.state,
-            note: "Accepted for review. No video has been queued; Render is a separate press." });
+            state: "landed", consentAt: Date.now(), landedAt: Date.now() },
+          check: async (rows) => {
+            const minutes = await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []), ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: `${overrides.map((item) => item.why).join(" ")} Review these checks and explicitly choose Accept anyway to reserve this job.`,
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
+          } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          return json(res, 200, { ok: true, order: order.id, state: landed.row.state,
+            note: `Accepted locally; about ${landed.decision.minutes.thisOne ?? "unknown"} min reserved. Model and engine readiness are checked at Render. No video has been queued.` });
         }
 
         if (action === "video_render") {
@@ -5648,6 +5684,20 @@ const server = http.createServer(async (req, res) => {
           if (assignedTo("video")) return json(res, 409, { error: "A custom Video workflow is active; this job needs the built-in H3 graph. Unassign it and review again.", reason: "workflow-incompatible" });
           const readiness = videoReady("h3");
           if (!readiness.ready) return json(res, 409, { error: "MiniMax H3 is not ready on this machine.", reason: "model-not-ready", readiness });
+          const renderReadings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const renderBusy = machineBusy(renderReadings);
+          if (renderBusy.busy) {
+            const overridable = !["art-paused", "workload-unreachable", "engine-unreachable"].includes(renderBusy.reason);
+            if (!overridable || b.anyway !== true) return json(res, 409, {
+              error: renderBusy.why, reason: renderBusy.reason, busy: true, overridable,
+              ...(overridable ? { overrides: [{ reason: renderBusy.reason, why: renderBusy.why }] } : {}),
+            });
+          }
           const j = order.job;
           if (Number(videoEngine("h3")?.fps) !== 24) return json(res, 409, {
             error: "This machine's H3 graph is not set to 24 fps. It would change the signed video contract; nothing was queued.",

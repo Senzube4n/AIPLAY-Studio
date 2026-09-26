@@ -128,6 +128,26 @@ export async function landOrderRow({ outDir, row } = {}) {
   });
 }
 
+/** Read, decide, and land under the same orderbook writer. A daily lending
+ * allowance is a reservation: two different signed jobs accepted at once must
+ * not both price themselves against the book before either row is written.
+ * `check` may read projects but must not call an orderbook method (that would
+ * wait on this same writer). A refusal returns without claiming the id. */
+export async function landOrderRowChecked({ outDir, row, check } = {}) {
+  const id = String(row?.id || "");
+  if (!ID_RE.test(id) || typeof check !== "function") throw refuse("bad-arguments", "A checked landing needs an order id and a check function.");
+  return enqueue(async () => {
+    const file = rowPath(outDir, "in", id);
+    if (await readRow(file)) throw refuse("already-landed", `Order ${id} was already accepted here; it cannot reserve or render twice.`, 409);
+    const rows = await readRows(outDir, "in");
+    const decision = await check(rows);
+    if (decision?.refusal) return { row: null, decision };
+    const full = { ...row, ...(decision?.patch || {}), state: row.state === "claimed" ? "claimed" : "landed", landedAt: row.landedAt ?? 0 };
+    await writeAtomic(file, full);
+    return { row: full, decision };
+  });
+}
+
 /**
  * Let go of a claim that never became anything.
  *
@@ -194,20 +214,21 @@ export async function findOrder({ outDir, id, side = "out" } = {}) {
 }
 
 /** Every row on one side, newest first. */
+async function readRows(outDir, side) {
+  const dir = bookDir(outDir, side);
+  let names = [];
+  try {
+    names = (await readdir(dir)).filter((f) => /^o_[0-9a-f]{12}\.json$/.test(f));
+  } catch (err) {
+    if (err && err.code === "ENOENT") return [];
+    throw refuse("orderbook-unreadable", `The order book at ${dir} could not be listed: ${err.message}.`, 500);
+  }
+  const rows = [];
+  for (const f of names) rows.push(await readRow(path.join(dir, f)));
+  return rows.filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0));
+}
 export async function listOrders({ outDir, side = "out" } = {}) {
-  return enqueue(async () => {
-    const dir = bookDir(outDir, side);
-    let names = [];
-    try {
-      names = (await readdir(dir)).filter((f) => /^o_[0-9a-f]{12}\.json$/.test(f));
-    } catch (err) {
-      if (err && err.code === "ENOENT") return [];
-      throw refuse("orderbook-unreadable", `The order book at ${dir} could not be listed: ${err.message}.`, 500);
-    }
-    const rows = [];
-    for (const f of names) rows.push(await readRow(path.join(dir, f)));
-    return rows.filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0));
-  });
+  return enqueue(() => readRows(outDir, side));
 }
 
 /** Move a row's state, refusing a state nobody wrote down. */

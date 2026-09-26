@@ -671,6 +671,12 @@ export const CHAT_WITHHELD_ARGS = {
   collab_accept: {
     anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
   },
+  collab_video_accept: {
+    anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
+  },
+  collab_video_render: {
+    anyway: "queues behind work already on the card; a person answers \"Render anyway\" on the Collab screen",
+  },
   collab_adopt: {
     anyway: "keeps a take that failed its checks; a person watches it and answers \"Keep anyway\" on the Collab screen",
   },

@@ -276,6 +276,23 @@ export function estimateErrand(doc) {
 
 const round1 = (x) => Math.round(x * 10) / 10;
 
+/** Reserve a standalone H3 job using the same frame grid and cost curve that
+ * ArtRunner uses to size its render deadline. This is an estimate, not a live
+ * speed reading; round up so several accepted jobs cannot lose small fractions
+ * of a minute from the daily allowance. */
+export function estimateVideoJobMinutes(job, cfg = config) {
+  const j = job?.job || job;
+  if (!j || j.engine !== "h3" || ![j.width, j.height, j.seconds, j.steps].every((v) => Number.isFinite(Number(v)) && Number(v) > 0)) return null;
+  const v = { ...cfg.video, ...cfg.video?.engines?.h3 };
+  if (![v.fps, v.costRate, v.costExponent].every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)
+      || typeof v.costFixedSeconds !== "number" || !Number.isFinite(v.costFixedSeconds) || v.costFixedSeconds < 0) return null;
+  const fps = Number(v.fps);
+  const frames = alignFrames(Number(j.seconds), fps, "h3");
+  const seconds = Number(v.costFixedSeconds)
+    + Number(v.costRate) * Math.pow((Number(j.width) * Number(j.height) * frames) / 1e6, Number(v.costExponent)) * Number(j.steps) / 8;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds / 6) / 10 : null;
+}
+
 /**
  * What this card has already given one friend today.
  *
@@ -293,9 +310,36 @@ const round1 = (x) => Math.round(x * 10) / 10;
 export async function lentToday({ rows = [], readProject, fp, now = Date.now(), except = null } = {}) {
   const since = startOfDay(now);
   const who = String(fp || "").toLowerCase();
-  const out = { measuredMinutes: 0, rendered: 0, withWait: 0, pendingMinutes: 0, pending: 0, unpriced: 0 };
+  const out = { measuredMinutes: 0, rendered: 0, withWait: 0, pendingMinutes: 0, pending: 0, pendingVideo: 0, unpriced: 0, untimed: 0, untimedMinutes: 0 };
   for (const row of rows) {
     if (!row || String(row.from?.fp || "").toLowerCase() !== who || (except && row.id === except)) continue;
+    if (row.jobType === "video") {
+      /* A finished standalone job remains `queued` until its MP4 is sealed.
+       * Its completion record, not its orderbook state, is the render receipt. */
+      if (row.renderStatus === "complete") {
+        if (Number(row.renderCompletedAt) >= since) {
+          out.rendered++;
+          if (row.renderRunMs !== null && row.renderRunMs !== undefined && Number.isFinite(Number(row.renderRunMs)) && Number(row.renderRunMs) >= 0)
+            out.measuredMinutes += Number(row.renderRunMs) / 60000;
+          else {
+            /* Older completion rows lack a run clock. Keep their reservation
+             * as an estimate, never request-to-finish time (which includes a
+             * potentially long wait behind someone else's queue). */
+            out.untimed++;
+            const estimate = Number(row.renderEstimatedMinutes);
+            if (Number.isFinite(estimate) && estimate > 0) out.untimedMinutes += estimate;
+          }
+        }
+        continue;
+      }
+      if (!["landed", "rendering", "queued", "returning"].includes(row.state) || !(Number(row.landedAt) >= since)) continue;
+      out.pending++;
+      out.pendingVideo++;
+      const estimate = Number(row.renderEstimatedMinutes);
+      if (Number.isFinite(estimate) && estimate > 0) out.pendingMinutes += estimate;
+      else out.unpriced++;
+      continue;
+    }
     if (!["landed", "rendered"].includes(row.state) || !row.slug) continue;
     const doc = await readProject(row.slug).catch(() => null);
     /* A project deleted by hand has nothing left to spend and nothing to count. */
@@ -318,6 +362,7 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
   }
   out.measuredMinutes = round1(out.measuredMinutes);
   out.pendingMinutes = round1(out.pendingMinutes);
+  out.untimedMinutes = round1(out.untimedMinutes);
   return out;
 }
 
@@ -326,10 +371,10 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
 export function usedSentence(used) {
   const parts = [
     used.rendered
-      ? `${used.measuredMinutes} min timed on this card today${used.withWait ? ` (${used.withWait === 1 ? "one render was" : `${used.withWait} renders were`} timed from request to finish, so that includes waiting in the queue)` : ""}`
+      ? `${used.measuredMinutes} min timed on this card today${used.withWait ? ` (${used.withWait === 1 ? "one render was" : `${used.withWait} renders were`} timed from request to finish, so that includes waiting in the queue)` : ""}${used.untimed ? `; ${used.untimed} completed video ${used.untimed === 1 ? "has" : "have"} no recorded render time (${used.untimedMinutes} min reserved estimate)` : ""}`
       : "nothing rendered for them yet today",
     used.pending
-      ? `${used.pending} scene${used.pending === 1 ? "" : "s"} accepted today still to render (${used.unpriced ? "at least" : "about"} ${used.pendingMinutes} min${used.unpriced ? `; ${used.unpriced} with no estimate` : ""})`
+      ? `${used.pending} ${used.pendingVideo ? `job${used.pending === 1 ? "" : "s"}` : `scene${used.pending === 1 ? "" : "s"}`} accepted today still to render (${used.unpriced ? "at least" : "about"} ${used.pendingMinutes} min${used.unpriced ? `; ${used.unpriced} with no estimate` : ""})`
       : "",
   ];
   return parts.filter(Boolean).join(", ");
@@ -349,8 +394,8 @@ export async function budgetCheck({ peer, orderDoc, rows = [], readProject, now 
   const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: orderDoc?.id });
   const est = estimateErrand(resolveErrand(orderDoc).doc);
   const thisOne = est ? round1(Number(est.minutes)) : null;
-  const total = round1(used.measuredMinutes + used.pendingMinutes + (thisOne ?? 0));
-  const unknown = thisOne === null || used.unpriced > 0;
+  const total = round1(used.measuredMinutes + used.untimedMinutes + used.pendingMinutes + (thisOne ?? 0));
+  const unknown = thisOne === null || used.unpriced > 0 || used.untimed > 0;
   const cost = thisOne === null
     ? "this scene has no estimate"
     : `this scene is about ${thisOne} min more (${est.basis === "measured" ? "timed on earlier renders here" : "an estimate, not timed on this card"})`;
@@ -363,6 +408,26 @@ export async function budgetCheck({ peer, orderDoc, rows = [], readProject, now 
   const why = `${name} may use ${allowance} minutes of your card a day: ${usedSentence(used)}, and ${cost} — ${tally}.`;
   if (total > allowance) return { ...base, over: true, reason: "budget-spent", why };
   return { ...base, over: false, reason: null, why };
+}
+
+/** The same peer allowance for a standalone signed Video job. This estimate is
+ * stored on the landed row, so the next accepted job counts this reservation
+ * even before a GPU run exists. Once complete, lentToday switches to runMs. */
+export async function budgetCheckVideoJob({ peer, orderDoc, rows = [], readProject, now = Date.now(), cfg = config } = {}) {
+  const allowance = Number(peer?.lendMinutesPerDay) || 0;
+  const name = peer?.nickname || String(peer?.fp || "").slice(0, 8) || "this friend";
+  const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: orderDoc?.id });
+  const thisOne = estimateVideoJobMinutes(orderDoc, cfg);
+  const total = round1(used.measuredMinutes + used.untimedMinutes + used.pendingMinutes + (thisOne ?? 0));
+  const unknown = thisOne === null || used.unpriced > 0 || used.untimed > 0;
+  const cost = thisOne === null ? "this video job has no estimate" : `this video job reserves about ${thisOne} min until its render time is measured`;
+  const base = { allowance, used, thisOne, total, unknown };
+  if (allowance <= 0) return { ...base, over: true, reason: "budget-zero",
+    why: `You give ${name} 0 minutes of your card a day (Collab → Friends, “Minutes of my card per day”), so accepting is a decision to make on purpose. ${cost[0].toUpperCase()}${cost.slice(1)}.` };
+  if (thisOne === null) return { ...base, over: true, reason: "budget-unpriced",
+    why: `This machine cannot estimate the GPU time for this H3 video job, so it cannot reserve an honest amount of ${name}'s ${allowance}-minute daily allowance. Accept only after reviewing the job and choosing an explicit override.` };
+  const why = `${name} may use ${allowance} minutes of your card a day: ${usedSentence(used)}, and ${cost} — ${unknown ? "at least" : "about"} ${total} min in all.`;
+  return { ...base, over: total > allowance, reason: total > allowance ? "budget-spent" : null, why };
 }
 
 /* ───────────────────────────────────────── the borrower's half: filing a take */

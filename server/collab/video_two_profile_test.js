@@ -128,6 +128,8 @@ test("sealed standalone Video job crosses two profiles, returns a checked MP4, a
     assert.equal(review.status, 409, JSON.stringify(review.body));
     assert.equal(review.body.reason, "not-seen");
     assert.match(review.body.reviewDigest, /^[0-9a-f]{64}$/);
+    assert.match(review.body.minutes, /minutes of your card a day/);
+    assert.match(review.body.readinessNote, /readiness.*Render/);
     const second = await request(borrower, { action: "preview", kind: "video-job", to: lenderMe.fp,
       video: video("A different adult dancer.", 43) });
     assert.equal(second.status, 200);
@@ -138,7 +140,13 @@ test("sealed standalone Video job crosses two profiles, returns a checked MP4, a
     assert.equal(swapped.status, 409);
     assert.equal(swapped.body.reason, "review-changed");
     await writeFile(delivered, sealed);
-    const accepted = await request(lender, { action: "video_accept", file, seen: true, expectedDigest: review.body.reviewDigest });
+    assert.equal((await request(lender, { action: "set_lend_minutes", fp: borrowerMe.fp, minutesPerDay: 0 })).status, 200);
+    const overAllowance = await request(lender, { action: "video_accept", file, seen: true, expectedDigest: review.body.reviewDigest });
+    assert.equal(overAllowance.status, 409, JSON.stringify(overAllowance.body));
+    assert.equal(overAllowance.body.reason, "budget-zero");
+    assert.equal(overAllowance.body.overridable, true);
+    assert.deepEqual((await request(lender, { action: "orders", side: "in" })).body.orders, [], "the allowance refusal must not book consent");
+    const accepted = await request(lender, { action: "video_accept", file, seen: true, expectedDigest: review.body.reviewDigest, anyway: true });
     assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
     assert.equal(accepted.body.state, "landed");
     assert.equal((await request(lender, { action: "video_accept", file, seen: true, expectedDigest: review.body.reviewDigest })).body.reason, "already-landed");
@@ -146,6 +154,7 @@ test("sealed standalone Video job crosses two profiles, returns a checked MP4, a
     const landed = JSON.parse(await readFile(rowFile));
     assert.equal(readStoredVideoJob(landed.videoJob).job.prompt, prompt);
     assert.equal(landed.artJobId, undefined, "accept may not queue");
+    assert.ok(landed.renderEstimatedMinutes > 0, "accept reserves estimated GPU minutes before render");
     const noModel = await request(lender, { action: "video_render", id: packed.body.order });
     assert.equal(noModel.status, 409, JSON.stringify(noModel.body));
     assert.ok(["model-not-ready", "video-disabled"].includes(noModel.body.reason),

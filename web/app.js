@@ -7630,14 +7630,20 @@ $("cbVideoReview")?.addEventListener("click", async () => {
   opened.reviewDigest = r.reviewDigest;
   if (card) { card.dataset.videoArmed = opened.file; card.dataset.videoArmedDigest = r.reviewDigest; }
   $("cbVideoAccept").hidden = false;
-  $("cbVideoNote").textContent = `${r.readiness?.ready ? "H3 appears ready here." : "H3 is missing files here; install them before rendering."} Accept records consent only.`;
+  $("cbVideoNote").textContent = `${r.minutes || "Daily allowance could not be read."} ${r.readiness?.ready ? "H3 appears ready here." : "H3 is missing files here; install them before rendering."} Model and engine readiness are checked again at Render; Accept only reserves this job.`;
 });
 $("cbVideoAccept")?.addEventListener("click", async () => {
   const opened = cbOpenedVideoJob, card = $("cbFileCard");
   if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.videoArmed !== opened.file || card?.dataset.videoArmedDigest !== opened.reviewDigest) {
     cbSay("Review this exact signed video job before accepting it."); disarmCollab(); return;
   }
-  const r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+  let r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+  if (r.overridable && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Accept this video job anyway?",
+      body: `${r.overrides.map((item) => item.why).join(" ")} Accept reserves this job; it does not queue a render.`, yes: "Accept anyway" });
+    if (!go || cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+    r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest, anyway: true });
+  }
   if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
   $("cbVideoNote").textContent = r.error || r.note || "Accepted locally; no render queued.";
   if (!r.error) { disarmCollab(); await paintVideoCardStatus(); await paintErrands(); }
@@ -7645,7 +7651,13 @@ $("cbVideoAccept")?.addEventListener("click", async () => {
 $("cbVideoRender")?.addEventListener("click", async () => {
   const opened = cbOpenedVideoJob;
   if (!opened || opened.file !== $("cbFile")?.value) return;
-  const r = await cb({ action: "video_render", id: opened.id });
+  let r = await cb({ action: "video_render", id: opened.id });
+  if (r.overridable && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Render behind the current work?",
+      body: r.overrides.map((item) => item.why).join(" "), yes: "Render anyway" });
+    if (!go || cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+    r = await cb({ action: "video_render", id: opened.id, anyway: true });
+  }
   if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
   $("cbVideoNote").textContent = r.error || r.note || "Queued on this machine.";
   await paintVideoCardStatus(); await paintErrands();

@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import * as L from "./lending.js";
+import * as book from "./orderbook.js";
 import * as O from "./order.js";
 import { quarantineTake } from "./quarantine.js";
 import { shotPacket } from "./packet.js";
@@ -426,6 +427,68 @@ test("8: the order being accepted is never counted twice", async () => {
   const rows = [{ id: o.id, from: { fp: FP }, slug: "self", state: "landed", landedAt: DAY - 1000 }];
   const used = await L.lentToday({ rows, readProject: async () => errandFor(o), fp: FP, now: DAY, except: o.id });
   assert.equal(used.pending, 0);
+});
+
+test("8: standalone H3 jobs reserve allowance at accept and completed jobs use render time, not queue wait", async () => {
+  const job = { id: "o_" + "f".repeat(12), job: { engine: "h3", width: 1280, height: 704, seconds: 5, steps: 20 } };
+  const estimate = L.estimateVideoJobMinutes(job);
+  assert.ok(estimate > 0);
+  const peer = { fp: FP, nickname: "Friend", lendMinutesPerDay: 0 };
+  const readProject = async () => { throw new Error("Standalone video has no movie project"); };
+  const zero = await L.budgetCheckVideoJob({ peer, orderDoc: job, rows: [], readProject, now: DAY });
+  assert.deepEqual([zero.over, zero.reason, zero.thisOne], [true, "budget-zero", estimate]);
+  const unpriced = await L.budgetCheckVideoJob({ peer: { ...peer, lendMinutesPerDay: 60 }, orderDoc: job,
+    rows: [], readProject, now: DAY, cfg: { video: { fps: 24, costFixedSeconds: 15, costRate: null, costExponent: 1.2, engines: { h3: {} } } } });
+  assert.deepEqual([unpriced.over, unpriced.reason, unpriced.thisOne], [true, "budget-unpriced", null],
+    "missing cost configuration must not silently reserve zero minutes");
+
+  const pending = { id: "o_" + "a".repeat(12), jobType: "video", from: { fp: FP },
+    state: "landed", landedAt: DAY - 1000, renderEstimatedMinutes: estimate };
+  const queued = { ...pending, id: "o_" + "b".repeat(12), state: "queued" };
+  const other = { ...pending, id: "o_" + "c".repeat(12), from: { fp: "cd".repeat(16) } };
+  const failed = { ...pending, id: "o_" + "d".repeat(12), state: "failed" };
+  const previousDay = { ...pending, id: "o_" + "e".repeat(12), landedAt: DAY - 26 * 3600_000 };
+  const rows = [pending, queued, other, failed, previousDay];
+  const used = await L.lentToday({ rows, readProject, fp: FP, now: DAY });
+  assert.deepEqual([used.pending, used.pendingVideo, used.pendingMinutes, used.rendered], [2, 2, estimate * 2, 0]);
+  const spent = await L.budgetCheckVideoJob({ peer: { ...peer, lendMinutesPerDay: estimate * 2 }, orderDoc: job,
+    rows, readProject, now: DAY });
+  assert.deepEqual([spent.over, spent.reason, spent.total], [true, "budget-spent", Math.round(estimate * 3 * 10) / 10]);
+  const self = await L.budgetCheckVideoJob({ peer: { ...peer, lendMinutesPerDay: estimate * 2 }, orderDoc: { ...job, id: pending.id },
+    rows, readProject, now: DAY });
+  assert.equal(self.over, false, "a retry of the same order cannot reserve its own estimate twice");
+
+  const completed = { ...pending, state: "queued", renderStatus: "complete", renderCompletedAt: DAY - 100,
+    renderRequestedAt: DAY - 60 * 60_000, renderRunMs: 90_000 };
+  const measured = await L.lentToday({ rows: [completed], readProject, fp: FP, now: DAY });
+  assert.deepEqual([measured.measuredMinutes, measured.rendered, measured.pending, measured.withWait], [1.5, 1, 0, 0],
+    "a completion replaces the reservation with GPU run time even while the orderbook state is queued");
+  const untimed = await L.lentToday({ rows: [{ ...completed, renderRunMs: undefined }], readProject, fp: FP, now: DAY });
+  assert.deepEqual([untimed.measuredMinutes, untimed.untimed, untimed.untimedMinutes], [0, 1, estimate],
+    "keep the reserved estimate, never request-to-finish time, when an older completion has no render clock");
+});
+
+test("8: simultaneous H3 landings cannot both spend the same remaining allowance", async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), "aiplay-video-allowance-"));
+  try {
+    const job = { engine: "h3", width: 1280, height: 704, seconds: 5, steps: 20 };
+    const estimate = L.estimateVideoJobMinutes(job);
+    assert.ok(estimate > 0);
+    const peer = { fp: FP, nickname: "Friend", lendMinutesPerDay: estimate * 1.5 };
+    const readProject = async () => { throw new Error("No movie project"); };
+    const results = await Promise.all(["a", "b"].map((letter) => {
+      const orderDoc = { id: "o_" + letter.repeat(12), job };
+      return book.landOrderRowChecked({ outDir, row: { id: orderDoc.id, from: { fp: FP }, jobType: "video",
+        state: "landed", landedAt: DAY - 1000 },
+      check: async (rows) => {
+        const minutes = await L.budgetCheckVideoJob({ peer, orderDoc, rows, readProject, now: DAY });
+        return minutes.over ? { refusal: { reason: minutes.reason } } : { patch: { renderEstimatedMinutes: minutes.thisOne } };
+      } });
+    }));
+    assert.deepEqual(results.map((result) => !!result.row).sort(), [false, true]);
+    assert.equal(results.find((result) => !result.row).decision.refusal.reason, "budget-spent");
+    assert.equal((await book.listOrders({ outDir, side: "in" })).length, 1);
+  } finally { await rm(outDir, { recursive: true, force: true }); }
 });
 
 test("8: the estimate is the plan's own, so the number on the card is the number the Plan card shows", async () => {

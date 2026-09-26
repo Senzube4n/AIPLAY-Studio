@@ -418,6 +418,37 @@ test("standalone Video handoff keeps its signed job separate from movie orders",
  assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
 });
 
+test("signed Video acceptance and rendering ask before each busy or allowance override", async () => {
+  for (const answer of [false, true]) {
+    const f = fixture();
+    const asked = [];
+    f.context.bottomDrawer = async (options) => { asked.push(options); return answer; };
+    f.node("cbFile").value = "video.aiplay";
+    f.node("cbFileCard").dataset.videoArmed = "video.aiplay";
+    f.node("cbFileCard").dataset.videoArmedDigest = "a".repeat(64);
+    f.run('cbOpenedVideoJob = { file: "video.aiplay", id: "o_aaaaaaaaaaaa", reviewDigest: "' + "a".repeat(64) + '" }');
+    f.context.respond = (url, body) => body?.action === "video_accept"
+      ? (body.anyway === true ? { ok: true, note: "Accepted." }
+        : { error: "Daily allowance reached.", overridable: true,
+          overrides: [{ reason: "budget-zero", why: "You give Friend 0 minutes of your card a day." }] })
+      : body?.action === "video_render"
+        ? (body.anyway === true ? { ok: true, note: "Queued." }
+          : { error: "Card busy.", overridable: true,
+            overrides: [{ reason: "engine-busy", why: "The card is rendering a song." }] })
+        : f.defaults(url, body);
+    await f.fire("cbVideoAccept");
+    const accepts = f.calls.filter((call) => call.body?.action === "video_accept");
+    assert.deepEqual(accepts.map((call) => call.body.anyway === true), answer ? [false, true] : [false]);
+    assert.equal(asked[0].yes, "Accept anyway");
+    assert.match(asked[0].body, /0 minutes/);
+    await f.fire("cbVideoRender");
+    const renders = f.calls.filter((call) => call.body?.action === "video_render");
+    assert.deepEqual(renders.map((call) => call.body.anyway === true), answer ? [false, true] : [false]);
+    assert.equal(asked[1].yes, "Render anyway");
+    assert.match(asked[1].body, /rendering a song/);
+  }
+});
+
 /* ── LENDING FOR A PERSON WITH NO STRONG CARD ────────────────────────────
  * Every override the door has is one a person can reach from this screen,
  * and every one is a QUESTION: a missing dialog must never read as a yes. */

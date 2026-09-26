@@ -462,11 +462,13 @@ function collabControlTools(api, safeName) {
       description: "Review and then explicitly accept one signed H3 video job. First call with seen:false to get the exact prompt, model rights/readiness and reviewDigest. Only after review, call seen:true with that digest. Accepting records consent; it does not queue a render. The sender's signature, verified role and expiry are enforced again.",
       inputSchema: { type: "object", required: ["file", "seen"], additionalProperties: false, properties: {
         file: { type: "string" }, seen: { type: "boolean" }, review_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        anyway: { type: "boolean", description: "Explicitly override only the listed daily-minute or observed-busy checks after reviewing the server refusal. Never overrides the signed job, role, expiry, or render readiness." },
       } },
       async run(a) {
+        if (a.anyway === true && a.seen !== true) throw new Error("Review the signed video job and its allowance before using anyway:true.");
         if (a.seen === true && !/^[0-9a-f]{64}$/.test(String(a.review_digest || ""))) throw new Error("Pass review_digest from this exact signed video job before accepting.");
         try { return await api("POST", "/api/collab", { action: "video_accept", file: String(a.file || ""), seen: a.seen === true,
-          ...(a.seen === true ? { expectedDigest: a.review_digest } : {}) }); }
+          ...(a.seen === true ? { expectedDigest: a.review_digest, anyway: a.anyway === true } : {}) }); }
         catch (error) {
           if (a.seen !== false || error?.cause?.status !== 409 || error.cause.refusal?.reason !== "not-seen") throw error;
           return error.cause.refusal;
@@ -476,8 +478,11 @@ function collabControlTools(api, safeName) {
     {
       name: "collab_video_render",
       description: "Explicitly queue one accepted standalone H3 video job on this machine. Rechecks local H3 readiness, plan settings and peer permission; no engine substitution, no automatic retry and no render on open/accept.",
-      inputSchema: { type: "object", required: ["id"], additionalProperties: false, properties: { id: { type: "string", pattern: "^o_[0-9a-f]{12}$" } } },
-      async run(a) { return await api("POST", "/api/collab", { action: "video_render", id: String(a.id || "") }); },
+      inputSchema: { type: "object", required: ["id"], additionalProperties: false, properties: {
+        id: { type: "string", pattern: "^o_[0-9a-f]{12}$" },
+        anyway: { type: "boolean", description: "Explicitly override an observed busy queue after reviewing the server refusal. Never overrides missing models, paused queues, or an unreadable engine." },
+      } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_render", id: String(a.id || ""), anyway: a.anyway === true }); },
     },
     {
       name: "collab_video_send_back",
