@@ -1,7 +1,7 @@
 import {createAvatarLipSync} from './avatar-lipsync.js';
 
 /** One expiring browser preview. Human controls and MCP share desired state. */
-export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
+export async function mountAvatarVoice({row, runtime, isCurrent = () => true, onMotion = null, onSessionReset = null}) {
   const $ = id => document.getElementById(id);
   const overlayEnable = $('voice-enable-overlay');
   const post = async body => {
@@ -15,7 +15,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
   let live = true, active = !document.hidden, polling = false, applied = 0, consumed = 0, consumedAudio = 0, loaded = 0, sought = 0, timer;
   let override = '', error = '', pendingStart = false, startToken = 0, uploadToken = 0;
   let commandTail = Promise.resolve(), recovering = null, commandSerial = 0, settledCommand = 0;
-  let cue = null, cueError = '', cueSeenRevision = 0, completedCueRevision = 0;
+  let cue = null, cueError = '', cueSeenRevision = 0, completedCueRevision = 0, motionSeenRevision = 0;
   const valid = () => live && isCurrent();
   const paintCue = () => {
     if (!valid()) return;
@@ -112,12 +112,20 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
         ? false : syncCue(session.desired?.cue);
       if (cueApplied) cueSeenRevision = session.revision;
     }
+    const motionRevision = Number.isSafeInteger(session.desired?.motion_revision) ? session.desired.motion_revision : 0;
+    let motionApplied = motionRevision <= motionSeenRevision;
+    if (!motionApplied && typeof onMotion === 'function') {
+      try { motionApplied = onMotion(session.desired.motion, motionRevision) === true; }
+      catch { motionApplied = false; }
+      if (motionApplied) motionSeenRevision = motionRevision;
+    }
+    const acknowledged = Math.min(cueApplied ? session.revision : session.desired.cue.revision - 1,
+      motionApplied ? session.revision : motionRevision - 1);
     if (session.revision <= consumed) {
-      if (cueApplied) applied = Math.max(applied, session.revision);
+      applied = Math.max(applied, acknowledged);
       return;
     }
     const d = session.desired;
-    const acknowledged = cueApplied ? session.revision : Math.min(session.revision, d.cue.revision - 1);
     // An expression cue has its own session revision. It must never replay an
     // ended song, clear a blocked-audio warning, or re-seek the audio.
     const audioRevision = Number.isSafeInteger(d.audio_revision) ? d.audio_revision : session.revision;
@@ -150,14 +158,15 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
     }
   }
   const registration = () => ({action:'register',session_id,id:row.id,sha256:row.inspection.sha256,
-    capabilities:{audio:true,lip_sync:lip.state().lipSyncSupported}});
+    capabilities:{audio:true,lip_sync:lip.state().lipSyncSupported,...(typeof onMotion === 'function' ? {motion:true} : {})}});
   async function recover() {
     if (recovering) return recovering;
     const epoch = ++generation;
     cancelStart(); uploadToken++; lip.dispose(); lip = newLip();
     syncCue(null);
     cueSeenRevision = completedCueRevision = 0;
-    session_id = crypto.randomUUID(); applied = consumed = consumedAudio = loaded = sought = 0;
+    session_id = crypto.randomUUID(); applied = consumed = consumedAudio = loaded = sought = motionSeenRevision = 0;
+    if (typeof onSessionReset === 'function') onSessionReset();
     commandTail = Promise.resolve(); commandSerial = settledCommand = 0;
     override = ''; error = 'Preview expired. Choose audio again.';
     $('voice-file').value = ''; $('voice-session').textContent = session_id; paint(lip.state());
@@ -280,6 +289,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
   if (overlayEnable) overlayEnable.onclick = enableOverlay;
   timer = setInterval(poll, 1000); paint(lip.state()); paintCue();
   return {
+    motionCommand(op, fields = {}) { if (typeof onMotion === 'function' && valid()) return command(op, fields); },
     update(dt) { if (!valid()) return; if (cue?.expiresAt <= Date.now()) syncCue(null); lip.update(dt); $('voice-level').value = lip.state().level; },
     captureBaseline() { if (valid()) lip.captureBaseline(); },
     setActive(value) {

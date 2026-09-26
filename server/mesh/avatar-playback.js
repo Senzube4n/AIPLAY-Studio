@@ -73,14 +73,17 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
   }
   async function register(input,actor='system'){
     fields(input,['session_id','id','sha256','capabilities'],'registration');const request=structuredClone(input);sid(request.session_id);sourceIdentity(request);
-    fields(request.capabilities,['audio','lip_sync'],'capabilities');if(typeof request.capabilities.audio!=='boolean'||typeof request.capabilities.lip_sync!=='boolean'||request.capabilities.lip_sync&&!request.capabilities.audio)throw fail('Invalid preview capabilities.');
+    fields(request.capabilities,['audio','lip_sync','motion'],'capabilities');if(typeof request.capabilities.audio!=='boolean'||typeof request.capabilities.lip_sync!=='boolean'||request.capabilities.lip_sync&&!request.capabilities.audio||(request.capabilities.motion!==undefined&&typeof request.capabilities.motion!=='boolean'))throw fail('Invalid preview capabilities.');
     return serial(lock,async()=>{
       await source(request);await cleanup(actor);
       let previous;try{previous=await session(request.session_id);}catch(error){if(error.status!==404&&error.status!==410)throw error;}
       if(previous&&(previous.id!==request.id||previous.sha256!==request.sha256))throw fail('Session belongs to another avatar; use a new session id.',409);
       if(!previous&&(await entries(sessionsDir,uuid)).length>=PLAYBACK_LIMITS.sessions)throw fail('Too many active preview sessions.',409);
       const row=previous||{session_id:request.session_id,id:request.id,sha256:request.sha256,revision:0,applied_revision:0,
-        desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,audio_revision:0,cue:null},status:{phase:'empty',time:0,duration:null},commands:[]};
+        desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,audio_revision:0,cue:null,motion:{clip_index:null,playing:false,time:0,speed:1,time_revision:0},motion_revision:0},status:{phase:'empty',time:0,duration:null},commands:[]};
+      row.desired.motion ||= {clip_index:null,playing:false,time:0,speed:1,time_revision:0};
+      if(!Number.isSafeInteger(row.desired.motion.time_revision))row.desired.motion.time_revision=0;
+      row.desired.motion_revision ||= 0;
       row.capabilities=request.capabilities;row.expiresAt=now()+PLAYBACK_LIMITS.sessionMs;
       await event('playback_register',actor,`avatar/${row.id}/playback/${row.session_id}`,{session_id:row.session_id,avatarId:row.id,sha256:row.sha256,capabilities:row.capabilities});
       await atomic(sessionPath(row.session_id),row);return publicSession(row);
@@ -121,26 +124,51 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
     });
   }
   async function command(input,actor='system'){
-    fields(input,['session_id','command_id','op','audio_id','seconds','expression','duration_ms'],'playback command');const request=structuredClone(input);sid(request.session_id);if(request.command_id!==undefined)sid(request.command_id);
-    if(!['load','play','pause','stop','seek','cue','clear_cue'].includes(request.op))throw fail('Unknown playback command.');
+    fields(input,['session_id','command_id','op','audio_id','clip_index','speed','seconds','expression','duration_ms'],'playback command');const request=structuredClone(input);sid(request.session_id);if(request.command_id!==undefined)sid(request.command_id);
+    if(!['load','play','pause','stop','seek','cue','clear_cue','motion_select','motion_play','motion_pause','motion_stop','motion_seek','motion_speed'].includes(request.op))throw fail('Unknown playback command.');
     if(request.op==='load')aid(request.audio_id);else if(request.audio_id!==undefined)throw fail('Only load accepts an audio id.');
-    if(request.op==='seek')number(request.seconds,'seek time');else if(request.seconds!==undefined)throw fail('Only seek accepts seconds.');
+    if(request.op==='motion_select'){
+      if(request.clip_index!==null&&(!Number.isInteger(request.clip_index)||request.clip_index<0||request.clip_index>31))throw fail('Select an embedded clip index or null for rest pose.');
+    }else if(request.clip_index!==undefined)throw fail('Only motion_select accepts a clip index.');
+    if(request.op==='motion_speed'){
+      if(typeof request.speed!=='number'||!Number.isFinite(request.speed)||request.speed<0.25||request.speed>2)throw fail('Motion speed must be from 0.25 to 2.');
+    }else if(request.speed!==undefined)throw fail('Only motion_speed accepts speed.');
+    if(request.op==='seek'||request.op==='motion_seek')number(request.seconds,'seek time');else if(request.seconds!==undefined)throw fail('Only seek accepts seconds.');
     if(request.op==='cue'){
       if(typeof request.expression!=='string'||!request.expression.length||request.expression.length>100||!Number.isSafeInteger(request.duration_ms)||request.duration_ms<PLAYBACK_LIMITS.cueMinMs||request.duration_ms>PLAYBACK_LIMITS.cueMaxMs)throw fail('Cue requires an embedded expression and duration from 250 to 10000 ms.');
     }else if(request.expression!==undefined||request.duration_ms!==undefined)throw fail('Only cue accepts an expression and duration.');
-    const identity=digest(Buffer.from(JSON.stringify({op:request.op,audio_id:request.audio_id,seconds:request.seconds,expression:request.expression,duration_ms:request.duration_ms})));
+    const identity=digest(Buffer.from(JSON.stringify({op:request.op,audio_id:request.audio_id,clip_index:request.clip_index,speed:request.speed,seconds:request.seconds,expression:request.expression,duration_ms:request.duration_ms})));
     return serial(lock,async()=>{
       const row=await session(request.session_id);const asset=await source(row);
       const previous=request.command_id&&row.commands.find(entry=>entry.id===request.command_id);
       if(previous){if(previous.identity!==identity)throw fail('Command id was already used with different arguments.',409);return publicSession(row);}
       if(request.command_id&&row.commands.length>=4096)throw fail('Session command history is full; register a new preview session.',409);
       if(request.op==='cue'&&!cueExpressions(asset.row,asset.bytes).some(item=>item.name===request.expression))throw fail('Expression is not available for a lip-sync-safe cue.',422);
-      if(!['cue','clear_cue'].includes(request.op)&&!row.capabilities.audio)throw fail('This preview cannot play audio.',409);
+      const isMotion=request.op.startsWith('motion_');
+      if(isMotion&&!row.capabilities.motion)throw fail('This preview cannot play embedded motion.',409);
+      if(!isMotion&&!['cue','clear_cue'].includes(request.op)&&!row.capabilities.audio)throw fail('This preview cannot play audio.',409);
+      const motion=row.desired.motion||{clip_index:null,playing:false,time:0,speed:1,time_revision:0};
+      const clips=asset.row.inspection?.clips||[];
+      if(request.op==='motion_select'&&request.clip_index!==null&&!clips.some(clip=>clip.index===request.clip_index))throw fail('Clip index is not embedded in this avatar.',422);
+      if(isMotion&&!['motion_select','motion_speed'].includes(request.op)&&motion.clip_index===null)throw fail('Select an embedded clip before controlling motion.',409);
+      if(request.op==='motion_seek'){
+        const selected=clips.find(clip=>clip.index===motion.clip_index);
+        if(!selected||request.seconds>selected.duration)throw fail('Motion time exceeds the selected clip.',422);
+      }
       const next=row.revision+1;if(!Number.isSafeInteger(next))throw fail('Playback revision exhausted.',409);
       if(request.op==='cue')row.desired.cue={expression:request.expression,durationMs:request.duration_ms,expiresAt:null,revision:next};
       else if(request.op==='clear_cue')row.desired.cue=null;
+      else if(isMotion){
+        if(request.op==='motion_select'){motion.clip_index=request.clip_index;motion.playing=false;motion.time=0;motion.time_revision=next;}
+        if(request.op==='motion_play')motion.playing=true;
+        if(request.op==='motion_pause'||request.op==='motion_stop')motion.playing=false;
+        if(request.op==='motion_stop'){motion.time=0;motion.time_revision=next;}
+        if(request.op==='motion_seek'){motion.time=request.seconds;motion.playing=false;motion.time_revision=next;}
+        if(request.op==='motion_speed')motion.speed=request.speed;
+        row.desired.motion=motion;row.desired.motion_revision=next;
+      }
       else if(request.op==='load'){
-        const clip=await audio(request.audio_id);row.desired={audio_id:clip.audio_id,url:clip.url,name:clip.name,bytes:clip.bytes,playing:false,time:0,load_revision:next,seek_revision:next,audio_revision:next,cue:row.desired.cue||null};
+        const clip=await audio(request.audio_id);row.desired={audio_id:clip.audio_id,url:clip.url,name:clip.name,bytes:clip.bytes,playing:false,time:0,load_revision:next,seek_revision:next,audio_revision:next,cue:row.desired.cue||null,motion:row.desired.motion,motion_revision:row.desired.motion_revision};
       }else{
         if(!row.desired.audio_id)throw fail('Load local audio before controlling playback.',409);
         await audio(row.desired.audio_id);
@@ -151,7 +179,7 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
       }
       row.revision=next;
       if(request.command_id)row.commands.push({id:request.command_id,identity});
-      await event('playback_command',actor,`avatar/${row.id}/playback/${row.session_id}`,{op:'playback_command',command:request.op,command_id:request.command_id||null,session_id:row.session_id,avatarId:row.id,revision:next,audio_id:row.desired.audio_id,...(request.seconds===undefined?{}:{seconds:request.seconds}),...(request.expression===undefined?{}:{expression:request.expression,duration_ms:request.duration_ms})});
+      await event('playback_command',actor,`avatar/${row.id}/playback/${row.session_id}`,{op:'playback_command',command:request.op,command_id:request.command_id||null,session_id:row.session_id,avatarId:row.id,revision:next,audio_id:row.desired.audio_id,...(request.clip_index===undefined?{}:{clip_index:request.clip_index}),...(request.speed===undefined?{}:{speed:request.speed}),...(request.seconds===undefined?{}:{seconds:request.seconds}),...(request.expression===undefined?{}:{expression:request.expression,duration_ms:request.duration_ms})});
       await atomic(sessionPath(row.session_id),row);return publicSession(row);
     });
   }

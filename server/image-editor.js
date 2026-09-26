@@ -58,10 +58,29 @@ export function editorOptions(body) {
 
 /** All generation goes through the existing Image API/ArtRunner supplied by index. */
 export function createImageEditor({ imageDir, inputDir, coverDir, python, generate, preflight = async () => {},
-  register = async () => {}, documentChanged = async () => {}, runPython } = {}) {
+  register = async () => {}, documentChanged = async () => {}, runPython, removeTemp = unlink,
+  now = () => Date.now() } = {}) {
   const jobs = new Map();
   let preparing = 0;
   const documentLocks = new Map();
+  async function cleanupPaths(paths, warnings) {
+    for (const file of paths) {
+      try { await removeTemp(file); }
+      catch (error) {
+        if (error.code === "ENOENT") continue;
+        warnings.push(`Could not clear temporary editor file ${path.basename(file)}: ${error.message}`);
+      }
+    }
+  }
+  async function cleanupOwned(job, { source = false } = {}) {
+    const files = [...job.ownedFiles].filter(file => source || file !== job.sourcePath);
+    for (const file of files) {
+      const warnings = [];
+      await cleanupPaths([file], warnings);
+      if (warnings.length) (job.warnings ||= []).push(...warnings);
+      else job.ownedFiles.delete(file);
+    }
+  }
   async function withDocumentLock(key, operation) {
     const previous = documentLocks.get(key) || Promise.resolve();
     let release;
@@ -114,7 +133,15 @@ export function createImageEditor({ imageDir, inputDir, coverDir, python, genera
     ++preparing;
     try {
     // Keep the bounded review history without expiring an active generation.
-    for (const [id, job] of jobs) if (job.status !== "generating" && Date.now() - job.createdAt > 86400000) jobs.delete(id);
+    for (const [id, job] of jobs) {
+      if (job.status === "generating" || job.mutating || now() - job.createdAt <= 86400000) continue;
+      job.mutating = true;
+      try {
+        await cleanupOwned(job, { source: true });
+        if (job.ownedFiles.size === 0) jobs.delete(id);
+      }
+      finally { job.mutating = false; }
+    }
     if (jobs.size >= 100) throw new Error("The editor review history is full; restart the app to clear completed session history.");
     await mkdir(inputDir, { recursive: true });
     await mkdir(scratch, { recursive: true });
@@ -132,21 +159,26 @@ export function createImageEditor({ imageDir, inputDir, coverDir, python, genera
     const stagedOptions = { ...options,
       prompt: mode === "inpaint" ? `Edit <image 1> only where the selection mask in <image 2> is white. Black regions must stay unchanged. ${options.prompt}`
         : mode === "style" ? `Edit <image 1> using the visual style of <image 2>, preserving the subject and composition of <image 1>. ${options.prompt}` : options.prompt };
-    let prepared;
+    let prepared, sentReferences = [];
     try {
       const { references: sent, ...frozen } = await run("prepare", { documentId: body.documentId, source: body.source,
         mode, selection: body.selection, out: sourcePath, maskOut: maskPath, maskImageOut: maskImagePath, references });
       prepared = frozen;
-      stagedOptions.refImages = [sourceName, ...(mode === "inpaint" ? [maskName] : []), ...options.refImages.map((name, i) => sent?.[i] ?? name)];
+      sentReferences = sent || [];
+      stagedOptions.refImages = [sourceName, ...(mode === "inpaint" ? [maskName] : []), ...options.refImages.map((name, i) => sentReferences[i] ?? name)];
       await preflight(stagedOptions);
     }
     catch (error) {
-      await Promise.allSettled([sourcePath, maskPath, maskImagePath, ...references.map(r => r.out)].map(file => unlink(file)));
+      const warnings = [];
+      await cleanupPaths([sourcePath, maskPath, maskImagePath, ...references.map(r => r.out)], warnings);
+      for (const warning of warnings) console.warn(warning);
       throw error;
     }
-    const job = { id, status: "generating", actor, createdAt: Date.now(), mode,
+    const job = { id, status: "generating", actor, createdAt: now(), mode,
       options: stagedOptions, requestedPrompt: options.prompt, documentId: body.documentId, source: body.source,
       sourcePath, maskPath: mode === "inpaint" ? maskPath : null,
+      ownedFiles: new Set([sourcePath, ...(mode === "inpaint" ? [maskPath, maskImagePath] : []),
+        ...references.filter((r, i) => sentReferences[i] === path.basename(r.out)).map(r => r.out)]),
       ...prepared };
     jobs.set(id, job);
     // Deliberately detached from the HTTP response: UI and MCP poll the same job.
@@ -164,8 +196,13 @@ export function createImageEditor({ imageDir, inputDir, coverDir, python, genera
           generatedFrom: generated.name, derivedFrom: body.source || null, documentId: body.documentId || null, operation: `qwen-${mode}`,
           refImages: options.refImages, masked: mode === "inpaint", runId: generated.runId }, actor);
         job.candidate = { name, url: `/api/image/${encodeURIComponent(name)}`, ...finished };
+        await cleanupOwned(job);
         job.status = "ready";
-      } catch (error) { job.status = "error"; job.error = error.message; }
+      } catch (error) {
+        job.error = error.message;
+        await cleanupOwned(job, { source: true });
+        job.status = "error";
+      }
     })();
     return publicJob(job);
     } finally { --preparing; }
@@ -179,8 +216,12 @@ export function createImageEditor({ imageDir, inputDir, coverDir, python, genera
     if (job.mutating) throw new Error("This editor result is already being changed.");
     if (action === "discard") {
       if (job.status !== "ready" && job.status !== "error") throw new Error("Only a finished, unaccepted edit can be discarded.");
-      job.status = "discarded";
-      return publicJob(job);
+      job.mutating = true;
+      try {
+        await cleanupOwned(job, { source: true });
+        job.status = "discarded";
+        return publicJob(job);
+      } finally { job.mutating = false; }
     }
     if (!["accept", "undo"].includes(action)) throw new Error("action must be create, status, accept, discard or undo.");
     if (action === "accept" && job.status !== "ready") throw new Error("Only a ready result can be accepted.");
@@ -199,6 +240,7 @@ export function createImageEditor({ imageDir, inputDir, coverDir, python, genera
       try { await documentChanged({ action, id: job.id, documentId: job.documentId, layerId: result.layerId,
         candidate: job.candidate.name }, actor); }
       catch (error) { (job.warnings ||= []).push(`Document saved, but its audit note failed: ${error.message}`); }
+      if (action === "accept") await cleanupOwned(job, { source: true });
       return { ...publicJob(job), doc: result.doc, revision: result.revision, layerId: result.layerId };
     } finally { job.mutating = false; }
   }
