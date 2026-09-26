@@ -1280,14 +1280,16 @@ catalogued; our own hum-to-score path is its first stage already.
 
 The Images screen is the cover-art pipeline given its own room: a prompt on the
 left, a masonry gallery on the right — hover a tile for its prompt, seed and
-render time. Six engines:
+render time. Engines include:
 
-- **FLUX.2 klein** *(default)* — fast, Apache-2.0, and the only engine that
-  takes **reference images**: the prompt refers to them as "image 1",
-  "image 2" — "the character from image 1 in the scene from image 2" — which is
-  how a character stays consistent across pictures. References are reachable
-  through the API and the MCP tools; the screen itself has no attach control
-  yet.
+- **Qwen Image 2.1** *(default when installed)* — text generation and editing
+  with ordered reference images, including masked edits in the image editor.
+  Its research licence limits commercial use; Models and `qwen_image_status`
+  show the required files and runtime support.
+- **FLUX.2 klein** — fast, Apache-2.0, and also takes **reference images**:
+  the prompt refers to them as "image 1", "image 2" — "the character from image
+  1 in the scene from image 2" — which helps a character stay consistent.
+  References can be attached in Pictures or passed through the API and MCP.
 - **Z-Image Turbo** (Tongyi-MAI, Apache-2.0) — eight steps to a finished
   picture, strong on photographic realism, faces and bilingual
   English/Chinese prompts, and the cleanest commercial answer in the app:
@@ -2099,8 +2101,9 @@ int8 repack, through ComfyUI's own Krea 2 support: pick *Krea 2 Turbo* on the
 Images screen (or `make_image` with `engine: "krea2"`). Measured at 1024²: 52 s
 for the first picture, 26 s warm — ten times FLUX.2 klein, for the frontier
 look. Krea 2 Community Licence: outputs are yours; commercial use under USD 1M
-company-wide revenue. No references (FLUX.2's trick) and no negative prompt
-(distilled at cfg 1). FLUX.2 stays the default for speed and references.
+company-wide revenue. No references (unlike Qwen and FLUX.2) and no negative prompt
+(distilled at cfg 1). FLUX.2 remains a faster, commercially licensed option
+for references; installed Qwen Image 2.1 is the picture default.
 
 **"fast" means 3 steps now.** `make_clip`'s fast preset renders on the TaoMate
 build where it is installed (measured as coherent and as sharp as the 8-step

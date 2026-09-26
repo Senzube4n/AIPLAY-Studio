@@ -893,10 +893,10 @@ export function recommendFor({ capabilities, machine, disk, music = null } = {})
 /* ── WHAT RUNS WHEN NOBODY CHOSE ───────────────────────────────────────────
  *
  * A fresh install used to aim music at MiniMax Music 3 and pictures and covers
- * at Qwen Image 2.1, neither of which the recommended download fetches; the
- * first song opened a download for the wrong engine and every cover after it
- * failed. defaultFor() is asked only when a preference is NOT saved, answers
- * from what is on this PC, and is worked out on every read: index.js applies it
+ * at Qwen Image 2.1 even when neither model was installed. The first song
+ * opened a download for the wrong engine and every cover after it failed.
+ * defaultFor() is asked only when a preference is NOT saved, answers from
+ * what is on this PC, and is worked out on every read: index.js applies it
  * to the live config without writing it into settings.json (config.js
  * applyMachineDefault), so the day a download finishes the default follows it.
  *
@@ -952,6 +952,16 @@ function pictureDefault({ saved = null, kept = false, capabilities = [], machine
       why: `${saidBy(kept)} ${label} for pictures${ready ? "." : ", and it is not on this PC. The Models screen has it; Studio does not switch for you."}` };
   }
   const rows = pictureRows(capabilities, machine);
+  /* Qwen is Studio's main image model when its files are present. The generic
+   * recommendation ranking prefers Apache-2.0 FLUX.2 even beside a ready Qwen,
+   * which silently changed the Pictures/MCP default despite the selected Qwen
+   * option in the UI. Keep that ranking for the available fallback and for a
+   * machine with no picture model; a person's saved choice still wins above. */
+  const qwen = rows.find((r) => r.engine === "qwen-image-2.1" && r.cap.ready);
+  if (qwen) {
+    return { key, value: qwen.engine, chosenBy: "machine", kept: false, ready: true, label: shortLabel(qwen.cap.label),
+      why: `Studio picked ${shortLabel(qwen.cap.label)} for pictures because it is on this PC.` };
+  }
   const onDisk = rows.filter((r) => r.cap.ready).sort(rankPick)[0];
   if (onDisk) {
     return { key, value: onDisk.engine, chosenBy: "machine", kept: false, ready: true, label: shortLabel(onDisk.cap.label),

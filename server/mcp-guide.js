@@ -160,11 +160,10 @@ timeline (\`mv_read_timeline\` treats a relinked item as a first-class state).
 weights on the next render, so batch work by engine, never alternate per
 clip.
 
-IMAGES — the default engine is FLUX.2 (Apache-2.0) and it is the only one
-taking ref_images. The Ideogram engine is typography-grade but NON-COMMERCIAL
-and noise-locked: most seeds return the model's refusal card regardless of
-prompt. The app renders from its pass-seed list automatically; pin 777
-if you pin one at all. A refusal card is a seed problem, not a prompt one.
+IMAGES — installed Qwen Image 2.1 is the default (research-only); when absent,
+Studio uses another ready model. Qwen and FLUX.2 (Apache-2.0) take ref_images.
+Ideogram is noncommercial and noise-locked: use its pass-seed list (or 777);
+refusal cards indicate a bad seed.
 
 THE ENGINE DOOR — there is no other way to the GPU. The engine binds an
 unpublished loopback port chosen fresh at every start, so a graph runs through
