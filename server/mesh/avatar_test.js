@@ -18,14 +18,20 @@ try{
     assert.equal(result.geometry.triangles,12);assert.equal(result.geometry.meshNodes,1);
     assert.equal(result.surface.materials,0);assert.equal(result.surface.images,0);
     assert.equal(result.skin.structural,'absent');assert.equal(result.vrm.version,null);
+    assert.equal(result.deformation.state,'absent');
     assert.deepEqual(result.next.map(step=>step.code),['surface','parts','rig','vrm']);
     assert.match(result.caveat,/cannot judge fused anatomy/);
   });
-  await test('source preflight distinguishes a structural skin from verified deformation',async()=>{
-    const result=await inspectAvatarSourceBytes(packGlb(glbDoc({skinned:true,rigid:true})));
-    assert.equal(result.skin.structural,'valid');assert.equal(result.skin.joints,3);
-    assert.ok(!result.next.some(step=>step.code==='rig'));
-    assert.match(result.caveat,/joint bends/);
+  await test('source preflight distinguishes a deforming rig from an equally valid rigid skin',async()=>{
+    const moving=await inspectAvatarSourceBytes(packGlb(glbDoc({skinned:true})));
+    const rigid=await inspectAvatarSourceBytes(packGlb(glbDoc({skinned:true,rigid:true})));
+    assert.equal(moving.skin.structural,'valid');assert.equal(rigid.skin.structural,'valid');
+    assert.equal(moving.skin.joints,3);assert.equal(rigid.skin.joints,3);
+    assert.equal(moving.deformation.state,'deforms');assert.equal(rigid.deformation.state,'rigid');
+    assert.ok(moving.deformation.strain>rigid.deformation.strain);
+    assert.ok(!moving.next.some(step=>step.code==='rig-bend'));
+    assert.ok(rigid.next.some(step=>step.code==='rig-bend'));
+    assert.match(rigid.caveat,/not whether bends look good/);
   });
   await test('source preflight reads paths and canonical uploads but rejects external resources',async()=>{
     const raw=packGlb(glbDoc());const source=path.join(temp,'source.glb');await writeFile(source,raw);
@@ -73,6 +79,19 @@ try{
     assert.equal(response.status,200,await response.clone().text());
     assert.equal((await response.json()).skin.structural,'absent');
     await assert.rejects(readdir(path.join(temp,'http')),{code:'ENOENT'});
+  });
+  await test('source preflight HTTP and MCP report the same measured bend state',async()=>{
+    const rigid=await post({action:'source_preflight',data_base64:packGlb(glbDoc({skinned:true,rigid:true})).toString('base64')},{Origin:base});
+    assert.equal(rigid.status,200,await rigid.clone().text());
+    assert.equal((await rigid.json()).deformation.state,'rigid');
+    const api=async(method,route,body)=>{
+      assert.equal(method,'POST');assert.equal(route,'/api/avatars');
+      const response=await post(body,{Origin:base});assert.equal(response.status,200,await response.clone().text());
+      return response.json();
+    };
+    const result=await avatarTools(api).find(tool=>tool.name==='avatar_source_preflight').run({path:input});
+    assert.equal(result.deformation.state,'deforms');
+    assert.ok(result.deformation.probedJoints>0);
   });
   await test('HTTP rejects cross-site, opaque and different-port origins',async()=>{for(const h of [{Origin:'https://evil.test'},{Origin:'null'},{Origin:'http://127.0.0.1:1'},{'Sec-Fetch-Site':'cross-site'}])assert.equal((await post({action:'inspect',id:row.id},h)).status,403);});
   await test('HTTP refuses DNS rebinding Host on reads too',async()=>{const code=await new Promise((resolve,reject)=>{http.get(base+'/api/avatars',{headers:{Host:'evil.test'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));}).on('error',reject);});assert.equal(code,403);});

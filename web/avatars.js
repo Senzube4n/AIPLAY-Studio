@@ -163,8 +163,10 @@ $('source-preflight').onclick=async()=>{
     if(!file||!['glb','vrm'].includes(file.name.split('.').at(-1)?.toLowerCase())||file.size>64*1024*1024)throw Error('Choose a GLB or VRM up to 64 MiB.');
     const result=await api({action:'source_preflight',data_base64:await fileBase64(file)});
     if(token!==preflightEpoch||file!==$('import-form').elements.file.files[0])return;
-    state.className=`chip ${result.skin.structural==='invalid'?'err':result.skin.structural==='absent'?'warn':'ok'}`;
-    state.textContent=result.skin.structural==='invalid'?'Skin issue':result.skin.structural==='absent'?'Unrigged source':'Skin data found';
+    const bend=result.deformation?.state;
+    state.className=`chip ${result.skin.structural==='invalid'||bend==='rigid'?'err':bend!=='deforms'?'warn':'ok'}`;
+    state.textContent=result.skin.structural==='invalid'?'Skin issue':bend==='absent'?'Unrigged source'
+      :bend==='rigid'?'Rigid skin':bend==='deforms'?'Bend detected':'Bend unverified';
     state.title=result.caveat;
     facts.textContent=`${result.geometry.triangles.toLocaleString()} triangles · ${result.geometry.meshNodes} mesh nodes · ${result.surface.materials} materials · ${result.surface.images} images`;
     facts.hidden=false;

@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {readFile, stat} from 'node:fs/promises';
 import validator from 'gltf-validator';
 import {readGlb, assertSkinned} from './glb.js';
+import {assertDeforms} from './deform.js';
 
 export const AVATAR_SOURCE_LIMIT_BYTES = 64 * 1024 * 1024;
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
@@ -67,6 +68,11 @@ export async function inspectAvatarSourceBytes(bytes) {
   }
   const materials=doc.materials||[], images=doc.images||[], skins=doc.skins||[];
   const skin=skins.length?assertSkinned(doc,parsed.binData):null;
+  // A valid skin only proves that weights and joints can be read. Pose the
+  // existing skeleton locally to distinguish a bend from rigid carrying.
+  const bend=!skins.length?{state:'absent',why:[]}:!skin.ok
+    ?{state:'unreadable',why:['Skin data must be repaired before its bends can be measured.']}
+    :assertDeforms(doc,parsed.binData);
   const expressions=doc.extensions?.VRMC_vrm?.expressions||{};
   const next=[];
   if (!materials.length && !images.length && !withVertexColor)
@@ -79,6 +85,10 @@ export async function inspectAvatarSourceBytes(bytes) {
     next.push({code:'rig',text:'Rig a clean body, then review bends before avatar import.'});
   else if (!skin.ok)
     next.push({code:'skin',text:'Repair the skin data before avatar import.'});
+  else if (bend.state==='rigid')
+    next.push({code:'rig-bend',text:'This skin carries the mesh rigidly. Repaint the weights and check a body bend before import.'});
+  else if (bend.state==='unreadable')
+    next.push({code:'rig-bend-unreadable',text:'The skin could not be posed. Inspect its joints and bind matrices before import.'});
   if (doc.extensions?.VRMC_vrm?.specVersion!=='1.0')
     next.push({code:'vrm',text:'For expressions and spring hair, author a VRM 1.0 export.'});
   return {
@@ -89,11 +99,13 @@ export async function inspectAvatarSourceBytes(bytes) {
       primitivesWithUv:withUv,primitivesWithVertexColor:withVertexColor},
     skin:{skins:skins.length,joints:new Set(skins.flatMap(entry=>entry.joints||[])).size,
       structural:!skins.length?'absent':skin.ok?'valid':'invalid',why:skin?.ok?[]:(skin?.why||[])},
+    deformation:{state:bend.state,probeDegrees:bend.probeDegrees||null,strain:bend.strain??null,
+      probedJoints:bend.probedJoints??0,why:bend.why||[]},
     vrm:{version:doc.extensions?.VRMC_vrm?.specVersion||null,
       declaredExpressions:Object.values(expressions).reduce((sum,group)=>sum+Object.keys(group||{}).length,0),
       declaredSpringChains:doc.extensions?.VRMC_springBone?.springs?.length||0},
     validation:{errors:0,warnings:validation.issues.numWarnings},next,
-    caveat:'Structural checks cannot judge fused anatomy, silhouette, texture quality, joint bends, independent hair motion or World admission.'
+    caveat:'A local joint pose checks whether shape changes, not whether bends look good. It cannot judge fused anatomy, silhouette, texture quality, independent hair motion or World admission.'
   };
 }
 
