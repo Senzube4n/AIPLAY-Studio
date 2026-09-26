@@ -71,6 +71,9 @@ the page's dials. Song `start` and source-video timing are independent. The LCM
 profile measures drum RMS peaks; it does not infer a tempo-grid substitute.
 Setting `seconds:4` is an ordinary short render, not a separate model preview.
 The page's request review shows this same payload; it is not a generated preview.
+The review reports when the selected source clip will repeat. The MCP/API
+result includes `motion.sourceWindow` with that timing when video-stream
+duration is readable; missing metadata does not stop a render.
 
 Training uses `startSeconds` and `seconds` for the actual source region. The full
 region is encoded as conditioning without inventing an autoregressive tail.

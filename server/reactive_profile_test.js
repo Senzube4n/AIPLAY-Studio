@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { motionDials, motionRenderOptions, motionSourceArgs, motionRmsPeaks, preflightMotion, YVANN_DIALS } from "./reactive_motion.js";
+import { motionDials, motionRenderOptions, motionSourceArgs, probeMotionSourceWindow, motionRmsPeaks, preflightMotion, YVANN_DIALS } from "./reactive_motion.js";
 import { animateGraph } from "./animatediff.js";
 import { runReactive } from "./reactive.js";
 
@@ -64,6 +64,17 @@ await test("source ffmpeg seek and speed do not use the song offset", () => {
   assert.match(args[args.indexOf("-vf") + 1], /^setpts=\(PTS-STARTPTS\)\/1\.25,fps=12,/);
   assert.equal(args[args.indexOf("-t") + 1], "4");
 });
+await test("Motion records the source repeat point using video-stream duration, and tolerates missing ffprobe", async () => {
+  let args;
+  const input = { srcPath: "dance.mp4", sourceStart: 70, sourceSpeed: 1.25, seconds: 20 };
+  const measured = await probeMotionSourceWindow(input, { runner: async (_, argv) => {
+    args = argv; return { stdout: "81.720000\n", err: null };
+  } });
+  assert.deepEqual([measured.known, measured.repeats, Number(measured.firstRepeatAt.toFixed(3))], [true, true, 9.376]);
+  assert.deepEqual(args.slice(args.indexOf("-select_streams"), args.indexOf("-show_entries")), ["-select_streams", "v:0"]);
+  const unavailable = await probeMotionSourceWindow(input, { runner: async () => ({ stdout: "", err: new Error("ffprobe missing") }) });
+  assert.deepEqual(unavailable, { known: false });
+});
 await test("missing named model errors include the exact files", async () => {
   await assert.rejects(preflightMotion(motionDials({ profile: "yvann" }), { engine: { objectInfo: async () => ({}) }, exists: async () => false }),
     (err) => /AnimateLCM_sd15_t2v.ckpt/.test(err.message) && /LiquidAF-0-1.safetensors/.test(err.message) && /MTEED.pth/.test(err.message));
@@ -103,13 +114,14 @@ await test("Yvann forces drum analysis and forwards only its resolved path", asy
   const result = await runReactive({ song: "song.wav", pictures: ["dance.mp4", "style.png"], style: "motion", hits: "mix", start: 20, seconds: 4,
     rhythmPath: "untrusted.wav", motion: { profile: "yvann", sourceStart: 15.76, sourceSpeed: 1.25, rhythmPath: "untrusted2.wav" } }, {
     analyse: async (_, __, opts) => { analysisOptions = opts; return { duration: 40, rhythmPath: "resolved/drums.wav", beats: [], bars: [], tracks: {} }; },
-    motion: async (args) => { motion = args; return { file: "painted.mp4" }; },
+    motion: async (args) => { motion = args; return { file: "painted.mp4", sourceWindow: { known: true, repeats: false } }; },
     vfx: async (body) => body.action === "create" ? { slug: "test" } : body.action === "add_layer" ? { layerId: "L1" } : body.action === "add_effect" ? { effectId: "F1" } : { jobId: "test" },
   });
   assert.equal(analysisOptions.hits, "drums");
   assert.equal(motion.rhythmPath, "resolved/drums.wav");
   assert.deepEqual([motion.start, motion.dials.sourceStart, motion.dials.sourceSpeed], [20, 15.76, 1.25]);
   assert.equal(result.seconds, 4);
+  assert.deepEqual(result.motion.sourceWindow, { known: true, repeats: false });
 });
 await test("Reactive controls load ahead of slow libraries and a failed clip refresh preserves its grid", async () => {
   const elements = new Map();

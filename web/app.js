@@ -1,4 +1,5 @@
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
+import { reactiveSourceWindow } from './reactive-source-window.js';
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -19015,12 +19016,24 @@ function reactReview() {
     const known = !!request.seconds || remaining !== null;
     const frames = known ? (request.paint ? Math.ceil(seconds * request.paint.fps) : Math.round(seconds * 12)) : null;
     const refs = request.pictures.filter((name) => !/\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const firstClip = request.pictures.find((name) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const sourceVideo = $("reactSourceVideo");
+    const sourceClipDuration = sourceVideo?.dataset.file === firstClip && Number.isFinite(sourceVideo.duration) ? sourceVideo.duration : null;
+    const sourceWindow = request.motion && known ? reactiveSourceWindow({ duration: sourceClipDuration,
+      start: request.motion.sourceStart, speed: request.motion.sourceSpeed, seconds }) : { known: false };
+    const sourceWindowNote = !request.motion ? "" : !sourceWindow.known
+      ? "Source loop point is unknown until the selected clip and song durations load."
+      : sourceWindow.startBeyondEnd
+        ? `Source starts at ${sourceWindow.start.toFixed(1)}s, at or beyond the clip's ${sourceWindow.duration.toFixed(1)}s end; check the offset before rendering.`
+        : sourceWindow.repeats
+          ? `Source clip ends about ${sourceWindow.firstRepeatAt.toFixed(1)}s into the output and then repeats from the beginning. The source player previews only the first pass.`
+          : `Source window ${sourceWindow.start.toFixed(1)}–${sourceWindow.sourceEnd.toFixed(1)}s fits in the ${sourceWindow.duration.toFixed(1)}s clip.`;
     const drums = request.hits === "drums" || request.motion?.profile === "yvann";
     const work = request.paint ? `${frames === null ? "Duration-dependent" : frames} diffusion frames at ${request.paint.fps} fps, then a compositor export.`
       : request.motion ? `${frames === null ? "Duration-dependent" : frames} motion frames at 12 fps · ${$("reactMotionSteps").value} sampling steps · ${$("reactMotionHires").checked ? "detail pass enabled (extra diffusion work)" : "one diffusion pass"}${$("reactMotionSmooth").checked ? " · interpolation to 24 fps" : ""}, then a compositor export.`
         : "Song analysis and compositor export; no video diffusion model is used for this look.";
     const time = known ? `${seconds.toFixed(1)}s from song ${start.toFixed(1)}s${request.seconds && seconds < request.seconds ? " (limited by remaining song)" : ""}` : `Remaining song from ${start.toFixed(1)}s, capped at ${limit}s; duration is not loaded yet`;
-    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p><p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
+    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p>${sourceWindowNote ? `<p>${esc(sourceWindowNote)}</p>` : ""}<p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
     $("reactRequestJson").textContent = JSON.stringify(request, null, 2);
     $("reactSongRegion").textContent = sourceDuration === null ? "Song duration loads from the audio file. Blank length uses the remainder, capped at 600s (120s for Motion)." : `Song length ${sourceDuration.toFixed(1)}s · selected start ${start.toFixed(1)}s · ${remaining.toFixed(1)}s remaining. Song and source clip timing are independent.`;
     return request;
@@ -19034,6 +19047,7 @@ $("reactReviewRefresh")?.addEventListener("click", reactReview);
 $("reactForm")?.addEventListener("input", reactReview);
 $("reactForm")?.addEventListener("change", reactReview);
 $("reactSongPlayer")?.addEventListener("loadedmetadata", reactReview);
+$("reactSourceVideo")?.addEventListener("loadedmetadata", reactReview);
 $("reactSongPlayer")?.addEventListener("timeupdate", () => {
   const player = $("reactSongPlayer"), seconds = Number($("reactSecs").value), start = Number($("reactStart").value || 0);
   if (player.dataset.region === "yes" && seconds > 0 && player.currentTime >= start + seconds) { player.pause(); player.dataset.region = ""; }

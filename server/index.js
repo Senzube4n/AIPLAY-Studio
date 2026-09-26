@@ -5107,7 +5107,7 @@ const server = http.createServer(async (req, res) => {
         const runId = String(b.runId || "").trim();
         const name = String(b.name || "");
         if (!runId || !name) return json(res, 400, { error: "Pass the runId and the name that start gave you.", reason: "bad-arguments" });
-        const rec = await engineDoor.runRecord(runId).catch(() => null);
+        const rec = await engineDoor.runRecord(runId, { graph: true }).catch(() => null);
         if (!rec) return json(res, 404, { error: `No run "${runId}" in this ledger.`, reason: "no-run" });
         /* ⚠ A NULL `result` MEANS STILL RUNNING, AND MUST NEVER READ AS DONE.
          * The record is `{runId, request, result, graph}` — there is no `state`
@@ -5126,21 +5126,19 @@ const server = http.createServer(async (req, res) => {
             runningSec: live?.runningSec ?? live?.elapsedSec ?? null,
           });
         }
-        if (done.status === "error" || done.ok === false) {
+        if (done.status !== "completed") {
           return json(res, 200, {
             ok: true, done: true, failed: true, state: "error",
-            error: done.error || "the engine reported an error",
+            error: done.error || `the engine reported ${done.status || "an incomplete result"}`,
           });
         }
         try {
           const receipt = await readTrainingReceipt(config.paths.appData, runId).catch(error => { if (error.code === "ENOENT") return null; throw error; });
-          if (receipt && receipt.name !== name) return json(res, 409, { error: "This training run belongs to a different adapter name." });
-          const kept = await train.adoptLora(name, receipt ? { outputPrefix: receipt.outputPrefix, exact: true } : {});
+          const adoption = train.verifyTrainAdoption({ runId, name, receipt, record: rec });
+          const kept = await train.adoptLora(name, adoption);
           let trainingReceipt = null, receiptWarning = null;
-          if (receipt) {
-            try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
-            catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
-          }
+          try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
+          catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
           return json(res, 200, {
             ok: true, done: true, kept, trainingReceipt, receiptWarning,
             note: `"${kept.name}" is in your LoRA folder now — pick it on the Music screen under the YuE2 engine.`,

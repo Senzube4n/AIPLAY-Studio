@@ -3341,6 +3341,7 @@ export const TOOLS = [
       + "paint and motion use GPU diffusion. Pass library pictures/clips or a prompt to generate pictures first. "
       + "motion.profile yvann selects the experimental LCM remix, with drum-stem frame-RMS transitions. "
       + "motion.sourceStart/sourceSpeed control source video independently of the song start. "
+      + "The result's motion.sourceWindow reports when that source will repeat, if video duration was readable. "
       + "Depth/line structure and optional reference anchors guide the result; appearance and speed depend on the profile. "
       + "Call reactive_status for installed choices. The generated composition is editable with vfx_* tools; "
       + "poll vfx_render_status for its final movie. Diffusion preparation can hold this call for a long time. "
