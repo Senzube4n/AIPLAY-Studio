@@ -101,6 +101,16 @@ function applyRemoteJointPose(next){
   $('joint-pose-node').value=String(next.node_index);$('joint-pose-axis').value=next.axis;$('joint-pose-degrees').value=String(next.degrees);$('joint-pose-value').textContent=`${next.degrees}°`;
   jointPose.apply(next);return true;
 }
+function applyRemotePreviewMotion(enabled){
+  if(typeof enabled!=='boolean'||!runtime?.vrm)return false;
+  if(enabled){
+    if(action||playing||jointPose?.current != null){$('motion').value='';setMotion('');}
+    playing=false;$('play').textContent='Play';
+  }
+  runtime.setPreviewMotion(enabled);
+  $('pose-test').textContent=runtime.previewMotion?'Stop movement':'Test movement';
+  return runtime.previewMotion===enabled;
+}
 function showFacts(row){const i=row.inspection;$('facts').replaceChildren();for(const [value,label] of [[i.triangles.toLocaleString(),'triangles'],[i.joints,'joints'],[(i.bytes/1024/1024).toFixed(2)+' MiB','file size'],[i.clips.length,'own clips']]){const el=document.createElement('div');el.className='fact';const b=document.createElement('strong');b.textContent=value;const s=document.createElement('span');s.textContent=label;el.append(b,s);$('facts').append(el);} $('warnings').replaceChildren();for(const message of new Set(i.validation.warnings)){const p=document.createElement('p');p.textContent=message;$('warnings').append(p);} $('metadata').textContent=JSON.stringify({source:row.source,license:row.license,persona:row.personaAttribution,coordinates:row.coordinates,skeletonFamily:row.skeletonFamily,sha256:i.sha256,joints:i.jointNames,clips:i.clips,anchors:i.anchors,validation:i.validation},null,2);}
 async function select(id){
   handoff?.dispose();handoff=null;
@@ -128,9 +138,10 @@ async function select(id){
     const mounted=await mountAvatarAppearance({row,runtime,api,status,isCurrent:()=>token===epoch,onLook:look=>{void nextWardrobe.setLook(look);}});if(token!==epoch){mounted?.dispose();return;}appearance=mounted;
     handoff=mountAvatarHandoff({row,isCurrent:()=>token===epoch,getContext:()=>({appearance:appearance?.snapshot(),wardrobe:nextWardrobe.snapshot()})});
     try{const nextVoice=await mountAvatarVoice({row,runtime,isCurrent:()=>token===epoch,
-      onSessionReset:()=>{if(token===epoch){motionTimeRevision=0;$('motion').value='';setMotion('');}},
+      onSessionReset:()=>{if(token===epoch){motionTimeRevision=0;$('motion').value='';setMotion('');runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';}},
       onMotion:(motion)=>token===epoch&&selected?.id===row.id&&selected?.inspection.sha256===row.inspection.sha256&&applyRemoteMotion(motion),
-      onJointPose:available.length?(pose)=>token===epoch&&selected?.id===row.id&&selected?.inspection.sha256===row.inspection.sha256&&applyRemoteJointPose(pose):null});if(token!==epoch){nextVoice?.dispose();return;}voice=nextVoice;voice?.setActive(activeView);}catch(e){if(token!==epoch)return;$('voice-panel').hidden=false;$('voice-state').textContent='Audio unavailable';$('voice-note').textContent=e.message;$('voice-note').hidden=false;}
+      onJointPose:available.length?(pose)=>token===epoch&&selected?.id===row.id&&selected?.inspection.sha256===row.inspection.sha256&&applyRemoteJointPose(pose):null,
+      onPreviewMotion:runtime.vrm?(enabled)=>token===epoch&&selected?.id===row.id&&selected?.inspection.sha256===row.inspection.sha256&&applyRemotePreviewMotion(enabled):null});if(token!==epoch){nextVoice?.dispose();return;}voice=nextVoice;voice?.setActive(activeView);}catch(e){if(token!==epoch)return;$('voice-panel').hidden=false;$('voice-state').textContent='Audio unavailable';$('voice-note').textContent=e.message;$('voice-note').hidden=false;}
     $('wireframe').dispatchEvent(new Event('change'));$('overlay-open').href=`/avatars.html?id=${id}&overlay=1`;const url=new URL(location.href);url.searchParams.set('id',id);history.replaceState(null,'',url);if(workshop.embedded)parent.postMessage({type:'aiplay-avatar-selection',id},location.origin);status(row.inspection.profile==='vrm'?'VRM ready':'Skin verified');
   }catch(e){if(token===epoch)status(e.message,true);}finally{if(token===epoch)paintTools();}
 }
@@ -141,6 +152,7 @@ $('import-form').onsubmit=async event=>{event.preventDefault();const form=event.
 $('motion').onchange=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';setMotion($('motion').value);void voice?.motionCommand('motion_select',{clip_index:$('motion').value===''?null:Number($('motion').value)});};
 function previewJointPose(send){
   if(!jointPose||!jointPose.joints.length)return;
+  runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';
   const next={node_index:Number($('joint-pose-node').value),axis:$('joint-pose-axis').value,degrees:Number($('joint-pose-degrees').value)};
   if(action||playing){$('motion').value='';setMotion('');$('joint-pose-degrees').value=String(next.degrees);}
   jointPose.apply(next);$('joint-pose-value').textContent=`${next.degrees}°`;
@@ -176,7 +188,7 @@ $('source-preflight').onclick=async()=>{
   }catch(error){if(token===preflightEpoch){state.className='chip err';state.textContent='Check failed';facts.textContent=error.message;facts.hidden=false;}}
   finally{if(token===preflightEpoch)button.disabled=false;}
 };
-$('pose-test').onclick=()=>{if(!runtime?.vrm)return;if(playing)void voice?.motionCommand('motion_pause');playing=false;$('play').textContent='Play';runtime.setPreviewMotion(!runtime.previewMotion);$('pose-test').textContent=runtime.previewMotion?'Stop movement':'Test movement';};
+$('pose-test').onclick=()=>{if(!runtime?.vrm)return;const enabled=!runtime.previewMotion;if(voice?.previewMotionCommand){void voice.previewMotionCommand(enabled?'preview_motion_start':'preview_motion_stop');return;}applyRemotePreviewMotion(enabled);};
 $('play').onclick=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';playing=!playing;$('play').textContent=playing?'Pause':'Play';void voice?.motionCommand(playing?'motion_play':'motion_pause');};
 $('time').oninput=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';playing=false;$('play').textContent='Play';if(action){action.time=Number($('time').value);mixer.update(0);updateTime();}};
 $('time').onchange=()=>{if(action)void voice?.motionCommand('motion_seek',{seconds:Number($('time').value)});};

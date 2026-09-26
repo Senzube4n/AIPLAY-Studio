@@ -73,19 +73,21 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
   }
   async function register(input,actor='system'){
     fields(input,['session_id','id','sha256','capabilities'],'registration');const request=structuredClone(input);sid(request.session_id);sourceIdentity(request);
-    fields(request.capabilities,['audio','lip_sync','motion','joint_pose'],'capabilities');if(typeof request.capabilities.audio!=='boolean'||typeof request.capabilities.lip_sync!=='boolean'||request.capabilities.lip_sync&&!request.capabilities.audio||(request.capabilities.motion!==undefined&&typeof request.capabilities.motion!=='boolean')||(request.capabilities.joint_pose!==undefined&&typeof request.capabilities.joint_pose!=='boolean'))throw fail('Invalid preview capabilities.');
+    fields(request.capabilities,['audio','lip_sync','motion','joint_pose','preview_motion'],'capabilities');if(typeof request.capabilities.audio!=='boolean'||typeof request.capabilities.lip_sync!=='boolean'||request.capabilities.lip_sync&&!request.capabilities.audio||(request.capabilities.motion!==undefined&&typeof request.capabilities.motion!=='boolean')||(request.capabilities.joint_pose!==undefined&&typeof request.capabilities.joint_pose!=='boolean')||(request.capabilities.preview_motion!==undefined&&typeof request.capabilities.preview_motion!=='boolean'))throw fail('Invalid preview capabilities.');
     return serial(lock,async()=>{
       await source(request);await cleanup(actor);
       let previous;try{previous=await session(request.session_id);}catch(error){if(error.status!==404&&error.status!==410)throw error;}
       if(previous&&(previous.id!==request.id||previous.sha256!==request.sha256))throw fail('Session belongs to another avatar; use a new session id.',409);
       if(!previous&&(await entries(sessionsDir,uuid)).length>=PLAYBACK_LIMITS.sessions)throw fail('Too many active preview sessions.',409);
       const row=previous||{session_id:request.session_id,id:request.id,sha256:request.sha256,revision:0,applied_revision:0,
-        desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,audio_revision:0,cue:null,motion:{clip_index:null,playing:false,time:0,speed:1,time_revision:0},motion_revision:0,joint_pose:null,joint_pose_revision:0},status:{phase:'empty',time:0,duration:null},commands:[]};
+        desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,audio_revision:0,cue:null,motion:{clip_index:null,playing:false,time:0,speed:1,time_revision:0},motion_revision:0,joint_pose:null,joint_pose_revision:0,preview_motion:false,preview_motion_revision:0},status:{phase:'empty',time:0,duration:null},commands:[]};
       row.desired.motion ||= {clip_index:null,playing:false,time:0,speed:1,time_revision:0};
       if(!Number.isSafeInteger(row.desired.motion.time_revision))row.desired.motion.time_revision=0;
       row.desired.motion_revision ||= 0;
       row.desired.joint_pose ??= null;
       row.desired.joint_pose_revision ||= 0;
+      row.desired.preview_motion ??= false;
+      row.desired.preview_motion_revision ||= 0;
       row.capabilities=request.capabilities;row.expiresAt=now()+PLAYBACK_LIMITS.sessionMs;
       await event('playback_register',actor,`avatar/${row.id}/playback/${row.session_id}`,{session_id:row.session_id,avatarId:row.id,sha256:row.sha256,capabilities:row.capabilities});
       await atomic(sessionPath(row.session_id),row);return publicSession(row);
@@ -127,7 +129,7 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
   }
   async function command(input,actor='system'){
     fields(input,['session_id','command_id','op','audio_id','clip_index','speed','seconds','expression','duration_ms','node_index','axis','degrees'],'playback command');const request=structuredClone(input);sid(request.session_id);if(request.command_id!==undefined)sid(request.command_id);
-    if(!['load','play','pause','stop','seek','cue','clear_cue','motion_select','motion_play','motion_pause','motion_stop','motion_seek','motion_speed','joint_pose','joint_reset'].includes(request.op))throw fail('Unknown playback command.');
+    if(!['load','play','pause','stop','seek','cue','clear_cue','motion_select','motion_play','motion_pause','motion_stop','motion_seek','motion_speed','joint_pose','joint_reset','preview_motion_start','preview_motion_stop'].includes(request.op))throw fail('Unknown playback command.');
     if(request.op==='load')aid(request.audio_id);else if(request.audio_id!==undefined)throw fail('Only load accepts an audio id.');
     if(request.op==='motion_select'){
       if(request.clip_index!==null&&(!Number.isInteger(request.clip_index)||request.clip_index<0||request.clip_index>31))throw fail('Select an embedded clip index or null for rest pose.');
@@ -155,11 +157,13 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
       if(isMotion&&!row.capabilities.motion)throw fail('This preview cannot play embedded motion.',409);
       const isJoint=request.op==='joint_pose'||request.op==='joint_reset';
       if(isJoint&&!row.capabilities.joint_pose)throw fail('This preview cannot bend a joint.',409);
-      if(!isMotion&&!isJoint&&!['cue','clear_cue'].includes(request.op)&&!row.capabilities.audio)throw fail('This preview cannot play audio.',409);
+      const isPreviewMotion=request.op==='preview_motion_start'||request.op==='preview_motion_stop';
+      if(isPreviewMotion&&(!row.capabilities.preview_motion||asset.row.inspection?.profile!=='vrm'))throw fail('This preview cannot test VRM movement.',409);
+      if(!isMotion&&!isJoint&&!isPreviewMotion&&!['cue','clear_cue'].includes(request.op)&&!row.capabilities.audio)throw fail('This preview cannot play audio.',409);
       const motion=row.desired.motion||{clip_index:null,playing:false,time:0,speed:1,time_revision:0};
       const clips=asset.row.inspection?.clips||[];
       if(request.op==='motion_select'&&request.clip_index!==null&&!clips.some(clip=>clip.index===request.clip_index))throw fail('Clip index is not embedded in this avatar.',422);
-      if(isMotion&&!['motion_select','motion_speed'].includes(request.op)&&motion.clip_index===null)throw fail('Select an embedded clip before controlling motion.',409);
+      if(isMotion&&request.op!=='motion_select'&&motion.clip_index===null)throw fail('Select an embedded clip before controlling motion.',409);
       if(request.op==='motion_seek'){
         const selected=clips.find(clip=>clip.index===motion.clip_index);
         if(!selected||request.seconds>selected.duration)throw fail('Motion time exceeds the selected clip.',422);
@@ -172,10 +176,12 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
       else if(isJoint){
         row.desired.joint_pose=request.op==='joint_pose'?{node_index:request.node_index,axis:request.axis,degrees:request.degrees}:null;
         row.desired.joint_pose_revision=next;
+        if(request.op==='joint_pose'&&row.desired.preview_motion){row.desired.preview_motion=false;row.desired.preview_motion_revision=next;}
         if(request.op==='joint_pose'&&motion.clip_index!==null){motion.clip_index=null;motion.playing=false;motion.time=0;motion.time_revision=next;row.desired.motion=motion;row.desired.motion_revision=next;}
       }
       else if(isMotion){
         if(request.op==='motion_select'){motion.clip_index=request.clip_index;motion.playing=false;motion.time=0;motion.time_revision=next;
+          if(row.desired.preview_motion){row.desired.preview_motion=false;row.desired.preview_motion_revision=next;}
           if(row.desired.joint_pose){row.desired.joint_pose=null;row.desired.joint_pose_revision=next;}}
         if(request.op==='motion_play')motion.playing=true;
         if(request.op==='motion_pause'||request.op==='motion_stop')motion.playing=false;
@@ -184,8 +190,15 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
         if(request.op==='motion_speed')motion.speed=request.speed;
         row.desired.motion=motion;row.desired.motion_revision=next;
       }
+      else if(isPreviewMotion){
+        row.desired.preview_motion=request.op==='preview_motion_start';row.desired.preview_motion_revision=next;
+        if(row.desired.preview_motion){
+          if(motion.clip_index!==null){motion.clip_index=null;motion.playing=false;motion.time=0;motion.time_revision=next;row.desired.motion=motion;row.desired.motion_revision=next;}
+          if(row.desired.joint_pose){row.desired.joint_pose=null;row.desired.joint_pose_revision=next;}
+        }
+      }
       else if(request.op==='load'){
-        const clip=await audio(request.audio_id);row.desired={audio_id:clip.audio_id,url:clip.url,name:clip.name,bytes:clip.bytes,playing:false,time:0,load_revision:next,seek_revision:next,audio_revision:next,cue:row.desired.cue||null,motion:row.desired.motion,motion_revision:row.desired.motion_revision,joint_pose:row.desired.joint_pose,joint_pose_revision:row.desired.joint_pose_revision};
+        const clip=await audio(request.audio_id);row.desired={audio_id:clip.audio_id,url:clip.url,name:clip.name,bytes:clip.bytes,playing:false,time:0,load_revision:next,seek_revision:next,audio_revision:next,cue:row.desired.cue||null,motion:row.desired.motion,motion_revision:row.desired.motion_revision,joint_pose:row.desired.joint_pose,joint_pose_revision:row.desired.joint_pose_revision,preview_motion:row.desired.preview_motion,preview_motion_revision:row.desired.preview_motion_revision};
       }else{
         if(!row.desired.audio_id)throw fail('Load local audio before controlling playback.',409);
         await audio(row.desired.audio_id);
