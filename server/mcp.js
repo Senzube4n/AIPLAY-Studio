@@ -56,6 +56,7 @@ import { setupTools } from "./mcp-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
 import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
+import { standRigTools } from "./mcp-standrig.js";
 import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
 import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
@@ -464,6 +465,7 @@ export const TOOLS = [
   ...setupTools(api),
   ...avatarTools(api),
   ...avatarPlaybackTools(api),
+  ...standRigTools(api),
   ...avatarWeightTransferTools(api),
   ...avatarWardrobeTools(api),
   ...avatarFittingTools(api),

@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="ui.css">
 <link rel="stylesheet" href="router.css">
 <link rel="stylesheet" href="avatar-shell.css">
+<link rel="stylesheet" href="standrig.css">
 <link rel="stylesheet" href="galleries.css">
 <link rel="stylesheet" href="music-input.css">
 <link rel="stylesheet" href="music-workflows.css">
@@ -5203,6 +5204,36 @@
          loadCommunity(). -->
     <div id="radio" hidden>
       <div class="stagehead"><h2>Radio</h2></div>
+      <section id="radioPerformer" class="pcard" aria-labelledby="srTitle">
+        <div class="sr-head">
+          <h3 id="srTitle">2D performer</h3>
+          <span id="srStatus" class="chip">Not connected</span>
+        </div>
+        <div class="cta">
+          <button id="srCheck" class="btn2" type="button">Check StandRig</button>
+          <a class="btn2" href="https://github.com/sayaka-aiart/StandRig" target="_blank" rel="noopener noreferrer" title="Install and start the separate local 2D rigging service.">StandRig setup ↗</a>
+          <a id="srEditor" class="btn2" href="http://127.0.0.1:5180/" target="_blank" rel="noopener" hidden>Open editor ↗</a>
+          <a id="srOverlay" class="btn2" href="#" target="_blank" rel="noopener" hidden title="Use this local player URL as an OBS browser source.">Open overlay ↗</a>
+        </div>
+        <p id="srNote" class="hint" role="status" hidden></p>
+        <div id="srStage" class="sr-stage" hidden>
+          <iframe id="srPreview" title="2D performer preview" loading="lazy"></iframe>
+          <div class="sr-controls">
+            <div class="params">
+              <label for="srParameter">Parameter</label>
+              <span class="pv"><select id="srParameter" class="sel2"></select></span>
+              <label for="srValue">Value</label>
+              <span class="pv sr-value"><input id="srValue" type="range"><output id="srValueLabel" for="srValue">0</output></span>
+            </div>
+            <div class="cta">
+              <button id="srDemo" class="btn2" type="button">Test motion</button>
+              <button id="srPlay" class="btn2" type="button">Play</button>
+              <button id="srPause" class="btn2" type="button">Pause</button>
+              <button id="srReset" class="btn2" type="button">Reset pose</button>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- Real YouTube streams from the platform's own channel list. -->
       <div class="grid2" id="commRadio"></div>
       <div class="commempty" id="radioEmpty" hidden>
@@ -5446,6 +5477,7 @@
 <script type="module" src="tips.js"></script>
 <!-- The Agent page: cloud API keys, which model answers where, and the MCP details. -->
 <script type="module" src="agent.js"></script>
+<script type="module" src="standrig.js"></script>
 <!-- Who built it, at the top of the Thanks page. One table, no server call. -->
 <script type="module" src="credits.js"></script>
 <script type="module" src="roulette.js"></script>

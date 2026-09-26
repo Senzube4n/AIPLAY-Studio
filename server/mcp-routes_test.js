@@ -78,7 +78,7 @@ function ok(label, cond, detail = "") {
  * ────────────────────────────────────────────────────────────────────────── */
 
 const MCP_FILES = [
-  "server/mcp.js",
+  "server/mcp.js", "server/mcp-standrig.js",
   "server/mcp-audio.js",
   "server/mcp-avatars.js", "server/mcp-avatar-handoff.js", "server/mcp-avatar-appearance.js", "server/mcp-avatar-playback.js", "server/mcp-avatar-weight-transfer.js", "server/mcp-avatar-fitting.js", "server/mcp-avatar-wardrobe.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-cloud.js", "server/mcp-music-input.js",
@@ -94,7 +94,7 @@ const MCP_FILES = [
 /* Everything that answers a /api/ path. index.js serves most of them inline and
  * mounts the rest; these are the mounted ones, from its own import list. */
 const ROUTE_FILES = [
-  "server/index.js", "server/vfx/routes.js", "server/score/routes.js", "server/daw/routes.js",
+  "server/index.js", "server/standrig/routes.js", "server/vfx/routes.js", "server/score/routes.js", "server/daw/routes.js",
   "server/videolab/routes.js", "server/daw/ear.js", "server/engine/routes.js",
   "server/llm/routes.js", "server/mv/routes.js", "server/welcome/routes.js",
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",

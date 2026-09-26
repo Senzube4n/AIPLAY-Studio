@@ -30,6 +30,35 @@ if (workshop.embedded) {
 document.addEventListener('visibilitychange',()=>voice?.setActive(activeView));
 if(overlayMode){document.body.classList.add('avatar-overlay');document.documentElement.classList.add('avatar-overlay');}
 const viewport=$('viewport'),center=new THREE.Vector3(0,1,0);let radius=2;
+const toolTabs=[...document.querySelectorAll('.avatar-tools [data-tool]')];
+let activeTool='look';
+function paintTools(){
+  const available=toolTabs.filter(tab=>!$(tab.getAttribute('aria-controls')).hidden);
+  if(available.length&&!available.some(tab=>tab.dataset.tool===activeTool))activeTool=available[0].dataset.tool;
+  for(const tab of toolTabs){
+    const panel=$(tab.getAttribute('aria-controls'));
+    const enabled=!panel.hidden,selected=enabled&&tab.dataset.tool===activeTool;
+    tab.disabled=!enabled;tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;
+    panel.toggleAttribute('data-active',selected);
+  }
+  $('avatar-tool-empty').hidden=available.length>0;
+}
+function chooseTool(name){
+  const tab=toolTabs.find(item=>item.dataset.tool===name);
+  if(!tab||tab.disabled)return;
+  activeTool=name;paintTools();
+}
+for(const tab of toolTabs)tab.onclick=()=>chooseTool(tab.dataset.tool);
+document.querySelector('.avatar-tools').onkeydown=event=>{
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+  const enabled=toolTabs.filter(tab=>!tab.disabled);if(!enabled.length)return;
+  event.preventDefault();let index=enabled.indexOf(document.activeElement);
+  if(event.key==='Home')index=0;
+  else if(event.key==='End')index=enabled.length-1;
+  else index=(index+(event.key==='ArrowRight'?1:-1)+enabled.length)%enabled.length;
+  chooseTool(enabled[index].dataset.tool);enabled[index].focus();
+};
+paintTools();
 function initViewer(){
   if(renderer)return;
   renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;
@@ -46,7 +75,8 @@ function setMotion(index){mixer?.stopAllAction();action=null;restoreRestPose?.()
 function showFacts(row){const i=row.inspection;$('facts').replaceChildren();for(const [value,label] of [[i.triangles.toLocaleString(),'triangles'],[i.joints,'joints'],[(i.bytes/1024/1024).toFixed(2)+' MiB','file size'],[i.clips.length,'own clips']]){const el=document.createElement('div');el.className='fact';const b=document.createElement('strong');b.textContent=value;const s=document.createElement('span');s.textContent=label;el.append(b,s);$('facts').append(el);} $('warnings').replaceChildren();for(const message of new Set(i.validation.warnings)){const p=document.createElement('p');p.textContent=message;$('warnings').append(p);} $('metadata').textContent=JSON.stringify({source:row.source,license:row.license,persona:row.personaAttribution,coordinates:row.coordinates,skeletonFamily:row.skeletonFamily,sha256:i.sha256,joints:i.jointNames,clips:i.clips,anchors:i.anchors,validation:i.validation},null,2);}
 async function select(id){
   handoff?.dispose();handoff=null;
-  const token=++epoch;playing=false;wardrobe?.dispose();wardrobe=null;fitting?.dispose();fitting=null;$('wardrobe-panel').hidden=true;$('fitting-panel').hidden=true;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;$('appearance-panel').hidden=true;$('pose-test').disabled=true;$('pose-test').textContent='Test movement';if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
+  activeTool='look';
+  const token=++epoch;playing=false;wardrobe?.dispose();wardrobe=null;fitting?.dispose();fitting=null;$('wardrobe-panel').hidden=true;$('fitting-panel').hidden=true;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;$('appearance-panel').hidden=true;$('details').hidden=true;paintTools();$('pose-test').disabled=true;$('pose-test').textContent='Test movement';if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
   try{
     const row=await api({action:'inspect',id});if(token!==epoch)return;
     selected=row;playing=false;$('character-name').textContent=row.name;$('family').textContent=row.skeletonFamily;$('review-state').textContent='Needs visual review';$('details').hidden=false;showFacts(row);
@@ -63,7 +93,7 @@ async function select(id){
     handoff=mountAvatarHandoff({row,isCurrent:()=>token===epoch,getContext:()=>({appearance:appearance?.snapshot(),wardrobe:nextWardrobe.snapshot()})});
     try{const nextVoice=await mountAvatarVoice({row,runtime,isCurrent:()=>token===epoch});if(token!==epoch){nextVoice?.dispose();return;}voice=nextVoice;voice?.setActive(activeView);}catch(e){if(token!==epoch)return;$('voice-panel').hidden=false;$('voice-state').textContent='Audio unavailable';$('voice-note').textContent=e.message;$('voice-note').hidden=false;}
     $('wireframe').dispatchEvent(new Event('change'));$('overlay-open').href=`/avatars.html?id=${id}&overlay=1`;const url=new URL(location.href);url.searchParams.set('id',id);history.replaceState(null,'',url);if(workshop.embedded)parent.postMessage({type:'aiplay-avatar-selection',id},location.origin);status(row.inspection.profile==='vrm'?'VRM ready':'Skin verified');
-  }catch(e){if(token===epoch)status(e.message,true);}
+  }catch(e){if(token===epoch)status(e.message,true);}finally{if(token===epoch)paintTools();}
 }
 async function refresh(preferred){const data=await api();$('library').replaceChildren();for(const row of data.avatars){const b=document.createElement('button');b.className='btn2';b.dataset.id=row.id;b.textContent=row.name;const s=document.createElement('small');s.textContent=`${row.inspection.joints} joints · ${row.inspection.clips.length} clips`;b.append(s);b.onclick=()=>select(row.id);$('library').append(b);}if(!data.avatars.length){$('library').textContent='No characters imported yet.';status('Import a rigged GLB from Blender or your character pipeline.');}else{const id=preferred||selected?.id||data.avatars[0].id;await select(id);}}
 $('install-example').onclick=async()=>{const button=$('install-example');button.disabled=true;status('Loading anime sample…');try{const row=await api({action:'install_example'});await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};

@@ -48,7 +48,15 @@
 <div class="camera-controls"><button class="btn2" id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button></div>
 <div class="motion-controls"><label>Motion<select class="sel2" id="motion" disabled><option value="">Rest pose</option></select></label><button class="btn2" id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select class="sel2" id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
 </section>
-<section id="wardrobe-panel" hidden class="pcard">
+<nav class="avatar-tools" role="tablist" aria-label="3D tools">
+<button class="btn2" id="avatar-tab-look" type="button" role="tab" data-tool="look" aria-controls="appearance-panel" aria-selected="true" title="Edit saved looks, visible parts, colours and expressions" disabled>Look</button>
+<button class="btn2" id="avatar-tab-outfit" type="button" role="tab" data-tool="outfit" aria-controls="wardrobe-panel" aria-selected="false" title="Preview and save prepared outfits" disabled>Outfit</button>
+<button class="btn2" id="avatar-tab-fit" type="button" role="tab" data-tool="fit" aria-controls="fitting-panel" aria-selected="false" title="Fit a separate mesh to this avatar" disabled>Fit</button>
+<button class="btn2" id="avatar-tab-voice" type="button" role="tab" data-tool="voice" aria-controls="voice-panel" aria-selected="false" title="Preview mouth movement with local audio" disabled>Voice</button>
+<button class="btn2" id="avatar-tab-asset" type="button" role="tab" data-tool="asset" aria-controls="details" aria-selected="false" title="Inspect the rig and prepare handoff files" disabled>Asset</button>
+</nav>
+<section id="avatar-tool-empty" class="pcard"><p class="hint">Choose an avatar to edit its look.</p></section>
+<section id="wardrobe-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-outfit">
 <div class="section-heading"><h2>Wardrobe</h2><span id="wardrobe-state" class="chip">Loading</span></div>
 <div class="camera-controls"><span id="wardrobe-context" class="hint">Base outfit</span><button id="wardrobe-save" class="btn" disabled>Save outfit</button><button id="wardrobe-reset" class="btn2" disabled>Reset preview</button><button id="outfit-export" class="btn2" disabled title="Export the saved look and fitted parts together for World import.">Export outfit</button></div>
 <p id="outfit-note" hidden class="hint" role="status"></p><div id="outfit-downloads" class="camera-controls"></div>
@@ -63,7 +71,7 @@
 <button id="wardrobe-import-submit" class="btn" type="submit">Add to wardrobe</button>
 </form></details>
 </section>
-<section id="fitting-panel" hidden class="pcard">
+<section id="fitting-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-fit">
 <div class="section-heading"><h2>Fit a part</h2><span id="fitting-state" class="chip">Choose a part</span></div>
 <form id="fitting-form">
 <label>Unrigged part<input class="in2" name="file" type="file" accept=".glb" required title="Separate body, clothing or accessory geometry in a compatible rest pose."></label>
@@ -83,7 +91,7 @@
 <p id="fitting-note" hidden class="hint warnhint" role="status"></p>
 <details class="more"><summary>Job details</summary><code id="fitting-job"></code><div id="fitting-result" class="hint"></div></details>
 </section>
-<section id="voice-panel" hidden class="pcard">
+<section id="voice-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-voice">
 <div class="section-heading"><h2>Voice preview</h2><span id="voice-state" class="chip">Choose audio</span></div>
 <label>Audio<input class="in2" id="voice-file" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm" title="Local audio, up to 32 MiB. Mouth motion follows loudness, not phonemes."></label>
 <div id="voice-name" class="hint">No audio selected</div>
@@ -92,7 +100,7 @@
 <p id="voice-note" hidden class="hint warnhint" role="status"></p>
 <details class="more"><summary>MCP session</summary><code id="voice-session"></code></details>
 </section>
-<section id="appearance-panel" hidden class="pcard" data-nav="Appearance">
+<section id="appearance-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-look">
 <div class="section-heading"><h2>Appearance</h2><span id="appearance-state" class="chip">Embedded defaults</span></div>
 <div class="fields"><label>Saved look<select class="sel2" id="appearance-looks"><option value="">Choose a look</option></select></label><label>Look name<input class="in2" id="appearance-name" maxlength="80" placeholder="Stage outfit"></label></div>
 <label>Source persona<input class="in2" id="appearance-persona" inputmode="numeric" placeholder="Optional persona ID" title="Local attribution only; live account binding is a separate platform action."></label>
@@ -102,7 +110,7 @@
 <details id="appearance-expression-group" class="more" open><summary>Expressions</summary><div id="appearance-expressions" class="appearance-grid"></div></details>
 
 </section>
-<section id="details" hidden class="pcard"><div class="section-heading"><h2>Asset details</h2><button class="btn" id="export">Prepare handoff</button></div>
+<section id="details" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-asset"><div class="section-heading"><h2>Asset details</h2><button class="btn" id="export">Prepare handoff</button></div>
 <div id="facts" class="facts"></div><details class="more"><summary>Validation notes</summary><div id="warnings"></div></details>
 
 <div id="downloads"></div><details><summary>Provenance and rig inventory</summary><pre id="metadata"></pre></details>

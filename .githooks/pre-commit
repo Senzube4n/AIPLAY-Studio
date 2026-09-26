@@ -31,7 +31,9 @@ node --check web/avatar-voice.js || exit 1
 node --check web/avatar-lipsync.js || exit 1
 node --check web/avatar-handoff.js || exit 1
 node --check web/avatars.js || exit 1
+node --check web/standrig.js || exit 1
 node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
+node --test server/standrig/connector_test.js || exit 1
 node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1
 node --test server/mesh/avatar-fitting_test.js server/mesh/avatar-fitting-ui_test.js server/mesh/avatar-wardrobe_test.js server/mesh/avatar-wardrobe-runtime_test.js server/mesh/avatar-wardrobe-ui_test.js || exit 1
 node --test server/mesh/avatar-composition_test.js server/mesh/avatar-handoff_test.js || exit 1

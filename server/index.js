@@ -1,5 +1,6 @@
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
+import { createStandRigRoutes } from './standrig/routes.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
@@ -2929,6 +2930,7 @@ const imageEditor = createImageEditor({
   },
 });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
+const standRigRoutes = createStandRigRoutes({ json, readBody, sameOriginLocalJson });
 const weightTransferRoutes = createWeightTransferRoutes({json, directory:path.join(config.outputDir,'avatar-weight-transfer'), provenance:prov});
 const avatarFitAssets = createAvatarService({directory:path.join(config.outputDir,'avatars')});
 const avatarFittingRoutes = createAvatarFittingRoutes({json,directory:path.join(config.outputDir,'avatar-fitting'),inspectAsset:avatarFitAssets.file,provenance:prov});
@@ -3127,6 +3129,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- API ------------------------------------------------------------
+    if (p === '/api/standrig') {
+      return standRigRoutes(req, res);
+    }
     if (p === '/api/avatars' || p.startsWith('/api/avatars/')) {
       if (await avatarRoutes(req, res, url)) return;
     }
