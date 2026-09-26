@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { glbDoc,packGlb,fixtureBin } from './fixtures.js';
 import { inspectAvatar,createAvatarService,createAvatarRoutes } from './avatar.js';
+import { inspectAvatarSource, inspectAvatarSourceBytes } from './avatar-source.js';
 import { avatarTools } from '../mcp-avatars.js';
 let pass=0;async function test(name,fn){await fn();pass++;console.log(`ok ${name}`);}
 const fixture=(opts={skinned:true})=>{const doc=glbDoc(opts);doc.materials=[{pbrMetallicRoughness:{baseColorFactor:[.3,.5,.7,1],metallicFactor:0,roughnessFactor:.6}}];doc.meshes[0].primitives[0].material=0;return doc;};
@@ -12,6 +13,30 @@ const temp=await mkdtemp(path.join(os.tmpdir(),'studio-avatar-'));
 let server;
 try{
   const input=path.join(temp,'input.glb'),bytes=packGlb(fixture());await writeFile(input,bytes);
+  await test('source preflight gives useful facts for an unrigged, untextured GLB without claiming quality',async()=>{
+    const raw=packGlb(glbDoc());const result=await inspectAvatarSourceBytes(raw);
+    assert.equal(result.geometry.triangles,12);assert.equal(result.geometry.meshNodes,1);
+    assert.equal(result.surface.materials,0);assert.equal(result.surface.images,0);
+    assert.equal(result.skin.structural,'absent');assert.equal(result.vrm.version,null);
+    assert.deepEqual(result.next.map(step=>step.code),['surface','parts','rig','vrm']);
+    assert.match(result.caveat,/cannot judge fused anatomy/);
+  });
+  await test('source preflight distinguishes a structural skin from verified deformation',async()=>{
+    const result=await inspectAvatarSourceBytes(packGlb(glbDoc({skinned:true,rigid:true})));
+    assert.equal(result.skin.structural,'valid');assert.equal(result.skin.joints,3);
+    assert.ok(!result.next.some(step=>step.code==='rig'));
+    assert.match(result.caveat,/joint bends/);
+  });
+  await test('source preflight reads paths and canonical uploads but rejects external resources',async()=>{
+    const raw=packGlb(glbDoc());const source=path.join(temp,'source.glb');await writeFile(source,raw);
+    const fromPath=await inspectAvatarSource({path:source});
+    const fromUpload=await inspectAvatarSource({data_base64:raw.toString('base64')});
+    assert.equal(fromPath.sha256,fromUpload.sha256);
+    await assert.rejects(inspectAvatarSource({path:source,data_base64:raw.toString('base64')}),/exactly one/);
+    await assert.rejects(inspectAvatarSource({data_base64:'AA=A'}),/canonical base64/);
+    const external=glbDoc();external.images=[{uri:'https://example.test/texture.png'}];
+    await assert.rejects(inspectAvatarSourceBytes(packGlb(external)),/Embed all buffers and images/);
+  });
   await test('valid binary skin is admitted but visual and clip readiness stay pending',async()=>{const r=await inspectAvatar(bytes);assert.equal(r.validation.errors,0);assert.equal(r.joints,3);assert.equal(r.triangles,12);assert.equal(r.state,'needs_visual_review');assert.deepEqual(r.missingClips,['idle','walk','run']);});
   /* ⚠ THE ADMISSION assertSkinned CANNOT MAKE. This is the surface where
    * people hand each other files, and it used to admit a GLB on its skin
@@ -43,9 +68,15 @@ try{
   server=http.createServer((req,res)=>routes(req,res,new URL(req.url,'http://localhost')).catch(e=>{res.writeHead(500);res.end(e.message);}));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${server.address().port}`;
   const post=(body,headers={})=>fetch(base+'/api/avatars',{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
+  await test('source preflight HTTP accepts an unrigged upload without importing it',async()=>{
+    const response=await post({action:'source_preflight',data_base64:packGlb(glbDoc()).toString('base64')},{Origin:base});
+    assert.equal(response.status,200,await response.clone().text());
+    assert.equal((await response.json()).skin.structural,'absent');
+    await assert.rejects(readdir(path.join(temp,'http')),{code:'ENOENT'});
+  });
   await test('HTTP rejects cross-site, opaque and different-port origins',async()=>{for(const h of [{Origin:'https://evil.test'},{Origin:'null'},{Origin:'http://127.0.0.1:1'},{'Sec-Fetch-Site':'cross-site'}])assert.equal((await post({action:'inspect',id:row.id},h)).status,403);});
   await test('HTTP refuses DNS rebinding Host on reads too',async()=>{const code=await new Promise((resolve,reject)=>{http.get(base+'/api/avatars',{headers:{Host:'evil.test'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));}).on('error',reject);});assert.equal(code,403);});
   await test('HTTP imports and serves local GLB/manifest and actual Three modules',async()=>{const res=await post({action:'import',...options},{Origin:base});assert.equal(res.status,200,await res.clone().text());const r=await res.json();const glb=await fetch(base+r.files.glb);assert.deepEqual(Buffer.from(await glb.arrayBuffer()),bytes);assert.equal((await fetch(base+r.files.manifest)).status,200);const mod=await fetch(base+'/api/avatars/vendor/three.module.js');assert.equal(mod.status,200);assert.match(mod.headers.get('Content-Type'),/javascript/);assert.ok((await mod.text()).length>10000);});
-  await test('MCP verbs preserve their shared route arguments',async()=>{const calls=[];const tools=avatarTools(async(...args)=>{calls.push(args);return {ok:true};});await tools.find(t=>t.name==='avatar_import').run(options);assert.deepEqual(calls[0],['POST','/api/avatars',{action:'import',...options}]);await tools.find(t=>t.name==='avatar_export').run({id:row.id});assert.deepEqual(calls[1],['POST','/api/avatars',{action:'export',id:row.id}]);});
+  await test('MCP verbs preserve their shared route arguments',async()=>{const calls=[];const tools=avatarTools(async(...args)=>{calls.push(args);return {ok:true};});await tools.find(t=>t.name==='avatar_source_preflight').run({path:input});assert.deepEqual(calls[0],['POST','/api/avatars',{action:'source_preflight',path:input}]);await tools.find(t=>t.name==='avatar_import').run(options);assert.deepEqual(calls[1],['POST','/api/avatars',{action:'import',...options}]);await tools.find(t=>t.name==='avatar_export').run({id:row.id});assert.deepEqual(calls[2],['POST','/api/avatars',{action:'export',id:row.id}]);});
   console.log(`${pass} avatar checks passed`);
 }finally{if(server)await new Promise(resolve=>server.close(resolve));await rm(temp,{recursive:true,force:true});}

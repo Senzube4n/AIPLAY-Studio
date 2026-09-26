@@ -12,6 +12,7 @@ import { GLTFLoader } from '/api/avatars/vendor/loaders/GLTFLoader.js';
 import { OrbitControls } from '/api/avatars/vendor/controls/OrbitControls.js';
 const $=id=>document.getElementById(id),status=(message,error=false)=>{$('status').textContent=message;$('status').className=error?'error':'';};
 const api=async body=>{const r=await fetch('/api/avatars',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);const data=await r.json();if(!r.ok)throw Error(data.error||`HTTP ${r.status}`);return data;};
+const fileBase64=async file=>{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);};
 let runtime=null,appearance=null,voice=null,wardrobe=null,fitting=null,handoff=null,restoreRestPose=null;
 let selected=null,epoch=0,model=null,mixer=null,clips=[],action=null,playing=false,helper=null,renderer=null,controls=null,scene=null,camera=null;
 const workshop = workshopRoute(location.href), overlayMode = workshop.overlay;
@@ -98,9 +99,31 @@ async function select(id){
 async function refresh(preferred){const data=await api();$('library').replaceChildren();for(const row of data.avatars){const b=document.createElement('button');b.className='btn2';b.dataset.id=row.id;b.textContent=row.name;const s=document.createElement('small');s.textContent=`${row.inspection.joints} joints · ${row.inspection.clips.length} clips`;b.append(s);b.onclick=()=>select(row.id);$('library').append(b);}if(!data.avatars.length){$('library').textContent='No characters imported yet.';status('Import a rigged GLB from Blender or your character pipeline.');}else{const id=preferred||selected?.id||data.avatars[0].id;await select(id);}}
 $('install-example').onclick=async()=>{const button=$('install-example');button.disabled=true;status('Loading anime sample…');try{const row=await api({action:'install_example'});await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};
 $('refresh').onclick=()=>refresh().catch(e=>status(e.message,true));
-$('import-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;try{const f=form.elements.file.files[0];const profile=form.elements.profile.value,limit=profile==='vrm'?64:8;if(!f||f.size>limit*1024*1024)throw Error(`Choose an avatar up to ${limit} MiB.`);status('Checking the GLB, skin and textures…');const bytes=new Uint8Array(await f.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));const body={action:'import',profile,data_base64:btoa(binary)};for(const name of ['name','persona_id','facing','skeleton_family','source','license'])body[name]=form.elements[name].value;const row=await api(body);$('import-panel').open=false;await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};
+$('import-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]');button.disabled=true;try{const f=form.elements.file.files[0];const profile=form.elements.profile.value,limit=profile==='vrm'?64:8;if(!f||f.size>limit*1024*1024)throw Error(`Choose an avatar up to ${limit} MiB.`);status('Checking the GLB, skin and textures…');const body={action:'import',profile,data_base64:await fileBase64(f)};for(const name of ['name','persona_id','facing','skeleton_family','source','license'])body[name]=form.elements[name].value;const row=await api(body);$('import-panel').open=false;await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};
 $('motion').onchange=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';setMotion($('motion').value);};
-$('import-form').elements.file.onchange=event=>{if(event.target.files[0]?.name.toLowerCase().endsWith('.vrm'))$('import-form').elements.profile.value='vrm';};
+let preflightEpoch=0;
+function clearSourcePreflight(){preflightEpoch++;$('source-preflight').disabled=false;$('source-preflight-state').hidden=true;$('source-preflight-facts').hidden=true;$('source-preflight-next').hidden=true;$('source-preflight-steps').replaceChildren();}
+$('import-form').elements.file.onchange=event=>{clearSourcePreflight();if(event.target.files[0]?.name.toLowerCase().endsWith('.vrm'))$('import-form').elements.profile.value='vrm';};
+$('source-preflight').onclick=async()=>{
+  const file=$('import-form').elements.file.files[0],button=$('source-preflight'),token=++preflightEpoch;
+  const state=$('source-preflight-state'),facts=$('source-preflight-facts'),details=$('source-preflight-next');
+  state.hidden=false;state.className='chip busy';state.textContent='Checking source';facts.hidden=true;details.hidden=true;
+  button.disabled=true;
+  try{
+    if(!file||!['glb','vrm'].includes(file.name.split('.').at(-1)?.toLowerCase())||file.size>64*1024*1024)throw Error('Choose a GLB or VRM up to 64 MiB.');
+    const result=await api({action:'source_preflight',data_base64:await fileBase64(file)});
+    if(token!==preflightEpoch||file!==$('import-form').elements.file.files[0])return;
+    state.className=`chip ${result.skin.structural==='invalid'?'err':result.skin.structural==='absent'?'warn':'ok'}`;
+    state.textContent=result.skin.structural==='invalid'?'Skin issue':result.skin.structural==='absent'?'Unrigged source':'Skin data found';
+    state.title=result.caveat;
+    facts.textContent=`${result.geometry.triangles.toLocaleString()} triangles · ${result.geometry.meshNodes} mesh nodes · ${result.surface.materials} materials · ${result.surface.images} images`;
+    facts.hidden=false;
+    $('source-preflight-steps').replaceChildren();
+    for(const step of result.next){const li=document.createElement('li');li.textContent=step.text;$('source-preflight-steps').append(li);}
+    details.hidden=!result.next.length;
+  }catch(error){if(token===preflightEpoch){state.className='chip err';state.textContent='Check failed';facts.textContent=error.message;facts.hidden=false;}}
+  finally{if(token===preflightEpoch)button.disabled=false;}
+};
 $('pose-test').onclick=()=>{if(!runtime?.vrm)return;playing=false;$('play').textContent='Play';runtime.setPreviewMotion(!runtime.previewMotion);$('pose-test').textContent=runtime.previewMotion?'Stop movement':'Test movement';};
 $('play').onclick=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';playing=!playing;$('play').textContent=playing?'Pause':'Play';};
 $('time').oninput=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';playing=false;$('play').textContent='Play';if(action){action.time=Number($('time').value);mixer.update(0);updateTime();}};

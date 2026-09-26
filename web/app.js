@@ -6637,6 +6637,7 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   $("cbPlanDelivery").textContent = counts
     ? `Order records checked ${new Date(cbPlanDelivery.observedAt).toLocaleTimeString()} · ${counts.prepared} prepared · ${counts.returned} returns recorded · ${counts.adopted} adopted · ${counts.refused + counts.expired + counts.unknown} need attention${cbPlanDelivery.unmatchedOrders.length ? ` · ${cbPlanDelivery.unmatchedOrders.length} refer to removed scenes` : ""}. File handoff: receipt and live progress are unknown. Refresh to read new returns.`
     : "Order progress unavailable in this server version. Update and restart Studio.";
+  paintCbHandoffs();
   $("cbPlanBoard").innerHTML = Object.entries(CB_STAGES).map(([stage, title]) => {
     const shots = cbPlan.shots.filter((s) => s.stage === stage);
     return `<section class="cbcolumn"><b>${title} · ${shots.length}</b>${shots.map((s) => `<button type="button" class="cbshot${s.segmentId === cbPlanScene ? " on" : ""}" data-scene="${esc(s.segmentId)}"><b>${esc(cbSceneTitle(s))}</b><small>${esc(s.segmentId)} · ${s.seconds ? `${s.seconds.toFixed(1)}s` : "duration unknown"}</small><small>${esc(cbOwnerName(s.owner))}${s.pinned ? " · pinned" : ""}${s.dependsOn ? ` · after ${esc(s.dependsOn)}` : ""}</small><small>${esc(cbSceneOrderSummary(s.segmentId))}</small>${s.reviewNote ? `<small>${esc(s.reviewNote.slice(0, 100))}</small>` : ""}</button>`).join("") || '<p class="hint">No scenes</p>'}</section>`;
@@ -6644,6 +6645,35 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   if (!cbPlan.shots.some((s) => s.segmentId === cbPlanScene)) cbPlanScene = cbPlan.shots[0]?.segmentId || "";
   if (!preserveShot) paintCbShotEditor();
 }
+function paintCbHandoffs() {
+  const host = $("cbHandoffList"); if (!host) return;
+  const rows = cbPlanDelivery?.handoffs;
+  if ($("cbHandoffWrap")) $("cbHandoffWrap").hidden = !Array.isArray(rows) || !rows.length;
+  if (!Array.isArray(rows)) { host.innerHTML = ""; return; }
+  if ($("cbHandoffCount")) $("cbHandoffCount").textContent = `· ${rows.filter((row) => row.status === "not-prepared").length} without files · ${rows.length} assigned`;
+  const labels = { "not-prepared": "No file prepared", prepared: "File prepared", expired: "Expired · ask friend", returned: "Return to review", adopted: "Take adopted", refused: "Return refused", cancelled: "Cancelled locally", unknown: "Order state unknown" };
+  host.innerHTML = rows.map((row) => {
+    const card = row.card?.state === "current" ? "Recent self-reported card" : row.card?.state === "stale" ? "Self-reported card over 24h old" : row.card?.state === "future" ? "Card timestamp invalid" : "No hardware card";
+    const fit = row.card?.fit === "listed" ? ` · ${esc(row.card.capability)} listed` : row.card?.fit === "not-listed" ? ` · ${esc(row.card.capability)} not listed` : row.card?.fit === "vram-below-minimum" ? " · VRAM below selected minimum" : "";
+    const canReview = row.status === "not-prepared" && row.peer?.eligible;
+    return `<div class="cbpeer cbassignment" data-segment="${esc(row.segmentId)}"><b>${esc(row.title || row.segmentId)}</b><span>${esc(row.peer?.nickname || row.owner?.slice(0, 8) || "Former friend")} · ${esc(labels[row.status] || "Check order")}</span><small title="${esc(row.nextStep || "Check the order record.")}">${esc(card)}${fit} · idle unknown</small>${canReview ? '<button type="button" class="btn sm cbhandoffreview">Preview request</button>' : ""}</div>`;
+  }).join("");
+}
+$("cbHandoffList")?.addEventListener("click", async (event) => {
+  const button = event.target.closest(".cbhandoffreview"); if (!button) return;
+  const segmentId = button.closest("[data-segment]")?.dataset.segment;
+  const row = cbPlanDelivery?.handoffs?.find((item) => item.segmentId === segmentId);
+  if (!row || row.status !== "not-prepared" || !row.peer?.eligible || row.owner !== cbPlan?.shots?.find((shot) => shot.segmentId === segmentId)?.owner) return;
+  let fresh;
+  try { fresh = await cbPlanRead(); }
+  catch (error) { cbSay(`Order status could not refresh: ${error.message}. Nothing was prepared.`); return; }
+  const still = fresh.delivery?.handoffs?.find((item) => item.segmentId === segmentId);
+  if (fresh.plan?.revision !== cbPlan?.revision || still?.status !== "not-prepared" || still.owner !== row.owner || !still.peer?.eligible) {
+    cbSay("The scene handoff changed. Reload the episode plan before preparing a request."); return;
+  }
+  cbPlanDelivery = fresh.delivery; paintCbHandoffs();
+  cbPlanScene = segmentId; paintCbShotEditor(); cbPreviewPlannedScene("order");
+});
 function cbSceneOrders(segmentId) {
   return cbPlanDelivery?.scenes?.find((scene) => scene.segmentId === segmentId)?.orders || [];
 }
@@ -6900,21 +6930,25 @@ function paintCbSavedDraft() {
   $("cbDraftSaved").hidden = !draft;
   $("cbDraftApply").disabled = !draft || !!draft.stale || !!draft.appliedAt;
   $("cbAssignedStart").hidden = !draft;
-  $("cbAssignedStart").disabled = !draft || !!draft.stale || !draft.assignments?.some((row) => row.segmentIds?.length);
+  $("cbAssignedStart").disabled = !draft || !!draft.stale || !draft.appliedAt || !draft.assignments?.some((row) => row.segmentIds?.length);
   if (cbAssignedReview && cbAssignedReview.key !== cbAssignedDraftKey()) { cbAssignedReview = null; paintCbAssignedStatus(); }
-  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied to this Studio's episode plan." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved locally. Review assigned scenes to prepare files."}</p>${cbDraftMarkup(draft)}`;
+  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied locally. Review each unprepared request." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved locally. Apply owners before preparing files."}</p>${cbDraftMarkup(draft)}`;
 }
 $("cbAssignedStart")?.addEventListener("click", async () => {
   const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
-  if (!draft || draft.stale || !cbSceneReady || cbLoadedSlug !== cbPlan.slug) { cbSay("Reload the saved allocation before reviewing scenes."); return; }
-  const key = cbAssignedDraftKey(), response = await cb({ action: "orders", side: "out" });
-  if (response.error) { cbSay(response.error); return; }
-  if (key !== cbAssignedDraftKey() || cbLoadedSlug !== cbPlan?.slug) { cbSay("The allocation changed. Start again."); return; }
-  const prepared = new Set((Array.isArray(response.orders) ? response.orders : []).filter((row) => row.slug === cbPlan.slug)
-    .map((row) => `${row.to?.fp}\n${row.order?.segmentId}`));
-  const rows = draft.assignments.flatMap((row) => row.segmentIds.map((segmentId) => ({ fp: row.fp, segmentId })))
-    .filter((row) => !prepared.has(`${row.fp}\n${row.segmentId}`));
-  if (!rows.length) { cbAssignedReview = null; paintCbAssignedStatus(); cbSay("Every assigned scene already has a prepared order."); return; }
+  if (!draft?.appliedAt || draft.stale || !cbSceneReady || cbLoadedSlug !== cbPlan.slug) { cbSay("Apply the current allocation before reviewing assigned scenes."); return; }
+  const key = cbAssignedDraftKey(), revision = cbPlan.revision;
+  let response;
+  try { response = await cbPlanRead(); }
+  catch (error) { cbSay(`Order status could not refresh: ${error.message}. Nothing was prepared.`); return; }
+  if (key !== cbAssignedDraftKey() || revision !== cbPlan?.revision || response.plan.revision !== revision || cbLoadedSlug !== cbPlan?.slug) { cbSay("The allocation changed. Reload the plan before reviewing scenes."); return; }
+  if (!Array.isArray(response.delivery?.handoffs)) { cbSay("Order status is unavailable. Nothing was prepared."); return; }
+  cbPlanDelivery = response.delivery || null; paintCbHandoffs();
+  const assigned = new Set(draft.assignments.flatMap((row) => row.segmentIds.map((segmentId) => `${row.fp}\n${segmentId}`)));
+  const handoffs = Array.isArray(response.delivery?.handoffs) ? response.delivery.handoffs : [];
+  const rows = handoffs.filter((row) => row.status === "not-prepared" && row.peer?.eligible && assigned.has(`${row.owner}\n${row.segmentId}`))
+    .map((row) => ({ fp: row.owner, segmentId: row.segmentId }));
+  if (!rows.length) { cbAssignedReview = null; paintCbAssignedStatus(); cbSay("No new request is ready to prepare. Review prepared, expired and returned orders in the episode plan."); return; }
   cbAssignedReview = { key, rows, at: 0, waiting: false }; cbSay(""); cbAssignedPick();
 });
 $("cbAssignedNext")?.addEventListener("click", () => { if (cbAssignedReview?.waiting) cbAssignedPick(); });

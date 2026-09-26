@@ -546,6 +546,7 @@ export const ROUTABLE = {
   standrig_parameters: "writes", // transient values sent to the local performer
   standrig_control: "writes", // transient play, pause, reset or demo command
   avatar_list: null,
+  avatar_source_preflight: null,
   avatar_playback_sessions: null,
   avatar_cue_inventory: null,
   avatar_audio_upload: "writes",

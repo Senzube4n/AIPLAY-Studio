@@ -6,7 +6,7 @@ The 3D page loads VRM 1.0 models with MToon materials, existing humanoid bones, 
 
 ## Use
 
-1. Use **Try anime sample** for the documented 10.3 MiB reference download, or import a self-contained `.vrm` using **VRM 1.0 workshop**, with the actual source/license. The local preview budget is 64 MiB, 150,000 triangles, 32 materials, 256 skin joints; textures are bounded at 4096 px and 64 megapixels total. Existing World GLB limits are unchanged.
+1. Use **Check source** to inspect a local GLB/VRM before rigging or import. It reports exact mesh-node, material, image, skin and VRM metadata without saving the file. This cannot detect fused limbs or grade visual quality. Then use **Try anime sample** for the documented 10.3 MiB reference download, or import a self-contained `.vrm` using **VRM 1.0 workshop**, with the actual source/license. The local preview budget is 64 MiB, 150,000 triangles, 32 materials, 256 skin joints; textures are bounded at 4096 px and 64 megapixels total. Existing World GLB limits are unchanged.
 2. Use **Test movement** to inspect gentle humanoid motion and existing hair springs. This is a procedural review pose, not a generated dance clip. Embedded clips retain their own raw-bone animation.
 3. Choose visible embedded parts, tint materials and test expressions. The five vowel presets remain manual expression controls. Voice preview additionally drives `aa` (or `jawOpen`) from a local audio waveform. **Cue expression** can show a lip-sync-safe embedded expression briefly without saving it to the look. This is loudness-driven mouth motion, not phoneme recognition.
 4. Save a named look. Choose a saved look to activate it. An open page follows MCP activation and edits unless it has an unsaved local draft.
@@ -24,6 +24,8 @@ Image and audio files remain browser `File`/object URLs; Studio does not upload 
 ## MCP
 
 `avatar_install_example` installs the hash-pinned reference on explicit request. `avatar_import` accepts `profile: "vrm"` for this runtime; `world` remains the default. `avatar_list`, `avatar_inspect` and `avatar_export` remain available.
+
+`avatar_source_preflight` reads an absolute local `.glb` or `.vrm` up to 64 MiB through the same loopback route as the Check source button. It returns structural facts and preparation steps without writing an avatar, using the GPU or asserting that skinning deforms well. A GLB may pass Khronos validation while still lacking material, texture, modular geometry and skin data.
 
 - `avatar_appearance_inventory`: exact mesh/material indices, morph names, expression presets and spring availability.
 - `avatar_appearance_list/get`: saved looks for a source asset.
@@ -49,12 +51,12 @@ The adapter verifies the tested upstream source contracts and PyTorch version, p
 
 Body skinning does not author hair spring chains or facial blendshapes. Those remain explicit authored data in the VRM baseline. [UniMate](https://github.com/Friedrich-M/UniMate) targets motion on already rigged assets; its public README still advertises pretrained checkpoints as forthcoming at the time of this work. No UniMate generation button is offered.
 
-The [SkinTokens/TokenRig successor to UniRig](https://github.com/VAST-AI-Research/SkinTokens) is a candidate for a separate local comparison, not an installed Studio backend. Its published CLI accepts a mesh and can transfer the original texture and scale; the upstream prerequisites specify at least 14 GB NVIDIA VRAM, Python 3.11, CUDA 12.1 and FlashAttention. The local 16 GB card meets the stated memory floor, but the Windows dependency path and actual peak memory have not been validated here. Before offering it in Studio, run the same textured reference and Mika meshes through both riggers in an isolated environment, validate GLB skinning and textures, inspect limb deformation in motion, and record elapsed time and peak VRAM. A better predicted rig would still not repair Mika's fused geometry or author hair springs and facial expressions.
+The [SkinTokens/TokenRig successor to UniRig](https://github.com/VAST-AI-Research/SkinTokens) remains an experimental local comparison, not a Studio backend. An isolated Windows run on the publisher's giraffe sample completed in 116.38 seconds and produced a textured, deforming 47-joint GLB. Whole-device GPU use peaked at 5,836 MiB on the 16 GB card, but that single sample does not override the publisher's 14 GB VRAM prerequisite. The native Windows run needed a private PyTorch SDPA compatibility patch because the tested Python had no FlashAttention wheel. Its output is a valid generic skinned GLB, not a VRM; it also exceeds the current World texture-side budget. Anime character quality, controlled background jobs and safe upstream server isolation remain unverified. A better predicted rig would still not repair Mika's fused geometry or author hair springs and facial expressions.
 
 ## Measured local rigging result
 
 On an existing RTX 4070 Ti SUPER (16 GB), the revised Studio adapter completed the upstream giraffe through extraction, skeleton, skinning and merge in 83.125 seconds of run stages, plus prerequisite probing. The result has 41 joints and 14,885 exported vertices with embedded textures; binary skin validation passed. This is one measured run, not a speed or memory guarantee.
 
-The original TripoSG Mika source also received a learned 65-joint rig. Its fused limbs, rough surfaces and missing textures remained. It is not the quality baseline for the configurator. Body auto-rigging and making a clean modular anime character are separate production steps.
+The original TripoSG Mika source also received a learned 65-joint rig. Its fused limbs, rough surfaces and missing textures remained. Source preflight finds 707,138 triangles in one mesh node and primitive, with zero materials, images or skins before rigging. That metadata explains why a valid GLB is a poor starting point for the desired configurator; it does not itself diagnose fused limbs. Body auto-rigging and making a clean modular anime character are separate production steps.
 
 The next asset milestone is a reusable, weighted body with compatible head, hair and outfit parts, authored facial morphs and explicit spring colliders. Arbitrary part fitting, persona ownership binding and Agent World runtime adoption remain outstanding. See [local audio playback](AVATAR_LIPSYNC.md) and [attachment weight transfer](AVATAR_PARTS.md) for the next local workflow pieces and their limits.

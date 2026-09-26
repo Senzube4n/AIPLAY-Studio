@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { planHandoffs, projectOrderProgress } from "./planning.js";
 
 const source = readFileSync(new URL("../../web/app.js", import.meta.url), "utf8");
 const collab = source.slice(source.indexOf("const cb = (body)"), source.indexOf("function paintExtend(t)"));
@@ -30,11 +31,13 @@ function fixture() {
   };
   const peer = { fp: "abc123", nickname: "Friend", verified: true, role: "lender" };
   const doc = { segments: [{ id: "opening", title: "The arrival", mode: "generate", durationSec: 5 }, { id: "closing", mode: "generate", durationSec: 4 }] };
-  const plan = { slug: "episode", revision: 0, notes: "", shots: doc.segments.map((s) => ({ segmentId: s.id, title: s.title || s.id, seconds: s.durationSec, stage: "storyboard", owner: null, pinned: false, reviewNote: "" })) };
+  const plan = { slug: "episode", revision: 0, notes: "", shots: doc.segments.map((s) => ({ segmentId: s.id, title: s.title || s.id, seconds: s.durationSec, mode: s.mode, stage: "storyboard", owner: null, pinned: false, reviewNote: "" })) };
+  const book = [];
+  const delivery = () => { const r = projectOrderProgress({ slug: "episode", shots: plan.shots, orders: book }); r.handoffs = planHandoffs({ plan, peers: [peer], delivery: r }); return r; };
   const defaults = (url, body) => {
     if (url === "/api/mv/projects") return { projects: [{ slug: "episode", title: "Episode" }] };
     if (url === "/api/mv/project/episode") return { project: doc };
-    if (url === "/api/collab/plan?slug=episode") return { ok: true, plan };
+    if (url === "/api/collab/plan?slug=episode") return { ok: true, plan, delivery: delivery() };
     if (body?.action === "roster") return { peers: [peer] };
     if (body?.action === "me") return { fp: "local", words: [], card: "key" };
     return { items: [], orders: [], takes: [] };
@@ -53,7 +56,7 @@ function fixture() {
   });
   node("cbKind").value = "shot"; node("cbDraftPolicy").value = "equal";
   vm.runInContext(collab, context);
-  return { node, calls, context, defaults, peer, doc, plan, run: (code) => vm.runInContext(code, context), fire: (id, event = "click") => node(id).handlers[event]?.({ target: node(id) }) };
+  return { node, calls, context, defaults, peer, doc, plan, book, run: (code) => vm.runInContext(code, context), fire: (id, event = "click") => node(id).handlers[event]?.({ target: node(id) }) };
 }
 
 test("initial and return visits load real flat scenes and refresh the selected project", async () => {
@@ -188,7 +191,8 @@ test("equal allocation covers 47 clips once across 10 peers; capability mode exc
 
 test("saved allocation steps through exact order previews one scene at a time", async () => {
   const f = fixture(); await f.run("paintCollab()");
-  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
   assert.equal(f.node("cbAssignedStart").disabled, false);
   await f.fire("cbAssignedStart");
   assert.equal(f.node("cbTo").value, f.peer.fp);
@@ -212,8 +216,9 @@ test("saved allocation steps through exact order previews one scene at a time", 
 
 test("saved allocation skips historical prepared orders without silently requesting another", async () => {
   const f = fixture(); await f.run("paintCollab()");
-  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
-  f.context.respond = (url, body) => body?.action === "orders" ? {orders:[{slug:"episode",to:{fp:f.peer.fp},order:{segmentId:"opening"},state:"sent"}]} : f.defaults(url, body);
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "sent", at: Date.now(), expires: Date.now() + 60000 });
   await f.fire("cbAssignedStart");
   assert.equal(f.node("cbSegment").value, "closing");
   assert.match(f.node("cbAssignedStatus").textContent, /1\/1 to review/);
@@ -222,9 +227,45 @@ test("saved allocation skips historical prepared orders without silently request
   assert.equal(f.node("cbAssignedStart").disabled, true);
 });
 
+test("expired and refused orders remain visible but are not offered as fresh handoffs", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "sent", at: Date.now() - 60000, expires: Date.now() - 1 });
+  f.book.push({ id: "o_000000000002", slug: "episode", to: f.peer, order: { segmentId: "closing" }, state: "refused", at: Date.now() - 1000 });
+  await f.fire("cbAssignedStart");
+  assert.match(f.node("cbSay").textContent, /No new request is ready/);
+  assert.match(f.node("cbHandoffList").innerHTML, /Expired · ask friend/);
+  assert.match(f.node("cbHandoffList").innerHTML, /Return refused/);
+  assert.doesNotMatch(f.node("cbHandoffList").innerHTML, /cbhandoffreview/);
+  assert.ok(!f.calls.some((call) => ["preview", "pack"].includes(call.body?.action)));
+});
+
+test("an unknown order state is not presented as ready for another request", async () => {
+  const f = fixture(); f.plan.shots[0].owner = f.peer.fp;
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "future-state", at: Date.now() });
+  await f.run("paintCollab()");
+  assert.match(f.node("cbHandoffList").innerHTML, /Order state unknown/);
+  assert.doesNotMatch(f.node("cbHandoffList").innerHTML, /cbhandoffreview/);
+});
+
+test("a handoff row rechecks the order state before opening its preview", async () => {
+  const f = fixture(); f.plan.shots[0].owner = f.peer.fp; await f.run("paintCollab()");
+  assert.match(f.node("cbHandoffList").innerHTML, /cbhandoffreview/);
+  const button = { closest: () => ({ dataset: { segment: "opening" } }) };
+  const event = { target: { closest: () => button } };
+  await f.node("cbHandoffList").handlers.click(event);
+  assert.equal(f.node("cbSegment").value, "opening");
+  assert.ok(!f.calls.some((call) => ["preview", "pack"].includes(call.body?.action)));
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "sent", at: Date.now(), expires: Date.now() + 60000 });
+  await f.node("cbHandoffList").handlers.click(event);
+  assert.match(f.node("cbSay").textContent, /handoff changed/);
+});
+
 test("a failed pack leaves the current assigned scene ready for another preview", async () => {
   const f = fixture(); await f.run("paintCollab()");
-  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
   await f.fire("cbAssignedStart");
   f.context.respond = (url, body) => body?.action === "preview" ? {previewId:"frozen",packet:{kind:"order",shot:{segmentId:"opening"}},describes:"scene",manifest:[]}
     : body?.action === "pack" ? {error:"Preview expired"} : f.defaults(url, body);

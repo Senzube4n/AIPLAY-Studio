@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { allocatePlan, createCollabPlanning, createCollabPlanningRoutes, projectOrderProgress } from "./planning.js";
+import { allocatePlan, createCollabPlanning, createCollabPlanningRoutes, planHandoffs, projectOrderProgress } from "./planning.js";
 import { listOrders, rememberOrder, setOrderState, noteReturn } from "./orderbook.js";
 
 const now = 10_000_000;
@@ -98,6 +98,7 @@ test("HTTP planning contract exposes read/write errors and records the caller ac
   const route = createCollabPlanningRoutes({ ...f.deps, json: (_res, status, data) => { answer = { status, data }; }, readBody: async (req) => req.body, actorFrom: () => "agent:test" });
   assert.equal(await route({ method: "GET" }, {}, new URL("http://local/other")), false);
   await route({ method: "GET" }, {}, new URL("http://local/api/collab/plan?slug=episode")); assert.equal(answer.status, 200);
+  assert.deepEqual(answer.data.delivery.handoffs, [], "the plan API and collab_plan MCP read the same handoff projection");
   await route({ method: "POST", body: { action: "update_episode", slug: "episode", expectedRevision: 0, notes: "Episode arc" } }, {}, new URL("http://local/api/collab/plan"));
   assert.equal(answer.data.plan.changedBy, "agent:test");
   await route({ method: "POST", body: { action: "update_episode", slug: "episode", expectedRevision: 0, notes: "Stale" } }, {}, new URL("http://local/api/collab/plan")); assert.equal(answer.status, 409);
@@ -128,22 +129,63 @@ test("expiry applies only to unanswered packages and does not infer cancellation
   assert.equal(result.counts.expired, 1);
 });
 
+test("handoffs use the current owner and latest order without implying remote idle or delivery", () => {
+  const observed = now + 86400002;
+  const p = peers(2), s = shots(4); s.forEach((shot) => { shot.mode = "generate"; }); s[0].owner = p[0].fp; s[1].owner = p[1].fp; s[2].owner = p[0].fp; s[3].owner = p[0].fp; s[3].mode = "import";
+  p[0].resources.at = observed; p[1].resources.at = now;
+  const orders = [
+    { id: "o_000000000001", slug: "episode", order: { segmentId: "s0" }, to: p[1], state: "sent", at: observed - 1000, expires: observed + 1000 },
+    { id: "o_000000000002", slug: "episode", order: { segmentId: "s0" }, to: p[0], state: "sent", at: observed - 500, expires: observed - 1 },
+    { id: "o_000000000003", slug: "episode", order: { segmentId: "s1" }, to: p[1], state: "returned", at: observed - 500 },
+  ];
+  const delivery = projectOrderProgress({ slug: "episode", shots: s, orders, now: observed });
+  const plan = { shots: s, draft: { appliedAt: now, stale: false, capability: "videoH3", minVramMb: 12000,
+    assignments: [{ fp: p[0].fp, segmentIds: ["s0", "s2"] }, { fp: p[1].fp, segmentIds: ["s1"] }] } };
+  const handoffs = planHandoffs({ plan, peers: p, delivery, now: observed });
+  assert.deepEqual(handoffs.map((row) => [row.segmentId, row.status]), [["s0", "expired"], ["s1", "returned"], ["s2", "not-prepared"]]);
+  assert.equal(handoffs[0].otherOwnerOrders, 1);
+  assert.equal(handoffs[0].card.fit, "listed");
+  assert.equal(handoffs[1].card.state, "stale");
+  assert.equal(handoffs[1].card.fit, "unknown");
+  assert.ok(handoffs.every((row) => row.remoteAvailability === "unknown"));
+  assert.doesNotMatch(JSON.stringify(handoffs), /privatePath|secret/);
+});
+
+test("handoff eligibility and card fit fail closed on changed trust and future timestamps", () => {
+  const p = peers(2), s = shots(3); s.forEach((shot, i) => { shot.mode = "generate"; shot.owner = i === 2 ? "missing-friend" : p[i].fp; });
+  p[0].verified = false; p[1].resources.at = now + 1;
+  const plan = { shots: s, draft: { appliedAt: now, stale: false, capability: "videoH3", minVramMb: 12000,
+    assignments: [{ fp: p[0].fp, segmentIds: ["s0"] }, { fp: p[1].fp, segmentIds: ["s1"] }] } };
+  const handoffs = planHandoffs({ plan, peers: p, delivery: projectOrderProgress({ slug: "episode", shots: s, orders: [], now }), now });
+  assert.equal(handoffs[0].peer.eligible, false);
+  assert.equal(handoffs[1].card.state, "future");
+  assert.equal(handoffs[1].card.fit, "unknown");
+  assert.equal(handoffs[2].peer.eligible, false);
+  assert.equal(handoffs[2].card.state, "missing");
+});
+
 test("real order-book transitions survive restart without modifying the plan or selecting a take", async (t) => {
   const f = await fixture(t), outDir = path.join(f.dir, "output", "collab"), id = "o_000000000001";
   const deps = { ...f.deps, readOrders: () => listOrders({ outDir }) }, store = createCollabPlanning(deps);
-  await store.mutate({ action: "update_shot", slug: "episode", expectedRevision: 0, segmentId: "s0", owner: f.roster[0].fp, stage: "assigned" });
+  const assigned = await store.mutate({ action: "update_shot", slug: "episode", expectedRevision: 0, segmentId: "s0", owner: f.roster[0].fp, stage: "assigned" });
+  assert.equal(assigned.delivery.handoffs[0].status, "not-prepared", "write response reflects the new current owner");
   const file = path.join(f.dir, "collab/plans/episode.json"), before = await readFile(file, "utf8");
   await rememberOrder({ outDir, row: { id, slug: "episode", order: { segmentId: "s0" }, to: f.roster[0], at: now, expires: now + 1000 } });
-  assert.equal((await store.get("episode")).delivery.counts.prepared, 1);
+  const prepared = await store.get("episode");
+  assert.equal(prepared.delivery.counts.prepared, 1);
+  assert.equal(prepared.delivery.handoffs[0].status, "prepared");
   await assert.rejects(rememberOrder({ outDir, row: { id } }), { reason: "order-exists" });
   await noteReturn({ outDir, id, entry: { ok: true, file: "take.mp4" } });
   await setOrderState({ outDir, id, state: "returned" });
   const afterReturn = await createCollabPlanning(deps).get("episode");
   assert.equal(afterReturn.delivery.counts.returned, 1);
+  assert.equal(afterReturn.delivery.handoffs[0].status, "returned");
   assert.equal(afterReturn.delivery.scenes[0].orders[0].returnCount, 1);
   assert.equal(afterReturn.plan.shots[0].stage, "assigned");
   await setOrderState({ outDir, id, state: "adopted" });
-  assert.equal((await store.get("episode")).delivery.counts.adopted, 1);
+  const adopted = await store.get("episode");
+  assert.equal(adopted.delivery.counts.adopted, 1);
+  assert.equal(adopted.delivery.handoffs[0].status, "adopted");
   assert.equal(await readFile(file, "utf8"), before);
   await store.mutate({ action: "update_episode", slug: "episode", expectedRevision: 1, notes: "Saved later" });
   assert.equal(JSON.parse(await readFile(file, "utf8")).delivery, undefined);

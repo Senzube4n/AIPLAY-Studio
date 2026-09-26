@@ -12,6 +12,8 @@
 <details id="import-panel" class="pcard more"><summary>Import avatar</summary>
 <form id="import-form">
 <label>Avatar file<input class="in2" name="file" type="file" accept=".glb,.vrm" required></label>
+<div class="camera-controls"><button class="btn2" id="source-preflight" type="button" title="Read the file's mesh, texture and skin data. Visual quality still needs review.">Check source</button><span id="source-preflight-state" hidden class="chip" role="status"></span></div>
+<p id="source-preflight-facts" hidden class="hint"></p><details id="source-preflight-next" hidden class="more"><summary>Preparation</summary><ul id="source-preflight-steps"></ul></details>
 <label>Import profile<select class="sel2" name="profile"><option value="world">World GLB</option><option value="vrm">VRM 1.0 workshop</option></select></label>
 <label>Character name<input class="in2" name="name" required maxlength="100" placeholder="Mika · development body"></label>
 <div class="fields"><label>Source persona ID<input class="in2" name="persona_id" inputmode="numeric" placeholder="Optional"></label><label>Facing<select class="sel2" name="facing"><option>+Z</option><option>-Z</option><option>+X</option><option>-X</option></select></label></div>

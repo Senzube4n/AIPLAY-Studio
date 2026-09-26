@@ -13,6 +13,7 @@ import { createPngtuberRoutes } from './pngtuber.js';
 import { createAvatarWardrobe, createAvatarWardrobeRoutes } from './avatar-wardrobe.js';
 import { createAvatarHandoffRoutes } from './avatar-handoff.js';
 import { VRM_LIMITS, VRM_EXTENSIONS, inspectVrmDocument } from './vrm-profile.js';
+import { inspectAvatarSource } from './avatar-source.js';
 
 export const AVATAR_LIMITS = Object.freeze({ bytes: 8*1024*1024, triangles: 30000, materials: 4, joints: 96, textureSide: 1024, texturePixels: 4*1024*1024 });
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
@@ -236,6 +237,7 @@ export function createAvatarRoutes({directory,json,provenance}) {
       const actor=provenance.actorFrom(req);let result;
       const {action,...input}=b;
       if(action==='install_example') result=await installExample(actor);
+      else if(action==='source_preflight') result=await inspectAvatarSource(input);
       else if(action==='appearance_inventory') result=await appearance.inventory(b.id);
       else if(action==='appearance_list') result=await appearance.list(b.id);
       else if(action==='appearance_get') result=await appearance.get(b.id,b.look_id);
