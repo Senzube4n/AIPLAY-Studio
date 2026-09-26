@@ -451,6 +451,16 @@ RUNTIME DEPENDENCIES (separate installations)
                            top of server/mesh/avatar.js, which server/index.js
                            imports, so it is loaded on start. REQUIRED FOR BOOT.
 
+    ag-psd 31.0.2 (npm)    MIT, copyright (c) 2016 Agamnentzar. Writes the
+                           separately painted image-document layers to a real
+                           PSD for StandRig. Its transitive base64-js 1.5.1
+                           is MIT, copyright (c) 2014 Jameson Little; pako
+                           2.1.0 is MIT and Zlib, copyright (c) 2014-2017
+                           Vitaly Puzrin and Andrei Tuputcyn. npm retains
+                           each package's original LICENSE in node_modules.
+                           No StandRig source or sample character art ships
+                           with Studio.
+
     @pixiv/three-vrm 3.5.5 MIT, copyright (c) 2019-2026 pixiv Inc. Local VRM
                            preview, expressions, MToon materials and spring
                            bones. Its original LICENSE is served locally at

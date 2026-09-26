@@ -1,6 +1,7 @@
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
 import { createStandRigRoutes } from './standrig/routes.js';
+import { createStandRigPsdRoutes } from './standrig/psd-export-routes.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
@@ -2931,6 +2932,13 @@ const imageEditor = createImageEditor({
 });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
 const standRigRoutes = createStandRigRoutes({ json, readBody, sameOriginLocalJson });
+const standRigPsdRoutes = createStandRigPsdRoutes({
+  json, readBody, sameOriginLocalJson, imageDir: IMAGE_DIR, python: config.python,
+  onExport: ({ name, documentId, layers }, req) => provNote("library", {
+    actor: prov.actorFrom(req), type: "export", asset: `images/_standrig/${name}`,
+    data: { op: "document.standrig-psd", documentId, layers },
+  }),
+});
 const weightTransferRoutes = createWeightTransferRoutes({json, directory:path.join(config.outputDir,'avatar-weight-transfer'), provenance:prov});
 const avatarFitAssets = createAvatarService({directory:path.join(config.outputDir,'avatars')});
 const avatarFittingRoutes = createAvatarFittingRoutes({json,directory:path.join(config.outputDir,'avatar-fitting'),inspectAsset:avatarFitAssets.file,provenance:prov});
@@ -3131,6 +3139,9 @@ const server = http.createServer(async (req, res) => {
     // ---- API ------------------------------------------------------------
     if (p === '/api/standrig') {
       return standRigRoutes(req, res);
+    }
+    if (p === '/api/images/standrig-psd' || p.startsWith('/api/images/standrig-psd/')) {
+      return standRigPsdRoutes(req, res, url);
     }
     if (p === '/api/avatars' || p.startsWith('/api/avatars/')) {
       if (await avatarRoutes(req, res, url)) return;

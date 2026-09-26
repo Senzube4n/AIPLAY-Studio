@@ -15,7 +15,7 @@ const { config } = await import("./config.js");
 const { PROVIDERS } = await import("./apiEngine.js");
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("the saved switch, provider and cap are read back at start", () => {
   assert.equal(config.api.enabled, true, "API mode used to switch itself off on every restart");

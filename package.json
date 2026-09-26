@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@pixiv/three-vrm": "3.5.5",
+    "ag-psd": "31.0.2",
     "gltf-validator": "2.0.0-dev.3.10",
     "three": "0.185.1",
     "ws": "^8.18.0"

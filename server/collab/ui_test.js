@@ -186,6 +186,57 @@ test("equal allocation covers 47 clips once across 10 peers; capability mode exc
   assert.equal(result.matched, 6); assert.equal(result.excluded, 4);
 });
 
+test("saved allocation steps through exact order previews one scene at a time", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  assert.equal(f.node("cbAssignedStart").disabled, false);
+  await f.fire("cbAssignedStart");
+  assert.equal(f.node("cbTo").value, f.peer.fp);
+  assert.equal(f.node("cbSegment").value, "opening");
+  assert.match(f.node("cbAssignedStatus").textContent, /1\/2 to review/);
+  assert.ok(!f.calls.some((c) => ["preview", "pack"].includes(c.body?.action)));
+  f.context.respond = (url, body) => body?.action === "preview" ? {previewId:"frozen",packet:{kind:"order",shot:{segmentId:"opening"}},describes:"scene",manifest:[]}
+    : body?.action === "pack" ? {ok:true,file:"C:/collab/out/order.aiplay",describes:"scene",bytes:1024}
+      : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, false);
+  await f.fire("cbPack");
+  assert.equal(f.node("cbAssignedNext").hidden, false);
+  assert.match(f.node("cbAssignedStatus").textContent, /2\/2 to review/);
+  await f.fire("cbAssignedNext");
+  assert.equal(f.node("cbSegment").value, "closing");
+  assert.equal(f.node("cbHandoff").hidden, true);
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.equal(f.calls.filter((c) => c.body?.action === "pack").length, 1);
+});
+
+test("saved allocation skips historical prepared orders without silently requesting another", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.context.respond = (url, body) => body?.action === "orders" ? {orders:[{slug:"episode",to:{fp:f.peer.fp},order:{segmentId:"opening"},state:"sent"}]} : f.defaults(url, body);
+  await f.fire("cbAssignedStart");
+  assert.equal(f.node("cbSegment").value, "closing");
+  assert.match(f.node("cbAssignedStatus").textContent, /1\/1 to review/);
+  assert.ok(!f.calls.some((c) => ["preview", "pack"].includes(c.body?.action)));
+  f.run('cbPlan.draft.stale = true; paintCbSavedDraft()');
+  assert.equal(f.node("cbAssignedStart").disabled, true);
+});
+
+test("a failed pack leaves the current assigned scene ready for another preview", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  await f.fire("cbAssignedStart");
+  f.context.respond = (url, body) => body?.action === "preview" ? {previewId:"frozen",packet:{kind:"order",shot:{segmentId:"opening"}},describes:"scene",manifest:[]}
+    : body?.action === "pack" ? {error:"Preview expired"} : f.defaults(url, body);
+  await f.fire("cbPreview");
+  await f.fire("cbPack");
+  assert.equal(f.node("cbSegment").value, "opening");
+  assert.match(f.node("cbAssignedStatus").textContent, /1\/2 to review/);
+  assert.equal(f.node("cbAssignedNext").hidden, true);
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /Preview again/);
+});
+
 test("all list failures keep previous rows and expose the failure", async () => {
   const f = fixture();
   for (const [id, fn] of [["cbPeers", "paintPeers"], ["cbInbox", "paintInbox"], ["cbOutbox", "paintOutbox"], ["cbErrands", "paintErrands"], ["cbTakes", "paintTakes"]]) {

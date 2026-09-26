@@ -2203,6 +2203,7 @@
             <div class="chips">
               <button class="btn sm" type="button" id="cbReveal">Show me this file</button>
               <button class="btn sm ghost" type="button" id="cbCopyPath">Copy its location</button>
+              <button class="btn sm" type="button" id="cbAssignedNext" hidden>Next assigned scene</button>
             </div>
             <p class="hint">However you normally send them things &mdash; chat, email, a USB stick. It is sealed to them, so nobody else can open it.</p>
           </div>
@@ -2228,6 +2229,7 @@
           <div class="cblist" id="cbDraftResult"></div>
           <div class="chips"><button type="button" class="btn sm" id="cbDraftPreview">Preview with pinned owners</button><button type="button" class="btn sm" id="cbDraftSave">Save allocation draft</button><button type="button" class="btn sm ghost" id="cbDraftApply" disabled>Use draft owners in episode plan</button></div>
           <div class="cbsaved" id="cbDraftSaved" hidden></div>
+          <div class="chips"><button type="button" class="btn sm" id="cbAssignedStart" hidden disabled title="Review each unprepared scene in the saved allocation. Every sealed order still needs its own exact preview.">Review assigned scenes</button><span class="chip" id="cbAssignedStatus" hidden></span></div>
         </details>
 
         <div id="cbOutboxWrap" hidden>
@@ -4168,6 +4170,7 @@
                 </span></div>
                 <div class="wrow"><span>
                   <button class="edtool sm" id="iedDocRender">Render &amp; open composite</button>
+                  <button class="edtool sm" id="iedDocPsd" title="Export the saved document's separate painted layers for StandRig. A flat image is refused.">Export PSD</button>
                   <button class="edtool sm warn" id="iedDocClose" title="Stop editing it here. It stays on the shelf.">close it</button>
                 </span></div>
               </div>

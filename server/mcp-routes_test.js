@@ -78,7 +78,7 @@ function ok(label, cond, detail = "") {
  * ────────────────────────────────────────────────────────────────────────── */
 
 const MCP_FILES = [
-  "server/mcp.js", "server/mcp-standrig.js",
+  "server/mcp.js", "server/mcp-standrig.js", "server/mcp-standrig-psd.js", "server/mcp-community.js",
   "server/mcp-audio.js",
   "server/mcp-avatars.js", "server/mcp-avatar-handoff.js", "server/mcp-avatar-appearance.js", "server/mcp-avatar-playback.js", "server/mcp-avatar-weight-transfer.js", "server/mcp-avatar-fitting.js", "server/mcp-avatar-wardrobe.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-cloud.js", "server/mcp-music-input.js",

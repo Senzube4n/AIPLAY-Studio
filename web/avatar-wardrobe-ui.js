@@ -90,6 +90,24 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
       check.type = 'checkbox'; check.checked = draft.includes(part.id); check.disabled = busy; check.title = 'Preview this part. Save outfit to keep the selection.';
       name.textContent = part.name; label.append(check, name);
       const slot = documentRef.createElement('span'); slot.className = 'hint'; slot.textContent = slotNames[part.slot] || part.slot;
+      let motionBadge;
+      if (part.slot === 'hair') {
+        const motion = part.inspection?.motion;
+        motionBadge = documentRef.createElement('span'); motionBadge.className = 'hint wardrobe-motion';
+        if (motion?.mode === 'base_springs' && motion.springLinkedVertices > 0) {
+          motionBadge.className += ' linked';
+          motionBadge.textContent = 'Spring-linked';
+          motionBadge.title = `${motion.springLinkedVertices} vertices have at least 5% weight on ${motion.springLinkedJoints} existing base spring joints. Movement needs Hair physics on; this part adds no new springs.`;
+        } else if (motion?.mode === 'none') {
+          motionBadge.textContent = 'No spring link';
+          motionBadge.title = 'No vertices have at least 5% weight on an existing base spring joint. This part follows ordinary rig movement.';
+        } else {
+          motionBadge.textContent = 'Motion unverified';
+          motionBadge.title = motion?.mode === 'unverified'
+            ? 'The base has too many spring chains for this check. Part movement has not been verified.'
+            : 'Reimport this prepared hair part to inspect its connection to base VRM springs.';
+        }
+      }
       check.onchange = () => {
         if (!live || !isCurrent() || busy) return;
         const next = new Set(draft);
@@ -110,7 +128,7 @@ export function mountAvatarWardrobeUI({row, gltf, load, isCurrent = () => true,
         catch (error) { if (current(token)) note(error.message); }
         finally { if (current(token)) { busy = false; draw(); paint(); } }
       };
-      line.append(label, slot, remove); $('wardrobe-list').append(line);
+      line.append(label, slot, ...(motionBadge ? [motionBadge] : []), remove); $('wardrobe-list').append(line);
     }
   }
   async function refreshParts(token) {

@@ -6650,6 +6650,7 @@ $("cbPreview")?.addEventListener("click", async () => {
 $("cbPack")?.addEventListener("click", async () => {
   const preview = cbPreparedPreview, note = $("cbPackNote");
   if (!preview || preview.key !== JSON.stringify(cbPackRequest())) { invalidateCbPreview(); return; }
+  const packedRequest = JSON.parse(preview.key);
   $("cbPack").disabled = true;
   if (note) note.textContent = "Preparing the reviewed file…";
   if ($("cbHandoff")) $("cbHandoff").hidden = true;
@@ -6658,6 +6659,11 @@ $("cbPack")?.addEventListener("click", async () => {
   if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
   if (note) note.textContent = `Prepared · ${r.describes} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
   showHandoff(r.file, r.describes);
+  const assigned = cbAssignedReview?.rows[cbAssignedReview.at];
+  if (assigned && cbAssignedReview.key === cbAssignedDraftKey() && packedRequest.kind === "order"
+      && packedRequest.slug === cbPlan?.slug && packedRequest.to === assigned.fp && packedRequest.segmentId === assigned.segmentId) {
+    cbAssignedReview.at++; cbAssignedReview.waiting = true; paintCbAssignedStatus();
+  }
   await paintOutbox();
 });
 
@@ -6737,12 +6743,58 @@ function cbDraftMarkup(draft) {
     + draft.excluded.map((p) => `<p class="hint">Excluded: ${esc(p.nickname || p.fp)} — ${esc(p.reason)}</p>`).join("")
     + draft.unassigned.map((s) => `<p class="hint">Unassigned: ${esc(s.segmentId)} — ${esc(s.reason)}</p>`).join("");
 }
+let cbAssignedReview = null;
+const cbAssignedDraftKey = (plan = cbPlan) => plan?.draft ? JSON.stringify([plan.slug, plan.draft.at, plan.draft.stale, plan.draft.assignments]) : "";
+function paintCbAssignedStatus() {
+  const status = $("cbAssignedStatus"), next = $("cbAssignedNext");
+  if (status) {
+    status.hidden = !cbAssignedReview;
+    if (cbAssignedReview) status.textContent = cbAssignedReview.at >= cbAssignedReview.rows.length
+      ? `${cbAssignedReview.rows.length} prepared` : `${cbAssignedReview.at + 1}/${cbAssignedReview.rows.length} to review`;
+  }
+  if (next) next.hidden = !cbAssignedReview?.waiting || cbAssignedReview.at >= cbAssignedReview.rows.length;
+}
+function cbAssignedPick() {
+  const review = cbAssignedReview;
+  if (!review || review.key !== cbAssignedDraftKey() || cbPlan?.slug !== cbLoadedSlug || !cbSceneReady) {
+    cbAssignedReview = null; paintCbAssignedStatus(); cbSay("Reload the saved allocation before reviewing scenes."); return;
+  }
+  if (review.at >= review.rows.length) { review.waiting = false; paintCbAssignedStatus(); return; }
+  const item = review.rows[review.at];
+  const peer = cbPeers.find((p) => p.fp === item?.fp && cbCanReceive(p, "order"));
+  const scene = cbProjectDoc?.segments?.find((s) => s.id === item?.segmentId && s.mode === "generate");
+  if (!peer || !scene) { cbSay("A planned friend or scene changed. Save a fresh allocation."); return; }
+  review.waiting = false;
+  setCbTab("Send"); $("cbKind").value = "order"; paintCbKind();
+  $("cbTo").value = item.fp; $("cbSegment").value = item.segmentId;
+  for (const id of ["cbSeed", "cbSteps", "cbEngineMode"]) $(id).value = "";
+  paintCbRecipientStatus(); invalidateCbPreview(); paintCbAssignedStatus();
+  if ($("cbHandoff")) $("cbHandoff").hidden = true;
+  $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
+}
 function paintCbSavedDraft() {
   const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
   $("cbDraftSaved").hidden = !draft;
   $("cbDraftApply").disabled = !draft || !!draft.stale || !!draft.appliedAt;
-  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied to this Studio's episode plan." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved separately from the controls above. Apply to set planned owners locally."} No files prepared or delivered; no remote work accepted.</p>${cbDraftMarkup(draft)}`;
+  $("cbAssignedStart").hidden = !draft;
+  $("cbAssignedStart").disabled = !draft || !!draft.stale || !draft.assignments?.some((row) => row.segmentIds?.length);
+  if (cbAssignedReview && cbAssignedReview.key !== cbAssignedDraftKey()) { cbAssignedReview = null; paintCbAssignedStatus(); }
+  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied to this Studio's episode plan." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved locally. Review assigned scenes to prepare files."}</p>${cbDraftMarkup(draft)}`;
 }
+$("cbAssignedStart")?.addEventListener("click", async () => {
+  const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
+  if (!draft || draft.stale || !cbSceneReady || cbLoadedSlug !== cbPlan.slug) { cbSay("Reload the saved allocation before reviewing scenes."); return; }
+  const key = cbAssignedDraftKey(), response = await cb({ action: "orders", side: "out" });
+  if (response.error) { cbSay(response.error); return; }
+  if (key !== cbAssignedDraftKey() || cbLoadedSlug !== cbPlan?.slug) { cbSay("The allocation changed. Start again."); return; }
+  const prepared = new Set((Array.isArray(response.orders) ? response.orders : []).filter((row) => row.slug === cbPlan.slug)
+    .map((row) => `${row.to?.fp}\n${row.order?.segmentId}`));
+  const rows = draft.assignments.flatMap((row) => row.segmentIds.map((segmentId) => ({ fp: row.fp, segmentId })))
+    .filter((row) => !prepared.has(`${row.fp}\n${row.segmentId}`));
+  if (!rows.length) { cbAssignedReview = null; paintCbAssignedStatus(); cbSay("Every assigned scene already has a prepared order."); return; }
+  cbAssignedReview = { key, rows, at: 0, waiting: false }; cbSay(""); cbAssignedPick();
+});
+$("cbAssignedNext")?.addEventListener("click", () => { if (cbAssignedReview?.waiting) cbAssignedPick(); });
 $("cbDraftPreview")?.addEventListener("click", async () => {
   const r = await mutateCollabPlan("preview_allocation", cbAllocationFields()); if (!r) return;
   $("cbDraftResult").innerHTML = cbDraftMarkup(r.plan.draft);
@@ -12623,6 +12675,7 @@ function iedDocPaint() {
   gate("iedDocUngroup", !!hit && hit.layer.type === "group",
     iedDoc ? "Pick a group row — ungroup is the one op that needs one." : iedDocNeed());
   gate("iedDocRender", !!iedDoc, iedDocNeed());
+  gate("iedDocPsd", !!iedDoc, iedDocNeed());
   gate("iedDocClose", !!iedDoc, iedDocNeed());
 
   for (const b of shelf.querySelectorAll("[data-docopen]")) {
@@ -12682,6 +12735,26 @@ $("iedDocClose").onclick = () => {
   iedDocPaint();
 };
 $("iedDockDocs").addEventListener("toggle", iedDocMaybeList);
+
+$("iedDocPsd").onclick = async () => {
+  if (!iedDoc || iedDocBusy) return;
+  const id = iedDoc.id;
+  iedDocBusy = true; iedDocPaint();
+  try {
+    const response = await fetch("/api/images/standrig-psd", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    const result = await response.json();
+    if (!response.ok || result.error) { iedDocSay(result.error || "PSD export failed."); return; }
+    if (!/^\/api\/images\/standrig-psd\/standrig_[0-9a-f]{32}\.psd$/.test(result.downloadUrl)) {
+      iedDocSay("PSD export returned an invalid download link."); return;
+    }
+    const link = document.createElement("a");
+    link.href = result.downloadUrl; link.download = result.name;
+    document.body.append(link); link.click(); link.remove();
+    iedDocSay(`PSD ready · ${result.layers?.length || 0} parts.`, result.warnings);
+  } catch (error) { iedDocSay(`PSD export failed: ${error.message || error}`); }
+  finally { iedDocBusy = false; iedDocPaint(); }
+};
 
 $("iedDocRender").onclick = async () => {
   if (!iedDoc) { iedToast(iedDocNeed()); return; }

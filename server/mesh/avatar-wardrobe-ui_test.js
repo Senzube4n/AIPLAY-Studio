@@ -90,3 +90,16 @@ test('category browser previews prepared parts and removing one category preserv
  await f.get('wardrobe-save').onclick();
  assert.deepEqual(f.calls.find(call=>call.action==='select').part_ids,['coat-a']);f.ui.dispose();
 });
+
+test('hair parts disclose inherited spring coverage without implying new physics',async()=>{
+ const f=uiFixture();f.parts.push(
+  {...part('hair-spring'),name:'Spring hair',slot:'hair',source:'artist',license:'CC0',inspection:{motion:{mode:'base_springs',baseSpringChains:1,springLinkedJoints:2,springLinkedVertices:100,minimumWeight:.05}}},
+  {...part('hair-static'),name:'Static hair',slot:'hair',source:'artist',license:'CC0',inspection:{motion:{mode:'none',baseSpringChains:1,springLinkedJoints:0,springLinkedVertices:0,minimumWeight:.05}}},
+  {...part('hair-old'),name:'Old hair',slot:'hair',source:'artist',license:'CC0'});
+ await f.ui.setLook(null);
+ const items=f.get('wardrobe-list').children;
+ assert.equal(items[2].children[2].textContent,'Spring-linked');assert.match(items[2].children[2].title,/existing base spring joints/);
+ assert.equal(items[3].children[2].textContent,'No spring link');assert.match(items[3].children[2].title,/at least 5% weight/);
+ assert.equal(items[4].children[2].textContent,'Motion unverified');
+ f.ui.dispose();
+});

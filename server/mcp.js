@@ -70,6 +70,8 @@ import { welcomeTools } from "./mcp-welcome.js";
 import { modelTools } from "./mcp-models.js";
 import { cloudTools } from "./mcp-cloud.js";
 import { collabTools } from "./mcp-collab.js";
+import { communityTools } from "./mcp-community.js";
+import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { workspaceTools } from "./mcp-workspace.js";
 import { excludedTerritoriesText } from "./models.js";
 
@@ -439,6 +441,8 @@ export const TOOLS = [
   ...modelTools(api),
   ...cloudTools(api),
   ...collabTools(api, safeName),
+  ...communityTools(api),
+  ...standRigPsdTools(api),
   ...workspaceTools(api, safeName),
   ...musicInputTools(api),
   ...musicPlanTools(api),

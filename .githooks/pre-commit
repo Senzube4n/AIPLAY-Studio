@@ -34,6 +34,7 @@ node --check web/avatars.js || exit 1
 node --check web/standrig.js || exit 1
 node --test server/mesh/avatar-shell_test.js server/mesh/avatar-lipsync_test.js server/mesh/avatar-playback_test.js || exit 1
 node --test server/standrig/connector_test.js || exit 1
+node --test server/standrig/psd-export_test.js || exit 1
 node --test server/mesh/avatar-weight-transfer_test.js server/mesh/avatar-voice_test.js || exit 1
 node --test server/mesh/avatar-fitting_test.js server/mesh/avatar-fitting-ui_test.js server/mesh/avatar-wardrobe_test.js server/mesh/avatar-wardrobe-runtime_test.js server/mesh/avatar-wardrobe-ui_test.js || exit 1
 node --test server/mesh/avatar-composition_test.js server/mesh/avatar-handoff_test.js server/mesh/avatar-world-preflight_test.js || exit 1
@@ -276,6 +277,10 @@ node server/reactive_test.js || exit 1
 # mcp.js and has never existed in index.js, and seventy-one regular expressions
 # over the source did not see it. Runs on the CPU: no engine, no card, no network.
 node server/collab/collab_test.js || exit 1
+# Two isolated Studio processes exchange a real sealed order file. The receiver
+# opens without accepting, then refuses to promise an offline card; a CPU-made
+# return is measured and quarantined on the original profile when ffmpeg exists.
+node --test server/collab/two_profile_test.js || exit 1
 # LENDING FOR A PERSON WITH NO STRONG CARD: the return check centred on the
 # renderer's own frame grid (H3 rounds a clip up to 17k+5), a take filed onto a
 # scene never rendered here, a refused take watched by name only, lip-sync said
@@ -1360,7 +1365,7 @@ if command -v powershell.exe >/dev/null 2>&1; then
 fi
 # Qwen editor lifecycle, exact masked RGBA preservation, async image completion,
 # persistent local collaboration planning and MCP parity use isolated fixtures.
-node --test server/image-job_test.js server/image-editor_test.js server/image-editor-ui_test.js server/collab/planning_test.js server/reactive-ui_test.js server/mcp-workspace_test.js server/qwen-cover_test.js || exit 1
+node --test server/image-job_test.js server/image-editor_test.js server/image-editor-ui_test.js server/collab/planning_test.js server/reactive-ui_test.js server/mcp-workspace_test.js server/mcp-community_test.js server/qwen-cover_test.js || exit 1
 if [ -x "$PY" ]; then "$PY" server/image_editor_test.py || exit 1; fi
 # Fork integration: typed MCP controls, video LoRA validation and shared-card unloading.
 node --test server/bucky-integration_test.js || exit 1

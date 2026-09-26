@@ -50,6 +50,18 @@ test('multiple base skins bind against their shared original raw joint nodes',as
   const report=await inspectWardrobePart(model(),base,hash(base));assert.deepEqual(report.bindings[0].baseJointNodes,[1,2,3]);
 });
 
+test('hair import and list expose actual inherited spring coverage, never invented part physics',async t=>{
+  const f=await fixture(t),base=model(j=>{j.extensionsUsed=['VRMC_springBone'];j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node:3}]}]}};});
+  f.replace(base);
+  const hair=await f.import({name:'Prepared hair',slot:'hair'});
+  assert.deepEqual(hair.inspection.motion,{mode:'base_springs',baseSpringChains:1,springLinkedJoints:1,springLinkedVertices:2,minimumWeight:.05});
+  assert.deepEqual((await f.service.list({id:ID})).parts[0].inspection.motion,hair.inspection.motion);
+  const unsupported=model(j=>{j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node:3}]}]}};});
+  f.replace(unsupported);
+  const unadvertised=await inspectWardrobePart(model(),unsupported,hash(unsupported));
+  assert.equal(unadvertised.motion.mode,'none');
+});
+
 test('stale concurrent selections, duplicate slots and caller mutation do not overwrite saved state',async t=>{
   const f=await fixture(t),a=await f.import(),b=await f.import({name:'Other coat'}),input={id:ID,sha256:f.sha256,expected_revision:0,part_ids:[a.id]};
   const save=f.service.select(input);input.part_ids.push(b.id);await save;
@@ -74,6 +86,7 @@ test('MCP payloads use the real route and provenance writer with optional fields
   const inventory=await run('avatar_wardrobe_inventory',{id:ID});assert.equal(inventory.sha256,f.sha256);
   const imported=await run('avatar_wardrobe_import',{id:ID,sha256:f.sha256,name:'Coat',slot:'outfit',source:'Local',license:'CC0',data_base64:model().toString('base64')});
   assert.equal((await run('avatar_wardrobe_list',{id:ID})).parts[0].id,imported.id);
+  assert.deepEqual(imported.inspection.motion,{mode:'none',baseSpringChains:0,springLinkedJoints:0,springLinkedVertices:0,minimumWeight:.05});
   await run('avatar_wardrobe_select',{id:ID,sha256:f.sha256,expected_revision:0,part_ids:[imported.id]});
   const selected=await run('avatar_wardrobe_selection',{id:ID});assert.deepEqual(selected.part_ids,[imported.id]);assert.equal(selected.look_id,null);
   await run('avatar_wardrobe_select',{id:ID,sha256:f.sha256,expected_revision:1,part_ids:[]});assert.deepEqual(await run('avatar_wardrobe_delete',{id:ID,sha256:f.sha256,part_id:imported.id}),{deleted:imported.id});

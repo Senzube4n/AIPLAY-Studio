@@ -13,15 +13,24 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Image creation and ordered references | `make_image`: refs, reference sizing/resolution, dimensions, alpha, native DiT/encoder/VAE, seed and sampling settings |
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
 | Layer editing and preview | `image_documents`, `document_edit`, `image_document_preview`, `image_tools_catalog`, `image_capabilities` |
+| StandRig 2D performer | `image_standrig_psd_export` for a saved layered document; `standrig_status`, `standrig_parameters`, `standrig_control` for the local StandRig bridge |
 | AI edit, style transfer, selected-area repair | `image_ai_edit_create`, `image_ai_edit_status`, `image_ai_edit_accept`, `image_ai_edit_undo`, `image_ai_edit_discard` |
 | Per-image privacy blur | `image_set_blur` with `blur:true` or `false` |
 | Reactive video | `reactive_status`, `reactive_render`, then `vfx_render_status`; compositions remain editable through `vfx_*` |
 | YuE2 training | `training_status`, `audio_waveform`, `train_lora`, `list_trained_loras`, `list_loras`, `make_song` |
 | Episode planning and allocation | `collab_plan`: get, update_episode, update_shot, preview_allocation, allocate, apply_draft |
 | Peer identity and permissions | `collab_me`, `collab_roster`, `collab_add_peer`, `collab_verify`, `collab_set_role`, `collab_set_lend_minutes`, `collab_remove_peer` |
+| Public community discovery | `community_feed`: the Community page's public live-session, upcoming-event, station, recent-track and article listings |
 | Reviewed outgoing bundles | `collab_resources`, `collab_preview`, `collab_pack`, `collab_send_back`, `collab_orders`, `collab_credit` |
 | Incoming work and returned takes | `collab_inbox`, `collab_open`, `collab_accept`, `collab_receive`, `collab_quarantine`, `collab_adopt`, `collab_drop`, `collab_set_resources`, `collab_free` |
 | Other existing JSON API operations | `studio_api_reference` searches API.md; `studio_api_request` calls an existing `/api/` endpoint when no typed tool covers it |
+
+`community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
+returned rows and fields, and reports whether the desktop feed was offline when
+checked. It gives listings, not the radio's current track, song queue, votes,
+reactions, authenticated viewers or a realtime event stream. Building those
+for external sites needs a separate AIPLAY.live API with its own access rules;
+Studio's loopback API must not be exposed as a public server.
 
 ## Image edit review
 
@@ -43,6 +52,14 @@ that frozen mask after generation, preserving zero-mask pixels. Canvas dimension
 stay fixed. Generation does not replace the document: poll, inspect the candidate,
 then accept or discard. Acceptance keeps old layers hidden; undo restores them.
 Stale document revisions are refused.
+
+`image_standrig_psd_export` takes the saved document's `id` and returns a local
+download URL for a layered PSD. The editor's Documents dock has the same
+**Export PSD** action. It requires two or more separately painted parts; a flat
+image is refused. Layer transforms and alpha are baked from the saved document,
+but unsupported blend/group effects are refused instead of silently flattened.
+Import the PSD into StandRig to set up a 2D performer. This does not create a
+GLB/VRM, rig a 3D avatar, or connect a stream by itself.
 
 ## Timing and reproducibility
 

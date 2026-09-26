@@ -32,6 +32,31 @@ list.
 > `server/engine/client.js` names the engine's port, its routes or
 > `config.comfy.*`.
 
+### `GET /api/community`
+
+The Community page reads this local proxy for AIPLAY.live's public desktop
+discovery feed and recent public blog posts. It can list live sessions, upcoming
+sessions, stations and recent tracks. A missing desktop feed returns `offline:true`
+with empty session/station lists, while the blog may still have articles. The
+typed `community_feed` MCP tool reads this same route and returns a bounded
+allowlist of public fields; it is also available to Studio's local chat as a
+read-only tool. These are discovery listings, not a current radio track, queue,
+votes, reactions, authenticated session state or a realtime event feed.
+
+This is still Studio's loopback API. External community applications need a
+separate AIPLAY.live API with explicit public and authenticated schemas.
+
+### `POST /api/images/standrig-psd`
+
+Send `{ "id": "<saved image document id or slug>" }` from the local Studio UI
+or `image_standrig_psd_export` MCP tool. Studio renders each separately painted
+layer of that document, checks the PSD round trip and returns an opaque
+`downloadUrl` served by `GET /api/images/standrig-psd/<name>`. Creation requires
+a same-origin loopback JSON request; downloads also stay on loopback and expire
+after 24 hours. A flat image, opaque document background or unsupported stack
+is refused with a reason. The result is a 2D layer handoff for StandRig, not a
+rigged 3D character.
+
 ### `POST /api/engine`
 
 The graph-rendering door for ComfyUI-backed features. Native YuE2 uses the

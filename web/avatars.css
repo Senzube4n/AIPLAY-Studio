@@ -76,6 +76,8 @@ body.avatar-overlay #voice-enable-overlay:not([hidden]) { display: block; positi
 #avatarWorkshop .wardrobe-item.selected { border-color: var(--primary); background: var(--raise); }
 #avatarWorkshop .wardrobe-item label { display: flex; flex: 1; flex-direction: row; align-items: center; margin: 0; }
 #avatarWorkshop .wardrobe-item .hint { color: var(--ghost); }
+#avatarWorkshop .wardrobe-motion { border: 1px solid var(--hair); border-radius: 999px; padding: 2px 7px; font-size: 11px; white-space: nowrap; }
+#avatarWorkshop .wardrobe-motion.linked { border-color: var(--primary); color: var(--primary); }
 #avatarWorkshop #wardrobe-context { flex: 1; }
 #avatarWorkshop #fitting-job { overflow-wrap: anywhere; font: 11px var(--mono); }
 @media (min-width: 980px) {

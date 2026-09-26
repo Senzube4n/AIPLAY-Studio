@@ -230,6 +230,15 @@ separately in the package; they are not baked into the VRM. Up to eight compatib
 parts and 64 MiB of combined model data are supported. This operation creates no
 new rig, facial expressions or hair physics.
 
+Newly imported parts include `inspection.motion`. It counts vertices with at
+least 5% skin weight on the base VRM's existing spring joints and reports
+`mode: "base_springs"` only when such weights exist. The wardrobe labels hair
+parts **Spring-linked**, **No spring link**, or **Motion unverified** for older
+imports without this inspection or spring setups beyond the inspection cap. The composed export manifest repeats the
+inspection, and wardrobe and export MCP tools return the same data. This is a
+weight-link check, not a visual quality or physics simulation test. The base
+VRM still owns all spring chains; no part-local spring chain is imported.
+
 `avatar_outfit_export` uses the same handler as `POST /api/avatars/handoff` with
 `action: "prepare"`, `id`, `sha256`, `look_id`, `expected_look_revision` and
 `expected_wardrobe_revision`. Use `avatar_outfit_get` with `export_id` to read its

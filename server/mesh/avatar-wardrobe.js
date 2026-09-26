@@ -5,6 +5,7 @@ import {readFile,writeFile,mkdir,readdir,rename,unlink,stat} from 'node:fs/promi
 import {Matrix4,Vector3,Quaternion} from 'three';
 import validator from 'gltf-validator';
 import {readGlb,assertSkinned,skinAccessor} from './glb.js';
+import {inspectPartSpringCoverage} from './avatar-spring-coverage.js';
 
 export const WARDROBE_LIMITS=Object.freeze({bytes:32*1024*1024,triangles:60000,vertices:180000,materials:16,joints:256,nodes:512,parts:64,selected:8,textureSide:2048,texturePixels:16*1024*1024});
 export const WARDROBE_SLOTS=Object.freeze(['hair','head','body','outfit','shoes','accessory']);
@@ -86,7 +87,8 @@ export async function inspectWardrobePart(bytes,baseBytes,baseHash){
     for(let i=0;i<s.joints.length;i++)if(!near(baseGraph.worlds.get(mapped.get(s.joints[i])).clone().multiply(matrices[i]),graph.worlds.get(index)))throw fault('Part inverse bind matrices do not fit the selected base.',422);
     bindings.push({node:index,skin:n.skin,baseJointNodes:s.joints.map(joint=>mapped.get(joint)),partJointNodes:[...s.joints],meshMatrix:graph.worlds.get(index).toArray()});
   }
-  return {sha256:digest(bytes),bytes:bytes.length,triangles,vertices,materials:j.materials?.length||0,joints:joints.length,texturePixels,bindings,validation:{errors:0,warnings:report.issues.numWarnings},review:'needs_visual_review'};
+  const motion=inspectPartSpringCoverage(b,j,parsed.binData,bindings);
+  return {sha256:digest(bytes),bytes:bytes.length,triangles,vertices,materials:j.materials?.length||0,joints:joints.length,texturePixels,bindings,motion,validation:{errors:0,warnings:report.issues.numWarnings},review:'needs_visual_review'};
 }
 
 export function createAvatarWardrobe({directory,inspectAsset,inspectLook,record=async()=>{}}){

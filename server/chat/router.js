@@ -78,6 +78,7 @@ export const ROUTABLE = {
    * set_cloud is withheld below, because it decides whether songs bill. */
   cloud_status: null,
   studio_status: null,
+  community_feed: null,
   engine_status: null,
   engine_activity: null,
   engine_nodes: null,
@@ -304,6 +305,7 @@ export const ROUTABLE = {
    * picture in the library, which is exactly what `writes` is for. */
   image_paint_layer: "writes",
   image_document: "writes",
+  image_standrig_psd_export: "writes",
   /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
    * mostly harmless — list, open, save, rename, reorder — but image_documents
    * takes action:"delete", and imgdoc.py says in its own words that there is no
@@ -532,6 +534,9 @@ export const ROUTABLE = {
   score_render: "gpu",
 
   /* avatars */
+  standrig_status: null,
+  standrig_parameters: "writes", // transient values sent to the local performer
+  standrig_control: "writes", // transient play, pause, reset or demo command
   avatar_list: null,
   avatar_playback_sessions: null,
   avatar_audio_upload: "writes",
@@ -671,6 +676,8 @@ export const COST_TEXT = {
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
   stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
+  standrig_parameters: "no graphics card time and no new file; it changes the local performer's current expression until replaced",
+  standrig_control: "no graphics card time and no new file; it changes the local performer's playback state",
   /* The router gates the whole tool, so a plain read asks too: the card says
    * that reading changes nothing. */
   video_settings: "no graphics card time and no new file — reading your video settings changes nothing; a setting it changes is SAVED, and every later render uses it",
@@ -681,6 +688,8 @@ export const COST_TEXT_BY_TOOL = {
  *  "writes" for its confirm, but it saves a setting, not a file. */
 export const GATE_WORDS_BY_TOOL = {
   video_settings: "SAVES A SETTING",
+  standrig_parameters: "CHANGES PERFORMER",
+  standrig_control: "CHANGES PERFORMER",
 };
 
 /* ─────────────────────────────────────────────── the flat-argument rule
@@ -702,6 +711,7 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 // silently dropped. External MCP clients still use the original typed schema.
 const JSON_ARGUMENT_TOOLS = new Set([
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
+  "standrig_parameters",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
   /* The score tools take `source` as an object and the note editor takes an
    * array of notes; without these three the chat could not reach them at all

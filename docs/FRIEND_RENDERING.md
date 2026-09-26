@@ -14,6 +14,8 @@ MCP uses the same operations:
 
 The shortcut clears any seed, steps or engine override left from an earlier request. It reads the saved scene, not an unsaved inspector prompt. It never invokes a generator or sends a network request to a friend's machine. Multi-friend distribution stays in Collab's production planner. Standalone Image/Music requests still need typed contracts for their settings.
 
+For many scenes, save an allocation draft in **Collab** → **Send**, then choose **Review assigned scenes**. Studio walks through unprepared recipient/scene pairs from that saved draft. Each scene still needs its own exact preview and **Prepare reviewed file**; **Next assigned scene** advances only after the current order is packed. Existing outgoing orders are skipped even if their acceptance window has expired, because a friend may already be rendering one. Use the scene's individual button to make a deliberate replacement request. MCP clients can walk `collab_plan`'s saved `draft.assignments` with the same `collab_preview` and `collab_pack` calls, checking `collab_orders` before each order. This produces local sealed files and does not deliver them or report live peer presence.
+
 ## If you have no strong card (borrowing)
 
 Every scene is rendered by a friend, so none of them has ever been rendered on your machine. That is fine:

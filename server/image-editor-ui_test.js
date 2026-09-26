@@ -89,6 +89,28 @@ test("document canvas blocks legacy file actions before their handlers, while do
   assert.ok(exportHandler.indexOf("openImageEditor(r.name)") > exportHandler.indexOf("await loadImages()"));
 });
 
+test("StandRig PSD button exports the saved document and accepts only its local download route", async () => {
+  assert.equal(html.split('id="iedDocPsd"').length - 1, 1);
+  const elements = new Map(), calls = [], messages = [], downloads = [];
+  const element = id => { if (!elements.has(id)) elements.set(id, {}); return elements.get(id); };
+  let url = "/api/images/standrig-psd/standrig_" + "a".repeat(32) + ".psd";
+  const ctx = vm.createContext({ iedDoc: { id: "saved_doc" }, iedDocBusy: false,
+    iedDocPaint() {}, iedDocSay: (...args) => messages.push(args), $: element,
+    fetch: async (path, init) => { calls.push({ path, body: JSON.parse(init.body) });
+      return { ok: true, json: async () => ({ name: "part.psd", downloadUrl: url, layers: [{ name: "hair" }, { name: "head" }], warnings: [] }) }; },
+    document: { body: { append() {} }, createElement: () => ({ click() { downloads.push(this.href); }, remove() {} }) },
+  });
+  vm.runInContext(section('$("iedDocPsd").onclick = async () =>', '$("iedDocRender").onclick = async () =>'), ctx);
+  await element("iedDocPsd").onclick();
+  assert.deepEqual(calls, [{ path: "/api/images/standrig-psd", body: { id: "saved_doc" } }]);
+  assert.deepEqual(downloads, [url]);
+  assert.match(messages.at(-1)[0], /PSD ready/);
+  url = "https://outside.example/part.psd";
+  await element("iedDocPsd").onclick();
+  assert.equal(downloads.length, 1);
+  assert.match(messages.at(-1)[0], /invalid download link/);
+});
+
 test("layer paint UI requires fresh server eligibility and the HTTP route checks it before painting", () => {
   const layer = { id: "result", type: "image", src: "qwen_edit.png", locked: false };
   const ctx = vm.createContext({ iedDoc: { id: "doc" }, iedDocRef: () => "result",
