@@ -31,6 +31,8 @@ GGUF conversions are a different loader path and are not advertised as working
 by this integration. In particular, the linked community Q8 conversion reports
 an upstream shape mismatch; a filename containing “uncensored” does not establish
 different base weights or a capability test.
+The [GGUF compatibility check](QWEN_GGUF_COMPATIBILITY.md) records a pinned Q4
+candidate and why the currently installed loader cannot safely run it.
 
 Download sizes are not VRAM requirements. Memory and time depend on image size,
 batch, references, runtime and offloading. The model uses the Qwen Research License,
