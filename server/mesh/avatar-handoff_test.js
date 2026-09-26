@@ -103,17 +103,18 @@ test('MCP calls execute actual route handlers with the same revisions and actor'
   await assert.rejects(route(req,{},new URL('http://127.0.0.1/api/avatars/handoff')),/too large/);
 });
 test('UI exports saved state only and rejects unsaved or mismatched contexts',async t=>{
-  const f=await fixture(t),a={look:f.look,dirty:false,busy:false},w={selection:f.selected,dirty:false,busy:false};
+  const f=await fixture(t),a={look:f.look,dirty:false,busy:false},w={selection:f.selected,dirty:false,busy:false,previewValid:true};
   assert.deepEqual(outfitExportRequest(f.row,a,w),{action:'prepare',...f.request});
   assert.throws(()=>outfitExportRequest(f.row,{...a,dirty:true},w),/Save the look/);
   assert.throws(()=>outfitExportRequest(f.row,a,{...w,dirty:true}),/Save the outfit/);
+  assert.throws(()=>outfitExportRequest(f.row,a,{...w,previewValid:false}),/Preview unavailable/);
   assert.throws(()=>outfitExportRequest(f.row,a,{...w,selection:{...f.selected,look_id:null}}),/load/);
   assert.throws(()=>outfitExportRequest(f.row,a,{...w,busy:true}),/Wait/);
 });
 test('late export completion cannot replace another avatar download links',async t=>{
   const f=await fixture(t);let resolve;
   const nodes=Object.fromEntries(['outfit-export','outfit-note','outfit-downloads'].map(id=>[id,{children:[],replaceChildren(){this.children=[];},append(v){this.children.push(v);}}]));
-  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected}}),
+  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected,previewValid:true}}),
     documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:()=>new Promise(r=>{resolve=r;})});
   const pending=nodes['outfit-export'].onclick();mounted.dispose();resolve({files:{}});await pending;
   assert.deepEqual(nodes['outfit-downloads'].children,[]);
@@ -121,7 +122,7 @@ test('late export completion cannot replace another avatar download links',async
 
 test('disposing the owning panel clears already prepared links, note and click handler',async t=>{
   const f=await fixture(t),nodes=Object.fromEntries(['outfit-export','outfit-note','outfit-downloads'].map(id=>[id,{children:[],replaceChildren(){this.children=[];},append(v){this.children.push(v);}}]));
-  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected}}),documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:async()=>({worldCandidate:true,files:{bundle:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.vrm`}})});
+  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected,previewValid:true}}),documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:async()=>({worldCandidate:true,files:{bundle:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.vrm`}})});
   await nodes['outfit-export'].onclick();assert.equal(nodes['outfit-downloads'].children.length,2);
   mounted.dispose();assert.equal(nodes['outfit-downloads'].children.length,0);assert.equal(nodes['outfit-export'].disabled,true);assert.equal(nodes['outfit-export'].onclick,null);assert.equal(nodes['outfit-note'].hidden,true);
 });
@@ -130,7 +131,7 @@ test('outfit export explains World preflight findings without claiming admission
   const f=await fixture(t),nodes=Object.fromEntries(['outfit-export','outfit-note','outfit-downloads'].map(id=>[id,{children:[],replaceChildren(){this.children=[];},append(v){this.children.push(v);}}]));
   const response={worldCandidate:false,worldPreflight:{candidate:false,reasons:['World model limit is 16 MiB.','World needs a saved part.']},
     files:{bundle:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.aiplay-avatar.json`,vrm:`/api/avatars/handoff/outfit_${'a'.repeat(64)}/outfit.vrm`}};
-  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected}}),
+  const mounted=mountAvatarHandoff({row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected,previewValid:true}}),
     documentRef:{getElementById:id=>nodes[id],createElement:()=>({})},api:async()=>response});
   await nodes['outfit-export'].onclick();
   assert.match(nodes['outfit-note'].textContent,/World model limit is 16 MiB.*\(\+1 more\)/);
@@ -143,7 +144,7 @@ test('outfit export explains World preflight findings without claiming admission
 
 test('disposing an old mount cannot clear controls or links owned by its replacement',async t=>{
   const f=await fixture(t),nodes=Object.fromEntries(['outfit-export','outfit-note','outfit-downloads'].map(id=>[id,{children:[],replaceChildren(){this.children=[];},append(v){this.children.push(v);}}]));
-  const options={row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected}}),documentRef:{getElementById:id=>nodes[id],createElement:()=>({})}};
+  const options={row:f.row,getContext:()=>({appearance:{look:f.look},wardrobe:{selection:f.selected,previewValid:true}}),documentRef:{getElementById:id=>nodes[id],createElement:()=>({})}};
   const old=mountAvatarHandoff(options),replacement=mountAvatarHandoff(options),handler=nodes['outfit-export'].onclick;
   nodes['outfit-downloads'].append({textContent:'New avatar download'});nodes['outfit-note'].hidden=false;nodes['outfit-note'].textContent='New avatar ready';
   old.dispose();assert.equal(nodes['outfit-export'].onclick,handler);assert.equal(nodes['outfit-export'].disabled,false);assert.equal(nodes['outfit-downloads'].children.length,1);assert.equal(nodes['outfit-note'].textContent,'New avatar ready');replacement.dispose();

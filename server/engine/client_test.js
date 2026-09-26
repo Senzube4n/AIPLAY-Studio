@@ -1018,6 +1018,35 @@ async function settled(runId) {
 }
 
 {
+  /* The Collab availability reading discounts only chat prompts actually in
+   * ComfyUI's current queue. A lingering local chat row cannot explain a
+   * different job that appeared in the engine with the same count. */
+  const stub = queuedEngine();
+  let replacement = null;
+  const fetchImpl = async (url, opts) => {
+    if (replacement && String(url).includes("/queue") && (!opts?.method || opts.method === "GET")) {
+      return { ok: true, status: 200, json: async () => replacement };
+    }
+    return stub.fetchImpl(url, opts);
+  };
+  const c = clientOn({ fetchImpl }, { dir: path.join(tmp, "collab-chat-match") });
+  const chat = await c.submit({ graph: TEXT_JUDGE_GRAPH, actor: "agent:claude", via: "chat", label: "a chat turn", pollMs: 1000 });
+  const matching = await c.status();
+  ok("the engine queue counts a chat prompt only when its ID is present",
+    matching.queue?.running === 1 && matching.queue.briefChatRunning === 1, JSON.stringify(matching.queue));
+  replacement = { queue_running: [[0, "somebody-else"]], queue_pending: [] };
+  const stale = await c.status();
+  ok("a stale local chat row does not mask a different ComfyUI job",
+    stale.running.some((row) => row.runId === chat.runId) && stale.queue?.running === 1
+      && stale.queue.briefChatRunning === 0, JSON.stringify(stale.queue));
+  replacement = { queue_running: [] };
+  ok("a malformed queue snapshot is unknown rather than empty", (await c.status()).queue === null);
+  replacement = null;
+  stub.finishRunning();
+  ok("the attribution check does not disturb the chat job", (await settled(chat.runId)).status === "completed");
+}
+
+{
   /* C holds the engine; A (the song) and B (the chat turn) are queued behind
    * it. A is cancelled — which is the Stop button — and B is the run that
    * disappeared. */
@@ -1029,6 +1058,11 @@ async function settled(runId) {
   ok("three runs: one holding the engine, two queued behind it",
     stub.state().running[0] === C.promptId && stub.state().pending.join() === [A.promptId, B.promptId].join(),
     JSON.stringify(stub.state()));
+  const queueStatus = (await c.status()).queue;
+  ok("queued chat attribution matches its own prompt ID, beside a render and another pending job",
+    queueStatus?.running === 1 && queueStatus.briefChatRunning === 0
+      && queueStatus.pending === 2 && queueStatus.briefChatPending === 1,
+    JSON.stringify(queueStatus));
 
   const r = await c.cancelRun({ runId: A.runId });
   ok("cancelling the queued song names exactly one prompt id to the engine",

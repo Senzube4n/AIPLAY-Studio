@@ -51,8 +51,8 @@ function uiFixture({load=async()=>({scene:{traverse(){}}}),respond}={}){
 test('failed saved outfit preview is labelled unavailable and Reset retries the same revision',async()=>{
  let failed=true;
  const f=uiFixture({load:async()=>{if(failed)throw Error('Network failed');return {scene:{traverse(){}}};},respond:body=>body.action==='selection'?{id:'base',sha256:'hash',look_id:null,revision:2,part_ids:['coat-a'],parts:[]}:undefined});
- await f.ui.setLook(null);assert.equal(f.get('wardrobe-state').textContent,'Preview unavailable');assert.equal(f.get('wardrobe-reset').disabled,false);assert.equal(f.get('wardrobe-save').disabled,true);
- failed=false;await f.get('wardrobe-reset').onclick();assert.equal(f.get('wardrobe-state').textContent,'1 equipped');assert.equal(f.get('wardrobe-note').hidden,true);assert.equal(f.get('wardrobe-reset').disabled,true);f.ui.dispose();
+ await f.ui.setLook(null);assert.equal(f.get('wardrobe-state').textContent,'Preview unavailable');assert.equal(f.get('wardrobe-reset').disabled,false);assert.equal(f.get('wardrobe-save').disabled,true);assert.equal(f.ui.snapshot().previewValid,false);
+ failed=false;await f.get('wardrobe-reset').onclick();assert.equal(f.get('wardrobe-state').textContent,'1 equipped');assert.equal(f.get('wardrobe-note').hidden,true);assert.equal(f.get('wardrobe-reset').disabled,true);assert.equal(f.ui.snapshot().previewValid,true);f.ui.dispose();
 });
 
 test('selecting a replacement in the same slot previews one part and cannot delete the equipped draft',async()=>{

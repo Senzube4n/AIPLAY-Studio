@@ -85,6 +85,13 @@ test('VRM cue inventory drives UI and MCP cue expires without altering the saved
   await f.node('voice-cue').onclick();
   const request=f.requests.at(-1);
   assert.equal(request.op,'cue');assert.equal(request.expression,'happy');assert.equal(request.duration_ms,3000);
+  f.node('voice-cue-duration').value='500';
+  await f.node('voice-cue').onclick();
+  assert.equal(f.requests.at(-1).duration_ms,500,'short chat reactions use the selected cue duration');
+  const requestCount=f.requests.length;
+  f.node('voice-cue-duration').value='25000';
+  f.node('voice-cue').onclick();
+  assert.equal(f.requests.length,requestCount,'unsupported duration cannot leave the browser');
   const expiresAt=Date.now()+5000;
   f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,
     cue:{expression:'happy',expiresAt,revision:1}}});

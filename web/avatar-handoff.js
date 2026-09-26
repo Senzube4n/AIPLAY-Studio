@@ -4,6 +4,7 @@ export function outfitExportRequest(row, appearance, wardrobe) {
   if(!appearance || !wardrobe || appearance.busy || wardrobe.busy) throw Error('Wait for the current change.');
   if(appearance.dirty) throw Error('Save the look before exporting.');
   if(wardrobe.dirty) throw Error('Save the outfit before exporting.');
+  if(wardrobe.previewValid !== true) throw Error('Preview unavailable. Reset the outfit before exporting.');
   const look=appearance.look, selected=wardrobe.selection;
   if(!selected || selected.look_id!==(look?.id??null) || selected.sha256!==row.inspection.sha256) throw Error('Wait for the saved outfit to load.');
   return {action:'prepare',id:row.id,sha256:row.inspection.sha256,look_id:look?.id??null,

@@ -64,6 +64,7 @@ import { store as defaultStore } from "./store.js";
 import { applyModelOverrides } from "../localmodels.js";
 import { checkGraph } from "../safety/graph.js";
 import { refusalEvent, safetyError } from "../safety/refusal.js";
+import { isBriefChatVia } from "./chat-vias.js";
 
 /** Where the Studio's safety node inside ComfyUI says whether it is armed. */
 export const BACKSTOP_STATUS_PATH = "/aiplay/safety_status";
@@ -467,7 +468,14 @@ export function createEngineClient(deps = {}) {
     let q = null;
     try {
       const raw = await queue();
-      q = { running: (raw.queue_running || []).length, pending: (raw.queue_pending || []).length };
+      if (!Array.isArray(raw?.queue_running) || !Array.isArray(raw?.queue_pending)) throw new Error("Unreadable engine queue");
+      /* Match exact ComfyUI prompt IDs. An inFlight chat row can linger after
+       * its prompt disappears; subtracting a mere chat count would hide an
+       * unrelated job that appeared in the engine's queue meanwhile. */
+      const chatIds = new Set([...inFlight.values()].filter((r) => isBriefChatVia(r.via) && typeof r.promptId === "string").map((r) => r.promptId));
+      const matched = (rows) => rows.filter((item) => chatIds.has(item?.[1])).length;
+      q = { running: raw.queue_running.length, pending: raw.queue_pending.length,
+        briefChatRunning: matched(raw.queue_running), briefChatPending: matched(raw.queue_pending) };
     } catch { /* not up */ }
     return {
       ready: ready() && isOurs(),

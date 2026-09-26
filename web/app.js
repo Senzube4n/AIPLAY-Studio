@@ -11345,7 +11345,7 @@ function iedChkVerdict(ok) {
 }
 
 function openImageEditor(name) {
-  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocViewSeq;
+  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocOpenSeq; ++iedDocViewSeq;
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
   ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
@@ -12217,6 +12217,7 @@ let iedDocRows = null;          // the shelf listing; null until it has been rea
 let iedDoc = null;              // the OPEN document's tree, refreshed by every edit
 let iedDocLines = [];           // the flat outline the shelf answers with
 let iedDocPick = [];            // picked layer ids, in the order they were clicked
+let iedDocOpenSeq = 0;          // newer canvas choices invalidate older shelf reads
 let iedDocCat = null, iedDocCatErr = null;
 /* ⚠ A FAILED READ IS NOT AN EMPTY SHELF. Both leave the row list empty, and
  * rendering them the same way tells somebody their documents are gone when the
@@ -12301,11 +12302,14 @@ function iedDocFind(id, layers) {
 async function iedDocEdit(ops, what) {
   if (!iedDoc) { iedToast(iedDocNeed()); return null; }
   if (iedDocBusy) return null;
+  const sourceDoc = iedDoc, id = sourceDoc.id;
   iedDocBusy = true; iedDocPaint();
   try {
     const r = await (await fetch("/api/images/document-edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: iedDoc.id, ops, doc: true }) })).json();
+      body: JSON.stringify({ id, ops, doc: true }) })).json();
+    // The shelf edit still commits, but a later canvas choice owns the view.
+    if (iedDoc !== sourceDoc) return r;
     if (r.error) {
       /* A refusal anywhere in the list leaves the shelf exactly as it was, so
        * the local tree is still right and must not be thrown away. */
@@ -12359,7 +12363,9 @@ function iedDocMaybeList() {
 }
 
 async function iedDocOpenId(id) {
+  const seq = ++iedDocOpenSeq;
   const r = await iedDocPost({ action: "open", id });
+  if (seq !== iedDocOpenSeq) return;
   if (r.error) { iedDocSay(`That document did not open: ${r.error}`); iedToast(r.error); return; }
   if (iedDoc?.id !== r.doc?.id && ied.name) openImageEditor(ied.name);
   iedDoc = r.doc || null;
@@ -13049,7 +13055,7 @@ $("iedDocClip").onclick = () => iedDocClipToggle();
 $("iedDocUngroup").onclick = () => iedDocUngroup();
 $("iedDocClose").onclick = () => {
   iedDoc = null; iedDocLines = []; iedDocPick = [];
-  ++iedDocViewSeq;
+  ++iedDocOpenSeq; ++iedDocViewSeq;
   iedPreviewClear();
   if (ied.name) $("iedImg").src = `/api/image/${encodeURIComponent(ied.name)}`;
   $("iedDocName").textContent = ied.name || "Image";

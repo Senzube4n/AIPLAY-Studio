@@ -5886,7 +5886,7 @@ const server = http.createServer(async (req, res) => {
            * past — a yes to "busy" never silently spends minutes too. */
           const overrides = [];
           if (busy.busy) {
-            const overridable = !["art-paused", "engine-unreachable"].includes(busy.reason);
+            const overridable = !["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason);
             if (!overridable) return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable });
             overrides.push({ reason: busy.reason, why: busy.why });
           }

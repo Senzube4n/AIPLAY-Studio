@@ -277,6 +277,7 @@ node server/reactive_test.js || exit 1
 # mcp.js and has never existed in index.js, and seventy-one regular expressions
 # over the source did not see it. Runs on the CPU: no engine, no card, no network.
 node server/collab/collab_test.js || exit 1
+node --test server/collab/free_test.js || exit 1
 # Two isolated Studio processes exchange a real sealed order file. The receiver
 # opens without accepting, then refuses to promise an offline card; a CPU-made
 # return is measured and quarantined on the original profile when ffmpeg exists.

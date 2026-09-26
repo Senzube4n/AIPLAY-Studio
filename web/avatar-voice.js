@@ -209,6 +209,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
   $('voice-cue-row').hidden = true;
   $('voice-cue-expression').textContent = '';
   $('voice-cue-expression').disabled = true;
+  $('voice-cue-duration').value = '3000';
   $('voice-cue').disabled = true;
   $('voice-cue-clear').disabled = true;
   $('voice-cue-state').hidden = true;
@@ -264,7 +265,9 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
   $('voice-time').onchange = () => command('seek',{seconds:Number($('voice-time').value)});
   $('voice-cue').onclick = () => {
     const expression = $('voice-cue-expression').value;
-    if (valid() && expression) return command('cue',{expression,duration_ms:3000});
+    const duration = Number($('voice-cue-duration').value);
+    if (valid() && expression && [500,1000,3000,5000,10000].includes(duration))
+      return command('cue',{expression,duration_ms:duration});
   };
   $('voice-cue-clear').onclick = () => {
     if (!valid()) return;
