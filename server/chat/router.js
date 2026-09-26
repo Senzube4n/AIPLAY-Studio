@@ -113,6 +113,7 @@ export const ROUTABLE = {
   collab_free: null,
   collab_orders: null,
   collab_video_preview: null,
+  collab_video_job_preview: null, // frozen H3 request; packing is a separate write
   collab_image_preview: null,
   collab_preview: null, // local snapshot; packing is a separate explicit write
   collab_add_peer: "writes",
@@ -130,6 +131,9 @@ export const ROUTABLE = {
   collab_image_review_return: null, // reads the checked PNG as native image content
   collab_image_adopt: "writes", // adds a peer PNG to Pictures
   collab_image_drop: "destroys", // removes a quarantined PNG
+  collab_video_accept: "writes", // reviewed signed H3 order; no GPU work yet
+  collab_video_render: "gpu", // explicitly runs the accepted order on this card
+  collab_video_send_back: "writes", // seals a local return for manual handoff
   collab_accept: "writes",
   collab_send_back: "writes",
   collab_receive: "writes",
@@ -634,6 +638,9 @@ export const WITHHELD = {
   collab_set_lend_minutes: "raises or lowers how many minutes a day this card renders for a friend; with collab_accept routable, a chat could raise the allowance and then accept, walking past the minutes a person set exactly as the withheld \"anyway\" would. The Friends row on the Collab screen is where a person sets it (MCP clients keep the tool)",
   collab_set_role: "makes a friend a lending friend or a collaborator, a trust decision about who may send this card work or hold the whole project; a person makes it on the Collab screen's Friends row (MCP clients keep the tool)",
   collab_verify: "records that the twelve words were read aloud and matched, the one trust grant in Collab; a chat cannot hear the words, so a person presses it on the Collab screen (MCP clients keep the tool)",
+  collab_video_review_return: "returns a receipt for an MP4 the reviewer must watch; this text chat cannot inspect playback. Use the Collab page or an external MCP client with video access",
+  collab_video_adopt: "requires the exact reviewed MP4 receipt, and this text chat cannot watch that video. Use the Collab page or an external MCP client after inspecting the file",
+  collab_video_drop: "removes a returned MP4 that this text chat cannot watch or judge. Use the Collab page or an external MCP client after inspecting the file",
   set_cloud: "switches a PAID service on, or raises its monthly cap: it decides whether songs bill the person's own key, and that is the person's decision on the Settings page (No strong graphics card?)",
   studio_welcome: "hides or re-shows the first-run lines and SAVES the Simple/Advanced level, a setting for a person (Settings > Screens), not a sentence in a chat box",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
