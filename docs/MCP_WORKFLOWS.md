@@ -14,7 +14,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
 | Layer editing and preview | `image_documents`, `document_edit`, `image_document_preview`, `image_tools_catalog`, `image_capabilities` |
 | StandRig 2D performer | `image_standrig_psd_export` for a saved layered document; `standrig_status`, `standrig_parameters`, `standrig_control` for the local StandRig bridge |
-| 3D avatar preview and expression cues | `avatar_list`, `avatar_cue_inventory`, `avatar_playback_sessions`, `avatar_audio_upload`, `avatar_playback_command`; cue an embedded VRM expression for 250–10,000 ms in a live preview, then it restores the saved look |
+| 3D avatar preview, motion and expression cues | `avatar_list`, `avatar_inspect`, `avatar_cue_inventory`, `avatar_playback_sessions`, `avatar_audio_upload`, `avatar_playback_command`; select and play an embedded clip in a live preview, or cue a VRM expression for 250–10,000 ms |
 | AI edit, style transfer, selected-area repair | `image_ai_edit_create`, `image_ai_edit_status`, `image_ai_edit_accept`, `image_ai_edit_undo`, `image_ai_edit_discard` |
 | Per-image privacy blur | `image_set_blur` with `blur:true` or `false` |
 | Reactive video | `reactive_status`, `reactive_render`, then `vfx_render_status`; compositions remain editable through `vfx_*` |

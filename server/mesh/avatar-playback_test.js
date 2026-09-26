@@ -19,7 +19,7 @@ async function setup(t,{vrm=false}={}){
  const doc=glbDoc({skinned:true});
  doc.extensions={VRMC_vrm:{expressions:{preset:{aa:{morphTargetBinds:[{node:0,index:0,weight:1}]},happy:{morphTargetBinds:[{node:0,index:1,weight:1}]},blink:{morphTargetBinds:[]}},custom:{sharedMouth:{morphTargetBinds:[{node:0,index:0,weight:1}]},blocksMouth:{overrideMouth:'block',morphTargetBinds:[]}}}}};
  let clock=100000,bytes=vrm?packGlb(doc):Buffer.from('exact source avatar');const ledger={dir:path.join(directory,'ledger')};
- const options={directory,now:()=>clock,inspectAsset:async id=>({row:{id,inspection:{sha256:sha(bytes),profile:vrm?'vrm':'world'}},bytes}),record:event=>provenance.append(ledger,event)};
+ const options={directory,now:()=>clock,inspectAsset:async id=>({row:{id,inspection:{sha256:sha(bytes),profile:vrm?'vrm':'world',clips:[{index:0,name:'Dance',duration:4}]}},bytes}),record:event=>provenance.append(ledger,event)};
  const service=createAvatarPlayback(options),session_id=randomUUID();
  const registration={session_id,id:avatarId,sha256:sha(bytes),capabilities:{audio:true,lip_sync:true}};
  const upload=()=>service.upload({name:'voice.wav',data_base64:clip.toString('base64')},'agent:test');
@@ -82,6 +82,67 @@ test('loading audio during an active expression cue preserves both intents',asyn
  assert.deepEqual(loaded.desired.cue,cued.desired.cue);
  assert.equal(loaded.desired.audio_id,audio.audio_id);
  const playing=await f.command('play');assert.equal(playing.desired.playing,true);assert.deepEqual(playing.desired.cue,cued.desired.cue);
+});
+
+test('embedded motion commands are clip-bound, independent of audio and acknowledged by the preview',async t=>{
+ const f=await setup(t);await f.service.register({...f.registration,capabilities:{audio:false,lip_sync:false,motion:true}});
+ const selected=await f.command('motion_select',{clip_index:0});
+ assert.deepEqual(selected.desired.motion,{clip_index:0,playing:false,time:0,speed:1,time_revision:1});
+ assert.equal(selected.desired.audio_revision,0);assert.equal(selected.applied_revision,0);
+ const playing=await f.command('motion_play');assert.equal(playing.desired.motion.playing,true);
+ const sped=await f.command('motion_speed',{speed:0.75});assert.equal(sped.desired.motion.speed,0.75);
+ assert.equal(sped.desired.motion.time_revision,1,'speed does not restart the clip');
+ const seeked=await f.command('motion_seek',{seconds:2.5});assert.equal(seeked.desired.motion.time,2.5);
+ assert.equal(seeked.desired.motion.playing,false);assert.equal(seeked.desired.motion.time_revision,4);
+ const seen=await f.service.heartbeat({session_id:f.session_id,applied_revision:4,status:{phase:'empty',time:0,duration:null}});
+ assert.equal(seen.applied_revision,4);
+ const paused=await f.command('motion_pause');assert.equal(paused.desired.motion.playing,false);
+ const stopped=await f.command('motion_stop');assert.equal(stopped.desired.motion.time,0);
+ assert.equal(stopped.desired.motion.time_revision,6);
+ const rest=await f.command('motion_select',{clip_index:null});assert.equal(rest.desired.motion.clip_index,null);
+ await assert.rejects(f.command('motion_play'),{status:409});
+ await assert.rejects(f.command('motion_select',{clip_index:1}),{status:422});
+ await assert.rejects(f.command('motion_select',{clip_index:-1}),{status:400});
+ await assert.rejects(f.command('motion_speed',{speed:2.1}),{status:400});
+ await f.command('motion_select',{clip_index:0});
+ await assert.rejects(f.command('motion_seek',{seconds:4.1}),{status:422});
+ await assert.rejects(f.command('motion_play',{audio_id:'au_12345678-1234-1234-1234-123456789abc'}),{status:400});
+ const request={session_id:f.session_id,command_id:randomUUID(),op:'motion_speed',speed:1.5};
+ const once=await f.service.command(request),twice=await f.service.command(request);
+ assert.deepEqual(once,twice);await assert.rejects(f.service.command({...request,speed:1}),{status:409});
+ assert.equal((await provenance.verify(f.ledger)).ok,true);
+});
+
+test('motion requires an advertised capable session and refuses a changed avatar source',async t=>{
+ const f=await setup(t);await f.service.register(f.registration);
+ await assert.rejects(f.command('motion_select',{clip_index:0}),{status:409});
+ await assert.rejects(f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,motion:'yes'}}),{status:400});
+ await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,motion:true}});
+ f.change();await assert.rejects(f.command('motion_select',{clip_index:0}),{status:409});
+});
+
+test('a session saved before motion support keeps its audio intent when the browser registers again',async t=>{
+ const f=await setup(t);await f.service.register(f.registration);
+ const audio=await f.upload();await f.command('load',{audio_id:audio.audio_id});
+ const file=path.join(f.directory,'sessions',`${f.session_id}.json`),old=JSON.parse(await readFile(file,'utf8'));
+ delete old.desired.motion;delete old.desired.motion_revision;
+ await writeFile(file,JSON.stringify(old));
+ const resumed=await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,motion:true}});
+ assert.equal(resumed.desired.audio_id,audio.audio_id);
+ assert.equal(resumed.desired.load_revision,1);
+ assert.deepEqual(resumed.desired.motion,{clip_index:null,playing:false,time:0,speed:1,time_revision:0});
+ assert.equal(resumed.desired.motion_revision,0);
+ await f.command('motion_select',{clip_index:0});
+ assert.equal((await f.service.sessions()).sessions[0].desired.audio_id,audio.audio_id);
+});
+
+test('loading audio keeps selected motion and its revision',async t=>{
+ const f=await setup(t);await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,motion:true}});
+ const motion=await f.command('motion_select',{clip_index:0});
+ const audio=await f.upload();const loaded=await f.command('load',{audio_id:audio.audio_id});
+ assert.deepEqual(loaded.desired.motion,motion.desired.motion);
+ assert.equal(loaded.desired.motion_revision,1);
+ assert.equal(loaded.desired.audio_revision,2);
 });
 
 test('desired playback survives reload, coalesces load then play, and separates request from browser acknowledgement',async t=>{
@@ -185,6 +246,9 @@ test('real guarded HTTP routes and MCP control playback with byte ranges and val
  const cueCommand={session_id,command_id:randomUUID(),op:'cue',expression:'happy',duration_ms:3000};
  await assert.rejects(run('avatar_playback_command',cueCommand),{status:422});
  assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'command',...cueCommand}});
+ const motionCommand={session_id,command_id:randomUUID(),op:'motion_select',clip_index:0};
+ await assert.rejects(run('avatar_playback_command',motionCommand),{status:409});
+ assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'command',...motionCommand}});
  assert.equal((await run('avatar_playback_sessions')).sessions[0].revision,1);
  for(const [range,start,end] of [['bytes=2-6',2,6],['bytes=-5',clip.length-5,clip.length-1],['bytes=4-',4,clip.length-1]]){
   const response=await fetch(f.base+audio.url,{headers:{Range:range}});assert.equal(response.status,206);assert.equal(response.headers.get('Content-Range'),`bytes ${start}-${end}/${clip.length}`);assert.deepEqual(Buffer.from(await response.arrayBuffer()),clip.subarray(start,end+1));
