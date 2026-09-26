@@ -474,6 +474,52 @@ test("typed MCP image acceptance requires the prior review digest and forwards i
   await tool.run({ file: "signed.aiplay", seen: true, review_digest: digest });
   assert.deepEqual(calls[1], ["POST", "/api/collab", { action: "image_accept", file: "signed.aiplay",
     seen: true, expectedDigest: digest }]);
+  await assert.rejects(tool.run({ file: "signed.aiplay", seen: false, anyway: true }), /Review the exact image job/);
+  await tool.run({ file: "signed.aiplay", seen: true, review_digest: digest, anyway: true });
+  assert.deepEqual(calls[2], ["POST", "/api/collab", { action: "image_accept", file: "signed.aiplay",
+    seen: true, expectedDigest: digest, anyway: true }]);
+});
+
+test("image UI asks before any daily-minute or busy override and keeps the same review digest", async () => {
+  const f = collabFixture(), digest = "d".repeat(64), imageJob = { id: "o_0123456789ab",
+    job: { prompt: "Dancer", width: 1024, height: 1024, steps: 25, cfg: 1, seed: 7, references: [] } };
+  let state = "new", confirms = 0;
+  f.context.confirm = () => { confirms++; return true; };
+  f.context.respond = (url, body) => {
+    if (body?.action === "open") return { kind: "job-order", file: "friend.aiplay", from: f.peer,
+      imageJob, packet: { job: { references: [] } } };
+    if (body?.action === "image_accept") {
+      if (!body.seen) return { reason: "not-seen", from: f.peer, imageJob, reviewDigest: digest, overBudget: true, minutes: "About 3 minutes." };
+      if (!body.anyway) return { reason: "budget-spent", error: "Limit reached", overridable: true,
+        overrides: [{ reason: "budget-spent", why: "Daily allowance is spent." }] };
+      state = "landed"; return { ok: true, note: "Accepted" };
+    }
+    if (body?.action === "orders") return { orders: state === "new" ? [] : [{ id: imageJob.id, jobType: "image", state, imageJob, from: f.peer }] };
+    if (body?.action === "image_render") {
+      if (!body.anyway) return { reason: "art-rendering", error: "Card busy", overridable: true,
+        overrides: [{ reason: "art-rendering", why: "Another image is rendering." }] };
+      state = "queued"; return { ok: true, note: "Queued" };
+    }
+    return f.defaults(url, body);
+  };
+  await f.run('openCollabFile("friend.aiplay")');
+  await f.fire("cbImageReview"); await f.fire("cbImageAccept");
+  const accepts = f.calls.filter((call) => call.body?.action === "image_accept" && call.body.seen);
+  assert.equal(accepts.length, 2);assert.equal(accepts[1].body.expectedDigest, digest);
+  assert.equal(accepts[1].body.anyway, true);assert.equal(confirms, 1);
+  await f.fire("cbImageRender");
+  const renders = f.calls.filter((call) => call.body?.action === "image_render");
+  assert.equal(renders.length, 2);assert.equal(renders[1].body.anyway, true);assert.equal(confirms, 2);
+});
+
+test("typed MCP image render forwards only an explicit anyway override", async () => {
+  const calls = [];
+  const tool = collabTools(async (...args) => { calls.push(args); return { ok: true }; }, (value) => value)
+    .find((entry) => entry.name === "collab_image_render");
+  await tool.run({ id: "o_0123456789ab" });
+  await tool.run({ id: "o_0123456789ab", retry: true, anyway: true });
+  assert.deepEqual(calls, [["POST", "/api/collab", { action: "image_render", id: "o_0123456789ab" }],
+    ["POST", "/api/collab", { action: "image_render", id: "o_0123456789ab", retry: true, anyway: true }]]);
 });
 
 test("typed MCP preview maps only bounded image fields to the same Collab route", async () => {
@@ -523,7 +569,7 @@ test("image accept binds consent to the current signed file digest before stagin
     routeSource.indexOf('if (action === "image_render")'));
   const digest = acceptance.indexOf('createHash("sha256").update(read.blob).digest("hex")');
   const comparison = acceptance.indexOf('b.expectedDigest !== reviewDigest');
-  const stage = acceptance.indexOf('await book.landOrderRow(');
+  const stage = acceptance.indexOf('await book.landOrderRowChecked(');
   assert.ok(digest >= 0 && comparison > digest && stage > comparison,
     "a changed signed file must be refused before an order row or references are staged");
   assert.ok(acceptance.includes('reason: "review-changed"'));
@@ -700,7 +746,7 @@ test("typed MCP video tools use the same signed job and consent routes", async (
   await assert.rejects(accept.run({ file: "signed.aiplay", seen: true }), /review_digest/);
   await accept.run({ file: "signed.aiplay", seen: true, review_digest: "f".repeat(64) });
   assert.deepEqual(calls[1], ["POST", "/api/collab", { action: "video_accept",
-    file: "signed.aiplay", seen: true, expectedDigest: "f".repeat(64) }]);
+    file: "signed.aiplay", seen: true, expectedDigest: "f".repeat(64), anyway: false }]);
   for (const [name, action, input] of [
     ["collab_video_render", "video_render", { id: "o_0123456789ab" }],
     ["collab_video_send_back", "video_send_back", { id: "o_0123456789ab" }],

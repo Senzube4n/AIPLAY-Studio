@@ -41,6 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { config, loraStepsOf } from "../config.js";
+import { imageCostSeconds } from "../art.js";
 import { CATALOG } from "../models.js";
 import { alignFrames, h3TurboLoraFor, videoEngine } from "../workflow.js";
 import { findBoard, resolveShot } from "../mv/shot.js";
@@ -293,6 +294,18 @@ export function estimateVideoJobMinutes(job, cfg = config) {
   return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds / 6) / 10 : null;
 }
 
+/** The image renderer's own quiet-card estimate, with the signed references
+ * represented only by their count. No peer-supplied paths or model filenames
+ * enter the estimate. */
+export function estimateImageJob(imageOrder) {
+  const job = imageOrder?.job;
+  if (!job || job.engine !== "qwen-image-2.1" || !Array.isArray(job.references)) return null;
+  const seconds = imageCostSeconds({ engine: job.engine, steps: job.steps, count: job.count,
+    width: job.width, height: job.height, cfg: job.cfg,
+    refImages: job.references.map((ref) => ref.sha256), refResolution: 1024, draft: false });
+  return Number.isFinite(seconds) && seconds > 0 ? { minutes: seconds / 60, basis: "estimate" } : null;
+}
+
 /**
  * What this card has already given one friend today.
  *
@@ -310,9 +323,10 @@ export function estimateVideoJobMinutes(job, cfg = config) {
 export async function lentToday({ rows = [], readProject, fp, now = Date.now(), except = null } = {}) {
   const since = startOfDay(now);
   const who = String(fp || "").toLowerCase();
-  const out = { measuredMinutes: 0, rendered: 0, withWait: 0, pendingMinutes: 0, pending: 0, pendingVideo: 0, unpriced: 0, untimed: 0, untimedMinutes: 0 };
+  const out = { measuredMinutes: 0, rendered: 0, withWait: 0, pendingMinutes: 0, pending: 0,
+    pendingVideo: 0, pendingImages: 0, pendingImageMinutes: 0, unpriced: 0, untimed: 0, untimedMinutes: 0 };
   for (const row of rows) {
-    if (!row || String(row.from?.fp || "").toLowerCase() !== who || (except && row.id === except)) continue;
+    if (!row || String(row.from?.fp || "").toLowerCase() !== who) continue;
     if (row.jobType === "video") {
       /* A finished standalone job remains `queued` until its MP4 is sealed.
        * Its completion record, not its orderbook state, is the render receipt. */
@@ -332,7 +346,7 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
         }
         continue;
       }
-      if (!["landed", "rendering", "queued", "returning"].includes(row.state) || !(Number(row.landedAt) >= since)) continue;
+      if (except === row.id || !["landed", "rendering", "queued", "returning"].includes(row.state) || !(Number(row.landedAt) >= since)) continue;
       out.pending++;
       out.pendingVideo++;
       const estimate = Number(row.renderEstimatedMinutes);
@@ -340,6 +354,41 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
       else out.unpriced++;
       continue;
     }
+    if (row.jobType === "image") {
+      /* A failed attempt still spent the card. The render's own terminal event
+       * records each attempt, including retries, so today's measured time is
+       * counted even when this same order is the one being reconsidered. */
+      const runs = Array.isArray(row.imageRuns) && row.imageRuns.length ? row.imageRuns
+        : ["complete", "failed", "stopped"].includes(row.renderStatus)
+          ? [{ at: row.renderCompletedAt || row.renderFailedAt, durationMs: row.renderDurationMs }]
+          : [];
+      for (const run of runs) {
+        if (!(Number(run?.at) >= since)) continue;
+        out.rendered++;
+        if (typeof run.durationMs === "number" && Number.isFinite(run.durationMs) && run.durationMs >= 0)
+          out.measuredMinutes += run.durationMs / 60000;
+        else {
+          /* Older image rows have no render clock. The accepted estimate is
+           * more honest than request-to-finish time, which includes queue wait. */
+          out.untimed++;
+          const reserved = Number(row.renderEstimatedMinutes);
+          const estimate = Number.isFinite(reserved) && reserved > 0 ? reserved : estimateImageJob(row.imageJob)?.minutes;
+          if (estimate) out.untimedMinutes += estimate;
+          else out.unpriced++;
+        }
+      }
+      if (except === row.id || Number(row.landedAt) < since
+          || !["landed", "rendering", "queued"].includes(row.state)
+          || row.renderStatus === "complete") continue;
+      const reserved = Number(row.renderEstimatedMinutes);
+      const estimate = Number.isFinite(reserved) && reserved > 0
+        ? { minutes: reserved } : estimateImageJob(row.imageJob);
+      out.pending++; out.pendingImages++;
+      if (estimate) { out.pendingMinutes += estimate.minutes; out.pendingImageMinutes += estimate.minutes; }
+      else out.unpriced++;
+      continue;
+    }
+    if (except && row.id === except) continue;
     if (!["landed", "rendered"].includes(row.state) || !row.slug) continue;
     const doc = await readProject(row.slug).catch(() => null);
     /* A project deleted by hand has nothing left to spend and nothing to count. */
@@ -362,6 +411,7 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
   }
   out.measuredMinutes = round1(out.measuredMinutes);
   out.pendingMinutes = round1(out.pendingMinutes);
+  out.pendingImageMinutes = round1(out.pendingImageMinutes);
   out.untimedMinutes = round1(out.untimedMinutes);
   return out;
 }
@@ -369,15 +419,22 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
 /** What `lentToday` found, as the sentence both the accept card and the
  *  Friends row show. Composed here, so the page only displays it. */
 export function usedSentence(used) {
-  const parts = [
-    used.rendered
-      ? `${used.measuredMinutes} min timed on this card today${used.withWait ? ` (${used.withWait === 1 ? "one render was" : `${used.withWait} renders were`} timed from request to finish, so that includes waiting in the queue)` : ""}${used.untimed ? `; ${used.untimed} completed video ${used.untimed === 1 ? "has" : "have"} no recorded render time (${used.untimedMinutes} min reserved estimate)` : ""}`
-      : "nothing rendered for them yet today",
-    used.pending
-      ? `${used.pending} ${used.pendingVideo ? `job${used.pending === 1 ? "" : "s"}` : `scene${used.pending === 1 ? "" : "s"}`} accepted today still to render (${used.unpriced ? "at least" : "about"} ${used.pendingMinutes} min${used.unpriced ? `; ${used.unpriced} with no estimate` : ""})`
-      : "",
-  ];
-  return parts.filter(Boolean).join(", ");
+  const parts = [];
+  let rendered = used.rendered ? used.measuredMinutes + " min timed on this card today" : "nothing rendered for them yet today";
+  if (used.withWait) rendered += " (" + (used.withWait === 1 ? "one render was" : used.withWait + " renders were")
+    + " timed from request to finish, so that includes waiting in the queue)";
+  if (used.untimed) rendered += "; " + used.untimed + " render attempt" + (used.untimed === 1 ? " has" : "s have")
+    + " no recorded render time (" + used.untimedMinutes + " min reserved estimate)";
+  parts.push(rendered);
+  const sceneCount = Math.max(0, used.pending - (used.pendingVideo || 0) - (used.pendingImages || 0));
+  const kinds = [];
+  if (sceneCount) kinds.push(sceneCount + " scene" + (sceneCount === 1 ? "" : "s"));
+  if (used.pendingVideo) kinds.push(used.pendingVideo + " video job" + (used.pendingVideo === 1 ? "" : "s"));
+  if (used.pendingImages) kinds.push(used.pendingImages + " image job" + (used.pendingImages === 1 ? "" : "s"));
+  if (kinds.length) parts.push(kinds.join(" + ") + " accepted today still to render ("
+    + (used.unpriced ? "at least" : "about") + " " + used.pendingMinutes + " min"
+    + (used.unpriced ? "; " + used.unpriced + " with no estimate" : "") + ")");
+  return parts.join(", ");
 }
 
 /**
@@ -388,17 +445,18 @@ export function usedSentence(used) {
  * ⚠ A SCENE WITH NO ESTIMATE IS NOT A SCENE THAT COSTS NOTHING. Its minutes are
  * left out of the total, and the total then says "at least", never "about".
  */
-export async function budgetCheck({ peer, orderDoc, rows = [], readProject, now = Date.now() } = {}) {
+export async function budgetCheck({ peer, orderDoc, imageOrder, rows = [], readProject, now = Date.now() } = {}) {
   const allowance = Number(peer?.lendMinutesPerDay) || 0;
   const name = peer?.nickname || String(peer?.fp || "").slice(0, 8) || "this friend";
-  const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: orderDoc?.id });
-  const est = estimateErrand(resolveErrand(orderDoc).doc);
+  const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: imageOrder?.id || orderDoc?.id });
+  const est = imageOrder ? estimateImageJob(imageOrder) : estimateErrand(resolveErrand(orderDoc).doc);
+  const thing = imageOrder ? "image job" : "scene";
   const thisOne = est ? round1(Number(est.minutes)) : null;
   const total = round1(used.measuredMinutes + used.untimedMinutes + used.pendingMinutes + (thisOne ?? 0));
   const unknown = thisOne === null || used.unpriced > 0 || used.untimed > 0;
   const cost = thisOne === null
-    ? "this scene has no estimate"
-    : `this scene is about ${thisOne} min more (${est.basis === "measured" ? "timed on earlier renders here" : "an estimate, not timed on this card"})`;
+    ? `this ${thing} has no estimate`
+    : `this ${thing} is about ${thisOne} min more (${est.basis === "measured" ? "timed on earlier renders here" : "an estimate, not timed on this card"})`;
   const tally = `${unknown ? "at least" : "about"} ${total} min in all`;
   const base = { allowance, used, thisOne, total, unknown };
   if (allowance <= 0) {

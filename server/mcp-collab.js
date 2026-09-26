@@ -434,18 +434,20 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_image_accept",
-      description: "Accept one signed Qwen image job after reviewing its exact prompt, fixed settings and ordered reference pictures. First call with seen:false to receive the review card and reviewDigest. A later seen:true must pass that digest, binding consent to the exact sealed file. The sender must remain a verified lender or collaborator. Acceptance stages references locally but does not render; collab_image_render is a separate step.",
+      description: "Accept one signed Qwen image job after reviewing its exact prompt, fixed settings, ordered reference pictures and daily-minute estimate. First call with seen:false to receive the review card and reviewDigest. A later seen:true must pass that digest, binding consent to the exact sealed file. A budget or busy refusal lists overrides; only after explicit user approval may you repeat the same digest-bound call with anyway:true. Acceptance stages references locally but does not render; collab_image_render is a separate step.",
       inputSchema: { type: "object", required: ["file", "seen"], properties: {
         file: { type: "string", description: "Signed image job file from collab_inbox." },
         seen: { type: "boolean", description: "The user reviewed this exact job and its reference images." },
         review_digest: { type: "string", pattern: "^[0-9a-f]{64}$", description: "reviewDigest returned by this tool with seen:false for the exact file reviewed. Required when seen:true." },
+        anyway: { type: "boolean", description: "Explicit user override of the listed daily-minute or busy reasons for this exact reviewed job." },
       }, additionalProperties: false },
       async run(a) {
         if (a.seen === true && !/^[0-9a-f]{64}$/.test(String(a.review_digest || ""))) throw new Error("Pass review_digest from the exact image job review before accepting it.");
+        if (a.anyway === true && a.seen !== true) throw new Error("Review the exact image job before using anyway.");
         let response;
         try {
           response = await api("POST", "/api/collab", { action: "image_accept", file: String(a.file || ""), seen: a.seen === true,
-            ...(a.seen === true ? { expectedDigest: a.review_digest } : {}) });
+            ...(a.seen === true ? { expectedDigest: a.review_digest } : {}), ...(a.anyway === true ? { anyway: true } : {}) });
         } catch (error) {
           /* The first review intentionally gets HTTP 409. The MCP API wrapper
            * raises non-2xx responses, but this one carries the consent digest
@@ -516,12 +518,13 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_image_render",
-      description: "Queue one previously accepted standalone image job on this machine's local Qwen Image 2.1 base renderer. Checks the signed order, staged reference hashes, peer role and model readiness again. A confirmed failed or stopped render may be retried only with retry:true; uncertain queue outcomes remain locked. This is an explicit GPU action and cannot be queued twice automatically.",
+      description: "Queue one previously accepted standalone image job on this machine's local Qwen Image 2.1 base renderer. Rechecks the signed order, reference hashes, peer role, model readiness, daily-minute allowance and current GPU workload. A refusal lists overridable reasons; only after explicit user approval may you call again with anyway:true. A confirmed failed or stopped render may be retried only with retry:true; uncertain queue outcomes remain locked.",
       inputSchema: { type: "object", required: ["id"], properties: {
         id: { type: "string", description: "Incoming image order id from collab_orders side in." },
         retry: { type: "boolean", description: "Explicitly retry only a confirmed failed/stopped render. Never retries a still queued or uncertain order." },
+        anyway: { type: "boolean", description: "Explicit user override of listed daily-minute or busy reasons after a refusal." },
       }, additionalProperties: false },
-      async run(a) { return await api("POST", "/api/collab", { action: "image_render", id: String(a.id || ""), ...(a.retry === true ? { retry: true } : {}) }); },
+      async run(a) { return await api("POST", "/api/collab", { action: "image_render", id: String(a.id || ""), ...(a.retry === true ? { retry: true } : {}), ...(a.anyway === true ? { anyway: true } : {}) }); },
     },
     {
       name: "collab_image_send_back",

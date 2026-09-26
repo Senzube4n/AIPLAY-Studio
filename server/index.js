@@ -747,13 +747,13 @@ function noteCollabImageOutcome(file, outcome) {
   void recordImageOutcome({ book, outDir: path.join(config.outputDir, "collab"), file, outcome })
     .catch((error) => console.error(`[collab image] Could not record terminal render state: ${error.message}`));
 }
-art.on("cover", ({ file, covers }) => {
+art.on("cover", ({ file, covers, durationMs }) => {
   const imageId = imageIdFromArtFile(file);
   if (imageId && covers?.includes(`${imageId}.png`))
-    noteCollabImageOutcome(file, { type: "complete", cover: `${imageId}.png` });
+    noteCollabImageOutcome(file, { type: "complete", cover: `${imageId}.png`, durationMs });
 });
-art.on("failed", ({ file, kind, cancelled }) => {
-  if (kind === "cover") noteCollabImageOutcome(file, { type: "failed", cancelled: cancelled === true });
+art.on("failed", ({ file, kind, cancelled, durationMs }) => {
+  if (kind === "cover") noteCollabImageOutcome(file, { type: "failed", cancelled: cancelled === true, durationMs });
   const match = kind === "video" && /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
   if (match) void (async () => {
     const dir = path.join(config.outputDir, "collab");
@@ -5842,21 +5842,48 @@ const server = http.createServer(async (req, res) => {
             ordinal: reference.ordinal, mime: reference.mime, bytes: reference.bytes, sha256: reference.sha256,
             dataUrl: `data:${reference.mime};base64,${reference.b64}`,
           }));
-          if (b.seen !== true) return json(res, 409, {
+          if (b.seen !== true) {
+            const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+              rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+            return json(res, 409, {
             error: "Review the full prompt and reference pictures, then accept this job explicitly. Acceptance only stages its references; it does not render.",
             reason: "not-seen", from: { fp: sender.fp, nickname: sender.nickname },
             imageJob: { ...imageOrder, job: { ...imageOrder.job, references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
-            pictures, reviewDigest, describes: describeImageJob(imageOrder),
-          });
+            pictures, reviewDigest, describes: describeImageJob(imageOrder), minutes: minutes.why, overBudget: minutes.over,
+            });
+          }
           /* The signed bytes and hashes alone do not make an image safe to
            * decode. Measure every included source under bounded pixels and a
            * full decoder before an order row or Comfy input file is created. */
-          await book.landOrderRow({ outDir, row: {
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy && ["art-paused", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          /* Consent stages pictures. Engine startup may happen later, but a
+           * known running job is an explicit override. Actual GPU use gets a
+           * fresh full workload reading at image_render. */
+          const busyOverride = busy.busy && busy.reason !== "engine-unreachable" ? { reason: busy.reason, why: busy.why } : null;
+          const landed = await book.landOrderRowChecked({ outDir, row: {
             id: imageOrder.id, at: imageOrder.at, expires: imageOrder.expires,
             from: { fp: sender.fp, nickname: sender.nickname, role: sender.role },
             jobType: "image", imageJob: compactImageJob(imageOrder), returnTo: imageOrder.returnTo,
-            state: "claimed", consentAt: Date.now(),
+            state: "claimed", consentAt: Date.now(), reviewDigest,
+          }, check: async (rows) => {
+            const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []), ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: `${overrides.map((item) => item.why).join(" ")} Review these checks and explicitly choose Accept anyway to reserve this image job.`,
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
           } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
           try {
             const stagedRefs = [];
             await mkdir(config.inputDir, { recursive: true });
@@ -5873,7 +5900,7 @@ const server = http.createServer(async (req, res) => {
             const row = await book.fillOrderRow({ outDir, id: imageOrder.id, patch: { state: "landed", stagedRefs, landedAt: Date.now() } });
             return json(res, 200, { ok: true, order: imageOrder.id, state: row.state, stagedRefs,
               imageJob: { ...imageOrder, job: { ...imageOrder.job, references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
-              note: "Accepted and staged locally. Nothing is queued. Press Render separately after checking this machine's Qwen readiness." });
+              note: `Accepted and staged locally; about ${landed.decision.minutes.thisOne ?? "unknown"} min reserved. Nothing is queued. Press Render separately after checking this machine's Qwen readiness.` });
           } catch (error) {
             await book.releaseOrder({ outDir, id: imageOrder.id }).catch(() => {});
             throw error;
@@ -5909,10 +5936,27 @@ const server = http.createServer(async (req, res) => {
             dit: QWEN_IMAGE_FILES.dit, encoder: QWEN_IMAGE_FILES.encoder, vae: QWEN_IMAGE_FILES.vae,
           } });
           if (!ready.ready) return json(res, 409, { error: "Qwen Image 2.1 base is not ready on this machine. Install the missing files or nodes, then render this accepted job.", reason: "model-not-ready", readiness: ready });
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy && ["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+          const overrides = [...(busy.busy ? [{ reason: busy.reason, why: busy.why }] : []),
+            ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+          if (overrides.length && b.anyway !== true) return json(res, 409, {
+            error: `${overrides.map((item) => item.why).join(" ")} Check this machine and explicitly choose Render anyway to spend the card.`,
+            reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
+          });
           await book.transitionOrderState({ outDir, id, from: retrying ? "failed" : "landed", to: "rendering",
             patch: { renderRequestedAt: Date.now(), renderStatus: "requested",
               ...(retrying ? { lastFailedImageId: row.imageId || row.lastFailedImageId || null,
-                imageId: null, renderFailedAt: null, renderCompletedAt: null,
+                imageId: null, renderFailedAt: null, renderCompletedAt: null, renderDurationMs: null,
                 retryCount: (Number(row.retryCount) || 0) + 1 } : {}) } });
           let response, queued;
           try {

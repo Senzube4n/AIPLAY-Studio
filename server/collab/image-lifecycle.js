@@ -16,8 +16,9 @@ export function recentImageOutcome(status, imageId) {
   if (!Array.isArray(recent)) return null;
   const entry = recent.find((item) => item?.file === `image:${imageId}` && item?.kind === "cover");
   if (!entry) return null;
-  if (entry.error) return { type: "failed", cancelled: entry.cancelled === true };
-  if (Array.isArray(entry.covers) && entry.covers.includes(`${imageId}.png`)) return { type: "complete" };
+  const durationMs = typeof entry.ms === "number" && Number.isFinite(entry.ms) && entry.ms >= 0 ? entry.ms : null;
+  if (entry.error) return { type: "failed", cancelled: entry.cancelled === true, durationMs };
+  if (Array.isArray(entry.covers) && entry.covers.includes(`${imageId}.png`)) return { type: "complete", durationMs };
   return null;
 }
 
@@ -35,16 +36,6 @@ export async function recordImageOutcome({ book, outDir, file, outcome, now = Da
   if (outcome.type === "complete" && row.renderStatus === "complete") return row;
   if (outcome.type === "complete" && outcome.cover !== `${imageId}.png`) return null;
   if (outcome.type === "failed" && row.renderStatus === "complete") return null;
-  const patch = outcome.type === "complete"
-    ? { renderStatus: "complete", renderCompletedAt: now, renderFailedAt: null }
-    : { renderStatus: outcome.cancelled ? "stopped" : "failed", renderFailedAt: now,
-        renderCompletedAt: null };
-  try {
-    return await book.transitionOrderState({ outDir, id: row.id, from: "queued",
-      to: outcome.type === "complete" ? "queued" : "failed", patch });
-  } catch (error) {
-    // A return or another reconciliation claimed the row between list and CAS.
-    if (error?.reason === "order-state-changed") return null;
-    throw error;
-  }
+  return book.settleImageRender({ outDir, id: row.id, imageId, outcome: outcome.type === "complete" ? "complete" : outcome.cancelled ? "stopped" : "failed",
+    now, durationMs: outcome.durationMs });
 }

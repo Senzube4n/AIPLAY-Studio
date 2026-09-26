@@ -7568,7 +7568,8 @@ $("cbImageReview")?.addEventListener("click", async () => {
     opened.reviewDigest = r.reviewDigest;
     if (card) { card.dataset.imageArmed = opened.file; card.dataset.imageArmedDigest = r.reviewDigest; }
     $("cbImageAccept").hidden = false;
-    $("cbImageNote").textContent = "The server checked this exact sealed file and its references again. Accept stages them locally; it still does not render.";
+    $("cbImageAccept").title = r.minutes || "Accept stages references; Render is separate.";
+    $("cbImageNote").textContent = r.overBudget ? "This exceeds your friend's daily minutes. Accept will ask you to review the override." : "Reviewed. Accept stages references; Render is separate.";
   } finally { opened.reviewBusy = false; paintIncomingImageReferenceState(); }
 });
 $("cbImageAccept")?.addEventListener("click", async () => {
@@ -7582,19 +7583,36 @@ $("cbImageAccept")?.addEventListener("click", async () => {
   opened.acceptBusy = true;
   paintIncomingImageReferenceState();
   try {
-    const r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+    let r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+    if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+      const go = await cbConfirm({ title: "Accept anyway?", body: r.overrides.map((item) => item.why).join(" "), yes: "Accept anyway" });
+      if (!go) { $("cbImageNote").textContent = "Not accepted. Your friend's minutes remain unchanged."; return; }
+      if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value || card?.dataset.imageArmedDigest !== opened.reviewDigest) return;
+      r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest, anyway: true });
+    }
     if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
     $("cbImageNote").textContent = r.error || r.note || "Accepted locally. Rendering is a separate press.";
     if (!r.error) { disarmCollab(); await paintImageCardStatus(); await paintErrands(); }
   } finally { opened.acceptBusy = false; paintIncomingImageReferenceState(); }
 });
+async function requestFriendImageRender(id, retry, stillCurrent) {
+  const request = { action: "image_render", id, ...(retry ? { retry: true } : {}) };
+  let r = await cb(request);
+  if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Render anyway?", body: r.overrides.map((item) => item.why).join(" "), yes: "Render anyway" });
+    if (!go) return { error: "Not queued. Check your card and daily minutes before trying again." };
+    if (!stillCurrent()) return { error: "This is no longer the image job you reviewed." };
+    r = await cb({ ...request, anyway: true });
+  }
+  return r;
+}
 $("cbImageRender")?.addEventListener("click", async () => {
   const opened = cbOpenedImage;
   if (!opened || opened.file !== $("cbFile")?.value) return;
   const button = $("cbImageRender"); button.disabled = true;
   try {
-    const r = await cb({ action: "image_render", id: opened.id,
-      ...(opened.imageState === "failed" ? { retry: true } : {}) });
+    const r = await requestFriendImageRender(opened.id, opened.imageState === "failed",
+      () => cbOpenedImage === opened && opened.file === $("cbFile")?.value);
     if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
     $("cbImageNote").textContent = r.error || r.note || "Queued here. Check the result before sending it back.";
     if (!r.error) { await paintImageCardStatus(); await paintErrands(); }
@@ -7739,8 +7757,8 @@ $("cbErrands")?.addEventListener("click", async (ev) => {
     return;
   }
   if (row && ev.target.classList.contains("cbimgrender")) {
-    const r = await cb({ action: "image_render", id: row.dataset.id,
-      ...(ev.target.dataset.retry === "true" ? { retry: true } : {}) });
+    const id = row.dataset.id, retry = ev.target.dataset.retry === "true";
+    const r = await requestFriendImageRender(id, retry, () => row.dataset.id === id);
     cbSay(r.error || r.note || "Image queued on this computer. Check its result before sending it back.");
     if (!r.error) { await paintErrands(); await paintImageCardStatus(); }
     return;

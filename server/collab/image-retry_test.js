@@ -9,7 +9,7 @@ const end = source.indexOf('if (action === "image_send_back")', begin);
 assert.ok(begin > 0 && end > begin, "extract the real image render route");
 const route = source.slice(begin, end);
 
-function fixture({ state = "failed", retry = false, fetchResult = "ok" } = {}) {
+function fixture({ state = "failed", retry = false, fetchResult = "ok", busy = null, overBudget = false, anyway = false } = {}) {
   const fromFp = "a".repeat(32);
   const row = { id: "o_0123456789ab", jobType: "image", state,
     imageId: state === "failed" ? "iold" : null, stagedRefs: [], imageJob: {}, from: { fp: fromFp } };
@@ -18,6 +18,7 @@ function fixture({ state = "failed", retry = false, fetchResult = "ok" } = {}) {
   const calls = { fetch: 0, transitions: [] };
   const book = {
     findOrder: async () => ({ ...row }),
+    listOrders: async () => [{ ...row }],
     transitionOrderState: async ({ from, to, patch }) => {
       if (row.state !== from) throw Object.assign(new Error("concurrent change"), { reason: "order-state-changed" });
       calls.transitions.push([from, to]);
@@ -26,12 +27,16 @@ function fixture({ state = "failed", retry = false, fetchResult = "ok" } = {}) {
     },
   };
   const context = {
-    action: "image_render", b: { id: row.id, ...(retry ? { retry: true } : {}) }, res: {}, outDir: "collab", appData: "app",
+    action: "image_render", b: { id: row.id, ...(retry ? { retry: true } : {}), ...(anyway ? { anyway: true } : {}) }, res: {}, outDir: "collab", appData: "app",
     book, config: { inputDir: "input", uiPort: 4173 }, QWEN_IMAGE_FILES: { dit: "dit", encoder: "enc", vae: "vae" },
     collabIdentity: async () => ({ fp: "b".repeat(32) }),
-    collabRoster: { roster: async () => ({ peers: [{ fp: fromFp, verified: true, role: "lender" }] }) },
+    collabRoster: { roster: async () => ({ peers: [{ fp: fromFp, verified: true, role: "lender", lendMinutesPerDay: 60 }] }) },
     readStoredImageJob: () => ({ returnTo: { fp: fromFp }, job: settings }),
     qwenImageStatus: async () => ({ ready: true }),
+    readWorkload: async () => ({}), machineBusy: () => busy || { busy: false, reason: null },
+    jobs: { current: null, queue: [] }, plansRunningNow: () => [], engineDoor: { status: async () => ({}) },
+    collabLending: { budgetCheck: async () => overBudget ? { over: true, reason: "budget-spent", why: "Daily allowance is spent." }
+      : { over: false, reason: null, why: "Within daily allowance." } }, readMvProject: async () => ({}),
     fetch: async () => {
       calls.fetch++;
       if (fetchResult === "uncertain") throw new Error("socket lost");
@@ -80,4 +85,25 @@ test("a lost queue answer stays locked; a definite refusal returns to failed", a
   assert.equal(no.body.reason, "render-refused");
   assert.equal(refused.row.state, "failed");
   assert.equal(refused.calls.fetch, 1);
+});
+
+test("image render refuses both a busy card and spent minutes until explicit anyway", async () => {
+  const busy = { busy: true, reason: "art-rendering", why: "Another render is running." };
+  const stopped = fixture({ state: "landed", busy, overBudget: true });
+  const refusal = await stopped.run();
+  assert.equal(refusal.status, 409);
+  assert.equal(refusal.body.reason, "art-rendering");
+  assert.deepEqual(Array.from(refusal.body.overrides, (item) => item.reason), ["art-rendering", "budget-spent"]);
+  assert.equal(stopped.calls.fetch, 0);
+  const confirmed = fixture({ state: "landed", busy, overBudget: true, anyway: true });
+  assert.equal((await confirmed.run()).status, 200);
+  assert.equal(confirmed.calls.fetch, 1);
+});
+
+test("an unreadable engine cannot be bypassed by image render anyway", async () => {
+  const f = fixture({ state: "landed", busy: { busy: true, reason: "engine-unreachable", why: "Engine is unavailable." }, anyway: true });
+  const result = await f.run();
+  assert.equal(result.body.reason, "engine-unreachable");
+  assert.equal(result.body.overridable, false);
+  assert.equal(f.calls.fetch, 0);
 });

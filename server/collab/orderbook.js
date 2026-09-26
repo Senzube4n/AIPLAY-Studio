@@ -207,6 +207,26 @@ export async function transitionOrderState({ outDir, id, side = "in", from, to, 
   });
 }
 
+/** Settle one exact queued image attempt in the same writer used for order
+ * claims. A duplicate terminal event cannot append its GPU time twice. */
+export async function settleImageRender({ outDir, id, imageId, outcome, now = Date.now(), durationMs = null } = {}) {
+  if (!ID_RE.test(String(id || "")) || !/^i[a-z0-9]+$/.test(String(imageId || ""))
+      || !["complete", "failed", "stopped"].includes(outcome)) throw refuse("bad-arguments", "An image result needs its order, image and terminal outcome.");
+  return enqueue(async () => {
+    const file = rowPath(outDir, "in", id);
+    const row = await readRow(file);
+    if (!row || row.jobType !== "image" || row.state !== "queued" || row.imageId !== imageId || row.renderStatus !== "queued") return null;
+    const ms = typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : null;
+    const completed = outcome === "complete";
+    const next = { ...row, state: completed ? "queued" : "failed", stateAt: Date.now(),
+      renderStatus: outcome, renderDurationMs: ms,
+      renderCompletedAt: completed ? now : null, renderFailedAt: completed ? null : now,
+      imageRuns: [...(Array.isArray(row.imageRuns) ? row.imageRuns : []), { imageId, at: now, durationMs: ms, status: outcome }] };
+    await writeAtomic(file, next);
+    return next;
+  });
+}
+
 /** One row, or null. Refuses only when a row exists and cannot be read. */
 export async function findOrder({ outDir, id, side = "out" } = {}) {
   if (!ID_RE.test(String(id || ""))) return null;

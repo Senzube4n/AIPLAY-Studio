@@ -141,6 +141,8 @@ test("two Studio profiles hand off one sealed Qwen image request without renderi
       const role = await request(here, { action: "set_role", fp: other.fp, role: "lender" });
       assert.equal(role.status, 200, JSON.stringify(role.body));
     }
+    const zeroMinutes = await request(lender, { action: "set_lend_minutes", fp: borrowerMe.fp, minutesPerDay: 0 });
+    assert.equal(zeroMinutes.status, 200, JSON.stringify(zeroMinutes.body));
 
     await mkdir(borrower.input, { recursive: true });
     await writeFile(path.join(borrower.input, "source.png"), reference);
@@ -219,6 +221,8 @@ test("two Studio profiles hand off one sealed Qwen image request without renderi
     const consent = await request(lender, { action: "image_accept", file: path.basename(landed) });
     assert.equal(consent.status, 409, JSON.stringify(consent.body));
     assert.equal(consent.body.reason, "not-seen");
+    assert.equal(consent.body.overBudget, true);
+    assert.match(consent.body.minutes, /0 minutes/);
     assert.match(consent.body.reviewDigest, /^[0-9a-f]{64}$/);
     assert.equal(consent.body.imageJob.job.prompt, prompt);
     assert.equal(consent.body.pictures.length, 1);
@@ -258,7 +262,13 @@ test("two Studio profiles hand off one sealed Qwen image request without renderi
     assert.equal(unbound.status, 409, JSON.stringify(unbound.body));
     assert.equal(unbound.body.reason, "review-changed");
     assert.deepEqual((await request(lender, { action: "orders", side: "in" })).body.orders, []);
-    const accepted = await request(lender, { action: "image_accept", file: path.basename(landed), seen: true, expectedDigest: consent.body.reviewDigest });
+    const budgetRefusal = await request(lender, { action: "image_accept", file: path.basename(landed), seen: true, expectedDigest: consent.body.reviewDigest });
+    assert.equal(budgetRefusal.status, 409, JSON.stringify(budgetRefusal.body));
+    assert.equal(budgetRefusal.body.reason, "budget-zero");
+    assert.equal(budgetRefusal.body.overridable, true);
+    assert.deepEqual((await request(lender, { action: "orders", side: "in" })).body.orders, []);
+    const accepted = await request(lender, { action: "image_accept", file: path.basename(landed), seen: true,
+      expectedDigest: consent.body.reviewDigest, anyway: true });
     assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
     assert.equal(accepted.body.state, "landed");
     assert.equal(accepted.body.order, packed.body.order);

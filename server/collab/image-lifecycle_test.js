@@ -33,6 +33,8 @@ test("only the exact queued image's completed PNG marks the order complete", asy
   assert.equal(row.state, "queued"); // existing explicit Send back contract
   assert.equal(row.renderStatus, "complete");
   assert.equal(row.renderCompletedAt, 123);
+  assert.equal(row.imageRuns.length, 1);
+  assert.equal(row.imageRuns[0].imageId, imageId);
 }));
 
 test("confirmed failure or Stop allows retry but never invents a completed result", async () => fixture(async (outDir) => {
@@ -60,8 +62,17 @@ test("uncertain render and an already claimed return are never made retryable", 
 
 test("recent ArtRunner result can reconcile a terminal event that beat the queue receipt", () => {
   assert.deepEqual(recentImageOutcome({ art: { recent: [{ file: `image:${imageId}`, kind: "cover",
-    covers: [`${imageId}.png`] }] } }, imageId), { type: "complete" });
+    covers: [`${imageId}.png`], ms: 8123 }] } }, imageId), { type: "complete", durationMs: 8123 });
   assert.deepEqual(recentImageOutcome({ art: { recent: [{ file: `image:${imageId}`, kind: "cover",
-    error: "Stopped", cancelled: true }] } }, imageId), { type: "failed", cancelled: true });
+    error: "Stopped", cancelled: true }] } }, imageId), { type: "failed", cancelled: true, durationMs: null });
   assert.equal(recentImageOutcome({ art: { recent: [] } }, imageId), null);
 });
+
+test("duplicate terminal image events count one measured attempt", async () => fixture(async (outDir) => {
+  const outcome = { type: "complete", cover: `${imageId}.png`, durationMs: 91234 };
+  await Promise.all([recordImageOutcome({ book, outDir, file: `image:${imageId}`, outcome, now: 1000 }),
+    recordImageOutcome({ book, outDir, file: `image:${imageId}`, outcome, now: 1000 })]);
+  const row = await book.findOrder({ outDir, id, side: "in" });
+  assert.equal(row.imageRuns.length, 1);
+  assert.equal(row.imageRuns[0].durationMs, 91234);
+}));

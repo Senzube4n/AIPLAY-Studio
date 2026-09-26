@@ -1677,7 +1677,7 @@ export class ArtRunner extends EventEmitter {
           console.log(`  [${job.kind}] ${job.title}: stopped (you pressed Stop)`);
           this.emit("failed", {
             file: job.file, kind: job.kind, owner: job.owner || null,
-            error: job.error, runId: job.runId ?? null, cancelled: true,
+            error: job.error, runId: job.runId ?? null, cancelled: true, durationMs: job.durationMs,
           });
           continue;
         }
@@ -1716,6 +1716,7 @@ export class ArtRunner extends EventEmitter {
         this.emit("failed", {
           file: job.file, kind: job.kind, owner: job.owner || null,
           error: String(err.message || err),
+          durationMs: job.durationMs,
           /* Present when the engine door refused the graph under the minors
            * rule, so a waiter can answer 422 rather than "render failed". */
           ...(err?.safety ? { code: err.code } : {}),
