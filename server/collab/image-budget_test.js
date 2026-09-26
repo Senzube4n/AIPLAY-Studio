@@ -23,6 +23,8 @@ test("image allowance uses the renderer estimate and reserves accepted jobs", as
   assert.ok(est.minutes > 2 && est.minutes < 4);
   const zero = await check(first, [], { ...peer, lendMinutesPerDay: 0 });
   assert.equal(zero.reason, "budget-zero");
+  assert.equal(zero.thisOne, Math.ceil(est.minutes * 10) / 10,
+    "a fractional image estimate reserves upward to the next tenth of a minute");
   const second = await check(imageOrder("o_222222222222"), [row(first.id)]);
   assert.equal(second.used.pendingImages, 1);
   assert.equal(second.used.pending, 1);

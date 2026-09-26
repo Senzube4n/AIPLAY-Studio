@@ -5872,7 +5872,7 @@ const server = http.createServer(async (req, res) => {
             id: imageOrder.id, at: imageOrder.at, expires: imageOrder.expires,
             from: { fp: sender.fp, nickname: sender.nickname, role: sender.role },
             jobType: "image", imageJob: compactImageJob(imageOrder), returnTo: imageOrder.returnTo,
-            state: "claimed", consentAt: Date.now(), reviewDigest,
+            state: "claimed", consentAt: Date.now(), landedAt: Date.now(), reviewDigest,
           }, check: async (rows) => {
             const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
               rows, readProject: readMvProject, now: Date.now() });
@@ -6271,36 +6271,31 @@ const server = http.createServer(async (req, res) => {
            * override. Every overridable reason is listed in ONE refusal, so the
            * confirmation a person reads names everything `anyway` will walk
            * past — a yes to "busy" never silently spends minutes too. */
-          const overrides = [];
-          if (busy.busy) {
-            const overridable = !["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason);
-            if (!overridable) return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable });
-            overrides.push({ reason: busy.reason, why: busy.why });
+          if (busy.busy && ["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason)) {
+            return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable: false });
           }
-          /* ⚠ THE MINUTES ARE READ HERE, NOT ONLY REMEMBERED. The friend row has
-           * always held `lendMinutesPerDay` and nothing read it, while two screens
-           * promised the card would not be lent without that number. Accept
-           * checks it against what this card has spent for them today (timed)
-           * and promised (the plan's own estimate) — see lending.js. */
-          const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
-            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
-          if (minutes.over) overrides.push({ reason: minutes.reason, why: minutes.why });
-          if (overrides.length && b.anyway !== true) {
-            return json(res, 409, {
-              error: `${overrides.map((o) => o.why).join(" ")} It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)${busy.busy ? ", and your friend's scene waits its turn behind what is running" : ""}.`,
-              reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
-            });
-          }
-
+          const busyOverride = busy.busy ? { reason: busy.reason, why: busy.why } : null;
           const from = { fp: sender.fp, nickname: sender.nickname };
-          /* ⚠ THE ID IS CLAIMED BEFORE ANYTHING IS BUILT. The guard used to be
-           * the LAST step, so a bundle sent twice made two projects, two copies
-           * of every picture and two plans before it was ever consulted — and
-           * the second plan renders into a project nothing can find. */
-          await book.landOrderRow({ outDir, row: {
+          /* Claim and price the scene in one orderbook writer turn. Until its
+           * errand project exists, the claim carries its estimated minutes, so
+           * concurrent image, H3 and scene accepts see the same reservation. */
+          const landed = await book.landOrderRowChecked({ outDir, row: {
             id: orderDoc.id, at: orderDoc.at, from, slug: null, order: orderDoc.order,
             state: "claimed", returnTo: orderDoc.returnTo, landedAt: Date.now(),
+          }, check: async (rows) => {
+            const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []),
+              ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: overrides.map((item) => item.why).join(" ")
+                + " Review these checks and explicitly choose Accept anyway to reserve this scene.",
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
           } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          const minutes = landed.decision.minutes;
           let slug = null;
           let built = null;
           try {

@@ -276,6 +276,7 @@ export function estimateErrand(doc) {
 }
 
 const round1 = (x) => Math.round(x * 10) / 10;
+const reserve1 = (x) => Math.ceil(Number(x) * 10) / 10;
 
 /** Reserve a standalone H3 job using the same frame grid and cost curve that
  * ArtRunner uses to size its render deadline. This is an estimate, not a live
@@ -372,23 +373,33 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
            * more honest than request-to-finish time, which includes queue wait. */
           out.untimed++;
           const reserved = Number(row.renderEstimatedMinutes);
-          const estimate = Number.isFinite(reserved) && reserved > 0 ? reserved : estimateImageJob(row.imageJob)?.minutes;
+          const estimate = Number.isFinite(reserved) && reserved > 0 ? reserved : reserve1(estimateImageJob(row.imageJob)?.minutes);
           if (estimate) out.untimedMinutes += estimate;
           else out.unpriced++;
         }
       }
       if (except === row.id || Number(row.landedAt) < since
-          || !["landed", "rendering", "queued"].includes(row.state)
+          || !["claimed", "landed", "rendering", "queued"].includes(row.state)
           || row.renderStatus === "complete") continue;
       const reserved = Number(row.renderEstimatedMinutes);
       const estimate = Number.isFinite(reserved) && reserved > 0
         ? { minutes: reserved } : estimateImageJob(row.imageJob);
       out.pending++; out.pendingImages++;
-      if (estimate) { out.pendingMinutes += estimate.minutes; out.pendingImageMinutes += estimate.minutes; }
+      if (estimate) { const minutes = reserve1(estimate.minutes); out.pendingMinutes += minutes; out.pendingImageMinutes += minutes; }
       else out.unpriced++;
       continue;
     }
     if (except && row.id === except) continue;
+    /* A movie-scene accept reserves minutes before its errand project is
+     * built. During that short claim, another image or H3 accept must see the
+     * reservation, even though the scene has no project slug yet. */
+    if (row.state === "claimed" && !row.jobType && Number(row.landedAt) >= since) {
+      out.pending++;
+      const reserved = Number(row.renderEstimatedMinutes);
+      if (Number.isFinite(reserved) && reserved > 0) out.pendingMinutes += reserved;
+      else out.unpriced++;
+      continue;
+    }
     if (!["landed", "rendered"].includes(row.state) || !row.slug) continue;
     const doc = await readProject(row.slug).catch(() => null);
     /* A project deleted by hand has nothing left to spend and nothing to count. */
@@ -451,7 +462,7 @@ export async function budgetCheck({ peer, orderDoc, imageOrder, rows = [], readP
   const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: imageOrder?.id || orderDoc?.id });
   const est = imageOrder ? estimateImageJob(imageOrder) : estimateErrand(resolveErrand(orderDoc).doc);
   const thing = imageOrder ? "image job" : "scene";
-  const thisOne = est ? round1(Number(est.minutes)) : null;
+  const thisOne = est ? (imageOrder ? reserve1(est.minutes) : round1(Number(est.minutes))) : null;
   const total = round1(used.measuredMinutes + used.untimedMinutes + used.pendingMinutes + (thisOne ?? 0));
   const unknown = thisOne === null || used.unpriced > 0 || used.untimed > 0;
   const cost = thisOne === null
@@ -464,6 +475,7 @@ export async function budgetCheck({ peer, orderDoc, imageOrder, rows = [], readP
       why: `You give ${name} 0 minutes of your card a day (Collab → Friends, “Minutes of my card per day”), so accepting is a decision to make on purpose. ${cost[0].toUpperCase()}${cost.slice(1)}.` };
   }
   const why = `${name} may use ${allowance} minutes of your card a day: ${usedSentence(used)}, and ${cost} — ${tally}.`;
+  if (thisOne === null || used.unpriced > 0) return { ...base, over: true, reason: "budget-unpriced", why };
   if (total > allowance) return { ...base, over: true, reason: "budget-spent", why };
   return { ...base, over: false, reason: null, why };
 }
@@ -484,6 +496,8 @@ export async function budgetCheckVideoJob({ peer, orderDoc, rows = [], readProje
     why: `You give ${name} 0 minutes of your card a day (Collab → Friends, “Minutes of my card per day”), so accepting is a decision to make on purpose. ${cost[0].toUpperCase()}${cost.slice(1)}.` };
   if (thisOne === null) return { ...base, over: true, reason: "budget-unpriced",
     why: `This machine cannot estimate the GPU time for this H3 video job, so it cannot reserve an honest amount of ${name}'s ${allowance}-minute daily allowance. Accept only after reviewing the job and choosing an explicit override.` };
+  if (used.unpriced > 0) return { ...base, over: true, reason: "budget-unpriced",
+    why: `${name} already has ${used.unpriced} accepted ${used.unpriced === 1 ? "job" : "jobs"} with no time estimate today. ${usedSentence(used)}. Review the total and choose an explicit override before reserving this video job.` };
   const why = `${name} may use ${allowance} minutes of your card a day: ${usedSentence(used)}, and ${cost} — ${unknown ? "at least" : "about"} ${total} min in all.`;
   return { ...base, over: total > allowance, reason: total > allowance ? "budget-spent" : null, why };
 }
