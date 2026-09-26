@@ -12464,7 +12464,7 @@ async function iedDocViewRefresh() {
   } catch (error) { if (seq === iedDocViewSeq) iedDocSay(`Canvas preview failed: ${error.message}`); }
 }
 
-const iedAI = { refs: [], job: null, busy: false, poll: 0, original: null };
+const iedAI = { refs: [], job: null, busy: false, poll: 0, pollFailures: 0, original: null };
 function iedAIPaint() {
   iedDocumentFileToolsPaint();
   const mode = $("iedAIMode").value;
@@ -12489,8 +12489,10 @@ function iedAIPaint() {
   $("iedAITransparent").disabled = mode === "inpaint";
   if (mode === "inpaint") $("iedAITransparent").checked = false;
   const ready = iedAI.job?.status === "ready", active = iedAI.job?.status === "generating";
-  $("iedAIGenerate").disabled = iedAI.busy || active || ready || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
-  $("iedAIGenerate").textContent = active ? "Qwen is generating…" : "Generate edit preview";
+  $("iedAIGenerate").disabled = iedAI.busy || active || ready || iedAI.pollFailures > 0
+    || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
+  $("iedAIGenerate").textContent = iedAI.pollFailures ? "Checking edit…"
+    : active ? "Qwen is generating…" : "Generate edit preview";
   $("iedAIReview").hidden = !ready;
   $("iedAIUndo").hidden = iedAI.job?.status !== "accepted";
   for (const id of ["iedAIAccept", "iedAIDiscard", "iedAIUndo"]) $(id).disabled = iedAI.busy;
@@ -12524,6 +12526,8 @@ async function iedAIPoll() {
     const r = await iedAIRequest({ action: "status", id });
     if (iedAI.job?.id !== id) return;
     iedAI.job = r;
+    iedAI.pollFailures = 0;
+    $("iedAIStatus").title = "";
     if (r.status === "generating") {
       $("iedAIStatus").textContent = `Queued or generating · seed ${r.seed}. The original is unchanged.`;
       iedAI.poll = setTimeout(iedAIPoll, 2000);
@@ -12532,7 +12536,25 @@ async function iedAIPoll() {
       await loadImages();
     } else if (r.status === "error") $("iedAIStatus").textContent = r.error || "The generation failed.";
     iedAIPaint();
-  } catch (error) { $("iedAIStatus").textContent = error.message; iedAI.job = null; iedAIPaint(); }
+  } catch (error) {
+    if (iedAI.job?.id !== id) return;
+    // A status request can fail while the detached GPU job keeps running.
+    // Keep its id and refuse another render until we know the actual result.
+    // A server restart is definitive: it has no record to recover.
+    if (/editor job is unavailable or belongs to a previous app session/i.test(error.message)) {
+      iedAI.job = null;
+      iedAI.pollFailures = 0;
+      $("iedAIStatus").textContent = "Edit session ended. Generate again.";
+      $("iedAIStatus").title = "";
+    } else {
+      const delay = Math.min(10_000, 1000 * 2 ** Math.min(iedAI.pollFailures + 1, 4));
+      iedAI.pollFailures++;
+      $("iedAIStatus").textContent = "Connection lost. Checking edit again…";
+      $("iedAIStatus").title = error.message;
+      iedAI.poll = setTimeout(iedAIPoll, delay);
+    }
+    iedAIPaint();
+  }
 }
 function iedAIHasPending() {
   const o = iedOps();
@@ -12551,7 +12573,7 @@ $("iedAIRefAdd").onclick = () => {
   iedAIPaint();
 };
 $("iedAIGenerate").onclick = async () => {
-  if (iedAI.busy || ["generating", "ready"].includes(iedAI.job?.status)) return;
+  if (iedAI.busy || iedAI.pollFailures || ["generating", "ready"].includes(iedAI.job?.status)) return;
   iedAI.busy = true; iedAIPaint();
   try {
     if (iedDoc && !iedDocViewReady) throw new Error("Wait for the document canvas preview to finish before editing.");
@@ -12566,6 +12588,7 @@ $("iedAIGenerate").onclick = async () => {
       ...($("iedAISeed").value.trim() ? { seed: +$("iedAISeed").value } : {}) };
     $("iedAIStatus").textContent = "Freezing the source and checking Qwen…";
     iedAI.job = await iedAIRequest(body);
+    iedAI.pollFailures = 0;
     clearTimeout(iedAI.poll); iedAI.poll = setTimeout(iedAIPoll, 1000);
     $("iedAIStatus").textContent = `Queued · seed ${iedAI.job.seed}. You can keep the original until the preview is ready.`;
   } catch (error) { $("iedAIStatus").textContent = error.message; }

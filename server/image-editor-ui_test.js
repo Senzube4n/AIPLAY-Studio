@@ -27,6 +27,57 @@ test("pending flat adjustments are blocked, while selections alone can drive a Q
   assert.equal(vm.runInContext("iedAIHasPending()", ctx), true);
 });
 
+test("a transient edit status failure keeps the detached job and recovers its candidate", async () => {
+  const timers = [], elements = new Map(), asked = [];
+  let failures = 4, libraryRefreshes = 0;
+  const element = id => {
+    if (!elements.has(id)) elements.set(id, { value: id === "iedAIMode" ? "edit" : "", title: "",
+      querySelectorAll: () => [] });
+    return elements.get(id);
+  };
+  const ctx = vm.createContext({
+    iedAI: { refs: [], job: { id: "job-1", status: "generating", source: "frame.png", seed: 17 },
+      busy: false, poll: 0, pollFailures: 0 },
+    iedDoc: null, ied: { name: "frame.png" }, state: { images: [] },
+    iedHasPixels: () => true, iedDocumentFileToolsPaint() {}, esc: value => value,
+    $: element, setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
+    async iedAIRequest(body) {
+      asked.push(body);
+      if (failures-- > 0) throw new Error("Temporary network failure");
+      return { id: "job-1", status: "ready", source: "frame.png", seed: 17, width: 32, height: 32,
+        candidate: { url: "/api/image/result.png" }, sourcePreview: "/api/image/source.png", warnings: [] };
+    },
+    async loadImages() { libraryRefreshes++; },
+  });
+  vm.runInContext(section("function iedAIPaint()", "async function iedAIRequest(body)"), ctx);
+  vm.runInContext(section("async function iedAIPoll()", "function iedAIHasPending()"), ctx);
+  await vm.runInContext("iedAIPoll()", ctx);
+  for (const delay of [2000, 4000, 8000, 10000]) {
+    assert.equal(ctx.iedAI.job.id, "job-1", "the GPU job id survives a failed status check");
+    assert.equal(element("iedAIGenerate").disabled, true, "a duplicate render stays blocked");
+    assert.equal(timers.at(-1).delay, delay, "retries back off but remain bounded");
+    assert.match(element("iedAIStatus").textContent, /Checking edit again/);
+    if (delay < 10000) await timers.at(-1).fn();
+  }
+  await timers.at(-1).fn();
+  assert.equal(ctx.iedAI.job.status, "ready");
+  assert.equal(ctx.iedAI.pollFailures, 0);
+  assert.equal(element("iedAICandidate").src, "/api/image/result.png");
+  assert.equal(element("iedAIStatus").title, "");
+  assert.equal(element("iedAIGenerate").disabled, true, "review happens before another render");
+  assert.equal(libraryRefreshes, 1);
+  assert.equal(asked.length, 5);
+  assert.ok(asked.every(body => body.action === "status" && body.id === "job-1"));
+
+  ctx.iedAI.job = { id: "old-session", status: "generating", source: "frame.png" };
+  ctx.iedAIRequest = async () => { throw new Error("This editor job is unavailable or belongs to a previous app session."); };
+  await vm.runInContext("iedAIPoll()", ctx);
+  assert.equal(ctx.iedAI.job, null, "a confirmed server restart can release the stale job");
+  assert.equal(element("iedAIGenerate").disabled, false);
+  assert.equal(timers.length, 4, "a lost server-side job is not polled forever");
+  assert.match(element("iedAIStatus").textContent, /session ended/);
+});
+
 test("document viewport uses the newest actual composed pixels, ignoring out-of-order responses", async () => {
   const requests = [], elements = new Map();
   const element = id => { if (!elements.has(id)) elements.set(id, { style: {}, src: "", textContent: "", addEventListener() {} }); return elements.get(id); };
