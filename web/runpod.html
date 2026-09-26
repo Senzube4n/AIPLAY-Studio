@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RunPod · AIPLAY Studio</title><link rel="stylesheet" href="runpod.css"></head>
+<body>
+<header><a href="/">← AIPLAY Studio</a><span>REMOTE RENDERING · PREVIEW</span></header>
+<main>
+  <h1>Your studio here.<br><em>Your rendering on RunPod.</em></h1>
+  <p class="intro">Edit and keep your media on this PC. Send a workflow to your own GPU worker and bring the results back into your library.</p>
+  <p id="notice" role="status" aria-live="polite"></p>
+  <section aria-labelledby="connection-title">
+    <div class="section-title"><h2 id="connection-title">1. Connect your worker</h2><span id="connectionState">Not connected</span></div>
+    <p>Run the AIPLAY worker beside ComfyUI on your Pod. Use its HTTPS URL and worker token. The token is separate from your RunPod account API key.</p>
+    <form id="connectForm"><label>Worker URL<input id="url" type="url" placeholder="https://your-pod-8787.proxy.runpod.net" required></label>
+      <label>Worker token<input id="token" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved token"></label>
+      <button id="connectButton">Connect and check models</button>
+    </form>
+    <p id="hardware" class="muted"></p>
+  </section>
+  <section aria-labelledby="workflow-title">
+    <div class="section-title"><h2 id="workflow-title">2. Prepare your workflow</h2><button id="refreshModels" class="secondary">Refresh remote models</button></div>
+    <p>Start with an AIPLAY template, or import a ComfyUI workflow saved in API format. Templates require their models and custom nodes on the Pod. The JSON below is editable before rendering.</p>
+    <div class="grid">
+      <label>Template<select id="template"><option value="checkpoint">Image · SD / SDXL checkpoint</option><option value="qwen">Image · Qwen Image 2.1</option><option value="h3">Video · H3</option><option value="ltx">Video · LTX</option><option value="ace-step15">Music · ACE-Step 1.5</option><option value="yue2-comfy">Music · YuE2 through ComfyUI</option></select></label>
+      <label>Checkpoint on the worker<select id="checkpoint"><option value="">Connect to load checkpoints</option></select></label>
+      <label>Width<input id="width" type="number" value="512" min="64" max="4096" step="8"></label>
+      <label>Height<input id="height" type="number" value="512" min="64" max="4096" step="8"></label>
+      <label>Seed<input id="seed" type="number" value="42" min="0" max="2147483647"></label>
+      <label>Duration (video/music seconds)<input id="seconds" type="number" value="5" min="1" max="300"></label>
+    </div>
+    <label>Prompt / music style<textarea id="prompt" rows="3" placeholder="Describe the image, scene or music you want"></textarea></label>
+    <label>Lyrics (music only)<textarea id="lyrics" rows="3" placeholder="Your lyrics"></textarea></label>
+    <div class="actions"><button id="build">Build workflow</button><label class="file-label">Import API workflow<input id="workflowFile" type="file" accept=".json,application/json"></label></div>
+    <label>Workflow JSON<textarea id="graph" rows="12" spellcheck="false" placeholder='{"1": {"class_type": "...", "inputs": {}}}'></textarea></label>
+    <p id="validation" class="muted">Building or importing a workflow does not start a render.</p>
+    <details><summary>Add reference files</summary><p>Select the node and input that should receive each file. Files upload when you press Render. Maximum 512 MiB per file.</p><div id="bindings"></div><button id="addReference" class="secondary">Add a reference</button></details>
+    <label>Job name<input id="label" value="RunPod render" maxlength="160"></label>
+    <button id="render" class="primary">Render on RunPod</button>
+    <p class="muted">The prompt, workflow and selected references are sent to your Pod. Running Pods incur charges even between jobs; manage the Pod in RunPod. Native GGUF, 3D tools and final timeline export are not connected through this panel yet.</p>
+  </section>
+  <section aria-labelledby="jobs-title"><div class="section-title"><h2 id="jobs-title">3. Jobs and local results</h2><span>Recoverable after reconnect</span></div><div id="jobs"><p>No jobs yet.</p></div></section>
+</main><script type="module" src="runpod.js"></script>
+</body></html>

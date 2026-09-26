@@ -616,8 +616,9 @@ test("the launcher offers it as a third, new, credit-spending mode", () => {
   /* Relabelled 2026-09-24 (owner: a friend's card first, paid Comfy API second):
    * the heading says whose key and that it costs, where it said "New". */
   assert.match(html, /id="mode-cloud"[\s\S]*?Use Comfy API <span class="tagcredit">your own key, paid<\/span>[\s\S]*?<span class="tagcredit">Requires credits<\/span>[\s\S]*?data-launch="cloud"/);
-  assert.match(html, /for \(const m of \["full", "music", "cloud"\]\)/);
-  assert.match(mjs, /if \(!\["full", "music", "cloud"\]\.includes\(mode\)\)/);
+  /* A fourth mode joined on 2026-09-25: RunPod GPU (server/engine/remote_ui_test.js pins it). */
+  assert.match(html, /for \(const m of \["full", "music", "cloud", "runpod"\]\)/);
+  assert.match(mjs, /if \(!\["full", "music", "cloud", "runpod"\]\.includes\(mode\)\)/);
   assert.match(mjs, /mode === "cloud" \? path\.join\("scripts", "start-cloud\.mjs"\)/);
   assert.match(mjs, /AIPLAY_CLOUD_ONLY: mode === "cloud" \? "1" : "0"/);
   assert.match(read("scripts/start-cloud.mjs"), /process\.env\.AIPLAY_CLOUD_ONLY='1';/);
@@ -627,7 +628,7 @@ test("the launcher offers it as a third, new, credit-spending mode", () => {
 test("the server mounts the page's routes and starts no ComfyUI only in that mode", () => {
   const idx = read("server/index.js");
   assert.match(idx, /const routerRoutes = config\.cloudOnly \? createRouterRoutes\(/, "full Studio has no route that can spend a credit");
-  assert.match(idx, /let comfyWanted = !config\.musicOnly && !config\.cloudOnly;/);
+  assert.match(idx, /let comfyWanted = !config\.musicOnly && !config\.cloudOnly && !config\.remoteOnly;/);
   assert.match(idx, /if \(config\.cloudOnly\) \{[\s\S]{0,400}await routerJobs\.resume\(\);[\s\S]{0,120}return;\n  \}/);
 });
 

@@ -846,6 +846,29 @@ few seconds at most, and counts as missing after ten) (`reason` `stems-python-mi
 modules: { demucs, torch }, ready, note } }`. MCP: `separate_stems`,
 `stems_python`, `setup_feature {"id":"stems"}`.
 
+### `POST /api/whisper` · `GET /api/whisper`
+```jsonc
+// same-origin local JSON only; exactly one of file | clip | path
+{ "action": "transcribe", "file": "aiplay_00021.flac",   // a library song
+  "lyrics": "…", "language": "en", "words": true, "writeLrc": true, "vocals": true }
+{ "action": "transcribe", "clip": "import_talk_x1.mp4" } // a clip or imported file
+{ "action": "transcribe", "path": "D:\\…\\output\\stems\\htdemucs_ft\\song\\vocals.flac" }
+{ "action": "model", "value": "large-v3|large-v3-turbo|medium|small|base|tiny" }
+```
+Whisper over any file, in the timed lyrics python with the timed lyrics model,
+queued on the art queue (kind `whisper`) behind music like a separation. A
+`path` must resolve inside the output folder. `transcribe` answers
+`{ ok, jobId, input, usesVocalStem, model, lrc?, wordLrc? }`, or `400` with
+`setup: "lyrics"` when the whisper python is missing. `GET /api/whisper?job=<id>`
+answers `{ job: { id, state: queued|running|done|failed|stopped, error?, result? } }`;
+`result` is `{ language, text, segments: [{ start, end, text, words? }], duration,
+aligned?: { lines: [{ start, text, words? }], confidence, matched }, lrc?, wordLrc?,
+device, model }`. With known `lyrics` the lines keep those words and take
+whisper's timing; `writeLrc` writes `<name>.whisper.lrc` and `.whisper.word.lrc`
+(read them at `/api/lrc/<name>`). `GET /api/whisper` (or `model` with no value)
+reports `{ whisper: { python, source, ready, modules, note, install?, setup?,
+model, models, device, jobs } }`. MCP: `whisper_transcribe`, `whisper_status`.
+
 ### Refusals: `409` and `setup`
 `409` means this machine is not ready (a python, a module or a model is
 missing). The body is `{ error, setup?, python?, pip?, module?, needsModel?,

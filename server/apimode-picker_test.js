@@ -15,6 +15,7 @@ const { config } = await import("./config.js");
 const { PROVIDERS } = await import("./apiEngine.js");
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
+// LF, so the patterns hold on a Windows checkout (core.autocrlf writes CRLF).
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("the saved switch, provider and cap are read back at start", () => {

@@ -210,10 +210,31 @@ export const H3_SOL_ATTN = (() => {
   });
 })();
 
-/** FastH3's place: Advanced only (the lab's #4), in the owner's words. */
+/**
+ * MINIMAX H3 BLOCK CACHE (T8), an experimental custom node
+ * (github.com/T8mars/comfyui-minimax-h3-blockcache-T8, Apache-2.0, class
+ * MiniMaxH3BlockCacheT8). It recomputes H3's first block every step and skips
+ * the rest when both the audio and the video residual barely moved, reusing
+ * the cached result. Its author measured 1.09x to 1.20x on 20 steps at 256x160
+ * on an RTX 4060 Ti; nothing is measured on the 3 to 8 step builds or on AMD.
+ * The recipe is the node's own defaults. It refuses to run beside
+ * BlockSparseAttention, so workflow.js never puts both in one graph.
+ */
+export const H3_BLOCK_CACHE = Object.freeze({
+  node: "MiniMaxH3BlockCacheT8",
+  threshold: 0.12, startPercent: 0.08, endPercent: 0.95, maxConsecutiveHits: 2,
+  cacheDevice: "cpu", metricStride: 8,
+  repo: "https://github.com/T8mars/comfyui-minimax-h3-blockcache-T8",
+});
+
+/** FastH3's label and caveat wherever it is offered. The name is older than
+ *  the wording: it was an Advanced "More motion" switch until 2026-09-25.
+ *  FastH3 is a model of its own (FastVideo's 8-step distillation of H3), and
+ *  it is not a motion setting. So it is a choice in the engine list, named
+ *  as the model, with the measured caveat. */
 export const H3_MORE_MOTION = Object.freeze({
-  label: "More motion (FastH3, experimental)",
-  note: "More camera motion. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; "
+  label: "FastH3 (experimental)",
+  note: "A distilled H3 model, 8 steps. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; "
     + "check the take.",
   /* The lab ran FastH3 on text prompts only. Frames are accepted and said. */
   framesUntried: "FastH3 was only tried on text to video: an opening or closing picture is accepted, but not "

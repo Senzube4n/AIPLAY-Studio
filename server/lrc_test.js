@@ -798,7 +798,8 @@ console.log("\n  -- README.md and INSTALL.md --");
 {
   for (const doc of ["README.md", "INSTALL.md"]) {
     const text = read(doc);
-    const at = text.indexOf("**Whisper large-v3**");
+    /* The row's name is the catalogue label (scripts/models_table.mjs). */
+    const at = text.indexOf("**Whisper: transcription and timed lyrics**");
     const row2 = at >= 0 ? text.slice(at, text.indexOf("\n\n", at)) : "";
     ok(`${doc}: the lyrics row says Studio's whisper venv, the setting and the variable`,
       row2.includes("%USERPROFILE%\\aiplay-whisper\\venv") && row2.includes(SETTING_WORDS) && row2.includes("AIPLAY_WHISPER_PYTHON"), row2);

@@ -704,6 +704,53 @@ export const KNOBS = [
     cite: DOCS.config,
   },
 
+  {
+    id: "free_before_clip",
+    label: "Fresh engine before each H3 clip",
+    applies: "h3",
+    kind: "enum", options: ["auto", "always", "never"],
+    path: ["video", "freeBeforeClip"],
+    effect: "Restarts the engine before an H3 or FastH3 clip when it has already rendered something. Measured on an "
+      + "RX 9060 XT: a second clip in the same engine spilled into shared memory and took about 152 s a step "
+      + "instead of 82 s; unloading the models did not help, a restart did (78 s). Auto does it on any card that is "
+      + "not NVIDIA. The restart costs about 45 s.",
+    cite: DOCS.config,
+  },
+  {
+    id: "sparse_everywhere",
+    label: "Sparse attention on every step count (experimental)",
+    applies: "h3",
+    kind: "bool", onValue: true, offValue: false,
+    path: ["video", "engines", "h3", "sparseAll"],
+    effect: "Runs sol-attn sparse attention on Standard and Best too, not only on the Fast setting, when the sparse "
+      + "attention switch is on. Faster at large sizes, a slightly softer picture. References stay dense. Not "
+      + "measured by the H3 lab: check the take.",
+    cite: DOCS.config,
+  },
+  {
+    id: "sparse_tau",
+    label: "Sparse attention strength (tau)",
+    applies: "h3",
+    kind: "number", min: 1, max: 2, step: 0.1,
+    path: ["video", "engines", "h3", "solAttnTau"],
+    effect: "How much attention sol-attn skips. 1.0 keeps about 16% of blocks, 1.5 about 7%, 2.0 about 2.7% "
+      + "(ComfyUI's Block Sparse Attention node). Higher is faster and softer. Unset, the lab's 1.3.",
+    cite: DOCS.config,
+  },
+  {
+    id: "block_cache",
+    label: "Block cache (experimental)",
+    applies: "h3",
+    kind: "bool", onValue: true, offValue: false,
+    path: ["video", "engines", "h3", "blockCache"],
+    /* h3tier.js H3_BLOCK_CACHE: the node, its recipe and what was measured. */
+    effect: "Skips most of H3's transformer blocks on steps where the picture barely changes (the MiniMax H3 "
+      + "Block Cache (T8) custom node, which must be installed in ComfyUI). Plain clips only, and never with sparse "
+      + "attention on. Its author measured 1.09x to 1.20x at 20 steps on NVIDIA; untested on the 3 to 8 step "
+      + "settings and on AMD: check the take.",
+    cite: DOCS.config,
+  },
+
   /* ── LTX, whose schedule IS its speed and is therefore worth showing ─────── */
   {
     id: "ltx_cfg",

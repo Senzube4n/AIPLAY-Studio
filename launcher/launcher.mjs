@@ -227,6 +227,7 @@ async function probeStudio() {
       engineExpected: s.config?.engineExpected ?? !s.config?.musicOnly,
       musicOnly: !!s.config?.musicOnly,
       cloudOnly: !!s.config?.cloudOnly,
+      remoteOnly: !!s.config?.remoteOnly,
       torch: s.engine?.torch || null,
       device: s.engine?.device || null,
     };
@@ -393,6 +394,15 @@ async function systemCheck({ redetect = false } = {}) {
       warn: null,
       note: "Hosted image, video, audio, 3D and text models on your own Comfy API key, paid per run in Comfy credits. No ComfyUI needed.",
     },
+    /* Images and Video on the person's own RunPod Pod through the AIPLAY worker
+     * (server/engine/remote-*.js). Needs nothing local but Node; the Pod bills
+     * by the hour while it runs. */
+    runpod: {
+      available: nodeMajor >= 20,
+      engine: "Your RunPod Pod",
+      warn: null,
+      note: "Images and video render on your own RunPod GPU and come back to this PC. Billed by RunPod per hour while the Pod runs. No ComfyUI needed here.",
+    },
   };
 
   return {
@@ -428,12 +438,12 @@ async function launch(mode) {
   if (studio.state === "starting") throw new Error("Studio is already starting.");
   if (child) throw new Error("Studio is already running from this launcher.");
   if (busyInstalling()) throw new Error("Wait for the engine install to finish.");
-  if (!["full", "music", "cloud"].includes(mode)) throw new Error("Unknown mode.");
+  if (!["full", "music", "cloud", "runpod"].includes(mode)) throw new Error("Unknown mode.");
 
   setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
   const running = await probeStudio();
   if (running) {
-    setState({ mode: running.cloudOnly ? "cloud" : running.musicOnly ? "music" : "full", state: "external", stage: null, error: null });
+    setState({ mode: running.cloudOnly ? "cloud" : running.remoteOnly ? "runpod" : running.musicOnly ? "music" : "full", state: "external", stage: null, error: null });
     addLog(`Studio is already running at ${STUDIO_URL} (started outside this launcher). Opening it.`, "sys");
     openInBrowser(STUDIO_URL);
     return;
@@ -451,10 +461,12 @@ async function launch(mode) {
   }
 
   const script = mode === "music" ? path.join("scripts", "start-music.mjs")
-    : mode === "cloud" ? path.join("scripts", "start-cloud.mjs") : path.join("server", "index.js");
-  const env = { ...process.env, AIPLAY_MUSIC_ONLY: mode === "music" ? "1" : "0", AIPLAY_CLOUD_ONLY: mode === "cloud" ? "1" : "0" };
+    : mode === "cloud" ? path.join("scripts", "start-cloud.mjs")
+    : mode === "runpod" ? path.join("scripts", "start-remote.mjs") : path.join("server", "index.js");
+  const env = { ...process.env, AIPLAY_MUSIC_ONLY: mode === "music" ? "1" : "0", AIPLAY_CLOUD_ONLY: mode === "cloud" ? "1" : "0",
+    AIPLAY_REMOTE_ONLY: mode === "runpod" ? "1" : "0" };
   delete env.AIPLAY_OPEN;   // the launcher opens Studio itself, once the engine is ready
-  addLog(`Starting ${mode === "music" ? "music-only" : mode === "cloud" ? "Comfy API" : "full"} Studio…`, "sys");
+  addLog(`Starting ${mode === "music" ? "music-only" : mode === "cloud" ? "Comfy API" : mode === "runpod" ? "RunPod GPU" : "full"} Studio…`, "sys");
   child = spawn(process.execPath, [script], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   const me = child;
   setState({ stage: "server", pid: child.pid });
@@ -744,7 +756,7 @@ function makeServer(portRef) {
       if (url.pathname === "/api/state") {
         const saved = (await readJson(SETTINGS)) || {};
         return send(res, 200, { studio, install, pkgRetry, log: logLines.slice(-400), host: HOST,
-          prefs: { closeStopsStudio: saved.launcherCloseStopsStudio === true } });
+          prefs: launcherPrefs(saved) });
       }
       /* Launcher preferences. One so far: whether the window's X also stops
        * Studio. Off by default — closing a window should not end a render
@@ -752,8 +764,14 @@ function makeServer(portRef) {
       if (req.method === "POST" && url.pathname === "/api/prefs") {
         const b = await readBody(req);
         if (typeof b.closeStopsStudio === "boolean") await saveSettings({ launcherCloseStopsStudio: b.closeStopsStudio });
+        /* The favourite (the star on a card): one mode, or null to clear it. */
+        if (b.autoLaunch === null) await saveSettings({}, ["launcherAutoLaunch"]);
+        else if (b.autoLaunch !== undefined) {
+          if (!LAUNCH_MODES.includes(b.autoLaunch)) return send(res, 400, { error: "Unknown mode." });
+          await saveSettings({ launcherAutoLaunch: b.autoLaunch });
+        }
         const saved = (await readJson(SETTINGS)) || {};
-        return send(res, 200, { ok: true, prefs: { closeStopsStudio: saved.launcherCloseStopsStudio === true } });
+        return send(res, 200, { ok: true, prefs: launcherPrefs(saved) });
       }
       if (url.pathname === "/api/advanced") {
         if (req.method === "POST") return send(res, 200, await saveAdvanced(await readBody(req)));
@@ -850,6 +868,31 @@ function showWindow() {
   });
 }
 
+/* The launch modes, and the launcher's own preferences as the page reads them.
+ * `autoLaunch` is the favourite: the star on a card, started by main() below
+ * every time the launcher starts (settings.json launcherAutoLaunch). */
+const LAUNCH_MODES = ["full", "music", "cloud", "runpod"];
+function launcherPrefs(saved) {
+  return {
+    closeStopsStudio: saved.launcherCloseStopsStudio === true,
+    autoLaunch: LAUNCH_MODES.includes(saved.launcherAutoLaunch) ? saved.launcherAutoLaunch : null,
+  };
+}
+/** Start the favourite, once, as the launcher opens. Not when Studio already
+ *  runs (launch() finds it and opens it instead), not when the system check
+ *  says the mode cannot run here: the log says why, and nothing starts. */
+async function autoLaunch() {
+  const mode = launcherPrefs((await readJson(SETTINGS)) || {}).autoLaunch;
+  if (!mode) return;
+  const c = await getCheck(false).catch(() => null);
+  if (!c?.modes?.[mode]?.available) {
+    addLog(`Your favourite (${mode}) cannot start on this PC right now; see System. Remove the star to stop trying.`, "sys");
+    return;
+  }
+  addLog(`Starting your favourite. Remove the star on its card to stop this.`, "sys");
+  await launch(mode).catch((e) => addLog(`The favourite did not start: ${e.message}`, "err"));
+}
+
 async function main() {
   /* One launcher at a time: a second double-click just shows the first. */
   try {
@@ -873,6 +916,7 @@ async function main() {
   console.log(`  launcher: ${launcherUrl}`);
   getCheck(false).catch(() => {});   // warm the system check while the window opens
   showWindow();
+  autoLaunch();
 
   const shutdown = () => {
     if (child) killTreeSync(child.pid);

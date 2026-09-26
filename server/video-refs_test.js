@@ -54,7 +54,7 @@ test("the plan refuses references on FastH3 and LTX, in that sentence, and takes
   const index = read("./index.js");
   assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}, \{ engineKey: eng, eng: videoEngine\(eng\),/,
     "the door plans on the references that really staged");
-  assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason \}\);/);
+  assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   assert.doesNotMatch(index, /References need MiniMax H3/, "no second, hand-kept copy of the sentence");
 });
 

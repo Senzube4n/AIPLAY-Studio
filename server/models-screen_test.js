@@ -118,7 +118,8 @@ test("every screen's 'model not installed' opens the model window, gated ones wi
 });
 
 test("Render is never greyed out for video being off: it asks in a drawer and switches it on", () => {
-  assert.match(app, /\$\("vidCreate"\)\.disabled = false;/);
+  /* Never for video being off; only while this form's RunPod job is being sent (RunPod GPU mode). */
+  assert.match(app, /\$\("vidCreate"\)\.disabled = \$\("vidCreate"\)\.dataset\.runpodBusy === "1";/);
   assert.doesNotMatch(app, /\$\("vidCreate"\)\.disabled = !on;/);
   assert.match(app, /function bottomDrawer\(\{ title, body, yes = "Continue", no = "Not now" \}\)/);
   assert.match(app, /if \(!state\.video\?\.enabled\) \{\n\s+const go = await bottomDrawer\(/);

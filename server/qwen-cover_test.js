@@ -560,8 +560,11 @@ test("an overnight step fails in its own words, and a dropped one is said, again
 test("every art wait in mcp.js passes the job id the route returned", async () => {
   const src = (await readFile(new URL("./mcp.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
   const calls = src.match(/await waitForArt\(/g) || [];
-  const withId = src.match(/await waitForArt\([^;]*, r\.job\?\.id\);/g) || [];
-  assert.equal(calls.length, 4, "make_image, make_clip, restyle_clip and extend_clip");
+  /* whisper_transcribe waits on the id /api/whisper returned (or the job_id
+   * it was handed), held in `id`: its own job all the same. */
+  const withId = [...(src.match(/await waitForArt\([^;]*, r\.job\?\.id\);/g) || []),
+    ...(src.match(/await waitForArt\([^;]*, "whisper", id\);/g) || [])];
+  assert.equal(calls.length, 5, "make_image, make_clip, restyle_clip, extend_clip and whisper_transcribe");
   assert.equal(withId.length, calls.length, "each one on its own job");
   /* ...and each one's empty result speaks about THAT job, from the reading its
    * own wait settled on, pointing at the listing that shows the files. The old

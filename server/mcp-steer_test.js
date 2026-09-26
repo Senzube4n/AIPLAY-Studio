@@ -38,9 +38,10 @@ console.log("\n§1  the simple way on the Video screen");
   const html = src("../web/index.html"), app = src("../web/app.js"), index = src("./index.js");
   ok("three chips above More controls", /id="vidQualityRow"[\s\S]*?data-vq="fast"[\s\S]*?data-vq="standard"[\s\S]*?data-vq="best"[\s\S]*?id="vidAdv"/.test(html));
   ok("...a click sets the slider and repaints", /\$\("vidSteps"\)\.value = String\(steps\);\n\s+vidPaint\(\);/.test(app));
-  ok("...the chips light up on the slider's value", /aria-pressed", stNow === want \? "true" : "false"/.test(app));
+  ok("...the chips light up on the slider's value", /aria-pressed", !get && stNow === want \? "true" : "false"/.test(app));
+  /* ...and in RunPod GPU mode (`remote`), where the Pod's LTX preset takes no steps. */
   ok("...and the row hides with the slider on LTX and on a fixed-step engine (FastH3)",
-    /const noSteps = cur === "ltx" \|\| !!eng\.fixedSteps;/.test(app) && /qRow\.hidden = noSteps;/.test(app));
+    /const noSteps = remote \|\| cur === "ltx" \|\| !!eng\.fixedSteps;/.test(app) && /qRow\.hidden = noSteps;/.test(app));
   ok("the status carries turbo3Ready per engine", /turbo3Ready: \/taomate\/i\.test\(String\(e\.turboLora3 \|\| ""\)\),/.test(index));
 
   /* EVERY STEP COUNT ON THE SCREEN IS THE SERVER'S, and the server's follows
@@ -60,8 +61,10 @@ console.log("\n§1  the simple way on the Video screen");
   ok("the chips and their click read vidQualitySteps, not literals",
     /const want = qs\[b\.dataset\.vq\];/.test(app) && /const steps = vidQualitySteps\(eng(?:, !!state\.vidKeeping)?\)\[b\.dataset\.vq\];/.test(app)
     && /small\.textContent = want \+ " steps";/.test(app) && !/eng\.turbo3Ready \? 3 : 8/.test(app));
-  ok("...and Fast hides where it would equal Standard",
-    /\$\("vidQFast"\)\.hidden = qs\.fast === qs\.standard;/.test(app));
+  /* With the speed-ups known (turboBuilds) Fast is TaoMate's 3 and always
+   * shows, dimmed when its file is missing (server/taomate_test.js). */
+  ok("...and Fast hides where it would equal Standard, only without the builds",
+    /\$\("vidQFast"\)\.hidden = !tb && qs\.fast === qs\.standard;/.test(app));
   ok("the slider opens on Standard, once, from the status",
     /if \(!state\.vidStepsOpened && eng\.stepDefaults\) \{\n\s+state\.vidStepsOpened = true;\n\s+\$\("vidSteps"\)\.value = String\(vidQualitySteps\(eng\)\.standard\);/.test(app));
   /* Before the first status lands the page shows index.html's typed numbers,

@@ -29,6 +29,9 @@ const VIDEO_ROWS = ["video", "videoLtx"];
  *  same job. `kind` "auto" takes the job from the asked-about row's section. */
 function rowsFor(caps, kind, focus) {
   const asked = caps.find((c) => c.id === focus);
+  /* An add-on (a LoRA on another row's model, `addonFor`): the others on the
+   * same model beside it, such as H3's 3-, 4- and 8-step speed-ups. */
+  if (kind === "auto" && asked?.addonFor) return caps.filter((c) => c.id === focus || c.addonFor === asked.addonFor);
   const job = kind === "auto" ? (asked?.group || "music") : kind;
   const same = job === "chat" ? (c) => c.group === "chat"
     : job === "music" ? (c) => MUSIC_ROWS.includes(c.id)

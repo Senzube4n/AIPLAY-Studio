@@ -167,6 +167,9 @@ export const ROUTABLE = {
    * files beside the song. A refusal names setup id "stems", which the chat
    * may not run (setup_feature is withheld below). */
   separate_stems: "gpu",
+  /* Whether whisper can run and which model: a read. Its `model` argument
+   * saves a setting and is withheld (CHAT_WITHHELD_ARGS). */
+  whisper_status: null,
   /* The Stop button. It runs nothing, but it ends the person's own render and
    * drops the queue behind it. The gate word is "writes" (the contract's); the
    * card's sentence is its own, COST_TEXT_BY_TOOL below, because "it writes a
@@ -634,6 +637,7 @@ export const WITHHELD = {
   set_cloud: "switches a PAID service on, or raises its monthly cap: it decides whether songs bill the person's own key, and that is the person's decision on the Settings page (No strong graphics card?)",
   studio_welcome: "hides or re-shows the first-run lines and SAVES the Simple/Advanced level, a setting for a person (Settings > Screens), not a sentence in a chat box",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
+  whisper_transcribe: "waits for a whisper pass that takes minutes on a processor, holding the turn open the way wait_for_song would, and can name any file in the output folder; Time the lyrics on a song is the person's door (MCP clients keep the tool)",
   make_song: "the chat has its own make_song with a written caption guide",
   make_image: "the chat has its own make_image",
   mv_create_project: "the chat has its own mv_create_project",
@@ -662,6 +666,9 @@ export const CHAT_WITHHELD_ARGS = {
   },
   collab_adopt: {
     anyway: "keeps a take that failed its checks; a person watches it and answers \"Keep anyway\" on the Collab screen",
+  },
+  whisper_status: {
+    model: "saves which whisper model every later transcription and timed lyrics use (the first use downloads it); a setting for a person, not a sentence in a chat box",
   },
 };
 

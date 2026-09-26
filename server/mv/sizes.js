@@ -49,6 +49,7 @@ const MORE_PICTURES = "A cast with more than one picture was not measured at thi
 /* The two sizes that are not a card tier, typed once, here. */
 const DRAFT = Object.freeze({ width: 864, height: 480 });
 const HIGH = Object.freeze({ width: 1920, height: 1088 });
+const HD720 = Object.freeze({ width: 1280, height: 720 });
 /* The scene length the two shipped High films were cut to: both Bone Waffle
  * films rendered 1920x1088 in 5 s scenes on the lab's 16 GB card (plancost.js
  * COST_ROWS "h3-4-1080" prices that row). */
@@ -87,6 +88,17 @@ export const MV_SIZES = Object.freeze([
     cutWhy: `measured up to ${FULL.maxSeconds} s at ${FULL.width}x${FULL.height} under ${an(FULL.minGb)} `
       + `${FULL.minGb} GB memory cap on the lab's ${H3_LAB_CARD_GB} GB card (text to video, the Fast setting); `
       + "longer is untested",
+  }),
+  /* 720P, the first pick on a full-size AMD or Intel card (the owner's call,
+   * 2026-09-25; config.js prefers720p). Below H3's trained size, so the
+   * full-size evidence covers it; an LTX project floors it to 1280x704. */
+  Object.freeze({
+    id: "hd720", tier: null, label: "720p",
+    width: HD720.width, height: HD720.height, experimental: false,
+    note: `1280x720, below H3's trained ${FULL.width}x${FULL.height}. Studio's first pick on AMD and Intel cards. `
+      + "An LTX project renders it at 1280x704.",
+    cutSec: FULL.maxSeconds,
+    cutWhy: `smaller than full size's ${FULL.width}x${FULL.height}, so it takes full size's ${FULL.maxSeconds} s`,
   }),
   Object.freeze({
     id: "small", tier: "small", label: SMALL.label,
@@ -219,7 +231,9 @@ export function sizeChoices({ gpu = null, ram = null, cpuOnly = false, vaeMeasur
   /* A card H3 is not offered on gets no pick, whether the card or the RAM is
    * why: "Studio's pick for this card" beside "H3 is not offered here" would
    * be two answers to one question. */
-  const cardPick = t.offered ? PICK_FOR_TIER[t.id] ?? null : null;
+  const off = gpu?.vendor === "amd" || gpu?.vendor === "intel";
+  /* 720p first on a full-size card that is not NVIDIA (the hd720 row above). */
+  const cardPick = t.offered ? (t.id === "full" && off ? "hd720" : PICK_FOR_TIER[t.id] ?? null) : null;
   const cardGb = t.cardGb ?? null;
   const choices = MV_SIZES.map((s) => {
     const needsGb = s.tier ? tier(s.tier).minGb : s.id === "high" ? H3_LAB_CARD_GB : null;
@@ -227,7 +241,7 @@ export function sizeChoices({ gpu = null, ram = null, cpuOnly = false, vaeMeasur
     const line = fits === false
       ? (s.tier ? `Needs ${an(needsGb)} ${needsGb} GB card for H3; this one has ${cardGb} GB.`
         : `Only ever rendered on ${an(needsGb)} ${needsGb} GB card; this one has ${cardGb} GB.`)
-      : !s.tier && s.id !== "high"
+      : !s.tier && s.id !== "high" && s.id !== "hd720"
         ? `Not one of the sizes the H3 lab measured; close to ${PREVIEW.label} (${PREVIEW.width}x${PREVIEW.height}).`
       : null;
     return {

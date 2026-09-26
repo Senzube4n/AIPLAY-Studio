@@ -16,6 +16,10 @@ examples/** text=auto eol=lf
 # every commit; a CRLF checkout of the .abc fails that lane on a clean tree.
 server/score/fixtures/** text=auto eol=lf
 
+# Shell entry points run inside Linux containers (the RunPod worker bootstrap)
+# and must not acquire Windows CRLF endings from a Windows checkout.
+*.sh text eol=lf
+
 # A GitHub "Download ZIP" has no .git, so the build could not say which commit it
 # is and showed "S unknown". GitHub makes those zips with `git archive`, which
 # fills in $Format:...$ placeholders in files marked export-subst. So the zip

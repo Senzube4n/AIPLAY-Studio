@@ -179,6 +179,7 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
   /* 2026-09-23: FastH3, FastVideo's 8-step distillation of H3; its repo names
    * H3's licence as its own. */
   const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small",
+                              "videoH3Turbo4", "videoH3Turbo8",
                               "videoH3FunControl", "bridgeBunny", "bridgeSemantic", "videoFastH3"];
   ok("...and H3 and its derivatives are the only things that carry one",
     locked.every((id) => H3_AND_DERIVATIVES.includes(id)), locked.join(", "));

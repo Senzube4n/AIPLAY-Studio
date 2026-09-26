@@ -25,8 +25,8 @@
  *                        video_settings change too); changing it saves
  *                        video_settings' sparse_attention, and a render names
  *                        it only while it differs from the saved one.
- *   More motion          #vidMoreMotion: FastH3, off the main engine list,
- *                        picks the same (hidden) option of #vidEngine.
+ *   More motion          #vidMoreMotionRow: retired, always hidden; FastH3 is
+ *                        in #vidEngine by name.
  *   References           #vidRefIgnored: the server's sentence when the engine
  *                        ignores them and some are attached.
  *   Keep my character    #vidKeepNote: the server's line (video-plain.js
@@ -299,31 +299,12 @@ async function sparsePicked(sel) {
   } catch { /* offline: this visit's renders still name it */ }
 }
 
-function advancedEngine() {
-  return Object.entries(video().engines || {}).find(([, e]) => e?.advanced) || [];
-}
+/* THE OLD "MORE MOTION" SWITCH, retired 2026-09-25: FastH3 is a model of its
+ * own and sits in #vidEngine by name (app.js vidPaint). The row stays in the
+ * markup, hidden, so nothing that looks it up by id breaks. */
 function paintMoreMotion() {
-  const row = $("vidMoreMotionRow"), box = $("vidMoreMotion");
-  if (!row || !box) return;
-  const [key, e] = advancedEngine();
-  const cur = engineKey();
-  const on = !!key && family(cur);
-  row.hidden = !on;
-  if (!on) return;
-  if ($("vidMoreMotionL")) $("vidMoreMotionL").textContent = e.advanced.label || key;
-  row.title = e.advanced.note || "";
-  box.checked = cur === key;
-}
-function moreMotionPicked(box) {
-  const [key] = advancedEngine();
-  const sel = $("vidEngine");
-  /* Its partner is the H3 engine it distils: the one family member that is
-   * not Advanced-only. */
-  const back = Object.entries(video().engines || {}).find(([k, x]) => !x?.advanced && family(k))?.[0];
-  const want = box.checked ? key : back;
-  if (!sel || !want || !hasOption(sel, want)) return;
-  sel.value = want;
-  fire(sel, "change");
+  const row = $("vidMoreMotionRow");
+  if (row) row.hidden = true;
 }
 
 /* FastH3's dense attention starts on the server's default (Kitchen where the
@@ -417,7 +398,6 @@ if (typeof document !== "undefined") {
     document.addEventListener("input", again, true);
     document.addEventListener("change", again, true);
     $("vidTierChips")?.addEventListener("click", (e) => { const b = e.target.closest?.("button[data-tier]"); if (b) pickTier(b); });
-    $("vidMoreMotion")?.addEventListener("change", (e) => moreMotionPicked(e.target));
     if (typeof MutationObserver === "function") {
       const sel = $("vidSize");
       if (sel) new MutationObserver(() => { startAtTier(); paintTiers(); }).observe(sel, { childList: true });

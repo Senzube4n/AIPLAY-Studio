@@ -298,6 +298,19 @@ export function fixApplies(mode, vendor) {
   return vendor === "amd" || vendor === "intel";
 }
 
+/** The attention the PERSON chose, for rules that give way to one (art.js
+ *  h3Attention), or null. With the fix on, its PyTorch attention is laid over
+ *  every launch whatever was saved, and the launcher's Advanced panel shows it
+ *  as the value, so any Save there stores it. That value is the fix speaking,
+ *  not the person: read as their choice, it would quietly take H3's per-graph
+ *  Comfy Kitchen node away on every AMD install whose panel was ever saved.
+ *  Someone on AMD who wants H3 on PyTorch turns the fix off and picks it. */
+export function chosenAttention(saved, { fix = "auto", vendor = null } = {}) {
+  const a = typeof saved === "string" && saved ? saved : null;
+  if (a === DEFAULT_OPTIONS.attention && fixApplies(fix, vendor)) return null;
+  return a;
+}
+
 export function effectiveValues(saved, rev, cliArgsText, { fix = "auto", vendor = null } = {}) {
   let clean = cleanValues(saved);
   const has = (flag) => typeof cliArgsText === "string" && cliArgsText.includes(`"${flag}"`);

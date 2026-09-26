@@ -139,8 +139,9 @@ test("§2 the settings: tier sizes in H3's list, sol-attn on Fast, FastH3 Advanc
     "the recipe's words are built from its numbers");
   assert.equal(fast.attention, "kitchen");
   assert.equal(fast.sparse, null, "FastH3 runs its own VSA, never H3's switch");
-  assert.equal(fast.advanced.label, "More motion (FastH3, experimental)");
-  assert.equal(fast.advanced.note, "More camera motion. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; check the take.");
+  /* Named as the model it is since 2026-09-25 (it was a "More motion" switch). */
+  assert.equal(fast.advanced.label, "FastH3 (experimental)");
+  assert.equal(fast.advanced.note, "A distilled H3 model, 8 steps. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; check the take.");
   assert.equal(fast.advanced.label, tier.H3_MORE_MOTION.label, "one copy, h3tier.js");
   /* The Fast chip's note follows the saved sparse attention: never "as sharp" while sol-attn runs. */
   assert.match(plain.fastNote(h3), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
@@ -324,7 +325,9 @@ test("§5 the plan: the card's size when none is named, each change said", () =>
 });
 
 test("§5 the plan: steps and sparse attention", () => {
-  const eng = config.video.engines.h3;
+  /* A disk with the Fast setting's file: without it 3 steps is refused
+   * (taomate_test.js), and this section is about what Fast does. */
+  const eng = { ...config.video.engines.h3, turboBuilds: { ...config.video.engines.h3.turboBuilds, three: true } };
   const refs = plain.videoPlan({ prompt: "<Picture 1> walks", steps: 3, refImages: ["a.png"] }, { engineKey: "h3", eng, h3: null });
   assert.equal(refs.steps, 4);
   assert.equal(refs.warnings.find((w) => w.id === "steps").text,
@@ -437,7 +440,7 @@ test("§6 the page holds no opinion: no threshold, no size, no prose in web/vidf
   const strings = [...code.matchAll(/`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g)]
     .map((m) => m[0].slice(1, -1)).filter((t) => t.length >= 50 && !t.includes("${"));
   assert.deepEqual(strings.filter((s) => /[a-z] [a-z]+ [a-z]+ [a-z]+ [a-z]/.test(s)), [], "every sentence comes off the wire");
-  for (const f of ["h3.notOffered", "h3.choices", "h3.start", "h3?.ramWarning", "refsIgnored", "r.fit?.sentence", "e.advanced.label", "sp.note",
+  for (const f of ["h3.notOffered", "h3.choices", "h3.start", "h3?.ramWarning", "refsIgnored", "r.fit?.sentence", "sp.note",
     "?.h3Tiers", "c?.lengthSaid", "st.lengthSaid", "r.notes", "r.character"]) {
     assert.ok(code.includes(f), `reads ${f} from the server`);
   }
@@ -451,18 +454,19 @@ test("§6 the page holds no opinion: no threshold, no size, no prose in web/vidf
   assert.match(html, /<script type="module" src="vidfit\.js"><\/script>/);
   assert.match(css, /\.assist-on > [^{]*:not\(#vidTierRow\)[^{]* \{ display: none !important; \}/, "the size chips show in Simple");
   assert.match(app, /if \(typeof globalThis\.aiplayVidFit === "function"\) globalThis\.aiplayVidFit\(s\);/);
-  assert.match(app, /for \(const o of \$\("vidEngine"\)\.options\) o\.hidden = !!engines\[o\.value\]\?\.advanced && o\.value !== cur;/,
-    "FastH3 leaves the main list unless it is the saved choice");
+  /* FastH3 is in both engine lists by name since 2026-09-25 (it was hidden
+   * behind a "More motion" switch). */
+  assert.doesNotMatch(app, /o\.hidden = !!(?:s\.config\.video\.)?engines\??\.?\[o\.value\]\?\.advanced/, "no engine list hides FastH3");
   assert.match(app, /\$\("tierHint"\)\.textContent = t \? \[t\.note, state\.tierScope\]\.filter\(Boolean\)\.join\(" "\) : "";/,
     "the Graphics memory note says it restarts the engine for every model");
-  /* Overnight's "clips made with" list: FastH3 by its Advanced label, and out unless saved. */
-  assert.match(app, /esc\(e\.advanced\?\.label \|\| e\.label\) \+ "<\/option>"\)\.join\(""\);\n\s+\}\n[^\n]*\n\s+for \(const o of \$\("ovEngine"\)\.options\) o\.hidden = !!s\.config\.video\.engines\?\.\[o\.value\]\?\.advanced && o\.value !== s\.config\.video\.engine;/);
+  /* Overnight's "clips made with" list: FastH3 by its label, as on the Video screen. */
+  assert.match(app, /\$\("ovEngine"\)\.innerHTML = Object\.entries\(s\.config\.video\.engines\)\s+\.map\(\(\[k, e\]\) => '<option value="' \+ esc\(k\) \+ '">' \+ esc\(e\.advanced\?\.label \|\| e\.label\) \+ "<\/option>"\)\.join\(""\);/);
   /* The Fast chip's note is the server's, and never promises "as sharp" on its
    * own; while a character is kept it is the server's keepFast words instead. */
   assert.match(app, /\$\("vidQualityNote"\)\.textContent = keeping \? \(\(qs\.fast !== qs\.standard && eng\.keepFast\?\.note\) \|\| ""\) : \(eng\.fastNote \|\| ""\);/);
   assert.doesNotMatch(strip(app), /as sharp as the 8-step build/, "no second copy of the note in the page's code");
   /* Render: asks first where H3 is not offered, and names sparse only when it differs from the saved one. */
-  assert.match(app, /if \(typeof globalThis\.aiplayVidAsk === "function" && !\(await globalThis\.aiplayVidAsk\(appConfirm\)\)\) return;\n[\s\S]{0,900}?const \[width, height\] = vidWH\(\);\n\s+\$\("vidCreate"\)\.disabled = true;/,
+  assert.match(app, /if \(typeof globalThis\.aiplayVidAsk === "function" && !\(await globalThis\.aiplayVidAsk\(appConfirm\)\)\) return;\n[\s\S]{0,1600}?const \[width, height\] = vidWH\(\);\n\s+\$\("vidCreate"\)\.disabled = true;/,
     "asked before anything is sent");
   assert.match(app, /sparse: typeof globalThis\.aiplayVidSparse === "function" \? globalThis\.aiplayVidSparse\(\) : undefined,/);
   assert.doesNotMatch(app, /sparse: state\.video\?\.engine === "h3" && \$\("vidSparse"\)/, "the page's default is not sent as a request");
@@ -551,7 +555,9 @@ test("§6 web/vidfit.js on three machines: chips, start size, the not-offered li
 
   /* An 8 GB card, 32 GB of RAM, on H3. */
   eng.value = "h3"; vs.innerHTML = sizes("custom"); secs.value = "8";
-  assert.equal(vs.value, "1344x768", "a new list sits on its own first size");
+  /* The first size is 1280x720 off NVIDIA (config.js prefers720p), else 1344x768. */
+  const first = config.video.engines.h3.sizes[0];
+  assert.equal(vs.value, `${first.w}x${first.h}`, "a new list sits on its own first size");
   paint(st(status(8, 32)));
   assert.equal(vs.value, "960x544", "the size list starts on the card's size");
   assert.equal(secs.value, "5", "and the length on its measured one");
@@ -581,26 +587,15 @@ test("§6 web/vidfit.js on three machines: chips, start size, the not-offered li
    * and the reading, when it lands, still moves an untouched list. */
   eng.value = "h3"; vs.innerHTML = sizes("custom");
   paint(st(status(0, 32)));
-  assert.equal(vs.value, "1344x768", "card not read yet: no size chosen");
+  assert.equal(vs.value, `${first.w}x${first.h}`, "card not read yet: no size chosen");
   paint(st(status(8, 32)));
   assert.equal(vs.value, "960x544", "the card read: the untouched list moves to its size");
 
   /* A chip writes the real size list. */
   els.get("vidTierChips")._on.click[0]({ target: { closest: () => els.get("vidTierChips").querySelectorAll("button[data-tier]")[1] } });
   assert.equal(vs.value, "832x480", "the Preview chip set the size list");
-  /* More motion: FastH3 by the server's words, and the same engine choice. */
-  assert.equal(els.get("vidMoreMotionRow").hidden, false);
-  assert.equal(els.get("vidMoreMotionL").textContent, "More motion (FastH3, experimental)");
-  assert.match(els.get("vidMoreMotionRow").title, /About 1\.4x the wait of Fast/);
-  let switched = null;
-  eng.addEventListener("change", () => { switched = eng.value; });
-  const box = els.get("vidMoreMotion");
-  box.checked = true;
-  box._on.change[0]({ target: box });
-  assert.equal(switched, "fasth3", "ticking it picks FastH3 on the engine list, whose handler switches");
-  box.checked = false;
-  box._on.change[0]({ target: box });
-  assert.equal(switched, "h3", "and unticking goes back to H3");
+  /* The old More motion switch is retired: FastH3 is in the engine list by name. */
+  assert.equal(els.get("vidMoreMotionRow").hidden, true);
   /* Sparse: the saved value and the server's numbers; a render names nothing
    * while the switch says what is saved. */
   const sp = els.get("vidSparse");

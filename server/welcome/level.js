@@ -59,9 +59,8 @@ export const ADVANCED_ADDS = {
     { say: "steps and the quality chips", ids: ["vidSteps", "vidQualityRow"] },
     { say: "size and length", ids: ["vidSize", "vidSecs"] },
     { say: "the engine, its files and LoRAs", ids: ["vidEngine", "vidModel", "vidLoras"] },
-    /* FastH3's Advanced label is config's (h3tier.js H3_MORE_MOTION), not retyped. */
-    { say: `attention, sparse attention and ${config.video.engines.fasth3?.advanced?.label || "FastH3"}`,
-      ids: ["vidAttn", "vidSparse", "vidMoreMotion"] },
+    /* FastH3 is in the engine list since 2026-09-25, not a switch of its own. */
+    { say: "attention and sparse attention", ids: ["vidAttn", "vidSparse"] },
     { say: "what a size needs on this card's graphics memory", ids: ["vidFitNote"] },
     /* Not the song under the clip or Keep my character: Simple shows both
      * since 2026-09-24 (the REWIND A/B, DIRECTING.md §2). */

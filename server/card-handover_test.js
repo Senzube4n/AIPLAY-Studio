@@ -86,7 +86,8 @@ test("MiniMax Music 3 decodes in tiles when the engine can, whole only when it c
   assert.deepEqual(tiled.inputs.vae, ["3", 0]);
   assert.equal(buildGraph({ ...args, tiledVae: false })["8"].class_type, "VAEDecodeAudio", "an engine without the node keeps the old decode");
   const jobs = src("./jobs.js");
-  assert.match(jobs, /tiledVae: await this\.#hasTiledAudioDecode\(\),/);
+  /* Not asked of a RunPod Pod (RunPod GPU mode): the plain decode, which every ComfyUI has. */
+  assert.match(jobs, /tiledVae: this\.remote \? false : await this\.#hasTiledAudioDecode\(\),/);
   assert.match(jobs, /engine\.objectInfo\("VAEDecodeAudioTiled"\)/, "asked of the engine, not assumed");
   assert.match(jobs, /config\.music\?\.tiledVae === false/, "and it can be switched off");
 });

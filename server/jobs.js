@@ -257,7 +257,8 @@ export class JobRunner extends EventEmitter {
      * otherwise a machine whose ComfyUI is down could never render a song
      * with the engine that does not use it. */
     const next = this.queue[0];
-    if (!config.api?.enabled && !this.comfy.ready && !JobRunner.isStandaloneEngine(next?.engine)
+    /* RunPod GPU mode (this.remote): the Pod is the engine, and no local one starts. */
+    if (!config.api?.enabled && !this.remote && !this.comfy.ready && !JobRunner.isStandaloneEngine(next?.engine)
         && JobRunner.isKnownEngine(next?.engine)) {
       clearTimeout(this.#waitTimer);
       this.#waitTimer = setTimeout(() => this.#pump(), 4000);
@@ -315,13 +316,14 @@ export class JobRunner extends EventEmitter {
     if (config.api?.enabled && (!job.engine || job.engine === "minimax-music3")) return this.#runApi(job);
 
     try {
-      await this.connect();
+      /* RunPod GPU mode (setRemote): no local engine to connect to or unload. */
+      if (!this.remote) await this.connect();
       if (job.cancelRequested) return;
       /* A DIFFERENT MODEL UNLOADS THE PREVIOUS ONE FIRST. ComfyUI would load
        * the new one beside the old, and on a 16 GB card MiniMax (~14 GiB warm)
        * next to YuE2 is how a render ends up streaming everything from RAM. */
       const modelKey = JobRunner.modelKey(job);
-      if (modelKey && ((this.loaded && this.loaded.key !== modelKey) || this.artResident)) {
+      if (!this.remote && modelKey && ((this.loaded && this.loaded.key !== modelKey) || this.artResident)) {
         console.log(`  [music] switching model: unloading ${this.artResident ? "the image/video model" : this.loaded.key} before ${modelKey}`);
         await this.unloadModels().catch(() => {});
         if (job.cancelRequested) return;
@@ -355,7 +357,7 @@ export class JobRunner extends EventEmitter {
         planSampling: job.planSampling,
         prefix: "aiplay",
       }) : buildGraph({
-        tiledVae: await this.#hasTiledAudioDecode(),
+        tiledVae: this.remote ? false : await this.#hasTiledAudioDecode(),
         caption: job.caption,
         lyrics: job.lyrics,
         seed: job.seed,
@@ -378,6 +380,8 @@ export class JobRunner extends EventEmitter {
         preview: job.preview,
         prefix: job.preview ? "preview" : "aiplay",
       });
+      /* RUNPOD GPU MODE: the same graph, rendered on the Pod (#runRemote). */
+      if (this.remote) return await this.#runRemote(job, graph);
       /* THROUGH THE DOOR, not straight at the engine.
        *
        * `submit` (rather than `run`) because this class watches its own
@@ -932,6 +936,61 @@ export class JobRunner extends EventEmitter {
     }
   }
 
+  /** Where the music queue renders in the launcher's RunPod GPU mode: index.js
+   *  hands a function that sends a graph to the Pod and resolves with the
+   *  downloaded file, already in the library folder. Null: the local engine. */
+  setRemote(fn) { this.remote = typeof fn === "function" ? fn : null; }
+
+  /**
+   * One song on the Pod. The job looks like a local one throughout (queued,
+   * running, done), and ends in the same "done" shape #finish writes, so the
+   * library, the tags and the ledger file it exactly as they file a local song.
+   * No cover picture or clip afterwards: those need a local engine this mode
+   * does not start.
+   */
+  async #runRemote(job, graph) {
+    job.stage = "remote";
+    job.note = "Rendering on your RunPod GPU.";
+    job.stages = { ...(job.stages || {}), cover: false, video: false };
+    this.emit("update", this.snapshot());
+    try {
+      const r = await this.remote({
+        graph, label: job.title, actor: job.actor,
+        isCancelled: () => !!job.cancelRequested,
+        onState: (state) => {
+          const note = `RunPod: ${state}`;
+          if (job.note !== note) { job.note = note; this.emit("update", this.snapshot()); }
+        },
+      });
+      if (this.current !== job) return;
+      /* The Pod can finish while Stop is being requested. Its output was
+       * already downloaded and adopted, so report the completed render. */
+      job.state = "done";
+      job.overall = 1;
+      job.finishedAt = Date.now();
+      job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
+      job.file = r.file;
+      job.runId = r.runId || job.runId || null;
+      job.note = job.cancelRequested ? "The Pod completed before Stop took effect; the output was kept." : null;
+      job.remote = true;
+      this.history.unshift(job);
+      this.current = null;
+      this.emit("update", this.snapshot());
+    } catch (err) {
+      if (this.current !== job) return;
+      /* A failed or uncertain paid render is not a confirmed cancellation.
+       * Keep its real state and message so the user can check the Pod. */
+      if (err.remoteState === "cancelled") { this.#markCancelled(job); return; }
+      job.state = "failed";
+      job.error = String(err.message || err);
+      job.finishedAt = Date.now();
+      this.history.unshift(job);
+      this.current = null;
+      this.emit("update", this.snapshot());
+    }
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
+  }
+
   async #finish(job) {
     if (job.cancelRequested || this.current !== job) return;
     job.state = "done";
@@ -1152,6 +1211,14 @@ export class JobRunner extends EventEmitter {
       job.state = "cancelling";
       this.emit("update", this.snapshot());
       if (job.proc && this.yue?.killTree) await this.yue.killTree(job.proc).catch(() => {});
+      return { found: true, id, state: "cancelling", pending: true };
+    }
+    /* The RunPod song has a remote job ID, not a local ComfyUI prompt ID.
+     * Its watcher requests a scoped Stop and keeps this queue slot occupied
+     * until the Pod actually reports a terminal state. */
+    if (this.remote && job.stage === "remote") {
+      job.state = "cancelling";
+      this.emit("update", this.snapshot());
       return { found: true, id, state: "cancelling", pending: true };
     }
     if (job.submitting && !job.promptId) {

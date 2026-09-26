@@ -302,8 +302,12 @@ test("9: a matched file, LTX, and the full model at 20 steps say nothing", () =>
 test("9: a speed-up file that is not on the PC at all is named as missing, with the Models screen row that fetches it", () => {
   const r = L.speedUpCheck({ engine: "h3", steps: 4, refs: false }, { cfg: FOUR_ONLY, onDisk: () => false });
   assert.equal(r.problem, "missing");
-  assert.match(r.why, /not on this PC.*Download it from the Models screen \(“Video clips — MiniMax H3/);
-  const unoffered = L.speedUpCheck({ engine: "h3", steps: 8, refs: false }, { cfg: EIGHT, onDisk: () => false });
+  /* Each speed-up is its own optional row now (models.js, addonFor "video"). */
+  assert.match(r.why, /not on this PC.*Download it from the Models screen \(“Video clips — 4-step speed-up for H3/);
+  const eight = L.speedUpCheck({ engine: "h3", steps: 8, refs: false }, { cfg: EIGHT, onDisk: () => false });
+  assert.match(eight.why, /Download it from the Models screen \(“Video clips — 8-step speed-up for H3/);
+  /* The ref2v 8-step file is still one the Models screen does not offer. */
+  const unoffered = L.speedUpCheck({ engine: "h3", steps: 8, refs: true }, { cfg: EIGHT, onDisk: () => false });
   assert.match(unoffered.why, /The Models screen does not offer it, so leave this order unaccepted/);
 });
 

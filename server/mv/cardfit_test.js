@@ -98,8 +98,8 @@ const lyricLinesOf = (name) => TIMED[name].lines.map(([startSec, endSec], index)
 console.log("\n  -- 1. one size list, read from the card tiers --");
 {
   const ids = sizes.MV_SIZES.map((s) => s.id);
-  ok("the list is the three card tiers and the two older sizes",
-    JSON.stringify(ids) === JSON.stringify(["recommended", "small", "preview", "budget", "high"]), ids.join(","));
+  ok("the list is the three card tiers, 720p and the two older sizes",
+    JSON.stringify(ids) === JSON.stringify(["recommended", "hd720", "small", "preview", "budget", "high"]), ids.join(","));
   for (const [id, t] of [["recommended", "full"], ["small", "small"], ["preview", "preview"]]) {
     const s = sizes.sizeById(id);
     ok(`${id} IS h3tier's "${t}" row (${tier(t).width}x${tier(t).height}, "${tier(t).label}"), not a copy of it`,
@@ -183,6 +183,12 @@ console.log("\n  -- 3. a new video starts at its card's size, and the cut follow
   const picks = [null, 4096, 6144, 8188, 12282, 16376].map((mb) => card(mb).cardPick);
   ok("no reading, 4 GB, 6, 8, 12, 16 GB pick nothing, nothing, preview, small, full, full",
     JSON.stringify(picks) === JSON.stringify([null, null, "preview", "small", "recommended", "recommended"]), JSON.stringify(picks));
+  /* 720p first off NVIDIA (2026-09-25): a full-size AMD or Intel card starts at
+   * hd720; a smaller one keeps its measured tier. */
+  const off = (vendor, mb) => sizes.sizeChoices({ gpu: { totalMb: mb, vendor }, ram: { totalMb: 32768 } }).cardPick;
+  ok("AMD and Intel at full size start at 720p; an 8 GB AMD card keeps small",
+    off("amd", 16376) === "hd720" && off("intel", 16376) === "hd720" && off("amd", 8188) === "small"
+    && sizes.sizeById("hd720").width === 1280 && sizes.sizeById("hd720").height === 720);
   const eight = card(8188);
   ok("on 8 GB, full size says the card it needs, from the tier",
     eight.choices.find((c) => c.id === "recommended").fits === false
@@ -872,7 +878,7 @@ console.log("\n  -- 9. the cut leaves no sung second without a picture, at any l
   const mcp = mvTools(async () => ({}), (x) => x).find((t) => t.name === "mv_segment").description;
   ok("mv_segment stops promising lyric lines are never split, and names the ceiling as refused past",
     !/lyric lines are never split/.test(mcp) && /A line longer than the longest scene is the one thing split/.test(mcp)
-    && /from 1 to 15 s \(refused past that/.test(mcp) && /recommended 8 s, small 5 s, preview 5 s, budget 8 s, high 5 s; an LTX project 15 s/.test(mcp), mcp);
+    && /from 1 to 15 s \(refused past that/.test(mcp) && /recommended 8 s, hd720 8 s, small 5 s, preview 5 s, budget 8 s, high 5 s; an LTX project 15 s/.test(mcp), mcp);
 }
 
 /* ── done ────────────────────────────────────────────────────────────────── */

@@ -16,10 +16,18 @@ import { fileURLToPath } from "node:url";
 
 export const STUDIO_NODES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "comfy_nodes");
 
-/** Copy every studio node whose bytes differ. Returns { copied, kept, dir }. */
+/**
+ * Third-party nodes Studio ships, pinned, with their licence (server/comfy_nodes/<dir>/):
+ *   comfyui-minimax-h3-blockcache-T8  T8mars, Apache-2.0, commit 36336dc (v1.0.4,
+ *     2026-09-08): MiniMaxH3BlockCacheT8, H3's opt-in block cache (h3tier.js
+ *     H3_BLOCK_CACHE, video_settings block_cache). Pure Python, no packages.
+ */
+export const VENDORED_NODES = Object.freeze(["comfyui-minimax-h3-blockcache-T8"]);
+
+/** Copy Studio-owned nodes; never alter an existing third-party node folder. */
 export function deployStudioNodes(customNodesDir, sourceDir = STUDIO_NODES_DIR) {
-  const copied = [], kept = [];
-  if (!existsSync(sourceDir)) return { copied, kept, dir: customNodesDir };
+  const copied = [], kept = [], warnings = [];
+  if (!existsSync(sourceDir)) return { copied, kept, warnings, dir: customNodesDir };
   mkdirSync(customNodesDir, { recursive: true });
   for (const name of readdirSync(sourceDir)) {
     if (!/^aiplay_[a-z0-9_]+\.py$/.test(name)) continue;
@@ -29,5 +37,31 @@ export function deployStudioNodes(customNodesDir, sourceDir = STUDIO_NODES_DIR) 
     writeFileSync(dst, src);
     copied.push(name);
   }
-  return { copied, kept, dir: customNodesDir };
+  /* Bundled third-party nodes use the upstream folder name to avoid a second
+   * registration. An existing folder may belong to ComfyUI Manager or the user:
+   * leave it entirely untouched if a bundled file differs or is absent. */
+  for (const dir of VENDORED_NODES) {
+    const from = path.join(sourceDir, dir);
+    if (!existsSync(from)) continue;
+    const to = path.join(customNodesDir, dir);
+    const names = readdirSync(from).filter(name => /\.py$|^LICENSE$/.test(name));
+    if (existsSync(to)) {
+      const identical = names.every(name => {
+        const dst = path.join(to, name);
+        return existsSync(dst) && readFileSync(dst).equals(readFileSync(path.join(from, name)));
+      });
+      if (identical) kept.push(...names.map(name => dir + "/" + name));
+      else warnings.push("Preserved existing custom_nodes/" + dir + "; its files differ from Studio's bundled copy. To use the bundled H3 node, move that folder aside and restart Studio.");
+      continue;
+    }
+    mkdirSync(to, { recursive: true });
+    for (const name of names) {
+      const src = readFileSync(path.join(from, name));
+      const dst = path.join(to, name);
+      const rel = dir + "/" + name;
+      writeFileSync(dst, src);
+      copied.push(rel);
+    }
+  }
+  return { copied, kept, warnings, dir: customNodesDir };
 }

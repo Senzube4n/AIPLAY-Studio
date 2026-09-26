@@ -341,8 +341,19 @@ async function finalize(rig, cur, { announce }) {
   }
 
   if (JSON.stringify(next) !== JSON.stringify(cur)) {
+    /* ONLY WHAT THIS RUN CHANGED, merged into the file as it is NOW. The
+     * launcher runs this check while its window is open, and a preference saved
+     * meanwhile (the favourite star, closing stops Studio, a folder) was put back
+     * to the copy read at the start when `next` was written whole. */
+    const latest = await saved();
+    const out = { ...latest };
+    for (const k of new Set([...Object.keys(cur), ...Object.keys(next)])) {
+      if (JSON.stringify(cur[k]) === JSON.stringify(next[k])) continue;
+      if (next[k] === undefined) delete out[k];
+      else out[k] = next[k];
+    }
     await mkdir(path.dirname(SETTINGS), { recursive: true });
-    await writeFile(SETTINGS, JSON.stringify(next, null, 2));
+    await writeFile(SETTINGS, JSON.stringify(out, null, 2));
     if (announce) console.log(`\n  Saved to ${SETTINGS}`);
   }
   report = {

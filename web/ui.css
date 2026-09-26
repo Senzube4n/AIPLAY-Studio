@@ -364,6 +364,9 @@ p.hint.open, div.hint.open { cursor: pointer; }
 .draftrow[hidden], .draftrow > [hidden] { display: none; }
 .draftrow .draftchip { margin-right: auto; }
 .draftrow .draftchip.off { opacity: .55; cursor: default; }
+/* H3's quality chips (Video): a speed-up that is not on disk stays in place,
+ * dimmed like the chip above, and a press offers its download. */
+#vidQualityRow .edtool.off { opacity: .55; }
 .draftrow .linkbtn { margin: 8px 2px 0; font-size: 12px; }
 .draftrow .hint { flex: 1 0 100%; margin: 2px 2px 0 24px; }
 .assist-on #imgDraftNums { display: none !important; }

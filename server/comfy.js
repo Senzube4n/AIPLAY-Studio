@@ -110,6 +110,15 @@ export class ComfySupervisor extends EventEmitter {
   /** Change the graphics-memory tier. Flags are read at process start, so this
    *  restarts the engine — which discards the AR cache, hence the warning in the
    *  UI rather than doing it silently. */
+  /** Stop and start the engine with the same flags: a fresh process. art.js
+   *  asks for it before an H3 clip on a used engine (config.js
+   *  video.freeBeforeClip, where the measurement is). */
+  async restart() {
+    await this.stop();
+    await this.start();
+    return this.assertBackend();
+  }
+
   async setTier(tier) {
     const t = config.vramTiers[tier];
     if (!t) throw new Error(`unknown tier: ${tier}`);
@@ -177,6 +186,7 @@ export class ComfySupervisor extends EventEmitter {
     try {
       const d = deployStudioNodes(path.join(config.comfyDir, "custom_nodes"));
       if (d.copied.length) console.log(`[comfy] studio nodes deployed: ${d.copied.join(", ")}`);
+      for (const warning of d.warnings) console.warn(`[comfy] ${warning}`);
     } catch (err) {
       console.error(`[comfy] could not deploy the studio nodes: ${err.message}`);
     }

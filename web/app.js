@@ -49,6 +49,8 @@ const picDrops = {};
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
 import { paintFit, initFit } from "./modelfit.js";
 import { paintLocal, initLocal } from "./modellocal.js";
+// The Models screen's search, under "For this machine" (#video h3 and the like).
+import { paintSearch, searchModels, queryFor, modelName } from "./modelsearch.js";
 // The ⓘ in every screen's header (fork-only). One control, mounted once per
 // view by mountAllInfo() below, rendering /api/welcome's `screen_info` — the
 // screen's own paragraph and honest limit from the catalogue, joined against
@@ -698,6 +700,55 @@ function paintMusicModelSelect(sel) {
   if (document.activeElement !== sel && [...sel.options].some((o) => o.value === v)) sel.value = v;
   return true;
 }
+/* PRE-CONFIGURE MODELS: the top of the Models screen, one pick per job. Each
+ * row is the same choice as its own screen and is saved through that screen's
+ * own door (the Music picker's, /api/artconfig, /api/video, /api/chat/models,
+ * /api/whisper), so nothing here can disagree with the screen it names.
+ *
+ * A pick that is not installed is not saved: the select goes back to what is
+ * really chosen, and the search under "For this machine" is set to find the
+ * model (web/modelsearch.js searchModels), so the row with its download is on
+ * screen. A current pick whose files went missing shows "Find" beside it.
+ *
+ * `var`, not `const`: musicEnginePaint() calls the painter from early in boot. */
+var PRESET_IMAGE_CAP = { "qwen-image-2.1": "qwen-image-2.1", flux2: "coverArt", zimage: "imageZImage", "zimage-base": "imageZImageBase",
+  anima: "imageAnima", krea2: "imageKrea2", ideogram4: "imageIdeogram" };
+var PRESET_VIDEO_CAP = { ltx: "videoLtx", h3: "video", fasth3: "videoFastH3" };
+/* What the rows read that /api/models does not carry: the covers pick, the
+ * writing models and Whisper. Read when the screen paints, at most every 20 s,
+ * because the list repaints on every download tick. */
+var presetInfo = { at: 0, art: null, chat: null, whisper: null };
+function presetCap(id) { return (state.models?.capabilities || []).find((c) => c.id === id) || null; }
+/* A row this launch does not list (Music only) is not judged missing. */
+function presetReady(id) { const c = presetCap(id); return !c || !!c.ready; }
+
+async function loadPresetInfo(force = false) {
+  if (!force && Date.now() - presetInfo.at < 20000) return;
+  presetInfo.at = Date.now();
+  const get = (u) => fetch(u).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const [art, chat, whisper] = await Promise.all([get("/api/artconfig"), get("/api/chat/models"), get("/api/whisper")]);
+  /* /api/whisper answers { whisper: { model, models, ready, ... } }. */
+  Object.assign(presetInfo, { art, chat, whisper: whisper?.whisper || null });
+  paintModelMusicPanel();
+}
+
+/** Point at a model that is not installed: search for it and say so. */
+function presetPoint(capId) {
+  const c = presetCap(capId);
+  const note = $("modelMusicNote");
+  if (!c) return;
+  const n = searchModels(queryFor(c), capId);
+  if (note) note.textContent = n ? `${modelName(c)} isn't installed. It's shown below.` : `${modelName(c)} isn't installed.`;
+}
+
+function presetOptions(sel, rows, current) {
+  const sig = JSON.stringify([rows, current]);
+  if (sel.dataset.sig === sig || document.activeElement === sel) return;
+  sel.innerHTML = rows.map((r) => `<option value="${esc(r.value)}"${r.off ? " disabled" : ""}>${esc(r.label + (r.missing ? " (not installed)" : ""))}</option>`).join("");
+  sel.dataset.sig = sig;
+  sel.value = current;
+}
+
 function paintModelMusicPanel() {
   const list = $("modelList");
   if (!list || !state.musicModels?.length) return;
@@ -706,17 +757,147 @@ function paintModelMusicPanel() {
     box = document.createElement("div");
     box.id = "modelMusic";
     box.className = "mmusic";
-    box.innerHTML = `<label class="flabel" for="modelMusicPick">Music model</label>
-      <select id="modelMusicPick" class="sel2"></select>
-      <span class="hint" id="modelMusicNote"></span>`;
+    const row = (id, label, find) => `<label for="${id}">${label}</label>
+      <span class="pv"><select id="${id}" class="sel2"></select><button type="button" class="edtool" data-mpfind="${find}" hidden>Find</button></span>`;
+    box.innerHTML = `<div class="mpchead"><h3>Pre-Configure Models</h3><span class="mfcount" id="modelPresetCount"></span></div>
+      <div class="params mpc">${row("modelMusicPick", "music", "music")}${row("mpImage", "pictures", "image")}${row("mpCover", "covers", "cover")}
+        ${row("mpVideo", "video", "video")}${row("mpChat", "writing", "chat")}${row("mpLyrics", "lyrics (Whisper)", "lyrics")}</div>
+      <span class="hint" id="modelMusicNote" role="status"></span>`;
     list.parentNode.insertBefore(box, $("modelFolder") || $("modelFit") || list);
-    $("modelMusicPick").onchange = () => chooseMusicModel($("modelMusicPick").value);
+    $("modelMusicPick").onchange = () => {
+      const c = (state.musicModels || []).find((x) => x.value === $("modelMusicPick").value);
+      /* Not installed and nothing to set up here: point at it instead of the
+       * model window, the same as every other row. */
+      if (c && !c.available && !c.api && c.engine !== "yue2-gguf") {
+        $("modelMusicPick").dataset.sig = "";
+        paintMusicModelSelect($("modelMusicPick"));
+        presetPoint(MUSIC_CAP[c.engine]);
+        return;
+      }
+      $("modelMusicNote").textContent = "";
+      chooseMusicModel($("modelMusicPick").value);
+    };
+    $("mpImage").onchange = () => presetPick("image", $("mpImage").value);
+    $("mpCover").onchange = () => presetPick("cover", $("mpCover").value);
+    $("mpVideo").onchange = () => presetPick("video", $("mpVideo").value);
+    $("mpChat").onchange = () => presetPick("chat", $("mpChat").value);
+    $("mpLyrics").onchange = () => presetPick("lyrics", $("mpLyrics").value);
+    box.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-mpfind]");
+      if (b?.dataset.cap) presetPoint(b.dataset.cap);
+    });
   }
+  const rows = presetRows();
   paintMusicModelSelect($("modelMusicPick"));
-  const ready = state.musicModels.filter((c) => c.available).length;
-  $("modelMusicNote").textContent = ready
-    ? `${ready} of ${state.musicModels.length} ready on this machine · the same choice as the Music tab`
-    : "No music model is ready yet — install one below.";
+  let shown = 0, ready = 0;
+  for (const key of ["music", "image", "cover", "video", "chat", "lyrics"]) {
+    const r = rows[key];
+    const sel = key === "music" ? $("modelMusicPick") : $({ image: "mpImage", cover: "mpCover", video: "mpVideo", chat: "mpChat", lyrics: "mpLyrics" }[key]);
+    const off = !r || (state.musicOnly && key !== "music");
+    sel.parentElement.hidden = off;
+    sel.parentElement.previousElementSibling.hidden = off;
+    if (off) continue;
+    if (key !== "music") presetOptions(sel, r.options, r.current);
+    const find = sel.nextElementSibling;
+    find.hidden = r.ok;
+    find.dataset.cap = r.cap || "";
+    shown++;
+    if (r.ok) ready++;
+  }
+  $("modelPresetCount").textContent = `${ready} of ${shown} ready`;
+}
+
+/** Each row's options, its current pick, whether that pick can run, and the
+ *  Models row that installs it. Null for a row with nothing to show yet. */
+function presetRows() {
+  const out = {};
+  const m = (state.musicModels || []).find((c) => c.value === musicModelValue());
+  out.music = { ok: !!m?.available, cap: MUSIC_CAP[m?.engine || state.musicEngine] || null };
+  /* Pictures and covers: the Images screen's own list, "Your own model file"
+   * left to that screen (it is picked per picture). */
+  const imgOpts = [...($("imgEngine")?.options || [])].filter((o) => o.value !== "checkpoint");
+  const imgRow = (current, cover) => {
+    const options = imgOpts.map((o) => ({ value: o.value, label: (cover && o.dataset.cover) || o.textContent,
+      missing: !presetReady(PRESET_IMAGE_CAP[o.value]) }));
+    if (current === "checkpoint") options.push({ value: "checkpoint", label: "Your own model file", off: true });
+    const cap = PRESET_IMAGE_CAP[current] || null;
+    return { options, current, cap, ok: current === "checkpoint" || presetReady(cap) };
+  };
+  out.image = imgOpts.length ? imgRow($("imgEngine").value, false) : null;
+  const artEngine = presetInfo.art?.engine;
+  out.cover = imgOpts.length && artEngine ? imgRow(artEngine, true) : null;
+  const engines = state.video?.engines || {};
+  const vcur = state.video?.engine;
+  out.video = Object.keys(engines).length && vcur ? {
+    options: Object.entries(engines).map(([k, e]) => ({ value: k, label: e.advanced?.label || e.label || k, missing: !presetReady(PRESET_VIDEO_CAP[k]) })),
+    current: vcur, cap: PRESET_VIDEO_CAP[vcur] || null, ok: presetReady(PRESET_VIDEO_CAP[vcur]),
+  } : null;
+  /* Writing: what can write, local and connected APIs (server/chat/models.js). */
+  const ch = presetInfo.chat;
+  if (ch) {
+    const models = Array.isArray(ch.models) ? ch.models : [];
+    out.chat = models.length
+      ? { options: models.map((x) => ({ value: x.file, label: x.label })), current: ch.current || models[0].file, cap: "chatQwen3", ok: true }
+      : { options: [{ value: "", label: ch.offline ? "waiting for the engine" : "none installed", off: true }], current: "", cap: "chatQwen3", ok: !!ch.offline };
+  }
+  /* Lyrics and speech: the Whisper model size, and whether Whisper can run. */
+  const w = presetInfo.whisper;
+  if (w && Array.isArray(w.models) && w.models.length) {
+    out.lyrics = { options: w.models.map((x) => (typeof x === "string" ? { value: x, label: x } : { value: x.value || x.id, label: x.label || x.value || x.id })),
+      current: w.model, cap: "lyrics", ok: w.ready !== false };
+  }
+  return out;
+}
+
+/** A pick from a row: saved where the row's own screen saves it. */
+async function presetPick(key, value) {
+  const rows = presetRows();
+  const r = rows[key];
+  const note = $("modelMusicNote");
+  const back = () => { const sel = $({ image: "mpImage", cover: "mpCover", video: "mpVideo", chat: "mpChat", lyrics: "mpLyrics" }[key]); sel.dataset.sig = ""; paintModelMusicPanel(); };
+  const post = async (url, body) => {
+    try {
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      return await res.json().catch(() => ({}));
+    } catch (e) { return { error: String(e?.message || e) }; }
+  };
+  note.textContent = "";
+  if (key === "image" || key === "cover") {
+    const cap = PRESET_IMAGE_CAP[value];
+    if (!presetReady(cap)) { back(); presetPoint(cap); return; }
+    const res = await post("/api/artconfig", key === "image" ? { imageEngine: value } : { engine: value, choose: true });
+    if (res.error) { note.textContent = res.error; back(); return; }
+    if (key === "image" && $("imgEngine")) { $("imgEngine").value = value; $("imgEngine").onchange?.(); }
+    if (key === "cover") {
+      presetInfo.art = { ...(presetInfo.art || {}), engine: res.engine || value };
+      if ($("artEngine")) { $("artEngine").value = res.engine || value; artEngineShape(); }
+    }
+  } else if (key === "video") {
+    /* Tried even when the row reads missing: the server also accepts an
+     * engine whose files are on disk under other names (workflow.js
+     * videoReady), and names the row to point at when it refuses. */
+    const res = await post("/api/video", { action: "engine", value });
+    if (res.error) {
+      back();
+      const id = typeof res.needsModel === "string" ? res.needsModel : res.needsModel?.id || res.capability || PRESET_VIDEO_CAP[value];
+      if (presetCap(id)) presetPoint(id); else note.textContent = res.error;
+      return;
+    }
+    state.video = { ...(state.video || {}), engine: value };
+    state.vidSizeFor = null;
+    vidPaint();
+  } else if (key === "chat") {
+    const res = await post("/api/chat/models", { model: value });
+    if (res.error) { note.textContent = res.error; back(); return; }
+    presetInfo.chat = { ...(presetInfo.chat || {}), current: value };
+    document.dispatchEvent(new Event("aiplay:llm-changed"));
+  } else if (key === "lyrics") {
+    const res = await post("/api/whisper", { action: "model", value });
+    if (res.error) { note.textContent = res.error; back(); return; }
+    presetInfo.whisper = res.whisper || { ...(presetInfo.whisper || {}), model: value };
+    if (r && !r.ok) presetPoint("lyrics");
+  }
+  paintModelMusicPanel();
 }
 async function chooseMusicModel(value) {
   const c = (state.musicModels || []).find((x) => x.value === value);
@@ -893,7 +1074,8 @@ function musicEnginePaint() {
      * here re-enabled Create for a MiniMax user whose engine was still
      * STARTING… — caught in review before it shipped. The painter may add a
      * reason to disable; it may not remove one it does not own. */
-    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady : !state.engineReady);
+    /* RunPod GPU mode (state.remoteOnly): the queue renders on the Pod. */
+    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady : !state.engineReady && !state.remoteOnly);
     create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
   }
 
@@ -3278,7 +3460,7 @@ async function generate(preview, mixSeed) {
   } finally {
     setTimeout(() => {
       const eng = (state.musicEngines || {})[state.musicEngine];
-      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng) : !state.engineReady;
+      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng) : !state.engineReady && !state.remoteOnly;
     }, 400);
   }
 }
@@ -7944,6 +8126,9 @@ async function loadModels() {
   paintFit(d);
   paintLocal(d);
   paintModelMusicPanel();
+  loadPresetInfo();
+  /* The search under "For this machine", put back on the fresh rows. */
+  paintSearch(d, { getOpen: modelGroupsOpen });
   /* A [Set up …] button on the rows a one-click setup serves (web/setup-feature.js). */
   if (typeof paintSetupButtons === "function") paintSetupButtons($("modelList"), { refresh: loadModels });
 
@@ -7996,6 +8181,8 @@ function groupModelCards(d, htmls) {
 $("modelList").addEventListener("toggle", (e) => {
   const g = e.target;
   if (!g?.matches?.("details.mgroup")) return;
+  /* Opened or closed by a search (web/modelsearch.js), not by the person. */
+  if ($("modelList").dataset.searching) return;
   const open = modelGroupsOpen();
   if (g.open) open.add(g.dataset.mgroup);
   else open.delete(g.dataset.mgroup);
@@ -8098,8 +8285,35 @@ function vidQualitySteps(eng, keeping = false) {
   return { fast, standard, best: Number(d.best) || 20 };
 }
 
+/* H3'S SPEED-UPS ARE OPTIONAL ADD-ONS (models.js, addonFor "video"): 3 steps
+ * is TaoMate, 4 steps the 4-step file, 6 to 12 the 8-step file, and 13 and up
+ * the bare model, which needs none. The server refuses a step count whose
+ * file is missing and offers its download (video-plain.js speedupNeeded);
+ * this is the same rule, so the page can offer it first. Null when nothing
+ * is missing, else { build, row }. */
+const VID_SPEEDUP_ROWS = { 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" };
+function vidSpeedupNeed(eng, steps, hasRefs) {
+  const tb = eng?.turboBuilds;
+  const n = Number(steps);
+  if (!tb || eng.fixedSteps || !Number.isFinite(n) || n > (eng.turboMaxSteps ?? 12)) return null;
+  const build = hasRefs ? (n <= (eng.turbo4MaxSteps ?? 5)
+    ? (tb.four ? null : 4) : (tb.eight ? null : 8))
+    : n <= (eng.turbo3MaxSteps ?? 3) ? (tb.three ? null : 3)
+    : n <= (eng.turbo4MaxSteps ?? 5) ? (tb.four ? null : 4)
+    : (tb.eight ? null : 8);
+  return build ? { build, row: VID_SPEEDUP_ROWS[build] } : null;
+}
+/** The words for a missing speed-up, and the model window on its row. */
+const vidSpeedupWords = (b) => b === 3 ? "TaoMate (182 MB)" : "the " + b + "-step speed-up (1.96 GB)";
+function vidOfferSpeedup(build) {
+  offerModel({ needsModel: VID_SPEEDUP_ROWS[build],
+    error: (build === 3 ? "TaoMate isn't" : "The " + build + "-step speed-up isn't") + " installed. It is optional." });
+}
+
 function vidPaint() {
   const on = !!state.video?.enabled;
+  /* RunPod GPU mode (web/runpod-integrated.js): the clip renders on the Pod. */
+  const remote = $("vidRenderWhere")?.value === "runpod";
   const engines = state.video?.engines || {};
   const cur = state.video?.engine || "ltx";
   const eng = engines[cur] || {};
@@ -8129,18 +8343,14 @@ function vidPaint() {
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
     state.vidEnginesPainted = true;
     vidModelShape();
-    /* An Advanced-only engine (FastH3, config `advanced`) goes by its Advanced
-     * label, "More motion (FastH3, experimental)". */
+    /* FastH3 (config `advanced`) goes by its label there, "FastH3 (experimental)":
+     * a model of its own, in the list since 2026-09-25 (it was an Advanced
+     * "More motion" switch). */
     const opts = Object.entries(engines)
       .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.advanced?.label || e.label) + "</option>").join("");
     $("vidEngine").innerHTML = opts;
     $("qVideoEngine").innerHTML = opts;
   }
-  /* ...and it is not in the main list (the H3 lab, 2026-09-24): hidden there
-   * unless it is the saved choice, which keeps rendering on it and shows as
-   * selected. Its switch is Advanced's "More motion" (web/vidfit.js), which
-   * picks this same option. Settings' list keeps every engine. */
-  for (const o of $("vidEngine").options) o.hidden = !!engines[o.value]?.advanced && o.value !== cur;
   $("vidEngine").value = cur;
   $("qVideoEngine").value = cur;
 
@@ -8167,7 +8377,8 @@ function vidPaint() {
     const h = Math.min(Math.max(Number($("vidH").value) || 704, 256), 1920);
     const q = (n) => (cur === "ltx" ? Math.max(32, Math.floor(n / 2 / 32) * 32) * 2 : n);
     const rw = q(w), rh = q(h);
-    const nat = eng.width && eng.height ? (w * h) / (eng.width * eng.height) : null;
+    const nw = eng.nativeWidth || eng.width, nh = eng.nativeHeight || eng.height;
+    const nat = nw && nh ? (w * h) / (nw * nh) : null;
     $("vidSizeNote").textContent =
       (rw !== w || rh !== h ? `renders ${rw}×${rh} · ` : "")
       + (nat ? `${Math.round(nat * 100)}% of native` : "")
@@ -8179,8 +8390,10 @@ function vidPaint() {
   /* Never greyed out for being switched off: a disabled button explains
    * nothing, and the switch lived in Settings where nobody on this screen
    * would look. Pressing it asks, in a drawer, and switches it on from there. */
-  $("vidCreate").disabled = false;
-  $("vidIntro").textContent = on
+  $("vidCreate").disabled = $("vidCreate").dataset.runpodBusy === "1";
+  $("vidIntro").textContent = remote
+    ? "Text-to-video on your RunPod with LTX 2.5."
+    : on
     ? "Short clips with " + (eng.label || "the video engine") + "."
     : "Video is switched off. Press Render and Studio asks to switch it on.";
   $("vidEngineNote").textContent = cur === "ltx"
@@ -8190,7 +8403,7 @@ function vidPaint() {
     : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references: pictures that keep a person the same from clip to clip.";
   // LTX has no single step count — it is baked into two fixed sigma schedules.
   // FastH3 has one, and it is fixed (eng.fixedSteps): no slider for either.
-  const noSteps = cur === "ltx" || !!eng.fixedSteps;
+  const noSteps = remote || cur === "ltx" || !!eng.fixedSteps;
   const stepRow = $("vidSteps").closest(".pv");
   if (stepRow) {
     stepRow.hidden = noSteps;
@@ -8210,9 +8423,23 @@ function vidPaint() {
     qRow.hidden = noSteps;
     const qs = vidQualitySteps(eng, keeping);
     const stNow = +$("vidSteps").value;
+    /* Optional speed-ups: Fast is TaoMate's 3 steps and Standard the 8-step
+     * file (the 4-step one where only it is on disk). A chip whose file is
+     * missing stays in place, dimmed, and a press offers the download
+     * (data-get) instead of choosing it. Best needs nothing. While a character
+     * is kept the reference path's own numbers stand (vidQualitySteps). */
+    const tb = keeping ? null : eng.turboBuilds;
+    if (tb) {
+      qs.fast = 3;
+      qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+    }
+    const getFor = { fast: tb && !tb.three ? 3 : null, standard: tb && !tb.eight && !tb.four ? 8 : null, best: null };
     for (const b of qRow.querySelectorAll("[data-vq]")) {
       const want = qs[b.dataset.vq];
-      b.setAttribute("aria-pressed", stNow === want ? "true" : "false");
+      const get = getFor[b.dataset.vq];
+      b.classList.toggle("off", !!get);
+      if (get) b.dataset.get = String(get); else delete b.dataset.get;
+      b.setAttribute("aria-pressed", !get && stNow === want ? "true" : "false");
       const small = b.querySelector("small");
       if (small) small.textContent = want + " steps";
     }
@@ -8220,16 +8447,17 @@ function vidPaint() {
     /* On the 3-step build the chip's title is the server's note, which says
      * what the saved sparse attention does to it (fastNote, video-plain.js).
      * While a character is kept it is the server's keepFast note instead: the
-     * TaoMate claim is about the text path, which a kept character never takes. */
-    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
+     * TaoMate claim is about the text path, which a kept character never takes.
+     * A speed-up that is not on disk says so, and a press offers it. */
+    const getTitle = (g) => "Needs " + vidSpeedupWords(g) + ", an optional add-on. Click to get it.";
+    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(3) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
     qRow.querySelector('[data-vq="standard"]').title = keeping
       ? (qs.standard === 8 ? "The 8-step reference build, at its own count" : "The " + qs.standard + "-step reference build, at its own count")
-      : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step files are not on this disk");
-    /* Where Fast would be the same number as Standard (no TaoMate build, and
-     * no 4-step build under an 8-step Standard) it is two chips doing one
-     * thing, lit together. Fast shows only when it is really faster; the "!"
-     * says how to get it. */
-    $("vidQFast").hidden = qs.fast === qs.standard;
+      : getFor.standard ? getTitle(8) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
+    /* Where Fast would be the same number as Standard it is two chips doing
+     * one thing, lit together. With the speed-ups known (turboBuilds) Fast is
+     * always TaoMate's 3, dimmed when it is missing, so it always shows. */
+    $("vidQFast").hidden = !tb && qs.fast === qs.standard;
     /* The server's words (video-plain.js fastNote): they follow the disk and
      * the saved sparse attention, which makes Fast slightly softer, so this
      * line can no longer promise "as sharp as the 8-step build" while it runs.
@@ -8347,8 +8575,12 @@ function vidPaint() {
     : alignedFrames(+$("vidSecs").value);
   const mpxf = (w * h * frames) / 1e6;
   const stepScale = cur === "ltx" ? 1 : (eng.fixedSteps || +$("vidSteps").value) / 8;
-  const secs = Math.round((eng.costFixedSeconds ?? 15)
-    + (eng.costRate ?? 0.84) * Math.pow(mpxf, eng.costExponent ?? 1.2) * stepScale);
+  /* The curve is the lab's NVIDIA card; once this PC has rendered clips,
+   * its own measured factor scales it (server/video-speed.js). */
+  const curveSecs = (eng.costFixedSeconds ?? 15)
+    + (eng.costRate ?? 0.84) * Math.pow(mpxf, eng.costExponent ?? 1.2) * stepScale;
+  const measured = Number(eng.speedFactor) > 0;
+  const secs = Math.round(curveSecs * (measured ? Number(eng.speedFactor) : 1));
 
   /* ⚠ Below the trained range the model falls apart, and that is not obvious
    * from a slider. 124 frames is the documented floor; under it you get the
@@ -8404,14 +8636,20 @@ function vidPaint() {
     : " · full-model path";
   const mismatch = !fixedPath && midFile !== null && midFile < 8 && st > midFile && st > t4 && st <= t8;
   const betweenBuilds = !fixedPath && midFile === 8 && st > t4 && st < 8;
+  /* A step count whose optional speed-up is missing: the server refuses the
+   * render and offers the download (video-plain.js). Said here first, while
+   * the slider sits there, and Make clip offers it before sending. */
+  const needSpeedup = fixedPath ? null : vidSpeedupNeed(eng, st, hasRefs);
   /* While Keep my character carries the server's receipt, its words name the
    * pictures and the steps, so the estimate drops the reference build's name
    * rather than saying it twice; "references ride along" stays, because the
    * receipt does not say what they cost in time. */
   const keepSaid = keeping && !!$("vidCharacter")?.dataset?.receipt;
 
-  $("vidEst").textContent = on
-    ? "about " + fmt(secs) + " once the engine is idle · " + frames + " frames at " + fps + " fps"
+  $("vidEst").textContent = remote
+    ? "The Pod must stay running until the clip is on this PC."
+    : on
+    ? "about " + fmt(secs) + (measured ? " on this PC" : "") + " once the engine is idle · " + frames + " frames at " + fps + " fps"
       + (short ? " · ⚠ under the model's trained range (124+)" : "")
       + (small && !short ? " · ⚠ below native size, expect softer detail" : "")
       // Only 6-7 is genuinely orphaned: at or below t4 the 4-step build loads,
@@ -8419,7 +8657,11 @@ function vidPaint() {
       + (mismatch ? " · ⚠ no " + (hasRefs ? "reference " : "") + "build for " + st + " steps on this disk: use "
           + fourFile + " (the " + fourFile + "-step build) or 13+ (the bare model)" : "")
       + (betweenBuilds ? " · ⚠ between the " + fourFile + "-step and 8-step builds: use " + fourFile + " or 8" : "")
-      + (keepSaid ? "" : stepPath)
+      + (needSpeedup ? " · ⚠ " + st + " steps needs " + vidSpeedupWords(needSpeedup.build)
+          + ": download it, or pick another step count" : "")
+      // No path to name: without its speed-up, this step count does not render;
+      // with a kept character the receipt already names the build.
+      + (needSpeedup || keepSaid ? "" : stepPath)
       // Reference tokens are attended on every step, so they cost time. One
       // measured point: one picture at 864x480x124 added ~10% — more and
       // larger references cost more.
@@ -8440,6 +8682,8 @@ if ($("vidAttn")) {
 }
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
+    /* A dimmed chip is an optional speed-up that is not on disk: offer it. */
+    if (b.dataset.get) { vidOfferSpeedup(Number(b.dataset.get)); return; }
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
     // The same numbers the chips are lit and labelled by: the server's.
     const steps = vidQualitySteps(eng, !!state.vidKeeping)[b.dataset.vq];
@@ -9319,6 +9563,15 @@ $("vidCreate").onclick = async () => {
   /* On a card H3 is not offered on, the server's sentence first, as a
    * question (web/vidfit.js): never a silent render, never a silent stop. */
   if (typeof globalThis.aiplayVidAsk === "function" && !(await globalThis.aiplayVidAsk(appConfirm))) return;
+  /* A step count whose optional speed-up is missing: offer its download now
+   * rather than send a render the server would refuse. */
+  {
+    const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine] || {};
+    /* A kept character rides the reference path like pictures do. */
+    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+    const need = eng.fixedSteps ? null : vidSpeedupNeed(eng, +$("vidSteps").value, hasRefs);
+    if (need) { vidOfferSpeedup(need.build); return; }
+  }
   /* ⚠ THROUGH vidWH(), never by re-parsing the select. This line used to be
    * `$("vidSize").value.split("x").map(Number)`, which on the custom option
    * splits the literal string "custom" and yields [NaN] — so a custom size
@@ -9424,6 +9677,14 @@ async function loadClips() {
  * it gets the same tools: search, filter, sort. Everything is client-side
  * because the whole list is already in memory and a round trip per keystroke
  * would be slower and worse. */
+/* RunPod results are adopted by the same server routes as local renders, but
+ * their completion is announced by web/runpod-integrated.js rather than the
+ * local engine socket. Re-read only the shelf that changed. */
+document.addEventListener("aiplay:remote-output", (event) => {
+  if (event.detail?.kind === "img") loadImages();
+  if (event.detail?.kind === "vid") loadClips();
+});
+
 function paintClips() {
   /* Tear the hover preview down BEFORE the repaint. innerHTML is replaced below,
    * which detaches whatever tile the pointer is resting on — and no mouseout
@@ -17019,7 +17280,8 @@ function imgEffectiveEngine() {
 let imgQwenStatus = null, imgQwenChecking = false, imgQwenRequest = 0, imgMakePending = false;
 let imgQwenRequestedKey = "", imgQwenStatusKey = "";
 function imgQueueGate() {
-  $("imgGo").disabled = imgMakePending || (imgEffectiveEngine() === "qwen-image-2.1"
+  const remote = $("imgRenderWhere")?.value === "runpod";
+  $("imgGo").disabled = $("imgGo").dataset.runpodBusy === "1" || imgMakePending || (!remote && imgEffectiveEngine() === "qwen-image-2.1"
     && (imgQwenChecking || imgQwenStatus?.ready !== true || imgQwenStatusKey !== imgQwenQuery().toString()));
 }
 function imgQwenShape() {
@@ -20822,7 +21084,8 @@ function applyStatus(s) {
    * is worth a line in the rail is the states where something is NOT ready,
    * and the work box already says what is happening. */
   // Comfy API mode has no local engine to wait for: nothing to say.
-  const line = state.cloudOnly ? ""
+  // Nor does RunPod GPU mode: its renders go to the Pod.
+  const line = state.cloudOnly || s.config?.remoteOnly ? ""
     : state.musicOnly
     ? (s.config?.musicEngine === "yue2-comfy"
         ? (s.engine.ready ? "" : "MUSIC ONLY · STARTING COMFYUI…")
@@ -20830,7 +21093,9 @@ function applyStatus(s) {
     : s.engine.ready ? "" : "STARTING…";
   $("engineLine").textContent = line;
   $("engineLineWrap").hidden = !line;
-  $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready;
+  /* RunPod GPU mode: no local engine to wait for; the queue renders on the Pod. */
+  state.remoteOnly = !!s.config?.remoteOnly;
+  $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready && !state.remoteOnly;
 
   const b = s.engine.backend;
   const warn = $("engineWarn");
@@ -21003,13 +21268,10 @@ function applyStatus(s) {
       row.hidden = !vready;
       if (!state.ovEnginePainted && s.config.video.engines) {
         state.ovEnginePainted = true;
-        /* An Advanced-only engine (FastH3) by its Advanced label, as on the
-         * Video screen... */
+        /* FastH3 by its label, "FastH3 (experimental)", as on the Video screen. */
         $("ovEngine").innerHTML = Object.entries(s.config.video.engines)
           .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.advanced?.label || e.label) + "</option>").join("");
       }
-      /* ...and out of this list too unless it is the saved choice. */
-      for (const o of $("ovEngine").options) o.hidden = !!s.config.video.engines?.[o.value]?.advanced && o.value !== s.config.video.engine;
       $("ovEngine").value = s.config.video.engine;
     }
   }

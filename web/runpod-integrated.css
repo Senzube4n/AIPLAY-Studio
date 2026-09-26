@@ -1,0 +1,30 @@
+/* RunPod inside the Images and Video forms, and its connection sheet
+ * (web/runpod-integrated.js). The launcher's "RunPod GPU" mode only.
+ * Contributed by nemesisone-dev; tokens only, as docs/UI_GUIDE.md asks. */
+.runpod-inline { border: 1px solid var(--edge); border-radius: 10px; padding: 12px; background: var(--raise); flex: none; display: block; }
+.runpod-inline[hidden] { display: none; }
+.runpod-options { margin-top: 0; }
+.runpod-summary, .runpod-connect-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.runpod-summary .edtool { margin-left: auto; }
+.runpod-sheet { max-width: 620px; }
+.runpod-sheet form { display: grid; gap: 9px; }
+.runpod-connect-actions { margin-top: 10px; }
+.runpod-connect-actions a { text-decoration: none; }
+.runpod-fields { display: grid; grid-template-columns: minmax(105px, auto) minmax(0, 1fr); align-items: center; gap: 8px; margin: 10px 0; }
+.runpod-fields .flabel { margin: 0; }
+.runpod-fields .sel2 { min-width: 0; }
+/* The local engine's own controls step aside while the form renders on the Pod. */
+.runpod-target #imgQwenStatus, .runpod-target #imgQwenOptions, .runpod-target #imgQwenOptionsNote { display: none !important; }
+.runpod-target #vidModelRow, .runpod-target #vidLoraRow, .runpod-target #vidQualityRow { display: none !important; }
+.runpod-account { margin-top: 16px; border-top: 1px solid var(--edge); padding-top: 12px; }
+.runpod-account > summary { cursor: pointer; font-weight: 700; }
+.runpod-balance { margin: 10px 0; font-family: var(--mono); font-size: .78rem; }
+.runpod-pods { display: grid; gap: 8px; margin: 10px 0 16px; }
+.runpod-pod { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 9px; border: 1px solid var(--edge); border-radius: 8px; }
+.runpod-pod small { color: var(--ghost); }
+.runpod-pod-actions { display: flex; gap: 6px; grid-row: 1 / 3; grid-column: 2; }
+.runpod-review { margin-top: 10px; padding: 10px; border: 1px solid var(--primary); border-radius: 8px; display: grid; gap: 8px; }
+.runpod-review[hidden] { display: none; }
+.runpod-review .btn { justify-self: start; }
+.runpod-bootstrap { margin-top: 12px; }
+.runpod-bootstrap textarea { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: .72rem; resize: vertical; }

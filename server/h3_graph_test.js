@@ -24,6 +24,7 @@ import {
   videoGraphH3, videoGraphLtx, h3TurboLoraFor, h3SigmaShiftFor, h3SamplerFor, saveEncode,
 } from "./workflow.js";
 import { attentionOptions } from "./art.js";
+import { chosenAttention } from "./comfyargs.js";
 
 let pass = 0;
 const failures = [];
@@ -265,11 +266,12 @@ try {
     ok("the table has a row for the fl2v 4-step 768p build, at 6",
       savedH3.turboShiftByLora?.["minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"]?.video === 6);
     ok("refTurboLora's first candidate is the ref2v 8-step v1.0 768p build",
-      /refTurboLora: pick\("loras",\n\s+"minimax_h3_ref2v_turbo_8step_v1\.0_768p_comfyui_bf16\.safetensors"/.test(cfg));
+      /refTurboLora: loraSlot\("refTurboLora",\n\s+"minimax_h3_ref2v_turbo_8step_v1\.0_768p_comfyui_bf16\.safetensors"/.test(cfg));
     ok("refTurboLora4 still leads with the 4-step v0.1 build",
-      /refTurboLora4: pick\("loras",\n\s+"minimax_h3_ref2v_turbo_4step_v0\.1_comfyui_bf16\.safetensors"/.test(cfg));
+      /refTurboLora4: loraSlot\("refTurboLora4",\n\s+"minimax_h3_ref2v_turbo_4step_v0\.1_comfyui_bf16\.safetensors"/.test(cfg));
     ok("turboLora3 leads with the TaoMate conversion, then Kijai's rank-19 average, then the 4-step build",
-      /turboLora3: pick\("loras",\n\s+"taomate_h3_3step_comfy\.safetensors",\n(?:\s*\/\/[^\n]*\n)*\s+"minimax_h3_taomate_3step_lora_avg_rank_19_bf16\.safetensors",\n\s+"minimax_h3_fl2v_turbo_4step_v1\.0_768p_comfyui_bf16\.safetensors"\)/.test(cfg));
+      /export const TAOMATE_FILES = \[\n\s+"taomate_h3_3step_comfy\.safetensors",\n\s+"minimax_h3_taomate_3step_lora_avg_rank_19_bf16\.safetensors",\n\];/.test(cfg)
+      && /turboLora3: loraSlot\("turboLora3", \.\.\.TAOMATE_FILES,\n\s+"minimax_h3_fl2v_turbo_4step_v1\.0_768p_comfyui_bf16\.safetensors"\)/.test(cfg));
     ok("...and the table starts the rank-19 average at the base 12 too",
       savedH3.turboShiftByLora?.["minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors"]?.video === 12);
     ok("the table starts the 3-step build at the base 12 until it is measured",
@@ -360,7 +362,19 @@ try {
     ok("h3Attention answers \"ck\" or null, never \"pytorch\" (so H3's graphs are unchanged)",
       /return \(await this\.#kitchenOffered\(\)\) \? "ck" : null;/.test(fn) && !/"pytorch"/.test(fn.slice(0, fn.indexOf("async #kitchenOffered()"))));
     ok("h3Attention lets an EXPLICIT launcher choice other than CK win",
-      /const chosen = config\.comfy\?\.options\?\.attention;\s*if \(chosen && chosen !== "--use-ck-attention"\) return null;/.test(fn));
+      /const chosen = chosenAttention\(config\.comfy\?\.options\?\.attention,\s*\{ fix: config\.comfy\?\.amdFix, vendor: vendorOf\(config\.gpu, config\.torchBackend\) \}\);\s*if \(chosen && chosen !== "--use-ck-attention"\) return null;/.test(fn));
+    /* The AMD/Intel fix's PyTorch value is what the launcher's panel SHOWS on
+     * those cards, so any Save stores it. Read as a choice, it took Comfy
+     * Kitchen away from H3 on every AMD install whose panel was ever saved. */
+    const PT = "--use-pytorch-cross-attention";
+    eq("AMD, fix auto: the fix's PyTorch is not a choice", chosenAttention(PT, { fix: "auto", vendor: "amd" }), null);
+    eq("Intel, fix auto: the same", chosenAttention(PT, { fix: "auto", vendor: "intel" }), null);
+    eq("fix forced on (any card): the same", chosenAttention(PT, { fix: "on", vendor: "nvidia" }), null);
+    eq("NVIDIA, fix auto: PyTorch is the person's choice", chosenAttention(PT, { fix: "auto", vendor: "nvidia" }), PT);
+    eq("AMD with the fix OFF: PyTorch is the person's choice", chosenAttention(PT, { fix: "off", vendor: "amd" }), PT);
+    eq("AMD, fix auto: Sage is still the person's choice", chosenAttention("--use-sage-attention", { fix: "auto", vendor: "amd" }), "--use-sage-attention");
+    eq("AMD, fix auto: CK stays CK", chosenAttention("--use-ck-attention", { fix: "auto", vendor: "amd" }), "--use-ck-attention");
+    eq("nothing saved is no choice", chosenAttention(undefined, { fix: "auto", vendor: "amd" }), null);
     ok("...honours config's own switch", /config\.video\.engines\.h3\?\.attention \?\? "ck"\) !== "ck"\) return null/.test(fn));
     ok("...asks the running engine whether it offers the option", /engineDoor\.objectInfo\("ModelAttentionBackend"\)/.test(probe) && /attentionOptions\(info\)\.includes\("comfy kitchen attention"\)/.test(probe));
     ok("...and a failed probe means not offered, never a thrown render", /catch \{ this\.#ckOffered = false; \}/.test(probe));

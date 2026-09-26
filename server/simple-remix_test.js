@@ -454,7 +454,8 @@ test("Video quality: Fast only when it differs from Standard, chips in a row; no
    * disk), so "the same" is a comparison of those numbers, not of the TaoMate
    * flag: without TaoMate Fast is the 4-step build, which equals Standard on a
    * disk without the 8-step files. server/mcp-steer_test.js pins the numbers. */
-  assert.match(app, /\$\("vidQFast"\)\.hidden = qs\.fast === qs\.standard;/, "where Fast would equal Standard: one chip, not two");
+  assert.match(app, /\$\("vidQFast"\)\.hidden = !tb && qs\.fast === qs\.standard;/,
+    "where Fast would equal Standard: one chip, not two (with the builds known, Fast is TaoMate's 3, dimmed when missing)");
   assert.match(css, /#vidQualityRow > \.pv\.chips \{ flex-wrap: nowrap;/);
   assert.match(css, /\.create\.simplemode \.ctawrap > \.cta, \.assist-on \.ctawrap > \.cta \{ display: none !important; \}/,
     "the assistant makes it on your word: Create, Make image and Render clip hide in Simple");

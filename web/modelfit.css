@@ -165,19 +165,30 @@ summary.fithead:hover h3 { color: var(--primary); }
 
 /* ── the music model picker and the collapsible sections ───────────────────
  * web/app.js. */
+/* Pre-Configure Models: one pick per job (web/app.js paintModelMusicPanel). */
 .mmusic {
   border: 1px solid var(--edge-s);
   background: var(--raise);
   border-radius: 10px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
 }
-.mmusic .flabel { margin: 0; font-family: var(--disp); font-size: 15px; letter-spacing: .03em; color: var(--ink); text-transform: none; }
-.mmusic select { min-width: 280px; font-size: 12px; padding: 6px 8px; }
-.mmusic .hint { margin-left: auto; }
+.mpchead { display: flex; align-items: baseline; gap: 10px; }
+.mpchead h3 { margin: 0; font-family: var(--disp); font-size: 15px; letter-spacing: .03em; color: var(--ink); }
+.mmusic .params.mpc { margin-top: 0; grid-template-columns: minmax(0, 8rem) minmax(0, 1fr); gap: 6px 12px; }
+.mmusic .params.mpc > * { min-width: 0; }
+.mmusic .params.mpc .pv { justify-content: flex-start; }
+.mmusic .params.mpc select { flex: 1 1 auto; min-width: 0; max-width: 420px; font-size: 12px; padding: 6px 8px; }
+.mmusic .params.mpc label[hidden], .mmusic .params.mpc .pv[hidden], .mmusic .edtool[hidden] { display: none; }
+.mmusic .hint:empty { display: none; }
+
+/* The search under "For this machine" (web/modelsearch.js). */
+.msearch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.msearch .line { flex: 1 1 280px; width: auto; min-width: 0; font-size: 12px; padding: 7px 10px; }
+.msearch .hint:empty { display: none; }
+#modelList .modelcard[hidden], #modelList .mgroup[hidden] { display: none; }
 
 .mgroup { border: 1px solid var(--edge); border-radius: 10px; background: var(--panel); }
 .mgroup > summary {

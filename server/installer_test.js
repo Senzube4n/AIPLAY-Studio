@@ -98,6 +98,11 @@ test("INSTALL.md puts Setup.exe first, and its disk sizes come from the catalogu
   assert.ok(install.includes(`| **Free disk space.** ${diskSentence(t)} |`),
     "INSTALL.md's disk row is the catalogue's numbers; run: node scripts/disk_totals.mjs --write");
   assert.doesNotMatch(install, /About 62 GB/);
+  /* The row reads the same on every machine: an AMD machine's `files` swap in
+   * larger int8 builds, so the totals count the published `defaultFiles`. */
+  const amdRow = { id: "video", files: [{ name: "te_int8.safetensors", bytes: 30e9 }] };
+  Object.defineProperty(amdRow, "defaultFiles", { value: [{ name: "te_fp4.safetensors", bytes: 20e9 }], enumerable: false });
+  assert.equal(Math.round(diskTotals([amdRow]).musicVideos), 20, "the totals count defaultFiles, not this machine's files");
   assert.match(install, /install \*\*Studio\*\* \(Setup\.exe brings\s+Node\.js 20\+ when this PC has none\)/, "Node.js comes with Setup.exe");
   /* The timed-lyrics size INSTALL.md quotes is the recipe's, and says it is an estimate. */
   const { lyricsRecipe } = await import("./setup/venv.js");

@@ -31,8 +31,10 @@ test("FastH3 is an engine after H3 and LTX, built on H3's parts", () => {
   /* The H3 lab (2026-09-24) timed FastH3 with Kitchen INT8; PyTorch was a
    * default nobody had measured. */
   assert.equal(f.attention, "kitchen", "Kitchen attention unless the render asks for PyTorch");
-  /* ...and it is an Advanced-only engine, with the lab's label and note. */
-  assert.equal(f.advanced?.label, "More motion (FastH3, experimental)");
+  /* ...named as the model it is, with the lab's caveat (an Advanced "More
+   * motion" switch until 2026-09-25). */
+  assert.equal(f.advanced?.label, "FastH3 (experimental)");
+  assert.doesNotMatch(f.advanced?.note || "", /motion/i, "no motion claim: its card makes none");
   assert.match(f.advanced?.note || "", /About 1\.4x the wait of Fast\. Can change the subject's colour or add a white blob; check the take\./);
 });
 
@@ -212,7 +214,7 @@ test("the route, the job and the Video screen carry the attention choice; refere
   /* References on FastH3 or LTX: refused by the plan (server/video-plain.js),
    * in the one sentence the page and make_clip show. */
   assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}/);
-  assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason \}\);/);
+  assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   const art = read("./art.js");
   assert.match(art, /attention: await this\.videoAttention\(job\),/);
   const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);

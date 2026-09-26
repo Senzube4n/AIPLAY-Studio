@@ -5526,8 +5526,10 @@ button, input, select, textarea { font-family: inherit; }
 /* Simple: the Advanced form steps aside; the Make button and its progress stay,
  * and so do Video's Keep my character and Song under the clip: a person's
  * identity and lip-sync are what a newcomer cannot recover afterwards (the
- * REWIND A/B, 2026-09-24, DIRECTING.md §2). */
-.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(#vidTierRow):not(#vidKeepField):not(#vidSndWrap):not(.ctawrap):not(.infopanel) { display: none !important; }
+ * REWIND A/B, 2026-09-24, DIRECTING.md §2). The RunPod box stays too: in
+ * the launcher's RunPod GPU mode it holds the Pod's model and the connection,
+ * and anywhere else it is `hidden` from the markup. */
+.assist-on > :not(.stagehead):not(.ovhead):not(.asmode):not(.assist):not(#imgGo):not(#imgProg):not(#imgNote):not(#vidFromField):not(#imgRefWrap):not(#vidTierRow):not(#vidKeepField):not(#vidSndWrap):not(#imgRunPodBlock):not(#vidRunPodBlock):not(.ctawrap):not(.infopanel) { display: none !important; }
 .assist {
   flex: none; display: flex; flex-direction: column; gap: 4px; padding: 3px; margin-bottom: 10px;
   background: var(--raise); border: 1px solid var(--hair); border-radius: 18px;

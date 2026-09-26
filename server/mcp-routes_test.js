@@ -101,7 +101,7 @@ const ROUTE_FILES = [
   "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/pngtuber.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
   "server/music/artifacts.js", "server/music/listening-lab.js",
-  "server/setup/routes.js", "server/cloud-switch.js",
+  "server/setup/routes.js", "server/cloud-switch.js", "server/whisper.js",
 ];
 
 /* ──────────────────────────────────────────────────────────────────────────

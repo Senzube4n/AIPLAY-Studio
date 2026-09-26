@@ -59,7 +59,7 @@ import { EventEmitter, once } from "node:events";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { config } from "./config.js";
+import { config, isLightH3 } from "./config.js";
 import { folderGroup } from "./localmodels.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
  * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
@@ -101,8 +101,15 @@ const M = (p) => path.join(config.modelsDir, p);
 export const cardIsAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "amd";
 const noFp4Card = () => cardIsAmd() || config.gpu?.vendor === "intel" || config.torchBackend === "xpu";
 export const fp4Blocked = (f) => noFp4Card() && /fp4/i.test(path.basename(String(f?.dest || f?.url || "")));
-/** A file list with each entry's `amd` build swapped in on an AMD card. */
-const forCard = (files) => (cardIsAmd() ? files.map((f) => f.amd || f) : files);
+/** A light machine for H3 (config.js h3Light: an AMD or Intel card, under
+ *  16 GB of VRAM or under 32 GB of RAM) takes a file's `light` build. */
+export const lightMachine = () => isLightH3(config);
+/** A file list with each entry's `light` build swapped in on a light machine
+ *  and its `amd` build on an AMD card. */
+const forCard = (files) => {
+  const light = lightMachine(), amd = cardIsAmd();
+  return light || amd ? files.map((f) => (light && f.light) || (amd && f.amd) || f) : files;
+};
 /**
  * The one shelf that is NOT models/.
  *
@@ -560,20 +567,16 @@ const YUE2_LICENCE_FILE_RIGHTS = Object.freeze({
  * name the same files and a machine holding one engine fetches only the other
  * engine's DiT. */
 const H3_SHARED_FILES = [
-  { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/main/qwen3vl_32b_minimax_h3-int4_convrot.safetensors`,
+  /* THE int4 TEXT ENCODER ON EVERY CARD. AMD used to fetch the official
+   * int8 (27.1 GB) on the belief that ROCm ran int4 on a slow fallback.
+   * Measured 2026-09-25 on an RX 9060 XT: int4 was a little faster (299 s
+   * against 316 s a clip), staged 13.5 GB instead of 25.9 and looked as good.
+   * An int8 already on disk still counts (the alt). Revision and sha256 as
+   * HuggingFace lists them. */
+  { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/6387f8cd370fd8b4deaa9aa7e9e1be4d7298e7df/qwen3vl_32b_minimax_h3-int4_convrot.safetensors`,
     dest: M("text_encoders/qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), bytes: 14173709116,
-    alt: ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors"],
-    /* ROCm has only a slow fallback for this int4 build; the official
-     * int8 is the format AMD cards already run for Music 3 and Qwen.
-     * An int4 ALREADY on disk still counts (the alt): config.js's AMD pick()
-     * accepts it as its second choice and the graph loads it, and before the
-     * amd entry existed Studio's own downloader fetched int4 on every card. Without
-     * the alt, an AMD machine holding H3 was told H3 needs a 27.1 GB download
-     * and /api/video refused to switch to an engine that renders. A fresh AMD
-     * install still downloads the int8. */
-    amd: { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors`,
-      dest: M("text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"), bytes: 27141342152,
-      alt: ["qwen3vl_32b_minimax_h3-int4_convrot.safetensors"] } },
+    sha256: "a97a557136057a8bcf6f2459b0875aeee3e8274408bd6616b669b41caefdb48d",
+    alt: ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors"] },
   /* ⚠ STILL THE fp16 VIDEO VAE, although config.js loads the int8 one first
    * when it is present (a912a39: about 12% a clip). Checked 2026-09-24: the
    * rig's int8 file is 3,171,670,912 bytes, dated 2026-08-17, a month before
@@ -587,7 +590,15 @@ const H3_SHARED_FILES = [
    * row's other builds meanwhile. */
   { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors`,
     dest: M("vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496,
-    alt: ["minimax_h3_video_vae_int8_convrot.safetensors"] },
+    alt: ["minimax_h3_video_vae_int8_convrot.safetensors"],
+    /* A light machine (config.js h3Light) fetches the published int8:
+     * rendered 2026-09-25 on an RX 9060 XT against the fp16, same seed:
+     * frames PSNR 35.8 dB / SSIM 0.975, decode ~15 s faster, 2.7 GB staged
+     * instead of 5. */
+    light: { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/vae/minimax_h3_video_vae_int8_convrot.safetensors`,
+      dest: M("vae/minimax_h3_video_vae_int8_convrot.safetensors"), bytes: 2811065184,
+      sha256: "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
+      alt: ["minimax_h3_video_vae_fp16.safetensors"] } },
   { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors`,
     dest: M("vae/minimax_h3_audio_vae_fp32.safetensors"), bytes: 605254808,
     alt: ["minimax_h3_audio_vae_bf16.safetensors"] },
@@ -757,6 +768,7 @@ export const CATALOG = [
       note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
     },
     required: false,
+    addonFor: "video",
     /* Turns on the Video screen's Fast setting for H3 (fit.js recommendFor).
      * Not `newInstalls`: the rank-19 row below is what a new install gets.
      * `fastNote` is the plain sentence the recommendation shows. */
@@ -854,6 +866,7 @@ export const CATALOG = [
       note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
     },
     required: false,
+    addonFor: "video",
     /* Turns on the Video screen's Fast setting for H3, and it is the one NEW
      * installs are recommended (fit.js recommendFor): same speed and picture
      * as the 2.48 GB conversion, 2.30 GB less to fetch (lab, 2026-09-24).
@@ -869,6 +882,82 @@ export const CATALOG = [
     ],
     note: "182 MB, one file in models/loras. The one new installs are offered for the Fast setting. Loaded by the 3-step path when the full conversion is absent (config turboLora3 order); with both on disk the full one loads, which gives the same picture.",
     requires: h3Requires("The same H3 render, three steps of it."),
+  },
+  {
+    /* H3'S 4-STEP SPEED-UP, an optional add-on (addonFor "video"): the
+     * Video screen's 4-step renders need it, and nothing else does.
+     * Read off HuggingFace 2026-09-24 (Comfy-Org/MiniMax-H3, revision pinned,
+     * LFS sha256 and size as listed there). */
+    id: "videoH3Turbo4",
+    label: "Video clips — 4-step speed-up for H3 (1.96 GB)",
+    why: "Four-step H3 renders: the Video screen's Standard setting on a disk without the 8-step file. Full-rank on purpose: the 440 MB resized-rank one has two independent reports of camera-movement and prompt-following damage.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/Comfy-Org/MiniMax-H3",
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property); a derivative of H3",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with this LoRA is an H3 output and carries the same limit.",
+      ],
+      note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    addonFor: "video",
+    stepsFor: 4,
+    files: [
+      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors`,
+        dest: M("loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
+        bytes: 1_956_192_992,
+        sha256: "c396a9a06f58399e9df9754b18299818d84a2ddd371724ba48fe4a41221437dc" },
+    ],
+    note: "1.96 GB, one file in models/loras. Optional: without it, 4 and 5 steps are refused with this download offered, and H3 still renders at 3 (TaoMate), 8 (the 8-step file) or 20 steps.",
+    requires: h3Requires("The same H3 render, 4 steps of it."),
+  },
+  {
+    /* H3'S 8-STEP SPEED-UP, an optional add-on (addonFor "video"): the
+     * Video screen's 8-step renders need it, and nothing else does.
+     * Read off HuggingFace 2026-09-24 (Comfy-Org/MiniMax-H3, revision pinned,
+     * LFS sha256 and size as listed there). */
+    id: "videoH3Turbo8",
+    label: "Video clips — 8-step speed-up for H3 (1.96 GB)",
+    why: "Eight-step H3 renders, the Video screen's Standard setting when it is on disk: the build config.js prefers for 6 to 12 steps.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/Comfy-Org/MiniMax-H3",
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property); a derivative of H3",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with this LoRA is an H3 output and carries the same limit.",
+      ],
+      note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    addonFor: "video",
+    stepsFor: 8,
+    files: [
+      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`,
+        dest: M("loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"),
+        bytes: 1_956_193_000,
+        sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e" },
+    ],
+    note: "1.96 GB, one file in models/loras. Optional: without it, 6 to 12 steps are refused with this download offered, and H3 still renders at 3 (TaoMate), 4 (the 4-step file) or 20 steps.",
+    requires: h3Requires("The same H3 render, 8 steps of it."),
   },
   {
     /* CONDITIONING BRIDGES FOR H3 — two 5120→h→h→5120 MLPs that rewrite the
@@ -1594,14 +1683,24 @@ export const CATALOG = [
     files: [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
         dest: M("diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"), bytes: 20970379616,
-        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] },
+        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"],
+        /* A light machine (config.js h3Light) fetches the w4a8 build: 12.5 GB
+         * instead of 21. Rendered 2026-09-25 on an RX 9060 XT, same seed as
+         * the int8: sampling ~7% faster, as good to the eye. */
+        light: { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/6387f8cd370fd8b4deaa9aa7e9e1be4d7298e7df/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors`,
+          dest: M("diffusion_models/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"), bytes: 12540857840,
+          sha256: "8b624de0ab7554bb507c4486093d4c93e0bf2eb2a40c2382f26eb0af7cd97407",
+          alt: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int4_convrot.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] } },
       ...H3_SHARED_FILES,
-      // Full-rank turbo LoRA on purpose — the 440 MB resized-rank one has two
-      // independent reports of camera-movement and prompt-following damage.
-      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors`,
-        dest: M("loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"), bytes: 1956192992 },
+      /* NO SPEED-UP LORA HERE. H3 renders without one (the bare model, Best,
+       * 20 steps), so a missing LoRA must not make the engine "not
+       * downloaded": that refused H3 on a disk holding everything but the
+       * 4-step file. The 3-, 4- and 8-step speed-ups are their own optional
+       * rows (addonFor "video"), and a step count whose file is missing is
+       * refused with its download offered (video-plain.js videoPlan). */
     ],
-    note: "43 GB (56 GB on AMD, which gets the int8 text encoder) — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
+    note: "41 GB, or 30 GB on AMD, Intel and lower-end PCs, which get lighter builds measured as good and a little faster — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
+      + "The speed-ups (3, 4 and 8 steps) are optional add-ons below; without one, H3 renders at 20 steps. "
       + H3_AMD_NOTE,
     /* The card decides the size, not a floor (server/h3tier.js, from the H3
      * lab of 2026-09-24): this row used to say 16 GB minimum, which told a
@@ -1652,8 +1751,8 @@ export const CATALOG = [
         alt: ["fastvideo_fasth3_8step_v2_pruned_bf16.safetensors"] },
       ...H3_SHARED_FILES,
     ],
-    note: "22.1 GB on a machine that already has H3; 42 GB without it (55 GB on AMD, which gets the int8 text encoder). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
-      + "⚠ Experimental. Measured 2026-09-24 on a 16 GB card against H3's Fast setting (TaoMate 3-step): about 1.4x the wait at 1344x768, 8 s (236 s against 172 s); more camera motion, and good on 1 of 3 prompts, "
+    note: "22.1 GB on a machine that already has H3; 42 GB without it (40 GB on AMD, Intel and lower-end PCs, which get the lighter int8 video VAE). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
+      + "⚠ Experimental. Measured 2026-09-24 on a 16 GB card against H3's Fast setting (TaoMate 3-step): about 1.4x the wait at 1344x768, 8 s (236 s against 172 s); good on 1 of 3 prompts, "
       + "while the others showed a recurring white blob and a subject changing colour, so check each take. VSA made it about 1.45x faster than dense on the whole clip. "
       + H3_AMD_NOTE,
     /* The same tiers as H3: under an 8 GB cap its DiT phase was within 50 MiB
@@ -2121,7 +2220,11 @@ export const CATALOG = [
       { url: `${HF}/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors`,
         dest: M("text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"), bytes: 15372969374 },
       { url: `${HF}/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-conv-bf16.safetensors`,
-        dest: M("vae/ltx-2.5-video-vae-conv-bf16.safetensors"), bytes: 1452269922 },
+        dest: M("vae/ltx-2.5-video-vae-conv-bf16.safetensors"), bytes: 1452269922,
+        /* The DIFFUSION-decoder VAE (CausalDiffusionVAE, 1.47 GB) is what the
+         * ComfyUI LTX 2.5 template names. ComfyUI's VAELoader reads either,
+         * and config.js loads it when the conv one is absent. */
+        alt: ["ltx-2.5-video-vae-bf16.safetensors"] },
       { url: `${HF}/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors`,
         dest: M("vae/ltx-2.5-audio-vae-bf16.safetensors"), bytes: 364866540 },
       // Not optional. The whole speed advantage is sampling at half size and
@@ -2762,8 +2865,11 @@ export const CATALOG = [
   {
     id: "lyrics",
     home: "https://github.com/openai/whisper",   // faster-whisper fetches into its own cache
-    label: "Timed lyrics — Whisper large-v3",
-    why: "Produces word-level and line-level LRC files for visualisers.",
+    /* The id stays "lyrics" (tests, setup id and saved settings name it); the
+     * words say what it now is: Whisper for any transcription, and the timed
+     * lyrics that were once its only use (server/whisper.js). */
+    label: "Whisper: transcription and timed lyrics",
+    why: "Transcribes speech and songs, and times lyrics into LRC files.",
     licence: "MIT",
     outputRights: {
       class: "unrestricted",
@@ -2776,7 +2882,7 @@ export const CATALOG = [
     files: [],                 // fetched by faster-whisper into its own cache
     viaPackage: "faster_whisper",
     approxBytes: 3090000000,
-    note: "We already know the words, so this is alignment rather than transcription — the model supplies timing and the known lyrics supply the text. Measured 97.9% of words timed by direct match on a real track.",
+    note: "Transcribes any song, clip or file. With known lyrics it keeps your words and takes Whisper's timing. Measured 97.9% of words timed by direct match on a real track.",
     needsPackage: "faster_whisper",
     /* EVERY module server/lrc.py imports, by import name. `needsPackage` names
      * one, and probing only that one badged this row Ready in a fresh venv where
@@ -2794,9 +2900,12 @@ export const CATALOG = [
       note: "About 36 s for a 2.5-minute song at int8_float16. Line timing is reliable; word timing is approximate on sung vocals.",
     },
     variants: [
-      { label: "large-v3 (shipped)", bytes: 3090000000, note: "Best accuracy on sung vocals." },
-      { label: "medium", bytes: 1530000000, note: "Faster, more misheard words — reconciliation fixes the text, not the timing." },
+      { label: "large-v3 (default)", bytes: 3090000000, note: "Best accuracy on sung vocals." },
+      { label: "large-v3-turbo", bytes: 1620000000, note: "Much faster, close to large-v3 on speech." },
+      { label: "medium", bytes: 1530000000, note: "Faster, more misheard words. With known lyrics the text is fixed, not the timing." },
+      { label: "small", bytes: 484000000, note: "Fast; fine for clear speech." },
       { label: "base", bytes: 141000000, note: "Fast but unreliable on singing." },
+      { label: "tiny", bytes: 75000000, note: "Fastest; rough drafts of clear speech only." },
     ],
   },
   {
@@ -2887,12 +2996,12 @@ export const CATALOG = [
   },
 ];
 
-/* Rows with an `amd` build answer `files` for the card they run on: status,
- * sizes and the downloader all read the same list, so none of them can offer
- * one build and fetch the other. */
+/* Rows with an `amd` or `light` build answer `files` for the machine they
+ * run on: status, sizes and the downloader all read the same list, so none of
+ * them can offer one build and fetch the other. */
 for (const cap of CATALOG) {
   const all = cap.files;
-  if (!Array.isArray(all) || !all.some((f) => f.amd)) continue;
+  if (!Array.isArray(all) || !all.some((f) => f.amd || f.light)) continue;
   Object.defineProperty(cap, "files", { get: () => forCard(all), enumerable: true, configurable: true });
   // The published list, the same on every machine: the docs tables read this.
   Object.defineProperty(cap, "defaultFiles", { value: all, enumerable: false });

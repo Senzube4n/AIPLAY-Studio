@@ -239,7 +239,7 @@ export function speedUpCheck({ engine, steps, refs = false } = {}, { cfg = confi
     fileLine = here
       ? `The file made for ${n} steps ${pathWords}, ${here}, is on this PC but loads only after a restart: restart the Studio, then approve the plan.`
       : offered
-        ? `The file made for ${n} steps ${pathWords} is ${offered.name}, and the Models screen offers it (“${offered.row.label}”); a restart after the download loads it.`
+        ? `The file made for ${n} steps ${pathWords} is ${offered.name}, and the Models screen offers it (“${offered.row.label}”); it is used as soon as the download lands.`
         : `The file made for ${n} steps ${pathWords} is ${needs.join(" or ")}, and the Models screen does not offer it.`;
   }
   return { ...out, problem: "overrun",

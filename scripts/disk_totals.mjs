@@ -11,7 +11,7 @@
  *   node scripts/disk_totals.mjs           print the totals and the sentence
  *   node scripts/disk_totals.mjs --write   put the sentence into INSTALL.md
  *
- * Bytes are the catalogue's own (server/models.js, NVIDIA file lists), a file
+ * Bytes are the catalogue's own (server/models.js, the published file lists), a file
  * two rows share is counted once (server/fit.js bytesFor, the Models screen's
  * rule), and each total is rounded to the whole GB and said as "about".
  *
@@ -30,8 +30,11 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function diskTotals(catalog = CATALOG) {
   /* Rows a python package fetches for itself (timed lyrics' whisper model)
-   * carry `approxBytes` and no files; bytesFor counts them from totalBytes. */
-  const rows = catalog.map((c) => ({ ...c, totalBytes: c.approxBytes || 0 }));
+   * carry `approxBytes` and no files; bytesFor counts them from totalBytes.
+   * `defaultFiles` is the published list: on an AMD machine `files` swaps in
+   * the builds ROCm can run (larger int8 in place of fp4), and INSTALL.md must
+   * read the same on every machine, as the model tables do (models_table.mjs). */
+  const rows = catalog.map((c) => ({ ...c, files: c.defaultFiles || c.files, totalBytes: c.approxBytes || 0 }));
   const gb = (ids) => bytesFor(ids ? rows.filter((c) => ids.includes(c.id)) : rows).totalBytes / 1e9;
   return {
     music: gb(["musicYue2Comfy"]),        // YuE2 3B through ComfyUI: what a fresh Full Studio install is pointed at

@@ -247,7 +247,11 @@ export function createEngineClient(deps = {}) {
   }
 
   /** Identity, not a port: THIS child owns the engine. */
-  function attachChild(proc) { child = proc || null; return child; }
+  /* Renders this engine process has run, reset whenever the supervisor
+   * attaches a new one: art.js starts an H3 clip on a fresh process where a
+   * used one runs at half speed (config.js video.freeBeforeClip). */
+  let ranSinceStart = 0;
+  function attachChild(proc) { child = proc || null; ranSinceStart = 0; return child; }
   function detachChild() { child = null; }
   const isOurs = () => !!child && child.exitCode === null && child.signalCode === null;
 
@@ -1029,6 +1033,7 @@ export function createEngineClient(deps = {}) {
 
     inFlight.delete(runId);
     cancelling.delete(promptId);
+    if (status === "completed" && !data.cached) ranSinceStart++;
     const generate = await prov.append("library", { actor, type: "generate", asset: `engine/${runId}`, data })
       .catch((e) => { console.error(`  [engine] ${runId} completion not recorded: ${e.message}`); return null; });
 
@@ -1173,6 +1178,7 @@ export function createEngineClient(deps = {}) {
     dispatch, run, submit, socket, cancelRun, interrupt, clearQueue, freeMemory,
     history, queue, objectInfo, systemStats, identity, probePort, refreshFacts,
     status, activity, runRecord, reveal,
+    ranSinceStart: () => ranSinceStart,
     // events
     on: (...a) => bus.on(...a), off: (...a) => bus.off(...a), once: (...a) => bus.once(...a),
     // for the supervisor's spawn line only; never for building a URL

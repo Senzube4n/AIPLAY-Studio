@@ -62,6 +62,7 @@ import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
 import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
 import { waitForArtJob, emptyResultNote } from "./art-wait.js";
+import { WHISPER_MODELS } from "./config.js";
 
 /* The welcome window's catalogue (FORK): what the studio is and can make, in
  * the same words the app shows a new person. */
@@ -2971,8 +2972,8 @@ export const TOOLS = [
       + "pinned to a frame — the model recasts the subject wherever the words put it, which "
       + "is how you keep one character across many shots. ⚠ H3's licence grants NO rights "
       + "in " + H3_EXCLUDED + " — where that applies, stay on LTX.\n"
-      + "  • FastH3 — H3 distilled to 8 fixed steps (quality and steps do not apply), the Video screen's "
-      + `Advanced "${H3_MORE_MOTION.label}": ${H3_MORE_MOTION.note} ${H3_MORE_MOTION.framesUntried} `
+      + "  • FastH3 — H3 distilled to 8 fixed steps (quality and steps do not apply), in the Video screen's "
+      + `engine list as "${H3_MORE_MOTION.label}": ${H3_MORE_MOTION.note} ${H3_MORE_MOTION.framesUntried} `
       + "first_frame/last_frame are accepted (the reply warns), references are refused; `attention` picks "
       + "the dense attention under its sparse attention. Same licence and territory clause as H3.\n\n"
       + "KEEPING A CHARACTER (measured 2026-09-24, same seeds, two blind judges): on MiniMax H3 a person who "
@@ -3626,6 +3627,103 @@ export const TOOLS = [
       const r = await api("POST", "/api/lyrics", a.python === undefined ? { action: "python" } : { action: "python", value: a.python });
       if (r?.error) throw new Error(r.error);
       return r.lyrics;
+    },
+  },
+
+  /* ── Whisper as a tool (server/whisper.js, POST /api/whisper) ──────────
+   * The timed-lyrics python and model pointed at any file. It is queued on
+   * the art queue (kind "whisper"), so it waits for music and never shares
+   * the card with a render; the wait below follows its own job id. */
+  {
+    name: "whisper_transcribe",
+    description: "Transcribe speech or singing, or time lyrics, with Whisper: a library song (`file`), a clip or an "
+      + "imported file (`clip`, as import_local_media or list_clips names it), or a `path` inside Studio's output "
+      + "folder (a stem, say). Returns the language, the full text and segments with start and end seconds; `words` "
+      + "adds word timing. With `lyrics` (known words, [Verse] markers are fine) it keeps YOUR text and takes "
+      + "Whisper's timing: `aligned.lines` with a start per line, and `confidence`, the share measured rather than "
+      + "interpolated. For a song whose words you do not know, leave `lyrics` out and read `text`. `write_lrc` also "
+      + "writes <name>.whisper.lrc and .word.lrc (served at /api/lrc/<name>); a song's own timed lyrics are never "
+      + "overwritten. A library song's separated vocal is used when it has one. Runs in the timed lyrics python "
+      + "(whisper_status says whether it is ready), queued behind music like the other art jobs: on a GPU without "
+      + "CUDA it runs on the processor and takes minutes. Waits for the result by default; if the wait ends first, "
+      + "call again with `job_id`. stop_generation stops it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file: { type: "string", description: "A library song's file name (from list_songs)." },
+        clip: { type: "string", description: "A clip or imported file's name in the clips folder (import_local_media returns it)." },
+        path: { type: "string", maxLength: 1024, description: "The full path of an audio or video file inside Studio's output folder." },
+        lyrics: { type: "string", maxLength: 20000, description: "Optional known lyrics to time; the result keeps these words." },
+        language: { type: "string", maxLength: 8, description: "Optional language code (en, de, ja ...); default: detected." },
+        words: { type: "boolean", description: "Include word timing (segments[].words, aligned.lines[].words). Default false." },
+        write_lrc: { type: "boolean", description: "Also write a line LRC and a word LRC. Default false." },
+        vocals: { type: "boolean", description: "Library songs: use the separated vocal when there is one. Default: the timed lyrics setting (on)." },
+        wait: { type: "boolean", description: "Wait for the result (default true). false returns the job id at once." },
+        timeout_seconds: { type: "integer", minimum: 10, maximum: 7200, description: "How long to wait; default 1200." },
+        job_id: { type: "string", description: "Read (or keep waiting for) a job queued earlier instead of queueing one." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      let id = a.job_id ? String(a.job_id) : null;
+      let queued = null;
+      if (!id) {
+        const body = { action: "transcribe" };
+        if (a.file) body.file = safeName(a.file, "song");
+        if (a.clip) body.clip = safeName(a.clip, "clip");
+        if (a.path) body.path = String(a.path);
+        if (a.lyrics) body.lyrics = String(a.lyrics);
+        if (a.language) body.language = String(a.language);
+        body.words = a.words === true;
+        body.writeLrc = a.write_lrc === true;
+        if (typeof a.vocals === "boolean") body.vocals = a.vocals;
+        queued = await api("POST", "/api/whisper", body);
+        if (queued?.error) throw new Error(refusalText(queued));
+        id = queued.jobId;
+        if (a.wait === false) {
+          return { job_id: id, state: "queued", input: queued.input, model: queued.model, lrc: queued.lrc || null,
+            note: "Queued behind any music. Call whisper_transcribe with this job_id to read the result." };
+        }
+      }
+      try {
+        await waitForArt((Number(a.timeout_seconds) || 1200) * 1000, "whisper", id);
+      } catch (e) {
+        if (!e?.stillWorking) throw e;
+        return { job_id: id, state: "working", note: `${e.message} Call whisper_transcribe with this job_id to keep waiting.` };
+      }
+      const r = await api("GET", `/api/whisper?job=${encodeURIComponent(id)}`);
+      const job = r?.job || {};
+      if (job.state !== "done") {
+        if (job.error) throw new Error(job.error);
+        return { job_id: id, state: job.state || "unknown" };
+      }
+      const out = job.result || {};
+      return {
+        job_id: id, state: "done", ...out,
+        ...(out.lrc ? { lrc_url: `/api/lrc/${encodeURIComponent(out.lrc)}`, word_lrc_url: `/api/lrc/${encodeURIComponent(out.wordLrc)}` } : {}),
+      };
+    },
+  },
+
+  {
+    name: "whisper_status",
+    description: "Whether Whisper (transcription and timed lyrics) can run here, and which model it uses: the python "
+      + "it runs in, whether faster-whisper and stable-ts import there, the install lines and setup id \"lyrics\" when "
+      + "they do not, the device setting (auto uses CUDA when it really works, else the processor), the model and "
+      + "the models on offer, and any whisper jobs running or queued. With `model`, choose the model for every later "
+      + "transcription and timed lyrics, saved across restarts; the first use of a model downloads it. To choose "
+      + "the python itself, use timed_lyrics_python.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        model: { type: "string", enum: WHISPER_MODELS, description: "Optional: the whisper model to use from now on. large-v3 is the most accurate on singing; smaller ones are faster." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = a.model === undefined ? await api("GET", "/api/whisper") : await api("POST", "/api/whisper", { action: "model", value: a.model });
+      if (r?.error) throw new Error(refusalText(r));
+      return r.whisper;
     },
   },
 

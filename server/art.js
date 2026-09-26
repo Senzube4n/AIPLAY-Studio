@@ -30,11 +30,13 @@ import { config } from "./config.js";
 import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET, QWEN_IMAGE_FILES } from "./qwen-image.js";
 import { qwenImageStatus } from "./qwen-status.js";
 import { resolvePick } from "./modelpick.js";
-import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph, h3SparseFor } from "./workflow.js";
+import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph, h3SparseFor, h3BlockCacheFor } from "./workflow.js";
 /* An engine failure as a sentence, the raw text behind Details (the Video screen's). */
 import { plainVideoFailure } from "./video-plain.js";
+import { chosenAttention, vendorOf } from "./comfyargs.js";
+import { createVideoSpeed } from "./video-speed.js";
 import { joinClips } from "./clipjoin.js";
-import { runLrc, LRC_SCRIPT, stderrTail } from "./lrc.js";
+import { runLrc, LRC_SCRIPT, WHISPER_SCRIPT, whisperArgs, stderrTail } from "./lrc.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 import { killProcessTree } from "./proctree.js";
 import { demucsMeter, stemsPipLine, STEMS_SETTING_WORDS, STEMS_SETUP_BUTTON, stemsPythonEpoch, demucsEnv } from "./music/stems.js";
@@ -189,6 +191,57 @@ export function attentionOptions(info) {
   if (spec[0] === "COMBO" && Array.isArray(spec[1]?.options)) return spec[1].options.map(String);
   return [];
 }
+
+/**
+ * How long a clip may take before it counts as hung: 4x the estimate plus five
+ * minutes for a cold model load, never under 15 minutes. Generous on purpose:
+ * killing a nearly-finished render wastes everything spent on it.
+ *
+ * THE ESTIMATE IS AN NVIDIA ONE. The cost curve was fitted on the lab's card,
+ * so on any other card (AMD, Intel, one nobody could read) it gets three times
+ * the room. MEASURED 2026-09-24 on an RX 9060 XT (16 GB, ROCm): H3 at
+ * 1344x768, 124 frames, 8 steps took 1617 s against a 299 s estimate (5.4x).
+ * The old 4x limit gave up at 1497 s, two minutes before the clip landed, and
+ * the finished file was never filed.
+ */
+export function clipBudgetMs(expectedSeconds, vendor, factor = null) {
+  const slow = vendor === "nvidia" ? 1 : 3;
+  const base = Math.max(900_000, (expectedSeconds * 4 * slow + 300) * 1000);
+  /* Once this PC has rendered clips, its own measured factor (video-speed.js)
+   * counts too: whichever allows more. */
+  return Number(factor) > 0 ? Math.max(base, Math.round((expectedSeconds * factor * 4 + 300) * 1000)) : base;
+}
+
+/** Whether an H3-family clip starts on a clean card (config.js
+ *  video.freeBeforeClip, measured there): "auto" on any card but NVIDIA. */
+export function clipNeedsCleanCard(engine, { mode = "auto", vendor = null } = {}) {
+  if (engine !== "h3" && engine !== "fasth3") return false;
+  if (mode === "always") return true;
+  if (mode === "never") return false;
+  return vendor !== "nvidia";
+}
+
+/**
+ * Wait until nothing else is running on the card: no song (`musicBusy`) and
+ * nothing running or pending in ComfyUI's own queue (`engineQueue`, its
+ * /queue answer). True once quiet, false when `timeoutMs` passes first. A
+ * queue that cannot be read counts as quiet: the engine is not answering, so
+ * there is nothing in it to lose.
+ */
+export async function waitForQuietEngine({ musicBusy, engineQueue, timeoutMs = 20 * 60_000, pollMs = 2000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {
+  const until = now() + timeoutMs;
+  for (;;) {
+    let q = null;
+    try { q = await engineQueue?.(); } catch { q = null; }
+    const inQueue = q ? (q.queue_running || []).length + (q.queue_pending || []).length : 0;
+    if (!musicBusy?.() && inQueue === 0) return true;
+    if (now() >= until) return false;
+    await sleep(pollMs);
+  }
+}
+
+/** This PC's measured clip speed, per engine (server/video-speed.js). */
+export const videoSpeed = createVideoSpeed({ dir: config.paths?.appData });
 
 /**
  * The methods BlockSparseAttention offers, from an /object_info answer, or
@@ -555,8 +608,12 @@ export function refusalCard(buf) {
  *    ComfyUI, so in Music-only mode (no ComfyUI) a separation queued for ever.
  *    Music still comes first: nothing here starts while a song is running or
  *    waiting.
+ *
+ * "whisper" is a transcription somebody asked for (server/whisper.js, POST
+ * /api/whisper): the timed-lyrics program pointed at any file. It is queued
+ * here, not run beside the queue, so it never shares the card with a render.
  */
-export const SUBPROCESS_KINDS = new Set(["stems", "lrc"]);
+export const SUBPROCESS_KINDS = new Set(["stems", "lrc", "whisper"]);
 
 /** What a job the person stopped reads, in the Jobs list and to its waiters.
  *  Non-null on purpose: art-wait.js and index.js standing() read a job with an
@@ -627,6 +684,7 @@ export class ArtRunner extends EventEmitter {
        * launch flag), so what it offers is asked again, not remembered. */
       this.#ckOffered = undefined;
       this.#sparseOffered = undefined;
+      this.#cacheOffered = undefined;
       this.#lastQwen = null;
     });
   }
@@ -683,6 +741,8 @@ export class ArtRunner extends EventEmitter {
    *     Somebody who picked PyTorch there — to debug, or because a model
    *     misbehaved — asked for it, and a per-graph node would overrule them
    *     without a word. Only "no choice" or "Comfy Kitchen" lets CK through.
+   *     The AMD/Intel fix's own PyTorch value is not a choice (comfyargs.js
+   *     chosenAttention): the launcher shows it and a Save stores it.
    *  2. config.video.engines.h3.attention says "ck" (see the measurement there).
    *  3. The RUNNING engine offers the option. ModelAttentionBackend lists
    *     "comfy kitchen attention" only when comfy_kitchen int8 is available, and
@@ -692,7 +752,8 @@ export class ArtRunner extends EventEmitter {
    *     fails is "not offered", never an exception.
    */
   async h3Attention() {
-    const chosen = config.comfy?.options?.attention;
+    const chosen = chosenAttention(config.comfy?.options?.attention,
+      { fix: config.comfy?.amdFix, vendor: vendorOf(config.gpu, config.torchBackend) });
     if (chosen && chosen !== "--use-ck-attention") return null;
     if ((config.video.engines.h3?.attention ?? "ck") !== "ck") return null;
     return (await this.#kitchenOffered()) ? "ck" : null;
@@ -771,6 +832,34 @@ export class ArtRunner extends EventEmitter {
       + "ComfyUI's BlockSparseAttention in sol-attn mode, which this engine does not have (0.36 or newer has it).";
     return ok ? "sol-attn" : "off";
   }
+
+  /**
+   * H3's block cache for this job (h3tier.js H3_BLOCK_CACHE): true only when
+   * video_settings block_cache is on, the render would carry it (plain path,
+   * no sparse attention: workflow.js h3BlockCacheFor) and the engine has the
+   * custom node. Where it would and cannot, the job says so (blockCacheNote).
+   */
+  async videoBlockCache(job) {
+    const name = job.engine || config.video.engine;
+    const eng = { ...config.video, ...(config.video.engines[name] || {}), ...(job.models || {}) };
+    if (eng.blockCache !== true) return false;
+    /* The same answer the graph gets for sparse attention (asked, not guessed). */
+    const sparse = await this.videoSparse(job);
+    const refs = (Array.isArray(job.refImages) && job.refImages.some(Boolean))
+      || (Array.isArray(job.refAudios) && job.refAudios.some((a) => a && a.name));
+    const sparseCfg = h3SparseFor(eng, { steps: job.steps ?? eng.steps, refs, sparse,
+      continuation: !!job.continueFrom?.file, control: !!(job.controlVideo && job.controlPatch) });
+    if (!h3BlockCacheFor(eng, { blockCache: true, refs, continuation: !!job.continueFrom?.file,
+      control: !!(job.controlVideo && job.controlPatch), sparse: sparseCfg })) return false;
+    if (this.#cacheOffered === undefined) {
+      try { this.#cacheOffered = !!(await engineDoor.objectInfo(eng.blockCacheRecipe.node))?.[eng.blockCacheRecipe.node]; }
+      catch { this.#cacheOffered = false; }
+    }
+    if (!this.#cacheOffered) job.blockCacheNote = "This clip ran without the block cache: it needs the MiniMax H3 Block Cache (T8) "
+      + "custom node in ComfyUI, which this engine does not have.";
+    return this.#cacheOffered;
+  }
+  #cacheOffered;
 
   /** Idempotent, lazy, and never fatal — progress is a nicety, not the work. */
   #connect() {
@@ -1164,7 +1253,7 @@ export class ArtRunner extends EventEmitter {
    * and it bit `private` the same way: the route set it, the render ran, and
    * the prompt went into the ledger verbatim because the flag never arrived.
    * Anything new belongs here AND on the job below. */
-  request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, actor, asked = false, private: isPrivate = false }) {
+  request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, whisper, actor, asked = false, private: isPrivate = false }) {
     this.lastRefusal = null;
     /* Set only when the refusal is the minors rule, so a route can answer 422
      * with the one sentence rather than its generic "not queued" 409. */
@@ -1254,6 +1343,10 @@ export class ArtRunner extends EventEmitter {
       // audioRef in jobs.js and the video stage in batch.js — the caller already
       // validated this object, and adding a knob should not need three edits.
       ...(video || {}),
+      /* A transcription's own spec (server/whisper.js validated and resolved
+       * it): kept whole on its own key rather than spread, so none of its
+       * fields can land on a name a render reads. */
+      ...(kind === "whisper" ? { whisper: whisper || null } : {}),
     };
     /* ⚠ SEXUAL CONTENT INVOLVING MINORS IS NOT QUEUED. Checked on the words
      * this job WILL render — a cover's prompt written from lyrics, a clip's from
@@ -1455,6 +1548,8 @@ export class ArtRunner extends EventEmitter {
               /* The sparse attention the graph carried, and why not where
                * sol-attn was asked for and the engine could not take it. */
               sparse: job.sparseRan ?? null, sparseNote: job.sparseNote || null,
+              /* Whether H3's block cache ran, and why not where it was asked for. */
+              blockCache: !!job.blockCacheRan, blockCacheNote: job.blockCacheNote || null,
               at: Date.now(),
             },
           });
@@ -1503,6 +1598,15 @@ export class ArtRunner extends EventEmitter {
           const info = await this.#timeLyrics(job);
           this.done.unshift(job);
           this.emit("lrc", { file: job.file, ...info });
+        } else if (job.kind === "whisper") {
+          /* The whole answer stays on the job: GET /api/whisper?job=<id>
+           * reads it from the finished list, which is where the waiters
+           * (art-wait.js) already look for the verdict. */
+          const info = await this.#transcribe(job);
+          job.transcript = info;
+          job.lrc = info.lrc || null;
+          this.done.unshift(job);
+          this.emit("whisper", { file: job.file, id: job.id, language: info.language ?? null, lrc: job.lrc });
         } else if (job.kind === "sfx") {
           // Fork-only (FORK_DELTA): a 3-5 s sound effect through the same
           // queue as everything else, so music still preempts.
@@ -2180,6 +2284,8 @@ export class ArtRunner extends EventEmitter {
        * engine was asked whether it has the node (videoSparse). Named here for
        * the reason the warning above gives. */
       sparse: await this.videoSparse(job),
+      /* H3's block cache, after the engine was asked for the node (videoBlockCache). */
+      blockCache: await this.videoBlockCache(job),
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.
       keepAudio: job.keepAudio ?? !job.file.startsWith("clip:"),
@@ -2193,6 +2299,7 @@ export class ArtRunner extends EventEmitter {
     /* Which sparse attention the graph really carries (node 81), for the
      * clip's metadata: sol-attn on H3's Fast setting, vsa on FastH3. */
     job.sparseRan = graph?.["81"]?.inputs?.selection || null;
+    job.blockCacheRan = graph?.["82"]?.class_type === config.video.engines.h3?.blockCacheRecipe?.node;
 
     // Generous: a clip is ~25 s warm but the first one after a music render pays
     // to load 29 GB of weights back in.
@@ -2217,9 +2324,37 @@ export class ArtRunner extends EventEmitter {
     const stepScale = engine === "ltx" ? 1 : (job.steps ?? v.steps) / 8;
     const expected = v.costFixedSeconds
       + v.costRate * Math.pow((px * frames) / 1e6, v.costExponent) * stepScale;
-    // 4x the estimate plus five minutes for a cold model load. Generous on
-    // purpose: killing a nearly-finished render wastes everything spent on it.
-    const budgetMs = Math.max(900_000, (expected * 4 + 300) * 1000);
+    const budgetMs = clipBudgetMs(expected, vendorOf(config.gpu, config.torchBackend), videoSpeed.factor(engine));
+
+    /* A FRESH ENGINE FIRST (config.js video.freeBeforeClip, measured there):
+     * a second H3 render in the same engine process spilled into shared
+     * memory and ran at half speed, and ComfyUI's /free with unload_models
+     * did not bring it back; a new process did. So an engine that has already
+     * rendered anything is restarted, same flags, before the clip (about 45
+     * s against about 9 minutes lost on an 8-step clip). Nothing is loaded
+     * afterwards: the music model is gone, Qwen is not warm. */
+    if (clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor: vendorOf(config.gpu, config.torchBackend) })
+        && engineDoor.ranSinceStart() > 0 && typeof this.comfy?.restart === "function") {
+      /* ...but never under someone else's work. A restart kills whatever the
+       * engine is running, so a song rendering at that moment, or a graph an
+       * agent sent through the engine door, died with it. Wait until neither
+       * the music queue nor the engine's own queue has anything running (at
+       * most restartWaitMs), and render on the old process if it never frees:
+       * slower, but nothing is lost. */
+      const free = await waitForQuietEngine({
+        musicBusy: () => !!this.jobs?.current,
+        engineQueue: () => engineDoor.queue(),
+      });
+      if (free) {
+        console.log(`  [art] restarting the engine before the ${engine} clip (it has rendered ${engineDoor.ranSinceStart()} since it started)`);
+        await this.comfy.restart().catch((e) => console.error(`  [art] engine restart failed: ${e.message}`));
+        this.jobs.loaded = null;
+        this.jobs.artResident = true;
+        this.#lastQwen = null;
+      } else {
+        console.log(`  [art] the engine stayed busy; the ${engine} clip renders without the fresh restart`);
+      }
+    }
 
     /* AT MOST TWO SUBMISSIONS, and the second one is rare — see the ENOENT arm
      * below for the only thing that reaches it. The deadline is per attempt
@@ -2268,6 +2403,8 @@ export class ArtRunner extends EventEmitter {
       if (done.status !== "completed") {
         throw failed(done.error || `the engine did not finish (${done.status})`);
       }
+      /* This PC's speed: what really rendered, against the curve's estimate. */
+      if (!done.cached) videoSpeed.record(engine, done.runningSec ?? done.elapsedSec, expected);
       // SaveVideo reports under `images` with animated:true, not a `videos` key —
       // the client normalises both into one list, so this no longer has to care.
       const saved = savedClip(done.outputs, graph);
@@ -2663,17 +2800,7 @@ export class ArtRunner extends EventEmitter {
        * traceback alike: four causes, one message, no way to tell them apart. */
       const info = await runLrc({
         python: config.lyrics.python,
-        // The interpreter scripts/extras_setup.mjs tells people to install
-        // into; server/docs_test.js pairs that claim with this spawn.
-        /* The program is kept on the job, so Stop kills its tree the way it
-         * kills a separation's (it had the same hole: whisper ran on after
-         * Stop). A stopped job starts nothing more, and that includes runLrc's
-         * second, CPU run after a GPU crash. Detached on POSIX for the group kill. */
-        launch: (argv, opts) => {
-          if (job.cancelled) throw Object.assign(new Error("stopped before it started"), { code: "STOPPED" });
-          const o = { ...opts, detached: process.platform !== "win32" };
-          return this.#adopt(job, this.spawnPython ? this.spawnPython(config.lyrics.python, argv, o) : spawn(config.lyrics.python, argv, o));
-        },
+        launch: this.#whisperLaunch(job),
         script: LRC_SCRIPT,
         args,
         env: { ...process.env, AIPLAY_WHISPER_MODEL: config.lyrics.model },
@@ -2682,6 +2809,51 @@ export class ArtRunner extends EventEmitter {
       return { lrc: `${stem}.lrc`, wordLrc: `${stem}.word.lrc`, ...info };
     } finally {
       unlink(tmp).catch(() => {});
+    }
+  }
+
+  /* How timed lyrics and a transcription start the whisper python.
+   * config.lyrics.python is the interpreter scripts/extras_setup.mjs tells
+   * people to install into; server/docs_test.js pairs that claim with this spawn.
+   * The program is kept on the job, so Stop kills its tree the way it kills a
+   * separation's (it had the same hole: whisper ran on after Stop). A stopped
+   * job starts nothing more, and that includes runLrc's second, CPU run after a
+   * GPU crash. Detached on POSIX for the group kill. */
+  #whisperLaunch(job) {
+    return (argv, opts) => {
+      if (job.cancelled) throw Object.assign(new Error("stopped before it started"), { code: "STOPPED" });
+      const o = { ...opts, detached: process.platform !== "win32" };
+      return this.#adopt(job, this.spawnPython ? this.spawnPython(config.lyrics.python, argv, o) : spawn(config.lyrics.python, argv, o));
+    };
+  }
+
+  /**
+   * A transcription somebody asked for (kind "whisper"): server/whisper.py over
+   * any file, in the same python, with the same model and the same failure
+   * sentences as timed lyrics (server/lrc.js runLrc). `job.whisper` was
+   * validated and resolved by server/whisper.js: absolute input and vocal
+   * paths, the known lyrics, and the LRC stem when files were asked for.
+   */
+  async #transcribe(job) {
+    const w = job.whisper || {};
+    if (!w.input) throw new Error("nothing to transcribe (no input file)");
+    let tmp = null;
+    if (w.lyrics) {
+      tmp = path.join(config.paths.appData, `whisper_${job.id}_${Date.now()}.txt`);
+      await writeFile(tmp, w.lyrics, "utf8");
+    }
+    if (w.outStem) await mkdir(path.dirname(w.outStem), { recursive: true });
+    try {
+      return await runLrc({
+        python: config.lyrics.python,
+        launch: this.#whisperLaunch(job),
+        script: WHISPER_SCRIPT,
+        args: whisperArgs({ input: w.input, lyricsFile: tmp, outStem: w.outStem, language: w.language, words: w.words, vocals: w.vocals }),
+        env: { ...process.env, AIPLAY_WHISPER_MODEL: config.lyrics.model },
+        model: config.lyrics.model,
+      });
+    } finally {
+      if (tmp) unlink(tmp).catch(() => {});
     }
   }
 

@@ -121,7 +121,9 @@ test("the update check asks GitHub about the base this build contains, and never
     assert.ok(seen.some((u) => /\/compare\/[0-9a-f]{7,}\.\.\.main/.test(u)), "compared against the commit this build contains");
     assert.equal(r.upstream.ahead, 3);
     assert.match(updateSentence(r), /3 commits on the original you do not have/);
-    assert.match(updateSentence(r), /3 commits on the original you do not have[^]*\. Stop Studio, then press Update at the bottom of the launcher window\.$/,
+    /* Judged without the fork line: on a fork's checkout the fake GitHub answers
+     * the fork's own head too, and "Your own repository has ..." follows. */
+    assert.match(updateSentence({ ...r, fork: null }), /3 commits on the original you do not have[^]*\. Stop Studio, then press Update at the bottom of the launcher window\.$/,
       "behind, the sentence says what to press, where");
     // One if/else chain: only the behind case gets the launcher step, and the
     // "not a commit GitHub knows" line is for a base GitHub could not compare.

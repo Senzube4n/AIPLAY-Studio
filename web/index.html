@@ -33,6 +33,8 @@
        Same bargain again: not one colour is spelled in it, and
        server/modelfit_test.js fails the commit if one appears. -->
   <link rel="stylesheet" href="modelfit.css">
+  <!-- RunPod GPU mode (web/runpod-integrated.js). -->
+  <link rel="stylesheet" href="runpod-integrated.css">
   <!-- The ⓘ in every screen's header and the panel it opens. AFTER modelfit.css,
        because the verdict chips inside that panel ARE modelfit's `.fitbadge` —
        one badge, one palette, so the Models screen and this panel cannot show
@@ -1033,13 +1035,39 @@
     <div class="ovhead"><h2>Video</h2></div>
     <p class="hint" id="vidIntro">Short looping clips with MiniMax H3.</p>
 
+    <!-- RUNPOD, the launcher's "RunPod GPU" mode only (web/runpod-integrated.js unhides
+         these when /api/status says remoteOnly). Contributed by nemesisone-dev. -->
+    <div class="field runpod-inline" id="vidRunPodBlock" hidden>
+      <label class="flabel" for="vidRenderWhere" hidden>Render on</label>
+      <select id="vidRenderWhere" class="sel2" hidden>
+        <option value="local">This PC</option>
+        <option value="runpod">RunPod GPU</option>
+      </select>
+      <div id="vidRunPodOptions" class="runpod-options" hidden>
+        <div class="runpod-summary"><b>LTX 2.5 distilled</b><button class="edtool sm" type="button" data-runpod-settings>Connection…</button></div>
+        <div class="runpod-fields">
+          <label class="flabel" for="vidRunPodSize">Remote size</label>
+          <select id="vidRunPodSize" class="sel2">
+            <option value="512x320">512 × 320 · cheapest test</option>
+            <option value="768x448">768 × 448</option>
+            <option value="1024x576">1024 × 576</option>
+            <option value="1280x704">1280 × 704</option>
+          </select>
+          <label class="flabel" for="vidRunPodGuidance">Remote guidance</label>
+          <input id="vidRunPodGuidance" class="sel2 sm" type="number" min="1" max="8" step="0.5" value="3">
+        </div>
+        <p class="hint" id="vidRunPodState">Checking the saved worker…</p>
+        <p class="hint">Uses the prompt, length, seed and negative prompt below. This first integrated path is text-to-video; frames, references and soundtracks still use the local engine.</p>
+      </div>
+    </div>
+
+
     <div class="field">
       <label class="flabel" for="vidEngine">Engine</label>
       <select id="vidEngine" class="sel2"></select>
       <p class="hint" id="vidEngineNote"></p>
-      <!-- FastH3 left the main list (the H3 lab, 2026-09-24): an Advanced
-           switch over the same engine choice, its label and tooltip the
-           server's (config.js fasth3.advanced). web/vidfit.js. -->
+      <!-- The old "More motion" switch for FastH3, retired 2026-09-25 and
+           kept hidden: FastH3 is in the engine list by name (web/vidfit.js). -->
       <label class="ovstage" id="vidMoreMotionRow" hidden>
         <input type="checkbox" id="vidMoreMotion"><span id="vidMoreMotionL"></span>
       </label>
@@ -1402,6 +1430,28 @@
            so it is the "!" beside the engine row now (web/tips.js reads
            this element live) and `tipsrc` keeps it off the screen. -->
       <p class="hint tipsrc" id="imgModelNote"></p>
+
+      <!-- RUNPOD, the launcher's "RunPod GPU" mode only (web/runpod-integrated.js unhides
+           these when /api/status says remoteOnly). Contributed by nemesisone-dev. -->
+      <div class="field runpod-inline" id="imgRunPodBlock" hidden>
+        <label class="flabel" for="imgRenderWhere" hidden>Render on</label>
+        <select id="imgRenderWhere" class="sel2" hidden>
+          <option value="local">This PC</option>
+          <option value="runpod">RunPod GPU</option>
+        </select>
+        <div id="imgRunPodOptions" class="runpod-options" hidden>
+          <div class="runpod-summary"><b>Checkpoint image</b><button class="edtool sm" type="button" data-runpod-settings>Connection…</button></div>
+          <label class="flabel" for="imgRunPodCheckpoint">Model on the Pod</label>
+          <select id="imgRunPodCheckpoint" class="sel2"><option value="">Connect to load remote models</option></select>
+          <label class="flabel" for="imgRunPodCfg">Remote CFG</label>
+          <input id="imgRunPodCfg" class="sel2 sm" type="number" min="1" max="30" step="0.5" value="6">
+          <label class="flabel" for="imgRunPodNegative">Remote negative</label>
+          <input id="imgRunPodNegative" class="sel2" placeholder="blur, artifacts, unwanted details">
+          <p class="hint" id="imgRunPodState">Checking the saved worker…</p>
+          <p class="hint">Uses the prompt, size, steps, count and seed below. References remain on this PC.</p>
+        </div>
+      </div>
+
 
       <label class="lbl" for="imgPrompt">What should it show</label>
       <textarea id="imgPrompt" rows="5" placeholder="a lone payphone on a wet neon street at night, cinematic, shallow depth of field"></textarea>
@@ -5508,6 +5558,72 @@
      re-render mid-click. -->
 <div class="rowmenu" id="rowMenu" role="menu" hidden></div>
 
+<!-- Shared by the Images and Video screens. The worker token is sent once to
+     the local backend's secret store and is never read back into the page. -->
+<div class="overlay" id="runpodConnection" hidden><div class="sheet runpod-sheet">
+  <div class="sheethead">
+    <div><h3>RunPod connection</h3><p class="hint">AIPLAY stays on this PC; this worker runs ComfyUI on your Pod.</p></div>
+    <button class="btn sm" type="button" id="runpodConnectionClose">Close</button>
+  </div>
+  <form id="runpodConnectionForm">
+    <label class="flabel" for="runpodWorkerUrl">Worker URL</label>
+    <input class="line" id="runpodWorkerUrl" type="url" placeholder="https://your-pod-8787.proxy.runpod.net" required>
+    <label class="flabel" for="runpodWorkerToken">Worker token</label>
+    <input class="line" id="runpodWorkerToken" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved token">
+    <p class="hint">The token is stored in AIPLAY's local secret store and is not your RunPod account API key.</p>
+    <p class="hint" id="runpodConnectionState" role="status"></p>
+    <div class="runpod-connect-actions">
+      <a class="edtool" href="/runpod.html">Advanced workflow panel</a>
+      <button class="btn" id="runpodConnect" type="submit">Connect and check models</button>
+    </div>
+  </form>
+  <details class="runpod-account" id="runpodAccount">
+    <summary>Create or manage a RunPod Pod</summary>
+    <p class="hint">Optional account access. Use a restricted RunPod API key with permission to read GPUs and manage Pods. The key stays in AIPLAY's local secret store.</p>
+    <form id="runpodAccountForm">
+      <label class="flabel" for="runpodApiKey">RunPod API key</label>
+      <input class="line" id="runpodApiKey" type="password" autocomplete="new-password" placeholder="Paste a restricted RunPod API key">
+      <div class="runpod-connect-actions">
+        <a class="edtool" href="https://console.runpod.io/user/settings" target="_blank" rel="noreferrer">Create API key</a>
+        <button class="edtool" id="runpodAccountDisconnect" type="button">Remove saved key</button>
+        <button class="btn" id="runpodAccountConnect" type="submit">Save and load account</button>
+      </div>
+    </form>
+    <p class="hint" id="runpodAccountState" role="status">Checking account configuration…</p>
+    <div id="runpodAccountPanel" hidden>
+      <div class="runpod-balance" id="runpodBalance"></div>
+      <div id="runpodPodList" class="runpod-pods"></div>
+      <h4>Create an AIPLAY Pod</h4>
+      <div class="runpod-fields">
+        <label class="flabel" for="runpodPodName">Name</label>
+        <input class="line" id="runpodPodName" value="AIPLAY renderer" maxlength="80">
+        <label class="flabel" for="runpodGpu">GPU</label>
+        <select class="sel2" id="runpodGpu"></select>
+        <label class="flabel" for="runpodCloud">Cloud</label>
+        <select class="sel2" id="runpodCloud"><option value="ALL">Any available</option><option value="SECURE">Secure only</option><option value="COMMUNITY">Community only</option></select>
+        <label class="flabel" for="runpodVolume">Persistent disk</label>
+        <select class="sel2" id="runpodVolume"><option value="100">100 GB</option><option value="150">150 GB</option><option value="200">200 GB</option><option value="300">300 GB</option></select>
+      </div>
+      <p class="hint">Creates the standard CUDA 12.8 ComfyUI Pod with only AIPLAY worker port 8787 exposed. Keep ComfyUI on loopback; worker and model installation is the next step.</p>
+      <button class="edtool" id="runpodReviewPod" type="button">Review price and configuration</button>
+      <div class="runpod-review" id="runpodCreateReview" hidden>
+        <b id="runpodReviewPrice"></b>
+        <p class="hint" id="runpodReviewDetails"></p>
+        <label><input id="runpodCostConfirm" type="checkbox"> I understand this starts paid GPU billing immediately.</label>
+        <button class="btn" id="runpodCreatePod" type="button" disabled>Create paid Pod</button>
+      </div>
+    </div>
+    <details class="runpod-bootstrap">
+      <summary>Install the AIPLAY worker after the Pod starts</summary>
+      <p class="hint">Open a Pod terminal or SSH session, paste this command, then copy the printed worker URL and token into the connection fields above. The bootstrap checks that ComfyUI listens only on loopback.</p>
+      <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly>curl -fsSL https://raw.githubusercontent.com/Senzube4n/AIPLAY-Studio/main/worker/bootstrap-runpod.sh -o /tmp/aiplay-bootstrap.sh &amp;&amp; bash /tmp/aiplay-bootstrap.sh</textarea>
+      <button class="edtool" id="runpodCopyBootstrap" type="button">Copy bootstrap command</button>
+      <p class="hint" id="runpodBootstrapState"></p>
+    </details>
+  </details>
+</div></div>
+
+
 <!-- Before app.js on purpose: its fetch wrapper must be in place before any
      screen can start a generation. -->
 <script type="module" src="battery.js"></script>
@@ -5540,6 +5656,9 @@
 <script type="module" src="credits.js"></script>
 <script type="module" src="roulette.js"></script>
 <script type="module" src="prompt-tools.js"></script>
+<!-- RunPod: the launcher's RunPod GPU mode only. It owns only the controls carrying
+     runpod ids and intercepts Make / Render in the capture phase in that mode. -->
+<script type="module" src="runpod-integrated.js"></script>
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
 <script type="module" src="receipt.js"></script>

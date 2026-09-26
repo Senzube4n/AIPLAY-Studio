@@ -91,6 +91,28 @@ in the app.
                             Kingdom, Republic of Korea, United States of
                             America.
 
+    4-step speed-up for H3 (1.96 GB)
+                            MiniMax H3 Community Licence (derived from H3)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property); a derivative of H3)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    8-step speed-up for H3 (1.96 GB)
+                            MiniMax H3 Community Licence (derived from H3)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property); a derivative of H3)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
     BUNNY (action logic)    MiniMax H3 Community Licence (derived from H3)
                             Output rights: yours, with conditions (MiniMax H3
                             Community License Agreement §VI.4 (Intellectual
@@ -378,7 +400,8 @@ in the app.
                             (UniRig LICENSE, VAST-AI-Research))
                             https://github.com/VAST-AI-Research/UniRig/blob/main/LICENSE
 
-    Whisper large-v3        MIT
+    Whisper: transcription and timed lyrics
+                            MIT
                             Output rights: yours (MIT License, grant paragraph
                             (openai/whisper LICENSE))
                             https://github.com/openai/whisper/blob/main/LICENSE
@@ -509,6 +532,19 @@ RUNTIME DEPENDENCIES (separate installations)
                            where one of the two is recorded as unverified.
                            Optional: without it pose extraction has no node to
                            run and the rest of the app is unaffected.
+
+────────────────────────────────────────────────────────────────────────────────
+BUNDLED THIRD-PARTY CODE
+────────────────────────────────────────────────────────────────────────────────
+    MiniMax H3 Block Cache (T8)
+                           Apache-2.0, Copyright T8mars.
+                           Source: https://github.com/T8mars/comfyui-minimax-h3-blockcache-T8
+                           Shipped unmodified at commit 36336dcee1ecb49a5ee98
+                           426456aeb353c8535bd (v1.0.4) in
+                           server/comfy_nodes/comfyui-minimax-h3-blockcache-T8/
+                           with its LICENSE, and copied into ComfyUI's
+                           custom_nodes when the engine starts. Used only when
+                           video_settings block_cache is switched on.
 
 ────────────────────────────────────────────────────────────────────────────────
 TRADEMARKS

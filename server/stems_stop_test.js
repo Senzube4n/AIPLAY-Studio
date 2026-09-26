@@ -472,7 +472,8 @@ console.log("\n§8  THE SAME STOP FOR TIMED LYRICS");
   ok("Stop kills it and its grandchild", r.stopped === "Sung" && r.kind === "lrc" && r.killed === true && !alive(pids.child) && !alive(pids.grand), JSON.stringify(r));
   const row = runner.status().art.recent[0];
   ok("...and it reads stopped, not failed, with no CPU re-run started", left && row.kind === "lrc" && row.cancelled === true && row.error === STOPPED_ERROR, JSON.stringify(row));
-  ok("SUBPROCESS_KINDS names exactly the two program kinds", [...SUBPROCESS_KINDS].sort().join() === "lrc,stems");
+  /* "whisper" is the timed-lyrics program pointed at any file (server/whisper.js). */
+  ok("SUBPROCESS_KINDS names exactly the three program kinds", [...SUBPROCESS_KINDS].sort().join() === "lrc,stems,whisper");
 }
 
 /* ═══ §9 the helpers and the literals ══════════════════════════════════════ */

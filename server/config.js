@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import { autoVramFlags } from "./comfyargs.js";
 /* The card tiers' sizes join H3's size list (below the engines): pure data. */
-import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION } from "./h3tier.js";
+import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION, H3_BLOCK_CACHE } from "./h3tier.js";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,12 @@ const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
  * local is needed, not ComfyUI and not a card. Only the launcher turns it on,
  * so full Studio never shows a page that spends credits. */
 const CLOUD_ONLY = !MUSIC_ONLY && process.env.AIPLAY_CLOUD_ONLY === "1";
+/* The RunPod entry point (launcher: "RunPod GPU"; scripts/start-remote.mjs):
+ * Images and Video render on the person's own RunPod Pod through the AIPLAY
+ * worker (server/engine/remote-*.js), so no local ComfyUI starts. RunPod bills
+ * by the hour, so like the Comfy API mode only the launcher turns it on and
+ * full Studio never shows it (/api/runpod answers in this mode only). */
+const REMOTE_ONLY = !MUSIC_ONLY && !CLOUD_ONLY && process.env.AIPLAY_REMOTE_ONLY === "1";
 const RIG = process.env.AIPLAY_RIG || saved.rig
   || (MUSIC_ONLY ? path.join(APPDATA, "rig") : "D:\\AI\\aiplay-studio-bench");
 /* Where model weights live. A ComfyUI Desktop install keeps them outside the
@@ -82,6 +88,23 @@ function onDisk(sub, name) {
   return bases.some((b) => { try { return fs.statSync(path.join(b, sub, String(name))).size > 0; } catch { return false; } });
 }
 
+/* THE H3 SPEED-UP SLOTS and their candidate lists, kept so a speed-up that
+ * lands (a Models download) is picked again without a restart
+ * (refreshH3Speedups below). loraSlot() is pick() on the loras folder that
+ * also remembers the list. */
+const H3_LORA_SLOTS = {};
+const loraSlot = (slot, ...names) => { H3_LORA_SLOTS[slot] = names; return pick("loras", ...names); };
+
+/* The TaoMate 3-step files, in pick order (the full conversion, then Kijai's
+ * 182 MB rank-19 average). OPTIONAL: nothing asks for them at start. They are
+ * read at import like every other file, again when a download finishes
+ * (refreshTaoMate below), and a render asking for 3 steps without one is
+ * refused with the download offered (video-plain.js videoPlan). */
+export const TAOMATE_FILES = [
+  "taomate_h3_3step_comfy.safetensors",
+  "minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors",
+];
+
 /** The step count a turbo LoRA was distilled for, read off its file name
  *  (`_8step_`), or null for a name that does not say. One reader for the H3
  *  step defaults below, /api/status and mv/plancost.js loraSteps(). */
@@ -93,6 +116,27 @@ export const loraStepsOf = (name) => {
 /* The card first-run setup saved. Same test as index.js onAmd() and
  * models.js cardIsAmd(): ROCm has no kernel for NVIDIA's fp4 formats. */
 const AMD_CARD = saved.torchBackend === "rocm" || saved.gpu?.vendor === "amd";
+/* A LIGHT MACHINE for H3: an AMD or Intel card, a card under 16 GB, or under
+ * 32 GB of RAM. It downloads and loads H3's lighter builds: the w4a8 DiT and
+ * the int8 video VAE (models.js `light` entries; the int4 text encoder is
+ * everyone's). MEASURED 2026-09-25 on an RX 9060 XT 16 GB, TaoMate 3-step
+ * 1344x768 5 s, same seed, each on a fresh engine: int8 DiT + int8 TE + fp16
+ * VAE 357 s; int8 VAE 316 s (frames PSNR 35.8 dB, SSIM 0.975 against fp16);
+ * int4 TE 299 s (13.5 GB staged against 25.9); w4a8 DiT 293 s; all three
+ * 290 s, every one as good to the eye. 30 GB to fetch instead of 41. */
+export function isLightH3({ gpu, torchBackend } = {}, ramBytes = os.totalmem()) {
+  return torchBackend === "rocm" || gpu?.vendor === "amd" || gpu?.vendor === "intel" || torchBackend === "xpu"
+    || (Number(gpu?.totalMb) > 0 && Number(gpu.totalMb) < 15000)
+    || ramBytes < 30 * 2 ** 30;
+}
+const LIGHT_H3 = isLightH3(saved);
+/** Video starts at 720p on any card but NVIDIA (the H3 block below): an AMD
+ *  or Intel card, or the CPU. A machine whose card was never recorded keeps
+ *  the trained size. */
+export function prefers720p({ gpu, torchBackend } = {}) {
+  return ["rocm", "xpu", "cpu"].includes(torchBackend) || gpu?.vendor === "amd" || gpu?.vendor === "intel";
+}
+const PREFER_720P = prefers720p(saved);
 
 /** Find a python inside a ComfyUI rig, trying every layout in the wild.
  *
@@ -233,7 +277,8 @@ export const config = {
   dataDir: APPDATA,
   musicOnly: MUSIC_ONLY,
   cloudOnly: CLOUD_ONLY,
-  comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY,
+  remoteOnly: REMOTE_ONLY,
+  comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY && !REMOTE_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
   musicInput: {
@@ -254,6 +299,9 @@ export const config = {
   /* The card first-run setup found ({vendor, name, totalMb, source}). Only a
    * fallback for machines where nvidia-smi cannot be read — see gpu.js. */
   gpu: saved.gpu && typeof saved.gpu === "object" ? saved.gpu : null,
+  /* H3's lighter builds (LIGHT_H3 above): models.js downloads them, the picks
+   * below load them first. */
+  h3Light: LIGHT_H3,
   /* "cuda" | "rocm" | "cpu" — which torch build the engine's python carries. */
   torchBackend: typeof saved.torchBackend === "string" ? saved.torchBackend : null,
   /* Local files standing in for catalogue files, by basename:
@@ -308,7 +356,7 @@ export const config = {
   outputDir: process.env.AIPLAY_OUTPUT || saved.outputDir
     /* Comfy API mode with no ComfyUI set up keeps its results in app data,
      * like music-only; with one, beside everything else Studio made. */
-    || (MUSIC_ONLY || (CLOUD_ONLY && !process.env.AIPLAY_RIG && !saved.rig)
+    || (MUSIC_ONLY || ((CLOUD_ONLY || REMOTE_ONLY) && !process.env.AIPLAY_RIG && !saved.rig)
       ? path.join(APPDATA, "output") : path.join(RIG, "ComfyUI", "output")),
   settingsFile: SETTINGS_FILE,
   // Where `LoadLatent` looks. Its `latent` input is a name RELATIVE to this, so
@@ -930,6 +978,8 @@ export const config = {
 
   lyrics: {
     when: "off",
+    /* The whisper model for timed lyrics AND transcription (server/whisper.js),
+     * one of WHISPER_MODELS; saved when chosen (PREF_PATHS). */
     model: "large-v3",
     /* The interpreter a person chose in Settings > Songs (or with the
      * timed_lyrics_python tool), saved as prefs.lyrics.whisperPython; null when
@@ -1131,6 +1181,20 @@ export const config = {
   video: {
     enabled: false,
 
+    /* A FRESH ENGINE BEFORE EVERY H3-FAMILY CLIP. MEASURED 2026-09-24 on an
+     * RX 9060 XT (ROCm, Windows, dynamic VRAM), H3 1344x768, 8 steps, same
+     * settings: on a fresh engine process ~82 s a step; the next render in
+     * the same process ~152 s, with 14.1 GB on the card and 4.1 GB spilled to
+     * shared system memory (13.3 and 2.5 before). ComfyUI's /free with
+     * unload_models did NOT bring it back (155 s a step after it), and
+     * --disable-dynamic-vram was far worse (580 s for one step, RAM paging).
+     * A restarted engine did: 78 s a step on the render after a TaoMate one.
+     * So an engine that has rendered anything is restarted before an H3 or
+     * FastH3 clip: "auto" does it on any card that is not NVIDIA (not seen
+     * there), "always" and "never" force it. art.js clipNeedsCleanCard();
+     * video_settings free_before_clip. */
+    freeBeforeClip: "auto",
+
     /* WHAT SaveVideo ENCODES AT — every engine, both H3 paths and LTX.
      *
      * MEASURED 2026-09-12 on the promo clips: `codec: "auto"` hands ComfyUI's
@@ -1225,10 +1289,19 @@ export const config = {
      * prune — an actual prompt-following close-up with photographic texture —
      * at ~15% more wall clock (771 s vs 669 s at 1344x768x124x20). The old
      * builds stay as fallbacks for machines that only have those. */
-    dit: pick("diffusion_models",
-      "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-      "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
-      "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
+    /* A light machine (LIGHT_H3) loads the w4a8 build first: measured as good
+     * and a little faster on an RX 9060 XT, 8 GB smaller. Repeated last so a
+     * light machine holding none is told to fetch it. */
+    dit: LIGHT_H3
+      ? pick("diffusion_models",
+        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
+        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors")
+      : pick("diffusion_models",
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
+        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
     /* References render on the checkpoint BUILT for them — the vendor's r2v
      * template uses ref2va, not fl2va. Falls back to the fl2va builds so refs
      * keep working (measured working 08-23) where ref2va is not downloaded. */
@@ -1237,21 +1310,25 @@ export const config = {
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
       "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
-    /* AMD gets the official int8 build (models.js downloads it there): ROCm
-     * has only a slow fallback for the int4 one. The int8 name is repeated
-     * last so a machine holding neither is told to fetch the int8. */
-    textEncoder: AMD_CARD
-      ? pick("text_encoders",
-        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
-        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
-        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors")
-      : pick("text_encoders",
-        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
-        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
-        "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
-    videoVae: pick("vae",
-      "minimax_h3_video_vae_int8_convrot.safetensors",
-      "minimax_h3_video_vae_fp16.safetensors"),
+    /* The int4 build on every card. AMD used to take the int8 one on the
+     * belief that ROCm ran int4 on a slow fallback; measured 2026-09-25 on an
+     * RX 9060 XT it was a little FASTER than int8 (299 s against 316 s a
+     * clip) and staged 13.5 GB instead of 25.9. The int4 name is repeated
+     * last so a machine holding neither is told to fetch the int4. */
+    textEncoder: pick("text_encoders",
+      "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
+      "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
+    /* int8 first where it is on disk; a light machine (LIGHT_H3) is told to
+     * fetch it, others the fp16 (the build the H3 lab measured with). */
+    videoVae: LIGHT_H3
+      ? pick("vae",
+        "minimax_h3_video_vae_int8_convrot.safetensors",
+        "minimax_h3_video_vae_fp16.safetensors",
+        "minimax_h3_video_vae_int8_convrot.safetensors")
+      : pick("vae",
+        "minimax_h3_video_vae_int8_convrot.safetensors",
+        "minimax_h3_video_vae_fp16.safetensors"),
     audioVae: pick("vae",
       "minimax_h3_audio_vae_fp32.safetensors",
       "minimax_h3_audio_vae_bf16.safetensors"),
@@ -1263,7 +1340,7 @@ export const config = {
      * We ran the 4-STEP 768p build at 8 steps, which is off its design point.
      * Both are on disk; `pick` prefers the matching one and falls back to the
      * 4-step build for anyone who only has that. */
-    turboLora: pick("loras",
+    turboLora: loraSlot("turboLora",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     /* The ref2va checkpoint has its own turbo distillations — TWO now. The
@@ -1275,7 +1352,7 @@ export const config = {
      * distillation off its design point — the exact mistake the turboLora4
      * comment below describes for the fl2v path, made on the other one. Falls
      * back to v0.1, then to the fl2v loras, for machines without it. */
-    refTurboLora: pick("loras",
+    refTurboLora: loraSlot("refTurboLora",
       "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
@@ -1288,10 +1365,10 @@ export const config = {
      * use — a distillation trained for 4 steps run at 8 is not a faster model,
      * it is a different one used wrongly. Picking by step count is the whole
      * fix; both files have been on disk all along. */
-    turboLora4: pick("loras",
+    turboLora4: loraSlot("turboLora4",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"),
-    refTurboLora4: pick("loras",
+    refTurboLora4: loraSlot("refTurboLora4",
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     // At or below this many steps, the 4-step distillation is the right one.
@@ -1303,11 +1380,9 @@ export const config = {
      * it comes back overcooked. Falls back to the 4-step build on a machine
      * without the file, which is what 2 and 3 steps ran before this existed.
      * The reference path is left alone: this file was not trained on ref2va. */
-    turboLora3: pick("loras",
-      "taomate_h3_3step_comfy.safetensors",
-      // Kijai's rank-19 average of the same LoRA (182 MB against 2.48 GB): the
-      // small alternative, taken when the full conversion is not on disk.
-      "minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors",
+    // TAOMATE_FILES: the full conversion, then Kijai's rank-19 average of the
+    // same LoRA (182 MB against 2.48 GB), taken when the full one is not on disk.
+    turboLora3: loraSlot("turboLora3", ...TAOMATE_FILES,
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     // At or below this many steps, the 3-step distillation is the right one.
     turbo3MaxSteps: 3,
@@ -1562,6 +1637,18 @@ export const config = {
      * the mode gets no node at all (art.js videoSparse asks it first). */
     sparse: "sol-attn",
     solAttn: H3_SOL_ATTN,
+    /* OPT-IN, NOT MEASURED BY THE LAB: sol-attn on every step count of the
+     * plain path (Standard and Best too), and its strength. video_settings
+     * sparse_everywhere / sparse_tau. Off and the lab's tau until a person
+     * sets them; workflow.js h3SparseFor reads both. */
+    sparseAll: false,
+    solAttnTau: null,
+    /* OPT-IN, EXPERIMENTAL: T8mars's MiniMax H3 Block Cache custom node
+     * (h3tier.js H3_BLOCK_CACHE) on the plain path, where no sparse attention
+     * runs. video_settings block_cache; art.js videoBlockCache() asks the
+     * engine for the node first. */
+    blockCache: false,
+    blockCacheRecipe: H3_BLOCK_CACHE,
 
     /* H3 ALWAYS renders audio — there is no video-only path, and moving the
      * audio shift changes its level without changing the time it costs
@@ -1633,10 +1720,12 @@ export const config = {
     loraBase: "LTX",
     dit: "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
     textEncoder: "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
-    /* ⚠ "-conv-". The vendor template's widget says ltx-2.5-video-vae-bf16 and
-     * THAT FILE DOES NOT EXIST in the ComfyUI build of the repo. Copying the
-     * template verbatim fails with "value not in list". */
-    videoVae: "ltx-2.5-video-vae-conv-bf16.safetensors",
+    /* ⚠ "-conv-" first: it is the file Studio's LTX graph was measured with.
+     * The diffusion-decoder VAE (CausalDiffusionVAE) is what ComfyUI's own
+     * LTX 2.5 template loads under the plain name; ComfyUI's VAELoader reads it
+     * (comfy/sd.py, "lightricks LTX 2.4 diffusion VAE decoder"). Taken when
+     * the conv one is not on disk, so a template install renders here too. */
+    videoVae: pick("vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors"),
     audioVae: "ltx-2.5-audio-vae-bf16.safetensors",
     upscaler: "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
 
@@ -1953,22 +2042,42 @@ export const config = {
  * (loraStepsOf), and only for a file that is on disk, because pick() returns
  * its last name when none is.
  * server/mcp-steer_test.js builds both disks in a temp folder and pins this. */
-{
-  const h3 = config.video.engines.h3;
+/* With no speed-up on disk at all, Standard is the bare model's 20: every
+ * speed-up is optional (models.js, addonFor "video"), and a step count whose
+ * file is missing is refused with its download offered (video-plain.js). */
+function resolveH3Steps(h3) {
   const stepsOnDisk = (name) => (onDisk("loras", name) ? loraStepsOf(name) : null);
   const eight = stepsOnDisk(h3.turboLora) === 8 && stepsOnDisk(h3.refTurboLora) === 8;
   const four = stepsOnDisk(h3.turboLora4) === 4 && stepsOnDisk(h3.refTurboLora4) === 4;
   const three = stepsOnDisk(h3.turboLora3) === 3;
-  const standard = eight ? 8 : 4;
+  const standard = eight ? 8 : four ? 4 : 20;
   h3.turboBuilds = { three, four, eight };
   h3.stepDefaults = { fast: three ? 3 : four ? 4 : standard, standard, best: 20 };
-  h3.steps = standard;
   /* The step count of the REFERENCE speed-up file on this disk (8, 4, or null
    * when none is), for a music-video scene with cast pictures: its matched
    * default is this file's count, which can be 8 where standard is 4
    * (server/mv/clipsteps.js defaultClipSteps). */
   h3.refTurboSteps = stepsOnDisk(h3.refTurboLora);
+  return standard;
 }
+config.video.engines.h3.steps = resolveH3Steps(config.video.engines.h3);
+
+/** Look for H3's speed-ups again, after one lands (server/index.js, the
+ *  downloader's "ready" for a row with addonFor "video"), so its step counts
+ *  work without a restart: every slot is picked again from its own list, and
+ *  the builds and step defaults follow. The step count in use moves only
+ *  while it is still the machine's default (Standard), never a person's.
+ *  Returns turboBuilds. */
+export function refreshH3Speedups() {
+  const h3 = config.video.engines.h3;
+  const before = h3.stepDefaults?.standard;
+  for (const [slot, names] of Object.entries(H3_LORA_SLOTS)) h3[slot] = pick("loras", ...names);
+  const standard = resolveH3Steps(h3);
+  if (h3.steps === before) h3.steps = standard;
+  return h3.turboBuilds;
+}
+/** The 3-step slot alone; kept for its callers. */
+export const refreshTaoMate = () => refreshH3Speedups().three;
 
 /* THE CARD TIERS' SIZES in H3's list, from server/h3tier.js (the one source),
  * each labelled with the card it was measured for. Added before FastH3 copies
@@ -1979,6 +2088,26 @@ export const config = {
     if (!t.width || h3.sizes.some((z) => z.w === t.width && z.h === t.height)) continue;
     h3.sizes.push({ w: t.width, h: t.height,
       label: `${t.width} x ${t.height} · ${t.label.toLowerCase()} for ${t.minGb} GB cards${t.experimental ? ", experimental" : ""}` });
+  }
+}
+
+/* 720P FIRST OFF NVIDIA (the owner's call, 2026-09-25): on an AMD or Intel
+ * card, or no card, H3 (and FastH3, which copies this below) starts at
+ * 1280x720 and lists it first, ahead of the 1344x768 it was trained at. 720
+ * is not on H3's 32 px grid; the model pads the latent to its 2x2 patch and
+ * crops the output back (comfy/ldm/minimax/model.py _forward), so it renders
+ * at exactly 1280x720. `nativeWidth`/`nativeHeight` keep the trained size
+ * for anything that measures against it. LTX already starts at 1280x704. A
+ * smaller card's tier (h3tier.js) still starts at its own measured size. */
+{
+  const h3 = config.video.engines.h3;
+  h3.nativeWidth = h3.width;
+  h3.nativeHeight = h3.height;
+  if (PREFER_720P) {
+    h3.width = 1280;
+    h3.height = 720;
+    const i = h3.sizes.findIndex((z) => z.w === 1280 && z.h === 720);
+    if (i > 0) h3.sizes.unshift(...h3.sizes.splice(i, 1));
   }
 }
 
@@ -2018,6 +2147,8 @@ config.video.engines.fasth3 = {
     minTokens: 12288, extraTokens: 256, sinkConditioning: "exact_kv_and_rows" },
   /* H3's sol-attn switch is H3's: FastH3 always runs its own VSA above. */
   sparse: null, solAttn: null,
+  /* FastH3 always runs BlockSparseAttention (VSA), which the block cache refuses. */
+  blockCache: false, blockCacheRecipe: null,
   /* NOT IN THE MAIN ENGINE LIST (the H3 lab, 2026-09-24): slower than the Fast
    * setting in every pair (1.37x the wall at 1344x768, 8 s; 1.22x at 960x544)
    * and good on one prompt of three (a white blob on one, colour changes on
@@ -2061,6 +2192,12 @@ const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
  * person chose, and dropping it at boot would silently put the default back. */
 const OK_PYTHON_PATH = (v) => v === null
   || (typeof v === "string" && v.length > 0 && v.length <= 1024 && !/[\r\n\0]/.test(v) && path.isAbsolute(v));
+/* The whisper models Studio offers (config.lyrics.model, POST /api/whisper
+ * {action:"model"}). Every one is a name faster-whisper's own table resolves
+ * to a converted checkpoint on huggingface.co (its utils.py _MODELS, which
+ * has had "large-v3-turbo" since 1.1), fetched on first use into its cache.
+ * large-v3 stays the default: it is the one measured on sung vocals. */
+export const WHISPER_MODELS = ["large-v3", "large-v3-turbo", "medium", "small", "base", "tiny"];
 config.music.engines["yue2-gguf"] = {
   label: "YuE2 GGUF · Q4 / Q8 · sellable by individuals",
   runtime: "audiocpp", capability: "musicYue2Gguf",
@@ -2131,6 +2268,7 @@ export const PREF_PATHS = [
   ["stems", "devicePython", OK_PYTHON_PATH],
   ["lyrics", "when", OK_WHEN],
   ["lyrics", "whisperPython", OK_PYTHON_PATH],
+  ["lyrics", "model", (v) => WHISPER_MODELS.includes(v)],
   ["output", "format", (v) => ["flac", "mp3", "opus"].includes(v)],
   ["output", "mp3Quality", (v) => ["V0", "128k", "320k"].includes(v)],
   ["output", "opusQuality", (v) => ["64k", "96k", "128k", "192k", "320k"].includes(v)],
