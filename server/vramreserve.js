@@ -80,6 +80,24 @@ export function othersDedicatedMb(rows, { excludePids = [] } = {}) {
   return Math.round(Math.max(...byAdapter.values()) / 1024 / 1024);
 }
 
+/**
+ * The biggest holders by program name, for the log line: "firefox 11.2 GB".
+ * Measured 2026-09-27 on the RX 9060 XT PC: after an afternoon, Firefox's GPU
+ * process alone held 11.5 GB of the 16 GB card, more than any reserve can
+ * leave room for; the line says who, so the person can close or restart it.
+ */
+export function topHolders(rows, { excludePids = [], n = 2, minMb = 500 } = {}) {
+  const skip = new Set(excludePids.map(Number));
+  const by = new Map();
+  for (const r of rows || []) {
+    const m = /^pid_(\d+)_/.exec(String(r?.instance || ""));
+    if (!m || skip.has(Number(m[1])) || !r.name || !(Number(r.bytes) > 0)) continue;
+    by.set(r.name, (by.get(r.name) || 0) + Number(r.bytes));
+  }
+  return [...by].map(([name, bytes]) => ({ name, mb: Math.round(bytes / 1024 / 1024) }))
+    .filter((h) => h.mb >= minMb).sort((a, b) => b.mb - a.mb).slice(0, n);
+}
+
 /** The --reserve-vram value in GB, or null when ComfyUI's own is enough. */
 export function autoReserveGb({ othersMb, totalMb } = {}) {
   if (!Number.isFinite(othersMb) || othersMb <= 0) return null;
@@ -94,13 +112,14 @@ export function autoReserveGb({ othersMb, totalMb } = {}) {
 export function readGpuProcessMemory({ timeoutMs = 10_000 } = {}) {
   if (process.platform !== "win32") return Promise.resolve(null);
   const script = "(Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples"
-    + " | Where-Object { $_.CookedValue -gt 0 } | ForEach-Object { $_.InstanceName + ' ' + [int64]$_.CookedValue }";
+    + " | Where-Object { $_.CookedValue -gt 0 } | ForEach-Object { $p = Get-Process -Id ([int](($_.InstanceName -split '_')[1])) -ErrorAction SilentlyContinue;"
+    + " $_.InstanceName + ' ' + [int64]$_.CookedValue + ' ' + $(if ($p) { $p.ProcessName } else { '?' }) }";
   return new Promise((resolve) => {
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
       { timeout: timeoutMs, windowsHide: true }, (err, stdout) => {
         if (err) return resolve(null);
         const rows = String(stdout).split(/\r?\n/).map((l) => l.trim().split(/\s+/))
-          .filter((p) => p.length === 2).map(([instance, bytes]) => ({ instance, bytes: Number(bytes) }));
+          .filter((p) => p.length >= 2).map(([instance, bytes, ...name]) => ({ instance, bytes: Number(bytes), name: name.join(" ") || null }));
         resolve(rows.length ? rows : null);
       });
   });
@@ -122,9 +141,14 @@ export async function desktopReserve({ mode, vendor, totalMb, options, installFl
   const gb = autoReserveGb({ othersMb, totalMb });
   const install = installReserveGb(installFlags, useInstallFlags);
   if (gb === null || (install !== null && install >= gb)) return { ...none, othersMb };
+  const top = topHolders(rows, { excludePids });
+  const most = top.length ? ` (most: ${top.map((h) => `${h.name} ${(h.mb / 1024).toFixed(1)} GB`).join(", ")})` : "";
+  /* More than the cap can leave: the render will spill whatever Studio does. */
+  const over = othersMb / 1024 + RESERVE_MARGIN_GB > gb
+    ? ". That is more than Studio can leave room for: close or restart the biggest one before long renders" : "";
   return {
-    values: { reserveVram: gb }, othersMb, gb,
-    said: `other programs hold ${(othersMb / 1024).toFixed(1)} GB of the card; reserving ${gb} GB for them`
-      + (install !== null ? ` (the install's own flag said ${install})` : ""),
+    values: { reserveVram: gb }, othersMb, gb, top,
+    said: `other programs hold ${(othersMb / 1024).toFixed(1)} GB of the card${most}; reserving ${gb} GB for them`
+      + (install !== null ? ` (the install's own flag said ${install})` : "") + over,
   };
 }

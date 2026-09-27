@@ -18,6 +18,7 @@ try {
 // Dynamic imports are intentional: even config's read-only discovery is scoped
 // to the empty test rig rather than the owner's configured installation.
 const { prepareGgufJob } = await import("./music-gguf-input.js");
+const { labelYueLyrics } = await import("./music/yue-lyrics.js");
 const { config } = await import("./config.js");
 // The route marks the required badge over its overlaid rows; the slice below runs the real rule.
 const { markRequired, modulesOf } = await import("./models.js");
@@ -175,6 +176,8 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   const route = runInNewContext(`(async(payload)=>{const req={},res={};const readBody=async()=>payload;
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
     config: app, ggufSetup: setup, prov: { actorFrom: () => "agent:test" },
+    /* Unlabelled YuE2 lyrics get [Verse]/[Chorus] before any build (music/yue-lyrics.js). */
+    labelYueLyrics, console: { log() {}, warn() {} },
     prepareGgufJob: (body, actor) => { events.push("validate"); return prepareGgufJob(body, actor); },
     jobs: { enqueue: (spec) => { events.push("enqueue"); return { id: "owned-native", title: spec.title, quantization: spec.quantization }; }, snapshot: () => ({ current: { id: "someone-else" } }) },
     json: (res, status, body) => ({ status, body }),

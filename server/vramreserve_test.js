@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { autoReserveGb, chosenReserve, desktopReserve, installReserveGb, othersDedicatedMb,
+import { autoReserveGb, chosenReserve, desktopReserve, installReserveGb, othersDedicatedMb, topHolders,
   wantsAutoReserve, RESERVE_MAX_GB } from "./vramreserve.js";
 import { buildLaunchArgs } from "./comfyargs.js";
 
@@ -50,6 +50,18 @@ test("the person's own reserve wins; the install's is replaced only by a larger 
   assert.deepEqual((await desktopReserve({ ...base, options: { reserveVram: 1 } })).values, {});
   assert.deepEqual((await desktopReserve({ ...base, read: async () => { throw new Error("no counters"); } })).values, {},
     "a machine where the counters cannot be read starts as before");
+});
+
+test("the log names the biggest holders, and says when they are more than the cap can leave", async () => {
+  const named = (pid, mb, name) => ({ ...row(pid, mb), name });
+  const rows = [named(1, 11499, "firefox"), named(2, 2587, "dwm"), named(3, 333, "Discord"), named(4, 20, "firefox")];
+  assert.deepEqual(topHolders(rows), [{ name: "firefox", mb: 11519 }, { name: "dwm", mb: 2587 }]);
+  const r = await desktopReserve({ platform: "win32", vendor: "amd", totalMb: 16304, read: async () => rows });
+  assert.equal(r.gb, RESERVE_MAX_GB);
+  assert.match(r.said, /\(most: firefox 11\.2 GB, dwm 2\.5 GB\)/);
+  assert.match(r.said, /more than Studio can leave room for/);
+  const calm = await desktopReserve({ platform: "win32", vendor: "amd", totalMb: 16304, read: async () => [named(1, 1500, "firefox")] });
+  assert.doesNotMatch(calm.said, /more than Studio/);
 });
 
 test("laid over the install's flag as one --reserve-vram, the person's choices still on top", () => {

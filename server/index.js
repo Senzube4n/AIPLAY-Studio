@@ -171,6 +171,8 @@ async function checkedVideoLoras(value, engine) {
  * when the files are there. The answer and its one sentence are the cover row
  * of machineDefaults() (server/fit.js defaultFor "cover"). */
 async function coverCanRun() {
+  /* Fast covers draw on the processor (server/fastcover.js): no picture model needed. */
+  if (fastCovers.use()) return true;
   const cover = (await machineDefaults().catch(() => null))?.find((d) => d.key === "art.engine");
   if (!cover || cover.canRun) return true;
   if (!coverSkipSaid) console.log(`  [cover] skipped: ${cover.why} Songs are unaffected.`);
@@ -336,6 +338,8 @@ import { createMusicInputRoutes } from "./music-input.js";
 /* One-click setups: a private Python per feature (timed lyrics), built with the
  * kept uv, and Studio's own packages again in an engine Studio installed. */
 import { createSetupRunner } from "./setup/venv.js";
+import { createFastCovers, FAST_COVER_ENGINE, FAST_COVER_SETUP } from "./fastcover.js";
+import { labelYueLyrics } from "./music/yue-lyrics.js";
 import { createEnginePackagesRunner } from "./setup/engine-packages.js";
 /* Read through the namespace, not by name: engineModuleRefusal (lane D) is
  * called only when the module carries it, so this file loads either way. */
@@ -562,7 +566,7 @@ const art = new ArtRunner(comfy, jobs);
 
 // A finished cover is metadata like any other, so it goes through the same
 // sidecar the rest of the library uses.
-art.on("cover", async ({ file, covers, thumbs, runId }) => {
+art.on("cover", async ({ file, covers, thumbs, runId, engine }) => {
   /* ⚠ A standalone image is not a cover.
    *
    * It rides the same engine and therefore the same event, but it belongs to no
@@ -582,7 +586,8 @@ art.on("cover", async ({ file, covers, thumbs, runId }) => {
        * answers with the graph, the prompt, the seed, the model FILES, the
        * elapsed time and the SHA-256 of the picture. Purely additive: every
        * existing reader of this event is unaffected. */
-      data: { model: config.art.engine || "flux2", for: file, runId: runId ?? null },
+      /* A fast cover names its own model (server/fastcover.js), not the engine setting. */
+      data: { model: engine === FAST_COVER_ENGINE ? engine : config.art.engine || "flux2", for: file, runId: runId ?? null },
     });
   }
   batch.noteStage(file, "cover", covers?.length ? "done" : "failed");
@@ -1840,6 +1845,12 @@ jobs.on("update", async (snap) => {
       }
     }
   }
+  /* Music-only mode has no picture engine, so it never drew covers. Fast
+   * covers need none (server/fastcover.js): with them set up, its songs get
+   * a cover too. Only the cover: the other stages stay full Studio's. */
+  if (!h.preview && config.musicOnly && fastCovers.use() && (job.stages ? job.stages.cover : true)) {
+    art.request({ file: h.file, title: h.title, caption: job.caption, lyrics: job.lyrics, seed: h.seed });
+  }
 });
 
 /**
@@ -2894,17 +2905,23 @@ const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance
  * With AIPLAY_WHISPER_PYTHON set the environment names the interpreter and
  * wins over the field, so a build would change nothing: it is refused up
  * front, in the same words Settings uses. */
-const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: oneRunner(createSetupRunner({
+const setupRunner = oneRunner(createSetupRunner({
   appData: config.dataDir,
   vendor: () => gpuStatus()?.vendor || vendorOf(config.gpu, config.torchBackend),
   probe: (py, mods) => probeOne(py, mods),
-  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : id === "stems" ? config.systemPython : null),
+  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : id === "stems" ? config.systemPython
+    : id === FAST_COVER_SETUP ? config.art.fastCoverPython : null),
   blockedBy: (id) => (id === "lyrics" && process.env.AIPLAY_WHISPER_PYTHON
     ? `AIPLAY_WHISPER_PYTHON is set, so timed lyrics run in ${config.lyrics.python} whatever Studio builds. `
       + "Install faster-whisper and stable-ts there, or remove the variable and start Studio again to use the button."
     : stemsBlockedBy(id)),
   save: async (id, py) => {
     if (id === "stems") return saveStemsBuild(py);
+    if (id === FAST_COVER_SETUP) {
+      config.art.fastCoverPython = py;
+      await savePrefs();
+      return null;
+    }
     if (id !== "lyrics") return null;
     config.lyrics.whisperPython = py;
     config.lyrics.python = whisperPython();
@@ -2919,7 +2936,12 @@ const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, run
   rig: () => config.rig,
   python: () => config.python,
   probe: (py, mods) => probeOne(py, mods),
-})) });
+}));
+const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: setupRunner });
+/* Fast covers (server/fastcover.js): song covers on the processor. The art
+ * queue asks use() for every song cover it queues. */
+const fastCovers = createFastCovers({ config, catalog: CATALOG, models, setup: setupRunner, save: () => savePrefs() });
+art.fastCovers = fastCovers;
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
 const listeningRuntime = createListeningLabRuntime({ config, library,
   shelf: async () => scanBases(await modelBases()), probe: probeModel, engine: engineDoor });
@@ -4134,6 +4156,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, powerSnapshot());
     }
 
+    /* Fast covers (server/fastcover.js): GET its state; POST { enabled } is
+     * the Settings switch and the first-run answer alike. On sets up the
+     * Python and fetches the Models row by itself, so only Studio's own page
+     * or a local client may post it. */
+    if (p === "/api/fastcovers") {
+      if (req.method === "GET") return json(res, 200, await fastCovers.status());
+      if (req.method !== "POST") return json(res, 405, { error: "GET or POST" });
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Fast covers are switched from Studio's own page or a local client." });
+      const b = await readBody(req);
+      if (typeof b.enabled !== "boolean") return json(res, 400, { error: "enabled must be true or false." });
+      return json(res, 200, await fastCovers.setEnabled(b.enabled));
+    }
+
     if (p === "/api/provenance/settings" && req.method === "POST") {
       const b = await readBody(req);
       if (typeof b.showBadges === "boolean") config.provenance.showBadges = b.showBadges;
@@ -4452,6 +4487,16 @@ const server = http.createServer(async (req, res) => {
       // No engine named: the default follows the disk when nobody chose (machineDefaults).
       if (body.engine === undefined && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const requestedEngine=body.engine || config.music.engine;
+      /* YuE2 sings labelled lyrics (server/music/yue-lyrics.js): lyrics with no
+       * [Verse] / [Chorus] at all are given them, for every YuE2 build. The
+       * song keeps the labelled text, so what rendered is what is stored. */
+      if (/^yue2(-|$)/.test(requestedEngine) && !body.instrumental) {
+        const labelled = labelYueLyrics(body.lyrics);
+        if (labelled.changed) {
+          body.lyrics = labelled.lyrics;
+          console.log(`  [yue2] the lyrics had no section labels; [Verse]/[Chorus] were added before rendering`);
+        }
+      }
       if (config.musicOnly && requestedEngine !== "yue2-gguf" && !(requestedEngine === "yue2-comfy" && comfyWanted)) return json(res, 400, {error:"Music-only mode runs YuE2 (native GGUF, or through ComfyUI when a YuE2 checkpoint is found). Start full Studio for other engines."});
       if (requestedEngine === "yue2-gguf") {
         try {
@@ -7753,7 +7798,8 @@ const server = http.createServer(async (req, res) => {
       try {
         /* A cover that could only fail is not queued: with no picture model on
          * this PC (or the chosen one missing) say the one sentence instead. */
-        if (b.action === "backfill" || b.action === "regenerate") {
+        /* Fast covers draw without a picture model (server/fastcover.js). */
+        if ((b.action === "backfill" || b.action === "regenerate") && !fastCovers.use()) {
           const cover = (await machineDefaults().catch(() => null))?.find((d) => d.key === "art.engine");
           if (cover && cover.canRun === false) {
             return json(res, 409, { error: cover.why, needsModel: MODEL_TO_CAPABILITY[cover.value] || null, ...art.status() });
@@ -13280,6 +13326,11 @@ async function powerTick() {
 server.listen(config.uiPort, "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
   persistStartLevel().catch((err) => console.warn(`  [settings] the starting level was not saved: ${err.message}`));
+  /* Fast covers switched on and answered, but not all there (a setup or a
+   * download a restart cut short): carry on by itself. */
+  if (config.art.fastCovers && config.art.fastCoversAsked) {
+    fastCovers.ensure().catch((err) => console.warn(`  [fast covers] could not resume the setup: ${err.message}`));
+  }
 
   /* Open the browser HERE, not in the launcher.
    *

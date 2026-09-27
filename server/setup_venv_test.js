@@ -128,7 +128,7 @@ console.log("\nTHE RECIPE READS THE SAME LINES AS THE REST OF STUDIO");
   ok("the modules are the catalogue's needsModules, the Models row's probe",
     JSON.stringify(nv.modules) === JSON.stringify(modulesOf(CATALOG.find((c) => c.id === "lyrics"))) && nv.modules.length === 2);
   ok("Python 3.12, managed by uv", nv.python === "3.12");
-  ok("recipes and torch choices are the lists MCP offers", RECIPE_IDS.join() === "lyrics,stems" && TORCH_CHOICES.join() === "auto,cu126,cu128,cpu");
+  ok("recipes and torch choices are the lists MCP offers", RECIPE_IDS.join() === "lyrics,stems,covers" && TORCH_CHOICES.join() === "auto,cu126,cu128,cpu");
   const offerNv = offerSentence(nv, "C:\\Users\\Zoe\\.aiplay-studio\\venvs\\lyrics");
   ok("the offer names the build, the folder, the sizes and where the numbers come from",
     /PyTorch for your NVIDIA card \(CUDA 12\.6\)/.test(offerNv) && /About 2\.6 GB to download/.test(offerNv)
@@ -732,14 +732,15 @@ console.log("\nTHE DOOR");
   const other = await door({ method: "POST", headers: PAGE }, null, new URL(`http://${HOST}/api/models`));
   ok("any other path falls through", other === false);
 
-  const mount = INDEX.slice(INDEX.indexOf("const setupRoutes = createSetupRoutes("), INDEX.indexOf("const setupRoutes = createSetupRoutes(") + 1400);
-  ok("index.js mounts it with the real guard and body reader", /createSetupRoutes\(\{ json, readBody, sameOriginLocalJson, runner:/.test(mount)
+  /* The runner is built first (fast covers use it too), then mounted. */
+  const mount = INDEX.slice(INDEX.indexOf("const setupRunner = oneRunner(createSetupRunner("), INDEX.indexOf("const setupRoutes = createSetupRoutes(") + 200);
+  ok("index.js mounts it with the real guard and body reader", /createSetupRoutes\(\{ json, readBody, sameOriginLocalJson, runner: setupRunner \}\)/.test(mount)
     && /if \(p === "\/api\/setup"\) \{\s*\n\s*if \(await setupRoutes\(req, res, url\)\) return;/.test(INDEX));
   ok("...and a finished build is chosen through the Settings fields, then answered with that door's verdict",
     /config\.lyrics\.whisperPython = py;\s*\n\s*config\.lyrics\.python = whisperPython\(\);[\s\S]*?savePrefs\(\)[\s\S]*?pythonVerdict\(/.test(mount), mount.slice(0, 300));
   ok("...with AIPLAY_WHISPER_PYTHON blocking the lyrics build, and Studio's engine packages served by the same door",
     /blockedBy: \(id\) => \(id === "lyrics" && process\.env\.AIPLAY_WHISPER_PYTHON/.test(mount)
-      && /runner: oneRunner\(createSetupRunner\(/.test(mount) && /createEnginePackagesRunner\(\{[\s\S]*?rig: \(\) => config\.rig,[\s\S]*?python: \(\) => config\.python,/.test(mount));
+      && /const setupRunner = oneRunner\(createSetupRunner\(/.test(mount) && /createEnginePackagesRunner\(\{[\s\S]*?rig: \(\) => config\.rig,[\s\S]*?python: \(\) => config\.python,/.test(mount));
 }
 
 console.log("\nSTUDIO'S OWN ENGINE PACKAGES AGAIN (studio-packages)");

@@ -5013,6 +5013,21 @@
         <p class="hint" id="artNote"></p>
       </section>
 
+      <!-- Early features (web/fastcovers.js). Fast covers: song covers drawn by
+           a small model on the processor (server/fastcover.js). -->
+      <section class="pcard" id="set-experimental" data-nav="Experimental">
+        <h3>Experimental</h3>
+        <p class="pcard-sub">Early features. They may change.</p>
+        <div class="params">
+          <label for="qFastCovers">fast covers</label>
+          <span class="pv"><select id="qFastCovers" class="sel2" title="Small covers from Supra2-IMG, drawn on the processor in seconds, for every song (automatic covers above only switches the covers engine). Off: covers use the covers engine.">
+            <option value="1">On (processor, seconds)</option>
+            <option value="0">Off (covers engine)</option>
+          </select> <span class="chip" id="fastCoversChip" role="status" hidden></span></span>
+        </div>
+        <p class="hint warnhint" id="fastCoversNote" hidden></p>
+      </section>
+
       <section class="pcard" id="set-video" data-nav="Video">
         <h3>Video clips</h3>
         <p class="pcard-sub">Short music-video clips for your songs. The Video screen works either way.</p>
@@ -5684,6 +5699,8 @@
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
 <script type="module" src="receipt.js"></script>
+<!-- Fast covers: the Settings > Experimental switch and the first-run question. -->
+<script type="module" src="fastcovers.js"></script>
 <!-- The Video screen follows the card: size chips, what a size needs, sparse
      attention, More motion, the reference and RAM lines (web/vidfit.js; every
      judgement and sentence is the server's). -->

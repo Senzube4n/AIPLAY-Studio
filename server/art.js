@@ -39,6 +39,7 @@ import { joinClips } from "./clipjoin.js";
 import { runLrc, LRC_SCRIPT, WHISPER_SCRIPT, whisperArgs, stderrTail } from "./lrc.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 import { killProcessTree } from "./proctree.js";
+import { FAST_COVER_ENGINE } from "./fastcover.js";
 import { demucsMeter, stemsPipLine, STEMS_SETTING_WORDS, STEMS_SETUP_BUTTON, stemsPythonEpoch, demucsEnv } from "./music/stems.js";
 /* The ledger, imported HERE and not only at the API seam in index.js: a clip
  * served from the engine's cache is a fact only the renderer can know, and it
@@ -615,6 +616,11 @@ export function refusalCard(buf) {
  */
 export const SUBPROCESS_KINDS = new Set(["stems", "lrc", "whisper"]);
 
+/* A job that runs a program of its own: those kinds, and a song cover drawn
+ * by fast covers (server/fastcover.js), which stays kind "cover" everywhere a
+ * cover is looked for but runs Supra2-IMG on the processor, not on the engine. */
+export const ownProgram = (job) => SUBPROCESS_KINDS.has(job?.kind) || job?.fast === true;
+
 /** What a job the person stopped reads, in the Jobs list and to its waiters.
  *  Non-null on purpose: art-wait.js and index.js standing() read a job with an
  *  error as not-a-success, and a stopped job is not one. */
@@ -955,7 +961,7 @@ export class ArtRunner extends EventEmitter {
     const none = { stopped: null, kind: null, queued: this.queue.length, killed: false, stopping: false };
     if (!job) return none;
     try {
-      if (SUBPROCESS_KINDS.has(job.kind)) {
+      if (ownProgram(job)) {
         const r = await this.#stopChild(job);
         return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: r.killed, stopping: r.stopping };
       }
@@ -1025,7 +1031,7 @@ export class ArtRunner extends EventEmitter {
       const job = this.current;
       out.wasRunning = job?.title || null;
       out.kind = job?.kind || null;
-      if (job && SUBPROCESS_KINDS.has(job.kind)) {
+      if (job && ownProgram(job)) {
         const r = await this.#stopChild(job);
         out.killed = r.killed;
         out.stopping = r.stopping;
@@ -1037,7 +1043,7 @@ export class ArtRunner extends EventEmitter {
       const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId }).catch(() => ({ stopped: false }))));
       out.engineCancelled = stops.filter((s) => s?.stopped === true).length;
       out.interrupted = out.engineCancelled > 0;
-      if (out.interrupted && job && !SUBPROCESS_KINDS.has(job.kind) && this.current === job) {
+      if (out.interrupted && job && !ownProgram(job) && this.current === job) {
         job.cancelled = true; job.stopping = true; out.stopping = true;
         this.emit("update");
       }
@@ -1130,7 +1136,7 @@ export class ArtRunner extends EventEmitter {
      * a separation kept the card busy. Its tree is killed too; what this
      * method returns is unchanged. */
     const cur = this.current;
-    if (cur && SUBPROCESS_KINDS.has(cur.kind)) await this.#stopChild(cur).catch(() => {});
+    if (cur && ownProgram(cur)) await this.#stopChild(cur).catch(() => {});
     /* Two halves and both are needed: clearing OUR queue (above) stops what has
      * not been submitted, interrupting stops what is rendering, and clearing
      * ComfyUI's own queue catches what it accepted but has not started. */
@@ -1161,7 +1167,7 @@ export class ArtRunner extends EventEmitter {
         /* Only a job that needs the engine waits for it: stems and timed
          * lyrics run their own program and start without it. */
         deferred: this.queue.length > 0 && !this.current && !this.paused && !this.comfy.ready
-          && this.queue.some((j) => !SUBPROCESS_KINDS.has(j.kind))
+          && this.queue.some((j) => !ownProgram(j))
           ? { reason: "engine", message: "Waiting for the image engine to start; model readiness has not been verified." }
           : null,
         // `kind` is reported so the UI can name the stage that is actually
@@ -1305,7 +1311,15 @@ export class ArtRunner extends EventEmitter {
      * Video screen ("ignores this setting the same way a manual cover render
      * ignores the cover dropdown") — that sentence was true of every screen
      * except this one. */
-    if (kind === "cover" && !asked && !this.enabled) {
+    /* FAST COVERS (server/fastcover.js, Settings > Experimental): a song's
+     * cover drawn by Supra2-IMG on the processor, when it is switched on and
+     * set up. Never a picture from the Images screen (image:…), never one
+     * that names its engine. The automatic-cover switch above is about the
+     * covers ENGINE on the card: reported 2026-09-27, with it off and fast
+     * covers on, no song got a cover until Regenerate was pressed. */
+    const fast = kind === "cover" && !String(file).startsWith("image:") && !video?.engine && !assignedTo("cover")
+      && this.fastCovers?.use?.() === true;
+    if (kind === "cover" && !asked && !this.enabled && !fast) {
       return this.#refuse("automatic cover art is switched off in Settings");
     }
     if (!force && this.queue.some((j) => j.file === file && j.kind === kind)) {
@@ -1364,6 +1378,7 @@ export class ArtRunner extends EventEmitter {
      * Several callers ignore request()'s return and wait on events (MV's
      * awaitArt, sfxcue), so a refusal is also announced as `failed` for this
      * file and remembered for a late listener (refusalFor). */
+    if (fast) job.fast = true;
     const words = this.#renderedWords(job);
     if (words !== null) {
       const verdict = checkPrompt([words], { context: job.safetyContext, flags: job.safetyFlags });
@@ -1414,7 +1429,7 @@ export class ArtRunner extends EventEmitter {
   #nextRunnable() {
     if (this.jobs?.current || (this.jobs?.queue?.length || 0) > 0) return -1;
     if (this.comfy?.ready) return this.queue.length ? 0 : -1;
-    return this.queue.findIndex((j) => SUBPROCESS_KINDS.has(j.kind));
+    return this.queue.findIndex((j) => ownProgram(j));
   }
 
   #schedule() {
@@ -1462,20 +1477,21 @@ export class ArtRunner extends EventEmitter {
        * render ends up streaming from system RAM. The music runner's own
        * switch (jobs.js) only ever compared music models with each other.
        * `artResident` tells it the way back needs an unload too. */
-      if (this.jobs.loaded) {
+      /* A fast cover runs on the processor: the music model stays where it is. */
+      if (this.jobs.loaded && !job.fast) {
         console.log(`  [art] unloading ${this.jobs.loaded.key} before the ${job.kind || "image"} job`);
         await this.jobs.unloadModels().catch(() => {});
         this.#lastQwen = null;             // a music model had the card: Qwen is not warm
       }
       /* A program of its own puts nothing into the engine and reports no
        * progress over its socket: neither the resident flag nor the socket. */
-      const ownProgram = SUBPROCESS_KINDS.has(job.kind);
-      if (!ownProgram) this.jobs.artResident = true;
+      const own = ownProgram(job);
+      if (!own) this.jobs.artResident = true;
       /* A clip, a separation or anything but a picture uses the card: Qwen is
        * not known to be warm after it. A picture sets this itself below. */
       if (job.kind !== "cover") this.#lastQwen = null;
       job.startedAt = this.startedAt;
-      if (!ownProgram) this.#connect();
+      if (!own) this.#connect();
       this.emit("update");
       try {
         if (job.kind === "stems") {
@@ -1622,7 +1638,7 @@ export class ArtRunner extends EventEmitter {
           this.done.unshift(job);
           this.emit("sfx", { file: job.file, sfxFile: out, seed: job.seed, runId: job.runId ?? null });
         } else {
-          const { covers, thumbs } = await this.#render(job);
+          const { covers, thumbs } = job.fast ? await this.#fastCover(job) : await this.#render(job);
           job.covers = covers;
           /* What the next Qwen render follows: this one, if Qwen painted it;
            * after any other engine, Qwen is not known to be warm. */
@@ -1746,6 +1762,24 @@ export class ArtRunner extends EventEmitter {
       }
     }
     if (this.queue.length) this.#schedule();      // yielded early; resume later
+  }
+
+  /* A song cover from fast covers (server/fastcover.js): Supra2-IMG in its
+   * own Python on the processor, written straight to the names #render gives
+   * a cover (<track stem>.png and _t.png in covers/). The program is kept on
+   * the job, so Stop kills it like a separation. */
+  async #fastCover(job) {
+    const stem = job.file.replace(/\.(flac|mp3|opus|wav)$/i, "");
+    await mkdir(COVER_DIR, { recursive: true });
+    const names = { cover: `${stem}.png`, thumb: `${stem}_t.png` };
+    const done = await this.fastCovers.render(job, {
+      out: path.join(COVER_DIR, names.cover), thumb: path.join(COVER_DIR, names.thumb),
+      run: (start) => this.#runChild(job, start),
+    });
+    job._paintedBy = FAST_COVER_ENGINE;
+    job._imageOptions = { steps: done.steps, cfg: done.cfg, native: done.native, drawSeconds: done.drawSeconds };
+    this.progress = 1;
+    return { covers: [names.cover], thumbs: [names.thumb] };
   }
 
   async #render(job) {
@@ -2840,7 +2874,7 @@ export class ArtRunner extends EventEmitter {
   }
 
   /**
-   * A transcription somebody asked for (kind "whisper"): server/whisper.py over
+   * A transcription somebody asked for (kind "whisper"): server/whisper_run.py over
    * any file, in the same python, with the same model and the same failure
    * sentences as timed lyrics (server/lrc.js runLrc). `job.whisper` was
    * validated and resolved by server/whisper.js: absolute input and vocal

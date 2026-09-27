@@ -1833,6 +1833,14 @@ export const config = {
   image: { engine: "qwen-image-2.1" },
   art: {
     enabled: true,
+    /* FAST COVERS (server/fastcover.js, Settings > Experimental): song covers
+     * drawn by Supra2-IMG on the processor. On by default; nothing is set up
+     * or fetched until the first-run question is answered (`fastCoversAsked`),
+     * and switching it off there keeps the picture engine. `fastCoverPython`
+     * is the Python the "covers" setup built (setup/venv.js). */
+    fastCovers: true,
+    fastCoversAsked: false,
+    fastCoverPython: null,
     /* Which engine paints COVERS (song thumbnails). The Images screen picks
      * per-picture; this is the library-wide default. "checkpoint" uses
      * `checkpoint` below — any file in ComfyUI/models/checkpoints. */
@@ -2280,6 +2288,9 @@ export const PREF_PATHS = [
   ["output", "mp3Quality", (v) => ["V0", "128k", "320k"].includes(v)],
   ["output", "opusQuality", (v) => ["64k", "96k", "128k", "192k", "320k"].includes(v)],
   ["art", "enabled", (v) => typeof v === "boolean"],
+  ["art", "fastCovers", (v) => typeof v === "boolean"],
+  ["art", "fastCoversAsked", (v) => typeof v === "boolean"],
+  ["art", "fastCoverPython", (v) => v === null || OK_PYTHON_PATH(v)],
   /* ⚠ THIS LIST IS READ BY A TEST, not only by the loader. provenance_test.js
    * parses this exact literal and requires every name in it to resolve through
    * MODEL_TO_CAPABILITY — an engine added here without a line in models.js

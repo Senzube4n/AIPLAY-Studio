@@ -1546,6 +1546,62 @@ export const CATALOG = [
     ],
   },
   {
+    id: "fastCover",
+    /* FAST COVERS (2026-09-27, Settings > Experimental): Supra2-IMG, a 104M
+     * DiT that draws 256 px pictures, run on the PROCESSOR in its own Python
+     * (setup/venv.js "covers", server/fastcover.js). Not a picture engine:
+     * no `makes`, so fit.js never offers it for the Pictures screen; it only
+     * draws song covers, beside a song rendering on the card. Measured on a
+     * Ryzen 7 5700X: about 8 s a cover at 25 steps, the card untouched.
+     * Every file is pinned to a revision and a hash. */
+    label: "Fast covers: Supra2-IMG",
+    home: "https://huggingface.co/SupraLabs/Supra2-IMG",
+    why: "Draws a small cover for each song on the processor, in seconds.",
+    licence: "Apache-2.0",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://huggingface.co/SupraLabs/Supra2-IMG",
+      note: PERMISSIVE_NOTE + " Its training pictures (FLUX-Reason-6M, Apache-2.0) were made with FLUX.1-dev,"
+        + " whose own licence Studio does not assess here.",
+    },
+    files: [
+      { url: `${HF}/SupraLabs/Supra2-IMG/resolve/10dec6e4b4b5d1c44fd1d7d3fe5e50137333da5b/model_final_ema.pt`,
+        dest: M("fastcover/supra2-img/model_final_ema.pt"), bytes: 416651529,
+        sha256: "e96aa0537e0fd120af82b3a606dd50c90ae079ac7aa97b38a8da4882daeeee48" },
+      { url: `${HF}/google/flan-t5-base/resolve/7bcac572ce56db69c1ea7c8af255c5d7c9672fc2/model.safetensors`,
+        dest: M("fastcover/flan-t5-base/model.safetensors"), bytes: 990345061,
+        sha256: "1dfb70afdcedceb9f9fae2f9b68e004ad934361fb35b9b2bd50b45ea90790fc8" },
+      { url: `${HF}/google/flan-t5-base/resolve/7bcac572ce56db69c1ea7c8af255c5d7c9672fc2/config.json`,
+        dest: M("fastcover/flan-t5-base/config.json"), bytes: 1404,
+        sha256: "7c1853dbfa0e4aac093eb109a358b6ab25fe86b7c15185a91322f0ed26f0f940" },
+      { url: `${HF}/google/flan-t5-base/resolve/7bcac572ce56db69c1ea7c8af255c5d7c9672fc2/tokenizer.json`,
+        dest: M("fastcover/flan-t5-base/tokenizer.json"), bytes: 2424064,
+        sha256: "fe2ebbbbde2985be723e0ce18217853e4020c5e9d35bd07be2c27ab9d3ead57a" },
+      { url: `${HF}/google/flan-t5-base/resolve/7bcac572ce56db69c1ea7c8af255c5d7c9672fc2/tokenizer_config.json`,
+        dest: M("fastcover/flan-t5-base/tokenizer_config.json"), bytes: 2537,
+        sha256: "4c55124402e4ce48c7125d04b9af152a125eda9e7c80829f8f99f2ec69f3f68d" },
+      { url: `${HF}/google/flan-t5-base/resolve/7bcac572ce56db69c1ea7c8af255c5d7c9672fc2/special_tokens_map.json`,
+        dest: M("fastcover/flan-t5-base/special_tokens_map.json"), bytes: 2201,
+        sha256: "5c87151ef0f72a99d1f766a4c418bd2a1f90aaa30a8e22fe5eca9641daebb64f" },
+      { url: `${HF}/stabilityai/sd-vae-ft-mse/resolve/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.safetensors`,
+        dest: M("fastcover/sd-vae-ft-mse/diffusion_pytorch_model.safetensors"), bytes: 334643276,
+        sha256: "a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815" },
+      { url: `${HF}/stabilityai/sd-vae-ft-mse/resolve/31f26fdeee1355a5c34592e401dd41e45d25a493/config.json`,
+        dest: M("fastcover/sd-vae-ft-mse/config.json"), bytes: 547,
+        sha256: "92d3dfb746fca211a2c9e019e285f8597412211728dce3c5bcf4eda0f2d62e7e" },
+    ],
+    /* Its Python (setup/venv.js RECIPES.covers) imports these. */
+    needsModules: ["torch", "transformers", "diffusers", "safetensors", "PIL"],
+    note: "Experimental. 256 px pictures, scaled up for the cover. Runs on the processor, so a cover never waits for the card.",
+    requires: {
+      vramMinGb: 0, vramRecGb: 0, ramMinGb: 4, ramRecGb: 8,
+      note: "Processor only. The text encoder is Flan-T5-base (Apache-2.0) and the decoder the SD VAE ft-MSE (MIT).",
+    },
+  },
+  {
     id: "chatQwen3",
     /* THE LANGUAGE MODEL, WHICH HAD NO ROW. Chat, Simple mode and every
      * Enhance button run a text encoder that can also generate (ComfyUI's
@@ -3050,6 +3106,9 @@ export function isPictureModel(cap) {
  */
 export const MODEL_TO_CAPABILITY = {
   "minimax-music3": "engine",
+  /* Fast covers (server/fastcover.js): the name its covers' ledger lines carry.
+   * Missing, its first live covers (2026-09-27) were stamped `unknown`. */
+  "supra2-img": "fastCover",
   /* ⚠ THE SECOND MUSIC ENGINE, and the line without which every YuE2 render
    * stamps its rights `unknown` — silently, exactly as Anima's did (see the
    * "anima" note below) and exactly as this map's own header warns.

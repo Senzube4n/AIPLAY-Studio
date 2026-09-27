@@ -47,12 +47,14 @@ const CSS = `
 .appdlg.warn h2 i { background: hsla(38,92%,55%,.14); color: var(--warn, hsl(38,92%,55%)); }
 .appdlg p { margin: 0 0 8px; font-size: 13.5px; line-height: 1.6; color: var(--dim, hsl(0,0%,85%)); white-space: pre-wrap; overflow-wrap: anywhere; }
 .appdlg p.more { color: var(--faint, hsl(0,0%,68%)); font-size: 13px; }
-.appdlg input {
+.appdlg input[type="text"] {
   width: 100%; box-sizing: border-box; margin: 6px 0 4px; height: 38px; padding: 0 12px;
   font: inherit; font-size: 13.5px; color: var(--ink, hsl(0,0%,96%));
   background: hsla(0,0%,100%,.06); border: 1px solid transparent; border-radius: 10px;
 }
-.appdlg input:focus { outline: none; border-color: hsla(195,100%,60%,.5); background: hsla(0,0%,100%,.09); }
+.appdlg input[type="text"]:focus { outline: none; border-color: hsla(195,100%,60%,.5); background: hsla(0,0%,100%,.09); }
+.appdlg .appdlg-tog { display: flex; align-items: center; gap: 10px; margin: 10px 0 2px; font-size: 13.5px; color: var(--ink, hsl(0,0%,96%)); cursor: pointer; }
+.appdlg .appdlg-tog input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary, hsl(195,100%,60%)); }
 .appdlg .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .appdlg button {
   font: inherit; font-size: 13px; font-weight: 600; height: 36px; padding: 0 18px;
@@ -136,6 +138,7 @@ function open(kind, message, opts = {}) {
     const g = globalThis;
     if (kind === "confirm") return Promise.resolve(typeof g.confirm === "function" ? !!g.confirm(message) : false);
     if (kind === "prompt") return Promise.resolve(typeof g.prompt === "function" ? g.prompt(message, opts.value ?? "") : null);
+    if (kind === "toggle") return Promise.resolve(opts.checked !== false);
     if (hostAlert) hostAlert(message);
     return Promise.resolve();
   }
@@ -167,6 +170,18 @@ function open(kind, message, opts = {}) {
     });
 
     let input = null;
+    /* A question answered with one switch (appToggle): the switch, then one
+     * button. Closing it any way keeps what the switch says. */
+    let tog = null;
+    if (kind === "toggle") {
+      const row = document.createElement("label");
+      row.className = "appdlg-tog";
+      tog = document.createElement("input");
+      tog.type = "checkbox";
+      tog.checked = opts.checked !== false;
+      row.append(tog, document.createTextNode(opts.label || "On"));
+      box.appendChild(row);
+    }
     if (kind === "prompt") {
       input = document.createElement("input");
       input.type = "text";
@@ -179,7 +194,7 @@ function open(kind, message, opts = {}) {
     const acts = document.createElement("div");
     acts.className = "acts";
     let cancel = null;
-    if (kind !== "alert") {
+    if (kind !== "alert" && kind !== "toggle") {
       cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "cancel";
@@ -189,7 +204,7 @@ function open(kind, message, opts = {}) {
     const ok = document.createElement("button");
     ok.type = "button";
     ok.className = "ok";
-    ok.textContent = opts.ok || (kind === "alert" ? "OK" : kind === "prompt" ? "Save" : guess.ok);
+    ok.textContent = opts.ok || (kind === "alert" || kind === "toggle" ? "OK" : kind === "prompt" ? "Save" : guess.ok);
     acts.appendChild(ok);
     box.appendChild(acts);
     back.appendChild(box);
@@ -201,8 +216,8 @@ function open(kind, message, opts = {}) {
       try { before?.focus?.({ preventScroll: true }); } catch { /* gone */ }
       resolve(value);
     };
-    const yes = () => finish(kind === "prompt" ? input.value : kind === "confirm" ? true : undefined);
-    const no = () => finish(kind === "prompt" ? null : kind === "confirm" ? false : undefined);
+    const yes = () => finish(kind === "prompt" ? input.value : kind === "confirm" ? true : kind === "toggle" ? tog.checked : undefined);
+    const no = () => finish(kind === "prompt" ? null : kind === "confirm" ? false : kind === "toggle" ? tog.checked : undefined);
     function onKey(e) {
       /* While the window is open no key reaches the page's own shortcuts
        * (Delete in VFX, Space in the DAW). Typing in the box still works:
@@ -211,7 +226,7 @@ function open(kind, message, opts = {}) {
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); no(); }
       else if (e.key === "Enter" && (e.target === input || !e.target.closest?.("button"))) { e.preventDefault(); e.stopPropagation(); yes(); }
       else if (e.key === "Tab") {
-        const f = [input, cancel, ok].filter(Boolean);
+        const f = [input, tog, cancel, ok].filter(Boolean);
         const i = f.indexOf(document.activeElement);
         e.preventDefault();
         f[(i + (e.shiftKey ? f.length - 1 : 1)) % f.length].focus();
@@ -234,6 +249,8 @@ function open(kind, message, opts = {}) {
 export const appConfirm = (message, opts) => open("confirm", message, opts);
 export const appAlert = (message, opts) => open("alert", message, opts);
 export const appPrompt = (message, value = "", opts = {}) => open("prompt", message, { ...opts, value });
+/** One switch and OK: resolves to whether the switch is on (`opts.label`, `opts.checked`). */
+export const appToggle = (message, opts = {}) => open("toggle", message, opts);
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   window.appConfirm = appConfirm;

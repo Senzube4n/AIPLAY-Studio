@@ -275,6 +275,11 @@ node server/mcp-steer_test.js || exit 1
 # a Make button names a control that exists; an older Studio's settings (the
 # owner's) keep every value, pictures included; the launcher names what Studio runs.
 node --check web/receipt.js || exit 1
+# Fast covers: Supra2-IMG song covers on the processor (Settings > Experimental),
+# its page script and the in-app switch question it asks once.
+node --check web/fastcovers.js || exit 1
+node --check web/dialog.js || exit 1
+node --test server/fastcover_test.js || exit 1
 node server/defaults_test.js || exit 1
 # EXTEND AND REPLACE ON THE PAGE, AND THE GGUF CARD: one panel with a mode
 # switch and two handles that never cross, both offered from the row menu and
@@ -929,7 +934,7 @@ node server/art_cache_test.js || exit 1
 node server/lrc_test.js || exit 1
 # WHISPER AS A TOOL: /api/whisper and the whisper_* MCP tools. The door's
 # arguments and its output-folder guard, the "whisper" kind on the art queue
-# (a fake python, so no whisper and no GPU), the saved model, and whisper.py
+# (a fake python, so no whisper and no GPU), the saved model, and whisper_run.py
 # against fake whisper modules. The python half skips where no python runs.
 node server/whisper_test.js || exit 1
 # ONE-CLICK TIMED LYRICS: [Set up timed lyrics] builds a private Python with the
@@ -1349,6 +1354,8 @@ node --test server/music/train-ui_test.js server/overnight-image_test.js || exit
 # Archived LoRA pairs and take comparison (the archive suite builds graphs with
 # the saved output format, so an Opus or MP3 setting fails it: environment).
 node --test server/music/train-archive_test.js server/music/train-compare_test.js || exit 1
+# YuE2 lyrics with no section labels get [Verse]/[Chorus] (an unlabelled song sang only "ah").
+node --test server/music/yue-lyrics_test.js || exit 1
 # Qwen native graphs/readiness, frozen Collab previews, and reactive reference anchors.
 node --test server/qwen-api_test.js server/qwen-image_test.js server/qwen-modelpick_test.js server/qwen-models_test.js server/qwen-status_test.js server/collab/preview_test.js server/collab/ui_test.js server/reactive_profile_test.js || exit 1
 # Signed standalone Qwen jobs: exact frozen wire, two-profile consent and replay,

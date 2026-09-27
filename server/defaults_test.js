@@ -437,8 +437,8 @@ console.log("\n§4  index.js and the MCP surface");
   const body = /\nasync function coverCanRun\(\) \{[\s\S]*?\n\}\n/.exec(index)?.[0] || "";
   const gate = (answer) => {
     const logs = [];
-    const fn = new Function("machineDefaults", "console", `let coverSkipSaid = false; ${body}; return coverCanRun;`)(
-      async () => answer, { log: (m) => logs.push(m) });
+    const fn = new Function("machineDefaults", "console", "fastCovers", `let coverSkipSaid = false; ${body}; return coverCanRun;`)(
+      async () => answer, { log: (m) => logs.push(m) }, { use: () => false });
     return fn().then((v) => ({ v, logs }));
   };
   const off = await gate([{ key: "art.engine", canRun: false, why: COVER_NEEDS_MODEL }]);
@@ -449,7 +449,7 @@ console.log("\n§4  index.js and the MCP surface");
   ok("Qwen is no longer waved through without its files", !/if \(config\.art\.engine === QWEN_IMAGE_ENGINE\) return true;/.test(index));
   ok("every automatic cover asks first: after a song, after a merge, and \"Draw any missing covers\" says the sentence",
     /if \(\(live \? live\.cover : true\) && await coverCanRun\(\)\) \{/.test(index) && /if \(await coverCanRun\(\)\) art\.request\(\{ file: out,/.test(index)
-    && /if \(b\.action === "backfill" \|\| b\.action === "regenerate"\) \{[\s\S]{0,300}cover\.canRun === false\) \{\n\s+return json\(res, 409, \{ error: cover\.why,/.test(index));
+    && /if \(\(b\.action === "backfill" \|\| b\.action === "regenerate"\) && !fastCovers\.use\(\)\) \{[\s\S]{0,300}cover\.canRun === false\) \{\n\s+return json\(res, 409, \{ error: cover\.why,/.test(index));
 
   /* studio_status and set_music_engine, run as their own stdio process against
    * a stub Studio, the way mcp-steer_test.js drives make_clip. */

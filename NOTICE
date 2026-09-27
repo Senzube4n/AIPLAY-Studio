@@ -214,6 +214,11 @@ in the app.
                             Copyright License))
                             https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/blob/main/LICENSE.md
 
+    Fast covers: Supra2-IMG Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/SupraLabs/Supra2-IMG
+
     Qwen3 4B                Apache-2.0
                             Output rights: yours (Apache-2.0 §2 (Grant of
                             Copyright License))
@@ -545,6 +550,15 @@ BUNDLED THIRD-PARTY CODE
                            with its LICENSE, and copied into ComfyUI's
                            custom_nodes when the engine starts. Used only when
                            video_settings block_cache is switched on.
+
+    Supra2-IMG model code  Apache-2.0, SupraLabs.
+                           Source: https://huggingface.co/SupraLabs/Supra2-IMG
+                           (inference.py, revision 10dec6e4b4b5d1c44fd1d7d3fe5e
+                           50137333da5b). Its model classes and sampling loop
+                           are carried in server/fastcover_run.py, unchanged
+                           apart from comments, loading and file handling.
+                           Used only when Settings > Experimental > fast covers
+                           is on.
 
 ────────────────────────────────────────────────────────────────────────────────
 TRADEMARKS

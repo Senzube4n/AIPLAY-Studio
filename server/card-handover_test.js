@@ -27,7 +27,8 @@ test("no card size gets --highvram automatically", () => {
 
 test("a music model leaves ComfyUI before a picture or clip, and the way back unloads too", () => {
   const art = src("./art.js"), jobs = src("./jobs.js");
-  assert.match(art, /if \(this\.jobs\.loaded\) \{[\s\S]{0,200}await this\.jobs\.unloadModels\(\)/);
+  assert.match(art, /if \(this\.jobs\.loaded && !job\.fast\) \{[\s\S]{0,200}await this\.jobs\.unloadModels\(\)/,
+    "every job but a fast cover (processor only, server/fastcover.js) unloads the music model first");
   assert.match(art, /this\.jobs\.artResident = true;/);
   assert.match(jobs, /\(this\.loaded && this\.loaded\.key !== modelKey\) \|\| this\.artResident/,
     "MiniMax, ACE-Step and YuE2-through-ComfyUI all go through this one switch");
@@ -49,7 +50,9 @@ test("automatic covers skip an engine whose files are missing, Qwen included", a
   // What machineDefaults hands coverCanRun: the cover row of fit.js defaultFor, over these rows.
   const machineDefaults = async () => [defaultFor("cover", { saved, custom, machine: null,
     capabilities: CATALOG.filter(isPictureModel).map((c) => ({ ...c, ready: ready.includes(c.id) })) })];
-  const check = new Function("machineDefaults", "console", `let coverSkipSaid = false; ${fn}; return coverCanRun;`)(machineDefaults, { log() {} });
+  let fast = false;
+  const check = new Function("machineDefaults", "console", "fastCovers", `let coverSkipSaid = false; ${fn}; return coverCanRun;`)(
+    machineDefaults, { log() {} }, { use: () => fast });
   assert.equal(await check(), false, "FLUX chosen and not on disk: no cover job");
   saved = "qwen-image-2.1";
   assert.equal(await check(), false, "Qwen chosen and its files missing: no cover job either");
@@ -61,6 +64,8 @@ test("automatic covers skip an engine whose files are missing, Qwen included", a
   assert.equal(await check(), false, "nothing chosen and no picture model on disk: none");
   ready = ["coverArt"];
   assert.equal(await check(), true, "nothing chosen, FLUX.2 klein on disk: covers");
+  ready = []; fast = true;
+  assert.equal(await check(), true, "fast covers draw on the processor: no picture model needed");
   /* A stale checkpoint name does not bypass another engine's readiness: only
    * the checkpoint ENGINE with a file counts as the person's own. */
   assert.match(index, /custom: !!assignedTo\("cover"\) \|\| \(config\.art\.engine === "checkpoint" && !!config\.art\.checkpoint\),/);

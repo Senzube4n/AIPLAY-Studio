@@ -439,7 +439,7 @@ export function refuseAudioInput(request = {}) {
  * `[Verse]`, `[Chorus 2]`, `【副歌】` — the CJK brackets included, because a
  * Chinese lyric sheet uses them and PYTHONUTF8 means they now survive the trip.
  */
-const SECTION_LABEL_RE = /^\s*(?:\[[^\]\n]{1,40}\]|【[^】\n]{1,40}】|\([Vv]erse[^)\n]{0,20}\)|\([Cc]horus[^)\n]{0,20}\))\s*$/;
+export const SECTION_LABEL_RE = /^\s*(?:\[[^\]\n]{1,40}\]|【[^】\n]{1,40}】|\([Vv]erse[^)\n]{0,20}\)|\([Cc]horus[^)\n]{0,20}\))\s*$/;
 
 /**
  * Section labels in lyrics are ALLOWED — they are YuE2's own lyric format.
