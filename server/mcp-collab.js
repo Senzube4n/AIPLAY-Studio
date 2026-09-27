@@ -292,7 +292,8 @@ export function collabTools(api, safeName) {
         "THE ORDER BOOK: what this Studio has sent to friends to render, and what friends have asked it to "
         + "render. `side: \"out\"` is what you asked for, `\"in\"` is what was asked of you. Every row carries the "
         + "four words that were agreed (the scene, the seed, the steps and the engine mode), who it is with, and "
-        + "where it got to. A row for a take that came back and was REFUSED is kept with its reason, because the "
+        + "where it got to. Outgoing rows include `file` when the sealed package was prepared; use it to find "
+        + "the package after a lost prepare response before trying again. A row for a take that came back and was REFUSED is kept with its reason, because the "
         + "reason is the only thing that tells your friend what to fix.",
       inputSchema: {
         type: "object",
