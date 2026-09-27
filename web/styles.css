@@ -4402,6 +4402,12 @@ details.adv[open] summary::before { content: "▾"; }
    the footer and come back when the rail does. */
 .shell.railmini .meters { display: none; }
 
+/* The automatic narrow rail also has only 60px, even when the user has not
+   toggled railmini. Keep its queue control and hide the full-width footer. */
+@media (max-width: 1000px) {
+  .shell:not(.railmini) .railfoot > :not(.workbox) { display: none; }
+}
+
 /* Bigger song thumbnails and a touch larger library text. */
 .row { grid-template-columns: 60px minmax(0,1fr) auto; gap: 14px; padding: 8px; }
 .art { width: 60px; height: 60px; border-radius: 8px; }
