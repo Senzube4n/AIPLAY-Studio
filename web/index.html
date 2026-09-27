@@ -1121,6 +1121,7 @@
       <label class="flabel" for="vidPrompt">What should it show</label>
       <textarea id="vidPrompt" rows="4" spellcheck="false"
         placeholder="slow drifting neon cityscape at night, gentle camera push"></textarea>
+      <p class="hint" id="vidFriendSourceNote" hidden>Source clip only · return to Reactive after keeping it in Collab.</p>
       <p class="hint">Describe a picture that moves, not a song. One subject, one
         camera move — H3 holds a simple shot far better than a busy one.</p>
     </div>
@@ -1409,7 +1410,6 @@
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
         <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Workflow → Video clips → Ask friend.">Ask friend</button>
       </div>
-      <p class="hint" id="vidFriendSourceNote" hidden>Source clip only · return to Reactive after keeping it in Collab.</p>
       <p class="ctanote" id="vidEst"></p>
       <!-- At render time: the RAM warning under 32 GB (server/h3tier.js), and
            the last failed render in words with the engine's text behind
