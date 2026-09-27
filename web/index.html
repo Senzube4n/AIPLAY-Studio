@@ -1409,6 +1409,7 @@
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
         <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Workflow → Video clips → Ask friend.">Ask friend</button>
       </div>
+      <p class="hint" id="vidFriendSourceNote" hidden>Source clip only · return to Reactive after keeping it in Collab.</p>
       <p class="ctanote" id="vidEst"></p>
       <!-- At render time: the RAM warning under 32 GB (server/h3tier.js), and
            the last failed render in words with the engine's text behind
@@ -3249,6 +3250,7 @@
           <span>Clips <i>· optional: a clip plays in sync with the song in its slot</i></span>
           <div class="reactimgs" id="reactClips"></div>
           <p class="hint">Cuts use your selected media in order. Paint and Motion repaint the first selected clip, with the selected pictures as visual references. Extra clips are ignored by those two looks.</p>
+          <button class="btn sm ghost" type="button" id="reactAskSourceFriend" title="Open Video to prepare a reviewed, signed H3 text-to-video source-clip job for a friend. The song and Reactive look stay on this machine.">Ask friend for a source clip</button>
         </div>
         <div><b class="subhead">Your selection, in order</b><div id="reactSelected"><p class="hint">Pick pictures or clips above.</p></div></div>
         <video id="reactSourceVideo" controls playsinline preload="metadata" hidden></video>

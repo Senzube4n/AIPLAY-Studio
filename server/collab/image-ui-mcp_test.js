@@ -825,3 +825,27 @@ test("typed MCP video tools use the same signed job and consent routes", async (
     }
   }
 });
+
+test("Reactive friend shortcut opens the reviewed source-clip path without submitting its song or render", () => {
+  assert.match(html, /id="reactAskSourceFriend"[^>]*>Ask friend for a source clip/);
+  assert.match(html, /id="vidFriendSourceNote" hidden>Source clip only/);
+  const start = source.indexOf('$("reactAskSourceFriend")?.addEventListener');
+  const end = source.indexOf("/* Watch one render row", start);
+  assert.ok(start > 0 && end > start);
+  const nodes = new Map(), views = [];
+  const node = (id) => {
+    if (!nodes.has(id)) nodes.set(id, {
+      textContent: "", handlers: {}, focused: false, hidden: true,
+      addEventListener(event, handler) { this.handlers[event] = handler; },
+      focus() { this.focused = true; },
+    });
+    return nodes.get(id);
+  };
+  const context = vm.createContext({ $: node, setView: (name) => views.push(name),
+    fetch: () => { throw new Error("friend shortcut must not submit a job"); } });
+  vm.runInContext(source.slice(start, end), context);
+  node("reactAskSourceFriend").handlers.click();
+  assert.deepEqual(views, ["video"]);
+  assert.equal(node("vidFriendSourceNote").hidden, false);
+  assert.equal(node("vidPrompt").focused, true);
+});

@@ -4,6 +4,8 @@
 
 This Ask friend carries the scene's **reference pictures**. For one text-only clip outside a project, use **Video** → **Ask friend** (below); each button's tooltip names the other.
 
+On **Reactive**, **Ask friend for a source clip** opens Video's existing text-only H3 job. After reviewing and keeping the returned clip in Collab, select it in Reactive and render the song-driven look locally. The sealed H3 job cannot include a song, source video, ordered media or Reactive's Paint/Motion settings, so this shortcut does not delegate the whole Reactive composition. MCP clients use `collab_video_job_preview` → `collab_pack` for the source clip, then `reactive_render` after the returned clip is adopted into the local Clips library.
+
 MCP uses the same operations:
 
 1. `collab_roster` to inspect permitted friends.

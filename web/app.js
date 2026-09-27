@@ -19632,6 +19632,14 @@ $("reactSourcePlay")?.addEventListener("click", async () => {
   catch (error) { $("reactNote").textContent = `Could not play the source: ${error.message}`; }
 });
 $("reactShortTest")?.addEventListener("click", () => { $("reactSecs").value = "4"; reactReview(); $("reactNote").textContent = "Length set to 4 seconds. Review the settings, then Render to run the test."; });
+$("reactAskSourceFriend")?.addEventListener("click", () => {
+  /* Collab's signed H3 job is text-only. A Reactive render also needs the local
+   * song, ordered media and compositor settings, so this shortcut opens the
+   * existing source-clip workflow without pretending to send that whole job. */
+  setView("video");
+  $("vidFriendSourceNote").hidden = false;
+  $("vidPrompt")?.focus();
+});
 
 /* Watch one render row on the comp until it is done or failed. */
 async function reactWatch(slug, jobId) {
@@ -20123,7 +20131,7 @@ function setView(name, options) {
   if (name === "thanks") loadThanks();
   // Same catalogue, filled the first time the About page is opened.
   if (name === "about") { loadAboutRights(); loadAboutReport(); loadVersion(); }
-  if (name === "video") { vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
+  if (name === "video") { $("vidFriendSourceNote").hidden = true; vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is
    * how two views start disagreeing about what exists. */
