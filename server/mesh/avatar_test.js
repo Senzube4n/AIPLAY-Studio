@@ -129,6 +129,14 @@ try{
     assert.equal(disconnected.springMotion.status,'unlinked');
     assert.equal(disconnected.springMotion.linkedChains,0);
   });
+  await test('a VRM without spring chains offers an optional movement preparation step',async()=>{
+    const doc=glbDoc({skinned:true});
+    doc.extensionsUsed=['VRMC_vrm'];
+    doc.extensions={VRMC_vrm:{specVersion:'1.0'}};
+    const result=await inspectAvatarSourceBytes(packGlb(doc));
+    assert.equal(result.springMotion.status,'no_springs');
+    assert.ok(result.next.some(step=>step.code==='spring-author'));
+  });
   await test('VRM foot controls report independent, missing and cross-weighted vertices without claiming a leg gap',async()=>{
     const make=()=>{const doc=glbDoc({skinned:true});doc.nodes[1].children=[2,3];delete doc.nodes[2].children;doc.extensions={VRMC_vrm:{specVersion:'1.0',humanoid:{humanBones:{leftFoot:{node:2},rightFoot:{node:3}}}}};return doc;};
     const separate=make(),linked=inspectAvatarFootControls(separate,fixtureBin(separate));

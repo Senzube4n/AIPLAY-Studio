@@ -142,6 +142,8 @@ export async function inspectAvatarSourceBytes(bytes) {
   }
   if (doc.extensions?.VRMC_vrm?.specVersion!=='1.0')
     next.push({code:'vrm',text:'For expressions and spring hair, author a VRM 1.0 export.'});
+  if(motion.status==='no_springs'&&doc.extensions?.VRMC_vrm?.specVersion==='1.0')
+    next.push({code:'spring-author',text:'For moving hair or accessories, author spring chains and colliders in the VRM source.'});
   if(motion.status==='unlinked'||motion.status==='linked'&&unlinkedChains.length)
     next.push({code:'spring-links',text:'Some spring chains do not reach weighted vertices or rigid child meshes. Connect the intended hair or accessory geometry to those joints, then preview its motion.'});
   else if(motion.status==='unverified')
