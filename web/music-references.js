@@ -28,7 +28,7 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
     <pre data-mr="request"></pre><p class="mr-caveat">A new take can follow this direction; singer identity, exact hit timing and the original performance are not guaranteed. Loading a draft does not generate music.</p>
     </section></div><p data-mr="status" role="status" aria-live="polite">Choose a local file to begin.</p>`;
   const $ = name => root.querySelector(`[data-mr="${name}"]`);
-  let row = null, timer = null, disposed = false, dirty = false, scoreDirty = false, capability = null, busy = false, libraryTicket = 0;
+  let row = null, timer = null, disposed = false, dirty = false, scoreDirty = false, capability = null, busy = false, libraryTicket = 0, selectionTicket = 0, selectionPending = false;
   const status = s => { $("status").textContent = s; };
   async function json(url, body) {
     const response = await request(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
@@ -38,7 +38,7 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
   }
   const post = body => json("/api/music-references", body);
   function buttons() {
-    const pending = busy || ["preparing", "analyzing", "transcribing"].includes(row?.state);
+    const pending = busy || selectionPending || ["preparing", "analyzing", "transcribing"].includes(row?.state);
     for (const name of ["save", "draft", "saveScore"]) $(name).disabled = !row?.evidence || pending;
     $("visual").disabled = !row?.evidence?.timestamps?.length || pending || !capability?.available;
     $("transcribe").disabled = !row?.evidence?.hasAudio || pending;
@@ -73,8 +73,11 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
   }
   async function poll() {
     if (disposed || !row) return;
-    try { paint((await post({ action: "get", referenceId: row.id, preview: true })).reference); }
-    catch (error) { status(error.message); }
+    const referenceId = row.id;
+    try {
+      const next = (await post({ action: "get", referenceId, preview: true })).reference;
+      if (!disposed && row?.id === referenceId) paint(next);
+    } catch (error) { if (!disposed && row?.id === referenceId) status(error.message); }
   }
   async function act(action, extra = {}) {
     busy = true; buttons();
@@ -136,7 +139,20 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
       status("Imported. Select a region to prepare.");
     } finally { busy = false; buttons(); }
   });
-  $("saved").addEventListener("change", async () => { if (!$("saved").value) return; try { paint((await post({ action: "get", referenceId: $("saved").value, preview: true })).reference); } catch (e) { status(e.message); } });
+  $("saved").addEventListener("change", async () => {
+    const referenceId = $("saved").value, ticket = ++selectionTicket;
+    selectionPending = true; buttons();
+    if (!referenceId) { selectionPending = false; buttons(); return; }
+    try {
+      const next = (await post({ action: "get", referenceId, preview: true })).reference;
+      if (!disposed && ticket === selectionTicket && $("saved").value === referenceId) { selectionPending = false; paint(next); }
+    } catch (error) {
+      if (!disposed && ticket === selectionTicket) {
+        $("saved").value = row?.id || "";
+        selectionPending = false; buttons(); status(error.message);
+      }
+    }
+  });
   for (const name of ["style", "lyrics", "notes", "engine", "seed", "useScore", "labels", "instrumental"]) $(name).addEventListener("input", () => { dirty = true; $("request").textContent = "Draft changed — review a new request before loading."; buttons(); });
   listen("prepare", async () => { await act("prepare", { kind: $("kind").value === "video" ? "video" : "audio",
     location: $("kind").value === "audio" ? "library" : "clips", file: $("file").value,
@@ -153,7 +169,7 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
       instrumental: $("instrumental").checked, allowSectionLabels: $("labels").checked });
     status("Request prepared. Check it above, then load it into Create. No music has been generated.");
   });
-  listen("load", async () => { if (row?.prepared && !dirty && !scoreDirty) { await onLoadRequest(structuredClone(row.prepared.request)); status("Reviewed request loaded into Create. Check the composer and press Generate when ready."); } });
+  listen("load", async () => { if (row?.prepared && !dirty && !scoreDirty && !selectionPending) { await onLoadRequest(structuredClone(row.prepared.request)); status("Reviewed request loaded into Create. Check the composer and press Generate when ready."); } });
   Promise.allSettled([libraries(), saved(), post({ action: "capabilities" }).then(data => {
     capability = data.visual; $("capability").textContent = capability.available ? `Local visual model available: ${capability.models[0]}. This optional action uses the engine queue.` : capability.reason; buttons();
   }).catch(error => { $("capability").textContent = error.message; })]);
