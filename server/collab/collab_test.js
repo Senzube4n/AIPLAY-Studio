@@ -1249,6 +1249,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * a clip UP to n mod 17 == 5, so it renders 107 frames, and the old check
      * (round(4 × 24) = 96, ± 4) refused every correct take. */
     const sentRow = await bookM.findOrder({ outDir: collabOut, id: packedOrder.body.order, side: "out" });
+    eq("a scene order keeps its sealed file location for a later manual handoff",
+      sentRow.file, packedOrder.body.file);
     eq("the order book records the frame count the renderer will actually make",
       [sentRow.expect.engine, sentRow.expect.frames, sentRow.expect.slotFrames], ["h3", 107, 96]);
     const onGrid = await returnFor(packedOrder.body.order, { frames: 107 });
@@ -1404,6 +1406,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   eq("decryption recovers exactly the reviewed packet and original picture bytes", frozenInside,
     { ...preview.body.packet, files: preview.body.packet.files.map((row) => ({ ...row, b64: PNG.toString("base64") })) });
   eq("frozen packing records the same resolved seed", (await bookM.findOrder({ outDir: path.join(out, "collab"), id: frozenInside.id })).order.seed, preview.body.packet.order.seed);
+  eq("reviewed scene orders keep their sealed file location after the prepare response",
+    (await bookM.findOrder({ outDir: path.join(out, "collab"), id: frozenInside.id })).file, frozenPacked.body.file);
   eq("packing consumes a preview only once", (await call({ action: "pack", previewId: preview.body.previewId })).body.reason, "preview-expired");
 
   const previewShot = () => call({ action: "preview", slug: "demo", to: friend.fp, kind: "shot", segmentId: "s1_0" });

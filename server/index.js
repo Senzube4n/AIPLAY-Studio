@@ -6863,7 +6863,7 @@ const server = http.createServer(async (req, res) => {
             if (packet.kind === "order") await book.rememberOrder({ outDir, row: {
               id: packet.id, at: packet.at, expires: packet.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
-              slug: frozen.slug, order: packet.order,
+              slug: frozen.slug, order: packet.order, file: wrote.file,
               /* The renderer's own frame count for this order (H3's 17k+5 grid,
                * LTX's 8k+1), and whether lip-sync stays home — see lending.js. */
               expect: collabLending.expectForOrder(packet), songUnder: packet.shot.songUnder ?? null,
@@ -7037,7 +7037,7 @@ const server = http.createServer(async (req, res) => {
             await book.rememberOrder({ outDir, row: {
               id: orderDoc.id, at: orderDoc.at, expires: orderDoc.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
-              slug: slugO, order: orderDoc.order,
+              slug: slugO, order: orderDoc.order, file: wroteO.file,
               expect: collabLending.expectForOrder(orderDoc), songUnder: shotO.songUnder ?? null,
             } });
             return json(res, 200, {

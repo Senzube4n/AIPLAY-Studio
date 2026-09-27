@@ -7363,11 +7363,12 @@ async function paintOutbox() {
       <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
       ${collabFileControls(o.file)}
     </div>` : `
-    <div class="cbpeer">
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
       <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
       <span class="meta">${esc(plain[o.state] || o.state || "Prepared")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}</span>
+      ${collabFileControls(o.file)}
     </div>`).join("");
 }
 $("cbOutbox")?.addEventListener("click", collabFileAction);

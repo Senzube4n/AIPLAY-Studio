@@ -193,6 +193,20 @@ test("failed preview can be retried; lost prepare response requires checking Out
   assert.ok(f.calls.some((c) => c.body?.action === "orders" && c.body.side === "out"));
 });
 
+test("scene orders expose their sealed file in Outbox after leaving the Send pane", async () => {
+  const f = fixture();
+  const file = "C:/studio/collab/out/order-o_000000000001-to-abc123.aiplay";
+  f.context.respond = (url, body) => body?.action === "orders" && body.side === "out"
+    ? { orders: [{ id: "o_000000000001", to: f.peer, slug: "episode", order: { segmentId: "opening" }, state: "sent", file }] }
+    : f.defaults(url, body);
+  await f.run("paintOutbox()");
+  assert.equal(f.node("cbOutboxWrap").hidden, false);
+  assert.match(f.node("cbOutbox").innerHTML, /The arrival|opening/);
+  assert.match(f.node("cbOutbox").innerHTML, /data-file="C:\/studio\/collab\/out\/order-o_000000000001-to-abc123\.aiplay"/);
+  assert.match(f.node("cbOutbox").innerHTML, /Show file.*Copy location/s);
+  assert.doesNotMatch(f.node("cbOutbox").innerHTML, /older record has no saved file path/);
+});
+
 test("equal allocation covers 47 clips once across 10 peers; capability mode excludes stale and incompatible cards", () => {
   const f = fixture();
   const result = f.run(`(() => {

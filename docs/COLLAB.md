@@ -4,7 +4,7 @@
 in the document that is kept up to date** — everything below was written as a
 design and still reads as one.
 
-**Updated, 2026-09-24** — the identity, the friend list, the courier, the two
+**Updated, 2026-09-27** — the identity, the friend list, the courier, the two
 units and the lending loop, with a screen, two doors and twenty-four tools:
 
 | | |
@@ -103,6 +103,9 @@ of a render already accepted. Return states are historical order records; a
 take may since have been adopted or discarded. Resource cards remain snapshots,
 and remote availability and live progress remain unknown. A failed order-book
 read is an error, never an empty history. Refresh the plan to read newer records.
+Outgoing scene orders retain their sealed `.aiplay` file location in the order
+book. If Prepare loses its response, check **Outbox** before trying again;
+**Show file** and **Copy location** recover the package for manual delivery.
 
 It answers one question the owner asked on 2026-09-20 — *could three friends make
 an episode together, and could one of them borrow the others' idle cards?* — and
