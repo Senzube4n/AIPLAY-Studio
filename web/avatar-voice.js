@@ -1,7 +1,7 @@
 import {createAvatarLipSync} from './avatar-lipsync.js';
 
 /** One expiring browser preview. Human controls and MCP share desired state. */
-export async function mountAvatarVoice({row, runtime, isCurrent = () => true, onMotion = null, onJointPose = null, onPreviewMotion = null, onSessionReset = null}) {
+export async function mountAvatarVoice({row, runtime, isCurrent = () => true, onMotion = null, onJointPose = null, onPreviewMotion = null, onCamera = null, onSessionReset = null}) {
   const $ = id => document.getElementById(id);
   const overlayEnable = $('voice-enable-overlay');
   const post = async body => {
@@ -15,7 +15,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true, on
   let live = true, active = !document.hidden, polling = false, applied = 0, consumed = 0, consumedAudio = 0, loaded = 0, sought = 0, timer;
   let override = '', error = '', pendingStart = false, startToken = 0, uploadToken = 0;
   let commandTail = Promise.resolve(), recovering = null, commandSerial = 0, settledCommand = 0;
-  let cue = null, cueError = '', cueSeenRevision = 0, completedCueRevision = 0, motionSeenRevision = 0, jointPoseSeenRevision = 0, previewMotionSeenRevision = 0;
+  let cue = null, cueError = '', cueSeenRevision = 0, completedCueRevision = 0, motionSeenRevision = 0, jointPoseSeenRevision = 0, previewMotionSeenRevision = 0, cameraSeenRevision = 0;
   const valid = () => live && isCurrent();
   const paintCue = () => {
     if (!valid()) return;
@@ -133,10 +133,18 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true, on
       catch { previewMotionApplied = false; }
       if (previewMotionApplied) previewMotionSeenRevision = previewMotionRevision;
     }
+    const cameraRevision = Number.isSafeInteger(session.desired?.camera_revision) ? session.desired.camera_revision : 0;
+    let cameraApplied = cameraRevision <= cameraSeenRevision;
+    if (!cameraApplied && typeof onCamera === 'function') {
+      try { cameraApplied = onCamera(session.desired.camera_view, cameraRevision) === true; }
+      catch { cameraApplied = false; }
+      if (cameraApplied) cameraSeenRevision = cameraRevision;
+    }
     const acknowledged = Math.min(cueApplied ? session.revision : session.desired.cue.revision - 1,
       motionApplied ? session.revision : motionRevision - 1,
       jointPoseApplied ? session.revision : jointPoseRevision - 1,
-      previewMotionApplied ? session.revision : previewMotionRevision - 1);
+      previewMotionApplied ? session.revision : previewMotionRevision - 1,
+      cameraApplied ? session.revision : cameraRevision - 1);
     if (session.revision <= consumed) {
       applied = Math.max(applied, acknowledged);
       return;
@@ -174,14 +182,14 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true, on
     }
   }
   const registration = () => ({action:'register',session_id,id:row.id,sha256:row.inspection.sha256,
-    capabilities:{audio:true,lip_sync:lip.state().lipSyncSupported,...(typeof onMotion === 'function' ? {motion:true} : {}),...(typeof onJointPose === 'function' ? {joint_pose:true} : {}),...(typeof onPreviewMotion === 'function' && row.inspection.profile === 'vrm' ? {preview_motion:true} : {})}});
+    capabilities:{audio:true,lip_sync:lip.state().lipSyncSupported,...(typeof onMotion === 'function' ? {motion:true} : {}),...(typeof onJointPose === 'function' ? {joint_pose:true} : {}),...(typeof onPreviewMotion === 'function' && row.inspection.profile === 'vrm' ? {preview_motion:true} : {}),...(typeof onCamera === 'function' ? {camera:true} : {})}});
   async function recover() {
     if (recovering) return recovering;
     const epoch = ++generation;
     cancelStart(); uploadToken++; lip.dispose(); lip = newLip();
     syncCue(null);
     cueSeenRevision = completedCueRevision = 0;
-    session_id = crypto.randomUUID(); applied = consumed = consumedAudio = loaded = sought = motionSeenRevision = jointPoseSeenRevision = previewMotionSeenRevision = 0;
+    session_id = crypto.randomUUID(); applied = consumed = consumedAudio = loaded = sought = motionSeenRevision = jointPoseSeenRevision = previewMotionSeenRevision = cameraSeenRevision = 0;
     if (typeof onSessionReset === 'function') onSessionReset();
     commandTail = Promise.resolve(); commandSerial = settledCommand = 0;
     override = ''; error = 'Preview expired. Choose audio again.';
@@ -308,6 +316,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true, on
     motionCommand(op, fields = {}) { if (typeof onMotion === 'function' && valid()) return command(op, fields); },
     jointPoseCommand(op, fields = {}) { if (typeof onJointPose === 'function' && valid()) return command(op, fields); },
     previewMotionCommand(op) { if (typeof onPreviewMotion === 'function' && valid()) return command(op); },
+    cameraCommand(view) { if (typeof onCamera === 'function' && valid()) return command('camera_view', {view}); },
     update(dt) { if (!valid()) return; if (cue?.expiresAt <= Date.now()) syncCue(null); lip.update(dt); $('voice-level').value = lip.state().level; },
     captureBaseline() { if (valid()) lip.captureBaseline(); },
     setActive(value) {

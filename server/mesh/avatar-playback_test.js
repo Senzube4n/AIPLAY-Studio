@@ -121,6 +121,23 @@ test('motion requires an advertised capable session and refuses a changed avatar
  f.change();await assert.rejects(f.command('motion_select',{clip_index:0}),{status:409});
 });
 
+test('camera review uses a capable hash-pinned session without changing audio or motion',async t=>{
+ const f=await setup(t);await f.service.register({...f.registration,capabilities:{audio:false,lip_sync:false,camera:true}});
+ const request={session_id:f.session_id,command_id:randomUUID(),op:'camera_view',view:'side'};
+ const first=await f.service.command(request),retry=await f.service.command(request);
+ assert.deepEqual(retry,first);assert.equal(first.desired.camera_view,'side');assert.equal(first.desired.camera_revision,1);
+ assert.equal(first.desired.audio_revision,0);assert.equal(first.desired.motion_revision,0);assert.equal(first.applied_revision,0);
+ await assert.rejects(f.service.command({...request,view:'back'}),{status:409});
+ for(const view of ['feet','',null])await assert.rejects(f.command('camera_view',{view}),{status:400});
+ await assert.rejects(f.command('motion_play',{view:'front'}),{status:400});
+ await f.service.heartbeat({session_id:f.session_id,applied_revision:1,status:{phase:'empty',time:0,duration:null}});
+ assert.equal((await f.service.sessions()).sessions[0].applied_revision,1);
+ await f.service.register({...f.registration,capabilities:{audio:false,lip_sync:false,camera:false}});
+ await assert.rejects(f.command('camera_view',{view:'front'}),{status:409});
+ f.change();await assert.rejects(f.command('camera_view',{view:'fit'}),{status:409});
+ assert.equal((await provenance.verify(f.ledger)).ok,true);
+});
+
 test('Workshop VRM movement test is MCP controlled, exclusive with clips, and acknowledged by the browser',async t=>{
  const f=await setup(t,{vrm:true});
  await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:false,motion:true,preview_motion:true}});
@@ -188,10 +205,12 @@ test('joint controls need a capable preview and migration restores older session
  await assert.rejects(f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,joint_pose:'yes'}}),{status:400});
  const file=path.join(f.directory,'sessions',`${f.session_id}.json`),old=JSON.parse(await readFile(file,'utf8'));
  delete old.desired.joint_pose;delete old.desired.joint_pose_revision;
- delete old.desired.preview_motion;delete old.desired.preview_motion_revision;await writeFile(file,JSON.stringify(old));
+ delete old.desired.preview_motion;delete old.desired.preview_motion_revision;
+ delete old.desired.camera_view;delete old.desired.camera_revision;await writeFile(file,JSON.stringify(old));
  const resumed=await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,joint_pose:true}});
  assert.equal(resumed.desired.joint_pose,null);assert.equal(resumed.desired.joint_pose_revision,0);
  assert.equal(resumed.desired.preview_motion,false);assert.equal(resumed.desired.preview_motion_revision,0);
+ assert.equal(resumed.desired.camera_view,'fit');assert.equal(resumed.desired.camera_revision,0);
 });
 
 test('a session saved before motion support keeps its audio intent when the browser registers again',async t=>{
@@ -209,13 +228,16 @@ test('a session saved before motion support keeps its audio intent when the brow
  assert.equal((await f.service.sessions()).sessions[0].desired.audio_id,audio.audio_id);
 });
 
-test('loading audio keeps selected motion and its revision',async t=>{
- const f=await setup(t);await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,motion:true}});
+test('loading audio keeps selected motion and camera revisions',async t=>{
+ const f=await setup(t);await f.service.register({...f.registration,capabilities:{audio:true,lip_sync:true,motion:true,camera:true}});
  const motion=await f.command('motion_select',{clip_index:0});
+ const camera=await f.command('camera_view',{view:'front'});
  const audio=await f.upload();const loaded=await f.command('load',{audio_id:audio.audio_id});
  assert.deepEqual(loaded.desired.motion,motion.desired.motion);
  assert.equal(loaded.desired.motion_revision,1);
- assert.equal(loaded.desired.audio_revision,2);
+ assert.equal(loaded.desired.camera_view,camera.desired.camera_view);
+ assert.equal(loaded.desired.camera_revision,2);
+ assert.equal(loaded.desired.audio_revision,3);
 });
 
 test('desired playback survives reload, coalesces load then play, and separates request from browser acknowledgement',async t=>{
@@ -310,7 +332,7 @@ test('real guarded HTTP routes and MCP control playback with byte ranges and val
  const tools=avatarPlaybackTools(async(method,route,body)=>{calls.push({method,route,body});return f.post(body,{},route);});
  assert.ok(tools.find(tool=>tool.name==='avatar_playback_command').inputSchema.properties.op.enum.includes('preview_motion_start'));
  const run=(name,args={})=>tools.find(tool=>tool.name===name).run(args),session_id=randomUUID();
- await f.post({action:'register',session_id,id:f.row.id,sha256:f.row.inspection.sha256,capabilities:{audio:true,lip_sync:true,joint_pose:true}});
+ await f.post({action:'register',session_id,id:f.row.id,sha256:f.row.inspection.sha256,capabilities:{audio:true,lip_sync:true,joint_pose:true,camera:true}});
  const audio=await run('avatar_audio_upload',{name:'voice.wav',data_base64:clip.toString('base64')});
  const command={session_id,command_id:randomUUID(),op:'load',audio_id:audio.audio_id};
  const loaded=await run('avatar_playback_command',command);assert.equal(loaded.desired.url,audio.url);assert.equal(loaded.desired.playing,false);
@@ -329,7 +351,11 @@ test('real guarded HTTP routes and MCP control playback with byte ranges and val
  const jointCommand={session_id,command_id:randomUUID(),op:'joint_pose',node_index:f.row.inspection.jointNames[1].index,axis:'z',degrees:20};
  assert.deepEqual((await run('avatar_playback_command',jointCommand)).desired.joint_pose,{node_index:jointCommand.node_index,axis:'z',degrees:20});
  assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'command',...jointCommand}});
- assert.equal((await run('avatar_playback_sessions')).sessions[0].revision,2);
+ const cameraCommand={session_id,command_id:randomUUID(),op:'camera_view',view:'back'};
+ assert.equal((await run('avatar_playback_command',cameraCommand)).desired.camera_view,'back');
+ assert.deepEqual(calls.at(-1),{method:'POST',route:'/api/avatars/playback',body:{action:'command',...cameraCommand}});
+ assert.ok(tools.find(tool=>tool.name==='avatar_playback_command').inputSchema.properties.view.enum.includes('back'));
+ assert.equal((await run('avatar_playback_sessions')).sessions[0].revision,3);
  for(const [range,start,end] of [['bytes=2-6',2,6],['bytes=-5',clip.length-5,clip.length-1],['bytes=4-',4,clip.length-1]]){
   const response=await fetch(f.base+audio.url,{headers:{Range:range}});assert.equal(response.status,206);assert.equal(response.headers.get('Content-Range'),`bytes ${start}-${end}/${clip.length}`);assert.deepEqual(Buffer.from(await response.arrayBuffer()),clip.subarray(start,end+1));
  }

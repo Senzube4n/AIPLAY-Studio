@@ -29,6 +29,8 @@ Image and audio files remain browser `File`/object URLs; Studio does not upload 
 
 `avatar_playback_sessions` finds an open local preview. `avatar_playback_command` accepts `joint_pose` with a `node_index` from `avatar_inspect.inspection.jointNames`, `axis` (`x`, `y` or `z`) and `degrees` (-45 to 45), or `joint_reset`. The imported source hash and preview capability are checked on each command. `applied_revision` confirms the browser applied the requested pose; it does not certify deformation quality. No joint bend is saved into the GLB or a look.
 
+The same command accepts `camera_view` with `view` set to `front`, `side`, `back` or `fit`, matching the Workshop buttons. This steers only the selected live preview and keeps its choice when the viewport resizes. `applied_revision` confirms that preview changed its camera.
+
 - `avatar_appearance_inventory`: exact mesh/material indices, morph names, expression presets and spring availability.
 - `avatar_appearance_list/get`: saved looks for a source asset.
 - `avatar_appearance_save`: a name, source SHA-256, settings and expected revision (0 to create).
@@ -62,5 +64,7 @@ The [SkinTokens/TokenRig successor to UniRig](https://github.com/VAST-AI-Researc
 On an existing RTX 4070 Ti SUPER (16 GB), the revised Studio adapter completed the upstream giraffe through extraction, skeleton, skinning and merge in 83.125 seconds of run stages, plus prerequisite probing. The result has 41 joints and 14,885 exported vertices with embedded textures; binary skin validation passed. This is one measured run, not a speed or memory guarantee.
 
 The original TripoSG Mika source also received a learned 65-joint rig. Its fused limbs, rough surfaces and missing textures remained. Source preflight finds 707,138 triangles in one mesh node and primitive, with zero materials, images or skins before rigging. That metadata explains why a valid GLB is a poor starting point for the desired configurator; it does not itself diagnose fused limbs. Body auto-rigging and making a clean modular anime character are separate production steps.
+
+A separate local TripoSR image-to-3D trial completed at its full 256-grid extraction on the same Mika source. Its valid 50,964-triangle GLB had vertex colors, but no UV texture or skin; visual inspection still found fused legs, one readable foot and weak facial detail. It is not a quality replacement for the existing TripoSG path. A usable modular avatar needs better source views and geometry before weight transfer, facial expressions or spring hair can help.
 
 The next asset milestone is a reusable, weighted body with compatible head, hair and outfit parts, authored facial morphs and explicit spring colliders. Arbitrary part fitting, persona ownership binding and Agent World runtime adoption remain outstanding. See [local audio playback](AVATAR_LIPSYNC.md) and [attachment weight transfer](AVATAR_PARTS.md) for the next local workflow pieces and their limits.

@@ -15,7 +15,7 @@ const loaded = (revision = 1, extra = {}) => ({revision, desired: {audio_id:AUDI
 // DOM and transport boundary. Requests and media actions remain observable;
 // tests never replace the controller with a mock that would hide its races.
 function browser(t, options = {}) {
-  const elements = new Map(), requests = [], media = [], contexts = [], intervals = new Map(), cues = [], motions = [], poses = [], previews = [], resets = [];
+  const elements = new Map(), requests = [], media = [], contexts = [], intervals = new Map(), cues = [], motions = [], poses = [], previews = [], cameras = [], resets = [];
   let nextTimer = 0, controller, current = true;
   let session = {revision:0, desired:{audio_id:null, url:null, name:null, bytes:0, playing:false, time:0, load_revision:0, seek_revision:0}};
   const node = id => { if (!elements.has(id)) elements.set(id, {hidden:id==='voice-cue-row', disabled:false, value:id==='voice-cue-expression'?'':'0', textContent:'', className:'',children:[],append(option){this.children.push(option);if(this.children.length===1)this.value=option.value;}}); return elements.get(id); };
@@ -66,13 +66,14 @@ function browser(t, options = {}) {
   const expressionManager = {getExpression:name => values.has(name) ? {} : null,
     getValue:name => values.get(name), setValue:(name, value) => values.set(name, value)};
   return {
-    node, requests, media, contexts, intervals, document, values, cues, motions, poses, previews, resets,
+    node, requests, media, contexts, intervals, document, values, cues, motions, poses, previews, cameras, resets,
     async mount() { controller = await mountAvatarVoice({row:{id:ID, inspection:{sha256:'a'.repeat(64),profile:options.vrm?'vrm':'world'}},
       runtime:{vrm:{expressionManager},setExpressionCue(name){cues.push(['set',name]);return true;},clearExpressionCue(){cues.push(['clear']);}}, isCurrent:() => current,
       ...(options.motion?{onMotion:(desired,revision)=>{motions.push([structuredClone(desired),revision]);return options.motionFailure!==true;}}: {}),
       ...(options.pose?{onJointPose:(desired,revision)=>{poses.push([structuredClone(desired),revision]);return options.poseFailure!==true;}}:{}),
       ...(options.preview?{onPreviewMotion:(desired,revision)=>{previews.push([desired,revision]);return options.previewFailure!==true;}}:{}),
-      ...((options.motion||options.pose||options.preview)?{onSessionReset:()=>resets.push('reset')}: {})}); return controller; },
+      ...(options.camera?{onCamera:(view,revision)=>{cameras.push([view,revision]);return options.cameraFailure!==true;}}:{}),
+      ...((options.motion||options.pose||options.preview||options.camera)?{onSessionReset:()=>resets.push('reset')}: {})}); return controller; },
     session(value) { session = structuredClone(value); },
     stale() { current = false; },
     metadata(duration = 8) { media[0].duration = duration; media[0].dispatchEvent(new Event('loadedmetadata')); },
@@ -206,6 +207,18 @@ test('failed motion application is retried and never acknowledged early',async t
   options.motionFailure=false;await f.tick();await f.tick();
   assert.equal(f.requests.at(-1).applied_revision,1);
   assert.equal(f.motions.length,3);
+});
+
+test('camera commands steer this preview and acknowledge only after the view changes',async t=>{
+  const options={camera:true,cameraFailure:true},f=browser(t,options),voice=await f.mount();
+  assert.equal(f.requests[0].capabilities.camera,true);
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,camera_view:'side',camera_revision:1}});
+  await f.tick();await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.cameraFailure=false;await f.tick();await f.tick();
+  assert.deepEqual(f.cameras.at(-1),['side',1]);assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.media[0].playCalls,0);
+  await voice.cameraCommand('back');assert.equal(f.requests.at(-1).op,'camera_view');assert.equal(f.requests.at(-1).view,'back');
 });
 
 test('VRM movement preview uses the shared session and acknowledges only after application',async t=>{
