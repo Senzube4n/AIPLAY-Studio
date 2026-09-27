@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash, webcrypto } from "node:crypto";
 import vm from "node:vm";
 import { collabTools } from "../mcp-collab.js";
 
@@ -51,6 +52,10 @@ function pictureFixture() {
 
 function collabFixture() {
   const nodes = new Map(), calls = [];
+  class DecodableImage {
+    naturalWidth = 1; naturalHeight = 1;
+    set src(_value) { Promise.resolve().then(() => this.onload?.()); }
+  }
   const node = (id) => {
     if (!nodes.has(id)) nodes.set(id, {
       value: "", textContent: "", hidden: false, disabled: false, dataset: {}, handlers: {}, inputs: [],
@@ -93,6 +98,7 @@ function collabFixture() {
     $: node, esc: (v) => String(v ?? "").replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;"),
     state: { collabProtocol: 1 }, localStorage: { getItem() { return ""; }, setItem() {} },
     navigator: {}, CSS: { escape: (s) => s }, matchMedia: () => ({ matches: true }), setTimeout() {},
+    URL, Blob, Image: DecodableImage, location: { href: "http://localhost:4173/", origin: "http://localhost:4173" }, crypto: webcrypto,
     respond: defaults,
     fetch: async (url, options) => {
       const body = options?.body ? JSON.parse(options.body) : null;
@@ -149,7 +155,14 @@ test("Collab image preview exposes exact seed and reference hashes; pack uses on
   const f = collabFixture();
   const image = { prompt: "A dancer", negative: "", width: 1344, height: 768, steps: 25, cfg: 1,
     seed: 42, refs: ["head.png", "hair.png"] };
-  const hashes = ["1".repeat(64), "2".repeat(64)];
+  const references = [Buffer.from("head picture bytes"), Buffer.from("hair picture bytes")];
+  const hashes = references.map((bytes) => createHash("sha256").update(bytes).digest("hex"));
+  const originalFetch = f.context.fetch;
+  f.context.fetch = (url, options) => {
+    const index = ["/api/images/head.png", "/api/images/hair.png"].indexOf(url);
+    return index < 0 ? originalFetch(url, options) : Promise.resolve({ ok: true,
+      arrayBuffer: async () => Uint8Array.from(references[index]).buffer });
+  };
   f.context.image = image;
   await f.run("paintCollab(false, null, null, image, [{name:'head.png',url:'/api/images/head.png'},{name:'hair.png',url:'/api/images/hair.png'}])");
   assert.equal(f.node("cbKind").value, "image-job");
@@ -158,7 +171,7 @@ test("Collab image preview exposes exact seed and reference hashes; pack uses on
   f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
   f.context.respond = (url, body) => body?.action === "preview" ? {
     previewId: "sealed-image-1", to: f.peer,
-    packet: { kind: "job-order", jobType: "image", job: { ...image, references: hashes.map((sha256) => ({ sha256, bytes: 2048, b64: "PRIVATE_REFERENCE_BYTES" })) } },
+    packet: { kind: "job-order", jobType: "image", job: { ...image, references: hashes.map((sha256, i) => ({ sha256, mime: "image/png", bytes: references[i].length, b64: "PRIVATE_REFERENCE_BYTES" })) } },
     manifest: [{ file: "head.png", included: true }, { file: "hair.png", included: true }],
   } : body?.action === "pack" ? { file: "image.aiplay", bytes: 4100, to: f.peer }
     : f.defaults(url, body);
@@ -169,12 +182,61 @@ test("Collab image preview exposes exact seed and reference hashes; pack uses on
   assert.match(f.node("cbPreviewManifest").innerHTML, new RegExp(hashes[0]));
   assert.match(f.node("cbPreviewManifest").innerHTML, new RegExp(hashes[1]));
   assert.match(f.node("cbPreviewPictures").innerHTML, /head\.png/);
+  assert.match(f.node("cbPreviewPictures").innerHTML, /blob:/);
   assert.doesNotMatch(f.node("cbPreviewPacket").textContent, /PRIVATE_REFERENCE_BYTES/);
   assert.equal(f.node("cbPack").disabled, false);
   await f.fire("cbPack");
   assert.deepEqual(JSON.parse(JSON.stringify(f.calls.find((c) => c.body?.action === "pack").body)),
     { action: "pack", previewId: "sealed-image-1" });
   assert.match(f.node("cbPackNote").textContent, /Awaiting your manual handoff/);
+});
+
+test("Collab refuses Prepare when a displayed reference differs from the frozen bytes", async () => {
+  const f = collabFixture(), image = { prompt: "A dancer", negative: "", width: 1024, height: 1024,
+    steps: 25, cfg: 1, refs: ["head.png"] };
+  const local = Buffer.from("old picture"), frozen = Buffer.from("new picture");
+  const originalFetch = f.context.fetch;
+  f.context.fetch = (url, options) => url === "/api/images/head.png"
+    ? Promise.resolve({ ok: true, arrayBuffer: async () => Uint8Array.from(local).buffer })
+    : originalFetch(url, options);
+  f.context.image = image;
+  await f.run("paintCollab(false, null, null, image, [{name:'head.png',url:'/api/images/head.png'}])");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
+  f.context.respond = (url, body) => body?.action === "preview" ? {
+    previewId: "frozen-changed-reference", to: f.peer,
+    packet: { kind: "job-order", jobType: "image", job: { ...image, references: [{
+      sha256: createHash("sha256").update(frozen).digest("hex"), bytes: frozen.length,
+    }] } },
+  } : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /differs from the frozen job/);
+  assert.doesNotMatch(f.node("cbPreviewPictures").innerHTML, /<img/);
+  await f.fire("cbPack");
+  assert.ok(!f.calls.some((c) => c.body?.action === "pack"));
+});
+
+test("Collab refuses Prepare when matching frozen reference bytes cannot display", async () => {
+  const f = collabFixture(), image = { prompt: "A dancer", negative: "", width: 1024, height: 1024,
+    steps: 25, cfg: 1, refs: ["head.png"] };
+  const bytes = Buffer.from("broken image bytes"), sha256 = createHash("sha256").update(bytes).digest("hex");
+  const originalFetch = f.context.fetch;
+  f.context.fetch = (url, options) => url === "/api/images/head.png"
+    ? Promise.resolve({ ok: true, arrayBuffer: async () => Uint8Array.from(bytes).buffer })
+    : originalFetch(url, options);
+  f.context.Image = class { set src(_value) { Promise.resolve().then(() => this.onerror?.()); } };
+  f.context.image = image;
+  await f.run("paintCollab(false, null, null, image, [{name:'head.png',url:'/api/images/head.png'}])");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
+  f.context.respond = (url, body) => body?.action === "preview" ? {
+    previewId: "frozen-broken-reference", to: f.peer,
+    packet: { kind: "job-order", jobType: "image", job: { ...image, references: [{ sha256,
+      mime: "image/png", bytes: bytes.length }] } },
+  } : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /could not be displayed/);
+  assert.doesNotMatch(f.node("cbPreviewPictures").innerHTML, /<img/);
 });
 
 test("an incomplete image preview cannot arm Prepare even if it has a token", async () => {

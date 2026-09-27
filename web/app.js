@@ -6759,7 +6759,7 @@ $("cbKind")?.addEventListener("change", paintCbKind);
 
 /* The scenes of the chosen project, so "which scene" stops being a box wanting
  * a string like s1_24 that only the sender's own board knows. */
-let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null;
+let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null, cbVerifiedPreviewUrls = [];
 function cbSceneTitle(shot) {
   const id = shot.segmentId || shot.id, title = shot.title || shot.name || shot.label;
   if (title && title !== id) return title;
@@ -6971,9 +6971,36 @@ function cbPackRequest() {
 function invalidateCbPreview() {
   cbPreviewRequest++;
   cbPreparedPreview = null;
+  for (const url of cbVerifiedPreviewUrls) URL.revokeObjectURL(url);
+  cbVerifiedPreviewUrls = [];
   if ($("cbPack")) $("cbPack").disabled = true;
   if ($("cbOutgoingPreview")) $("cbOutgoingPreview").hidden = true;
   if ($("cbPackNote")) $("cbPackNote").textContent = "Preview the current contents before preparing a file.";
+}
+async function cbReferencePreviewBytes(preview, reference) {
+  if (typeof preview?.url !== "string" || !/^[a-f0-9]{64}$/.test(reference?.sha256 || "")
+      || !Number.isSafeInteger(reference.bytes) || reference.bytes < 1 || reference.bytes > 8 * 1024 * 1024) return null;
+  let address;
+  try { address = new URL(preview.url, location.href); } catch { return null; }
+  if (address.origin !== location.origin || !(address.protocol === "blob:" ||
+      (preview.url.startsWith("/") && address.pathname.startsWith("/api/")))) return null;
+  try {
+    const response = await fetch(preview.url, { cache: "no-store" });
+    if (!response.ok) return null;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength !== reference.bytes) return null;
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("") === reference.sha256 ? bytes : null;
+  } catch { return null; }
+}
+function cbReferenceCanDisplay(url) {
+  return new Promise((resolve) => {
+    let image;
+    try { image = new Image(); } catch { resolve(false); return; }
+    image.onload = () => resolve(image.naturalWidth > 0 && image.naturalHeight > 0);
+    image.onerror = () => resolve(false);
+    image.src = url;
+  });
 }
 $("cbTo")?.addEventListener("change", () => { paintCbRecipientStatus(); invalidateCbPreview(); });
 for (const id of ["cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
@@ -7012,6 +7039,33 @@ $("cbPreview")?.addEventListener("click", async () => {
     $("cbPackNote").textContent = "The frozen video preview did not include the exact signed H3 job. Update Studio and preview again.";
     return;
   }
+  let verifiedRefUrls = [];
+  if (body.kind === "image-job" && imageJob.references.length) {
+    $("cbPackNote").textContent = "Checking each picture against the frozen reference hashes…";
+    const verifiedBytes = await Promise.all(imageJob.references.map(async (ref, i) => {
+      const preview = body.image.refs[i] === collabImageRefPreviews[i]?.name ? collabImageRefPreviews[i] : null;
+      return cbReferencePreviewBytes(preview, ref);
+    }));
+    if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+    if (verifiedBytes.some((bytes) => !bytes)) {
+      $("cbPackNote").textContent = "A reference thumbnail differs from the frozen job. Remove and upload that picture again in Pictures, then preview.";
+      return;
+    }
+    // Render the bytes that were hashed, not another request to a path that
+    // could change between verification and the image element loading.
+    verifiedRefUrls = verifiedBytes.map((bytes, i) => URL.createObjectURL(new Blob([bytes], {
+      type: imageJob.references[i].mime || "application/octet-stream",
+    })));
+    cbVerifiedPreviewUrls = verifiedRefUrls;
+    const visible = await Promise.all(verifiedRefUrls.map(cbReferenceCanDisplay));
+    if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+    if (visible.some((shown) => !shown)) {
+      for (const url of cbVerifiedPreviewUrls) URL.revokeObjectURL(url);
+      cbVerifiedPreviewUrls = [];
+      $("cbPackNote").textContent = "A frozen reference could not be displayed. Repair or replace that picture in Pictures before preparing.";
+      return;
+    }
+  }
   cbPreparedPreview = { id: r.previewId, key };
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
@@ -7026,8 +7080,7 @@ $("cbPreview")?.addEventListener("click", async () => {
   const pictures = manifest.filter((f) => typeof f.file === "string" && !/[\\/]/.test(f.file) && /\.(png|jpe?g|webp)$/i.test(f.file));
   $("cbPreviewPictures").innerHTML = body.kind === "image-job" && imageJob.references.length
     ? imageJob.references.map((f, i) => {
-      const preview = body.image.refs[i] === collabImageRefPreviews[i]?.name ? collabImageRefPreviews[i] : null;
-      return `<figure>${preview ? `<img loading="lazy" decoding="async" src="${esc(preview.url)}" alt="Reference ${i + 1}">` : ""}<figcaption><b>Included reference ${i + 1}</b><br>Local view · sealed bytes checked by hash below</figcaption></figure>`;
+      return `<figure><img loading="lazy" decoding="async" src="${esc(verifiedRefUrls[i])}" alt="Reference ${i + 1}"><figcaption><b>Included reference ${i + 1}</b><br>${esc(body.image.refs[i])} · exact bytes checked by hash below</figcaption></figure>`;
     }).join("")
     : body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
   $("cbPreviewPacket").textContent = JSON.stringify(packet, (k, v) => k === "b64" ? "[picture bytes listed above]" : v, 2);
