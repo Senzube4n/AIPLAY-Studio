@@ -174,7 +174,7 @@ export const IPADAPTER_WEIGHTS = {
 };
 
 /** The reference workflow's transition: a picture per peak segment, the
- *  pictures looping, a linear cross-fade of `transition` frames ending on
+ *  pictures looping, a linear cross-fade of `transition` frames centered on
  *  each peak, weights between `min` and `max` ("Audio IPAdapter Transitions":
  *  linear, 5, 0.0, 1.0). */
 export const IP_TRANSITION = { frames: 5, min: 0, max: 1 };
@@ -186,8 +186,10 @@ export const IP_TRANSITION = { frames: 5, min: 0, max: 1 };
  * `peaks` are FRAME indices (the drum-stem hits, as the reference's Audio
  * Peaks Detection gives them: threshold 0.4, at least 5 frames apart). Frame 0
  * is always a peak. Segment k (peak k up to peak k+1) shows picture k mod
- * `pictures`; over the last `transition` frames before peak k+1 the weight
- * crosses linearly to the next picture, so the switch LANDS on the hit.
+ * `pictures`. Yvann's AudioIPAdapterTransitions centers its blend on each
+ * peak: with length five the previous image fades out across two frames
+ * before the hit, the hit and two frames after it. Later transition windows
+ * overwrite earlier ones if peaks are closer than the blend length.
  */
 export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition = IP_TRANSITION.frames, min = IP_TRANSITION.min, max = IP_TRANSITION.max }) {
   const n = Math.max(1, Math.round(frames));
@@ -199,13 +201,18 @@ export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition =
   for (let f = 0; f < n; f++) {
     let k = 0;
     while (k + 1 < cuts.length && cuts[k + 1] <= f) k++;
-    const cur = k % p;
-    const next = cuts[k + 1];
-    if (next !== undefined && transition > 0 && f >= next - transition) {
-      const t = (f - (next - transition) + 1) / (transition + 1);   // 0 < t < 1, reaching 1 ON the peak
-      per_frame.push([[cur, w(1 - t)], [(k + 1) % p, w(t)]]);
-    } else {
-      per_frame.push([[cur, w(1)]]);
+    per_frame.push([[k % p, w(1)]]);
+  }
+  if (transition > 0 && p > 1) {
+    for (let k = 1; k < cuts.length; k++) {
+      const change = cuts[k];
+      const begin = Math.max(0, change - Math.floor(transition / 2));
+      const end = Math.min(n, change + Math.floor((transition + 1) / 2));
+      const span = end - begin - 1;
+      for (let f = begin; f < end; f++) {
+        const t = span > 0 ? (f - begin) / span : 1;
+        per_frame[f] = [[(k - 1) % p, w(1 - t)], [k % p, w(t)]];
+      }
     }
   }
   return { per_frame };
