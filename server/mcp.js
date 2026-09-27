@@ -56,6 +56,8 @@ import { setupTools } from "./mcp-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
 import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
+import { pngtuberTools } from "./mcp-pngtuber.js";
+import { standRigTools } from "./mcp-standrig.js";
 import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
 import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
@@ -69,7 +71,10 @@ import { welcomeTools } from "./mcp-welcome.js";
  * actually run, and what to fetch first. */
 import { modelTools } from "./mcp-models.js";
 import { cloudTools } from "./mcp-cloud.js";
+import { runpodTools } from "./mcp-runpod.js";
 import { collabTools } from "./mcp-collab.js";
+import { communityTools } from "./mcp-community.js";
+import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { workspaceTools } from "./mcp-workspace.js";
 import { excludedTerritoriesText } from "./models.js";
 
@@ -438,7 +443,10 @@ export const TOOLS = [
    * complete confidence. */
   ...modelTools(api),
   ...cloudTools(api),
+  ...runpodTools(api),
   ...collabTools(api, safeName),
+  ...communityTools(api),
+  ...standRigPsdTools(api),
   ...workspaceTools(api, safeName),
   ...musicInputTools(api),
   ...musicPlanTools(api),
@@ -465,6 +473,8 @@ export const TOOLS = [
   ...setupTools(api),
   ...avatarTools(api),
   ...avatarPlaybackTools(api),
+  ...pngtuberTools(api),
+  ...standRigTools(api),
   ...avatarWeightTransferTools(api),
   ...avatarWardrobeTools(api),
   ...avatarFittingTools(api),
@@ -2578,6 +2588,31 @@ export const TOOLS = [
   },
 
   {
+    name: "compare_yue2_lora_takes",
+    description:
+      "Review two finished YuE2 ComfyUI library takes before judging a trained audio LoRA. "
+      + "Pass a baseline rendered without an audio LoRA and an adapter take. Studio checks the saved "
+      + "checkpoint, style, lyrics, both seeds, score, NAR steps, duration limit, sampler settings, "
+      + "planner LoRA and instrumental mode. For older takes, a saved listening-lab pair can also "
+      + "be checked against local finished-run graphs and final audio hashes. A broken provenance link "
+      + "leaves the pair unverified even if the graphs structurally match; other incomplete takes remain "
+      + "unverified. Matching settings do not prove audible improvement. Read-only: "
+      + "this does not start training or generation.",
+    inputSchema: {
+      type: "object", required: ["before_file", "after_file"],
+      properties: {
+        before_file: { type: "string", description: "Baseline file from the local library, generated without an audio LoRA." },
+        after_file: { type: "string", description: "Comparison file from the local library, generated with the adapter." },
+      }, additionalProperties: false,
+    },
+    async run(a) {
+      return await api("POST", "/api/train", {
+        action: "compare", before: safeName(a.before_file, "song"), after: safeName(a.after_file, "song"),
+      });
+    },
+  },
+
+  {
     name: "sampling_options",
     description:
       "Every sampler and scheduler THIS ComfyUI install actually has, read from its own /object_info rather "
@@ -2950,8 +2985,9 @@ export const TOOLS = [
   {
     name: "make_clip",
     description:
-      "Render a short video clip. Blocks until done — roughly 2 min on LTX, 2-13 min on H3 "
-      + "depending on `quality` and size.\n\n"
+      "Render a short video clip. Waits until done or `timeout_seconds`; a timed-out job keeps running. "
+      + "H3 time grows with size, frames and references, and long clips can take much longer than the fitted estimate. "
+      + "Use `check_only` to inspect the exact request and its evidence warnings first.\n\n"
       + "TWO ENGINES, AND THEY TAKE DIFFERENT INPUTS. Check the current one with "
       + "studio_status and change it with set_video_engine.\n"
       + "  • LTX 2.5 — fast. Takes EXACT frames: `first_frame`, `last_frame`, `mid_frames` "
@@ -2992,7 +3028,7 @@ export const TOOLS = [
         quality: { type: "string", enum: ["fast", "best"],
           description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. With references or a persona and no quality, the reference build's own count runs (studio_status video.h3_reference_steps). All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
-        seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
+        seconds: { type: "integer", description: "Direct clip length, 1–20 s (default 5). H3 is trained for about 4–15 s; longer requests are experimental. More than 20 s is clamped and reported in warnings. Continue a clip for more output." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
         height: { type: "integer", description: "Frame height." },
         first_frame: { type: "string", description: "An image name to open on (from list_images or a cover). Pinned at frame 0." },
@@ -3025,7 +3061,7 @@ export const TOOLS = [
         attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it (PyTorch where it does not). H3 decides its own; LTX has none. Default: kitchen, the one the H3 lab timed FastH3 with." },
         sparse: { type: "string", enum: ["sol-attn", "off"], description: "H3 only: sparse attention on the fast setting (the 3-step build, no references), the Video screen's Advanced \"Sparse attention\" switch. " + H3_SOL_ATTN.note + " Default: the saved setting (video_settings sparse_attention), sol-attn unless changed; name it only to differ for this render." },
         check_only: { type: "boolean", description: "Render nothing: return what this call WOULD render on this card (engine, size, seconds, steps, sparse attention), what the size needs (\"needs about X GB free; you have Y\"), every warning, or the refusal. The Video screen's Advanced line reads the same answer." },
-        timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
+        timeout_seconds: { type: "integer", description: "Wait limit, default 900 s. Reaching it does not stop the queued or running render; check studio_status/list_clips before attempting another." },
       },
       additionalProperties: false,
     },
@@ -3334,6 +3370,7 @@ export const TOOLS = [
       + "paint and motion use GPU diffusion. Pass library pictures/clips or a prompt to generate pictures first. "
       + "motion.profile yvann selects the experimental LCM remix, with drum-stem frame-RMS transitions. "
       + "motion.sourceStart/sourceSpeed control source video independently of the song start. "
+      + "The result's motion.sourceWindow reports when that source will repeat, if video duration was readable. "
       + "Depth/line structure and optional reference anchors guide the result; appearance and speed depend on the profile. "
       + "Call reactive_status for installed choices. The generated composition is editable with vfx_* tools; "
       + "poll vfx_render_status for its final movie. Diffusion preparation can hold this call for a long time. "

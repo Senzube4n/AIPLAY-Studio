@@ -43,7 +43,7 @@ import {
   LIMITS, INSTRUMENTS, TAILS, TICKS_PER_BEAT, REGION_BARS,
   PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
   listProjects, readProject, createProject, updateProject, deleteProject,
-  blankTrack, blankClip, newId, noteLedger,
+  blankTrack, blankClip, newId, uniqueId, noteLedger,
   findTrack, findClip, clipCovering, findNote,
   /* the clip-bounds surface (agent/dawparity) */
   shiftClipNotes, notesOutsideClip,
@@ -1787,10 +1787,15 @@ export function createDawRoutes(deps) {
           const m = await mutate(slug, b, "add_track", (d) => {
             if (d.tracks.length >= LIMITS.tracks) throw new Error(`This project already has ${LIMITS.tracks} tracks.`);
             const track = blankTrack(b.name, { patch: inst, params: b.params });
+            track.id = uniqueId(track.id, d.tracks.map((t) => t.id), () => newId("trk"));
             /* A track without a clip cannot hold a note, and "add_clip first"
              * is a speed bump both hands would hit every time — so a track
              * arrives with one clip spanning the project unless told not to. */
-            if (b.with_clip !== false) track.clips.push(blankClip(1, d.lengthBars));
+            if (b.with_clip !== false) {
+              const clip = blankClip(1, d.lengthBars);
+              clip.id = uniqueId(clip.id, d.tracks.flatMap((t) => t.clips.map((c) => c.id)), () => newId("clp"));
+              track.clips.push(clip);
+            }
             d.tracks.push(track);
             return { trackId: track.id, clipId: track.clips[0]?.id ?? null,
                      track: { id: track.id, name: track.name, instrument: track.instrument },
@@ -1887,6 +1892,7 @@ export function createDawRoutes(deps) {
             const from = clampInt(inRange(b.from_bar, 1, d.lengthBars, "from_bar"), 1, d.lengthBars);
             const bars = clampInt(inRange(b.bars ?? 4, 1, d.lengthBars, "bars"), 1, d.lengthBars);
             const clip = blankClip(from, Math.min(from + bars - 1, d.lengthBars), { name: b.name });
+            clip.id = uniqueId(clip.id, d.tracks.flatMap((t) => t.clips.map((c) => c.id)), () => newId("clp"));
             t.clips.push(clip);
             return { clipId: clip.id, fromBar: clip.fromBar, toBar: clip.toBar };
           });

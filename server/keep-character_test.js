@@ -111,9 +111,11 @@ const L = {
 };
 const VAE8 = "minimax_h3_video_vae_int8_convrot.safetensors";
 const DISK8 = eng({ turboLora: L.fl8, turboLora4: L.fl4, turboLora3: L.tao, refTurboLora: L.ref8, refTurboLora4: L.ref4,
-  refTurboSteps: 8, stepDefaults: { fast: 3, standard: 8, best: 20 }, steps: 8, videoVae: VAE8 });
+  refTurboSteps: 8, stepDefaults: { fast: 3, standard: 8, best: 20 }, steps: 8, videoVae: VAE8,
+  turboBuilds: { three: true, four: true, eight: true } });
 const DISK4 = eng({ turboLora: L.fl4, turboLora4: L.fl4, turboLora3: L.tao, refTurboLora: L.ref4, refTurboLora4: L.ref4,
-  refTurboSteps: 4, stepDefaults: { fast: 3, standard: 4, best: 20 }, steps: 4, videoVae: VAE8 });
+  refTurboSteps: 4, stepDefaults: { fast: 3, standard: 4, best: 20 }, steps: 4, videoVae: VAE8,
+  turboBuilds: { three: true, four: true, eight: false } });
 const MIRA = { name: "Mira", fragment: "a tall woman with cropped silver hair", refImages: ["m1.png", "m2.png", "m3.png", "m4.png"] };
 const plan = (b, o = {}) => videoPlan({ prompt: "Mira runs through the rain", ...b }, { engineKey: "h3", eng: DISK8, ...o });
 

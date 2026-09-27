@@ -77,3 +77,22 @@ test("Studio ships the node pinned with its licence and deploys it into custom_n
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   assert.match(read("../NOTICE"), /MiniMax H3 Block Cache \(T8\)\s+Apache-2\.0, Copyright T8mars\./);
 });
+
+test("an independently installed H3 node folder is never overwritten or mixed with bundled files", async () => {
+  const { deployStudioNodes, VENDORED_NODES } = await import("./comfy_nodes.js");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aiplay-user-h3-"));
+  const folder = path.join(root, VENDORED_NODES[0]);
+  try {
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, "nodes.py"), "# user-installed version\n");
+    fs.writeFileSync(path.join(folder, "extra.py"), "# keep this too\n");
+    const before = fs.readdirSync(folder).sort();
+    const result = deployStudioNodes(root);
+    assert.deepEqual(fs.readdirSync(folder).sort(), before, "no bundled file fills a partial user installation");
+    assert.equal(fs.readFileSync(path.join(folder, "nodes.py"), "utf8"), "# user-installed version\n");
+    assert.equal(result.copied.some(name => name.startsWith(VENDORED_NODES[0] + "/")), false);
+    assert.match(result.warnings.join("\n"), /Preserved existing.*move that folder aside and restart Studio/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

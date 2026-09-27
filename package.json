@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@pixiv/three-vrm": "3.5.5",
+    "ag-psd": "31.0.2",
     "gltf-validator": "2.0.0-dev.3.10",
     "three": "0.185.1",
     "ws": "^8.18.0"
@@ -36,8 +37,8 @@
       "repo": "bani4kaskashka/AIPLAY-Studio-Bucky-Fork",
       "upstream": {
         "repo": "Senzube4n/AIPLAY-Studio",
-        "commit": "a3562a982d975e4f027868717bf66d30edb6cf6d",
-        "date": "2026-09-24T23:23:19+02:00"
+        "commit": "0090e820cb631b29d487f9738f38cc51d9ae589d",
+        "date": "2026-09-27T10:09:33+02:00"
       }
     }
   }

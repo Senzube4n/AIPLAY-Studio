@@ -68,6 +68,34 @@ eq("...and an empty request is the measured defaults",
   ok("duration metadata without an audio stream is refused", noAudio?.reason === "region");
 }
 
+/* The source probe can report a valid region even when the decoder writes a
+ * shorter WAV. Check the extracted WAV before paying for YuE2 tokenization. */
+{
+  const probe = (actualSeconds) => ({ runner: async (_command, args) => {
+    ok("the extracted slice, rather than the source recording, is probed", args.at(-1) === "train_slice.wav");
+    return { stdout: JSON.stringify({ streams: [{ codec_type: "audio", duration: String(actualSeconds) }] }) };
+  } });
+  eq("a complete extracted slice is accepted", await train.verifyTrainSliceAudio("train_slice.wav", { seconds: 24 }, probe(24)), 24);
+  for (const boundary of [8, 180]) {
+    eq(`the ${boundary}s training boundary remains valid after extraction`,
+      await train.verifyTrainSliceAudio("train_slice.wav", { seconds: boundary }, probe(boundary)), boundary);
+  }
+  for (const actualSeconds of [18, 24.2, 0]) {
+    let error;
+    try { await train.verifyTrainSliceAudio("train_slice.wav", { seconds: 24 }, probe(actualSeconds)); }
+    catch (e) { error = e; }
+    ok(`an incomplete or malformed extracted slice is refused before tokenization (${actualSeconds}s)`,
+      error?.reason === "slice-duration" && error.status === 422 && /24\.00s/.test(error.message));
+  }
+  eq("codec-frame rounding does not reject an otherwise complete slice",
+    await train.verifyTrainSliceAudio("train_slice.wav", { seconds: 24 }, probe(23.98)), 23.98);
+  const extract = index.indexOf("train.trainSliceArgs(path.join(config.outputDir, file), slice, set)");
+  const verified = index.indexOf("train.verifyTrainSliceAudio(slice, set)", extract);
+  const tokenize = index.indexOf("tokenizeTrack({ source: slice })", extract);
+  ok("the route verifies the extracted WAV after ffmpeg and before YuE2 tokenization",
+    extract >= 0 && extract < verified && verified < tokenize);
+}
+
 /* ── the refusals, in the order that makes each sentence the right one ───── */
 {
   const base = { checkpoints: ["yue2_3b_int8_convrot.safetensors"], freeVramMb: 13000, busy: false };

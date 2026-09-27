@@ -1,6 +1,6 @@
 /**
  * THE ENGRAVER — the guard suite. No GPU. Launches Edge only when Edge is on
- * this machine, and says so out loud when it is not.
+ * this machine, with Chrome retrying a silent zero-DOM Edge exit.
  *
  * What each section is guarding:
  *
@@ -57,7 +57,7 @@ const REAL_AUDIO = REAL_RECEIPT.audio_seconds;
 const { readScoreText } = await import("./abc.js");
 const sheet = await import("./sheet.js");
 const {
-  buildPage, sheetSubtitle, edgePath, abcjsPath, sheetCapability,
+  buildPage, sheetSubtitle, edgePath, abcjsPath, sheetCapability, silentEdgeFallback,
   engrave, verifyEngraved, PDF_FLOOR_BYTES, VIRTUAL_TIME_BUDGET_MS,
   ABCJS_TESTED_VERSION, abcjsInfo,
 } = sheet;
@@ -397,6 +397,27 @@ console.log("\n5 · why the outcome is read off the page and not off the file si
     && /refuses to start headless against a[\s\S]{0,12}profile/.test(SRC));
   ok("...and the GPU is switched off, because another agent may be rendering on it",
     /"--disable-gpu"/.test(SRC));
+  const edgeBinary = "C:\\edge.exe", chromeBinary = "C:\\chrome.exe";
+  eq("a successful Edge exit with zero DOM selects Chrome for the same real check",
+    silentEdgeFallback(edgeBinary, { ok: true, out: "" },
+      { explicitEdge: false, chrome: chromeBinary }), chromeBinary);
+  eq("a reported DOM never selects another browser",
+    silentEdgeFallback(edgeBinary, { ok: true, out: "<html></html>" },
+      { explicitEdge: false, chrome: chromeBinary }), null);
+  eq("a failed Edge exit is not mistaken for the silent-zero-DOM case",
+    silentEdgeFallback(edgeBinary, { ok: false, out: "" },
+      { explicitEdge: false, chrome: chromeBinary }), null);
+  eq("an explicit AIPLAY_EDGE selection remains authoritative",
+    silentEdgeFallback(edgeBinary, { ok: true, out: "" },
+      { explicitEdge: true, chrome: chromeBinary }), null);
+  eq("the same browser cannot be selected as its own fallback",
+    silentEdgeFallback(edgeBinary, { ok: true, out: "" },
+      { explicitEdge: false, chrome: edgeBinary }), null);
+  eq("without a Chrome installation the silent Edge result remains a failure",
+    silentEdgeFallback(edgeBinary, { ok: true, out: "" },
+      { explicitEdge: false, chrome: null }), null);
+  ok("the PDF uses the browser that proved the page engraved",
+    /runEdge\(check\.browser \|\| edge, \[/.test(SRC));
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -445,10 +466,11 @@ if (!LIB || !EDGE) {
   ok("...well above the truncation floor", r.pdfBytes > PDF_FLOOR_BYTES * 10, String(r.pdfBytes));
   ok("...and comparable to the measured 352,047 bytes for this score",
     r.pdfBytes > 200_000 && r.pdfBytes < 600_000, String(r.pdfBytes));
-  ok("...on disk", existsSync(path.join(sheetDir("real", "v1"), "sheet.pdf")));
+  const realPdf = path.join(sheetDir("real", "v1"), "sheet.pdf");
+  ok("...on disk", existsSync(realPdf));
   ok("...starting with a PDF header rather than an error page",
-    readFileSync(path.join(sheetDir("real", "v1"), "sheet.pdf")).subarray(0, 5).toString() === "%PDF-");
-  console.log(`        (two Edge launches, ${seconds.toFixed(1)} s total — against a 399.6 s render)`);
+    existsSync(realPdf) && readFileSync(realPdf).subarray(0, 5).toString() === "%PDF-");
+  console.log(`        (browser verification and print, ${seconds.toFixed(1)} s total — against a 399.6 s render)`);
 
   /* 🔴 THE BLANK SHEET. Serve a page with NO library and prove the check
    * catches what a size test cannot. */

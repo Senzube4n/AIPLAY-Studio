@@ -2896,40 +2896,24 @@ function declareForm(kind) {
 function meshForm(kind, id, cat) {
   const bad = cat && !cat.installed;
   return `<div class="declare" data-meshform="${esc(kind)}|${esc(id)}">
-    <h4>Build a mesh from this sheet</h4>
+    <h4>Image → 3D mesh</h4>
     ${bad ? `<p class="hint warnhint">The 3D runtime is not ready on this machine:<br>
       ${(cat.why || []).map((w) => esc(w)).join("<br>")}</p>` : ""}
-    <p class="hint dim">One panel in, a <b>GLB</b> out — the object itself rather than a picture
-      of it. It does <b>not</b> replace the sheet: the clip engines take pictures, so the sheet
-      stays the thing that reaches a render. What a mesh buys is that the object is the
-      <i>same object</i> every time, which a description cannot promise.</p>
-
-    <label class="dfield"><span>panel to build from</span>
+    <p class="hint dim">One image → a local, geometry-only GLB. Keep the original sheet for video generation.</p>
+    <label class="dfield"><span>Source image</span>
       <input class="line" data-mimage spellcheck="false" autocomplete="off"
-        placeholder="leave empty to use this row's selected take"></label>
-    <p class="hint dim">A full path on THIS machine, and only when the selected take is not the
-      clearest single panel of the object. A contact strip is <b>refused</b> before anything is
-      spent — handed a grid, an image-to-3D model builds a mesh of the grid.</p>
-
-    <label class="dfield"><span><input type="checkbox" data-mrig> rig it as well</span></label>
+        placeholder="Use the selected take, or paste a local image path"
+        title="A single image on this computer. Transparent PNGs preserve limb gaps; contact sheets are refused."></label>
+    <details class="more"><summary>Preparing the image</summary><p class="hint dim">Use one front-facing subject with space between arms and legs. A transparent PNG works best. A contact sheet is refused; its panels would become one mesh.</p></details>
+    <label class="dfield" title="Add a body skeleton and skin weights in the same pass. Use only for an articulated subject, not a static prop."><span><input type="checkbox" data-mrig> Add body rig</span></label>
     ${cat && cat.installed && cat.canRig === false ? `<p class="hint warnhint">⚠ The rig cannot run on this machine, so ticking this refuses the whole pass <b>before</b> the mesh is built — leave it clear to get the mesh. The checkpoints are present; it is the runtime that is missing:<br>${(cat.rigRuntime?.missing || []).map((m) => esc(m.module + " — " + m.error)).join("<br>")}</p>` : ""}
-    <p class="hint dim">Adds a skeleton and skinning weights in the same pass — glTF joints and
-      inverse bind matrices, which is what makes a mesh posable. Refused on a blocky object: a
-      rigger asked to rig a crate does not fail, it invents a skeleton for a crate and reports
-      success. You can also rig later, from the ⬗ Rig button.</p>
-
     <div class="framepick">
-      <label class="dfield"><span>seed</span>
+      <label class="dfield" title="Record a seed to reproduce this geometry."><span>Seed</span>
         <input class="line sm num" type="number" step="1" data-mseed placeholder="42"></label>
-      <label class="dfield"><span>steps</span>
+      <label class="dfield" title="More steps spend more time refining the surface; they do not add texture or hair physics."><span>Steps</span>
         <input class="line sm num" type="number" step="1" data-msteps placeholder="50"></label>
     </div>
-    <p class="hint dim">Seed is recorded on the run so the mesh can be rebuilt. Steps trade time
-      against surface detail and nothing else.</p>
-
-    <p class="hint">⚠ <b>It shares the one graphics card with the engine.</b> If there is not
-      enough free memory this refuses <i>before</i> starting and says to unload the engine
-      first — it will never evict a render that is already going.</p>
+    <p class="hint">Uses the local GPU. Low free memory blocks the job before it starts.</p>
 
     <div class="framepick">
       <button class="edtool" type="button" data-msave>Build the mesh</button>

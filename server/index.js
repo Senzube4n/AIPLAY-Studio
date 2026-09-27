@@ -1,5 +1,7 @@
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
+import { createStandRigRoutes } from './standrig/routes.js';
+import { createStandRigPsdRoutes } from './standrig/psd-export-routes.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
@@ -23,6 +25,7 @@ import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultW
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
+import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
  * self-explaining quality selector, and the turbo toggles. Additive — it owns
@@ -33,7 +36,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, yue2ComfySamplingReceipt, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -43,13 +46,14 @@ import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
  * of an image/video MODEL throughout this file, and a bare import would be
  * shadowed inside the very handlers that need the door. */
 import { engine as engineDoor } from "./engine/client.js";
-import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings } from "./qwen-image.js";
+import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, QWEN_IMAGE_FILES, qwenImageSettings } from "./qwen-image.js";
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
 /* RunPod rendering (the launcher's "RunPod GPU" mode): the worker client, the
  * account (Pods and billing) and their routes, contributed by nemesisone-dev. */
 import { createRemoteRoutes } from "./engine/remote-routes.js";
+import { awaitRemoteMusicJob } from "./engine/remote-music.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { isNativeLibraryWav } from "./library-wav.js";
@@ -369,11 +373,25 @@ import { createListeningLabRuntime, saveTrainingReceipt, readTrainingReceipt, co
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
 import { createPreviewStore, assertPreviewFresh } from "./collab/preview.js";
 const collabPreviews = createPreviewStore();
+/* A return claim still active in this process must not be mistaken for an
+ * orphaned claim after a restart. The orderbook records the intended sealed
+ * filename/hash before publication so a new process can reconcile it. */
+const collabImageReturnClaims = new Set();
 import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
 import { creditRollup, creditLines } from "./collab/credit.js";
 import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn, shotFlags } from "./collab/order.js";
+import { makeImageJob, readImageJob, readStoredImageJob, compactImageJob, describeImageJob, IMAGE_JOB_REF_CAP, IMAGE_JOB_REF_BYTES_CAP } from "./collab/image-job.js";
+import { makeVideoJob, readVideoJob, readStoredVideoJob, compactVideoJob, describeVideoJob } from "./collab/video-job.js";
+import { receiverBaseH3Models } from "./collab/video-render-profile.js";
+import { measureImageJobReferences } from "./collab/image-reference.js";
+import { makeImageReturn, readImageReturn } from "./collab/image-return.js";
+import { landImageReturn, listImageQuarantine, imageQuarantinePicture, adoptImageReturn, dropImageReturn } from "./collab/image-quarantine.js";
+import { makeVideoReturn, readVideoReturn, VIDEO_RETURN_BYTES_CAP } from "./collab/video-return.js";
+import { landVideoReturn, listVideoQuarantine, videoQuarantineClip, reviewVideoReturn, adoptVideoReturn, dropVideoReturn } from "./collab/video-quarantine.js";
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
+import { imageIdFromArtFile, recentImageOutcome, recordImageOutcome } from "./collab/image-lifecycle.js";
+import { recordVideoFailure, videoIdFromArtFile } from "./collab/video-lifecycle.js";
 import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrderFiles } from "./collab/errand.js";
 import { describePacket as describeAnyPacket } from "./collab/packet.js";
 import { speaks, stamp as collabStamp, describeStamp } from "./collab/compat.js";
@@ -724,6 +742,24 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
   saveImageStore();
   push(jobs.snapshot());
 });
+/* A queued friend image is an errand until the ArtRunner says exactly how that
+ * image attempt ended. An unanswered queue HTTP request is not an outcome. */
+function noteCollabImageOutcome(file, outcome) {
+  if (!imageIdFromArtFile(file)) return;
+  void recordImageOutcome({ book, outDir: path.join(config.outputDir, "collab"), file, outcome })
+    .catch((error) => console.error(`[collab image] Could not record terminal render state: ${error.message}`));
+}
+art.on("cover", ({ file, covers, durationMs }) => {
+  const imageId = imageIdFromArtFile(file);
+  if (imageId && covers?.includes(`${imageId}.png`))
+    noteCollabImageOutcome(file, { type: "complete", cover: `${imageId}.png`, durationMs });
+});
+art.on("failed", ({ file, kind, cancelled, durationMs, runId }) => {
+  if (kind === "cover") noteCollabImageOutcome(file, { type: "failed", cancelled: cancelled === true, durationMs });
+  if (kind === "video") void recordVideoFailure({
+    book, outDir: path.join(config.outputDir, "collab"), file, kind, cancelled, durationMs, runId,
+  }).catch((error) => console.error(`[collab video] Could not record render failure: ${error.message}`));
+});
 /* A stage that failed is a stage that FINISHED, as far as the display goes.
  *
  * The runner's success events each tick their own row off; nothing ticked a row
@@ -764,6 +800,30 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
   if (clip && (seconds || meta)) saveClipStore();
+  const friendJob = /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
+  if (friendJob && clip) void (async () => {
+    const dir = path.join(config.outputDir, "collab");
+    const row = await book.findOrder({ outDir: dir, id: friendJob[1], side: "in" });
+    if (!row || row.jobType !== "video" || !["queued", "rendering"].includes(row.state)
+        || row.renderStatus === "complete") return;
+    if (clip !== `collab_${friendJob[1]}.mp4`) {
+      await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: "failed",
+        expected: { renderStatus: row.renderStatus },
+        patch: { renderStatus: "wrong-output", renderFailedAt: Date.now(),
+          renderRunMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null,
+          renderRunId: runId ?? null,
+          note: "The engine served a cached library clip rather than this order's own output; no return can be sealed." } });
+      return;
+    }
+    const bytes = await readFile(path.join(CLIP_DIR, clip));
+    await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: row.state,
+      expected: { renderStatus: row.renderStatus }, patch: {
+      renderStatus: "complete", renderCompletedAt: Date.now(), renderClip: clip,
+      renderSha256: createHash("sha256").update(bytes).digest("hex"), renderRunId: runId ?? null,
+      /* `seconds` is ArtRunner's render clock, not request-to-finish queue time. */
+      renderRunMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null,
+    } });
+  })().catch((error) => console.error(`[collab video] Could not record completed clip: ${error.message}`));
   // Generated-media registration: a rendered clip is ai-generated video.
   if (clip) {
     provNote("library", {
@@ -1009,11 +1069,32 @@ const pendingImageWild = new Map();
  * that writes the sidecar has no other way to know. */
 const pendingImagePrivate = new Map();
 const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
-async function saveImageStore() {
-  try {
-    await mkdir(path.dirname(IMAGE_STORE), { recursive: true });
-    await writeFile(IMAGE_STORE, JSON.stringify(Object.fromEntries(imageMeta)));
-  } catch { /* provenance is a nicety; losing it must not fail a render */ }
+let imageStoreWriteTail = Promise.resolve();
+function saveImageStore({ strict = false, mutate = null } = {}) {
+  /* Serialize snapshots so an older background save cannot land after a
+   * checked peer adoption and erase its rights/model record. The rename also
+   * leaves either the old complete JSON or the new one after a process crash. */
+  const job = imageStoreWriteTail.then(async () => {
+    /* A strict caller installs its metadata while it owns this write queue.
+     * On failure it rolls back before a later background save can snapshot
+     * an image whose quarantine row is still unadopted. */
+    const undo = typeof mutate === "function" ? mutate() : null;
+    const tmp = `${IMAGE_STORE}.tmp-${process.pid}-${randomUUID()}`;
+    try {
+      await mkdir(path.dirname(IMAGE_STORE), { recursive: true });
+      await writeFile(tmp, JSON.stringify(Object.fromEntries(imageMeta)), { flag: "wx" });
+      await rename(tmp, IMAGE_STORE);
+    } catch (error) {
+      await unlink(tmp).catch(() => {});
+      if (typeof undo === "function") undo();
+      throw error;
+    }
+  });
+  imageStoreWriteTail = job.catch(() => {});
+  /* Ordinary generated art may still finish if the optional index is
+   * unavailable. A peer image's signed rights record is required, so its
+   * adoption asks for strict failure propagation below. */
+  return strict ? job : imageStoreWriteTail;
 }
 try {
   const raw = JSON.parse(await readFile(IMAGE_STORE, "utf8"));
@@ -1547,8 +1628,11 @@ jobs.on("update", async (snap) => {
     });
   }
 
+  const comparisonSampling = isYueComfy
+    ? yue2ComfySamplingReceipt({ sampling: job.sampling, planSampling: job.planSampling, cot: job.cot, abc: job.abc })
+    : null;
   library.remember(h.file, {
-    title: h.title, seed: h.seed, mixSeed: h.mixSeed,
+    title: h.title, seed: h.seed, mixSeed: isYueComfy ? (h.mixSeed ?? h.seed) : h.mixSeed,
     /* The Library's model column and its "YuE2 3B" badge read `model`; the
      * MiniMax value is a precision (int8/fp16/fp32) because that engine has
      * one weight file per precision. YuE2's 32 is the NAR's ODE step count,
@@ -1588,6 +1672,12 @@ jobs.on("update", async (snap) => {
        * from the model's own plan. The version it came from is in the ledger
        * (params.scoreFrom); the ♪ badge's scoreSlug stays the Python kit's. */
       scoreSupplied: !!job.abc,
+      /* This explicit comparison receipt lets Training distinguish a matched
+       * baseline/adapter pair from older rows whose sampler inputs were never
+       * saved. Only the supplied score's hash is kept, not its full text. */
+      comparisonVersion: 1, maxDuration: job.maxDuration ?? null,
+      scoreHash: job.abc ? prov.sha256hex(job.abc) : null,
+      sampling: comparisonSampling.audio, planSampling: comparisonSampling.planner,
       lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
       /* The planner's LoRA beside the audio one — including the one the
        * Instrumental switch picks by itself, which is why this matters more
@@ -2948,6 +3038,14 @@ const imageEditor = createImageEditor({
   },
 });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
+const standRigRoutes = createStandRigRoutes({ json, readBody, sameOriginLocalJson });
+const standRigPsdRoutes = createStandRigPsdRoutes({
+  json, readBody, sameOriginLocalJson, imageDir: IMAGE_DIR, python: config.python,
+  onExport: ({ name, documentId, layers }, req) => provNote("library", {
+    actor: prov.actorFrom(req), type: "export", asset: `images/_standrig/${name}`,
+    data: { op: "document.standrig-psd", documentId, layers },
+  }),
+});
 const weightTransferRoutes = createWeightTransferRoutes({json, directory:path.join(config.outputDir,'avatar-weight-transfer'), provenance:prov});
 const avatarFitAssets = createAvatarService({directory:path.join(config.outputDir,'avatars')});
 const avatarFittingRoutes = createAvatarFittingRoutes({json,directory:path.join(config.outputDir,'avatar-fitting'),inspectAsset:avatarFitAssets.file,provenance:prov});
@@ -3134,21 +3232,13 @@ const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret,
  * queue's usual "done" path, title, tags and all. */
 if (remoteRoutes) jobs.setRemote(async ({ graph, label, actor, isCancelled, onState }) => {
   const c = await remoteRoutes.start();
-  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor });
-  const FINAL = new Set(["completed", "cancelled", "failed", "uncertain"]);
-  let cancelSent = false;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 2500));
-    const row = c.status().jobs.find((j) => j.id === sent.id);
-    if (!row) continue;
-    if (isCancelled() && !cancelSent && !FINAL.has(row.state)) { cancelSent = true; await c.cancel(sent.id).catch(() => {}); }
-    onState(row.state);
-    if (!FINAL.has(row.state)) continue;
-    if (row.state !== "completed") throw new Error(row.error || `The RunPod job ended ${row.state}.`);
-    const audio = (row.outputs || []).find((o) => /\.(wav|flac|mp3|ogg|opus)$/i.test(o.localFile || o.file || ""));
-    if (!audio?.localFile) throw new Error("The Pod finished but returned no audio file.");
-    return { file: audio.localFile, runId: row.runId || null };
+  if (isCancelled()) {
+    const error = new Error("Stopped before the Pod job was submitted.");
+    error.remoteState = "cancelled";
+    throw error;
   }
+  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor });
+  return await awaitRemoteMusicJob({ client: c, sent, isCancelled, onState });
 });
 
 /* THE ENGINE'S OWN BACKSTOP ASKS HERE. server/comfy_nodes/aiplay_safety_gate.py
@@ -3200,6 +3290,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- API ------------------------------------------------------------
+    if (p === '/api/standrig') {
+      return standRigRoutes(req, res);
+    }
+    if (p === '/api/images/standrig-psd' || p.startsWith('/api/images/standrig-psd/')) {
+      return standRigPsdRoutes(req, res, url);
+    }
     if (p === '/api/avatars' || p.startsWith('/api/avatars/')) {
       if (await avatarRoutes(req, res, url)) return;
     }
@@ -5011,6 +5107,33 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const action = String(b.action || "status");
 
+      /* Listening review is read-only and must work while another render owns
+       * the card. Resolve both names against the current library, so a stale
+       * sidecar cannot masquerade as a playable comparison take. */
+      if (action === "compare") {
+        const before = String(b.before || ""), after = String(b.after || "");
+        if (!before || !after || [before, after].some((file) => file.includes("..") || /[/\\]/.test(file))) {
+          return json(res, 400, { error: "Choose two library takes to compare.", reason: "file" });
+        }
+        const rows = await library.list();
+        if (!rows.some((row) => row.file === before) || !rows.some((row) => row.file === after)) {
+          return json(res, 404, { error: "One of those takes is no longer in the library.", reason: "file" });
+        }
+        const baseline = { file: before, ...(library.meta.get(before) || {}) };
+        const adapterTake = { file: after, ...(library.meta.get(after) || {}) };
+        const recorded = train.compareTrainingTakes(baseline, adapterTake);
+        /* Old library rows have no complete sampler receipt. A saved lab may
+         * still have the exact finished run graphs and final audio hashes.
+         * Fail closed to the older "unverified" result if any link is absent. */
+        const archived = recorded.status === "unverified"
+          ? await compareArchivedTrainingPair({ appData: config.paths.appData, outputDir: config.outputDir,
+            before, after, baseline, adapterTake, prior: recorded,
+            runRecord: (runId, options) => engineDoor.runRecord(runId, options),
+            readProvenance: () => prov.read("library"), verifyProvenance: () => prov.verify("library") }).catch(() => null)
+          : null;
+        return json(res, 200, { ok: true, before, after, ...(archived || recorded) });
+      }
+
       /* Free VRAM, and an honest null where it cannot be read. `usedMb` comes
        * from nvidia-smi, which does not exist on an AMD machine — and refusing
        * to train on a card we simply cannot measure would be the wrong answer
@@ -5083,6 +5206,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 409, { error: "The training recording changed while extracting its region. No training was started." });
         }
 
+        try { await train.verifyTrainSliceAudio(slice, set); }
+        catch (e) { return json(res, e.status || 422, { error: e.message, reason: e.reason || "slice-duration" }); }
+
         /* Reading the audio into codes is itself a minute or two of work, and it
          * is CACHED by the decoded bytes — so re-training the same song with
          * different settings does not pay for it twice. */
@@ -5133,7 +5259,7 @@ const server = http.createServer(async (req, res) => {
         const runId = String(b.runId || "").trim();
         const name = String(b.name || "");
         if (!runId || !name) return json(res, 400, { error: "Pass the runId and the name that start gave you.", reason: "bad-arguments" });
-        const rec = await engineDoor.runRecord(runId).catch(() => null);
+        const rec = await engineDoor.runRecord(runId, { graph: true }).catch(() => null);
         if (!rec) return json(res, 404, { error: `No run "${runId}" in this ledger.`, reason: "no-run" });
         /* ⚠ A NULL `result` MEANS STILL RUNNING, AND MUST NEVER READ AS DONE.
          * The record is `{runId, request, result, graph}` — there is no `state`
@@ -5152,21 +5278,19 @@ const server = http.createServer(async (req, res) => {
             runningSec: live?.runningSec ?? live?.elapsedSec ?? null,
           });
         }
-        if (done.status === "error" || done.ok === false) {
+        if (done.status !== "completed") {
           return json(res, 200, {
             ok: true, done: true, failed: true, state: "error",
-            error: done.error || "the engine reported an error",
+            error: done.error || `the engine reported ${done.status || "an incomplete result"}`,
           });
         }
         try {
           const receipt = await readTrainingReceipt(config.paths.appData, runId).catch(error => { if (error.code === "ENOENT") return null; throw error; });
-          if (receipt && receipt.name !== name) return json(res, 409, { error: "This training run belongs to a different adapter name." });
-          const kept = await train.adoptLora(name, receipt ? { outputPrefix: receipt.outputPrefix, exact: true } : {});
+          const adoption = train.verifyTrainAdoption({ runId, name, receipt, record: rec });
+          const kept = await train.adoptLora(name, adoption);
           let trainingReceipt = null, receiptWarning = null;
-          if (receipt) {
-            try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
-            catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
-          }
+          try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
+          catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
           return json(res, 200, {
             ok: true, done: true, kept, trainingReceipt, receiptWarning,
             note: `"${kept.name}" is in your LoRA folder now — pick it on the Music screen under the YuE2 engine.`,
@@ -5176,7 +5300,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list.`, reason: "action" });
+      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list, compare.`, reason: "action" });
     }
 
     if (p === "/api/tokenize" && req.method === "POST") {
@@ -5312,10 +5436,12 @@ const server = http.createServer(async (req, res) => {
       if (!n) return json(res, 400, { error: "No file received." });
       const asked = path.basename(String(url.searchParams.get("name") || "bundle"));
       const stem = (asked.replace(/\.[^.]*$/, "").replace(/[^A-Za-z0-9._-]/g, "_") || "bundle").slice(0, 60);
-      const name = `${stem}.aiplay`;
       await mkdir(dir, { recursive: true });
+      /* Preserve every received copy. Reusing the sender's basename could
+       * replace a bundle between the review and consent presses. */
+      const name = `${stem}-${randomUUID().replaceAll("-", "")}.aiplay`;
       const file = path.join(dir, name);
-      await writeFile(file, Buffer.concat(chunks));
+      await writeFile(file, Buffer.concat(chunks), { flag: "wx" });
       return json(res, 200, { ok: true, file, name, bytes: n });
     }
 
@@ -5344,6 +5470,45 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { ...base, "Content-Length": take.size });
       return createReadStream(take.file).pipe(res);
+    }
+
+    if (p.startsWith("/api/collab-image/") && req.method === "GET") {
+      const site = String(req.headers["sec-fetch-site"] || "");
+      if (site !== "same-origin") return json(res, 403, { error: "Returned images are shown only on this Studio's Collab screen.", reason: "not-same-origin" });
+      const parts = p.slice("/api/collab-image/".length).split("/");
+      if (parts.length !== 2) return json(res, 400, { error: "Choose one returned image.", reason: "file" });
+      let fromFp, name;
+      try { [fromFp, name] = parts.map(decodeURIComponent); }
+      catch { return json(res, 400, { error: "The image address is invalid.", reason: "file" }); }
+      let picture;
+      try { picture = await imageQuarantinePicture({ outDir: path.join(config.outputDir, "collab"), fromFp, file: name }); }
+      catch (error) { return json(res, error.status || 400, { error: error.message, reason: error.reason }); }
+      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": picture.size,
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" });
+      return res.end(picture.bytes);
+    }
+
+    if (p.startsWith("/api/collab-video/") && req.method === "GET") {
+      if (String(req.headers["sec-fetch-site"] || "") !== "same-origin") return json(res, 403, { error: "Returned videos play only on this Studio's Collab screen.", reason: "not-same-origin" });
+      const parts = p.slice("/api/collab-video/".length).split("/");
+      if (parts.length !== 2) return json(res, 400, { error: "Choose one returned video.", reason: "file" });
+      let fromFp, name;
+      try { [fromFp, name] = parts.map(decodeURIComponent); }
+      catch { return json(res, 400, { error: "The video address is invalid.", reason: "file" }); }
+      let clip;
+      try { clip = await videoQuarantineClip({ outDir: path.join(config.outputDir, "collab"), fromFp, file: name }); }
+      catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason }); }
+      const size = clip.bytes.length;
+      const base = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+      const range = byteRange(req.headers.range, size);
+      if (range?.unsatisfiable) { res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` }); return res.end(); }
+      if (range) {
+        const { start, end } = range;
+        res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
+        return res.end(clip.bytes.subarray(start, end + 1));
+      }
+      res.writeHead(200, { ...base, "Content-Length": size });
+      return res.end(clip.bytes);
     }
 
     if (p === "/api/collab" && req.method === "POST") {
@@ -5375,7 +5540,9 @@ const server = http.createServer(async (req, res) => {
           reason: "not-same-origin",
         });
       }
-      const b = await readBody(req);
+      let b;
+      try { b = await readBody(req, MAX_BUNDLE_BYTES); }
+      catch (err) { return json(res, err.tooBig ? 413 : 400, { error: err.tooBig ? "That Collab request is too large." : "Could not read that Collab request as JSON.", reason: err.tooBig ? "too-big" : "bad-json" }); }
       const appData = config.paths.appData;
       const outDir = path.join(config.outputDir, "collab");
       /* ⚠ ONE READER FOR EVERY SEALED FILE, AND IT REFUSES BY SIZE BEFORE IT
@@ -5454,13 +5621,561 @@ const server = http.createServer(async (req, res) => {
         /* ── WHAT I SENT, WHAT LANDED HERE, WHAT IS WAITING ──────────────── */
         if (action === "orders") {
           const side = b.side === "in" ? "in" : "out";
-          return json(res, 200, { ok: true, side, orders: await book.listOrders({ outDir, side }) });
+          const orders = await book.listOrders({ outDir, side });
+          return json(res, 200, { ok: true, side, orders: orders.map((row) => row.imageJob?.job?.references
+            ? { ...row, imageJob: { ...row.imageJob, job: { ...row.imageJob.job,
+              references: row.imageJob.job.references.map(({ b64, ...reference }) => reference),
+            } } }
+            : row) });
         }
         if (action === "inbox") {
           return json(res, 200, { ok: true, ...(await scanInbox({ outDir })) });
         }
         if (action === "quarantine") {
-          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }) });
+          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }), images: await listImageQuarantine({ outDir }), videos: await listVideoQuarantine({ outDir }) });
+        }
+
+        /* Standalone Video gets a real signed render order. Accepting merely
+         * records consent; only video_render may spend the receiver's GPU. */
+        if (action === "video_accept") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Choose the signed video job first.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const reviewDigest = createHash("sha256").update(read.blob).digest("hex");
+          if (b.seen === true && b.expectedDigest !== reviewDigest) return json(res, 409, { error: "The signed file changed after review. Open it again before accepting.", reason: "review-changed" });
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({ blob: read.blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((peer) => peer.fp === envelope.from) || null;
+              if (!sender) { const e = new Error("The video job signer is not on your roster."); e.reason = "unknown-sender"; throw e; }
+              return sender.sign;
+            } });
+          if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify the sender and give them a render role first.", reason: "role" });
+          let packet;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); }
+          catch { return json(res, 400, { error: "The video job is not readable JSON.", reason: "bad-packet" }); }
+          const order = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
+          if (order.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer.", reason: "return-address" });
+          const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
+          const readiness = videoReady("h3");
+          const reviewMinutes = b.seen !== true ? await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() }) : null;
+          if (b.seen !== true) return json(res, 409, { error: "Review the complete job and this machine's H3 readiness, then accept explicitly. Accepting does not render.", reason: "not-seen",
+            from: { fp: sender.fp, nickname: sender.nickname }, videoJob: order, reviewDigest,
+            describes: describeVideoJob(order), readiness, outputRights: model?.outputRights ?? null,
+            minutes: reviewMinutes.why, overBudget: reviewMinutes.over,
+            readinessNote: "Model and engine readiness are checked again when Render is pressed; accepting only reserves this friend's daily allowance." });
+          if (await book.findOrder({ outDir, id: order.id, side: "in" })) return json(res, 409, {
+            error: `Video job ${order.id} was already accepted on this machine. It cannot reserve or render twice.`, reason: "already-landed" });
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          /* A signed job may be accepted before its model/engine is installed;
+           * that is consent, not a promise of GPU availability. Every unreadable
+           * LOCAL queue and a paused queue still block acceptance. Render makes
+           * the full engine/readiness check when it can actually spend GPU time. */
+          if (busy.busy && ["art-paused", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          const busyOverride = busy.busy && busy.reason !== "engine-unreachable" ? { reason: busy.reason, why: busy.why } : null;
+          /* Price and land within one orderbook writer turn. Two concurrent
+           * accepts must see each other's reservations before either can spend
+           * the same remaining daily minutes. */
+          const landed = await book.landOrderRowChecked({ outDir, row: { id: order.id, at: order.at, expires: order.expires,
+            from: { fp: sender.fp, nickname: sender.nickname, role: sender.role }, jobType: "video",
+            videoJob: compactVideoJob(order), returnTo: order.returnTo, reviewDigest,
+            state: "landed", consentAt: Date.now(), landedAt: Date.now() },
+          check: async (rows) => {
+            const minutes = await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []), ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: `${overrides.map((item) => item.why).join(" ")} Review these checks and explicitly choose Accept anyway to reserve this job.`,
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
+          } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          return json(res, 200, { ok: true, order: order.id, state: landed.row.state,
+            note: `Accepted locally; about ${landed.decision.minutes.thisOne ?? "unknown"} min reserved. Model and engine readiness are checked at Render. No video has been queued.` });
+        }
+
+        if (action === "video_render") {
+          const id = String(b.id || "");
+          const row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "video") return json(res, 404, { error: "No accepted video job has that id.", reason: "no-such-order" });
+          if (row.state !== "landed") return json(res, 409, { error: `Video job ${id} is ${row.state}; it cannot be queued again.`, reason: "already-rendering" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const sender = peers.find((peer) => peer.fp === row.from?.fp);
+          if (!sender?.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "The sender no longer has a verified render role.", reason: "role" });
+          const order = readStoredVideoJob(row.videoJob, { now: Date.now(), myFp: me.fp });
+          if (order.returnTo.fp !== sender.fp || !config.video.enabled) return json(res, 409, { error: "The accepted order changed or Video is disabled on this machine.", reason: "video-disabled" });
+          if (assignedTo("video")) return json(res, 409, { error: "A custom Video workflow is active; this job needs the built-in H3 graph. Unassign it and review again.", reason: "workflow-incompatible" });
+          const readiness = videoReady("h3");
+          if (!readiness.ready) return json(res, 409, { error: "MiniMax H3 is not ready on this machine.", reason: "model-not-ready", readiness });
+          const renderReadings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const renderBusy = machineBusy(renderReadings);
+          if (renderBusy.busy) {
+            const overridable = !["art-paused", "workload-unreachable", "engine-unreachable"].includes(renderBusy.reason);
+            if (!overridable || b.anyway !== true) return json(res, 409, {
+              error: renderBusy.why, reason: renderBusy.reason, busy: true, overridable,
+              ...(overridable ? { overrides: [{ reason: renderBusy.reason, why: renderBusy.why }] } : {}),
+            });
+          }
+          const j = order.job;
+          if (Number(videoEngine("h3")?.fps) !== 24) return json(res, 409, {
+            error: "This machine's H3 graph is not set to 24 fps. It would change the signed video contract; nothing was queued.",
+            reason: "settings-incompatible" });
+          if ((await art.videoAttention({ engine: "h3", attention: j.attention })) !== j.attention) return json(res, 409, {
+            error: "This machine cannot run the signed H3 attention backend. Nothing was queued.",
+            reason: "attention-incompatible" });
+          const eng = videoEngine("h3");
+          const renderModels = receiverBaseH3Models(eng, config.video);
+          const plan = videoPlan({ prompt: j.prompt, seed: j.seed, width: j.width, height: j.height,
+            seconds: j.seconds, steps: j.steps, guidance: j.guidance, sparse: "off", keepAudio: j.keepAudio },
+            { engineKey: "h3", eng: { ...config.video, ...eng, ...renderModels },
+              h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
+              framed: false, control: false });
+          if (plan.refusal || plan.prompt !== j.prompt || plan.width !== j.width || plan.height !== j.height || plan.seconds !== j.seconds || plan.steps !== j.steps || plan.sparse !== "off") return json(res, 409, {
+            error: plan.refusal?.error || "This machine would change a signed Video setting. Nothing was queued.",
+            reason: plan.refusal?.reason || "settings-incompatible", plan });
+          const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
+          await book.transitionOrderState({ outDir, id, from: "landed", to: "rendering", patch: {
+            renderRequestedAt: Date.now(), renderStatus: "requested", renderModel: String(renderModels.dit || "minimax-h3"),
+            renderModels,
+            renderRights: model?.outputRights ?? { class: "unknown", why: "No local model rights record was found." },
+          } });
+          let queued;
+          try {
+            queued = art.request({ actor: "script:collab-video", file: `clip:collab_${id}`,
+              title: `Friend video ${id}`, kind: "video", force: true, seed: j.seed,
+              video: { engine: "h3", prompt: j.prompt, seconds: j.seconds, width: j.width, height: j.height,
+                steps: j.steps, guidance: j.guidance, keepAudio: j.keepAudio, negative: "", sparse: "off",
+                attention: j.attention, blockCache: false, bridge: "off", bridgeAlpha: 0, loras: [], refImages: [], refAudios: [],
+                models: renderModels, collabVideoBase: true,
+                firstFrame: null, lastFrame: null, midFrames: [], audioTrack: null,
+              } });
+          } catch (e) { return json(res, 409, { error: `The video queue's outcome is uncertain: ${e.message}. Do not press Render again.`, reason: "render-uncertain" }); }
+          if (!queued) {
+            await book.transitionOrderState({ outDir, id, from: "rendering", to: "landed", patch: { renderStatus: "refused" } });
+            return json(res, 422, art.lastRefusalBody || { error: "The local Video queue refused this prompt.", reason: "render-refused" });
+          }
+          await book.transitionOrderState({ outDir, id, from: "rendering", to: "queued", patch: { queuedAt: Date.now(), artJobId: queued.id } });
+          return json(res, 200, { ok: true, order: id, state: "queued", job: queued.id,
+            note: "Queued locally after explicit receiver consent. No result has been sent." });
+        }
+
+        if (action === "video_send_back") {
+          const id = String(b.id || "");
+          let row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "video") return json(res, 404, { error: "No accepted video job has that id.", reason: "no-such-order" });
+          const returnNameOK = (name) => new RegExp(`^video-return-${id}-[0-9a-f]{8}\\.aiplay$`).test(String(name || ""));
+          if (row.state === "returning") {
+            if (!returnNameOK(row.videoReturnFile)) return json(res, 409, {
+              error: "The prepared return name changed; nothing was re-sealed.", reason: "return-changed" });
+            const file = path.join(outDir, "out", row.videoReturnFile);
+            const prior = await readFile(file).catch((e) => { if (e.code === "ENOENT") return null; throw e; });
+            if (prior && createHash("sha256").update(prior).digest("hex") !== row.videoReturnSha256)
+              return json(res, 409, { error: "The prepared return changed; nothing was re-sealed.", reason: "return-changed" });
+            if (prior) {
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+                patch: { renderedAt: Date.now() } });
+              return json(res, 200, { ok: true, replay: true, order: id, state: "rendered",
+                file, name: row.videoReturnFile, bytes: prior.length });
+            }
+            /* The atomic book claim happened, but no output file was published.
+             * Re-sealing the same checked clip is safe: no render is repeated
+             * and the receiver de-duplicates by order and content hash. */
+            row = await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+              patch: { videoReturnFile: null, videoReturnSha256: null } });
+          }
+          if (row.state === "rendered" && row.videoReturnFile) {
+            if (!returnNameOK(row.videoReturnFile)) return json(res, 409, {
+              error: "The prepared return name changed; nothing was re-sealed.", reason: "return-changed" });
+            const file = path.join(outDir, "out", row.videoReturnFile);
+            const bytes = await readFile(file).catch(() => null);
+            if (bytes && createHash("sha256").update(bytes).digest("hex") === row.videoReturnSha256) return json(res, 200, { ok: true, replay: true, order: id, file, name: row.videoReturnFile, bytes: bytes.length });
+            return json(res, 409, { error: "The prepared return changed or disappeared. Its state needs review; nothing was sealed again.", reason: "return-changed" });
+          }
+          if (row.state !== "queued" || row.renderStatus !== "complete" || !row.renderClip) return json(res, 409, { error: "This job has no completed, recorded clip to return.", reason: "not-rendered" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const peer = peers.find((item) => item.fp === row.from?.fp);
+          if (!peer?.verified || !["lender", "collaborator"].includes(peer.role)) return json(res, 403, { error: "The borrower is no longer a verified rendering friend.", reason: "role" });
+          const order = readStoredVideoJob(row.videoJob);
+          if (order.returnTo.fp !== peer.fp || row.renderClip !== `collab_${id}.mp4`) return json(res, 409, { error: "The recorded clip or return address changed.", reason: "render-record-mismatch" });
+          const bytes = await readFile(path.join(CLIP_DIR, row.renderClip)).catch(() => null);
+          if (!bytes || bytes.length > VIDEO_RETURN_BYTES_CAP || createHash("sha256").update(bytes).digest("hex") !== row.renderSha256) return json(res, 409, { error: "The rendered MP4 changed, is missing or exceeds 64 MiB.", reason: "render-output-changed" });
+          const meta = clipMeta.get(row.renderClip);
+          const j = order.job;
+          if (!meta || meta.engine !== "h3" || meta.prompt !== j.prompt || meta.seed !== j.seed || meta.width !== j.width || meta.height !== j.height || meta.clipSeconds !== j.seconds || meta.steps !== j.steps || meta.guidance !== j.guidance || meta.firstFrame || meta.refImages || meta.refAudios || meta.audioTrack || meta.loras || meta.bridge !== "off" || meta.bridgeAlpha !== 0 || meta.sparse === "sol-attn" || meta.blockCache !== false || meta.attention !== j.attention) return json(res, 409, { error: "The renderer's clip record differs from the signed job. No return was sealed.", reason: "render-record-mismatch" });
+          const { type: _videoType, ...recordSettings } = j;
+          const record = { ...recordSettings, model: "minimax-h3", modelVersion: row.renderModel || "minimax-h3", modelSha256: null,
+            outputRights: row.renderRights || { class: "unknown", why: "No local rights record was found." } };
+          const payload = await makeVideoReturn({ orderDoc: order, fromFp: me.fp, resultBytes: bytes, record, now: Date.now() });
+          const { signPrivate } = await collabPrivateKeys({ appData });
+          const blob = sealTo({ payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
+            toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+            toFp: peer.fp, fromFp: me.fp, signPrivate });
+          const name = `video-return-${id}-${randomUUID().replaceAll("-", "").slice(0, 8)}.aiplay`;
+          const dest = path.join(outDir, "out", name);
+          const digest = createHash("sha256").update(blob).digest("hex");
+          await book.transitionOrderState({ outDir, id, from: "queued", to: "returning", patch: { videoReturnFile: name, videoReturnSha256: digest, returnRequestedAt: Date.now() } });
+          await mkdir(path.dirname(dest), { recursive: true });
+          try { await writeFile(dest, blob, { flag: "wx" });
+            await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered", patch: { renderedAt: Date.now() } }); }
+          catch (e) { return json(res, 409, { error: `Return publication was interrupted: ${e.message}. Review the order before retrying.`, reason: "return-uncertain" }); }
+          return json(res, 200, { ok: true, order: id, state: "rendered", file: dest, name, bytes: blob.length,
+            to: { fp: peer.fp, nickname: peer.nickname }, note: "Prepared the signed MP4 return. Hand this sealed file to the friend; their Studio will quarantine it." });
+        }
+
+        /* A standalone image job has its own consent and queue. It never enters
+         * the movie plan or the older scene-order wire format. */
+        if (action === "image_accept") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Choose the received image job file first.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const reviewDigest = createHash("sha256").update(read.blob).digest("hex");
+          if (b.seen === true && (typeof b.expectedDigest !== "string" || b.expectedDigest !== reviewDigest)) {
+            return json(res, 409, { error: "This signed image job changed since review, or no review digest was supplied. Open and review the current file again before accepting it.", reason: "review-changed" });
+          }
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({ blob: read.blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((row) => row.fp === envelope.from) || null;
+              if (!sender) { const error = new Error("The image job signer is not on your roster."); error.reason = "unknown-sender"; throw error; }
+              return sender.sign;
+            },
+          });
+          if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify the sender and grant a render role before accepting their image job.", reason: "role" });
+          let packet;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); }
+          catch { return json(res, 400, { error: "The image job is not a readable packet.", reason: "bad-packet" }); }
+          const imageOrder = readImageJob(packet, { now: Date.now(), myFp: me.fp });
+          if (imageOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer. Nothing was accepted.", reason: "return-address" });
+          /* A signed hash proves which compressed bytes arrived, not whether
+           * they are bounded, decodable pictures. The browser must never get
+           * data URLs for a peer reference before this independent preflight. */
+          await measureImageJobReferences(imageOrder.job.references);
+          const pictures = imageOrder.job.references.map((reference) => ({
+            ordinal: reference.ordinal, mime: reference.mime, bytes: reference.bytes, sha256: reference.sha256,
+            dataUrl: `data:${reference.mime};base64,${reference.b64}`,
+          }));
+          if (b.seen !== true) {
+            const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+              rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+            return json(res, 409, {
+            error: "Review the full prompt and reference pictures, then accept this job explicitly. Acceptance only stages its references; it does not render.",
+            reason: "not-seen", from: { fp: sender.fp, nickname: sender.nickname },
+            imageJob: { ...imageOrder, job: { ...imageOrder.job, references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
+            pictures, reviewDigest, describes: describeImageJob(imageOrder), minutes: minutes.why, overBudget: minutes.over,
+            });
+          }
+          /* The signed bytes and hashes alone do not make an image safe to
+           * decode. Measure every included source under bounded pixels and a
+           * full decoder before an order row or Comfy input file is created. */
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy && ["art-paused", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          /* Consent stages pictures. Engine startup may happen later, but a
+           * known running job is an explicit override. Actual GPU use gets a
+           * fresh full workload reading at image_render. */
+          const busyOverride = busy.busy && busy.reason !== "engine-unreachable" ? { reason: busy.reason, why: busy.why } : null;
+          const landed = await book.landOrderRowChecked({ outDir, row: {
+            id: imageOrder.id, at: imageOrder.at, expires: imageOrder.expires,
+            from: { fp: sender.fp, nickname: sender.nickname, role: sender.role },
+            jobType: "image", imageJob: compactImageJob(imageOrder), returnTo: imageOrder.returnTo,
+            state: "claimed", consentAt: Date.now(), landedAt: Date.now(), reviewDigest,
+          }, check: async (rows) => {
+            const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []), ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: `${overrides.map((item) => item.why).join(" ")} Review these checks and explicitly choose Accept anyway to reserve this image job.`,
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
+          } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          try {
+            const stagedRefs = [];
+            await mkdir(config.inputDir, { recursive: true });
+            for (const reference of imageOrder.job.references) {
+              const bytes = Buffer.from(reference.b64, "base64");
+              const ext = reference.mime === "image/jpeg" ? "jpg" : reference.mime === "image/webp" ? "webp" : "png";
+              const name = `aiplay_frame_${createHash("sha1").update(bytes).digest("hex").slice(0, 12)}.${ext}`;
+              const target = path.join(config.inputDir, name);
+              const old = await readFile(target).catch(() => null);
+              if (old && !old.equals(bytes)) { const error = new Error("A staged reference filename already contains different bytes. Nothing was accepted."); error.reason = "reference-collision"; throw error; }
+              if (!old) await writeFile(target, bytes);
+              stagedRefs.push(name);
+            }
+            const row = await book.fillOrderRow({ outDir, id: imageOrder.id, patch: { state: "landed", stagedRefs, landedAt: Date.now() } });
+            return json(res, 200, { ok: true, order: imageOrder.id, state: row.state, stagedRefs,
+              imageJob: { ...imageOrder, job: { ...imageOrder.job, references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
+              note: `Accepted and staged locally; about ${landed.decision.minutes.thisOne ?? "unknown"} min reserved. Nothing is queued. Press Render separately after checking this machine's Qwen readiness.` });
+          } catch (error) {
+            await book.releaseOrder({ outDir, id: imageOrder.id }).catch(() => {});
+            throw error;
+          }
+        }
+
+        if (action === "image_render") {
+          const id = String(b.id || "");
+          const row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "image") return json(res, 404, { error: "No accepted image job has that id.", reason: "no-such-order" });
+          const retrying = row.state === "failed";
+          if (retrying && b.retry !== true) return json(res, 409, { error: "The previous image render failed or was stopped. Review that result, then explicitly retry this accepted job.", reason: "retry-review-required" });
+          if ((!retrying && row.state !== "landed") || (!retrying && row.imageId)) return json(res, 409, { error: `This image job is ${row.state || "already in progress"}. It cannot be queued twice.`, reason: "already-rendering" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const sender = peers.find((peer) => peer.fp === row.from?.fp);
+          if (!sender?.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "The sender is no longer a verified rendering friend. No image was queued.", reason: "role" });
+          const imageOrder = readStoredImageJob(row.imageJob, { now: Date.now(), myFp: me.fp });
+          if (imageOrder.returnTo.fp !== sender.fp || !Array.isArray(row.stagedRefs)
+              || row.stagedRefs.length !== imageOrder.job.references.length) return json(res, 400, { error: "The accepted job or its staged pictures no longer match the signer.", reason: "order-changed" });
+          for (let i = 0; i < row.stagedRefs.length; i++) {
+            const name = String(row.stagedRefs[i] || "");
+            if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(name)) return json(res, 400, { error: "A staged image reference has an invalid filename.", reason: "bad-reference" });
+            const bytes = await readFile(path.join(config.inputDir, name)).catch(() => null);
+            if (!bytes || createHash("sha256").update(bytes).digest("hex") !== imageOrder.job.references[i].sha256) return json(res, 400, { error: `Reference ${i + 1} changed or disappeared after acceptance. No image was queued.`, reason: "reference-changed" });
+          }
+          const ready = await qwenImageStatus({ options: {
+            prompt: imageOrder.job.prompt, seed: imageOrder.job.seed,
+            width: imageOrder.job.width, height: imageOrder.job.height,
+            steps: imageOrder.job.steps, cfg: imageOrder.job.cfg,
+            sampler: imageOrder.job.sampler, scheduler: imageOrder.job.scheduler,
+            refImages: row.stagedRefs, refSizing: "custom", count: 1, draft: false, transparent: false,
+            dit: QWEN_IMAGE_FILES.dit, encoder: QWEN_IMAGE_FILES.encoder, vae: QWEN_IMAGE_FILES.vae,
+          } });
+          if (!ready.ready) return json(res, 409, { error: "Qwen Image 2.1 base is not ready on this machine. Install the missing files or nodes, then render this accepted job.", reason: "model-not-ready", readiness: ready });
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy && ["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+          const overrides = [...(busy.busy ? [{ reason: busy.reason, why: busy.why }] : []),
+            ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+          if (overrides.length && b.anyway !== true) return json(res, 409, {
+            error: `${overrides.map((item) => item.why).join(" ")} Check this machine and explicitly choose Render anyway to spend the card.`,
+            reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
+          });
+          await book.transitionOrderState({ outDir, id, from: retrying ? "failed" : "landed", to: "rendering",
+            patch: { renderRequestedAt: Date.now(), renderStatus: "requested",
+              ...(retrying ? { lastFailedImageId: row.imageId || row.lastFailedImageId || null,
+                imageId: null, renderFailedAt: null, renderCompletedAt: null, renderDurationMs: null,
+                retryCount: (Number(row.retryCount) || 0) + 1 } : {}) } });
+          let response, queued;
+          try {
+            response = await fetch(`http://127.0.0.1:${config.uiPort}/api/image`, {
+              method: "POST", headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:collab-image" },
+              body: JSON.stringify({ action: "create", engine: "qwen-image-2.1", prompt: imageOrder.job.prompt,
+                seed: imageOrder.job.seed, width: imageOrder.job.width, height: imageOrder.job.height,
+                steps: imageOrder.job.steps, cfg: imageOrder.job.cfg,
+                sampler: imageOrder.job.sampler, scheduler: imageOrder.job.scheduler,
+                count: 1, refSizing: "custom", refImages: row.stagedRefs,
+                draft: false, transparent: false, negative: "", private: true,
+                dit: QWEN_IMAGE_FILES.dit, encoder: QWEN_IMAGE_FILES.encoder, vae: QWEN_IMAGE_FILES.vae,
+                dedupe: false,
+              }),
+            });
+          } catch (error) {
+            return json(res, 409, { error: "The image queue did not answer. Its outcome is uncertain, so this job will not be queued a second time automatically.", reason: "render-uncertain", detail: error.message });
+          }
+          try { queued = await response.json(); }
+          catch { return json(res, 409, { error: "The image queue answered without a readable receipt. Its outcome is uncertain; do not queue it again automatically.", reason: "render-uncertain" }); }
+          if (!response.ok) {
+            await book.transitionOrderState({ outDir, id, from: "rendering", to: retrying ? "failed" : "landed",
+              patch: { renderRequestedAt: null, renderStatus: retrying ? "failed" : null } });
+            return json(res, response.status, { error: queued?.error || "The local image queue refused this job.", reason: "render-refused", readiness: queued });
+          }
+          if (!queued?.ok || !/^i[a-z0-9]+$/.test(String(queued.id || "")) || queued.seed !== imageOrder.job.seed) {
+            return json(res, 409, { error: "The image queue receipt did not match this job. Its outcome is uncertain; do not queue it again automatically.", reason: "render-uncertain" });
+          }
+          await book.transitionOrderState({ outDir, id, from: "rendering", to: "queued",
+            patch: { imageId: queued.id, queuedAt: Date.now(), renderStatus: "queued" } });
+          /* An exceptionally fast job can emit its terminal event before this
+           * receipt is committed. Reconcile the runner's own recent record;
+           * absence is unknown, never a failure inferred from an empty queue. */
+          const recent = recentImageOutcome(art.status(), queued.id);
+          if (recent) await recordImageOutcome({ book, outDir, file: `image:${queued.id}`,
+            outcome: { ...recent, ...(recent.type === "complete" ? { cover: `${queued.id}.png` } : {}) } });
+          const latest = await book.findOrder({ outDir, id, side: "in" });
+          return json(res, 200, { ok: true, order: id, state: latest?.state || "queued", imageId: queued.id,
+            renderStatus: latest?.renderStatus || "queued",
+            note: "The local Qwen render was queued after your explicit request. Nothing has been sent back yet." });
+        }
+
+        if (action === "image_send_back") {
+          const id = String(b.id || "");
+          let row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "image") return json(res, 404, { error: "No accepted image job has that id.", reason: "no-such-order" });
+          if (row.state === "returning") {
+            if (collabImageReturnClaims.has(id)) return json(res, 409, { error: "This image return is being prepared now. Check again shortly.", reason: "return-in-progress" });
+            const intended = String(row.imageReturnFile || "");
+            if (!/^image-return-o_[0-9a-f]{12}-[0-9a-f]{8}\.aiplay$/.test(intended)
+                || !/^[0-9a-f]{64}$/.test(String(row.imageReturnSha256 || ""))) {
+              return json(res, 409, { error: "The interrupted return has no complete sealed-file record. It needs manual review before it can be retried.", reason: "return-record-changed" });
+            }
+            const intendedFile = path.join(outDir, "out", intended);
+            const existing = (await readSealed(intendedFile)).blob || null;
+            if (!existing && await stat(intendedFile).catch(() => null)) {
+              return json(res, 409, { error: "The interrupted return file exists but could not be read within the sealed-file limit. It cannot be replaced automatically.", reason: "return-file-changed" });
+            }
+            if (existing) {
+              if (createHash("sha256").update(existing).digest("hex") !== row.imageReturnSha256) {
+                return json(res, 409, { error: "The interrupted return file differs from its saved hash. It cannot be handed off or replaced automatically.", reason: "return-file-changed" });
+              }
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+                patch: { renderedAt: Date.now() } });
+            } else {
+              /* No finished file was published. A lone temp file can only
+               * contain this attempt's incomplete bytes; remove that exact
+               * path and allow a new explicit Send back press to seal again. */
+              await unlink(`${intendedFile}.tmp`).catch((error) => { if (error.code !== "ENOENT") throw error; });
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+                patch: { imageReturnFile: null, imageReturnSha256: null, returnRequestedAt: null } });
+            }
+            row = await book.findOrder({ outDir, id, side: "in" });
+          }
+          if (row.state === "rendered") {
+            const name = String(row.imageReturnFile || "");
+            if (!/^image-return-o_[0-9a-f]{12}-[0-9a-f]{8}\.aiplay$/.test(name)
+                || !/^[0-9a-f]{64}$/.test(String(row.imageReturnSha256 || ""))) {
+              return json(res, 409, { error: "The recorded image return is incomplete; it cannot be handed off as verified.", reason: "return-record-changed" });
+            }
+            const file = path.join(outDir, "out", name);
+            const existing = (await readSealed(file)).blob || null;
+            if (!existing || createHash("sha256").update(existing).digest("hex") !== row.imageReturnSha256) {
+              return json(res, 409, { error: "The prepared image return changed or disappeared. It cannot be handed off as verified.", reason: "return-file-changed" });
+            }
+            return json(res, 200, { ok: true, order: id, state: "rendered", file, name, bytes: existing.length,
+              to: row.from, note: "This verified sealed result was already prepared. Hand this file to your friend." });
+          }
+          if (!/^i[a-z0-9]+$/.test(String(row.imageId || "")) || row.state !== "queued") return json(res, 409, { error: "This image job has not completed a local render.", reason: "not-rendered" });
+          const imageOrder = readStoredImageJob(row.imageJob);
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const peer = peers.find((item) => item.fp === imageOrder.returnTo.fp);
+          if (!peer?.verified || !["lender", "collaborator"].includes(peer.role) || peer.fp !== row.from?.fp) return json(res, 403, { error: "The sender is no longer a verified rendering friend. No image was prepared for them.", reason: "role" });
+          const name = `${row.imageId}.png`;
+          const imageBytes = await readFile(path.join(IMAGE_DIR, name)).catch(() => null);
+          if (!imageBytes) return json(res, 409, { error: "The image is still rendering or failed. Check its status before preparing a return.", reason: "not-rendered" });
+          const meta = imageMeta.get(name);
+          if (meta?.engine !== "qwen-image-2.1" || meta?.draft === true) return json(res, 409, { error: "The finished file is not recorded as a Qwen Image 2.1 base render. It was not sent.", reason: "model-mismatch" });
+          if (!/^[0-9a-f]{64}$/.test(String(meta.outputSha256 || ""))
+              || createHash("sha256").update(imageBytes).digest("hex") !== meta.outputSha256) {
+            return json(res, 409, { error: "The finished image file changed after this render was recorded. No return was sealed.", reason: "render-output-changed" });
+          }
+          const settings = imageOrder.job;
+          const actual = meta.refImages;
+          const sameSettings = meta.seed === settings.seed && meta.steps === settings.steps
+            && meta.cfg === settings.cfg && meta.sampler === settings.sampler
+            && meta.scheduler === settings.scheduler && meta.count === settings.count
+            && meta.requestedWidth === settings.width && meta.requestedHeight === settings.height
+            && meta.refSizing === settings.refSizing && meta.transparent === settings.transparent
+            && meta.dit === QWEN_IMAGE_FILES.dit && meta.encoder === QWEN_IMAGE_FILES.encoder
+            && meta.vae === QWEN_IMAGE_FILES.vae && Array.isArray(actual)
+            && actual.length === settings.references.length && Array.isArray(row.stagedRefs)
+            && row.stagedRefs.length === settings.references.length;
+          if (!sameSettings) return json(res, 409, { error: "The completed image's recorded model, settings or reference count differ from the signed job. No return was sealed.", reason: "render-record-mismatch" });
+          for (let i = 0; i < settings.references.length; i++) {
+            const source = String(row.stagedRefs[i] || "");
+            if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(source)) return json(res, 409, { error: "A staged reference name changed since acceptance.", reason: "render-record-mismatch" });
+            const bytes = await readFile(path.join(config.inputDir, source)).catch(() => null);
+            if (!bytes || createHash("sha256").update(bytes).digest("hex") !== settings.references[i].sha256) return json(res, 409, { error: "A signed reference changed before the return could be sealed.", reason: "render-record-mismatch" });
+            const flat = `aiplay_frame_${createHash("sha1").update(`${path.join(config.inputDir, source)}\0over white`).digest("hex").slice(0, 12)}.png`;
+            if (actual[i] !== source && actual[i] !== flat) return json(res, 409, { error: "The completed image used a different reference order. No return was sealed.", reason: "render-record-mismatch" });
+          }
+          const model = (await models.status()).find((item) => item.id === "qwen-image-2.1");
+          const record = {
+            engine: settings.engine, model: "qwen-image-2.1",
+            modelVersion: meta.dit,
+            modelSha256: null, modelPolicy: settings.modelPolicy,
+            seed: settings.seed, width: settings.width, height: settings.height,
+            steps: settings.steps, cfg: settings.cfg, sampler: settings.sampler,
+            scheduler: settings.scheduler, count: settings.count,
+            refSizing: settings.refSizing, draft: settings.draft,
+            transparent: settings.transparent, negative: settings.negative,
+            referenceSha256s: settings.references.map((reference) => reference.sha256),
+            outputRights: model?.outputRights ?? { class: "unknown", why: "The rendering Studio has no local rights record for this model." },
+          };
+          /* Build the exact sealed bytes before claiming the row. The CAS then
+           * persists their intended name and hash, allowing the next process
+           * to reconcile a crash before or after the atomic publish. */
+          const payload = await makeImageReturn({ orderDoc: imageOrder, fromFp: me.fp,
+            resultBytes: imageBytes, record, now: Date.now() });
+          const { signPrivate } = await collabPrivateKeys({ appData });
+          const blob = sealTo({ payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
+            toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+            toFp: peer.fp, fromFp: me.fp, signPrivate });
+          const outName = `image-return-${id}-${randomUUID().replaceAll("-", "").slice(0, 8)}.aiplay`;
+          const outFile = path.join(outDir, "out", outName);
+          const tempFile = `${outFile}.tmp`;
+          const outSha256 = createHash("sha256").update(blob).digest("hex");
+          if (collabImageReturnClaims.has(id)) return json(res, 409, { error: "This image return is being prepared now. Check again shortly.", reason: "return-in-progress" });
+          collabImageReturnClaims.add(id);
+          let claimed = false;
+          let published = false;
+          let prepared;
+          try {
+            await book.transitionOrderState({ outDir, id, from: "queued", to: "returning",
+              patch: { returnRequestedAt: Date.now(), imageReturnFile: outName,
+                imageReturnSha256: outSha256 } });
+            claimed = true;
+            await mkdir(path.join(outDir, "out"), { recursive: true });
+            await writeFile(tempFile, blob, { flag: "wx" });
+            if (await stat(outFile).catch(() => null)) throw new Error("An image return already exists at the selected handoff name.");
+            await rename(tempFile, outFile);
+            published = true;
+            await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+              patch: { renderedAt: Date.now() } });
+            prepared = { ok: true, order: id, state: "rendered", file: outFile,
+              name: outName, bytes: blob.length, to: { fp: peer.fp, nickname: peer.nickname },
+              note: "Prepared the verified image return. Hand the sealed file to the friend; their Studio will quarantine it for review." };
+          } catch (error) {
+            await unlink(tempFile).catch(() => {});
+            if (claimed) {
+              if (published) await unlink(outFile).catch(() => {});
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+                patch: { returnRequestedAt: null, imageReturnFile: null, imageReturnSha256: null } }).catch(() => {});
+            }
+            throw error;
+          } finally {
+            collabImageReturnClaims.delete(id);
+          }
+          return json(res, 200, prepared);
         }
 
         /* ── ACCEPT AN ORDER: it becomes a PROPOSED plan and nothing more ───
@@ -5594,36 +6309,32 @@ const server = http.createServer(async (req, res) => {
            * override. Every overridable reason is listed in ONE refusal, so the
            * confirmation a person reads names everything `anyway` will walk
            * past — a yes to "busy" never silently spends minutes too. */
-          const overrides = [];
-          if (busy.busy) {
-            const overridable = !["art-paused", "engine-unreachable"].includes(busy.reason);
-            if (!overridable) return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable });
-            overrides.push({ reason: busy.reason, why: busy.why });
+          if (busy.busy && ["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason)) {
+            return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable: false });
           }
-          /* ⚠ THE MINUTES ARE READ HERE, NOT ONLY REMEMBERED. The friend row has
-           * always held `lendMinutesPerDay` and nothing read it, while two screens
-           * promised the card would not be lent without that number. Accept
-           * checks it against what this card has spent for them today (timed)
-           * and promised (the plan's own estimate) — see lending.js. */
-          const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
-            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
-          if (minutes.over) overrides.push({ reason: minutes.reason, why: minutes.why });
-          if (overrides.length && b.anyway !== true) {
-            return json(res, 409, {
-              error: `${overrides.map((o) => o.why).join(" ")} It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)${busy.busy ? ", and your friend's scene waits its turn behind what is running" : ""}.`,
-              reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
-            });
-          }
-
+          const busyOverride = busy.busy ? { reason: busy.reason, why: busy.why } : null;
           const from = { fp: sender.fp, nickname: sender.nickname };
-          /* ⚠ THE ID IS CLAIMED BEFORE ANYTHING IS BUILT. The guard used to be
-           * the LAST step, so a bundle sent twice made two projects, two copies
-           * of every picture and two plans before it was ever consulted — and
-           * the second plan renders into a project nothing can find. */
-          await book.landOrderRow({ outDir, row: {
+          /* Claim and price the scene in one orderbook writer turn. Until its
+           * errand project exists, the claim carries its estimated minutes, so
+           * concurrent image, H3 and scene accepts see the same reservation. */
+          const landed = await book.landOrderRowChecked({ outDir, row: {
             id: orderDoc.id, at: orderDoc.at, from, slug: null, order: orderDoc.order,
             state: "claimed", returnTo: orderDoc.returnTo, landedAt: Date.now(),
+          }, check: async (rows) => {
+            const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []),
+              ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: overrides.map((item) => item.why).join(" ")
+                + " It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)"
+                + (busyOverride ? ", and your friend's scene waits its turn behind what is running" : "") + ".",
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
           } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          const minutes = landed.decision.minutes;
           let slug = null;
           let built = null;
           try {
@@ -5794,6 +6505,36 @@ const server = http.createServer(async (req, res) => {
           try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
             return json(res, 400, { error: "That bundle opened but what is inside it is not a packet.", reason: "bad-packet" });
           }
+          if (packet?.kind === "job-return" && packet?.jobType === "video") {
+            const videoReturn = readVideoReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: videoReturn.orderId, side: "out" });
+            if (!sent || sent.jobType !== "video" || sent.to?.fp !== sender.fp || videoReturn.to !== me.fp) return json(res, 400, { error: "This video answers no job sent to this verified friend.", reason: "return-unknown-order" });
+            const landed = await landVideoReturn({ outDir, payload: videoReturn,
+              orderDoc: sent.videoJob, orderToFp: sent.to.fp, fromFp: sender.fp, toFp: me.fp, now: Date.now() });
+            await book.reconcileVideoReturn({ outDir, id: sent.id,
+              entry: { ok: landed.ok, reason: landed.reason, file: landed.file, kind: "video" },
+              state: landed.adopted ? "adopted" : landed.ok ? "returned" : "refused", note: landed.why });
+            return json(res, landed.ok ? 200 : 400, { ok: landed.ok, video: landed, reason: landed.reason,
+              note: landed.ok ? "The MP4 passed the signed-order and independent decode checks. Review it in quarantine before keeping it."
+                : `${landed.why} The MP4 remains in video quarantine for review or deletion.` });
+          }
+          if (packet?.kind === "job-return" && packet?.jobType === "image") {
+            const imageReturn = readImageReturn(packet).doc;
+            const imageOrderRow = await book.findOrder({ outDir, id: imageReturn.orderId, side: "out" });
+            if (!imageOrderRow || imageOrderRow.jobType !== "image") return json(res, 400, { error: "This image answers no image job this Studio sent. Nothing was written.", reason: "return-unknown-order" });
+            if (imageOrderRow.to?.fp !== sender.fp) return json(res, 400, { error: "This image came from a different friend than the one asked to render it. Nothing was written.", reason: "return-not-my-order" });
+            const landedImage = await landImageReturn({ outDir, payload: imageReturn,
+              orderDoc: imageOrderRow.imageJob, orderToFp: imageOrderRow.to.fp,
+              fromFp: sender.fp, toFp: me.fp, now: Date.now() });
+            await book.reconcileImageReturn({ outDir, id: imageOrderRow.id,
+              entry: { ok: landedImage.ok, reason: landedImage.reason, file: landedImage.file, kind: "image" },
+              state: landedImage.adopted ? "adopted" : landedImage.ok ? "returned" : "refused",
+              note: landedImage.why });
+            return json(res, landedImage.ok ? 200 : 400, { ok: landedImage.ok, image: landedImage,
+              reason: landedImage.reason,
+              note: landedImage.ok ? "The PNG passed the signed-order and independent decode checks. It is in quarantine until you review and keep it."
+                : `${landedImage.why} The PNG remains in image quarantine for review or deletion.` });
+          }
           /* ⚠ AND IT MUST ANSWER AN ORDER THIS MACHINE ACTUALLY SENT — to THEM.
            * A return naming somebody else's order used to be able to flip that
            * order's state, and a return naming no order at all was still
@@ -5818,6 +6559,74 @@ const server = http.createServer(async (req, res) => {
               : `${landed.why} It waits under “Finished scenes waiting for you”: watch it there if this browser can play it, and keep it anyway if it is what you wanted.`)
               + (landedNotes.length ? ` ${landedNotes.join(" ")}` : ""),
           });
+        }
+
+        if (action === "image_review_return") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const picture = await imageQuarantinePicture({ outDir, fromFp, file });
+          return json(res, 200, { ok: true, from: fromFp, file, sha256: picture.row.sha256,
+            mime: "image/png", b64: picture.bytes.toString("base64") });
+        }
+
+        if (action === "video_review_return") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const clip = await reviewVideoReturn({ outDir, fromFp, file });
+          return json(res, 200, { ok: true, from: fromFp, file, sha256: clip.row.sha256,
+            bytes: clip.bytes.length, measured: clip.row.measured, prompt: clip.row.prompt,
+            record: clip.row.record, path: path.join(outDir, "video-quarantine", fromFp, file),
+            reviewReceipt: clip.receipt,
+            note: "Checked local MP4 for review; its receipt is bound to these exact bytes. No adoption occurred." });
+        }
+
+        if (action === "image_adopt") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const kept = await adoptImageReturn({ outDir, imageDir: IMAGE_DIR, fromFp, file, now: Date.now(),
+            allowAlreadyAdopted: true,
+            persistMetadata: async ({ name, metadata }) => {
+              await saveImageStore({ strict: true, mutate: () => {
+                const previous = imageMeta.get(name);
+                imageMeta.set(name, metadata);
+                return () => {
+                  if (previous) imageMeta.set(name, previous);
+                  else imageMeta.delete(name);
+                };
+              } });
+            },
+          });
+          if (!kept.replay) provNote("library", { actor: prov.actorFrom(req), type: "import", asset: `images/${kept.name}`,
+            data: { source: "peer-image", peer: fromFp, orderId: kept.row.orderId,
+              model: kept.metadata.model, modelVersion: kept.metadata.modelVersion,
+              modelSha256: kept.metadata.modelSha256, outputRights: kept.metadata.outputRights,
+              seed: kept.metadata.seed },
+          });
+          await book.reconcileImageReturn({ outDir, id: kept.row.orderId,
+            entry: { ok: true, reason: kept.row.reason, file: kept.name, kind: "image" }, state: "adopted" });
+          return json(res, 200, { ok: true, name: kept.name, metadata: kept.metadata, replay: kept.replay,
+            note: "Added the reviewed PNG to this Studio's Images library with the lender's model and rights record." });
+        }
+        if (action === "image_drop") {
+          const dropped = await dropImageReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") });
+          return json(res, 200, { ok: true, ...dropped });
+        }
+
+        if (action === "video_adopt") {
+          const kept = await adoptVideoReturn({ outDir, clipDir: CLIP_DIR,
+            fromFp: String(b.from || ""), file: String(b.file || ""), reviewReceipt: String(b.reviewReceipt || ""), now: Date.now(),
+            persistMetadata: async ({ name, metadata }) => { clipMeta.set(name, metadata); saveClipStore(); },
+          });
+          if (!kept.replay) provNote("library", { actor: prov.actorFrom(req), type: "import",
+            asset: `clips/${kept.name}`, data: { source: "peer-video", peer: kept.row.from,
+              orderId: kept.row.orderId, model: kept.metadata.model, modelVersion: kept.metadata.modelVersion,
+              modelSha256: kept.metadata.modelSha256, outputRights: kept.metadata.outputRights,
+              seed: kept.metadata.seed } });
+          await book.reconcileVideoReturn({ outDir, id: kept.row.orderId,
+            entry: { ok: true, reason: null, file: kept.name, kind: "video" }, state: "adopted" });
+          return json(res, 200, { ok: true, name: kept.name, metadata: kept.metadata,
+            replay: kept.replay, note: "Added the reviewed MP4 to the Clips library with its peer provenance." });
+        }
+        if (action === "video_drop") {
+          const dropped = await dropVideoReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") });
+          return json(res, 200, { ok: true, ...dropped });
         }
 
         /* ── ADOPT ──────────────────────────────────────────────────────────
@@ -5991,8 +6800,8 @@ const server = http.createServer(async (req, res) => {
             b.kind = frozen.payload.kind; b.to = frozen.peer.fp;
           }
           const kind = String(b.kind || "");
-          if (!["shot", "project", "resources", "order", "video-recipe"].includes(kind)) {
-            return json(res, 400, { error: "kind must be shot, project, resources, order or video-recipe.", reason: "kind" });
+          if (!["shot", "project", "resources", "order", "video-recipe", "image-job", "video-job", "job-order"].includes(kind)) {
+            return json(res, 400, { error: "Unknown Collab package kind.", reason: "kind" });
           }
           const { peers } = await collabRoster.roster({ appData });
           const peer = peers.find((x) => x.fp === String(b.to || ""));
@@ -6065,17 +6874,99 @@ const server = http.createServer(async (req, res) => {
             if (packet.kind === "order") await book.rememberOrder({ outDir, row: {
               id: packet.id, at: packet.at, expires: packet.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
-              slug: frozen.slug, order: packet.order,
+              slug: frozen.slug, order: packet.order, file: wrote.file,
               /* The renderer's own frame count for this order (H3's 17k+5 grid,
                * LTX's 8k+1), and whether lip-sync stays home — see lending.js. */
               expect: collabLending.expectForOrder(packet), songUnder: packet.shot.songUnder ?? null,
             } });
+            if (packet.kind === "job-order" && packet.jobType === "image") await book.rememberOrder({ outDir, row: {
+              id: packet.id, at: packet.at, expires: packet.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              jobType: "image", imageJob: compactImageJob(packet), file: wrote.file,
+            } });
+            if (packet.kind === "job-order" && packet.jobType === "video") await book.rememberOrder({ outDir, row: {
+              id: packet.id, at: packet.at, expires: packet.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              jobType: "video", videoJob: compactVideoJob(packet), file: wrote.file,
+            } });
             return json(res, 200, { ok: true, ...wrote, kind, previewId: b.previewId,
-              ...(kind === "order" ? { order: packet.id } : {}),
+              ...(kind === "order" || kind === "job-order" ? { order: packet.id } : {}),
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role }, describes: frozen.describes,
               note: "Packed exactly the reviewed snapshot. Send this file using your usual file-sharing method." });
           }
 
+          if (kind === "image-job") {
+            if (action !== "preview") return json(res, 400, { error: "Preview the exact image request before preparing it.", reason: "preview-required" });
+            const image = b.image;
+            if (!image || typeof image !== "object" || Array.isArray(image)) return json(res, 400, { error: "Choose the image prompt and canvas first.", reason: "image" });
+            if (hasWildcards(String(image.prompt || ""))) return json(res, 400, { error: "Resolve this dynamic prompt into the exact text you want your friend to render before previewing it.", reason: "prompt-not-frozen" });
+            const allowed = ["prompt", "width", "height", "seed", "refs", "negative", "steps", "cfg", "sampler", "scheduler", "count", "refSizing", "draft", "transparent", "private", "persona"];
+            if (Object.keys(image).some((key) => !allowed.includes(key))) return json(res, 400, { error: "This image job contains settings the receiving Studio cannot reproduce.", reason: "settings-incompatible" });
+            for (const [key, wanted] of Object.entries({ negative: "", steps: 25, cfg: 1, sampler: "euler", scheduler: "simple", count: 1, refSizing: "custom", draft: false, transparent: false, private: false, persona: "" })) {
+              if (image[key] !== undefined && image[key] !== wanted) return json(res, 400, { error: `${key} must be ${JSON.stringify(wanted)} for a friend's Qwen base image job.`, reason: "settings-incompatible" });
+            }
+            const names = image.refs === undefined ? [] : image.refs;
+            if (!Array.isArray(names) || names.length > IMAGE_JOB_REF_CAP) return json(res, 400, { error: `Choose up to ${IMAGE_JOB_REF_CAP} reference pictures.`, reason: "references-count" });
+            const references = [];
+            const safetyContext = [];
+            for (const picked of names) {
+              const name = String(picked || "");
+              if (!name || name !== path.basename(name) || !/^[a-zA-Z0-9_.-]{1,120}\.(png|jpe?g|webp)$/i.test(name)) return json(res, 400, { error: "An image reference must be a filename from this Studio's image shelf or upload door.", reason: "bad-reference" });
+              let source = null;
+              for (const dir of [config.inputDir, IMAGE_DIR, COVER_DIR]) {
+                const candidate = path.join(dir, name);
+                const st = await stat(candidate).catch(() => null);
+                if (st?.isFile()) { source = candidate; break; }
+              }
+              if (!source) return json(res, 404, { error: `${name} is no longer available on this Studio. Pick the reference again.`, reason: "reference-missing" });
+              const st = await stat(source);
+              if (st.size < 1 || st.size > IMAGE_JOB_REF_BYTES_CAP) return json(res, 400, { error: `${name} exceeds the 8 MiB per-reference limit.`, reason: "reference-too-large" });
+              const data = await readFile(source);
+              const mime = data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? "image/png"
+                : data[0] === 255 && data[1] === 216 && data[2] === 255 ? "image/jpeg"
+                  : data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
+              if (!mime) return json(res, 400, { error: `${name} is not a PNG, JPEG or WebP picture.`, reason: "reference-type" });
+              const ancestry = lineage([name]);
+              safetyContext.push(...ancestry.texts);
+              references.push({ data, mime, safety: {
+                minor: ancestry.flags.some((flag) => flag?.minor === true),
+                sexual: ancestry.flags.some((flag) => flag?.sexual === true),
+              } });
+            }
+            const meI = await collabIdentity({ appData });
+            const orderI = makeImageJob({
+              prompt: typeof image.prompt === "string" ? expand(image.prompt.trim()).prompt : image.prompt,
+              seed: image.seed === undefined ? Math.floor(Math.random() * 4294967296) : image.seed,
+              width: image.width, height: image.height, references,
+              returnTo: { fp: meI.fp, nickname: String(b.nickname || "").slice(0, 40) },
+              safetyContext, now: Date.now(),
+            });
+            return previewFor(orderI, `image-${orderI.id}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+              describes: describeImageJob(orderI),
+              note: "One Qwen base image with these exact settings and included references. The friend must review and explicitly accept; preparing does not transmit or render.",
+            });
+          }
+          if (kind === "video-job") {
+            if (action !== "preview") return json(res, 400, { error: "Preview the exact video request before preparing it.", reason: "preview-required" });
+            const video = b.video;
+            if (!video || typeof video !== "object" || Array.isArray(video)) return json(res, 400, { error: "Choose the video prompt and settings first.", reason: "video" });
+            const allowed = ["engine", "prompt", "width", "height", "seconds", "steps", "guidance", "negative", "keepAudio", "seed", "sparse", "attention", "blockCache", "bridge", "bridgeAlpha", "guideStrength", "refImages", "refAudios", "audioTrack", "fromCover", "toCover", "fromUpload", "toUpload", "midUploads", "persona", "loop", "loras", "models", "sourceVideo"];
+            if (Object.keys(video).some((key) => !allowed.includes(key))) return json(res, 400, { error: "This video request has settings the friend job cannot reproduce.", reason: "settings-incompatible" });
+            for (const key of ["refImages", "refAudios", "midUploads", "loras"]) if (video[key] !== undefined && (!Array.isArray(video[key]) || video[key].length)) return json(res, 400, { error: `${key} cannot travel in this text-to-video job.`, reason: "references-unsupported" });
+            for (const key of ["audioTrack", "fromCover", "toCover", "fromUpload", "toUpload", "persona", "sourceVideo", "models"]) if (video[key]) return json(res, 400, { error: `${key} cannot travel in this text-to-video job.`, reason: "references-unsupported" });
+            if (video.loop || video.engine !== "h3" || video.steps !== 20 || video.guidance !== 1 || video.negative !== "" || video.sparse !== "off" || !["ck", "pytorch"].includes(video.attention) || video.blockCache !== false || video.bridge !== "off" || video.bridgeAlpha !== 0 || video.guideStrength !== 0.7) return json(res, 400, { error: "This base-only friend job needs H3 at 20 steps, default guidance 1, CK or PyTorch attention, and no negative prompt, sparse attention, block cache, bridge or guide. Clear unsupported settings before preview.", reason: "settings-incompatible" });
+            /* A saved bridge can affect the normal Video button even when its
+             * render request omits a bridge field. Refuse it at this boundary. */
+            if (config.video.engines.h3?.bridge && config.video.engines.h3.bridge !== "off") return json(res, 409, { error: "The saved H3 conditioning bridge is enabled. Turn it off before asking a friend for the same text-to-video clip.", reason: "settings-incompatible" });
+            if (config.video.engines.h3?.blockCache === true) return json(res, 409, { error: "The saved H3 block cache is enabled. Turn it off before asking for a base-only friend clip.", reason: "settings-incompatible" });
+            const meV = await collabIdentity({ appData });
+            const orderV = makeVideoJob({ prompt: video.prompt, seed: video.seed === undefined ? Math.floor(Math.random() * 4294967296) : video.seed,
+              width: video.width, height: video.height, seconds: video.seconds, steps: video.steps,
+              guidance: video.guidance, keepAudio: video.keepAudio, attention: video.attention,
+              returnTo: { fp: meV.fp, nickname: String(b.nickname || "").slice(0, 40) }, now: Date.now() });
+            return previewFor(orderV, `video-${orderV.id}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+              describes: describeVideoJob(orderV), note: "Exact H3 text-to-video settings are frozen for this friend. They must review, accept and separately render. No file is sent automatically." });
+          }
           if (kind === "video-recipe") {
             if (action !== "preview") return json(res,400,{error:"Preview this recipe before preparing it.",reason:"preview-required"});
             const recipe=makeVideoRecipe(b.video);
@@ -6157,7 +7048,7 @@ const server = http.createServer(async (req, res) => {
             await book.rememberOrder({ outDir, row: {
               id: orderDoc.id, at: orderDoc.at, expires: orderDoc.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
-              slug: slugO, order: orderDoc.order,
+              slug: slugO, order: orderDoc.order, file: wroteO.file,
               expect: collabLending.expectForOrder(orderDoc), songUnder: shotO.songUnder ?? null,
             } });
             return json(res, 200, {
@@ -6271,6 +7162,33 @@ const server = http.createServer(async (req, res) => {
             if (!sender.verified || !["lender","collaborator"].includes(sender.role)) return json(res,403,{error:"Verify this sender and assign a role before using a video recipe.",reason:"role"});
             videoRecipe = readVideoRecipe(packet);
           }
+          let imageOrder = null;
+          if (packet?.kind === "job-order" && packet?.jobType === "image") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before using their image job.", reason: "role" });
+            imageOrder = readImageJob(packet, { now: Date.now(), myFp: me.fp });
+            if (imageOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The image job asks this machine to return the result to somebody other than its signer.", reason: "return-address" });
+            await measureImageJobReferences(imageOrder.job.references);
+          }
+          let videoOrder = null;
+          if (packet?.kind === "job-order" && packet?.jobType === "video") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before reviewing their video job.", reason: "role" });
+            videoOrder = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
+            if (videoOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The video job return address differs from its signer.", reason: "return-address" });
+          }
+          let imageReturnPreview = null;
+          if (packet?.kind === "job-return" && packet?.jobType === "image") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before receiving an image return.", reason: "role" });
+            imageReturnPreview = readImageReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: imageReturnPreview.orderId, side: "out" });
+            if (!sent || sent.jobType !== "image" || sent.to?.fp !== sender.fp || imageReturnPreview.to !== me.fp) return json(res, 400, { error: "This image return does not answer a job sent to this verified friend.", reason: "return-unknown-order" });
+          }
+          let videoReturnPreview = null;
+          if (packet?.kind === "job-return" && packet?.jobType === "video") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before reviewing their video return.", reason: "role" });
+            videoReturnPreview = readVideoReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: videoReturnPreview.orderId, side: "out" });
+            if (!sent || sent.jobType !== "video" || sent.to?.fp !== sender.fp || videoReturnPreview.to !== me.fp) return json(res, 400, { error: "This video return does not answer a job sent to this verified friend.", reason: "return-unknown-order" });
+          }
           /* Their build, recorded on their row: a caption, never a gate. */
           if (packet?.by) await collabRoster.setBuild({ appData, fp: sender.fp, by: packet.by }).catch(() => {});
           return json(res, 200, {
@@ -6280,17 +7198,32 @@ const server = http.createServer(async (req, res) => {
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
             ...(videoRecipe ? {videoRecipe, makeClipArgs:videoRecipeMcpArgs(packet)} : {}),
+            ...(imageOrder ? { imageJob: { ...imageOrder, job: { ...imageOrder.job,
+              references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
+              prompt: imageOrder.job.prompt } : {}),
+            ...(videoOrder ? { videoJob: videoOrder, prompt: videoOrder.job.prompt,
+              reviewDigest: createHash("sha256").update(blob).digest("hex") } : {}),
+            ...(imageReturnPreview ? { imageReturn: { ...imageReturnPreview,
+              result: { ...imageReturnPreview.result, b64: "[picture bytes]" } } } : {}),
+            ...(videoReturnPreview ? { videoReturn: { ...videoReturnPreview,
+              result: { ...videoReturnPreview.result, b64: "[video bytes]" } } } : {}),
             /* The prompt as its own field: a screen must be able to show it
              * whole and unstyled rather than trimmed into a sentence. */
             ...(packet?.kind === "order" ? { prompt: String(packet.shot?.prompt || "") } : {}),
             /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
              * packet" and the four words a person is being asked to agree to
              * were only ever visible after they had already agreed. */
-            describes: videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
+            describes: videoReturnPreview ? `A returned ${videoReturnPreview.record.width}×${videoReturnPreview.record.height} MP4 for video job ${videoReturnPreview.orderId}. Receive it into quarantine before keeping it.`
+              : imageReturnPreview ? `A returned ${imageReturnPreview.record.width}×${imageReturnPreview.record.height} PNG for image job ${imageReturnPreview.orderId}, made with ${imageReturnPreview.record.model}. Receive it into quarantine before keeping it.`
+              : videoOrder ? describeVideoJob(videoOrder) : imageOrder ? describeImageJob(imageOrder) : videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
               : packet?.kind === "order" ? describeOrder(packet, Date.now())
                 : packet?.kind === "return" ? `A finished take for scene ${packet.segmentId} of order ${packet.orderId}, rendered on ${packet.record?.model || "their machine"}. Press Receive to check it against what you ordered.`
                   : describeAnyPacket(packet),
-            packet,
+            /* A returned PNG can be 64 MiB. Opening is only a review step;
+             * the verified bytes remain in the sealed file until Receive.
+             * Sending their base64 back in JSON freezes the Collab screen. */
+            packet: imageReturnPreview || videoReturnPreview ? { ...packet,
+              result: { ...packet.result, b64: videoReturnPreview ? "[video bytes]" : "[picture bytes]" } } : packet,
             /* Said every time rather than once in a manual: opening is not
              * accepting, and nothing has been rendered. */
             note: "Read and verified. Nothing has been rendered: turning this into work is a separate press on the Collab screen.",
@@ -6800,6 +7733,12 @@ const server = http.createServer(async (req, res) => {
         const file = String(b.file || "");
         if (!file) return json(res, 400, { error: "give a file" });
         const r = art.drop(file);
+        /* drop() removes a waiting job without an ArtRunner terminal event.
+         * Release this friend's reservation as a stopped, zero-time attempt. */
+        if (r.removed && videoIdFromArtFile(file)) await recordVideoFailure({
+          book, outDir: path.join(config.outputDir, "collab"), file,
+          kind: "video", cancelled: true, durationMs: null,
+        });
         return json(res, 200, { ok: true, ...r, ...art.status() });
       }
       if (b.action === "stop_current") {
@@ -8649,7 +9588,18 @@ const server = http.createServer(async (req, res) => {
       const finalPrompt = shaped.prompt;
       refImages = shaped.refImages;
 
-      const id = `i${Date.now().toString(36)}`;
+      /* A peer job may wait behind music before Comfy reads its references.
+       * Pin the staged bytes and recheck them in art.js at execution. */
+      const collabImageBase = engine === QWEN_IMAGE_ENGINE && req.headers?.["x-aiplay-actor"] === "script:collab-image";
+      const collabRefHashes = collabImageBase ? await Promise.all(refImages.map(async (name) => {
+        if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(name)) throw new Error("A peer image reference has an invalid staged name.");
+        return createHash("sha256").update(await readFile(path.join(config.inputDir, name))).digest("hex");
+      })) : null;
+
+      /* Two friend jobs can be queued in one millisecond. An image id also
+       * names its output file and private prompt metadata, so sharing that id
+       * could return one friend's image to another. */
+      const id = `i${randomUUID().replaceAll("-", "")}`;
       const file = `image:${id}`;
       pendingImagePrompt.set(file, finalPrompt);
       if (b.private === true) pendingImagePrivate.set(file, true);
@@ -8693,6 +9643,9 @@ const server = http.createServer(async (req, res) => {
            * provenance (draft: true and the LoRA). Absent unless asked for, so
            * every other render's job is unchanged. */
           ...(engine === QWEN_IMAGE_ENGINE && b.draft === true ? { draft: true } : {}),
+          /* An explicitly accepted peer job is pinned to the built-in Qwen base
+           * graph. A custom cover assignment must not silently replace it. */
+          ...(collabImageBase ? { collabImageBase: true, collabRefHashes } : {}),
           // One text encode serves up to four pictures — see coverGraph.
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
           width: Math.min(Math.max(Number(b.width) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),

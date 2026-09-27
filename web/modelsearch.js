@@ -156,4 +156,3 @@ export function modelName(c) {
   const tail = label.split(/\s[—–-]\s/).pop();
   return tail.replace(/\([^)]*\)/g, " ").replace(/[·]/g, " ").replace(/\s+/g, " ").trim() || label;
 }
-

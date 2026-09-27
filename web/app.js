@@ -1,4 +1,5 @@
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
+import { reactiveSourceWindow } from './reactive-source-window.js';
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -5861,7 +5862,7 @@ const tr = (body) => fetch("/api/train", {
 /* Survives a reload, because training outlives the page that started it. */
 const trRemember = (v) => { try { v ? localStorage.setItem("train.run", JSON.stringify(v)) : localStorage.removeItem("train.run"); } catch { /* a private window is not a reason to fail */ } };
 const trRecall = () => { try { return JSON.parse(localStorage.getItem("train.run") || "null"); } catch { return null; } };
-let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
+let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trCompareRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
 
 function trRegionIssue({ start, seconds, duration, maxStart = 3600 }) {
   if (!Number.isFinite(duration) || duration <= 0) return "Reading the source duration before training. If it cannot be read, choose another recording.";
@@ -5941,10 +5942,22 @@ $("trListen")?.addEventListener("click", async () => {
   $("trSourceAudio").currentTime = region.start; trAuditionEnd = region.start + region.seconds;
   try { await $("trSourceAudio").play(); } catch (e) { $("trSourceNote").textContent = `Could not play this recording: ${e.message || e}`; }
 });
+async function trCompareTakes() {
+  const before = $("trBefore").value, after = $("trAfter").value, request = ++trCompareRequest;
+  const note = $("trCompareStatus");
+  note.classList.toggle("warn", false);
+  if (!before || !after) { note.textContent = "Choose both takes to check their recorded settings."; return; }
+  note.textContent = "Checking the saved generation settings…";
+  const result = await tr({ action: "compare", before, after });
+  if (request !== trCompareRequest || $("trBefore").value !== before || $("trAfter").value !== after) return;
+  note.textContent = result.error || result.message || "Comparison unavailable.";
+  note.classList.toggle("warn", result.status !== "matched" || !!result.evidence?.provenanceWarning || !!result.error);
+}
 for (const side of ["Before", "After"]) {
   $(`tr${side}`)?.addEventListener("change", () => {
     const player = $(`tr${side}Audio`), file = $(`tr${side}`).value;
     player.pause(); player.src = file ? `/api/audio/${encodeURIComponent(file)}` : ""; player.hidden = !file;
+    trCompareTakes();
   });
   $(`tr${side}Audio`)?.addEventListener("play", () => { $("trSourceAudio").pause(); $(`tr${side === "Before" ? "After" : "Before"}Audio`).pause(); });
 }
@@ -5991,6 +6004,7 @@ async function paintTraining() {
         choice.innerHTML = '<option value="">Choose an existing render…</option>' + rows.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
         if (rows.some((t) => t.file === keep)) choice.value = keep;
       }
+      trCompareTakes();
     }
   } catch (e) { $("trNote").textContent = `Library could not refresh: ${e.message || e}. Previous choices are still shown.`; }
 
@@ -6030,9 +6044,10 @@ $("trStart")?.addEventListener("click", async () => {
   if (!trStatus?.ready || issue || !$("trName").value.trim()) { if (note) note.textContent = issue || "Check the hardware status and give the adapter a name first."; return; }
   trStarting = true; trPaintRegion();
   if (note) note.textContent = "Cutting the song and reading it into codes…";
+  const sourceFile = $("trFile")?.value;
   const r = await tr({
     action: "start",
-    file: $("trFile")?.value,
+    file: sourceFile,
     name: $("trName")?.value,
     startSeconds: Number($("trStartSeconds")?.value),
     seconds: Number($("trSeconds")?.value) || undefined,
@@ -6043,7 +6058,7 @@ $("trStart")?.addEventListener("click", async () => {
   trStarting = false;
   if (r.error) { if (note) note.textContent = r.error; trPaintRegion(); return; }
   if (note) note.textContent = r.note || "Started.";
-  const run = { runId: r.runId, name: r.name, settings: r.settings, file: $("trFile").value };
+  const run = { runId: r.runId, name: r.name, settings: r.settings, file: sourceFile };
   trRemember(run);
   showTrainLive(run); trPaintRegion();
   trCheckRun();
@@ -6095,7 +6110,7 @@ $("trCheck")?.addEventListener("click", trCheckRun);
  */
 const cb = (body) => fetch("/api/collab", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}` }));
+}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}`, transportFailure: true }));
 
 /* ⚠ ONE VISIBLE LANDING PLACE FOR EVERY MESSAGE, OUTSIDE ALL THREE PANES.
  * Five handlers used to write into #cbFreeNote, which was safe only while the
@@ -6180,14 +6195,18 @@ $("cbGoFriends")?.addEventListener("click", () => setCbTab("Friends"));
  * still holds it. Any row click, tab change or repaint clears the stamp. */
 function disarmCollab() {
   const card = $("cbFileCard");
-  if (card) delete card.dataset.armed;
+  if (card) { delete card.dataset.armed; delete card.dataset.imageArmed; delete card.dataset.imageArmedDigest; delete card.dataset.videoArmed; delete card.dataset.videoArmedDigest; }
+  if (cbOpenedImage) delete cbOpenedImage.reviewDigest;
+  if (cbOpenedVideoJob) delete cbOpenedVideoJob.reviewDigest;
   if ($("cbAcceptYes")) $("cbAcceptYes").hidden = true;
+  if ($("cbImageAccept")) $("cbImageAccept").hidden = true;
+  if ($("cbVideoAccept")) $("cbVideoAccept").hidden = true;
   if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
 }
 
-let collabVideoDraft = null, cbOpenedVideo = null;
+let collabVideoDraft = null, collabImageDraft = null, collabImageRefPreviews = [], cbOpenedVideo = null, cbOpenedVideoJob = null, cbOpenedImage = null;
 let collabPainted = false;
-async function paintCollab(force = false, scene = null, videoRecipe = null) {
+async function paintCollab(force = false, scene = null, videoRecipe = null, imageJob = null, imageRefPreviews = []) {
   const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
@@ -6226,7 +6245,13 @@ async function paintCollab(force = false, scene = null, videoRecipe = null) {
   await loadCollabPlan(true);
   paintCbKind();
   if (scene) selectCollabScene(scene);
-  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-recipe"; paintCbKind(); $("cbTo")?.focus?.(); }
+  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-job"; paintCbKind(); $("cbTo")?.focus?.(); }
+  if (imageJob) {
+    collabImageDraft = imageJob;
+    collabImageRefPreviews = imageRefPreviews;
+    collabTabChosen = true;
+    setCbTab("Send"); $("cbKind").value = "image-job"; paintCbKind(); $("cbTo")?.focus?.();
+  }
 }
 
 function selectCollabScene({slug, segmentId}) {
@@ -6287,15 +6312,45 @@ function cbListError(label, r) {
 function cbCanReceive(p, kind) {
   return p.verified && (kind === "resources" || p.role === "collaborator" || (kind !== "project" && p.role === "lender"));
 }
+function paintCbRecipientStatus() {
+  const kind = $("cbKind")?.value || "shot";
+  const peer = cbPeers.find((p) => p.fp === $("cbTo")?.value && cbCanReceive(p, kind));
+  const host = $("cbRecipientStatus");
+  if ($("cbPreview")) $("cbPreview").disabled = !peer || (kind === "image-job" && !collabImageDraft) || (kind === "video-job" && !collabVideoDraft);
+  if (!host) return;
+  if (!peer) {
+    host.innerHTML = '<span class="chip warn">Choose a friend</span>';
+    return;
+  }
+  const card = peer.resources;
+  const parts = [];
+  if (!card) parts.push('<span class="chip warn" title="Ask this friend to send a hardware card before relying on their model list.">No hardware card</span>');
+  else {
+    const age = peer.resourcesSaid || "age unknown";
+    const ageLabel = age.length > 25 ? "age unknown" : age;
+    parts.push(`<span class="chip" title="Last card: ${esc(age)}. This is not a live reading.">Card ${esc(ageLabel)}</span>`);
+    const vram = Number(card.gpu?.vramMb);
+    if (Number.isFinite(vram) && vram > 0) parts.push(`<span class="chip">${(vram / 1024).toFixed(1)} GB VRAM</span>`);
+    else parts.push('<span class="chip warn">VRAM unknown</span>');
+    const ready = Array.isArray(card.ready) ? card.ready : [];
+    const engine = kind === "video-recipe" || kind === "video-job" ? collabVideoDraft?.engine : kind === "order" ? $("cbEngineMode")?.value : "";
+    const capability = kind === "image-job" ? "qwen-image-2.1" : engine === "ltx" ? "videoLtx" : engine === "h3" ? "video" : "";
+    const capabilityLabel = kind === "image-job" ? "Qwen Image 2.1" : String(engine || "").toUpperCase();
+    if (capability) parts.push(`<span class="chip ${ready.includes(capability) ? "ok" : "warn"}" title="Downloaded catalogue models on this friend's last card only; current readiness is unknown.">${capabilityLabel} ${ready.includes(capability) ? "listed" : "not listed"}</span>`);
+    else parts.push(`<span class="chip" title="Downloaded catalogue models on their last card.">${ready.length} models listed</span>`);
+  }
+  parts.push('<span class="chip warn" title="Collab has no remote presence or queue connection. Ask your friend before counting on their card.">Idle unknown</span>');
+  host.innerHTML = parts.join("");
+}
 function paintCbRecipients() {
   const kind = $("cbKind")?.value || "shot", to = $("cbTo");
   const peers = cbPeers.filter((p) => cbCanReceive(p, kind)), selected = to?.value;
   if (to) {
-    to.innerHTML = peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="">No verified friend with permission for this package</option>';
+    to.innerHTML = '<option value="">Choose a friend</option>' + (peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="" disabled>No verified friend with permission</option>');
     if (peers.some((p) => p.fp === selected)) to.value = selected;
   }
   if ($("cbNobody")) $("cbNobody").hidden = !!peers.length;
-  if ($("cbPreview")) $("cbPreview").disabled = !peers.length;
+  paintCbRecipientStatus();
 }
 
 async function paintPeers() {
@@ -6428,13 +6483,13 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
-  cbOpenedResources = null; cbOpenedVideo = null;
+  cbOpenedResources = null; cbOpenedVideo = null; cbOpenedVideoJob = null; cbOpenedImage = null;
   if ($("cbUseVideo")) $("cbUseVideo").hidden = true;
   if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
   if ($("cbFile")) $("cbFile").value = r.file || file || "";
-  for (const face of ["cbOrderFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
+  for (const face of ["cbOrderFace", "cbImageFace", "cbVideoFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
   if (card) card.hidden = false;
   if (r.error) {
     /* A refusal is a row state with one remedy, not a dead end. */
@@ -6452,9 +6507,39 @@ async function openCollabFile(file) {
   if (r.kind === "order") {
     if ($("cbOrderFace")) $("cbOrderFace").hidden = false;
     if ($("cbOrderWho")) $("cbOrderWho").innerHTML = `${who} is asking this computer to render one scene`;
+  } else if (r.kind === "job-order" && r.imageJob?.job) {
+    cbOpenedImage = { file: r.file || file, id: r.imageJob.id, signerFp: r.from?.fp,
+      orderKey: JSON.stringify(r.imageJob), referenceCount: r.imageJob.job.references.length };
+    $("cbImageFace").hidden = false;
+    $("cbImageWho").textContent = `${r.from?.nickname || r.from?.fp?.slice(0, 8) || "A friend"} asks for an image`;
+    paintIncomingImageJob(r.imageJob.job, r.packet?.job?.references || []);
+    await paintImageCardStatus();
+    paintIncomingImageReferenceState();
+  } else if (r.kind === "job-order" && r.videoJob?.job) {
+    cbOpenedVideoJob = { file: r.file || file, id: r.videoJob.id, signerFp: r.from?.fp,
+      orderKey: JSON.stringify(r.videoJob), reviewDigest: null };
+    $("cbVideoFace").hidden = false;
+    $("cbVideoWho").textContent = `${r.from?.nickname || r.from?.fp?.slice(0, 8) || "A friend"} asks for an H3 video`;
+    const j = r.videoJob.job;
+    $("cbVideoSettings").textContent = `${j.width} × ${j.height} · ${j.seconds}s · ${j.steps} steps · guidance ${j.guidance} · seed ${j.seed} · ${j.attention === "ck" ? "CK" : "PyTorch"} attention · generated audio ${j.keepAudio ? "kept" : "off"} · local H3 weights`;
+    $("cbVideoPrompt").textContent = j.prompt;
+    $("cbVideoNote").textContent = "Review this exact prompt and your local H3 model. Accepting does not render.";
+    await paintVideoCardStatus();
+  } else if (r.kind === "job-return" && r.packet?.jobType === "image") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished image has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned image";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the signed image against your request before keeping it.";
+  } else if (r.kind === "job-return" && r.packet?.jobType === "video") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished video has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned video";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Verify the signed MP4 against your exact request, then watch it in quarantine.";
   } else if (r.kind === "return") {
     if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
     if ($("cbReturnWho")) $("cbReturnWho").innerHTML = `A finished scene has come back from ${who}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check it against what I asked for";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the returned file against your order before keeping it.";
   } else {
     if ($("cbReadFace")) $("cbReadFace").hidden = false;
     if ($("cbReadWho")) $("cbReadWho").innerHTML = `${who} sent you something to look at`;
@@ -6485,6 +6570,99 @@ Custom LoRAs and conditioning bridge off. Review before rendering.`;
       if ($("cbSaveResources")) $("cbSaveResources").hidden = false;
     }
   }
+}
+function paintIncomingImageJob(job, references) {
+  $("cbImageSettings").textContent = `${job.width} × ${job.height} · ${job.steps} steps · CFG ${job.cfg} · seed ${job.seed} · ${job.references.length} references · receiver's local Qwen base model`;
+  $("cbImagePrompt").textContent = job.prompt;
+  $("cbImageRefs").innerHTML = references.map((ref, i) => {
+    const meta = job.references[i];
+    if (!meta || meta.sha256 !== ref.sha256 || !["image/png", "image/jpeg", "image/webp"].includes(ref.mime) || typeof ref.b64 !== "string")
+      return `<figure><figcaption class="warn">Reference ${i + 1} could not be shown. Do not accept until it opens correctly.</figcaption></figure>`;
+    return `<figure><img loading="eager" decoding="async" data-cb-image-reference="${i + 1}" src="data:${ref.mime};base64,${ref.b64}" alt="Reference ${i + 1}" style="max-width:180px;max-height:150px;object-fit:contain"><figcaption>Reference ${i + 1} · ${Number(meta.bytes).toLocaleString()} bytes<br><code>${esc(meta.sha256)}</code></figcaption></figure>`;
+  }).join("") || '<span class="hint">No reference pictures.</span>';
+}
+function imageReferencesShown(opened) {
+  if (!opened || cbOpenedImage !== opened) return false;
+  const images = [...($('cbImageRefs')?.querySelectorAll('img[data-cb-image-reference]') || [])];
+  return images.length === opened.referenceCount && images.every((image) => image.complete
+    && image.naturalWidth > 0 && image.naturalHeight > 0 && image.dataset.cbRefFailed !== "1");
+}
+function paintIncomingImageReferenceState() {
+  const opened = cbOpenedImage, refs = $('cbImageRefs');
+  if (!opened || !refs || $('cbImageFace')?.hidden) return;
+  const images = [...refs.querySelectorAll('img[data-cb-image-reference]')];
+  const ready = imageReferencesShown(opened);
+  const review = $('cbImageReview'), accept = $('cbImageAccept'), note = $('cbImageNote');
+  if (review && !review.hidden) review.disabled = !ready || !!opened.reviewBusy;
+  if (accept && !accept.hidden) accept.disabled = !ready || !!opened.acceptBusy;
+  if ((!review?.hidden || !accept?.hidden) && !ready) {
+    const failed = images.length !== opened.referenceCount
+      || images.some((image) => image.dataset.cbRefFailed === "1" || (image.complete && !image.naturalWidth));
+    note.textContent = failed
+      ? "A reference could not be shown; reopen the file before accepting."
+      : "Waiting for reference pictures to load.";
+    opened.refLoadNotice = true;
+  } else if (ready && opened.refLoadNotice) {
+    note.textContent = "Inspect the prompt and every reference before accepting.";
+    opened.refLoadNotice = false;
+  }
+}
+for (const event of ['load', 'error']) $('cbImageRefs')?.addEventListener(event, (ev) => {
+  if (ev.target?.dataset?.cbImageReference === undefined) return;
+  if (event === 'error') ev.target.dataset.cbRefFailed = "1";
+  paintIncomingImageReferenceState();
+}, true);
+async function imageResultReady(imageId) {
+  if (typeof imageId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(imageId)) return false;
+  try {
+    const r = await (await fetch("/api/images")).json();
+    return Array.isArray(r.images) && r.images.some((image) => image.name === `${imageId}.png`);
+  } catch { return false; }
+}
+async function paintImageCardStatus() {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "orders", side: "in" });
+  if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.error) { $("cbImageNote").textContent = `Could not check this job: ${r.error}`; return; }
+  const row = (r.orders || []).find((order) => order.id === opened.id && order.jobType === "image");
+  opened.imageState = row?.state || null;
+  $("cbImageReview").hidden = !!row;
+  $("cbImageRender").hidden = !["landed", "failed"].includes(row?.state);
+  $("cbImageRender").textContent = row?.state === "failed" ? "Retry image render" : "Render image";
+  $("cbImageCheck").hidden = !["queued", "rendering", "failed"].includes(row?.state);
+  $("cbImageSendBack").hidden = true;
+  $("cbImageSendBack").disabled = true;
+  if (row?.state === "queued" && await imageResultReady(row.imageId)) {
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageSendBack").hidden = false;
+    $("cbImageSendBack").disabled = false;
+    $("cbImageNote").textContent = "Result ready; review it, then send back the sealed file.";
+  } else if (row?.state === "landed") $("cbImageNote").textContent = "Accepted; press Render image when ready.";
+  else if (row?.state === "queued") $("cbImageNote").textContent = "Rendering or waiting in the local queue.";
+  else if (row?.state === "rendering") $("cbImageNote").textContent = "Queue receipt uncertain; check the local queue before recovery.";
+  else if (row?.state === "failed") $("cbImageNote").textContent = "Render failed; check the queue, then retry if needed.";
+  else if (row?.state === "rendered") $("cbImageNote").textContent = "Return file ready in accepted jobs below.";
+  else if (row) $("cbImageNote").textContent = `Job ${row.state}; check the accepted-job list.`;
+  else $("cbImageNote").textContent = "Inspect the prompt and every reference before accepting.";
+  paintIncomingImageReferenceState();
+}
+async function paintVideoCardStatus() {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "orders", side: "in" });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.error) { $("cbVideoNote").textContent = r.error; return; }
+  const row = (r.orders || []).find((order) => order.id === opened.id && order.jobType === "video");
+  $("cbVideoReview").hidden = !!row;
+  $("cbVideoRender").hidden = row?.state !== "landed";
+  $("cbVideoSendBack").hidden = !(row?.state === "queued" && row?.renderStatus === "complete");
+  if (row?.state === "landed") $("cbVideoNote").textContent = "Accepted. Press Render video when this machine is ready.";
+  else if (row?.state === "queued") $("cbVideoNote").textContent = row.renderStatus === "complete" ? "Finished here. Prepare the signed return." : "Waiting or rendering on this machine.";
+  else if (row?.state === "rendering") $("cbVideoNote").textContent = "Queue receipt uncertain; no duplicate render is allowed.";
+  else if (row?.state === "failed") $("cbVideoNote").textContent = "Render failed. Review the queue; this order cannot rerun without a new signed request.";
+  else if (row?.state === "rendered") $("cbVideoNote").textContent = "The signed return is ready under accepted jobs.";
+  else if (row) $("cbVideoNote").textContent = `Job ${row.state}.`;
 }
 $("cbSaveResources")?.addEventListener("click", async () => {
   const card = cbOpenedResources;
@@ -6574,10 +6752,19 @@ $("cbPeers")?.addEventListener("change", async (ev) => {
 function paintCbKind() {
   const kind = $("cbKind")?.value || "shot";
   const show = (id, on) => { const el = $(id); if (el) el.hidden = !on; };
+  show("cbProjectRow", kind === "shot" || kind === "project" || kind === "order");
   show("cbSegmentRow", kind === "shot" || kind === "order");
   show("cbNoteRow", kind === "resources");
   show("cbMine", kind === "resources");
   show("cbNumbers", kind === "order");
+  show("cbImageJobNote", kind === "image-job");
+  show("cbVideoJobNote", kind === "video-job");
+  if (kind === "image-job") $("cbImageJobNote").textContent = collabImageDraft
+    ? `Qwen Image 2.1 · one image · ${collabImageDraft.refs.length} reference${collabImageDraft.refs.length === 1 ? "" : "s"}; preview and prepare one file per friend.`
+    : "Choose a Qwen image in Pictures, then press Ask friend.";
+  if (kind === "video-job") $("cbVideoJobNote").textContent = collabVideoDraft
+    ? "H3 text-to-video · one sealed job per friend; your friend reviews, accepts and renders separately."
+    : "Choose a text-only H3 clip in Video, then press Ask friend.";
   paintCbRecipients();
   invalidateCbPreview();
 }
@@ -6585,7 +6772,7 @@ $("cbKind")?.addEventListener("change", paintCbKind);
 
 /* The scenes of the chosen project, so "which scene" stops being a box wanting
  * a string like s1_24 that only the sender's own board knows. */
-let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null;
+let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null, cbVerifiedPreviewUrls = [];
 function cbSceneTitle(shot) {
   const id = shot.segmentId || shot.id, title = shot.title || shot.name || shot.label;
   if (title && title !== id) return title;
@@ -6685,6 +6872,7 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   $("cbPlanDelivery").textContent = counts
     ? `Order records checked ${new Date(cbPlanDelivery.observedAt).toLocaleTimeString()} · ${counts.prepared} prepared · ${counts.returned} returns recorded · ${counts.adopted} adopted · ${counts.refused + counts.expired + counts.unknown} need attention${cbPlanDelivery.unmatchedOrders.length ? ` · ${cbPlanDelivery.unmatchedOrders.length} refer to removed scenes` : ""}. File handoff: receipt and live progress are unknown. Refresh to read new returns.`
     : "Order progress unavailable in this server version. Update and restart Studio.";
+  paintCbHandoffs();
   $("cbPlanBoard").innerHTML = Object.entries(CB_STAGES).map(([stage, title]) => {
     const shots = cbPlan.shots.filter((s) => s.stage === stage);
     return `<section class="cbcolumn"><b>${title} · ${shots.length}</b>${shots.map((s) => `<button type="button" class="cbshot${s.segmentId === cbPlanScene ? " on" : ""}" data-scene="${esc(s.segmentId)}"><b>${esc(cbSceneTitle(s))}</b><small>${esc(s.segmentId)} · ${s.seconds ? `${s.seconds.toFixed(1)}s` : "duration unknown"}</small><small>${esc(cbOwnerName(s.owner))}${s.pinned ? " · pinned" : ""}${s.dependsOn ? ` · after ${esc(s.dependsOn)}` : ""}</small><small>${esc(cbSceneOrderSummary(s.segmentId))}</small>${s.reviewNote ? `<small>${esc(s.reviewNote.slice(0, 100))}</small>` : ""}</button>`).join("") || '<p class="hint">No scenes</p>'}</section>`;
@@ -6692,6 +6880,35 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   if (!cbPlan.shots.some((s) => s.segmentId === cbPlanScene)) cbPlanScene = cbPlan.shots[0]?.segmentId || "";
   if (!preserveShot) paintCbShotEditor();
 }
+function paintCbHandoffs() {
+  const host = $("cbHandoffList"); if (!host) return;
+  const rows = cbPlanDelivery?.handoffs;
+  if ($("cbHandoffWrap")) $("cbHandoffWrap").hidden = !Array.isArray(rows) || !rows.length;
+  if (!Array.isArray(rows)) { host.innerHTML = ""; return; }
+  if ($("cbHandoffCount")) $("cbHandoffCount").textContent = `· ${rows.filter((row) => row.status === "not-prepared").length} without files · ${rows.length} assigned`;
+  const labels = { "not-prepared": "No file prepared", prepared: "File prepared", expired: "Expired · ask friend", returned: "Return to review", adopted: "Take adopted", refused: "Return refused", cancelled: "Cancelled locally", unknown: "Order state unknown" };
+  host.innerHTML = rows.map((row) => {
+    const card = row.card?.state === "current" ? "Recent self-reported card" : row.card?.state === "stale" ? "Self-reported card over 24h old" : row.card?.state === "future" ? "Card timestamp invalid" : "No hardware card";
+    const fit = row.card?.fit === "listed" ? ` · ${esc(row.card.capability)} listed` : row.card?.fit === "not-listed" ? ` · ${esc(row.card.capability)} not listed` : row.card?.fit === "vram-below-minimum" ? " · VRAM below selected minimum" : "";
+    const canReview = row.status === "not-prepared" && row.peer?.eligible;
+    return `<div class="cbpeer cbassignment" data-segment="${esc(row.segmentId)}"><b>${esc(row.title || row.segmentId)}</b><span>${esc(row.peer?.nickname || row.owner?.slice(0, 8) || "Former friend")} · ${esc(labels[row.status] || "Check order")}</span><small title="${esc(row.nextStep || "Check the order record.")}">${esc(card)}${fit} · idle unknown</small>${canReview ? '<button type="button" class="btn sm cbhandoffreview">Preview request</button>' : ""}</div>`;
+  }).join("");
+}
+$("cbHandoffList")?.addEventListener("click", async (event) => {
+  const button = event.target.closest(".cbhandoffreview"); if (!button) return;
+  const segmentId = button.closest("[data-segment]")?.dataset.segment;
+  const row = cbPlanDelivery?.handoffs?.find((item) => item.segmentId === segmentId);
+  if (!row || row.status !== "not-prepared" || !row.peer?.eligible || row.owner !== cbPlan?.shots?.find((shot) => shot.segmentId === segmentId)?.owner) return;
+  let fresh;
+  try { fresh = await cbPlanRead(); }
+  catch (error) { cbSay(`Order status could not refresh: ${error.message}. Nothing was prepared.`); return; }
+  const still = fresh.delivery?.handoffs?.find((item) => item.segmentId === segmentId);
+  if (fresh.plan?.revision !== cbPlan?.revision || still?.status !== "not-prepared" || still.owner !== row.owner || !still.peer?.eligible) {
+    cbSay("The scene handoff changed. Reload the episode plan before preparing a request."); return;
+  }
+  cbPlanDelivery = fresh.delivery; paintCbHandoffs();
+  cbPlanScene = segmentId; paintCbShotEditor(); cbPreviewPlannedScene("order");
+});
 function cbSceneOrders(segmentId) {
   return cbPlanDelivery?.scenes?.find((scene) => scene.segmentId === segmentId)?.orders || [];
 }
@@ -6740,6 +6957,7 @@ function cbPreviewPlannedScene(kind) {
   setCbTab("Send"); $("cbKind").value = kind; paintCbKind(); $("cbSegment").value = shot.segmentId;
   // Never silently retain another friend's selection when the planned owner cannot receive this kind.
   $("cbTo").value = cbPeers.some((p) => p.fp === shot.owner && cbCanReceive(p, kind)) ? shot.owner : "";
+  paintCbRecipientStatus();
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 }
 $("cbShotPreview")?.addEventListener("click", () => cbPreviewPlannedScene("shot"));
@@ -6749,6 +6967,8 @@ $("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return pai
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
   if (kind === "video-recipe") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
+  if (kind === "video-job") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
+  if (kind === "image-job") return {kind,to:$("cbTo")?.value,image:collabImageDraft};
   return {
     slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
@@ -6764,36 +6984,120 @@ function cbPackRequest() {
 function invalidateCbPreview() {
   cbPreviewRequest++;
   cbPreparedPreview = null;
+  for (const url of cbVerifiedPreviewUrls) URL.revokeObjectURL(url);
+  cbVerifiedPreviewUrls = [];
   if ($("cbPack")) $("cbPack").disabled = true;
   if ($("cbOutgoingPreview")) $("cbOutgoingPreview").hidden = true;
   if ($("cbPackNote")) $("cbPackNote").textContent = "Preview the current contents before preparing a file.";
 }
-for (const id of ["cbTo", "cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
+async function cbReferencePreviewBytes(preview, reference) {
+  if (typeof preview?.url !== "string" || !/^[a-f0-9]{64}$/.test(reference?.sha256 || "")
+      || !Number.isSafeInteger(reference.bytes) || reference.bytes < 1 || reference.bytes > 8 * 1024 * 1024) return null;
+  let address;
+  try { address = new URL(preview.url, location.href); } catch { return null; }
+  if (address.origin !== location.origin || !(address.protocol === "blob:" ||
+      (preview.url.startsWith("/") && address.pathname.startsWith("/api/")))) return null;
+  try {
+    const response = await fetch(preview.url, { cache: "no-store" });
+    if (!response.ok) return null;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength !== reference.bytes) return null;
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("") === reference.sha256 ? bytes : null;
+  } catch { return null; }
+}
+function cbReferenceCanDisplay(url) {
+  return new Promise((resolve) => {
+    let image;
+    try { image = new Image(); } catch { resolve(false); return; }
+    image.onload = () => resolve(image.naturalWidth > 0 && image.naturalHeight > 0);
+    image.onerror = () => resolve(false);
+    image.src = url;
+  });
+}
+$("cbTo")?.addEventListener("change", () => { paintCbRecipientStatus(); invalidateCbPreview(); });
+for (const id of ["cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
   $(id)?.addEventListener("input", invalidateCbPreview);
-  $(id)?.addEventListener("change", invalidateCbPreview);
+  $(id)?.addEventListener("change", () => { if (id === "cbEngineMode") paintCbRecipientStatus(); invalidateCbPreview(); });
 }
 $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
   const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
-  if (!["resources", "video-recipe"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  if (body.kind === "image-job" && !body.image) { cbSay("Start in Pictures and press Ask friend to choose a Qwen image job."); return; }
+  if (body.kind === "video-job" && !body.video) { cbSay("Start in Video and press Ask friend to choose an H3 clip."); return; }
+  if (!["resources", "video-recipe", "video-job", "image-job"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
   $("cbPreview").disabled = true;
   $("cbPackNote").textContent = "Reading the exact outgoing contents…";
   const r = await cb({ action: "preview", ...body });
   paintCbRecipients();
   if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
-  if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
-  cbPreparedPreview = { id: r.previewId, key };
+  if (!r || r.error || !r.previewId) { $("cbPackNote").textContent = r?.transportFailure
+    ? "Could not load the outgoing preview. Check the Studio connection and try Preview again."
+    : r?.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
   const packet = r.packet || {}, shot = packet.video || packet.shot || packet, order = packet.order || {};
+  const imageJob = packet.job || {};
+  if (body.kind === "image-job" && (typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
+      || !Array.isArray(imageJob.references) || imageJob.references.length !== body.image.refs.length
+      || imageJob.references.some((ref) => !ref.sha256 || !Number.isSafeInteger(ref.bytes)))) {
+    $("cbPackNote").textContent = "The frozen image preview did not include the exact job and reference hashes. Update Studio and preview again.";
+    return;
+  }
+  if (body.kind === "video-job" && (packet.kind !== "job-order" || packet.jobType !== "video"
+      || !/^o_[0-9a-f]{12}$/.test(String(packet.id || ""))
+      || imageJob.engine !== "h3" || imageJob.modelPolicy !== "receiver-local-base"
+      || typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
+      || !["seed", "width", "height", "seconds", "steps", "guidance"].every((key) => Number.isFinite(imageJob[key]))
+      || imageJob.steps !== 20 || imageJob.guidance !== 1 || typeof imageJob.keepAudio !== "boolean"
+      || !["ck", "pytorch"].includes(imageJob.attention) || imageJob.blockCache !== false
+      || !Array.isArray(imageJob.references)
+      || imageJob.references.length || !Array.isArray(imageJob.loras) || imageJob.loras.length)) {
+    $("cbPackNote").textContent = "The frozen video preview did not include the exact signed H3 job. Update Studio and preview again.";
+    return;
+  }
+  let verifiedRefUrls = [];
+  if (body.kind === "image-job" && imageJob.references.length) {
+    $("cbPackNote").textContent = "Checking each picture against the frozen reference hashes…";
+    const verifiedBytes = await Promise.all(imageJob.references.map(async (ref, i) => {
+      const preview = body.image.refs[i] === collabImageRefPreviews[i]?.name ? collabImageRefPreviews[i] : null;
+      return cbReferencePreviewBytes(preview, ref);
+    }));
+    if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+    if (verifiedBytes.some((bytes) => !bytes)) {
+      $("cbPackNote").textContent = "A reference thumbnail differs from the frozen job. Remove and upload that picture again in Pictures, then preview.";
+      return;
+    }
+    // Render the bytes that were hashed, not another request to a path that
+    // could change between verification and the image element loading.
+    verifiedRefUrls = verifiedBytes.map((bytes, i) => URL.createObjectURL(new Blob([bytes], {
+      type: imageJob.references[i].mime || "application/octet-stream",
+    })));
+    cbVerifiedPreviewUrls = verifiedRefUrls;
+    const visible = await Promise.all(verifiedRefUrls.map(cbReferenceCanDisplay));
+    if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+    if (visible.some((shown) => !shown)) {
+      for (const url of cbVerifiedPreviewUrls) URL.revokeObjectURL(url);
+      cbVerifiedPreviewUrls = [];
+      $("cbPackNote").textContent = "A frozen reference could not be displayed. Repair or replace that picture in Pictures before preparing.";
+      return;
+    }
+  }
+  cbPreparedPreview = { id: r.previewId, key };
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
-  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${r.describes || body.kind}`;
-  $("cbPreviewPrompt").textContent = shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
-  $("cbPreviewSettings").textContent = body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
+  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${body.kind === "image-job" ? "Qwen Image 2.1 image job" : body.kind === "video-job" ? "MiniMax H3 video job" : r.describes || body.kind}`;
+  $("cbPreviewPrompt").textContent = body.kind === "image-job" || body.kind === "video-job" ? imageJob.prompt || "" : shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
+  $("cbPreviewSettings").textContent = body.kind === "video-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.seconds}s · ${imageJob.steps} steps · guidance ${imageJob.guidance} · seed ${imageJob.seed} · ${imageJob.attention === "ck" ? "CK" : "PyTorch"} attention · audio ${imageJob.keepAudio ? "keep" : "off"} · friend's local H3 weights · idle unknown` : body.kind === "image-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.steps} steps · CFG ${imageJob.cfg} · seed ${imageJob.seed} · ${imageJob.references.length} included references · friend's local Qwen base model · idle unknown` : body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
     ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
     : r.note || "Review the full contents below.";
-  $("cbPreviewManifest").innerHTML = manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
+  $("cbPreviewManifest").innerHTML = body.kind === "image-job"
+    ? imageJob.references.map((f, i) => `<div class="cbmanifestrow"><b>Reference ${i + 1}</b><span>${Number(f.bytes).toLocaleString()} bytes · included</span><code>${esc(f.sha256)}</code></div>`).join("") || '<p class="hint">No reference pictures.</p>'
+    : manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
   const pictures = manifest.filter((f) => typeof f.file === "string" && !/[\\/]/.test(f.file) && /\.(png|jpe?g|webp)$/i.test(f.file));
-  $("cbPreviewPictures").innerHTML = body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
+  $("cbPreviewPictures").innerHTML = body.kind === "image-job" && imageJob.references.length
+    ? imageJob.references.map((f, i) => {
+      return `<figure><img loading="lazy" decoding="async" src="${esc(verifiedRefUrls[i])}" alt="Reference ${i + 1}"><figcaption><b>Included reference ${i + 1}</b><br>${esc(body.image.refs[i])} · exact bytes checked by hash below</figcaption></figure>`;
+    }).join("")
+    : body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
   $("cbPreviewPacket").textContent = JSON.stringify(packet, (k, v) => k === "b64" ? "[picture bytes listed above]" : v, 2);
   $("cbPack").disabled = false;
   $("cbPackNote").textContent = "Preview ready. Preparing a file does not deliver it or start a remote render.";
@@ -6801,14 +7105,28 @@ $("cbPreview")?.addEventListener("click", async () => {
 $("cbPack")?.addEventListener("click", async () => {
   const preview = cbPreparedPreview, note = $("cbPackNote");
   if (!preview || preview.key !== JSON.stringify(cbPackRequest())) { invalidateCbPreview(); return; }
+  const packedRequest = JSON.parse(preview.key);
   $("cbPack").disabled = true;
   if (note) note.textContent = "Preparing the reviewed file…";
   if ($("cbHandoff")) $("cbHandoff").hidden = true;
   const r = await cb({ action: "pack", previewId: preview.id });
   cbPreparedPreview = null;
+  if (!r || r.transportFailure) {
+    if (note) note.textContent = "Could not confirm whether the file was prepared. Check Outbox after Studio reconnects before previewing again.";
+    await paintOutbox();
+    return;
+  }
   if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
-  if (note) note.textContent = `Prepared · ${r.describes} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
-  showHandoff(r.file, r.describes);
+  const packedDescription = packedRequest.kind === "image-job"
+    ? `One Qwen Image 2.1 job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}`
+    : packedRequest.kind === "video-job" ? `One MiniMax H3 video job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}` : r.describes;
+  if (note) note.textContent = `Prepared · ${packedDescription} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
+  showHandoff(r.file, packedDescription);
+  const assigned = cbAssignedReview?.rows[cbAssignedReview.at];
+  if (assigned && cbAssignedReview.key === cbAssignedDraftKey() && packedRequest.kind === "order"
+      && packedRequest.slug === cbPlan?.slug && packedRequest.to === assigned.fp && packedRequest.segmentId === assigned.segmentId) {
+    cbAssignedReview.at++; cbAssignedReview.waiting = true; paintCbAssignedStatus();
+  }
   await paintOutbox();
 });
 
@@ -6888,14 +7206,70 @@ function cbDraftMarkup(draft) {
     + draft.excluded.map((p) => `<p class="hint">Excluded: ${esc(p.nickname || p.fp)} — ${esc(p.reason)}</p>`).join("")
     + draft.unassigned.map((s) => `<p class="hint">Unassigned: ${esc(s.segmentId)} — ${esc(s.reason)}</p>`).join("");
 }
+let cbAssignedReview = null;
+const cbAssignedDraftKey = (plan = cbPlan) => plan?.draft ? JSON.stringify([plan.slug, plan.draft.at, plan.draft.stale, plan.draft.assignments]) : "";
+function paintCbAssignedStatus() {
+  const status = $("cbAssignedStatus"), next = $("cbAssignedNext");
+  if (status) {
+    status.hidden = !cbAssignedReview;
+    if (cbAssignedReview) status.textContent = cbAssignedReview.at >= cbAssignedReview.rows.length
+      ? `${cbAssignedReview.rows.length} prepared` : `${cbAssignedReview.at + 1}/${cbAssignedReview.rows.length} to review`;
+  }
+  if (next) next.hidden = !cbAssignedReview?.waiting || cbAssignedReview.at >= cbAssignedReview.rows.length;
+}
+function cbAssignedPick() {
+  const review = cbAssignedReview;
+  if (!review || review.key !== cbAssignedDraftKey() || cbPlan?.slug !== cbLoadedSlug || !cbSceneReady) {
+    cbAssignedReview = null; paintCbAssignedStatus(); cbSay("Reload the saved allocation before reviewing scenes."); return;
+  }
+  if (review.at >= review.rows.length) { review.waiting = false; paintCbAssignedStatus(); return; }
+  const item = review.rows[review.at];
+  const peer = cbPeers.find((p) => p.fp === item?.fp && cbCanReceive(p, "order"));
+  const scene = cbProjectDoc?.segments?.find((s) => s.id === item?.segmentId && s.mode === "generate");
+  if (!peer || !scene) { cbSay("A planned friend or scene changed. Save a fresh allocation."); return; }
+  review.waiting = false;
+  setCbTab("Send"); $("cbKind").value = "order"; paintCbKind();
+  $("cbTo").value = item.fp; $("cbSegment").value = item.segmentId;
+  for (const id of ["cbSeed", "cbSteps", "cbEngineMode"]) $(id).value = "";
+  paintCbRecipientStatus(); invalidateCbPreview(); paintCbAssignedStatus();
+  if ($("cbHandoff")) $("cbHandoff").hidden = true;
+  $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
+}
 function paintCbSavedDraft() {
   const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
   $("cbDraftSaved").hidden = !draft;
   $("cbDraftApply").disabled = !draft || !!draft.stale || !!draft.appliedAt;
-  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied to this Studio's episode plan." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved separately from the controls above. Apply to set planned owners locally."} No files prepared or delivered; no remote work accepted.</p>${cbDraftMarkup(draft)}`;
+  $("cbAssignedStart").hidden = !draft;
+  $("cbAssignedStart").disabled = !draft || !!draft.stale || !draft.appliedAt || !draft.assignments?.some((row) => row.segmentIds?.length);
+  if (cbAssignedReview && cbAssignedReview.key !== cbAssignedDraftKey()) { cbAssignedReview = null; paintCbAssignedStatus(); }
+  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied locally. Review each unprepared request." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved locally. Apply owners before preparing files."}</p>${cbDraftMarkup(draft)}`;
 }
+$("cbAssignedStart")?.addEventListener("click", async () => {
+  const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
+  if (!draft?.appliedAt || draft.stale || !cbSceneReady || cbLoadedSlug !== cbPlan.slug) { cbSay("Apply the current allocation before reviewing assigned scenes."); return; }
+  const key = cbAssignedDraftKey(), revision = cbPlan.revision;
+  let response;
+  try { response = await cbPlanRead(); }
+  catch (error) { cbSay(`Order status could not refresh: ${error.message}. Nothing was prepared.`); return; }
+  if (key !== cbAssignedDraftKey() || revision !== cbPlan?.revision || response.plan.revision !== revision || cbLoadedSlug !== cbPlan?.slug) { cbSay("The allocation changed. Reload the plan before reviewing scenes."); return; }
+  if (!Array.isArray(response.delivery?.handoffs)) { cbSay("Order status is unavailable. Nothing was prepared."); return; }
+  cbPlanDelivery = response.delivery || null; paintCbHandoffs();
+  const assigned = new Set(draft.assignments.flatMap((row) => row.segmentIds.map((segmentId) => `${row.fp}\n${segmentId}`)));
+  const handoffs = Array.isArray(response.delivery?.handoffs) ? response.delivery.handoffs : [];
+  const rows = handoffs.filter((row) => row.status === "not-prepared" && row.peer?.eligible && assigned.has(`${row.owner}\n${row.segmentId}`))
+    .map((row) => ({ fp: row.owner, segmentId: row.segmentId }));
+  if (!rows.length) { cbAssignedReview = null; paintCbAssignedStatus(); cbSay("No new request is ready to prepare. Review prepared, expired and returned orders in the episode plan."); return; }
+  cbAssignedReview = { key, rows, at: 0, waiting: false }; cbSay(""); cbAssignedPick();
+});
+$("cbAssignedNext")?.addEventListener("click", () => { if (cbAssignedReview?.waiting) cbAssignedPick(); });
 $("cbDraftPreview")?.addEventListener("click", async () => {
-  const r = await mutateCollabPlan("preview_allocation", cbAllocationFields()); if (!r) return;
+  const fields = cbAllocationFields(), key = JSON.stringify(fields);
+  const r = await mutateCollabPlan("preview_allocation", fields); if (!r) return;
+  if (key !== JSON.stringify(cbAllocationFields())) {
+    paintCbAllocation();
+    $("cbDraftSummary").textContent = "Selection changed while the preview loaded. Preview again for the current friends and scenes.";
+    return;
+  }
   $("cbDraftResult").innerHTML = cbDraftMarkup(r.plan.draft);
   $("cbDraftSummary").textContent = `Unsaved preview · pinned owners respected · ${r.plan.draft.unassigned.length} unassigned · no remote availability data.`;
 });
@@ -6906,6 +7280,7 @@ for (const id of ["cbDraftResult", "cbDraftSaved"]) $(id)?.addEventListener("cli
   const button = ev.target.closest(".cbdraftpick"); if (!button) return;
   $("cbKind").value = "order"; paintCbKind();
   $("cbTo").value = button.dataset.to; $("cbSegment").value = button.dataset.segment;
+  paintCbRecipientStatus();
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 });
 
@@ -6920,6 +7295,28 @@ function showHandoff(file, what) {
   box.hidden = false;
   box.dataset.file = file || "";
   if ($("cbHandoffWhat")) $("cbHandoffWhat").textContent = `${what || "Your sealed file"} — ${file || ""}`;
+}
+function collabFileControls(file) {
+  return typeof file === "string" && file
+    ? `<span class="cbres" title="${esc(file)}">Prepared file: <code>${esc(file.split(/[\\/]/).pop())}</code></span><div class="chips"><button class="btn sm ghost cbfile-reveal" type="button">Show file</button><button class="btn sm ghost cbfile-copy" type="button">Copy location</button></div>`
+    : '<span class="cbres warn">This older record has no saved file path. Check the Collab out folder.</span>';
+}
+async function collabFileAction(event) {
+  const button = event.target?.closest?.("button");
+  if (!button?.classList?.contains || (!button.classList.contains("cbfile-reveal") && !button.classList.contains("cbfile-copy"))) return false;
+  const file = button.closest(".cbpeer")?.dataset.file || "";
+  if (!file) { cbSay("The prepared file path is unavailable. Check the Collab out folder."); return true; }
+  if (button.classList.contains("cbfile-copy")) {
+    try { await navigator.clipboard.writeText(file); cbSay("Prepared file location copied."); }
+    catch { cbSay(`Could not copy the path. Prepared file: ${file}`); }
+  } else {
+    const rel = file.replace(/^.*[\\/]collab[\\/]/, "collab/").replace(/\\/g, "/");
+    const r = await fetch("/api/reveal", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: rel }),
+    }).then((x) => x.json()).catch(() => ({ error: "could not open the file" }));
+    if (r.error) cbSay(r.error);
+  }
+  return true;
 }
 $("cbReveal")?.addEventListener("click", async () => {
   const file = $("cbHandoff")?.dataset.file || "";
@@ -6953,14 +7350,28 @@ async function paintOutbox() {
     returned: "came back — waiting for you under “What arrived”",
     adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
   };
-  host.innerHTML = rows.map((o) => `
-    <div class="cbpeer">
+  host.innerHTML = rows.map((o) => o.jobType === "video" ? `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>H3 video · seed ${esc(String(o.videoJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
+      ${collabFileControls(o.file)}
+    </div>` : o.jobType === "image" ? `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
+      ${collabFileControls(o.file)}
+    </div>` : `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
       <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
       <span class="meta">${esc(plain[o.state] || o.state || "Prepared")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}</span>
+      ${collabFileControls(o.file)}
     </div>`).join("");
 }
+$("cbOutbox")?.addEventListener("click", collabFileAction);
 
 $("cbFree")?.addEventListener("click", async () => {
   const n = $("cbFreeNote");
@@ -6978,7 +7389,38 @@ async function paintErrands() {
   if (cbListError("Accepted jobs", r)) return;
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
-  host.innerHTML = rows.map((o) => `
+  let readyImages = new Set();
+  if (rows.some((o) => o.jobType === "image" && o.state === "queued" && o.imageId)) {
+    try {
+      const images = await (await fetch("/api/images")).json();
+      readyImages = new Set((images.images || []).map((image) => image.name));
+    } catch { /* Unknown is not ready. The next refresh can check again. */ }
+  }
+  host.innerHTML = rows.map((o) => o.jobType === "video" ? `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>H3 video · seed ${esc(String(o.videoJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(String(o.videoJob?.job?.width ?? "?"))} × ${esc(String(o.videoJob?.job?.height ?? "?"))} · ${esc(String(o.videoJob?.job?.seconds ?? "?"))}s</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "accepted")}</span>
+      ${o.state === "landed" ? '<button class="btn sm cbvidrender" type="button">Render video</button>' : ""}
+      ${o.state === "queued" && o.renderStatus === "complete" ? '<button class="btn sm cbvidsend" type="button">Prepare return</button>' : ""}
+      ${o.state === "rendered" ? '<button class="btn sm ghost cbvidlocate" type="button">Show prepared return</button>' : ""}
+      ${["queued", "rendering"].includes(o.state) && o.renderStatus !== "complete" ? '<button class="btn sm ghost cbvidcheck" type="button">Refresh status</button>' : ""}
+      ${o.state === "failed" ? '<span class="cbres warn">Render failed; request a new signed job to retry.</span>' : ""}
+    </div>` : o.jobType === "image" ? `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(String(o.imageJob?.job?.width ?? "?"))} × ${esc(String(o.imageJob?.job?.height ?? "?"))} · ${esc(String(o.imageJob?.job?.references?.length ?? 0))} references</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "accepted")}</span>
+      ${o.state === "landed" ? '<button class="btn sm cbimgrender" type="button">Render image</button>' : ""}
+      ${o.state === "failed" ? '<button class="btn sm cbimgrender" data-retry="true" type="button">Retry image render</button>' : ""}
+      ${o.state === "rendering" ? '<span class="cbres warn">Queue receipt uncertain. This job is locked against duplicate renders; check the local queue before recovering it.</span>' : ""}
+      ${o.state === "failed" ? '<span class="cbres warn">Local render failed. Check the Images queue and model status before explicitly retrying; no return was sent.</span>' : ""}
+      ${o.state === "rendered" ? '<button class="btn sm ghost cbimglocate" type="button">Show prepared return</button>' : ""}
+      ${o.state === "queued" && readyImages.has(`${o.imageId}.png`) ? '<button class="btn sm cbimgsend" type="button">Send image back</button>' : ""}
+      ${["queued", "rendering", "failed"].includes(o.state) && !readyImages.has(`${o.imageId}.png`) ? '<button class="btn sm ghost cbimgcheck" type="button">Refresh status</button>' : ""}
+    </div>` : `
     <div class="cbpeer" data-id="${esc(o.id)}" data-slug="${esc(o.slug || "")}">
       <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
@@ -6991,7 +7433,7 @@ async function paintErrands() {
 }
 
 async function paintTakes() {
-  const host = $("cbTakes"), wrap = $("cbTakesWrap");
+  const host = $("cbTakes"), wrap = $("cbTakesWrap"), imageHost = $("cbImages"), imageWrap = $("cbImagesWrap"), videoHost = $("cbVideos"), videoWrap = $("cbVideosWrap");
   if (!host) return;
   const r = await cb({ action: "quarantine" });
   if (cbListError("Returned takes", r)) return;
@@ -7020,7 +7462,75 @@ async function paintTakes() {
       ${t.adopted ? "" : '<button class="btn sm ghost cbdrop" type="button">Throw it away</button>'}
     </div>`;
   }).join("");
+  if (imageHost) {
+    const images = Array.isArray(r.images) ? r.images : [];
+    if (imageWrap) imageWrap.hidden = !images.length;
+    imageHost.innerHTML = images.map((image) => {
+      const goodRow = image.v === 1 && typeof image.from === "string" && typeof image.file === "string";
+      const preview = `/api/collab-image/${encodeURIComponent(image.from || "")}/${encodeURIComponent(image.file || "")}`;
+      const ready = goodRow && image.ok === true && !image.adopted;
+      return `<div class="cbpeer" data-from="${esc(image.from || "")}" data-file="${esc(image.file || "")}">
+        <b>${esc(image.orderId || "Returned image")}</b>
+        <code>${esc(String(image.from || "").slice(0, 8))}</code>
+        <span class="${image.ok ? "ok" : "warn"}">${image.adopted ? "kept" : image.ok ? "checked" : esc(image.reason || "refused")}</span>
+        <span class="cbres">${esc(image.why || "")}</span>
+        ${goodRow ? `<details><summary>Job and model</summary><pre class="cbopened">${esc(image.prompt || "")}</pre><span class="cbres">${esc(image.record?.modelVersion || image.record?.model || "Model unknown")} · seed ${esc(String(image.record?.seed ?? "?"))} · rights ${esc(image.record?.outputRights?.class || "unknown")}</span></details>` : ""}
+        ${ready ? `<button class="btn sm ghost cbimagepreview" type="button">Preview image</button><img class="cbreturnedimage" alt="Returned image for ${esc(image.orderId || "this job")}" data-src="${esc(preview)}" hidden>` : ""}
+        ${ready ? '<button class="btn sm cbimageadopt" type="button" disabled title="Preview this checked image first">Keep image</button>' : ""}
+        ${goodRow && !image.adopted ? '<button class="btn sm ghost cbimagedrop" type="button">Throw it away</button>' : ""}
+      </div>`;
+    }).join("");
+  }
+  if (videoHost) {
+    const videos = Array.isArray(r.videos) ? r.videos : [];
+    if (videoWrap) videoWrap.hidden = !videos.length;
+    videoHost.innerHTML = videos.map((video) => {
+      const good = video.v === 1 && typeof video.from === "string" && typeof video.file === "string";
+      const playable = good && video.ok && !video.adopted;
+      const preview = `/api/collab-video/${encodeURIComponent(video.from || "")}/${encodeURIComponent(video.file || "")}`;
+      return `<div class="cbpeer" data-from="${esc(video.from || "")}" data-file="${esc(video.file || "")}">
+        <b>${esc(video.orderId || "Returned video")}</b>
+        <code>${esc(String(video.from || "").slice(0, 8))}</code>
+        <span class="${video.ok ? "ok" : "warn"}">${video.adopted ? "kept" : video.ok ? "checked" : esc(video.reason || "refused")}</span>
+        <span class="cbres">${esc(video.why || "")}</span>
+        ${good ? `<details><summary>Prompt and model</summary><pre class="cbopened">${esc(video.prompt || "")}</pre><span class="cbres">${esc(video.record?.modelVersion || video.record?.model || "Model unknown")} · rights ${esc(video.record?.outputRights?.class || "unknown")}</span></details>` : ""}
+        ${playable ? `<video class="cbtakevid" controls playsinline preload="none" src="${esc(preview)}"></video><button class="btn sm cbvideoadopt" type="button" disabled title="Play this checked video first">Keep video</button>` : ""}
+        ${good && !video.adopted ? '<button class="btn sm ghost cbvideodrop" type="button">Throw it away</button>' : ""}
+      </div>`;
+    }).join("");
+  }
 }
+$("cbVideos")?.addEventListener("playing", async (ev) => {
+  const row = ev.target?.closest?.(".cbpeer");
+  if (!row || row.dataset.reviewPending || row.dataset.reviewReceipt) return;
+  row.dataset.reviewPending = "1";
+  try {
+    const r = await cb({ action: "video_review_return", from: row.dataset.from, file: row.dataset.file });
+    if (r.error || !/^[0-9a-f]{48}$/.test(String(r.reviewReceipt || ""))) { cbSay(r.error || "Could not review this video."); return; }
+    row.dataset.played = "1";
+    row.dataset.reviewReceipt = r.reviewReceipt;
+    const button = row.querySelector(".cbvideoadopt");
+    if (button) button.disabled = false;
+  } catch (error) { cbSay(error.message || "Could not review this video.");
+  } finally { delete row.dataset.reviewPending; }
+}, true);
+$("cbVideos")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest?.(".cbpeer");
+  if (!row) return;
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  if (ev.target.classList.contains("cbvideoadopt")) {
+    if (row.dataset.played !== "1" || !row.dataset.reviewReceipt) { cbSay("Play this video before keeping it."); return; }
+    const r = await cb({ action: "video_adopt", ...body, reviewReceipt: row.dataset.reviewReceipt });
+    cbSay(r.error || `Kept in Clips as ${r.name}.`);
+    if (!r.error) await paintTakes();
+  } else if (ev.target.classList.contains("cbvideodrop")) {
+    const go = await cbConfirm({ title: "Throw away this returned video?", body: "This removes it from quarantine. It has not been added to Clips.", yes: "Throw it away" });
+    if (!go) return;
+    const r = await cb({ action: "video_drop", ...body });
+    cbSay(r.error || "Returned video removed.");
+    if (!r.error) await paintTakes();
+  }
+});
 /* Media events do not bubble, so the list listens in the capture phase: a row
  * whose take has started playing is a row somebody has watched.
  * ⚠ "playing", NOT "play". "play" fires the moment the button is pressed,
@@ -7115,14 +7625,231 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
   await refreshCollab();
 });
 
+$("cbImageReview")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  if (!imageReferencesShown(opened)) { paintIncomingImageReferenceState(); return; }
+  opened.reviewBusy = true;
+  paintIncomingImageReferenceState();
+  try {
+    const r = await cb({ action: "image_accept", file: opened.file });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    if (r.reason !== "not-seen" || !r.imageJob?.job) { $("cbImageNote").textContent = r.error || r.note || "Could not review this image job."; return; }
+    if (r.from?.fp !== opened.signerFp || r.imageJob.id !== opened.id
+        || JSON.stringify(r.imageJob) !== opened.orderKey) {
+      await openCollabFile(opened.file);
+      $("cbImageNote").textContent = "This file or its signer changed since it was opened. Review the new sender, prompt and references before accepting.";
+      return;
+    }
+    if (!imageReferencesShown(opened)) { paintIncomingImageReferenceState(); return; }
+    if (!/^[0-9a-f]{64}$/.test(String(r.reviewDigest || ""))) {
+      $("cbImageNote").textContent = "The server did not bind this review to the sealed file. Update Studio and review it again before accepting.";
+      return;
+    }
+    opened.reviewDigest = r.reviewDigest;
+    if (card) { card.dataset.imageArmed = opened.file; card.dataset.imageArmedDigest = r.reviewDigest; }
+    $("cbImageAccept").hidden = false;
+    $("cbImageAccept").title = r.minutes || "Accept stages references; Render is separate.";
+    $("cbImageNote").textContent = r.overBudget ? "This exceeds your friend's daily minutes. Accept will ask you to review the override." : "Reviewed. Accept stages references; Render is separate.";
+  } finally { opened.reviewBusy = false; paintIncomingImageReferenceState(); }
+});
+$("cbImageAccept")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.imageArmed !== opened.file
+      || !/^[0-9a-f]{64}$/.test(String(opened.reviewDigest || ""))
+      || card.dataset.imageArmedDigest !== opened.reviewDigest || !imageReferencesShown(opened)) {
+    cbSay("Review this exact image job again before accepting it.");
+    disarmCollab(); return;
+  }
+  opened.acceptBusy = true;
+  paintIncomingImageReferenceState();
+  try {
+    let r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+    if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+      const go = await cbConfirm({ title: "Accept anyway?", body: r.overrides.map((item) => item.why).join(" "), yes: "Accept anyway" });
+      if (!go) { $("cbImageNote").textContent = "Not accepted. Your friend's minutes remain unchanged."; return; }
+      if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value || card?.dataset.imageArmedDigest !== opened.reviewDigest) return;
+      r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest, anyway: true });
+    }
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Accepted locally. Rendering is a separate press.";
+    if (!r.error) { disarmCollab(); await paintImageCardStatus(); await paintErrands(); }
+  } finally { opened.acceptBusy = false; paintIncomingImageReferenceState(); }
+});
+async function requestFriendImageRender(id, retry, stillCurrent) {
+  const request = { action: "image_render", id, ...(retry ? { retry: true } : {}) };
+  let r = await cb(request);
+  if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Render anyway?", body: r.overrides.map((item) => item.why).join(" "), yes: "Render anyway" });
+    if (!go) return { error: "Not queued. Check your card and daily minutes before trying again." };
+    if (!stillCurrent()) return { error: "This is no longer the image job you reviewed." };
+    r = await cb({ ...request, anyway: true });
+  }
+  return r;
+}
+$("cbImageRender")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const button = $("cbImageRender"); button.disabled = true;
+  try {
+    const r = await requestFriendImageRender(opened.id, opened.imageState === "failed",
+      () => cbOpenedImage === opened && opened.file === $("cbFile")?.value);
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Queued here. Check the result before sending it back.";
+    if (!r.error) { await paintImageCardStatus(); await paintErrands(); }
+  } finally { button.disabled = false; }
+});
+$("cbImageCheck")?.addEventListener("click", async () => { await paintImageCardStatus(); await paintErrands(); });
+$("cbImageSendBack")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value || $("cbImageSendBack").disabled) return;
+  const button = $("cbImageSendBack"); button.disabled = true;
+  try {
+    const r = await cb({ action: "image_send_back", id: opened.id });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Finished image sealed for manual handoff.";
+    if (!r.error && r.file) {
+      setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend");
+      await paintErrands();
+    }
+  } finally { button.disabled = false; }
+});
+
+$("cbVideoReview")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_accept", file: opened.file });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.reason !== "not-seen" || !r.videoJob?.job) { $("cbVideoNote").textContent = r.error || r.note || "Could not review this job."; return; }
+  if (r.from?.fp !== opened.signerFp || r.videoJob.id !== opened.id || JSON.stringify(r.videoJob) !== opened.orderKey || !/^[0-9a-f]{64}$/.test(String(r.reviewDigest || ""))) {
+    await openCollabFile(opened.file);
+    $("cbVideoNote").textContent = "The signed file or signer changed. Review this job again.";
+    return;
+  }
+  opened.reviewDigest = r.reviewDigest;
+  if (card) { card.dataset.videoArmed = opened.file; card.dataset.videoArmedDigest = r.reviewDigest; }
+  $("cbVideoAccept").hidden = false;
+  $("cbVideoNote").textContent = `${r.minutes || "Daily allowance could not be read."} ${r.readiness?.ready ? "H3 appears ready here." : "H3 is missing files here; install them before rendering."} Model and engine readiness are checked again at Render; Accept only reserves this job.`;
+});
+$("cbVideoAccept")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.videoArmed !== opened.file || card?.dataset.videoArmedDigest !== opened.reviewDigest) {
+    cbSay("Review this exact signed video job before accepting it."); disarmCollab(); return;
+  }
+  let r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+  if (r.overridable && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Accept this video job anyway?",
+      body: `${r.overrides.map((item) => item.why).join(" ")} Accept reserves this job; it does not queue a render.`, yes: "Accept anyway" });
+    if (!go || cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+    r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest, anyway: true });
+  }
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Accepted locally; no render queued.";
+  if (!r.error) { disarmCollab(); await paintVideoCardStatus(); await paintErrands(); }
+});
+$("cbVideoRender")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  let r = await cb({ action: "video_render", id: opened.id });
+  if (r.overridable && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Render behind the current work?",
+      body: r.overrides.map((item) => item.why).join(" "), yes: "Render anyway" });
+    if (!go || cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+    r = await cb({ action: "video_render", id: opened.id, anyway: true });
+  }
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Queued on this machine.";
+  await paintVideoCardStatus(); await paintErrands();
+});
+$("cbVideoSendBack")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_send_back", id: opened.id });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Signed MP4 return prepared.";
+  if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished H3 video sealed for your friend"); await paintErrands(); }
+});
+
 $("cbReceiveBtn")?.addEventListener("click", async () => {
   const r = await cb({ action: "receive", file: $("cbFile")?.value.trim() });
   cbSay(r.error || r.note || "");
   await refreshCollab();
 });
 
+$("cbImages")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row) return;
+  if (ev.target.classList.contains("cbimagepreview")) {
+    const image = row.querySelector(".cbreturnedimage");
+    if (!image) return;
+    image.hidden = false;
+    image.src = image.dataset.src;
+    ev.target.textContent = "Previewing…";
+    return;
+  }
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  if (ev.target.classList.contains("cbimageadopt")) {
+    if (row.dataset.viewed !== "1") { cbSay("Preview the returned image before keeping it."); return; }
+    const r = await cb({ action: "image_adopt", ...body });
+    cbSay(r.error || `Kept in Pictures as ${r.name}.`);
+    if (!r.error) await paintTakes();
+  } else if (ev.target.classList.contains("cbimagedrop")) {
+    const go = await cbConfirm({ title: "Throw away this returned image?", body: "This removes it from quarantine. It has not been added to Pictures.", yes: "Throw it away" });
+    if (!go) return;
+    const r = await cb({ action: "image_drop", ...body });
+    cbSay(r.error || "Returned image removed.");
+    if (!r.error) await paintTakes();
+  }
+});
+$("cbImages")?.addEventListener("load", (ev) => {
+  const row = ev.target.closest?.(".cbpeer");
+  if (row && ev.target.classList?.contains("cbreturnedimage")) {
+    row.dataset.viewed = "1";
+    const button = row.querySelector(".cbimagepreview");
+    if (button) button.textContent = "Image shown";
+    const keep = row.querySelector(".cbimageadopt");
+    if (keep) { keep.disabled = false; keep.title = "Keep the reviewed image in Pictures"; }
+  }
+}, true);
+$("cbImages")?.addEventListener("error", (ev) => {
+  if (ev.target.classList?.contains("cbreturnedimage")) cbSay("This browser could not show the returned image. It has not been kept.");
+}, true);
+
 $("cbErrands")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
+  if (row && await collabFileAction(ev)) return;
+  if (row && ev.target.classList.contains("cbvidcheck")) { await paintErrands(); await paintVideoCardStatus(); return; }
+  if (row && ev.target.classList.contains("cbvidrender")) {
+    const r = await cb({ action: "video_render", id: row.dataset.id });
+    cbSay(r.error || r.note || "H3 video queued locally.");
+    await paintErrands(); await paintVideoCardStatus(); return;
+  }
+  if (row && (ev.target.classList.contains("cbvidsend") || ev.target.classList.contains("cbvidlocate"))) {
+    const r = await cb({ action: "video_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Signed H3 video return prepared.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished H3 video sealed for your friend"); await paintErrands(); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgcheck")) { await paintErrands(); return; }
+  if (row && ev.target.classList.contains("cbimglocate")) {
+    const r = await cb({ action: "image_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Prepared image return found.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend"); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgrender")) {
+    const id = row.dataset.id, retry = ev.target.dataset.retry === "true";
+    const r = await requestFriendImageRender(id, retry, () => row.dataset.id === id);
+    cbSay(r.error || r.note || "Image queued on this computer. Check its result before sending it back.");
+    if (!r.error) { await paintErrands(); await paintImageCardStatus(); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgsend")) {
+    const r = await cb({ action: "image_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Finished image sealed for manual handoff.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend"); await paintErrands(); }
+    return;
+  }
   if (row && ev.target.classList.contains("cbopenplan")) { cbOpenProject(row.dataset.slug); return; }
   if (!row || !ev.target.classList.contains("cbsend")) return;
   const r = await cb({ action: "send_back", id: row.dataset.id });
@@ -7854,7 +8581,8 @@ function vidSpeedupNeed(eng, steps, hasRefs) {
   const tb = eng?.turboBuilds;
   const n = Number(steps);
   if (!tb || eng.fixedSteps || !Number.isFinite(n) || n > (eng.turboMaxSteps ?? 12)) return null;
-  const build = hasRefs ? (tb.four || tb.eight ? null : 8)
+  const build = hasRefs ? (n <= (eng.turbo4MaxSteps ?? 5)
+    ? (tb.four ? null : 4) : (tb.eight ? null : 8))
     : n <= (eng.turbo3MaxSteps ?? 3) ? (tb.three ? null : 3)
     : n <= (eng.turbo4MaxSteps ?? 5) ? (tb.four ? null : 4)
     : (tb.eight ? null : 8);
@@ -8056,12 +8784,14 @@ function vidPaint() {
    * attached, in which case the server's refusal shows in #vidKeepNote. */
   { const kf = $("vidKeepField");
     if (kf) kf.hidden = cur !== "h3" && !($("vidCharacter")?.value || (state.refImages || []).length); }
-  /* Ask friend explains itself before anyone clicks: a recipe is H3 or LTX. */
+  /* This button sends a signed H3 render order, not a text-only recipe. */
   if ($("vidAskFriend")) {
-    const recipeOk = recipeEngineOk(cur);
-    $("vidAskFriend").disabled = !recipeOk;
+    const h3Job = cur === "h3";
+    $("vidAskFriend").disabled = !h3Job;
     const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
-    $("vidAskFriend").title = recipeOk ? `Prepare a text-only recipe for a friend using their default models. To send reference pictures, use ${wfName} → Video clips → Ask friend, which carries them.` : recipeEngineRefusal();
+    $("vidAskFriend").title = h3Job
+      ? `Send a signed 20-step H3 text-to-video job for a friend to review and render. For scenes with pictures, use ${wfName} → Video clips → Ask friend.`
+      : "Friend render jobs currently use MiniMax H3. Select H3 to ask a friend.";
   }
   /* The song under the clip works on BOTH engines — LTX freezes the audio
    * latent, H3 freezes it AND anchors it so the model can read the vocal: on
@@ -9070,6 +9800,24 @@ function videoFriendRecipe() {
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
 }
+function videoFriendJob() {
+  const video = videoFriendRecipe();
+  if (!video.prompt.trim()) throw new Error("Describe the clip before asking a friend to render it.");
+  if (video.engine !== "h3") throw new Error("Friend render jobs currently support MiniMax H3 text-to-video. Select H3 first.");
+  if (video.steps !== 20) throw new Error("Set H3 to 20 steps for this base-only friend job. Faster steps load a different turbo LoRA.");
+  if (video.guidance !== 1) throw new Error("Set guidance to 1 before asking a friend; the H3 graph does not use the Video guidance slider.");
+  if (video.negative.trim()) throw new Error("Clear the negative prompt before sending an H3 friend job; H3's built-in graph does not use it.");
+  if (($("vidSparse")?.value || state.video?.engines?.h3?.sparse || "off") !== "off") throw new Error("Turn H3 sparse attention off before sending this friend job.");
+  if (state.video?.engines?.h3?.bridge && state.video.engines.h3.bridge !== "off") throw new Error("Turn the H3 conditioning bridge off before sending this friend job.");
+  if (state.video?.engines?.h3?.blockCache === true) throw new Error("Turn H3 block cache off before sending this base-only friend job.");
+  if (Math.abs((+$('vidPin').value / 100) - 0.7) > 0.00001) throw new Error("Set frame guide strength to 70% before sending this text-only job.");
+  const backend = state.video?.engines?.h3?.attention
+    ? ($("vidAttn")?.value || state.video.engines.h3.attention) : "pytorch";
+  const attention = backend === "kitchen" ? "ck" : backend;
+  if (!["ck", "pytorch"].includes(attention)) throw new Error("Choose CK or PyTorch H3 attention before sending this friend job.");
+  return { ...video, prompt: video.prompt.trim(), negative: "", sparse: "off", attention, blockCache: false, bridge: "off", bridgeAlpha: 0, guideStrength: 0.7,
+    refImages: [], refAudios: [], midUploads: [], loras: [], loop: false };
+}
 /* A recipe carries MiniMax H3 or LTX settings (server/collab/video-recipe.js,
  * whose enum is the wire format a friend's Studio reads). Any other engine is
  * refused on the page, by name and with the way out, instead of reaching the
@@ -9083,7 +9831,7 @@ function recipeEngineRefusal() {
 }
 $("vidRecipeClear")?.addEventListener("click",()=>{state.videoRecipeLoaded=false;$("vidRecipeClear").hidden=true;$("clipNote").textContent="Recipe mode cleared.";});
 $("vidAskFriend")?.addEventListener("click",()=>{
-  try {const videoRecipe=videoFriendRecipe();setView("collab",{videoRecipe});}
+  try {const videoRecipe=videoFriendJob();setView("collab",{videoRecipe});}
   catch(e){$("clipNote").textContent=e.message;}
 });
 $("cbUseVideo")?.addEventListener("click",async()=>{
@@ -11198,7 +11946,7 @@ function iedChkVerdict(ok) {
 }
 
 function openImageEditor(name) {
-  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocViewSeq;
+  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocOpenSeq; ++iedDocViewSeq;
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
   ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
@@ -12070,6 +12818,7 @@ let iedDocRows = null;          // the shelf listing; null until it has been rea
 let iedDoc = null;              // the OPEN document's tree, refreshed by every edit
 let iedDocLines = [];           // the flat outline the shelf answers with
 let iedDocPick = [];            // picked layer ids, in the order they were clicked
+let iedDocOpenSeq = 0;          // newer canvas choices invalidate older shelf reads
 let iedDocCat = null, iedDocCatErr = null;
 /* ⚠ A FAILED READ IS NOT AN EMPTY SHELF. Both leave the row list empty, and
  * rendering them the same way tells somebody their documents are gone when the
@@ -12154,11 +12903,14 @@ function iedDocFind(id, layers) {
 async function iedDocEdit(ops, what) {
   if (!iedDoc) { iedToast(iedDocNeed()); return null; }
   if (iedDocBusy) return null;
+  const sourceDoc = iedDoc, id = sourceDoc.id;
   iedDocBusy = true; iedDocPaint();
   try {
     const r = await (await fetch("/api/images/document-edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: iedDoc.id, ops, doc: true }) })).json();
+      body: JSON.stringify({ id, ops, doc: true }) })).json();
+    // The shelf edit still commits, but a later canvas choice owns the view.
+    if (iedDoc !== sourceDoc) return r;
     if (r.error) {
       /* A refusal anywhere in the list leaves the shelf exactly as it was, so
        * the local tree is still right and must not be thrown away. */
@@ -12212,7 +12964,9 @@ function iedDocMaybeList() {
 }
 
 async function iedDocOpenId(id) {
+  const seq = ++iedDocOpenSeq;
   const r = await iedDocPost({ action: "open", id });
+  if (seq !== iedDocOpenSeq) return;
   if (r.error) { iedDocSay(`That document did not open: ${r.error}`); iedToast(r.error); return; }
   if (iedDoc?.id !== r.doc?.id && ied.name) openImageEditor(ied.name);
   iedDoc = r.doc || null;
@@ -12277,7 +13031,7 @@ async function iedDocViewRefresh() {
   } catch (error) { if (seq === iedDocViewSeq) iedDocSay(`Canvas preview failed: ${error.message}`); }
 }
 
-const iedAI = { refs: [], job: null, busy: false, poll: 0, original: null };
+const iedAI = { refs: [], job: null, busy: false, poll: 0, pollFailures: 0, original: null };
 function iedAIPaint() {
   iedDocumentFileToolsPaint();
   const mode = $("iedAIMode").value;
@@ -12302,8 +13056,10 @@ function iedAIPaint() {
   $("iedAITransparent").disabled = mode === "inpaint";
   if (mode === "inpaint") $("iedAITransparent").checked = false;
   const ready = iedAI.job?.status === "ready", active = iedAI.job?.status === "generating";
-  $("iedAIGenerate").disabled = iedAI.busy || active || ready || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
-  $("iedAIGenerate").textContent = active ? "Qwen is generating…" : "Generate edit preview";
+  $("iedAIGenerate").disabled = iedAI.busy || active || ready || iedAI.pollFailures > 0
+    || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
+  $("iedAIGenerate").textContent = iedAI.pollFailures ? "Checking edit…"
+    : active ? "Qwen is generating…" : "Generate edit preview";
   $("iedAIReview").hidden = !ready;
   $("iedAIUndo").hidden = iedAI.job?.status !== "accepted";
   for (const id of ["iedAIAccept", "iedAIDiscard", "iedAIUndo"]) $(id).disabled = iedAI.busy;
@@ -12337,6 +13093,8 @@ async function iedAIPoll() {
     const r = await iedAIRequest({ action: "status", id });
     if (iedAI.job?.id !== id) return;
     iedAI.job = r;
+    iedAI.pollFailures = 0;
+    $("iedAIStatus").title = "";
     if (r.status === "generating") {
       $("iedAIStatus").textContent = `Queued or generating · seed ${r.seed}. The original is unchanged.`;
       iedAI.poll = setTimeout(iedAIPoll, 2000);
@@ -12345,7 +13103,25 @@ async function iedAIPoll() {
       await loadImages();
     } else if (r.status === "error") $("iedAIStatus").textContent = r.error || "The generation failed.";
     iedAIPaint();
-  } catch (error) { $("iedAIStatus").textContent = error.message; iedAI.job = null; iedAIPaint(); }
+  } catch (error) {
+    if (iedAI.job?.id !== id) return;
+    // A status request can fail while the detached GPU job keeps running.
+    // Keep its id and refuse another render until we know the actual result.
+    // A server restart is definitive: it has no record to recover.
+    if (/editor job is unavailable or belongs to a previous app session/i.test(error.message)) {
+      iedAI.job = null;
+      iedAI.pollFailures = 0;
+      $("iedAIStatus").textContent = "Edit session ended. Generate again.";
+      $("iedAIStatus").title = "";
+    } else {
+      const delay = Math.min(10_000, 1000 * 2 ** Math.min(iedAI.pollFailures + 1, 4));
+      iedAI.pollFailures++;
+      $("iedAIStatus").textContent = "Connection lost. Checking edit again…";
+      $("iedAIStatus").title = error.message;
+      iedAI.poll = setTimeout(iedAIPoll, delay);
+    }
+    iedAIPaint();
+  }
 }
 function iedAIHasPending() {
   const o = iedOps();
@@ -12364,7 +13140,7 @@ $("iedAIRefAdd").onclick = () => {
   iedAIPaint();
 };
 $("iedAIGenerate").onclick = async () => {
-  if (iedAI.busy || ["generating", "ready"].includes(iedAI.job?.status)) return;
+  if (iedAI.busy || iedAI.pollFailures || ["generating", "ready"].includes(iedAI.job?.status)) return;
   iedAI.busy = true; iedAIPaint();
   try {
     if (iedDoc && !iedDocViewReady) throw new Error("Wait for the document canvas preview to finish before editing.");
@@ -12379,6 +13155,7 @@ $("iedAIGenerate").onclick = async () => {
       ...($("iedAISeed").value.trim() ? { seed: +$("iedAISeed").value } : {}) };
     $("iedAIStatus").textContent = "Freezing the source and checking Qwen…";
     iedAI.job = await iedAIRequest(body);
+    iedAI.pollFailures = 0;
     clearTimeout(iedAI.poll); iedAI.poll = setTimeout(iedAIPoll, 1000);
     $("iedAIStatus").textContent = `Queued · seed ${iedAI.job.seed}. You can keep the original until the preview is ready.`;
   } catch (error) { $("iedAIStatus").textContent = error.message; }
@@ -12851,6 +13628,7 @@ function iedDocPaint() {
   gate("iedDocUngroup", !!hit && hit.layer.type === "group",
     iedDoc ? "Pick a group row — ungroup is the one op that needs one." : iedDocNeed());
   gate("iedDocRender", !!iedDoc, iedDocNeed());
+  gate("iedDocPsd", !!iedDoc, iedDocNeed());
   gate("iedDocClose", !!iedDoc, iedDocNeed());
 
   for (const b of shelf.querySelectorAll("[data-docopen]")) {
@@ -12901,7 +13679,7 @@ $("iedDocClip").onclick = () => iedDocClipToggle();
 $("iedDocUngroup").onclick = () => iedDocUngroup();
 $("iedDocClose").onclick = () => {
   iedDoc = null; iedDocLines = []; iedDocPick = [];
-  ++iedDocViewSeq;
+  ++iedDocOpenSeq; ++iedDocViewSeq;
   iedPreviewClear();
   if (ied.name) $("iedImg").src = `/api/image/${encodeURIComponent(ied.name)}`;
   $("iedDocName").textContent = ied.name || "Image";
@@ -12910,6 +13688,26 @@ $("iedDocClose").onclick = () => {
   iedDocPaint();
 };
 $("iedDockDocs").addEventListener("toggle", iedDocMaybeList);
+
+$("iedDocPsd").onclick = async () => {
+  if (!iedDoc || iedDocBusy) return;
+  const id = iedDoc.id;
+  iedDocBusy = true; iedDocPaint();
+  try {
+    const response = await fetch("/api/images/standrig-psd", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    const result = await response.json();
+    if (!response.ok || result.error) { iedDocSay(result.error || "PSD export failed."); return; }
+    if (!/^\/api\/images\/standrig-psd\/standrig_[0-9a-f]{32}\.psd$/.test(result.downloadUrl)) {
+      iedDocSay("PSD export returned an invalid download link."); return;
+    }
+    const link = document.createElement("a");
+    link.href = result.downloadUrl; link.download = result.name;
+    document.body.append(link); link.click(); link.remove();
+    iedDocSay(`PSD ready · ${result.layers?.length || 0} parts.`, result.warnings);
+  } catch (error) { iedDocSay(`PSD export failed: ${error.message || error}`); }
+  finally { iedDocBusy = false; iedDocPaint(); }
+};
 
 $("iedDocRender").onclick = async () => {
   if (!iedDoc) { iedToast(iedDocNeed()); return; }
@@ -16868,7 +17666,9 @@ async function imgQwenCheck() {
    * of them reads as a fault; one that spins when the answer is actually slow
    * reads as work. The light is left alone until then, so a green Qwen stays
    * green through a re-check that changes nothing. */
-  const spin = setTimeout(() => imgQwenPaint("busy", "Checking Qwen Image 2.1…"), 350);
+  const spin = setTimeout(() => {
+    if (request === imgQwenRequest) imgQwenPaint("busy", "Checking Qwen Image 2.1…");
+  }, 350);
   imgQueueGate();
   try {
     const response = await fetch(`/api/images/qwen-status?${key}`);
@@ -17943,6 +18743,47 @@ function ckptOptions(list, selected) {
   }
 }
 
+/* A standalone friend job is deliberately narrower than Make image. Every
+ * setting it cannot reproduce on the receiver is refused here, never dropped
+ * while changing views. References are ordered server-issued names only; their
+ * bytes are frozen, hashed and included by the Collab preview on the server. */
+function imageFriendJob() {
+  if ($("imgEngine").value !== "qwen-image-2.1") throw new Error("Ask friend currently supports Qwen Image 2.1. Choose it above first.");
+  const prompt = $("imgPrompt").value.trim();
+  if (!prompt) throw new Error("Describe the image before asking a friend.");
+  if ($("imgPrivate").checked) throw new Error("Don't record the prompt is on. Sending this job reveals its words to your friend; turn that switch off first.");
+  if ($("imgPersona").value) throw new Error("This job cannot expand a saved character yet. Add up to three of its reference images directly, then ask again.");
+  if (imgRefs.length > 3) throw new Error("A friend job can carry up to three reference images. Remove the extras first.");
+  if (imgRefs.length && $("imgRefSizing").value !== "custom") throw new Error("Set canvas to ‘Use the size above’ for a friend job. Matching a reference's shape is not in this job format.");
+  if ($("imgTransparent").checked) throw new Error("Transparent backgrounds are not in this friend job format. Turn Transparent off first.");
+  if (imgDraftOn()) throw new Error("Fast draft is not in this friend job format. Turn it off to send a full Qwen render.");
+  if (Number($("imgCount").value) !== 1) throw new Error("A friend job makes one image. Set ‘how many’ to 1; prepare another file for each additional image.");
+  if (Number($("imgSteps").value) !== 25) throw new Error("A friend job uses Qwen's 25-step full render. Set steps to 25 first.");
+  if (Number($("imgCfg").value) !== 1 || $("imgNeg").value.trim()) throw new Error("A friend job uses CFG 1 with no negative prompt. Set CFG to 1 and clear Avoid first.");
+  const [width, height] = $("imgSize").value === "custom"
+    ? [Number($("imgW").value), Number($("imgH").value)]
+    : $("imgSize").value.split("x").map(Number);
+  if (![width, height].every((n) => Number.isInteger(n) && n >= 256 && n <= 4096)) throw new Error("Choose a valid canvas size before asking a friend.");
+  if (![[1024, 1024], [1344, 768], [768, 1344]].some(([w, h]) => w === width && h === height))
+    throw new Error("A friend job supports 1024 × 1024, 1344 × 768 or 768 × 1344. Choose Custom for the wide or tall size.");
+  const refs = imgRefs.map((r) => r.name);
+  if (refs.some((name) => typeof name !== "string" || !name || name === "." || name === ".." || /[\\/]/.test(name))) throw new Error("A reference is missing its Studio-issued name. Add it again before asking a friend.");
+  const seedText = $("imgSeed").value.trim();
+  const seed = seedText === "" ? undefined : Number(seedText);
+  if (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 4294967295)) throw new Error("Seed must be a whole number from 0 through 4294967295.");
+  return { prompt, negative: "", width, height, steps: 25, cfg: 1, ...(seed === undefined ? {} : { seed }), refs };
+}
+$("imgAskFriend")?.addEventListener("click", () => {
+  try {
+    const imageJob = imageFriendJob();
+    const imageRefPreviews = imgRefs.map(({ name, url }) => ({ name, url }));
+    setView("collab", { imageJob, imageRefPreviews });
+  } catch (e) {
+    $("imgNote").textContent = e.message || String(e);
+    $("imgNote").classList.add("stick");
+  }
+});
+
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
   if (!prompt) { $("imgPrompt").focus(); return; }
@@ -18744,12 +19585,24 @@ function reactReview() {
     const known = !!request.seconds || remaining !== null;
     const frames = known ? (request.paint ? Math.ceil(seconds * request.paint.fps) : Math.round(seconds * 12)) : null;
     const refs = request.pictures.filter((name) => !/\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const firstClip = request.pictures.find((name) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const sourceVideo = $("reactSourceVideo");
+    const sourceClipDuration = sourceVideo?.dataset.file === firstClip && Number.isFinite(sourceVideo.duration) ? sourceVideo.duration : null;
+    const sourceWindow = request.motion && known ? reactiveSourceWindow({ duration: sourceClipDuration,
+      start: request.motion.sourceStart, speed: request.motion.sourceSpeed, seconds }) : { known: false };
+    const sourceWindowNote = !request.motion ? "" : !sourceWindow.known
+      ? "Source loop point is unknown until the selected clip and song durations load."
+      : sourceWindow.startBeyondEnd
+        ? `Source starts at ${sourceWindow.start.toFixed(1)}s, at or beyond the clip's ${sourceWindow.duration.toFixed(1)}s end; check the offset before rendering.`
+        : sourceWindow.repeats
+          ? `Source clip ends about ${sourceWindow.firstRepeatAt.toFixed(1)}s into the output and then repeats from the beginning. The source player previews only the first pass.`
+          : `Source window ${sourceWindow.start.toFixed(1)}–${sourceWindow.sourceEnd.toFixed(1)}s fits in the ${sourceWindow.duration.toFixed(1)}s clip.`;
     const drums = request.hits === "drums" || request.motion?.profile === "yvann";
     const work = request.paint ? `${frames === null ? "Duration-dependent" : frames} diffusion frames at ${request.paint.fps} fps, then a compositor export.`
       : request.motion ? `${frames === null ? "Duration-dependent" : frames} motion frames at 12 fps · ${$("reactMotionSteps").value} sampling steps · ${$("reactMotionHires").checked ? "detail pass enabled (extra diffusion work)" : "one diffusion pass"}${$("reactMotionSmooth").checked ? " · interpolation to 24 fps" : ""}, then a compositor export.`
         : "Song analysis and compositor export; no video diffusion model is used for this look.";
     const time = known ? `${seconds.toFixed(1)}s from song ${start.toFixed(1)}s${request.seconds && seconds < request.seconds ? " (limited by remaining song)" : ""}` : `Remaining song from ${start.toFixed(1)}s, capped at ${limit}s; duration is not loaded yet`;
-    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p><p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
+    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p>${sourceWindowNote ? `<p>${esc(sourceWindowNote)}</p>` : ""}<p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
     $("reactRequestJson").textContent = JSON.stringify(request, null, 2);
     $("reactSongRegion").textContent = sourceDuration === null ? "Song duration loads from the audio file. Blank length uses the remainder, capped at 600s (120s for Motion)." : `Song length ${sourceDuration.toFixed(1)}s · selected start ${start.toFixed(1)}s · ${remaining.toFixed(1)}s remaining. Song and source clip timing are independent.`;
     return request;
@@ -18763,6 +19616,7 @@ $("reactReviewRefresh")?.addEventListener("click", reactReview);
 $("reactForm")?.addEventListener("input", reactReview);
 $("reactForm")?.addEventListener("change", reactReview);
 $("reactSongPlayer")?.addEventListener("loadedmetadata", reactReview);
+$("reactSourceVideo")?.addEventListener("loadedmetadata", reactReview);
 $("reactSongPlayer")?.addEventListener("timeupdate", () => {
   const player = $("reactSongPlayer"), seconds = Number($("reactSecs").value), start = Number($("reactStart").value || 0);
   if (player.dataset.region === "yes" && seconds > 0 && player.currentTime >= start + seconds) { player.pause(); player.dataset.region = ""; }
@@ -18778,6 +19632,14 @@ $("reactSourcePlay")?.addEventListener("click", async () => {
   catch (error) { $("reactNote").textContent = `Could not play the source: ${error.message}`; }
 });
 $("reactShortTest")?.addEventListener("click", () => { $("reactSecs").value = "4"; reactReview(); $("reactNote").textContent = "Length set to 4 seconds. Review the settings, then Render to run the test."; });
+$("reactAskSourceFriend")?.addEventListener("click", () => {
+  /* Collab's signed H3 job is text-only. A Reactive render also needs the local
+   * song, ordered media and compositor settings, so this shortcut opens the
+   * existing source-clip workflow without pretending to send that whole job. */
+  setView("video");
+  $("vidFriendSourceNote").hidden = false;
+  $("vidPrompt")?.focus();
+});
 
 /* Watch one render row on the comp until it is done or failed. */
 async function reactWatch(slug, jobId) {
@@ -19187,7 +20049,7 @@ function setView(name, options) {
   $("imgPanel").hidden = name !== "images";
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
-  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe);
+  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe, options?.imageJob, options?.imageRefPreviews);
   if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
@@ -19269,7 +20131,7 @@ function setView(name, options) {
   if (name === "thanks") loadThanks();
   // Same catalogue, filled the first time the About page is opened.
   if (name === "about") { loadAboutRights(); loadAboutReport(); loadVersion(); }
-  if (name === "video") { vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
+  if (name === "video") { $("vidFriendSourceNote").hidden = true; vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is
    * how two views start disagreeing about what exists. */

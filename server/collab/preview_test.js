@@ -48,3 +48,17 @@ test("freshness rejects changed recipient keys, missing assets, and unsafe filen
   await assert.rejects(assertPreviewFresh({ ...frozen, manifest: [{ ...frozen.manifest[0], file: "../secret.png" }] }, checks), { reason: "preview-stale" });
   assert.equal(reads, 1);
 });
+
+test("a standalone image preview lists included reference hashes without exposing bytes", () => {
+  const store = createPreviewStore();
+  const picture = Buffer.from("exact reference bytes");
+  const image = { kind: "job-order", jobType: "image", job: { prompt: "A portrait",
+    references: [{ ordinal: 1, mime: "image/png", bytes: picture.length,
+      sha256: previewHash(picture), b64: picture.toString("base64") }] } };
+  const shown = store.create({ payload: image, peer, name: "image.aiplay", describes: "One Qwen image" });
+  assert.equal(shown.manifest[0].included, true);
+  assert.equal(shown.manifest[0].ordinal, 1);
+  assert.equal(shown.includedBytes, picture.length);
+  assert.equal(shown.packet.job.references[0].b64, undefined);
+  assert.equal(store.take(shown.previewId).payload.job.references[0].b64, picture.toString("base64"));
+});

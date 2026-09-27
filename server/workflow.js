@@ -260,6 +260,24 @@ export function saveAudioNode(prefix) {
  * that picks it and the catalogue row that fetches it cannot spell it apart. */
 export const INSTRUMENTAL_PLANNER_LORA = "ar_lora_inst_v3abc_comfyui.safetensors";
 
+/** Effective node inputs saved beside a YuE2 take for listening comparisons.
+ * The graph and the receipt use this one resolver, so later default changes
+ * cannot make two differently sampled songs look like a matched pair. */
+export function yue2ComfySamplingReceipt({ sampling = null, planSampling = null, cot = "full", abc = null } = {}) {
+  const pick = (o, k, d) => (o && typeof o[k] === "number" && Number.isFinite(o[k]) ? o[k] : d);
+  const score = typeof abc === "string" && abc.trim() !== "";
+  return {
+    audio: {
+      temperature: pick(sampling, "temperature", 1.0), top_p: pick(sampling, "top_p", 0.95),
+      top_k: pick(sampling, "top_k", 100), repetition_penalty: pick(sampling, "repetition_penalty", 1.2),
+    },
+    planner: cot !== "off" && !score ? {
+      temperature: pick(planSampling, "temperature", 0.7), top_p: pick(planSampling, "top_p", 0.9),
+      top_k: 30, repetition_penalty: 1.005, penalty_window: 100,
+    } : null,
+  };
+}
+
 export function buildYue2ComfyGraph({
   caption, lyrics = "", seed = 0, mixSeed, cot = "full", maxDuration = 240, steps, checkpoint,
   lora = null, loraStrength = 1,
@@ -284,7 +302,6 @@ export function buildYue2ComfyGraph({
   /* The door refuses this with its own sentence; a caller that skipped the
    * door fails here rather than rendering without the score. */
   if (score && !plan) throw new Error("A supplied score needs the chain of thought on (full or melody); nothing was rendered.");
-  const pick = (o, k, d) => (o && typeof o[k] === "number" && Number.isFinite(o[k]) ? o[k] : d);
   /* TWO LoRA DOORS, one per half of the model. The audio LoRA rides between
    * the checkpoint and the sampler on the MODEL wire only —
    * LoraLoaderModelOnly, the node H3's turbo LoRAs load through — which
@@ -304,10 +321,8 @@ export function buildYue2ComfyGraph({
   const clipWire = useClipLora ? ["3", 1] : ["1", 1];
   const mode = cot === "melody" ? "melody" : "full";
   const s = Number(seed) || 0;
-  const performance = {
-    temperature: pick(sampling, "temperature", 1.0), top_p: pick(sampling, "top_p", 0.95),
-    top_k: pick(sampling, "top_k", 100), repetition_penalty: pick(sampling, "repetition_penalty", 1.2),
-  };
+  const effectiveSampling = yue2ComfySamplingReceipt({ sampling, planSampling, cot, abc: score });
+  const performance = effectiveSampling.audio;
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
     ...(useLora ? {
@@ -321,8 +336,7 @@ export function buildYue2ComfyGraph({
         class_type: "YuE2GenerateABC",
         inputs: {
           clip: clipWire, style: caption, lyrics, seed: s, mode,
-          max_abc_tokens: 8192, temperature: pick(planSampling, "temperature", 0.7), top_p: pick(planSampling, "top_p", 0.9), top_k: 30,
-          repetition_penalty: 1.005, penalty_window: 100,
+          max_abc_tokens: 8192, ...effectiveSampling.planner,
         },
       },
     } : {}),

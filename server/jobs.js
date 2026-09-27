@@ -963,21 +963,24 @@ export class JobRunner extends EventEmitter {
         },
       });
       if (this.current !== job) return;
-      if (job.cancelRequested) { this.#markCancelled(job); return; }
+      /* The Pod can finish while Stop is being requested. Its output was
+       * already downloaded and adopted, so report the completed render. */
       job.state = "done";
       job.overall = 1;
       job.finishedAt = Date.now();
       job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
       job.file = r.file;
       job.runId = r.runId || job.runId || null;
-      job.note = null;
+      job.note = job.cancelRequested ? "The Pod completed before Stop took effect; the output was kept." : null;
       job.remote = true;
       this.history.unshift(job);
       this.current = null;
       this.emit("update", this.snapshot());
     } catch (err) {
       if (this.current !== job) return;
-      if (job.cancelRequested) { this.#markCancelled(job); return; }
+      /* A failed or uncertain paid render is not a confirmed cancellation.
+       * Keep its real state and message so the user can check the Pod. */
+      if (err.remoteState === "cancelled") { this.#markCancelled(job); return; }
       job.state = "failed";
       job.error = String(err.message || err);
       job.finishedAt = Date.now();
@@ -1208,6 +1211,14 @@ export class JobRunner extends EventEmitter {
       job.state = "cancelling";
       this.emit("update", this.snapshot());
       if (job.proc && this.yue?.killTree) await this.yue.killTree(job.proc).catch(() => {});
+      return { found: true, id, state: "cancelling", pending: true };
+    }
+    /* The RunPod song has a remote job ID, not a local ComfyUI prompt ID.
+     * Its watcher requests a scoped Stop and keeps this queue slot occupied
+     * until the Pod actually reports a terminal state. */
+    if (this.remote && job.stage === "remote") {
+      job.state = "cancelling";
+      this.emit("update", this.snapshot());
       return { found: true, id, state: "cancelling", pending: true };
     }
     if (job.submitting && !job.promptId) {

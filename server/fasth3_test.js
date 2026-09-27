@@ -216,8 +216,8 @@ test("the route, the job and the Video screen carry the attention choice; refere
   assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}/);
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   const art = read("./art.js");
-  assert.match(art, /attention: await this\.videoAttention\(job\),/);
-  const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);
+  assert.match(art, /const attention = graph \? null : await this\.videoAttention\(job\);/);
+  const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 1200);
   assert.match(va, /const want = job\.attention \?\? eng\.attention;/, "the person's pick, else the engine's default");
   assert.match(va, /if \(want !== "kitchen" && want !== "ck"\) return "pytorch";/, "a PyTorch pick is written out, not left to the launcher");
   assert.match(va, /return \(await this\.#kitchenOffered\(\)\) \? "ck" : "pytorch";/,
@@ -227,7 +227,7 @@ test("the route, the job and the Video screen carry the attention choice; refere
    * the later one wins in silence, and the picker is dead. Exactly one. */
   const call = art.slice(art.indexOf("if (!graph) graph = videoGraph({"), art.indexOf("const key = graphHash(graph);"));
   assert.ok(call.length > 100, "the videoGraph call was found");
-  assert.equal((call.match(/^\s+attention:/gm) || []).length, 1, "exactly one attention key reaches the graph");
+  assert.equal((call.match(/^\s+attention(?:,|:)/gm) || []).length, 1, "exactly one attention key reaches the graph");
   const html = read("../web/index.html"), app = read("../web/app.js");
   assert.match(html, /<select id="vidAttn" class="sel2"[\s\S]*?<option value="pytorch">PyTorch<\/option>\s*<option value="kitchen">Kitchen INT8<\/option>/);
   assert.match(app, /el\.hidden = !eng\.attention;/, "the picker shows only for an engine with the choice");

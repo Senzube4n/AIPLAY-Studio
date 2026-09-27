@@ -661,7 +661,9 @@ export function mvTools(api, safeName) {
         + "mv_mesh_from_image. It answers without loading a model or touching the card, and it "
         + "names any missing piece — the venv, either checkout, either set of weights — so a "
         + "missing install costs a read rather than a failed run. It also returns the format "
-        + "contract and the accepted input formats.",
+        + "contract, accepted input formats and generator.output appearance capabilities. "
+        + "The installed TripoSG generator accepts one image and writes geometry only: "
+        + "it does not preserve source colours, UVs or embedded textures.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       async run() { return api("GET", "/api/mv/mesh"); },
     },
@@ -678,6 +680,9 @@ export function mvTools(api, safeName) {
         + "extension and nearly the same size — so \"the rig succeeded\" cannot be read off an exit "
         + "code. The container is parsed after every run and `skinned` in the answer is that "
         + "assertion, not the subprocess's own opinion.\n\n"
+        + "APPEARANCE — the installed TripoSG path uses one image to make geometry only. "
+        + "Its GLB does not carry the image's colours, UVs or embedded textures. "
+        + "Read mv_mesh_status.generator.output before presenting it as a finished character.\n\n"
         + "AND THEN THE SKELETON IS POSED, because `skinned` is only half the contract. Two GLBs "
         + "can carry the same `skins[]`, the same joints, the same MAT4 `inverseBindMatrices`, the "
         + "same JOINTS_0/WEIGHTS_0 with every weight row summing to one, and come out the same size "

@@ -325,9 +325,10 @@ test("§5 the plan: the card's size when none is named, each change said", () =>
 });
 
 test("§5 the plan: steps and sparse attention", () => {
-  /* A disk with the Fast setting's file: without it 3 steps is refused
-   * (taomate_test.js), and this section is about what Fast does. */
-  const eng = { ...config.video.engines.h3, turboBuilds: { ...config.video.engines.h3.turboBuilds, three: true } };
+  /* A disk with every speed-up, named rather than read: without the Fast
+   * setting's file 3 steps is refused (taomate_test.js), and with references
+   * a missing 4-step file refuses too, so a PC without one failed here. */
+  const eng = { ...config.video.engines.h3, turboBuilds: { three: true, four: true, eight: true } };
   const refs = plain.videoPlan({ prompt: "<Picture 1> walks", steps: 3, refImages: ["a.png"] }, { engineKey: "h3", eng, h3: null });
   assert.equal(refs.steps, 4);
   assert.equal(refs.warnings.find((w) => w.id === "steps").text,
@@ -355,8 +356,12 @@ test("§5 the plan: steps and sparse attention", () => {
   assert.equal(small.warnings.length, 0);
   assert.equal(small.notes.find((n) => n.id === "sparse-untried")?.text,
     "Sparse attention runs on this clip; it was measured at 1344x768 only, so its speed and look at 960x544 are not yet tried.");
-  assert.deepEqual(plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 }, { engineKey: "h3", eng, h3: status(16, 32) }).notes
-    .filter((n) => n.id !== "runs"), [], "at the measured size: nothing to add but the runs line");
+  const atSparseLabSize = plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 },
+    { engineKey: "h3", eng, h3: status(16, 32) });
+  assert.equal(atSparseLabSize.notes.some((n) => n.id === "sparse-untried"), false,
+    "the sparse-attention caveat does not appear at its measured size");
+  assert.equal(atSparseLabSize.notes.some((n) => n.id === "time-extrapolated"), true,
+    "the independent render-time curve is still extrapolated at eight seconds");
   assert.equal(plain.videoPlan({ prompt: "a lamp", steps: 3, sparse: "sol-attn" }, { engineKey: "h3", eng, h3: null, control: true }).sparse,
     "off", "video-to-video stays dense");
   const fast = plain.videoPlan({ prompt: "a lamp", steps: 3 }, { engineKey: "h3", eng, h3: null });

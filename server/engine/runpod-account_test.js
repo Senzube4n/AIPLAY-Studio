@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRunpodAccount, normalizeAccount } from "./runpod-account.js";
+import { assertComfyLoopback } from "../../worker/check-comfy-loopback.js";
 
 const KEY = "runpod-test-api-key-at-least-32-characters";
 
@@ -65,9 +66,21 @@ test("paid creation requires the review phrase and sends the bounded AIPLAY Comf
     cloudType: "COMMUNITY", volumeInGb: 100, containerDiskInGb: 20 });
   const input = r.calls.at(-1).variables.input;
   assert.equal(input.imageName, "runpod/comfyui:cuda12.8");
-  assert.equal(input.ports, "8080/http,8188/http,8888/http,8787/http");
+  assert.equal(input.ports, "8787/http");
   assert.equal(input.gpuTypeId, "cheap"); assert.equal(input.cloudType, "COMMUNITY");
   assert.equal(result.pod.workerUrl, "https://created1-8787.proxy.runpod.net");
+  assert.match(result.next, /Pod terminal or SSH session/);
+});
+
+test("worker accepts an IPv4 loopback ComfyUI listener and rejects absent or public listeners", () => {
+  const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
+  const row = (address, port = "1FFC") => `   0: ${address}:${port} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 0`;
+  assert.doesNotThrow(() => assertComfyLoopback([header, row("0100007F")].join("\n")));
+  assert.throws(() => assertComfyLoopback(header), /not listening on 127\.0\.0\.1/);
+  assert.throws(() => assertComfyLoopback([header, row("00000000")].join("\n")), /outside loopback/);
+  assert.throws(() => assertComfyLoopback([header, row("0100007F"), row("0201A8C0")].join("\n")), /outside loopback/);
+  assert.throws(() => assertComfyLoopback([header, row("0100007F")].join("\n"),
+    [header, row("00000000000000000000000000000000")].join("\n")), /outside loopback/);
 });
 
 test("creation refuses an existing Pod name before sending another paid mutation", async () => {
@@ -79,7 +92,9 @@ test("creation refuses an existing Pod name before sending another paid mutation
 
 test("start and stop use scoped Pod mutations", async () => {
   const r = rig(); await r.account.connect(KEY);
-  assert.equal((await r.account.start("pod1")).pod.status, "RUNNING");
+  assert.throws(() => r.account.start("pod1"), /confirm paid Pod startup/);
+  assert.equal(r.calls.filter(call => call.query.includes("podResume")).length, 0);
+  assert.equal((await r.account.start("pod1", "START PAID POD")).pod.status, "RUNNING");
   assert.equal(r.calls.at(-1).variables.input.gpuCount, 1);
   assert.equal((await r.account.stop("pod1")).pod.status, "EXITED");
   assert.deepEqual(r.calls.at(-1).variables.input, { podId: "pod1" });

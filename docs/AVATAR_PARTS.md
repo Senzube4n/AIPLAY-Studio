@@ -218,10 +218,12 @@ to an avatar automatically, and no live persona/account binding is granted.
 ## Export a saved outfit
 
 Save the appearance and wardrobe selection, then choose **Export outfit** in
-the wardrobe panel. **Download outfit** produces one `.aiplay-avatar.json`
+the wardrobe panel. **World package** downloads one `.aiplay-avatar.json`
 package containing the composed VRM, saved appearance and declared part credits.
-**Download VRM** provides the composed model separately. Export does not activate
-the saved look or modify the original avatar or part files.
+**VRM · rig + parts** provides the composed model separately. The World package
+is the primary handoff when the recipient needs the saved look. The export receipt
+and MCP results expose `appearanceDelivery` (`package: true`, `vrm: false`).
+Export does not activate the saved look or modify the original avatar or part files.
 
 The composer appends admitted part geometry, materials and embedded textures to
 the VRM and binds it to the original joints. Original VRM expressions, springs,
@@ -229,6 +231,15 @@ constraints and binary resources remain intact. Appearance settings are stored
 separately in the package; they are not baked into the VRM. Up to eight compatible
 parts and 64 MiB of combined model data are supported. This operation creates no
 new rig, facial expressions or hair physics.
+
+Newly imported parts include `inspection.motion`. It counts vertices with at
+least 5% skin weight on the base VRM's existing spring joints and reports
+`mode: "base_springs"` only when such weights exist. The wardrobe labels hair
+parts **Spring-linked**, **No spring link**, or **Motion unverified** for older
+imports without this inspection or spring setups beyond the inspection cap. The composed export manifest repeats the
+inspection, and wardrobe and export MCP tools return the same data. This is a
+weight-link check, not a visual quality or physics simulation test. The base
+VRM still owns all spring chains; no part-local spring chain is imported.
 
 `avatar_outfit_export` uses the same handler as `POST /api/avatars/handoff` with
 `action: "prepare"`, `id`, `sha256`, `look_id`, `expected_look_revision` and
@@ -242,6 +253,11 @@ World verifies the original model and added resources independently. Part credit
 are uploader declarations, not verified license grants. Import selects the asset
 and look for review; binding it to a persona is a separate action. A successful
 Studio export alone does not establish World admission or multiplayer acceptance.
+The export receipt includes `worldPreflight` with local size, part-count, mesh,
+triangle and texture-budget findings; `worldCandidate` mirrors its basic verdict.
+This is a preview, not an acceptance receipt. World checks the actual bytes,
+account and persona again when the package is imported and bound. The Studio
+`avatar_outfit_export` and `avatar_outfit_get` MCP tools return the same findings.
 
 ## Direct CLI
 

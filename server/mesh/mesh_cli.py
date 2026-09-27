@@ -158,7 +158,7 @@ def matte(src, dst):
     Give the picture an alpha channel, and SAY WHAT THE MATTE DID.
 
     ⚠ WHY THIS EXISTS. prepare_image() takes one of two branches: an input
-    carrying a valid alpha (at least 1% fully transparent AND at least 1% fully
+    carrying a valid alpha (at least 1% fully transparent AND at least 1% nearly
     opaque) is composited against the background colour; anything else goes to
     the background-removal network. Keying the matte here means that branch is
     never reached.
@@ -180,14 +180,32 @@ def matte(src, dst):
         raise Refused("The picture at %s could not be decoded." % src)
     stats = {"width": int(img.shape[1]), "height": int(img.shape[0]),
              "channels": int(img.shape[2]) if img.ndim == 3 else 1}
+    if img.dtype != np.uint8:
+        # TripoSG converts high-bit-depth inputs to 8-bit before it checks
+        # alpha. Inspect the same values here; otherwise a 16-bit alpha of
+        # e.g. 10000 looks "opaque" to this wrapper but not to the model.
+        if not np.issubdtype(img.dtype, np.integer):
+            raise Refused("Unsupported image depth in %s." % os.path.basename(src))
+        stats["normalizedFromBits"] = int(np.iinfo(img.dtype).bits)
+        img = (img.astype(np.float32) * (255.0 / np.iinfo(img.dtype).max)).astype(np.uint8)
 
     if img.ndim == 3 and img.shape[2] == 4:
         a = img[:, :, 3]
-        zero, full = float((a == 0).mean()), float((a == 255).mean())
-        if zero >= 0.01 and full >= 0.01:
+        zero = float((a == 0).mean())
+        full = float((a == 255).mean())
+        # TripoSG's is_valid_alpha uses the top bin of a 20-bin histogram over
+        # [0, 256), which includes 244..255. Keep the lower bound stricter:
+        # alpha 1..12 across a background makes TripoSG crop the whole frame.
+        # Generated RGBA cutouts often have
+        # soft edges and almost no pixels exactly 255. Requiring exact 255 here
+        # caused a valid full-body cutout to fall into Otsu segmentation, where
+        # largest-component selection kept only one leg.
+        near_full = float((a >= 244).mean())
+        if zero >= 0.01 and near_full >= 0.01:
             stats.update({"source": "the picture's own alpha",
                           "alphaZeroPct": round(100 * zero, 2),
-                          "alphaFullPct": round(100 * full, 2)})
+                          "alphaFullPct": round(100 * full, 2),
+                          "alphaNearFullPct": round(100 * near_full, 2)})
             return stats, src
         img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         stats["note"] = "the input had an alpha channel but not a usable matte, so one was keyed"

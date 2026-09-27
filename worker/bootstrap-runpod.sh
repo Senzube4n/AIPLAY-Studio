@@ -47,6 +47,10 @@ if [[ ! -x "$RUNTIME/current/bin/node" ]]; then
 fi
 
 if [[ -d "$ROOT/.git" ]]; then
+  if [[ "$(git -C "$ROOT" remote get-url origin)" != "$REPO" ]]; then
+    echo "$ROOT has a different Git origin. Review it and set AIPLAY_REPOSITORY explicitly or move that checkout aside before retrying." >&2
+    exit 1
+  fi
   git -C "$ROOT" fetch --depth 1 origin "$BRANCH"
   git -C "$ROOT" merge --ff-only FETCH_HEAD
 elif [[ -e "$ROOT" ]]; then
@@ -55,6 +59,10 @@ elif [[ -e "$ROOT" ]]; then
 else
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$ROOT"
 fi
+
+# Raw ComfyUI must stay on loopback; the bearer-authenticated worker is the
+# only HTTP service this Pod exposes. The worker repeats this check on start.
+"$RUNTIME/current/bin/node" "$ROOT/worker/check-comfy-loopback.js"
 
 ENV_FILE="$STATE/worker.env"
 if [[ ! -f "$ENV_FILE" ]]; then

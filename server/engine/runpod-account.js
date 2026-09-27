@@ -88,14 +88,14 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
       if (current.pods.some(pod => pod.name === name)) throw new Error(`A RunPod named "${name}" already exists. Refresh the list before retrying.`);
       const variables = { input: { cloudType, gpuCount: 1, volumeInGb, containerDiskInGb,
         minVcpuCount: 2, minMemoryInGb: 15, gpuTypeId, name, imageName,
-        dockerArgs: "", ports: "8080/http,8188/http,8888/http,8787/http", volumeMountPath: "/workspace" } };
+        dockerArgs: "", ports: "8787/http", volumeMountPath: "/workspace" } };
       const data = await graphql(`mutation AiplayCreatePod($input: PodFindAndDeployOnDemandInput) {
         podFindAndDeployOnDemand(input: $input) { ${POD_FIELDS} }
       }`, variables);
       const pod = data.podFindAndDeployOnDemand;
       if (!pod?.id) throw new Error("RunPod did not return the created Pod. Refresh the account before retrying.");
       return { pod: normalizeAccount({ myself: { pods: [pod] } }).pods[0],
-        next: "Open JupyterLab once the Pod is ready, then install the AIPLAY worker and models." };
+        next: "Open a Pod terminal or SSH session once it is ready, then install the AIPLAY worker and models." };
     } finally { creating = false; }
   }
   async function setRunning(id, running) {
@@ -110,6 +110,10 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
   }
   return {
     status: async () => ({ configured: !!(await key()) }), connect, disconnect, overview, create,
-    start: id => setRunning(id, true), stop: id => setRunning(id, false),
+    start: (id, confirm) => {
+      if (confirm !== "START PAID POD") throw new Error("Review the hourly price and confirm paid Pod startup.");
+      return setRunning(id, true);
+    },
+    stop: id => setRunning(id, false),
   };
 }

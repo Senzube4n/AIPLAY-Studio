@@ -12,6 +12,8 @@
 <details id="import-panel" class="pcard more"><summary>Import avatar</summary>
 <form id="import-form">
 <label>Avatar file<input class="in2" name="file" type="file" accept=".glb,.vrm" required></label>
+<div class="camera-controls"><button class="btn2" id="source-preflight" type="button" title="Read mesh, texture and skin data, then check bends, foot weights and spring links locally. Inspect movement and separation visually before use.">Check source</button><span id="source-preflight-state" hidden class="chip" role="status"></span></div>
+<p id="source-preflight-facts" hidden class="hint"></p><details id="source-preflight-next" hidden class="more"><summary>Preparation</summary><ul id="source-preflight-steps"></ul></details>
 <label>Import profile<select class="sel2" name="profile"><option value="world">World GLB</option><option value="vrm">VRM 1.0 workshop</option></select></label>
 <label>Character name<input class="in2" name="name" required maxlength="100" placeholder="Mika · development body"></label>
 <div class="fields"><label>Source persona ID<input class="in2" name="persona_id" inputmode="numeric" placeholder="Optional"></label><label>Facing<select class="sel2" name="facing"><option>+Z</option><option>-Z</option><option>+X</option><option>-X</option></select></label></div>
@@ -44,14 +46,25 @@
 <div class="workspace">
 <section class="viewport-panel pcard"><div class="section-heading"><div><p class="eyebrow" id="family">LOCAL REVIEW</p><h2 id="character-name">Choose a character</h2></div><span id="review-state" class="chip">Awaiting import</span></div>
 <div id="viewport"><p id="empty-view">Your character will appear here.<br>Orbit to inspect its silhouette and joints.</p></div>
-<div class="camera-controls"><button class="btn2" data-camera="front">Front</button><button class="btn2" data-camera="side">Side</button><button class="btn2" data-camera="back">Back</button><button class="btn2" data-camera="fit">Fit</button><a class="btn2" id="overlay-open" href="#" target="_blank" rel="noopener" title="Use this local URL as an OBS browser source. Appearance follows the active saved look.">Overlay ↗</a><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
-<div class="camera-controls"><button class="btn2" id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button></div>
+<div class="camera-controls"><button class="btn2" data-camera="front">Front</button><button class="btn2" data-camera="side">Side</button><button class="btn2" data-camera="back">Back</button><button class="btn2" data-camera="fit">Fit</button><a class="btn2" id="overlay-open" href="#" target="_blank" rel="noopener" title="Use this local URL as an OBS browser source. Appearance follows the active saved look.">Overlay ↗</a><a class="btn2" href="pngtuber.html" target="_blank" rel="noopener" title="Try a local two-frame PNGtuber preview. Capture the same tab; files do not follow a new browser source.">PNGtuber ↗</a><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
+<div class="camera-controls"><button class="btn2" id="pose-test" disabled title="A gentle humanoid sway to inspect skinning and existing hair springs. This is a preview, not an authored animation.">Test movement</button><span id="foot-control-state" class="chip warn" hidden title="Pose left and right feet separately and check the gap. Separate weights do not prove separate geometry."></span><div id="foot-review-controls" class="foot-review-controls" hidden role="group" aria-label="Foot movement review"><button class="btn2" id="foot-review-left" type="button" aria-pressed="false" title="Temporarily bend the left foot and frame both feet. Check the gap and surface; this does not separate geometry.">Left foot</button><button class="btn2" id="foot-review-right" type="button" aria-pressed="false" title="Temporarily bend the right foot and frame both feet. Check the gap and surface; this does not separate geometry.">Right foot</button></div></div>
 <div class="motion-controls"><label>Motion<select class="sel2" id="motion" disabled><option value="">Rest pose</option></select></label><button class="btn2" id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select class="sel2" id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
+<div class="motion-controls" id="joint-pose-controls" hidden title="Temporarily bend one imported joint to inspect its skin weights. This does not create animation or change the file."><label>Joint<select class="sel2" id="joint-pose-node"></select></label><label>Axis<select class="sel2" id="joint-pose-axis"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select></label><label class="scrubber">Bend<input id="joint-pose-degrees" type="range" min="-45" max="45" step="1" value="0"></label><output id="joint-pose-value">0°</output><button class="btn2" id="joint-pose-reset" type="button">Reset</button></div>
 </section>
-<section id="wardrobe-panel" hidden class="pcard">
+<nav class="avatar-tools" role="tablist" aria-label="3D tools">
+<button class="btn2" id="avatar-tab-look" type="button" role="tab" data-tool="look" aria-controls="appearance-panel" aria-selected="true" title="Edit saved looks, visible parts, colours and expressions" disabled>Look</button>
+<button class="btn2" id="avatar-tab-outfit" type="button" role="tab" data-tool="outfit" aria-controls="wardrobe-panel" aria-selected="false" title="Preview and save prepared outfits" disabled>Outfit</button>
+<button class="btn2" id="avatar-tab-fit" type="button" role="tab" data-tool="fit" aria-controls="fitting-panel" aria-selected="false" title="Fit a separate mesh to this avatar" disabled>Fit</button>
+<button class="btn2" id="avatar-tab-voice" type="button" role="tab" data-tool="voice" aria-controls="voice-panel" aria-selected="false" title="Preview mouth movement with local audio" disabled>Voice</button>
+<button class="btn2" id="avatar-tab-asset" type="button" role="tab" data-tool="asset" aria-controls="details" aria-selected="false" title="Inspect the rig and prepare handoff files" disabled>Asset</button>
+</nav>
+<section id="avatar-tool-empty" class="pcard"><p class="hint">Choose an avatar to edit its look.</p></section>
+<section id="wardrobe-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-outfit">
 <div class="section-heading"><h2>Wardrobe</h2><span id="wardrobe-state" class="chip">Loading</span></div>
-<div class="camera-controls"><span id="wardrobe-context" class="hint">Base outfit</span><button id="wardrobe-save" class="btn" disabled>Save outfit</button><button id="wardrobe-reset" class="btn2" disabled>Reset preview</button><button id="outfit-export" class="btn2" disabled title="Export the saved look and fitted parts together for World import.">Export outfit</button></div>
+<div class="camera-controls"><span id="wardrobe-context" class="hint">Base outfit</span><button id="wardrobe-save" class="btn" disabled>Save outfit</button><button id="wardrobe-reset" class="btn2" disabled>Reset preview</button><button id="outfit-export" class="btn2" disabled title="Prepare a World package with the saved look and fitted parts, plus a separate rigged VRM without saved look settings.">Export outfit</button></div>
 <p id="outfit-note" hidden class="hint" role="status"></p><div id="outfit-downloads" class="camera-controls"></div>
+<p class="hint wardrobe-help" title="These are parts imported and checked for this exact avatar rig. A generic GLB does not gain editable hair, clothing or physics controls automatically.">Choose a prepared part to preview it, then save the outfit.</p>
+<div class="wardrobe-browser"><div id="wardrobe-categories" class="wardrobe-categories" role="group" aria-label="Part categories"></div><button id="wardrobe-clear" class="btn2 sm" type="button" disabled title="Preview without the selected imported parts in this category. Embedded meshes stay unchanged.">Remove add-ons</button></div>
 <div id="wardrobe-list" class="wardrobe-list"></div>
 <p id="wardrobe-note" hidden class="hint warnhint" role="status"></p>
 <details id="wardrobe-import" class="more"><summary>Add prepared part</summary>
@@ -63,7 +76,7 @@
 <button id="wardrobe-import-submit" class="btn" type="submit">Add to wardrobe</button>
 </form></details>
 </section>
-<section id="fitting-panel" hidden class="pcard">
+<section id="fitting-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-fit">
 <div class="section-heading"><h2>Fit a part</h2><span id="fitting-state" class="chip">Choose a part</span></div>
 <form id="fitting-form">
 <label>Unrigged part<input class="in2" name="file" type="file" accept=".glb" required title="Separate body, clothing or accessory geometry in a compatible rest pose."></label>
@@ -81,28 +94,32 @@
 <div class="camera-controls"><button id="fitting-submit" class="btn" type="submit" disabled>Prepare fit</button><button id="fitting-add" class="btn2" type="button" disabled>Add to wardrobe</button></div>
 </form>
 <p id="fitting-note" hidden class="hint warnhint" role="status"></p>
-<details class="more"><summary>Job details</summary><code id="fitting-job"></code><div id="fitting-result" class="hint"></div></details>
+<details class="more"><summary>Job details</summary><code id="fitting-job"></code><div id="fitting-result" class="hint"></div>
+<label>Find job<input class="in2" id="fitting-find-id" placeholder="fit_…" title="Paste a fitting job ID for this exact avatar and source file."></label>
+<button id="fitting-find" class="btn2" type="button" title="Resume a fitting job or inspect its saved result.">Check job</button></details>
 </section>
-<section id="voice-panel" hidden class="pcard">
+<section id="voice-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-voice">
 <div class="section-heading"><h2>Voice preview</h2><span id="voice-state" class="chip">Choose audio</span></div>
 <label>Audio<input class="in2" id="voice-file" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm" title="Local audio, up to 32 MiB. Mouth motion follows loudness, not phonemes."></label>
 <div id="voice-name" class="hint">No audio selected</div>
 <div class="camera-controls"><button id="voice-play" class="btn2" disabled>Play voice</button><button id="voice-stop" class="btn2" disabled>Stop voice</button><meter id="voice-level" min="0" max="1" value="0" aria-label="Mouth activity"></meter><output id="voice-clock">0.0 s</output></div>
 <label>Position<input id="voice-time" type="range" min="0" max="1" step="0.1" value="0" disabled></label>
 <p id="voice-note" hidden class="hint warnhint" role="status"></p>
+<div class="camera-controls" id="voice-cue-row" hidden><label>Expression <select class="in2" id="voice-cue-expression" disabled title="Uses an embedded VRM expression without changing the saved look."></select></label><label>For <select class="in2" id="voice-cue-duration" title="How long this expression appears in the preview and OBS overlay."><option value="500">½ s</option><option value="1000">1 s</option><option value="3000" selected>3 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></label><button id="voice-cue" class="btn2" disabled title="Show this expression in the preview and OBS overlay.">Cue</button><button id="voice-cue-clear" class="btn2" disabled>Clear cue</button><span id="voice-cue-state" class="chip" hidden></span></div>
 <details class="more"><summary>MCP session</summary><code id="voice-session"></code></details>
 </section>
-<section id="appearance-panel" hidden class="pcard" data-nav="Appearance">
+<section id="appearance-panel" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-look">
 <div class="section-heading"><h2>Appearance</h2><span id="appearance-state" class="chip">Embedded defaults</span></div>
 <div class="fields"><label>Saved look<select class="sel2" id="appearance-looks"><option value="">Choose a look</option></select></label><label>Look name<input class="in2" id="appearance-name" maxlength="80" placeholder="Stage outfit"></label></div>
 <label>Source persona<input class="in2" id="appearance-persona" inputmode="numeric" placeholder="Optional persona ID" title="Local attribution only; live account binding is a separate platform action."></label>
-<div class="camera-controls"><button class="btn2" id="appearance-new">New look</button><button class="btn" id="appearance-save">Save look</button><button class="btn2" id="appearance-delete">Delete look</button><label><input type="checkbox" id="appearance-springs" checked> Hair physics</label></div>
+<div class="camera-controls"><button class="btn2" id="appearance-new">New look</button><button class="btn" id="appearance-save">Save look</button><button class="btn2" id="appearance-delete">Delete look</button><label><input type="checkbox" id="appearance-springs" checked> Spring motion</label><button class="btn2" id="appearance-motion-check" type="button" title="Check whether this avatar's spring chains reach mesh geometry.">Check links</button><span id="appearance-motion-state" class="chip" role="status">Unchecked</span></div>
+<details id="appearance-motion-details" hidden class="more"><summary>Spring links</summary><div id="appearance-motion-list" class="hint"></div></details>
 <details class="more" open><summary>Parts</summary><div id="appearance-parts" class="appearance-grid"></div></details>
 <details class="more"><summary>Material colours</summary><div id="appearance-colors" class="appearance-grid"></div></details>
 <details id="appearance-expression-group" class="more" open><summary>Expressions</summary><div id="appearance-expressions" class="appearance-grid"></div></details>
 
 </section>
-<section id="details" hidden class="pcard"><div class="section-heading"><h2>Asset details</h2><button class="btn" id="export">Prepare handoff</button></div>
+<section id="details" hidden class="pcard avatar-tool-panel" role="tabpanel" aria-labelledby="avatar-tab-asset"><div class="section-heading"><h2>Asset details</h2><button class="btn" id="export">Prepare handoff</button></div>
 <div id="facts" class="facts"></div><details class="more"><summary>Validation notes</summary><div id="warnings"></div></details>
 
 <div id="downloads"></div><details><summary>Provenance and rig inventory</summary><pre id="metadata"></pre></details>

@@ -9,6 +9,7 @@ import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL, MAX_ASSET, TERMINAL, MEDIA_EXT, jobId, relativeFile, containedFile,
   hashFile, digest, readJSON, jsonStore, readBody, sendJSON, validateGraph } from "../server/engine/remote-common.js";
+import { checkComfyLoopback } from "./check-comfy-loopback.js";
 
 export async function createWorker({ token, comfyURL, inputDir, outputDir, stateDir, fetchFn = fetch, pollMs = 2000 }) {
   if (typeof token !== "string" || token.length < 32 || /[\r\n]/.test(token)) throw new Error("AIPLAY_WORKER_TOKEN must contain at least 32 characters.");
@@ -211,6 +212,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await checkComfyLoopback();
   const root = process.env.AIPLAY_COMFY_DIR || "/workspace/ComfyUI";
   const worker = await createWorker({ token: process.env.AIPLAY_WORKER_TOKEN,
     comfyURL: process.env.AIPLAY_WORKER_COMFY_URL || "http://127.0.0.1:8188",

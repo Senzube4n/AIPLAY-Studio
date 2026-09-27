@@ -32,6 +32,31 @@ list.
 > `server/engine/client.js` names the engine's port, its routes or
 > `config.comfy.*`.
 
+### `GET /api/community`
+
+The Community page reads this local proxy for AIPLAY.live's public desktop
+discovery feed and recent public blog posts. It can list live sessions, upcoming
+sessions, stations and recent tracks. A missing desktop feed returns `offline:true`
+with empty session/station lists, while the blog may still have articles. The
+typed `community_feed` MCP tool reads this same route and returns a bounded
+allowlist of public fields; it is also available to Studio's local chat as a
+read-only tool. These are discovery listings, not a current radio track, queue,
+votes, reactions, authenticated session state or a realtime event feed.
+
+This is still Studio's loopback API. External community applications need a
+separate AIPLAY.live API with explicit public and authenticated schemas.
+
+### `POST /api/images/standrig-psd`
+
+Send `{ "id": "<saved image document id or slug>" }` from the local Studio UI
+or `image_standrig_psd_export` MCP tool. Studio renders each separately painted
+layer of that document, checks the PSD round trip and returns an opaque
+`downloadUrl` served by `GET /api/images/standrig-psd/<name>`. Creation requires
+a same-origin loopback JSON request; downloads also stay on loopback and expire
+after 24 hours. A flat image, opaque document background or unsupported stack
+is refused with a reason. The result is a 2D layer handoff for StandRig, not a
+rigged 3D character.
+
 ### `POST /api/engine`
 
 The graph-rendering door for ComfyUI-backed features. Native YuE2 uses the
@@ -958,9 +983,15 @@ episode or scene using the plan's `expectedRevision`. This is a local plan link.
 
 `POST /api/music-references` actions `capabilities`, `list`, `prepare`, `get`,
 `analyze_visual`, `transcribe`, `update_brief`, `update_score`, `prepare_request`
-produce a reviewed music draft. Prepare takes a local library `file`, `kind`
-(`audio` or `video`), `startSeconds`, `seconds` (up to 120), and `maxFrames`
-(up to six). Sources are bounded to 512 MiB; remote URLs are not accepted.
+produce a reviewed music draft. Prepare takes a bare local `file`, `kind`
+(`audio` or `video`), optional `location` (`library` for audio by default,
+`clips` for imported audio or video), `startSeconds`, `seconds` (up to 120),
+and `maxFrames` (up to six). The browser can import audio/video to the clip bin
+through `/api/studio/import`; MCP can use `import_local_media` with
+`destination:"studio"`, then prepare the returned filename with
+`location:"clips"`. The workflow's browser import and `import_local_media`
+limit uploads to 256 MiB; existing
+library/bin sources can be up to 512 MiB. Remote URLs are not accepted.
 Subsequent edits require `referenceId` and `expectedRevision`. Poll `get` after
 asynchronous preparation or model analysis. `preview:true` includes the contact
 sheet. `prepare_request` requires `reviewed:true`; returns an HTTP generation
@@ -972,6 +1003,29 @@ GGUF). Native GGUF currently requires lyrics.
 Source evidence, suggestions and edited briefs remain separate. This is not
 native YuE2 multimodal input or guaranteed audiovisual synchronization. See
 [workflow status and limits](docs/YUE2_NEXT_WORKFLOWS.md).
+
+### RunPod GPU mode (`/api/runpod`)
+
+These local routes are available only in the launcher's RunPod GPU mode.
+`GET /api/runpod` reports the authenticated worker connection and durable
+local jobs; `GET /api/runpod/models` reads its node/model inventory.
+`POST /api/runpod/connect` saves a worker URL and token, while
+`POST /api/runpod/workflow` builds a template graph without rendering.
+`POST /api/runpod/assets?name=...` uploads raw reference bytes;
+`POST /api/runpod/jobs` queues a graph and optional asset bindings, recording
+the request's `agent:*` actor before dispatch. `POST /api/runpod/jobs/ID/cancel`
+requests a scoped cancellation. Poll `/api/runpod` for the final state.
+
+`GET /api/runpod/account` checks account-key presence;
+`GET /api/runpod/account/overview` lists balance, current spend, Pods and live
+GPU price estimates. `POST /api/runpod/account/connect` verifies and saves a
+RunPod API key, and `/disconnect` removes it. `POST /api/runpod/account/pods`
+requires `confirm: "CREATE PAID POD"`. A stopped Pod's
+`POST /api/runpod/account/pods/ID/start` requires
+`confirm: "START PAID POD"`; `/stop` stops its compute. These confirmation
+phrases are checked by the server for UI, MCP and raw HTTP alike. Neither
+saved credential is returned by status or overview. The typed `runpod_*` MCP
+tools cover these routes, with asset upload limited to 64 MiB per call.
 
 `server/mcp.js` exposes typed tools over these same handlers. See the
 [MCP workflow map](docs/MCP_WORKFLOWS.md) for editor candidate review, Qwen

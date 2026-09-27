@@ -71,6 +71,21 @@ test("audition seeks to the same offset that training receives and stops at the 
   assert.match(f.$("trRunDetails").textContent, /10s start/);
 });
 
+test("training run remembers the source actually submitted when the library selection changes during start", async () => {
+  const f = fixture(); await f.run("paintTraining()");
+  let finish;
+  f.context.respond = (url, body) => body?.action === "start"
+    ? new Promise((resolve) => { finish = resolve; }) : f.defaults(url, body);
+  const pending = f.fire("trStart");
+  assert.equal(f.calls.find((call) => call.body?.action === "start").body.file, "source.wav");
+  f.$("trFile").value = "another.wav";
+  finish({ runId: "run-1", name: "mine_piano", settings: { startSeconds: 0, seconds: 24 } });
+  await pending;
+  assert.equal(f.run("trRecall().file"), "source.wav");
+  assert.match(f.$("trRunDetails").textContent, /source\.wav/);
+  assert.doesNotMatch(f.$("trRunDetails").textContent, /another\.wav/);
+});
+
 test("a failed completed run is cleared so it cannot permanently block another run", async () => {
   const f = fixture(); await f.run("paintTraining()");
   f.run('trRemember({runId:"failed-run",name:"mine_piano"})');
@@ -101,4 +116,22 @@ test("late waveform response cannot replace the newly chosen source", async () =
   finish({ ok: true, seconds: 999, peaks: [0, 1] }); await pending;
   assert.equal(f.run("trSource.file"), "second.wav");
   assert.equal(f.run("trSource.duration"), 40);
+});
+
+test("take review reaches the shared compare route and ignores an older pair's late verdict", async () => {
+  const f = fixture(); await f.run("paintTraining()");
+  let finishOld;
+  f.context.respond = (url, body) => body?.action === "compare" && body.before === "baseline-old.flac"
+    ? new Promise(resolve => { finishOld = resolve; })
+    : body?.action === "compare" ? { status: "matched", message: "New pair matched." }
+      : f.defaults(url, body);
+  f.$("trBefore").value = "baseline-old.flac"; f.$("trAfter").value = "adapter-old.flac";
+  const old = f.run("trCompareTakes()");
+  assert.deepEqual(f.calls.at(-1).body, { action: "compare", before: "baseline-old.flac", after: "adapter-old.flac" });
+  f.$("trBefore").value = "baseline-new.flac"; f.$("trAfter").value = "adapter-new.flac";
+  await f.run("trCompareTakes()");
+  finishOld({ status: "mismatch", message: "Old pair mismatched." });
+  await old;
+  assert.equal(f.$("trCompareStatus").textContent, "New pair matched.");
+  assert.match(html, /id="trCompareStatus" role="status"/);
 });

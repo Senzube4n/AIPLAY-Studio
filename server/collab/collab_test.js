@@ -430,7 +430,7 @@ console.log("\n§6  the doors: shared API checks and explicit MCP intents");
 
   ok("...and the keys are made when it is opened, not at boot",
     // Scene context is passed only when Collab opens; no identity is minted at boot.
-    /if \(name === "collab"\) paintCollab\(false, collabScene, options\?\.videoRecipe\);/.test(app));
+    /if \(name === "collab"\) paintCollab\(false, collabScene, options\?\.videoRecipe, options\?\.imageJob, options\?\.imageRefPreviews\);/.test(app));
 }
 
 console.log("\n\u00a76b  the errand: a friend's order becomes a project that renders what was asked");
@@ -589,12 +589,12 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   const lendingDoor = { ...lendingM,
     speedUpForOrder: (o) => lendingM.speedUpForOrder(o, FOUR_STEP_ONLY),
     speedUpCheck: (a) => lendingM.speedUpCheck(a, FOUR_STEP_ONLY) };
-  const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM] = [
+  const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM, imageQuarM, videoQuarM] = [
     await import("./identity.js"), await import("./seal.js"),
     await import("./roster.js"), await import("./packet.js"),
     await import("./resources.js"), await import("./credit.js"),
     await import("./order.js"), await import("./free.js"), await import("./orderbook.js"),
-    await import("./errand.js"), await import("./quarantine.js"), await import("./inbox.js"),
+    await import("./errand.js"), await import("./quarantine.js"), await import("./inbox.js"), await import("./image-quarantine.js"), await import("./video-quarantine.js"),
   ];
   /* What the machine is doing, so a pin can move it. */
   const machineState = {
@@ -654,7 +654,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * text with only what it is entitled to. */
     "makeOrder", "readOrder", "orderPlanItem", "describeOrder", "makeReturn",
     "machineBusy", "readWorkload", "book", "errandDoc", "errandTitle", "stageOrderFiles",
-    "adoptReturn", "dropReturn", "landReturn", "listQuarantine", "scanInbox",
+    "adoptReturn", "dropReturn", "landReturn", "listQuarantine", "scanInbox", "listImageQuarantine", "listVideoQuarantine",
     "createMvProject", "updateMvProject", "plansRunningNow",
     /* ⚠ NOT `models` AGAIN. It is injected further up, and a duplicate
      * parameter name is legal here — the LAST one wins, silently, which is how
@@ -744,7 +744,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       (f) => stat(f),
       orderM.makeOrder, orderM.readOrder, orderM.orderPlanItem, orderM.describeOrder, orderM.makeReturn,
       freeM.machineBusy, freeM.readWorkload, bookM, errandM.errandDoc, errandM.errandTitle, errandM.stageOrderFiles,
-      quarM.adoptReturn, quarM.dropReturn, quarM.landReturn, quarM.listQuarantine, inboxM.scanInbox,
+      quarM.adoptReturn, quarM.dropReturn, quarM.landReturn, quarM.listQuarantine, inboxM.scanInbox, imageQuarM.listImageQuarantine, videoQuarM.listVideoQuarantine,
       /* Narrow stand-ins: enough to walk the branch, too little to hide a
        * mistake. `fetch` is a PARAMETER here, which shadows the global — the
        * route's loopback call must not leave this process. */
@@ -1249,6 +1249,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * a clip UP to n mod 17 == 5, so it renders 107 frames, and the old check
      * (round(4 × 24) = 96, ± 4) refused every correct take. */
     const sentRow = await bookM.findOrder({ outDir: collabOut, id: packedOrder.body.order, side: "out" });
+    eq("a scene order keeps its sealed file location for a later manual handoff",
+      sentRow.file, packedOrder.body.file);
     eq("the order book records the frame count the renderer will actually make",
       [sentRow.expect.engine, sentRow.expect.frames, sentRow.expect.slotFrames], ["h3", 107, 96]);
     const onGrid = await returnFor(packedOrder.body.order, { frames: 107 });
@@ -1404,6 +1406,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   eq("decryption recovers exactly the reviewed packet and original picture bytes", frozenInside,
     { ...preview.body.packet, files: preview.body.packet.files.map((row) => ({ ...row, b64: PNG.toString("base64") })) });
   eq("frozen packing records the same resolved seed", (await bookM.findOrder({ outDir: path.join(out, "collab"), id: frozenInside.id })).order.seed, preview.body.packet.order.seed);
+  eq("reviewed scene orders keep their sealed file location after the prepare response",
+    (await bookM.findOrder({ outDir: path.join(out, "collab"), id: frozenInside.id })).file, frozenPacked.body.file);
   eq("packing consumes a preview only once", (await call({ action: "pack", previewId: preview.body.previewId })).body.reason, "preview-expired");
 
   const previewShot = () => call({ action: "preview", slug: "demo", to: friend.fp, kind: "shot", segmentId: "s1_0" });

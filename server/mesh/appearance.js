@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, readdir, unlink } from 'node:fs/promises';
 import { readGlb } from './glb.js';
+import { inspectAvatarSpringMotion } from './avatar-motion-audit.js';
 
 const fail = (message, status = 400) => Object.assign(new Error(message), {status});
 const avatarPattern = /^av_[a-f0-9-]{36}$/;
@@ -100,7 +101,7 @@ function inventoryFrom(row, bytes, id) {
   const springs = document.extensions?.VRMC_springBone;
   const inventory = {avatarId: id, sha256, name: label(row.name, id), nodes, materials, expressions,
     spring: {supported: Boolean(springs?.springs?.length), chains: springs?.springs?.length || 0, colliders: springs?.colliders?.length || 0}};
-  return {inventory, ancestors};
+  return {inventory, ancestors, document, binary: parsed.binData};
 }
 
 function settingsFor(value, inventory, ancestors) {
@@ -150,6 +151,10 @@ export function createAppearanceService({directory, inspectAsset, record = async
     return inventoryFrom(row, bytes, id);
   }
   async function inventory(id) { return (await inspect(id)).inventory; }
+  async function motion(id) {
+    const {inventory, document, binary} = await inspect(id);
+    return {avatarId: id, sha256: inventory.sha256, ...inspectAvatarSpringMotion(document, binary)};
+  }
   async function read(id, lookId, context) {
     let row;
     try {
@@ -264,5 +269,5 @@ export function createAppearanceService({directory, inspectAsset, record = async
       return {deleted: existing.id, avatarId: request.id};
     });
   }
-  return {inventory, list, get, save, remove, active, activate};
+  return {inventory, motion, list, get, save, remove, active, activate};
 }

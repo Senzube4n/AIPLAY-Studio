@@ -13,15 +13,38 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Image creation and ordered references | `make_image`: refs, reference sizing/resolution, dimensions, alpha, native DiT/encoder/VAE, seed and sampling settings |
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
 | Layer editing and preview | `image_documents`, `document_edit`, `image_document_preview`, `image_tools_catalog`, `image_capabilities` |
+| StandRig 2D performer | `image_standrig_psd_export` for a saved layered document; `standrig_status`, `standrig_parameters`, `standrig_control` for the local StandRig bridge |
+| 3D avatar preview, motion and expression cues | `avatar_list`, `avatar_inspect`, `avatar_cue_inventory`, `avatar_playback_sessions`, `avatar_audio_upload`, `avatar_playback_command`; select and play an embedded clip in a live preview, or cue a VRM expression for 250–10,000 ms |
 | AI edit, style transfer, selected-area repair | `image_ai_edit_create`, `image_ai_edit_status`, `image_ai_edit_accept`, `image_ai_edit_undo`, `image_ai_edit_discard` |
 | Per-image privacy blur | `image_set_blur` with `blur:true` or `false` |
 | Reactive video | `reactive_status`, `reactive_render`, then `vfx_render_status`; compositions remain editable through `vfx_*` |
 | YuE2 training | `training_status`, `audio_waveform`, `train_lora`, `list_trained_loras`, `list_loras`, `make_song` |
 | Episode planning and allocation | `collab_plan`: get, update_episode, update_shot, preview_allocation, allocate, apply_draft |
 | Peer identity and permissions | `collab_me`, `collab_roster`, `collab_add_peer`, `collab_verify`, `collab_set_role`, `collab_set_lend_minutes`, `collab_remove_peer` |
+| Public community discovery | `community_feed`: the Community page's public live-session, upcoming-event, station, recent-track and article listings |
 | Reviewed outgoing bundles | `collab_resources`, `collab_preview`, `collab_pack`, `collab_send_back`, `collab_orders`, `collab_credit` |
 | Incoming work and returned takes | `collab_inbox`, `collab_open`, `collab_accept`, `collab_receive`, `collab_quarantine`, `collab_adopt`, `collab_drop`, `collab_set_resources`, `collab_free` |
+| Standalone Qwen image lending | `collab_image_preview`, `collab_pack`, `collab_open`, `collab_image_accept`, `collab_image_render`, `collab_image_send_back`, `collab_image_receive`, `collab_quarantine`, `collab_image_review_return`, `collab_image_adopt`, `collab_image_drop` |
+| RunPod GPU mode | `runpod_status`, `runpod_worker_connect`, `runpod_models`, `runpod_workflow_preview`, `runpod_upload_asset`, `runpod_submit_job`, `runpod_cancel_job`; `runpod_account_status`, `runpod_account_connect`, `runpod_account_overview`, `runpod_account_disconnect`, `runpod_pod_create`, `runpod_pod_start`, `runpod_pod_stop` |
 | Other existing JSON API operations | `studio_api_reference` searches API.md; `studio_api_request` calls an existing `/api/` endpoint when no typed tool covers it |
+
+`community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
+returned rows and fields, and reports whether the desktop feed was offline when
+checked. It gives listings, not the radio's current track, song queue, votes,
+reactions, authenticated viewers or a realtime event stream. Building those
+for external sites needs a separate AIPLAY.live API with its own access rules;
+Studio's loopback API must not be exposed as a public server.
+
+RunPod tools call the launcher's **RunPod GPU mode** only. Account and worker
+credentials stay in Studio's local secret store and are redacted from MCP
+results. Review live hourly prices through `runpod_account_overview` before a
+paid Pod action; creation and startup require their exact confirmation phrases
+at the server. `runpod_upload_asset` transfers an explicitly named absolute
+local image/audio/video/latent/NumPy file to the worker, capped at **64 MiB**
+per MCP call; the browser's separate upload accepts larger files. Its returned
+content-addressed `asset` can be bound to a workflow node and input when calling
+`runpod_submit_job`. A queued job is paid GPU work even when an account key is
+not involved in that particular HTTP call.
 
 ## Image edit review
 
@@ -44,6 +67,14 @@ stay fixed. Generation does not replace the document: poll, inspect the candidat
 then accept or discard. Acceptance keeps old layers hidden; undo restores them.
 Stale document revisions are refused.
 
+`image_standrig_psd_export` takes the saved document's `id` and returns a local
+download URL for a layered PSD. The editor's Documents dock has the same
+**Export PSD** action. It requires two or more separately painted parts; a flat
+image is refused. Layer transforms and alpha are baked from the saved document,
+but unsupported blend/group effects are refused instead of silently flattened.
+Import the PSD into StandRig to set up a 2D performer. This does not create a
+GLB/VRM, rig a 3D avatar, or connect a stream by itself.
+
 ## Timing and reproducibility
 
 `reactive_render` accepts `motion.profile` (`standard` or `yvann`, labelled LCM
@@ -52,6 +83,9 @@ the page's dials. Song `start` and source-video timing are independent. The LCM
 profile measures drum RMS peaks; it does not infer a tempo-grid substitute.
 Setting `seconds:4` is an ordinary short render, not a separate model preview.
 The page's request review shows this same payload; it is not a generated preview.
+The review reports when the selected source clip will repeat. The MCP/API
+result includes `motion.sourceWindow` with that timing when video-stream
+duration is readable; missing metadata does not stop a render.
 
 Training uses `startSeconds` and `seconds` for the actual source region. The full
 region is encoded as conditioning without inventing an autoregressive tail.
@@ -79,9 +113,19 @@ planned owner changes. Reading or saving a plan never dispatches another job.
 `collab_verify` records a user's completed word check and requires explicit
 `verified` plus `words_matched:true` for a grant. Peer content cannot supply that
 authorization. Opening a bundle returns untrusted peer data. Accepting a reviewed
-order creates a proposed plan; plan approval and rendering remain separate.
+movie-scene order creates a proposed plan; plan approval and rendering remain
+separate. Accepting a standalone image job only stages its references;
+`collab_image_render` is a second explicit GPU action. It supports one Qwen base
+image with up to three included references and fixed settings; see
+[FRIEND_RENDERING.md](FRIEND_RENDERING.md#standalone-qwen-image-jobs).
+Only a confirmed failed or stopped image render accepts an explicit
+`collab_image_render({id, retry:true})`; an unanswered queue receipt remains
+locked. Review a returned PNG with `collab_image_review_return({from,file})`,
+which emits native MCP image content from the checked quarantine bytes.
 Packing and sending back create local sealed files and open no network connection.
-Adoption files an unselected take; it does not replace the current scene choice.
+Movie adoption files an unselected take; it does not replace the current scene
+choice. Image adoption adds a checked, reviewed PNG to Pictures with its peer
+model and rights record.
 
 ## Music workflows
 
@@ -97,7 +141,10 @@ Adoption files an unselected take; it does not replace the current scene choice.
   idempotency key only for retrying the same request. `collab_plan` action
   `set_music_cue` attaches a variant to an episode or scene locally.
 - `music_reference_prepare` makes bounded CPU evidence from a library recording
-  or clip. Poll `music_reference_status`; `music_reference_analyze_visual` and
+  or clip. To start from a local file, call `import_local_media` with
+  `destination:"studio"`, then prepare its returned name with `location:"clips"`
+  and `kind:"audio"` or `kind:"video"`. Poll `music_reference_status`;
+  `music_reference_analyze_visual` and
   `music_reference_transcribe` are separate optional GPU actions. Save reviewed
   text with `music_reference_update_brief`, correct ABC with
   `music_reference_update_score`, then call `music_reference_prepare_request`.

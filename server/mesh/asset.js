@@ -326,6 +326,20 @@ export async function meshCatalogue() {
       + "size to the byte, and only one of them deform. The container is parsed and then the "
       + "skeleton is posed; a result that binds without deforming is not filed as a rig.",
     inputs: ["png", "jpg", "jpeg", "webp"],
+    /* TripoSG's .samples[0] is only (vertices, faces). mesh_cli.py exports
+     * those arrays directly, so neither the source colours nor a UV/texture
+     * survives into the GLB. Keep this machine-readable for MCP clients that
+     * must choose whether a second, separate appearance pass is needed. */
+    generator: {
+      id: "triposg",
+      inputImages: 1,
+      output: {
+        geometry: true,
+        sourceColors: false,
+        uvCoordinates: false,
+        embeddedTextures: false,
+      },
+    },
     /* Not a reference — said here so a page cannot imply otherwise. */
     notAReference: "A mesh is never a clip reference. The clip engines take pictures; render a "
       + "single panel from the mesh if a scene needs one.",

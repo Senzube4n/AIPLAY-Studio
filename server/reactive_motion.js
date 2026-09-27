@@ -27,7 +27,8 @@ import { stat, copyFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
-import { ffmpegPath } from "./clipjoin.js";
+import { ffmpegPath, ffprobePath } from "./clipjoin.js";
+import { reactiveSourceWindow } from "../web/reactive-source-window.js";
 import * as prov from "./provenance.js";
 import { animateGraph, smoothGraph, scheduleFromBars, ipScheduleFromPeaks, IP_TRANSITION, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_PRESET } from "./animatediff.js";
 
@@ -231,6 +232,14 @@ export function motionSourceArgs({ srcPath, output, seconds, frames, fps, width,
     "-t", String(seconds), "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", output];
 }
 
+/** Best-effort timing record; missing metadata must not block a render. */
+export async function probeMotionSourceWindow({ srcPath, sourceStart, sourceSpeed, seconds }, { runner = run } = {}) {
+  const result = await runner(ffprobePath(), ["-v", "error", "-select_streams", "v:0",
+    "-show_entries", "stream=duration", "-of", "default=noprint_wrappers=1:nokey=1", srcPath], { timeoutMs: 15_000 });
+  const duration = !result.err ? Number(String(result.stdout || "").trim()) : NaN;
+  return reactiveSourceWindow({ duration, start: sourceStart, speed: sourceSpeed, seconds });
+}
+
 /** No model downloads during a render: name missing assets before staging. */
 export async function preflightMotion(dials, { engine, exists = async (file) => !!(await stat(file).catch(() => null)) } = {}) {
   const inspect = async (cls) => {
@@ -343,6 +352,7 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
   const frames = Math.round(seconds * dials.fps);
   const srcPath = path.join(o.clipDir, clip);
   await stat(srcPath).catch(() => { throw new Error(`${clip} is not in the clips library.`); });
+  const sourceWindow = await probeMotionSourceWindow({ srcPath, sourceStart: dials.sourceStart, sourceSpeed: dials.sourceSpeed, seconds });
   const id = createHash("sha1").update(JSON.stringify({ clip, pictures, start, seconds, dials, width, height })).digest("hex").slice(0, 8);
 
   /* 1. The source at the working size and frame rate, looped to the piece,
@@ -454,6 +464,7 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
            size: [width * scale, height * scale], firstPass: [width, height], hires: renderOptions.hires, schedule,
            pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null,
            motionScale: dials.motionScale, hintLift: dials.hintLift,
-           sourceStart: dials.sourceStart, sourceSpeed: dials.sourceSpeed, rhythm: rms ? { method: rms.method, fps: rms.fps, frames: rms.frames, peaks: rms.peaks } : { method: dials.hitsOn },
+           sourceStart: dials.sourceStart, sourceSpeed: dials.sourceSpeed, sourceWindow,
+           rhythm: rms ? { method: rms.method, fps: rms.fps, frames: rms.frames, peaks: rms.peaks } : { method: dials.hitsOn },
            sourceHold: dials.sourceHold > 0 ? { strength: dials.sourceHold, end: dials.sourceHoldEnd, keyframes: peaks.length } : null };
 }

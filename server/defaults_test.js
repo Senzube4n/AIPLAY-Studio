@@ -202,8 +202,14 @@ ok("yue2BuildFor: int8 on NVIDIA and on an unread card, bf16 on AMD, the one the
   yue2BuildFor([BF16, INT8], "nvidia") === INT8 && yue2BuildFor([BF16, INT8], null) === INT8
   && yue2BuildFor([INT8, BF16], "amd") === BF16 && yue2BuildFor(["yue2_custom.safetensors"], "amd") === "yue2_custom.safetensors"
   && yue2BuildFor([], "nvidia") === null);
-ok("pictures on the 8-step disk: FLUX.2 klein, on disk and the least restrictive licence", rig.image.value === "flux2" && rig.image.ready, JSON.stringify(rig.image));
-ok("...and covers follow it", rig.cover.value === "flux2" && rig.cover.canRun && /because it is on this PC/.test(rig.cover.why));
+ok("pictures on the 8-step disk: installed Qwen wins the default", rig.image.value === "qwen-image-2.1" && rig.image.ready, JSON.stringify(rig.image));
+ok("...and covers follow it", rig.cover.value === "qwen-image-2.1" && rig.cover.canRun && /because it is on this PC/.test(rig.cover.why));
+const fluxFallback = pictures(["coverArt"]);
+ok("without installed Qwen, ready FLUX.2 paints pictures and covers",
+  defaultFor("image", { capabilities: fluxFallback, machine: MACHINES[0].machine }).value === "flux2"
+  && defaultFor("cover", { capabilities: fluxFallback, machine: MACHINES[0].machine }).value === "flux2");
+ok("a saved FLUX.2 choice still wins beside installed Qwen",
+  defaultFor("image", { saved: "flux2", capabilities: MACHINES[0].pictures, machine: MACHINES[0].machine }).value === "flux2");
 ok("the Z-Image-only disk: Z-Image for pictures and covers", shop.image.value === "zimage" && shop.cover.value === "zimage" && shop.cover.canRun);
 ok("no picture model: covers are off in one sentence, and no cover can run",
   amd.cover.canRun === false && amd.cover.why === COVER_NEEDS_MODEL && none.cover.canRun === false, JSON.stringify(amd.cover));
@@ -334,7 +340,7 @@ console.log("\n§3  config.js: who chose, and what reaches settings.json");
     fresh.snapFresh?.music?.engine === undefined && fresh.snapFresh?.art?.engine === undefined && fresh.snapFresh?.image?.engine === undefined
     && fresh.snapFresh?.music?.yue2Checkpoint === undefined && fresh.snapFresh?.art?.enabled === true
     && JSON.stringify(fresh.snapFresh?.keptFromBefore) === "[]", JSON.stringify(fresh.snapFresh));
-  ok("...so its pictures follow the disk: FLUX.2 klein on a disk holding every picture model", fresh.imageDefault?.value === "flux2"
+  ok("...so ready Qwen is the picture default on a disk holding every picture model", fresh.imageDefault?.value === "qwen-image-2.1"
     && fresh.imageDefault.chosenBy === "machine", JSON.stringify(fresh.imageDefault));
   ok("the machine's pick is applied live and never written", fresh.applied === true && fresh.afterApply?.music === "yue2-comfy"
     && fresh.afterApply.chosen === false && fresh.snapApplied === null);
@@ -345,8 +351,8 @@ console.log("\n§3  config.js: who chose, and what reaches settings.json");
   ok("\"auto\" forgets it, so the next start works it out again", fresh.forgot?.chosen === false && fresh.forgot.snap === null);
   ok("a spread of config.music still carries the engine (accessors are enumerable)", fresh.spread === "ace-step15");
   const next = run({ prefs: fresh.snapFresh });
-  ok("the next start of a fresh install reads its own file as its own: still nothing chosen, Qwen not pinned",
-    next.before?.chosen === false && next.before.imageChosen === false && next.imageDefault?.value === "flux2", JSON.stringify(next.before));
+  ok("the next start still chooses installed Qwen without pinning a preference",
+    next.before?.chosen === false && next.before.imageChosen === false && next.imageDefault?.value === "qwen-image-2.1", JSON.stringify(next.before));
 
   /* THE OWNER'S MACHINE, from the owner's real prefs as an older Studio wrote
    * them (no keptFromBefore): nothing moves, and nothing claims a choice. */
@@ -456,7 +462,7 @@ console.log("\n§4  index.js and the MCP surface");
   ok("...and is withheld from the in-app chat by sentence, like set_image_engine and set_video_engine",
     typeof WITHHELD?.set_music_engine === "string" && /Music page/.test(WITHHELD.set_music_engine) && !("set_music_engine" in (ROUTABLE || {})));
   ok("the API doc names it", /`set_music_engine`/.test(src("../API.md")));
-  ok("make_image and set_image_engine no longer promise Qwen as the fresh default",
+  ok("make_image and set_image_engine describe a model chosen from this PC rather than promise a missing download",
     !/defaulting to Qwen Image 2\.1/.test(mcp) && !/Fresh installs default to Qwen/.test(mcp));
 
   const DEFAULTS = [

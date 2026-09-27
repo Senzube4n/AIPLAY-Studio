@@ -53,8 +53,31 @@ test("4 and 8 steps need their own speed-ups, and say which", () => {
     assert.equal(plan({ steps }, fourOnly).refusal?.needsModel, "videoH3Turbo8", `${steps} steps with only the 4-step file`);
   }
   assert.deepEqual({ ...SPEEDUP_ROWS }, { 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" });
-  assert.equal(speedupNeeded(h3({}), { steps: 8, refs: true })?.row, "videoH3Turbo8", "references need a 4- or 8-step file");
-  assert.equal(speedupNeeded(h3({ four: true }), { steps: 8, refs: true }), null, "and any one of them will do");
+  assert.equal(speedupNeeded(h3({}), { steps: 8, refs: true })?.row, "videoH3Turbo8", "8-step references need their matching slot");
+  assert.equal(speedupNeeded(h3({ four: true }), { steps: 8, refs: true })?.row, "videoH3Turbo8", "a 4-step slot cannot satisfy an 8-step reference graph");
+});
+
+test("reference clips refuse the absent slot actually selected by their graph", () => {
+  const eightOnly = h3({ eight: true });
+  for (const steps of [3, 4, 5]) {
+    const p = plan({ steps, refImages: ["a.png"] }, eightOnly);
+    assert.equal(p.refusal?.needsModel, "videoH3Turbo4", `${steps} steps cannot load an absent 4-step reference LoRA`);
+    assert.equal(p.refusal?.reason, "speedup-missing");
+  }
+  for (const steps of [6, 8, 12]) {
+    assert.equal(plan({ steps, refImages: ["a.png"] }, eightOnly).refusal, null,
+      `${steps} steps can load the installed 8-step reference slot`);
+  }
+  const fourOnly = h3({ four: true });
+  for (const steps of [6, 8, 12]) {
+    const p = plan({ steps, refImages: ["a.png"] }, fourOnly);
+    assert.equal(p.refusal?.needsModel, "videoH3Turbo8", `${steps} steps cannot load an absent 8-step reference LoRA`);
+    assert.equal(p.refusal?.reason, "speedup-missing");
+  }
+  for (const steps of [3, 4, 5]) {
+    assert.equal(plan({ steps, refImages: ["a.png"] }, fourOnly).refusal, null,
+      `${steps} steps can load the installed 4-step reference slot`);
+  }
 });
 
 test("everything with its file renders as before, and Best needs none", () => {

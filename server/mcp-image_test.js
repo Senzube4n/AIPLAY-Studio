@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { TOOLS } from "./mcp.js";
+import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { ZIMAGE_PRESET } from "./workflow.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,12 @@ ok("every declared parameter is named in its run()", dropped.length === 0,
 console.log("\n  -- the panel routes the tools lean on --");
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
+const psdCalls = [];
+const psd = standRigPsdTools(async (...args) => { psdCalls.push(args); return { ok: true }; })[0];
+await psd.run({ id: "saved_doc" });
+ok("StandRig PSD export is typed, registered and posts the saved document id",
+  byName.has(psd.name) && psd.inputSchema.required.includes("id")
+  && JSON.stringify(psdCalls) === JSON.stringify([["POST", "/api/images/standrig-psd", { id: "saved_doc" }]]));
 const idx = readFileSync(path.join(HERE, "index.js"), "utf8").replace(/\r\n/g, "\n");   // CRLF-normalised: a Windows checkout adds a char per line, which overflows the bounded [\s\S]{0,N} spans below and fails assertions about correct code
 
 /* image_tools_catalog promises module=paths; the route's MODULES map is where

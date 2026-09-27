@@ -419,6 +419,18 @@ head("§8  what the model is told about the gate");
   ok("...and the label reaches the prompt the model actually reads",
     text.includes("[REMOVES WORK — ASKS YOU FIRST]"));
   ok("...on the same line as the tool name", text.split("\n")[0].includes(destroys.name));
+
+  const rigStatus = index().find((entry) => entry.tool.name === "standrig_status")?.tool;
+  const rigControl = index().find((entry) => entry.tool.name === "standrig_control")?.tool;
+  const rigValues = index().find((entry) => entry.tool.name === "standrig_parameters")?.tool;
+  ok("StandRig status is readable while performer changes ask first",
+    rigStatus?.gate === null && rigControl?.gate === "writes" && rigValues?.gate === "writes");
+  ok("StandRig change cards describe transient state instead of a file",
+    [rigControl, rigValues].every((tool) => tool?.cost?.includes("no new file")
+      && gateLabel(tool) === "   [CHANGES PERFORMER — ASKS YOU FIRST]"));
+  ok("local chat accepts the StandRig parameter object as JSON",
+    rigValues?.args?.values?.type === "string"
+    && rigValues?.args?.values?.required === true);
 }
 
 /* ─────────────────────────────────────────────────────────────── §9 */

@@ -186,6 +186,7 @@ export class ComfySupervisor extends EventEmitter {
     try {
       const d = deployStudioNodes(path.join(config.comfyDir, "custom_nodes"));
       if (d.copied.length) console.log(`[comfy] studio nodes deployed: ${d.copied.join(", ")}`);
+      for (const warning of d.warnings) console.warn(`[comfy] ${warning}`);
     } catch (err) {
       console.error(`[comfy] could not deploy the studio nodes: ${err.message}`);
     }

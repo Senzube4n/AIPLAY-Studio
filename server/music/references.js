@@ -156,7 +156,7 @@ export function createMusicReferences({ config, engine, songToScore, runner = ru
   async function request(body = {}, { actor = "system" } = {}) {
     if (!body || typeof body !== "object" || Array.isArray(body)) throw fault("Expected a reference request.");
     if (Buffer.byteLength(JSON.stringify(body)) > 128 * 1024) throw fault("Reference request exceeds 128 KiB.", 413);
-    const fields = { capabilities: [], list: [], prepare: ["kind", "file", "startSeconds", "seconds", "maxFrames"],
+    const fields = { capabilities: [], list: [], prepare: ["kind", "file", "location", "startSeconds", "seconds", "maxFrames"],
       get: ["referenceId", "preview"], analyze_visual: ["referenceId", "expectedRevision", "model"],
       transcribe: ["referenceId", "expectedRevision", "mode"], update_brief: ["referenceId", "expectedRevision", "brief"],
       update_score: ["referenceId", "expectedRevision", "abc", "mode"],
@@ -177,13 +177,16 @@ export function createMusicReferences({ config, engine, songToScore, runner = ru
       number(body.startSeconds, 0, 0, 86400, "startSeconds"); number(body.seconds, 30, .25, 120, "seconds"); number(body.maxFrames, 6, 1, 6, "maxFrames", true);
       const name = text(body.file, 240, "file");
       if (!name || /[\\/:]/.test(name) || name.includes("..") || !(body.kind === "audio" ? AUDIO : VIDEO).test(name)) throw fault("Choose a supported bare filename from the local audio or video library.");
-      const root = await realpath(body.kind === "video" ? path.join(config.outputDir, "clips") : config.outputDir);
+      const location = body.location ?? (body.kind === "video" ? "clips" : "library");
+      if (!["library", "clips"].includes(location) || body.kind === "video" && location !== "clips")
+        throw fault("Choose library audio, clip audio, or a video clip.");
+      const root = await realpath(location === "clips" ? path.join(config.outputDir, "clips") : config.outputDir);
       const source = await realpath(path.join(root, name)).catch(() => { throw fault("That library file was not found.", 404); });
       if (path.dirname(source).toLowerCase() !== root.toLowerCase()) throw fault("Reference must stay inside its library folder.");
       const info = await stat(source);
       if (!info.isFile() || !info.size || info.size > REFERENCE_LIMITS.bytes) throw fault("Reference must be a regular, nonempty file no larger than 512 MiB.");
       const row = { id: `mr_${randomUUID()}`, revision: 0, state: "preparing", createdAt: Date.now(), actor,
-        source: { file: name, kind: body.kind, bytes: info.size, modifiedAt: info.mtimeMs },
+        source: { file: name, kind: body.kind, location, bytes: info.size, modifiedAt: info.mtimeMs },
         brief: { style: "", lyrics: "", notes: "" }, evidence: null, warnings: [], note: NOTE };
       const dir = folder(row.id); await mkdir(dir, { recursive: true });
       // Private snapshot makes a library replacement during preparation harmless.

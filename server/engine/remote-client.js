@@ -38,7 +38,7 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
   };
   const json = async (route, init, target, auth) => (await request(route, init, target, auth)).json();
   const post = (route, body) => json(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const snapshot = job => ({ id: job.id, label: job.label, state: job.state, remoteState: job.remoteState,
+  const snapshot = job => ({ id: job.id, runId: job.runId, label: job.label, state: job.state, remoteState: job.remoteState,
     createdAt: job.createdAt, finishedAt: job.finishedAt, error: job.error, outputs: job.outputs || [], cancelRequested: job.cancelRequested || false });
   async function verify(target = connection, auth = token) {
     const health = await json("/v1/health", undefined, target, auth);

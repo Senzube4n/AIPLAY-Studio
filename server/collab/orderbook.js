@@ -37,6 +37,10 @@ export const ORDER_STATES = Object.freeze([
   "cancelled",  // owner: given up on
   "claimed",    // lender: the id is taken while the project is being built
   "landed",     // lender: read, validated, a proposed plan exists
+  "rendering",  // lender: explicit image render request begun; outcome may be uncertain after a crash
+  "queued",     // lender: explicit image render accepted by the local image queue
+  "failed",     // lender: that exact queued image failed or was stopped; explicit retry only
+  "returning",  // lender: one caller claimed the finished image return; sealing in progress
   "rendered",   // lender: the plan finished and a return was written
   "declined",   // lender: a human said no, or the machine was not free
 ]);
@@ -124,6 +128,26 @@ export async function landOrderRow({ outDir, row } = {}) {
   });
 }
 
+/** Read, decide, and land under the same orderbook writer. A daily lending
+ * allowance is a reservation: two different signed jobs accepted at once must
+ * not both price themselves against the book before either row is written.
+ * `check` may read projects but must not call an orderbook method (that would
+ * wait on this same writer). A refusal returns without claiming the id. */
+export async function landOrderRowChecked({ outDir, row, check } = {}) {
+  const id = String(row?.id || "");
+  if (!ID_RE.test(id) || typeof check !== "function") throw refuse("bad-arguments", "A checked landing needs an order id and a check function.");
+  return enqueue(async () => {
+    const file = rowPath(outDir, "in", id);
+    if (await readRow(file)) throw refuse("already-landed", `Order ${id} was already accepted here; it cannot reserve or render twice.`, 409);
+    const rows = await readRows(outDir, "in");
+    const decision = await check(rows);
+    if (decision?.refusal) return { row: null, decision };
+    const full = { ...row, ...(decision?.patch || {}), state: row.state === "claimed" ? "claimed" : "landed", landedAt: row.landedAt ?? 0 };
+    await writeAtomic(file, full);
+    return { row: full, decision };
+  });
+}
+
 /**
  * Let go of a claim that never became anything.
  *
@@ -165,6 +189,47 @@ export async function fillOrderRow({ outDir, id, side = "in", patch } = {}) {
   });
 }
 
+/** Change an order state only if it still has the state this caller observed.
+ * `expected` also protects fields such as renderStatus when the state stays
+ * queued on completion. The read and write share the orderbook's one writer
+ * queue, so concurrent render outcomes cannot overwrite one another. */
+export async function transitionOrderState({ outDir, id, side = "in", from, to, patch = {}, expected = null } = {}) {
+  if (!ORDER_STATES.includes(String(from)) || !ORDER_STATES.includes(String(to))) {
+    throw refuse("bad-state", "An order transition needs two known states.");
+  }
+  return enqueue(async () => {
+    const file = rowPath(outDir, side, String(id));
+    const row = await readRow(file);
+    if (!row) throw refuse("no-such-order", `Order ${id} is not in this machine's book.`, 404);
+    if (row.state !== from) throw refuse("order-state-changed", `Order ${id} is now ${row.state}; another request already changed it.`, 409);
+    if (expected && Object.entries(expected).some(([key, value]) => row[key] !== value))
+      throw refuse("order-state-changed", `Order ${id}'s render record changed; this outcome was not written over it.`, 409);
+    const next = { ...row, ...patch, state: to, stateAt: Date.now() };
+    await writeAtomic(file, next);
+    return next;
+  });
+}
+
+/** Settle one exact queued image attempt in the same writer used for order
+ * claims. A duplicate terminal event cannot append its GPU time twice. */
+export async function settleImageRender({ outDir, id, imageId, outcome, now = Date.now(), durationMs = null } = {}) {
+  if (!ID_RE.test(String(id || "")) || !/^i[a-z0-9]+$/.test(String(imageId || ""))
+      || !["complete", "failed", "stopped"].includes(outcome)) throw refuse("bad-arguments", "An image result needs its order, image and terminal outcome.");
+  return enqueue(async () => {
+    const file = rowPath(outDir, "in", id);
+    const row = await readRow(file);
+    if (!row || row.jobType !== "image" || row.state !== "queued" || row.imageId !== imageId || row.renderStatus !== "queued") return null;
+    const ms = typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : null;
+    const completed = outcome === "complete";
+    const next = { ...row, state: completed ? "queued" : "failed", stateAt: Date.now(),
+      renderStatus: outcome, renderDurationMs: ms,
+      renderCompletedAt: completed ? now : null, renderFailedAt: completed ? null : now,
+      imageRuns: [...(Array.isArray(row.imageRuns) ? row.imageRuns : []), { imageId, at: now, durationMs: ms, status: outcome }] };
+    await writeAtomic(file, next);
+    return next;
+  });
+}
+
 /** One row, or null. Refuses only when a row exists and cannot be read. */
 export async function findOrder({ outDir, id, side = "out" } = {}) {
   if (!ID_RE.test(String(id || ""))) return null;
@@ -172,20 +237,21 @@ export async function findOrder({ outDir, id, side = "out" } = {}) {
 }
 
 /** Every row on one side, newest first. */
+async function readRows(outDir, side) {
+  const dir = bookDir(outDir, side);
+  let names = [];
+  try {
+    names = (await readdir(dir)).filter((f) => /^o_[0-9a-f]{12}\.json$/.test(f));
+  } catch (err) {
+    if (err && err.code === "ENOENT") return [];
+    throw refuse("orderbook-unreadable", `The order book at ${dir} could not be listed: ${err.message}.`, 500);
+  }
+  const rows = [];
+  for (const f of names) rows.push(await readRow(path.join(dir, f)));
+  return rows.filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0));
+}
 export async function listOrders({ outDir, side = "out" } = {}) {
-  return enqueue(async () => {
-    const dir = bookDir(outDir, side);
-    let names = [];
-    try {
-      names = (await readdir(dir)).filter((f) => /^o_[0-9a-f]{12}\.json$/.test(f));
-    } catch (err) {
-      if (err && err.code === "ENOENT") return [];
-      throw refuse("orderbook-unreadable", `The order book at ${dir} could not be listed: ${err.message}.`, 500);
-    }
-    const rows = [];
-    for (const f of names) rows.push(await readRow(path.join(dir, f)));
-    return rows.filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0));
-  });
+  return enqueue(() => readRows(outDir, side));
 }
 
 /** Move a row's state, refusing a state nobody wrote down. */
@@ -217,6 +283,57 @@ export async function noteReturn({ outDir, id, entry } = {}) {
     const row = await readRow(file);
     if (!row) throw refuse("no-such-order", `A return arrived for order ${id}, which is not one this machine sent. Nothing was written.`, 404);
     const next = { ...row, returns: [...(row.returns || []), { at: Date.now(), ...entry }] };
+    await writeAtomic(file, next);
+    return next;
+  });
+}
+
+/** Repair or record an image return in one orderbook write. Quarantine may
+ * finish before this write, so receiving the same signed file again must be
+ * able to complete the book without adding a duplicate history entry. */
+export async function reconcileImageReturn({ outDir, id, entry, state, note = null } = {}) {
+  if (!entry || entry.kind !== "image" || typeof entry.file !== "string" || !entry.file
+      || !["returned", "refused", "adopted"].includes(state)) {
+    throw refuse("bad-image-return", "An image return needs its file and a final order state.");
+  }
+  return enqueue(async () => {
+    const file = rowPath(outDir, "out", String(id));
+    const row = await readRow(file);
+    if (!row || row.jobType !== "image") throw refuse("no-such-order", `Image return ${id} has no sent image order.`, 404);
+    const returns = Array.isArray(row.returns) ? row.returns : [];
+    const already = returns.some((item) => item?.kind === "image" && item.file === entry.file);
+    const nextState = row.state === "adopted" ? "adopted" : state;
+    const nextNote = nextState === "adopted" ? row.note : note;
+    if (already && row.state === nextState && (nextNote === null || nextNote === row.note)) return row;
+    const next = { ...row,
+      returns: already ? returns : [...returns, { at: Date.now(), ...entry }],
+      state: nextState, stateAt: Date.now() };
+    if (nextNote !== null) next.note = String(nextNote).slice(0, 400);
+    await writeAtomic(file, next);
+    return next;
+  });
+}
+
+/** Standalone video uses the same one-write return reconciliation as images.
+ * A replay can repair an interrupted orderbook write without duplicating its
+ * history or changing an already adopted result back to returned. */
+export async function reconcileVideoReturn({ outDir, id, entry, state, note = null } = {}) {
+  if (!entry || entry.kind !== "video" || typeof entry.file !== "string" || !entry.file
+      || !["returned", "refused", "adopted"].includes(state)) {
+    throw refuse("bad-video-return", "A video return needs its file and a final order state.");
+  }
+  return enqueue(async () => {
+    const file = rowPath(outDir, "out", String(id));
+    const row = await readRow(file);
+    if (!row || row.jobType !== "video") throw refuse("no-such-order", `Video return ${id} has no sent video order.`, 404);
+    const returns = Array.isArray(row.returns) ? row.returns : [];
+    const already = returns.some((item) => item?.kind === "video" && item.file === entry.file);
+    const nextState = row.state === "adopted" ? "adopted" : state;
+    const nextNote = nextState === "adopted" ? row.note : note;
+    if (already && row.state === nextState && (nextNote === null || nextNote === row.note)) return row;
+    const next = { ...row, returns: already ? returns : [...returns, { at: Date.now(), ...entry }],
+      state: nextState, stateAt: Date.now() };
+    if (nextNote !== null) next.note = String(nextNote).slice(0, 400);
     await writeAtomic(file, next);
     return next;
   });

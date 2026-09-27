@@ -1,0 +1,20 @@
+#radioPerformer { margin-bottom: 18px; }
+#radioPerformer[hidden], #srStage[hidden], #radioPerformer [hidden] { display: none; }
+#radioPerformer .sr-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+#radioPerformer .sr-head h3 { margin: 0; }
+#radioPerformer .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+#radioPerformer .cta a { text-decoration: none; }
+#radioPerformer .sr-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, 300px); gap: 16px; margin-top: 14px; }
+#radioPerformer iframe { display: block; width: 100%; min-height: 360px; height: min(62vh, 620px); border: 1px solid var(--hair); border-radius: 10px; background: var(--raise); }
+#radioPerformer .sr-controls { align-self: start; min-width: 0; }
+#radioPerformer .sr-controls .params { grid-template-columns: 1fr; }
+#radioPerformer .sr-controls .pv { min-width: 0; }
+#radioPerformer .sr-controls select { width: 100%; }
+#radioPerformer .sr-value { display: flex; align-items: center; gap: 8px; }
+#radioPerformer .sr-value input { min-width: 0; flex: 1; accent-color: var(--primary); }
+#radioPerformer .sr-value output { min-width: 45px; text-align: right; font: 12px var(--mono); color: var(--faint); }
+#radioPerformer :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+@media (max-width: 780px) {
+  #radioPerformer .sr-stage { grid-template-columns: 1fr; }
+  #radioPerformer iframe { height: 420px; min-height: 300px; }
+}

@@ -297,7 +297,7 @@ you will read is comments explaining each one. Here is what that is.
 
 1. **Checks for Node.js.** If it is missing, it says so and stops. Nothing else
    happens.
-2. **Fetches npm dependencies** on first run. The four direct packages are:
+2. **Fetches npm dependencies** on first run. The five direct packages are:
 
    | Package | Licence | What it is for |
    | --- | --- | --- |
@@ -305,6 +305,7 @@ you will read is comments explaining each one. Here is what that is.
    | `three` | MIT | The 3D renderer, served to your browser from `node_modules` |
    | `gltf-validator` | Apache-2.0 (Khronos) | The official glTF validator used for uploaded avatars |
    | `@pixiv/three-vrm` | MIT (pixiv Inc.) | Local VRM avatars, expressions, MToon materials and spring bones |
+   | `ag-psd` | MIT | Writes layered PSDs from saved image documents for StandRig |
 
    The VRM package also installs these thirteen transitive packages, all at
    version 3.5.5 under the MIT licence (copyright 2019-2026 pixiv Inc.):
@@ -323,7 +324,9 @@ you will read is comments explaining each one. Here is what that is.
    - `@pixiv/types-vrmc-springbone-extended-collider-1.0`
    - `@pixiv/types-vrmc-vrm-1.0`
 
-   The server imports the glTF validator at startup; the VRM packages provide
+   The PSD writer also installs `base64-js` (MIT) and `pako` (MIT/Zlib).
+
+   The server imports the glTF validator and PSD writer at startup; the VRM packages provide
    the browser's avatar runtime. Both launchers fetch missing direct packages.
    After updating an older copy, run `npm install --omit=dev` in the Studio
    folder to reconcile the complete dependency graph with `package-lock.json`.

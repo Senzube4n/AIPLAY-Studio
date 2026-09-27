@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { planHandoffs, projectOrderProgress } from "./planning.js";
 
 const source = readFileSync(new URL("../../web/app.js", import.meta.url), "utf8");
 const collab = source.slice(source.indexOf("const cb = (body)"), source.indexOf("function paintExtend(t)"));
@@ -30,11 +31,13 @@ function fixture() {
   };
   const peer = { fp: "abc123", nickname: "Friend", verified: true, role: "lender" };
   const doc = { segments: [{ id: "opening", title: "The arrival", mode: "generate", durationSec: 5 }, { id: "closing", mode: "generate", durationSec: 4 }] };
-  const plan = { slug: "episode", revision: 0, notes: "", shots: doc.segments.map((s) => ({ segmentId: s.id, title: s.title || s.id, seconds: s.durationSec, stage: "storyboard", owner: null, pinned: false, reviewNote: "" })) };
+  const plan = { slug: "episode", revision: 0, notes: "", shots: doc.segments.map((s) => ({ segmentId: s.id, title: s.title || s.id, seconds: s.durationSec, mode: s.mode, stage: "storyboard", owner: null, pinned: false, reviewNote: "" })) };
+  const book = [];
+  const delivery = () => { const r = projectOrderProgress({ slug: "episode", shots: plan.shots, orders: book }); r.handoffs = planHandoffs({ plan, peers: [peer], delivery: r }); return r; };
   const defaults = (url, body) => {
     if (url === "/api/mv/projects") return { projects: [{ slug: "episode", title: "Episode" }] };
     if (url === "/api/mv/project/episode") return { project: doc };
-    if (url === "/api/collab/plan?slug=episode") return { ok: true, plan };
+    if (url === "/api/collab/plan?slug=episode") return { ok: true, plan, delivery: delivery() };
     if (body?.action === "roster") return { peers: [peer] };
     if (body?.action === "me") return { fp: "local", words: [], card: "key" };
     return { items: [], orders: [], takes: [] };
@@ -53,7 +56,7 @@ function fixture() {
   });
   node("cbKind").value = "shot"; node("cbDraftPolicy").value = "equal";
   vm.runInContext(collab, context);
-  return { node, calls, context, defaults, peer, doc, plan, run: (code) => vm.runInContext(code, context), fire: (id, event = "click") => node(id).handlers[event]?.({ target: node(id) }) };
+  return { node, calls, context, defaults, peer, doc, plan, book, run: (code) => vm.runInContext(code, context), fire: (id, event = "click") => node(id).handlers[event]?.({ target: node(id) }) };
 }
 
 test("initial and return visits load real flat scenes and refresh the selected project", async () => {
@@ -85,7 +88,8 @@ test("verified friends without a role can receive resources and received cards c
   f.peer.role = "none"; await f.run("paintPeers()");
   assert.equal(f.node("cbPreview").disabled, true);
   f.node("cbKind").value = "resources"; f.run("paintCbKind()");
-  assert.equal(f.node("cbTo").value, f.peer.fp);
+  assert.equal(f.node("cbTo").value, "", "outgoing packages do not silently choose the first friend");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
   assert.equal(f.node("cbPreview").disabled, false);
   f.context.respond = (url, body) => body?.action === "open" ? { file: "card.aiplay", kind: "resources", from: f.peer, packet: card } : f.defaults(url, body);
   await f.run('openCollabFile("card.aiplay")');
@@ -93,6 +97,27 @@ test("verified friends without a role can receive resources and received cards c
   await f.fire("cbSaveResources");
   const saved = f.calls.find((c) => c.body?.action === "set_resources");
   assert.deepEqual(saved.body, { action: "set_resources", fp: f.peer.fp, resources: card });
+});
+
+test("recipient choice shows only advertised capacity and leaves live idle unknown", async () => {
+  const f = fixture();
+  f.peer.resources = { at: Date.now(), gpu: { vramMb: 12288 }, ready: ["videoLtx"] };
+  f.peer.resourcesSaid = "1 hour ago";
+  await f.run("paintPeers()");
+  assert.equal(f.node("cbPreview").disabled, true);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /Choose a friend/);
+  f.node("cbTo").value = f.peer.fp;
+  f.node("cbKind").value = "video-recipe";
+  f.run('collabVideoDraft = { engine: "ltx" }; paintCbKind()');
+  await f.fire("cbTo", "change");
+  assert.equal(f.node("cbPreview").disabled, false);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /12\.0 GB VRAM/);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /LTX listed/);
+  assert.match(f.node("cbRecipientStatus").innerHTML, /Idle unknown/);
+  f.run('collabVideoDraft = { engine: "h3" }; paintCbRecipientStatus()');
+  assert.match(f.node("cbRecipientStatus").innerHTML, /H3 not listed/);
+  f.node("cbTo").value = ""; await f.fire("cbTo", "change");
+  assert.equal(f.node("cbPreview").disabled, true);
 });
 
 test("reviewed preview token is required for prepare and changing inputs disarms it", async () => {
@@ -146,6 +171,42 @@ test("late preview response cannot arm changed inputs", async () => {
   assert.equal(f.node("cbOutgoingPreview").hidden, true);
 });
 
+test("failed preview can be retried; lost prepare response requires checking Outbox", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
+  f.context.respond = (url, body) => body?.action === "preview"
+    ? Promise.reject(new Error("Connection lost")) : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPreview").disabled, false);
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /Check the Studio connection and try Preview again/);
+
+  f.context.respond = (url, body) => body?.action === "preview"
+    ? { previewId: "frozen-retry", to: f.peer, packet: { segmentId: "opening", prompt: "Exact scene" } }
+    : body?.action === "pack" ? Promise.reject(new Error("Response lost")) : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, false);
+  await f.fire("cbPack");
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.equal(f.run("cbPreparedPreview"), null);
+  assert.match(f.node("cbPackNote").textContent, /Check Outbox.*before previewing again/);
+  assert.ok(f.calls.some((c) => c.body?.action === "orders" && c.body.side === "out"));
+});
+
+test("scene orders expose their sealed file in Outbox after leaving the Send pane", async () => {
+  const f = fixture();
+  const file = "C:/studio/collab/out/order-o_000000000001-to-abc123.aiplay";
+  f.context.respond = (url, body) => body?.action === "orders" && body.side === "out"
+    ? { orders: [{ id: "o_000000000001", to: f.peer, slug: "episode", order: { segmentId: "opening" }, state: "sent", file }] }
+    : f.defaults(url, body);
+  await f.run("paintOutbox()");
+  assert.equal(f.node("cbOutboxWrap").hidden, false);
+  assert.match(f.node("cbOutbox").innerHTML, /The arrival|opening/);
+  assert.match(f.node("cbOutbox").innerHTML, /data-file="C:\/studio\/collab\/out\/order-o_000000000001-to-abc123\.aiplay"/);
+  assert.match(f.node("cbOutbox").innerHTML, /Show file.*Copy location/s);
+  assert.doesNotMatch(f.node("cbOutbox").innerHTML, /older record has no saved file path/);
+});
+
 test("equal allocation covers 47 clips once across 10 peers; capability mode excludes stale and incompatible cards", () => {
   const f = fixture();
   const result = f.run(`(() => {
@@ -162,6 +223,95 @@ test("equal allocation covers 47 clips once across 10 peers; capability mode exc
   assert.equal(result.unique, 47);
   assert.equal(Math.max(...result.counts) - Math.min(...result.counts), 1);
   assert.equal(result.matched, 6); assert.equal(result.excluded, 4);
+});
+
+test("saved allocation steps through exact order previews one scene at a time", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  assert.equal(f.node("cbAssignedStart").disabled, false);
+  await f.fire("cbAssignedStart");
+  assert.equal(f.node("cbTo").value, f.peer.fp);
+  assert.equal(f.node("cbSegment").value, "opening");
+  assert.match(f.node("cbAssignedStatus").textContent, /1\/2 to review/);
+  assert.ok(!f.calls.some((c) => ["preview", "pack"].includes(c.body?.action)));
+  f.context.respond = (url, body) => body?.action === "preview" ? {previewId:"frozen",packet:{kind:"order",shot:{segmentId:"opening"}},describes:"scene",manifest:[]}
+    : body?.action === "pack" ? {ok:true,file:"C:/collab/out/order.aiplay",describes:"scene",bytes:1024}
+      : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, false);
+  await f.fire("cbPack");
+  assert.equal(f.node("cbAssignedNext").hidden, false);
+  assert.match(f.node("cbAssignedStatus").textContent, /2\/2 to review/);
+  await f.fire("cbAssignedNext");
+  assert.equal(f.node("cbSegment").value, "closing");
+  assert.equal(f.node("cbHandoff").hidden, true);
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.equal(f.calls.filter((c) => c.body?.action === "pack").length, 1);
+});
+
+test("saved allocation skips historical prepared orders without silently requesting another", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "sent", at: Date.now(), expires: Date.now() + 60000 });
+  await f.fire("cbAssignedStart");
+  assert.equal(f.node("cbSegment").value, "closing");
+  assert.match(f.node("cbAssignedStatus").textContent, /1\/1 to review/);
+  assert.ok(!f.calls.some((c) => ["preview", "pack"].includes(c.body?.action)));
+  f.run('cbPlan.draft.stale = true; paintCbSavedDraft()');
+  assert.equal(f.node("cbAssignedStart").disabled, true);
+});
+
+test("expired and refused orders remain visible but are not offered as fresh handoffs", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "sent", at: Date.now() - 60000, expires: Date.now() - 1 });
+  f.book.push({ id: "o_000000000002", slug: "episode", to: f.peer, order: { segmentId: "closing" }, state: "refused", at: Date.now() - 1000 });
+  await f.fire("cbAssignedStart");
+  assert.match(f.node("cbSay").textContent, /No new request is ready/);
+  assert.match(f.node("cbHandoffList").innerHTML, /Expired · ask friend/);
+  assert.match(f.node("cbHandoffList").innerHTML, /Return refused/);
+  assert.doesNotMatch(f.node("cbHandoffList").innerHTML, /cbhandoffreview/);
+  assert.ok(!f.calls.some((call) => ["preview", "pack"].includes(call.body?.action)));
+});
+
+test("an unknown order state is not presented as ready for another request", async () => {
+  const f = fixture(); f.plan.shots[0].owner = f.peer.fp;
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "future-state", at: Date.now() });
+  await f.run("paintCollab()");
+  assert.match(f.node("cbHandoffList").innerHTML, /Order state unknown/);
+  assert.doesNotMatch(f.node("cbHandoffList").innerHTML, /cbhandoffreview/);
+});
+
+test("a handoff row rechecks the order state before opening its preview", async () => {
+  const f = fixture(); f.plan.shots[0].owner = f.peer.fp; await f.run("paintCollab()");
+  assert.match(f.node("cbHandoffList").innerHTML, /cbhandoffreview/);
+  const button = { closest: () => ({ dataset: { segment: "opening" } }) };
+  const event = { target: { closest: () => button } };
+  await f.node("cbHandoffList").handlers.click(event);
+  assert.equal(f.node("cbSegment").value, "opening");
+  assert.ok(!f.calls.some((call) => ["preview", "pack"].includes(call.body?.action)));
+  f.book.push({ id: "o_000000000001", slug: "episode", to: f.peer, order: { segmentId: "opening" }, state: "sent", at: Date.now(), expires: Date.now() + 60000 });
+  await f.node("cbHandoffList").handlers.click(event);
+  assert.match(f.node("cbSay").textContent, /handoff changed/);
+});
+
+test("a failed pack leaves the current assigned scene ready for another preview", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.plan.shots.forEach((shot) => { shot.owner = f.peer.fp; });
+  f.run('cbPlan.draft = { policy:"equal", at:Date.now(), appliedAt:Date.now(), stale:false, assignments:[{fp:"abc123",nickname:"Friend",segmentIds:["opening","closing"],estimatedMinutes:null}],excluded:[],unassigned:[] }; paintCbSavedDraft()');
+  await f.fire("cbAssignedStart");
+  f.context.respond = (url, body) => body?.action === "preview" ? {previewId:"frozen",packet:{kind:"order",shot:{segmentId:"opening"}},describes:"scene",manifest:[]}
+    : body?.action === "pack" ? {error:"Preview expired"} : f.defaults(url, body);
+  await f.fire("cbPreview");
+  await f.fire("cbPack");
+  assert.equal(f.node("cbSegment").value, "opening");
+  assert.match(f.node("cbAssignedStatus").textContent, /1\/2 to review/);
+  assert.equal(f.node("cbAssignedNext").hidden, true);
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /Preview again/);
 });
 
 test("all list failures keep previous rows and expose the failure", async () => {
@@ -201,6 +351,25 @@ test("allocation preview uses the server's pinned result and does not apply or s
   assert.match(f.node("cbDraftSummary").textContent, /Unsaved preview/);
   assert.equal(f.node("cbDraftSaved").hidden, true);
   assert.ok(!f.calls.some((c) => ["allocate", "apply_draft", "pack"].includes(c.body?.action)));
+});
+
+test("late allocation preview cannot replace a changed friend or scene selection", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.node("cbDraftPeers").inputs = [{ checked: true, value: f.peer.fp }];
+  f.node("cbDraftScenes").inputs = [{ checked: true, value: "opening" }];
+  let finish;
+  f.context.respond = (url, body) => body?.action === "preview_allocation"
+    ? new Promise((resolve) => { finish = resolve; }) : f.defaults(url, body);
+  const waiting = f.fire("cbDraftPreview");
+  f.node("cbDraftScenes").inputs = [{ checked: true, value: "closing" }];
+  await f.fire("cbDraftScenes", "change");
+  finish({ ok: true, previewOnly: true, plan: { ...f.plan,
+    draft: { assignments: [{ fp: f.peer.fp, nickname: "Friend", segmentIds: ["opening"], estimatedMinutes: null }], excluded: [], unassigned: [] } } });
+  await waiting;
+  assert.match(f.node("cbDraftResult").innerHTML, /closing/);
+  assert.doesNotMatch(f.node("cbDraftResult").innerHTML, /opening/);
+  assert.match(f.node("cbDraftSummary").textContent, /Selection changed.*Preview again/);
+  assert.equal(f.node("cbDraftSaved").hidden, true);
 });
 
 test("saving one plan section preserves unsaved edits in the other", async () => {
@@ -296,12 +465,43 @@ test("movie handoff overrides a different project selected in Collab", async () 
 });
 
 
-test("standalone video handoff keeps its recipe separate from movie orders",async()=>{
- const f=fixture(); const video={engine:"ltx",prompt:"Moonlight",width:1280,height:704,seconds:5,steps:8,guidance:3,keepAudio:false,seed:42};
+test("standalone Video handoff keeps its signed job separate from movie orders",async()=>{
+ const f=fixture(); const video={engine:"h3",prompt:"Moonlight",width:1280,height:704,seconds:5,steps:20,guidance:3,keepAudio:false,seed:42};
  f.context.recipe=video;await f.run("paintCollab(false,null,recipe)");f.node("cbTo").value=f.peer.fp;
- assert.equal(f.node("cbKind").value,"video-recipe");
- assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-recipe",to:f.peer.fp,video});
+ assert.equal(f.node("cbKind").value,"video-job");
+ assert.deepEqual(JSON.parse(JSON.stringify(f.run("cbPackRequest()"))),{kind:"video-job",to:f.peer.fp,video});
  assert.ok(!f.calls.some(c=>["preview","pack","accept","generate_clip"].includes(c.body?.action)));
+});
+
+test("signed Video acceptance and rendering ask before each busy or allowance override", async () => {
+  for (const answer of [false, true]) {
+    const f = fixture();
+    const asked = [];
+    f.context.bottomDrawer = async (options) => { asked.push(options); return answer; };
+    f.node("cbFile").value = "video.aiplay";
+    f.node("cbFileCard").dataset.videoArmed = "video.aiplay";
+    f.node("cbFileCard").dataset.videoArmedDigest = "a".repeat(64);
+    f.run('cbOpenedVideoJob = { file: "video.aiplay", id: "o_aaaaaaaaaaaa", reviewDigest: "' + "a".repeat(64) + '" }');
+    f.context.respond = (url, body) => body?.action === "video_accept"
+      ? (body.anyway === true ? { ok: true, note: "Accepted." }
+        : { error: "Daily allowance reached.", overridable: true,
+          overrides: [{ reason: "budget-zero", why: "You give Friend 0 minutes of your card a day." }] })
+      : body?.action === "video_render"
+        ? (body.anyway === true ? { ok: true, note: "Queued." }
+          : { error: "Card busy.", overridable: true,
+            overrides: [{ reason: "engine-busy", why: "The card is rendering a song." }] })
+        : f.defaults(url, body);
+    await f.fire("cbVideoAccept");
+    const accepts = f.calls.filter((call) => call.body?.action === "video_accept");
+    assert.deepEqual(accepts.map((call) => call.body.anyway === true), answer ? [false, true] : [false]);
+    assert.equal(asked[0].yes, "Accept anyway");
+    assert.match(asked[0].body, /0 minutes/);
+    await f.fire("cbVideoRender");
+    const renders = f.calls.filter((call) => call.body?.action === "video_render");
+    assert.deepEqual(renders.map((call) => call.body.anyway === true), answer ? [false, true] : [false]);
+    assert.equal(asked[1].yes, "Render anyway");
+    assert.match(asked[1].body, /rendering a song/);
+  }
 });
 
 /* ── LENDING FOR A PERSON WITH NO STRONG CARD ────────────────────────────
@@ -433,9 +633,9 @@ test("the Workflow view listens for the project Collab asks it to open", () => {
   assert.match(source, /if \(name === "workflow"\) wfOpen\(\);/, "the view change is what loads it");
 });
 
-test("each Ask friend names the other: Video's is text only, Workflow's carries the pictures", () => {
+test("each Ask friend names the other: standalone Video is text only, Workflow carries pictures", () => {
   const mv = readFileSync(new URL("../../web/mv.js", import.meta.url), "utf8");
-  assert.match(html, /id="vidAskFriend" title="[^"]*Music video → Video clips → Ask friend, which carries them/);
+  assert.match(html, /id="vidAskFriend" title="[^"]*Workflow → Video clips → Ask friend/);
   /* The page's own sentences name the screen by the rail's label (cbScreen),
    * typeof-guarded because vidPaint and videoFriendRecipe are lifted alone. */
   assert.match(source, /use \$\{typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow"\} → Video clips → Ask friend, which carries them\.`\);/);

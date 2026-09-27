@@ -960,12 +960,12 @@ const TABS = [
   },
   {
     id: "radio", icon: "∿", name: "Radio", group: "run",
-    lead: "The AI PLAY radio stations: live streams from the platform's own channel list, opened in your browser.",
-    makes: ["Something to listen to"],
-    start: "Pick a station that is live.",
+    lead: "Browse AI PLAY radio streams or preview a local 2D performer for OBS.",
+    makes: ["Something to listen to", "A local 2D performer preview"],
+    start: "Pick a live station, or start StandRig and check its connection.",
     needs: [],
-    needsNote: "An internet connection to aiplay.live and to the streams themselves. No account, and nothing of yours is uploaded.",
-    cant: "It plays in your browser, not in the app; offline it says so and shows nothing.",
+    needsNote: "Stations need internet. The 2D performer needs a separate local StandRig service and a layered model.",
+    cant: "Studio does not build the 2D rig, control OBS, or start a stream. Radio stations open in your browser.",
   },
   {
     id: "blog", icon: "✎", name: "Blog", group: "run",

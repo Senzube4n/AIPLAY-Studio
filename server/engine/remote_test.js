@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { EventEmitter } from "node:events";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -8,6 +9,8 @@ import { mkdtemp, mkdir, readFile, writeFile, readdir, rename, rm } from "node:f
 import { Readable } from "node:stream";
 import { createWorker } from "../../worker/runpod-worker.js";
 import { createRemoteClient } from "./remote-client.js";
+import { awaitRemoteMusicJob } from "./remote-music.js";
+import { JobRunner } from "../jobs.js";
 import { endpoint, relativeFile, sendJSON, readBody, validateGraph, inputChoices } from "./remote-common.js";
 
 const TOKEN = "test-only-worker-token-32-characters-long";
@@ -102,14 +105,96 @@ async function rig(t, { dropSubmit = false, targetedCancel = true, clientFetch =
 test("round trip: local ledger, remote execution, verified local output", async t => {
   const r = await rig(t);
   const submitted = await r.client.submit({ graph: graph(), label: "A test image" });
+  assert.match(submitted.runId, /^remote-/);
   assert.equal(r.events[0].type, "delegate"); assert.equal(r.submissions, 0);
   await r.client.tick(); await r.worker.tick(); assert.equal(r.submissions, 1);
   await r.complete(); await r.worker.tick(); await r.client.tick();
   const job = r.client.status().jobs[0]; assert.equal(job.state, "completed");
+  assert.equal(job.runId, submitted.runId, "remote music can link the result to its technical record");
   assert.deepEqual(await readFile(path.join(r.root, "local-output", job.outputs[0].localFile)), PNG);
   assert.equal(r.events[1].type, "generate"); assert.equal(r.events[1].data.remote.jobId, submitted.id);
   assert.ok(r.events[1].data.remote.executedGraphHash);
   assert.equal(JSON.stringify(r.client.status()).includes(TOKEN), false);
+});
+
+test("remote music Stop retries an unaddressable prompt and waits for the Pod verdict", async () => {
+  const sent = { id: randomUUID(), runId: "remote-test" };
+  let state = "submitting", attempts = 0, ticks = 0;
+  const notes = [];
+  const client = {
+    status: () => ({ jobs: [{ id: sent.id, state }] }),
+    cancel: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("Submission is being reconciled");
+    },
+  };
+  await assert.rejects(awaitRemoteMusicJob({ client, sent, isCancelled: () => true,
+    onState: note => notes.push(note), wait: async () => { if (++ticks === 3) state = "cancelled"; } }),
+  error => error.remoteState === "cancelled");
+  assert.equal(attempts, 2, "a rejected Stop is retried after the prompt ID becomes available");
+  assert.ok(notes.some(note => note.includes("not confirmed")), "the first failure is visible, not called stopped");
+  assert.ok(notes.some(note => note.includes("accepted")));
+});
+
+test("remote music keeps a completed result when Stop arrived too late", async () => {
+  const sent = { id: randomUUID(), runId: "remote-record-id" };
+  let state = "running", attempts = 0, ticks = 0;
+  const client = {
+    status: () => ({ jobs: [{ id: sent.id, state, runId: sent.runId,
+      outputs: state === "completed" ? [{ localFile: "aiplay_runpod_song.wav" }] : [] }] }),
+    cancel: async () => { attempts++; throw new Error("Worker unavailable"); },
+  };
+  const result = await awaitRemoteMusicJob({ client, sent, isCancelled: () => true,
+    onState: () => {}, wait: async () => { if (++ticks === 2) state = "completed"; } });
+  assert.equal(attempts, 1);
+  assert.deepEqual(result, { file: "aiplay_runpod_song.wav", runId: sent.runId });
+});
+
+test("remote music warns before a second paid render when the Pod status is uncertain", async () => {
+  const sent = { id: randomUUID(), runId: "remote-uncertain" };
+  const client = { status: () => ({ jobs: [{ id: sent.id, state: "uncertain", error: "The queue lost this prompt." }] }) };
+  await assert.rejects(awaitRemoteMusicJob({ client, sent, isCancelled: () => true,
+    onState: () => {}, wait: async () => {} }), error =>
+    error.remoteState === "uncertain" && /Check the Pod before starting another paid render/.test(error.message));
+});
+
+test("music queue retains its current remote job until Stop is confirmed", async () => {
+  const runner = new JobRunner(new EventEmitter());
+  let complete;
+  runner.setRemote(() => new Promise(resolve => { complete = resolve; }));
+  const job = runner.enqueue({ engine: "minimax-music3", caption: "a song", lyrics: "hello", seed: 1, maxDuration: 10 });
+  const until = async condition => {
+    for (let i = 0; i < 50; i++) {
+      if (condition()) return;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.fail("remote queue did not advance in time");
+  };
+  await until(() => runner.current?.stage === "remote");
+  const stopped = await runner.cancelById(job.id);
+  assert.deepEqual({ state: stopped.state, pending: stopped.pending }, { state: "cancelling", pending: true });
+  assert.equal(runner.current, job, "the next paid song must not start while this Pod render may still run");
+  assert.equal(runner.history.length, 0);
+  assert.equal((await runner.cancelById(job.id)).state, "cancelling", "a repeated Stop remains pending");
+  complete({ file: "aiplay_runpod_song.wav", runId: "remote-record-id" });
+  await until(() => runner.history.length === 1);
+  assert.equal(runner.history[0].state, "done", "the adopted file is retained when the Pod completed");
+  assert.equal(runner.history[0].runId, "remote-record-id");
+  assert.match(runner.history[0].note, /completed before Stop took effect/);
+});
+
+test("music queue reports uncertain paid work as uncertain, not cancelled", async () => {
+  const runner = new JobRunner(new EventEmitter());
+  let rejectRemote;
+  runner.setRemote(() => new Promise((resolve, reject) => { rejectRemote = reject; }));
+  const job = runner.enqueue({ engine: "minimax-music3", caption: "a song", lyrics: "hello", seed: 1, maxDuration: 10 });
+  for (let i = 0; i < 50 && runner.current?.stage !== "remote"; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(runner.current?.stage, "remote");
+  await runner.cancelById(job.id);
+  rejectRemote(Object.assign(new Error("The Pod could not establish whether ComfyUI accepted the render."), { remoteState: "uncertain" }));
+  for (let i = 0; i < 50 && runner.history.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(runner.history[0]?.state, "failed");
+  assert.match(runner.history[0]?.error, /could not establish/);
 });
 
 test("failed provenance write prevents every render submission", async t => {

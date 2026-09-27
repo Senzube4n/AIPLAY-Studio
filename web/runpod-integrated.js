@@ -364,7 +364,8 @@ async function init() {
     const action = button.dataset.podPower;
     if (action === "start" && !window.confirm("Start this Pod now? Paid GPU billing begins as soon as RunPod allocates the GPU.")) return;
     button.disabled = true;
-    try { await accountApi(`/pods/${encodeURIComponent(button.dataset.podId)}/${action}`, {}); renderAccount(await accountApi("/overview")); }
+    try { await accountApi(`/pods/${encodeURIComponent(button.dataset.podId)}/${action}`,
+      action === "start" ? { confirm: "START PAID POD" } : {}); renderAccount(await accountApi("/overview")); }
     catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
     finally { button.disabled = false; }
   });

@@ -78,6 +78,7 @@ export const ROUTABLE = {
    * set_cloud is withheld below, because it decides whether songs bill. */
   cloud_status: null,
   studio_status: null,
+  community_feed: null,
   engine_status: null,
   engine_activity: null,
   engine_nodes: null,
@@ -112,6 +113,8 @@ export const ROUTABLE = {
   collab_free: null,
   collab_orders: null,
   collab_video_preview: null,
+  collab_video_job_preview: null, // frozen H3 request; packing is a separate write
+  collab_image_preview: null,
   collab_preview: null, // local snapshot; packing is a separate explicit write
   collab_add_peer: "writes",
   /* collab_set_role, collab_verify and collab_set_lend_minutes: WITHHELD below. */
@@ -121,6 +124,16 @@ export const ROUTABLE = {
   collab_open: null,
   collab_inbox: null,
   collab_quarantine: null,
+  collab_image_accept: "writes", // stages a reviewed peer job's references locally
+  collab_image_render: "gpu", // explicitly spends this machine's card
+  collab_image_send_back: "writes", // prepares a signed file for manual handoff
+  collab_image_receive: "writes", // validates and files a returned PNG in quarantine
+  collab_image_review_return: null, // reads the checked PNG as native image content
+  collab_image_adopt: "writes", // adds a peer PNG to Pictures
+  collab_image_drop: "destroys", // removes a quarantined PNG
+  collab_video_accept: "writes", // reviewed signed H3 order; no GPU work yet
+  collab_video_render: "gpu", // explicitly runs the accepted order on this card
+  collab_video_send_back: "writes", // seals a local return for manual handoff
   collab_accept: "writes",
   collab_send_back: "writes",
   collab_receive: "writes",
@@ -307,6 +320,7 @@ export const ROUTABLE = {
    * picture in the library, which is exactly what `writes` is for. */
   image_paint_layer: "writes",
   image_document: "writes",
+  image_standrig_psd_export: "writes",
   /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
    * mostly harmless — list, open, save, rename, reorder — but image_documents
    * takes action:"delete", and imgdoc.py says in its own words that there is no
@@ -535,10 +549,19 @@ export const ROUTABLE = {
   score_render: "gpu",
 
   /* avatars */
+  standrig_status: null,
+  standrig_parameters: "writes", // transient values sent to the local performer
+  standrig_control: "writes", // transient play, pause, reset or demo command
   avatar_list: null,
+  avatar_source_preflight: null,
+  avatar_motion_audit: null,
   avatar_playback_sessions: null,
+  avatar_cue_inventory: null,
   avatar_audio_upload: "writes",
   avatar_playback_command: null,
+  pngtuber_sessions: null,
+  pngtuber_talk: null, // transient frame cue in one live browser preview
+  pngtuber_clear_talk: null,
   avatar_weight_transfer_status: null,
   avatar_weight_transfer_inspect: null,
   avatar_weight_transfer_submit: "writes", // bounded local CPU work creating a new attachment
@@ -616,6 +639,9 @@ export const WITHHELD = {
   collab_set_lend_minutes: "raises or lowers how many minutes a day this card renders for a friend; with collab_accept routable, a chat could raise the allowance and then accept, walking past the minutes a person set exactly as the withheld \"anyway\" would. The Friends row on the Collab screen is where a person sets it (MCP clients keep the tool)",
   collab_set_role: "makes a friend a lending friend or a collaborator, a trust decision about who may send this card work or hold the whole project; a person makes it on the Collab screen's Friends row (MCP clients keep the tool)",
   collab_verify: "records that the twelve words were read aloud and matched, the one trust grant in Collab; a chat cannot hear the words, so a person presses it on the Collab screen (MCP clients keep the tool)",
+  collab_video_review_return: "returns a receipt for an MP4 the reviewer must watch; this text chat cannot inspect playback. Use the Collab page or an external MCP client with video access",
+  collab_video_adopt: "requires the exact reviewed MP4 receipt, and this text chat cannot watch that video. Use the Collab page or an external MCP client after inspecting the file",
+  collab_video_drop: "removes a returned MP4 that this text chat cannot watch or judge. Use the Collab page or an external MCP client after inspecting the file",
   set_cloud: "switches a PAID service on, or raises its monthly cap: it decides whether songs bill the person's own key, and that is the person's decision on the Settings page (No strong graphics card?)",
   studio_welcome: "hides or re-shows the first-run lines and SAVES the Simple/Advanced level, a setting for a person (Settings > Screens), not a sentence in a chat box",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
@@ -646,6 +672,12 @@ export const CHAT_WITHHELD_ARGS = {
   collab_accept: {
     anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
   },
+  collab_video_accept: {
+    anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
+  },
+  collab_video_render: {
+    anyway: "queues behind work already on the card; a person answers \"Render anyway\" on the Collab screen",
+  },
   collab_adopt: {
     anyway: "keeps a take that failed its checks; a person watches it and answers \"Keep anyway\" on the Collab screen",
   },
@@ -658,6 +690,9 @@ export const CHAT_WITHHELD_ARGS = {
 for (const t of MCP_TOOLS) {
   if (t.name.startsWith("ab_") && !(t.name in WITHHELD)) {
     WITHHELD[t.name] = "the audiobook surface is a whole workflow of its own and has had no pass for chat";
+  }
+  if (t.name.startsWith("runpod_")) {
+    WITHHELD[t.name] = "RunPod GPU mode includes paid Pod controls, remote file transfer and arbitrary graphs; the in-app chat has no route-specific review for this surface. Use its panel or external MCP.";
   }
 }
 
@@ -678,6 +713,8 @@ export const COST_TEXT = {
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
   stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
+  standrig_parameters: "no graphics card time and no new file; it changes the local performer's current expression until replaced",
+  standrig_control: "no graphics card time and no new file; it changes the local performer's playback state",
   /* The router gates the whole tool, so a plain read asks too: the card says
    * that reading changes nothing. */
   video_settings: "no graphics card time and no new file — reading your video settings changes nothing; a setting it changes is SAVED, and every later render uses it",
@@ -688,6 +725,8 @@ export const COST_TEXT_BY_TOOL = {
  *  "writes" for its confirm, but it saves a setting, not a file. */
 export const GATE_WORDS_BY_TOOL = {
   video_settings: "SAVES A SETTING",
+  standrig_parameters: "CHANGES PERFORMER",
+  standrig_control: "CHANGES PERFORMER",
 };
 
 /* ─────────────────────────────────────────────── the flat-argument rule
@@ -709,6 +748,7 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 // silently dropped. External MCP clients still use the original typed schema.
 const JSON_ARGUMENT_TOOLS = new Set([
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
+  "standrig_parameters",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
   /* The score tools take `source` as an object and the note editor takes an
    * array of notes; without these three the chat could not reach them at all

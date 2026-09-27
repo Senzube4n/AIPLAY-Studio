@@ -45,6 +45,24 @@ class MatteTests(unittest.TestCase):
         self.assertEqual(stats["source"], "the picture's own alpha")
         np.testing.assert_array_equal(result, image)
 
+    def test_soft_alpha_cutout_is_not_segmented(self):
+        image = np.zeros((128, 128, 4), dtype=np.uint8)
+        image[24:104, 40:88] = (40, 80, 140, 250)
+        image[64:104, 62:66, 3] = 0  # gap between two legs
+        stats, result = self.prepare(image)
+        self.assertEqual(stats["source"], "the picture's own alpha")
+        self.assertEqual(stats["alphaFullPct"], 0)
+        self.assertGreater(stats["alphaNearFullPct"], 1)
+        np.testing.assert_array_equal(result, image)
+
+    def test_high_bit_depth_alpha_is_checked_after_normalization(self):
+        image = np.zeros((128, 128, 4), dtype=np.uint16)
+        image[24:104, 40:88] = (65535, 65535, 65535, 10000)
+        stats, result = self.prepare(image)
+        self.assertEqual(stats["normalizedFromBits"], 16)
+        self.assertEqual(stats["source"], "keyed here from luminance (Otsu, largest component, gaps preserved)")
+        self.assertEqual(result.dtype, np.uint8)
+
     def test_grayscale_input(self):
         image = np.zeros((128, 128), dtype=np.uint8)
         image[24:104, 40:88] = 255

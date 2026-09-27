@@ -1,9 +1,10 @@
 # Qwen Image 2.1 in Studio
 
 Studio uses the native ComfyUI Qwen Image 2.1 workflow for image creation and
-reference-guided editing. The Images page and `make_image` select it by default.
-Fresh installations also default automatic covers to Qwen; saved engine choices
-are preserved. Missing files or nodes produce an actionable cover failure before
+reference-guided editing. The Images page, `make_image` and automatic covers
+select Qwen by default when its files are installed; saved engine choices are
+preserved, and a ready alternative is used when Qwen is absent. If Qwen is
+selected but missing files or nodes, covers report an actionable failure before
 a GPU graph is submitted. An offline engine leaves queued work explicitly deferred.
 Check Models or `qwen_image_status` before rendering: installing weights alone
 does not add missing ComfyUI nodes.
@@ -30,6 +31,8 @@ GGUF conversions are a different loader path and are not advertised as working
 by this integration. In particular, the linked community Q8 conversion reports
 an upstream shape mismatch; a filename containing “uncensored” does not establish
 different base weights or a capability test.
+The [GGUF compatibility check](QWEN_GGUF_COMPATIBILITY.md) records a pinned Q4
+candidate and why the currently installed loader cannot safely run it.
 
 Download sizes are not VRAM requirements. Memory and time depend on image size,
 batch, references, runtime and offloading. The model uses the Qwen Research License,

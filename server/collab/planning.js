@@ -102,6 +102,38 @@ export function projectOrderProgress({ slug, shots, orders, now = Date.now() }) 
     unmatchedOrders: rows.filter((row) => !sceneIds.has(row.segmentId)) };
 }
 
+/** One advisory handoff row per currently assigned friend. Historical orders
+ * for another owner cannot satisfy this assignment. A prepared file is not a
+ * delivery receipt, and an expired order may still be rendering remotely. */
+export function planHandoffs({ plan, peers = [], delivery, now = Date.now() }) {
+  const assignedInDraft = new Map((plan?.draft?.appliedAt && !plan.draft.stale ? plan.draft.assignments || [] : [])
+    .flatMap((row) => (row.segmentIds || []).map((id) => [id, row.fp])));
+  return (plan?.shots || []).filter((shot) => shot.mode === "generate" && shot.owner && shot.owner !== "self").map((shot) => {
+    const peer = peers.find((item) => item.fp === shot.owner) || null;
+    const eligible = peer?.verified === true && ["lender", "collaborator"].includes(peer.role);
+    const orders = delivery?.scenes?.find((scene) => scene.segmentId === shot.segmentId)?.orders || [];
+    const current = orders.find((order) => order.to?.fp === shot.owner) || null;
+    const otherOwnerOrders = orders.filter((order) => order.to?.fp !== shot.owner).length;
+    const card = peer?.resources;
+    const cardAt = Number(card?.at);
+    const age = now - cardAt;
+    const cardState = !card || !Number.isFinite(cardAt) || cardAt <= 0 ? "missing"
+      : age < 0 ? "future" : age > MAX_AGE ? "stale" : "current";
+    const capability = assignedInDraft.get(shot.segmentId) === shot.owner ? plan.draft.capability || null : null;
+    const minVramMb = capability ? Number(plan.draft.minVramMb) || 0 : 0;
+    const cardFit = !capability ? "not-checked" : cardState !== "current" ? "unknown"
+      : !(card.ready || []).includes(capability) ? "not-listed"
+        : minVramMb > 0 && Number(card.gpu?.vramMb || 0) < minVramMb ? "vram-below-minimum" : "listed";
+    return { segmentId: shot.segmentId, title: shot.title, owner: shot.owner,
+      peer: peer ? { fp: peer.fp, nickname: peer.nickname, eligible } : { fp: shot.owner, nickname: null, eligible: false },
+      status: current?.status || "not-prepared", orderId: current?.id || null,
+      nextStep: current?.nextStep || "Preview this scene, then prepare a sealed file for manual transfer.",
+      otherOwnerOrders, card: { state: cardState, saidAt: cardState === "missing" ? null : cardAt,
+        source: "self-reported", capability, minVramMb, fit: cardFit },
+      remoteAvailability: "unknown" };
+  });
+}
+
 export function createCollabPlanning({ appData, readProject, readPeers, readOrders = async () => [], resolveKitCue, now = Date.now }) {
   const locks = new Map(), directory = path.join(appData, "collab", "plans");
   const filename = (slug) => path.join(directory, `${slugOf(slug)}.json`);
@@ -117,10 +149,13 @@ export function createCollabPlanning({ appData, readProject, readPeers, readOrde
       stage: "storyboard", owner: null, reviewNote: "", pinned: false, dependsOn: null,
       ...(saved?.shots || []).find((shot) => shot.segmentId === scene.id),
       segmentId: scene.id, title: scene.title || scene.name || scene.label || scene.id, seconds: secondsOf(scene) }));
-    return { plan: { v: 1, slug, title: project.title || slug, revision: saved?.revision || 0,
+    const plan = { v: 1, slug, title: project.title || slug, revision: saved?.revision || 0,
       notes: saved?.notes || "", updatedAt: saved?.updatedAt || null, changedBy: saved?.changedBy || null,
-      shots, draft: saved?.draft || null, musicCues: saved?.musicCues || [], removedSceneCount: (saved?.shots || []).filter((shot) => !shots.some((s) => s.segmentId === shot.segmentId)).length }, peers: await peersNow(),
-      delivery: projectOrderProgress({ slug, shots, orders: await readOrders(), now: now() }) };
+      shots, draft: saved?.draft || null, musicCues: saved?.musicCues || [], removedSceneCount: (saved?.shots || []).filter((shot) => !shots.some((s) => s.segmentId === shot.segmentId)).length };
+    const peers = await peersNow(), observedAt = now();
+    const delivery = projectOrderProgress({ slug, shots, orders: await readOrders(), now: observedAt });
+    delivery.handoffs = planHandoffs({ plan, peers, delivery, now: observedAt });
+    return { plan, peers, delivery };
   }
   async function get(slug) { return { ok: true, ...await context(slugOf(slug)) }; }
   async function mutate(body, actor = "system") {
@@ -161,7 +196,8 @@ export function createCollabPlanning({ appData, readProject, readPeers, readOrde
       } else if (body.action === "allocate" || body.action === "preview_allocation") {
         plan.draft = allocatePlan({ shots: plan.shots, peers, segmentIds: body.segmentIds, peerIds: body.peerIds,
           policy: body.policy, capability: body.capability, minVramMb: body.minVramMb, minutesPerTenSeconds: body.minutesPerTenSeconds, now: now() });
-        if (body.action === "preview_allocation") return { ok: true, plan, peers, delivery, previewOnly: true };
+        if (body.action === "preview_allocation") return { ok: true, plan, peers,
+          delivery: { ...delivery, handoffs: planHandoffs({ plan, peers, delivery, now: now() }) }, previewOnly: true };
       } else if (body.action === "apply_draft") {
         const draft = plan.draft;
         if (!draft || draft.stale) refuse("Create a current allocation draft before applying it.", 409);
@@ -183,7 +219,8 @@ export function createCollabPlanning({ appData, readProject, readPeers, readOrde
       const tmp = `${filename(slug)}.${randomUUID()}.tmp`;
       await writeFile(tmp, JSON.stringify(plan, null, 2), "utf8");
       await rename(tmp, filename(slug));
-      return { ok: true, plan, peers, delivery };
+      return { ok: true, plan, peers,
+        delivery: { ...delivery, handoffs: planHandoffs({ plan, peers, delivery, now: now() }) } };
     });
     locks.set(slug, work);
     work.finally(() => { if (locks.get(slug) === work) locks.delete(slug); }).catch(() => {});

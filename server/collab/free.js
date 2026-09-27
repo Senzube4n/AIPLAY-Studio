@@ -48,8 +48,7 @@
  * says so in its own sentence rather than claiming a certainty it does not have.
  */
 
-/** Work on the engine that is not really an occupation of the card. */
-const DISCOUNT_VIA = Object.freeze(["chat", "chat.turn", "chat.tools"]);
+import { isBriefChatVia } from "../engine/chat-vias.js";
 
 const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
@@ -72,11 +71,16 @@ function elapsed(secs) {
  *               or null when it could not be reached.
  * @returns `{ busy, reason, why }`. `reason` is null when free.
  */
-export function machineBusy({ art = null, jobs = null, plansRunning = [], engine = null } = {}) {
+export function machineBusy({ art = null, jobs = null, plansRunning = [], engine = null, unreadable = [] } = {}) {
   const say = (reason, why) => ({ busy: true, reason, why });
 
   if (art && art.paused) {
     return say("art-paused", "This Studio's own render queue is paused. Accepting work now would mean saying yes to your friend and then not rendering, which is worse than saying no — start the queue again first.");
+  }
+  /* Unknown local queues are non-overridable. Otherwise a known busy queue
+   * could be overridden while another queue was unreadable. */
+  if (Array.isArray(unreadable) && unreadable.length) {
+    return say("workload-unreachable", `This Studio cannot read its ${unreadable.join(", ")} status, so it cannot promise that the card is free. Nothing was accepted.`);
   }
   if (art && art.current) {
     const t = art.current.title || art.current.kind || "something";
@@ -99,9 +103,16 @@ export function machineBusy({ art = null, jobs = null, plansRunning = [], engine
   if (!engine) {
     return say("engine-unreachable", "This Studio cannot read its own engine, so it cannot honestly say whether the card is free. Nothing was accepted.");
   }
+  /* `engine.status()` can still report `ready: true` when its separate queue
+   * probe failed. With no queue reading, the count of work started outside this
+   * Studio is unknown, so an empty local in-flight list proves nothing. */
+  if (!engine.queue || ![engine.queue.running, engine.queue.pending].every((count) => Number.isSafeInteger(count) && count >= 0)) {
+    return say("engine-unreachable", "This Studio cannot read its engine queue, so it cannot honestly say whether the card is free. Nothing was accepted.");
+  }
   /* ⚠ THE ENGINE IS ASKED LAST AND IT IS THE ONLY ONE THAT SEES EVERYTHING.
    * The four readings above are queues this app keeps; this is the card. */
-  const live = (engine.running || []).filter((r) => !DISCOUNT_VIA.includes(String(r?.via || "")));
+  const inFlight = Array.isArray(engine.running) ? engine.running : [];
+  const live = inFlight.filter((r) => !isBriefChatVia(r?.via));
   if (live.length) {
     const r = live[0];
     return say("engine-busy", `The card is busy: ${r.label || r.via || "a render"}${elapsed(r.elapsedSec)}. That is the reading that sees everything — most work here never touches this app's own queues.`);
@@ -110,11 +121,15 @@ export function machineBusy({ art = null, jobs = null, plansRunning = [], engine
    * app dispatched; the count is what the engine says is on the card. A render
    * somebody started in ComfyUI's own window appears in the second and not the
    * first, and reading only the array called that machine free. */
-  if (n(engine.queue?.running) > 0) {
-    return say("engine-busy", `${n(engine.queue.running)} job${n(engine.queue.running) === 1 ? " is" : "s are"} running on the card. Not all of it was started by this app — the engine's own count sees work this Studio never dispatched.`);
+  /* These are exact prompt-ID matches produced from this same engine queue,
+   * not counts inferred from local rows that can linger after a render ends. */
+  const otherRunning = Math.max(0, n(engine.queue.running) - n(engine.queue.briefChatRunning));
+  if (otherRunning > 0) {
+    return say("engine-busy", `${otherRunning} job${otherRunning === 1 ? " is" : "s are"} running on the card. Not all of it was started by this app — the engine's own count sees work this Studio never dispatched.`);
   }
-  if (n(engine.queue?.pending) > 0) {
-    return say("engine-busy", `${n(engine.queue.pending)} job${n(engine.queue.pending) === 1 ? " is" : "s are"} waiting on the card already.`);
+  const otherPending = Math.max(0, n(engine.queue.pending) - n(engine.queue.briefChatPending));
+  if (otherPending > 0) {
+    return say("engine-busy", `${otherPending} job${otherPending === 1 ? " is" : "s are"} waiting on the card already.`);
   }
   if (engine.ready === false) {
     return say("engine-unreachable", "This Studio's engine is not running, so there is nothing to render a friend's scene with yet.");
@@ -147,13 +162,24 @@ export function machineBusy({ art = null, jobs = null, plansRunning = [], engine
  * Everything is injected; this module opens nothing.
  */
 export async function readWorkload({ artStatus, jobsStatus, anyRunning, engineStatus } = {}) {
-  const safe = async (fn, fallback) => { try { return await fn(); } catch { return fallback; } };
+  const unreadable = [];
+  const safe = async (name, fn, valid, fallback) => {
+    try {
+      const value = await fn();
+      if (valid(value)) return value;
+    } catch { /* An unreadable local queue cannot establish that the card is free. */ }
+    unreadable.push(name);
+    return fallback;
+  };
   return {
-    art: await safe(async () => (await artStatus())?.art ?? null, null),
-    jobs: await safe(async () => (await jobsStatus()) ?? null, null),
-    plansRunning: await safe(async () => (await anyRunning()) ?? [], []),
+    art: await safe("render queue", async () => (await artStatus())?.art,
+      (value) => value && typeof value.paused === "boolean" && Number.isSafeInteger(value.queued) && Object.hasOwn(value, "current"), null),
+    jobs: await safe("music queue", jobsStatus,
+      (value) => value && Object.hasOwn(value, "current") && Array.isArray(value.queue), null),
+    plansRunning: await safe("plan", anyRunning, Array.isArray, []),
     /* null, not {}: "could not read the engine" and "the engine is idle" are
      * different answers and only one of them may accept work. */
-    engine: await safe(async () => (await engineStatus()) ?? null, null),
+    engine: await (async () => { try { return await engineStatus() ?? null; } catch { return null; } })(),
+    unreadable,
   };
 }

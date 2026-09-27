@@ -17,7 +17,7 @@ In this mode the Images and Video screens render on the Pod: each shows a RunPod
 
 ## Prepare one dedicated Pod
 
-Choose a ComfyUI environment and GPU for one specific first workflow. A model-specific API such as Seedance includes its model deployment; a rented GPU does not. Confirm current compute and storage prices in the RunPod console before deploying. This integration does not create Pods, enforce a dollar budget, or stop idle GPUs.
+Choose a ComfyUI environment and GPU for one specific first workflow. A model-specific API such as Seedance includes its model deployment; a rented GPU does not. Confirm current compute and storage prices in the RunPod console before deploying. The Pod wizard can create a paid Pod, but does not enforce a dollar budget or stop idle GPUs.
 
 1. Keep ComfyUI, model weights, its `input`/`output` folders, and worker state on persistent storage. A network volume can outlive the Pod, but has separate storage charges and placement constraints. See [RunPod storage options](https://docs.runpod.io/pods/storage/types) and [network volumes](https://docs.runpod.io/storage/network-volumes).
 2. Install the selected models/custom nodes and prove a small workflow directly in that ComfyUI installation first. Start with a standard SD/SDXL checkpoint image to test transport cheaply. For video/music, install the exact files and nodes referenced by the chosen graph. The remote model list and graph validation report missing names; they do not install models or prove GPU memory is sufficient.
@@ -79,9 +79,18 @@ On Images or Video, choose **RunPod GPU**, open **Connection…**, and enter the
 
 The same window has **Create or manage a RunPod Pod**. Add a restricted RunPod API key with permission to read GPU inventory and manage Pods. AIPLAY stores that key in the same local secret store and never returns it to the page after saving. It can then show the account balance, current hourly spend, existing Pods, live GPU stock/price estimates, and start/stop controls. See RunPod's [API-key guidance](https://docs.runpod.io/get-started/api-keys) and [Pod GraphQL operations](https://docs.runpod.io/sdks/graphql/manage-pods).
 
-Creating a Pod is a reviewed paid action: choose the GPU, cloud tier and persistent disk, review the current estimated GPU hourly price, and explicitly acknowledge that billing begins before the create button is enabled. The current wizard creates the standard `runpod/comfyui:cuda12.8` image with HTTP ports 8080, 8188, 8888 and 8787. Storage is billed separately and may continue after compute is stopped.
+Creating a Pod is a reviewed paid action: choose the GPU, cloud tier and persistent disk, review the current estimated GPU hourly price, and explicitly acknowledge that billing begins before the create button is enabled. The current wizard creates the standard `runpod/comfyui:cuda12.8` image with only worker HTTP port 8787 exposed. Storage is billed separately and may continue after compute is stopped.
 
-After JupyterLab opens, copy the bootstrap command shown in the setup window into a terminal. It installs Node.js and the AIPLAY worker under `/workspace`, creates a private worker token, adds a ComfyUI restart hook, starts the worker, and prints the connection URL and token. The script is safe to run again and preserves the token. Model files are still a separate step because their licenses, access gates, size and required nodes vary by model.
+The MCP surface exposes the same local worker, account, workflow, job and Pod
+routes (see [MCP workflow control](MCP_WORKFLOWS.md)). MCP Pod creation requires
+`CREATE PAID POD`; starting a stopped Pod requires `START PAID POD` after the
+hourly price is reviewed. The server checks both phrases, including for raw
+HTTP callers. The MCP asset uploader accepts absolute local reference paths up
+to **64 MiB** per file so the MCP process does not buffer the browser route's
+512 MiB maximum. Its result is an asset name for a job's node/input binding;
+workflow preview itself never starts a render.
+
+Use a Pod terminal or SSH session from the RunPod Connect panel to run the bootstrap command shown in the setup window. It installs Node.js and the AIPLAY worker under `/workspace`, checks that ComfyUI actually listens on `127.0.0.1:8188` and no public address, creates a private worker token, adds a ComfyUI restart hook, starts the worker, and prints the connection URL and token. If the check fails, restart ComfyUI with `--listen 127.0.0.1 --port 8188` and rerun the bootstrap. The script is safe to run again and preserves the token. Model files are still a separate step because their licenses, access gates, size and required nodes vary by model.
 
 For a first image, select the checkpoint shown under **Model on the Pod**, keep the default remote CFG 6, choose a small size and render. For a first video, keep **512 × 320 · cheapest test**, use a short duration, and render. Results appear in the normal Images or Clips library after their hashes are verified and the files are downloaded to the PC. The normal render buttons resume an active matching remote job after a page reload.
 

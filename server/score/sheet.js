@@ -6,7 +6,7 @@
  *                            version is READ OFF THE FILE (abcjsInfo()), never
  *                            declared: MEASURED, this checkout holds 6.4.4 and
  *                            the copy exercised end to end tonight was 6.7.0.
- *   Edge --headless=new      prints the page; ships with Windows
+ *   Edge --headless=new      prints the page; Chrome backs up a silent Edge exit
  *
  * Adapted from the engraving prototype, which established every fact below by
  * running. The four that decided the shape of this file:
@@ -182,6 +182,35 @@ export function edgePath() {
     return unix.find((p) => existsSync(p)) || null;
   }
   return null;
+}
+
+/** Chromium-compatible backup for an Edge binary that exits 0 without DOM. */
+export function chromePath() {
+  const rel = path.join("Google", "Chrome", "Application", "chrome.exe");
+  const roots = [
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+    process.env.LOCALAPPDATA,
+    "C:\\Program Files",
+    "C:\\Program Files (x86)",
+  ].filter(Boolean);
+  if (process.platform === "win32") {
+    return roots.map((r) => path.join(r, rel)).find((p) => existsSync(p)) || null;
+  }
+  return [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ].find((p) => existsSync(p)) || null;
+}
+
+/** A zero-byte successful Edge dump is a browser failure, never an empty score. */
+export function silentEdgeFallback(edge, run, {
+  explicitEdge = Boolean(process.env.AIPLAY_EDGE), chrome = chromePath(),
+} = {}) {
+  return !explicitEdge && run?.ok && run.out === "" && chrome
+    && path.normalize(chrome).toLowerCase() !== path.normalize(edge).toLowerCase()
+    ? chrome : null;
 }
 
 /** What the engraver can do here, and in which words. One place, both surfaces. */
@@ -449,25 +478,45 @@ function runEdge(edge, args, { timeoutMs = EDGE_TIMEOUT_MS, capture = false } = 
  * like a finished document until somebody opens them.
  *
  * MEASURED cost: 2.2 s engraved, 1.9 s not — against a 399.6 s render.
+ *
+ * On this Windows installation Edge exits 0 with zero stdout for --dump-dom,
+ * despite a fresh profile. Chrome renders the same served page and PDF. Only
+ * that silent zero-DOM exit triggers a Chrome retry. A page that explicitly
+ * reports data-engraved="no" remains a real failed engraving, and an
+ * AIPLAY_EDGE override is authoritative.
  */
 export async function verifyEngraved(edge, url, { timeoutMs = EDGE_TIMEOUT_MS } = {}) {
   const profile = throwawayProfile();
-  const run = await runEdge(edge, [...edgeBase(profile), "--dump-dom", url],
+  let run = await runEdge(edge, [...edgeBase(profile), "--dump-dom", url],
     { timeoutMs, capture: true });
-  await rm(profile, { recursive: true, force: true });
-  if (!run.ok) return { engraved: false, why: run.why, domBytes: run.out.length };
+  await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  let browser = edge;
+  const fallback = silentEdgeFallback(edge, run);
+  if (fallback) {
+    const backupProfile = throwawayProfile();
+    run = await runEdge(fallback, [...edgeBase(backupProfile), "--dump-dom", url],
+      { timeoutMs, capture: true });
+    await rm(backupProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    browser = fallback;
+  }
+  if (!run.ok) return { engraved: false, why: run.why, domBytes: run.out.length, browser };
+  if (run.out === "") return {
+    engraved: false, domBytes: 0, browser,
+    why: `${fallback ? "Edge and Chrome" : path.basename(browser).toLowerCase().includes("chrome") ? "Chrome" : "Edge"}`
+      + " exited without producing a DOM, so the page script never ran",
+  };
   const m = /data-engraved="(yes|no)"/.exec(run.out);
   const why = (/data-engrave-why="([^"]*)"/.exec(run.out) || [, null])[1];
   if (!m) {
     return {
-      engraved: false, domBytes: run.out.length,
+      engraved: false, domBytes: run.out.length, browser,
       /* The page always sets the attribute, both branches, so its absence means
        * the script did not run at all — a JS error before the try, or a page
        * that is not the page we wrote. */
       why: "the served page did not report an engraving outcome at all, so its script never ran",
     };
   }
-  return { engraved: m[1] === "yes", why: m[1] === "yes" ? null : (why || "the page reported it engraved nothing"), domBytes: run.out.length };
+  return { engraved: m[1] === "yes", why: m[1] === "yes" ? null : (why || "the page reported it engraved nothing"), domBytes: run.out.length, browser };
 }
 
 /**
@@ -563,13 +612,13 @@ export async function engrave({
   }
 
   const profile = throwawayProfile();
-  const run = await runEdge(edge, [
+  const run = await runEdge(check.browser || edge, [
     ...edgeBase(profile),
     "--no-pdf-header-footer",
     `--print-to-pdf=${pdfPath}`,
     url,
   ]);
-  await rm(profile, { recursive: true, force: true });
+  await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 
   let size = null;
   try { size = (await stat(pdfPath)).size; } catch { size = null; }

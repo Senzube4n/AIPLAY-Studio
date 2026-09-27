@@ -86,6 +86,9 @@ test("the Pod bootstrap installs this repository, not a contributor's branch", (
   assert.match(sh, /AIPLAY_BRANCH:-main\}/);
   const html = read("web", "index.html");
   assert.match(html, /raw\.githubusercontent\.com\/bani4kaskashka\/AIPLAY-Studio-Bucky-Fork\/main\/worker\/bootstrap-runpod\.sh/);
+  assert.match(sh, /check-comfy-loopback\.js/);
+  assert.match(sh, /different Git origin/);
+  assert.match(read("worker", "runpod-worker.js"), /await checkComfyLoopback\(\);/, "worker autostart also verifies the listener");
   assert.doesNotMatch(html, /nemesisone-dev\/AIPLAY-Studio\/feature/);
 });
 

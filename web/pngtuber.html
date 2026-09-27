@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PNGtuber · AIPlay Studio</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="ui.css"><link rel="stylesheet" href="pngtuber.css">
+</head><body class="pngtuber">
+<main class="page page-wide" id="pngtuber">
+<header class="page-head"><h2>PNGtuber</h2><p>Two local frames react to your mic or audio.</p><a class="btn2" href="/?view=avatars">3D Workshop</a></header>
+<nav class="pnav" aria-label="PNGtuber sections"></nav>
+<div class="pn-layout">
+<section class="pcard pn-setup" id="pn-setup" data-nav="Setup" aria-label="PNGtuber settings">
+<h3>Frames</h3>
+<label>Idle<input class="in2" id="pn-idle" type="file" accept="image/png,image/webp,.png,.webp" title="Choose a local PNG or WebP with the same canvas size as the talking frame."></label>
+<label>Talking<input class="in2" id="pn-talking" type="file" accept="image/png,image/webp,.png,.webp" title="Choose a local PNG or WebP with the same canvas size as the idle frame."></label>
+<hr>
+<h3>Sound</h3>
+<div class="pn-actions"><button class="btn2" id="pn-mic" type="button">Use mic</button><button class="btn2" id="pn-stop" type="button" disabled>Stop</button></div>
+<label>Audio file<input class="in2" id="pn-audio-file" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm" title="Choose a local audio file. Press Play to start it."></label>
+<div class="pn-actions"><button class="btn2" id="pn-play" type="button" disabled>Play audio</button><span id="pn-audio-name" class="hint">No audio selected</span></div>
+<label>Trigger <output id="pn-trigger-label">0.045</output><input id="pn-trigger" type="range" min="0.01" max="0.2" step="0.005" value="0.045" title="Raise this if background noise opens the mouth. Lower it for quiet speech."></label>
+<div class="pn-actions"><meter id="pn-level" min="0" max="0.2" value="0" aria-label="Audio level"></meter><span id="pn-state" class="chip" role="status" aria-live="polite">Choose frames</span></div>
+<p class="hint pn-detail" id="pn-detail" aria-live="polite" hidden></p>
+<button class="btn" id="pn-stage" type="button" disabled title="Hide controls in this tab for window capture. A separate browser source must select the files again. Press Escape to edit.">Stage view</button>
+<p class="hint pn-capture-hint">OBS: capture this browser window in Stage view. A separate Browser Source starts without these local files.</p>
+</section>
+<section class="pcard pn-preview" id="pn-preview" data-nav="Preview" aria-label="PNGtuber preview"><div class="pn-canvas" id="pn-canvas" data-talking="false">
+<img id="pn-idle-frame" alt="Idle frame" hidden><img id="pn-talking-frame" alt="Talking frame" hidden><span id="pn-empty">Choose idle and talking frames</span>
+</div></section>
+</div>
+</main>
+<button class="btn2" id="pn-edit" type="button" hidden title="Return to settings (Escape)">Settings</button>
+<audio id="pn-audio" preload="none" hidden></audio>
+<script type="module" src="ui.js"></script><script type="module" src="pngtuber.js"></script>
+</body></html>

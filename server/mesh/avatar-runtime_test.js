@@ -90,6 +90,27 @@ test('real expression bindings remain connected to the material and respect a ch
   assert.equal(happy.binds[0], colorBind);
 });
 
+test('session cue restores the current saved look without touching waveform mouth weight', () => {
+  const f = fixture(), manager = new VRMExpressionManager();
+  const happy = new VRMExpression('happy'), aa = new VRMExpression('aa');
+  manager.registerExpression(happy); manager.registerExpression(aa);
+  f.gltf.userData.vrm = {expressionManager:manager};
+  const runtime = createAvatarRuntime(f.gltf);
+  runtime.apply({expressions:{happy:.4}});
+  manager.setValue('aa',.7);
+  assert.equal(runtime.setExpressionCue('aa'),false);
+  assert.equal(manager.getValue('aa'),.7);
+  assert.equal(runtime.setExpressionCue('happy'),true);
+  assert.equal(manager.getValue('happy'),1);
+  runtime.apply({expressions:{happy:.2}});
+  assert.equal(manager.getValue('happy'),1,'saved look changes keep the temporary cue visible');
+  runtime.clearExpressionCue();
+  assert.equal(manager.getValue('happy'),.2);
+  assert.equal(manager.getValue('aa'),0,'look application restores authored mouth baseline before waveform updates');
+  runtime.setExpressionCue('happy');runtime.reset();
+  assert.equal(manager.getValue('happy'),0);
+});
+
 test('invalid settings do not partially mutate the current look', () => {
   const f = fixture(), runtime = createAvatarRuntime(f.gltf);
   runtime.apply({ material_colors: { 0: [.2, .3, .4, 1] } });

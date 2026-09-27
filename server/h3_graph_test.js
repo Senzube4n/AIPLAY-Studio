@@ -23,7 +23,8 @@ import { config } from "./config.js";
 import {
   videoGraphH3, videoGraphLtx, h3TurboLoraFor, h3SigmaShiftFor, h3SamplerFor, saveEncode,
 } from "./workflow.js";
-import { attentionOptions } from "./art.js";
+import { ArtRunner, attentionOptions } from "./art.js";
+import { engine as engineDoor } from "./engine/client.js";
 import { chosenAttention } from "./comfyargs.js";
 
 let pass = 0;
@@ -349,13 +350,39 @@ try {
      * and drops the rest in silence — so a speedup nobody passes is simply
      * absent, and a slow clip is not an error anyone sees. */
     const art = fs.readFileSync(new URL("./art.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-    ok("art.js hands the H3 graph its attention", /attention: await this\.videoAttention\(job\),/.test(art));
+    ok("art.js resolves attention before building the H3 graph",
+      /const attention = graph \? null : await this\.videoAttention\(job\);/.test(art)
+      && /if \(!graph\) graph = videoGraph\(\{[\s\S]*?\n\s+attention,/.test(art));
     {
-      const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);
+      const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 1400);
       ok("...videoAttention gives LTX no node", /if \(name === "ltx"\) return null;/.test(va));
-      ok("...H3 goes through h3Attention(), never around it", /return this\.h3Attention\(\);/.test(va));
+      ok("...default H3 goes through h3Attention(); signed explicit picks name a node",
+        /if \(name === "h3" && job\.attention === "pytorch"\) return "pytorch";/.test(va)
+        && /if \(name === "h3" && \(job\.attention === "ck" \|\| job\.attention === "kitchen"\)\)/.test(va)
+        && /return this\.h3Attention\(\);/.test(va));
       ok("...and an engine with its own picker names a literal backend, never the launcher's",
         /if \(eng\?\.sparseAttention\) \{[\s\S]{0,200}return "pytorch";[\s\S]{0,120}return \(await this\.#kitchenOffered\(\)\) \? "ck" : "pytorch";/.test(va));
+    }
+    {
+      const oldInfo = engineDoor.objectInfo;
+      config.comfy.options = config.comfy.options || {};
+      const oldAttention = config.comfy.options.attention;
+      const hadAttention = Object.hasOwn(config.comfy.options, "attention");
+      try {
+        engineDoor.objectInfo = async () => v3;
+        config.comfy.options.attention = "--use-sage-attention";
+        const runner = new ArtRunner(null, null);
+        eq("ordinary H3 keeps the launcher's Sage choice", await runner.videoAttention({ engine: "h3" }), null);
+        const explicit = await runner.videoAttention({ engine: "h3", attention: "pytorch" });
+        eq("signed H3 PyTorch names its requested backend", explicit, "pytorch");
+        eq("the signed backend reaches node 85", videoGraphH3({ ...base, attention: explicit })["85"].inputs.attention,
+          "pytorch attention");
+        eq("signed H3 Kitchen names its requested backend", await runner.videoAttention({ engine: "h3", attention: "ck" }), "ck");
+      } finally {
+        engineDoor.objectInfo = oldInfo;
+        if (hadAttention) config.comfy.options.attention = oldAttention;
+        else delete config.comfy.options.attention;
+      }
     }
     const fn = art.slice(art.indexOf("async h3Attention()"), art.indexOf("async h3Attention()") + 900);
     const probe = art.slice(art.indexOf("async #kitchenOffered()"), art.indexOf("async #kitchenOffered()") + 500);

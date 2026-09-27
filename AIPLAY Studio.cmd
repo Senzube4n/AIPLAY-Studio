@@ -35,6 +35,7 @@ if not exist "node_modules\ws" goto :deps
 if not exist "node_modules\three" goto :deps
 if not exist "node_modules\gltf-validator" goto :deps
 if not exist "node_modules\@pixiv\three-vrm" goto :deps
+if not exist "node_modules\ag-psd" goto :deps
 goto :ready
 :deps
 echo   Fetching dependencies (a few seconds)...
