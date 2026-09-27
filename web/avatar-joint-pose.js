@@ -32,5 +32,11 @@ export function createAvatarJointPose(gltf, jointNames) {
     current = node_index;
     gltf.scene.updateMatrixWorld(true);
   }
-  return {joints,apply,reset,get current(){return current;}};
+  function worldPosition(node_index) {
+    const bone=bones.get(node_index);
+    if (!bone) return null;
+    bone.updateWorldMatrix(true,false);
+    return bone.getWorldPosition(new THREE.Vector3());
+  }
+  return {joints,apply,reset,worldPosition,get current(){return current;}};
 }

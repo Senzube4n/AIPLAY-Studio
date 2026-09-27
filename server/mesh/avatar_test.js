@@ -42,6 +42,7 @@ try{
     const make=()=>{const doc=glbDoc({skinned:true});doc.nodes[1].children=[2,3];delete doc.nodes[2].children;doc.extensions={VRMC_vrm:{specVersion:'1.0',humanoid:{humanBones:{leftFoot:{node:2},rightFoot:{node:3}}}}};return doc;};
     const separate=make(),linked=inspectAvatarFootControls(separate,fixtureBin(separate));
     assert.equal(linked.state,'independent_weights');
+    assert.equal(linked.leftFootNode,2);assert.equal(linked.rightFootNode,3);
     assert.ok(linked.leftVertices>0&&linked.rightVertices>0);
     assert.equal(linked.sharedVertices,0);
     assert.equal(linked.geometrySeparation,'unverified');
@@ -53,7 +54,8 @@ try{
     const overlap=inspectAvatarFootControls(mixed,bin);
     assert.equal(overlap.state,'cross_weighted');assert.equal(overlap.sharedVertices,1);
     const unmapped=make();delete unmapped.extensions.VRMC_vrm.humanoid.humanBones.rightFoot;
-    assert.equal(inspectAvatarFootControls(unmapped,fixtureBin(unmapped)).state,'unverified');
+    const noMapping=inspectAvatarFootControls(unmapped,fixtureBin(unmapped));
+    assert.equal(noMapping.state,'unverified');assert.equal(noMapping.leftFootNode,undefined);
     const hidden=make();hidden.scenes[0].nodes=[0];
     assert.equal(inspectAvatarFootControls(hidden,fixtureBin(hidden)).state,'unverified');
   });

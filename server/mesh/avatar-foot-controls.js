@@ -55,7 +55,7 @@ export function inspectAvatarFootControls(doc,binary){
     }
     const state=!leftVertices||!rightVertices?'unweighted'
       :sharedVertices?'cross_weighted':'independent_weights';
-    return {state,reason:null,leftVertices,rightVertices,sharedVertices,minimumWeight:MIN_WEIGHT,
+    return {state,reason:null,leftFootNode:left,rightFootNode:right,leftVertices,rightVertices,sharedVertices,minimumWeight:MIN_WEIGHT,
       geometrySeparation:'unverified',reviewRequired:true};
   }catch(error){return unverified(`Foot weights could not be inspected: ${String(error.message).slice(0,120)}`);}
 }

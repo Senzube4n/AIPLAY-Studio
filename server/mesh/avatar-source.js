@@ -96,6 +96,7 @@ export async function inspectAvatarSourceBytes(bytes) {
   if(skins.length){
     if(feet.state==='unweighted')next.push({code:'foot-weights',text:'One or both VRM foot controls have no weighted vertices. Repair the foot weights, then pose each foot separately.'});
     else if(feet.state==='cross_weighted')next.push({code:'foot-weights',text:'Some vertices follow both foot controls. Inspect the seam and repaint weights where needed.'});
+    else if(feet.state==='unverified')next.push({code:'foot-review',text:'Verify the VRM left/right foot mapping and skin, then pose each foot to inspect the gap.'});
     else next.push({code:'foot-review',text:'Pose each foot separately and inspect the gap between legs and feet. Weight checks cannot detect fused geometry.'});
   }
   if (doc.extensions?.VRMC_vrm?.specVersion!=='1.0')

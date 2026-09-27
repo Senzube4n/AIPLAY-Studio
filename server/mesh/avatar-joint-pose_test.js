@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {createAvatarJointPose} from '../../web/avatar-joint-pose.js';
+import {mountAvatarFootReview} from '../../web/avatar-foot-review.js';
 import {glbDoc,packGlb} from './fixtures.js';
 
 const parse=async()=>{
@@ -29,4 +30,43 @@ test('a named imported joint bends weighted vertices and reset restores the orig
   assert.equal(pose.current,null);assert.ok(rest);
   assert.throws(()=>pose.apply({node_index:99,axis:'z',degrees:20}),/imported joint/);
   assert.throws(()=>pose.apply({node_index:2,axis:'z',degrees:46}),/-45° to 45°/);
+});
+
+test('VRM foot buttons target mapped skinned joints one at a time and keep pressed state in sync',async()=>{
+  const gltf=await parse(),pose=createAvatarJointPose(gltf,[{index:1,name:'root'},{index:2,name:'leftFoot'},{index:3,name:'rightFoot'}]);
+  const elements=new Map(),element=id=>{
+    if(!elements.has(id))elements.set(id,{hidden:true,onclick:null,attributes:{},
+      setAttribute(name,value){this.attributes[name]=value;},getAttribute(name){return this.attributes[name];}});
+    return elements.get(id);
+  };
+  const commands=[],ui=mountAvatarFootReview({inspection:{profile:'vrm',footControls:{leftFootNode:2,rightFootNode:3}},
+    joints:pose.joints,documentRef:{getElementById:element},onPose:command=>{commands.push(command);pose.apply(command);ui.paint(command);}});
+  assert.equal(element('foot-review-controls').hidden,false);
+  element('foot-review-left').onclick();
+  assert.deepEqual(commands.at(-1),{node_index:2,axis:'x',degrees:25});
+  assert.equal(pose.current,2);
+  assert.equal(element('foot-review-left').getAttribute('aria-pressed'),'true');
+  element('foot-review-right').onclick();
+  assert.deepEqual(commands.at(-1),{node_index:3,axis:'x',degrees:25});
+  assert.equal(pose.current,3);
+  assert.equal(element('foot-review-left').getAttribute('aria-pressed'),'false');
+  assert.equal(element('foot-review-right').getAttribute('aria-pressed'),'true');
+  assert.ok(pose.worldPosition(2)?.isVector3);
+  ui.paint(null);assert.equal(element('foot-review-right').getAttribute('aria-pressed'),'false');
+  ui.dispose();assert.equal(element('foot-review-controls').hidden,true);
+  assert.equal(element('foot-review-left').onclick,null);
+});
+
+test('foot review stays hidden without both mapped skinned joints',()=>{
+  const elements=new Map(),element=id=>{
+    if(!elements.has(id))elements.set(id,{hidden:true,onclick:null,setAttribute(){}});
+    return elements.get(id);
+  };
+  for(const footControls of [{leftFootNode:2,rightFootNode:2},{leftFootNode:2,rightFootNode:3},{}]){
+    const ui=mountAvatarFootReview({inspection:{profile:'vrm',footControls},joints:[{index:2}],
+      documentRef:{getElementById:element},onPose:()=>assert.fail('unavailable foot was posed')});
+    assert.equal(element('foot-review-controls').hidden,true);
+    assert.equal(element('foot-review-left').onclick,null);
+    ui.dispose();
+  }
 });

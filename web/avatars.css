@@ -34,6 +34,8 @@ body.avatar-workshop { overflow: auto; background: transparent; }
 #empty-view { position: absolute; inset: 42% 0 auto; text-align: center; color: var(--ghost); pointer-events: none; }
 #avatarWorkshop .camera-controls, #avatarWorkshop .motion-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 #avatarWorkshop .camera-controls[hidden], #avatarWorkshop .camera-controls [hidden] { display: none; }
+#avatarWorkshop .foot-review-controls { display: inline-flex; gap: 6px; }
+#avatarWorkshop .foot-review-controls [aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: var(--raise); }
 #avatarWorkshop .camera-controls label { flex-direction: row; align-items: center; margin: 0 4px; }
 #avatarWorkshop .camera-controls a { text-decoration: none; }
 #avatarWorkshop .motion-controls label { margin: 0; }

@@ -5,6 +5,7 @@ import { mountAvatarFitting } from './avatar-fitting.js';
 import { mountAvatarHandoff } from './avatar-handoff.js';
 import { createAvatarRuntime, createAvatarLoaderPlugin, disposeAvatarScene as dispose } from './avatar-runtime.js';
 import { createAvatarJointPose } from './avatar-joint-pose.js';
+import { mountAvatarFootReview } from './avatar-foot-review.js';
 import { mountAvatarVoice } from './avatar-voice.js';
 import { mountAvatarAppearance } from './avatar-appearance.js';
 import { workshopRoute, workshopStudioUrl } from './avatar-shell.js';
@@ -14,7 +15,7 @@ import { OrbitControls } from '/api/avatars/vendor/controls/OrbitControls.js';
 const $=id=>document.getElementById(id),status=(message,error=false)=>{$('status').textContent=message;$('status').className=error?'error':'';};
 const api=async body=>{const r=await fetch('/api/avatars',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);const data=await r.json();if(!r.ok)throw Error(data.error||`HTTP ${r.status}`);return data;};
 const fileBase64=async file=>{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);};
-let runtime=null,appearance=null,voice=null,wardrobe=null,fitting=null,handoff=null,restoreRestPose=null,jointPose=null;
+let runtime=null,appearance=null,voice=null,wardrobe=null,fitting=null,handoff=null,restoreRestPose=null,jointPose=null,footReview=null;
 let selected=null,epoch=0,model=null,mixer=null,clips=[],action=null,playing=false,helper=null,renderer=null,controls=null,scene=null,camera=null;
 let motionTimeRevision=0;
 const workshop = workshopRoute(location.href), overlayMode = workshop.overlay;
@@ -73,8 +74,19 @@ function initViewer(){
   let last=performance.now();renderer.setAnimationLoop(now=>{const dt=Math.min((now-last)/1000,.05);last=now;if(document.hidden || !activeView)return;if(playing&&mixer){mixer.update(dt*Number($('speed').value));updateTime();}voice?.update(dt);runtime?.update(dt);wardrobe?.update();controls.update();renderer.render(scene,camera);});
 }
 function cameraView(view){if(!camera)return;const facing=selected?.coordinates.facing||'+Z';let theta={'+Z':0,'-Z':Math.PI,'+X':Math.PI/2,'-X':-Math.PI/2}[facing];if(view==='side')theta+=Math.PI/2;if(view==='back')theta+=Math.PI;if(view==='fit')theta+=.3;const distance=radius*Math.max(1,1/camera.aspect);camera.position.copy(center).add(new THREE.Vector3(Math.sin(theta)*distance,.1*distance,Math.cos(theta)*distance));controls.target.copy(center);controls.update();}
+function cameraFeet(){
+  const targets=footReview?.targets;
+  if(overlayMode||!camera||!targets||!jointPose)return;
+  const left=jointPose.worldPosition(targets.left),right=jointPose.worldPosition(targets.right);
+  if(!left||!right)return;
+  const target=left.add(right).multiplyScalar(.5);target.y+=.15;
+  const theta={'+Z':0,'-Z':Math.PI,'+X':Math.PI/2,'-X':-Math.PI/2}[selected?.coordinates.facing||'+Z'];
+  const distance=Math.max(.8,Math.min(radius*.35,1.5));
+  camera.position.copy(target).add(new THREE.Vector3(Math.sin(theta)*distance,.08*distance,Math.cos(theta)*distance));
+  controls.target.copy(target);controls.update();
+}
 function updateTime(){const t=action?.time||0;$('time').value=String(t);$('time-label').textContent=`${t.toFixed(2)} s`;}
-function setMotion(index){mixer?.stopAllAction();action=null;jointPose?.reset();$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';restoreRestPose?.();runtime?.vrm?.springBoneManager?.reset();if(index!==''){action=mixer.clipAction(clips[Number(index)]);action.reset().play();mixer.update(0);$('time').max=String(clips[Number(index)].duration);$('time').disabled=false;$('play').disabled=false;}else{$('time').disabled=true;$('play').disabled=true;}playing=false;$('play').textContent='Play';updateTime();}
+function setMotion(index){mixer?.stopAllAction();action=null;jointPose?.reset();footReview?.paint(null);$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';restoreRestPose?.();runtime?.vrm?.springBoneManager?.reset();if(index!==''){action=mixer.clipAction(clips[Number(index)]);action.reset().play();mixer.update(0);$('time').max=String(clips[Number(index)].duration);$('time').disabled=false;$('play').disabled=false;}else{$('time').disabled=true;$('play').disabled=true;}playing=false;$('play').textContent='Play';updateTime();}
 function applyRemoteMotion(next){
   if(!next||!Number.isFinite(next.speed)||next.speed<.25||next.speed>2||typeof next.playing!=='boolean')return false;
   const index=next.clip_index;
@@ -94,12 +106,14 @@ function applyRemoteMotion(next){
 }
 function applyRemoteJointPose(next){
   if(!jointPose)return false;
-  if(next===null){jointPose.reset();$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';return true;}
+  if(next===null){jointPose.reset();footReview?.paint(null);$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';return true;}
   if(!Number.isInteger(next.node_index)||!jointPose.joints.some(joint=>joint.index===next.node_index)||!['x','y','z'].includes(next.axis)||typeof next.degrees!=='number'||!Number.isFinite(next.degrees)||Math.abs(next.degrees)>45)return false;
   if(action||playing){$('motion').value='';setMotion('');}
   runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';
   $('joint-pose-node').value=String(next.node_index);$('joint-pose-axis').value=next.axis;$('joint-pose-degrees').value=String(next.degrees);$('joint-pose-value').textContent=`${next.degrees}°`;
-  jointPose.apply(next);return true;
+  jointPose.apply(next);footReview?.paint(next);
+  if(Object.values(footReview?.targets||{}).includes(next.node_index))cameraFeet();
+  return true;
 }
 function applyRemotePreviewMotion(enabled){
   if(typeof enabled!=='boolean'||!runtime?.vrm)return false;
@@ -115,7 +129,7 @@ function showFacts(row){const i=row.inspection;$('facts').replaceChildren();for(
 async function select(id){
   handoff?.dispose();handoff=null;
   activeTool='look';
-  const token=++epoch;playing=false;motionTimeRevision=0;wardrobe?.dispose();wardrobe=null;fitting?.dispose();fitting=null;$('wardrobe-panel').hidden=true;$('fitting-panel').hidden=true;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;jointPose?.reset();jointPose=null;$('joint-pose-controls').hidden=true;$('appearance-panel').hidden=true;$('details').hidden=true;paintTools();$('pose-test').disabled=true;$('pose-test').textContent='Test movement';$('foot-control-state').hidden=true;if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
+  const token=++epoch;playing=false;motionTimeRevision=0;wardrobe?.dispose();wardrobe=null;fitting?.dispose();fitting=null;$('wardrobe-panel').hidden=true;$('fitting-panel').hidden=true;appearance?.dispose();appearance=null;voice?.dispose();voice=null;$('voice-panel').hidden=true;runtime?.dispose();runtime=null;jointPose?.reset();jointPose=null;footReview?.dispose();footReview=null;$('joint-pose-controls').hidden=true;$('appearance-panel').hidden=true;$('details').hidden=true;paintTools();$('pose-test').disabled=true;$('pose-test').textContent='Test movement';$('foot-control-state').hidden=true;if(model)model.visible=false;if(helper)helper.visible=false;status('Validating character…');$('downloads').replaceChildren();$('export').disabled=true;$('motion').disabled=true;$('play').disabled=true;$('time').disabled=true;
   try{
     const row=await api({action:'inspect',id});if(token!==epoch)return;
     selected=row;playing=false;$('character-name').textContent=row.name;$('family').textContent=row.skeletonFamily;$('review-state').textContent='Needs visual review';$('details').hidden=false;showFacts(row);
@@ -123,13 +137,15 @@ async function select(id){
     initViewer();const gltf=await new GLTFLoader().register(createAvatarLoaderPlugin).loadAsync(row.files.glb);if(token!==epoch){dispose(gltf.scene);return;}
     mixer?.stopAllAction();if(model){mixer?.uncacheRoot(model);scene.remove(model);dispose(model);}if(helper){scene.remove(helper);helper.dispose();}
     model=gltf.scene;restoreRestPose=captureAvatarRestPose(model);runtime=createAvatarRuntime(gltf);const applyLook=runtime.apply.bind(runtime);runtime.apply=settings=>{applyLook(settings);voice?.captureBaseline();};scene.add(model);model.updateMatrixWorld(true);clips=gltf.animations;mixer=new THREE.AnimationMixer(model);helper=new THREE.SkeletonHelper(model);helper.visible=$('skeleton').checked;scene.add(helper);
-    if(row.inspection.profile==='world'){
-      try{jointPose=createAvatarJointPose(gltf,row.inspection.jointNames);}
-      catch{jointPose=null;}
-    }
+    try{jointPose=createAvatarJointPose(gltf,row.inspection.jointNames);}
+    catch{jointPose=null;}
     const available=jointPose?.joints||[];$('joint-pose-controls').hidden=!available.length;$('joint-pose-node').replaceChildren();
     for(const joint of available)$('joint-pose-node').add(new Option(`${joint.name} (#${joint.index})`,String(joint.index)));
     $('joint-pose-axis').value='z';$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';
+    footReview=mountAvatarFootReview({inspection:row.inspection,joints:available,onPose:next=>{
+      $('joint-pose-node').value=String(next.node_index);$('joint-pose-axis').value=next.axis;
+      $('joint-pose-degrees').value=String(next.degrees);previewJointPose(true);cameraFeet();
+    }});
     const box=new THREE.Box3().setFromObject(model);box.getCenter(center);radius=Math.max(box.getSize(new THREE.Vector3()).length()*1.3,1);cameraView('fit');
     $('motion').replaceChildren(new Option('Rest pose',''));clips.forEach((c,i)=>$('motion').add(new Option(`${c.name} · ${c.duration.toFixed(2)} s`,String(i))));$('motion').disabled=false;setMotion('');$('empty-view').hidden=true;$('export').disabled=false;
     $('pose-test').disabled=!runtime.vrm;
@@ -155,14 +171,14 @@ function previewJointPose(send){
   runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';
   const next={node_index:Number($('joint-pose-node').value),axis:$('joint-pose-axis').value,degrees:Number($('joint-pose-degrees').value)};
   if(action||playing){$('motion').value='';setMotion('');$('joint-pose-degrees').value=String(next.degrees);}
-  jointPose.apply(next);$('joint-pose-value').textContent=`${next.degrees}°`;
+  jointPose.apply(next);footReview?.paint(next);$('joint-pose-value').textContent=`${next.degrees}°`;
   if(send)void voice?.jointPoseCommand('joint_pose',next);
 }
 $('joint-pose-node').onchange=()=>previewJointPose(true);
 $('joint-pose-axis').onchange=()=>previewJointPose(true);
 $('joint-pose-degrees').oninput=()=>previewJointPose(false);
 $('joint-pose-degrees').onchange=()=>previewJointPose(true);
-$('joint-pose-reset').onclick=()=>{jointPose?.reset();$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';void voice?.jointPoseCommand('joint_reset');};
+$('joint-pose-reset').onclick=()=>{jointPose?.reset();footReview?.paint(null);$('joint-pose-degrees').value='0';$('joint-pose-value').textContent='0°';void voice?.jointPoseCommand('joint_reset');};
 let preflightEpoch=0;
 function clearSourcePreflight(){preflightEpoch++;$('source-preflight').disabled=false;$('source-preflight-state').hidden=true;$('source-preflight-facts').hidden=true;$('source-preflight-next').hidden=true;$('source-preflight-steps').replaceChildren();}
 $('import-form').elements.file.onchange=event=>{clearSourcePreflight();if(event.target.files[0]?.name.toLowerCase().endsWith('.vrm'))$('import-form').elements.profile.value='vrm';};
