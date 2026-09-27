@@ -11,6 +11,7 @@ export const AVATAR_SOURCE_LIMIT_BYTES = 64 * 1024 * 1024;
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const short = value => typeof value === 'string' ? value.slice(0, 100) : '';
+const textureImageExtensions=['KHR_texture_basisu','EXT_texture_webp','EXT_texture_astc','EXT_texture_avif','MSFT_texture_dds'];
 
 async function sourceBytes(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) ||
@@ -38,6 +39,35 @@ function materialTextureBindings(material) {
   const pbr=material.pbrMetallicRoughness || {};
   return [pbr.baseColorTexture,pbr.metallicRoughnessTexture,material.normalTexture,
     material.occlusionTexture,material.emissiveTexture].filter(Boolean).length;
+}
+
+/** Counts declared primitive colour inputs, not the visual quality of their pixels. */
+export function summarizeAvatarColorSources(doc) {
+  const summary={baseColorTextureBindings:0,baseColorTextureWithUv:0,baseColorTextureMissingUv:0,
+    vertexColorBindings:0,materialColorOnlyPrimitives:0,defaultColorOnlyPrimitives:0,baseColorImageIndices:[]};
+  const images=new Set();
+  for(const mesh of doc.meshes||[]) for(const primitive of mesh.primitives||[]) {
+    const attributes=primitive.attributes||{};
+    const material=doc.materials?.[primitive.material];
+    const binding=material?.pbrMetallicRoughness?.baseColorTexture;
+    if(attributes.COLOR_0!==undefined) summary.vertexColorBindings++;
+    if(binding) {
+      summary.baseColorTextureBindings++;
+      const uv=`TEXCOORD_${binding.extensions?.KHR_texture_transform?.texCoord??binding.texCoord??0}`;
+      if(attributes[uv]===undefined) summary.baseColorTextureMissingUv++;
+      else summary.baseColorTextureWithUv++;
+      const texture=doc.textures?.[binding.index];
+      // Image-format extensions may omit the core source, or supply an alternate
+      // image alongside a PNG/JPEG fallback. Report every referenced image.
+      for(const image of [texture?.source,...textureImageExtensions.map(name=>texture?.extensions?.[name]?.source)])
+        if(Number.isInteger(image)&&image>=0&&image<(doc.images?.length||0))images.add(image);
+    } else if(attributes.COLOR_0===undefined) {
+      if(material) summary.materialColorOnlyPrimitives++;
+      else summary.defaultColorOnlyPrimitives++;
+    }
+  }
+  summary.baseColorImageIndices=[...images].sort((a,b)=>a-b);
+  return summary;
 }
 
 /** Facts only. Mesh-node counts do not detect fused limbs or prove swappable parts. */
@@ -68,6 +98,7 @@ export async function inspectAvatarSourceBytes(bytes) {
     if (primitive.attributes?.COLOR_0!==undefined) withVertexColor++;
   }
   const materials=doc.materials||[], images=doc.images||[], skins=doc.skins||[];
+  const colorSources=summarizeAvatarColorSources(doc);
   const skin=skins.length?assertSkinned(doc,parsed.binData):null;
   // A valid skin only proves that weights and joints can be read. Pose the
   // existing skeleton locally to distinguish a bend from rigid carrying.
@@ -83,6 +114,10 @@ export async function inspectAvatarSourceBytes(bytes) {
     next.push({code:'surface',text:'Add materials or texture data before rigging.'});
   else if (!images.length)
     next.push({code:'images',text:'No embedded image textures. Check the intended colour source.'});
+  else if (!colorSources.baseColorTextureBindings && !colorSources.vertexColorBindings)
+    next.push({code:'base-color',text:'Embedded images exist, but no mesh material uses one for base colour. Check the intended colour source.'});
+  if(colorSources.baseColorTextureMissingUv)
+    next.push({code:'base-color-uv',text:'A base-colour texture references a UV set missing from its mesh. Repair the UV mapping.'});
   if (meshNodes.length < 2)
     next.push({code:'parts',text:'For swappable parts, prepare separate head, hair and outfit files.'});
   if (!skins.length)
@@ -106,7 +141,7 @@ export async function inspectAvatarSourceBytes(bytes) {
     geometry:{meshes:doc.meshes?.length||0,meshNodes:meshNodes.length,meshNodeSample:meshNodes.slice(0,24),
       primitives:primitives.length,triangles,vertices,otherPrimitives},
     surface:{materials:materials.length,images:images.length,textureBindings:materials.reduce((sum,material)=>sum+materialTextureBindings(material),0),
-      primitivesWithUv:withUv,primitivesWithVertexColor:withVertexColor},
+      primitivesWithUv:withUv,primitivesWithVertexColor:withVertexColor,colorSources},
     skin:{skins:skins.length,joints:new Set(skins.flatMap(entry=>entry.joints||[])).size,
       structural:!skins.length?'absent':skin.ok?'valid':'invalid',why:skin?.ok?[]:(skin?.why||[])},
     deformation:{state:bend.state,probeDegrees:bend.probeDegrees||null,strain:bend.strain??null,

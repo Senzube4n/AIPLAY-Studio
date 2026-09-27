@@ -5,7 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { glbDoc,packGlb,fixtureBin } from './fixtures.js';
 import { inspectAvatar,createAvatarService,createAvatarRoutes } from './avatar.js';
-import { inspectAvatarSource, inspectAvatarSourceBytes } from './avatar-source.js';
+import { inspectAvatarSource, inspectAvatarSourceBytes, summarizeAvatarColorSources } from './avatar-source.js';
 import { inspectAvatarFootControls } from './avatar-foot-controls.js';
 import { avatarTools } from '../mcp-avatars.js';
 let pass=0;async function test(name,fn){await fn();pass++;console.log(`ok ${name}`);}
@@ -18,11 +18,82 @@ try{
     const raw=packGlb(glbDoc());const result=await inspectAvatarSourceBytes(raw);
     assert.equal(result.geometry.triangles,12);assert.equal(result.geometry.meshNodes,1);
     assert.equal(result.surface.materials,0);assert.equal(result.surface.images,0);
+    assert.equal(result.surface.colorSources.defaultColorOnlyPrimitives,1);
+    assert.equal(result.surface.colorSources.baseColorTextureWithUv,0);
     assert.equal(result.skin.structural,'absent');assert.equal(result.vrm.version,null);
     assert.equal(result.deformation.state,'absent');
     assert.deepEqual(result.next.map(step=>step.code),['surface','parts','rig','vrm']);
     assert.equal(result.footControls.geometrySeparation,'unverified');
     assert.match(result.caveat,/Review fused anatomy/);
+  });
+  await test('source colour inventory distinguishes embedded images from connected base-colour textures and UVs',async()=>{
+    const doc={images:[{},{}],textures:[{source:1}],materials:[
+      {pbrMetallicRoughness:{baseColorTexture:{index:0,texCoord:1}}},
+      {pbrMetallicRoughness:{baseColorFactor:[.4,.5,.6,1]}},
+    ],meshes:[{primitives:[
+      {material:0,attributes:{POSITION:0,TEXCOORD_0:1}},
+      {material:1,attributes:{POSITION:0}},
+      {attributes:{POSITION:0,COLOR_0:2}},
+      {attributes:{POSITION:0}},
+    ]}]};
+    const missing=summarizeAvatarColorSources(doc);
+    assert.equal(missing.baseColorTextureBindings,1);
+    assert.equal(missing.baseColorTextureMissingUv,1);
+    assert.equal(missing.baseColorTextureWithUv,0);
+    assert.deepEqual(missing.baseColorImageIndices,[1]);
+    assert.equal(missing.vertexColorBindings,1);
+    assert.equal(missing.materialColorOnlyPrimitives,1);
+    assert.equal(missing.defaultColorOnlyPrimitives,1);
+    doc.meshes[0].primitives[0].attributes.TEXCOORD_1=3;
+    const connected=summarizeAvatarColorSources(doc);
+    assert.equal(connected.baseColorTextureWithUv,1);
+    assert.equal(connected.baseColorTextureMissingUv,0);
+    doc.materials[0].pbrMetallicRoughness.baseColorTexture.extensions={KHR_texture_transform:{texCoord:0}};
+    assert.equal(summarizeAvatarColorSources(doc).baseColorTextureWithUv,1);
+    assert.equal(summarizeAvatarColorSources({...doc,meshes:[{primitives:[{material:1,attributes:{POSITION:0}}]}]}).baseColorTextureBindings,0);
+  });
+  await test('source colour inventory includes extension-backed images and a core fallback',async()=>{
+    const doc={images:[{},{},{},{}],textures:[{source:0,extensions:{
+      KHR_texture_basisu:{source:1},EXT_texture_webp:{source:2},EXT_texture_avif:{source:3},
+    }}],materials:[{pbrMetallicRoughness:{baseColorTexture:{index:0}}}],
+      meshes:[{primitives:[{material:0,attributes:{POSITION:0,TEXCOORD_0:1}}]}]};
+    assert.deepEqual(summarizeAvatarColorSources(doc).baseColorImageIndices,[0,1,2,3]);
+    delete doc.textures[0].source;
+    assert.deepEqual(summarizeAvatarColorSources(doc).baseColorImageIndices,[1,2,3]);
+    assert.equal(summarizeAvatarColorSources(doc).baseColorTextureWithUv,1);
+  });
+  await test('source preflight flags an embedded image that supplies no mesh base colour',async()=>{
+    const doc=glbDoc();
+    const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l6cAAAAASUVORK5CYII=','base64');
+    const bin=Buffer.concat([fixtureBin(doc),png]);
+    doc.bufferViews.push({buffer:0,byteOffset:fixtureBin(doc).length,byteLength:png.length});
+    doc.buffers[0].byteLength=bin.length;
+    doc.images=[{bufferView:doc.bufferViews.length-1,mimeType:'image/png'}];
+    const result=await inspectAvatarSourceBytes(packGlb(doc,bin));
+    assert.equal(result.surface.images,1);
+    assert.equal(result.surface.colorSources.baseColorTextureBindings,0);
+    assert.ok(result.next.some(step=>step.code==='base-color'));
+  });
+  await test('source preflight recognizes a connected base-colour texture with the requested UV set',async()=>{
+    const doc=glbDoc();
+    const uv=Buffer.alloc(8*8);
+    for(let i=0;i<8;i++){uv.writeFloatLE((i%2),i*8);uv.writeFloatLE((i>>1)%2,i*8+4);}
+    const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l6cAAAAASUVORK5CYII=','base64');
+    const bin=Buffer.concat([fixtureBin(doc),uv,png]);
+    doc.bufferViews.push({buffer:0,byteOffset:fixtureBin(doc).length,byteLength:uv.length});
+    doc.bufferViews.push({buffer:0,byteOffset:fixtureBin(doc).length+uv.length,byteLength:png.length});
+    doc.buffers[0].byteLength=bin.length;
+    doc.accessors.push({bufferView:5,componentType:5126,count:8,type:'VEC2'});
+    doc.meshes[0].primitives[0].attributes.TEXCOORD_0=2;
+    doc.meshes[0].primitives[0].material=0;
+    doc.images=[{bufferView:6,mimeType:'image/png'}];
+    doc.textures=[{source:0}];
+    doc.materials=[{pbrMetallicRoughness:{baseColorTexture:{index:0}}}];
+    const result=await inspectAvatarSourceBytes(packGlb(doc,bin));
+    assert.equal(result.surface.colorSources.baseColorTextureWithUv,1);
+    assert.equal(result.surface.colorSources.baseColorTextureMissingUv,0);
+    assert.deepEqual(result.surface.colorSources.baseColorImageIndices,[0]);
+    assert.ok(!result.next.some(step=>step.code==='base-color'));
   });
   await test('source preflight distinguishes a deforming rig from an equally valid rigid skin',async()=>{
     const moving=await inspectAvatarSourceBytes(packGlb(glbDoc({skinned:true})));
@@ -117,6 +188,7 @@ try{
     };
     const result=await avatarTools(api).find(tool=>tool.name==='avatar_source_preflight').run({path:input});
     assert.equal(result.deformation.state,'deforms');
+    assert.equal(result.surface.colorSources.materialColorOnlyPrimitives,1);
     assert.ok(result.deformation.probedJoints>0);
     assert.equal(result.footControls.geometrySeparation,'unverified');
   });

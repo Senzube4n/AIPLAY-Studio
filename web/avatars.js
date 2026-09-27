@@ -198,7 +198,10 @@ $('source-preflight').onclick=async()=>{
       :bend==='rigid'?'Rigid skin':feet==='unweighted'?'Foot weights missing':feet==='cross_weighted'?'Foot weights overlap'
       :bend==='deforms'?'Bend found · review feet':'Bend unverified';
     state.title=result.caveat;
-    facts.textContent=`${result.geometry.triangles.toLocaleString()} triangles · ${result.geometry.meshNodes} mesh nodes · ${result.surface.materials} materials · ${result.surface.images} images · feet: ${feet==='independent_weights'?'separate weights, geometry unchecked':feet==='unweighted'?'missing weights':feet==='cross_weighted'?'shared weights':'unchecked'}`;
+    const color=result.surface.colorSources;
+    const textureFact=!color?'colour wiring unchecked':color.baseColorTextureBindings
+      ?`${color.baseColorTextureWithUv}/${color.baseColorTextureBindings} colour textures mapped`:'no colour texture';
+    facts.textContent=`${result.geometry.triangles.toLocaleString()} triangles · ${result.geometry.meshNodes} mesh nodes · ${result.surface.materials} materials · ${result.surface.images} images · ${textureFact} · feet: ${feet==='independent_weights'?'separate weights, geometry unchecked':feet==='unweighted'?'missing weights':feet==='cross_weighted'?'shared weights':'unchecked'}`;
     facts.hidden=false;
     $('source-preflight-steps').replaceChildren();
     for(const step of result.next){const li=document.createElement('li');li.textContent=step.text;$('source-preflight-steps').append(li);}
