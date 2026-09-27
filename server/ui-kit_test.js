@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 
 // Source assertions describe lines, independent of the checkout's EOL setting.
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -172,8 +173,40 @@ test("Qwen readiness is keyed on whether there are references, not how many", ()
   assert.match(APP, /function imgQwenCheckSoon\(\)/, "repaints coalesce into one check");
   assert.match(APP, /imgQwenRequestedKey !== imgQwenQuery\(\)\.toString\(\)\) imgQwenCheckSoon\(\)/);
   // The light waits before it spins, so a fast local answer does not flicker.
-  assert.match(APP, /const spin = setTimeout\(\(\) => imgQwenPaint\("busy"/);
+  assert.match(APP, /const spin = setTimeout\(\(\) => \{/);
   assert.match(APP, /if \(same === imgQwenPainted\) return;/, "saying the same thing again restarts the pulse");
+});
+
+test("a stale Qwen readiness timer cannot replace a newer ready answer with a spinner", async () => {
+  const source = /async function imgQwenCheck\(\) \{[\s\S]*?\n\}/.exec(APP)?.[0];
+  assert.ok(source, "exercise the readiness function shown by Pictures");
+  const painted = [], responses = [], timers = new Map();
+  let nextTimer = 0;
+  const context = vm.createContext({
+    imgQwenSoon: null, imgQwenRequest: 0, imgQwenChecking: false,
+    imgQwenStatus: null, imgQwenStatusKey: "",
+    imgQwenShape() {}, imgEffectiveEngine: () => "qwen-image-2.1",
+    imgQwenQuery: () => ({ toString: () => "refs=0&transparent=false" }),
+    imgQueueGate() {}, imgDraftPaint() {},
+    imgQwenPaint: tone => painted.push(tone),
+    setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
+    clearTimeout: id => timers.delete(id),
+    fetch: () => new Promise(resolve => responses.push(resolve)),
+  });
+  vm.runInContext(source, context);
+  const first = vm.runInContext("imgQwenCheck()", context);
+  const second = vm.runInContext("imgQwenCheck()", context);
+  assert.equal(responses.length, 2);
+  const ready = { ready: true, filesReady: true, runtimeReady: true, missingFiles: [], missingNodes: [] };
+  responses[1]({ json: async () => ready });
+  assert.equal(await second, true);
+  assert.deepEqual(painted, ["ok"]);
+  assert.equal(timers.size, 1, "the first request still has a delayed spinner");
+  timers.values().next().value();
+  assert.deepEqual(painted, ["ok"], "the old spinner must not cover the newer answer");
+  responses[0]({ json: async () => ready });
+  assert.equal(await first, false);
+  assert.deepEqual(painted, ["ok"]);
 });
 
 test("'don't record the prompt' sits with the Make button, not in the reference block", () => {

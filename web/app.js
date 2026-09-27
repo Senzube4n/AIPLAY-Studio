@@ -17585,7 +17585,9 @@ async function imgQwenCheck() {
    * of them reads as a fault; one that spins when the answer is actually slow
    * reads as work. The light is left alone until then, so a green Qwen stays
    * green through a re-check that changes nothing. */
-  const spin = setTimeout(() => imgQwenPaint("busy", "Checking Qwen Image 2.1…"), 350);
+  const spin = setTimeout(() => {
+    if (request === imgQwenRequest) imgQwenPaint("busy", "Checking Qwen Image 2.1…");
+  }, 350);
   imgQueueGate();
   try {
     const response = await fetch(`/api/images/qwen-status?${key}`);
