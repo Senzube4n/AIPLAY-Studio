@@ -148,14 +148,17 @@ try{
     // <rig>/blender-toolkit/. A rig holding a copy is found; a rig without one
     // gets the toolkit path back, so the sentence names where to put it. Never
     // a path inside server/mesh.
-    const priorRig=config.rig,rig=path.join(directory,'a rig');delete process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT;
+    const priorRig=config.rig,priorPreviz=config.blender.previz,rig=path.join(directory,'a rig');delete process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT;
     try{
-      config.rig=rig;const toolkit=path.join(path.dirname(config.blender.previz),'weight_transfer.py');
+      // Isolate the fallback branch from an optional toolkit installed beside
+      // this checkout. An installed toolkit correctly takes precedence.
+      config.rig=rig;config.blender.previz=path.join(directory,'empty toolkit','previz','cli.py');
+      const toolkit=path.join(path.dirname(config.blender.previz),'weight_transfer.py');
       assert.equal(weightTransferScriptPath(),toolkit);assert.notEqual(path.dirname(toolkit),meshDir);
       const bench=path.join(rig,'blender-toolkit','weight_transfer.py');await mkdir(path.dirname(bench),{recursive:true});await writeFile(bench,'# a local copy\n');
       assert.equal(weightTransferScriptPath(),bench);
     }
-    finally{config.rig=priorRig;process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=stubScript;}
+    finally{config.rig=priorRig;config.blender.previz=priorPreviz;process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=stubScript;}
   });
   await test('a missing script is a 503 setup sentence and nothing is spawned',async()=>{
     const absent=path.join(directory,'no toolkit here','weight_transfer.py');process.env.AIPLAY_WEIGHT_TRANSFER_SCRIPT=absent;
