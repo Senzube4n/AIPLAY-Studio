@@ -9,6 +9,7 @@ import { mountAvatarFootReview } from './avatar-foot-review.js';
 import { mountAvatarVoice } from './avatar-voice.js';
 import { mountAvatarAppearance } from './avatar-appearance.js';
 import { workshopRoute, workshopStudioUrl } from './avatar-shell.js';
+import { prepareAvatarImport } from './avatar-import.js';
 import * as THREE from 'three';
 import { GLTFLoader } from '/api/avatars/vendor/loaders/GLTFLoader.js';
 import { OrbitControls } from '/api/avatars/vendor/controls/OrbitControls.js';
@@ -164,7 +165,7 @@ async function select(id){
 async function refresh(preferred){const data=await api();$('library').replaceChildren();for(const row of data.avatars){const b=document.createElement('button');b.className='btn2';b.dataset.id=row.id;b.textContent=row.name;const s=document.createElement('small');s.textContent=`${row.inspection.joints} joints · ${row.inspection.clips.length} clips`;b.append(s);b.onclick=()=>select(row.id);$('library').append(b);}if(!data.avatars.length){$('library').textContent='No characters imported yet.';status('Import a rigged GLB from Blender or your character pipeline.');}else{const id=preferred||selected?.id||data.avatars[0].id;await select(id);}}
 $('install-example').onclick=async()=>{const button=$('install-example');button.disabled=true;status('Loading anime sample…');try{const row=await api({action:'install_example'});await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};
 $('refresh').onclick=()=>refresh().catch(e=>status(e.message,true));
-$('import-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]');button.disabled=true;try{const f=form.elements.file.files[0];const profile=form.elements.profile.value,limit=profile==='vrm'?64:8;if(!f||f.size>limit*1024*1024)throw Error(`Choose an avatar up to ${limit} MiB.`);status('Checking the GLB, skin and textures…');const body={action:'import',profile,data_base64:await fileBase64(f)};for(const name of ['name','persona_id','facing','skeleton_family','source','license'])body[name]=form.elements[name].value;const row=await api(body);$('import-panel').open=false;await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};
+$('import-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button[type="submit"]');button.disabled=true;try{const request=prepareAvatarImport(form,fileBase64);status('Checking the GLB, skin and textures…');const row=await api(await request);$('import-panel').open=false;await refresh(row.id);}catch(e){status(e.message,true);}finally{button.disabled=false;}};
 $('motion').onchange=()=>{runtime?.setPreviewMotion(false);$('pose-test').textContent='Test movement';setMotion($('motion').value);void voice?.motionCommand('motion_select',{clip_index:$('motion').value===''?null:Number($('motion').value)});};
 function previewJointPose(send){
   if(!jointPose||!jointPose.joints.length)return;
