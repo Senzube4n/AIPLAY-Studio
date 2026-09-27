@@ -6031,9 +6031,10 @@ $("trStart")?.addEventListener("click", async () => {
   if (!trStatus?.ready || issue || !$("trName").value.trim()) { if (note) note.textContent = issue || "Check the hardware status and give the adapter a name first."; return; }
   trStarting = true; trPaintRegion();
   if (note) note.textContent = "Cutting the song and reading it into codes…";
+  const sourceFile = $("trFile")?.value;
   const r = await tr({
     action: "start",
-    file: $("trFile")?.value,
+    file: sourceFile,
     name: $("trName")?.value,
     startSeconds: Number($("trStartSeconds")?.value),
     seconds: Number($("trSeconds")?.value) || undefined,
@@ -6044,7 +6045,7 @@ $("trStart")?.addEventListener("click", async () => {
   trStarting = false;
   if (r.error) { if (note) note.textContent = r.error; trPaintRegion(); return; }
   if (note) note.textContent = r.note || "Started.";
-  const run = { runId: r.runId, name: r.name, settings: r.settings, file: $("trFile").value };
+  const run = { runId: r.runId, name: r.name, settings: r.settings, file: sourceFile };
   trRemember(run);
   showTrainLive(run); trPaintRegion();
   trCheckRun();
