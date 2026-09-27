@@ -6,6 +6,7 @@ import http from 'node:http';
 import { glbDoc,packGlb,fixtureBin } from './fixtures.js';
 import { inspectAvatar,createAvatarService,createAvatarRoutes } from './avatar.js';
 import { inspectAvatarSource, inspectAvatarSourceBytes } from './avatar-source.js';
+import { inspectAvatarFootControls } from './avatar-foot-controls.js';
 import { avatarTools } from '../mcp-avatars.js';
 let pass=0;async function test(name,fn){await fn();pass++;console.log(`ok ${name}`);}
 const fixture=(opts={skinned:true})=>{const doc=glbDoc(opts);doc.materials=[{pbrMetallicRoughness:{baseColorFactor:[.3,.5,.7,1],metallicFactor:0,roughnessFactor:.6}}];doc.meshes[0].primitives[0].material=0;return doc;};
@@ -20,7 +21,8 @@ try{
     assert.equal(result.skin.structural,'absent');assert.equal(result.vrm.version,null);
     assert.equal(result.deformation.state,'absent');
     assert.deepEqual(result.next.map(step=>step.code),['surface','parts','rig','vrm']);
-    assert.match(result.caveat,/cannot judge fused anatomy/);
+    assert.equal(result.footControls.geometrySeparation,'unverified');
+    assert.match(result.caveat,/Review fused anatomy/);
   });
   await test('source preflight distinguishes a deforming rig from an equally valid rigid skin',async()=>{
     const moving=await inspectAvatarSourceBytes(packGlb(glbDoc({skinned:true})));
@@ -31,7 +33,29 @@ try{
     assert.ok(moving.deformation.strain>rigid.deformation.strain);
     assert.ok(!moving.next.some(step=>step.code==='rig-bend'));
     assert.ok(rigid.next.some(step=>step.code==='rig-bend'));
+    assert.ok(moving.next.some(step=>step.code==='foot-review'));
+    assert.equal(moving.footControls.state,'unverified');
+    assert.equal(moving.footControls.reviewRequired,true);
     assert.match(rigid.caveat,/not whether bends look good/);
+  });
+  await test('VRM foot controls report independent, missing and cross-weighted vertices without claiming a leg gap',async()=>{
+    const make=()=>{const doc=glbDoc({skinned:true});doc.nodes[1].children=[2,3];delete doc.nodes[2].children;doc.extensions={VRMC_vrm:{specVersion:'1.0',humanoid:{humanBones:{leftFoot:{node:2},rightFoot:{node:3}}}}};return doc;};
+    const separate=make(),linked=inspectAvatarFootControls(separate,fixtureBin(separate));
+    assert.equal(linked.state,'independent_weights');
+    assert.ok(linked.leftVertices>0&&linked.rightVertices>0);
+    assert.equal(linked.sharedVertices,0);
+    assert.equal(linked.geometrySeparation,'unverified');
+    assert.equal(linked.reviewRequired,true);
+    const missing=make();for(let vertex=0;vertex<8;vertex++)fixtureBin(missing).writeUInt8(1,288+vertex*4);
+    assert.equal(inspectAvatarFootControls(missing,fixtureBin(missing)).state,'unweighted');
+    const mixed=make(),bin=fixtureBin(mixed);
+    bin.writeUInt8(1,288);bin.writeUInt8(2,289);bin.writeFloatLE(.5,320);bin.writeFloatLE(.5,324);
+    const overlap=inspectAvatarFootControls(mixed,bin);
+    assert.equal(overlap.state,'cross_weighted');assert.equal(overlap.sharedVertices,1);
+    const unmapped=make();delete unmapped.extensions.VRMC_vrm.humanoid.humanBones.rightFoot;
+    assert.equal(inspectAvatarFootControls(unmapped,fixtureBin(unmapped)).state,'unverified');
+    const hidden=make();hidden.scenes[0].nodes=[0];
+    assert.equal(inspectAvatarFootControls(hidden,fixtureBin(hidden)).state,'unverified');
   });
   await test('source preflight reads paths and canonical uploads but rejects external resources',async()=>{
     const raw=packGlb(glbDoc());const source=path.join(temp,'source.glb');await writeFile(source,raw);
@@ -43,7 +67,7 @@ try{
     const external=glbDoc();external.images=[{uri:'https://example.test/texture.png'}];
     await assert.rejects(inspectAvatarSourceBytes(packGlb(external)),/Embed all buffers and images/);
   });
-  await test('valid binary skin is admitted but visual and clip readiness stay pending',async()=>{const r=await inspectAvatar(bytes);assert.equal(r.validation.errors,0);assert.equal(r.joints,3);assert.equal(r.triangles,12);assert.equal(r.state,'needs_visual_review');assert.deepEqual(r.missingClips,['idle','walk','run']);});
+  await test('valid binary skin is admitted but visual, foot and clip readiness stay pending',async()=>{const r=await inspectAvatar(bytes);assert.equal(r.validation.errors,0);assert.equal(r.joints,3);assert.equal(r.triangles,12);assert.equal(r.state,'needs_visual_review');assert.equal(r.footControls.state,'unverified');assert.equal(r.footControls.geometrySeparation,'unverified');assert.deepEqual(r.missingClips,['idle','walk','run']);});
   /* ⚠ THE ADMISSION assertSkinned CANNOT MAKE. This is the surface where
    * people hand each other files, and it used to admit a GLB on its skin
    * structure alone. The fixture below is IDENTICAL to the accepted one in
@@ -92,6 +116,7 @@ try{
     const result=await avatarTools(api).find(tool=>tool.name==='avatar_source_preflight').run({path:input});
     assert.equal(result.deformation.state,'deforms');
     assert.ok(result.deformation.probedJoints>0);
+    assert.equal(result.footControls.geometrySeparation,'unverified');
   });
   await test('HTTP rejects cross-site, opaque and different-port origins',async()=>{for(const h of [{Origin:'https://evil.test'},{Origin:'null'},{Origin:'http://127.0.0.1:1'},{'Sec-Fetch-Site':'cross-site'}])assert.equal((await post({action:'inspect',id:row.id},h)).status,403);});
   await test('HTTP refuses DNS rebinding Host on reads too',async()=>{const code=await new Promise((resolve,reject)=>{http.get(base+'/api/avatars',{headers:{Host:'evil.test'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));}).on('error',reject);});assert.equal(code,403);});

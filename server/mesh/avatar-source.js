@@ -5,6 +5,7 @@ import {readFile, stat} from 'node:fs/promises';
 import validator from 'gltf-validator';
 import {readGlb, assertSkinned} from './glb.js';
 import {assertDeforms} from './deform.js';
+import {inspectAvatarFootControls} from './avatar-foot-controls.js';
 
 export const AVATAR_SOURCE_LIMIT_BYTES = 64 * 1024 * 1024;
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
@@ -73,6 +74,9 @@ export async function inspectAvatarSourceBytes(bytes) {
   const bend=!skins.length?{state:'absent',why:[]}:!skin.ok
     ?{state:'unreadable',why:['Skin data must be repaired before its bends can be measured.']}
     :assertDeforms(doc,parsed.binData);
+  const feet=skin?.ok?inspectAvatarFootControls(doc,parsed.binData)
+    :{state:'unverified',reason:'No usable skin to inspect.',leftVertices:0,rightVertices:0,
+      sharedVertices:0,minimumWeight:null,geometrySeparation:'unverified',reviewRequired:true};
   const expressions=doc.extensions?.VRMC_vrm?.expressions||{};
   const next=[];
   if (!materials.length && !images.length && !withVertexColor)
@@ -89,6 +93,11 @@ export async function inspectAvatarSourceBytes(bytes) {
     next.push({code:'rig-bend',text:'This skin carries the mesh rigidly. Repaint the weights and check a body bend before import.'});
   else if (bend.state==='unreadable')
     next.push({code:'rig-bend-unreadable',text:'The skin could not be posed. Inspect its joints and bind matrices before import.'});
+  if(skins.length){
+    if(feet.state==='unweighted')next.push({code:'foot-weights',text:'One or both VRM foot controls have no weighted vertices. Repair the foot weights, then pose each foot separately.'});
+    else if(feet.state==='cross_weighted')next.push({code:'foot-weights',text:'Some vertices follow both foot controls. Inspect the seam and repaint weights where needed.'});
+    else next.push({code:'foot-review',text:'Pose each foot separately and inspect the gap between legs and feet. Weight checks cannot detect fused geometry.'});
+  }
   if (doc.extensions?.VRMC_vrm?.specVersion!=='1.0')
     next.push({code:'vrm',text:'For expressions and spring hair, author a VRM 1.0 export.'});
   return {
@@ -101,11 +110,12 @@ export async function inspectAvatarSourceBytes(bytes) {
       structural:!skins.length?'absent':skin.ok?'valid':'invalid',why:skin?.ok?[]:(skin?.why||[])},
     deformation:{state:bend.state,probeDegrees:bend.probeDegrees||null,strain:bend.strain??null,
       probedJoints:bend.probedJoints??0,why:bend.why||[]},
+    footControls:feet,
     vrm:{version:doc.extensions?.VRMC_vrm?.specVersion||null,
       declaredExpressions:Object.values(expressions).reduce((sum,group)=>sum+Object.keys(group||{}).length,0),
       declaredSpringChains:doc.extensions?.VRMC_springBone?.springs?.length||0},
     validation:{errors:0,warnings:validation.issues.numWarnings},next,
-    caveat:'A local joint pose checks whether shape changes, not whether bends look good. It cannot judge fused anatomy, silhouette, texture quality, independent hair motion or World admission.'
+    caveat:'A local joint pose checks whether shape changes, not whether bends look good. Foot weights do not prove separate geometry. Review fused anatomy, silhouette, texture quality and hair motion visually; World admission needs its own check.'
   };
 }
 

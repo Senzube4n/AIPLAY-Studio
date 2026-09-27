@@ -14,6 +14,7 @@ import { createAvatarWardrobe, createAvatarWardrobeRoutes } from './avatar-wardr
 import { createAvatarHandoffRoutes } from './avatar-handoff.js';
 import { VRM_LIMITS, VRM_EXTENSIONS, inspectVrmDocument } from './vrm-profile.js';
 import { inspectAvatarSource } from './avatar-source.js';
+import { inspectAvatarFootControls } from './avatar-foot-controls.js';
 
 export const AVATAR_LIMITS = Object.freeze({ bytes: 8*1024*1024, triangles: 30000, materials: 4, joints: 96, textureSide: 1024, texturePixels: 4*1024*1024 });
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
@@ -104,18 +105,21 @@ export async function inspectAvatar(bytes, profile="world") {
   const names=new Set(clips.map(c=>c.name.toLowerCase()));
   const missingClips=requiredClips.filter(n=>!names.has(n));
   const jointNames=[...allJoints].map(i=>({index:i,name:j.nodes[i].name||`node_${i}`}));
+  const footControls=inspectAvatarFootControls(j,g.binData);
   const anchors=(j.nodes||[]).map((n,index)=>({name:n.name,index})).filter(n=>/^(anchor_(chest|back|hand_l|hand_r))$/i.test(n.name||''));
   const warnings=report.issues.messages.filter(x=>x.severity===1).map(x=>`${x.code}: ${x.message}`);
   if (!textures.length) warnings.push('No image textures; material colours only.');
   if (missingClips.length) warnings.push(`Missing own embedded clips: ${missingClips.join(', ')}.`);
   if (anchors.length<4) warnings.push('Chest, back and both hand attachment anchors are not all present.');
+  if(footControls.state==='unweighted')warnings.push('One or both VRM foot controls have no weighted vertices; inspect and repaint foot weights.');
+  else if(footControls.state==='cross_weighted')warnings.push('Some vertices follow both VRM foot controls; inspect the foot seam and weights.');
   return {profile,vrm,sha256:digest(bytes),bytes:bytes.length,triangles,primitives,materials,joints:allJoints.size,jointNames,textures,texturePixels,clips,anchors,
     validation:{validator:validator.version(),errors:0,warnings},missingClips,
     deformation:{state:deform.state,strain:deform.strain,joint:deform.jointName,probeDegrees:deform.probeDegrees,
       minStrain:deform.minStrain,sampled:deform.sampled,vertices:deform.vertices,probedJoints:deform.probedJoints,
       crossCheck:deform.cross.state,crossAgreed:deform.agree},
-    state:'needs_visual_review',limits,
-    caveat:'The skin was posed and its vertices really move, but that is existence, not quality: structural validation does not verify identity, deformation QUALITY (weights, volume loss, candy-wrapper twists), in-place motion, phone performance or account ownership. The Blender cross-check is UNRUN on this path, which is not a second opinion in favour.'};
+    footControls,state:'needs_visual_review',limits,
+    caveat:'The skin was posed and its vertices really move, but that is existence, not quality: structural validation does not verify identity, fused feet or leg gaps, deformation QUALITY (weights, volume loss, candy-wrapper twists), in-place motion, phone performance or account ownership. The Blender cross-check is UNRUN on this path, which is not a second opinion in favour.'};
 }
 
 export function createAvatarService({directory,record=async()=>{}}) {
