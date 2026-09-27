@@ -49,7 +49,7 @@
  */
 import { CLOUD_CARD_PLACE, LENDING_UNTRIED } from "./cloud-switch.js";
 import { h3SizeFit, h3StartSize, H3_VRAM_OFFERED_GB, H3_RAM_FLOOR_GB, H3_SOL_ATTN, H3_MORE_MOTION } from "./h3tier.js";
-import { h3MatchedSteps, h3SparseFor, h3SamplerFor, h3TurboLoraFor, referenceSteps } from "./workflow.js";
+import { alignFrames, h3MatchedSteps, h3SparseFor, h3SamplerFor, h3TurboLoraFor, referenceSteps } from "./workflow.js";
 import { loraStepsOf } from "./config.js";
 import { bindPersonaForClip, promptNames } from "./personas.js";
 
@@ -506,6 +506,10 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
   const askedS = num(b.seconds);
   const hasS = Number.isFinite(askedS) && askedS > 0;
   let seconds = Math.min(Math.max(hasS ? askedS : eng.seconds, 1), 20);
+  if (hasS && seconds !== askedS) {
+    warnings.push({ id: "seconds", text: `This direct clip runs ${seconds} s, not the requested ${askedS} s (the direct-clip range is 1–20 s). `
+      + "Use Continue clip for another segment instead of expecting a single longer render." });
+  }
   if (start) {
     const cut = !hasS && seconds > start.maxSeconds;
     if (cut) seconds = start.maxSeconds;
@@ -575,6 +579,18 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
   const fit = family ? h3SizeFit({ width, height, seconds }, { vramMb: h3?.card?.vramMb ?? null }) : null;
   if (fit?.over) warnings.push({ id: "fit", text: fit.sentence });
   if (family && h3?.ramWarning) warnings.push({ id: "ram", text: h3.ramWarning });
+  if (engineKey === "h3") {
+    const frames = alignFrames(seconds, eng.fps || 24, "h3");
+    const fitted = Number(eng.costFitMaxMpxFrames);
+    if (Number.isFinite(fitted) && fitted > 0 && width * height * frames / 1e6 > fitted) {
+      notes.push({ id: "time-extrapolated", text: "The render-time prediction is outside the four measured "
+        + "size/length points used to fit it. Long H3 clips can take much longer or run out of memory." });
+    }
+    if (frames > 362) {
+      warnings.push({ id: "length-untrained", text: `This request becomes ${frames} frames, beyond H3's roughly `
+        + "124–362-frame trained range. A short clip followed by Continue clip is safer than one long render." });
+    }
+  }
 
   /* KEEPING A CHARACTER, on H3 (the only engine with a picture input). The
    * song flag is the soundtrack the render carries (`audioTrack`), or `song:

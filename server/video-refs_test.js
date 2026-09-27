@@ -58,6 +58,24 @@ test("the plan refuses references on FastH3 and LTX, in that sentence, and takes
   assert.doesNotMatch(index, /References need MiniMax H3/, "no second, hand-kept copy of the sentence");
 });
 
+test("the H3 plan says when 30 seconds becomes 20 and when its time curve is extrapolated", () => {
+  const plan = (seconds) => videoPlan({ prompt: "An adult dancer performs", seconds, steps: 20 },
+    { engineKey: "h3", eng: E.h3 });
+  const native = plan(5);
+  assert.equal(native.seconds, 5);
+  assert.equal(native.notes.some((n) => n.id === "time-extrapolated"), false,
+    "the five-second native render is inside the four-run time fit");
+  const longer = plan(8);
+  assert.equal(longer.notes.some((n) => n.id === "time-extrapolated"), true);
+  assert.equal(longer.warnings.some((w) => w.id === "length-untrained"), false,
+    "an eight-second clip is an extrapolation of the time curve, but remains in the trained length range");
+  const thirty = plan(30);
+  assert.equal(thirty.seconds, 20);
+  assert.match(thirty.warnings.find((w) => w.id === "seconds")?.text || "", /20 s, not the requested 30 s/);
+  assert.match(thirty.warnings.find((w) => w.id === "length-untrained")?.text || "", /beyond H3's roughly 124–362-frame trained range/);
+  assert.equal(thirty.notes.some((n) => n.id === "time-extrapolated"), true);
+});
+
 test("a tag nothing answers is taken out of the words, and said", () => {
   const ltx = videoPlan({ prompt: "the dancer from <Picture 1> spins, <Audio 1> plays" }, { engineKey: "ltx", eng: E.ltx });
   assert.equal(ltx.refusal, null, "no references attached: nothing to refuse, the Video Lab's LTX arm still renders");

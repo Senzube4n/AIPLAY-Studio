@@ -355,8 +355,12 @@ test("§5 the plan: steps and sparse attention", () => {
   assert.equal(small.warnings.length, 0);
   assert.equal(small.notes.find((n) => n.id === "sparse-untried")?.text,
     "Sparse attention runs on this clip; it was measured at 1344x768 only, so its speed and look at 960x544 are not yet tried.");
-  assert.deepEqual(plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 }, { engineKey: "h3", eng, h3: status(16, 32) }).notes
-    .filter((n) => n.id !== "runs"), [], "at the measured size: nothing to add but the runs line");
+  const atSparseLabSize = plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 },
+    { engineKey: "h3", eng, h3: status(16, 32) });
+  assert.equal(atSparseLabSize.notes.some((n) => n.id === "sparse-untried"), false,
+    "the sparse-attention caveat does not appear at its measured size");
+  assert.equal(atSparseLabSize.notes.some((n) => n.id === "time-extrapolated"), true,
+    "the independent render-time curve is still extrapolated at eight seconds");
   assert.equal(plain.videoPlan({ prompt: "a lamp", steps: 3, sparse: "sol-attn" }, { engineKey: "h3", eng, h3: null, control: true }).sparse,
     "off", "video-to-video stays dense");
   const fast = plain.videoPlan({ prompt: "a lamp", steps: 3 }, { engineKey: "h3", eng, h3: null });

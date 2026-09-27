@@ -1509,6 +1509,9 @@ export const config = {
     costFixedSeconds: 15,
     costRate: 0.84,
     costExponent: 1.2,
+    // Largest input to the four-run time fit above, in million pixel-frames.
+    // Longer clips still render, but a curve beyond this point is a prediction.
+    costFitMaxMpxFrames: 128,
 
     /* 🔑 shift_video 4, NOT the 12.0 default.
      *

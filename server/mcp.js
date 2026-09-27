@@ -2983,8 +2983,9 @@ export const TOOLS = [
   {
     name: "make_clip",
     description:
-      "Render a short video clip. Blocks until done — roughly 2 min on LTX, 2-13 min on H3 "
-      + "depending on `quality` and size.\n\n"
+      "Render a short video clip. Waits until done or `timeout_seconds`; a timed-out job keeps running. "
+      + "H3 time grows with size, frames and references, and long clips can take much longer than the fitted estimate. "
+      + "Use `check_only` to inspect the exact request and its evidence warnings first.\n\n"
       + "TWO ENGINES, AND THEY TAKE DIFFERENT INPUTS. Check the current one with "
       + "studio_status and change it with set_video_engine.\n"
       + "  • LTX 2.5 — fast. Takes EXACT frames: `first_frame`, `last_frame`, `mid_frames` "
@@ -3025,7 +3026,7 @@ export const TOOLS = [
         quality: { type: "string", enum: ["fast", "best"],
           description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. With references or a persona and no quality, the reference build's own count runs (studio_status video.h3_reference_steps). All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
-        seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
+        seconds: { type: "integer", description: "Direct clip length, 1–20 s (default 5). H3 is trained for about 4–15 s; longer requests are experimental. More than 20 s is clamped and reported in warnings. Continue a clip for more output." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
         height: { type: "integer", description: "Frame height." },
         first_frame: { type: "string", description: "An image name to open on (from list_images or a cover). Pinned at frame 0." },
@@ -3058,7 +3059,7 @@ export const TOOLS = [
         attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it (PyTorch where it does not). H3 decides its own; LTX has none. Default: kitchen, the one the H3 lab timed FastH3 with." },
         sparse: { type: "string", enum: ["sol-attn", "off"], description: "H3 only: sparse attention on the fast setting (the 3-step build, no references), the Video screen's Advanced \"Sparse attention\" switch. " + H3_SOL_ATTN.note + " Default: the saved setting (video_settings sparse_attention), sol-attn unless changed; name it only to differ for this render." },
         check_only: { type: "boolean", description: "Render nothing: return what this call WOULD render on this card (engine, size, seconds, steps, sparse attention), what the size needs (\"needs about X GB free; you have Y\"), every warning, or the refusal. The Video screen's Advanced line reads the same answer." },
-        timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
+        timeout_seconds: { type: "integer", description: "Wait limit, default 900 s. Reaching it does not stop the queued or running render; check studio_status/list_clips before attempting another." },
       },
       additionalProperties: false,
     },
