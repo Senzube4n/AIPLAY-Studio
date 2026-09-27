@@ -128,10 +128,12 @@ test('camera review uses a capable hash-pinned session without changing audio or
  assert.deepEqual(retry,first);assert.equal(first.desired.camera_view,'side');assert.equal(first.desired.camera_revision,1);
  assert.equal(first.desired.audio_revision,0);assert.equal(first.desired.motion_revision,0);assert.equal(first.applied_revision,0);
  await assert.rejects(f.service.command({...request,view:'back'}),{status:409});
+ const face=await f.command('camera_view',{view:'face'});
+ assert.equal(face.desired.camera_view,'face');assert.equal(face.desired.camera_revision,2);
  for(const view of ['feet','',null])await assert.rejects(f.command('camera_view',{view}),{status:400});
  await assert.rejects(f.command('motion_play',{view:'front'}),{status:400});
- await f.service.heartbeat({session_id:f.session_id,applied_revision:1,status:{phase:'empty',time:0,duration:null}});
- assert.equal((await f.service.sessions()).sessions[0].applied_revision,1);
+ await f.service.heartbeat({session_id:f.session_id,applied_revision:2,status:{phase:'empty',time:0,duration:null}});
+ assert.equal((await f.service.sessions()).sessions[0].applied_revision,2);
  await f.service.register({...f.registration,capabilities:{audio:false,lip_sync:false,camera:false}});
  await assert.rejects(f.command('camera_view',{view:'front'}),{status:409});
  f.change();await assert.rejects(f.command('camera_view',{view:'fit'}),{status:409});

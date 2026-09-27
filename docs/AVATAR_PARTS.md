@@ -192,8 +192,8 @@ The advanced local 3D workshop can use `POST /api/avatar-weight-transfer`:
 | Action | Required fields | Result |
 | --- | --- | --- |
 | `status` | None | Configured interpreter, limits and running state |
-| `inspect` | `reference_path`; optional `target_path` | `skeleton`, `reference_sha256`, optional `target_sha256`, joint names |
-| `submit` | Both paths and hashes, `expected_skeleton`, `transform`, `max_distance`, `name`, `source`, `license` | Unique job `id`, initial `running` state |
+| `inspect` | `reference_path`; optional `target_path`, `reference_mesh_node` and `reference_primitive` together | `skeleton`, `reference_sha256`, optional `target_sha256`, joint names and `reference_surfaces` |
+| `submit` | Both paths and hashes, `expected_skeleton`, `transform`, `max_distance`, `name`, `source`, `license`; optional selected surface pair | Unique job `id`, initial `running` state |
 | `get` | `id` | `running`, `complete`, `failed` or `interrupted` |
 
 Paths must be absolute and local. This endpoint requires Studio's loopback Host,
@@ -205,6 +205,10 @@ Equivalent tools are `avatar_weight_transfer_status`,
 `avatar_weight_transfer_inspect`, `avatar_weight_transfer_submit` and
 `avatar_weight_transfer_get`. MCP uses the same HTTP path and actor provenance.
 Caller-supplied actors are not accepted in request bodies.
+For hair, inspect the base's `reference_surfaces` and pass the hair `mesh_node`
+and `primitive` to both inspection and submission. Omitting the pair retains
+the legacy first-skinned-mesh behavior, which commonly transfers only head or
+body weights. The selected indices and output report are checked together.
 
 Each transfer snapshots both inputs in a unique job directory, verifies the
 inspected hashes, records a `delegate` event, and runs Python with bounded argv,

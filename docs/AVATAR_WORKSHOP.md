@@ -29,7 +29,7 @@ Image and audio files remain browser `File`/object URLs; Studio does not upload 
 
 `avatar_playback_sessions` finds an open local preview. `avatar_playback_command` accepts `joint_pose` with a `node_index` from `avatar_inspect.inspection.jointNames`, `axis` (`x`, `y` or `z`) and `degrees` (-45 to 45), or `joint_reset`. The imported source hash and preview capability are checked on each command. `applied_revision` confirms the browser applied the requested pose; it does not certify deformation quality. No joint bend is saved into the GLB or a look.
 
-The same command accepts `camera_view` with `view` set to `front`, `side`, `back` or `fit`, matching the Workshop buttons. This steers only the selected live preview and keeps its choice when the viewport resizes. `applied_revision` confirms that preview changed its camera.
+The same command accepts `camera_view` with `view` set to `face`, `front`, `side`, `back` or `fit`, matching the Workshop buttons. This steers only the selected live preview and keeps its choice when the viewport resizes. `applied_revision` confirms that preview changed its camera. Face frames the upper head for close texture review; double-clicking the viewport returns to Fit. Orbit zoom has a close-range limit.
 
 - `avatar_appearance_inventory`: exact mesh/material indices, morph names, expression presets and spring availability.
 - `avatar_appearance_list/get`: saved looks for a source asset.

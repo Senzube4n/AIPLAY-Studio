@@ -149,7 +149,7 @@ export function createAvatarPlayback({directory,inspectAsset,record=async()=>{},
         throw fail('Choose a joint index, x/y/z axis and bend from -45 to 45 degrees.');
     }else if(request.node_index!==undefined||request.axis!==undefined||request.degrees!==undefined)throw fail('Only joint_pose accepts joint bend fields.');
     if(request.op==='camera_view'){
-      if(!['front','side','back','fit'].includes(request.view))throw fail('Choose front, side, back or fit view.');
+      if(!['face','front','side','back','fit'].includes(request.view))throw fail('Choose face, front, side, back or fit view.');
     }else if(request.view!==undefined)throw fail('Only camera_view accepts a view.');
     const identity=digest(Buffer.from(JSON.stringify({op:request.op,audio_id:request.audio_id,clip_index:request.clip_index,speed:request.speed,seconds:request.seconds,expression:request.expression,duration_ms:request.duration_ms,node_index:request.node_index,axis:request.axis,degrees:request.degrees,view:request.view})));
     return serial(lock,async()=>{
