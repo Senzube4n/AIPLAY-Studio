@@ -28,5 +28,5 @@ test("any other card gets three times the room", () => {
 
 test("the clip job uses it, with the card's vendor", () => {
   const art = readFileSync(new URL("./art.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  assert.match(art, /const budgetMs = clipBudgetMs\(expected, vendorOf\(config\.gpu, config\.torchBackend\), videoSpeed\.factor\(engine\)\);/);
+  assert.match(art, /const budgetMs = clipBudgetMs\(expected, vendorOf\(config\.gpu, config\.torchBackend\), videoSpeed\.factor\(engine\), engine\);/);
 });
