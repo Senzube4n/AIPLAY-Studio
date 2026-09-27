@@ -44,12 +44,13 @@ import { config } from "./config.js";
 import { engine } from "./engine/client.js";
 import { setGpuFallback } from "./gpu.js";
 import { writeModelPathsYaml, samePath } from "./localmodels.js";
+import { desktopReserve } from "./vramreserve.js";
 
 /* The launch options ComfyUI starts with: the tier's flags, the install's, and
  * the launcher's choices over Studio's defaults (comfyargs.js effectiveValues,
  * which needs this install's cli_args.py to know which flags it accepts). Also
  * read by index.js, to say whether MiniMax's AMD fix is in the launch. */
-export function studioLaunchArgs(tierFlags = config.comfy.flags) {
+export function studioLaunchArgs(tierFlags = config.comfy.flags, measured = {}) {
   let cli = null;
   try { cli = readFileSync(path.join(config.comfyDir, "comfy", "cli_args.py"), "utf8"); } catch { /* no install yet */ }
   /* keepSafetyGate: whatever the options say, the minors backstop node loads
@@ -58,7 +59,9 @@ export function studioLaunchArgs(tierFlags = config.comfy.flags) {
     tierFlags,
     installFlags: config.comfy.extraArgs,
     useInstallFlags: config.comfy.useInstallFlags,
-    values: effectiveValues(config.comfy.options, config.comfy.optionsRev, cli, { fix: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend) }),
+    /* `measured`: this start's reading (server/vramreserve.js), laid under
+     * the person's own choices, never saved. */
+    values: { ...measured, ...effectiveValues(config.comfy.options, config.comfy.optionsRev, cli, { fix: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend) }) },
   }), cli);
 }
 
@@ -135,6 +138,17 @@ export class ComfySupervisor extends EventEmitter {
 
   async start() {
     if (this.proc) return;
+    /* Room on the card for the desktop and other programs, measured now
+     * (server/vramreserve.js): on AMD and Intel under Windows, Dynamic VRAM
+     * cannot see them, and a render that crowds them out ends in a driver
+     * timeout. Before the port is reserved: the reading takes a second. */
+    const reserve = await desktopReserve({
+      mode: config.comfy.autoReserve, vendor: vendorOf(config.gpu, config.torchBackend),
+      totalMb: config.gpu?.totalMb, options: config.comfy.options,
+      installFlags: config.comfy.extraArgs, useInstallFlags: config.comfy.useInstallFlags,
+    });
+    if (reserve.said) console.log(`[comfy] ${reserve.said}`);
+    this.reserve = reserve;
     /* THE PORT, CHOSEN FRESH AT EVERY START — including the crash-restart path
      * below and setTier's restart above.
      *
@@ -218,7 +232,7 @@ export class ComfySupervisor extends EventEmitter {
       /* Tier flags, then the install's own flags, then the launcher's
        * Advanced choices — each choice replacing its family in the first two
        * (server/comfyargs.js), so argparse never sees two exclusive flags. */
-      ...studioLaunchArgs(this.flags ?? config.comfy.flags),
+      ...studioLaunchArgs(this.flags ?? config.comfy.flags, reserve.values),
       ...modelArgs,
     ];
 

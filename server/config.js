@@ -410,6 +410,10 @@ export const config = {
     /* The AMD/Intel engine fix (PyTorch attention + CUDA graphs off): "auto"
      * lets the card decide, "on"/"off" force it. settings.json `comfyAmdFix`. */
     amdFix: ["auto", "on", "off"].includes(saved.comfyAmdFix) ? saved.comfyAmdFix : "auto",
+    /* VRAM kept free for the desktop and other programs, measured at every
+     * engine start (server/vramreserve.js): "auto" on Windows with a card that
+     * is not NVIDIA, "on"/"off" force it. settings.json `comfyAutoReserve`. */
+    autoReserve: ["auto", "on", "off"].includes(saved.comfyAutoReserve) ? saved.comfyAutoReserve : "auto",
     startupTimeoutMs: 180_000,
   },
 

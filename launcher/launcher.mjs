@@ -559,12 +559,15 @@ function openWindow(url) {
     return null;
   }
   /* Its own profile folder, so the window is its own process: closing it is
-   * noticed, and it never merges into a browser window you already have. */
+   * noticed, and it never merges into a browser window you already have.
+   * No GPU: the launcher is a plain page, and it stays open beside renders
+   * that need every megabyte of the card (server/vramreserve.js). */
   return spawn(exe, [
     `--app=${url}`,
     `--user-data-dir=${path.join(APPDATA, "launcher-window")}`,
     "--window-size=1120,800",
     "--no-first-run", "--no-default-browser-check",
+    "--disable-gpu",
   ], { stdio: "ignore" });
 }
 

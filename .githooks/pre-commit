@@ -155,6 +155,8 @@ node server/localmodels_test.js || exit 1
 # install's cli_args.py defines are offered, and Studio-owned flags cannot be
 # set. Fixture text only: no ComfyUI, no GPU.
 node server/comfyargs_test.js || exit 1
+# The measured --reserve-vram for the desktop on Windows AMD/Intel (driver timeouts).
+node --test server/vramreserve_test.js || exit 1
 node --test server/comfyargs-defaults_test.js || exit 1
 node server/install-engine_test.js || exit 1
 node server/music/yue_test.js || exit 1
