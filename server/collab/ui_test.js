@@ -317,6 +317,25 @@ test("allocation preview uses the server's pinned result and does not apply or s
   assert.ok(!f.calls.some((c) => ["allocate", "apply_draft", "pack"].includes(c.body?.action)));
 });
 
+test("late allocation preview cannot replace a changed friend or scene selection", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.node("cbDraftPeers").inputs = [{ checked: true, value: f.peer.fp }];
+  f.node("cbDraftScenes").inputs = [{ checked: true, value: "opening" }];
+  let finish;
+  f.context.respond = (url, body) => body?.action === "preview_allocation"
+    ? new Promise((resolve) => { finish = resolve; }) : f.defaults(url, body);
+  const waiting = f.fire("cbDraftPreview");
+  f.node("cbDraftScenes").inputs = [{ checked: true, value: "closing" }];
+  await f.fire("cbDraftScenes", "change");
+  finish({ ok: true, previewOnly: true, plan: { ...f.plan,
+    draft: { assignments: [{ fp: f.peer.fp, nickname: "Friend", segmentIds: ["opening"], estimatedMinutes: null }], excluded: [], unassigned: [] } } });
+  await waiting;
+  assert.match(f.node("cbDraftResult").innerHTML, /closing/);
+  assert.doesNotMatch(f.node("cbDraftResult").innerHTML, /opening/);
+  assert.match(f.node("cbDraftSummary").textContent, /Selection changed.*Preview again/);
+  assert.equal(f.node("cbDraftSaved").hidden, true);
+});
+
 test("saving one plan section preserves unsaved edits in the other", async () => {
   const f = fixture(); await f.run("paintCollab()");
   f.context.respond = (url, body) => {

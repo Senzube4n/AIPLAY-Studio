@@ -7189,7 +7189,13 @@ $("cbAssignedStart")?.addEventListener("click", async () => {
 });
 $("cbAssignedNext")?.addEventListener("click", () => { if (cbAssignedReview?.waiting) cbAssignedPick(); });
 $("cbDraftPreview")?.addEventListener("click", async () => {
-  const r = await mutateCollabPlan("preview_allocation", cbAllocationFields()); if (!r) return;
+  const fields = cbAllocationFields(), key = JSON.stringify(fields);
+  const r = await mutateCollabPlan("preview_allocation", fields); if (!r) return;
+  if (key !== JSON.stringify(cbAllocationFields())) {
+    paintCbAllocation();
+    $("cbDraftSummary").textContent = "Selection changed while the preview loaded. Preview again for the current friends and scenes.";
+    return;
+  }
   $("cbDraftResult").innerHTML = cbDraftMarkup(r.plan.draft);
   $("cbDraftSummary").textContent = `Unsaved preview · pinned owners respected · ${r.plan.draft.unassigned.length} unassigned · no remote availability data.`;
 });
