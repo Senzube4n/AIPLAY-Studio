@@ -39,12 +39,13 @@ const input={reference_path:reference,target_path:target,reference_sha256:hash(r
 const calls=[],events=[];
 async function runner(py,args){
   calls.push({py,args});
-  if(args[0]==='--inspect-reference')return {ok:true,mode:'inspect-reference',skeleton,joints:3,jointNames:['root','spine','head']};
+  const selected=args.includes('--reference-mesh-node')?{referenceMeshNode:Number(args[args.indexOf('--reference-mesh-node')+1]),referencePrimitive:Number(args[args.indexOf('--reference-primitive')+1])}:{};
+  if(args[0]==='--inspect-reference')return {ok:true,mode:'inspect-reference',skeleton,joints:3,jointNames:['root','spine','head'],...selected};
   const arg=name=>args[args.indexOf(name)+1];
   assert.deepEqual(await readFile(arg('--reference')),referenceBytes);assert.deepEqual(await readFile(arg('--target')),targetBytes);
   await writeFile(arg('--output'),referenceBytes);
   return {ok:true,mode:'nearest-surface',skeleton,referenceSha256:input.reference_sha256,targetSha256:input.target_sha256,coverage:1,
-    requiresVisualReview:true,vertices:8,joints:3,maxDistance:.01,meanDistance:.005,minRetainedWeight:1,distanceLimit:.02,transform,output:arg('--output')};
+    requiresVisualReview:true,vertices:8,joints:3,maxDistance:.01,meanDistance:.005,minRetainedWeight:1,distanceLimit:.02,transform,output:arg('--output'),...selected};
 }
 function service(name,options={}){return createWeightTransferService({directory:path.join(directory,name),python:process.execPath,run:runner,record:async event=>events.push(event),...options});}
 async function finished(instance,id){for(let i=0;i<100;i++){const row=await instance.get(id);if(row.state!=='running')return row;await new Promise(resolve=>setTimeout(resolve,5));}throw Error('Job did not finish');}
@@ -54,6 +55,7 @@ try{
   await test('inspection snapshots source and returns exact input hashes',async()=>{
     const result=await main.inspect({reference_path:reference,target_path:target});assert.equal(result.reference_sha256,input.reference_sha256);assert.equal(result.target_sha256,input.target_sha256);
     assert.notEqual(calls[0].args[1],reference);assert.equal(result.skeleton,skeleton);
+    assert.ok(result.reference_surfaces.length>0);
   });
   await test('async transfer verifies output, preserves source files and records actual actor',async()=>{
     const pending=await main.submit(input,'agent:parts');assert.equal(pending.state,'running');job=await finished(main,pending.id);assert.equal(job.state,'complete',job.error);
@@ -68,6 +70,20 @@ try{
   });
   await test('changed source bytes are refused before delegate or launch',async()=>{
     const before=calls.length;await assert.rejects(main.submit({...input,target_sha256:'b'.repeat(64)}),/changed since inspection/);assert.equal(calls.length,before);
+  });
+  await test('a selected hair surface is carried through inspection, transfer, journal and MCP',async()=>{
+    const chosen={reference_mesh_node:0,reference_primitive:0};
+    const seen=await main.inspect({reference_path:reference,target_path:target,...chosen});
+    assert.equal(seen.referenceMeshNode,0);assert.equal(seen.referencePrimitive,0);
+    const chosenJob=await finished(main,(await main.submit({...input,...chosen})).id);
+    assert.equal(chosenJob.state,'complete',chosenJob.error);
+    assert.equal(chosenJob.reference_mesh_node,0);assert.equal(chosenJob.result.referenceMeshNode,0);
+    assert.ok(calls.at(-1).args.includes('--reference-mesh-node'));
+    const requests=[],tools=avatarWeightTransferTools(async(...args)=>{requests.push(args);return {};});
+    await tools.find(t=>t.name.endsWith('_submit')).run({...input,...chosen});
+    assert.equal(requests[0][2].reference_mesh_node,0);assert.equal(requests[0][2].reference_primitive,0);
+    await assert.rejects(main.inspect({reference_path:reference,reference_mesh_node:0}),/Select both/);
+    await assert.rejects(main.submit({...input,reference_primitive:0}),/Select both/);
   });
   await test('explicit transform, distance, hashes, provenance and local paths are required',async()=>{
     for(const bad of [{transform:undefined},{max_distance:0},{expected_skeleton:'bad'},{license:''},{target_path:'https://example.org/a.glb'},{surprise:true}])await assert.rejects(main.submit({...input,...bad}));

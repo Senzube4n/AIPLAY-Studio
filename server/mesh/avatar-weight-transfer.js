@@ -27,6 +27,28 @@ const fault=(message,status=400)=>Object.assign(new Error(message),{status});
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const strict=(value,keys)=>{if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!keys.includes(k)))throw fault('Unsupported weight-transfer fields.');};
 const pin=(value,label)=>{if(typeof value!=='string'||!hashPattern.test(value))throw fault(`${label} must be a SHA-256 returned by inspection.`);return value;};
+const surfaceSelection=input=>{
+  const mesh=input.reference_mesh_node,primitive=input.reference_primitive;
+  if(mesh===undefined&&primitive===undefined)return null;
+  if(!Number.isInteger(mesh)||mesh<0||mesh>2048||!Number.isInteger(primitive)||primitive<0||primitive>2048)
+    throw fault('Select both reference_mesh_node and reference_primitive from inspection.');
+  return {mesh,primitive,args:['--reference-mesh-node',String(mesh),'--reference-primitive',String(primitive)]};
+};
+const surfaceInventory=json=>{
+  const rows=[],active=new Set(),stack=[...(json.scenes?.[json.scene??0]?.nodes||[])];
+  while(stack.length){const index=stack.pop();if(!Number.isInteger(index)||active.has(index)||!json.nodes?.[index])continue;
+    active.add(index);stack.push(...(json.nodes[index].children||[]));}
+  for(const node of [...active].sort((a,b)=>a-b)){
+    const current=json.nodes[node];if(!Number.isInteger(current.skin)||!Number.isInteger(current.mesh))continue;
+    const mesh=json.meshes?.[current.mesh];if(!mesh)continue;
+    for(let primitive=0;primitive<(mesh.primitives?.length||0);primitive++){
+      const part=mesh.primitives[primitive],accessor=json.accessors?.[part.indices??part.attributes?.POSITION];
+      rows.push({mesh_node:node,primitive,mesh_name:current.name||`Mesh ${node}`,
+        material_name:json.materials?.[part.material]?.name||null,triangles:Math.floor((accessor?.count||0)/3)});
+    }
+  }
+  return rows;
+};
 
 /** Fixed executable plus argv only, one bounded process, no shell or child tree. */
 export function runWeightPython(python,args,{timeoutMs=WEIGHT_TRANSFER_LIMITS.timeoutMs,spawnImpl=spawn,script=weightTransferScriptPath()}={}) {
@@ -100,23 +122,26 @@ export function createWeightTransferService({directory,python,run=runWeightPytho
     }
   }
   async function inspect(input){
-    strict(input,['reference_path','reference_bytes','target_path','target_bytes']);
+    strict(input,['reference_path','reference_bytes','target_path','target_bytes','reference_mesh_node','reference_primitive']);
+    const surface=surfaceSelection(input);
     const py=await interpreter(),reference=await inputBytes(input,'reference');
     const target=input.target_path!==undefined||input.target_bytes!==undefined?await inputBytes(input,'target'):null;
     // Inspection snapshots are retained with unique ids, so an in-flight scan
     // cannot read a subsequently edited user file or collide with another scan.
     const id='wt_'+randomUUID(),dir=jobPath(id);await mkdir(dir,{recursive:true});
     const snapshot=path.join(dir,'reference.glb');await writeFile(snapshot,reference.bytes,{flag:'wx'});
-    const result=await run(py,['--inspect-reference',snapshot],{timeoutMs:60000});
+    const result=await run(py,['--inspect-reference',snapshot,...(surface?.args||[])],{timeoutMs:60000});
     if(result.mode!=='inspect-reference'||!hashPattern.test(result.skeleton||'')||!Number.isInteger(result.joints)||result.joints<2||result.joints>256
       ||!Array.isArray(result.jointNames)||result.jointNames.length!==result.joints||result.jointNames.some(n=>typeof n!=='string'||!n)||new Set(result.jointNames).size!==result.joints)
       throw fault('Invalid reference inspection result.',502);
-    return {...result,reference_sha256:reference.sha256,...(target?{target_sha256:target.sha256}:{}),requiresVisualReview:true};
+    if(surface&&(result.referenceMeshNode!==surface.mesh||result.referencePrimitive!==surface.primitive))throw fault('Selected reference surface changed during inspection.',502);
+    return {...result,reference_surfaces:surfaceInventory(readGlb(reference.bytes).json),reference_sha256:reference.sha256,
+      ...(target?{target_sha256:target.sha256}:{}),requiresVisualReview:true};
   }
   async function submit(input,actor='system'){
-    strict(input,['reference_path','reference_bytes','target_path','target_bytes','reference_sha256','target_sha256','expected_skeleton','transform','max_distance','name','source','license']);
+    strict(input,['reference_path','reference_bytes','target_path','target_bytes','reference_sha256','target_sha256','expected_skeleton','transform','max_distance','name','source','license','reference_mesh_node','reference_primitive']);
     if(reserved)throw fault('A weight-transfer job is already running. Poll it before submitting another.',409);
-    const expected=pin(input.expected_skeleton,'expected_skeleton'),refHash=pin(input.reference_sha256,'reference_sha256'),targetHash=pin(input.target_sha256,'target_sha256');
+    const expected=pin(input.expected_skeleton,'expected_skeleton'),refHash=pin(input.reference_sha256,'reference_sha256'),targetHash=pin(input.target_sha256,'target_sha256'),surface=surfaceSelection(input);
     const transform=input.transform;
     if(!Array.isArray(transform)||transform.length!==16||transform.some(v=>typeof v!=='number'||!Number.isFinite(v))
       ||transform[3]!==0||transform[7]!==0||transform[11]!==0||transform[15]!==1)throw fault('transform must be an explicit finite affine 16-number column-major matrix.');
@@ -130,26 +155,30 @@ export function createWeightTransferService({directory,python,run=runWeightPytho
       const referenceFile=path.join(dir,'reference.glb'),targetFile=path.join(dir,'target.glb'),output=path.join(dir,'attachment.glb');
       await writeFile(referenceFile,reference.bytes,{flag:'wx'});await writeFile(targetFile,target.bytes,{flag:'wx'});
       const row={id,state:'running',actor:normalizeActor(actor),createdAt:new Date().toISOString(),name:input.name.trim(),source:input.source.trim(),license:input.license.trim(),
-        reference_sha256:refHash,target_sha256:targetHash,skeleton:expected,transform:[...transform],max_distance:input.max_distance,requiresVisualReview:true};
-      await record({type:'delegate',actor:row.actor,asset:`avatar-part/${id}`,data:{operation:'nearest-surface-weight-transfer',referenceSha256:refHash,targetSha256:targetHash,skeleton:expected,transform:row.transform,maxDistance:row.max_distance}});
+        reference_sha256:refHash,target_sha256:targetHash,skeleton:expected,transform:[...transform],max_distance:input.max_distance,
+        ...(surface?{reference_mesh_node:surface.mesh,reference_primitive:surface.primitive}:{}),requiresVisualReview:true};
+      await record({type:'delegate',actor:row.actor,asset:`avatar-part/${id}`,data:{operation:'nearest-surface-weight-transfer',referenceSha256:refHash,targetSha256:targetHash,skeleton:expected,transform:row.transform,maxDistance:row.max_distance,
+        ...(surface?{referenceMeshNode:surface.mesh,referencePrimitive:surface.primitive}:{})}});
       await save(row);
       const runningSnapshot=structuredClone(row);
       const pending=(async()=>{
         try{
           const result=await run(py,['--reference',referenceFile,'--target',targetFile,'--output',output,'--expected-skeleton',expected,
-            '--transform',JSON.stringify(transform),'--max-distance',String(input.max_distance),'--mode','nearest-surface']);
+            '--transform',JSON.stringify(transform),'--max-distance',String(input.max_distance),'--mode','nearest-surface',...(surface?.args||[])]);
           if(result.mode!=='nearest-surface'||result.skeleton!==expected||result.referenceSha256!==refHash||result.targetSha256!==targetHash||result.coverage!==1
             ||result.requiresVisualReview!==true||!Number.isInteger(result.vertices)||result.vertices<1||result.vertices>WEIGHT_TRANSFER_LIMITS.vertices
             ||!Number.isInteger(result.joints)||result.joints<2||result.joints>256||!Number.isFinite(result.maxDistance)||result.maxDistance<0||result.maxDistance>input.max_distance
             ||!Number.isFinite(result.meanDistance)||result.meanDistance<0||result.meanDistance>result.maxDistance||!Number.isFinite(result.minRetainedWeight)||result.minRetainedWeight<.9
-            ||result.distanceLimit!==input.max_distance||JSON.stringify(result.transform)!==JSON.stringify(transform)||path.resolve(result.output||'')!==output)
+            ||result.distanceLimit!==input.max_distance||JSON.stringify(result.transform)!==JSON.stringify(transform)||path.resolve(result.output||'')!==output
+            ||(surface&&(result.referenceMeshNode!==surface.mesh||result.referencePrimitive!==surface.primitive)))
             throw fault('Weight-transfer result does not match the pinned job.',502);
           const inspected=await validate(output);
           if(inspected.joints!==result.joints||inspected.vertices!==result.vertices)throw fault('Result geometry counts disagree with the actual GLB.',502);
           // Source snapshots are read again after execution; a subprocess cannot
           // quietly substitute either input and still receive an admitted result.
           if(digest(await readFile(referenceFile))!==refHash||digest(await readFile(targetFile))!==targetHash)throw fault('Source snapshot changed during transfer.',409);
-          await record({type:'edit',actor:row.actor,asset:`avatar-part/${id}`,data:{operation:'nearest-surface-weight-transfer',referenceSha256:refHash,targetSha256:targetHash,outputSha256:inspected.sha256,skeleton:expected,source:row.source,license:row.license,visualReview:'pending'}});
+          await record({type:'edit',actor:row.actor,asset:`avatar-part/${id}`,data:{operation:'nearest-surface-weight-transfer',referenceSha256:refHash,targetSha256:targetHash,outputSha256:inspected.sha256,skeleton:expected,source:row.source,license:row.license,visualReview:'pending',
+            ...(surface?{referenceMeshNode:surface.mesh,referencePrimitive:surface.primitive}:{})}});
           Object.assign(row,{state:'complete',completedAt:new Date().toISOString(),result:{...result,output,sha256:inspected.sha256,validation:inspected.validation}});
         }catch(error){Object.assign(row,{state:'failed',completedAt:new Date().toISOString(),error:error.message});}
         finally{try{await save(row);}finally{running.delete(id);reserved=false;}}
