@@ -94,7 +94,14 @@ export async function mountMusicAuditions(host, options = {}) {
   const stopped = () => { if (player.currentTime >= playbackEnd) player.pause(); };
   player.addEventListener("timeupdate", stopped);
   field("source").addEventListener("change", () => selectSource(field("source").value).catch(e => message(e.message)));
-  field("session").addEventListener("change", () => { clearTimeout(timer); if (field("session").value) loadSession(field("session").value).catch(e => message(e.message)); });
+  field("session").addEventListener("change", () => {
+    clearTimeout(timer); ++sessionEpoch;
+    current = null; player.pause(); player.removeAttribute("src"); player.load(); playbackEnd = Infinity;
+    q(".ma-playing").textContent = "Playback";
+    const id = field("session").value;
+    q(".ma-results").innerHTML = id ? "<p>Loading audition…</p>" : "<p>Choose a saved audition or generate alternatives to begin.</p>";
+    if (id) loadSession(id).catch(e => message(e.message));
+  });
   host.addEventListener("change", event => { if (event.target.dataset.ack && current) {
     const key = `${current.id}/${event.target.dataset.ack}`;
     event.target.checked ? acknowledged.add(key) : acknowledged.delete(key);

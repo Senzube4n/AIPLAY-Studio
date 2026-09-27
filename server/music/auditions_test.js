@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, exactJobReceipt, finishReplacement, audioHash } from "./auditions.js";
-import { auditionPlaybackWindow } from "../../web/music-auditions.js";
+import { auditionPlaybackWindow, mountMusicAuditions } from "../../web/music-auditions.js";
 import { Library } from "../library.js";
 
 const HASH = "a".repeat(64);
@@ -198,6 +198,39 @@ test("playback uses each take's actual outgoing seam, retaining original compari
   assert.deepEqual(auditionPlaybackWindow(s, take, "out"), { file: "short.flac", from: 15, to: 21 });
   assert.deepEqual(auditionPlaybackWindow(s, null, "out"), { file: "song.flac", from: 17, to: 23 });
   assert.deepEqual(auditionPlaybackWindow(s, take), { file: "short.flac", from: 7, to: 21 });
+});
+test("clearing audition selection hides the old take and ignores its late response", async () => {
+  const elements = new Map();
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, { value: "", textContent: "", innerHTML: "", disabled: false,
+      handlers: {}, pauses: 0, addEventListener(type, fn) { this.handlers[type] = fn; }, pause() { this.pauses++; },
+      removeAttribute(name) { delete this[name]; }, load() {} });
+    return elements.get(selector);
+  };
+  const host = { classList: { add() {} }, querySelector: element, addEventListener() {}, innerHTML: "" };
+  let release;
+  const delayed = new Promise(resolve => { release = resolve; });
+  const session = { id: "aud_fixture", title: "Old chorus", state: "review", source: "song.flac",
+    sourceSeconds: 40, fromSeconds: 10, toSeconds: 20, contextSeconds: 3, takes: [], chosen: null };
+  const fetch = async url => {
+    if (url.endsWith("?id=aud_fixture")) await delayed;
+    const body = url.endsWith("?id=aud_fixture") ? { session }
+      : url.includes("?source=") ? { source: { file: "song.flac", available: true, engine: "yue2", seconds: 40 } }
+        : { sources: [{ file: "song.flac", title: "Song", available: true }], sessions: [session] };
+    return { ok: true, json: async () => body };
+  };
+  const ui = await mountMusicAuditions(host, { fetch });
+  const chooser = element('[name="session"]');
+  element("audio").src = "/api/audio/old-take.flac";
+  chooser.value = session.id; chooser.handlers.change();
+  assert.match(element(".ma-results").innerHTML, /Loading audition/);
+  assert.equal(element("audio").src, undefined);
+  chooser.value = ""; chooser.handlers.change();
+  assert.match(element(".ma-results").innerHTML, /Choose a saved audition/);
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.doesNotMatch(element(".ma-results").innerHTML, /Old chorus/);
+  assert.equal(element("audio").pauses, 2);
+  ui.destroy();
 });
 test("HTTP routes keep state and actor handling on the shared store", async t => {
   const f = await fixture(t); let reply;
