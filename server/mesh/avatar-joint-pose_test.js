@@ -52,6 +52,9 @@ test('VRM foot buttons target mapped skinned joints one at a time and keep press
   assert.equal(element('foot-review-left').getAttribute('aria-pressed'),'false');
   assert.equal(element('foot-review-right').getAttribute('aria-pressed'),'true');
   assert.ok(pose.worldPosition(2)?.isVector3);
+  element('foot-review-right').onclick();
+  assert.deepEqual(commands.at(-1),{node_index:3,axis:'x',degrees:0});
+  assert.equal(element('foot-review-right').getAttribute('aria-pressed'),'false');
   ui.paint(null);assert.equal(element('foot-review-right').getAttribute('aria-pressed'),'false');
   ui.dispose();assert.equal(element('foot-review-controls').hidden,true);
   assert.equal(element('foot-review-left').onclick,null);
