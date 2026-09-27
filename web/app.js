@@ -5862,7 +5862,7 @@ const tr = (body) => fetch("/api/train", {
 /* Survives a reload, because training outlives the page that started it. */
 const trRemember = (v) => { try { v ? localStorage.setItem("train.run", JSON.stringify(v)) : localStorage.removeItem("train.run"); } catch { /* a private window is not a reason to fail */ } };
 const trRecall = () => { try { return JSON.parse(localStorage.getItem("train.run") || "null"); } catch { return null; } };
-let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
+let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trCompareRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
 
 function trRegionIssue({ start, seconds, duration, maxStart = 3600 }) {
   if (!Number.isFinite(duration) || duration <= 0) return "Reading the source duration before training. If it cannot be read, choose another recording.";
@@ -5942,10 +5942,22 @@ $("trListen")?.addEventListener("click", async () => {
   $("trSourceAudio").currentTime = region.start; trAuditionEnd = region.start + region.seconds;
   try { await $("trSourceAudio").play(); } catch (e) { $("trSourceNote").textContent = `Could not play this recording: ${e.message || e}`; }
 });
+async function trCompareTakes() {
+  const before = $("trBefore").value, after = $("trAfter").value, request = ++trCompareRequest;
+  const note = $("trCompareStatus");
+  note.classList.toggle("warn", false);
+  if (!before || !after) { note.textContent = "Choose both takes to check their recorded settings."; return; }
+  note.textContent = "Checking the saved generation settings…";
+  const result = await tr({ action: "compare", before, after });
+  if (request !== trCompareRequest || $("trBefore").value !== before || $("trAfter").value !== after) return;
+  note.textContent = result.error || result.message || "Comparison unavailable.";
+  note.classList.toggle("warn", result.status !== "matched" || !!result.error);
+}
 for (const side of ["Before", "After"]) {
   $(`tr${side}`)?.addEventListener("change", () => {
     const player = $(`tr${side}Audio`), file = $(`tr${side}`).value;
     player.pause(); player.src = file ? `/api/audio/${encodeURIComponent(file)}` : ""; player.hidden = !file;
+    trCompareTakes();
   });
   $(`tr${side}Audio`)?.addEventListener("play", () => { $("trSourceAudio").pause(); $(`tr${side === "Before" ? "After" : "Before"}Audio`).pause(); });
 }
@@ -5992,6 +6004,7 @@ async function paintTraining() {
         choice.innerHTML = '<option value="">Choose an existing render…</option>' + rows.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
         if (rows.some((t) => t.file === keep)) choice.value = keep;
       }
+      trCompareTakes();
     }
   } catch (e) { $("trNote").textContent = `Library could not refresh: ${e.message || e}. Previous choices are still shown.`; }
 
@@ -6097,7 +6110,7 @@ $("trCheck")?.addEventListener("click", trCheckRun);
  */
 const cb = (body) => fetch("/api/collab", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}` }));
+}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}`, transportFailure: true }));
 
 /* ⚠ ONE VISIBLE LANDING PLACE FOR EVERY MESSAGE, OUTSIDE ALL THREE PANES.
  * Five handlers used to write into #cbFreeNote, which was safe only while the
@@ -7018,7 +7031,9 @@ $("cbPreview")?.addEventListener("click", async () => {
   const r = await cb({ action: "preview", ...body });
   paintCbRecipients();
   if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
-  if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
+  if (!r || r.error || !r.previewId) { $("cbPackNote").textContent = r?.transportFailure
+    ? "Could not load the outgoing preview. Check the Studio connection and try Preview again."
+    : r?.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
   const packet = r.packet || {}, shot = packet.video || packet.shot || packet, order = packet.order || {};
   const imageJob = packet.job || {};
   if (body.kind === "image-job" && (typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
@@ -7096,6 +7111,11 @@ $("cbPack")?.addEventListener("click", async () => {
   if ($("cbHandoff")) $("cbHandoff").hidden = true;
   const r = await cb({ action: "pack", previewId: preview.id });
   cbPreparedPreview = null;
+  if (!r || r.transportFailure) {
+    if (note) note.textContent = "Could not confirm whether the file was prepared. Check Outbox after Studio reconnects before previewing again.";
+    await paintOutbox();
+    return;
+  }
   if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
   const packedDescription = packedRequest.kind === "image-job"
     ? `One Qwen Image 2.1 job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}`

@@ -35,7 +35,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, yue2ComfySamplingReceipt, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -1627,8 +1627,11 @@ jobs.on("update", async (snap) => {
     });
   }
 
+  const comparisonSampling = isYueComfy
+    ? yue2ComfySamplingReceipt({ sampling: job.sampling, planSampling: job.planSampling, cot: job.cot, abc: job.abc })
+    : null;
   library.remember(h.file, {
-    title: h.title, seed: h.seed, mixSeed: h.mixSeed,
+    title: h.title, seed: h.seed, mixSeed: isYueComfy ? (h.mixSeed ?? h.seed) : h.mixSeed,
     /* The Library's model column and its "YuE2 3B" badge read `model`; the
      * MiniMax value is a precision (int8/fp16/fp32) because that engine has
      * one weight file per precision. YuE2's 32 is the NAR's ODE step count,
@@ -1668,6 +1671,12 @@ jobs.on("update", async (snap) => {
        * from the model's own plan. The version it came from is in the ledger
        * (params.scoreFrom); the ♪ badge's scoreSlug stays the Python kit's. */
       scoreSupplied: !!job.abc,
+      /* This explicit comparison receipt lets Training distinguish a matched
+       * baseline/adapter pair from older rows whose sampler inputs were never
+       * saved. Only the supplied score's hash is kept, not its full text. */
+      comparisonVersion: 1, maxDuration: job.maxDuration ?? null,
+      scoreHash: job.abc ? prov.sha256hex(job.abc) : null,
+      sampling: comparisonSampling.audio, planSampling: comparisonSampling.planner,
       lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
       /* The planner's LoRA beside the audio one — including the one the
        * Instrumental switch picks by itself, which is why this matters more
@@ -5097,6 +5106,23 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const action = String(b.action || "status");
 
+      /* Listening review is read-only and must work while another render owns
+       * the card. Resolve both names against the current library, so a stale
+       * sidecar cannot masquerade as a playable comparison take. */
+      if (action === "compare") {
+        const before = String(b.before || ""), after = String(b.after || "");
+        if (!before || !after || [before, after].some((file) => file.includes("..") || /[/\\]/.test(file))) {
+          return json(res, 400, { error: "Choose two library takes to compare.", reason: "file" });
+        }
+        const rows = await library.list();
+        if (!rows.some((row) => row.file === before) || !rows.some((row) => row.file === after)) {
+          return json(res, 404, { error: "One of those takes is no longer in the library.", reason: "file" });
+        }
+        const baseline = { file: before, ...(library.meta.get(before) || {}) };
+        const adapterTake = { file: after, ...(library.meta.get(after) || {}) };
+        return json(res, 200, { ok: true, before, after, ...train.compareTrainingTakes(baseline, adapterTake) });
+      }
+
       /* Free VRAM, and an honest null where it cannot be read. `usedMb` comes
        * from nvidia-smi, which does not exist on an AMD machine — and refusing
        * to train on a card we simply cannot measure would be the wrong answer
@@ -5263,7 +5289,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list.`, reason: "action" });
+      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list, compare.`, reason: "action" });
     }
 
     if (p === "/api/tokenize" && req.method === "POST") {

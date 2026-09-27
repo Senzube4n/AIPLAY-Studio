@@ -2508,7 +2508,7 @@
           <div><label for="trBefore">Baseline · without adapter</label><select id="trBefore" class="sel2"><option value="">Choose an existing render…</option></select><audio id="trBeforeAudio" controls preload="metadata" hidden aria-label="Selected baseline render"></audio></div>
           <div><label for="trAfter">Comparison · with adapter</label><select id="trAfter" class="sel2"><option value="">Choose an existing render…</option></select><audio id="trAfterAudio" controls preload="metadata" hidden aria-label="Selected adapter render"></audio></div>
         </div>
-        <p class="hint">Choose existing library takes above after rendering. These labels do not verify matching settings or assert an improvement. Refresh the library to include new takes.</p>
+        <p class="hint" id="trCompareStatus" role="status">Choose both takes to check their recorded settings. Refresh the library to include new takes.</p>
       </section>
 
       <!-- ⚠ BOTH OF THESE ARE ON THE SCREEN ON PURPOSE. A person is about to

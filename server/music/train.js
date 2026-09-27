@@ -324,3 +324,59 @@ export async function listTrained({ dest = lorasDir() } = {}) {
   rows.sort((a, b) => b.at - a.at);
   return rows;
 }
+
+/** Review two finished YuE2 ComfyUI takes before claiming a LoRA changed them.
+ * Older library rows lack the complete sampler/score receipt. They can be
+ * listened to, but cannot be certified as a controlled pair retroactively. */
+export function compareTrainingTakes(baseline, adapterTake) {
+  const checks = [];
+  const add = (field, status) => checks.push({ field, status });
+  if (!baseline || !adapterTake) return { status: "unverified", checks, message: "Choose both library takes to compare." };
+  add("YuE2 ComfyUI engine", baseline.engine === "yue2-comfy" && adapterTake.engine === "yue2-comfy" ? "match" : "mismatch");
+  add("baseline without audio LoRA", baseline.lora ? "mismatch" : "match");
+  add("comparison with audio LoRA", adapterTake.lora ? "match" : "mismatch");
+  add("nonzero adapter strength", adapterTake.lora && Number.isFinite(adapterTake.loraStrength) && adapterTake.loraStrength !== 0 ? "match" : "mismatch");
+  add("different takes", baseline.file !== adapterTake.file ? "match" : "mismatch");
+
+  /* Version 1 records every input below, including explicit null sampler and
+   * score choices. A missing old field is unknown, never an inferred default. */
+  const complete = baseline.comparisonVersion === 1 && adapterTake.comparisonVersion === 1;
+  const fields = [
+    ["checkpoint", "checkpoint"], ["caption", "style prompt"], ["lyrics", "lyrics"],
+    ["seed", "performance seed"], ["mixSeed", "mix seed"], ["cot", "thinking mode"],
+    ["steps", "NAR steps"], ["maxDuration", "duration limit"],
+    ["scoreHash", "supplied score"], ["sampling", "audio sampling"],
+    ["planSampling", "planner sampling"], ["instrumental", "instrumental mode"],
+    ["loraClip", "planner LoRA"], ["loraClipStrength", "planner LoRA strength"],
+  ];
+  const evidenced = (key, row) => {
+    const value = row[key];
+    if (key === "cot") return ["full", "melody", "off"].includes(value);
+    if (["checkpoint", "caption", "lyrics"].includes(key)) return typeof value === "string" && (key === "lyrics" || value.length > 0);
+    if (["seed", "mixSeed", "steps", "maxDuration"].includes(key)) return Number.isFinite(value) && (key === "steps" || key === "maxDuration" ? value > 0 : true);
+    if (key === "instrumental") return typeof value === "boolean";
+    if (key === "scoreHash") return value === null || (typeof value === "string" && /^[a-f0-9]{64}$/i.test(value));
+    if (key === "sampling") return value && typeof value === "object" && ["temperature", "top_p", "top_k", "repetition_penalty"].every(k => Number.isFinite(value[k]));
+    if (key === "planSampling") {
+      if (row.cot === "off" || row.scoreHash !== null) return value === null;
+      return value && typeof value === "object" && ["temperature", "top_p", "top_k", "repetition_penalty", "penalty_window"].every(k => Number.isFinite(value[k]));
+    }
+    if (key === "loraClip") return value === null || (typeof value === "string" && !!value);
+    if (key === "loraClipStrength") return row.loraClip ? Number.isFinite(value) : value === null;
+    return false;
+  };
+  for (const [key, label] of fields) {
+    const known = complete && Object.hasOwn(baseline, key) && Object.hasOwn(adapterTake, key)
+      && evidenced(key, baseline) && evidenced(key, adapterTake);
+    add(label, known ? (sortedJSON(baseline[key]) === sortedJSON(adapterTake[key]) ? "match" : "mismatch") : "unknown");
+  }
+  const mismatch = checks.filter((c) => c.status === "mismatch").map((c) => c.field);
+  const unknown = checks.filter((c) => c.status === "unknown").map((c) => c.field);
+  const status = mismatch.length ? "mismatch" : unknown.length ? "unverified" : "matched";
+  const message = mismatch.length
+    ? `Not a controlled pair: ${mismatch.join(", ")} differ. You can still listen to both; do not attribute every difference to the adapter.`
+    : unknown.length
+      ? "These takes lack complete comparison metadata. Listen to both, but their generation settings cannot be verified."
+      : `Recorded generation settings matched; the comparison uses ${adapterTake.lora} at strength ${adapterTake.loraStrength ?? 1}. Listen to judge the sound; matching settings do not prove improvement.`;
+  return { status, checks, adapter: adapterTake.lora || null, strength: adapterTake.lora ? (adapterTake.loraStrength ?? 1) : null, message };
+}

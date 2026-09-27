@@ -171,6 +171,28 @@ test("late preview response cannot arm changed inputs", async () => {
   assert.equal(f.node("cbOutgoingPreview").hidden, true);
 });
 
+test("failed preview can be retried; lost prepare response requires checking Outbox", async () => {
+  const f = fixture(); await f.run("paintCollab()");
+  f.node("cbTo").value = f.peer.fp; await f.fire("cbTo", "change");
+  f.context.respond = (url, body) => body?.action === "preview"
+    ? Promise.reject(new Error("Connection lost")) : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPreview").disabled, false);
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.match(f.node("cbPackNote").textContent, /Check the Studio connection and try Preview again/);
+
+  f.context.respond = (url, body) => body?.action === "preview"
+    ? { previewId: "frozen-retry", to: f.peer, packet: { segmentId: "opening", prompt: "Exact scene" } }
+    : body?.action === "pack" ? Promise.reject(new Error("Response lost")) : f.defaults(url, body);
+  await f.fire("cbPreview");
+  assert.equal(f.node("cbPack").disabled, false);
+  await f.fire("cbPack");
+  assert.equal(f.node("cbPack").disabled, true);
+  assert.equal(f.run("cbPreparedPreview"), null);
+  assert.match(f.node("cbPackNote").textContent, /Check Outbox.*before previewing again/);
+  assert.ok(f.calls.some((c) => c.body?.action === "orders" && c.body.side === "out"));
+});
+
 test("equal allocation covers 47 clips once across 10 peers; capability mode excludes stale and incompatible cards", () => {
   const f = fixture();
   const result = f.run(`(() => {

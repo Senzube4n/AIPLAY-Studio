@@ -117,3 +117,21 @@ test("late waveform response cannot replace the newly chosen source", async () =
   assert.equal(f.run("trSource.file"), "second.wav");
   assert.equal(f.run("trSource.duration"), 40);
 });
+
+test("take review reaches the shared compare route and ignores an older pair's late verdict", async () => {
+  const f = fixture(); await f.run("paintTraining()");
+  let finishOld;
+  f.context.respond = (url, body) => body?.action === "compare" && body.before === "baseline-old.flac"
+    ? new Promise(resolve => { finishOld = resolve; })
+    : body?.action === "compare" ? { status: "matched", message: "New pair matched." }
+      : f.defaults(url, body);
+  f.$("trBefore").value = "baseline-old.flac"; f.$("trAfter").value = "adapter-old.flac";
+  const old = f.run("trCompareTakes()");
+  assert.deepEqual(f.calls.at(-1).body, { action: "compare", before: "baseline-old.flac", after: "adapter-old.flac" });
+  f.$("trBefore").value = "baseline-new.flac"; f.$("trAfter").value = "adapter-new.flac";
+  await f.run("trCompareTakes()");
+  finishOld({ status: "mismatch", message: "Old pair mismatched." });
+  await old;
+  assert.equal(f.$("trCompareStatus").textContent, "New pair matched.");
+  assert.match(html, /id="trCompareStatus" role="status"/);
+});

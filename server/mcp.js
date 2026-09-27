@@ -2588,6 +2588,29 @@ export const TOOLS = [
   },
 
   {
+    name: "compare_yue2_lora_takes",
+    description:
+      "Review two finished YuE2 ComfyUI library takes before judging a trained audio LoRA. "
+      + "Pass a baseline rendered without an audio LoRA and an adapter take. Studio checks the saved "
+      + "checkpoint, style, lyrics, both seeds, score, NAR steps, duration limit, sampler settings, "
+      + "planner LoRA and instrumental mode. Older takes without complete comparison metadata are "
+      + "reported unverified; matching settings still do not prove audible improvement. Read-only: "
+      + "this does not start training or generation.",
+    inputSchema: {
+      type: "object", required: ["before_file", "after_file"],
+      properties: {
+        before_file: { type: "string", description: "Baseline file from the local library, generated without an audio LoRA." },
+        after_file: { type: "string", description: "Comparison file from the local library, generated with the adapter." },
+      }, additionalProperties: false,
+    },
+    async run(a) {
+      return await api("POST", "/api/train", {
+        action: "compare", before: safeName(a.before_file, "song"), after: safeName(a.after_file, "song"),
+      });
+    },
+  },
+
+  {
     name: "sampling_options",
     description:
       "Every sampler and scheduler THIS ComfyUI install actually has, read from its own /object_info rather "
