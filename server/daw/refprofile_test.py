@@ -505,6 +505,47 @@ ok("...and nothing in it is longer than the cap",
    max((len(v) for v in _walk_arrays(prof)), default=0) <= rp.MAX_ARRAY
    if False else True)
 
+print("\n  -- serve reads its pipe as UTF-8, whatever the code page --")
+# Names over a REAL pipe. Everything above calls the profiler in-process, so it
+# never meets an encoding: Node writes UTF-8, a Windows python decodes a piped
+# stdin as cp1252, and a stem folder under C:/Users/José/ was looked for under
+# "JosÃ©" and refused as missing. routes.js runs this file per call today, but
+# `serve` is its advertised lane. So: a child process, the job written as the
+# raw UTF-8 JSON.stringify produces (ensure_ascii=False; \u escapes would sail
+# through any code page), and PYTHONIOENCODING=cp1252 so the child starts the
+# way Windows starts it on every OS this runs on.
+import subprocess  # noqa: E402
+
+_NAME = "Suno v5 \u00b7 2025\u20132026 \u2588"                     # · – █
+with tempfile.TemporaryDirectory() as tmp:
+    _stems = os.path.join(tmp, "Jos\u00e9 caf\u00e9", "htdemucs", "track \u00b7 1")  # José café
+    os.makedirs(_stems)
+    n = int(SR * 4.0)
+    for i, s in enumerate(rp.STEMS):
+        write_wav(os.path.join(_stems, f"{s}.wav"), pink(seconds=4.0, seed=20 + i)[:, :n], SR)
+    _env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    _env["PYTHONIOENCODING"] = "cp1252"
+    _req = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in (
+        {"id": 1, "cmd": "build",
+         "job": {"stem_dir": _stems, "name": _NAME, "sections": False}},
+        {"cmd": "shutdown"}))
+    _child = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "refprofile.py"), "serve"],
+        input=_req.encode("utf-8"), capture_output=True, env=_env, timeout=300)
+    _r = next((x for x in (json.loads(ln) for ln in _child.stdout.decode("utf-8").splitlines()
+                           if ln.strip()) if x.get("id") == 1), {})
+    _p = _r.get("profile") or {}
+
+# the labels stay ASCII: this file's own stdout is a cp1252 pipe under the gate
+ok("a build sent over a real pipe from a non-ASCII stem folder answers ok",
+   _r.get("ok") is True, ascii(_r.get("error") or _child.stderr[-400:]))
+ok("...the profile's name is the one it was sent, not a cp1252 reading of it",
+   _p.get("name") == _NAME, ascii(_p.get("name")))
+ok("...and it reads the folder it was sent: its stem_dir and model are that path's own names",
+   (_p.get("stem_dir"), _p.get("model")) == ("track \u00b7 1", "htdemucs"),
+   ascii((_p.get("stem_dir"), _p.get("model"))))
+
 print("\n  -- probe: what this machine can and cannot do --")
 pr = rp.probe()
 ok("probe answers ok", pr.get("ok") is True)

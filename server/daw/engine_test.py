@@ -232,6 +232,34 @@ finally:
     if proc.poll() is None:
         proc.kill()
 
+# A path over a REAL pipe. The serve test above writes ASCII through a text-mode
+# pipe, the one case that cannot go wrong. routes.js writes UTF-8, a Windows
+# python decodes a piped stdin as cp1252, and an `out` under C:/Users/José/
+# became "JosÃ©" and failed as file-not-found. So: a child process, the job
+# written as the raw UTF-8 JSON.stringify produces (ensure_ascii=False; \u
+# escapes would sail through any code page), and PYTHONIOENCODING=cp1252 so the
+# child starts the way Windows starts it on every OS this runs on.
+print("\n  -- serve reads its pipe as UTF-8, whatever the code page --")
+with tempfile.TemporaryDirectory() as td:
+    _home = os.path.join(td, "Jos\u00e9 caf\u00e9")                  # José café
+    os.mkdir(_home)
+    _out = os.path.join(_home, "chirp \u00b7 2025\u20132026 \u2588.wav")  # · – █
+    _env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    _env["PYTHONIOENCODING"] = "cp1252"
+    _req = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in (
+        {"id": 1, "cmd": "chirp", "job": {"sr": SR, "out": _out}}, {"cmd": "shutdown"}))
+    _child = subprocess.run([sys.executable, os.path.join(HERE, "engine.py"), "serve"],
+                            input=_req.encode("utf-8"), capture_output=True, env=_env,
+                            timeout=120)
+    _r = next((x for x in (json.loads(ln) for ln in _child.stdout.decode("utf-8").splitlines()
+                           if ln.strip()) if x.get("id") == 1), {})
+    # the labels stay ASCII: this file's own stdout is a cp1252 pipe under the gate
+    ok("a chirp sent over a real pipe into a non-ASCII folder answers ok",
+       _r.get("ok") is True, ascii(_r.get("error") or _child.stderr[-400:]))
+    ok("...its reply names the path it was sent, not a cp1252 reading of it",
+       _r.get("out") == _out, ascii(_r.get("out")))
+    ok("...and the file is where the job asked for it", os.path.exists(_out))
+
 
 # ═══════════════ [VOICELAB] the new modes are ADDITIONS, and only that ══════
 #

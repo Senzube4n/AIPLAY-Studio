@@ -1278,5 +1278,63 @@ with tempfile.TemporaryDirectory() as tmp:
        (int(pa[20, 40, 1]) > 200, int(pa[20, 40, 0]) < 60), (True, True))
 
 
+# -- imgworker.py over a REAL pipe --------------------------------------------
+# imgworker.py is this engine behind a process that stays, fed one JSON line at
+# a time by imgworker.js, and nothing above goes near its stdin. StringIO could
+# not have found this either, being text already: Node writes UTF-8, a Windows
+# python decodes a piped stdin as cp1252, and a caption's "·" was drawn as "Â·"
+# while a picture under C:/Users/José/ was looked for under "JosÃ©". So: a child
+# process, the jobs written as the raw UTF-8 JSON.stringify produces
+# (ensure_ascii=False; \u escapes would sail through any code page), and
+# PYTHONIOENCODING=cp1252 so the child starts the way Windows starts it on
+# every OS this runs on.
+import subprocess  # noqa: E402
+
+_CAPTION = "Suno v5 \u00b7 2025\u20132026 \u2588"          # · – █
+
+
+def _caption(content):
+    return {"text": {"content": content, "font": "arial.ttf", "size": 20,
+                     "color": [255, 255, 255], "x": 80, "y": 16}}
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    plate = Image.new("RGBA", (160, 32), (0, 0, 0, 255))
+    plate.save(os.path.join(tmp, "plate.png"))
+    served = os.path.join(tmp, "served.png")
+    home = os.path.join(tmp, "Jos\u00e9 caf\u00e9")                  # José café
+    os.mkdir(home)
+    gradient_rgba().save(os.path.join(home, "in.png"))
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    env["PYTHONIOENCODING"] = "cp1252"
+    req = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in (
+        {"id": 1, "mode": "edit", "job": {"in": os.path.join(tmp, "plate.png"),
+                                          "out": served, "ops": _caption(_CAPTION)}},
+        {"id": 2, "mode": "edit", "job": {"in": os.path.join(home, "in.png"),
+                                          "out": os.path.join(home, "out.png"),
+                                          "ops": {"rotate": 90}}}))
+    child = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "imgworker.py")],
+        input=req.encode("utf-8"), capture_output=True, env=env, timeout=180)
+    replies = {r.get("id"): r for r in (json.loads(ln) for ln in
+                                        child.stdout.decode("utf-8").splitlines() if ln.strip())}
+    if child.returncode:
+        print(ascii(child.stderr[-600:]))
+    # the labels stay ASCII: this file's own stdout is a cp1252 pipe under the gate
+    eq("a worker on a real pipe draws the caption job", replies.get(1, {}).get("ok"), True)
+
+    right = np.asarray(run(plate, _caption(_CAPTION), tmp))
+    garbled = np.asarray(run(plate, _caption(_CAPTION.encode("utf-8").decode("cp1252")), tmp))
+    eq("the garbled caption draws differently, so the next check can tell them apart",
+       bool(np.array_equal(right, garbled)), False)
+    eq("middle dot, en dash and full block reach the worker as themselves, not as "
+       "cp1252 mojibake: its caption is the in-process caption",
+       os.path.exists(served)
+       and bool(np.array_equal(np.asarray(Image.open(served).convert("RGBA")), right)), True)
+    eq("a picture in a non-ASCII folder is found, and its edit lands beside it",
+       (replies.get(2, {}).get("ok"), os.path.exists(os.path.join(home, "out.png"))),
+       (True, True))
+
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)
