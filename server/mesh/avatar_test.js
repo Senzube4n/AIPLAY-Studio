@@ -22,6 +22,7 @@ try{
     assert.equal(result.surface.colorSources.baseColorTextureWithUv,0);
     assert.equal(result.skin.structural,'absent');assert.equal(result.vrm.version,null);
     assert.equal(result.deformation.state,'absent');
+    assert.equal(result.springMotion.status,'no_springs');
     assert.deepEqual(result.next.map(step=>step.code),['surface','parts','rig','vrm']);
     assert.equal(result.footControls.geometrySeparation,'unverified');
     assert.match(result.caveat,/Review fused anatomy/);
@@ -109,6 +110,25 @@ try{
     assert.equal(moving.footControls.reviewRequired,true);
     assert.match(rigid.caveat,/not whether bends look good/);
   });
+  await test('source preflight exposes disconnected spring chains before import',async()=>{
+    const doc=glbDoc({skinned:true});
+    doc.nodes[3].children=[4];doc.nodes.push({name:'Unweighted strand'});
+    doc.extensionsUsed=['VRMC_springBone'];
+    doc.extensions={VRMC_springBone:{specVersion:'1.0',springs:[
+      {name:'Weighted strand',joints:[{node:3}]},
+      {name:'Unweighted strand',joints:[{node:4}]},
+    ]}};
+    const result=await inspectAvatarSourceBytes(packGlb(doc));
+    assert.equal(result.springMotion.status,'linked');
+    assert.equal(result.springMotion.linkedChains,1);
+    assert.equal(result.springMotion.declaredChains,2);
+    assert.deepEqual(result.springMotion.unlinkedChainNames,['Unweighted strand']);
+    assert.ok(result.next.some(step=>step.code==='spring-links'));
+    doc.extensions.VRMC_springBone.springs=[{name:'Unweighted strand',joints:[{node:4}]}];
+    const disconnected=await inspectAvatarSourceBytes(packGlb(doc));
+    assert.equal(disconnected.springMotion.status,'unlinked');
+    assert.equal(disconnected.springMotion.linkedChains,0);
+  });
   await test('VRM foot controls report independent, missing and cross-weighted vertices without claiming a leg gap',async()=>{
     const make=()=>{const doc=glbDoc({skinned:true});doc.nodes[1].children=[2,3];delete doc.nodes[2].children;doc.extensions={VRMC_vrm:{specVersion:'1.0',humanoid:{humanBones:{leftFoot:{node:2},rightFoot:{node:3}}}}};return doc;};
     const separate=make(),linked=inspectAvatarFootControls(separate,fixtureBin(separate));
@@ -191,6 +211,24 @@ try{
     assert.equal(result.surface.colorSources.materialColorOnlyPrimitives,1);
     assert.ok(result.deformation.probedJoints>0);
     assert.equal(result.footControls.geometrySeparation,'unverified');
+  });
+  await test('source preflight HTTP and MCP agree on spring links for identical bytes',async()=>{
+    const doc=glbDoc({skinned:true});
+    doc.nodes[3].children=[4];doc.nodes.push({name:'Free strand'});
+    doc.extensionsUsed=['VRMC_springBone'];
+    doc.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{name:'Free strand',joints:[{node:4}]}]}};
+    const raw=packGlb(doc),file=path.join(temp,'spring-source.glb');await writeFile(file,raw);
+    const response=await post({action:'source_preflight',data_base64:raw.toString('base64')},{Origin:base});
+    assert.equal(response.status,200,await response.clone().text());
+    const browser=await response.json();
+    const api=async(_method,_route,body)=>{
+      const reply=await post(body,{Origin:base});assert.equal(reply.status,200,await reply.clone().text());
+      return reply.json();
+    };
+    const mcp=await avatarTools(api).find(tool=>tool.name==='avatar_source_preflight').run({path:file});
+    assert.equal(browser.sha256,mcp.sha256);
+    assert.deepEqual(browser.springMotion,mcp.springMotion);
+    assert.equal(mcp.springMotion.status,'unlinked');
   });
   await test('HTTP rejects cross-site, opaque and different-port origins',async()=>{for(const h of [{Origin:'https://evil.test'},{Origin:'null'},{Origin:'http://127.0.0.1:1'},{'Sec-Fetch-Site':'cross-site'}])assert.equal((await post({action:'inspect',id:row.id},h)).status,403);});
   await test('HTTP refuses DNS rebinding Host on reads too',async()=>{const code=await new Promise((resolve,reject)=>{http.get(base+'/api/avatars',{headers:{Host:'evil.test'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));}).on('error',reject);});assert.equal(code,403);});

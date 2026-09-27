@@ -6,6 +6,7 @@ import validator from 'gltf-validator';
 import {readGlb, assertSkinned} from './glb.js';
 import {assertDeforms} from './deform.js';
 import {inspectAvatarFootControls} from './avatar-foot-controls.js';
+import {inspectAvatarSpringMotion} from './avatar-motion-audit.js';
 
 export const AVATAR_SOURCE_LIMIT_BYTES = 64 * 1024 * 1024;
 const fault = (message, status=400) => Object.assign(new Error(message), {status});
@@ -108,6 +109,11 @@ export async function inspectAvatarSourceBytes(bytes) {
   const feet=skin?.ok?inspectAvatarFootControls(doc,parsed.binData)
     :{state:'unverified',reason:'No usable skin to inspect.',leftVertices:0,rightVertices:0,
       sharedVertices:0,minimumWeight:null,geometrySeparation:'unverified',reviewRequired:true};
+  // Use the same bounded connectivity check as the imported-avatar audit, so
+  // a candidate VRM's declared springs are not mistaken for moving hair.
+  const motion=inspectAvatarSpringMotion(doc,parsed.binData);
+  const unlinkedChains=motion.chains.filter(chain=>!chain.weightedVertices&&!chain.rigidMeshes)
+    .map(chain=>chain.name).slice(0,12);
   const expressions=doc.extensions?.VRMC_vrm?.expressions||{};
   const next=[];
   if (!materials.length && !images.length && !withVertexColor)
@@ -136,6 +142,10 @@ export async function inspectAvatarSourceBytes(bytes) {
   }
   if (doc.extensions?.VRMC_vrm?.specVersion!=='1.0')
     next.push({code:'vrm',text:'For expressions and spring hair, author a VRM 1.0 export.'});
+  if(motion.status==='unlinked'||motion.status==='linked'&&unlinkedChains.length)
+    next.push({code:'spring-links',text:'Some spring chains do not reach weighted vertices or rigid child meshes. Connect the intended hair or accessory geometry to those joints, then preview its motion.'});
+  else if(motion.status==='unverified')
+    next.push({code:'spring-review',text:'Spring links could not be checked. Review the spring hierarchy and mesh weights before relying on hair motion.'});
   return {
     schema:1,sha256:sha256(bytes),bytes:bytes.length,
     geometry:{meshes:doc.meshes?.length||0,meshNodes:meshNodes.length,meshNodeSample:meshNodes.slice(0,24),
@@ -147,11 +157,13 @@ export async function inspectAvatarSourceBytes(bytes) {
     deformation:{state:bend.state,probeDegrees:bend.probeDegrees||null,strain:bend.strain??null,
       probedJoints:bend.probedJoints??0,why:bend.why||[]},
     footControls:feet,
+    springMotion:{status:motion.status,declaredChains:motion.declaredChains,linkedChains:motion.linkedChains,
+      colliders:motion.colliders,unlinkedChainNames:unlinkedChains,reason:motion.reason||null},
     vrm:{version:doc.extensions?.VRMC_vrm?.specVersion||null,
       declaredExpressions:Object.values(expressions).reduce((sum,group)=>sum+Object.keys(group||{}).length,0),
       declaredSpringChains:doc.extensions?.VRMC_springBone?.springs?.length||0},
     validation:{errors:0,warnings:validation.issues.numWarnings},next,
-    caveat:'A local joint pose checks whether shape changes, not whether bends look good. Foot weights do not prove separate geometry. Review fused anatomy, silhouette, texture quality and hair motion visually; World admission needs its own check.'
+    caveat:'A local joint pose checks whether shape changes, not whether bends look good. Foot weights do not prove separate geometry. Spring links prove connectivity, not pleasing motion or collisions. Review fused anatomy, silhouette, texture quality and hair motion visually; World admission needs its own check.'
   };
 }
 

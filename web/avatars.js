@@ -197,15 +197,19 @@ $('source-preflight').onclick=async()=>{
     if(token!==preflightEpoch||file!==$('import-form').elements.file.files[0])return;
     const bend=result.deformation?.state;
     const feet=result.footControls?.state;
-    state.className=`chip ${result.skin.structural==='invalid'||bend==='rigid'||feet==='unweighted'||feet==='cross_weighted'?'err':'warn'}`;
+    const springs=result.springMotion;
+    state.className=`chip ${result.skin.structural==='invalid'||bend==='rigid'||feet==='unweighted'||feet==='cross_weighted'||springs?.status==='unlinked'?'err':'warn'}`;
     state.textContent=result.skin.structural==='invalid'?'Skin issue':bend==='absent'?'Unrigged source'
       :bend==='rigid'?'Rigid skin':feet==='unweighted'?'Foot weights missing':feet==='cross_weighted'?'Foot weights overlap'
+      :springs?.status==='unlinked'?'Springs disconnected':springs?.status==='linked'&&springs.linkedChains<springs.declaredChains?'Some springs unlinked'
       :bend==='deforms'?'Bend found · review feet':'Bend unverified';
     state.title=result.caveat;
     const color=result.surface.colorSources;
     const textureFact=!color?'colour wiring unchecked':color.baseColorTextureBindings
       ?`${color.baseColorTextureWithUv}/${color.baseColorTextureBindings} colour textures mapped`:'no colour texture';
-    facts.textContent=`${result.geometry.triangles.toLocaleString()} triangles · ${result.geometry.meshNodes} mesh nodes · ${result.surface.materials} materials · ${result.surface.images} images · ${textureFact} · feet: ${feet==='independent_weights'?'separate weights, geometry unchecked':feet==='unweighted'?'missing weights':feet==='cross_weighted'?'shared weights':'unchecked'}`;
+    const springFact=!springs?'springs unchecked':springs.status==='no_springs'?'no spring chains'
+      :springs.status==='unverified'?'spring links unchecked':`${springs.linkedChains}/${springs.declaredChains} spring chains linked`;
+    facts.textContent=`${result.geometry.triangles.toLocaleString()} triangles · ${result.geometry.meshNodes} mesh nodes · ${result.surface.materials} materials · ${result.surface.images} images · ${textureFact} · ${springFact} · feet: ${feet==='independent_weights'?'separate weights, geometry unchecked':feet==='unweighted'?'missing weights':feet==='cross_weighted'?'shared weights':'unchecked'}`;
     facts.hidden=false;
     $('source-preflight-steps').replaceChildren();
     for(const step of result.next){const li=document.createElement('li');li.textContent=step.text;$('source-preflight-steps').append(li);}
