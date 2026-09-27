@@ -30,6 +30,7 @@ node --check worker/runpod-worker.js || exit 1
 # with a reason in the script. ~0.1 s.
 node scripts/suites_test.mjs || exit 1
 node --test server/mesh/avatar-example_test.js server/mesh/vrm-profile_test.js server/mesh/appearance_test.js server/mesh/appearance-route_test.js server/mesh/avatar-motion-audit_test.js server/mesh/avatar-runtime_test.js || exit 1
+node --test server/mesh/avatar-import-ui_test.js || exit 1
 node --check server/mesh/avatar-motion-audit.js || exit 1
 node --check web/avatar-runtime.js || exit 1
 node --check web/avatar-appearance.js || exit 1
@@ -768,6 +769,7 @@ node server/welcome/level_test.js || exit 1
 # app.js, so its syntax gets a line of its own.
 node --check web/videolab.js || exit 1
 node server/videolab/ui_test.js || exit 1
+node --test server/videolab/mcp-preview_test.js || exit 1
 node server/videolab/catalog_test.js || exit 1
 # And the store, which had to learn to heal: videolab.json is rewritten whole on
 # every save, so one save from a process holding an empty list erased two real
@@ -1342,6 +1344,7 @@ node scripts/yue2_rope_grad_test.mjs || exit 1
 # somebody spends an hour of their card, and the step that moves the finished
 # adapter somewhere a picker can actually see it.
 node server/music/train_test.js || exit 1
+node --test server/music/train-archive_test.js server/music/train-compare_test.js || exit 1
 node --test server/music/train-ui_test.js server/overnight-image_test.js || exit 1
 # Qwen native graphs/readiness, frozen Collab previews, and reactive reference anchors.
 node --test server/qwen-api_test.js server/qwen-image_test.js server/qwen-modelpick_test.js server/qwen-models_test.js server/qwen-status_test.js server/collab/preview_test.js server/collab/ui_test.js server/reactive_profile_test.js || exit 1

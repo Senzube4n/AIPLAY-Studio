@@ -34,7 +34,7 @@ if (workshop.embedded) {
 }
 document.addEventListener('visibilitychange',()=>voice?.setActive(activeView));
 if(overlayMode){document.body.classList.add('avatar-overlay');document.documentElement.classList.add('avatar-overlay');}
-const viewport=$('viewport'),center=new THREE.Vector3(0,1,0);let radius=2,currentCameraView='fit';
+const viewport=$('viewport'),center=new THREE.Vector3(0,1,0);let radius=2,modelBounds=null,currentCameraView='fit';
 const toolTabs=[...document.querySelectorAll('.avatar-tools [data-tool]')];
 let activeTool='look';
 function paintTools(){
@@ -68,14 +68,26 @@ function initViewer(){
   if(renderer)return;
   renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;
   viewport.append(renderer.domElement);scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(35,1,.01,200);camera.position.set(2,1.5,4);
-  controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.minDistance=.2;controls.maxDistance=15;
+  controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.minDistance=.7;controls.maxDistance=15;controls.minPolarAngle=.08;controls.maxPolarAngle=Math.PI*.85;
+  renderer.domElement.addEventListener('dblclick',()=>{if(model&&applyRemoteCamera('fit'))void voice?.cameraCommand('fit');});
   scene.add(new THREE.HemisphereLight(0xeaf3ff,0x4d566a,2.4));const key=new THREE.DirectionalLight(0xffeedb,3);key.position.set(3,5,4);scene.add(key);const fill=new THREE.DirectionalLight(0xa5c8ff,1.8);fill.position.set(-4,2,-3);scene.add(fill);
   if(!overlayMode)scene.add(new THREE.GridHelper(6,30,0x68857e,0x334455));
   new ResizeObserver(()=>{const w=viewport.clientWidth,h=viewport.clientHeight;if(!w||!h)return;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();if(model){if(currentCameraView==='feet')cameraFeet();else cameraView(currentCameraView);}}).observe(viewport);
   let last=performance.now();renderer.setAnimationLoop(now=>{const dt=Math.min((now-last)/1000,.05);last=now;if(document.hidden || !activeView)return;if(playing&&mixer){mixer.update(dt*Number($('speed').value));updateTime();}voice?.update(dt);runtime?.update(dt);wardrobe?.update();controls.update();renderer.render(scene,camera);});
 }
-function cameraView(view){if(!camera)return;currentCameraView=view;const facing=selected?.coordinates.facing||'+Z';let theta={'+Z':0,'-Z':Math.PI,'+X':Math.PI/2,'-X':-Math.PI/2}[facing];if(view==='side')theta+=Math.PI/2;if(view==='back')theta+=Math.PI;if(view==='fit')theta+=.3;const distance=radius*Math.max(1,1/camera.aspect);camera.position.copy(center).add(new THREE.Vector3(Math.sin(theta)*distance,.1*distance,Math.cos(theta)*distance));controls.target.copy(center);controls.update();}
-function applyRemoteCamera(view){if(!camera||!['front','side','back','fit'].includes(view))return false;cameraView(view);return true;}
+function cameraView(view){
+  if(!camera)return;
+  currentCameraView=view;
+  const facing=selected?.coordinates.facing||'+Z';let theta={'+Z':0,'-Z':Math.PI,'+X':Math.PI/2,'-X':-Math.PI/2}[facing];
+  if(view==='side')theta+=Math.PI/2;if(view==='back')theta+=Math.PI;if(view==='fit')theta+=.3;
+  const focus=center.clone();
+  if(view==='face'&&modelBounds)focus.y=modelBounds.max.y-modelBounds.getSize(new THREE.Vector3()).y*.14;
+  controls.minDistance=view==='face'?Math.max(.55,radius*.25):Math.max(.7,radius*.65);
+  const distance=view==='face'?Math.max(.8,radius*.35):radius*Math.max(1,1/camera.aspect);
+  camera.position.copy(focus).add(new THREE.Vector3(Math.sin(theta)*distance,(view==='face'?.02:.1)*distance,Math.cos(theta)*distance));
+  controls.target.copy(focus);controls.update();
+}
+function applyRemoteCamera(view){if(!camera||!['face','front','side','back','fit'].includes(view))return false;cameraView(view);return true;}
 function cameraFeet(){
   const targets=footReview?.targets;
   if(overlayMode||!camera||!targets||!jointPose)return;
@@ -85,6 +97,7 @@ function cameraFeet(){
   const target=left.add(right).multiplyScalar(.5);target.y+=.15;
   const theta={'+Z':0,'-Z':Math.PI,'+X':Math.PI/2,'-X':-Math.PI/2}[selected?.coordinates.facing||'+Z'];
   const distance=Math.max(.8,Math.min(radius*.35,1.5));
+  controls.minDistance=Math.max(.55,distance*.65);
   camera.position.copy(target).add(new THREE.Vector3(Math.sin(theta)*distance,.08*distance,Math.cos(theta)*distance));
   controls.target.copy(target);controls.update();
 }
@@ -149,7 +162,7 @@ async function select(id){
       $('joint-pose-node').value=String(next.node_index);$('joint-pose-axis').value=next.axis;
       $('joint-pose-degrees').value=String(next.degrees);previewJointPose(true);cameraFeet();
     }});
-    const box=new THREE.Box3().setFromObject(model);box.getCenter(center);radius=Math.max(box.getSize(new THREE.Vector3()).length()*1.3,1);cameraView('fit');
+    const box=new THREE.Box3().setFromObject(model);modelBounds=box.clone();box.getCenter(center);radius=Math.max(box.getSize(new THREE.Vector3()).length()*1.3,1);controls.maxDistance=Math.max(15,radius*8);cameraView('fit');
     $('motion').replaceChildren(new Option('Rest pose',''));clips.forEach((c,i)=>$('motion').add(new Option(`${c.name} · ${c.duration.toFixed(2)} s`,String(i))));$('motion').disabled=false;setMotion('');$('empty-view').hidden=true;$('export').disabled=false;
     $('pose-test').disabled=!runtime.vrm;
     const nextWardrobe=mountAvatarWardrobeUI({row,gltf,load:url=>new GLTFLoader().loadAsync(url),isCurrent:()=>token===epoch});wardrobe=nextWardrobe;

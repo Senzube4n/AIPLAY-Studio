@@ -151,6 +151,7 @@ export const ROUTABLE = {
   reactive_status: null,
   training_status: null,
   list_trained_loras: null,
+  compare_yue2_lora_takes: null, // compares existing files and provenance; no render or training
   audio_waveform: null,
   model_inventory: null,
   models_folder: "writes",
