@@ -65,7 +65,10 @@ test("the compare route checks physical library presence before sidecars and nee
   assert.ok(section.indexOf("await library.list()") < section.indexOf("library.meta.get(before)"));
   assert.ok(section.indexOf('action === "compare"') < section.indexOf("const g = gpuStatus()"));
   assert.match(section, /train\.compareTrainingTakes\(baseline, adapterTake\)/);
+  assert.match(section, /compareArchivedTrainingPair\(/);
+  assert.match(section, /runRecord: \(runId, options\) => engineDoor\.runRecord\(runId, options\)/);
   const mcp = readFileSync(new URL("../mcp.js", import.meta.url), "utf8");
   assert.match(mcp, /name: "compare_yue2_lora_takes"/);
   assert.match(mcp, /action: "compare", before: safeName\(a\.before_file, "song"\), after: safeName\(a\.after_file, "song"\)/);
+  assert.match(mcp, /A broken provenance link/);
 });

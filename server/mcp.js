@@ -2593,8 +2593,10 @@ export const TOOLS = [
       "Review two finished YuE2 ComfyUI library takes before judging a trained audio LoRA. "
       + "Pass a baseline rendered without an audio LoRA and an adapter take. Studio checks the saved "
       + "checkpoint, style, lyrics, both seeds, score, NAR steps, duration limit, sampler settings, "
-      + "planner LoRA and instrumental mode. Older takes without complete comparison metadata are "
-      + "reported unverified; matching settings still do not prove audible improvement. Read-only: "
+      + "planner LoRA and instrumental mode. For older takes, a saved listening-lab pair can also "
+      + "be checked against local finished-run graphs and final audio hashes. A broken provenance link "
+      + "leaves the pair unverified even if the graphs structurally match; other incomplete takes remain "
+      + "unverified. Matching settings do not prove audible improvement. Read-only: "
       + "this does not start training or generation.",
     inputSchema: {
       type: "object", required: ["before_file", "after_file"],

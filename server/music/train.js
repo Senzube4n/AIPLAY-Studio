@@ -326,8 +326,8 @@ export async function listTrained({ dest = lorasDir() } = {}) {
 }
 
 /** Review two finished YuE2 ComfyUI takes before claiming a LoRA changed them.
- * Older library rows lack the complete sampler/score receipt. They can be
- * listened to, but cannot be certified as a controlled pair retroactively. */
+ * Older library rows lack the complete sampler/score receipt. An archived
+ * listening lab can establish graph equality separately (train-archive.js). */
 export function compareTrainingTakes(baseline, adapterTake) {
   const checks = [];
   const add = (field, status) => checks.push({ field, status });

@@ -5951,7 +5951,7 @@ async function trCompareTakes() {
   const result = await tr({ action: "compare", before, after });
   if (request !== trCompareRequest || $("trBefore").value !== before || $("trAfter").value !== after) return;
   note.textContent = result.error || result.message || "Comparison unavailable.";
-  note.classList.toggle("warn", result.status !== "matched" || !!result.error);
+  note.classList.toggle("warn", result.status !== "matched" || !!result.evidence?.provenanceWarning || !!result.error);
 }
 for (const side of ["Before", "After"]) {
   $(`tr${side}`)?.addEventListener("change", () => {

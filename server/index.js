@@ -25,6 +25,7 @@ import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultW
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
+import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
  * self-explaining quality selector, and the turbo toggles. Additive — it owns
@@ -5120,7 +5121,17 @@ const server = http.createServer(async (req, res) => {
         }
         const baseline = { file: before, ...(library.meta.get(before) || {}) };
         const adapterTake = { file: after, ...(library.meta.get(after) || {}) };
-        return json(res, 200, { ok: true, before, after, ...train.compareTrainingTakes(baseline, adapterTake) });
+        const recorded = train.compareTrainingTakes(baseline, adapterTake);
+        /* Old library rows have no complete sampler receipt. A saved lab may
+         * still have the exact finished run graphs and final audio hashes.
+         * Fail closed to the older "unverified" result if any link is absent. */
+        const archived = recorded.status === "unverified"
+          ? await compareArchivedTrainingPair({ appData: config.paths.appData, outputDir: config.outputDir,
+            before, after, baseline, adapterTake, prior: recorded,
+            runRecord: (runId, options) => engineDoor.runRecord(runId, options),
+            readProvenance: () => prov.read("library"), verifyProvenance: () => prov.verify("library") }).catch(() => null)
+          : null;
+        return json(res, 200, { ok: true, before, after, ...(archived || recorded) });
       }
 
       /* Free VRAM, and an honest null where it cannot be read. `usedMb` comes
