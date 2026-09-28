@@ -45,6 +45,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -2091,6 +2092,60 @@ with tempfile.TemporaryDirectory() as _stmp:
        (int(_was[0]) > 180, int(_was[1]) < 60), (True, True))
     eq("a source replaced mid-session is re-read, not served from the cache",
        (int(_now[0]) < 60, int(_now[1]) > 180), (True, True))
+
+# Text over a REAL pipe. Everything above drives serve() through StringIO, which
+# is already text and never meets an encoding, so it could not see the bug this
+# pins: routes.js writes UTF-8, a Windows python decodes a piped stdin as
+# cp1252, and a still of "Suno v5 · 2025–2026" came back as "Suno v5 Â· 2025â€“
+# 2026" while a range render of the same layer was fine. So: a child process,
+# the job written as the raw UTF-8 JSON.stringify produces (ensure_ascii=False;
+# \u escapes would sail through any code page), and PYTHONIOENCODING=cp1252 so
+# the child starts the way Windows starts it on every OS this runs on.
+_TEXT_IN = "Suno v5 · 2025–2026 █"          # · – █
+
+
+def _text_doc(content):
+    return comp([{"id": "tx", "name": "type", "type": "text", "start": 0.0, "end": 4.0,
+                  "blend": "normal", "enabled": True,
+                  "text": {"content": content, "font": "arial.ttf", "size": 28,
+                           "color": [255, 255, 255, 255]},
+                  "transform": {"anchor": [160, 32], "position": [160, 32],
+                                "scale": [100, 100], "rotation": 0, "opacity": 100}}],
+                w=320, h=64, bg=(0, 0, 0, 255))
+
+
+with tempfile.TemporaryDirectory() as _utmp:
+    _served = os.path.join(_utmp, "served.png")
+    _env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    _env["PYTHONIOENCODING"] = "cp1252"
+    _req = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in (
+        {"id": 1, "cmd": "frame", "job": {"comp": _text_doc(_TEXT_IN), "t": 0.0, "out": _served}},
+        {"cmd": "shutdown"}))
+    _child = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine.py"),
+         "serve"], input=_req.encode("utf-8"), capture_output=True, env=_env, timeout=180)
+    _replies = [json.loads(ln) for ln in _child.stdout.decode("utf-8").splitlines() if ln.strip()]
+    if _child.returncode:
+        print(_child.stderr.decode("utf-8", "replace")[-600:])
+    eq("a serve child on a real pipe renders the text job",
+       [(r.get("id"), r.get("ok")) for r in _replies[1:2]], [(1, True)])
+
+    def _pixels(path):
+        return np.asarray(Image.open(path).convert("RGBA"))
+
+    def _in_process(content, name):
+        out = os.path.join(_utmp, name)
+        engine.cmd_frame({"comp": _text_doc(content), "t": 0.0, "out": out})
+        return _pixels(out)
+
+    _right = _in_process(_TEXT_IN, "right.png")
+    _garbled = _in_process(_TEXT_IN.encode("utf-8").decode("cp1252"), "garbled.png")
+    eq("the garbled string draws differently, so the next check can tell them apart",
+       bool(np.array_equal(_right, _garbled)), False)
+    # the label stays ASCII: this file's own stdout is a cp1252 pipe under the gate
+    eq("middle dot, en dash and full block reach the serve child as themselves, "
+       "not as cp1252 mojibake: its still is the in-process still",
+       os.path.exists(_served) and bool(np.array_equal(_pixels(_served), _right)), True)
 
 # ── video alpha survives the decoder ────────────────────────
 # PyAV's VideoFormat has no has_alpha attribute, so the old

@@ -46,8 +46,12 @@ test("the clip deadline allows for this PC's own speed", () => {
   assert.equal(clipBudgetMs(299, "nvidia"), (299 * 4 + 300) * 1000, "no factor: as before");
   assert.equal(clipBudgetMs(299, "nvidia", 5.4), Math.round((299 * 5.4 * 4 + 300) * 1000), "a slow PC gets its measured room");
   assert.equal(clipBudgetMs(299, "amd", 0.5), clipBudgetMs(299, "amd"), "never less than the vendor's allowance");
+  assert.equal(clipBudgetMs(299, "nvidia", null, "h3"), 7_200_000,
+    "a memory-spilled H3 render is collected instead of orphaned at 25 minutes");
+  assert.equal(clipBudgetMs(299, "nvidia", null, "ltx"), clipBudgetMs(299, "nvidia"),
+    "the longer floor does not delay unrelated engines");
   const art = read("./art.js");
-  assert.match(art, /const budgetMs = clipBudgetMs\(expected, vendorOf\(config\.gpu, config\.torchBackend\), videoSpeed\.factor\(engine\)\);/);
+  assert.match(art, /const budgetMs = clipBudgetMs\(expected, vendorOf\(config\.gpu, config\.torchBackend\), videoSpeed\.factor\(engine\), engine\);/);
   assert.match(art, /if \(!done\.cached\) videoSpeed\.record\(engine, done\.runningSec \?\? done\.elapsedSec, expected\);/,
     "a real render is measured; a cache hit is not a speed");
 });

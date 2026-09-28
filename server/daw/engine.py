@@ -643,12 +643,30 @@ SERVE_MODES = MODES
 
 # ---------------------------------------------------------------- serve
 
+def _utf8_stream(stream):
+    """The same stream, speaking UTF-8. One that cannot be reconfigured (None
+    under pythonw, a sys.stdin something else replaced) is returned as it is."""
+    try:
+        stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    return stream
+
+
 def serve(stdin=None, stdout=None):
     """`{"id":..., "cmd":"render", "job":{...}}` a line in, one JSON line out,
     until stdin closes or a `shutdown` arrives. The vfx engine's protocol,
-    kept to the letter so routes.js's lane code carries over unchanged."""
-    stdin = sys.stdin if stdin is None else stdin
-    stdout = sys.stdout if stdout is None else stdout
+    kept to the letter so routes.js's lane code carries over unchanged.
+
+    The pipes are UTF-8 whatever the interpreter was started with. routes.js
+    writes UTF-8, but on Windows a python whose stdin is a pipe decodes it with
+    the ANSI code page (cp1252), so an `out` under C:/Users/José/ became
+    "JosÃ©" and the render failed as file-not-found, on this lane only: the
+    per-call modes read their job from a file opened as UTF-8."""
+    if stdin is None:
+        stdin = _utf8_stream(sys.stdin)
+    if stdout is None:
+        stdout = _utf8_stream(sys.stdout)
 
     def reply(obj):
         stdout.write(json.dumps(obj) + "\n")

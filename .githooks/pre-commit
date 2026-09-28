@@ -646,6 +646,11 @@ if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
 # does and reads the cut back — it needs the rig's av + ffmpeg, and skips
 # those assertions in words where either is missing.
 if [ -x "$PY" ]; then "$PY" scripts/timeline_render_test.py || exit 1; fi
+# The video lab's still strip over a REAL pipe: stills.js writes its job as UTF-8,
+# a Windows python decodes a piped stdin as cp1252, and a clip library under
+# C:/Users/José/ came back "none of these clips could be opened". The child is
+# started with PYTHONIOENCODING=cp1252 so it bites on every OS. Needs the rig's cv2.
+if [ -x "$PY" ]; then "$PY" scripts/clipstills_test.py || exit 1; fi
 # Paths and liquify. Same argument as imgshape: a pen tool has a closed-form
 # answer for everything - w*L of ink, pi*r^2 of area, a 20px push that moves a
 # dot 20px - so a rasteriser or a displacement field that drifts fails here

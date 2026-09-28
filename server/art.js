@@ -205,12 +205,18 @@ export function attentionOptions(info) {
  * The old 4x limit gave up at 1497 s, two minutes before the clip landed, and
  * the finished file was never filed.
  */
-export function clipBudgetMs(expectedSeconds, vendor, factor = null) {
+export function clipBudgetMs(expectedSeconds, vendor, factor = null, engine = null) {
   const slow = vendor === "nvidia" ? 1 : 3;
   const base = Math.max(900_000, (expectedSeconds * 4 * slow + 300) * 1000);
   /* Once this PC has rendered clips, its own measured factor (video-speed.js)
    * counts too: whichever allows more. */
-  return Number(factor) > 0 ? Math.max(base, Math.round((expectedSeconds * factor * 4 + 300) * 1000)) : base;
+  const measured = Number(factor) > 0 ? Math.max(base, Math.round((expectedSeconds * factor * 4 + 300) * 1000)) : base;
+  /* A 16 GB NVIDIA card can spill H3's vision encoder and DiT into shared GPU
+   * memory, especially with several reference images. The fitted cost curve
+   * does not see that slowdown: a valid 124-frame render was abandoned after
+   * 25 minutes and completed in ComfyUI later. Keep the job alive to collect
+   * its output. Other engines retain their measured deadlines. */
+  return engine === "h3" ? Math.max(measured, 7_200_000) : measured;
 }
 
 /** Whether an H3-family clip starts on a clean card (config.js
@@ -2370,7 +2376,7 @@ export class ArtRunner extends EventEmitter {
     const stepScale = engine === "ltx" ? 1 : (job.steps ?? v.steps) / 8;
     const expected = v.costFixedSeconds
       + v.costRate * Math.pow((px * frames) / 1e6, v.costExponent) * stepScale;
-    const budgetMs = clipBudgetMs(expected, vendorOf(config.gpu, config.torchBackend), videoSpeed.factor(engine));
+    const budgetMs = clipBudgetMs(expected, vendorOf(config.gpu, config.torchBackend), videoSpeed.factor(engine), engine);
 
     /* A FRESH ENGINE FIRST (config.js video.freeBeforeClip, measured there):
      * a second H3 render in the same engine process spilled into shared
