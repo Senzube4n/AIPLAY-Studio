@@ -8,9 +8,10 @@
  * schema, so a schema that lies is a feature that appears to work.
  *
  * The check is a heuristic: it reads each tool's run source and asks whether
- * the parameter's name appears in it. That cannot prove the value is used
- * correctly, but it catches "declared and dropped", which is the class that
- * has actually happened. A tool that forwards its whole argument object is
+ * the parameter's name appears in it or in an explicitly forwarded helper.
+ * That cannot prove the value is used correctly, but catches "declared and
+ * dropped", which is the class that has actually happened. A tool that
+ * forwards its whole argument object is
  * listed in IGNORED, with the reason written down.
  *
  * Plus the structural checks for the routes the image panels lean on — the
@@ -23,6 +24,8 @@ import path from "node:path";
 import { TOOLS } from "./mcp.js";
 import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { ZIMAGE_PRESET } from "./workflow.js";
+import { h3OptionalMcpBody } from "./mcp-h3-refmods.js";
+import { videoLoraInput } from "./video-lora-validation.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,23 +70,65 @@ ok("every required parameter is also declared",
 
 console.log("\n  -- nothing is advertised and then dropped --");
 
+// Follow only the helper whose returned body make_clip actually spreads. Its
+// real function source participates in the same declared-and-dropped census.
+const h3BodyCall = /\.\.\.h3OptionalMcpBody\(a,\s*engine\)/;
+function forwardingSource(tool, runSource = String(tool.run)) {
+  return tool.name === "make_clip" && h3BodyCall.test(runSource)
+    ? `${runSource}\n${String(h3OptionalMcpBody)}` : runSource;
+}
+function unnamedParameters(tool, runSource = String(tool.run)) {
+  const src = forwardingSource(tool, runSource);
+  return Object.keys(tool.inputSchema.properties || {}).filter((p) => {
+    const camel = p.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    return !src.includes(p) && !src.includes(camel);
+  });
+}
+const clip = OURS.find((t) => t.name === "make_clip");
+ok("make_clip spreads the real H3 optional body helper with its arguments and selected engine",
+  h3BodyCall.test(String(clip.run)));
+ok("the H3 helper names all three optional MCP inputs",
+  ["ref_mods", "ref_mod_options", "h3_tweaks"].every((field) => String(h3OptionalMcpBody).includes(`args.${field}`)));
+const withoutH3Body = String(clip.run).replace(h3BodyCall, "...{}");
+ok("the census fails all three fields if make_clip drops the helper's result",
+  ["ref_mods", "ref_mod_options", "h3_tweaks"].every((field) => unnamedParameters(clip, withoutH3Body).includes(field)));
+ok("following the helper does not exempt an unrelated dropped declaration",
+  unnamedParameters({ ...clip, inputSchema: { ...clip.inputSchema, properties: { ...clip.inputSchema.properties, missing_forwarding_regression: { type: "string" } } } })
+    .includes("missing_forwarding_regression"));
 const dropped = [];
 for (const t of OURS) {
   if (IGNORED[t.name] === "*") continue;
-  const src = String(t.run);
   const ignored = new Set(IGNORED[t.name] || []);
-  for (const p of Object.keys(t.inputSchema.properties || {})) {
+  for (const p of unnamedParameters(t)) {
     if (ignored.has(p)) continue;
-    // snake_case in the schema becomes camelCase on the wire; either spelling
-    // appearing in run() means the parameter was not forgotten.
-    const camel = p.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-    if (!src.includes(p) && !src.includes(camel)) dropped.push(`${t.name}.${p}`);
+    dropped.push(`${t.name}.${p}`);
   }
 }
-ok("every declared parameter is named in its run()", dropped.length === 0,
+ok("every declared parameter is named in its run() or an explicitly forwarded helper", dropped.length === 0,
   dropped.length
     ? `${dropped.join(", ")}\n          Either forward it, or add it to IGNORED with a reason.`
     : "");
+
+// Exercise the real make_clip body builder and helper together through its
+// check-only door. RefMod and Fizgig require separate requests by design.
+const clipPosts = [];
+const clipApi = async (method, route, body) => {
+  if (route === "/api/status") return { config: { video: { enabled: true, ready: true, engine: "h3", engines: { h3: {} } } } };
+  if (method === "POST" && route === "/api/video") { clipPosts.push(body); return { engine: "h3" }; }
+  throw new Error(`Unexpected CPU fixture request: ${method} ${route}`);
+};
+const runClip = new Function("api", "videoLoraInput", "h3OptionalMcpBody",
+  `return (${String(clip.run).replace(/^async run\(/, "async function(")});`)(clipApi, videoLoraInput, h3OptionalMcpBody);
+await runClip({ prompt: "standing singer", check_only: true,
+  ref_mods: [{ name: "hero", strength: 0.65, copies: 2 }], ref_mod_options: { retention: 0.7, max_tokens: 1024 } });
+await runClip({ prompt: "standing singer", check_only: true,
+  h3_tweaks: { detail: 0.1, composition: 0.2, prompt_strength: 0.3, detail_mode: "per frame" } });
+ok("make_clip forwards ref_mods through the real helper into the HTTP body",
+  JSON.stringify(clipPosts[0]?.refMods) === JSON.stringify([{ name: "hero", strength: 0.65, copies: 2 }]));
+ok("make_clip forwards ref_mod_options including its renamed token budget",
+  JSON.stringify(clipPosts[0]?.refModOptions) === JSON.stringify({ retention: 0.7, maxTokens: 1024 }));
+ok("make_clip forwards h3_tweaks including prompt strength and detail mode",
+  JSON.stringify(clipPosts[1]?.h3Tweaks) === JSON.stringify({ detail: 0.1, composition: 0.2, promptStrength: 0.3, detailMode: "per frame" }));
 
 console.log("\n  -- the panel routes the tools lean on --");
 

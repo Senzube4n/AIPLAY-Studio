@@ -14,6 +14,7 @@
  */
 import { readProject, updateProject, noteRun, assetComplete } from "./store.js";
 import { markStale, markBoardRefsChanged, resolveShot } from "./shot.js";
+import { readRefRoles, assetReferenceImages } from "./references.js";
 
 const rid = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -27,8 +28,8 @@ export function bibleSpec(doc) {
   return {
     project: { slug: doc.slug, title: doc.title, brief: doc.brief || null },
     segments,
-    existingCharacters: doc.characters.map((c) => ({ name: c.name, description: c.description, hasImage: !!c.imageFile })),
-    existingBackgrounds: doc.backgrounds.map((g) => ({ name: g.name, description: g.description, hasImage: !!g.imageFile })),
+    existingCharacters: doc.characters.map((c) => ({ name: c.name, description: c.description, hasImage: assetReferenceImages(c).length > 0, referenceImages: assetReferenceImages(c) })),
+    existingBackgrounds: doc.backgrounds.map((g) => ({ name: g.name, description: g.description, hasImage: assetReferenceImages(g).length > 0, referenceImages: assetReferenceImages(g) })),
     contract: {
       shape: {
         story: { logline: "one sentence", synopsis: "2-4 sentences" },
@@ -53,11 +54,13 @@ export function bibleSpec(doc) {
           crowd: "true when the frame holds unnamed people beyond the named cast — a festival crowd, a street, a room of strangers. Without it the prompt states the exact number of people and caps the shot at the named cast.",
           lipSync: "true when a mouth in frame sings THIS scene's line. Projects on Song under the clip \"always\" (new projects since 2026-09-24) put the song under every scene anyway; lipSync is what makes a scene sing on an \"auto\" project.",
           refProminence: { "<name>": 0.5 },
+          refRoles: { "<name>": ["identity", "body"] },
         }],
       },
       rules: [
         "ACTION is the most important field: what HAPPENS in that beat — a clear subject performing a motion, what changes, the emotional beat, 1-2 vivid present-tense sentences that ADVANCE the segment's line. Name the motion and where it goes; never a static tableau.",
         "Name binding is strict: characterRefs/backgroundRefs must exactly match a declared name. Reuse the SAME names across boards — reuse is what makes the video coherent.",
+        "refRoles is optional: select only roles already available on a named asset. Omitted names use identity or the first available pack image. All views share one name, one subject and its prominence.",
         "refProminence 0..1 per referenced name: hero subject ~1.0, secondary ~0.5, barely-seen ~0.2. When the reference budget overflows (9), the LEAST prominent are dropped first.",
         "2-4 shots for a 10-15s scene; 1-2 for under 6s. Each scene's shots should read as ONE continuous generated clip, not a cut sequence.",
         "Lyrical segments: someone performs the line — say who and how. Instrumental segments: b-roll in the world; characterRefs optional.",
@@ -76,6 +79,15 @@ export function bibleSpec(doc) {
 
 const norm = (s) => String(s || "").trim();
 const lc = (s) => norm(s).toLowerCase();
+const refsOf = (board) => [...(board.characterRefs || []), ...(board.backgroundRefs || []), ...(board.propRefs || [])].map(norm);
+const uniqueBoardRefs = (board) => {
+  const seen = new Set();
+  return Object.fromEntries(["characterRefs", "backgroundRefs", "propRefs"].map((key) =>
+    [key, (board[key] || []).map(norm).filter((name) => !seen.has(name) && seen.add(name))]));
+};
+const boardRoles = (board, old, doc) => board.refRoles === undefined
+  ? Object.fromEntries(Object.entries(old?.refRoles || {}).filter(([name]) => refsOf(board).includes(name)))
+  : readRefRoles(board.refRoles, doc, refsOf(board));
 
 /** Commit a whole bible. Merges by NAME so rendered sheets survive re-authoring. */
 export async function commitBible(slug, bible) {
@@ -97,7 +109,7 @@ export async function commitBible(slug, bible) {
       // entries the new bible dropped but that already have a rendered sheet
       // survive — deleting rendered work needs to be a decision, not a diff
       for (const old of existing) {
-        if (old.imageFile && !out.some((x) => lc(x.name) === lc(old.name))) out.push(old);
+        if (assetReferenceImages(old).length && !out.some((x) => lc(x.name) === lc(old.name))) out.push(old);
       }
       return out;
     };
@@ -129,12 +141,13 @@ export async function commitBible(slug, bible) {
         for (const n of [...(b.characterRefs || []), ...(b.backgroundRefs || []), ...(b.propRefs || [])]) {
           prom[n] = Math.min(1, Math.max(0, Number(b.refProminence?.[n] ?? 0.5)));
         }
+        const refs = uniqueBoardRefs(b);
         const old = doc.boards.find((x) => x.segmentId === seg.id);
         boards.push({
           id: old?.id || rid("bd"), segmentId: seg.id, segmentIndex: seg.index, clipIndex: seg.index,
           boardPrompt: norm(b.boardPrompt), grade: norm(b.grade), shots,
-          characterRefs: (b.characterRefs || []).map(norm), backgroundRefs: (b.backgroundRefs || []).map(norm),
-          propRefs: (b.propRefs || []).map(norm),
+          characterRefs: refs.characterRefs, backgroundRefs: refs.backgroundRefs,
+          propRefs: refs.propRefs,
           crowd: !!b.crowd,
           /* (2026-09-24: new projects start on songConditioning "always",
            * store.js blankProject, the REWIND A/B; the expression below is
@@ -155,6 +168,7 @@ export async function commitBible(slug, bible) {
            * close-up mouths something unrelated to the lyric. */
           lipSync: !!b.lipSync,
           refProminence: prom,
+          refRoles: boardRoles(b, old, doc),
           imageFile: old?.imageFile || null, takes: old?.takes || [],
           updatedAt: Date.now(),
         });
@@ -191,6 +205,7 @@ export async function upsertBoard(slug, segmentId, board) {
     for (const n of [...(board.characterRefs || []), ...(board.backgroundRefs || []), ...(board.propRefs || [])]) {
       if (!names.has(lc(n))) throw new Error(`"${n}" is not a declared character, background or prop`);
     }
+    const refs = uniqueBoardRefs(board);
     const old = d.boards.find((x) => x.segmentId === seg.id);
     const prom = {};
     for (const n of [...(board.characterRefs || []), ...(board.backgroundRefs || []), ...(board.propRefs || [])]) {
@@ -201,8 +216,8 @@ export async function upsertBoard(slug, segmentId, board) {
       boardPrompt: norm(board.boardPrompt), grade: norm(board.grade),
       shots: (board.shots || []).map((sh) => ({ shotType: sh.shotType || "medium", angle: sh.angle,
         cameraMove: sh.cameraMove, lensFeel: sh.lensFeel, lighting: sh.lighting, action: norm(sh.action) })),
-      characterRefs: (board.characterRefs || []).map(norm), backgroundRefs: (board.backgroundRefs || []).map(norm),
-      propRefs: (board.propRefs || []).map(norm),
+      characterRefs: refs.characterRefs, backgroundRefs: refs.backgroundRefs,
+      propRefs: refs.propRefs,
       /* ⚠ PRESERVED when the caller does not mention it. This was an
        * unconditional `!!board.crowd`, and the board editor's payload has no
        * crowd key at all — so every time a human opened a crowd scene and
@@ -225,7 +240,9 @@ export async function upsertBoard(slug, segmentId, board) {
        * this key, and a Save from that screen must not silently turn the song
        * off under a scene somebody set to sing. */
       lipSync: board.lipSync === undefined ? !!old?.lipSync : !!board.lipSync,
-      refProminence: prom, imageFile: old?.imageFile || null, takes: old?.takes || [],
+      refProminence: prom,
+      refRoles: boardRoles(board, old, d),
+      imageFile: old?.imageFile || null, takes: old?.takes || [],
       updatedAt: Date.now(),
     };
     /* The editor's whole-board commit: the picture predates it by definition.

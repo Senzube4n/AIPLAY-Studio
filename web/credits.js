@@ -47,6 +47,14 @@ export const PEOPLE = [
     areas: ["AMD / Intel / CPU", "Launcher", "Music screen", "Agent & APIs", "Model picker"],
   },
   {
+    name: "Nemesis",
+    handle: "@nemesisone-dev",
+    url: "https://github.com/nemesisone-dev",
+    role: "RunPod and remote workers",
+    did: "Contributed RunPod account and worker integration, verified model downloads, private workload templates and ACE-Step training presets.",
+    areas: ["RunPod", "Remote workers", "Model downloads", "Training presets"],
+  },
+  {
     name: "Everyone who broke it first",
     role: "Testing and reports",
     url: "https://github.com/Senzube4n/AIPLAY-Studio/issues",

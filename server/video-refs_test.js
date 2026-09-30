@@ -52,7 +52,7 @@ test("the plan refuses references on FastH3 and LTX, in that sentence, and takes
   assert.equal(h3.refusal, null);
   assert.equal(h3.prompt, "<Picture 1> walks", "a tag an attached picture answers stays");
   const index = read("./index.js");
-  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}, \{ engineKey: eng, eng: videoEngine\(eng\),/,
+  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios \}, \{ engineKey: eng, eng: videoEngine\(eng\),/,
     "the door plans on the references that really staged");
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   assert.doesNotMatch(index, /References need MiniMax H3/, "no second, hand-kept copy of the sentence");
@@ -93,6 +93,31 @@ test("a tag nothing answers is taken out of the words, and said", () => {
    * note instead of vanishing. */
   const routes = read("./videolab/routes.js");
   assert.match(routes, /const said = \(Array\.isArray\(r\.warnings\) \? r\.warnings : \[\]\)\.map\(\(w\) => w\?\.text\)\.filter\(Boolean\);\n\s+if \(said\.length\) arm\.note = \[arm\.note, \.\.\.said\]\.filter\(Boolean\)\.join\(" "\);/);
+});
+
+test("cache-only H3 plans match reference Turbo steps, required speed-up and dense attention", () => {
+  const eng = { ...E.h3, sampler: "auto", steps: 3, refTurboSteps: 8,
+    turboLora3: "taomate_3step.safetensors", refTurboLora4: "ref2v_4step.safetensors",
+    refTurboLora: "ref2v_8step.safetensors", turboBuilds: { three: true, four: true, eight: true },
+    sparse: "sol-attn", sparseAll: true, solAttn: { tau: 1.5 } };
+  const body = { prompt: "<Picture 1> sings", refMods: [{ name: "singer", strength: 1, copies: 1 }] };
+  const plan = (b, e = eng) => videoPlan({ ...body, ...b }, { engineKey: "h3", eng: e });
+  const defaults = plan({});
+  assert.equal(defaults.refusal, null);
+  assert.equal(defaults.steps, 8, "the cache takes the reference default");
+  assert.equal(defaults.sampler, "res_multistep");
+  assert.equal(defaults.sparse, "off", "saved sparse-everywhere never patches cache references");
+  assert.equal(defaults.prompt, "sings", "a latent cache adds no numbered text-vision picture tag");
+  const fast = plan({ steps: 3 });
+  assert.equal(fast.steps, 4, "the 4-step reference file runs at its own count");
+  assert.match(fast.warnings.find((w) => w.id === "steps")?.text || "", /4 steps, not 3/);
+  assert.equal(fast.sparse, "off");
+  const missing = plan({ steps: 3 }, { ...eng, turboBuilds: { three: true, four: false, eight: true } });
+  assert.equal(missing.refusal?.reason, "speedup-missing");
+  assert.equal(missing.refusal?.needsModel, "videoH3Turbo4");
+  const text = videoPlan({ prompt: "A singer", steps: 3 }, { engineKey: "h3", eng });
+  assert.equal(text.steps, 3, "ordinary text-only Fast remains unchanged");
+  assert.equal(text.sparse, "sol-attn");
 });
 
 test("the page: the reference slots stay in view while anything is attached, and show the server's sentence", async () => {
@@ -147,9 +172,10 @@ test("make_clip: the same sentence, from the status or from the door, and the do
   const { TOOLS } = await import("./mcp.js");
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
   const t = TOOLS.find((x) => x.name === "make_clip");
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const mock = ({ engine, sentence, door = {} }) => {
     const posts = [];
     const api = async (method, p, body) => {

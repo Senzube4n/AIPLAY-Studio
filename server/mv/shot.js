@@ -29,6 +29,8 @@
  * prompt is the third staged file by construction rather than by coincidence.
  */
 
+import { selectedReferenceImages, readRefRoles, referenceLabel, namedReferences } from "./references.js";
+
 /* ─────────────────────────────────────────────────────── the prompt */
 
 /**
@@ -40,7 +42,7 @@
  * Moved here from generate.js unchanged. It is the payload, and the payload
  * belongs next to the resolution that decides what goes in it.
  */
-export function clipPrompt(doc, seg, board, refNames = [], boardRefIndex = -1, attached = true) {
+export function clipPrompt(doc, seg, board, refNames = [], boardRefIndex = -1, attached = true, leadRefIndex = 0) {
   const bits = [];
   if (doc.styleBible) bits.push(doc.styleBible + ".");
   const list = (xs) => (xs.length <= 1 ? (xs[0] || "")
@@ -66,6 +68,8 @@ export function clipPrompt(doc, seg, board, refNames = [], boardRefIndex = -1, a
   const legend = !refNames.length ? ""
     : attached
       ? refNames.map((n, i) => `<Picture ${i + 1}> is ${n}.`).join(" ") + " "
+        + (refNames.some((n) => /\(\w+ reference\)/.test(n))
+            ? "Views sharing a name show ONE subject. Use identity for face and hair, body for proportions, side for profile, outfit for clothing, style for the visual treatment, and detail for the pictured detail. " : "")
         /* Say what to DO with the storyboard, and say what not to do with it.
          * A still handed to a video model without instruction is an invitation
          * to hold still, which is the one failure a dance shot cannot survive. */
@@ -76,11 +80,12 @@ export function clipPrompt(doc, seg, board, refNames = [], boardRefIndex = -1, a
             : "")
       : `In this shot: ${list(refNames)}. Keep each one exactly as the style above describes, `
         + `identical in every scene. `;
-  /* <Picture 1> is the cast by construction — the board reference is appended
-   * last, so this never points at a storyboard. Without attachments there is no
-   * picture to point at, so the lead is named instead. */
+  /* The lead index comes from the resolved cast, after prominence and capping.
+   * A prominent prop or place must not become the performer. Without attached
+   * pictures the same cast reference is named in plain words. */
   const lead = !refNames.length ? "the lead performer"
-    : attached ? "the performer from <Picture 1>" : refNames[0];
+    : attached && leadRefIndex >= 0 ? `the performer from <Picture ${leadRefIndex + 1}>`
+    : leadRefIndex >= 0 ? refNames[leadRefIndex] : "the lead performer";
   if (board?.shots?.length) {
     const beats = board.shots.map((s, i) =>
       `${i + 1}. ${[s.shotType, s.angle, s.cameraMove, s.lensFeel, s.lighting].filter(Boolean).join(", ")}: ${s.action}`);
@@ -162,27 +167,30 @@ export function resolveShot(doc, segmentId, opts = {}) {
    * board still keeps its people consistent). Props ride along: they are cast,
    * and they have been in this list since the props work landed. */
   const wanted = board
-    ? [
-        ...(board.characterRefs || []).map((name) => ({ name, declaredAs: "characterRefs" })),
-        ...(board.backgroundRefs || []).map((name) => ({ name, declaredAs: "backgroundRefs" })),
-        ...(board.propRefs || []).map((name) => ({ name, declaredAs: "propRefs" })),
-      ].sort((a, b) => (board.refProminence?.[b.name] ?? 0) - (board.refProminence?.[a.name] ?? 0))
-    : (doc.characters || []).map((c) => ({ name: c.name, declaredAs: "every character (no board)" }));
+    ? namedReferences(board).sort((a, b) => (board.refProminence?.[b.name] ?? 0) - (board.refProminence?.[a.name] ?? 0))
+    : namedReferences({ characterRefs: (doc.characters || []).map((c) => c.name) })
+      .map((r) => ({ ...r, declaredAs: "every character (no board)" }));
 
   const refs = [];        // resolved, in the exact order they are staged
   const refsMissing = []; // named on the board, reaching the render as nothing
   const dropped = [];     // resolved fine, lost to the 9-picture cap
-  let castRefs = 0;
-  let capped = false;
+  const carriedCast = new Set();
 
   for (const w of wanted) {
-    if (capped) { dropped.push({ ...w, kind: declaredKind(doc, w.name), file: rowFor(doc, w.name)?.imageFile ?? null }); continue; }
     const kind = declaredKind(doc, w.name);
     const src = rowFor(doc, w.name);
     const prominence = board?.refProminence?.[w.name] ?? null;
-    if (src?.imageFile) {
-      refs.push({ name: src.name, kind, file: src.imageFile, prominence, declaredAs: w.declaredAs });
-      if (kind === "character") castRefs++;
+    const selected = selectedReferenceImages(src, board?.refRoles?.[w.name]);
+    if (selected.length) {
+      for (const image of selected) {
+        const ref = { name: src.name, kind, file: image.file, role: image.role, prominence, declaredAs: w.declaredAs };
+        if (refs.length >= REF_CAP) dropped.push(ref);
+        else { refs.push(ref); if (kind === "character") carriedCast.add(src.name); }
+      }
+      for (const role of board?.refRoles?.[w.name] || []) {
+        if (!selected.some((r) => r.role === role)) refsMissing.push({ name: w.name, kind, role,
+          declaredAs: w.declaredAs, prominence, why: `the selected ${role} reference image is no longer in this asset's pack` });
+      }
     } else {
       /* ⚠ THE SILENT DROP, NAMED. A declared prop with imageFile:null is
        * exactly the failure DIRECTING.md calls out: the board looks correct,
@@ -192,12 +200,10 @@ export function resolveShot(doc, segmentId, opts = {}) {
       refsMissing.push({
         name: w.name, kind, declaredAs: w.declaredAs, prominence,
         why: !kind ? "not declared as a character, background or prop"
+          : board?.refRoles?.[w.name] ? `selected roles ${board.refRoles[w.name].join(", ")} have no reference images — it reaches this render as nothing`
           : `declared as a ${kind}, but no sheet has been rendered — it reaches this render as nothing`,
       });
     }
-    /* Cap AFTER the push, exactly as the renderer's loop did: a name that
-     * resolves to nothing does not consume one of the nine. */
-    if (refs.length >= REF_CAP) capped = true;
   }
 
   /* ⚠ ONLY A FACE JUSTIFIES H3. Props became references and that immediately
@@ -237,6 +243,7 @@ export function resolveShot(doc, segmentId, opts = {}) {
    * It cost most of an evening, because nothing reported which engine a clip
    * chose until after it had run. That is now the first thing the shot record
    * says, above the prompt, for exactly this reason. */
+  const castRefs = carriedCast.size;
   const mode = String(doc.brief?.videoEngine || "hybrid").toLowerCase();
   const refsWanted = doc.brief?.castRefs !== false;
 
@@ -317,7 +324,7 @@ export function resolveShot(doc, segmentId, opts = {}) {
   const boardRefIndex = (doc.brief?.boardRef === true
       && engine === "h3" && useRefs && board?.imageFile && refs.length < REF_CAP)
     ? refs.length : -1;
-  const refNames = refs.map((r) => r.name);
+  const refNames = refs.map((r) => referenceLabel(r.name, r.role));
   if (boardRefIndex >= 0) refNames.push("the storyboard frame for this shot");
 
   /* Which pictures STEER the clip, as opposed to condition it. Predicted here
@@ -376,7 +383,7 @@ export function resolveShot(doc, segmentId, opts = {}) {
     });
   }
 
-  const computedPrompt = clipPrompt(doc, seg, board, refNames, boardRefIndex, useRefs);
+  const computedPrompt = clipPrompt(doc, seg, board, refNames, boardRefIndex, useRefs, refs.findIndex((r) => r.kind === "character"));
   /* PRECEDENCE, and each level is visible in `promptSource` so nobody has to
    * guess which one won: an argument for this one render beats the project's
    * stored hand-edit, which beats what the builder computes. */
@@ -398,7 +405,7 @@ export function resolveShot(doc, segmentId, opts = {}) {
     boardShots: (board?.shots || []).length,
     boardImage: board?.imageFile ?? null,
 
-    refs, refsMissing, dropped, refNames, castRefs,
+    refs, refsMissing, dropped, refNames, castRefs, refRoles: board?.refRoles || {},
     /* Whether the resolved pictures are actually handed over. A panel that
      * lists references without this reads as a promise the render does not
      * keep — which is the failure it exists to catch, one level up. */
@@ -466,7 +473,7 @@ function takeRow(t, i, clip) {
  * the failure that matters most here — the name stayed, the sheet behind it
  * moved — and file alone would call two different names sharing a picture the
  * same reference. "" is the unit separator: it cannot occur in either. */
-const refKey = (r) => `${r.name}${r.file}`;
+const refKey = (r) => `${r.name}${r.role || "identity"}${r.file}`;
 
 /**
  * What has changed under the take that is currently playing.
@@ -484,17 +491,18 @@ export function shotDrift(plan, current) {
   }
   const was = new Map(current.refs.map((r) => [refKey(r), r]));
   const now = new Map(plan.refs.map((r) => [refKey(r), r]));
-  const byName = (list) => new Map(list.map((r) => [r.name, r]));
+  const roleKey = (r) => `${r.name}\u001f${r.role || "identity"}`;
+  const byName = (list) => new Map(list.map((r) => [roleKey(r), r]));
   const wasN = byName(current.refs), nowN = byName(plan.refs);
 
-  const added = plan.refs.filter((r) => !was.has(refKey(r)) && !wasN.has(r.name)).map((r) => r.name);
-  const removed = current.refs.filter((r) => !now.has(refKey(r)) && !nowN.has(r.name)).map((r) => r.name);
+  const added = plan.refs.filter((r) => !was.has(refKey(r)) && !wasN.has(roleKey(r))).map((r) => referenceLabel(r.name, r.role));
+  const removed = current.refs.filter((r) => !now.has(refKey(r)) && !nowN.has(roleKey(r))).map((r) => referenceLabel(r.name, r.role));
   /* A name that survived but points at a DIFFERENT sheet — somebody re-picked
    * a take. This is the one a name-only comparison misses entirely, and it is
    * the one that silently changes a face. */
   const repointed = plan.refs
-    .filter((r) => wasN.has(r.name) && wasN.get(r.name).file !== r.file)
-    .map((r) => ({ name: r.name, was: wasN.get(r.name).file, now: r.file }));
+    .filter((r) => wasN.has(roleKey(r)) && wasN.get(roleKey(r)).file !== r.file)
+    .map((r) => ({ name: referenceLabel(r.name, r.role), was: wasN.get(roleKey(r)).file, now: r.file }));
 
   const promptChanged = current.prompt !== plan.prompt;
   const engineChanged = current.engine && current.engine !== "import" && current.engine !== plan.engine;
@@ -688,7 +696,7 @@ export function applyShotEdit(doc, segmentId, edit = {}) {
     if (was !== (next || null)) markStale(clip, "prompt");
   }
 
-  if (Array.isArray(edit.refs) || edit.prominence) {
+  if (Array.isArray(edit.refs) || edit.prominence || edit.refRoles !== undefined) {
     let board = findBoard(doc, seg);
     if (!board) {
       board = { id: `bd_${seg.id}`, segmentId: seg.id, segmentIndex: seg.index, clipIndex: seg.index,
@@ -703,13 +711,14 @@ export function applyShotEdit(doc, segmentId, edit = {}) {
      * whole-board commit. This is a per-shot tweak and a no-op save must not
      * send a director back to redraw a picture that is still correct. */
     const refSig = (b) => JSON.stringify([b.characterRefs || [], b.backgroundRefs || [],
-                                          b.propRefs || [], b.refProminence || {}]);
+                                          b.propRefs || [], b.refProminence || {}, b.refRoles || {}]);
     const before = refSig(board);
     if (Array.isArray(edit.refs)) {
-      const c = [], g = [], p = [];
+      const c = [], g = [], p = [], seen = new Set();
       for (const raw of edit.refs) {
         const name = String(raw ?? "").trim();
-        if (!name) continue;
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
         const kind = declaredKind(doc, name);
         /* Refuse rather than accept-and-drop. An undeclared name on a board is
          * the silent-nothing failure one layer up, and set_board already
@@ -718,6 +727,7 @@ export function applyShotEdit(doc, segmentId, edit = {}) {
         (kind === "character" ? c : kind === "background" ? g : p).push(name);
       }
       board.characterRefs = c; board.backgroundRefs = g; board.propRefs = p;
+      board.refRoles = Object.fromEntries(Object.entries(board.refRoles || {}).filter(([n]) => [...c, ...g, ...p].includes(n)));
       changed.push(`references: ${[...c, ...g, ...p].join(", ") || "none"}`);
     }
     if (edit.prominence && typeof edit.prominence === "object") {
@@ -726,6 +736,10 @@ export function applyShotEdit(doc, segmentId, edit = {}) {
         board.refProminence[k] = Math.min(1, Math.max(0, Number(v) || 0));
       }
       changed.push("prominence");
+    }
+    if (edit.refRoles !== undefined) {
+      board.refRoles = readRefRoles(edit.refRoles, doc, [...board.characterRefs, ...board.backgroundRefs, ...(board.propRefs || [])]);
+      changed.push("reference roles");
     }
     board.updatedAt = Date.now();
 
@@ -765,6 +779,6 @@ export function applyShotEdit(doc, segmentId, edit = {}) {
     }
   }
 
-  if (!changed.length) throw new Error("Nothing to change — send prompt, refs or prominence.");
+  if (!changed.length) throw new Error("Nothing to change — send prompt, refs, prominence or refRoles.");
   return changed;
 }

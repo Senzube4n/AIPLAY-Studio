@@ -526,11 +526,11 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
    * (said). A count the request names is kept, and the notes say when it is
    * under the one keeping a character was measured at. */
   const askedSteps = num(b.steps);
-  const refsOn = engineKey === "h3" && !!(pictures || audios);
+  const refsOn = engineKey === "h3" && !!(pictures || audios || b.refMods?.length);
   const unnamed = eng.steps || 20;
   let steps = eng.fixedSteps || Math.min(Math.max(Number.isFinite(askedSteps) && askedSteps > 0 ? askedSteps
     : (refsOn && referenceSteps(eng)) || unnamed, 2), 40);
-  if (engineKey === "h3" && (pictures || audios)) {
+  if (refsOn) {
     const m = h3MatchedSteps(eng, { steps, refs: true });
     if (m.raised) {
       warnings.push({ id: "steps", text: `With references this runs ${m.steps} steps, not ${m.asked}: the reference `
@@ -545,7 +545,7 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
    * Refused, with the download offered (needsModel opens the model window on
    * that row). The speed-ups are optional; Best (20) needs none. */
   if (engineKey === "h3") {
-    const need = speedupNeeded(eng, { steps, refs: !!(pictures || audios) });
+    const need = speedupNeeded(eng, { steps, refs: refsOn });
     if (need) {
       return { refusal: { error: need.error, reason: need.build === 3 ? "taomate-missing" : "speedup-missing",
         needsModel: need.row }, warnings, notes };
@@ -560,7 +560,7 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
   const sparseWant = b.sparse === "sol-attn" || b.sparse === "off" ? b.sparse : undefined;
   let sparse = null;
   if (engineKey === "h3") {
-    const cfg = h3SparseFor(eng, { steps, refs: !!(pictures || audios), sparse: sparseWant, control });
+    const cfg = h3SparseFor(eng, { steps, refs: refsOn, sparse: sparseWant, control });
     sparse = cfg ? "sol-attn" : "off";
     if (!cfg && sparseWant === "sol-attn" && (eng.sparse ?? "off") !== "sol-attn") {
       warnings.push({ id: "sparse", text: "Sparse attention runs on the Fast setting (the 3-step build, no "

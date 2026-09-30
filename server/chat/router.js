@@ -75,6 +75,10 @@ export const ROUTABLE = {
   /* Reads what a one-click setup would build and how its job is going. */
   setup_status: null,
   fastcovers_status: null,
+  h3_refmod_status: null,
+  h3_refmod_inspect: null,
+  /* VAE extraction and optional reconstruction use the shared graphics-card queue. */
+  h3_refmod_create: "gpu",
   /* No strong card? Friend first, then the person's own key: a read. Its twin
    * set_cloud is withheld below, because it decides whether songs bill. */
   cloud_status: null,
@@ -637,6 +641,7 @@ export const WITHHELD = {
   set_image_engine: "changes a persistent app setting the person set on the Pictures page",
   set_fastcovers: "sets up Python and downloads a model; use the explicit Fast covers setting or external MCP",
   set_music_engine: "changes a persistent app setting the person set on the Music page, and can switch paid API mode on",
+  set_yue2_style_adapter: "changes persistent planner and audio LoRA choices set on the Music page; available through external MCP",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",
   collab_set_lend_minutes: "raises or lowers how many minutes a day this card renders for a friend; with collab_accept routable, a chat could raise the allowance and then accept, walking past the minutes a person set exactly as the withheld \"anyway\" would. The Friends row on the Collab screen is where a person sets it (MCP clients keep the tool)",
@@ -751,7 +756,7 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 // silently dropped. External MCP clients still use the original typed schema.
 const JSON_ARGUMENT_TOOLS = new Set([
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
-  "standrig_parameters",
+  "standrig_parameters", "h3_refmod_create",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
   /* The score tools take `source` as an object and the note editor takes an
    * array of notes; without these three the chat could not reach them at all

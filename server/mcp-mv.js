@@ -45,6 +45,33 @@
  * renderSize makes. Not a copy; an import. */
 import { MV_SIZE_IDS, MV_ASPECTS, MV_CLIP_CEILING_SEC, sizeEnumText, cardTierText, cutDefaultText } from "./mv/sizes.js";
 
+import { REFERENCE_ROLES, REFERENCE_PACK_CAP } from "./mv/references.js";
+const referenceImagesArg = {
+  type: "array", maxItems: REFERENCE_PACK_CAP,
+  description: "Replace this named asset's reference pack. Project asset filenames only; one image per role. Empty clears extra images and keeps imageFile as identity.",
+  items: { type: "object", required: ["file", "role"], properties: {
+    file: { type: "string" }, role: { type: "string", enum: REFERENCE_ROLES },
+  }, additionalProperties: false },
+};
+const refRolesArg = {
+  type: "object", description: "Select roles per referenced name, e.g. {Mara: ['identity','body']}. Omitted names use identity, or the first pack image when identity is absent. Empty object resets the scene to defaults.",
+  additionalProperties: { type: "array", minItems: 1, maxItems: REFERENCE_PACK_CAP, uniqueItems: true,
+    items: { type: "string", enum: REFERENCE_ROLES } },
+};
+const boardArg = { type: "object", properties: {
+  segmentId: { type: "string" }, segmentIndex: { type: "integer", minimum: 0 },
+  boardPrompt: { type: "string" }, grade: { type: "string" }, crowd: { type: "boolean" }, lipSync: { type: "boolean" },
+  shots: { type: "array", items: { type: "object", properties: {
+    shotType: { type: "string" }, angle: { type: "string" }, cameraMove: { type: "string" },
+    lensFeel: { type: "string" }, lighting: { type: "string" }, action: { type: "string" },
+  } } },
+  characterRefs: { type: "array", items: { type: "string" } },
+  backgroundRefs: { type: "array", items: { type: "string" } },
+  propRefs: { type: "array", items: { type: "string" } },
+  refProminence: { type: "object", additionalProperties: { type: "number", minimum: 0, maximum: 1 } },
+  refRoles: refRolesArg,
+} };
+
 let liveSets = null;          // the toolkit's list, once the studio has said it
 let liveSetsRun = null;       // one fetch per process, however many tables are built
 const pendingSceneArgs = [];  // schema objects still waiting for it
@@ -474,13 +501,14 @@ export function mvTools(api, safeName) {
           description: { type: "string" },
           prompt: { type: "string", description: "Explicit sheet/plate prompt; \"\" clears it and the description is used again." },
           role: { type: "string", enum: ["lead", "support"], description: "Characters only." },
+          referenceImages: referenceImagesArg,
           cascade: { type: "boolean", description: "Required to rename anything that is referenced: move the name and every reference to it in one transaction." },
         }, additionalProperties: false,
       },
       async run(a) {
         const r = await mv({ action: "update_asset", slug: a.slug, kind: a.kind, id: a.id,
                              name: a.name, description: a.description, prompt: a.prompt,
-                             role: a.role, cascade: a.cascade });
+                             role: a.role, referenceImages: a.referenceImages, cascade: a.cascade });
         return { changed: r.changed, renamed: r.renamed };
       },
     },
@@ -488,9 +516,11 @@ export function mvTools(api, safeName) {
       name: "mv_import_asset",
       description: "Make a picture already on disk into a character, background or prop — the fastest path to a consistent cast when the art exists. Give it a NAME; that name is how boards and clip prompts refer to it. To declare one with no picture yet, use mv_add_asset.",
       inputSchema: {
-        type: "object", required: ["slug", "path", "name"],
+        type: "object", required: ["slug", "path"],
         properties: {
-          slug: { type: "string" }, path: { type: "string", description: "Full local path to the image." },
+          slug: { type: "string" }, path: { type: "string", description: "Full local image path, or frame:<upload name>, image:<shelf filename>, cover:<cover filename>." },
+          id: { type: "string", description: "Existing named asset id or exact name. Adds or replaces one reference role instead of declaring another asset." },
+          referenceRole: { type: "string", enum: REFERENCE_ROLES, description: "Role of this single image. Default identity. A pack holds at most six images." },
           name: { type: "string" }, target: { type: "string", enum: ["character", "background", "prop"] },
           description: { type: "string", description: "The look, for the prompts: face/build, wardrobe, palette." },
           /* REACHABLE BY NOBODY until now, and unlike its two siblings it was
@@ -503,7 +533,7 @@ export function mvTools(api, safeName) {
       /* `kind` on the wire, `target` in the schema: the route speaks ONE word
        * for which cast list a row is in (assetKind takes singular or plural),
        * and the agent-facing argument keeps the name agents already send. */
-      async run(a) { return stageSummary(await mv({ action: "import_asset", slug: a.slug, path: a.path, name: a.name, kind: a.target || "character", description: a.description, role: a.role })); },
+      async run(a) { return stageSummary(await mv({ action: "import_asset", slug: a.slug, path: a.path, name: a.name, kind: a.target || "character", description: a.description, role: a.role, id: a.id, referenceRole: a.referenceRole })); },
     },
     {
       name: "mv_import_clip",
@@ -1343,6 +1373,7 @@ export function mvTools(api, safeName) {
           segment: { type: "string", description: "Segment id, or the 0-based scene index." },
           prompt: { type: "string", description: "The exact text to send instead of the built prompt; \"\" reverts to the builder. START FROM mv_shot's `prompt` — written from scratch it loses the <Picture N> legend, and a reference the prompt never names barely conditions the render at all." },
           refs: { type: "array", items: { type: "string" }, description: "Declared names this shot references. Replaces the current set." },
+          refRoles: refRolesArg,
           prominence: { type: "object", description: "{name: 0..1} — which references survive the nine-picture cap.", additionalProperties: { type: "number" } },
         }, additionalProperties: false,
       },
@@ -1352,7 +1383,7 @@ export function mvTools(api, safeName) {
          * assembled conditionally, because the route tests the type rather
          * than the key's presence. */
         const r = await mv({ action: "set_shot", slug: a.slug, segmentId: a.segment,
-                             prompt: a.prompt, refs: a.refs, prominence: a.prominence });
+                             prompt: a.prompt, refs: a.refs, prominence: a.prominence, refRoles: a.refRoles });
         return { changed: r.changed, shot: r.shot };
       },
     },
@@ -1760,7 +1791,7 @@ export function mvTools(api, safeName) {
           properties: { story: { type: "object" }, styleBible: { type: "string" },
             characters: { type: "array" }, backgrounds: { type: "array" },
             props: { type: "array", description: "PROPS ARE CAST. Any object that recurs and must be the SAME object — a car, a guitar, a suitcase — as {name, description}. Undeclared, it is re-invented on every render. Render its sheet with mv_blender_sheet (a mesh IS the same object) or mv_generate_asset, and list it in each board's propRefs." },
-            boards: { type: "array" } } } },
+            boards: { type: "array", items: boardArg } } } },
         additionalProperties: false,
       },
       async run(a) { const r = await mv({ action: "set_bible", slug: a.slug, bible: a.bible }); return { boards: r.project.boards.length, characters: r.project.characters.length, backgrounds: r.project.backgrounds.length, lint: r.lint }; },
@@ -1770,7 +1801,7 @@ export function mvTools(api, safeName) {
       description: "Upsert ONE storyboard without re-authoring the bible: segmentId + {boardPrompt, grade, shots[], characterRefs, backgroundRefs, propRefs, refProminence, crowd, lipSync}. propRefs is not optional decoration — an object listed in props[] but not in the propRefs of the scenes it appears in is re-invented in each of them. Same validation as mv_set_bible; an existing clip for that scene is marked stale.",
       inputSchema: {
         type: "object", required: ["slug", "segmentId", "board"],
-        properties: { slug: { type: "string" }, segmentId: { type: "string" }, board: { type: "object" } },
+        properties: { slug: { type: "string" }, segmentId: { type: "string" }, board: boardArg },
         additionalProperties: false,
       },
       async run(a) { const r = await mv({ action: "set_board", slug: a.slug, segmentId: a.segmentId, board: a.board }); return r.board; },

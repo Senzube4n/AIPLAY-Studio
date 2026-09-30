@@ -8,6 +8,7 @@ import { modelTools } from "./mcp-models.js";
 import { TOOLS } from "./mcp.js";
 import { ROUTABLE } from "./chat/router.js";
 import { emptyResultNote } from "./art-wait.js";
+import { h3OptionalMcpBody } from "./mcp-h3-refmods.js";
 
 const src = (file) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const index = src("./index.js"), app = src("../web/app.js");
@@ -20,8 +21,8 @@ const tool = (name) => TOOLS.find((t) => t.name === name);
  * note this lane sees is the note an agent sees. */
 function mockedRun(name, api) {
   const code = String(tool(name).run).replace(/^async run\(/, "async function(");
-  return new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", `return (${code});`)(
-    api, (v) => { if (/[/\\]|\.\./.test(v)) throw new Error("bad name"); return v; }, async () => {}, videoLoraInput, emptyResultNote);
+  return new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody", `return (${code});`)(
+    api, (v) => { if (/[/\\]|\.\./.test(v)) throw new Error("bad name"); return v; }, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
 }
 
 test("video adapter input refuses silent drops, path rewriting and truncation", () => {

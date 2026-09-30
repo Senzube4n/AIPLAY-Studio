@@ -87,3 +87,31 @@ try {
 }
 
 console.log("Video Lab MCP preview matches referenced H3 shift and pinned size");
+
+// The transport must return what the server resolved, including a persisted
+// experimental request that currently runs the ordinary checkpoints instead.
+const buildStatus = {
+  requestedBuild: "w6a8", compatibility: { ready: false, reason: "Six-bit loader unavailable" },
+  fl2va: { selected: false, file: "ordinary-fl.safetensors", fallback: "Six-bit loader unavailable" },
+  ref2va: { selected: false, file: "ordinary-ref.safetensors", fallback: "Six-bit loader unavailable" },
+};
+const settingRequests = [];
+const settings = videoLabTools(async (method, path, body) => {
+  assert.equal(method, "POST"); assert.equal(path, "/api/videolab"); settingRequests.push(body);
+  if (body.action === "set_knob") return { id: body.id, value: body.value, buildStatus, state: { commit: { note: "unchanged" } } };
+  const knobs = [
+    { id: "h3_model_build", label: "Experimental build", applies: "h3", kind: "enum", value: "w6a8",
+      options: ["auto", "w6a8"], buildStatus },
+    { id: "ordinary_setting", label: "Ordinary", applies: "h3", kind: "bool", value: false },
+  ];
+  return { engine: "h3", knobs, allKnobs: knobs, commit: {} };
+}).find((entry) => entry.name === "video_settings");
+const written = await settings.run({ id: "h3_model_build", value: "w6a8" });
+assert.equal(written.value, "w6a8"); assert.deepEqual(written.buildStatus, buildStatus);
+for (const args of [{}, { engine: "h3" }]) {
+  const listing = await settings.run(args);
+  assert.deepEqual(listing.settings[0].buildStatus, buildStatus);
+  assert.equal(Object.hasOwn(listing.settings[1], "buildStatus"), false);
+}
+assert.deepEqual(settingRequests.map((request) => request.action), ["set_knob", "state", "state"]);
+console.log("Video settings preserves resolved W6A8 readiness and fallbacks on writes and reads");

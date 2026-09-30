@@ -19,6 +19,7 @@ try {
 // to the empty test rig rather than the owner's configured installation.
 const { prepareGgufJob } = await import("./music-gguf-input.js");
 const { labelYueLyrics } = await import("./music/yue-lyrics.js");
+const { validateYue2StyleAdapter } = await import("./music/yue2-style-adapters.js");
 const { config } = await import("./config.js");
 // The route marks the required badge over its overlaid rows; the slice below runs the real rule.
 const { markRequired, modulesOf } = await import("./models.js");
@@ -177,7 +178,7 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
     config: app, ggufSetup: setup, prov: { actorFrom: () => "agent:test" },
     /* Unlabelled YuE2 lyrics get [Verse]/[Chorus] before any build (music/yue-lyrics.js). */
-    labelYueLyrics, console: { log() {}, warn() {} },
+    labelYueLyrics, validateYue2StyleAdapter, console: { log() {}, warn() {} },
     prepareGgufJob: (body, actor) => { events.push("validate"); return prepareGgufJob(body, actor); },
     jobs: { enqueue: (spec) => { events.push("enqueue"); return { id: "owned-native", title: spec.title, quantization: spec.quantization }; }, snapshot: () => ({ current: { id: "someone-else" } }) },
     json: (res, status, body) => ({ status, body }),
@@ -200,6 +201,18 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
   setup.only = null;
+  for (const file of ["trbdr_broadside.safetensors", "grvl_thunder.safetensors"]) {
+    app.music.yue2Lora = file; app.music.yue2LoraClip = file;
+    response = await route(valid({ engine: "yue2-gguf" }));
+    assert.equal(response.status, 200, "retained Comfy style preferences do not block native generation");
+    assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
+    for (const engine of ["yue2", "yue2-gguf"]) for (const named of [{ lora: file }, { loraClip: file }]) {
+      response = await route(valid({ engine, ...named }));
+      assert.equal(response.status, 400); assert.equal(response.body.reason, "yue2-style-engine");
+      assert.deepEqual(events, [], "an explicitly requested unsupported adapter stops before native preflight and enqueue");
+    }
+  }
+  delete app.music.yue2Lora; delete app.music.yue2LoraClip;
   response = await route(valid({ engine: "yue2-gguf", narSteps: 0 }));
   assert.equal(response.status, 400); assert.deepEqual(events.splice(0), ["validate"]);
   setup.ready = false; response = await route(valid({ engine: "yue2-gguf" }));

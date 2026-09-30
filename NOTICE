@@ -421,6 +421,105 @@ in the app.
                             paragraph (xinntao/Real-ESRGAN LICENSE))
                             https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
 
+    MiniMax H3 fl2va W6A8 (experimental)
+                            MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    MiniMax H3 ref2va W6A8 (experimental)
+                            MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    TRBDR Broadside         CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Lantern           CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Hearth            CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Ferryman          CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Porch             CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    GRVL Ember              CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Smoulder           CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Cinder             CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Wildfire           CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Thunder            CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Tempest            CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
 The four output-rights classes, as the app words them:
 
     unrestricted            This model's licence places no condition on what you

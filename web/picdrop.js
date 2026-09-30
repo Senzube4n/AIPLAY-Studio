@@ -159,9 +159,9 @@ export function mountPicDrop(host, opts) {
   const input = $q("input[type=file]");
   $q(".pdzonetext").textContent = o.zone;
 
-  let busy = false;
+  let busy = false, destroyed = false;
   const run = async (fn) => {
-    if (busy) return;
+    if (busy || destroyed) return;
     if (o.blocked()) return;
     busy = true;
     box.classList.add("busy");
@@ -183,6 +183,7 @@ export function mountPicDrop(host, opts) {
   });
 
   function paint() {
+    if (destroyed) return;
     const why = o.blocked();
     box.classList.toggle("off", !!why);
     for (const b of $all(".pdchoose, .pdupload, .pdmore")) b.disabled = !!why || busy;
@@ -203,6 +204,7 @@ export function mountPicDrop(host, opts) {
   }
 
   async function openMenu(btn) {
+    if (destroyed) return;
     if (!menu.hidden) { closeMenu(); return; }
     for (const b of boxes) if (b !== box) b.querySelector(".pdmenu").hidden = true;
     menu.innerHTML = '<p class="pdempty">Loading…</p>';
@@ -212,6 +214,7 @@ export function mountPicDrop(host, opts) {
     menu.hidden = false;
     btn.setAttribute("aria-expanded", "true");
     try { await o.beforeMenu?.(); } catch { /* show what there is */ }
+    if (destroyed) return;
     const rows = o.candidates?.() || [];
     const groups = [...new Set(rows.map((x) => x.group || "Pictures"))];
     menu.innerHTML = `<button type="button" class="pdup">Upload from this computer…</button>` + (rows.length
@@ -273,7 +276,17 @@ export function mountPicDrop(host, opts) {
   });
 
   paint();
-  return { paint, take, el: box, blocked: () => o.blocked() };
+  return { paint, take, el: box, blocked: () => o.blocked(),
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      closeMenu();
+      boxes.delete(box);
+      if (o.bar) $q(".pdrow")?.remove();
+      menu.remove();
+      box.remove();
+    },
+  };
 }
 
 /**

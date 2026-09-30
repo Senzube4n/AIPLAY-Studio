@@ -330,8 +330,14 @@ function h3Fit(req, machine) {
  */
 export function fitFor(requires, machine) {
   const req = requires || {};
+  if (req.nvidiaOnly && (machine.gpu?.vendor && machine.gpu.vendor !== "nvidia")) return {
+    state: "wont-run", why: "This optional build requires NVIDIA CUDA; use the ordinary H3 build on this card.",
+    recommendable: false, note: req.note || null,
+    needVramGb: null, recVramGb: null, needRamGb: null, recRamGb: null,
+    yourVramGb: machine.gpu?.vramGb ?? null, yourRamGb: machine.ram.totalGb,
+  };
   if (req.h3Tiers) return h3Fit(req, machine);
-  if (req.experimental) return {state:"unknown",why:"Experimental native build: a minimum hardware floor has not been established.",
+  if (req.experimental) return {state:"unknown",why:req.experimentalWhy || "Experimental native build: a minimum hardware floor has not been established.",
     note:req.note||null,needVramGb:null,recVramGb:null,needRamGb:null,recRamGb:null,
     yourVramGb:machine.gpu?.vramGb??null,yourRamGb:machine.ram.totalGb};
   const needVram = Number(req.vramMinGb ?? 0);

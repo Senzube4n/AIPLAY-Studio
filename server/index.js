@@ -50,6 +50,9 @@ import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, QWEN_IMAGE_FILES, qwenIm
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
+import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
+import { stageRefModImage } from "./refmod-stage.js";
+import { validateYue2StyleAdapter, yue2StyleAdapterFor } from "./music/yue2-style-adapters.js";
 /* RunPod rendering (the launcher's "RunPod GPU" mode): the worker client, the
  * account (Pods and billing) and their routes, contributed by nemesisone-dev. */
 import { createRemoteRoutes } from "./engine/remote-routes.js";
@@ -563,6 +566,22 @@ const batch = new BatchRunner(jobs, {
 // Draws covers only while the music queue is empty — see art.js for why that is
 // a hard requirement rather than politeness.
 const art = new ArtRunner(comfy, jobs);
+const h3RefModService = createH3RefModService({
+  config, objectInfo: (name) => engineDoor.objectInfo(name),
+  workflowAssigned: () => assignedTo("video"),
+  stageImage: (name) => stageRefModImage(name, { inputDir: config.inputDir, imageDir: IMAGE_DIR, coverDir: COVER_DIR }),
+  async submit(spec) {
+    const name = spec.graph[2].inputs.name;
+    const job = art.request({ file: `refmod:${name}`, title: spec.label, kind: "refmod", force: true, asked: true,
+      actor: spec.actor, video: { refModGraph: spec.graph, refModName: name } });
+    if (!job) throw new Error(art.lastRefusal || "RefMod creation was not queued.");
+    return { id: job.id, file: job.file, state: "queued" };
+  },
+});
+const h3RefModRoutes = createH3RefModRoutes({ json, readBody, sameOriginLocalJson, service: h3RefModService,
+  actorFrom: prov.actorFrom });
+art.on("refmod-ready", ({ name }) => h3RefModService.complete(name));
+art.on("failed", ({ file, kind }) => { if (kind === "refmod") h3RefModService.complete(String(file).slice(7)); });
 
 // A finished cover is metadata like any other, so it goes through the same
 // sidecar the rest of the library uses.
@@ -3307,6 +3326,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/engine" || p.startsWith("/api/engine/")) {
       if (await engineRoutes(req, res, url)) return;
     }
+    if (p === "/api/h3-refmods") {
+      if (await h3RefModRoutes(req, res, url)) return;
+    }
     if (p === "/api/safety/check") {
       if (await safetyRoutes(req, res, url)) return;
     }
@@ -4487,6 +4509,11 @@ const server = http.createServer(async (req, res) => {
       // No engine named: the default follows the disk when nobody chose (machineDefaults).
       if (body.engine === undefined && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const requestedEngine=body.engine || config.music.engine;
+      try {
+        if (requestedEngine !== "yue2-comfy")
+        validateYue2StyleAdapter({ engine: requestedEngine, lora: body.lora, loraClip: body.loraClip,
+          cot: body.cot || "full", explicit: true });
+      } catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
       /* YuE2 sings labelled lyrics (server/music/yue-lyrics.js): lyrics with no
        * [Verse] / [Chorus] at all are given them, for every YuE2 build. The
        * song keeps the labelled text, so what rendered is what is stored. */
@@ -5017,6 +5044,10 @@ const server = http.createServer(async (req, res) => {
           ? Math.min(Math.max(Number(body.loraClipStrength), -4), 4)
           : (Number.isFinite(config.music.yue2LoraClipStrength) ? config.music.yue2LoraClipStrength : 1);
         if (body.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
+      }
+      if (musicEngine === "yue2-comfy") {
+        try { validateYue2StyleAdapter({ engine: musicEngine, lora: yueLora, loraClip: yueLoraClip, cot: body.cot || "full" }); }
+        catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
       }
       const job = jobs.enqueue({
         ...(aceJob || {}),
@@ -7072,7 +7103,7 @@ const server = http.createServer(async (req, res) => {
               /* THE MINORS RULE, with the words behind each <Picture n>: the
                * named rows' own descriptions, which stay on this machine. What
                * each picture was made as also travels, wordless, on its row. */
-              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.name)),
+              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.assetName || r.name)),
               order: {
                 segmentId: shotO.segmentId,
                 /* The defaults are the SCENE's own, so an order with nothing
@@ -7124,7 +7155,7 @@ const server = http.createServer(async (req, res) => {
            * same check an order gets, before anything is sealed or shown. */
           if (kind === "shot") {
             assertSafe({ door: "collab.shot", via: "collab", texts: [String(packet.prompt || "")],
-              context: mvRowWords(doc, (packet.refs || []).map((r) => r.name)), flags: shotFlags(packet) });
+              context: mvRowWords(doc, (packet.refs || []).map((r) => r.assetName || r.name)), flags: shotFlags(packet) });
           }
           if (action === "preview") return previewFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`, {
             slug, document: doc, describes: describePacket(packet),
@@ -8103,11 +8134,16 @@ const server = http.createServer(async (req, res) => {
        * check_only read it, so both say what a render does before it is asked
        * for. Reference names are counted, not staged. */
       if (b.action === "check") {
+        if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
+          return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
         const gate = await videoWeightsGate();
         if (gate.error) return json(res, 200, { ok: false, refusal: gate.error, warnings: [] });
+        let optionalH3;
+        try { optionalH3 = await h3RefModService.checkRender(b, { engine: gate.engine }); }
+        catch (error) { return json(res, 200, { ok: false, refusal: { error: error.message, reason: error.reason }, warnings: [] }); }
         /* Frames and a control video are named, not staged: the plan only
          * needs to know they ride. */
-        const plan = videoPlan(b, { engineKey: gate.engine, eng: videoEngine(gate.engine),
+        const plan = videoPlan({ ...b, ...optionalH3 }, { engineKey: gate.engine, eng: videoEngine(gate.engine),
           persona: await clipPersona(b.persona), characters: await clipCharacters(),
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
           framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
@@ -8116,6 +8152,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.action === "create") {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
+        if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
+          return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
         /* `eng` is the engine that will really render — the setting when its
          * weights are here, whatever IS here when they are not. Everything
          * below reads it instead of config.video.engine, because a substituted
@@ -8326,7 +8364,10 @@ const server = http.createServer(async (req, res) => {
          * plain words; a Fast render with references runs the reference
          * build's own step count; a render naming no size gets this card's
          * size. Each change is a warning in the reply. */
-        const plan = videoPlan({ ...b, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
+        let optionalH3;
+        try { optionalH3 = await h3RefModService.checkRender(b, { engine: eng }); }
+        catch (error) { return json(res, error.status || 400, { error: error.message, reason: error.reason }); }
+        const plan = videoPlan({ ...b, ...optionalH3, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
           persona: personaStaged,
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }), framed: !!(firstFrame || lastFrame),
           control: !!control.video });
@@ -8367,6 +8408,7 @@ const server = http.createServer(async (req, res) => {
             // The RESOLVED one: what actually renders, not what the setting
             // says, so the provenance record names the model that made the file.
             engine: eng,
+            h3ModelBuild: b.h3ModelBuild ?? config.video.h3ModelBuild,
             /* Undefined unless something was named — see videoModelPatch. */
             models: picked.models || undefined,
             // The plan's: unanswered reference tags taken out (and said).
@@ -8379,6 +8421,9 @@ const server = http.createServer(async (req, res) => {
             // H3 only — refused above for LTX rather than silently dropped.
             refImages,
             refAudios,
+            refMods: optionalH3.refMods,
+            refModOptions: optionalH3.refModOptions,
+            h3Tweaks: optionalH3.h3Tweaks,
             /* Video-to-video. Resolved and refused above: by here either both
              * the clip and the patch are real, or neither is set. */
             controlVideo: control.video,
@@ -8705,11 +8750,15 @@ const server = http.createServer(async (req, res) => {
          * the language model, the audio model and the VAE into ComfyUI. The
          * save node becomes PreviewAudio, which writes to ComfyUI's TEMP
          * folder — a warm-up must never become a song or a library row. */
+        /* Fused style adapters require a full score plan. Load their base here;
+         * their saved pair remains available for the next full song. Ordinary
+         * adapters retain the existing warm-up behaviour. */
+        const fusedStyle = yue2StyleAdapterFor(config.music.yue2Lora) || yue2StyleAdapterFor(config.music.yue2LoraClip);
         const graph = buildYue2ComfyGraph({
           caption: "warm-up", lyrics: "", cot: "off", maxDuration: 1, steps: 1,
           checkpoint: config.music.yue2Checkpoint, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
-          lora: config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
-          loraClip: config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
+          lora: fusedStyle ? null : config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
+          loraClip: fusedStyle ? null : config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
         });
         for (const n of Object.values(graph)) {
           if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
@@ -8747,6 +8796,26 @@ const server = http.createServer(async (req, res) => {
         if (Number.isFinite(Number(b.strength))) config.music.aceLoraStrength = Math.min(Math.max(Number(b.strength), -4), 4);
         savePrefs();
         return json(res, 200, { ok: true, music: { aceLora: config.music.aceLora, aceLoraStrength: config.music.aceLoraStrength } });
+      }
+      if (b.action === "style-adapter") {
+        if (b.value === "") {
+          config.music.yue2Lora = null; config.music.yue2LoraClip = null;
+          savePrefs();
+          return json(res, 200, { ok: true, music: { yue2Lora: null, yue2LoraClip: null } });
+        }
+        const adapter = yue2StyleAdapterFor(b.value);
+        if (!adapter) return json(res, 400, { error: "Choose a listed YuE2 style adapter." });
+        if (config.music.engine !== "yue2-comfy") return json(res, 400, { error: "Choose YuE2 ComfyUI before selecting this adapter." });
+        const shelf = await scanBases(await modelBases());
+        if (!shelf.some((file) => file.folder === "loras" && file.name === adapter.file))
+          return json(res, 400, { error: `${adapter.label} is not installed. Open Models to download it.` });
+        config.music.yue2Lora = adapter.file;
+        config.music.yue2LoraClip = adapter.file;
+        config.music.yue2LoraStrength = 1;
+        config.music.yue2LoraClipStrength = 1;
+        savePrefs();
+        return json(res, 200, { ok: true, music: { yue2Lora: adapter.file, yue2LoraClip: adapter.file,
+          yue2LoraStrength: 1, yue2LoraClipStrength: 1 }, cot: "full" });
       }
       if (b.action === "lora") {
         /* The Music tab's LoRA choice for YuE2 through ComfyUI, remembered.
@@ -13243,6 +13312,10 @@ function push(snap) {
 }
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status(), ...art.status() }));
+});
+art.on("refmod-ready", (result) => {
+  const message = JSON.stringify({ type: "refmod-ready", ...result });
+  for (const client of wss.clients) if (client.readyState === 1) client.send(message);
 });
 
 /* DAWUI: the DAW's live document sync rides this SAME socket — one connection

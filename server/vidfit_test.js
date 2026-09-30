@@ -390,7 +390,10 @@ test("§5 the plan: steps and sparse attention", () => {
 
 test("§5 the door renders the plan and says it; make_clip carries sparse and check_only", async () => {
   const index = read("./index.js");
-  assert.match(index, /if \(b\.action === "check"\) \{[\s\S]{0,400}const plan = videoPlan\(b, \{ engineKey: gate\.engine, eng: videoEngine\(gate\.engine\),/);
+  const videoDoor = index.indexOf('if (p === "/api/video"');
+  const checkDoor = index.slice(index.indexOf('if (b.action === "check") {', videoDoor), index.indexOf('if (b.action === "create") {', videoDoor));
+  assert.match(checkDoor, /await h3RefModService\.checkRender\(b, \{ engine: gate\.engine \}\)/);
+  assert.match(checkDoor, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3 \}, \{ engineKey: gate\.engine, eng: videoEngine\(gate\.engine\),/);
   assert.match(index, /prompt: plan\.prompt,/);
   assert.match(index, /seconds: plan\.seconds,/);
   assert.match(index, /width: plan\.width,\n\s+height: plan\.height,/);
@@ -413,8 +416,9 @@ test("§5 the door renders the plan and says it; make_clip carries sparse and ch
   assert.match(t.inputSchema.properties.attention.description, /Default: kitchen/);
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const posts = [];
   const api = async (method, p, body) => {
     if (method === "POST") posts.push(body);

@@ -546,5 +546,20 @@ head("§11  the score tools, the stem splitter and the Stop button are within re
     typeof WITHHELD.setup_feature === "string" && !routedNames.has("setup_feature"));
 }
 
+/* Optional H3 reads do not start the engine; extraction uses the ordinary GPU gate. */
+for (const name of ["h3_refmod_status", "h3_refmod_inspect"]) {
+  ok(`${name} is reachable as a free read`, routedNames.has(name) && ROUTABLE[name] === null);
+}
+ok("h3_refmod_create is reachable and asks before using the card",
+  routedNames.has("h3_refmod_create") && ROUTABLE.h3_refmod_create === "gpu"
+  && index().find(({ tool }) => tool.name === "h3_refmod_create")?.tool?.cost === COST_TEXT.gpu);
+{
+  const calls = [];
+  const adapted = adaptTool({ ...mcpByName.get("h3_refmod_create"), run: async (a) => { calls.push(a); return { ok: true }; } }, "gpu");
+  await adapted.run({ name: "singer", images: JSON.stringify(["singer.png"]) });
+  ok("the flat chat image list is decoded for the bounded RefMod tool",
+    adapted.args.images.type === "string" && calls[0].images[0] === "singer.png");
+}
+
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

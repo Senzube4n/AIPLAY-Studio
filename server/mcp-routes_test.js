@@ -86,7 +86,7 @@ const MCP_FILES = [
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
   "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
-  "server/mcp-setup.js", "server/mcp-runpod.js", "server/mcp-fastcovers.js",
+  "server/mcp-setup.js", "server/mcp-runpod.js", "server/mcp-fastcovers.js", "server/mcp-h3-refmods.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
   "server/daw/mcp-refprofile.js", "server/daw/mcp-voicelab.js",
 ];
@@ -101,7 +101,7 @@ const ROUTE_FILES = [
   "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/pngtuber.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
   "server/music/artifacts.js", "server/music/listening-lab.js",
-  "server/setup/routes.js", "server/cloud-switch.js", "server/whisper.js",
+  "server/setup/routes.js", "server/cloud-switch.js", "server/whisper.js", "server/h3-refmod.js",
 ];
 
 /* ──────────────────────────────────────────────────────────────────────────

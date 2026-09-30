@@ -18,6 +18,7 @@ import fs from "node:fs";
 import { buildYue2ComfyGraph, STAGE_OF_NODE } from "../workflow.js";
 import { loraTarget, detect, loraFits } from "../detect.js";
 import { PREF_PATHS } from "../config.js";
+import { yue2StyleAdapterFor } from "./yue2-style-adapters.js";
 
 let pass = 0;
 const failures = [];
@@ -123,8 +124,38 @@ console.log("\n§4  every hand the LoRA passes through names it");
     && /loraClip: job\.loraClip \|\| null, loraClipStrength: job\.loraClip \? \(job\.loraClipStrength \?\? 1\) : null,\n\s+rights: songRights\(\{ engine: "yue2-comfy", lora: job\.lora, loraClip: job\.loraClip \}\)\.label,/.test(index)
     && /loraClip: j\.loraClip \?\? null, loraClipStrength: j\.loraClip \? \(j\.loraClipStrength \?\? 1\) : null,/.test(src("../jobs.js")));
   ok("the FLAC tags name it", /\{ lora: `\$\{job\.lora\} @ \$\{job\.loraStrength \?\? 1\}` \}/.test(index));
-  ok("the warm-up loads the same LoRA the song will use",
-    /prefix: "aiplay_warmup",\n\s+lora: config\.music\.yue2Lora, loraStrength: config\.music\.yue2LoraStrength,/.test(index));
+  /* Run the actual load branch with the real graph builder. A saved fused
+   * pair must not make this one-step, Thinking Off base warm-up invalid. */
+  const warmStart = index.indexOf('const key = `yue2-comfy:${config.music.yue2Checkpoint}`;');
+  const warmEnd = index.indexOf("/* ACE-Step's own remembered choices", warmStart);
+  if (warmStart < 0 || warmEnd <= warmStart) throw new Error("YuE2 warm-up slice moved");
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const warm = new AsyncFunction("config", "jobs", "buildYue2ComfyGraph", "yue2StyleAdapterFor",
+    "engineDoor", "prov", "req", "json", "res", index.slice(warmStart, warmEnd).trim().replace(/\}\s*$/, ""));
+  for (const [label, audio, planner, fused] of [
+    ["TRBDR pair", "trbdr_broadside.safetensors", "trbdr_broadside.safetensors", true],
+    ["GRVL pair", "grvl_thunder.safetensors", "grvl_thunder.safetensors", true],
+    ["saved audio alone", "trbdr_broadside.safetensors", null, true],
+    ["saved planner alone", null, "grvl_thunder.safetensors", true],
+    ["ordinary adapters", "ordinary-audio.safetensors", "ordinary-planner.safetensors", false],
+  ]) {
+    const music = { yue2Checkpoint: "yue2_3b_bf16.safetensors", yue2Lora: audio, yue2LoraClip: planner,
+      yue2LoraStrength: 0.8, yue2LoraClipStrength: 0.7 };
+    const before = structuredClone(music), loaded = [];
+    let graph, calls = 0;
+    const result = await warm({ music }, { loaded: null, markLoaded: (key) => loaded.push(key), snapshot: () => ({}) },
+      buildYue2ComfyGraph, yue2StyleAdapterFor,
+      { run: async (request) => { calls++; graph = request.graph; return { status: "completed" }; } },
+      { actorFrom: () => "user" }, {}, (_, status, body) => ({ status, body }), {});
+    ok(`${label}: Load now reaches one real base warm-up graph`, result.status === 200 && calls === 1 && loaded.length === 1);
+    ok(`${label}: one step, no score planner or saved output`, graph[7].inputs.steps === 1 && !("4" in graph)
+      && Object.values(graph).some((node) => node.class_type === "PreviewAudio")
+      && !Object.values(graph).some((node) => /^Save/.test(node.class_type)));
+    if (fused) ok(`${label}: the dormant fused style is absent from both graph slots`, !("2" in graph) && !("3" in graph));
+    else ok("ordinary adapters retain their warm-up files and strengths", graph[2]?.inputs.lora_name === audio
+      && graph[2]?.inputs.strength_model === 0.8 && graph[3]?.inputs.lora_name === planner && graph[3]?.inputs.strength_clip === 0.7);
+    eq(`${label}: saved adapter preferences are retained`, music, before);
+  }
   ok("the Music tab's choice is saved by its own action",
     /b\.action === "lora"/.test(index) && /config\.music\.yue2Lora = name;/.test(index));
   ok("/api/loras lists every base the engine loads from",

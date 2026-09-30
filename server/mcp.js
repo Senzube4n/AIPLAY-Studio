@@ -53,6 +53,7 @@ import { musicAuditionTools } from "./mcp-music-auditions.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
 /* One-click setups (timed lyrics): server/setup/, the [Set up timed lyrics] button's door. */
 import { setupTools } from "./mcp-setup.js";
+import { h3RefModTools, H3_OPTIONAL_MCP_INPUTS, h3OptionalMcpBody } from "./mcp-h3-refmods.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
 import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
@@ -473,6 +474,7 @@ export const TOOLS = [
   ...musicAuditionTools(api),
   ...yueSetupTools(api),
   ...setupTools(api),
+  ...h3RefModTools(api),
   ...avatarTools(api),
   ...avatarPlaybackTools(api),
   ...pngtuberTools(api),
@@ -2946,6 +2948,16 @@ export const TOOLS = [
   },
 
   {
+    name: "set_yue2_style_adapter",
+    description: "Select an installed YuE2 style adapter for both planner and audio slots, at strength 1. Requires the YuE2 ComfyUI engine. Use download_model first if missing. Pass an empty file to clear both slots. Generation requires Thinking Full and the adapter trigger in Style. These becausereasons adapters are CC BY-NC 4.0; Studio labels their songs not for sale. Does not download weights or generate music.",
+    inputSchema: { type: "object", required: ["file"], additionalProperties: false,
+      properties: { file: { type: "string", maxLength: 240, description: "Installed adapter filename from models_for_this_machine, or empty to clear." } } },
+    async run(a) {
+      return await api("POST", "/api/music", { action: "style-adapter", value: a.file ? safeName(a.file, "LoRA") : "" });
+    },
+  },
+
+  {
     name: "set_image_engine",
     description:
       "Choose a picture engine persistently: for covers (the default), for pictures (the Pictures screen's engine, and make_image or a music video's stills with no engine named), or both, with `use_for`. "
@@ -3062,6 +3074,7 @@ export const TOOLS = [
         seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
         attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it (PyTorch where it does not). H3 decides its own; LTX has none. Default: kitchen, the one the H3 lab timed FastH3 with." },
         sparse: { type: "string", enum: ["sol-attn", "off"], description: "H3 only: sparse attention on the fast setting (the 3-step build, no references), the Video screen's Advanced \"Sparse attention\" switch. " + H3_SOL_ATTN.note + " Default: the saved setting (video_settings sparse_attention), sol-attn unless changed; name it only to differ for this render." },
+        ...H3_OPTIONAL_MCP_INPUTS,
         check_only: { type: "boolean", description: "Render nothing: return what this call WOULD render on this card (engine, size, seconds, steps, sparse attention), what the size needs (\"needs about X GB free; you have Y\"), every warning, or the refusal. The Video screen's Advanced line reads the same answer." },
         timeout_seconds: { type: "integer", description: "Wait limit, default 900 s. Reaching it does not stop the queued or running render; check studio_status/list_clips before attempting another." },
       },
@@ -3153,6 +3166,7 @@ export const TOOLS = [
         // H3's sparse attention on the fast setting; the route keeps only these two.
         sparse: a.sparse === "sol-attn" || a.sparse === "off" ? a.sparse : undefined,
         loras,
+        ...h3OptionalMcpBody(a, engine),
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
        * stages covers AND standalone images). This tool sent `firstFrame` from

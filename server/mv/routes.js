@@ -53,7 +53,9 @@ import { meshAsset, rigAsset, meshCatalogue } from "../mesh/asset.js";
  * together rather than discovering the second one months later. */
 import { controlCatalogue, controlRender } from "./control.js";
 import { shotPlan } from "./moves.js";
-import { shotRecord, applyShotEdit, findSegment, setLtxReady, ltxReadyNow } from "./shot.js";
+import { shotRecord, applyShotEdit, findSegment, setLtxReady, ltxReadyNow, markBoardRefsChanged, markStale } from "./shot.js";
+import { assetReferenceImages, readReferenceImages, readReferenceRole, REFERENCE_PACK_CAP } from "./references.js";
+import { fingerprintOf } from "../safety/minors.js";
 /* THE MUSIC VIDEO FOLLOWS THE CARD: the size list and the default longest
  * scene (sizes.js), the matched step count (clipsteps.js), and the card
  * reading they are judged against (gpu.js, the reading the status bar takes). */
@@ -1247,8 +1249,21 @@ export function createMvRoutes(deps) {
            * picture you already have and it becomes a character or a
            * background. No generation, no model, no wall — a file copy. */
           const slug = safe(b.slug);
-          const src = String(b.path || "");
-          if (!slug || !src) throw new Error("bad slug or path");
+          const source = String(b.path || "");
+          if (!slug || !source) throw new Error("bad slug or path");
+          const refRole = readReferenceRole(b.referenceRole);
+          const role = readRole(b.role);
+          // The ordinary picture drop uses Studio's existing upload and image shelf.
+          const tagged = /^(frame|image|cover):(.+)$/.exec(source);
+          let src = source;
+          if (tagged) {
+            const file = tagged[2];
+            if (file !== path.basename(file) || !/^[^\\/]+\.(png|jpe?g|webp)$/i.test(file) || file.includes("..")) throw new Error("bad reference filename");
+            const dir = tagged[1] === "frame" ? config.inputDir : tagged[1] === "image" ? deps.IMAGE_DIR : deps.COVER_DIR;
+            if (!dir) throw new Error("This picture shelf is unavailable");
+            src = path.join(dir, file);
+          }
+          if (!/\.(png|jpe?g|webp)$/i.test(src)) throw new Error("Reference pictures must be PNG, JPEG or WebP");
 
           /* ⚠ THE ONE DOOR A CONTACT SHEET COULD STILL WALK THROUGH.
            *
@@ -1271,26 +1286,59 @@ export function createMvRoutes(deps) {
           }
 
           const target = needKind(b.kind, "characters", CAST_KINDS);
+          if (b.id) {
+            const current = await readProject(slug);
+            const row = current?.[target]?.find((x) => x.id === b.id)
+              || current?.[target]?.find((x) => x.name === b.id);
+            if (!row) throw new Error(`No such ${ONE[target]}: ${b.id}`);
+            if (assetReferenceImages(row).length >= REFERENCE_PACK_CAP && !assetReferenceImages(row).some((r) => r.role === refRole)) throw new Error(`A reference pack holds at most ${REFERENCE_PACK_CAP} images`);
+          }
+          // Copy known Library ancestry before the staged filename leaves its map.
+          const ancestry = typeof deps.lineage === "function"
+            ? await deps.lineage([path.basename(src)]) : null;
+          const safety = fingerprintOf(ancestry?.texts || [], { flags: ancestry?.flags || [] });
           const name = await stageAsset(slug, src,
             target === "characters" ? "char" : target === "props" ? "prop" : "bg");
           const doc = await updateProject(slug, (doc) => {
             doc[target] = doc[target] || [];        // props post-date some documents
+            const existing = b.id ? doc[target].find((x) => x.id === b.id)
+              || doc[target].find((x) => x.name === b.id) : null;
+            if (b.id && !existing) throw new Error(`No such ${ONE[target]}: ${b.id}`);
+            if (existing) {
+              const pack = (existing.referenceImages || []).filter((r) => r.role !== refRole && r.file !== name);
+              pack.push({ file: name, role: refRole });
+              existing.referenceImages = readReferenceImages(pack);
+              (existing.takes = existing.takes || []).push({ file: name, seed: null, at: Date.now(), imported: true, safety });
+              if (refRole === "identity") existing.imageFile = name;
+              existing.status = "approved";
+              for (const board of doc.boards || []) {
+                if ([...(board.characterRefs || []), ...(board.backgroundRefs || []), ...(board.propRefs || [])].includes(existing.name)) {
+                  markBoardRefsChanged(board);
+                  markStale(doc.clips?.find((c) => c.segmentId === board.segmentId), "board");
+                }
+              }
+              noteRun(doc, { tool: "import_asset", outcome: `${existing.name}: ${refRole} reference` });
+              return doc;
+            }
+            const assetName = String(b.name || path.parse(src).name).trim();
+            if ([...doc.characters, ...doc.backgrounds, ...(doc.props || [])].some((x) => x.name.toLowerCase() === assetName.toLowerCase())) throw new Error(`"${assetName}" is already declared. Use id to add to its reference pack.`);
             const row = {
               id: `${target[0]}${doc[target].length + 1}_${Date.now().toString(36).slice(-4)}`,
-              name: String(b.name || path.parse(src).name),
+              name: assetName,
               /* ⚠ THROUGH readRole, like its two siblings. This was
                * `b.role ?? null` — any string an agent sent became the row's
                * role, and nothing downstream reads a role it does not
                * recognise, so a typo produced a row that silently had none.
                * add_asset and update_asset have validated it all along; this
                * one door was unlocked. */
-              role: readRole(b.role),
+              role,
               description: String(b.description || ""),
-              imageFile: name,
+              imageFile: refRole === "identity" ? name : null,
+              referenceImages: refRole === "identity" ? [] : [{ file: name, role: refRole }],
               status: "approved",
               imported: true,
               // Same shape as a generated take — a null seed says "imported".
-              takes: [{ file: name, seed: null, at: Date.now() }],
+              takes: [{ file: name, seed: null, at: Date.now(), safety }],
             };
             if (target === "backgrounds") row.platePrompt = null; else row.sheetPrompt = null;
             doc[target].push(row);
@@ -1536,9 +1584,9 @@ export function createMvRoutes(deps) {
              * carried. The page must not have to re-derive this — a picker that
              * offers a name with no sheet is the silent drop one step earlier. */
             declared: [
-              ...doc.characters.map((x) => ({ name: x.name, kind: "character", file: x.imageFile || null })),
-              ...doc.backgrounds.map((x) => ({ name: x.name, kind: "background", file: x.imageFile || null })),
-              ...(doc.props || []).map((x) => ({ name: x.name, kind: "prop", file: x.imageFile || null })),
+              ...doc.characters.map((x) => ({ name: x.name, kind: "character", file: x.imageFile || assetReferenceImages(x)[0]?.file || null, referenceImages: assetReferenceImages(x) })),
+              ...doc.backgrounds.map((x) => ({ name: x.name, kind: "background", file: x.imageFile || assetReferenceImages(x)[0]?.file || null, referenceImages: assetReferenceImages(x) })),
+              ...(doc.props || []).map((x) => ({ name: x.name, kind: "prop", file: x.imageFile || assetReferenceImages(x)[0]?.file || null, referenceImages: assetReferenceImages(x) })),
             ],
           }), true;
         }
@@ -1566,6 +1614,7 @@ export function createMvRoutes(deps) {
               prompt: typeof b.prompt === "string" ? b.prompt : undefined,
               refs: Array.isArray(b.refs) ? b.refs : undefined,
               prominence: b.prominence,
+              refRoles: b.refRoles,
             });
             const seg = findSegment(d, b.segmentId);
             noteRun(d, { tool: "mv_set_shot", outcome: `scene ${(seg?.index ?? 0) + 1}: ${changed.join("; ")}` });
@@ -1950,9 +1999,10 @@ export function createMvRoutes(deps) {
           if (!kind) throw new Error("kind must be characters | backgrounds | props");
           let moved = null;
           const changed = [];
-          const doc = await updateProject(slug, (d) => {
+          const doc = await updateProject(slug, async (d) => {
             const list = d[kind] = d[kind] || [];
-            const row = list.find((x) => x.id === b.id || String(x.name).toLowerCase() === String(b.id ?? "").toLowerCase());
+            const row = list.find((x) => x.id === b.id)
+              || list.find((x) => String(x.name).toLowerCase() === String(b.id ?? "").toLowerCase());
             if (!row) throw new Error(`No such ${ONE[kind]}: ${b.id}`);
 
             if (typeof b.description === "string") { row.description = b.description.trim(); changed.push("description"); }
@@ -1964,6 +2014,28 @@ export function createMvRoutes(deps) {
               changed.push("prompt");
             }
             if (b.role !== undefined) { row.role = readRole(b.role); changed.push("role"); }
+            if (b.referenceImages !== undefined) {
+              const images = readReferenceImages(b.referenceImages);
+              if (row.imageFile && images.length === REFERENCE_PACK_CAP && !images.some((r) => r.role === "identity" || r.file === row.imageFile)) throw new Error(`A reference pack holds at most ${REFERENCE_PACK_CAP} images including identity`);
+              for (const image of images) {
+                const file = path.join(assetsDir(slug), image.file);
+                await stat(file);
+                const gate = await referenceSafe(file);
+                if (!gate.safe) throw new Error("Crop one panel from this contact sheet before using it as a reference");
+              }
+              if (JSON.stringify(row.referenceImages || []) !== JSON.stringify(images)) {
+                row.referenceImages = images;
+                const identity = images.find((r) => r.role === "identity");
+                if (identity) row.imageFile = identity.file;
+                for (const board of d.boards || []) {
+                  if ([...(board.characterRefs || []), ...(board.backgroundRefs || []), ...(board.propRefs || [])].includes(row.name)) {
+                    markBoardRefsChanged(board);
+                    markStale(d.clips?.find((c) => c.segmentId === board.segmentId), "board");
+                  }
+                }
+              }
+              changed.push("reference images");
+            }
 
             if (typeof b.name === "string" && b.name.trim() && b.name.trim() !== row.name) {
               const next = b.name.trim();
@@ -1987,7 +2059,7 @@ export function createMvRoutes(deps) {
               moved = cascadeRename(d, row, next);
               changed.push(`renamed to "${next}"`);
             }
-            if (!changed.length) throw new Error("Nothing to change — send name, description, prompt or role.");
+            if (!changed.length) throw new Error("Nothing to change — send name, description, prompt, role or referenceImages.");
 
             /* PROVENANCE CARRIES BOTH NAMES. A run line saying "prop edited"
              * over a row that now has a different name is unreadable a week

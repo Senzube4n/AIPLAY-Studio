@@ -461,7 +461,8 @@ export function videoLabTools(api) {
         if (a.id !== undefined) {
           if (a.value === undefined) throw new Error(`Pass a value for "${a.id}". Call video_settings with no arguments to see its kind and range.`);
           const r = await lab({ action: "set_knob", id: a.id, value: a.value, engine: a.engine });
-          return { id: r.id, value: r.value, commit: r.state.commit?.note };
+          return { id: r.id, value: r.value, commit: r.state.commit?.note,
+            ...(r.buildStatus ? { buildStatus: r.buildStatus } : {}) };
         }
         const s = await lab({ action: "state", engine: a.engine });
         return {
@@ -474,6 +475,7 @@ export function videoLabTools(api) {
             unset_at: k.unsetAt,
             effect: k.effect,
             measured_in: k.cite,
+            ...(k.buildStatus ? { buildStatus: k.buildStatus } : {}),
           })),
         };
       },

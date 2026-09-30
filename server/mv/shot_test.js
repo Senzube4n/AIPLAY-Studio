@@ -461,8 +461,10 @@ ok("the staleness sweep no longer keeps a hand-written mirror of the resolution"
  * runs inside one. Zero imports is the structural fact: a module that pulls in
  * nothing cannot read a disk, cannot write a document, and can therefore be
  * called for free before a render — which is the whole premise of `mv_shot`. */
-ok("the resolver is pure: it imports nothing at all",
-  !/^\s*import\s/m.test(SHOT),
+// Sharing pack validation does not give the resolver an I/O dependency.
+ok("the resolver imports only its pure reference-pack helper",
+  (SHOT.match(/^\s*import\s/gm) || []).length === 1 && /from "\.\/references\.js"/.test(SHOT)
+    && !/^\s*import\s/m.test(src("references.js")),
   (SHOT.match(/^\s*import\s.*$/gm) || []).join(" / "));
 ok("...and no stray control byte crept into the source",
   // eslint-disable-next-line no-control-regex

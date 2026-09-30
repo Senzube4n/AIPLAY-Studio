@@ -216,6 +216,21 @@ function showControl(id) {
   el.focus?.();
 }
 
+/** The server resolves each path; a saved request alone does not mean it runs. */
+function modelBuildBadge(status) {
+  if (!status) return "";
+  const paths = [status.fl2va, status.ref2va].filter(Boolean);
+  const selected = paths.filter((choice) => choice.selected).length;
+  const requested = String(status.requestedBuild || "auto");
+  const label = requested === "auto" ? "Default build"
+    : `${requested.toUpperCase()} ${selected === paths.length && paths.length ? "ready" : selected ? "partial" : "fallback"}`;
+  const tip = [["fl2va", status.fl2va], ["ref2va", status.ref2va]]
+    .filter(([, choice]) => choice)
+    .map(([role, choice]) => `${role}: ${choice.file}${choice.fallback ? ` · ${choice.fallback}` : ""}`)
+    .join("\n");
+  return `<span class="vlab-badge" title="${esc(tip)}">${esc(label)}</span>`;
+}
+
 function paintKnobs() {
   const box = $("vlabKnobs");
   if (!box || !LAB) return;
@@ -247,7 +262,7 @@ function paintKnobs() {
       ? `<span class="vlab-badge">unset — today's behaviour</span>` : "";
     return `<div class="vlab-knob">
       <div class="vlab-knob-head">
-        <label>${esc(k.label)}</label>${control}${unset}
+        <label>${esc(k.label)}</label>${control}${unset}${modelBuildBadge(k.buildStatus)}
       </div>
       <p class="vlab-knob-why">${esc(k.effect)}</p>
       <p class="vlab-cite">From <code>${esc(k.cite)}</code> · writes <code>${esc(k.path)}</code></p>

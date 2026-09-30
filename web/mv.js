@@ -15,6 +15,7 @@
 import { mountBoard, mvBoardModel, abBoardModel } from "./mvboard.js";
 import { appConfirm, appPrompt } from "./dialog.js";
 import { runWords } from "./runwords.js";
+import { mountPicDrop } from "./picdrop.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -188,9 +189,9 @@ async function readBack(body, { kind, id }) {
   return d;
 }
 
-const postUpdateAsset = ({ kind, id, name, description, prompt, role, cascade }) =>
+const postUpdateAsset = ({ kind, id, name, description, prompt, role, referenceImages, cascade }) =>
   api({ action: "update_asset", slug: wf.slug, kind, id,
-        name, description, prompt, role, cascade });
+        name, description, prompt, role, referenceImages, cascade });
 
 const postAddAsset = ({ kind, name, description, prompt, role }) =>
   api({ action: "add_asset", slug: wf.slug, kind,
@@ -204,10 +205,10 @@ const postAddAsset = ({ kind, name, description, prompt, role }) =>
  * Read back on the NAME, because this row is created rather than found: a build
  * that still reads `target` would file the picture under characters and answer
  * ok, which is the silent wrong row. */
-const postImportAsset = ({ kind, path, name, description, role }) =>
+const postImportAsset = ({ kind, path, name, description, role, id, referenceRole }) =>
   readBack({ action: "import_asset", slug: wf.slug, kind,
-             path, name, description, role },
-           { kind, id: name || null });
+             path, name, description, role, id, referenceRole },
+           { kind, id: id || name || null });
 
 /* `refs` is the single-panel switch. It is forwarded by the route and read by
  * generateAsset, where it decides whether the cast sheets are attached to the
@@ -356,7 +357,10 @@ function paintRail() {
   }).join("");
 }
 
+let packDrops = [];
 function paint() {
+  for (const drop of packDrops) drop.destroy();
+  packDrops = [];
   /* The poll holds a handle to a card that is about to be replaced. Clearing it
    * here and re-establishing it in wire() means the interval can never outlive
    * the node it repaints. */
@@ -1491,6 +1495,27 @@ function renderBible() {
  * set_board reject a reference that is not a declared character or background,
  * and a rejection after the fact is a worse way to learn the rule than not
  * being able to break it. */
+const MV_REF_ROLES = ["identity", "body", "side", "outfit", "style", "detail"];
+function referencePack(row) {
+  const images = [...(row.referenceImages || [])];
+  if (row.imageFile && !images.some((x) => x.role === "identity" || x.file === row.imageFile)) images.unshift({ file: row.imageFile, role: "identity" });
+  return images;
+}
+function rolePicks(row, prefix, selection) {
+  const pack = referencePack(row);
+  if (pack.length < 2) return "";
+  const selected = selection || [pack.find((x) => x.role === "identity")?.role || pack[0]?.role];
+  return `<div class="framepick" title="Choose the views this scene uses. Images share this asset's name and prominence.">${pack.map((x) =>
+    `<label class="tog"><input type="checkbox" data-${prefix}role="${esc(x.role)}" data-${prefix}role-name="${esc(row.name)}"${selected.includes(x.role) ? " checked" : ""}>${esc(x.role)}</label>`).join("")}</div>`;
+}
+function selectedRoles(prefix, names) {
+  const roles = Object.create(null);
+  for (const el of document.querySelectorAll(`[data-${prefix}role]`)) {
+    const name = el.getAttribute(`data-${prefix}role-name`);
+    if (el.checked && names.includes(name)) (roles[name] = roles[name] || []).push(el.getAttribute(`data-${prefix}role`));
+  }
+  return roles;
+}
 const SHOT_TYPES = ["wide", "medium", "close", "extreme close", "over-the-shoulder", "insert", "establishing"];
 
 function boardShotRow(sh, i) {
@@ -1598,7 +1623,7 @@ async function openBoardEditor(segmentId) {
     return `<label class="refpick"><input type="checkbox" data-ref="${kind}|${esc(x.name)}"${on ? " checked" : ""}>
       <span>${esc(x.name)}</span>
       <input class="line sm num" type="number" min="0" max="1" step="0.05" style="width:56px"
-        data-prom="${esc(x.name)}" value="${board.refProminence?.[x.name] ?? 0.5}"></label>`;
+        data-prom="${esc(x.name)}" value="${board.refProminence?.[x.name] ?? 0.5}"></label>${rolePicks(x, "b", board.refRoles?.[x.name])}`;
   };
 
   const paintEditor = () => {
@@ -2053,7 +2078,8 @@ async function openBoardEditor(segmentId) {
         await busy(() => api({
           action: "set_board", slug: wf.slug, segmentId,
           board: { boardPrompt: $("bePrompt").value.trim(), grade: $("beGrade").value.trim(),
-                   shots, characterRefs, backgroundRefs, propRefs, refProminence },
+                   shots, characterRefs, backgroundRefs, propRefs, refProminence,
+                   refRoles: selectedRoles("b", [...characterRefs, ...backgroundRefs, ...propRefs]) },
         }));
       } catch (err) { alert(err.message); await loadProject(); }
     };
@@ -2322,7 +2348,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
       ? sh.refs.map((x, i) => `<div class="shotref">
           <span class="shotpic">&lt;Picture ${i + 1}&gt;</span>
           <img src="${assetSrc(x.file)}" alt="">
-          <span class="shotrefn">${esc(x.name)}</span>
+          <span class="shotrefn">${esc(x.name)}${x.role && x.role !== "identity" ? ` · ${esc(x.role)}` : ""}</span>
           <span class="dim">${esc(x.kind || "?")} · ${esc(x.file)}</span></div>`).join("")
       : `<p class="hint dim">No reference pictures — this shot is text only, so the model
            invents its people and places fresh on every render.</p>`;
@@ -2392,7 +2418,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         <input type="checkbox" data-sref="${esc(x.name)}"${on ? " checked" : ""}>
         <span>${esc(x.name)}${x.file ? "" : " ⚠"}</span>
         <input class="line sm num" type="number" min="0" max="1" step="0.05" style="width:56px"
-          data-sprom="${esc(x.name)}" value="${prom ?? 0.5}"></label>`;
+          data-sprom="${esc(x.name)}" value="${prom ?? 0.5}"></label>${rolePicks({ ...x, imageFile: x.file }, "s", sh.refRoles?.[x.name])}`;
     };
 
     const takeStrip = sh.takes.length ? `<div class="shottakes">${sh.takes.map((t) => `
@@ -2533,12 +2559,12 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
      * gate's parameter census reads the literal, so a body assembled behind a
      * spread would report this panel as sending nothing but a slug. A knob it
      * cannot see is a knob it will not defend. */
-    const save = async ({ prompt, refs, prominence }) => {
+    const save = async ({ prompt, refs, prominence, refRoles }) => {
       const el = $("wfBody");
       el.classList.add("wfbusy");
       try {
         const r2 = await api({ action: "set_shot", slug: wf.slug, segmentId,
-                               prompt, refs, prominence });
+                               prompt, refs, prominence, refRoles });
         replace(r2.shot); paint();
       } catch (err) { alert(explain(err)); }
       finally { el.classList.remove("wfbusy"); }
@@ -2554,7 +2580,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         const pv = document.querySelector(`[data-sprom="${CSS.escape(cb.dataset.sref)}"]`);
         prominence[cb.dataset.sref] = Number(pv?.value ?? 0.5);
       }
-      return save({ refs, prominence });
+      return save({ refs, prominence, refRoles: selectedRoles("s", refs) });
     };
 
     $("shRender").onclick = async () => {
@@ -2643,7 +2669,7 @@ function assetUsage(kind, row) {
    * board looks right, the render receives nothing for it, and nothing anywhere
    * says so. It is the loudest thing on the card because it is the most
    * expensive thing to discover after the GPU has been spent. */
-  if (!row.imageFile) {
+  if (!referencePack(row).length) {
     return `<p class="usage bad"><b>Used in ${esc(list)} — with no sheet.</b>
       Those renders get nothing for it and re-invent it from the words each time.
       Render it before the clips.</p>`;
@@ -2683,7 +2709,7 @@ function renderAssets(kind) {
         ? `<span class="dim">imported takes have no seed</span>` : ""}
     </div>`;
     return `<div class="wcard">
-      <div class="wthumb">${r.imageFile ? `<img src="${assetSrc(r.imageFile)}" alt="">`
+      <div class="wthumb">${referencePack(r).length ? `<img src="${assetSrc(r.imageFile || referencePack(r)[0].file)}" alt="">`
         : `<span class="bkind">${target[0].toUpperCase()}</span>`}</div>
       <div class="wrow">
         ${/* ⚠ THE NAME IS AN INPUT, NOT A LABEL, and that is the whole rename
@@ -2739,11 +2765,20 @@ function renderAssets(kind) {
       <div data-meshhost="${esc(kind)}|${esc(r.id)}"></div>
       ${seedRow}
       ${strip}
+      <details class="more"><summary title="Up to six single images under this name. Choose each image's role, then choose the roles per scene.">Reference pack</summary>
+        <div class="refpicks">${[...new Set([...takes.map((t) => t.file), ...referencePack(r).map((x) => x.file)])].map((file) => {
+          const role = (r.referenceImages || []).find((x) => x.file === file)?.role || "";
+          return `<label class="refpick"><img src="${assetSrc(file)}" alt="" width="36" height="36"><select class="sel2 sm" data-packrole="${esc(kind)}|${esc(r.id)}" data-packfile="${esc(file)}" title="Role in this asset's reference pack. An unassigned adopted image supplies identity."><option value="">${file === r.imageFile ? "identity (default)" : "unused"}</option>${MV_REF_ROLES.map((v) => `<option value="${v}"${role === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>`;
+        }).join("")}</div>
+        <button class="edtool sm" data-packsave="${esc(kind)}|${esc(r.id)}">Save pack</button>
+        <div class="framepick"><label>new image <select class="sel2 sm" data-packnewrole="${esc(kind)}|${esc(r.id)}" title="Role of the next picture you add.">${MV_REF_ROLES.map((v) => `<option>${v}</option>`).join("")}</select></label></div>
+        <div data-packdrop="${esc(kind)}|${esc(r.id)}"></div>
+      </details>
     </div>`;
   }).join("");
   const HEAD = { characters: "Characters", backgrounds: "Backgrounds", props: "Props" };
   const HINT = {
-    characters: "The people the video reuses. A ticked character with a picture keeps its identity in H3 clips, because the clip engine takes it as a named reference. Kept best (Hex Appeal; REWIND A/B, 2026-09-24): 1–3 tight crops of one view each on a near-black card, one row per view (Name, Name body, Name side); Import brings in your own crop. The description is editable in place and saves when you click away.",
+    characters: "Keep single views in a named reference pack, then choose the views each scene uses.",
     backgrounds: "The places the video returns to. Descriptions save when you click away.",
     /* PROPS ARE CAST, and until now this page never said so — props could be
      * declared in the bible and ticked on a board, and there was no card, no
@@ -4211,6 +4246,36 @@ function planItemFor(spec) {
 /* ─────────────────────────────────────────────────────── wiring */
 
 function wire(view) {
+  for (const btn of document.querySelectorAll("[data-packsave]")) btn.onclick = () => {
+    const [kind, id] = btn.dataset.packsave.split("|");
+    const referenceImages = [...document.querySelectorAll(`[data-packrole="${CSS.escape(btn.dataset.packsave)}"]`)]
+      .filter((el) => el.value).map((el) => ({ file: el.dataset.packfile, role: el.value }));
+    return busy(() => postUpdateAsset({ kind, id, referenceImages }));
+  };
+  for (const host of document.querySelectorAll("[data-packdrop]")) {
+    const key = host.dataset.packdrop;
+    const [kind, id] = key.split("|");
+    let candidates = [];
+    const add = (path) => busy(() => postImportAsset({ kind, id, path,
+      referenceRole: document.querySelector(`[data-packnewrole="${CSS.escape(key)}"]`)?.value || "identity" }));
+    packDrops.push(mountPicDrop(host, {
+      zone: "Drop a reference picture", multiple: false,
+      candidates: () => candidates,
+      beforeMenu: async () => {
+        const r = await (await fetch("/api/images")).json();
+        candidates = (r.images || []).filter((x) => /\.(png|jpe?g|webp)$/i.test(x.name))
+          .map((x) => ({ name: x.name, url: `/api/image/${encodeURIComponent(x.name)}`, label: x.name, group: "Pictures" }));
+      },
+      onPick: (x) => add(`image:${x.name}`),
+      onFiles: async (files) => {
+        try {
+          const r = await (await fetch("/api/frame", { method: "POST", body: files[0] })).json();
+          if (r.error) throw new Error(r.error);
+          await add(`frame:${r.name}`);
+        } catch (err) { alert(explain(err)); }
+      },
+    }));
+  }
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   /** A number box that has been typed in, or `undefined` — see the Segment
    *  wiring below for why the difference matters. */

@@ -58,6 +58,7 @@ import * as prov from "./provenance.js";
  * `const engine = job.engine || …` two lines above won. Caught by
  * art_cache_test.js on the first run, which is exactly what that test is for. */
 import { engine as engineDoor } from "./engine/client.js";
+import { runRefMod } from "./refmod-run.js";
 /* The minors rule, asked at the queue's door as well as the engine's: a
  * refusal here costs nothing and says so at once, before a job waits behind
  * music for the GPU. server/safety/minors.js is the rule. */
@@ -943,8 +944,18 @@ export class ArtRunner extends EventEmitter {
    * below is the explicit version. */
   drop(file) {
     const before = this.queue.length;
+    const refmods = this.queue.filter((j) => j.file === file && j.kind === "refmod");
     this.queue = this.queue.filter((j) => j.file !== file);
     const removed = before - this.queue.length;
+    /* A cache's filename is reserved until a terminal event. Dropping its
+     * waiting job must release that reservation just like queued Stop does. */
+    for (const j of refmods) {
+      j.cancelled = true;
+      j.error = STOPPED_ERROR;
+      try { this.emit("failed", { file: j.file, kind: j.kind, owner: j.owner || null,
+        error: STOPPED_ERROR, runId: null, cancelled: true }); }
+      catch { /* a listener's fault must not prevent the remaining drops */ }
+    }
     if (removed) this.emit("update");
     return { removed, running: this.current?.file === file };
   }
@@ -970,6 +981,16 @@ export class ArtRunner extends EventEmitter {
       if (ownProgram(job)) {
         const r = await this.#stopChild(job);
         return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: r.killed, stopping: r.stopping };
+      }
+      // A RefMod timeout has left the door's live ledger, but its writer can
+      // still be running. Stop that exact prompt, never an unrelated render.
+      if (job.kind === "refmod" && job.refModPromptId) {
+        const stop = await engineDoor.cancelRun({ runId: job.runId, promptId: job.refModPromptId }).catch(() => ({ stopped: false }));
+        if (stop.stopped === true && this.current === job) {
+          job.cancelled = true; job.stopping = true; this.emit("update");
+        }
+        return { stopped: job.title || null, kind: job.kind, queued: this.queue.length,
+          killed: false, stopping: this.current === job && !!job.stopping };
       }
       /* AN ENGINE RENDER: cancelled BY RUN ID, and only a run of this queue's
        * own (its `via` starts with "art."; the queue renders one job at a time,
@@ -1046,7 +1067,10 @@ export class ArtRunner extends EventEmitter {
        * waiter gave up) is still ours, so this is asked whatever is current. */
       const live = await engineDoor.status().catch(() => ({ running: [] }));
       const mine = (live?.running || []).filter((r) => String(r.via || "").startsWith("art."));
-      const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId }).catch(() => ({ stopped: false }))));
+      const targets = mine.map((r) => ({ runId: r.runId }));
+      if (job?.kind === "refmod" && job.refModPromptId && !mine.some((r) => r.runId === job.runId))
+        targets.push({ runId: job.runId, promptId: job.refModPromptId });
+      const stops = await Promise.all(targets.map((target) => engineDoor.cancelRun(target).catch(() => ({ stopped: false }))));
       out.engineCancelled = stops.filter((s) => s?.stopped === true).length;
       out.interrupted = out.engineCancelled > 0;
       if (out.interrupted && job && !ownProgram(job) && this.current === job) {
@@ -1369,6 +1393,7 @@ export class ArtRunner extends EventEmitter {
       // audioRef in jobs.js and the video stage in batch.js — the caller already
       // validated this object, and adding a knob should not need three edits.
       ...(video || {}),
+      ...(kind === "video" ? { h3ModelBuild: video?.collabVideoBase ? "auto" : video?.h3ModelBuild ?? config.video.h3ModelBuild } : {}),
       /* A transcription's own spec (server/whisper.js validated and resolved
        * it): kept whole on its own key rather than spread, so none of its
        * fields can land on a name a render reads. */
@@ -1505,6 +1530,17 @@ export class ArtRunner extends EventEmitter {
           job.stems = stems;
           this.done.unshift(job);
           this.emit("stems", { file: job.file, stems });
+        } else if (job.kind === "refmod") {
+          const done = await runRefMod(engineDoor, { graph: job.refModGraph, actor: job.actor, via: "art.refmod",
+            private: job.private === true, adopt: false, label: job.title, clientId: this.clientId,
+            timeoutMs: 15 * 60 * 1000, pollMs: 1000 }, { onAwaiting: (result) => {
+              job.runId = result.runId; job.refModPromptId = result.promptId;
+            } });
+          job.runId = done.runId;
+          if (done.status !== "completed") throw new Error(done.error || "RefMod creation did not complete.");
+          job.refModResult = { name: job.refModName, runId: done.runId, status: done.status };
+          this.done.unshift(job);
+          this.emit("refmod-ready", { file: job.file, name: job.refModName, ...job.refModResult });
         } else if (job.kind === "video") {
           let clip = await this.#clip(job);
           if (clip && job.continueFrom && job.extendedFrom) clip = await joinContinuation(job, clip);
@@ -1555,6 +1591,10 @@ export class ArtRunner extends EventEmitter {
               // liked clip can be re-rolled with the same references.
               refImages: job.refImages?.length ? job.refImages : null,
               refAudios: job.refAudios?.length ? job.refAudios : null,
+              refMods: job.refMods?.length ? job.refMods : null,
+              refModOptions: job.refMods?.length ? job.refModOptions : null,
+              h3Tweaks: job.h3Tweaks || null,
+              h3Checkpoint: job.h3Checkpoint || null,
               audioTrack: job.audioTrack || null,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
@@ -2272,6 +2312,8 @@ export class ArtRunner extends EventEmitter {
     /* The receiver accepted a signed built-in graph. A custom workflow chosen
      * while this job waits behind music cannot replace its model contract. */
     const customVideo = job.collabVideoBase ? null : assignedTo("video");
+    if (customVideo && (job.refMods?.length || job.h3Tweaks))
+      throw new Error("Reference caches and Fizgig tweaks require the built-in H3 workflow. Unassign the custom Video workflow first.");
     if (customVideo) {
       try {
         graph = await buildCustom(customVideo, {
@@ -2302,6 +2344,7 @@ export class ArtRunner extends EventEmitter {
       /* Model files the person named instead of the engine’s own
        * (server/modelpick.js). Undefined leaves every part as it was. */
       models: job.models,
+      h3ModelBuild: job.h3ModelBuild,
       // The person's own LoRAs from the Video screen, on both engines.
       loras: job.loras,
       // Waypoints. Without this line the route stages the pictures, the job
@@ -2310,6 +2353,9 @@ export class ArtRunner extends EventEmitter {
       // References (<Picture n> / <Audio n> in the prompt) — H3's ref2va path.
       refImages: job.refImages,
       refAudios: job.refAudios,
+      refMods: job.refMods,
+      refModOptions: job.refModOptions,
+      h3Tweaks: job.h3Tweaks,
       /* Video-to-video: the whole clip drives the render frame by frame. Named
        * here for the reason the warning above gives — an option this call does
        * not list is dropped without a word, and a control video that silently
@@ -2347,6 +2393,10 @@ export class ArtRunner extends EventEmitter {
      * decides what the clip looks like is in here, which is why this is a safe
      * key for the render index above — and why it is the same thing ComfyUI's
      * own cache is keyed on. */
+    if (graph.h3CheckpointChoice) {
+      const { requestedBuild, ranBuild, file, reference, fallback } = graph.h3CheckpointChoice;
+      job.h3Checkpoint = { requestedBuild, ranBuild, file, reference, fallback };
+    }
     const key = graphHash(graph);
     /* Which sparse attention the graph really carries (node 81), for the
      * clip's metadata: sol-attn on H3's Fast setting, vsa on FastH3. */

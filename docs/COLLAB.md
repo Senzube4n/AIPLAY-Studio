@@ -91,6 +91,18 @@ The manual lending routes can prepare, accept, render and return a scene. A real
 two-PC render round-trip still needs acceptance testing; CPU route tests do not
 prove that a friend's installed engine completes the job.
 
+**Named reference packs travel through the scene-order path.** The selected
+views keep the sender's Picture order and frozen prompt; the receiver groups
+them by their original asset name and restores the scene's chosen roles. Image
+refs add `assetName` and `referenceRole` beside the version 1 fields, with unique
+view labels and canonical attachment order for older receivers. Disk names use
+the image digest and an optional role from a fixed local enum. Each reference
+Picture slot needs a separate source filename; an order that reuses one is
+refused before staging. Copy a shared image to separate files before lending the
+scene. Equal bytes under distinct filenames remain supported. Whole-project manifests also find pack-only
+files through the existing recursive document walk; this does not add a
+whole-project importer or picture bytes to those metadata bundles.
+
 **Episode planning and order history are built.** Local plans support scene
 owners, stages, dependencies, review notes and allocation across peers. The
 planner reads outgoing order records by project and scene, displays every

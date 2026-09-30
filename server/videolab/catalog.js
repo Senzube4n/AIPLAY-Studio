@@ -37,6 +37,7 @@ import { h3SigmaShiftFor, shiftSigmas, videoEngine, videoSizeFor } from "../work
  * retyping them cost. server/welcome/catalogue.js already reads from here, and
  * this file disagreeing with that one is the failure both are guarding. */
 import { CATALOG, MODEL_TO_CAPABILITY } from "../models.js";
+import { probeH3W6a8, resolveH3Checkpoint } from "../h3-w6a8.js";
 
 /* Where the measurements live, so a citation is one constant rather than a
  * string typed out nine times and mistyped on the tenth. */
@@ -48,6 +49,7 @@ export const DOCS = {
   shot: "server/mv/shot.js",
   graph: "server/workflow.js",
   stills: "scripts/clipstills.py",
+  optionalModels: "docs/OPTIONAL_H3_YUE2_MODELS.md",
 };
 
 /**
@@ -414,6 +416,12 @@ export function sizesFor(engineKey) {
 const TURBO_STEPS_SHIPPED = config.video.engines.h3?.turboMaxSteps;
 
 export const KNOBS = [
+  {
+    id: "h3_model_build", label: "H3 build (experimental)", applies: "h3",
+    kind: "enum", options: ["auto", "w6a8"], path: ["video", "h3ModelBuild"],
+    effect: "Optional NVIDIA W6A8, 15.98 GB per transformer; speed and quality unmeasured, with the existing build used when unavailable.",
+    cite: DOCS.optionalModels,
+  },
   /* ── the 4-step LoRA, which is not a checkbox and has to be honest about it ── */
   {
     id: "turbo_lora",
@@ -887,7 +895,19 @@ export function knobRows(engineKey) {
        * that has one is a row that touches a field the render does not read,
        * and both hands should be able to see that rather than infer it. */
       remembers: k.remembers ? k.remembers.join(".") : null,
+      ...(k.id === "h3_model_build" ? { buildStatus: h3ModelBuildStatus() } : {}),
     }));
+}
+
+/** Compatibility and both path fallbacks beside the requested, persisted value.
+ * This reports the configured engine source; it is not a GPU benchmark. */
+export function h3ModelBuildStatus() {
+  const runtime = probeH3W6a8(config), h3 = config.video.engines.h3;
+  const modelBuild = config.video.h3ModelBuild ?? "auto";
+  return { requestedBuild: modelBuild, compatibility: runtime,
+    fl2va: resolveH3Checkpoint({ modelBuild, current: h3.dit, runtime }),
+    ref2va: resolveH3Checkpoint({ modelBuild, current: h3.ditRef ?? h3.dit, reference: true, runtime }),
+  };
 }
 
 /**
@@ -960,7 +980,7 @@ export function setKnob(id, value) {
    * — parking that would mean "on" restores nothing — and which value that is
    * belongs to the switch, so it is read off the switch rather than typed here. */
   if (knob.remembers && v !== offValueOf(knob.remembers)) write(knob.remembers, v);
-  return { id, value: knobValue(knob) };
+  return { id, value: knobValue(knob), ...(id === "h3_model_build" ? { buildStatus: h3ModelBuildStatus() } : {}) };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

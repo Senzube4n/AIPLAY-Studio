@@ -387,6 +387,10 @@ node server/mv/blockout_test.js || exit 1
 # per-take evidence — including that a take from before this feature admits it
 # has none rather than borrowing the row's current prompt.
 node server/mv/shot_test.js || exit 1
+# Named reference packs: role selection, persisted edits, Picture order,
+# per-role drift, typed MCP parity and picture-drop teardown. Temp data, no GPU.
+node --check server/mv/references.js || exit 1
+node --test server/mv/references_test.js || exit 1
 # THE MUSIC VIDEO FOLLOWS THE CARD: one size list read from server/h3tier.js
 # (renderSize, the collab packet and order, set_brief, the MCP enum and the
 # brief all read it), only the two shapes that render, a new video starting at
@@ -1427,4 +1431,18 @@ node --test server/music/artifacts_test.js server/music/artifacts-ui_test.js ser
 # Native artifact dataclasses only: no model loading or GPU work in this test.
 REPLAY_PY="${AIPLAY_YUE_PYTHON:-${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv-yue/Scripts/python.exe}"
 if [ -x "$REPLAY_PY" ] && "$REPLAY_PY" -c "import importlib.metadata,numpy; importlib.metadata.version('yue2-infer')" >/dev/null 2>&1; then "$REPLAY_PY" server/music/yue_replay_test.py || exit 1; fi
+# Optional H3 build fallback, fused YuE2 styles and explicit adapter selection.
+node --check server/h3-w6a8.js || exit 1
+node --check server/music/yue2-style-adapters.js || exit 1
+node --check web/yue2-style-adapters.js || exit 1
+node --test server/h3-w6a8_test.js server/music/yue2-style-adapters_test.js server/music/yue2-style-adapters-ui_test.js || exit 1
+# H3 optional reference mods: strict graph options and staged local artifacts.
+node --check server/h3-refmod-options.js || exit 1
+node --check server/h3-refmod.js || exit 1
+node --check server/mcp-h3-refmods.js || exit 1
+node --check server/refmod-stage.js || exit 1
+node --check server/refmod-run.js || exit 1
+node --check web/h3-refmods.js || exit 1
+node --test server/h3-refmod_test.js server/refmod-stage_test.js server/refmod-art_test.js || exit 1
+node --test server/collab/reference-packs_test.js || exit 1
 exit 0

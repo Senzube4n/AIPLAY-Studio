@@ -31,7 +31,9 @@ can never be handed by a test author is letterform geometry.
 """
 import math
 import os
+import statistics
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -821,6 +823,33 @@ eq("...and one call with both is not the same as two calls, which resample twice
    np.array_equal(P.liquify(src, [s1, s2]), P.liquify(P.liquify(src, [s1]), [s2])),
    False)
 
+# Count actual IMAGE samples, not the two-channel field-composition samples.
+# The deliberately separate calls prove this counter notices the regression
+# the timing ratio is intended to catch, without depending on CPU scheduling.
+image_samples = []
+original_remap = P.cv2.remap
+
+
+def counted_remap(image, *args, **kwargs):
+    if image.ndim == 3 and image.shape[2] == 4:
+        image_samples.append(image.shape)
+    return original_remap(image, *args, **kwargs)
+
+
+P.cv2.remap = counted_remap
+try:
+    P.liquify(src, [s1, s2] * 4)
+    eq("eight strokes in one call resample the image exactly once",
+       len(image_samples), 1)
+    image_samples.clear()
+    separately = src
+    for stroke in [s1, s2] * 4:
+        separately = P.liquify(separately, [stroke])
+    eq("the resample counter detects eight separate image samples",
+       len(image_samples), 8)
+finally:
+    P.cv2.remap = original_remap
+
 
 bicubic = P.liquify(src, wide)
 bilinear = P.liquify(src, {"strokes": wide, "interpolation": "bilinear"})
@@ -1249,16 +1278,53 @@ else:
 print("\n  -- cost at 2048 square --")
 
 TIMES = P._bench(2048)
+
+
+def paired_liquify_times(size=2048, rounds=3):
+    """Use the CLI benchmark's geometry, with adjacent, alternating pairs.
+
+    The CLI warms once and times once; its one-stroke and eight-stroke samples
+    are separated by every other liquify tool. A scheduling pause in only one
+    sample can reverse the ratio. Keep the same four-times limit and absolute
+    budgets, but measure the median of three pairs after warming both paths.
+    """
+    rng = np.random.default_rng(7)
+    image = rng.random((size, size, 4), dtype=np.float32) * 0.5 + 0.25
+    image[..., 3] = 1.0
+    n = 400
+    path = [[200.0 + i / (n - 1.0) * (size - 400.0),
+             size * 0.5 + math.sin(i / (n - 1.0) * 6.0) * size * 0.2, 1.0]
+            for i in range(n)]
+    stroke = {"tool": "push", "points": path, "size": 200, "amount": 0.6}
+    for count in (1, 8):
+        P.liquify(image, [stroke] * count)
+    pairs = []
+    for round_index in range(rounds):
+        costs = {}
+        for count in ((1, 8) if round_index % 2 == 0 else (8, 1)):
+            started = time.perf_counter()
+            P.liquify(image, [stroke] * count)
+            costs[count] = (time.perf_counter() - started) * 1000.0
+        pairs.append(costs)
+    return pairs
+
+
+PAIRS = paired_liquify_times()
+TIMES["liquify push"] = statistics.median(pair[1] for pair in PAIRS)
+TIMES["liquify push x8"] = statistics.median(pair[8] for pair in PAIRS)
+PUSH_RATIO = statistics.median(pair[8] / pair[1] for pair in PAIRS)
+print("        paired push timings (one / x8 ms): "
+      + ", ".join(f"{pair[1]:.1f} / {pair[8]:.1f}" for pair in PAIRS))
 for k, v in TIMES.items():
     print(f"        {k:<26} {v:8.1f} ms")
 print(f"        {'-> 8 strokes cost':<26} "
-      f"{TIMES['liquify push x8'] / TIMES['liquify push']:8.2f} x one, "
+      f"{PUSH_RATIO:8.2f} x one (median paired ratio), "
       f"because they share ONE resample")
 eq("a 2048-square fill is under a second", TIMES["fill"] < 1000, True)
 eq("a 2048-square path -> mask is under 200 ms", TIMES["path -> mask"] < 200, True)
 eq("a 2048-square liquify stroke is under a second", TIMES["liquify push"] < 1000, True)
 eq("eight strokes cost well under eight times one",
-   TIMES["liquify push x8"] < 4 * TIMES["liquify push"], True)
+   PUSH_RATIO < 4, True)
 
 
 if NOTES:

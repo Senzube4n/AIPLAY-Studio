@@ -61,6 +61,8 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { config, isLightH3 } from "./config.js";
 import { folderGroup } from "./localmodels.js";
+import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
+import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
  * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
 import {
@@ -3052,6 +3054,34 @@ export const CATALOG = [
   },
 ];
 
+/* Optional downloads stay separate from each engine's ordinary install. The
+ * files have no alternates: another checkpoint is not the selected experiment. */
+CATALOG.push(...H3_W6A8_FILES.map((build) => ({
+  id: build.id, addonFor: build.addonFor,
+  label: `MiniMax H3 ${build.role} W6A8 (experimental)`,
+  why: "An optional official six-bit transformer to compare with the existing H3 build.",
+  licence: "MiniMax H3 Community Licence",
+  get outputRights() { return CATALOG.find((cap) => cap.id === "video")?.outputRights; },
+  get region() { return CATALOG.find((cap) => cap.id === "video")?.region; },
+  required: false, compatibilityKind: "h3-w6a8", experimental: true,
+  files: [{ url: build.url, dest: M(`diffusion_models/${build.file}`), bytes: build.bytes, sha256: build.sha256 }],
+  note: H3_W6A8_CAVEAT + " Downloading this file does not select it. The text encoder and audio/video decoders come from the ordinary H3 install.",
+  requires: { nvidiaOnly: true, experimental: true,
+    experimentalWhy: "Experimental W6A8 build: a minimum hardware floor has not been established; render speed, quality and memory requirements have not been measured here.",
+    note: H3_W6A8_CAVEAT },
+})));
+CATALOG.push(...YUE2_STYLE_ADAPTERS.map((adapter) => ({
+  id: adapter.id, addonFor: "musicYue2Comfy", group: "music-addon",
+  label: `YuE2 style LoRA — ${adapter.label}`,
+  why: `${adapter.description} ${adapter.character}.`,
+  licence: "CC BY-NC 4.0 (adapter weights)", outputRights: adapter.outputRights,
+  required: false, styleAdapter: adapter,
+  files: [{ url: adapter.url, dest: M(`loras/${adapter.file}`), bytes: adapter.bytes, sha256: adapter.sha256 }],
+  note: `Optional fused planner and audio LoRA. Select ${adapter.file} in both YuE2 ComfyUI LoRA slots, start strengths at 1 and Thinking Full, and begin the style with ${adapter.trigger}. Native Python and GGUF do not support these files. Publisher demos use the bf16 checkpoint; int8 quality is not verified here. ${adapter.caution} Noncommercial use only; attribute ${adapter.outputRights.attribution}.`,
+  requires: { vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+    note: "Needs the YuE2 ComfyUI checkpoint. Adapter memory and quality have not been measured separately here." },
+})));
+
 /* Rows with an `amd` or `light` build answer `files` for the machine they
  * run on: status, sizes and the downloader all read the same list, so none of
  * them can offer one build and fetch the other. */
@@ -3605,6 +3635,7 @@ export class ModelManager extends EventEmitter {
   /** Catalogue with live presence, for the UI. */
   async status() {
     const out = [];
+    const w6a8 = CATALOG.some((cap) => cap.compatibilityKind === "h3-w6a8") ? probeH3W6a8(config) : null;
     for (const cap of CATALOG) {
       const files = await Promise.all(cap.files.map(async (f) => {
         /* A local file the user chose to stand in for this one (Models screen).
@@ -3638,6 +3669,8 @@ export class ModelManager extends EventEmitter {
       }));
       const totalBytes = cap.files.reduce((s, f) => s + f.bytes, 0) || cap.approxBytes || 0;
       const haveBytes = files.reduce((s, f) => s + (f.present ? f.bytes : f.have), 0);
+      const installed = cap.files.length > 0 && files.every((f) => f.present);
+      const compatibility = cap.compatibilityKind === "h3-w6a8" ? w6a8 : null;
       out.push({
         id: cap.id,
         group: cap.group || null,
@@ -3650,6 +3683,9 @@ export class ModelManager extends EventEmitter {
          * model, like Fast draft on Qwen Image 2.1). Null for every model of
          * its own. */
         addonFor: cap.addonFor || null,
+        styleAdapter: cap.styleAdapter || null,
+        experimental: !!cap.experimental,
+        compatibility,
         label: cap.label,
         why: cap.why,
         licence: cap.licence,
@@ -3698,7 +3734,8 @@ export class ModelManager extends EventEmitter {
         files,
         totalBytes,
         haveBytes,
-        ready: cap.files.length > 0 && files.every((f) => f.present),
+        installed,
+        ready: installed && (!compatibility || compatibility.ready),
         downloading: this.progress.has(cap.id),
         progress: this.progress.get(cap.id) || null,
       });
@@ -3752,6 +3789,14 @@ export class ModelManager extends EventEmitter {
       const e = new Error(cap.gated.how);
       e.gated = cap.gated;
       throw e;
+    }
+    if (cap.compatibilityKind === "h3-w6a8") {
+      const compatibility = probeH3W6a8(config);
+      if (!compatibility.downloadable) {
+        const error = new Error(compatibility.reason);
+        Object.assign(error, { compatibility, reason: "w6a8-hardware" });
+        throw error;
+      }
     }
     /* A ROW WHOSE FILE FACTS ARE STILL PLACEHOLDERS, refused here rather than
      * three gigabytes later. Without this the download runs, finishes, and dies

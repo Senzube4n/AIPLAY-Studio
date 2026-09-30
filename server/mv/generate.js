@@ -24,6 +24,7 @@ import { updateProject, readProject, assetsDir, stageAsset, noteRun } from "./st
  * — is decided there, as a pure function, so a human can look at it BEFORE
  * spending the GPU and get the same answer the renderer will act on. */
 import { resolveShot, markBoardRefsChanged, refreshBoardStale } from "./shot.js";
+import { selectedReferenceImages, assetReferenceImages, referenceLabel, namedReferences } from "./references.js";
 /* The size list and the matched step count, each from its one source. */
 import { renderSizeOf } from "./sizes.js";
 import { clipStepsFor } from "./clipsteps.js";
@@ -77,9 +78,12 @@ export function castFlags(doc, names = [], { board = null } = {}) {
   const adopted = (row) => {
     const flags = [];
     if (row?.safety && typeof row.safety === "object") flags.push(row.safety);
-    if (!row?.imageFile) return flags;
-    const take = (row.takes || []).find((t) => t?.file === row.imageFile);
-    if (take?.safety && typeof take.safety === "object") flags.push(take.safety);
+    if (!row?.imageFile && !row?.referenceImages?.length) return flags;
+    const images = row?.name ? selectedReferenceImages(row, board?.refRoles?.[row.name]) : [{ file: row.imageFile }];
+    for (const image of images) {
+      const take = (row.takes || []).find((t) => t?.file === image.file);
+      if (take?.safety && typeof take.safety === "object") flags.push(take.safety);
+    }
     return flags;
   };
   const out = [];
@@ -88,9 +92,7 @@ export function castFlags(doc, names = [], { board = null } = {}) {
   return out;
 }
 
-const boardCast = (board) => [
-  ...(board?.characterRefs || []), ...(board?.backgroundRefs || []), ...(board?.propRefs || []),
-];
+const boardCast = (board) => namedReferences(board).map((r) => r.name);
 
 const rollSeed = () => Math.floor(Math.random() * 4294967296);
 
@@ -336,9 +338,10 @@ export async function generateAsset(deps, slug, { target, id, count = 4, seed, r
       const prop = (doc.props || []).find((x) => x.name === n);
       const bg = doc.backgrounds.find((g) => g.name === n);
       const src = doc.characters.find((c) => c.name === n) || bg || prop;
-      if (src?.imageFile) {
-        refImages.push(await stageForComfy(slug, src.imageFile));
-        refNames.push(src.name);
+      for (const image of selectedReferenceImages(src, row.refRoles?.[n])) {
+        if (refImages.length >= 10) break;
+        refImages.push(await stageForComfy(slug, image.file));
+        refNames.push(referenceLabel(src.name, image.role));
         refIsProp.push(Boolean(prop));
         refIsBg.push(Boolean(bg));
       }
@@ -534,7 +537,7 @@ export async function generateAsset(deps, slug, { target, id, count = 4, seed, r
       width: wide ? 1344 : 768, height: wide ? 768 : 1344,
       refImages,
       safetyContext: castContext(doc, target === "board" ? boardCast(row) : [row.name]),
-      safetyFlags: castFlags(doc, target === "board" ? boardCast(row) : []),
+      safetyFlags: castFlags(doc, target === "board" ? boardCast(row) : [], { board: target === "board" ? row : null }),
     },
   });
   /* HOW LONG IT TOOK, kept on the take.
@@ -761,6 +764,12 @@ export async function pickTake(slug, { target, id, file }) {
     }
     if (!(row.takes || []).some((t) => t.file === file)) throw new Error("No such take.");
     row.imageFile = file;
+    if (target !== "board" && Array.isArray(row.referenceImages)) {
+      // Re-picking the adopted image also re-picks the pack's identity image.
+      const hadIdentity = row.referenceImages.some((r) => r.role === "identity");
+      row.referenceImages = row.referenceImages.filter((r) => r.role !== "identity" && r.file !== file);
+      if (hadIdentity) row.referenceImages.unshift({ role: "identity", file });
+    }
     /* ADOPTING A REDRAW IS THE ANSWER TO `staleRefs`, and until this line
      * nothing anywhere was one. If the take just adopted was drawn after the
      * board's references last moved, the picture no longer predates them and
@@ -1073,7 +1082,7 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
                         * side — the names that reached this render as nothing. */
                        prompt,
                        promptSource: plan.promptSource,
-                       refs: plan.refs.map((r) => ({ name: r.name, kind: r.kind, file: r.file })),
+                       refs: plan.refs.map((r) => ({ name: r.name, kind: r.kind, file: r.file, role: r.role })),
                        /* ⚠ RESOLVED IS NOT THE SAME AS SENT, AND THE TAKE HAS TO
                         * SAY WHICH. `refs` above is what RESOLVED; the pictures
                         * are attached as `refImages: useRefs ? refImages :
@@ -1085,7 +1094,7 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
                         * between "this face is in that clip" and "this face was
                         * named at it over no attachment". */
                        refsSent: plan.refsSent,
-                       refsMissing: plan.refsMissing.map((r) => ({ name: r.name, why: r.why })) });
+                       refsMissing: plan.refsMissing.map((r) => ({ name: r.name, role: r.role, why: r.why })) });
       row.clipFile = clip;           // the newest take plays until someone picks
       row.status = "done";
       /* A render answers every reason the clip was stale. Leaving the list behind
@@ -1347,7 +1356,7 @@ export function crimeBoard(doc) {
     lane.rows.forEach((r, i) => add({
       id: `${lane.key}:${r.id || r.name}`, kind: lane.key, lane: lane.key, col: i,
       label: r.name, rowId: r.id || null,
-      has: !!r.imageFile, file: r.imageFile || null, takes: (r.takes || []).length,
+      has: assetReferenceImages(r).length > 0, file: r.imageFile || assetReferenceImages(r)[0]?.file || null, takes: (r.takes || []).length,
       status: r.status || (r.imageFile ? "rendered" : "pending"),
       usedIn: [],
     }));
@@ -1415,6 +1424,7 @@ export function crimeBoard(doc) {
     for (const r of plan?.refs || []) {
       const tgt = byName.get(lc(r.name));
       if (!tgt) continue;
+      if (tgt.usedIn.includes(seg.index + 1)) continue;
       tgt.usedIn.push(seg.index + 1);
       edges.push({ from: tgt.id, to: anchor, w: r.prominence ?? 0.5, type: tgt.kind, group: col });
     }

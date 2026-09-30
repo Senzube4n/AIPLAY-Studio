@@ -14,6 +14,7 @@ const el = () => new Proxy(function () {}, {
     if (k === "style") return new Proxy({}, { get: () => () => {}, set: () => true });
     if (k === "classList") return { add() {}, remove() {}, toggle() {}, contains: () => false };
     if (k === "dataset") return {};
+    if (k === "options") return [];
     if (k === "value") return "1";
     if (k === "textContent" || k === "innerHTML") return "";
     if (k === "checked" || k === "hidden" || k === "complete") return false;
@@ -36,6 +37,7 @@ globalThis.document = {
   querySelectorAll: () => [],
   addEventListener: () => {},
   createElement: () => el(),
+  createTextNode: () => el(),
   hidden: false,
   body: el(),
 };
@@ -69,6 +71,7 @@ Object.defineProperty(globalThis, "navigator", {
 });
 globalThis.AbortSignal = { timeout: () => undefined };
 globalThis.Audio = function () { return el(); };
+globalThis.Option = function () { return el(); };
 /* web/videolab.js watches the size <select> for the rebuild app.js does on an
  * engine switch, which is more reliable than racing the fetch that caused it.
  * Stubbed here so this gate can evaluate that module too. */

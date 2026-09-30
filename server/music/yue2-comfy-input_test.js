@@ -29,6 +29,7 @@ import { yue2ComfyFields, COMFY_REFUSALS, SEED_WITH_SCORE, DIAL_RANGES, MAX_SCOR
 import { buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA } from "../workflow.js";
 import { createMusicTools } from "../chat/music-tools.js";
 import { prepareGgufJob } from "../music-gguf-input.js";
+import { validateYue2StyleAdapter } from "./yue2-style-adapters.js";
 
 let pass = 0;
 const failures = [];
@@ -143,10 +144,12 @@ console.log("\n§3  the route lane: a score on yue2-comfy reaches the graph, or 
     { folder: "checkpoints", name: "yue2_3b_bf16.safetensors", full: "yue2" },
     { folder: "loras", name: INSTRUMENTAL_PLANNER_LORA },
     { folder: "loras", name: "mine.safetensors" },
+    { folder: "loras", name: "trbdr_broadside.safetensors" },
+    { folder: "loras", name: "grvl_thunder.safetensors" },
   ];
   /* Every free name of the sliced branch, injected. A new one fails loudly
    * here (ReferenceError), which is the point of the slice. */
-  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields,
+  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields, validateYue2StyleAdapter,
     config: { music: { yue2Checkpoint: "yue2_3b_bf16.safetensors", yue2Lora: null, yue2LoraClip: null,
       engines: { "yue2-comfy": { maxDuration: 360 } }, precision: "int8" }, audioRef: { denoise: 0.5 } },
     scanBases: async () => shelf, modelBases: async () => [], probeModel: async () => ({ family: "yue2" }),
@@ -222,6 +225,34 @@ console.log("\n§3  the route lane: a score on yue2-comfy reaches the graph, or 
     [200, null, "one two three"]);
   r = await request({ abc: SCORE, cot: "full", instrumental: true, loraClip: "mine.safetensors" });
   eq("...and a planner LoRA the request names is still honoured", [r.status, queued[queued.length - 1].loraClip], [200, "mine.safetensors"]);
+
+  for (const file of ["trbdr_broadside.safetensors", "grvl_thunder.safetensors"]) {
+    r = await request({ lora: file, loraClip: file, cot: "full" });
+    eq(`${file}: a matched fused adapter queues both halves`, [r.status, queued[queued.length - 1].lora, queued[queued.length - 1].loraClip], [200, file, file]);
+    if (r.status === 200) {
+      const graph = graphOf(queued[queued.length - 1]);
+      eq("...both graph loaders receive the selected file", [graph[2]?.inputs.lora_name, graph[3]?.inputs.lora_name], [file, file]);
+    }
+    for (const cot of ["off", "melody"]) {
+      const before = queued.length;
+      r = await request({ lora: file, loraClip: file, cot });
+      eq(`${file}: Thinking ${cot} is refused before enqueue`, [r.status, r.value.reason, queued.length], [400, "yue2-style-score", before]);
+    }
+  }
+  for (const loraClip of ["", "grvl_thunder.safetensors"]) {
+    const before = queued.length;
+    r = await request({ lora: "trbdr_broadside.safetensors", loraClip, cot: "full" });
+    eq("unpaired or mismatched fused adapters never queue", [r.status, r.value.reason, queued.length], [400, "yue2-style-pair", before]);
+  }
+  scope.config.music.yue2Lora = "trbdr_broadside.safetensors";
+  scope.config.music.yue2LoraClip = "trbdr_broadside.safetensors";
+  for (const body of [{ cot: "full" }, { lora: "trbdr_broadside.safetensors", cot: "full" }, { loraClip: "trbdr_broadside.safetensors", cot: "full" }]) {
+    r = await request(body);
+    eq("omitted slots resolve the saved pair before validation", [r.status, queued[queued.length - 1].lora, queued[queued.length - 1].loraClip], [200, "trbdr_broadside.safetensors", "trbdr_broadside.safetensors"]);
+  }
+  r = await request({ lora: "", loraClip: "", cot: "melody" });
+  eq("explicit clears bypass a saved fused pair", [r.status, queued[queued.length - 1].lora, queued[queued.length - 1].loraClip], [200, null, null]);
+  scope.config.music.yue2Lora = null; scope.config.music.yue2LoraClip = null;
 
   r = await request({ abc: SCORE, cot: "melody", scoreSlug: "my-hum", scoreVersion: "v3" });
   eq("a score's lineage rides to the job", [queued[queued.length - 1].scoreSlug, queued[queued.length - 1].scoreVersion], ["my-hum", "v3"]);

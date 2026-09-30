@@ -46,6 +46,11 @@ const port = fake.address().port;
 /* config.js reads the environment at import time, so the port has to be set
  * before the (dynamic) import pulls it in. */
 process.env.AIPLAY_COMFY_PORT = String(port);
+const { config } = await import(`file://${path.join(ROOT, "server", "config.js").replace(/\\/g, "/")}`);
+/* This fixture measures the foreign-port guard. Hardware desktop counters have
+ * their own vramreserve suite and can spend ten seconds on Windows before the
+ * guard is reached, even though this test never launches an engine. */
+config.comfy.autoReserve = "off";
 const { ComfySupervisor } = await import(`file://${path.join(ROOT, "server", "comfy.js").replace(/\\/g, "/")}`);
 /* The engine door. The port is no longer a constant — it is reserved from the
  * OS at every start — so the guard's subject is whatever THIS start picked, and

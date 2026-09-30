@@ -143,10 +143,11 @@ test("make_clip carries FastH3's attention pick, and its refusals name the engin
   const { TOOLS } = await import("./mcp.js");
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
   const t = TOOLS.find((x) => x.name === "make_clip");
   assert.deepEqual(t.inputSchema.properties.attention.enum, ["pytorch", "kitchen"]);
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const calls = [];
   /* The reference sentence is the server's (video-plain.js), sent per engine on
    * the status: the one the Video screen's reference slots show. */
@@ -213,7 +214,7 @@ test("the route, the job and the Video screen carry the attention choice; refere
   assert.match(index, /steps: videoEngine\(eng\)\.fixedSteps \|\|/);
   /* References on FastH3 or LTX: refused by the plan (server/video-plain.js),
    * in the one sentence the page and make_clip show. */
-  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}/);
+  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios \}/);
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   const art = read("./art.js");
   assert.match(art, /const attention = graph \? null : await this\.videoAttention\(job\);/);

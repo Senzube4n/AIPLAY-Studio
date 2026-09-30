@@ -1271,6 +1271,10 @@ export const config = {
      * without an explicit acknowledgement. That is a licence someone must
      * accept, not a default that quietly does something; nothing here
      * downloads, and the Video surface names the condition beside the engine. */
+    /* Optional comparison only. "auto" retains the ordinary measured pick;
+     * merely downloading W6A8 never replaces it. workflow.js resolves this
+     * preference against the exact engine Python's compatibility evidence. */
+    h3ModelBuild: "auto",
     engine: "h3",
     engines: {
 
@@ -2260,6 +2264,7 @@ export const PREF_PATHS = [
   ["ui", "levelBy", (v) => v === "studio" || v === "you"],
   ["video", "enabled", (v) => typeof v === "boolean"],
   ["video", "engine", (v) => Object.prototype.hasOwnProperty.call(config.video.engines, v)],
+  ["video", "h3ModelBuild", (v) => ["auto", "w6a8"].includes(v)],
   ["video", "when", OK_WHEN],
   /* Validated against the MAP, not a hand-typed list, so a new engine is
    * accepted and a removed engine's saved name is rejected without anyone
@@ -2333,7 +2338,7 @@ export const PREF_PATHS = [
  * machine's). `keptFromBefore` in settings.json carries "kept" across starts
  * and marks a file as this Studio's.
  */
-const MACHINE_KEYS = [["music", "engine"], ["music", "yue2Checkpoint"], ["art", "engine"], ["image", "engine"]];
+const MACHINE_KEYS = [["music", "engine"], ["music", "yue2Checkpoint"], ["art", "engine"], ["image", "engine"], ["video", "h3ModelBuild"]];
 export const LITERAL_DEFAULTS = Object.fromEntries(["music", "art", "image"].map((g) => [g,
   Object.fromEntries(MACHINE_KEYS.filter(([mg]) => mg === g).map(([, k]) => [k, config[g][k]]))]));
 const origin = new Map();         // id -> "you" | "kept"

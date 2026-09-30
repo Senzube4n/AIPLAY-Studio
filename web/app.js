@@ -1,5 +1,7 @@
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
+import { mountH3RefMods } from './h3-refmods.js';
+import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -1152,6 +1154,7 @@ function musicEnginePaint() {
   if (typeof paintHumRows === "function") paintHumRows(false);
   if (typeof paintPlanDial === "function") paintPlanDial();
   // The receipt's rights word for this engine (web/receipt.js reads it off the picker).
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
   if (typeof paintMusicRights === "function") paintMusicRights();
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
@@ -3034,6 +3037,19 @@ $("melodyUseYue")?.addEventListener("click", async () => {
 
 /* ── the YuE2 LoRA picker (Melody & score, ComfyUI engine only) ──────────── */
 let musicLoraShelfKey = null;
+const yueStyleAdapters = mountYue2StyleAdapters({
+  getState: () => state, getAdapters: () => state.models?.capabilities || [],
+  onSelect: async (patch) => {
+    const result = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "style-adapter", value: patch.lora }) })).json();
+    if (result.error) throw new Error(result.error);
+    state.musicYue2Lora = patch.lora; state.musicYue2LoraClip = patch.loraClip;
+    if (patch.loraStrength !== undefined) state.musicYue2LoraStrength = patch.loraStrength;
+    if (patch.loraClipStrength !== undefined) state.musicYue2LoraClipStrength = patch.loraClipStrength;
+  },
+  onChange: () => { if (typeof paintPlanDial === "function") paintPlanDial(); },
+  onError: (error) => { if ($("yLoraShelf")) $("yLoraShelf").textContent = error.message; },
+});
 async function musicLoadLoras(force = false) {
   const sel = $("yLora");
   if (!sel) return;
@@ -3086,6 +3102,7 @@ async function musicLoadLoras(force = false) {
       if ($("yLoraClipStrengthValue")) $("yLoraClipStrengthValue").textContent = Number(state.musicYue2LoraClipStrength).toFixed(2);
     }
   }
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
 }
 async function musicSavePlannerLora() {
   const value = $("yLoraClip")?.value || "";
@@ -8271,8 +8288,9 @@ async function loadModels() {
    * before Music-only narrows the list below. */
   rightsCatalogCache = Object.fromEntries(d.capabilities.map((c) => [c.id, c]));
   // Music-only lists the two YuE2 builds it can run: native GGUF, and the ComfyUI checkpoint.
-  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy");
+  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy" || c.styleAdapter);
   state.models = d;
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
   /* WHETHER YOU MAY SELL WHAT IT MAKES, on the card itself: the same chip a
    * song and a picture carry, opening the licence's own words. A tester read
    * a card's note pointing at "the rights chip" and found none on it. */
@@ -8596,6 +8614,7 @@ function vidOfferSpeedup(build) {
 }
 
 function vidPaint() {
+  if (typeof h3RefModPanel !== "undefined") h3RefModPanel?.paint();
   const on = !!state.video?.enabled;
   /* RunPod GPU mode (web/runpod-integrated.js): the clip renders on the Pod. */
   const remote = $("vidRenderWhere")?.value === "runpod";
@@ -8617,7 +8636,7 @@ function vidPaint() {
    * Standard; a count the person chose stays theirs, and the server's
    * "steps-measured" note says what the character was measured at. Every name
    * here is optional-chained: vidPaint's lines are lifted and run alone. */
-  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0);
+  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0 || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length));
   if (eng.stepDefaults && state.vidKeeping !== undefined && state.vidKeeping !== keeping) {
     const was = vidQualitySteps(eng, state.vidKeeping).standard, now = vidQualitySteps(eng, keeping).standard;
     if (+$("vidSteps").value === was && was !== now) $("vidSteps").value = String(now);
@@ -8906,7 +8925,8 @@ function vidPaint() {
    * loraSteps) names no build and warns about none. */
   /* A kept character counts: a saved character's pictures ride on the
    * reference path too, so its files are the ones that load. */
-  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0
+    || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length);
   /* LTX and a fixed-schedule engine (FastH3, eng.fixedSteps) load no turbo
    * build, so they name no path and warn about none. */
   const fixedPath = cur === "ltx" || !!eng.fixedSteps;
@@ -9786,7 +9806,15 @@ async function enableVideo() {
   return !!state.video.enabled;
 }
 
+const h3RefModPanel = mountH3RefMods($("vidH3Extras"), {
+  getEngine: () => $("vidEngine").value || state.video?.engine || "h3",
+  getImages: () => state.refImages || [], onChange: () => vidPaint(),
+});
+globalThis.aiplayH3Extras = () => h3RefModPanel.spec();
+
 function videoFriendRecipe() {
+  if (typeof globalThis.aiplayH3Extras === "function" && Object.keys(globalThis.aiplayH3Extras()).length)
+    throw new Error("Clear reference caches and tweaks before sending this text-only recipe.");
   const recipeEngine = state.video?.engine || "ltx";
   if (!recipeEngineOk(recipeEngine)) throw new Error(recipeEngineRefusal());
   const [width,height]=vidWH();
@@ -9873,7 +9901,8 @@ $("vidCreate").onclick = async () => {
   {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine] || {};
     /* A kept character rides the reference path like pictures do. */
-    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0
+      || !!h3RefModPanel.spec().refMods?.length;
     const need = eng.fixedSteps ? null : vidSpeedupNeed(eng, +$("vidSteps").value, hasRefs);
     if (need) { vidOfferSpeedup(need.build); return; }
   }
@@ -9894,6 +9923,7 @@ $("vidCreate").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "create",
+        ...h3RefModPanel.spec(),
         prompt: $("vidPrompt").value,
         title: $("vidFrom").selectedOptions[0]?.dataset.title || "",
         fromCover: $("vidFrom").value || undefined,
@@ -21842,6 +21872,7 @@ function connect() {
   ws.onmessage = (e) => {
     let snap;
     try { snap = JSON.parse(e.data); } catch { return; }
+    if (snap?.type === "refmod-ready") { window.dispatchEvent(new CustomEvent("aiplay-refmod-ready", { detail: snap })); return; }
     // /live also carries DAW document revisions. Only job-state snapshots
     // may repaint these queues or change the remembered busy-to-idle transition.
     if (snap?.type !== "state" || !Array.isArray(snap.queue) || !("current" in snap)) return;

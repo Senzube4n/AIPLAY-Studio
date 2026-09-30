@@ -69,10 +69,18 @@ head("§1  the flag survives the door it has to pass through");
   /* Every engine call site, not just the first: a private clip is as private as
    * a private picture, and a half-wired flag is worse than none because it is
    * the half nobody checks. */
-  const calls = (art.match(/const done = await engineDoor\.run\(\{/g) || []).length;
+  const dispatches = /const done = await (?:engineDoor\.run\(\{|runRefMod\(engineDoor,\s*\{)/g;
+  const calls = (art.match(dispatches) || []).length;
   const wired = (art.match(/private: job\.private === true/g) || []).length;
-  ok(`every engine call site passes it (${wired} of ${calls})`, calls > 0 && wired === calls,
-    `${calls} call sites, ${wired} wired`);
+  both(`every engine call site passes it (${wired} of ${calls})`,
+    (t) => { const total = (t.match(dispatches) || []).length;
+      return total > 0 && (t.match(/private: job\.private === true/g) || []).length === total; },
+    art, (t) => t.replace("private: job.private === true,", ""),
+    "one dispatch stops forwarding the private flag");
+  both("the RefMod dispatch helper forwards the whole spec including private to engine.run",
+    (t) => /const done = await engine\.run\(spec\);/.test(t),
+    src("./refmod-run.js"), (t) => t.replace("engine.run(spec)", "engine.run({ graph: spec.graph })"),
+    "the helper forwards only the graph and drops privacy");
 }
 
 head("§2  the engine record keeps its shape and loses the words");

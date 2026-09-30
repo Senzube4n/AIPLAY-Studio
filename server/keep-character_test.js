@@ -431,7 +431,7 @@ test("5: Keep my character sits under the description, shows in Simple, and hold
   assert.match(app, /\$\("vidQFast"\)\.title = keeping \? \(eng\.keepFast\?\.note \|\| build\(qs\.fast\)\) : /);
   assert.match(app, /\$\("vidQualityNote"\)\.textContent = keeping \? \(\(qs\.fast !== qs\.standard && eng\.keepFast\?\.note\) \|\| ""\) : \(eng\.fastNote \|\| ""\);/);
   /* The estimate: a kept character loads the reference files, and still says references cost time. */
-  assert.match(app, /const hasRefs = keeping \|\| \(\(state\.refImages \|\| \[\]\)\.length \+ \(state\.refAudios \|\| \[\]\)\.length\) > 0;/);
+  assert.match(app, /const hasRefs = keeping \|\| \(\(state\.refImages \|\| \[\]\)\.length \+ \(state\.refAudios \|\| \[\]\)\.length\) > 0\n\s+\|\| \(typeof h3RefModPanel !== "undefined" && !!h3RefModPanel\?\.spec\(\)\.refMods\?\.length\);/);
   assert.match(app, /\+ \(cur === "h3" && \(keeping \|\| \(state\.refAudios \|\| \[\]\)\.length\)\n\s+\? " · references ride along, expect it slower" : ""\)/);
   /* The strip: a character's picture uploaded on Pictures has no library route; its place shows the name. */
   const stripSrc = /\nfunction paintKeepStrip\(\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
@@ -467,9 +467,10 @@ test("6: make_clip takes persona, refuses it where references are refused, and s
   const { TOOLS } = await import("./mcp.js");
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
   const t = TOOLS.find((x) => x.name === "make_clip");
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const mock = ({ engine, sentence, door = {} }) => {
     const posts = [];
     const api = async (method, p, body) => {
