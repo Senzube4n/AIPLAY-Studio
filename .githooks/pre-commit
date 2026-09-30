@@ -1435,7 +1435,7 @@ if [ -x "$REPLAY_PY" ] && "$REPLAY_PY" -c "import importlib.metadata,numpy; impo
 node --check server/h3-w6a8.js || exit 1
 node --check server/music/yue2-style-adapters.js || exit 1
 node --check web/yue2-style-adapters.js || exit 1
-node --test server/h3-w6a8_test.js server/music/yue2-style-adapters_test.js server/music/yue2-style-adapters-ui_test.js || exit 1
+node --test server/h3-w6a8_test.js server/h3-checkpoint-workflow_test.js server/music/yue2-style-adapters_test.js server/music/yue2-style-adapters-ui_test.js || exit 1
 # H3 optional reference mods: strict graph options and staged local artifacts.
 node --check server/h3-refmod-options.js || exit 1
 node --check server/h3-refmod.js || exit 1

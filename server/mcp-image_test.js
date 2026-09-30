@@ -112,8 +112,9 @@ ok("every declared parameter is named in its run() or an explicitly forwarded he
 // Exercise the real make_clip body builder and helper together through its
 // check-only door. RefMod and Fizgig require separate requests by design.
 const clipPosts = [];
+let clipFixtureEngine = "h3";
 const clipApi = async (method, route, body) => {
-  if (route === "/api/status") return { config: { video: { enabled: true, ready: true, engine: "h3", engines: { h3: {} } } } };
+  if (route === "/api/status") return { config: { video: { enabled: true, ready: true, engine: clipFixtureEngine, engines: { [clipFixtureEngine]: {} } } } };
   if (method === "POST" && route === "/api/video") { clipPosts.push(body); return { engine: "h3" }; }
   throw new Error(`Unexpected CPU fixture request: ${method} ${route}`);
 };
@@ -130,6 +131,77 @@ ok("make_clip forwards ref_mod_options including its renamed token budget",
 ok("make_clip forwards h3_tweaks including prompt strength and detail mode",
   JSON.stringify(clipPosts[1]?.h3Tweaks) === JSON.stringify({ detail: 0.1, composition: 0.2, promptStrength: 0.3, detailMode: "per frame" }));
 
+ok("make_clip declares both per-render H3 checkpoint builds",
+  JSON.stringify(clip.inputSchema.properties.h3_model_build?.enum) === JSON.stringify(["auto", "w6a8"]));
+for (const build of ["auto", "w6a8"]) {
+  await runClip({ prompt: "walking through a garden", check_only: true, h3_model_build: build });
+  ok(`make_clip forwards ${build} to the route's per-render checkpoint field`,
+    clipPosts.at(-1)?.h3ModelBuild === build);
+}
+const buildPosts = clipPosts.length;
+for (const args of [
+  { h3_model_build: "fp8" },
+  { h3_model_build: "w6a8", engine: "ltx" },
+  { h3_model_build: "auto", engine: "fasth3" },
+]) {
+  let refusal = null;
+  try { await runClip({ prompt: "walking through a garden", check_only: true, ...args }); }
+  catch (error) { refusal = error.message; }
+  ok(`make_clip refuses invalid checkpoint request ${JSON.stringify(args)}`,
+    typeof refusal === "string" && refusal.includes("h3_model_build"));
+}
+clipFixtureEngine = "ltx";
+let savedEngineRefusal = null;
+try { await runClip({ prompt: "walking through a garden", check_only: true, h3_model_build: "w6a8" }); }
+catch (error) { savedEngineRefusal = error.message; }
+clipFixtureEngine = "h3";
+ok("a saved non-H3 engine cannot silently ignore the checkpoint choice",
+  savedEngineRefusal?.includes("h3_model_build"));
+ok("checkpoint refusals do not post a render or a saved setting", clipPosts.length === buildPosts);
+ok("per-render checkpoint requests never change the saved build",
+  clipPosts.every((body) => body.action === "check"));
+
+// A render reports the receipt saved with its output, including a fallback.
+// The filename array stays intact for clients that already consume `clips`.
+const checkpointReceipt = { requestedBuild: "w6a8", ranBuild: "w6a8", file: "h3_w6_reference.safetensors", reference: true, fallback: null };
+const fallbackReceipt = { requestedBuild: "w6a8", ranBuild: "auto", file: "h3_int8.safetensors", reference: false, fallback: "The W6A8 weights are not installed." };
+const clipRows = [
+  { name: "older.mp4", meta: { h3Checkpoint: checkpointReceipt } },
+  { name: "reference.mp4", meta: { h3Checkpoint: checkpointReceipt } },
+  { name: "fallback.mp4", meta: { h3Checkpoint: fallbackReceipt } },
+  { name: "legacy.mp4", meta: {} },
+  { name: "imported.webm", meta: { source: "imported" } },
+];
+let receiptReads = 0;
+const receiptApi = async (method, route, body) => {
+  if (route === "/api/status") return { config: { video: { enabled: true, ready: true, engine: "h3", engines: { h3: {} } } } };
+  if (method === "GET" && route === "/api/clips") return { clips: ++receiptReads === 1 ? clipRows.slice(0, 1) : clipRows };
+  if (method === "POST" && route === "/api/video" && body.action === "create") return { job: { id: "receipt-fixture" } };
+  throw new Error(`Unexpected checkpoint fixture request: ${method} ${route}`);
+};
+const runRenderedClip = new Function("api", "videoLoraInput", "h3OptionalMcpBody", "waitForArt", "emptyResultNote",
+  `return (${String(clip.run).replace(/^async run\(/, "async function(")});`)(receiptApi, videoLoraInput, h3OptionalMcpBody,
+    async (_timeout, kind, id) => { if (kind !== "video" || id !== "receipt-fixture") throw new Error("Wrong checkpoint waiter"); return { done: true }; },
+    () => "No new clip was saved.");
+const receiptResult = await runRenderedClip({ prompt: "walking through a garden", h3_model_build: "w6a8" });
+ok("make_clip keeps its filename array while adding saved checkpoint receipts",
+  JSON.stringify(receiptResult.clips) === JSON.stringify(clipRows.slice(1).map((c) => c.name)));
+ok("make_clip reports the actual reference checkpoint and its requested build",
+  JSON.stringify(receiptResult.checkpoint_receipts?.["reference.mp4"]) === JSON.stringify(checkpointReceipt));
+ok("make_clip reports an automatic fallback from the saved receipt",
+  JSON.stringify(receiptResult.checkpoint_receipts?.["fallback.mp4"]) === JSON.stringify(fallbackReceipt));
+ok("make_clip does not invent receipts for old clips, imports or preexisting files",
+  JSON.stringify(Object.keys(receiptResult.checkpoint_receipts || {})) === JSON.stringify(["reference.mp4", "fallback.mp4"]));
+const listClipTool = OURS.find((t) => t.name === "list_clips");
+const runListClips = new Function("api",
+  `return (${String(listClipTool.run).replace(/^async run\(/, "async function(")});`)(receiptApi);
+const listedClips = await runListClips({});
+ok("list_clips includes each saved checkpoint receipt",
+  JSON.stringify(listedClips[1].h3_checkpoint) === JSON.stringify(checkpointReceipt)
+  && JSON.stringify(listedClips[2].h3_checkpoint) === JSON.stringify(fallbackReceipt));
+ok("list_clips uses null for legacy and imported clips without a checkpoint receipt",
+  listedClips[3].h3_checkpoint === null && listedClips[4].h3_checkpoint === null);
+
 console.log("\n  -- the panel routes the tools lean on --");
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
@@ -140,6 +212,35 @@ ok("StandRig PSD export is typed, registered and posts the saved document id",
   byName.has(psd.name) && psd.inputSchema.required.includes("id")
   && JSON.stringify(psdCalls) === JSON.stringify([["POST", "/api/images/standrig-psd", { id: "saved_doc" }]]));
 const idx = readFileSync(path.join(HERE, "index.js"), "utf8").replace(/\r\n/g, "\n");   // CRLF-normalised: a Windows checkout adds a char per line, which overflows the bounded [\s\S]{0,N} spans below and fails assertions about correct code
+
+// Execute the actual check/create guards without starting a server. Reaching
+// the weight gate means the request retained its existing custom behavior.
+const videoRoute = idx.slice(idx.indexOf('p === "/api/video" && req.method === "POST"'));
+for (const action of ["check", "create"]) {
+  const start = videoRoute.indexOf(`if (b.action === "${action}") {`);
+  const end = videoRoute.indexOf("const gate = await videoWeightsGate();", start);
+  const routeGuard = new Function("b", "assignedTo", "config", "json", "res",
+    `${videoRoute.slice(start, end)}\n}\nreturn { reachedGate: true };`);
+  let assignedReads = 0;
+  const assignment = () => { assignedReads++; return "custom-video"; };
+  for (const build of ["auto", "w6a8"]) {
+    const answer = routeGuard({ action, h3ModelBuild: build }, assignment, { video: { enabled: true } },
+      (_res, status, body) => ({ status, body }), {});
+    const refusal = action === "check" ? answer.body?.refusal : answer.body;
+    ok(`the video ${action} route refuses explicit ${build} before weight checks or queueing with a custom workflow`,
+      refusal?.reason === "workflow-incompatible" && /Unassign the custom Video workflow/.test(refusal.error)
+      && (action === "check" ? answer.status === 200 && answer.body.ok === false : answer.status === 400));
+  }
+  const omitted = routeGuard({ action }, assignment, { video: { enabled: true } },
+    (_res, status, body) => ({ status, body }), {});
+  ok(`the video ${action} route preserves custom workflows when the selector is omitted`,
+    omitted.reachedGate === true && assignedReads === 2);
+  const builtIn = routeGuard({ action, h3ModelBuild: "w6a8" }, () => null, { video: { enabled: true } },
+    (_res, status, body) => ({ status, body }), {});
+  ok(`the video ${action} route permits an explicit checkpoint on the built-in workflow`, builtIn.reachedGate === true);
+}
+ok("the queued clip distinguishes explicit requests from filled-in saved checkpoint defaults",
+  /h3ModelBuild: b\.h3ModelBuild \?\? config\.video\.h3ModelBuild,\s*h3ModelBuildExplicit: b\.h3ModelBuild !== undefined/.test(videoRoute));
 
 /* image_tools_catalog promises module=paths; the route's MODULES map is where
  * that promise is kept or broken. It WAS broken — the MCP description said

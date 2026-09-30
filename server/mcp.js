@@ -3002,6 +3002,8 @@ export const TOOLS = [
       "Render a short video clip. Waits until done or `timeout_seconds`; a timed-out job keeps running. "
       + "H3 time grows with size, frames and references, and long clips can take much longer than the fitted estimate. "
       + "Use `check_only` to inspect the exact request and its evidence warnings first.\n\n"
+      + "The reply keeps clip names in `clips` and returns each saved H3 checkpoint receipt in "
+      + "`checkpoint_receipts`, keyed by clip filename (requestedBuild, ranBuild, file, reference, fallback).\n\n"
       + "TWO ENGINES, AND THEY TAKE DIFFERENT INPUTS. Check the current one with "
       + "studio_status and change it with set_video_engine.\n"
       + "  • LTX 2.5 — fast. Takes EXACT frames: `first_frame`, `last_frame`, `mid_frames` "
@@ -3039,6 +3041,7 @@ export const TOOLS = [
       properties: {
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
+        h3_model_build: { type: "string", enum: ["auto", "w6a8"], description: "Built-in H3 workflow only: choose the checkpoint build for this render without changing saved settings. Refused while a custom Video workflow is assigned. W6A8 requires compatible loader support and downloaded weights; checkpoint_receipts reports the actual checkpoint and any fallback." },
         quality: { type: "string", enum: ["fast", "best"],
           description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. With references or a persona and no quality, the reference build's own count runs (studio_status video.h3_reference_steps). All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
@@ -3081,6 +3084,12 @@ export const TOOLS = [
       additionalProperties: false,
     },
     async run(a) {
+      if (a.h3_model_build !== undefined && !["auto", "w6a8"].includes(a.h3_model_build)) {
+        throw new Error("h3_model_build must be auto or w6a8.");
+      }
+      if (a.h3_model_build !== undefined && a.engine && a.engine !== "h3") {
+        throw new Error("h3_model_build is an H3 feature. Pass engine:\"h3\" or omit h3_model_build.");
+      }
       const loras = videoLoraInput(a.loras);
       let st = await api("GET", "/api/status");
       // A check renders nothing, so it answers with video switched off too.
@@ -3106,6 +3115,9 @@ export const TOOLS = [
         throw new Error(`Video models are not installed: ${(st.config.video.missing || []).join(", ")}`);
       }
       const engine = st.config?.video?.engine;
+      if (a.h3_model_build !== undefined && engine !== "h3") {
+        throw new Error("h3_model_build is an H3 feature. Pass engine:\"h3\" or omit h3_model_build.");
+      }
       const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song || !!a.persona;
       /* The refusals name the engine that IS selected: with three engines,
        * "but LTX is selected" was false on FastH3. The reference sentence is
@@ -3165,6 +3177,7 @@ export const TOOLS = [
         attention: a.attention === "kitchen" || a.attention === "pytorch" ? a.attention : undefined,
         // H3's sparse attention on the fast setting; the route keeps only these two.
         sparse: a.sparse === "sol-attn" || a.sparse === "off" ? a.sparse : undefined,
+        h3ModelBuild: a.h3_model_build,
         loras,
         ...h3OptionalMcpBody(a, engine),
       };
@@ -3231,12 +3244,15 @@ export const TOOLS = [
       if (r.error) throw new Error(r.error);
       const settled = await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video", r.job?.id);
       const after = (await api("GET", "/api/clips")).clips || [];
-      const made = after.filter((c) => !before.has(c.name)).map((c) => c.name);
+      const madeRows = after.filter((c) => !before.has(c.name));
+      const made = madeRows.map((c) => c.name);
+      const checkpoint_receipts = Object.fromEntries(madeRows.filter((c) => c.meta?.h3Checkpoint)
+        .map((c) => [c.name, c.meta.h3Checkpoint]));
       /* What the render changed from the request, and the RAM warning: the
        * door's own sentences (video-plain.js), the ones the page shows. */
       const warnings = (r.warnings || []).map((w) => w.text).filter(Boolean);
       // Its own failure has already thrown; see emptyResultNote in art-wait.js.
-      return { clips: made, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
+      return { clips: made, checkpoint_receipts, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
         ...(warnings.length ? { warnings } : {}),
         ...(r.character ? { character: r.character.receipt, character_hint: r.character.hint ?? undefined } : {}) };
     },
@@ -3244,7 +3260,7 @@ export const TOOLS = [
 
   {
     name: "list_clips",
-    description: "Every clip and imported media file, newest first, with what made it.",
+    description: "Every clip and imported media file, newest first, with what made it. h3_checkpoint is the saved checkpoint receipt (requestedBuild, ranBuild, file, reference, fallback), or null for clips without one.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "integer" } },
@@ -3255,6 +3271,7 @@ export const TOOLS = [
       return (d.clips || []).slice(0, Math.max(1, Number(a.limit) || 40)).map((c) => ({
         name: c.name, track: c.track, seconds: c.meta?.clipSeconds ?? null,
         source: c.meta?.source ?? "generated", prompt: c.meta?.prompt ?? null,
+        h3_checkpoint: c.meta?.h3Checkpoint ?? null,
       }));
     },
   },

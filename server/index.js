@@ -8136,6 +8136,8 @@ const server = http.createServer(async (req, res) => {
       if (b.action === "check") {
         if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
           return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
+        if (b.h3ModelBuild !== undefined && assignedTo("video"))
+          return json(res, 200, { ok: false, refusal: { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" }, warnings: [] });
         const gate = await videoWeightsGate();
         if (gate.error) return json(res, 200, { ok: false, refusal: gate.error, warnings: [] });
         let optionalH3;
@@ -8154,6 +8156,8 @@ const server = http.createServer(async (req, res) => {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
         if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
           return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
+        if (b.h3ModelBuild !== undefined && assignedTo("video"))
+          return json(res, 400, { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" });
         /* `eng` is the engine that will really render — the setting when its
          * weights are here, whatever IS here when they are not. Everything
          * below reads it instead of config.video.engine, because a substituted
@@ -8409,6 +8413,7 @@ const server = http.createServer(async (req, res) => {
             // says, so the provenance record names the model that made the file.
             engine: eng,
             h3ModelBuild: b.h3ModelBuild ?? config.video.h3ModelBuild,
+            h3ModelBuildExplicit: b.h3ModelBuild !== undefined,
             /* Undefined unless something was named — see videoModelPatch. */
             models: picked.models || undefined,
             // The plan's: unanswered reference tags taken out (and said).

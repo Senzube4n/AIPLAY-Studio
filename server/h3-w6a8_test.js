@@ -6,9 +6,12 @@ import os from "node:os";
 import { H3_W6A8_FILES, h3W6a8Compatibility, probeH3W6a8, resolveH3Checkpoint } from "./h3-w6a8.js";
 import { fitFor } from "./fit.js";
 import { config, PREF_PATHS, prefsSnapshot, sessionOverride, overrideForSession, forgetPref } from "./config.js";
-import { CATALOG, ModelManager } from "./models.js";
+import { CATALOG, ModelManager, rightsStampFor } from "./models.js";
 import { videoGraphH3 } from "./workflow.js";
 import { knobRows, setKnob } from "./videolab/catalog.js";
+import { modelKeyFromFiles } from "./engine/record.js";
+import { createEngineClient } from "./engine/client.js";
+import { append, read, verify } from "./provenance.js";
 
 const compatible = { gpu: { vendor: "nvidia", name: "RTX 4070 Ti SUPER" }, torchBackend: "cuda",
   loader: true, kitchenSixbit: true, kitchenVersion: "0.2.36", torchCuda: "13.0" };
@@ -176,4 +179,54 @@ test("the shared Lab and MCP knob writes the requested build and reads both fall
     assert.throws(() => setKnob("h3_model_build", "fp4"), /must be one of/);
     assert.equal(config.video.h3ModelBuild, "w6a8");
   } finally { config.video.h3ModelBuild = before; forgetPref("video", "h3ModelBuild"); }
+});
+
+test("official W6 checkpoints produce H3 engine receipts with the canonical output-rights stamp", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "aiplay-w6-receipts-"));
+  const scope = { dir: temp };
+  const posted = [];
+  const reply = (body) => ({ ok: true, status: 200, json: async () => body });
+  const client = createEngineClient({ port: 12345, poll: { POLL_MS: 1 },
+    provenance: { append: (_scope, event) => append(scope, event) },
+    store: { readSettings: async () => ({}), resolveRecordFiles: async () => {},
+      putGraph: async () => ({ path: null, existed: false }) },
+    fetch: async (url, opts) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/prompt") { posted.push(JSON.parse(opts.body).prompt); return reply({ prompt_id: "w6-cpu-fixture" }); }
+      if (pathname === "/history/w6-cpu-fixture") return reply({ "w6-cpu-fixture": { status: { completed: true }, outputs: {} } });
+      throw new Error(`Unexpected mocked W6 engine request: ${pathname}`);
+    } });
+  client.attachChild({ exitCode: null, signalCode: null });
+  try {
+    for (const build of H3_W6A8_FILES) {
+      assert.equal(CATALOG.find((cap) => cap.id === build.id).model, "h3");
+      assert.equal(modelKeyFromFiles([{ file: build.file }]), "h3");
+      assert.equal(modelKeyFromFiles([{ file: `diffusion_models\\${build.file.toUpperCase()}` }]), "h3");
+      // Use the actual native graph builder, then swap only its checkpoint as
+      // the paired benchmark does. No weights or GPU are loaded by this test.
+      const graph = videoGraphH3({ prompt: "A red paper kite floats above a grassy hill", seed: 7,
+        seconds: 3, width: 832, height: 480, steps: 8, h3ModelBuild: "auto",
+        ...(build.role === "ref2va" ? { refImages: ["singer.png"] } : {}) });
+      graph[1].inputs.unet_name = build.file;
+      const result = await client.run({ graph, actor: "agent:w6-cpu-proof", via: "art.clip", adopt: false });
+      assert.equal(result.status, "completed");
+      assert.equal(posted.at(-1)[1].inputs.unet_name, build.file);
+      assert.equal(result.record.model, "h3");
+      const { events } = await read(scope, { asset: `engine/${result.runId}` });
+      assert.deepEqual(events.map((event) => event.type), ["delegate", "generate"]);
+      assert.equal(events[0].data.model, "h3");
+      assert.equal(events[1].data.model, "h3");
+      assert.deepEqual(events[1].data.outputRights, rightsStampFor("h3"), "the existing H3 rule supplies the rights");
+      assert.equal(events[1].data.outputRights.capability, "video");
+      assert.equal(events[1].data.outputRights.class, "yours-with-conditions");
+    }
+    assert.equal(modelKeyFromFiles([{ file: "owner_h3_w6a8.safetensors" }]), null, "an unknown filename stays unknown");
+    assert.equal(modelKeyFromFiles([{ file: H3_W6A8_FILES[0].file },
+      { file: "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors" }]), null, "competing generators stay ambiguous");
+    assert.equal((await verify(scope)).ok, true);
+  } finally {
+    assert.equal(path.dirname(temp), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(temp).startsWith("aiplay-w6-receipts-"));
+    await fs.rm(temp, { recursive: true, force: true });
+  }
 });

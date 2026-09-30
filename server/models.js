@@ -3058,6 +3058,9 @@ export const CATALOG = [
  * files have no alternates: another checkpoint is not the selected experiment. */
 CATALOG.push(...H3_W6A8_FILES.map((build) => ({
   id: build.id, addonFor: build.addonFor,
+  // These optional checkpoint files identify the same canonical generator.
+  // Its provenance rights still resolve through MODEL_TO_CAPABILITY below.
+  model: "h3",
   label: `MiniMax H3 ${build.role} W6A8 (experimental)`,
   why: "An optional official six-bit transformer to compare with the existing H3 build.",
   licence: "MiniMax H3 Community Licence",

@@ -189,8 +189,14 @@ export function modelKeyFromFiles(files) {
   const refs = files.map((f) => String(f.file || "").split("\\").join("/").toLowerCase())
     .filter(Boolean);
   const hits = new Set();
-  for (const [key, capId] of Object.entries(MODEL_TO_CAPABILITY)) {
-    const cap = CATALOG.find((c) => c.id === capId);
+  const capabilities = Object.entries(MODEL_TO_CAPABILITY)
+    .map(([key, capId]) => [key, CATALOG.find((c) => c.id === capId)]);
+  // Optional checkpoint downloads can declare their existing canonical model.
+  // Exact catalogue files still earn the match; companions and unknown model
+  // names cannot acquire a licence through this marker.
+  capabilities.push(...CATALOG.filter((cap) => Object.hasOwn(MODEL_TO_CAPABILITY, cap.model))
+    .map((cap) => [cap.model, cap]));
+  for (const [key, cap] of capabilities) {
     for (const f of cap?.files || []) {
       const dest = String(f.dest || "").split("\\").join("/").toLowerCase();
       /* ⚠ THE SECOND WAY TO EARN THE RIGHT TO CLAIM A RENDER, and it is a

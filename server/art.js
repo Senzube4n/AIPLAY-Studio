@@ -1393,7 +1393,12 @@ export class ArtRunner extends EventEmitter {
       // audioRef in jobs.js and the video stage in batch.js — the caller already
       // validated this object, and adding a knob should not need three edits.
       ...(video || {}),
-      ...(kind === "video" ? { h3ModelBuild: video?.collabVideoBase ? "auto" : video?.h3ModelBuild ?? config.video.h3ModelBuild } : {}),
+      ...(kind === "video" ? {
+        h3ModelBuild: video?.collabVideoBase ? "auto" : video?.h3ModelBuild ?? config.video.h3ModelBuild,
+        // The route fills the saved build too, so only its explicit request flag
+        // can distinguish a per-render choice from the custom workflow's defaults.
+        h3ModelBuildExplicit: !video?.collabVideoBase && (video?.h3ModelBuildExplicit ?? (video?.h3ModelBuild !== undefined)),
+      } : {}),
       /* A transcription's own spec (server/whisper.js validated and resolved
        * it): kept whole on its own key rather than spread, so none of its
        * fields can land on a name a render reads. */
@@ -2312,6 +2317,8 @@ export class ArtRunner extends EventEmitter {
     /* The receiver accepted a signed built-in graph. A custom workflow chosen
      * while this job waits behind music cannot replace its model contract. */
     const customVideo = job.collabVideoBase ? null : assignedTo("video");
+    if (customVideo && job.h3ModelBuildExplicit)
+      throw new Error("An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.");
     if (customVideo && (job.refMods?.length || job.h3Tweaks))
       throw new Error("Reference caches and Fizgig tweaks require the built-in H3 workflow. Unassign the custom Video workflow first.");
     if (customVideo) {
