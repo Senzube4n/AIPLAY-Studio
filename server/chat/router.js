@@ -74,6 +74,7 @@ export const ROUTABLE = {
   models_for_this_machine: null,
   /* Reads what a one-click setup would build and how its job is going. */
   setup_status: null,
+  fastcovers_status: null,
   /* No strong card? Friend first, then the person's own key: a read. Its twin
    * set_cloud is withheld below, because it decides whether songs bill. */
   cloud_status: null,
@@ -634,6 +635,7 @@ export const WITHHELD = {
   music_input_capabilities: "harmless, but only meaningful beside the three above",
   set_video_engine: "changes a persistent app setting the person set on the Video page",
   set_image_engine: "changes a persistent app setting the person set on the Pictures page",
+  set_fastcovers: "sets up Python and downloads a model; use the explicit Fast covers setting or external MCP",
   set_music_engine: "changes a persistent app setting the person set on the Music page, and can switch paid API mode on",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",

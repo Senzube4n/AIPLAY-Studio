@@ -13,6 +13,7 @@
 node --check server/index.js || exit 1
 # RunPod transport and its UI: mock HTTP services only; no GPU or paid cloud resources.
 node --test server/engine/remote_test.js server/engine/remote_ui_test.js server/engine/runpod-account_test.js server/mcp-runpod_test.js || exit 1
+node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
 # The launcher favourite (the star) and the system check's settings merge.
 node --test server/launcher-fav_test.js || exit 1
 node --check web/runpod-integrated.js || exit 1

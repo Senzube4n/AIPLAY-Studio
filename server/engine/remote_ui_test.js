@@ -18,12 +18,19 @@ test("the Images and Video screens carry the RunPod controls (shown in RunPod GP
   assert.match(html, /id="runpodReviewPod"/);
   assert.match(html, /id="runpodCostConfirm"[^>]*type="checkbox"/);
   assert.match(html, /id="runpodCreatePod"[^>]*disabled/);
+  assert.match(html, /id="runpodCreateTemplates"/);
+  assert.match(html, /id="runpodTemplateState"/);
   assert.match(html, /id="runpodBootstrapCommand"[^>]*readonly/);
+  assert.match(html, /id="runpodModelList"/);
+  assert.match(html, /id="runpodCancelModel"/);
   assert.match(html, /id="imgRunPodCfg"[^>]*value="6"/);
   assert.match(html, /id="imgRunPodNegative"/);
   assert.match(html, /id="vidRunPodSize"[\s\S]*value="512x320"/);
   assert.match(html, /id="vidRunPodGuidance"[^>]*value="3"/);
   assert.match(html, /src="runpod-integrated\.js"/);
+  const worker = read("worker", "runpod-worker.js");
+  assert.match(worker, /\/v1\/setup\/install/);
+  assert.match(worker, /modelSetupVersion: 1/);
 });
 
 test("ComfyUI legacy and 0.37 COMBO model choices both populate the integrated picker", () => {
@@ -82,10 +89,10 @@ test("RunPod lives in its own launch mode and nowhere else", () => {
 
 test("the Pod bootstrap installs this repository, not a contributor's branch", () => {
   const sh = read("worker", "bootstrap-runpod.sh");
-  assert.match(sh, /AIPLAY_REPOSITORY:-https:\/\/github\.com\/bani4kaskashka\/AIPLAY-Studio-Bucky-Fork\.git/);
+  assert.match(sh, /AIPLAY_REPOSITORY:-https:\/\/github\.com\/Senzube4n\/AIPLAY-Studio\.git/);
   assert.match(sh, /AIPLAY_BRANCH:-main\}/);
   const html = read("web", "index.html");
-  assert.match(html, /raw\.githubusercontent\.com\/bani4kaskashka\/AIPLAY-Studio-Bucky-Fork\/main\/worker\/bootstrap-runpod\.sh/);
+  assert.match(html, /raw\.githubusercontent\.com\/Senzube4n\/AIPLAY-Studio\/main\/worker\/bootstrap-runpod\.sh/);
   assert.match(sh, /check-comfy-loopback\.js/);
   assert.match(sh, /different Git origin/);
   assert.match(read("worker", "runpod-worker.js"), /await checkComfyLoopback\(\);/, "worker autostart also verifies the listener");

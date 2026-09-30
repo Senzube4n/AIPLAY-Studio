@@ -5614,6 +5614,13 @@
       <button class="btn" id="runpodConnect" type="submit">Connect and check models</button>
     </div>
   </form>
+  <details class="runpod-models" id="runpodModels">
+    <summary>Install or repair models on this Pod</summary>
+    <p class="hint">AIPLAY downloads only pinned model files from its curated list, verifies their size and SHA-256 checksum, and resumes interrupted downloads. Running Pods continue to incur charges while downloading.</p>
+    <div id="runpodModelList" class="runpod-model-list"><p class="hint">Connect the worker to check model readiness.</p></div>
+    <button class="edtool sm" id="runpodCancelModel" type="button" hidden>Pause download</button>
+    <p class="hint" id="runpodModelState" role="status"></p>
+  </details>
   <details class="runpod-account" id="runpodAccount">
     <summary>Create or manage a RunPod Pod</summary>
     <p class="hint">Optional account access. Use a restricted RunPod API key with permission to read GPUs and manage Pods. The key stays in AIPLAY's local secret store.</p>
@@ -5630,6 +5637,13 @@
     <div id="runpodAccountPanel" hidden>
       <div class="runpod-balance" id="runpodBalance"></div>
       <div id="runpodPodList" class="runpod-pods"></div>
+      <h4>Save deployment presets</h4>
+      <p class="hint">Adds private image, video, audio and music LoRA training templates to your RunPod account.</p>
+      <div class="runpod-connect-actions">
+        <a class="edtool" href="https://console.runpod.io/user/templates" target="_blank" rel="noreferrer">Open RunPod templates</a>
+        <button class="edtool" id="runpodCreateTemplates" type="button">Create private templates</button>
+      </div>
+      <p class="hint" id="runpodTemplateState" role="status"></p>
       <h4>Create an AIPLAY Pod</h4>
       <div class="runpod-fields">
         <label class="flabel" for="runpodPodName">Name</label>
@@ -5653,7 +5667,7 @@
     <details class="runpod-bootstrap">
       <summary>Install the AIPLAY worker after the Pod starts</summary>
       <p class="hint">Open a Pod terminal or SSH session, paste this command, then copy the printed worker URL and token into the connection fields above. The bootstrap checks that ComfyUI listens only on loopback.</p>
-      <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly>curl -fsSL https://raw.githubusercontent.com/bani4kaskashka/AIPLAY-Studio-Bucky-Fork/main/worker/bootstrap-runpod.sh -o /tmp/aiplay-bootstrap.sh &amp;&amp; bash /tmp/aiplay-bootstrap.sh</textarea>
+      <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly>curl -fsSL https://raw.githubusercontent.com/Senzube4n/AIPLAY-Studio/main/worker/bootstrap-runpod.sh -o /tmp/aiplay-bootstrap.sh &amp;&amp; bash /tmp/aiplay-bootstrap.sh</textarea>
       <button class="edtool" id="runpodCopyBootstrap" type="button">Copy bootstrap command</button>
       <p class="hint" id="runpodBootstrapState"></p>
     </details>

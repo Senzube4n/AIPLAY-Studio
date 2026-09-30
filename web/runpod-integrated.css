@@ -17,6 +17,13 @@
 .runpod-target #imgQwenStatus, .runpod-target #imgQwenOptions, .runpod-target #imgQwenOptionsNote { display: none !important; }
 .runpod-target #vidModelRow, .runpod-target #vidLoraRow, .runpod-target #vidQualityRow { display: none !important; }
 .runpod-account { margin-top: 16px; border-top: 1px solid var(--edge); padding-top: 12px; }
+.runpod-models { margin-top: 16px; border-top: 1px solid var(--edge); padding-top: 12px; }
+.runpod-models > summary { cursor: pointer; font-weight: 700; }
+.runpod-model-list { display: grid; gap: 8px; margin: 10px 0; }
+.runpod-model { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; align-items: center; padding: 10px; border: 1px solid var(--edge); border-radius: 8px; }
+.runpod-model p, .runpod-model label { grid-column: 1 / -1; margin: 0; }
+.runpod-model progress { width: 100%; grid-column: 1 / -1; }
+.runpod-model .btn { grid-column: 2; grid-row: 1; }
 .runpod-account > summary { cursor: pointer; font-weight: 700; }
 .runpod-balance { margin: 10px 0; font-family: var(--mono); font-size: .78rem; }
 .runpod-pods { display: grid; gap: 8px; margin: 10px 0 16px; }

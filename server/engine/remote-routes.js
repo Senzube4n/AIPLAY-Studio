@@ -31,6 +31,10 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       } else if (req.method === "POST" && url.pathname === "/api/runpod/account/disconnect") sendJSON(res, 200, await account.disconnect());
       else if (req.method === "POST" && url.pathname === "/api/runpod/account/pods") {
         const b = JSON.parse((await readBody(req)).toString("utf8")); sendJSON(res, 201, await account.create(b));
+      } else if (req.method === "GET" && url.pathname === "/api/runpod/account/templates") {
+        sendJSON(res, 200, { templates: await account.templates() });
+      } else if (req.method === "POST" && url.pathname === "/api/runpod/account/templates") {
+        sendJSON(res, 201, await account.createTemplates());
       } else {
         const power = /^\/api\/runpod\/account\/pods\/([a-zA-Z0-9_-]+)\/(start|stop)$/.exec(url.pathname);
         if (req.method === "POST" && power) {
@@ -45,7 +49,13 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           else if (req.method === "POST" && url.pathname === "/api/runpod/connect") {
             sendJSON(res, 200, await c.connect(JSON.parse((await readBody(req)).toString("utf8"))));
           } else if (req.method === "GET" && url.pathname === "/api/runpod/models") sendJSON(res, 200, await c.models());
-          else if (req.method === "POST" && url.pathname === "/api/runpod/assets") {
+          else if (req.method === "GET" && url.pathname === "/api/runpod/setup") sendJSON(res, 200, await c.setup());
+          else if (req.method === "POST" && url.pathname === "/api/runpod/setup/install") {
+            const b = JSON.parse((await readBody(req)).toString("utf8"));
+            sendJSON(res, 202, await c.installBundle(b.bundle, b.acceptLicense));
+          } else if (req.method === "POST" && url.pathname === "/api/runpod/setup/cancel") {
+            sendJSON(res, 200, await c.cancelInstall());
+          } else if (req.method === "POST" && url.pathname === "/api/runpod/assets") {
             sendJSON(res, 200, await c.upload(url.searchParams.get("name"), req));
           } else if (req.method === "POST" && url.pathname === "/api/runpod/workflow") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));

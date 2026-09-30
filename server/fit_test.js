@@ -145,9 +145,19 @@ ok("...and its reason carries the territory condition rather than burying it",
 ok("an image engine is recommended, on an unrestricted licence",
   pickOf("rig", "image")?.outputRights?.class === "unrestricted",
   pickOf("rig", "image")?.outputRights?.class);
+/* config.music.engine is the boot placeholder until Studio applies its
+ * machine default. That is not a saved selection on this fresh-install
+ * fixture. Give the recommendation the same explicit answer index.js sends
+ * when a person selected MiniMax; otherwise this check compares YuE2's
+ * correct fresh-machine default with an unchosen config literal. */
+const selectedMusicRec = recommendFor({
+  capabilities: rec.rig.capabilities, machine: MACHINES.rig,
+  disk: { freeBytes: 900e9 }, music: { value: "minimax-music3", chosenBy: "you" },
+});
 ok("the selected music engine is recommended, without requiring a second music model",
-  !!pickOf("rig", "music") && pickOf("rig", "music").id === (MODEL_TO_CAPABILITY[config.music.engine] || "engine")
-    && rec.rig.out.picks.filter(p => p.slot === "music").length === 1);
+  selectedMusicRec.picks.filter(p => p.slot === "music").length === 1
+    && selectedMusicRec.picks.find(p => p.slot === "music")?.id === MODEL_TO_CAPABILITY["minimax-music3"]
+    && selectedMusicRec.picks.find(p => p.slot === "music")?.chosenBy === "you");
 ok("the headline names the card and the download size",
   /4070 Ti SUPER/.test(rec.rig.out.headline) && /GB to download/.test(rec.rig.out.headline),
   rec.rig.out.headline);

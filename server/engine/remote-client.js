@@ -188,6 +188,9 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
   const timer = setInterval(() => { tick().catch(() => {}); }, pollMs); timer.unref();
   return { connect, upload, submit, cancel, tick, verify,
     models: async () => { await verify(); return json("/v1/models"); },
+    setup: async () => { await verify(); return json("/v1/setup"); },
+    installBundle: async (bundle, acceptLicense) => { await verify(); return post("/v1/setup/install", { bundle, acceptLicense }); },
+    cancelInstall: async () => { await verify(); return post("/v1/setup/cancel", {}); },
     status: () => ({ configured: !!connection.url, url: connection.url || "", workerId: connection.workerId || null,
       hasToken: !!token, lastError, jobs: Object.values(jobs).map(snapshot).sort((a, b) => b.createdAt - a.createdAt) }),
     file: (id, fileId) => jobs[id]?.outputs.find(f => f.id === fileId)?.localFile || null,

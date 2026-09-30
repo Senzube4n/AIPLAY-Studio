@@ -10,8 +10,10 @@ import { fileURLToPath } from "node:url";
 import { PROTOCOL, MAX_ASSET, TERMINAL, MEDIA_EXT, jobId, relativeFile, containedFile,
   hashFile, digest, readJSON, jsonStore, readBody, sendJSON, validateGraph } from "../server/engine/remote-common.js";
 import { checkComfyLoopback } from "./check-comfy-loopback.js";
+import { createModelManager } from "./model-manager.js";
 
-export async function createWorker({ token, comfyURL, inputDir, outputDir, stateDir, fetchFn = fetch, pollMs = 2000 }) {
+export async function createWorker({ token, comfyURL, inputDir, outputDir, stateDir,
+  modelsDir = path.join(path.dirname(inputDir), "models"), fetchFn = fetch, pollMs = 2000, modelBundles }) {
   if (typeof token !== "string" || token.length < 32 || /[\r\n]/.test(token)) throw new Error("AIPLAY_WORKER_TOKEN must contain at least 32 characters.");
   const backend = new URL(comfyURL);
   if (backend.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(backend.hostname)) throw new Error("ComfyUI must be on the worker's loopback interface.");
@@ -24,6 +26,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   const state = await readJSON(stateFile, { workerId: randomUUID(), jobs: {} });
   const save = jsonStore(stateFile);
   await save(state);
+  const modelManager = await createModelManager({ modelsDir, fetchFn, ...(modelBundles ? { bundles: modelBundles } : {}) });
   let busy = false, closed = false;
   const request = async (route, init = {}) => {
     const response = await fetchFn(`${base}${route}`, { ...init, redirect: "error", signal: AbortSignal.timeout(30000) });
@@ -134,9 +137,16 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
       if (req.method === "GET" && url.pathname === "/v1/health") {
         const stats = await request("/system_stats");
         return sendJSON(res, 200, { protocol: PROTOCOL, workerId: state.workerId, ready: true,
-          version: stats.system?.comfyui_version || null, devices: stats.devices || [], maxAssetBytes: MAX_ASSET });
+          version: stats.system?.comfyui_version || null, devices: stats.devices || [], maxAssetBytes: MAX_ASSET,
+          modelSetupVersion: 1 });
       }
       if (req.method === "GET" && url.pathname === "/v1/models") return sendJSON(res, 200, await request("/object_info"));
+      if (req.method === "GET" && url.pathname === "/v1/setup") return sendJSON(res, 200, modelManager.status());
+      if (req.method === "POST" && url.pathname === "/v1/setup/install") {
+        const body = JSON.parse((await readBody(req)).toString("utf8"));
+        return sendJSON(res, 202, await modelManager.install(body.bundle, body.acceptLicense));
+      }
+      if (req.method === "POST" && url.pathname === "/v1/setup/cancel") return sendJSON(res, 200, modelManager.cancel());
       if (req.method === "POST" && url.pathname === "/v1/assets") {
         const name = relativeFile(url.searchParams.get("name"));
         if (name.includes("/") || !MEDIA_EXT.test(name)) throw new Error("Unsupported input filename.");
@@ -218,6 +228,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     comfyURL: process.env.AIPLAY_WORKER_COMFY_URL || "http://127.0.0.1:8188",
     inputDir: process.env.AIPLAY_WORKER_INPUT || path.join(root, "input"),
     outputDir: process.env.AIPLAY_WORKER_OUTPUT || path.join(root, "output"),
-    stateDir: process.env.AIPLAY_WORKER_STATE || "/workspace/aiplay-worker" });
+    stateDir: process.env.AIPLAY_WORKER_STATE || "/workspace/aiplay-worker",
+    modelsDir: process.env.AIPLAY_MODELS_DIR || path.join(root, "models") });
   worker.server.listen(Number(process.env.AIPLAY_WORKER_PORT || 8787), "0.0.0.0", () => console.log("AIPLAY remote worker listening; authentication required."));
 }

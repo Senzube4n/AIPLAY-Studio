@@ -22,9 +22,27 @@ function rig() {
   return { calls, tools };
 }
 
+test("verified bundle setup and private presets are exposed through matching local routes", async () => {
+  const r = rig();
+  await r.tools.runpod_setup_status.run({});
+  await r.tools.runpod_install_bundle.run({ bundle: "yue2-comfy", acceptLicense: true });
+  await r.tools.runpod_cancel_install.run({});
+  await r.tools.runpod_templates.run({});
+  await r.tools.runpod_create_templates.run({});
+  assert.deepEqual(r.calls.map(([method, route]) => [method, route]), [
+    ["GET", "/api/runpod/setup"], ["POST", "/api/runpod/setup/install"], ["POST", "/api/runpod/setup/cancel"],
+    ["GET", "/api/runpod/account/templates"], ["POST", "/api/runpod/account/templates"],
+  ]);
+  const count = r.calls.length;
+  for (const bad of [{ bundle: "yue2-comfy", acceptLicense: false }, { bundle: "url", acceptLicense: true },
+    { bundle: "yue2-comfy", acceptLicense: true, url: "https://arbitrary.example" }]) await assert.rejects(r.tools.runpod_install_bundle.run(bad));
+  await assert.rejects(r.tools.runpod_create_templates.run({ deploy: true }));
+  assert.equal(r.calls.length, count, "unaccepted downloads and hidden Pod deployment must not reach an API");
+});
+
 test("RunPod tools are registered with closed top-level schemas and use the local API", async () => {
   const r = rig();
-  assert.equal(Object.keys(r.tools).length, 14);
+  assert.equal(Object.keys(r.tools).length, 19);
   assert.ok(Object.values(r.tools).every(tool => tool.inputSchema.additionalProperties === false));
   assert.match(readFileSync(new URL("./mcp.js", import.meta.url), "utf8"), /\.\.\.runpodTools\(api\)/);
   await r.tools.runpod_status.run({});

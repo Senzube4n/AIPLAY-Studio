@@ -86,7 +86,7 @@ const MCP_FILES = [
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
   "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
-  "server/mcp-setup.js", "server/mcp-runpod.js",
+  "server/mcp-setup.js", "server/mcp-runpod.js", "server/mcp-fastcovers.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
   "server/daw/mcp-refprofile.js", "server/daw/mcp-voicelab.js",
 ];

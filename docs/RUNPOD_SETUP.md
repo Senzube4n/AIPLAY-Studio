@@ -79,6 +79,21 @@ On Images or Video, choose **RunPod GPU**, open **Connection…**, and enter the
 
 The same window has **Create or manage a RunPod Pod**. Add a restricted RunPod API key with permission to read GPU inventory and manage Pods. AIPLAY stores that key in the same local secret store and never returns it to the page after saving. It can then show the account balance, current hourly spend, existing Pods, live GPU stock/price estimates, and start/stop controls. See RunPod's [API-key guidance](https://docs.runpod.io/get-started/api-keys) and [Pod GraphQL operations](https://docs.runpod.io/sdks/graphql/manage-pods).
 
+Press **Create private templates** to add four reusable Pod templates to that RunPod account. The operation is idempotent and does not start a GPU. Existing templates with the same names are left unchanged.
+
+| Template | Persistent disk | Suggested GPU | Intended workload |
+| --- | ---: | --- | --- |
+| AIPLAY Images | 60 GB | 16 GB VRAM or more | ComfyUI checkpoints and image output |
+| AIPLAY Video | 120 GB | 32 GB VRAM or more | LTX 2.5 nodes, weights and clips |
+| AIPLAY Audio | 100 GB | 24 GB VRAM or more | YuE2, ACE-Step or MiniMax Music |
+| AIPLAY Music LoRA Training | 120 GB | 24 GB VRAM recommended | ACE-Step 1.5 datasets, checkpoints and LoRA output |
+
+The rendering templates are private, use the NVIDIA ComfyUI CUDA 13 image, mount persistent storage at `/workspace`, and expose only authenticated worker port 8787. Raw ComfyUI must listen on loopback. They save the deployment shape, not licensed model weights. After the first deployment, run the worker bootstrap and install only the model bundles whose terms you accepted. Selecting a template and pressing RunPod's deploy button is a separate paid action.
+
+The connection panel can install the pinned YuE2 ComfyUI bundle after its repository terms are accepted. Downloads continue on the worker, resume partial files, and verify the exact size and SHA-256 before adoption. The MCP equivalents are `runpod_setup_status`, `runpod_install_bundle` and `runpod_cancel_install`; private presets use `runpod_templates` and `runpod_create_templates`.
+
+The **AIPLAY Music LoRA Training** preset uses RunPod's Python 3.11 PyTorch image and exposes JupyterLab on port 8888, the ACE-Step interface on port 7860 and TensorBoard on port 6006. Its RunPod README pins the official ACE-Step 1.5 source revision and contains the installation commands. ACE-Step's LoRA Training tab handles annotation, preprocessing and training. The publisher documents a small personal example starting with eight songs and about 12 GB VRAM; larger datasets need more GPU memory, storage and time. Keep the source audio and training output under `/workspace` so they survive restarts. Use only recordings you have permission to train on. See the [official ACE-Step repository](https://github.com/ace-step/ACE-Step-1.5) and [LoRA training guide](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/LoRA_Training_Guide.md).
+
 Creating a Pod is a reviewed paid action: choose the GPU, cloud tier and persistent disk, review the current estimated GPU hourly price, and explicitly acknowledge that billing begins before the create button is enabled. The current wizard creates the standard `runpod/comfyui:cuda12.8` image with only worker HTTP port 8787 exposed. Storage is billed separately and may continue after compute is stopped.
 
 The MCP surface exposes the same local worker, account, workflow, job and Pod

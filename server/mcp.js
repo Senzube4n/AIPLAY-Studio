@@ -72,6 +72,7 @@ import { welcomeTools } from "./mcp-welcome.js";
 import { modelTools } from "./mcp-models.js";
 import { cloudTools } from "./mcp-cloud.js";
 import { runpodTools } from "./mcp-runpod.js";
+import { fastCoverTools } from "./mcp-fastcovers.js";
 import { collabTools } from "./mcp-collab.js";
 import { communityTools } from "./mcp-community.js";
 import { standRigPsdTools } from "./mcp-standrig-psd.js";
@@ -444,6 +445,7 @@ export const TOOLS = [
   ...modelTools(api),
   ...cloudTools(api),
   ...runpodTools(api),
+  ...fastCoverTools(api),
   ...collabTools(api, safeName),
   ...communityTools(api),
   ...standRigPsdTools(api),
