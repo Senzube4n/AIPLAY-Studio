@@ -51,11 +51,11 @@ await test("defaults select native GGUF Q4 without Python duration/rung or API f
   assert.equal(atBoundary(valid({ engine: "yue2-gguf", quantization: "q4_0" })).engine, "yue2-gguf");
 });
 
-await test("trimmed text and ordinary multilingual Unicode reach the job unchanged", () => {
+await test("exact lyric whitespace and ordinary multilingual Unicode reach the job unchanged", () => {
   const caption = "Café nocturne — 柔らかなピアノ 🌙";
   const lyrics = "Étoiles, guidez-moi\nこんにちは、月よ 🌙\nغنّي بهدوء";
   const job = atBoundary({ caption: `  ${caption}  `, lyrics: `\n ${lyrics} \n`, title: "  Nuit — 夜  " });
-  assert.equal(job.caption, caption); assert.equal(job.lyrics, lyrics); assert.equal(job.title, "Nuit — 夜");
+  assert.equal(job.caption, caption); assert.equal(job.lyrics, `\n ${lyrics} \n`); assert.equal(job.title, "Nuit — 夜");
   assert.equal(atBoundary(valid({ title: "x".repeat(200) })).title.length, 120);
   assert.equal(atBoundary(valid({ title: "  " })).title, "Sing softly");
 });

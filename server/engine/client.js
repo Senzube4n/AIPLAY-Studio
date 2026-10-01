@@ -52,6 +52,7 @@
  * Neither is worth it today; both are named so nobody has to rediscover that.
  */
 import { EventEmitter } from "node:events";
+import { externalMusicWork } from "../music/exclusive.js";
 import net from "node:net";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -544,6 +545,7 @@ export function createEngineClient(deps = {}) {
    * none may be added.
    */
   async function dispatch(spec = {}) {
+    externalMusicWork.assertFree();
     /* Local stand-ins chosen on the Models screen, applied BEFORE the record is
      * built so the ledger names the file that actually rendered. */
     const files = await scanBases(uniqueDirs([config.modelsDir, ...(config.modelsAlso || []),
@@ -671,6 +673,7 @@ export function createEngineClient(deps = {}) {
 
     let res;
     try {
+      externalMusicWork.assertFree();
       res = await doFetch(`${base()}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

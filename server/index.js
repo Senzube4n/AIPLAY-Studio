@@ -14,6 +14,8 @@ import http from "node:http";
 import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile, realpath } from "node:fs/promises";
 import { ImgWorker } from "./imgworker.js";
 import { createImageEditor } from "./image-editor.js";
+import { vectorizeImage, vectorReviewImage } from "./vectorize.js";
+import { importVectorSource, MAX_VECTOR_SOURCE_BYTES } from "./vector-import.js";
 import { requestImageAndWait } from "./image-job.js";
 import { createReadStream, statSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -24,6 +26,7 @@ import { WebSocketServer } from "ws";
 import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshH3Speedups } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
+import { createCommunityRoutes } from "./music/community-tools.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
 import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
@@ -2869,6 +2872,8 @@ const vfxRoutes = createVfxRoutes({
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
+const communityRoutes = createCommunityRoutes({ json, readBody, library, jobs, engine: engineDoor, provenance: prov,
+  daw:(body,actor)=>submitStudioJson('/api/daw',body,actor) });
 // Workflow modules submit through the ordinary validated API. Keeping a
 // receipt for the exact id matters when another song is already rendering.
 function jobReceipt(job) { return exactJobReceipt(job, jobs.snapshot()); }
@@ -3400,6 +3405,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/score" || p.startsWith("/api/score/")) {
       if (await scoreRoutes(req, res, url)) return;
     }
+    if (p.startsWith('/api/music-tools') && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Music tools are available to Studio and local clients.'});
+    if (await communityRoutes(req, res, url)) return;
     if (await auditionRoutes(req, res, url)) return;
     if (await musicWorkflowRoutes(req, res, url)) return;
     if (await musicArtifactRoutes(req, res, url)) return;
@@ -4819,7 +4826,7 @@ const server = http.createServer(async (req, res) => {
           caption: body.instrumental
             ? `${body.caption.trim().replace(/[.,;\s]+$/, "")}. Instrumental, no vocals, no singing, no voice.`
             : body.caption.trim(),
-          lyrics: body.instrumental ? "" : (body.lyrics || "").trim(),
+          lyrics: body.instrumental ? "" : (body.lyrics || ""),
           /* protocol.py:95 — an integer in [0, 2^63). The random one stays in
            * MiniMax's 32-bit range so the seed field on the page reads the same. */
           seed: Number.isFinite(body.seed) ? Math.max(0, Math.floor(body.seed)) : Math.floor(Math.random() * 4294967296),
@@ -5082,7 +5089,7 @@ const server = http.createServer(async (req, res) => {
         title: body.title?.trim()
           || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
         caption: body.caption.trim(),
-        lyrics: yueSheet ?? (body.lyrics || "").trim(),
+        lyrics: yueSheet ?? (["yue2", "yue2-comfy"].includes(musicEngine) ? (body.lyrics || "") : (body.lyrics || "").trim()),
         // The performance. Holding this steady is what lets the AR stage be reused.
         seed: Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296),
         // The mix. A re-roll keeps `seed` and changes only this, so ComfyUI reuses
@@ -12184,40 +12191,51 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, swatches });
     }
 
-    /* Vector conversion — posterize + contour-trace, made for logos and flat
-     * art. Photographs come out as posterized art, which is what an SVG is. */
+    /* Raster tracing owns its bounded worker and strict shared controls.
+     * Each run is a new asset with measured settings kept beside it. */
     if (p === "/api/images/vectorize" && req.method === "POST") {
-      const b = await readBody(req);
-      const name = path.basename(String(b.name || ""));
-      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      const src = path.join(IMAGE_DIR, name);
-      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
-      const outName = `${name.replace(/\.[^.]+$/, "")}_v.svg`;
-      const jobPath = path.join(IMAGE_DIR, `.vec_${Date.now().toString(36)}.json`);
-      await writeFile(jobPath, JSON.stringify({
-        in: src, out: path.join(IMAGE_DIR, outName),
-        colors: Math.max(2, Math.min(16, Number(b.colors) || 6)),
-        detail: Math.max(0.2, Math.min(4, Number(b.detail) || 1)),
-      }));
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Vectorization requires a local JSON request." });
+      const b = await readBody(req, 2 * 1024 * 1024);
       try {
-        const out = await new Promise((resolve, reject) => {
-          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "vectorize", jobPath], { windowsHide: true });
-          let so = "", se = "";
-          proc.stdout.on("data", (d) => { so += d; });
-          proc.stderr.on("data", (d) => { se += d; });
-          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
-        });
-        const r = JSON.parse(out.trim().split("\n").pop());
-        if (!r.ok) throw new Error(r.error || "vectorize failed");
-        const parent = imageMeta.get(name) || {};
-        imageMeta.set(outName, { ...parent, vectorFrom: name, at: Date.now(), durationMs: null });
-        saveImageStore();
-        return json(res, 200, { ok: true, name: outName, paths: r.paths, bytes: r.bytes });
+        const r = await vectorizeImage({ imageDir: IMAGE_DIR, python: config.python,
+          register: async ({ name, source, result }) => {
+            const { settings, palette, stats, warnings, sourceWidth, sourceHeight, width, height, paths, bytes, traceFingerprint, shapes, shapesTruncated, cleanup, replay } = result;
+            await saveImageStore({ strict: true, mutate: () => {
+              const parent = imageMeta.get(source) || {};
+              imageMeta.set(name, { ...parent, vectorFrom: source, at: Date.now(), durationMs: null,
+                vectorization: { settings, palette, stats, warnings, sourceWidth, sourceHeight, width, height, paths, bytes, traceFingerprint, shapes, shapesTruncated, cleanup, replay } });
+              return () => imageMeta.delete(name);
+            } });
+          },
+        }, b);
+        return json(res, 200, r);
       } catch (err) {
-        return json(res, 400, { error: `vectorize failed: ${err.message}` });
-      } finally {
-        unlink(jobPath).catch(() => {});
+        return json(res, err.status || 500, { error: err.message });
       }
+    }
+
+    if (p === "/api/images/vector-review" && req.method === "POST") {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Vector review requires a local JSON request." });
+      const b = await readBody(req, 32768);
+      try {
+        const r = await vectorReviewImage({ imageDir: IMAGE_DIR, python: config.python }, b);
+        return json(res, 200, { ...r, replay: imageMeta.get(r.name)?.vectorization?.replay || null });
+      }
+      catch (err) { return json(res, err.status || 500, { error: err.message }); }
+    }
+
+    if (p === "/api/images/vector-import" && req.method === "POST") {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Image import requires a local JSON request." });
+      const b = await readBody(req, Math.ceil(MAX_VECTOR_SOURCE_BYTES / 3) * 4 + 4096);
+      try {
+        const r = await importVectorSource({ imageDir: IMAGE_DIR, register: async (receipt) => {
+          await saveImageStore({ strict: true, mutate: () => {
+            imageMeta.set(receipt.name, { at: Date.now(), engine: "import", imported: receipt.source });
+            return () => imageMeta.delete(receipt.name);
+          } });
+        } }, b);
+        return json(res, 200, r);
+      } catch (err) { return json(res, err.status || 500, { error: err.message }); }
     }
 
     if (p === "/api/images" && req.method === "POST") {

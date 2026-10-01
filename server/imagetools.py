@@ -1539,59 +1539,13 @@ def sheet(job):
 
 
 def vectorize(job):
-    import cv2
+    from vector_trace import trace_image
 
-    colors = max(2, min(16, int(job.get("colors") or 6)))
-    detail = max(0.2, min(4.0, float(job.get("detail") or 1.0)))
-    min_area = int(job.get("minArea") or 16)
-
-    im = Image.open(job["in"]).convert("RGB")
-    # keep vector work at a sane size; SVG scales anyway
-    scale = min(1.0, 1024 / max(im.size))
-    if scale < 1.0:
-        im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
-    w, h = im.size
-
-    # adaptive palette; slight pre-blur so JPEG noise doesn't become 10k paths
-    q = im.filter(ImageFilter.GaussianBlur(0.6)).quantize(colors=colors, method=Image.MEDIANCUT)
-    pal = q.getpalette()
-    idx = np.asarray(q, dtype=np.uint8)
-
-    # layers back-to-front by coverage: the biggest color paints first so
-    # smaller shapes sit on top of it, exactly how a designer would stack
-    counts = [(int((idx == i).sum()), i) for i in range(colors)]
-    counts.sort(reverse=True)
-
-    eps_base = 1.2 / detail
-    paths = []
-    for _, i in counts:
-        mask = (idx == i).astype(np.uint8) * 255
-        if mask.sum() == 0:
-            continue
-        r, g, b = pal[i * 3], pal[i * 3 + 1], pal[i * 3 + 2]
-        contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-        if hierarchy is None:
-            continue
-        # group outer contours with their holes into one even-odd path
-        d_parts = []
-        for c, hinfo in zip(contours, hierarchy[0]):
-            if cv2.contourArea(c) < min_area:
-                continue
-            approx = cv2.approxPolyDP(c, eps_base, True)
-            if len(approx) < 3:
-                continue
-            pts = approx.reshape(-1, 2)
-            d = f"M{pts[0][0]},{pts[0][1]}" + "".join(f"L{x},{y}" for x, y in pts[1:]) + "Z"
-            d_parts.append(d)
-        if d_parts:
-            paths.append(f'<path fill="rgb({r},{g},{b})" fill-rule="evenodd" d="{"".join(d_parts)}"/>')
-
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
-           f'width="{w}" height="{h}">{"".join(paths)}</svg>')
-    with open(job["out"], "w", encoding="utf-8") as f:
-        f.write(svg)
-    print(json.dumps({"ok": True, "out": job["out"], "paths": len(paths), "colors": colors,
-                      "bytes": len(svg)}))
+    try:
+        result = trace_image(job)
+    except ValueError as exc:
+        result = {"ok": False, "error": str(exc), "status": 400}
+    print(json.dumps(result))
 
 
 def describe_selection(job):
@@ -1706,6 +1660,13 @@ def main():
         analyze(job)
     elif mode == "vectorize":
         vectorize(job)
+    elif mode == "vector_review":
+        from vector_preview import review_svg
+        try:
+            result = review_svg(job)
+        except ValueError as exc:
+            result = {"ok": False, "error": str(exc), "status": 400}
+        print(json.dumps(result))
     elif mode == "describe":
         describe_selection(job)
     elif mode == "blank":

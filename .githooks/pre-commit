@@ -11,6 +11,9 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+node --check web/vectorize-controls.js || exit 1
+node --test server/vectorize_test.js server/vectorize-ui_test.js server/vector-import_test.js || exit 1
+node --test server/music/community-tools_test.js server/music/score-follow_test.js server/music/native-adapter-export_test.js || exit 1
 # RunPod transport and its UI: mock HTTP services only; no GPU or paid cloud resources.
 node --test server/engine/remote_test.js server/engine/remote_ui_test.js server/engine/runpod-account_test.js server/mcp-runpod_test.js || exit 1
 node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
@@ -600,6 +603,11 @@ node server/mcp-guide_test.js || exit 1
 # stay manual: a hook that fails on a machine without the rig gets deleted.
 PY="${AIPLAY_RIG:-}/venv/Scripts/python.exe"   # set AIPLAY_RIG to your ComfyUI rig; unset skips these lanes
 if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
+if [ -x "$PY" ] && "$PY" -c "import cv2,numpy,scipy,PIL" >/dev/null 2>&1; then
+  "$PY" server/vector_trace_test.py || exit 1
+  "$PY" server/vector_cleanup_test.py || exit 1
+  "$PY" server/vector_preview_test.py || exit 1
+fi
 # THE UNIRIG ADAPTER, which is STDLIB-ONLY and so does not want the guard above.
 # The imagetools suites need PIL/numpy/scipy and are rightly skipped where the
 # rig is absent; this one needs nothing but an interpreter, and gating it on the

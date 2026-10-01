@@ -41,6 +41,9 @@ function ok(label, cond, detail = "") {
 const IGNORED = {
   // Spread wholesale into the request body, so no name appears individually.
   image_sheet: "*",
+  // Shared normalization forwards every vector schema control; vectorize_test
+  // exercises the actual MCP body and strict HTTP normalizer for parity.
+  image_vectorize: "*",
   // Destructures the handful it renames and REST-SPREADS everything else into
   // ops — the spread is the forwarding, so nothing declared can be dropped.
   image_adjust: "*",

@@ -13,6 +13,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Image creation and ordered references | `make_image`: refs, reference sizing/resolution, dimensions, alpha, native DiT/encoder/VAE, seed and sampling settings |
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
 | Layer editing and preview | `image_documents`, `document_edit`, `image_document_preview`, `image_tools_catalog`, `image_capabilities` |
+| SVG tracing and selected geometry cleanup | `image_vector_import` copies a supplied raster into Pictures; `image_vectorize` traces it, exposes a shape receipt, then reconstructs or smooths selected contours with explicit fills and offset shadows; `image_vector_review` returns the saved SVG as an actual image, including source-pixel detail crops; see [the vector workflow](vector.md) |
 | StandRig 2D performer | `image_standrig_psd_export` for a saved layered document; `standrig_status`, `standrig_parameters`, `standrig_control` for the local StandRig bridge |
 | 3D avatar preview, motion and expression cues | `avatar_list`, `avatar_inspect`, `avatar_cue_inventory`, `avatar_playback_sessions`, `avatar_audio_upload`, `avatar_playback_command`; select and play an embedded clip in a live preview, or cue a VRM expression for 250–10,000 ms |
 | AI edit, style transfer, selected-area repair | `image_ai_edit_create`, `image_ai_edit_status`, `image_ai_edit_accept`, `image_ai_edit_undo`, `image_ai_edit_discard` |
@@ -47,6 +48,21 @@ content-addressed `asset` can be bound to a workflow node and input when calling
 not involved in that particular HTTP call.
 
 ## Image edit review
+
+For logo and flat-art vectors, follow [the vector workflow](vector.md). Trace
+first, read the actual palette and contour IDs, then apply cleanup only to the
+intended outlines with the same source/settings. Keep lettering, holes and
+waveform peaks protected, and judge the saved SVG at high zoom through
+`image_vector_review` before delivery.
+Preserve and clone the trace's `replay` object for each refinement; it is an
+accepted `image_vectorize` request with the original source and fingerprint.
+Keep earlier cleanup/composition choices unless intentionally undoing them,
+because each call rebuilds from the source raster. Review of a saved Studio
+trace returns that request too. Do not forward the whole result or unfiltered
+computed settings as a tool request.
+Primitive reconstruction, smoothing and explicit gradient/shadow composition
+are CPU work; they do not invoke an image generator. Optional Qwen raster
+repairs use the separate image-edit review workflow below.
 
 With no saved choice, standalone images and automatic song covers use the
 recommended picture model on this PC; no cover is queued while none is there.

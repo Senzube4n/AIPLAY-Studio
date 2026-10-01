@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Score player · AIPlay Studio</title><link rel="stylesheet" href="/ui.css">
+<style>
+body{margin:0;background:var(--bg,#161920);color:var(--text,#eee);font-family:system-ui,sans-serif}
+.toolbar{position:sticky;top:0;z-index:2;padding:16px;background:var(--bg,#161920);border-bottom:1px solid #555}
+.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}audio{width:min(100%,560px)}
+#paper{padding:20px;color:#111;background:#fff;overflow-x:auto}#paper svg{max-width:100%;width:100%;height:auto}.playing-note{fill:#087f68!important;stroke:#087f68!important}
+input[type=number]{width:90px}.hint{font-size:13px}h1{font-size:20px;margin:0 0 10px}
+.btn{background:#263e39;color:inherit;border:1px solid #4e7e6b;border-radius:7px;padding:8px 12px;font:inherit;cursor:pointer}
+@media print{.toolbar{display:none}.playing-note{fill:#111!important;stroke:#111!important}}
+</style></head><body>
+<header class="toolbar"><h1 id="title">Score player</h1><div class="controls">
+<audio id="audio" controls preload="metadata"></audio>
+<label><input id="follow" type="checkbox" checked> Follow</label><span class="chip" id="position">Ready</span>
+<button class="btn" id="fullscreen">Full screen</button></div>
+<details class="more"><summary>Timing and recording</summary><div class="controls">
+<label>Start offset <input id="offset" type="number" value="0" step="0.1"> s</label>
+<label>Time scale <input id="scale" type="number" value="1" min="0.1" max="10" step="0.001"></label>
+<button class="btn" id="fit">Fit duration</button><label>Recording <input id="recording" type="file" accept="audio/*"></label>
+</div><p class="hint">Notation timing is approximate. Fit duration adjusts the whole score; local timing may still drift.</p></details>
+<p id="status" class="hint" role="status">Following notation timing</p></header><main id="paper"></main>
+<script src="/api/score/vendor/abcjs.js"></script><script type="module">
+import {mountScoreFollow} from '/score-follow.js';
+mountScoreFollow().catch(e=>{document.getElementById('status').textContent=e.message});
+</script></body></html>

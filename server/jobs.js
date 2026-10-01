@@ -16,6 +16,7 @@ import { readdir, stat, copyFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
+import { externalMusicWork } from "./music/exclusive.js";
 import { buildGraph, buildYue2ComfyGraph, buildAceStep15Graph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
 /* The second kind of work: a subprocess with a receipt, not a graph. The door
  * (renderSong) owns the refusals, the progress line and the ledger row; this
@@ -245,6 +246,11 @@ export class JobRunner extends EventEmitter {
 
   async #pump() {
     if (this.current || this.queue.length === 0) return;
+    if (typeof externalMusicWork !== "undefined" && externalMusicWork.owner) {
+      clearTimeout(this.#waitTimer);
+      this.#waitTimer = setTimeout(() => this.#pump(), 1000);
+      return;
+    }
     // The engine can drop out mid-run — it restarts, or a driver hiccup kills it.
     // Returning here without arranging a retry stalls the queue permanently, which
     // nobody notices while clicking Create by hand but silently ends an overnight

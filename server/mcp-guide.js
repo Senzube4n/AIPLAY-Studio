@@ -38,7 +38,7 @@ and video queue behind it.
 The economics drive the order: PLANNING IS FREE (brief, bible, lint, crime
 board), a render costs GPU-minutes, and every render KEEPS its takes. So plan
 fully, render once, pick takes, repair the stale minimum, and polish with VFX
-instead of re-rendering. Topics: stages, series, engines, example.`;
+instead of re-rendering. Topics: stages, series, engines, example, vectors. Read vectors for logo finishing.`;
 
 const STAGES = `THE FIVE STAGES OF A MUSIC VIDEO
 
@@ -278,7 +278,54 @@ FINISHING IS A STAGE. \`mv_build_timeline\` is the last one and the easiest neve
 to reach. Repairing tools is not delivering a video: re-read the objective before
 each new thread of work, and ask what the caller would have if you stopped now.`
 
-const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS };
+const VECTORS = `VECTOR ART: TRACE, SELECT, FINISH, LOOK
+
+1 SOURCE: use an existing Pictures raster from \`list_images\`, or \`image_vector_import\`
+  with an explicitly supplied absolute local path or base64 image data. An uploaded generation
+  reference is not automatically a Pictures asset. Keep the original source.
+
+2 TRACE: \`image_vectorize\` needs the library name. Choose logo for flat colors,
+  silhouette for transparent gradient art (one neutral alpha fill), posterize for a photo.
+  Transparency must already be correct; alpha mode on an opaque image traces the canvas.
+  The returned shapes carry palette color, contour index, source-pixel bounds, hole and
+  parent. The inventory is capped at 512 shapes. Save replay: it is a directly valid request
+  with the original source/settings and traceFingerprint already set as basis.
+
+3 PLAN: identify simple geometry, text/counters, smooth spans, sharp corners, narrow gaps
+  and waveform peaks. Select exact contours; leave protected/unselected outlines unchanged.
+  A connected outline can contain both smooth and delicate parts. Do not increase smoothing
+  until their visual identity survives. High trace quality follows noise more faithfully.
+
+4 FINISH: clone the latest replay and add or revise cleanup/composition. This retains the
+  ORIGINAL raster, SAME base settings and previous edits. cleanup.operations names type, color, contours,
+  maxDeviation in source pixels (default 4), and strength for smooth (default 0.7).
+  smooth uses longer curves and pinned corners; circle selects one complete circular outline;
+  concentric selects outer/inner circular contours and shares their center; parallelogram
+  selects one four-sided divider. Selections are disjoint. Unsafe fits or topology changes
+  fail instead of being forced. A stale basis requires a new trace, never guessed indexes.
+
+  composition.fills assigns selected outlines either solid or gradient. Selected gradients
+  use angle/stops and optional source-pixel bounds [x,y,width,height]; their default span
+  is the selection bounds. Include foreground outlines AND all their child holes in fills
+  and shadows. composition.shadows duplicates selected cleaned paths with offset [dx,dy]
+  and fill color. composition.omit removes only inspected artifacts; omitting a hole fills
+  that counter, so never omit meaningful letter counters. Source shadow fragments can be
+  removed explicitly, then rebuilt from clean foregrounds. Keep previous operations and
+  composition in later requests: each run reconstructs from the original, not the last SVG.
+  Use explicit masks/layers if raster colors cannot distinguish the intended design groups.
+
+5 LOOK: \`image_vector_review\` returns native PNG pixels rendered from the actual saved SVG.
+  Review the whole artwork and enlarged source-pixel crops on white and dark backgrounds.
+  Review also returns the saved replay, or null for an SVG without a Studio trace receipt.
+  Check lettering, holes, waveform peaks, curve joins, border thickness and shadow offsets.
+  Metrics/IoU do not prove polished curves. Unsupported SVG features are refused, not guessed.
+  Keep the source and previous SVGs for comparisons. Do not claim universal perfect tracing
+  or inferred gradients. Qwen can propose local raster repair through existing image tools,
+  but compare each candidate and protect original text before tracing it.
+
+Full guide: https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md`;
+
+const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS, vectors: VECTORS };
 
 /** Every section, for the test that proves no tool name here is a phantom. */
 export const GUIDE_SECTIONS = { head: HEAD, ...TOPICS };
@@ -292,11 +339,11 @@ export function guideTools() {
         + "at each of the five stages of a music video (song, plan, assets, polish, "
         + "assemble), the episodic-series variant, the engine and licence rules, and a "
         + "worked scene. Costs nothing and answers instantly. `topic` narrows it: "
-        + "stages | series | engines | example | pitfalls. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline.",
+        + "stages | series | engines | example | pitfalls | vectors. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline. Use topic=vectors for vector logos and selected cleanup.",
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls"],
+          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls", "vectors"],
             description: "One section instead of the whole map." },
         },
         additionalProperties: false,

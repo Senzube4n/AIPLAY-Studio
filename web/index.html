@@ -900,6 +900,8 @@
       <div class="frow">
         <button class="btn sm" type="button" id="scoreSave">Save as a new version</button>
         <button class="btn sm" type="button" id="scoreEngrave">Engrave</button>
+        <a class="btn sm" href="/music-workbench.html" target="_blank" rel="noopener">Music workbench</a>
+        <button class="btn sm" type="button" id="scoreFollow">Follow playback</button>
         <a class="btn sm" id="scoreSheetLink" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a>
         <a class="btn sm" id="scorePdfLink" href="#" target="_blank" rel="noopener" hidden>PDF</a>
         <a class="btn sm" id="scoreMidi" href="#" download hidden title="This version as a Standard MIDI File">MIDI</a>
@@ -2437,6 +2439,7 @@
       </style>
       <div class="stagehead">
         <h2>Train a music LoRA</h2>
+        <a class="btn sm" href="/music-workbench.html" target="_blank" rel="noopener">Dataset and native tools</a>
         <span class="count" id="trCount"></span>
       </div>
       <p class="hint"><b>Experimental.</b> Train a YuE2 adapter from a recording you own, then test whether it changes the sound usefully. The training loop runs; audible improvement is not validated. Audio and training stay on this computer.</p>
@@ -4488,15 +4491,81 @@
                   <button class="edtool sm" id="iedUp" title="RealESRGAN ×2 (BSD-3)">⤢ upscale ×2</button></span></div>
               </div>
               <div class="iedgrp" id="iedVec">
-                <div class="wrow"><b class="iedgrph">Vectorize</b>
+                <b class="iedgrph">Vectorize</b>
+                <div class="wrow"><label for="iedVecMode">mode</label>
+                  <select id="iedVecMode" class="sel2 sm"><option value="logo">Curves (flat art)</option>
+                    <option value="silhouette">Alpha shapes</option>
+                    <option value="posterize">Posterized photo</option></select></div>
+                <div class="wrow"><label for="iedVecQuality">quality</label>
+                  <select id="iedVecQuality" class="sel2 sm"><option value="draft">Draft</option>
+                    <option value="standard" selected>Standard</option><option value="high">High</option></select></div>
+                <div class="wrow"><label for="iedVecColors">colors</label>
                   <select id="iedVecColors" class="sel2 sm">
                     <option value="2">2 colors · logo</option>
                     <option value="4">4 colors</option>
                     <option value="6" selected>6 colors</option>
                     <option value="10">10 colors</option>
+                    <option value="16">16 colors</option>
                   </select></div>
+                <details class="more"><summary>Trace controls</summary>
+                  <div class="wrow"><label for="iedVecDetail">contour detail</label>
+                    <input id="iedVecDetail" class="sel2 sm" type="number" min="0.2" max="4" step="0.1" value="1"
+                      title="Higher values retain more contour detail without changing curve tolerance."></div>
+                  <div class="wrow"><label for="iedVecTolerance">curve tolerance</label>
+                    <input id="iedVecTolerance" class="sel2 sm" type="number" min="0.15" max="4" step="0.05" placeholder="Auto"
+                      title="Fitting tolerance in source pixels; empty uses the quality preset."></div>
+                  <div class="wrow"><label for="iedVecArea">minimum area</label>
+                    <input id="iedVecArea" class="sel2 sm" type="number" min="0" max="10000" step="1" value="1"
+                      title="Minimum component area in source pixels; holes of retained components stay open."></div>
+                  <div class="wrow"><label for="iedVecAlpha">alpha threshold</label>
+                    <input id="iedVecAlpha" class="sel2 sm" type="number" min="1" max="255" step="1" value="128"
+                      title="Alpha becomes a binary shape at this threshold; continuous transparency is approximated."></div>
+                  <div class="wrow"><label for="iedVecSize">working size</label>
+                    <input id="iedVecSize" class="sel2 sm" type="number" min="64" max="4096" step="1" placeholder="Auto"
+                      title="Maximum working side; empty uses the quality preset. The SVG keeps the original image dimensions."></div>
+                </details>
                 <button class="edtool" id="iedVecGo">Trace to SVG</button>
-                <p class="hint">Made for logos and flat art — a photo becomes posterized art.</p>
+                <p class="hint">Trace shapes, then choose editable fills.</p>
+                <span id="iedVecStatus" hidden class="chip" role="status" aria-live="polite"></span>
+                <p id="iedVecNotes" hidden class="hint noclamp"></p>
+                <details id="iedVecFill" hidden class="more"><summary>Gradient fill</summary>
+                  <div class="wrow"><label for="iedVecFillColor">traced fill</label>
+                    <select id="iedVecFillColor" class="sel2 sm"></select></div>
+                  <div class="wrow"><label for="iedVecStart">start color</label>
+                    <input id="iedVecStart" type="color" value="#e42dce"></div>
+                  <div class="wrow"><label for="iedVecEnd">end color</label>
+                    <input id="iedVecEnd" type="color" value="#46ddfb"></div>
+                  <div class="wrow"><label for="iedVecAngle">angle</label>
+                    <input id="iedVecAngle" class="sel2 sm" type="number" min="0" max="360" step="1" value="0"></div>
+                  <button id="iedVecFillGo" class="edtool" disabled
+                    title="Apply an editable gradient to the selected palette region; source gradients are not inferred.">Apply gradient</button>
+                </details>
+                <details id="iedVecClean" hidden class="more"><summary>Clean outlines</summary>
+                  <div class="wrow"><label for="iedVecShapeColor">traced color</label>
+                    <select id="iedVecShapeColor" class="sel2 sm"></select></div>
+                  <label for="iedVecShapes" class="hint">outlines</label>
+                  <select id="iedVecShapes" class="sel2" multiple size="6"
+                    title="Select outlines with Ctrl or Shift; choose inner holes with their surrounding outline."></select>
+                  <p id="iedVecShapeNote" hidden class="hint"></p>
+                  <div class="wrow"><label for="iedVecCleanType">cleanup</label>
+                    <select id="iedVecCleanType" class="sel2 sm"><option value="smooth">Smooth contour</option>
+                      <option value="circle">Fit circles</option><option value="concentric">Concentric rings</option>
+                      <option value="parallelogram">Straighten slant</option></select></div>
+                  <div class="wrow"><label for="iedVecCleanStrength">smoothness</label>
+                    <input id="iedVecCleanStrength" class="sel2 sm" type="number" min="0" max="1" step="0.05" value="0.7"></div>
+                  <div class="wrow"><label for="iedVecCleanDeviation">max movement</label>
+                    <input id="iedVecCleanDeviation" class="sel2 sm" type="number" min="0.5" max="32" step="0.5" value="4"
+                      title="Maximum outline movement in original source pixels."></div>
+                  <button id="iedVecCleanGo" class="edtool" disabled>Clean selected shape</button>
+                  <p class="hint">Only selected outlines change.</p>
+                </details>
+                <details id="iedVecCompare" hidden class="more"><summary>Compare trace</summary>
+                  <div class="wrow"><label for="iedVecCompareMode">preview</label>
+                    <select id="iedVecCompareMode" class="sel2 sm"><option value="after">SVG result</option>
+                      <option value="before">Original image</option></select></div>
+                  <img id="iedVecCompareImage" alt="Vector trace result" loading="lazy"
+                    style="display:block;width:100%;max-height:200px;object-fit:contain">
+                </details>
               </div>
               <div class="iedgrp" id="iedKeyPanel">
                 <b class="iedgrph">Chroma key preview</b>

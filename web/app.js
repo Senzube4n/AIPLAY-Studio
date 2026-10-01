@@ -2,6 +2,8 @@ import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
 import { mountH3RefMods } from './h3-refmods.js';
 import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
+import { createVectorizer } from './vectorize-controls.js';
+var iedVectorizer = null;
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -3503,7 +3505,7 @@ $("btnToOvernight").onclick = () => {
   ov.ideas.push({
     title: $("title").value.trim() || "Untitled",
     caption,
-    lyrics: instrumental ? $("scaffold").value : $("lyrics").value.trim(),
+    lyrics: instrumental ? $("scaffold").value : $("lyrics").value,
     instrumental,
     maxDuration: +$("maxDur").value,
   });
@@ -11987,6 +11989,7 @@ function openImageEditor(name) {
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
   ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
+  if (iedVectorizer) iedVectorizer.open(name, m);
   $("iedImg").src = `/api/image/${encodeURIComponent(name)}?v=${Date.now()}`;
   const d = m.at ? new Date(m.at) : null;
   $("iedMeta").innerHTML = [
@@ -12101,10 +12104,12 @@ function openImageEditor(name) {
    * trash it. Every pixel surface goes away, and so do the tools that would
    * drive one; the whole point of a tool strip is that what is lit is what
    * works. */
-  for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
+  for (const id of ["iedSliders", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
     "iedApply"]) {
     $(id).hidden = isFinal;
   }
+  // A traced SVG can still replace fills using its captured raster source.
+  $("iedVec").hidden = isFinal && !iedVectorizer?.hasSource();
   /* ⚠ THE DOCKS HAVE TWO REASONS TO BE HIDDEN, SO NEITHER WRITES THE FLAG.
    * This line used to read `$(id).hidden = isFinal` across twelve docks — the
    * right rule (an .svg has no pixels, so every pixel surface goes away) writing
@@ -12392,17 +12397,15 @@ $("iedApply").onclick = async () => {
   } finally { iedApplyBusy = false; iedApplyEnable(); }
 };
 
-$("iedVecGo").onclick = async () => {
-  const btn = $("iedVecGo"); btn.disabled = true; btn.textContent = "Tracing…";
-  try {
-    const r = await (await fetch("/api/images/vectorize", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: ied.name, colors: +$("iedVecColors").value }) })).json();
-    if (r.error) { failSay(r); return; }
+iedVectorizer = createVectorizer({
+  get: $, currentName: () => ied.name,
+  request: async (body) => (await fetch("/api/images/vectorize", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(),
+  onResult: async (r, show, active) => {
     await loadImages();
-    openImageEditor(r.name);
-  } finally { btn.disabled = false; btn.textContent = "Trace to SVG"; }
-};
+    if (show && ied.name === active) openImageEditor(r.name);
+  },
+});
 
 $("iedReuse2").onclick = () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta;
@@ -13023,7 +13026,7 @@ async function iedDocOpenId(id) {
 /* A document is the canvas, not just an outline beside an unrelated image.
  * Sequence replies so a slow older render cannot erase the latest layer edit. */
 let iedDocViewSeq = 0, iedDocViewReady = false, iedDocPaintTargets = {};
-const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedDl",
+const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedVecFillGo", "iedVecCleanGo", "iedDl",
   "iedBlur", "iedTrash2", "iedReveal2", "iedReuse2", "iedCompose", "iedDocSave",
   "iedSelWhat", "iedSelBake", "iedLutGo"]);
 const IED_DOC_FILE_COMMANDS = new Set(["file.download", "file.reveal", "file.reuse", "file.blur", "file.trash",
@@ -16729,7 +16732,10 @@ function iedSrcToViewNav(sx, sy, s) {
 const IED_SNAPCTL = ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV",
   "iedShd", "iedHl", "iedPost", "iedDn", "iedGr", "iedRw", "iedRh",
   "iedKeyTol", "iedKeySoft", "iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC",
-  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors",
+  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors", "iedVecMode", "iedVecQuality",
+  "iedVecDetail", "iedVecTolerance", "iedVecArea", "iedVecAlpha", "iedVecSize",
+  "iedVecFillColor", "iedVecStart", "iedVecEnd", "iedVecAngle",
+  "iedVecCleanType", "iedVecCleanStrength", "iedVecCleanDeviation", "iedVecShapeColor", "iedVecCompareMode",
   "iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA",
   "iedStSize2", "iedStHard", "iedStOpacity", "iedStFlow", "iedStAmount", "iedStColor", "iedStSpacing",
   "iedShFillOn", "iedShFill", "iedShStrokeOn", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend",
@@ -20766,7 +20772,7 @@ $("ovAdd").onclick = () => {
   ov.ideas.push({
     title: $("title").value.trim() || "Untitled",
     caption,
-    lyrics: state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value.trim(),
+    lyrics: state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value,
     instrumental: state.mode === "instrumental",
     maxDuration: +$("maxDur").value,
   });

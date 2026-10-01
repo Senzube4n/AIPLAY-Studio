@@ -79,6 +79,7 @@ import { collabTools } from "./mcp-collab.js";
 import { communityTools } from "./mcp-community.js";
 import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { workspaceTools } from "./mcp-workspace.js";
+import { VECTOR_INPUT_SCHEMA, VECTOR_REVIEW_SCHEMA, normalizeVectorOptions } from "./vectorize.js";
 import { excludedTerritoriesText } from "./models.js";
 
 // H3's excluded territories come from the catalogue (models.js excludedTerritoriesText);
@@ -2267,17 +2268,38 @@ export const TOOLS = [
     },
   },
   {
-    name: "image_vectorize",
-    description: "Convert a library image to SVG — posterize to N colors, trace each layer with simplified contours. Made for LOGOS and flat art (a photograph becomes posterized art). colors 2-16 (default 6; use 2-4 for a clean logo), detail 0.2-4 (higher = more faithful, more path points). The SVG lands in the image library.",
-    inputSchema: {
-      type: "object", required: ["name"],
-      properties: { name: { type: "string" }, colors: { type: "integer" }, detail: { type: "number" } },
-      additionalProperties: false,
-    },
+    name: "image_vector_import",
+    description: "Import an explicitly supplied PNG/JPEG/WebP into Pictures for vectorization. Supply one absolute local path or base64 data_url, optionally a filename hint. Creates a unique library asset and returns its name; keeps the source file. No URL downloads. Then call image_vectorize. Read pipeline_guide topic=vectors for the complete finishing workflow.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      path: { type: "string", description: "Absolute local path to the source raster." },
+      data_url: { type: "string", description: "data:image/png|jpeg|webp;base64,...; use instead of path." },
+      name: { type: "string", description: "Optional filename hint for the imported Pictures asset." },
+    }, oneOf: [{ required: ["path"] }, { required: ["data_url"] }] },
     async run(a) {
-      const r = await api("POST", "/api/images/vectorize", { name: safeName(a.name, "image"), colors: a.colors, detail: a.detail });
+      const r = await api("POST", "/api/images/vector-import", { path: a.path, data_url: a.data_url, name: a.name });
       if (r.error) throw new Error(r.error);
-      return { svg: r.name, paths: r.paths, bytes: r.bytes, url: `/api/image/${r.name}` };
+      return r;
+    },
+  },
+  {
+    name: "image_vector_review",
+    description: "LOOK at the actual saved vector SVG as native PNG image content, with optional source-pixel crop for enlarged curve, letter and hole checks. CPU renderer supports Studio's generated paths, circular arcs, explicit linear gradients and translated shadows; unsupported SVG features are refused. Review the complete badge and critical crops on white and dark backgrounds. Geometric metrics alone do not establish polished lettering or curves.",
+    inputSchema: VECTOR_REVIEW_SCHEMA,
+    async run(a) {
+      const r = await api("POST", "/api/images/vector-review", { name: safeName(a.name, "SVG"), max_edge: a.max_edge, crop: a.crop, background: a.background }, 50000);
+      if (r.error) throw new Error(r.error);
+      const { image, ...rest } = r;
+      return { ...rest, ...(image ? { _images: [image] } : {}) };
+    },
+  },
+  {
+    name: "image_vectorize",
+    description: "Trace and finish a Pictures PNG/JPEG/WebP as a new editable SVG. First call returns shapes (palette color, contour index, source bounds, hole/parent), traceFingerprint, settings and measurements. Reuse the original name/settings and basis=traceFingerprint for selected cleanup (smooth, circle, concentric ring, parallelogram), local gradient fills, inspected artifact omissions and rebuilt offset shadows. Unselected outlines retain the faithful trace. Unsafe geometry/deviation/topology changes fail explicitly. Read pipeline_guide topic=vectors before finishing; use image_vector_review to inspect actual SVG/crops. Logo suits flat art, silhouette traces alpha independently of gradient bands, posterize approximates photos. Gradients are explicit, not inferred. minArea/tolerance/deviation are source pixels; first inventory is capped at 512 outlines. Each run keeps a new SVG and its replayable receipt.",
+    inputSchema: VECTOR_INPUT_SCHEMA,
+    async run(a) {
+      const r = await api("POST", "/api/images/vectorize", { ...normalizeVectorOptions(a), name: safeName(a.name, "image") }, 125000);
+      if (r.error) throw new Error(r.error);
+      return { ...r, svg: r.name, url: r.url || `/api/image/${r.name}` };
     },
   },
   {

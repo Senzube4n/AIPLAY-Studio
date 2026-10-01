@@ -344,6 +344,8 @@ export const ROUTABLE = {
   image_cutout: "gpu",
   image_upscale: "gpu",
   image_vectorize: "writes",
+  image_vector_import: "writes",
+  image_vector_review: null,
   image_export: "writes",
 
   image_set_blur: null,

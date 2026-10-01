@@ -221,7 +221,7 @@ console.log("\n§  the planner's LoRA: the other half, on the clip wire");
   ok("...picks the instrumental planner LoRA for an instrumental when it is on a shelf, nothing was named and no score was supplied",
     /if \(!clipName && body\.loraClip === undefined && body\.instrumental && !yueComfy\.abc && onShelf\(INSTRUMENTAL_PLANNER_LORA\)\)/.test(index)
     && /if \(body\.instrumental && modelLeaf\(yueLoraClip\) === INSTRUMENTAL_PLANNER_LORA\) yueSheet = "\[instrumental\]";/.test(index)
-    && /lyrics: yueSheet \?\? \(body\.lyrics \|\| ""\)\.trim\(\),/.test(index));
+    && /lyrics: yueSheet \?\?/.test(index));
   ok("...and names it on the job, which the pump hands to the graph",
     /loraClip: yueLoraClip, loraClipStrength: yueLoraClipStrength,/.test(index)
     && /loraClip: job\.loraClip,\n\s+loraClipStrength: job\.loraClipStrength,/.test(src("../jobs.js")));
