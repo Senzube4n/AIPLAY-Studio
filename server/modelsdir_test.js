@@ -99,13 +99,19 @@ test("catalogue and downloader reuse complete nested weights without moving or d
   await mkdir(dir, { recursive: true });
   const full = path.join(dir, "nested-test.safetensors");
   await writeFile(full, Buffer.alloc(1234, 1));
+  const tokenizerDir = path.join(config.modelsDir, "audio_encoders", "tokenizer");
+  await mkdir(tokenizerDir, { recursive: true });
+  const sidecars = [["config.json", "{}"], ["configuration_mert2.py", "# tokenizer configuration\n"]];
+  for (const [name, contents] of sidecars) await writeFile(path.join(tokenizerDir, name), contents);
   const id = "nested-catalog-test";
-  CATALOG.push({ id, label: "Nested model", files: [{ url: "http://127.0.0.1:9/must-not-download", dest: path.join(config.modelsDir, "diffusion_models", "nested-test.safetensors"), bytes: 1234 }] });
+  CATALOG.push({ id, label: "Nested model", files: [{ url: "http://127.0.0.1:9/must-not-download", dest: path.join(config.modelsDir, "diffusion_models", "nested-test.safetensors"), bytes: 1234 },
+    ...sidecars.map(([name, contents]) => ({ url: "http://127.0.0.1:9/must-not-download", dest: path.join(tokenizerDir, name), bytes: Buffer.byteLength(contents) }))] });
   try {
     const manager = new ModelManager();
     const row = (await manager.status()).find((entry) => entry.id === id);
     assert.equal(row.ready, true);
     assert.equal(row.files[0].resolvedName, path.join("minimax", "nested-test.safetensors"));
+    assert.equal(row.files.slice(1).every(file => file.present), true, "JSON/Python tokenizer companions retain their exact package presence checks");
     assert.equal(row.files[0].resolvedPath, full);
     assert.deepEqual(await manager.download(id), { ok: true }, "unreachable URL proves the file was reused");
     assert.equal((await readFile(full)).length, 1234);

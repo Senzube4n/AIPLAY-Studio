@@ -3564,7 +3564,9 @@ function catalogModelFile(f, files, override = null) {
 
 async function filePresent(f, files = null, override = null) {
   const rel = path.relative(config.modelsDir, f.dest);
-  if (MODEL_FOLDERS.includes(rel.split(path.sep)[0])) {
+  // Tokenizer packages also keep JSON/Python companions under model shelves.
+  // Those retain their exact package paths; only weights use recursive lookup.
+  if (MODEL_FOLDERS.includes(rel.split(path.sep)[0]) && /\.(safetensors|sft|gguf|ckpt|pt|pth|bin)$/i.test(f.dest)) {
     return !!catalogModelFile(f, files || await catalogShelf(), override);
   }
   try {
