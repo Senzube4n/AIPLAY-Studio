@@ -334,6 +334,22 @@ export function aheadRun(rows, seconds, alsoCachedIdx = null) {
   return out;
 }
 
+/** Narrow non-HTTP seam for the shared-cue audition. The job is built from a
+ * reviewed cue, never accepted as an arbitrary renderer request. */
+export function validateCueAccentJob(job) {
+  previewAudioKey(job);
+  const note = job?.notes?.[0];
+  if (job.sr !== 48000 || job.start_sample !== 0 || job.n_samples > 480000
+    || job.notes.length !== 1 || !["impact", "tr909"].includes(note.inst)
+    || note.start_sample !== 0 || note.midi !== 36 || note.gain_db < -24 || note.gain_db > 0
+    || Object.keys(note.params || {}).length || job.mixer != null
+    || path.resolve(job.instruments_dir || "") !== path.resolve(instrumentsDir())
+    || job.n_samples !== note.dur_samples + Math.round(TAILS[note.inst] * 48000)) {
+    throw new Error("Cue preview requires one supported builtin accent, its bounded timing and its saved seed.");
+  }
+  return job;
+}
+
 export function createDawRoutes(deps) {
   const { json, readBody, config } = deps;
   const spawnPython = deps.spawnPython
@@ -3016,5 +3032,14 @@ export function createDawRoutes(deps) {
     return out;
   }
 
+  handle.renderCueAccent = async (job, out) => {
+    validateCueAccentJob(job);
+    const target = path.resolve(String(out || ""));
+    if (path.dirname(target) !== path.resolve(DAW_DIR(), "_previews")
+      || !/^pv_(impact|tr909)_v2_[a-f0-9]{24}\.wav\.[a-f0-9-]{36}\.tmp$/.test(path.basename(target))) {
+      throw new Error("Cue preview output must be an owned temporary audition file.");
+    }
+    return runOneNote("render", { ...job, out: target }, 60_000);
+  };
   return handle;
 }

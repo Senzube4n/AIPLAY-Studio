@@ -66,6 +66,28 @@ import { TOOLS as MCP_TOOLS } from "../mcp.js";
  * "destroys" — removes work that exists
  */
 export const ROUTABLE = {
+  /* Reviewed DAW score passages. Only alternatives submit real song jobs. */
+  music_daw_passages: null,
+  music_daw_preview: null,
+  music_daw_draft: "writes",
+  music_daw_draft_get: null,
+  music_daw_request: null,
+  music_daw_takes: "gpu",
+  music_daw_audition: null,
+  /* Existing songs are measured on the processor, never regenerated. */
+  music_takes_list: null,
+  music_takes_create: "writes",
+  music_takes_get: null,
+  music_takes_verify: null,
+  music_takes_choose: "writes",
+  /* Shared musical accents and editable flash keys use bounded CPU work. */
+  music_cue_status: null,
+  music_cue_save: "writes",
+  music_cue_read: null,
+  music_cue_preview: null,
+  music_cue_audition: "writes",
+  music_cue_apply: "writes",
+  music_cue_undo: "writes",
   /* the map, and what this machine is */
   pipeline_guide: null,
   studio_capabilities: null,
@@ -751,6 +773,14 @@ export const COST_TEXT = {
 /** A tool whose gate's sentence would be false for it gets its own. The gate
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
+  music_daw_draft: "no graphics card time; saves the reviewed score, exact text and source fingerprints without changing DAW notes",
+  music_daw_takes: "graphics card time; queues two or three YuE2 Python passage alternatives through ordinary song auditions, preserving the original recording",
+  music_takes_create: "processor time; measures 2, 4 or 8 existing recordings and saves their exact stored receipts and playback gains without generating songs",
+  music_takes_choose: "no graphics card time; saves this take choice and explicitly sets the selected recording's library favourite flag",
+  music_cue_save: "no graphics card time; saves a draft cue and its chosen musical and visual targets",
+  music_cue_audition: "processor time; saves a dry builtin accent preview and returns a composition still with simulated flash keys; no model generation",
+  music_cue_apply: "no graphics card time; adds an editable accent track, flash layer and labeled marker to the reviewed projects",
+  music_cue_undo: "no graphics card time; removes only unchanged objects owned by this cue and preserves other project content",
   stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
   music_workbench_stop: "no graphics card time and no new file — it stops the currently active native workbench worker, including training; Studio generation jobs and completed artifacts are retained",
   music_dataset_create: "no graphics card time — it saves a training dataset from the selected library recordings and retains their originals",
@@ -774,6 +804,13 @@ export const COST_TEXT_BY_TOOL = {
  *  would be false for it (server/chat/loop.js gateLabel). video_settings is
  *  "writes" for its confirm, but it saves a setting, not a file. */
 export const GATE_WORDS_BY_TOOL = {
+  music_daw_draft: "SAVES A SCORE DRAFT",
+  music_takes_create: "SAVES A COMPARISON",
+  music_takes_choose: "SAVES A TAKE CHOICE",
+  music_cue_save: "SAVES A CUE",
+  music_cue_audition: "PREVIEWS A CUE",
+  music_cue_apply: "ADDS CUE OBJECTS",
+  music_cue_undo: "REMOVES CUE OBJECTS",
   video_settings: "SAVES A SETTING",
   standrig_parameters: "CHANGES PERFORMER",
   standrig_control: "CHANGES PERFORMER",
@@ -819,6 +856,7 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 // this boundary and decode before invoking the unchanged MCP tool. Nothing is
 // silently dropped. External MCP clients still use the original typed schema.
 const JSON_ARGUMENT_TOOLS = new Set([
+  "music_daw_preview", "music_daw_draft", "music_daw_takes", "music_takes_create",
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
   "standrig_parameters", "h3_refmod_create",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
@@ -895,7 +933,7 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     gate: gate || null,
     cost: gate ? (COST_TEXT_BY_TOOL[tool.name] || COST_TEXT[gate]) : undefined,
     gateWords: gate ? GATE_WORDS_BY_TOOL[tool.name] || null : null,
-    endsTurn: WORKBENCH_STARTS.has(tool.name),
+    endsTurn: WORKBENCH_STARTS.has(tool.name) || tool.name === "music_daw_takes",
     cancelScope: WORKBENCH_STARTS.has(tool.name) && gate === "gpu" ? "music-workbench" : undefined,
     routed: true,
     run: (a) => {
@@ -917,6 +955,10 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
         decoded[name] = value;
       }
       const result = tool.run(decoded);
+      if (tool.name === "music_daw_takes") return Promise.resolve(result).then(receipt => ({
+        ...receipt,
+        say: "Passage audition session saved. Follow this draft in the DAW AI passage dock or its exact saved audition session. Cancel these takes through the audition shelf.",
+      }));
       if (!WORKBENCH_STARTS.has(tool.name)) return result;
       return Promise.resolve(result).then((receipt) => ({
         ...receipt,

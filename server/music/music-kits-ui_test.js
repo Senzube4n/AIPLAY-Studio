@@ -132,7 +132,10 @@ test("composer handoff preserves short reviewed durations and resets omitted bac
   vm.runInContext(between('$("maxDur").oninput = ', '$("qSteps").oninput = '), context);
   vm.runInContext(between("function currentSpec(", "/* The YuE2 rows in Advanced"), context);
   vm.runInContext(between("function yueSpec()", "/** A re-roll is:"), context);
-  vm.runInContext(between("mountMusicWorkflows({ onLoadRequest:", "/* LAST, and asynchronous."), context);
+  // Kits and DAW drafts share the named loader. Include its real body as
+  // well as the mount, so this fixture exercises the production handoff.
+  vm.runInContext(between("async function loadReviewedMusicRequest(", "/* LAST, and asynchronous."), context);
+  assert.equal(typeof load, "function", "the mounted workflow receives the shared composer loader");
   const spec = () => vm.runInContext("currentSpec(false)", context);
   const base = { engine: "yue2", caption: "Piano", lyrics: "Words", abc: "Reviewed ABC", cot: "melody", seed: 0, scoreSlug: "theme", scoreVersion: "v1" };
   for (const maxDuration of [8, 36, 36.5]) {

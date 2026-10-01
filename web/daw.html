@@ -44,6 +44,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="daw.css">
+<link rel="stylesheet" href="daw-passages.css">
 <!-- THE ⓘ. web/info.js writes no copy of its own — every word in the panel
      comes from /api/welcome's screen_info, which is server/welcome/catalogue.js
      joined against /api/models. It borrows the Models screen's own readiness
@@ -376,6 +377,7 @@
           <!-- VOICE LAB (web/voicelab.js) — 1 of 3, and the whole of its
                footprint in this file. The module binds this button itself, so
                daw.js's showDock() never has to learn about a fourth tab. -->
+          <button class="d-tab" id="tabPassage" title="Review selected notes as a score and audition AI alternatives.">AI takes</button>
           <button class="d-tab" id="tabVoice"
                   title="one note of the selected track's instrument, rendered on the server and drawn four ways — waveform, spectrum, dB envelope and the reference overlay slot. Every knob the patch declares re-renders it, and nothing reaches the document until you press apply.">Voice</button>
         </div>
@@ -425,6 +427,7 @@
            element inside it and loads its own web/voicelab.css, exactly as the
            Ear does, so this file carries no copy of the panel's markup. -->
       <div class="d-dockpane" id="paneVoice"></div>
+      <div class="d-dockpane" id="panePassage"></div>
     </section>
   </section>
 

@@ -5,8 +5,9 @@
 <h1 align="center">AIPLAY Studio</h1>
 
 <p align="center">
-  <b>Write a song, draw the cover, cut the video and mix it, all on your own machine.</b><br>
-  No account. No credits. No upload.
+  <b>Make a song. Make it yours.</b><br>
+  Generate the track, shape its score, mix it in the DAW and bring it to the screen.<br>
+  Free, open source and local first. Use the UI or your own MCP assistant.
 </p>
 
 <p align="center">
@@ -32,13 +33,15 @@
 
 ---
 
-AIPLAY Studio is a local creative suite built around music. Type a few lines of
-lyrics and a style, press **Create**, and a finished song lands in your library.
-From there the same app can draw its cover art, turn it into a music video, and
-mix it in a real DAW.
+AIPLAY Studio connects the pieces of a creative project: **song → score and DAW
+→ cover and vectors → video, VFX and 3D**. Start with lyrics and a style, compare
+different takes, edit the musical idea, then build its visual world in the same
+app. You can work by hand or let an MCP assistant use the same project tools.
 
-Everything runs on your own computer. Nothing is uploaded, nothing is billed,
-and you never need an account.
+Local generation needs no Studio account or per-render credits. Optional hosted
+engines and API assistants send the inputs they need to your chosen provider;
+paid services use your own key. Software is Apache-2.0. Each model has its own
+licence, shown before installation.
 
 <p align="center">
   <img src="GitHubAssets/AIPLAY_banner_1_make-music.png" alt="The Music screen: lyrics, styles and a library of finished songs." width="100%">
@@ -60,7 +63,7 @@ video models.
    is built but not yet tried between two PCs. See [Ask a friend to render](docs/FRIEND_RENDERING.md)
    and [Collab](docs/COLLAB.md).
 2. **Or pay for a service with your own key.** Both are off until you switch
-   them on, and every paid run asks first. Studio uses only a key typed into
+   them on, and paid work requires spending confirmation. Studio uses only a key typed into
    Studio on your Windows account, never one from another program or an
    environment variable, and each key card says when it was saved and by which
    copy of Studio.
@@ -109,7 +112,8 @@ The Vulkan and CPU builds bring their own.
    Finished songs appear as WAV files in the **Library**.
 
 **What gets downloaded?** About **2.93 GB** of model files for Q4 (**4.53 GB**
-for Q8), plus **833 MB** for the shared native runtime. Nothing downloads until
+for Q8). The separate native runtime is about **833 MB on NVIDIA**, **58 MB for
+Vulkan** or **24 MB for CPU**. Nothing downloads until
 you take an explicit action: picking a model or asking for a song never starts
 a download on its own. Q8 has not been benchmarked or listening-tested in
 Studio yet, so treat it as optional rather than a guaranteed upgrade.
@@ -141,20 +145,26 @@ make.
   <img src="GitHubAssets/AIPLAY_banner_2_song-to-video.png" alt="One studio: from a song on the Music screen to a video on the Studio timeline." width="100%">
 </p>
 
-It started as a music generator and grew one piece at a time, because a song
-wants a cover, a cover wants a video, and all of it wants a mixer.
+Keep developing the idea after the first render. Full Studio brings music,
+editing and visual production together; optional engines have their own setup
+and hardware requirements.
 
 | | |
 |---|---|
-| 🎵 **Music** | Songs from lyrics and a style, or instrumentals from a structure. Extend a take, replace a section, re-roll the mix, hum a melody, or cover a song with its tune kept. **Carry on from a real recording** — a track you own becomes the codes the model speaks, and the render continues it: measured at 0.9947 similarity to its source where a fresh render holds -0.003. The same codes make the library searchable by how a song sounds rather than by what it is called. Engines: YuE2 (native GGUF or through ComfyUI), MiniMax Music 3, and [ACE-Step 1.5](docs/DEEP_DIVE.md#ace-step-15) with LoRAs and covers. |
+| 🎵 **Music** | Generate songs from lyrics and a style with native YuE2 GGUF, Python YuE2, ComfyUI YuE2, MiniMax Music 3 or [ACE-Step 1.5](docs/DEEP_DIVE.md#ace-step-15). Model-specific controls cover references, continuation, covers and instrumentals where supported. Queue different seeds and keep the results in your library. |
+| ♩ **Follow the score** | Open a saved score in the main fullscreen player: note highlights, Follow scrolling and timing adjustments. Edit ABC, print notation or export MIDI. Generated notation timing can drift from the recording. |
+| 🎹 **DAW to AI takes** | Edit melody notes in the piano roll, preview their YuE2 ABC, then generate **2 or 3 alternatives** for reviewed bars against a compatible saved Python YuE2 song. Keep the rest of the recording, with **80 ms blends at the seams**; compare before keeping. This is background generation, not instant note-level audio inpainting. [Workflow and limits](docs/daw-passages.md). |
+| 🎧 **Takes** | Compare **2, 4 or 8 saved recordings** with loudness-matched playback, switch A–H at the same time position, save a favourite and inspect exact receipts and choice history. This compares saved audio; new songs are queued separately. [Take comparison](docs/take-comparison.md). |
+| ✨ **Shared cues** | Place one cue at a musical bar/beat/tick. Preview a dry impact or 909 kick with a flash, then Apply to the DAW and VFX composition or Undo. Explicit alignment keeps the two timelines understandable. [Shared cues](docs/shared-cues.md). |
 | 💬 **Chat and Simple mode** | Describe the song you want in plain words and let the assistant write the lyrics, style and title for you. |
 | ✨ **Enhance and galleries** | One click turns a rough style line or lyrics into a fuller one. Save the ones you like and reuse them later. |
 | 🎰 **Genre Roulette** | Spin six reels (genre, vocals, instrument, mood, rhythm, production) when you have no idea where to start. |
-| 🖼️ **Images** | Qwen Image 2.1 is the default for images and automatic song covers when installed, with ordered references and an image editor. Existing saved choices are preserved; without Qwen, Studio picks an available picture model. FLUX.2 klein, Z-Image, Krea 2, Anima, Ideogram 4 and compatible custom checkpoints remain available. Choose model downloads explicitly in Models; Qwen requires native files and a compatible runtime. |
+| 🖼️ **Covers, layers and vectors** | Generate cover art with Qwen Image 2.1 when installed, or choose another available engine. Use the layer image editor for masks, selections and text. Trace a raster to SVG, review detail crops and clean selected geometry through the UI or MCP. [Vector workflow](docs/vector.md). |
 | 🎬 **Video** | Clips under a finished track, a music-video workflow from song to final cut, and a camera you can block in Blender for the render to follow. |
 | 🌀 **Reactive** | Pictures that move with a song: cut on the beat, pulse with the bass, flash on the hits. Five cut-and-dissolve styles run on the compositor alone and work on any card, AMD included. Two more repaint a clip frame by frame so the figure moves and the look turns with the music, with a black circle that opens on the bass. |
 | ⚭ **Collab** | Make an episode with friends, and **lend each other a graphics card**. A project or one scene travels as a sealed file addressed to one person; an order asking a friend to render a scene carries four words and nothing else, and the take comes home to quarantine for you to adopt or throw away. Nothing on the screen opens a connection and there is no server in it. See [COLLAB.md](docs/COLLAB.md). |
-| ✂️ **Edit and mix** | A timeline editor, an After Effects-style compositor, and a DAW with a piano roll, mixer and mastering. |
+| ✂️ **Edit, mix and finish** | A timeline editor, a VFX compositor and a DAW with recording, piano roll, instruments, insert racks, sends and returns. Master with EQ, dynamics and stereo tools; inspect loudness, true peak, reference differences and delivery checks. |
+| 🧪 **Native workbench** | Optional YuE2 planning and saved-stage replay, dataset preparation and adapter training, audio-to-MIDI/DAW import and processing previews. Advanced tools have separate runtime and model requirements; the current native planner/trainer needs NVIDIA CUDA. [Workbench guide](docs/music-workbench.md). |
 | 📚 **More** | An audiobook workflow, stems, timed lyrics, 3D models from a picture, overnight batch runs, and a little game for while you wait. |
 
 The [deep dive](docs/DEEP_DIVE.md) covers every one of these in detail, and
@@ -175,15 +185,10 @@ render; an API model never needs to.
 
 ## Why this rather than a cloud tool
 
-<p align="center">
-  <img src="GitHubAssets/AIPLAY_banner_3_no-account.png" alt="No account. No credits. No upload. Everything runs on your own graphics card." width="100%">
-</p>
-
-- **Nothing leaves your machine.** No account, no key, no credits. The only
-  network use is downloading models (straight from their publishers), the
-  Community screen, the hosted engine if you switch it on yourself, and the launcher's
-  Use Comfy API mode, which sends your prompts and pictures to Comfy and the
-  model's provider and spends your Comfy credits.
+- **Local first, with optional services.** Local generation and editing stay
+  on your computer. You choose when to download models, browse Community,
+  connect an API assistant or use a hosted renderer. Hosted modes transmit
+  their required inputs and may charge your own provider account.
 - **Every render is recorded.** The model, prompt, seed and settings behind
   each file go into a tamper-evident log *before* the render starts, so you can
   always tell what made a file. (Comfy API runs keep their own run list and
@@ -193,8 +198,10 @@ render; an API model never needs to.
 - **Licences are read, not guessed.** Each model shows what its licence says
   about the model and, separately, about what you make with it, so you know
   whether you can sell a song or picture before you render it.
-- **An agent can drive all of it.** MCP tools cover the studio, so an
-  assistant like Claude can run it while you watch.
+- **Hands and agents share project tools.** Typed MCP controls use the same
+  validated handlers as the UI. Preview, review and apply workflows are
+  documented for assistants; some playback, OS and trust decisions stay in
+  the UI.
 
 The full reasoning is in [the deep dive](docs/DEEP_DIVE.md#why-this-rather-than-a-cloud-tool-in-full).
 
@@ -213,7 +220,7 @@ replaces torch, CUDA or ROCm.
 
 | your card | what works |
 |---|---|
-| **NVIDIA** | Everything. Use the portable `ComfyUI_windows_portable_nvidia.7z` (not `_cu126`) or a source install with a `+cu130` torch. |
+| **NVIDIA** | The widest accelerated support, including optional native CUDA planner/training tools. Individual features still have runtime and memory requirements. Use the portable `ComfyUI_windows_portable_nvidia.7z` (not `_cu126`) or a source install with a `+cu130` torch. |
 | **AMD Radeon** | Native YuE2 GGUF (Vulkan), YuE2, ACE-Step 1.5, MiniMax Music 3 and images through ComfyUI, Reactive, the DAW and compositor. MiniMax needs Studio's default launch flags (below). The 3D stack needs CUDA. |
 | **Intel Arc** | Native YuE2 GGUF (Vulkan), and ComfyUI with an XPU torch. |
 | **No GPU** | Native YuE2 GGUF on the CPU build, the DAW and the compositor. For video clips (here, or on any card too small for them), first ask a friend with a strong card to render them for you (**Collab**, free; built, not yet tried between two PCs). Then, paid on your own key: [the hosted engine](docs/DEEP_DIVE.md#no-gpu-api-mode) for MiniMax Music 3 songs, or the launcher's **Use Comfy API** mode. |
@@ -230,7 +237,8 @@ Measured AMD results, launch flags and the details of every layout are in
 
 For the whole suite (music, images, video and the rest):
 
-1. Install **[Node.js](https://nodejs.org)** (the LTS installer).
+1. Run **[Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
+   Developers using the source ZIP install **[Node.js 20+](https://nodejs.org)** themselves.
 2. Have a **ComfyUI**, or let the launcher install one for you. See
    [Getting a ComfyUI](docs/DEEP_DIVE.md#getting-a-comfyui).
 3. Double-click **`AIPLAY Studio.exe`** and choose **Full Studio**. It fetches
@@ -376,10 +384,12 @@ compositor scene, and read the render log back. The **Agent** screen in the app
 has the config block to paste. See [the tool list](docs/DEEP_DIVE.md#drive-it-from-an-agent)
 and [API.md](API.md).
 
-The [MCP workflow map](docs/MCP_WORKFLOWS.md) covers image references and masked
-editing, Reactive timing/profiles, source-region training, and collaboration
-planning, permissions and reviewed handoffs. Typed tools call the same API as the
-page. `studio_api_reference` and `studio_api_request` cover existing JSON API
+The [MCP workflow map](docs/MCP_WORKFLOWS.md) covers image references, vector
+cleanup, reviewed DAW passages, take comparisons, shared cues, native training
+and replay, Reactive video, and collaboration. Ask `pipeline_guide` for
+`topic:"music-editing"` or `topic:"music-workbench"` to discover the music
+workflows. Typed tools call the same API as the page. `studio_api_reference`
+and `studio_api_request` cover existing JSON API
 operations without a dedicated tool. Peer verification records the user's actual
 word check; adding a capability does not grant trust or send files by itself.
 Browser playback, OS dialogs and legacy canvas capture remain browser operations.

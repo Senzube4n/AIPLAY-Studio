@@ -1,0 +1,19 @@
+#musicSharedCues .sc-position { display: flex; gap: 8px; }
+#musicSharedCues .sc-position .in2 { width: 88px; min-width: 0; }
+#musicSharedCues .sc-form .pv { min-width: 0; }
+#musicSharedCues .sc-form .sel2 { width: 100%; max-width: 100%; }
+#musicSharedCues .sc-state { margin: 16px 0 0; }
+#musicSharedCues .sc-preview[hidden], #musicSharedCues .sc-error[hidden], #musicSharedCues .sc-frame-error[hidden] { display: none; }
+#musicSharedCues .sc-preview-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#musicSharedCues .sc-preview-head h3 { margin: 0; }
+#musicSharedCues .sc-alignment { color: var(--dim); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+#musicSharedCues .sc-media { max-width: 640px; border: 1px solid var(--hair); background: var(--raise); border-radius: 8px; overflow: hidden; }
+#musicSharedCues canvas { width: 100%; height: auto; max-height: 360px; object-fit: contain; display: block; }
+#musicSharedCues .sc-audio-label { display: grid; gap: 8px; color: var(--dim); margin-top: 14px; max-width: 640px; }
+#musicSharedCues audio { width: 100%; min-width: 0; }
+#musicSharedCues .sc-plan { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: var(--dim); }
+@media (max-width: 700px) {
+  #musicSharedCues .cta { flex-wrap: wrap; }
+  #musicSharedCues .params .pv { max-width: 100%; }
+  #musicSharedCues .sc-position .in2 { width: 72px; }
+}

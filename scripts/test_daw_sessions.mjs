@@ -31,7 +31,7 @@ function make(names,overrides={}){
     undo:[],redo:[],aud:{seq:0},ana:{curves:new Map()},at:0};
   const nodes=new Map();
   const $=(id)=>{if(!nodes.has(id))nodes.set(id,{textContent:'',value:'100',selectedOptions:[{textContent:'1/8'}],classList:{add(){},remove(){},contains(){return false;}}});return nodes.get(id);};
-  const ctx={S,console,Map,Set,Float32Array,Promise,performance:{now:()=>10},encodeURIComponent,TPB:960,audioImportRequest:0,
+  const ctx={S,console,Map,Set,Float32Array,Promise,performance:{now:()=>10},encodeURIComponent,TPB:960,audioImportRequest:0,passageDock:null,
     WAVE_BUCKETS:200,WAVE_REGION_CAP:16,AHEAD_REGIONS:4,DEFER_OK:new Set(),$,
     localStorage:{setItem:(key,value)=>calls.storage.push([key,value])},canvas:{},releasePointer(){},
     status:m=>calls.status.push(m),pushUndo:e=>calls.undo.push(e),
@@ -74,6 +74,13 @@ await test('old document cannot replace another project',async()=>{
 });
 await test('same-slug reload invalidates the old session',async()=>{
   const d=deferred(),h=make(['refreshDoc'],{get:()=>d.promise});const p=h.ctx.refreshDoc();h.jump('A');d.resolve(documentReply('old'));assert.equal(await p,false);
+});
+await test('only a current project read notifies the passage dock',async()=>{
+  const a=deferred(),b=deferred();let reads=0,notifications=0;
+  const h=make(['refreshDoc'],{get:()=>++reads===1?a.promise:b.promise,passageDock:{contextChanged:()=>notifications++}});
+  const old=h.ctx.refreshDoc();h.jump();const current=h.ctx.refreshDoc();
+  a.resolve(documentReply('old'));assert.equal(await old,false);assert.equal(notifications,0);
+  b.resolve(documentReply('new'));assert.equal(await current,true);assert.equal(notifications,1);
 });
 await test('out-of-order reads within one session keep the newest request',async()=>{
   const a=deferred(),b=deferred();let n=0;const h=make(['refreshDoc'],{get:()=>++n===1?a.promise:b.promise});const pa=h.ctx.refreshDoc(),pb=h.ctx.refreshDoc();b.resolve(documentReply('new'));assert.equal(await pb,true);a.resolve(documentReply('old'));assert.equal(await pa,false);assert.equal(h.S.proj.name,'new');

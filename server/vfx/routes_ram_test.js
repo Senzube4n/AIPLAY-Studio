@@ -25,7 +25,8 @@
  * Ports are deliberately 4196-4198. 4173 is the user's own Studio.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
@@ -75,7 +76,9 @@ async function boot(port, out, extra = {}) {
   let log = "";
   proc.stdout.on("data", (d) => { log += d; });
   proc.stderr.on("data", (d) => { log += d; });
-  servers.push(proc);
+  // Register before startup polling so even a failed boot can be awaited.
+  const closed = new Promise((resolve) => proc.once("close", resolve));
+  servers.push({ proc, closed });
 
   const base = `http://127.0.0.1:${port}`;
   const until = Date.now() + 45_000;
@@ -103,9 +106,42 @@ async function boot(port, out, extra = {}) {
   };
 }
 
-function shutdown() {
-  for (const p of servers) { try { p.kill(); } catch { /* already gone */ } }
-  setTimeout(() => { for (const p of servers) { try { p.kill("SIGKILL"); } catch { /* gone */ } } }, 2000).unref();
+async function waitClosed(closed, milliseconds) {
+  let timer;
+  try {
+    return await Promise.race([
+      closed.then(() => true),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), milliseconds); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+async function shutdown() {
+  await Promise.all(servers.map(async ({ proc, closed }) => {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      if (process.platform === "win32" && proc.pid) {
+        // Node's Windows kill terminates only the parent. Stop this test's
+        // owned process tree before releasing its working directories.
+        const killer = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"],
+          { windowsHide: true, stdio: "ignore" });
+        const killed = new Promise((resolve) => { killer.once("close", resolve); killer.once("error", resolve); });
+        if (!await waitClosed(killed, 5000)) killer.kill();
+      } else { try { proc.kill("SIGTERM"); } catch { /* await its close below */ } }
+    }
+    if (!await waitClosed(closed, 5000)) {
+      try { proc.kill("SIGKILL"); } catch { /* its close can already be pending */ }
+      if (!await waitClosed(closed, 5000)) throw new Error(`Test server ${proc.pid} did not close; scratch was retained.`);
+    }
+  }));
+}
+
+async function cleanupScratch() {
+  const target = path.resolve(SCRATCH), temporaryRoot = path.resolve(os.tmpdir());
+  if (path.dirname(target) !== temporaryRoot || path.basename(target) !== `vfx_ram_${process.pid}`)
+    throw new Error("Refusing to remove an unowned VFX RAM test directory.");
+  // Windows can hold directory handles briefly after the processes close.
+  // Retry only this verified test-owned target, and still fail on exhaustion.
+  await rm(target, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
 }
 
 /* ────────────────────────────────────────────────────── a PNG, decoded */
@@ -229,7 +265,7 @@ async function waitForJob(S, slug, id, ms = 300_000) {
 
 const A_OUT = path.join(SCRATCH, "outA");
 const C_OUT = path.join(SCRATCH, "outC");
-rmSync(SCRATCH, { recursive: true, force: true });
+await cleanupScratch();
 
 let A;
 try {
@@ -482,11 +518,11 @@ try {
   console.log(`\n  FAIL  the suite threw\n          ${err.stack}`);
   if (A) console.log(A.log().slice(-2000));
 } finally {
-  shutdown();
+  await shutdown();
 }
 
 console.log("\n  ── measured ──");
 for (const n of notes) console.log(`   ${n}`);
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
-rmSync(SCRATCH, { recursive: true, force: true });
+await cleanupScratch();
 process.exit(failures.length ? 1 : 0);

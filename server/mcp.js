@@ -41,6 +41,9 @@ import { musicReferenceTools } from "./mcp-music-references.js";
 import { musicArtifactTools } from "./mcp-music-artifacts.js";
 import { musicListeningLabTools } from "./mcp-music-listening-lab.js";
 import { musicWorkbenchTools } from "./mcp-music-workbench.js";
+import { dawPassageTools } from "./mcp-daw-passages.js";
+import { takeComparisonTools } from "./mcp-take-comparison.js";
+import { sharedCueTools } from "./mcp-shared-cues.js";
 /* AUDIO FINISHING. Four routes that existed, worked, and that no tool posted
  * to — /api/edit, /api/merge, /api/export and /api/timeline/render. The header
  * of mcp-audio.js carries the audit that found them and the reason an agent
@@ -461,6 +464,9 @@ export const TOOLS = [
   ...musicArtifactTools(api),
   ...musicListeningLabTools(api),
   ...musicWorkbenchTools(api),
+  ...dawPassageTools(api),
+  ...takeComparisonTools(api),
+  ...sharedCueTools(api),
   /* Beside the music family, because that is where they are reached FROM: the
    * take comes out of make_song and these are what happens to it next — trim
    * the silence off the front, merge the continuations, convert it, and render

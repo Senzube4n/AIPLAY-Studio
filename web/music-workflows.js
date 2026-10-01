@@ -4,6 +4,8 @@ import { mountMusicReferences } from "./music-references.js";
 import { mountMusicArtifacts } from "./music-artifacts.js";
 import { mountMusicListeningLab } from "./music-listening-lab.js";
 import { mountMusicWorkbench } from "./music-workbench.js";
+import { mountMusicTakeComparison } from "./music-take-comparison.js";
+import { mountSharedCues } from "./music-shared-cues.js";
 
 /** Lazy mounts keep ordinary Music startup independent of saved workflow data. */
 export function mountMusicWorkflows({ onLoadRequest } = {}) {
@@ -11,8 +13,9 @@ export function mountMusicWorkflows({ onLoadRequest } = {}) {
   if (!dialog) return;
   const mounted = new Set();
   const tabs = [...dialog.querySelectorAll('[role="tab"]')];
-  if (new URLSearchParams(location.search).get('tool') === 'native') {
-    for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.id === 'musicNativeToolsTab'));
+  const linkedTab = { native: 'musicNativeToolsTab', takes: 'musicTakesTab', cues: 'musicSharedCuesTab' }[new URLSearchParams(location.search).get('tool')];
+  if (linkedTab) {
+    for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.id === linkedTab));
   }
   const loadRequest = async (request) => {
     await onLoadRequest(request);
@@ -36,6 +39,9 @@ export function mountMusicWorkflows({ onLoadRequest } = {}) {
       if (panel.id === "musicArtifacts") await mountMusicArtifacts({ root: panel, fetch: window.fetch.bind(window) });
       if (panel.id === "musicListeningLab") await mountMusicListeningLab({ root: panel, fetch: window.fetch.bind(window) });
       if (panel.id === "musicNativeTools") await mountMusicWorkbench(panel);
+      if (panel.id === "musicTakes") await mountMusicTakeComparison({ root: panel, fetch: window.fetch.bind(window),
+        onBeforePlay: async () => { document.getElementById('audio')?.pause(); } });
+      if (panel.id === "musicSharedCues") await mountSharedCues(panel);
     } catch (error) {
       mounted.delete(panel.id);
       panel.textContent = `This workflow could not open: ${error.message}. Select its tab to retry.`;

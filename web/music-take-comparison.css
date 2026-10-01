@@ -1,0 +1,26 @@
+#musicTakes .tc-library { max-height: 320px; overflow: auto; margin: 14px 0; border: 1px solid var(--hair); border-radius: 10px; }
+#musicTakes .tc-song { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--hair); cursor: pointer; }
+#musicTakes .tc-song:last-child { border-bottom: 0; }
+#musicTakes .tc-song span { min-width: 0; }
+#musicTakes .tc-song strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
+#musicTakes small { color: var(--dim); display: block; }
+#musicTakes .tc-saved { display: flex; flex-wrap: wrap; gap: 8px; }
+#musicTakes .tc-saved select { flex: 1; min-width: 140px; }
+#musicTakes .tc-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#musicTakes .tc-takes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+#musicTakes .tc-take { min-width: 0; padding: 10px; background: var(--raise); border: 1px solid var(--hair); border-radius: 10px; }
+#musicTakes .tc-take.tc-active { border-color: var(--primary); }
+#musicTakes .tc-take button { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+#musicTakes .tc-take small { margin-top: 6px; }
+#musicTakes .tc-transport { display: flex; align-items: center; gap: 14px; margin: 16px 0; flex-wrap: wrap; }
+#musicTakes .tc-seek { flex: 1; min-width: 180px; }
+#musicTakes .tc-volume { max-width: 110px; }
+#musicTakes .tc-transport label { color: var(--dim); font-size: 12px; }
+#musicTakes .tc-transport input[type=range] { display: block; width: 100%; accent-color: var(--primary); }
+#musicTakes pre { max-height: 350px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#musicTakes [hidden] { display: none !important; }
+@media (max-width: 700px) {
+  #musicTakes .tc-takes { grid-template-columns: minmax(0, 1fr); }
+  #musicTakes .tc-transport { gap: 10px; }
+  #musicTakes .tc-volume { flex: 1; max-width: 120px; }
+}

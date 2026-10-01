@@ -85,6 +85,7 @@ const MCP_FILES = [
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
   "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js", "server/mcp-music-workbench.js",
+  "server/mcp-daw-passages.js", "server/mcp-take-comparison.js", "server/mcp-shared-cues.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
   "server/mcp-setup.js", "server/mcp-runpod.js", "server/mcp-fastcovers.js", "server/mcp-h3-refmods.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
@@ -101,6 +102,7 @@ const ROUTE_FILES = [
   "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/pngtuber.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
   "server/music/artifacts.js", "server/music/listening-lab.js", "server/music/community-tools.js",
+  "server/music/daw-passages.js", "server/music/take-comparison.js", "server/music/shared-cues.js",
   "server/setup/routes.js", "server/cloud-switch.js", "server/whisper.js", "server/h3-refmod.js",
 ];
 
@@ -395,6 +397,9 @@ for (const [route, moduleFile, factory, method, mountingFile = "server/index.js"
   ["/api/music-artifacts", "server/music/artifacts.js", "createMusicArtifactRoutes", "musicArtifactRoutes(req"],
   ["/api/music-listening-lab", "server/music/listening-lab.js", "createListeningLabRoutes", "listeningLabRoutes(req"],
   ["/api/music-tools", "server/music/community-tools.js", "createCommunityRoutes", "communityRoutes(req"],
+  ["/api/music-daw-passages", "server/music/daw-passages.js", "createDawPassageRoutes", "dawPassageRoutes(req"],
+  ["/api/music-take-comparison", "server/music/take-comparison.js", "createTakeComparisonRoutes", "takeComparisonRoutes(req"],
+  ["/api/music-cues", "server/music/shared-cues.js", "createSharedCueRoutes", "sharedCueRoutes(req"],
 ]) {
   const indexSource = routeSource.get(mountingFile);
   const mounted = indexSource.includes(factory) && indexSource.includes(method) && exactPaths.has(route);
@@ -402,6 +407,9 @@ for (const [route, moduleFile, factory, method, mountingFile = "server/index.js"
   if (!mounted) continue;
   const source = blankComments(read(moduleFile));
   for (const m of source.matchAll(/\b(?:body\.)?action\s*===\s*(["'])([A-Za-z0-9_]+)\1/g)) addAction(route, m[2]);
+  // Factory handlers can switch on b.action before calling their owned store.
+  // Read the actual case labels; the mounted path alone is not action proof.
+  for (const sw of actionCases(source)) for (const action of sw.cases) addAction(route, action);
   claimsActions.add(route);
 }
 
@@ -635,6 +643,20 @@ ok("native music factory actions are all read and checked against their real rou
     return calls.length === 1 && calls[0].path === "/api/music-tools" && calls[0].actions.length === 1
       && actionsByPath.get("/api/music-tools")?.has(calls[0].actions[0]);
   }));
+
+for (const [moduleFile, route, count] of [
+  ["server/mcp-daw-passages.js", "/api/music-daw-passages", 7],
+  ["server/mcp-take-comparison.js", "/api/music-take-comparison", 5],
+  ["server/mcp-shared-cues.js", "/api/music-cues", 7],
+]) {
+  const tools = TOOLS.filter(tool => ownerOf.get(tool.name) === moduleFile);
+  ok(`${moduleFile} exposes ${count} tools whose live routes and dispatch actions are read`,
+    tools.length === count && tools.every(tool => {
+      const { calls } = callsOf(tool);
+      return calls.length === 1 && calls[0].path === route &&
+        (calls[0].method === "GET" || calls[0].actions.length === 1 && actionsByPath.get(route)?.has(calls[0].actions[0]));
+    }));
+}
 
 /* THE PARSER'S OWN PIN. A door that answers "Unknown action" dispatches on the
  * word by its own admission; if this file found none for it, the action check

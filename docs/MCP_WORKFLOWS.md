@@ -21,6 +21,9 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Reactive video | `reactive_status`, `reactive_render`, then `vfx_render_status`; compositions remain editable through `vfx_*` |
 | YuE2 training | `training_status`, `audio_waveform`, `train_lora`, `list_trained_loras`, `list_loras`, `make_song` |
 | Native music workbench | `pipeline_guide` with `topic:"music-workbench"` discovers the 18 typed tools for readiness, datasets, training, planning, saved-stage replay, MIDI/DAW import and mastering previews; see [the workbench workflow](music-workbench.md) |
+| DAW score passages | `music_daw_passages`, `music_daw_preview`, `music_daw_draft`, `music_daw_draft_get`, `music_daw_request`, `music_daw_takes`, `music_daw_audition`; export selected notes, review a score and audition YuE2 Python passage alternatives with seam blends; see [AI takes from the DAW](daw-passages.md) |
+| Saved take comparisons | `music_takes_list`, `music_takes_create`, `music_takes_get`, `music_takes_verify`, `music_takes_choose`; compare 2/4/8 saved songs with measured loudness matching, exact stored receipts and an explicit favourite choice; see [take comparison](take-comparison.md) |
+| Shared music/visual cues | `music_cue_status`, `music_cue_save`, `music_cue_read`, `music_cue_preview`, `music_cue_audition`, `music_cue_apply`, `music_cue_undo`; preview and apply an editable builtin accent plus flash at one musical position; see [shared cues](shared-cues.md) |
 | Episode planning and allocation | `collab_plan`: get, update_episode, update_shot, preview_allocation, allocate, apply_draft |
 | Peer identity and permissions | `collab_me`, `collab_roster`, `collab_add_peer`, `collab_verify`, `collab_set_role`, `collab_set_lend_minutes`, `collab_remove_peer` |
 | Public community discovery | `community_feed`: the Community page's public live-session, upcoming-event, station, recent-track and article listings |
@@ -33,6 +36,11 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 Open **MusicLab → Native tools** for the workbench UI. Its actions and the typed
 MCP tools share the same server handlers. The focused guide records which advanced
 settings are available through MCP and which controls are present in the UI.
+
+Use the DAW's **AI passage** dock for score edits. Open **Music Lab → Takes**
+for saved-song comparisons and **Music Lab → Shared cues** to coordinate a
+musical accent with an editable flash. These tools preserve original recordings
+and use the same validated actions from their UI and typed MCP faces.
 
 `community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
 returned rows and fields, and reports whether the desktop feed was offline when

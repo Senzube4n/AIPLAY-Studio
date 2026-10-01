@@ -15,6 +15,17 @@ node --check web/full-player-score.js || exit 1
 node --check web/score-follow.js || exit 1
 node --check web/music-workbench.js || exit 1
 node --check web/music-workflows.js || exit 1
+node --check web/daw-passages.js || exit 1
+node --check web/music-take-comparison.js || exit 1
+node --check web/music-shared-cues.js || exit 1
+node --check server/mcp-daw-passages.js || exit 1
+node --check server/mcp-take-comparison.js || exit 1
+node --check server/mcp-shared-cues.js || exit 1
+node --check server/music/daw-score.js || exit 1
+node --check server/music/daw-passages.js || exit 1
+node --check server/music/take-comparison.js || exit 1
+node --check server/music/shared-cues.js || exit 1
+node --test server/music/daw-score_test.js server/music/daw-passages_test.js server/music/take-comparison_test.js server/mcp-take-comparison_test.js server/music/shared-cues_test.js server/mcp-shared-cues_test.js || exit 1
 node --test server/music/full-player-score_test.js server/batch-music-context_test.js || exit 1
 node --check web/music-batch-spec.js || exit 1
 node --check server/batch-music.js || exit 1

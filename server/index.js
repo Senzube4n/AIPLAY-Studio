@@ -29,6 +29,10 @@ import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createCommunityRoutes } from "./music/community-tools.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
+import { createDawPassages, createDawPassageRoutes } from "./music/daw-passages.js";
+import { createTakeComparisonRoutes } from "./music/take-comparison.js";
+import { createSharedCueRoutes } from "./music/shared-cues.js";
+import { readProject as readDawPassageProject } from "./daw/store.js";
 import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
@@ -2874,6 +2878,7 @@ const vfxRoutes = createVfxRoutes({
  * so an unknown /api/daw path still falls through to the app's own 404.
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
+const sharedCueRoutes = createSharedCueRoutes({ json, readBody, renderAccent: dawRoutes.renderCueAccent });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
 const communityRoutes = createCommunityRoutes({ json, readBody, library, jobs, engine: engineDoor, provenance: prov,
   daw:(body,actor)=>submitStudioJson('/api/daw',body,actor) });
@@ -2972,6 +2977,27 @@ art.fastCovers = fastCovers;
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
 const listeningRuntime = createListeningLabRuntime({ config, library,
   shelf: async () => scanBases(await modelBases()), probe: probeModel, engine: engineDoor });
+// Only library members verified by the calling workflow reach this door.
+async function serveReviewedMusic(req, res, name) {
+  if (typeof name !== 'string' || path.basename(name) !== name || /[:\\/]|\.\./.test(name)) throw new Error('Choose a library recording.');
+  const full = path.join(config.outputDir, name), info = await stat(full);
+  return sendFile(req, res, full, { size: info.size, headers: {
+    'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
+  } });
+}
+const dawPassages = createDawPassages({ dir: path.join(config.paths.appData, 'music-daw-passages'),
+  readProject: readDawPassageProject, inspectSource: inspectAuditionSource,
+  inspectAudio: listeningRuntime.inspectSource, listSources: async () => (await auditions.list()).sources, auditions });
+const dawPassageRoutes = createDawPassageRoutes({ store: dawPassages, json, readBody,
+  actorFrom: prov.actorFrom, serveAudio: serveReviewedMusic });
+const takeComparisonRoutes = createTakeComparisonRoutes({ json, readBody, actorFrom: prov.actorFrom,
+  appData: config.paths.appData, listSongs: () => library.list(), inspectSource: listeningRuntime.inspectSource,
+  sourceReceipt: async file => ({ metadata: structuredClone(library.meta.get(file) || {}),
+    provenance: await prov.read('library', { asset: file, limit: 100 }) }),
+  measureSource: (file, actor) => submitStudioJson('/api/daw', { action: 'analyze', file: path.join(config.outputDir, file), goniometer: false }, actor),
+  setFavourite: async (file, value) => { library.setFlag(file, 'starred', value); await library.save(); },
+  recordEvent: event => prov.append('library', event), serveAudio: serveReviewedMusic });
 async function readWorkflowJob(id) {
   const job = [jobs.current, ...jobs.queue, ...jobs.history].find(row => row?.id === id);
   if (!job) return null;
@@ -3411,6 +3437,12 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/music-tools') && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Music tools are available to Studio and local clients.'});
     if (await communityRoutes(req, res, url)) return;
     if (await auditionRoutes(req, res, url)) return;
+    if (p === '/api/music-daw-passages' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'DAW passage changes are only accepted from Studio\'s own page or a local client.'});
+    if (await dawPassageRoutes(req, res, url)) return;
+    if (p === '/api/music-take-comparison' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Take comparison changes are only accepted from Studio\'s own page or a local client.'});
+    if (await takeComparisonRoutes(req, res, url)) return;
+    if (p === '/api/music-cues' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Shared cue changes are only accepted from Studio\'s own page or a local client.'});
+    if (await sharedCueRoutes(req, res, url)) return;
     if (await musicWorkflowRoutes(req, res, url)) return;
     if (await musicArtifactRoutes(req, res, url)) return;
     if (await listeningLabRoutes(req, res, url)) return;

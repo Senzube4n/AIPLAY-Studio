@@ -1,0 +1,49 @@
+/* The AI takes dock uses the DAW's existing controls and Studio colour tokens. */
+.d-passages { min-height: 0; min-width: 0; }
+.d-pass-layout { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(240px, 1fr); gap: 12px; overflow: auto; padding: 10px; flex: 1 1 auto; min-height: 0; }
+.d-pass-form, .d-pass-review { min-width: 0; display: flex; flex-direction: column; gap: 9px; align-items: stretch; }
+.d-pass-review { border-left: 1px solid var(--hair); padding-left: 12px; }
+.d-pass-heading, .d-pass-actions, .d-pass-options, .d-pass-shelf, .d-pass-generate, .d-pass-listen, .d-pass-takehead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.d-pass-heading > strong { font-size: 13px; }
+.d-pass-project { flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ghost); }
+.d-pass-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.d-passages label { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 11px; color: var(--dim); min-width: 0; }
+.d-pass-fields label, .d-pass-source > label:first-child, .d-pass-more > label, .d-pass-shelf label { flex-direction: column; align-items: stretch; }
+.d-pass-fields .d-num, .d-pass-fields .d-sel, .d-pass-source .d-sel { width: 100%; box-sizing: border-box; min-height: 28px; }
+.d-pass-source { display: flex; flex-direction: column; gap: 7px; }
+.d-pass-options input, .d-pass-ack input { accent-color: var(--primary); }
+.d-pass-more { color: var(--dim); font-size: 11px; }
+.d-pass-more > summary { cursor: pointer; width: fit-content; }
+.d-pass-more > label { margin-top: 7px; }
+.d-pass-more > ul { padding-left: 18px; color: var(--ghost); line-height: 1.5; }
+.d-pass-more textarea { width: 100%; resize: vertical; box-sizing: border-box; min-height: 45px; }
+.d-pass-abc, .d-pass-settings { font: 10px/1.5 var(--mono); }
+.d-pass-settings { margin: 7px 0 0; padding: 7px; background: var(--raise); color: var(--ghost); border: 1px solid var(--edge); border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.d-pass-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.d-pass-preview .d-pass-more { flex-basis: 100%; }
+.d-pass-chip { display: inline-flex; font-size: 10px; padding: 2px 6px; border: 1px solid var(--edge); border-radius: 5px; color: var(--dim); background: var(--raise); }
+.d-pass-warn { color: var(--warn); }
+.d-pass-load { text-decoration: none; }
+.d-pass-load[aria-disabled="true"] { opacity: .4; pointer-events: none; cursor: default; }
+.d-pass-shelf label { flex: 1; }
+.d-pass-shelf .d-sel { max-width: 100%; }
+.d-pass-generate .d-num { width: 50px; }
+.d-pass-generate .d-btn { margin-left: auto; }
+.d-pass-results { display: flex; flex-direction: column; gap: 8px; }
+.d-pass-take { border: 1px solid var(--edge); border-radius: 6px; background: var(--raise); padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.d-pass-takehead > strong { margin-right: auto; }
+.d-pass-kept { border-color: var(--ok); }
+.d-pass-error { color: var(--err); font-size: 11px; overflow-wrap: anywhere; margin: 0; }
+.d-pass-audio { display: flex; flex-direction: column; gap: 4px; }
+.d-pass-audio audio { width: 100%; min-width: 0; height: 34px; }
+.d-pass-message { margin: 0; padding: 3px 10px; font-size: 11px; color: var(--dim); flex: 0 0 auto; overflow-wrap: anywhere; }
+.d-pass-message:empty { display: none; }
+.d-pass-more > summary:focus-visible, .d-pass-load:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@container (max-width: 580px) {
+  .d-pass-layout { grid-template-columns: minmax(0, 1fr); }
+  .d-pass-review { border-left: 0; padding-left: 0; border-top: 1px solid var(--hair); padding-top: 10px; }
+}
+@media (max-width: 680px) {
+  .d-pass-layout { grid-template-columns: minmax(0, 1fr); }
+  .d-pass-review { border-left: 0; padding-left: 0; border-top: 1px solid var(--hair); padding-top: 10px; }
+}

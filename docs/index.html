@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AIPLAY Studio — a creative studio that lives on your computer</title>
-<meta name="description" content="Write a song, draw the cover, cut the video and mix it — all on your own graphics card. No account, no credits, no upload. Free and open source. Music-only can start without ComfyUI or Python.">
+<title>AIPLAY Studio: make a song, make it yours</title>
+<meta name="description" content="Generate music, shape its score in a DAW, compare takes and create covers, vectors, video, VFX and 3D. Free, open source and local first. UI and MCP workflows; optional hosted services.">
 <link rel="canonical" href="https://senzube4n.github.io/AIPLAY-Studio/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://senzube4n.github.io/AIPLAY-Studio/">
-<meta property="og:title" content="AIPLAY Studio — a creative studio that lives on your computer">
-<meta property="og:description" content="Songs, pictures, video clips, whole music videos, a DAW and a compositor — on your own machine, with no account and nothing uploaded. Free and open source.">
+<meta property="og:title" content="AIPLAY Studio: make a song, make it yours">
+<meta property="og:description" content="Song to score, DAW, cover, vectors and video. Compare takes, try reviewed musical edits and link an accent to a flash. Free, open source and local first, by hand or through MCP.">
 <meta property="og:image" content="https://senzube4n.github.io/AIPLAY-Studio/demo/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="AIPLAY Studio">
-<meta name="twitter:description" content="Songs, pictures, video and a whole music video — on your own graphics card. No account, no credits, no upload.">
+<meta name="twitter:description" content="Generate a track. Shape its score. Build its visual world. Music, DAW, vectors, video and VFX in a local-first studio, with UI and MCP workflows.">
 <meta name="twitter:image" content="https://senzube4n.github.io/AIPLAY-Studio/demo/og.jpg">
 <style>
 :root{
@@ -112,6 +112,8 @@ code{font-family:var(--mono);font-size:.9em}
 .links a span{display:block;font-weight:400;font-size:.82rem;color:var(--ghost);margin-top:.25rem}
 footer{border-top:1px solid var(--hair);padding:34px 0 60px;color:var(--ghost);font-size:.87rem}
 footer a{color:var(--faint)}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media (max-width:700px){section{padding:42px 0}.wrap{padding:0 16px}.cards,.proof,.gal,.why,.links{grid-template-columns:minmax(0,1fr)}.hero{padding-top:36px}.brand{margin-bottom:24px}}
 </style>
 </head>
 <body>
@@ -120,22 +122,25 @@ footer a{color:var(--faint)}
 <div class="wrap">
 <header class="hero">
   <div class="brand"><span class="dot"></span>AIPLAY STUDIO</div>
-  <h1>Write a song, draw the cover,<br>cut the video and mix it.</h1>
-  <p class="lede">All of it on your own machine. <strong>No account, no credits, no upload</strong> —
-     nothing leaves the room, and there is no bill at the end of the month. Free and open source
-     under Apache&nbsp;2.0, so what you make is yours to sell. Want only music? That can start
-     <strong>without ComfyUI or Python at all</strong>.</p>
+  <h1>Make a song.<br>Make it yours.</h1>
+  <p class="lede">Generate the track, shape its score, mix it in the DAW and bring it to the screen.
+     <strong>Music, covers, vectors, video, VFX and 3D</strong> in one free, open-source studio.
+     Work by hand or let your own MCP assistant use the same project tools.</p>
+  <p>Start with <strong>Music only</strong> for native YuE2, without ComfyUI or Python.
+     Choose <strong>Full Studio</strong> for the wider suite. Local generation needs no Studio
+     account or credits; optional hosted services use your own key and may charge.</p>
   <div class="cta">
-    <a class="btn pri" href="#install">Download</a>
+    <a class="btn pri" href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe">Download for Windows</a>
+    <a class="btn" href="#music-editing">Shape your track</a>
     <a class="btn" href="#make">What you can make</a>
     <a class="btn" href="#native-yue2">Music-only start</a>
-    <a class="btn" href="#why">Why local</a>
+    <a class="btn" href="#install">Choose your setup</a>
     <a class="btn" href="https://github.com/Senzube4n/AIPLAY-Studio">GitHub</a>
   </div>
 
   <figure class="shot">
     <img src="brand/4_brand.webp" width="1600" height="900" alt="AIPLAY Studio: the logo and the program's own sidebar — Chat, Music, Images, Video, VFX, Avatars, Workflow, Studio, DAW, Reactive, Overnight, Community." loading="eager">
-    <figcaption>One program, on one computer. Everything on that list runs on your own graphics card.</figcaption>
+    <figcaption>One place for the song and the project around it. Install the engines you choose.</figcaption>
   </figure>
 
   <!-- The convincer. A whole music video, start to finish, from the program on
@@ -150,11 +155,34 @@ footer a{color:var(--faint)}
       was paid for.</strong></figcaption>
   </figure>
 
-  <figure class="shot">
-    <img src="demo/hero.webp" width="1344" height="768" alt="A still generated by AIPLAY Studio: three figures in an orbital lounge in front of a viewport showing a planet breaking apart." loading="lazy">
-    <figcaption>Rendered on one desktop graphics card, from a text description, by the program on this page.</figcaption>
-  </figure>
 </header>
+</div>
+
+<div class="wrap">
+<section id="music-editing">
+  <div class="eyebrow">Keep creating after the first render</div>
+  <h2>The first take is a starting point.</h2>
+  <p class="lede">Compare performances, reshape a musical passage and give the important moment
+     a visual accent. Each workflow has a UI, a saved receipt and typed MCP controls.</p>
+  <div class="cards">
+    <div class="card"><span class="ico">♩</span><h3>Notes into a new take</h3>
+      <p>Edit a melody in the DAW, review its YuE2 score and try two or three alternatives for
+         selected bars. Keep the rest of the recording with 80 ms blends at the seams, and
+         compare before keeping. Compatible saved Python YuE2
+         songs only; this is background generation, not instant audio inpainting.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/daw-passages.md">DAW score and AI-take workflow</a></span></div>
+    <div class="card"><span class="ico">◧</span><h3>Hear the difference</h3>
+      <p>Group 2, 4 or 8 saved songs. Switch A–H at the same playback position with loudness
+         matched for listening, then save your choice, favourite and receipts.
+         Different seeds are queued for generation separately.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/take-comparison.md">Take comparison</a></span></div>
+    <div class="card"><span class="ico">✦</span><h3>One moment, two timelines</h3>
+      <p>Place a Drop cue at a bar and beat. Preview a dry impact or 909 kick with a flash,
+         then apply editable objects to the DAW and VFX composition. Check the explicit
+         time offset; Undo removes the unchanged cue objects.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/shared-cues.md">Shared cues</a></span></div>
+  </div>
+</section>
 </div>
 
 <div class="wrap">
@@ -164,12 +192,13 @@ footer a{color:var(--faint)}
     <figcaption>Make music on your own machine. Local, private, no credits.</figcaption>
   </figure>
 
-  <div class="eyebrow">Experimental native music</div>
-  <h2>A smaller starting point. A measured short-song result.</h2>
+  <div class="eyebrow">Start with Music only</div>
+  <h2>YuE2 music without ComfyUI or Python.</h2>
   <div class="cards">
     <div class="card"><h3>Choose Q4 or optional Q8</h3>
       <p>Q4_0 is the smaller default: about 2.93 GB of model files. Q8_0 is higher precision: about 4.53 GB.
-         Both share an F16 VAE and four sidecars. The native runtime is a separate 833 MB download.
+         Both share an F16 VAE and four sidecars. Runtime downloads are separate:
+         about 833 MB for NVIDIA, 58 MB for Vulkan or 24 MB for CPU.
          Install explicitly in Models; source and integrity checks travel with the manifest.</p></div>
     <div class="card"><h3>49.4 seconds of audio in 22.0 seconds</h3>
       <p>One short-song test on an RTX 4070 Ti SUPER with 16 GB VRAM, CoT full and 32 synthesis steps.
@@ -179,13 +208,14 @@ footer a{color:var(--faint)}
          Import ABC notation and plan bars, BPM and nominal length in Music or through MCP.
          Planning uses no GPU; changing a score generates a new take, not seamless extension.
          Choose installed Q4/Q8 weights per take in Music or through MCP; no silent substitution.
-         Nonempty lyrics required. No guaranteed duration, instrumental mode, audio references,
-         mix-cache reuse or native score export.</p></div>
+         Nonempty lyrics required; reference audio and instrumental support depend on the route.
+         See the guide for this native engine's current limits.</p></div>
   </div>
   <p class="note">Sampled <strong>whole-GPU peak: 6,589 MiB</strong>, baseline <strong>3,129 MiB</strong>.
     Other applications are included: this is not a process-memory peak or certification for 6 GB or 8 GB cards.
-    YuE2 weights use <strong>CC BY-NC 4.0</strong>; Studio conservatively labels output noncommercial / not for sale,
-    without claiming the weight licence automatically governs every song.
+    YuE2 weights use <strong>CC BY-NC 4.0</strong>. Studio's output label follows the authors'
+    statement that individuals may sell output and companies need a commercial licence;
+    review the linked licence details before publishing.
     Q8 has not yet been GPU-benchmarked or listening-tested in Studio; higher precision is not a guaranteed quality upgrade.
     <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/YUE2_GGUF.md">Read the benchmark and licence limits.</a></p>
 </section>
@@ -361,24 +391,27 @@ footer a{color:var(--faint)}
   <div class="cards">
     <div class="card"><span class="ico">♪</span>
       <h3>Songs with vocals</h3>
-      <p>A style description and lyrics become a finished, mastered track with a cover. Instrumentals too.
-         Three engines, because none of them is best at everything: pick per song.</p>
+      <p>Generate from lyrics and a style, keep the track in your library and create its cover.
+         Choose the engine per song; references, instrumentals and continuation depend on the selected route.</p>
       <span class="who">MiniMax Music 3 &middot; YuE2 3B &middot; ACE-Step 1.5, with LoRAs and covers</span></div>
 
     <div class="card"><span class="ico">♩</span>
       <h3>A song with a score</h3>
-      <p>The second music engine writes a two-voice lead sheet with chords before it sings. Read it, edit it, render again — print it as sheet music, open it in the DAW, or take it out as MIDI. Ask for a key, a tempo and a meter and it plans in them; hum a line or hand it a whole song to cover; extend a take or replace a section of it.</p>
-      <p>It can also <strong>carry on from a recording you own</strong>, not just from its own output: the audio becomes the codes the model speaks and the render continues from them. Measured, a continuation holds 0.9947 against its source where a fresh render on the same prompt holds &minus;0.003. The same codes make your library searchable by how a song <em>sounds</em> — asked for one track, it put that recording first at 0.56 with everything else below 0.11.</p>
-      <span class="who">YuE2 3B · editable ABC · PDF via abcjs · MIDI · MERT tokenizer</span></div>
+      <p>Read and edit saved YuE2 ABC, print a lead sheet or move melody notes into the DAW.
+         Expand the main player and choose Score for note highlighting and Follow scrolling,
+         with timing adjustments for notation that drifts from the recording.</p>
+      <span class="who">Saved ABC · following player · MIDI · DAW</span></div>
 
     <div class="card"><span class="ico">▦</span>
-      <h3>Pictures</h3>
-      <p>Seven image engines, a full non-destructive editor with layers, masks, selections and text, plus background removal, upscaling and vectorising.</p>
-      <span class="who">FLUX · Z-Image · Krea 2 · Anima · Ideogram · your own checkpoints</span></div>
+      <h3>Covers, layers and vectors</h3>
+      <p>Generate cover art, edit layers, masks, selections and text, or turn a raster into SVG.
+         Review detail crops and clean selected geometry through the same UI and MCP workflow.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md">Vector workflow</a> · Qwen · FLUX · other installed engines</span></div>
 
     <div class="card"><span class="ico">▶</span>
       <h3>Video clips</h3>
-      <p>Text to video, image to video, continue a clip from its last second, or restyle one you already have while keeping its motion. A 3-step distillation renders two seconds at native size in under two minutes.</p>
+      <p>Generate clips from text or pictures, then use supported continuation and control routes
+         to develop the shot. Pick the engine and render settings for your machine.</p>
       <span class="who">MiniMax H3 · LTX 2.5 · WAN VACE</span></div>
 
     <div class="card"><span class="ico">✂</span>
@@ -388,48 +421,60 @@ footer a{color:var(--faint)}
 
     <div class="card"><span class="ico">▤</span>
       <h3>A real DAW</h3>
-      <p>Piano roll, tempo and meter maps, a mixer with sends and returns, insert racks, recording, stems, and delivery checks against streaming targets.</p>
-      <span class="who">Local synthesis, no plugins needed</span></div>
+      <p>Piano roll, tempo and meter maps, instruments, recording, insert racks, sends and returns.
+         Finish with EQ, dynamics and stereo tools, then inspect loudness, true peak and delivery checks.</p>
+      <span class="who">Builtin synthesis · optional instruments · CPU rendering</span></div>
 
     <div class="card"><span class="ico">◈</span>
       <h3>A compositor</h3>
-      <p>Comps, layers, keyframes, effects, masks, mattes and precompose — the After Effects shape, driven by hand or by an agent.</p>
+      <p>Build compositions with layers, keyframes, effects, masks, mattes and nested comps.
+         Preview the result and keep editing by hand or through MCP.</p>
       <span class="who">The VFX screen</span></div>
 
     <div class="card"><span class="ico">◎</span>
       <h3>Video that moves with the song</h3>
-      <p>The song is analysed and the picture arrives on the beat instead of on a timer. Five cut-and-dissolve styles run on the compositor alone and need no video model at all — they work on an AMD card. Two more repaint a clip frame by frame so the figure keeps moving and the look turns with the music, with a black circle that opens on every bass hit.</p>
-      <span class="who">Our own AnimateDiff, ControlNet and IP-Adapter nodes &mdash; no GPL packs</span></div>
+      <p>Use analysed music timing to drive cuts, pulses and transitions. Compositor-only styles
+         need no video model; motion and frame-repainting styles use their own optional models.</p>
+      <span class="who">Reactive video · editable VFX compositions</span></div>
 
     <div class="card"><span class="ico">⚭</span>
       <h3>Making something with friends</h3>
-      <p>Swap key cards, read twelve words aloud to each other, and a project travels as one sealed file addressed to one person. You can also <strong>lend each other a graphics card</strong>: an order asking a friend to render one scene carries four words — the scene, the seed, the steps and the engine — and no graph, no tool name, no model and no path. On their machine it becomes a plan that a person approves, and the finished take comes back to quarantine for you to adopt or throw away, carrying <em>their</em> model and <em>their</em> licence.</p>
-      <p>There is no server anywhere in it and nothing opens a connection. Six attackers were pointed at the receive path, each holding a key the victim trusts, and every finding was handed to a skeptic told to refute it.</p>
-      <span class="who">ed25519 &middot; X25519 &middot; AES-256-GCM &middot; no account, no relay</span></div>
+      <p>Exchange sealed project files and reviewed scene-render requests with trusted friends.
+         Returned takes enter quarantine before you adopt them. The file-based lending path is built;
+         a two-PC end-to-end trial remains to be done.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/COLLAB.md">Collab and reviewed handoffs</a></span></div>
 
     <div class="card"><span class="ico">◉</span>
       <h3>Camera control</h3>
-      <p>Block a shot in Blender as grey boxes, then use that as a control video so the render obeys the camera move you chose.</p>
+      <p>Block a shot in Blender, then use its preview as control footage for the supported
+         VACE route. Control quality depends on the scene and model.</p>
       <span class="who">Blender previz &rarr; WAN VACE</span></div>
 
     <div class="card"><span class="ico">⬢</span>
       <h3>Pictures into 3D</h3>
-      <p>Turn a rendered character sheet into a mesh you can open in Blender, with a skeleton where the runtime allows it.</p>
-      <span class="who">TripoSG · UniRig</span></div>
+      <p>Build a mesh from a picture and preview 3D avatars. Mesh generation needs its own models
+         and hardware; the optional rigging runtime currently cannot run on Windows.</p>
+      <span class="who">TripoSG · avatar preview · optional UniRig</span></div>
 
     <div class="card"><span class="ico">✦</span>
       <h3>A local assistant</h3>
-      <p>Chat to a model running on your own card and ask it to make things. It reaches the Studio's own tools and asks before spending.</p>
-      <span class="who">Qwen3-4B, on your GPU</span></div>
+      <p>Use Simple mode, Chat and Enhance to develop lyrics, style and creative requests.
+         Choose a local writing model or connect an API assistant in Settings.</p>
+      <span class="who">Optional local model or your own provider key</span></div>
 
     <div class="card"><span class="ico">&#9670;</span>
       <h3>Or drive it from your own assistant</h3>
-      <p>Studio speaks MCP. Point Claude, or anything else that speaks it, at one command and it can
-         write songs, draw pictures, render clips, build a whole music video, edit the DAW or the
-         compositor, and read the render log back. A few things it deliberately cannot do &mdash;
-         it may not verify a friend, lend out your card, or render what somebody else sent you.
-         Those are presses a person makes, and each absence is written into the tool that is missing.</p>
-      <span class="who">281 tools &middot; the Agent screen has the config block to paste</span></div>
+      <p>Connect an MCP-capable assistant to the same project workflows. Inspect readiness,
+         create assets, edit scores and scenes, compare receipts and apply reviewed changes.
+         UI playback, OS dialogs and some trust decisions remain human controls.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/MCP_WORKFLOWS.md">MCP workflow map</a> · configuration in Studio's Agent screen</span></div>
+
+    <div class="card"><span class="ico">⚙</span>
+      <h3>Plan, replay and train</h3>
+      <p>Use optional native planning and saved-stage replay, prepare a training dataset,
+         train adapters, transcribe audio to MIDI and preview processing.
+         These advanced tools have separate runtime requirements; the current planner/trainer needs NVIDIA CUDA.</p>
+      <span class="who"><a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/music-workbench.md">Native workbench</a></span></div>
   </div>
 </section>
 </div>
@@ -437,26 +482,27 @@ footer a{color:var(--faint)}
 <!-- ══ WHY ═══════════════════════════════════════════════ -->
 <div class="wrap">
 <section id="why">
-  <figure class="shot">
-    <img src="brand/3_no-account.webp" width="1600" height="900" alt="No account. No credits. No upload. Everything runs on your own graphics card." loading="lazy">
-    <figcaption>No account. No credits. No upload.</figcaption>
-  </figure>
-
-  <div class="eyebrow">Why bother running it yourself</div>
-  <h2>The three promises this makes</h2>
+  <div class="eyebrow">Own the tools and the workflow</div>
+  <h2>Local first. Clear choices.</h2>
 
   <div class="why">
     <div>
-      <h3>Nothing leaves the machine</h3>
-      <p>No account, no upload, no per-render charge, no terms that change next quarter. Your unfinished work stays unfinished in private.</p>
+      <h3>Choose where work runs</h3>
+      <p>Local generation and editing run on your computer with no Studio account or per-render credits.
+         Optional hosted engines and API assistants send their required inputs to the provider you choose.
+         Paid services use your own key.</p>
     </div>
     <div>
-      <h3>It ships no model weights</h3>
-      <p>Every model is downloaded from its own publisher, and the Models screen shows you the licence and the territory it applies to <em>before</em> anything is fetched. Some are free for commercial use and some are not. The program tells you which, and refuses to guess on your behalf.</p>
+      <h3>Choose the models</h3>
+      <p>Studio ships no model weights. Models shows download sizes, hardware requirements,
+         licences and known territorial restrictions before installation. Apache-2.0 covers
+         Studio's code; model and output rights depend on the selected model.</p>
     </div>
     <div>
-      <h3>Every render is recorded</h3>
-      <p>One door to the graphics card, and it writes the graph, the prompts verbatim, the seed, the step count, the size, every model file and the hash of every reference <em>before</em> the card spends. Failed renders are recorded too. You can always answer “how was this made?”.</p>
+      <h3>Inspect the work</h3>
+      <p>Read saved prompts, seeds, settings and provenance where recorded. Compare alternatives,
+         preview edits and keep the version you choose. Older recordings may have incomplete receipts;
+         matching a seed alone does not guarantee identical audio.</p>
     </div>
   </div>
 
@@ -495,8 +541,20 @@ footer a{color:var(--faint)}
      AIPLAY Studio Setup.exe</a> and run it. It installs Studio, plus a private Node.js 20+ when this PC has none, with no
      admin prompt. Windows may say “Windows protected your PC” because the installer is not signed yet: click
      <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
-  <p><strong>Same public GitHub, two launch modes.</strong> YuE2 music-only is part of AIPLAY Studio,
+  <p><strong>Same public GitHub, two local launch modes.</strong> YuE2 music-only is part of AIPLAY Studio,
      not a separate repository. You download the app, then only the models you choose.</p>
+  <p>When Setup asks which build, choose <strong>Senzu's</strong>.</p>
+  <div class="cards">
+    <div class="card"><h3>Music only</h3><p>Native YuE2 GGUF songs on NVIDIA, AMD, Intel or CPU.
+      No ComfyUI, Python or unrelated models. Start small; speed depends on your hardware.</p></div>
+    <div class="card"><h3>Full Studio</h3><p>The wider music, DAW, image, vector, video, VFX and 3D suite.
+      Uses ComfyUI and Python for applicable tools. The launcher can find an existing ComfyUI
+      or install a private one; optional packs have separate requirements.</p></div>
+    <div class="card"><h3>Optional hosted services</h3><p>Full Studio can use hosted MiniMax music
+      with your fal.ai key. The separate Use Comfy API launch mode offers hosted pictures,
+      clips, sound and 3D with your Comfy key; it has no Music or Music video screen.
+      Inputs go to the provider, and its usage charges apply.</p></div>
+  </div>
   <p>Source code (for developers):</p>
 
 <pre>git clone https://github.com/Senzube4n/AIPLAY-Studio.git
@@ -514,10 +572,14 @@ npm run start:music</pre>
   <div class="tw">
   <table>
     <tr><th>Native music prerequisite</th><th>What is known</th></tr>
-    <tr><td>OS / GPU</td><td>Windows x64, NVIDIA CUDA GPU. A 16 GB RTX 4070 Ti SUPER was tested; a minimum is not certified.</td></tr>
-    <tr><td>System components</td><td>A current NVIDIA driver compatible with CUDA 13.3 and the <a href="https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist">Microsoft Visual C++ v14 x64 Redistributable</a>.</td></tr>
+    <tr><td>OS / GPU</td><td>Windows x64. Setup selects CUDA for NVIDIA, Vulkan for AMD/Intel, or CPU.
+      A 16 GB RTX 4070 Ti SUPER was timed; native Vulkan/CPU performance and a minimum are not certified.</td></tr>
+    <tr><td>System components</td><td>Current graphics drivers. NVIDIA needs CUDA 13.3 compatibility and the
+      <a href="https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist">Microsoft Visual C++ v14 x64 Redistributable</a>.
+      Vulkan/CPU packages carry their runtime DLLs.</td></tr>
     <tr><td>Application</td><td>Node.js 20+ and Studio. No ComfyUI, Python or PyTorch for native music-only.</td></tr>
-    <tr><td>Disk</td><td>About 2.93 GB for Q4 or 4.53 GB for Q8 model files, plus 833 MB of shared native runtime downloads; allow extra room for extraction and output files.</td></tr>
+    <tr><td>Disk</td><td>About 2.93 GB for Q4 or 4.53 GB for Q8 model files. Runtime:
+      about 833 MB for NVIDIA, 58 MB for Vulkan or 24 MB for CPU. Allow room for extraction and output files.</td></tr>
   </table>
   </div>
 
@@ -605,8 +667,8 @@ npm run start:music</pre>
   <div class="tw">
   <table>
     <tbody>
-    <tr><td>GPU</td><td class="n">16 GB VRAM <b>minimum</b> — either engine</td></tr>
-    <tr><td>RAM</td><td class="n">32 GB minimum</td></tr>
+    <tr><td>GPU / RAM</td><td>Requirements vary by model, build, resolution and route.
+      Review the selected model's card and memory requirements in Models before installation.</td></tr>
     <!-- MODELS:BEGIN video-disk -->
     <tr><td>Disk</td><td class="n">2.5 GB (TaoMate 3-step LoRA) or 2.3 GB (video-to-video control) or 182 MB (Fast setting for H3) or 2.0 GB (4-step speed-up for H3) or 2.0 GB (8-step speed-up for H3) or 41.0 GB (MiniMax H3) or 42.1 GB (FastH3) or 39.7 GB (LTX 2.5)</td></tr>
     <!-- MODELS:END video-disk -->
@@ -621,8 +683,8 @@ npm run start:music</pre>
   </div>
 
   <ul class="chips">
-    <li>100% local</li><li>Apache-2.0</li><li>No telemetry</li><li>No account</li><li>No subscription</li>
-    <li>Ships no weights</li><li>Runs offline</li>
+    <li>Local first</li><li>Apache-2.0 code</li><li>UI + MCP</li><li>No Studio account</li>
+    <li>Ships no weights</li><li>Optional hosted services</li>
   </ul>
 </section>
 </div>
@@ -633,16 +695,22 @@ npm run start:music</pre>
   <div class="eyebrow">If you want the detail</div>
   <h2>Read deeper</h2>
   <div class="links">
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/daw-passages.md">DAW score and AI takes<span>Reviewed musical edits, alternatives with seam blends and current route limits.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/take-comparison.md">Take comparison<span>Loudness-matched A–H listening, receipts and saved choices.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/shared-cues.md">Shared cues<span>One musical position, a builtin accent, a VFX flash and reversible Apply.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md">Vector workflow<span>Raster import, SVG tracing, selected geometry cleanup and visual review.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/music-workbench.md">Native music workbench<span>Optional planning, replay, dataset training, MIDI and processing tools.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/MCP_WORKFLOWS.md">MCP workflow map<span>Typed tools and the UI workflows they share.</span></a>
     <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/YUE2_GGUF.md">YuE2 music-only<span>Install, native controls, source pins, the short-song benchmark and its limits.</span></a>
-    <a href="ENGINE_DOOR.md">The engine door<span>How every render is attributed and recorded, and why there is only one way in.</span></a>
-    <a href="PROVENANCE.md">Provenance<span>What the ledger stores, what it embeds in the file, and what it actually proves.</span></a>
-    <a href="VFX.md">The compositor<span>How to get something on screen, in order.</span></a>
-    <a href="VFX_SPEC.md">Compositor contract<span>The comp document, layer schemas and the effect stack.</span></a>
-    <a href="IMAGE_SPEC.md">Image contract<span>Where a committed pixel is decided, and by what.</span></a>
-    <a href="RESOLUTION_FOR_FACES.md">Resolution for faces<span>Six renders, one seed, size swept — where a distant face stops being usable.</span></a>
-    <a href="H3_REFERENCE_BLEED.md">Reference bleed<span>A negative result, written up: what the fast video path does to references.</span></a>
-    <a href="ENGINE_TRAPS.md">Engine traps<span>Things that silently do the wrong thing — on both video engines, and on the second music engine and its score.</span></a>
-    <a href="COLLAB.md">Collab<span>Sharing a project and lending a card between friends: the sealed bundle, the four-word order, and every refusal with the attack it stops.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/ENGINE_DOOR.md">The engine door<span>How render attribution and the shared engine path work.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/PROVENANCE.md">Provenance<span>What the ledger stores, embeds and proves.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/VFX.md">The compositor<span>How to get something on screen, in order.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/VFX_SPEC.md">Compositor contract<span>The composition document, layer schemas and effect stack.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/IMAGE_SPEC.md">Image contract<span>Where committed pixels are decided.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/RESOLUTION_FOR_FACES.md">Resolution for faces<span>Measured render size and face detail.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/H3_REFERENCE_BLEED.md">Reference bleed<span>A documented video-reference limitation.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/ENGINE_TRAPS.md">Engine traps<span>Known engine differences and failure cases.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/COLLAB.md">Collab<span>Sealed bundles, scene lending and reviewed returns.</span></a>
     <a href="https://github.com/Senzube4n/AIPLAY-Studio">Source<span>All of it. Apache-2.0.</span></a>
   </div>
 </section>

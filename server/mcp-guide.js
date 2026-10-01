@@ -38,7 +38,7 @@ and video queue behind it.
 The economics drive the order: PLANNING IS FREE (brief, bible, lint, crime
 board), a render costs GPU-minutes, and every render KEEPS its takes. So plan
 fully, render once, pick takes, repair the stale minimum, and polish with VFX
-instead of re-rendering. Topics: stages, series, engines, example, vectors, music-workbench.
+instead of re-rendering. Topics: stages, series, engines, example, vectors, music-workbench, music-editing.
 Read vectors for logos; music-workbench for native YuE2 tools.`;
 
 const STAGES = `THE FIVE STAGES OF A MUSIC VIDEO
@@ -364,7 +364,46 @@ Source recordings survive. GPU work is exclusive and refuses to overlap active S
 Generation, installation, training, replay and keeping results are distinct actions. No loop judge,
 Ozone-equivalent neural mastering or guaranteed hybrid-genre control is claimed.`;
 
-const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS, vectors: VECTORS, 'music-workbench': MUSIC_WORKBENCH };
+const MUSIC_EDITING = `MUSIC EDITING: reviewed notation, saved takes and shared cues.
+
+DAW > AI takes: draw/edit notes and preview the selected instrument in the piano roll.
+\`music_daw_preview\` exports inclusive bars into YuE2's two monophonic voices.
+It refuses unsupported polyphony/tempo; optional quantization changes only the ABC preview.
+Velocity, effects, sound and articulation are not score controls; read the returned warnings.
+\`music_daw_draft\` saves exact style/lyrics, score and project/recording hashes.
+\`music_daw_request\` validates freshness and returns the selected-score request for Music.
+Loading a draft does not generate. Music > Create is the explicit action.
+
+For protected alternatives, choose a saved YuE2 Python source made with full/melody planning.
+Review the recording offset: positive means DAW bar 1 starts later in the recording.
+\`music_daw_takes\` queues 2/3 distinct seeds using the COMPLETE edited score as conditioning.
+The compositor retains the rest with 80 ms seam blends, including just before the start; audition both seams.
+Edited notes steer a new performance, not guaranteed note-for-note synthesis or realtime inpainting.
+\`music_daw_draft_get\` reads exact session/job receipts; retries reuse that session.
+\`music_daw_audition\` verifies original/ready take hashes and returns region/seam/full playback.
+\`music_audition_keep\` records the choice; acknowledge short endings only after listening.
+\`music_audition_cancel\` cancels that session's owned jobs. Use \`music_auditions\` and
+\`studio_status\` to inspect an unacknowledged submission; never blindly resubmit it.
+Quantized/ComfyUI sources currently cannot use this protected ABC passage workflow.
+
+Music Lab > Takes: \`music_takes_create\` groups exactly 2/4/8 EXISTING library recordings.
+It measures integrated loudness/true peak on CPU and uses attenuation-only matched playback.
+Same-position A/B exposes changed durations. Original audio survives; no mastering is applied.
+\`music_takes_verify\` checks immutable hashes; guarded playback independently rechecks them.
+\`music_takes_get\` reads exact stored metadata/events, partial older receipts and choice history.
+\`music_takes_choose\` records an explicit choice and library favourite; meters are not taste.
+Reuse the same creation key and files after an acknowledgement loss. Creating new music remains
+Music's 2/4/8 Takes queue, with one generation at a time where the engine requires it.
+
+Music Lab > Shared cues: \`music_cue_save\` links a DAW bar/beat/tick to a VFX composition.
+Set the composition offset explicitly. \`music_cue_preview\` resolves the actual tempo/meter
+clock and returns a review token. \`music_cue_audition\` renders one deterministic dry accent
+on CPU. The UI pairs it with a simulated flash; after Apply it renders the real changed frame.
+\`music_cue_apply\` checks both documents and adds one owned impact/kick track and flash layer.
+\`music_cue_undo\` removes only those untouched owned items; changed/dependent items refuse.
+\`music_cue_read\` reports partial application/recovery receipts. No model, camera, avatar,
+lights or automatic publish run is implied. Preview first, then apply the reviewed cue.`;
+const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS, vectors: VECTORS, 'music-workbench': MUSIC_WORKBENCH, 'music-editing': MUSIC_EDITING };
 
 /** Every section, for the test that proves no tool name here is a phantom. */
 export const GUIDE_SECTIONS = { head: HEAD, ...TOPICS };
@@ -378,11 +417,11 @@ export function guideTools() {
         + "at each of the five stages of a music video (song, plan, assets, polish, "
         + "assemble), the episodic-series variant, the engine and licence rules, and a "
         + "worked scene. Costs nothing and answers instantly. `topic` narrows it: "
-        + "stages | series | engines | example | pitfalls | vectors | music-workbench. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline. Use topic=vectors for vector logos; topic=music-workbench for native YuE2 planning, training and processing.",
+        + "stages | series | engines | example | pitfalls | vectors | music-workbench | music-editing. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline. Use topic=vectors for vector logos; topic=music-workbench for native YuE2 tools; topic=music-editing for DAW passages, take comparisons and shared cues.",
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls", "vectors", "music-workbench"],
+          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls", "vectors", "music-workbench", "music-editing"],
             description: "One section instead of the whole map." },
         },
         additionalProperties: false,

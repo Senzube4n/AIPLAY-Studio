@@ -22268,7 +22268,7 @@ $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly && !entryView}));
+const initialStudioPoll = poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly && !entryView}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();
@@ -22382,7 +22382,7 @@ mountMusicPlan();
   dropAnywhere($("imgPanel"), () => picDrops.img);
   dropAnywhere($("vidPanel"), () => picDrops.from);
 }
-mountMusicWorkflows({ onLoadRequest: async (prepared) => {
+async function loadReviewedMusicRequest(prepared) {
   const request = prepared?.request || prepared;
   if (!request || !["yue2", "yue2-gguf", "yue2-comfy"].includes(request.engine)) throw new Error("Choose a supported YuE2 engine first.");
   const precision = request.quantization || (request.engine === "yue2-gguf" ? "q4_0" : "none");
@@ -22426,7 +22426,8 @@ mountMusicWorkflows({ onLoadRequest: async (prepared) => {
   for (const button of document.querySelectorAll(".howmany [data-n]")) button.classList.toggle("on", button.dataset.n === "1");
   countChars(); musicEnginePaint(); setView("create");
   $("caption").focus();
-} });
+}
+mountMusicWorkflows({ onLoadRequest: loadReviewedMusicRequest });
 /* LAST, and asynchronous. One request answers both "what can this studio do"
  * and "has this person been shown around", so a fresh install opens the window
  * on the same round trip that fills it — and an older server with no
@@ -22461,3 +22462,14 @@ document.addEventListener("click", async (e) => {
 
 // Deep links open after the workflow and remaining view controllers initialize.
 if (entryView) setView(entryView);
+const linkedDawPassage = new URLSearchParams(location.search).get('dawPassage');
+if (linkedDawPassage) {
+  initialStudioPoll.then(async () => {
+    if (!/^passage-[a-f0-9]{24}$/.test(linkedDawPassage)) throw new Error('This DAW passage link is invalid.');
+    const response = await fetch('/api/music-daw-passages', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'request', id: linkedDawPassage }) });
+    const prepared = await response.json();
+    if (!response.ok || prepared.error) throw new Error(prepared.error || 'The saved DAW draft could not be loaded.');
+    await loadReviewedMusicRequest(prepared);
+  }).catch(error => appAlert(error.message, 'DAW draft was kept'));
+}

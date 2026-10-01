@@ -4103,6 +4103,8 @@ const deferredNote = (name) =>
 
 /* ── the dock's three tabs ───────────────────────────────────────────── */
 
+let passageDock = null;
+let passageDockSized = false;
 function showDock(tab) {
   S.ana.tab = tab;
   /* Opening a tab UNFOLDS the dock, so the project has to hear about it —
@@ -4115,7 +4117,8 @@ function showDock(tab) {
   if (wasFolded && viewOf()?.dock?.folded) saveView({ dock: { folded: false } });
   for (const [id, pane, t] of [["tabChain", "paneChain", "chain"],
                                ["tabAnalysis", "paneAnalysis", "analysis"],
-                               ["tabEar", "paneEar", "ear"]]) {
+                               ["tabEar", "paneEar", "ear"],
+                               ["tabPassage", "panePassage", "passage"]]) {
     $(id).classList.toggle("d-on", tab === t);
     $(pane).classList.toggle("d-on", tab === t);
   }
@@ -4128,7 +4131,18 @@ function showDock(tab) {
   }
   if (tab === "analysis") { sizeAnalysis(); drawAnalysis(); }
   if (tab === "ear") document.querySelector(".ear-fab")?.setAttribute("data-open", "1");
+  passageDock?.setVisible(tab === 'passage');
+  if (tab === 'passage') {
+    passageDock?.contextChanged();
+    if (!passageDockSized) {
+      passageDockSized = true;
+      // Keep the piano roll visible while the taller passage form scrolls.
+      const available = $('centre').clientHeight;
+      $('centre').style.setProperty('--d-dock-h', `${Math.min(460, Math.max(140, available - 260), Math.max(240, Math.round(available * .48)))}px`);
+    }
+  }
 }
+$("tabPassage").addEventListener('click', () => { showDock('passage'); passageDock?.refresh(); });
 $("tabChain").addEventListener("click", () => showDock("chain"));
 $("tabAnalysis").addEventListener("click", () => showDock("analysis"));
 $("tabEar").addEventListener("click", () => {
@@ -5925,6 +5939,7 @@ async function refreshDoc(session = captureSession()) {
   paintClock();
   paintSelInfo();
   if (S.rollFit) fitRoll();
+  passageDock?.contextChanged();
   return true;
 }
 /** Set the loop without restarting the transport (used while re-reading). */
@@ -7527,10 +7542,17 @@ import { mountInfo } from "./info.js";
 mountInfo("daw", "#dawInfoHost");
 
 import { mountEar } from "./dawear.js";
+import { mountDawPassages } from './daw-passages.js';
 import { appConfirm, appPrompt } from "./dialog.js";
 mountEar({
   getSlug: () => S.slug,
   onEdited: () => { refreshDoc().then(() => renderAndSwap()).catch(() => {}); },
+});
+passageDock = mountDawPassages($('panePassage'), {
+  getContext: () => ({ slug: S.slug, project: S.proj, trackId: S.trackId,
+    fromBar: Math.max(1, Math.floor(S.loopA ?? 1)),
+    toBar: Math.min(S.proj?.lengthBars || 1, Math.ceil(S.loopB ?? ((S.proj?.lengthBars || 1) + 1)) - 1) }),
+  onOpen: () => showDock('passage'), onRefresh: () => refreshDoc(),
 });
 
 /* THE EAR GETS A HOME. mountEar appends a floating pill bottom-right and a
