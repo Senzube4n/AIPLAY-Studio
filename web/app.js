@@ -11358,8 +11358,11 @@ function iedStageSize() {
   const W = ied.crop ? ied.crop.w : nw, H = ied.crop ? ied.crop.h : nh;
   return (ied.rotate % 180) ? { w: H, h: W, W, H } : { w: W, h: H, W, H };
 }
-function iedSrcToStage(sx, sy) {
+function iedSrcToStage(sx, sy, pixel = false) {
   const { w, h, W, H } = iedStageSize();
+  // Rectangles use pixel edges; a wand samples pixel centres. Applying the
+  // edge transform to index zero produced width/height after a flip.
+  if (pixel) { sx += .5; sy += .5; }
   let x = sx - (ied.crop ? ied.crop.x : 0), y = sy - (ied.crop ? ied.crop.y : 0);
   let fx = x, fy = y;
   if (ied.rotate === 90) { fx = H - y; fy = x; }
@@ -11367,7 +11370,9 @@ function iedSrcToStage(sx, sy) {
   else if (ied.rotate === 270) { fx = y; fy = W - x; }
   if (ied.flipH) fx = w - fx;
   if (ied.flipV) fy = h - fy;
-  return { x: Math.round(fx), y: Math.round(fy) };
+  return pixel ? { x: Math.max(0, Math.min(w - 1, Math.floor(fx))),
+    y: Math.max(0, Math.min(h - 1, Math.floor(fy))) }
+    : { x: Math.round(fx), y: Math.round(fy) };
 }
 function iedStagePoint(e) {
   const p = iedImgPoint(e);
@@ -11471,6 +11476,8 @@ const IED_HINT = {
   type: "click the picture to place the words",
   zoom: "click to zoom in, alt-click out",
   hand: "drag to pan",
+  wand: "click a colour to select it · adjust tolerance to refine",
+  colorRange: "click a colour to select it across the image",
   /* Keyed by capability as well as by tool, so twelve brush tools do not need
    * twelve near-identical lines. iedStatus() falls back to the family's. */
   selection: "drag a region — every adjustment and all 88 effects then apply only there",
@@ -11803,7 +11810,7 @@ addEventListener("keydown", (e) => {
     if (ied.selDraft || ied.shapeDraft || ied.pathDraft) {
       ied.selDraft = null; ied.shapeDraft = null; ied.pathDraft = null; iedOverlayPaint(); return;
     }
-    $("imgEd").hidden = true; return;
+    iedCloseEditor(); return;
   }
   // Enter finishes the pen the way a double-click does — the options bar says
   // both, so both must be true.
@@ -12320,7 +12327,11 @@ $("iedReset").onclick = () => { ied.rotate = 0; ied.flipH = false; ied.flipV = f
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   iedReframe(); iedPush("reset adjustments"); };
-$("iedClose").onclick = () => { $("imgEd").hidden = true; };
+function iedCloseEditor() {
+  $("imgEd").hidden = true;
+  iedSelectionPreviewSchedule();
+}
+$("iedClose").onclick = iedCloseEditor;
 /* No click-outside-to-close any more: the console fills the screen and the
  * canvas is something you drag on. A stray pointer-up must not throw the edit
  * away. Escape and ✕ close it. */
@@ -12397,7 +12408,7 @@ $("iedReuse2").onclick = () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta;
   if (!m?.prompt) return;
   $("imgPrompt").value = m.prompt; if (m.seed != null) $("imgSeed").value = m.seed;
-  $("imgEd").hidden = true; $("imgPrompt").focus();
+  iedCloseEditor(); $("imgPrompt").focus();
 };
 $("iedBlur").onclick = async () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta || {};
@@ -13044,6 +13055,7 @@ async function iedDocViewRefresh() {
   if (!iedDoc) return;
   iedDocViewReady = false; iedDocPaintTargets = {}; iedAIPaint(); iedApplyEnable();
   const id = iedDoc.id, seq = ++iedDocViewSeq;
+  iedOverlayPaint();
   try {
     const r = await (await fetch("/api/images/document-preview", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
@@ -13677,7 +13689,7 @@ function iedDocPaint() {
          * and not one id, and it takes its refs in the order they were picked. */
         const at = iedDocPick.indexOf(id);
         if (at >= 0) iedDocPick.splice(at, 1); else iedDocPick.push(id);
-        iedDocPaint();
+        iedDocPaint(); iedOverlayPaint();
       };
     }
     for (const b of out.querySelectorAll("[data-doceye]")) {
@@ -14092,8 +14104,10 @@ function iedShapePts(s) {
 }
 
 function iedOverlayPaint() {
+  iedSelectionPreviewSchedule();
   const x = iedOverlaySize();
   if (!x || !$("iedImg").naturalWidth) return;
+  iedSelectionPreviewDraw(x);
   for (const s of ied.sel) {
     if (s.kind === "wand" || s.kind === "colorRange") { iedSeedMark(x, s); continue; }
     if (s.kind === "channel") continue;   // the mask IS the plane — no outline exists
@@ -14138,8 +14152,7 @@ function iedOverlayPaint() {
   }
 }
 
-/* A wand seed has no client-side mask — the server decides which pixels the
- * tolerance reaches. Marking the seed is the honest amount of preview. */
+/* While the server resolves the mask, retain the sampled point. */
 function iedSeedMark(x, s) {
   const p = s.kind === "wand" ? [s.x, s.y] : (s.at || null);
   if (!p) return;
@@ -14209,6 +14222,87 @@ function iedSelAdd(shape) {
   iedPush(`select ${shape.kind}`);
 }
 
+/* The selection engine supplies these pixels, including combined shapes,
+ * feather, expansion and inversion. Cache by recipe, not by zoom or pan. */
+var iedSelPreviewState;
+function iedSelectionPreviewSource() {
+  if (!iedDoc) return ied.name ? { name: ied.name, frame: iedSelFrame() } : null;
+  if (!iedDocViewReady) return null;
+  const target = iedPaintTarget();
+  const layer = target && iedDocFind(target.ref)?.layer;
+  return layer?.src ? { name: layer.src, frame: {}, sourceLayer: layer.name || target.ref }
+    : { documentId: iedDoc.id, frame: {} };
+}
+function iedSelectionPreviewRecipe() {
+  if ($("imgEd").hidden || !$("iedImg").naturalWidth
+      || !ied.sel.some(s => ["wand", "colorRange", "channel"].includes(s.kind))) return null;
+  // The viewport maps crop, rotation and flips. Other geometry is committed
+  // first rather than drawing an exact mask in the wrong coordinate frame.
+  if (ied.canvas || (ied.geom && Object.keys(ied.geom).length)) return null;
+  const source = iedSelectionPreviewSource();
+  if (!source) return null;
+  return { ...source, selection: iedSelectionOp() };
+}
+function iedSelectionPreviewSays(text, title = "") {
+  const el = $("iedSelPreviewStatus");
+  if (el) { el.textContent = text; el.title = title; }
+}
+function iedSelectionPreviewSchedule() {
+  const s = iedSelPreviewState ??= { key: null, seq: 0, timer: 0, controller: null, mask: null };
+  const recipe = iedSelectionPreviewRecipe();
+  const key = recipe ? JSON.stringify([recipe, iedDoc ? iedDocViewSeq : $("iedImg").src]) : null;
+  if (key === s.key) return;
+  s.key = key; ++s.seq; clearTimeout(s.timer); s.controller?.abort(); s.mask = null;
+  const framing = !key && !$("imgEd").hidden && ied.sel.some(s => ["wand", "colorRange", "channel"].includes(s.kind))
+    && (ied.canvas || (ied.geom && Object.keys(ied.geom).length));
+  iedSelectionPreviewSays(key ? "Selecting…" : framing ? "Apply framing first" : "");
+  if (!key) return;
+  const seq = s.seq;
+  s.timer = setTimeout(() => iedSelectionPreviewRender(recipe, seq), 140);
+}
+async function iedSelectionPreviewRender(recipe, seq) {
+  const s = iedSelPreviewState;
+  const controller = new AbortController(); s.controller = controller;
+  try {
+    const { sourceLayer, ...body } = recipe;
+    const response = await fetch("/api/images/preview-selection", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
+    const result = await response.json();
+    if (seq !== s.seq) return;
+    if (!response.ok || result.error || !result.mask) throw new Error(result.error || "Selection preview unavailable.");
+    const im = new Image();
+    im.onload = () => {
+      if (seq !== s.seq) return;
+      const cv = document.createElement("canvas");
+      cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+      const ctx = cv.getContext("2d"); ctx.drawImage(im, 0, 0);
+      ctx.globalCompositeOperation = "source-in";
+      ctx.fillStyle = iedLiveInk(); ctx.fillRect(0, 0, cv.width, cv.height);
+      s.mask = cv; s.width = result.width; s.height = result.height;
+      const coverage = Math.max(0, Math.min(1, Number(result.coverage) || 0));
+      iedSelectionPreviewSays(result.empty ? "Nothing selected" : `${(coverage * 100).toFixed(1)}% selected`,
+        sourceLayer ? `Sampled from layer: ${sourceLayer}` : "The highlighted area is the selection used by the image tools.");
+      iedOverlayPaint();
+    };
+    im.onerror = () => { if (seq === s.seq) iedSelectionPreviewSays("Preview unavailable"); };
+    im.src = result.mask;
+  } catch (error) {
+    if (seq !== s.seq || error.name === "AbortError") return;
+    iedSelectionPreviewSays("Preview unavailable", error.message);
+  } finally { if (s.controller === controller) s.controller = null; }
+}
+function iedSelectionPreviewDraw(x) {
+  const s = iedSelPreviewState;
+  if (!s?.mask) return;
+  const a = iedStageToView(0, 0), b = iedStageToView(s.width, 0), c = iedStageToView(0, s.height);
+  x.save();
+  x.transform((b.x - a.x) / s.width, (b.y - a.y) / s.width,
+    (c.x - a.x) / s.height, (c.y - a.y) / s.height, a.x, a.y);
+  x.globalAlpha = .28;
+  x.drawImage(s.mask, 0, 0, s.width, s.height);
+  x.restore();
+}
+
 /* the pixel under a stage point, for colour range — sampled from the file's own
  * pixels, which is what §3 says wand and colour range see at stage 4 */
 function iedSampleStage(sp) {
@@ -14229,7 +14323,9 @@ function iedSelDown(sp, e) {
   const mode = uiMode === "new" ? "add" : uiMode;
   const tol = +($("iedSelTol").value || 32);
   if (ied.tool === "wand") {
-    iedSelAdd({ kind: "wand", x: sp.x, y: sp.y, tolerance: tol,
+    const src = iedStageToSrc(sp.x, sp.y);
+    const seed = iedSrcToStage(src.x, src.y, true);
+    iedSelAdd({ kind: "wand", x: seed.x, y: seed.y, tolerance: tol,
       contiguous: !!$("iedSelContig").checked, mode });
     return null;
   }
@@ -14315,7 +14411,7 @@ function iedSelPaint() {
    * here rather than at each of the callers is what stops one of them being
    * forgotten and leaving Apply lit on a stale yes. */
   iedStylesGate();
-  iedStatus();
+  iedStatus(); iedPreviewSchedule();
 }
 
 for (const b of document.querySelectorAll("[data-selmode]")) {
@@ -14396,8 +14492,19 @@ $("iedSelBake").onclick = async () => {
     btn.disabled = false; btn.textContent = was;
   }
 };
-for (const id of ["iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
-  $(id).onchange = () => { iedOverlayPaint(); iedStatus(); iedPush("selection settings"); };
+function iedSelectionSettingsChange() {
+  const kind = ied.tool === "wand" ? "wand" : ied.tool === "colorRange" ? "colorRange" : null;
+  const shape = kind && ied.sel.findLast(s => s.kind === kind);
+  if (shape) {
+    const value = $("iedSelTol").value;
+    shape.tolerance = Math.max(0, Math.min(255, value === "" || !Number.isFinite(+value) ? 32 : +value));
+    if (kind === "wand") shape.contiguous = !!$("iedSelContig").checked;
+  }
+  iedSelPaint(); iedOverlayPaint(); iedStatus(); iedPreviewSchedule();
+}
+for (const id of ["iedSelTol", "iedSelContig", "iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
+  $(id).oninput = iedSelectionSettingsChange;
+  $(id).onchange = () => { iedSelectionSettingsChange(); iedPush("selection settings"); };
 }
 
 /* ── §5 strokes ────────────────────────────────────────────────────────────
@@ -17182,7 +17289,7 @@ const IED_CMDS = [
   { id: "file.blur", menu: "File", label: "Blur in the gallery", run: () => $("iedBlur").click() },
   { ...SEP, menu: "File" },
   { id: "file.trash", menu: "File", label: "Move to trash…", run: () => $("iedTrash2").click() },
-  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: () => { $("imgEd").hidden = true; } },
+  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: iedCloseEditor },
 
   { id: "edit.undo", menu: "Edit", label: "Undo", key: "Ctrl+Z",
     enabled: () => iedU.at > 0, run: () => iedStepTo(iedU.at - 1),
@@ -17327,7 +17434,7 @@ const IED_CMDS = [
   { id: "select.none", menu: "Select", label: "Deselect", key: "Ctrl+D", need: "selection",
     run: () => { ied.sel.length = 0; ied.selDraft = null; iedSelPaint(); iedOverlayPaint(); iedPush("deselect"); } },
   { id: "select.invert", menu: "Select", label: "Invert", key: "Ctrl+Shift+I", need: "selection",
-    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedStatus(); iedPush("invert selection"); } },
+    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedOverlayPaint(); iedStatus(); iedPreviewSchedule(); iedPush("invert selection"); } },
   { id: "select.fromcrop", menu: "Select", label: "From the crop rectangle", need: "selection",
     run: () => {
       if (!ied.crop) { iedToast("Drag a crop rectangle first."); return; }
@@ -17553,7 +17660,7 @@ $("iedTrash2").onclick = async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
   if (r.error) { failSay(r); return; }
-  $("imgEd").hidden = true;
+  iedCloseEditor();
   await loadImages();
 };
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };

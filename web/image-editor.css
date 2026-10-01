@@ -1,0 +1,48 @@
+/* The options bar holds controls, so its rows must grow rather than crop.
+ * .sel2 supplies the shared field appearance, but its dropdown arrow and
+ * arrow padding do not belong to the editor's small number inputs. */
+#imgEd .iedbar {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  row-gap: 8px;
+}
+
+#imgEd .iedopt {
+  flex: 1 1 520px;
+  flex-wrap: wrap;
+  max-width: 100%;
+  overflow: visible;
+  row-gap: 8px;
+}
+
+#imgEd .iedopt[hidden] { display: none; }
+#imgEd .iedopt > * { flex: 0 0 auto; }
+#imgEd .iedopt > [hidden] { display: none; }
+#imgEd .iedopt .ieddoc { flex: 1 1 160px; min-width: 0; }
+#imgEd .iedopt > .hint:not(label) {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: normal;
+}
+
+#imgEd .iedvar {
+  flex-wrap: wrap;
+  max-width: 100%;
+  row-gap: 4px;
+}
+
+#imgEd .iedbar > button { flex: 0 0 auto; }
+#imgEd .iedopt label.hint { min-height: 30px; }
+#imgEd .iedopt .iednum { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+#imgEd .iedbar input[type="number"] {
+  flex: 0 0 auto;
+  min-width: 70px;
+  padding: 5px 7px;
+  background-image: none;
+  cursor: text;
+  text-overflow: clip;
+  font-variant-numeric: tabular-nums;
+}
+
+#imgEd .iedbar input[type="range"] { flex: 0 0 auto; }

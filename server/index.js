@@ -10605,6 +10605,48 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* The exact selection edge, sampled at the same stage as an edit. A seed
+     * marker cannot show a wand's connected region. Keep this in memory: a
+     * selection click must not add a matte, thumbnail or ledger entry. */
+    if (p === "/api/images/preview-selection" && req.method === "POST") {
+      try {
+        const b = await readBody(req, 8 * 1024 * 1024);
+        const name = String(b.name || "");
+        const documentId = String(b.documentId || "").trim();
+        if (!!name === !!documentId) return json(res, 400, { error: "Pass one image name or documentId." });
+        for (const key of ["selection", "frame"]) {
+          if (b[key] != null && (typeof b[key] !== "object" || Array.isArray(b[key]))) {
+            return json(res, 400, { error: `${key} must be an object.` });
+          }
+        }
+        const frame = {};
+        for (const k of ["canvas", "crop", "geometry", "rotate", "flipH", "flipV"]) {
+          if ((b.frame || {})[k] !== undefined && (b.frame || {})[k] !== null) frame[k] = b.frame[k];
+        }
+        const job = { selection: b.selection || {}, frame, preview: true };
+        if (documentId) {
+          job.doc = (await imgdocRun("store", { action: "open", id: documentId })).doc;
+          if (!job.doc) return json(res, 404, { error: "no such document" });
+          job.dir = IMAGE_DIR;
+        } else {
+          if (name !== path.basename(name) || /[\\/]/.test(name) || !/\.(png|jpg|jpeg|webp)$/i.test(name)) {
+            return json(res, 400, { error: "Use an image library filename, not a path." });
+          }
+          job.src = path.join(IMAGE_DIR, name);
+          try { await stat(job.src); } catch { return json(res, 404, { error: "no such image" }); }
+        }
+        const result = await imgWorker().run("describe", job);
+        result.says = result.empty ? "This selection covers no pixels."
+          : result.everything ? "This selection covers the whole picture."
+            : `${((Number(result.coverage) || 0) * 100).toFixed(1)}% of the picture is selected.`;
+        res.setHeader("Cache-Control", "no-store");
+        return json(res, 200, result);
+      } catch (err) {
+        if (err.tooBig) return json(res, 413, { error: err.message });
+        return imageFailure(res, await imageRefusal(err), 400, String(err.message || err));
+      }
+    }
+
     /* WHAT A SELECTION ACTUALLY CAUGHT — before an edit is spent on it.
      *
      * ⚠ AN EMPTY SELECTION IS A SILENT NO-OP EVERYWHERE ELSE. imgselect's

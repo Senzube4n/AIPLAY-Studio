@@ -11,6 +11,103 @@ function section(first, next) {
   return app.slice(a, b);
 }
 
+test("wand tolerance updates its last selection, keeps zero and defaults to 32", () => {
+  const controls = { iedSelTol: { value: "32" }, iedSelContig: { checked: true } };
+  const ctx = vm.createContext({
+    ied: { tool: "wand", sel: [
+      { kind: "wand", tolerance: 8, contiguous: true },
+      { kind: "rect" }, { kind: "wand", tolerance: 12, contiguous: true }] },
+    $: id => controls[id], iedSelPaint() {}, iedOverlayPaint() {}, iedStatus() {}, iedPreviewSchedule() {},
+  });
+  vm.runInContext(section("function iedSelectionSettingsChange()", 'for (const id of ["iedSelTol"'), ctx);
+  vm.runInContext("iedSelectionSettingsChange()", ctx);
+  assert.equal(ctx.ied.sel[0].tolerance, 8, "earlier added regions keep their own tolerance");
+  assert.equal(ctx.ied.sel[2].tolerance, 32);
+  controls.iedSelTol.value = "0"; controls.iedSelContig.checked = false;
+  vm.runInContext("iedSelectionSettingsChange()", ctx);
+  assert.equal(ctx.ied.sel[2].tolerance, 0);
+  assert.equal(ctx.ied.sel[2].contiguous, false);
+  controls.iedSelTol.value = "";
+  vm.runInContext("iedSelectionSettingsChange()", ctx);
+  assert.equal(ctx.ied.sel[2].tolerance, 32);
+  assert.match(html, /id="iedSelTol"[^>]*value="32"/);
+});
+
+test("wand seeds stay on the clicked pixel after crop, rotations and flips", () => {
+  const ctx = vm.createContext({ ied: { crop: null, rotate: 0, flipH: false, flipV: false },
+    iedRotSize: () => ({ nw: 20, nh: 10 }) });
+  vm.runInContext(section("function iedStageSize()", "/* stage pixel -> canvas-viewport pixel"), ctx);
+  for (const [rotate, expected] of [[0, [0, 0]], [90, [9, 0]], [180, [19, 9]], [270, [0, 19]]]) {
+    ctx.ied.rotate = rotate;
+    assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(Object.values(iedSrcToStage(0, 0, true)))", ctx)), expected);
+    ctx.ied.flipH = true; ctx.ied.flipV = true;
+    const p = vm.runInContext("iedSrcToStage(0, 0, true)", ctx);
+    const size = vm.runInContext("iedStageSize()", ctx);
+    assert.equal(p.x, size.w - 1 - expected[0]);
+    assert.equal(p.y, size.h - 1 - expected[1]);
+    ctx.ied.flipH = false; ctx.ied.flipV = false;
+  }
+  ctx.ied.crop = { x: 4, y: 2, w: 12, h: 6 }; ctx.ied.rotate = 90;
+  const p = vm.runInContext("iedSrcToStage(4, 2, true)", ctx);
+  assert.equal(p.x, 5); assert.equal(p.y, 0);
+});
+
+test("exact wand previews debounce, reject stale responses and clear on deselect", async () => {
+  const timers = [], requests = [], images = [], drawCalls = [];
+  const controls = { imgEd: { hidden: false }, iedImg: { naturalWidth: 20, src: "/frame.png" },
+    iedSelPreviewStatus: { textContent: "" } };
+  const ctx = vm.createContext({
+    ied: { name: "frame.png", sel: [{ kind: "wand", tolerance: 32 }] }, iedDoc: null,
+    $: id => controls[id], iedSelFrame: () => ({ rotate: 90 }),
+    iedSelectionOp: () => ({ shapes: structuredClone(ctx.ied.sel) }),
+    clearTimeout() {}, setTimeout: fn => { timers.push(fn); return timers.length; },
+    AbortController,
+    fetch: (url, opts) => new Promise(resolve => requests.push({ url, opts, resolve })),
+    Image: class { constructor() { this.naturalWidth = 20; this.naturalHeight = 10; images.push(this); } },
+    document: { createElement: () => ({ getContext: () => ({ drawImage() {}, fillRect() {} }) }) },
+    iedLiveInk: () => "cyan", iedOverlayPaint() {},
+    iedStageToView: (x, y) => ({ x: 50 - y * 2, y: 30 + x * 2 }),
+  });
+  vm.runInContext(section("var iedSelPreviewState;", "/* the pixel under a stage point"), ctx);
+  vm.runInContext("iedSelectionPreviewSchedule(); iedSelectionPreviewSchedule()", ctx);
+  assert.equal(timers.length, 1, "pan/repaints do not create new selection requests");
+  const first = timers[0]();
+  assert.equal(requests[0].url, "/api/images/preview-selection");
+  assert.deepEqual(JSON.parse(requests[0].opts.body).frame, { rotate: 90 });
+  ctx.ied.sel[0].tolerance = 0;
+  vm.runInContext("iedSelectionPreviewSchedule()", ctx);
+  assert.equal(requests[0].opts.signal.aborted, true);
+  const second = timers[1]();
+  requests[1].resolve({ ok: true, json: async () => ({ mask: "data:image/png;base64,new", width: 20, height: 10, coverage: .5 }) });
+  await second;
+  requests[0].resolve({ ok: true, json: async () => ({ mask: "old", width: 20, height: 10, coverage: 1 }) });
+  await first;
+  assert.equal(images.length, 1, "obsolete results never decode or replace the mask");
+  images[0].onload();
+  assert.equal(controls.iedSelPreviewStatus.textContent, "50.0% selected");
+  const overlay = { save() {}, restore() {}, transform: (...a) => drawCalls.push(a), drawImage: (...a) => drawCalls.push(a) };
+  ctx.overlay = overlay;
+  vm.runInContext("iedSelectionPreviewDraw(overlay)", ctx);
+  assert.deepEqual(drawCalls[0], [0, 2, -2, 0, 50, 30], "mask follows rotated/zoomed stage coordinates");
+  ctx.ied.sel = [];
+  vm.runInContext("iedSelectionPreviewSchedule(); iedSelectionPreviewDraw(overlay)", ctx);
+  assert.equal(controls.iedSelPreviewStatus.textContent, "");
+  assert.equal(drawCalls.length, 2, "deselected masks disappear immediately");
+});
+
+test("document wand previews use the paint layer or current composed document, never the old flat file", () => {
+  let target = { ref: "layer-a" };
+  const ctx = vm.createContext({ ied: { name: "old.png" }, iedDoc: { id: "doc-1" },
+    iedDocViewReady: true, iedPaintTarget: () => target,
+    iedDocFind: () => ({ layer: { src: "actual-layer.png", name: "Foreground" } }) });
+  vm.runInContext(section("function iedSelectionPreviewSource()", "function iedSelectionPreviewRecipe()"), ctx);
+  assert.equal(vm.runInContext("iedSelectionPreviewSource().name", ctx), "actual-layer.png");
+  target = null;
+  assert.equal(vm.runInContext("iedSelectionPreviewSource().documentId", ctx), "doc-1");
+  ctx.iedDocViewReady = false;
+  assert.equal(vm.runInContext("iedSelectionPreviewSource()", ctx), null);
+});
+
 test("pending flat adjustments are blocked, while selections alone can drive a Qwen masked edit", () => {
   const defaults = { brightness: 100, contrast: 100, saturation: 100, gamma: 1,
     temperature: 0, sharpen: 0, blur: 0, vignette: 0, shadows: 0, highlights: 0,
@@ -79,11 +176,12 @@ test("a transient edit status failure keeps the detached job and recovers its ca
 });
 
 test("document viewport uses the newest actual composed pixels, ignoring out-of-order responses", async () => {
-  const requests = [], elements = new Map();
+  const requests = [], elements = new Map(), clearedSelections = [];
   const element = id => { if (!elements.has(id)) elements.set(id, { style: {}, src: "", textContent: "", addEventListener() {} }); return elements.get(id); };
   const ctx = vm.createContext({
     iedDoc: { id: "one", name: "First document" }, ied: { rotate: 90, flipH: true, flipV: false, crop: {} },
     iedPreviewSeq: 0, iedAIPaint() {}, iedPreviewClear() {}, iedApplyEnable() {}, iedDocPaint() {},
+    iedOverlayPaint() { clearedSelections.push(true); },
     iedDocSay(message) { throw new Error(message); }, $: element,
     fetch: async (url, init) => new Promise(resolve => requests.push({ url, body: JSON.parse(init.body), resolve })),
   });
@@ -91,6 +189,7 @@ test("document viewport uses the newest actual composed pixels, ignoring out-of-
   const first = vm.runInContext("iedDocViewRefresh()", ctx);
   ctx.iedDoc = { id: "two", name: "Second document" };
   const second = vm.runInContext("iedDocViewRefresh()", ctx);
+  assert.equal(clearedSelections.length, 2, "each canvas refresh invalidates the old selection preview");
   assert.equal(requests[0].body.id, "one"); assert.equal(requests[1].body.id, "two");
   requests[1].resolve({ json: async () => ({ dataUrl: "data:image/png;base64,newest", revision: "2", paintTargets: { image: { ready: true } } }) });
   await second;

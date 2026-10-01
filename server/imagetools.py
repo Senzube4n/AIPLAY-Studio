@@ -24,6 +24,8 @@ Usage:
 
 Prints one JSON line: { ok, out, [width, height | paths, colors] }.
 """
+import base64
+import io
 import json
 import sys
 
@@ -1600,23 +1602,73 @@ def describe_selection(job):
     treats an all-zero mask as a legitimate no-op.
     """
     src = job.get("src")
-    if not src:
+    if not src and not job.get("doc"):
         print(json.dumps({"ok": False, "error": "describe needs a src image"}))
         return
     import imgselect                                    # noqa: PLC0415
-    im = Image.open(src).convert("RGBA")
+    revision = None
+    _notes = []
+    if job.get("doc"):
+        import image_editor                             # noqa: PLC0415
+        im, doc_notes = image_editor.render_doc(job["doc"], job["dir"])
+        _notes.extend(doc_notes)
+        revision = image_editor.revision(job["doc"])
+    else:
+        with Image.open(src) as source:
+            if job.get("preview"):
+                _selection_preview_limit(source.size, job.get("frame") or {})
+            im = source.convert("RGBA")
     # ⚠ IN THE FRAME THE SHAPES WERE WRITTEN IN, NOT THE RAW SOURCE. This used
     # to open the file and resolve against it, so with a crop pending it
     # measured a selection in one picture that the edit would then apply to
     # another — right numbers, wrong frame, and the whole point of this route
     # is that the numbers can be trusted. `frame` carries only stages 1-3; the
     # adjustments cannot move a coordinate and are not run.
-    _notes = []
+    if job.get("preview"):
+        _selection_preview_limit(im.size, job.get("frame") or {})
     im = frame_stages(im, job.get("frame") or {}, _notes)
+    if job.get("preview"):
+        _selection_preview_limit(im.size, {})
     rgba = _to_rgba(im)
-    out = imgselect.describe(job.get("selection") or {}, rgba)
+    selection = job.get("selection") or {}
+    if job.get("preview"):
+        warnings = []
+        mask = imgselect.resolve(selection, rgba, warnings)
+        # Match apply_edit's refusal: a seed in a different frame must not
+        # silently look like an empty selection that successfully refreshed.
+        for warning in warnings:
+            if any(word in str(warning).lower() for word in ("seed", "outside", "bounds")):
+                raise ValueError(str(warning))
+        out = imgselect.mask_stats(mask, warnings)
+        rgba_mask = np.full((*mask.shape, 4), 255, dtype=np.uint8)
+        rgba_mask[..., 3] = (np.clip(mask, 0, 1) * 255 + 0.5).astype(np.uint8)
+        data = io.BytesIO()
+        Image.fromarray(rgba_mask, "RGBA").save(data, format="PNG")
+        out["mask"] = "data:image/png;base64," + base64.b64encode(data.getvalue()).decode("ascii")
+        if revision:
+            out["revision"] = revision
+    else:
+        out = imgselect.describe(selection, rgba)
     print(json.dumps({"ok": True, "width": im.width, "height": im.height,
                       "notes": _notes or None, **out}))
+
+
+def _selection_preview_limit(size, frame):
+    """Bound preview allocations before opening pixels or enlarging the frame.
+
+    Match the existing composed-document preview's 16-megapixel limit. Geometry
+    already caps rotation/perspective allocations; check their final size too.
+    """
+    cap = 16_777_216
+    width, height = size
+    if width * height > cap:
+        raise ValueError("The selection preview supports up to 16 megapixels.")
+    for spec in (frame.get("canvas"), (frame.get("geometry") or {}).get("smartResize")):
+        if isinstance(spec, dict):
+            w = max(1, min(30000, int(float(spec.get("width") or width))))
+            h = max(1, min(30000, int(float(spec.get("height") or height))))
+            if w * h > cap:
+                raise ValueError("The selection preview supports up to 16 megapixels.")
 
 
 def blank(job):

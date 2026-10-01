@@ -1396,6 +1396,8 @@ export const TOOLS = [
       "WHAT A SELECTION ACTUALLY CAUGHT, before an edit is spent running through it. Pass the same "
       + "`selection` you would give image_adjust and get back its coverage, how many pixels are fully in, "
       + "how many sit on the soft edge, and a plain sentence reading those numbers.\n\n"
+      + "Set preview:true to also return the exact selection as an in-memory PNG data URL; no matte is saved. "
+      + "For a composed layer document, use document_id instead of name with preview:true.\n\n"
       + "⚠ CALL THIS WHEN TUNING A wand OR colorRange, because an empty selection is SILENT everywhere "
       + "else. A tolerance that catches nothing resolves to a mask of zeros, every op through it becomes a "
       + "no-op, the edit writes a file identical to its input, and the reply still says ok — which is "
@@ -1403,18 +1405,25 @@ export const TOOLS = [
       + "system that will tell you the key caught nothing.",
     inputSchema: {
       type: "object",
-      required: ["name"],
+      anyOf: [{ required: ["name"] }, { required: ["document_id"] }],
       properties: {
         name: { type: "string", description: "An image in the library (from list_images)." },
+        document_id: { type: "string", description: "A layer document from list_documents; use instead of name with preview:true. Samples its current composed canvas and returns its revision." },
         selection: { type: "object", description: "The same shape image_adjust takes: {shapes:[...], mode, feather, expand, invert}. Call image_tools_catalog for the kinds and their ranges." },
+        preview: { type: "boolean", description: "Also return mask as a PNG data URL (white with selection alpha), sampled in the exact edit frame. Nothing is saved." },
         frame: { type: "object", description: "The frame the selection's coordinates are written in — `crop`, `geometry`/`rotate`/`flipH`/`flipV`, `canvas`, exactly as image_adjust takes them. ⚠ PASS THIS WHENEVER THE SAME CALL WOULD CROP OR ROTATE: a selection is resolved AFTER those stages (IMAGE_SPEC §3, \"pixels AFTER any crop/rotate/flip in the same call\"), so without it the shapes are measured against the uncropped picture — right numbers, wrong frame, no error. Omit it when the call has no geometry." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      return await api("POST", "/api/images/describe-selection", {
-        name: safeName(a.name, "image"), selection: a.selection || {}, frame: a.frame || {},
-      });
+      if (a.document_id && !a.preview) throw new Error("Use preview:true to describe a composed document selection.");
+      if (a.document_id && a.name) throw new Error("Pass one image name or document_id.");
+      const body = {
+        ...(a.document_id ? { documentId: String(a.document_id) } : { name: safeName(a.name, "image") }),
+        selection: a.selection || {}, frame: a.frame || {},
+      };
+      if (a.preview) return await api("POST", "/api/images/preview-selection", body);
+      return await api("POST", "/api/images/describe-selection", body);
     },
   },
 
