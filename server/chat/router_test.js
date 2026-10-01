@@ -121,6 +121,11 @@ head("§2  the gate is DECLARED, because deriving it is wrong in the dangerous d
   const plan = index().find(({ tool }) => tool.name === "music_plan");
   ok("music_plan is reachable as read-only planning, without a generation gate",
     !!plan && plan.tool.spends === false && !plan.tool.gate && ROUTABLE.music_plan === null);
+  const restore = routedRegistry(core, "restore the deleted note in the DAW").get("daw_restore_note");
+  ok("restoring a deleted DAW note is discoverable as a free edit with its required receipt",
+    !!restore && ROUTABLE.daw_restore_note === null && restore.spends === false
+    && restore.gate === null && restore.args.receipt?.type === "string"
+    && restore.args.receipt.required === true && restore.args.slug?.required === true);
   for (const name of ["vfx_audio_preview", "vfx_render_job", "yue2_gguf_setup"]) {
     ok(`${name} is explicitly withheld rather than generically auto-approved`,
       typeof WITHHELD[name] === "string" && !(name in ROUTABLE) && !routedNames.has(name));

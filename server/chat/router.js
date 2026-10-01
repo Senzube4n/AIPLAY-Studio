@@ -456,6 +456,7 @@ export const ROUTABLE = {
   daw_add_clip: null,
   daw_set_clip: null,
   daw_add_note: null,
+  daw_restore_note: null,
   daw_move_note: null,
   daw_set_meter: null,
   daw_set_tempo: null,

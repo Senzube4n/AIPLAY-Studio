@@ -135,6 +135,7 @@ node server/daw/mixer_return_sidechain_test.js || exit 1
 node server/daw/ui_test.js || exit 1
 node scripts/test_daw_editing.mjs || exit 1
 node scripts/test_daw_sessions.mjs || exit 1
+node scripts/test_daw_history.mjs || exit 1
 node scripts/test_daw_audio_results.mjs || exit 1
 node scripts/test_daw_export.mjs || exit 1
 node scripts/test_music_input_ui.mjs || exit 1

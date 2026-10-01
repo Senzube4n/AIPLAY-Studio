@@ -644,6 +644,20 @@ export function dawTools(api, safeName) {
     },
 
     {
+      name: "daw_restore_note",
+      description: "Restore exactly the note saved by daw_delete_note, including its id, clip, order and creator. "
+        + "Use the receipt in the deletion's undo body. Refuses if the original clip is gone or the id is already present.",
+      inputSchema: {
+        type: "object", required: ["slug", "receipt"],
+        properties: { slug: { type: "string" }, receipt: { type: "string", description: "The server-issued undo receipt from daw_delete_note." } },
+        additionalProperties: false,
+      },
+      async run(a) {
+        return daw({ action: "restore_note", slug: slugOf(a.slug), receipt: a.receipt });
+      },
+    },
+
+    {
       name: "daw_preview_note",
       description:
         "AUDITION one note on a track's patch without writing anything to the project — the "

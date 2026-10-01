@@ -2002,6 +2002,7 @@ export function createDawRoutes(deps) {
             };
             c.notes.push(note);
             return { note, trackId: t.id, clipId: c.id,
+                     undo: { action: "delete_note", slug, track: t.id, clip: c.id, note: note.id },
                      ledger: { detail: `pitch ${note.pitch} at ${note.bar}.${note.beat}.${note.tick}` } };
           });
           return mutReply(res, m), true;
@@ -2035,8 +2036,36 @@ export function createDawRoutes(deps) {
               : t.clips.find((x) => x.notes.some((n) => n.id === String(b.note)));
             if (!c) throw new Error(`No clip on ${t.id} holds note ${b.note}.`);
             const n = findNote(c, b.note);
+            // Keep restoration data on the server, including creator and array order.
+            // Repeated history cycles reuse the same snapshot; receipts never expire.
+            const snapshot = { track: t.id, clip: c.id, index: c.notes.indexOf(n), note: { ...n } };
+            const receipt = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+            d.noteHistory ||= {};
+            d.noteHistory[receipt] = snapshot;
             c.notes = c.notes.filter((x) => x.id !== n.id);
-            return { removed: n.id };
+            return { removed: n.id, undo: { action: "restore_note", slug, receipt } };
+          });
+          return mutReply(res, m), true;
+        }
+
+        case "restore_note": {
+          const slug = safe(b.slug);
+          const m = await mutate(slug, b, "restore_note", (d) => {
+            const receipt = String(b.receipt || "");
+            const snapshot = /^[a-f0-9]{64}$/.test(receipt) && d.noteHistory?.[receipt];
+            if (!snapshot) throw new Error("No saved note for this undo receipt in this project.");
+            const t = findTrack(d, snapshot.track), c = findClip(t, snapshot.clip);
+            const note = { ...snapshot.note };
+            if (d.tracks.some((track) => track.clips.some((clip) => clip.notes.some((n) => n.id === note.id))))
+              throw new Error(`Note ${note.id} already exists. Undo the later edit first.`);
+            if (c.notes.length >= LIMITS.notesPerClip) throw new Error(`Clip ${c.id} already holds ${LIMITS.notesPerClip} notes.`);
+            if (!Number.isInteger(snapshot.index) || snapshot.index < 0 || snapshot.index > c.notes.length)
+              throw new Error("The note's clip order changed. Undo the later edit first.");
+            c.notes.splice(snapshot.index, 0, note);
+            // The restored note keeps its original creator; this edit's actor is
+            // still stamped by mutate(), never taken from a caller's snapshot.
+            return { note, trackId: t.id, clipId: c.id,
+                     undo: { action: "delete_note", slug, track: t.id, clip: c.id, note: note.id } };
           });
           return mutReply(res, m), true;
         }
@@ -2928,7 +2957,7 @@ export function createDawRoutes(deps) {
           return json(res, 400, {
             error: `Unknown action "${action}". Actions: create, delete, set_length, `
               + "set_meter, remove_meter, set_tempo, remove_tempo, add_track, set_track, "
-              + "remove_track, add_clip, set_clip, remove_clip, add_note, move_note, delete_note, "
+              + "remove_track, add_clip, set_clip, remove_clip, add_note, move_note, delete_note, restore_note, "
               + "edit_notes, render, render_ahead, render_plan, "
               + "bounce, install_patch, uninstall_pack, credits, probe, arrange_bigroom, "
               + "record_arm, record_start, record_chunk_b64, record_stop, "

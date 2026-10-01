@@ -59,10 +59,10 @@ function make(names,overrides={}){
      * wants. The list stays explicit rather than auto-stubbing every unknown identifier:
      * auto-stubbing would also swallow a genuinely missing dependency, which is the one
      * thing this suite exists to catch. */
-    'applyViewFromDoc'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
+    'applyViewFromDoc','cancelNoteGesture'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
   const context=vm.createContext(ctx);
   vm.runInContext('var renderChain=Promise.resolve();var liveChain=Promise.resolve();var peakJobs=new Set();\n'
-    +['captureSession','sessionCurrent',...names].map(extract).join('\n'),context);
+    +['captureSession','sessionCurrent','noteEditBusy','beginEdit','finishEdit','replayHistory',...names].map(extract).join('\n'),context);
   const jump=(slug='B')=>{S.projectEpoch++;S.slug=slug;};
   return {ctx:context,S,calls,jump};
 }
@@ -152,6 +152,29 @@ await test('same-named take in a new session has an independent peak job',async(
 });
 await test('loadProject itself bumps epoch for same-slug reload and discards the first continuation',async()=>{
   const a=deferred(),b=deferred();let n=0;const h=make(['loadProject'],{refreshDoc:()=>++n===1?a.promise:b.promise,api:async()=>({credits:[]})});const pa=h.ctx.loadProject('A'),pb=h.ctx.loadProject('A');assert.equal(h.S.projectEpoch,3);assert.equal(h.S.aud.seq,2);a.resolve(true);assert.equal(await pa,false);assert.equal(h.calls.storage.length,0);b.resolve(true);assert.equal(await pb,true);assert.equal(h.calls.status.length,1);assert.deepEqual(h.calls.storage,[['daw.lastProject','A']]);
+});
+
+await test('an old edit finally cannot unlock a pending edit after a real project reload',async()=>{
+  const oldReply = deferred(), newReply = deferred();
+  const h = make(['act','loadProject'], {
+    api: body => body.action === 'credits' ? Promise.resolve({credits:[]})
+      : body.slug === 'A' ? oldReply.promise : newReply.promise,
+  });
+  const oldEdit = h.ctx.act({action:'edit_notes',slug:'A'}, {action:'old inverse'}, 'old note edit');
+  assert.ok(h.S.editBusy);
+  await h.ctx.loadProject('B');
+  assert.equal(h.S.editBusy, null);
+  const newEdit = h.ctx.act({action:'edit_notes',slug:'B'}, {action:'new inverse'}, 'new note edit');
+  const newOwner = h.S.editBusy;
+  oldReply.resolve({dirty:[]});
+  assert.equal(await oldEdit, null);
+  assert.equal(h.S.editBusy, newOwner);
+  assert.equal(h.calls.undo.length, 0);
+  newReply.resolve({dirty:[]});
+  await newEdit;
+  assert.equal(h.S.editBusy, null);
+  assert.equal(h.calls.undo.length, 1);
+  assert.equal(h.calls.undo[0].label, 'new note edit');
 });
 
 console.log(`${count} session-race checks passed against extracted DAW source; no live project touched.`);

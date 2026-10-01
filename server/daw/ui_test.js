@@ -1083,6 +1083,8 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
     bodyOf(CODE, "function VelHumanize("), bodyOf(CODE, "function velJitter("),
     bodyOf(CODE, "function velChanges("), bodyOf(CODE, "async function commitVel("),
     bodyOf(CODE, "function captureSession("), bodyOf(CODE, "function sessionCurrent("),
+    bodyOf(CODE, "function noteEditBusy("), bodyOf(CODE, "function beginEdit("),
+    bodyOf(CODE, "function finishEdit("),
   ];
   ok("all pieces of the lane and its session guards are declared and liftable",
     src.every(Boolean), src.map((x, i) => (x ? "" : i)).filter((x) => x !== "").join(", "));
@@ -1101,7 +1103,7 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
   let V = null;
   try {
     const build = new Function("S", "selNotes", "posToQ", "velTop", "VEL_H", "KEYS_W",
-      "tint", "C", "api", "pushUndo", "refreshDoc", "renderAndSwap", "status", "draw",
+      "tint", "C", "api", "pushUndo", "refreshDoc", "renderAndSwap", "status", "draw", "drawHistory",
       `${src.join("\n")}\nreturn { DEFAULT_VEL, clampVel, velLaneY, velOf, velScope, VelLine, VelDraw,`
       + ` VelNode, VelNumber, VelHumanize, velJitter, velChanges, commitVel };`);
     V = build(env.S, () => env.notes.map((n) => ({ n, c: { id: "c1" } })),
@@ -1109,7 +1111,7 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
       () => 100, env.VEL_H, env.KEYS_W,
       () => {}, {},
       async (body) => { posted.push(body); return { undo: { action: "edit_notes", notes: [] }, dirty: [] }; },
-      () => {}, async () => {}, () => {}, (m) => { lab = m; }, () => {});
+      () => {}, async () => {}, () => {}, (m) => { lab = m; }, () => {}, () => {});
   } catch (err) {
     ok("the lane's strategies evaluate on their own (they reach nothing but S / selNotes / the geometry)",
       false, err.message);
@@ -1161,9 +1163,11 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
      * and what must be true of it is that nothing leaves the page. */
     const esc = /window\.addEventListener\("keydown", \(e\) => \{[\s\S]*?\n\}\);/.exec(
       CODE.slice(CODE.indexOf("function commitVel") > 0 ? 0 : 0));
-    const escBody = CODE.match(/if \(e\.key !== "Escape" \|\| !S\.velStrategy\) return;[\s\S]{0,400}?\n\}\);/)?.[0] || "";
+    const escBody = CODE.match(/if \(e\.key !== "Escape"[^\n]*\n[\s\S]{0,400}?\n\}\);/)?.[0] || "";
+    const cancel = bodyOf(CODE, "function cancelNoteGesture(") || "";
     ok("Escape cancels a live gesture, and the cancel path posts nothing at all",
-      escBody.length > 0 && /S\.velStrategy = null/.test(escBody) && !/api\(/.test(escBody),
+      /cancelNoteGesture\(\)/.test(escBody) && /S\.velStrategy = null/.test(cancel)
+      && !/api\(/.test(escBody + cancel),
       "a cancelled gesture must never reach the server — that is the whole point of "
       + "computing on read");
 
