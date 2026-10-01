@@ -98,6 +98,10 @@ console.log("\n§3  the preference validators");
   ok("music.yue2Lora is a preference", typeof lora === "function");
   ok("...null clears it", lora?.(null) === true);
   ok("...a .safetensors basename is accepted", lora?.("my_yue2.safetensors") === true);
+  for (const key of ["yue2Lora", "yue2LoraClip", "aceLora"]) {
+    ok(`${key} persists nested LoRAs with either separator`, rule(key)?.("voices/my_voice.safetensors") === true && rule(key)?.("voices\\my_voice.safetensors") === true);
+    ok(`${key} refuses absolute or parent paths`, rule(key)?.("C:\\voices\\my_voice.safetensors") === false && rule(key)?.("voices/../my_voice.safetensors") === false);
+  }
   ok("...a path is refused", lora?.("../my_yue2.safetensors") === false);
   ok("...and so is another extension", lora?.("my_yue2.ckpt") === false);
   ok("music.yue2LoraStrength is a preference", typeof strength === "function");
@@ -164,7 +168,7 @@ console.log("\n§4  every hand the LoRA passes through names it");
   ok("make_song declares lora and lora_strength",
     /lora: \{ type: "string", description: "yue2-comfy only/.test(mcp) && /lora_strength: \{ type: "number", minimum: -4, maximum: 4/.test(mcp));
   ok("...and forwards them",
-    /loraStrength: Number\.isFinite\(a\.lora_strength\) \? a\.lora_strength : undefined,/.test(mcp) && /safeName\(a\.lora, "LoRA"\)/.test(mcp));
+    /loraStrength: Number\.isFinite\(a\.lora_strength\) \? a\.lora_strength : undefined,/.test(mcp) && /requireModelName\(a\.lora\)/.test(mcp));
   ok("the Music tab sends the picker's value with a yue2-comfy spec",
     /lora: \$\("yLora"\)\?\.value \|\| "", loraStrength: Number\(\$\("yLoraStrength"\)\?\.value \?\? 100\) \/ 100/.test(app));
   ok("...shows the picker only for the ComfyUI engine",
@@ -216,7 +220,7 @@ console.log("\n§  the planner's LoRA: the other half, on the clip wire");
    * is picked; yue2-comfy-input_test §3 runs the route to prove both ways. */
   ok("...picks the instrumental planner LoRA for an instrumental when it is on a shelf, nothing was named and no score was supplied",
     /if \(!clipName && body\.loraClip === undefined && body\.instrumental && !yueComfy\.abc && onShelf\(INSTRUMENTAL_PLANNER_LORA\)\)/.test(index)
-    && /if \(body\.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA\) yueSheet = "\[instrumental\]";/.test(index)
+    && /if \(body\.instrumental && modelLeaf\(yueLoraClip\) === INSTRUMENTAL_PLANNER_LORA\) yueSheet = "\[instrumental\]";/.test(index)
     && /lyrics: yueSheet \?\? \(body\.lyrics \|\| ""\)\.trim\(\),/.test(index));
   ok("...and names it on the job, which the pump hands to the graph",
     /loraClip: yueLoraClip, loraClipStrength: yueLoraClipStrength,/.test(index)
@@ -230,7 +234,7 @@ console.log("\n§  the planner's LoRA: the other half, on the clip wire");
     && /if \(b\.action === "planner-lora"\)/.test(index));
   ok("make_song declares lora_clip and lora_clip_strength and forwards them",
     /lora_clip: \{ type: "string", description: "yue2-comfy only: a PLANNER LoRA/.test(mcp)
-    && /loraClip: typeof a\.lora_clip === "string" \? \(a\.lora_clip \? safeName\(a\.lora_clip, "LoRA"\) : ""\) : undefined,/.test(mcp));
+    && /loraClip: typeof a\.lora_clip === "string" \? \(a\.lora_clip \? requireModelName\(a\.lora_clip\) : ""\) : undefined,/.test(mcp));
   ok("the Music tab has the picker and its strength, sends them, and saves through the planner-lora action",
     /<select id="yLoraClip" class="sel2">/.test(html) && /<input id="yLoraClipStrength" type="range" min="0" max="200"/.test(html)
     && /loraClip: \$\("yLoraClip"\)\?\.value \|\| "", loraClipStrength: Number\(\$\("yLoraClipStrength"\)\?\.value \?\? 100\) \/ 100/.test(app)

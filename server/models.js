@@ -60,7 +60,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { config, isLightH3 } from "./config.js";
-import { folderGroup } from "./localmodels.js";
+import { MODEL_FOLDERS, scanBases, extraBases, uniqueDirs, findShelfModel } from "./localmodels.js";
 import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
 import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
@@ -3539,7 +3539,34 @@ function sha256Of(file, cancelled = () => false) {
  * stalled. The .part stays, so pressing Download again resumes it. */
 const DOWNLOAD_STALL_MS = Number(process.env.AIPLAY_DOWNLOAD_STALL_MS) || 90_000;
 
-async function filePresent(f) {
+async function catalogShelf() {
+  return scanBases(uniqueDirs([config.modelsDir, ...(config.modelsAlso || []),
+    ...(await extraBases(config.comfy.extraArgs)), path.join(config.comfyDir, "models")]));
+}
+
+function catalogModelFile(f, files, override = null) {
+  const rel = path.relative(config.modelsDir, f.dest);
+  const [folder, ...rest] = rel.split(path.sep);
+  if (!MODEL_FOLDERS.includes(folder) || !rest.length) return null;
+  const resolve = (name) => {
+    try { return findShelfModel(files, folder, name); }
+    catch { return null; } // ambiguous names need an explicit subfolder selection
+  };
+  if (override) return resolve(override);
+  const stock = resolve(rest.join(path.sep));
+  if (stock?.bytes === f.bytes) return stock;
+  for (const name of f.alt || []) {
+    const alt = resolve(name);
+    if (alt?.bytes > 0) return alt;
+  }
+  return null;
+}
+
+async function filePresent(f, files = null, override = null) {
+  const rel = path.relative(config.modelsDir, f.dest);
+  if (MODEL_FOLDERS.includes(rel.split(path.sep)[0])) {
+    return !!catalogModelFile(f, files || await catalogShelf(), override);
+  }
   try {
     if ((await stat(f.dest)).size === f.bytes) return true;
   } catch { /* fall through to the alternates */ }
@@ -3551,7 +3578,6 @@ async function filePresent(f) {
   /* The same file under an EARLIER models folder (config.modelsAlso): the
    * engine still loads from there, so it is installed, not missing. Without
    * this a change of folder offered every model again, hundreds of GB. */
-  const rel = path.relative(config.modelsDir, f.dest);
   if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
     for (const base of config.modelsAlso || []) {
       try {
@@ -3638,6 +3664,7 @@ export class ModelManager extends EventEmitter {
   /** Catalogue with live presence, for the UI. */
   async status() {
     const out = [];
+    const shelf = await catalogShelf();
     const w6a8 = CATALOG.some((cap) => cap.compatibilityKind === "h3-w6a8") ? probeH3W6a8(config) : null;
     for (const cap of CATALOG) {
       const files = await Promise.all(cap.files.map(async (f) => {
@@ -3646,15 +3673,13 @@ export class ModelManager extends EventEmitter {
         const override = config.modelOverrides?.[path.basename(f.dest)] || null;
         const rel = path.relative(config.modelsDir, path.dirname(f.dest)).split(path.sep)[0];
         const folder = rel && !rel.startsWith("..") ? rel : null;
-        /* `alt` names resolve against the file's own folder, so a stand-in in an
-         * alias folder (unet for diffusion_models) is reached as ../unet/<name>. */
-        const checked = override && folder
-          ? { ...f, alt: [...(f.alt || []), ...folderGroup(folder).map((g) => path.join("..", g, override))] }
-          : f;
+        const resolved = catalogModelFile(f, shelf, override);
         return {
         name: path.basename(f.dest),
         folder,
         override,
+        resolvedName: resolved?.name || null,
+        resolvedPath: resolved?.full || null,
         /* ⚠ THE WHOLE PATH, BESIDE THE BASENAME, because "is this the same
          * file" is a question about a PATH and `bytesFor()` was answering it
          * with a name. That proxy held for as long as no two capabilities used
@@ -3666,7 +3691,7 @@ export class ModelManager extends EventEmitter {
          * dest, so the deduplication that matters is unchanged. */
         dest: f.dest,
         bytes: f.bytes,
-        present: await filePresent(checked),
+        present: await filePresent(f, shelf, override),
         have: await fileHave(f),
         };
       }));
@@ -3841,8 +3866,9 @@ export class ModelManager extends EventEmitter {
     this.#runs.set(id, run);
     const mine = () => this.#runs.get(id) === run;
     const total = cap.files.reduce((s, f) => s + f.bytes, 0);
+    const shelf = await catalogShelf();
     let doneBytes = 0;
-    for (const f of cap.files) if (await filePresent(f)) doneBytes += f.bytes;
+    for (const f of cap.files) if (await filePresent(f, shelf)) doneBytes += f.bytes;
 
     this.progress.set(id, { received: doneBytes, total, file: null, state: "starting" });
     this.emit("update");
@@ -3850,7 +3876,9 @@ export class ModelManager extends EventEmitter {
     try {
       for (const f of cap.files) {
         if (this.cancelled.has(id)) throw new Error("cancelled");
-        if (await filePresent(f)) continue;
+        // Re-read after each completed download; shared files may have landed
+        // while this request waited for another capability's download.
+        if (await filePresent(f, await catalogShelf())) continue;
         await this.#one(id, f, () => doneBytes, (n) => { doneBytes = n; });
         doneBytes += f.bytes;
       }

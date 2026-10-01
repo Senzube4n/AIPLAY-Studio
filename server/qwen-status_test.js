@@ -47,6 +47,25 @@ test("offline runtime fails closed; custom files replace stock requirements with
   assert.equal(hidden.ready, false); assert.deepEqual(hidden.missingFiles, [QWEN_IMAGE_FILES.dit]);
 });
 
+test("nested Qwen files use their loader paths, retain stock byte checks, and reject ambiguous defaults", async () => {
+  const nestedShelf = shelf.map(file => ({ ...file, name: path.join("qwen", file.name) }));
+  const loaderInfo = info();
+  for (const [node, input, folder] of [["UNETLoader", "unet_name", "diffusion_models"], ["CLIPLoader", "clip_name", "text_encoders"], ["VAELoader", "vae_name", "vae"]]) {
+    loaderInfo[node] = { input: { required: { [input]: [nestedShelf.filter(file => file.folder === folder).map(file => file.name.replace(/\\/g, "/"))] } } };
+  }
+  const ready = await qwenImageStatus(deps({}, { scan: async () => nestedShelf, engine: { objectInfo: async () => loaderInfo } }));
+  assert.equal(ready.ready, true, ready.error);
+  const truncated = await qwenImageStatus(deps({}, { scan: async () => nestedShelf.map((file, i) => i === 0 ? { ...file, bytes: 4 } : file) }));
+  assert.equal(truncated.ready, false);
+  assert.deepEqual(truncated.missingFiles, [path.join("qwen", QWEN_IMAGE_FILES.dit)]);
+  const copies = [...nestedShelf, { ...nestedShelf[0], name: path.join("alternative", QWEN_IMAGE_FILES.dit) }];
+  const ambiguous = await qwenImageStatus(deps({}, { scan: async () => copies }));
+  assert.equal(ambiguous.ready, false);
+  assert.match(ambiguous.error, /subfolder/);
+  const selected = await qwenImageStatus(deps({ dit: `qwen/${QWEN_IMAGE_FILES.dit}` }, { scan: async () => copies }));
+  assert.equal(selected.ready, true, selected.error);
+});
+
 test("changing the download folder keeps Qwen files in remembered folders ready", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "qwen-old-shelf-"));
   const previous = path.join(root, "previous");

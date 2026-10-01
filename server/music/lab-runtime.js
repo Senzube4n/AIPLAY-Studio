@@ -5,11 +5,17 @@ import { randomUUID } from "node:crypto";
 import { probeModel } from "../detect.js";
 import { audioHash, audioName } from "./auditions.js";
 import { probeTrainAudio } from "./train.js";
+import { modelName } from "../localmodels.js";
 
 const fail = (message, status = 409) => { throw Object.assign(new Error(message), { status }); };
 const digest = value => typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
 const nameOf = value => typeof value === "string" && value.length <= 255 && !/[\\/:\0]|\.\./.test(value) && /\.safetensors$/i.test(value)
   ? value : fail("Choose a model filename from the local shelf.", 400);
+const modelNameOf = value => {
+  const name = modelName(value);
+  return name && name.length <= 255 && /\.safetensors$/i.test(name)
+    ? name : fail("Choose a model filename from the local shelf.", 400);
+};
 const runOf = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value) ? value : fail("Invalid training run identifier.", 400);
 const samePath = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 const stamp = info => [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":");
@@ -52,7 +58,7 @@ function trainingInput(value) {
       || settings.seconds !== undefined && settings.seconds !== source.seconds) fail("Training settings disagree with the source region.", 400);
   if (value.graphHash !== undefined && !/^sha256:[a-f0-9]{64}$/i.test(value.graphHash)) fail("Invalid training graph hash.", 400);
   return { runId, name: value.name, source: { file: source.file, sha256: source.sha256.toLowerCase(), startSeconds: source.startSeconds, seconds: source.seconds },
-    checkpoint: nameOf(value.checkpoint), conditioning: CONDITIONING, outputPrefix: value.outputPrefix,
+    checkpoint: modelNameOf(value.checkpoint), conditioning: CONDITIONING, outputPrefix: value.outputPrefix,
     settings: { steps: settings.steps, rank: settings.rank, learningRate: settings.learningRate,
       ...(settings.seed !== undefined ? { seed: settings.seed } : {}) },
     ...(value.graphHash ? { graphHash: value.graphHash } : {}) };
@@ -125,7 +131,8 @@ export async function lookupTrainingReceipt(appData, { name, identity }) {
 
 export function createListeningLabRuntime({ config, library, shelf, engine, probe = probeModel,
   measure = probeTrainAudio, hashFile = audioHash,
-  trainingReceipt = (name, identity) => lookupTrainingReceipt(config.paths?.appData ?? config.dataDir, { name, identity }) }) {
+  trainingReceipt = (name, identity) => name.includes(path.sep) ? null
+    : lookupTrainingReceipt(config.paths?.appData ?? config.dataDir, { name, identity }) }) {
   const cache = new Map();
   async function inspect(file, type, allowedRoot = null) {
     const before = await fileState(file), key = `${type}:${before.full}`, old = cache.get(key);
@@ -155,18 +162,18 @@ export function createListeningLabRuntime({ config, library, shelf, engine, prob
     return { file, title: metadata.title || file, ...result };
   }
   async function capabilities({ adapter, checkpoint } = {}) {
-    if (adapter !== undefined) nameOf(adapter);
-    if (checkpoint !== undefined) nameOf(checkpoint);
+    if (adapter !== undefined) adapter = modelNameOf(adapter);
+    if (checkpoint !== undefined) checkpoint = modelNameOf(checkpoint);
     const checkpoints = [], adapters = [], issues = [], candidates = new Map();
     let files;
     try { files = await shelf(); }
     catch { return { engine: "yue2-comfy", ready: false, reason: "The local model shelves could not be read.", checkpoints, adapters }; }
     for (const file of files.filter(f => ["checkpoints", "loras"].includes(f.folder) && /\.safetensors$/i.test(f.name))) {
       try {
-        nameOf(file.name); const full = await realpath(file.full), key = `${file.folder}:${file.name}`;
+        const name = modelNameOf(file.name), full = await realpath(file.full), key = `${file.folder}:${name}`;
         const old = candidates.get(key);
         if (old && !samePath(old.full, full)) { old.ambiguous = true; continue; }
-        if (!old) candidates.set(key, { ...file, full });
+        if (!old) candidates.set(key, { ...file, name, full });
       } catch { /* Removed or unsupported shelf entry. */ }
     }
     for (const file of candidates.values()) {

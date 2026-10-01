@@ -16,6 +16,7 @@
  * Nothing here downloads, deletes or moves a file.
  */
 import { readdir, stat, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readdirSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 
@@ -25,7 +26,7 @@ export const MODEL_FOLDERS = [
   "checkpoints", "diffusion_models", "unet", "text_encoders", "clip", "vae", "loras",
   "clip_vision", "controlnet", "upscale_models", "audio_encoders", "embeddings",
   "latent_upscale_models", "model_patches", "style_models", "background_removal",
-  "frame_interpolation",
+  "frame_interpolation", "conditioning_bridges",
 ];
 
 /* Folders ComfyUI treats as one shelf: a loader reading `diffusion_models`
@@ -33,6 +34,67 @@ export const MODEL_FOLDERS = [
 const ALIASES = [["diffusion_models", "unet"], ["text_encoders", "clip"]];
 export const folderGroup = (folder) => ALIASES.find((g) => g.includes(folder)) || [folder];
 export const shelfOf = (folder) => folderGroup(folder)[0];
+
+/** Loader inputs name files relative to a shelf, never arbitrary disk paths. */
+export const MODEL_INPUT_FOLDERS = {
+  unet_name: ["diffusion_models", "unet"], ckpt_name: ["checkpoints"],
+  clip_name: ["text_encoders", "clip"], vae_name: ["vae"], lora_name: ["loras"],
+  clip_vision: ["clip_vision"], clip_vision_name: ["clip_vision"],
+  control_net_name: ["controlnet"], style_model_name: ["style_models"],
+  audio_encoder_name: ["audio_encoders"], bg_removal_name: ["background_removal"],
+  adapter: ["conditioning_bridges"],
+  upscale_model: ["latent_upscale_models"],
+  model_name: ["upscale_models", "background_removal", "frame_interpolation", "latent_upscale_models"],
+};
+
+/** Accept either separator so selections survive Windows/Linux handoffs. */
+export function modelName(value) {
+  if (typeof value !== "string" || !value.trim() || /[\x00-\x1f:*?"<>|]/.test(value)
+      || /^[\\/]/.test(value)) return null;
+  const parts = value.split(/[\\/]/);
+  if (parts.some((part) => !part || part === "." || part === "..")) return null;
+  return parts.join(path.sep);
+}
+export function requireModelName(value) {
+  const name = modelName(value);
+  if (!name) {
+    const error = new Error("Choose a model filename relative to its shelf, not an absolute or parent path.");
+    error.status = 400;
+    throw error;
+  }
+  return name;
+}
+export const modelLeaf = (value) => String(value || "").split(/[\\/]/).pop();
+const nameKey = (value) => {
+  const name = modelName(value);
+  return process.platform === "win32" ? name?.toLowerCase() : name;
+};
+
+/** Exact relative paths win. A bare name may locate one nested path, but never
+ * choose between different subfolders with the same filename. A loader cannot
+ * distinguish the same relative name in multiple physical shelves either. */
+export function findShelfModel(files, folder, name, { fallback = true } = {}) {
+  const wanted = modelName(name);
+  if (!wanted) return null;
+  const folders = Array.isArray(folder) ? folder : folderGroup(folder);
+  const candidates = files.filter((file) => folders.includes(file.folder));
+  const distinct = (rows) => [...new Map(rows.map((file) => [file.full ? key(file.full) : `${file.folder}/${nameKey(file.name)}`, file])).values()];
+  const exacts = distinct(candidates.filter((file) => nameKey(file.name) === nameKey(wanted)));
+  if (exacts.length > 1) {
+    const error = new Error(`${wanted} exists in several configured model folders. Give each copy a distinct relative path or keep one copy.`);
+    error.status = 400;
+    throw error;
+  }
+  const exact = exacts[0];
+  if (exact || !fallback || wanted !== modelLeaf(wanted)) return exact || null;
+  const matches = distinct(candidates.filter((file) => nameKey(modelLeaf(file.name)) === nameKey(wanted)));
+  if (matches.length > 1) {
+    const error = new Error(`More than one ${wanted} exists. Choose its subfolder in the model picker.`);
+    error.status = 400;
+    throw error;
+  }
+  return matches[0] || null;
+}
 
 const WEIGHT_RE = /\.(safetensors|sft|gguf|ckpt|pt|pth|bin)$/i;
 
@@ -62,26 +124,81 @@ export async function extraBases(args = []) {
 }
 
 /**
- * Every weight file at the top level of each standard folder of each base.
- * Top level only: a loader names a file by its path relative to the folder,
- * and a nested name's separator differs by platform.
+ * Every weight file under each standard folder of each base. `name` is the
+ * native relative loader path, e.g. minimax\\model.safetensors on Windows.
+ * Directory links below a shelf are skipped to avoid cycles; a chosen base
+ * or shelf can itself be a linked directory. Empty/partial files are skipped.
  */
 export async function scanBases(bases) {
   const files = [];
   for (const base of uniqueDirs(bases)) {
     for (const folder of MODEL_FOLDERS) {
-      let entries;
-      try { entries = await readdir(path.join(base, folder), { withFileTypes: true }); } catch { continue; }
-      for (const e of entries) {
-        if (!e.isFile() || !WEIGHT_RE.test(e.name)) continue;
-        const full = path.join(base, folder, e.name);
-        const st = await stat(full).catch(() => null);
-        if (!st || st.size === 0) continue;
-        files.push({ base, folder, shelf: shelfOf(folder), name: e.name, full, bytes: st.size, at: st.mtimeMs });
+      const root = path.join(base, folder), pending = [root];
+      while (pending.length) {
+        const dir = pending.shift();
+        let entries;
+        try { entries = await readdir(dir, { withFileTypes: true }); } catch { continue; }
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+        for (const e of entries) {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) { pending.push(full); continue; }
+          if (!e.isFile() || !WEIGHT_RE.test(e.name)) continue;
+          const st = await stat(full).catch(() => null);
+          if (!st?.isFile() || st.size === 0) continue;
+          files.push({ base, folder, shelf: shelfOf(folder), name: path.relative(root, full), full, bytes: st.size, at: st.mtimeMs });
+        }
       }
     }
   }
   return files;
+}
+
+/** Startup/default selection and synchronous readiness share the same shelf
+ * rules. No weight bytes are read. Callers reuse a snapshot when checking
+ * several slots rather than rescanning it per candidate. */
+export function scanBasesSync(bases) {
+  const files = [];
+  for (const base of uniqueDirs(bases)) for (const folder of MODEL_FOLDERS) {
+    const root = path.join(base, folder), pending = [root];
+    while (pending.length) {
+      const dir = pending.shift();
+      let entries;
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { pending.push(full); continue; }
+        if (!e.isFile() || !WEIGHT_RE.test(e.name)) continue;
+        let st;
+        try { st = statSync(full); } catch { continue; }
+        if (!st.isFile() || st.size === 0) continue;
+        files.push({ base, folder, shelf: shelfOf(folder), name: path.relative(root, full), full, bytes: st.size, at: st.mtimeMs });
+      }
+    }
+  }
+  return files;
+}
+
+/** Rewrite only model-bearing loader inputs before hashing/submission. Prompts,
+ * media inputs and output prefixes are never searched or changed. */
+export function resolveGraphModels(graph, files) {
+  if (!graph || typeof graph !== "object") return graph;
+  let changed = false;
+  const out = {};
+  for (const [id, node] of Object.entries(graph)) {
+    let next = null;
+    for (const [input, value] of Object.entries(node?.inputs || {})) {
+      // `adapter` is shelf-specific only on Studio's conditioning-bridge node.
+      if (input === "adapter" && node.class_type !== "AiplayH3ConditioningBridge") continue;
+      const folders = MODEL_INPUT_FOLDERS[input.replace(/\d+$/, "")];
+      if (!folders || typeof value !== "string") continue;
+      const found = findShelfModel(files, folders, value);
+      if (found && found.name !== value) (next ||= { ...node.inputs })[input] = found.name;
+    }
+    out[id] = next ? { ...node, inputs: next } : node;
+    if (next) changed = true;
+  }
+  return changed ? out : graph;
 }
 
 /** { folder: { files, bytes } } — the preview shown before a folder is adopted. */
@@ -138,7 +255,8 @@ export function applyModelOverrides(graph, overrides) {
     let next = null;
     if (inputs && typeof inputs === "object") {
       for (const [k, v] of Object.entries(inputs)) {
-        if (typeof v === "string" && FILE_INPUT.test(k) && names.includes(v)) (next ||= { ...inputs })[k] = overrides[v];
+        const modelInput = FILE_INPUT.test(k) || (node.class_type === "AiplayH3ConditioningBridge" && k === "adapter");
+        if (typeof v === "string" && modelInput && names.includes(v)) (next ||= { ...inputs })[k] = overrides[v];
       }
     }
     if (next) { changed = true; out[id] = { ...node, inputs: next }; } else out[id] = node;

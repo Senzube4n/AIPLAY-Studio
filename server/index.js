@@ -103,8 +103,8 @@ async function videoModelPatch(b, engine) {
   const [shelf, parts] = await Promise.all([listVideoPickable(config), listVideoParts(config)]);
   const patch = {};
   if (named.dit && named.dit !== "auto") {
-    const row = shelf.find((r) => r.name === path.basename(named.dit));
-    if (!row) return { error: `No such video model: ${path.basename(named.dit)}. It must be in models/diffusion_models.` };
+    const row = findShelfModel(shelf, "diffusion_models", named.dit);
+    if (!row) return { error: `No such video model: ${requireModelName(named.dit)}. It must be in models/diffusion_models.` };
     if (!row.ok) return { error: `${row.name} cannot drive a video render. ${row.why || ""}`.trim() };
     if (row.engine !== engine) {
       return { error: `${row.name} is a ${row.family} model, which renders on the ${row.engine.toUpperCase()} engine — switch the engine above, or pick a ${engine.toUpperCase()} model.` };
@@ -117,9 +117,9 @@ async function videoModelPatch(b, engine) {
   for (const [key, list, folder, verdict] of [["textEncoder", parts.encoders, "text_encoders", "fit"],
                                               ["videoVae", parts.vaes, "vae", "fitVideo"],
                                               ["audioVae", parts.vaes, "vae", "fitAudio"]]) {
-    const want = named[key] && named[key] !== "auto" ? path.basename(named[key]) : "";
+    const want = named[key] && named[key] !== "auto" ? requireModelName(named[key]) : "";
     if (!want) continue;
-    const row = list.find((x) => x.name === want);
+    const row = findShelfModel(list, folder, want);
     if (!row) return { error: `No such file in models/${folder}: ${want}.` };
     /* ⚠ THE DOOR, NOT ONLY THE DROPDOWN. The screen stopped offering parts that
      * belong to another engine, but this route takes them by name from anything
@@ -135,7 +135,7 @@ async function videoModelPatch(b, engine) {
       return { error: `${want} is not a ${key === "textEncoder" ? "text encoder" : key === "videoVae" ? "video VAE" : "audio VAE"} `
         + `the ${engine.toUpperCase()} engine can load — it is built differently from the one it came with.` };
     }
-    patch[key] = want;
+    patch[key] = row.name;
   }
   return { models: patch };
 }
@@ -210,7 +210,7 @@ let h3VaeCheck = { at: 0, value: false };
 function h3VaeMeasured() {
   if (Date.now() - h3VaeCheck.at < 30_000) return h3VaeCheck.value;
   const name = config.video.engines.h3?.videoVae;
-  const value = name === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
+  const value = modelLeaf(name) === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
     try { return statSync(path.join(base, "vae", name)).size === H3_VAE_MEASURED.bytes; } catch { return false; }
   });
   h3VaeCheck = { at: Date.now(), value };
@@ -302,7 +302,7 @@ function missingSupport(cap, ownDit, own = {}) {
     + `already have in the rows under the model file.`;
 }
 import {
-  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
+  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath, requireModelName, modelLeaf, findShelfModel,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
 import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
@@ -1923,7 +1923,7 @@ async function localModelsPayload(cat) {
     }
     rows.push({
       folder: f.folder, shelf: f.shelf, name: f.name, base: f.base, bytes: f.bytes,
-      family, variant, known: known.has(f.name), standsInFor: standsIn[f.name] || null,
+      family, variant, known: known.has(modelLeaf(f.name)), standsInFor: standsIn[f.name] || null,
     });
   }
   return { modelsDir: config.modelsDir, also: config.modelsAlso || [], bases, files: rows };
@@ -1950,7 +1950,7 @@ let comfyWanted = !config.musicOnly && !config.cloudOnly && !config.remoteOnly;
 async function findYue2Checkpoints() {
   const seen = new Set();
   return (await scanBases(await modelBases()))
-    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name))
     .map((f) => f.name)
     .filter((n) => (seen.has(n) ? false : seen.add(n)));
 }
@@ -1965,17 +1965,21 @@ const minimaxAmdRisk = () => onAmd() && !hasAmdMusicFix(studioLaunchArgs());
  * encoder layer. The encoders and the VAE are ComfyUI's split-file names. */
 const ACE_DIT = /^acestep[_-]?v?1\.?5.*\.(safetensors|sft)$/i;
 const ACE_LMS = ["qwen_4b_ace15.safetensors", "qwen_1.7b_ace15.safetensors"];
-const aceBuildName = (n) => String(n || "").replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
+const aceBuildName = (n) => modelLeaf(n).replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
 async function aceShelf() {
   const shelf = await scanBases(await modelBases());
-  const on = (folders, name) => shelf.some((f) => folders.includes(f.folder) && f.name === name);
+  const on = (folders, name) => {
+    try { return findShelfModel(shelf, folders[0], name); }
+    catch (err) { if (err.status === 400) return null; throw err; }
+  };
   const seen = new Set();
-  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(f.name))
+  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(modelLeaf(f.name)))
     .map((f) => f.name).filter((n) => (seen.has(n) ? false : seen.add(n)));
-  const vae = on(["vae"], "ace_1.5_vae.safetensors");
-  const enc = on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
-  const lms = ACE_LMS.filter((n) => on(["text_encoders", "clip"], n));
-  const lm = lms.includes(config.music.aceLm) ? config.music.aceLm : lms[0] || null;
+  const vae = !!on(["vae"], "ace_1.5_vae.safetensors");
+  const enc = !!on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
+  const lms = ACE_LMS.map((n) => on(["text_encoders", "clip"], n)?.name).filter(Boolean);
+  const selectedLm = config.music.aceLm && on(["text_encoders", "clip"], config.music.aceLm)?.name;
+  const lm = lms.includes(selectedLm) ? selectedLm : lms[0] || null;
   const missing = [!vae && "the ACE 1.5 VAE", !enc && "the 0.6B text encoder", !lm && "a planner (qwen_4b_ace15 or qwen_1.7b_ace15)"].filter(Boolean);
   return { dits, vae, enc, lms, lm, ready: vae && enc && !!lm, missing: missing.length ? `missing ${missing.join(", ")}` : null };
 }
@@ -1987,16 +1991,12 @@ async function musicModelChoices(cat) {
   const out = [];
   const minimax = byId.engine;
   if (config.music.engines["minimax-music3"] && minimax && !config.musicOnly) {
-    const dit = minimax.files.find((f) => f.name === config.models.dit);
+    const dit = minimax.files.find((f) => f.name === modelLeaf(config.models.dit));
     const restReady = minimax.files.filter((f) => f !== dit).every((f) => f.present);
-    const bases = await modelBases();
+    const musicShelf = await scanBases(await modelBases());
     const onDisk = async (name) => {
-      for (const base of bases) {
-        for (const folder of ["diffusion_models", "unet"]) {
-          if ((await stat(path.join(base, folder, name)).catch(() => null))?.size > 0) return true;
-        }
-      }
-      return false;
+      try { return !!findShelfModel(musicShelf, "diffusion_models", name); }
+      catch (err) { if (err.status === 400) return false; throw err; }
     };
     const builds = [
       { precision: "int8", present: !!dit?.present, note: dit?.override ? `using ${bareName(dit.override)}` : null },
@@ -2052,7 +2052,7 @@ async function musicModelChoices(cat) {
   if (config.music.engines["yue2-comfy"] && (!config.musicOnly || comfyWanted)) {
     const seen = new Set();
     const ckpts = (await scanBases(await modelBases()))
-      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name))
       .filter((f) => (seen.has(f.name) ? false : seen.add(f.name)));
     for (const f of ckpts) {
       const build = bareName(f.name).replace(/^yue2?[_-]?3b[_-]?/i, "") || bareName(f.name);
@@ -3665,7 +3665,7 @@ const server = http.createServer(async (req, res) => {
                * LoRA picker leaves them out, because stacking one again would
                * apply it twice. */
               ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
-                .filter(Boolean).map((n) => path.basename(String(n))),
+                .filter(Boolean).map((n) => requireModelName(n)),
               /* The base a LoRA must have been made for (config.js), which the
                * Video screen's picker judges against and /api/video checks: null
                * means this engine takes none, and the picker hides. */
@@ -3982,17 +3982,16 @@ const server = http.createServer(async (req, res) => {
           if (b.use === null || b.use === undefined || b.use === "") {
             delete next[catName];
           } else {
-            const useName = path.basename(String(b.use));
+            const useName = requireModelName(b.use);
             const folder = path.relative(config.modelsDir, path.dirname(entry.dest)).split(path.sep)[0];
             if (!folder || folder.startsWith("..")) {
               return json(res, 400, { error: `${catName} does not live in the models folder, so it cannot be swapped here.` });
             }
-            const found = (await scanBases(await modelBases()))
-              .find((f) => f.name === useName && f.shelf === shelfOf(folder));
+            const found = findShelfModel(await scanBases(await modelBases()), folder, useName, { fallback: false });
             if (!found) {
               return json(res, 400, { error: `${useName} is not in a configured ${shelfOf(folder)} model folder.` });
             }
-            next[catName] = useName;
+            next[catName] = found.name;
           }
           config.modelOverrides = next;
           musicChoicesCache.at = 0;
@@ -4898,7 +4897,8 @@ const server = http.createServer(async (req, res) => {
         }
         const shelf = await scanBases(await modelBases());
         const askedLora = body.lora === undefined ? config.music.aceLora : body.lora;
-        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
+        if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, { error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another, or choose none.`, engine: musicEngine, reason: "lora-missing" });
         }
@@ -4969,17 +4969,19 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return json(res, e.status || 400, { error: e.message, engine: "yue2-comfy", reason: e.reason });
         }
-        if (body.checkpoint !== undefined && (typeof body.checkpoint !== "string" || !body.checkpoint.trim() || /[/\\]|\.\./.test(body.checkpoint))) {
-          return json(res, 400, { error: "Choose an installed YuE2 checkpoint filename.", reason: "checkpoint" });
+        if (body.checkpoint !== undefined) {
+          try { body.checkpoint = requireModelName(body.checkpoint); }
+          catch (err) { return json(res, 400, { error: err.message, reason: "checkpoint" }); }
         }
-        const ckpt = body.checkpoint ?? config.music.yue2Checkpoint ?? (config.remoteOnly ? "yue2_3b_int8_convrot.safetensors" : undefined);
+        let ckpt = body.checkpoint ?? config.music.yue2Checkpoint ?? (config.remoteOnly ? "yue2_3b_int8_convrot.safetensors" : undefined);
         const shelf = await scanBases(await modelBases());
-        const found = ckpt && shelf.find((f) => f.folder === "checkpoints" && f.name === ckpt);
+        const found = ckpt && findShelfModel(shelf, "checkpoints", ckpt);
+        if (found) ckpt = found.name;
         if (!found && !config.remoteOnly) {
           /* NONE AT ALL: a fresh install whose music default is YuE2 through
            * ComfyUI (server/music-default.js). The page opens the download for
            * that row (needsModel), not a list to pick from. */
-          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name));
+          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name));
           if (!ckpt && !anyYue) {
             /* The size from the catalogue row the Models screen fetches, never typed here. */
             const get = CATALOG.find((c) => c.id === MODEL_TO_CAPABILITY["yue2-comfy"])?.files?.[0]?.bytes;
@@ -5005,7 +5007,8 @@ const server = http.createServer(async (req, res) => {
          * skips keys it cannot match without an error, and a render that
          * silently ignored the LoRA is the failure the picker exists to end. */
         const askedLora = body.lora === undefined ? config.music.yue2Lora : body.lora;
-        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
+        if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, {
             error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
@@ -5023,9 +5026,9 @@ const server = http.createServer(async (req, res) => {
          * a sectioned instrumental and the sheet becomes "[instrumental]",
          * the bare form its card asks for. Without the file, an instrumental
          * stays what it was: a phrasing of the style and empty words. */
-        const onShelf = (n) => /\.safetensors$/i.test(n) && shelf.some((f) => f.folder === "loras" && f.name === n);
+        const onShelf = (n) => /\.safetensors$/i.test(n) && !!findShelfModel(shelf, "loras", n);
         const askedClip = body.loraClip === undefined ? config.music.yue2LoraClip : body.loraClip;
-        let clipName = typeof askedClip === "string" && askedClip.trim() ? path.basename(askedClip.trim()) : null;
+        let clipName = typeof askedClip === "string" && askedClip.trim() ? requireModelName(askedClip) : null;
         /* Not beside a supplied score: the planner does not run then (node 4
          * is left out), so the reason for the pick is gone, and the same
          * language model would sing the score through an adapter nobody has
@@ -5033,6 +5036,7 @@ const server = http.createServer(async (req, res) => {
         if (!clipName && body.loraClip === undefined && body.instrumental && !yueComfy.abc && onShelf(INSTRUMENTAL_PLANNER_LORA)) {
           clipName = INSTRUMENTAL_PLANNER_LORA;
         }
+        if (clipName) clipName = findShelfModel(shelf, "loras", clipName)?.name || clipName;
         if (clipName && !onShelf(clipName)) {
           return json(res, 400, {
             error: `The planner LoRA ${bareName(clipName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
@@ -5043,7 +5047,7 @@ const server = http.createServer(async (req, res) => {
         yueLoraClipStrength = Number.isFinite(Number(body.loraClipStrength))
           ? Math.min(Math.max(Number(body.loraClipStrength), -4), 4)
           : (Number.isFinite(config.music.yue2LoraClipStrength) ? config.music.yue2LoraClipStrength : 1);
-        if (body.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
+        if (body.instrumental && modelLeaf(yueLoraClip) === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
       }
       if (musicEngine === "yue2-comfy") {
         try { validateYue2StyleAdapter({ engine: musicEngine, lora: yueLora, loraClip: yueLoraClip, cot: body.cot || "full" }); }
@@ -5221,7 +5225,7 @@ const server = http.createServer(async (req, res) => {
       const busy = await engineDoor.status()
         .then((st) => (st.running || []).length > 0 || Number(st.queue?.running || 0) > 0)
         .catch(() => false);
-      const ckpts = await readdir(path.join(config.rig, "ComfyUI", "models", "checkpoints")).catch(() => []);
+      const ckpts = await findYue2Checkpoints();
 
       if (action === "status") {
         const st = await train.trainStatus({
@@ -8111,7 +8115,7 @@ const server = http.createServer(async (req, res) => {
             },
             extendedFrom: name,
             safetyContext: extendLineage.texts, safetyFlags: extendLineage.flags,
-            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridge: typeof b.bridge === "string" && b.bridge ? requireModelName(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
@@ -8484,7 +8488,7 @@ const server = http.createServer(async (req, res) => {
             loop: !!b.loop,
             /* The conditioning bridge, per render: an adapter file name (or "off")
              * and a strength 0–1. Absent = the Video panel's setting. */
-            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridge: typeof b.bridge === "string" && b.bridge ? requireModelName(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
@@ -8650,10 +8654,11 @@ const server = http.createServer(async (req, res) => {
         if (b.choose === true || b.engine !== config.art.engine || prefChosen("art", "engine")) config.art.engine = b.engine;
       }
       if (b.checkpoint !== undefined) {
-        const nm = b.checkpoint === null ? null : path.basename(String(b.checkpoint));
+        let nm = b.checkpoint === null ? null : requireModelName(b.checkpoint);
         if (nm) {
-          try { await stat(path.join(config.modelsDir, "checkpoints", nm)); }
-          catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
+          const found = findShelfModel(await scanBases(await modelBases()), "checkpoints", nm);
+          if (!found) return json(res, 400, { error: `No such checkpoint: ${nm}` });
+          nm = found.name;
         }
         config.art.checkpoint = nm;
       }
@@ -8781,7 +8786,7 @@ const server = http.createServer(async (req, res) => {
        * checked against the shelves now, not saved for a later render to trip on. */
       if (b.action === "aceLm") {
         const ace = await aceShelf();
-        const name = b.value ? path.basename(String(b.value)) : null;
+        const name = b.value ? requireModelName(b.value) : null;
         if (name && !ace.lms.includes(name)) return json(res, 400, { error: `${name} is not in a text_encoders folder.` });
         config.music.aceLm = name;
         musicChoicesCache.at = 0;
@@ -8790,9 +8795,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.action === "aceLora") {
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -8812,14 +8818,15 @@ const server = http.createServer(async (req, res) => {
         if (!adapter) return json(res, 400, { error: "Choose a listed YuE2 style adapter." });
         if (config.music.engine !== "yue2-comfy") return json(res, 400, { error: "Choose YuE2 ComfyUI before selecting this adapter." });
         const shelf = await scanBases(await modelBases());
-        if (!shelf.some((file) => file.folder === "loras" && file.name === adapter.file))
+        const installed = findShelfModel(shelf, "loras", adapter.file);
+        if (!installed)
           return json(res, 400, { error: `${adapter.label} is not installed. Open Models to download it.` });
-        config.music.yue2Lora = adapter.file;
-        config.music.yue2LoraClip = adapter.file;
+        config.music.yue2Lora = installed.name;
+        config.music.yue2LoraClip = installed.name;
         config.music.yue2LoraStrength = 1;
         config.music.yue2LoraClipStrength = 1;
         savePrefs();
-        return json(res, 200, { ok: true, music: { yue2Lora: adapter.file, yue2LoraClip: adapter.file,
+        return json(res, 200, { ok: true, music: { yue2Lora: installed.name, yue2LoraClip: installed.name,
           yue2LoraStrength: 1, yue2LoraClipStrength: 1 }, cot: "full" });
       }
       if (b.action === "lora") {
@@ -8828,9 +8835,10 @@ const server = http.createServer(async (req, res) => {
          * that is not there is refused rather than saved for a later render to
          * trip over. */
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -8843,9 +8851,10 @@ const server = http.createServer(async (req, res) => {
       if (b.action === "planner-lora") {
         /* The planner's LoRA, remembered the same way as the audio one. */
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -9426,12 +9435,13 @@ const server = http.createServer(async (req, res) => {
         /* The encoder and the VAE, named from the shelves rather than typed. */
         const parts = await listParts(config);
         for (const [key, list, what] of [["encoder", parts.encoders, "text encoder"], ["vae", parts.vaes, "VAE"]]) {
-          const want = path.basename(String(b[key] || "").trim());
+          const want = b[key] && b[key] !== "auto" ? requireModelName(b[key]) : "";
           if (!want || want === "auto") { b[key] = null; continue; }
-          if (!list.some((x) => x.name === want)) {
+          const found = findShelfModel(list, key === "vae" ? "vae" : "text_encoders", want);
+          if (!found) {
             return json(res, 400, { error: `No such ${what}: ${want}. It must be in models/${key === "vae" ? "vae" : "text_encoders"}.` });
           }
-          b[key] = want;
+          b[key] = found.name;
         }
         /* THE PACK THAT READS A .gguf. ComfyUI's own loaders are safetensors
          * loaders; a quantised transformer or encoder goes through
@@ -9507,7 +9517,7 @@ const server = http.createServer(async (req, res) => {
          * models/checkpoints is invisible to it however the engine is picked.
          * Checked here so the answer is a sentence rather than a ComfyUI stack
          * trace three minutes into a queue. */
-        const dn = path.basename(String(b.dit || config.art.animaDit || ""));
+        const dn = b.dit || config.art.animaDit ? requireModelName(b.dit || config.art.animaDit) : "";
         if (!dn) {
           return json(res, 400, { error: "Pick an Anima model file first (models/diffusion_models)." });
         }
@@ -9520,7 +9530,7 @@ const server = http.createServer(async (req, res) => {
             error: `No such Anima model in models/diffusion_models: ${dn}. If it is still in models/checkpoints, move it — a bare transformer is loaded from diffusion_models.`,
           });
         }
-        b.dit = dn;
+        b.dit = found.name;
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Anima has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
         }
@@ -9796,12 +9806,11 @@ const server = http.createServer(async (req, res) => {
           /* LoRAs, stacked. Checkpoint engine only: FLUX.2 klein, Z-Image and
            * Ideogram load as bare DiTs here and LoraLoader takes a
            * CheckpointLoader’s model+clip pair, which they do not produce.
-           * Names are basenamed — a lora_name is a filename inside
-           * models/loras, never a path. */
+           * Names are relative to models/loras, including its subfolders. */
           loras: engine === "checkpoint" && Array.isArray(b.loras)
             ? b.loras.slice(0, 8)
                 .map((l) => ({
-                  name: path.basename(String(l?.name || "")),
+                  name: l?.name ? requireModelName(l.name) : "",
                   strength: Number.isFinite(l?.strength) ? Math.min(Math.max(Number(l.strength), -4), 4) : 1,
                   clipStrength: Number.isFinite(l?.clipStrength)
                     ? Math.min(Math.max(Number(l.clipStrength), -4), 4) : undefined,
@@ -9994,14 +10003,12 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/api/dits" && req.method === "GET") {
       const want = String(url.searchParams.get("family") || "").toLowerCase();
-      const dir = path.join(config.modelsDir, "diffusion_models");
-      let files = [];
-      try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
-      catch { /* no folder yet */ }
+      const seen = new Set();
+      const files = (await scanBases(await modelBases())).filter((f) => isDitFolder(f.folder)
+        && /\.safetensors$/i.test(f.name) && !seen.has(f.name) && seen.add(f.name));
       const rows = [];
-      for (const name of files) {
-        const full = path.join(dir, name);
-        const key = `dit:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
+      for (const { name, full, at } of files) {
+        const key = `dit:${full}:${at}`;
         let probe = ckptProbeCache.get(key);
         if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
         if (want && String(probe.family).toLowerCase() !== want) continue;
@@ -10015,22 +10022,22 @@ const server = http.createServer(async (req, res) => {
       /* Every base the engine loads from (the Models screen's folder, a ComfyUI
        * Desktop install's extra paths), not only config.modelsDir: the music
        * checkpoint list reads the same shelves, and a LoRA beside a checkpoint
-       * ComfyUI can see must be listable here. First base wins a duplicate
-       * name, which is also the order ComfyUI resolves it in. */
+       * ComfyUI can see must be listable here. Relative subfolders remain part
+       * of the selection, and duplicate copies are refused at the render door. */
       const shelf = await scanBases(await modelBases());
       const seen = new Set();
       const files = shelf.filter((f) => f.folder === "loras" && /\.safetensors$/i.test(f.name)
         && !seen.has(f.name) && seen.add(f.name));
 
-      const forName = path.basename(String(url.searchParams.get("for") || ""));
+      const forName = url.searchParams.get("for") ? requireModelName(url.searchParams.get("for")) : "";
       let against = null;
       if (forName) {
         /* A bare DiT (Krea 2, the MiniMax models) lives in diffusion_models or
          * unet, not checkpoints; a LoRA is judged against whichever holds it. */
-        const ck = shelf.find((f) => ["checkpoints", "diffusion_models", "unet"].includes(f.folder) && f.name === forName);
+        const ck = findShelfModel(shelf, ["checkpoints", "diffusion_models", "unet"], forName);
         /* An ACE-Step 1.5 DiT probes as MiniMax Music 3 (the two share a lyric
          * encoder layer), so it is named by its file, as the music list does. */
-        if (ck && ACE_DIT.test(ck.name)) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
+        if (ck && ACE_DIT.test(modelLeaf(ck.name))) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
         else if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
       }
 
@@ -11587,14 +11594,14 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
       if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      try { await stat(path.join(config.modelsDir, "background_removal", "birefnet.safetensors")); }
-      catch { return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." }); }
+      const cutoutModel = findShelfModel(await scanBases(await modelBases()), "background_removal", "birefnet.safetensors");
+      if (!cutoutModel) return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." });
       let staged;
       try {
         staged = await stageImageForEngine(name);
         const graph = {
           1: { class_type: "LoadImage", inputs: { image: staged } },
-          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: "birefnet.safetensors" } },
+          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: cutoutModel.name } },
           3: { class_type: "RemoveBackground", inputs: { bg_removal_model: ["2", 0], image: ["1", 0] } },
           4: { class_type: "InvertMask", inputs: { mask: ["3", 0] } },
           5: { class_type: "JoinImageWithAlpha", inputs: { image: ["1", 0], alpha: ["4", 0] } },
@@ -13300,7 +13307,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     if (err.code === "ENOENT") return json(res, 404, { error: "not found" });
     console.error(err);
-    return json(res, 500, { error: String(err.message || err) });
+    return json(res, err.status || 500, { error: String(err.message || err) });
   }
 });
 

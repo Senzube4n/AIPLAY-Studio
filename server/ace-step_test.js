@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { modelLeaf, findShelfModel } from "./localmodels.js";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "aiplay-ace-test-"));
 process.env.AIPLAY_APPDATA = tmp;
@@ -86,6 +87,36 @@ test("ACE-Step 1.5 LoRAs are recognised, and one ComfyUI cannot load is named", 
   assert.equal(loraTarget(["model.layers.0.qkv_proj.lora_A.weight"]).variant, "YuE2", "YuE2's rule is untouched");
 });
 
+test("the ACE shelf discovers nested split files and retains a moved planner selection", async () => {
+  const index = src("./index.js");
+  const start = index.indexOf("const ACE_DIT ="), end = index.indexOf("async function musicModelChoices", start);
+  assert.ok(start >= 0 && end > start);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const readShelf = new AsyncFunction("scanBases", "modelBases", "modelLeaf", "findShelfModel", "config",
+    index.slice(start, end) + "return aceShelf();");
+  const files = [
+    ["diffusion_models", path.join("ace", "acestep_v1.5_turbo.safetensors")],
+    ["vae", path.join("ace", "ace_1.5_vae.safetensors")],
+    ["text_encoders", path.join("ace", "qwen_0.6b_ace15.safetensors")],
+    ["text_encoders", path.join("ace", "qwen_4b_ace15.safetensors")],
+    ["text_encoders", path.join("ace", "qwen_1.7b_ace15.safetensors")],
+  ].map(([folder, name]) => ({ folder, name, full: path.join(tmp, folder, name) }));
+  const result = await readShelf(async () => files, async () => [tmp], modelLeaf, findShelfModel,
+    { music: { aceLm: "qwen_1.7b_ace15.safetensors" } });
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.dits, [path.join("ace", "acestep_v1.5_turbo.safetensors")]);
+  assert.equal(result.lm, path.join("ace", "qwen_1.7b_ace15.safetensors"), "saved 1.7B preference survives moving into a subfolder");
+  for (const [folder, leaf, key] of [["vae", "ace_1.5_vae.safetensors", "vae"], ["text_encoders", "qwen_0.6b_ace15.safetensors", "enc"]]) {
+    const duplicate = { folder, name: path.join("another", leaf), full: path.join(tmp, folder, "another", leaf) };
+    const unavailable = await readShelf(async () => [...files, duplicate], async () => [tmp], modelLeaf, findShelfModel,
+      { music: { aceLm: "qwen_1.7b_ace15.safetensors" } });
+    assert.equal(unavailable.ready, false, "ambiguous companion disables ACE readiness instead of failing the entire status request");
+    assert.equal(unavailable[key], false);
+    assert.ok(unavailable.missing);
+    assert.equal(unavailable.lm, result.lm, "other unambiguous parts remain available");
+  }
+});
+
 test("the runner, the route and the API switch", () => {
   const jobs = src("./jobs.js"), index = src("./index.js");
   assert.match(jobs, /value === "ace-step15"/);
@@ -97,7 +128,7 @@ test("the runner, the route and the API switch", () => {
   assert.match(index, /const codes = cover \? false : body\.aceCodes === undefined \? !loraName : !!body\.aceCodes;/,
     "a LoRA turns the planner off unless asked, a cover always");
   assert.match(index, /if \(body\.instrumental \|\| !String\(body\.lyrics \|\| ""\)\.trim\(\)\) body\.lyrics = "\[Instrumental\]";/);
-  assert.match(index, /if \(ck && ACE_DIT\.test\(ck\.name\)\) against = \{ variant: "ACE-Step 1\.5"/);
+  assert.match(index, /if \(ck && ACE_DIT\.test\(modelLeaf\(ck\.name\)\)\) against = \{ variant: "ACE-Step 1\.5"/);
   assert.match(index, /const modelName = isAce \? "ace-step15"/, "filed under the name the rights map knows");
 });
 

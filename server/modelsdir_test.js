@@ -89,9 +89,62 @@ test("a second models folder can be added on purpose, beside the main one", () =
   assert.match(page, /data-mf="also" disabled>Add as extra</);
   assert.match(page, /action: "addAlso", dir: root\.getElementById\("mfPath"\)\.value/);
   const conf = readFileSync(new URL("./config.js", import.meta.url), "utf8");
-  assert.match(conf, /const bases = \[MODELS_DIR, \.\.\.MODELS_ALSO\];/, "the engine's file choices look in the extra folders too");
+  assert.match(conf, /scanBasesSync\(\[MODELS_DIR, \.\.\.MODELS_ALSO\]\)/, "the engine's file choices look in the extra folders too");
   const wf = readFileSync(new URL("./workflow.js", import.meta.url), "utf8");
-  assert.match(wf, /if \(onDisk\(sub, file\)\) continue;/, "so does the video ready check");
+  assert.match(wf, /if \(onDisk\(sub, file, snapshot\)\) continue;/, "so does the video ready check");
+});
+
+test("catalogue and downloader reuse complete nested weights without moving or downloading", async () => {
+  const dir = path.join(config.modelsDir, "diffusion_models", "minimax");
+  await mkdir(dir, { recursive: true });
+  const full = path.join(dir, "nested-test.safetensors");
+  await writeFile(full, Buffer.alloc(1234, 1));
+  const id = "nested-catalog-test";
+  CATALOG.push({ id, label: "Nested model", files: [{ url: "http://127.0.0.1:9/must-not-download", dest: path.join(config.modelsDir, "diffusion_models", "nested-test.safetensors"), bytes: 1234 }] });
+  try {
+    const manager = new ModelManager();
+    const row = (await manager.status()).find((entry) => entry.id === id);
+    assert.equal(row.ready, true);
+    assert.equal(row.files[0].resolvedName, path.join("minimax", "nested-test.safetensors"));
+    assert.equal(row.files[0].resolvedPath, full);
+    assert.deepEqual(await manager.download(id), { ok: true }, "unreachable URL proves the file was reused");
+    assert.equal((await readFile(full)).length, 1234);
+    await writeFile(full, Buffer.alloc(3));
+    assert.equal((await manager.status()).find((entry) => entry.id === id).ready, false, "nested stock still needs its exact size");
+  } finally { CATALOG.splice(CATALOG.findIndex((entry) => entry.id === id), 1); }
+});
+
+test("nested YuE2 and video files reach the engine ledger as their actual loader paths", async () => {
+  const { createEngineClient } = await import("./engine/client.js");
+  const { createStore } = await import("./engine/store.js");
+  const { videoReady } = await import("./workflow.js");
+  const files = [["checkpoints", "yue2", "yue2_subfolder_test.safetensors"],
+    ["unet", "minimax", "h3_subfolder_test.safetensors"],
+    ["conditioning_bridges", "minimax", "bridge_subfolder_test.safetensors"]];
+  for (const [folder, sub, file] of files) {
+    await mkdir(path.join(config.modelsDir, folder, sub), { recursive: true });
+    await writeFile(path.join(config.modelsDir, folder, sub, file), "weights");
+  }
+  const graph = { 1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: files[0][2] } },
+    2: { class_type: "UNETLoader", inputs: { unet_name: files[1][2] } },
+    3: { class_type: "CLIPTextEncode", inputs: { text: files[0][2] } },
+    4: { class_type: "AiplayH3ConditioningBridge", inputs: { adapter: files[2][2] } } };
+  const engine = createEngineClient({ store: createStore({ modelsDir: config.modelsDir, modelsAlso: [],
+    graphDir: path.join(root, "graphs"), hashCacheFile: path.join(root, "hash-cache.json") }) });
+  const result = await engine.dispatch({ graph, via: "test.nested-models", dryRun: true });
+  assert.equal(result.record.engineFiles.find((entry) => entry.input === "ckpt_name").file, path.join("yue2", files[0][2]));
+  const dit = result.record.engineFiles.find((entry) => entry.input === "unet_name");
+  assert.equal(dit.file, path.join("minimax", files[1][2]));
+  assert.equal(dit.resolvedPath, path.join(config.modelsDir, ...files[1]));
+  const bridge = result.record.engineFiles.find((entry) => entry.input === "adapter");
+  assert.equal(bridge.file, path.join("minimax", files[2][2]));
+  assert.equal(bridge.resolvedPath, path.join(config.modelsDir, ...files[2]));
+  assert.equal(graph[1].inputs.ckpt_name, files[0][2], "the caller's graph stays unchanged");
+  const h3 = config.video.engines.h3, before = { ...h3 };
+  try {
+    Object.assign(h3, { dit: files[1][2], textEncoder: null, videoVae: null, audioVae: null });
+    assert.equal(videoReady("h3").ready, true, "readiness follows subfolders and unet alias too");
+  } finally { Object.assign(h3, before); }
 });
 
 test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {

@@ -10,6 +10,7 @@ import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION, H3_BLOCK_CACHE } from "./h3tier.
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { scanBasesSync, findShelfModel, modelName } from "./localmodels.js";
 
 /**
  * Where the settings a user can change actually live.
@@ -77,15 +78,25 @@ const MODELS_ALSO = Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d
  *
  * Order is preference: measured build first, downloadable substitute last.
  */
-const pick = (sub, ...names) => names.find((n) => onDisk(sub, n)) ?? names[names.length - 1];
+let modelSnapshot = null;
+const localFile = (sub, name) => {
+  modelSnapshot ||= scanBasesSync([MODELS_DIR, ...MODELS_ALSO]);
+  try { return findShelfModel(modelSnapshot, sub, name); } catch { return null; }
+};
+const pick = (sub, ...names) => {
+  for (const name of names) {
+    const found = localFile(sub, name);
+    if (found) return found.name;
+  }
+  return names[names.length - 1];
+};
 
 /* "Is this file on disk, with bytes in it", asked one way for pick() and for
  * the H3 step defaults below `config`, so the two cannot disagree about it.
  * Every folder the engine loads from counts: the models folder and the extra
  * ones (config.modelsAlso). A declaration, so pick() above can use it. */
 function onDisk(sub, name) {
-  const bases = [MODELS_DIR, ...MODELS_ALSO];
-  return bases.some((b) => { try { return fs.statSync(path.join(b, sub, String(name))).size > 0; } catch { return false; } });
+  return !!localFile(sub, name);
 }
 
 /* THE H3 SPEED-UP SLOTS and their candidate lists, kept so a speed-up that
@@ -2088,6 +2099,7 @@ config.video.engines.h3.steps = resolveH3Steps(config.video.engines.h3);
  *  while it is still the machine's default (Standard), never a person's.
  *  Returns turboBuilds. */
 export function refreshH3Speedups() {
+  modelSnapshot = scanBasesSync([config.modelsDir, ...(config.modelsAlso || [])]);
   const h3 = config.video.engines.h3;
   const before = h3.stepDefaults?.standard;
   for (const [slot, names] of Object.entries(H3_LORA_SLOTS)) h3[slot] = pick("loras", ...names);
@@ -2271,14 +2283,14 @@ export const PREF_PATHS = [
    * remembering to edit this line. Same shape as video.engine above. */
   ["music", "engine", (v) => Object.prototype.hasOwnProperty.call(config.music.engines, v)],
   ["music", "precision", (v) => ["int8", "fp16", "fp32"].includes(v)],
-  ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
-  ["music", "yue2Lora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "yue2Checkpoint", (v) => v === null || (!!modelName(v) && /\.(safetensors|sft)$/i.test(v))],
+  ["music", "yue2Lora", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
   ["music", "yue2LoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
-  ["music", "yue2LoraClip", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "yue2LoraClip", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
   ["music", "yue2LoraClipStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
-  ["music", "aceModel", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
-  ["music", "aceLm", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
-  ["music", "aceLora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "aceModel", (v) => v === null || (!!modelName(v) && /\.(safetensors|sft)$/i.test(v))],
+  ["music", "aceLm", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
+  ["music", "aceLora", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
   ["music", "aceLoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
@@ -2302,7 +2314,7 @@ export const PREF_PATHS = [
    * would stamp every render `unknown` and look perfectly fine. Add both, or
    * the hook fails. */
   ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(v)],
-  ["art", "checkpoint", (v) => v === null || (typeof v === "string" && /^[\w .()-]+\.(safetensors|ckpt)$/i.test(v))],
+  ["art", "checkpoint", (v) => v === null || (!!modelName(v) && /\.(safetensors|ckpt)$/i.test(v))],
   /* The Images screen's engine, and a picture with none named (make_image, a
    * music video's stills). The covers' list above, read at call time rather
    * than retyped; minus "checkpoint", which needs a file picked per picture. */

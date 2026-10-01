@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { config as defaultConfig } from "./config.js";
 import { CATALOG } from "./models.js";
 import { modelBases } from "./modelpick.js";
-import { scanBases } from "./localmodels.js";
+import { scanBases, modelName, requireModelName, modelLeaf, findShelfModel } from "./localmodels.js";
 import { engine as defaultEngine } from "./engine/client.js";
 import { QWEN_IMAGE_FILES, QWEN_DRAFT, qwenImageGraph } from "./qwen-image.js";
 
@@ -35,11 +35,9 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
   try {
     const selected = {};
     for (const [key, name] of Object.entries(QWEN_IMAGE_FILES)) {
-      selected[key] = options[key] || config.modelOverrides?.[name] || name;
-      if (path.basename(selected[key]) !== selected[key]) throw new Error("Select model filenames from the model shelf, not paths.");
+      selected[key] = requireModelName(options[key] || config.modelOverrides?.[name] || name);
     }
-    loraName = config.modelOverrides?.[QWEN_DRAFT.lora] || QWEN_DRAFT.lora;
-    if (path.basename(loraName) !== loraName) throw new Error("Select model filenames from the model shelf, not paths.");
+    loraName = requireModelName(config.modelOverrides?.[QWEN_DRAFT.lora] || QWEN_DRAFT.lora);
     /* The plainest draft this selection can make: which nodes and which LoRA
      * a draft needs, whatever else the request asked for. */
     draftGraph = qwenImageGraph({ prompt: "readiness check", ...selected, draft: true, draftLora: loraName });
@@ -63,20 +61,25 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
   ];
   /* Present: on a shelf the engine reads, at the catalogue's byte count for a
    * stock file, and in the loader's own list when the engine answered. */
+  const selectionErrors = [];
   const onShelf = (file, row = cap) => {
-    const expected = row?.files.find((f) => path.basename(f.dest) === file.name)?.bytes;
-    const candidates = shelf.filter((f) => f.name === file.name && file.folders.includes(f.folder));
-    let present = candidates.some((f) => expected ? f.bytes === expected : f.bytes > 0);
+    const expected = row?.files.find((f) => modelLeaf(f.dest) === modelLeaf(file.name))?.bytes;
+    let found;
+    try { found = findShelfModel(shelf, file.folders[0], file.name); }
+    catch (err) { selectionErrors.push(err.message); return false; }
+    if (found) file.name = modelName(found.name);
+    let present = !!found && (expected ? found.bytes === expected : found.bytes > 0);
     const available = info?.[file.node]?.input?.required?.[file.input]?.[0];
-    if (Array.isArray(available) && !available.includes(file.name)) present = false;
+    if (Array.isArray(available) && !available.some((name) => typeof name === "string" && modelName(name) === file.name)) present = false;
     return present;
   };
   for (const file of selected) {
     if (!onShelf(file)) out.missingFiles.push(file.name);
   }
   const loraFile = { name: loraName, folders: ["loras"], node: "LoraLoaderModelOnly", input: "lora_name" };
-  out.draft.lora = loraName;
   out.draft.fileReady = onShelf(loraFile, draftCap);
+  loraName = loraFile.name;
+  out.draft.lora = loraName;
   out.draft.missingNodes = info ? [...new Set(Object.values(draftGraph).map((node) => node.class_type))].filter((name) => !info[name]) : [];
   out.draft.runtimeReady = !!info && out.draft.missingNodes.length === 0;
   if (options.draft === true && !out.draft.fileReady) out.missingFiles.push(loraName);
@@ -84,7 +87,7 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
   out.ready = out.filesReady && out.runtimeReady;
   out.draft.ready = out.draft.fileReady && out.draft.runtimeReady
     && out.missingFiles.filter((name) => name !== loraName).length === 0;
-  const problems = [];
+  const problems = [...selectionErrors];
   const baseMissing = out.missingFiles.filter((name) => name !== loraName);
   if (baseMissing.length) problems.push(`Missing or incomplete Qwen Image files: ${baseMissing.join(", ")}. Choose Download in Models when ready.`);
   if (options.draft === true && !out.draft.fileReady) problems.push(`Fast draft needs its LoRA (${loraName}, ${(out.draft.bytes / 1e9).toFixed(2)} GB). Download "Fast draft" in Models, or turn Fast draft off.`);

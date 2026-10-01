@@ -67,7 +67,7 @@ console.log("\n§3  /api/loras judges `for=` against a bare DiT as well as a che
 {
   const index = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   ok("the lookup reads checkpoints, diffusion_models and unet",
-    /const ck = shelf\.find\(\(f\) => \["checkpoints", "diffusion_models", "unet"\]\.includes\(f\.folder\) && f\.name === forName\);/.test(index));
+    /const ck = findShelfModel\(shelf, \["checkpoints", "diffusion_models", "unet"\], forName\);/.test(index));
   const mcp = fs.readFileSync(new URL("./mcp.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   ok("list_loras says so", /`for` may also name a file in models\/diffusion_models or unet/.test(mcp));
 }

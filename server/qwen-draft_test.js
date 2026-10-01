@@ -199,7 +199,9 @@ test("every base-only case is refused with its own sentence, never ignored", () 
     assert.equal(qwenDraftRefusal(opts), sentence);
   }
   assert.throws(() => qwenImageGraph({ prompt: "x", draft: "yes" }), (err) => err.message === R.type);
-  assert.throws(() => qwenImageGraph({ prompt: "x", draft: true, draftLora: "../x.safetensors" }), /not a path/);
+  assert.throws(() => qwenImageGraph({ prompt: "x", draft: true, draftLora: "../x.safetensors" }), err => err.status === 400);
+  const nestedDraft = qwenImageGraph({ prompt: "x", draft: true, draftLora: "qwen/turbo.safetensors" });
+  assert.equal(Object.values(nestedDraft).find(node => node.class_type === "LoraLoaderModelOnly").inputs.lora_name, path.join("qwen", "turbo.safetensors"));
   // What a draft may carry: three references, CFG 1, steps 5, custom sizing,
   // up to 8,192 tokens, and a null reference size (the base's own 1024).
   for (const ok of [{ refImages: ["1.png", "2.png", "3.png"] }, { cfg: 1 }, { steps: 5 }, { refImages: ["a.png"], refSizing: "custom", refResolution: 0 }, { count: 4 },

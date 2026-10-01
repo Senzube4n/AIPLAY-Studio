@@ -144,9 +144,10 @@ test("§2 the settings: tier sizes in H3's list, sol-attn on Fast, FastH3 Advanc
   assert.equal(fast.advanced.note, "A distilled H3 model, 8 steps. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; check the take.");
   assert.equal(fast.advanced.label, tier.H3_MORE_MOTION.label, "one copy, h3tier.js");
   /* The Fast chip's note follows the saved sparse attention: never "as sharp" while sol-attn runs. */
-  assert.match(plain.fastNote(h3), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
-  assert.doesNotMatch(plain.fastNote(h3), /as sharp/);
-  assert.equal(plain.fastNote({ ...h3, sparse: "off" }), "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time.");
+  const fastInstalled = { ...h3, stepDefaults: { fast: 3, standard: 8, best: 20 } };
+  assert.match(plain.fastNote(fastInstalled), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
+  assert.doesNotMatch(plain.fastNote(fastInstalled), /as sharp/);
+  assert.equal(plain.fastNote({ ...fastInstalled, sparse: "off" }), "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time.");
   assert.match(plain.fastNote({ ...h3, stepDefaults: { fast: 4, standard: 8, best: 20 } }), /^Install the Fast setting for H3/);
   assert.equal(plain.fastNote(fast), null, "FastH3 has no quality chips");
   assert.equal(plain.fastNote(config.video.engines.ltx), null);

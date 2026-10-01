@@ -3,12 +3,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import path from "node:path";
 import { videoLoraInput, validateVideoLoras } from "./video-lora-validation.js";
 import { modelTools } from "./mcp-models.js";
 import { TOOLS } from "./mcp.js";
 import { ROUTABLE } from "./chat/router.js";
 import { emptyResultNote } from "./art-wait.js";
 import { h3OptionalMcpBody } from "./mcp-h3-refmods.js";
+import { findShelfModel } from "./localmodels.js";
 
 const src = (file) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const index = src("./index.js"), app = src("../web/app.js");
@@ -49,6 +51,17 @@ test("the API verifies shelf presence and architecture before queueing, includin
   assert.match(index, /shelf: async \(\) => scanBases\(await modelBases\(\)\)/);
   assert.match(index, /b\.loras = await checkedVideoLoras\(b\.loras, "h3"\)/);
   assert.match(index, /b\.loras = await checkedVideoLoras\(b\.loras, eng\)/);
+});
+
+test("video LoRAs preserve nested selections and refuse duplicate aliases", async () => {
+  const name = path.join("h3", "look.safetensors");
+  const files = [{ name, folder: "loras", full: `models/loras/${name}` }];
+  const options = { engine: "h3", loraBase: "MiniMax H3", shelf: async () => files,
+    probe: async () => ({ family: "lora", variant: "MiniMax H3" }) };
+  assert.deepEqual(await validateVideoLoras([{ name: "h3/look.safetensors" }], options), [{ name, strength: 1 }]);
+  assert.deepEqual(await validateVideoLoras([{ name: "look.safetensors" }], options), [{ name, strength: 1 }]);
+  assert.throws(() => videoLoraInput([{ name: "h3/look.safetensors" }, { name: "h3\\look.safetensors" }]), /twice/);
+  await assert.rejects(validateVideoLoras([{ name }], { ...options, automatic: ["look.safetensors"] }), /loads automatically/);
 });
 
 test("typed MCP make/extend forward the ordered video stack unchanged", async () => {
@@ -114,14 +127,29 @@ test("typed load/unload and video-enable actions preserve the API contracts and 
 });
 
 test("catalogue replacements can use the retained folder but must stay on the correct shelf", async () => {
-  const block = index.match(/const found = \(await scanBases\(await modelBases\(\)\)\)\s*\.find\(\(f\) => f\.name === useName && f\.shelf === shelfOf\(folder\)\);/);
+  const block = index.match(/const found = findShelfModel\(await scanBases\(await modelBases\(\)\), folder, useName, \{ fallback: false \}\);/);
   assert.ok(block, "the override route searches all configured bases with the same shelf guard");
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const lookup = new AsyncFunction("scanBases", "modelBases", "shelfOf", "folder", "useName", block[0] + "return found;");
-  const oldFile = { name: "custom.safetensors", shelf: "diffusion_models", full: "old/diffusion_models/custom.safetensors" };
+  const lookup = new AsyncFunction("scanBases", "modelBases", "findShelfModel", "folder", "useName", block[0] + "return found;");
+  const oldFile = { name: path.join("minimax", "custom.safetensors"), folder: "diffusion_models", full: "old/diffusion_models/minimax/custom.safetensors" };
   const scan = async (bases) => { assert.deepEqual(bases, ["new", "old"]); return [oldFile]; };
-  assert.equal(await lookup(scan, async () => ["new", "old"], x => x, "diffusion_models", oldFile.name), oldFile);
-  assert.equal(await lookup(scan, async () => ["new", "old"], x => x, "vae", oldFile.name), undefined);
+  assert.equal(await lookup(scan, async () => ["new", "old"], findShelfModel, "diffusion_models", "minimax/custom.safetensors"), oldFile);
+  assert.equal(await lookup(scan, async () => ["new", "old"], findShelfModel, "vae", oldFile.name), null);
+  assert.equal(await lookup(scan, async () => ["new", "old"], findShelfModel, "diffusion_models", "custom.safetensors"), null,
+    "an explicit override must identify the subfolder instead of silently selecting another file");
+});
+
+test("image cutout finds BiRefNet in a subfolder and loads its complete relative name", async () => {
+  const start = index.indexOf('if (p === "/api/images/cutout" && req.method === "POST")');
+  const route = index.slice(start, index.indexOf('if (p === "/api/', start + 30));
+  const lookup = route.match(/const cutoutModel = findShelfModel\(await scanBases\(await modelBases\(\)\), "background_removal", "birefnet\.safetensors"\);/);
+  const graph = route.match(/const graph = \{[\s\S]*?\n        \};/);
+  assert.ok(lookup && graph, "cutout uses the recursive shelf row for its loader");
+  const nested = { folder: "background_removal", name: path.join("portraits", "birefnet.safetensors"), full: "models/background_removal/portraits/birefnet.safetensors" };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const build = new AsyncFunction("findShelfModel", "scanBases", "modelBases", "staged", lookup[0] + graph[0] + "return graph;");
+  const actual = await build(findShelfModel, async () => [nested], async () => ["models"], "image.png");
+  assert.equal(actual[2].inputs.bg_removal_name, nested.name);
 });
 
 test("manual unload refuses every active queue and fails closed if engine status is unavailable", async () => {

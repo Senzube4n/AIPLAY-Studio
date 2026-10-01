@@ -323,7 +323,7 @@ export function buildRecord(graph, ctx = {}) {
       if (k === "filename_prefix" && typeof v === "string") outputPrefixes.push(v);
       if ((k === "fps" || k === "frame_rate") && typeof v === "number") rates.push(v);
 
-      if (typeof v === "string" && MODEL_INPUT_RE.test(k)) {
+      if (typeof v === "string" && (MODEL_INPUT_RE.test(k) || (cls === "AiplayH3ConditioningBridge" && k === "adapter"))) {
         const entry = { node: id, class: cls, input: k, file: v, bytes: null, mtimeMs: null, sha256: null };
         if (k === "lora_name") {
           loras.push({

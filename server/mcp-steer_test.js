@@ -106,10 +106,10 @@ console.log("\n§1  the simple way on the Video screen");
    * `modelsAlso` ("Add as extra", or the folder "Use this folder" left
    * behind), and the main folder holds no LoRA at all. The engine loads from
    * both, so pick() and the step defaults must both look in both. */
-  const disk = (files, { extra = false } = {}) => {
+  const disk = (files, { extra = false, nested = false } = {}) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "h3-disk-"));
     try {
-      const shelf = path.join(dir, extra ? "extra" : "models", "loras");
+      const shelf = path.join(dir, extra ? "extra" : "models", "loras", ...(nested ? ["minimax"] : []));
       fs.mkdirSync(path.join(dir, "models", "loras"), { recursive: true });
       fs.mkdirSync(shelf, { recursive: true });
       for (const f of files) fs.writeFileSync(path.join(shelf, f), "x");
@@ -152,9 +152,12 @@ console.log("\n§1  the simple way on the Video screen");
     extraRig.loraSteps?.turboLora === 8 && extraRig.stepDefaults?.standard === 8 && extraRig.turboBuilds?.eight === true
     && extraRig.steps === 8, JSON.stringify(extraRig));
   ok("config.js: pick() and the step defaults share ONE onDisk(), and it reads the extra folders",
-    /const pick = \(sub, \.\.\.names\) => names\.find\(\(n\) => onDisk\(sub, n\)\)/.test(src("./config.js"))
+    /const found = localFile\(sub, name\);/.test(src("./config.js"))
     && (src("./config.js").match(/function onDisk\(/g) || []).length === 1
-    && /function onDisk\(sub, name\) \{\n\s+const bases = \[MODELS_DIR, \.\.\.MODELS_ALSO\];/.test(src("./config.js")));
+    && /scanBasesSync\(\[MODELS_DIR, \.\.\.MODELS_ALSO\]\)/.test(src("./config.js")));
+  const nestedRig = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { extra: true, nested: true });
+  ok("nested H3 LoRAs in an extra models folder select the same matched step defaults",
+    !nestedRig.error && same(nestedRig, rig), JSON.stringify(nestedRig));
   /* The point of all of it: on every disk the default loads a file distilled
    * for exactly that many steps, on both paths, which is what workflow.js
    * h3TurboLoraFor picks when a render names no step count. */
@@ -221,6 +224,7 @@ console.log("\n§1  the simple way on the Video screen");
   ok("make_clip's quality text names no current step count and says where to read it",
     !/currently \d+ steps?/i.test(qDesc) && /studio_status/.test(qDesc) && /h3_quality_steps/.test(qDesc), qDesc);
   const posts = [];
+  const songs = [], loraQueries = [];
   let defaults = null;
   const stub = http.createServer(async (req, res) => {
     const chunks = [];
@@ -234,6 +238,14 @@ console.log("\n§1  the simple way on the Video screen");
     if (req.method === "POST" && req.url === "/api/video") {
       posts.push(JSON.parse(Buffer.concat(chunks).toString() || "{}"));
       return res.end(JSON.stringify({ ok: true, job: { id: `j${posts.length}` } }));
+    }
+    if (req.method === "POST" && req.url === "/api/generate") {
+      songs.push(JSON.parse(Buffer.concat(chunks).toString() || "{}"));
+      return res.end(JSON.stringify({ ok: true, engine: "yue2-comfy", job: { id: `s${songs.length}` } }));
+    }
+    if (req.method === "GET" && req.url.startsWith("/api/loras")) {
+      loraQueries.push(new URL(req.url, "http://127.0.0.1").searchParams.get("for"));
+      return res.end(JSON.stringify({ loras: [] }));
     }
     return res.end("{}");
   });
@@ -269,6 +281,17 @@ console.log("\n§1  the simple way on the Video screen");
       ok(`${name}: make_clip sends fast ${d.stepDefaults?.fast}, best ${d.stepDefaults?.best}, and no quality leaves the engine's default`,
         same(sent, [d.stepDefaults?.fast, d.stepDefaults?.best, "unset"]), JSON.stringify(sent));
     }
+    const nestedSong = await call("make_song", { caption: "Warm folk", lyrics: "Words", engine: "yue2-comfy",
+      checkpoint: "yue2/base.safetensors", lora: "voices/audio.safetensors", lora_clip: "voices/planner.safetensors" });
+    ok("the native MCP transport preserves nested checkpoint and both adapter names",
+      !nestedSong.error && !nestedSong.result?.isError && songs[0]?.checkpoint === path.join("yue2", "base.safetensors")
+      && songs[0]?.lora === path.join("voices", "audio.safetensors") && songs[0]?.loraClip === path.join("voices", "planner.safetensors"), JSON.stringify(nestedSong).slice(0, 200));
+    const nestedLoras = await call("list_loras", { for: "yue2/base.safetensors" });
+    ok("native MCP LoRA compatibility queries preserve the selected model's subfolder",
+      !nestedLoras.error && !nestedLoras.result?.isError && loraQueries[0] === path.join("yue2", "base.safetensors"));
+    const unsafeSong = await call("make_song", { caption: "Warm folk", checkpoint: "../base.safetensors" });
+    ok("native MCP refuses a parent model path before an HTTP render request",
+      (unsafeSong.error || unsafeSong.result?.isError) && songs.length === 1);
   } finally {
     proc.kill();
     await new Promise((resolve) => stub.close(resolve));

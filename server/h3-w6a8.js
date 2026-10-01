@@ -3,6 +3,7 @@
  * Readiness checks installed source in the configured engine Python only. */
 import fs from "node:fs";
 import path from "node:path";
+import { scanBasesSync, findShelfModel } from "./localmodels.js";
 
 export const H3_W6A8_FILES = Object.freeze([
   { id: "videoW6A8", role: "fl2va", addonFor: "video", file: "minimax_h3_fl2va_pruned_w6a8.safetensors",
@@ -70,7 +71,8 @@ function sitePackages(python) {
 
 /** Read-only source evidence, no Python process, GPU probe, download or update.
  * The package location comes from config.python, never another benchmark venv. */
-export function probeH3W6a8({ python, comfyDir, modelsDir, modelsAlso = [], gpu = null, torchBackend = null } = {}) {
+export function probeH3W6a8({ python, comfyDir, modelsDir, modelsAlso = [], gpu = null, torchBackend = null,
+  scanModels = scanBasesSync } = {}) {
   const quant = read(path.join(comfyDir || "", "comfy", "quant_ops.py"));
   const ops = read(path.join(comfyDir || "", "comfy", "ops.py"));
   const loader = quant === null || ops === null ? null
@@ -95,12 +97,13 @@ export function probeH3W6a8({ python, comfyDir, modelsDir, modelsAlso = [], gpu 
     torchCuda = version.match(/^cuda(?:\s*:[^=\n]+)?\s*=\s*["']([^"']+)["']/m)?.[1] ?? null;
     break;
   }
-  const files = Object.fromEntries(H3_W6A8_FILES.map((build) => [build.role, {
-    file: build.file, bytes: build.bytes,
-    present: [modelsDir, ...modelsAlso].filter(Boolean).some((base) => ["diffusion_models", "unet"].some((folder) => {
-      try { return fs.statSync(path.join(base, folder, build.file)).size === build.bytes; } catch { return false; }
-    })),
-  }]));
+  const shelf = scanModels([modelsDir, ...modelsAlso].filter(Boolean));
+  const files = Object.fromEntries(H3_W6A8_FILES.map((build) => {
+    let found = null;
+    try { found = findShelfModel(shelf, ["diffusion_models", "unet"], build.file); }
+    catch { /* An ambiguous nested filename cannot establish installation. */ }
+    return [build.role, { file: found?.name || build.file, bytes: build.bytes, present: found?.bytes === build.bytes }];
+  }));
   return { ...h3W6a8Compatibility({ gpu, torchBackend, loader, kitchenSixbit, kitchenVersion, torchCuda, python }),
     packageRoot, sourceEvidenceOnly: true, files };
 }

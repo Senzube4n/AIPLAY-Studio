@@ -61,7 +61,7 @@ import * as provenance from "../provenance.js";
 import { TOOL, normalizeActor } from "../provenance.js";
 import { buildRecord, graphProblems, sha256, sortedJSON } from "./record.js";
 import { store as defaultStore } from "./store.js";
-import { applyModelOverrides } from "../localmodels.js";
+import { applyModelOverrides, resolveGraphModels, scanBases, extraBases, uniqueDirs } from "../localmodels.js";
 import { checkGraph } from "../safety/graph.js";
 import { refusalEvent, safetyError } from "../safety/refusal.js";
 import { isBriefChatVia } from "./chat-vias.js";
@@ -546,7 +546,9 @@ export function createEngineClient(deps = {}) {
   async function dispatch(spec = {}) {
     /* Local stand-ins chosen on the Models screen, applied BEFORE the record is
      * built so the ledger names the file that actually rendered. */
-    const graph = applyModelOverrides(spec.graph, config.modelOverrides);
+    const files = await scanBases(uniqueDirs([config.modelsDir, ...(config.modelsAlso || []),
+      ...(await extraBases(config.comfy.extraArgs)), path.join(config.comfyDir, "models")]));
+    const graph = resolveGraphModels(applyModelOverrides(spec.graph, config.modelOverrides), files);
     const problems = graphProblems(graph);
     if (problems.length) {
       const err = new Error(`this graph cannot be run: ${problems[0]}`);

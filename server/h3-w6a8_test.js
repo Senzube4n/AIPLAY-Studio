@@ -12,6 +12,7 @@ import { knobRows, setKnob } from "./videolab/catalog.js";
 import { modelKeyFromFiles } from "./engine/record.js";
 import { createEngineClient } from "./engine/client.js";
 import { append, read, verify } from "./provenance.js";
+import { scanBasesSync } from "./localmodels.js";
 
 const compatible = { gpu: { vendor: "nvidia", name: "RTX 4070 Ti SUPER" }, torchBackend: "cuda",
   loader: true, kitchenSixbit: true, kitchenVersion: "0.2.36", torchCuda: "13.0" };
@@ -89,6 +90,37 @@ test("probe follows only the configured interpreter, including its plain .pth im
     await write(path.join(pkg, "comfy_kitchen", "tensor", "w4a8_int8.py"), '# old four-bit only\n');
     assert.equal(probeH3W6a8(settings).ready, false);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("W6 installation resolves nested model shelves and refuses ambiguous or wrong-sized weights", async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiplay-w6-nested-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const modelsDir = path.join(root, "models"), also = path.join(root, "extra"), build = H3_W6A8_FILES[0];
+  const write = async (base, folder, name, bytes) => {
+    const full = path.join(base, folder, name);
+    await fs.mkdir(path.dirname(full), { recursive: true }); await fs.writeFile(full, bytes);
+  };
+  await write(also, "unet", path.join("owners", build.file), "abc");
+  const settings = { modelsDir, modelsAlso: [also], comfyDir: root };
+  assert.equal(probeH3W6a8(settings).files.fl2va.present, false, "a filename is insufficient without the exact published size");
+  // Real recursive fixture scanning; substitute only the published size so a
+  // read-only readiness test never needs a sixteen-gigabyte temporary file.
+  const scanModels = bases => scanBasesSync(bases).map(file => ({ ...file, bytes: file.bytes === 3 ? build.bytes : file.bytes }));
+  let result = probeH3W6a8({ ...settings, scanModels });
+  assert.equal(result.files.fl2va.present, true);
+  assert.equal(result.files.fl2va.file, path.join("owners", build.file));
+  await write(modelsDir, "diffusion_models", path.join("owners", build.file), "bad-size");
+  result = probeH3W6a8({ ...settings, scanModels });
+  assert.equal(result.files.fl2va.present, false, "a later base cannot replace the earlier file with the same native relative name");
+  await fs.rm(path.join(modelsDir, "diffusion_models", "owners", build.file));
+  await write(modelsDir, "diffusion_models", path.join("second", build.file), "abc");
+  assert.equal(probeH3W6a8({ ...settings, scanModels }).files.fl2va.present, false, "different nested paths with the same leaf remain ambiguous");
+  await write(modelsDir, "diffusion_models", build.file, "abc");
+  result = probeH3W6a8({ ...settings, scanModels });
+  assert.equal(result.files.fl2va.present, true, "an exact top-level native selection wins over nested basename candidates");
+  assert.equal(result.files.fl2va.file, build.file);
+  await write(modelsDir, "loras", H3_W6A8_FILES[1].file, "abc");
+  assert.equal(probeH3W6a8({ ...settings, scanModels }).files.ref2va.present, false, "another shelf cannot certify an H3 transformer");
 });
 
 test("NVIDIA-only W6 downloads refuse incompatible hardware before fetching", async () => {

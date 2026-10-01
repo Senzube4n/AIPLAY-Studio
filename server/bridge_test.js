@@ -159,7 +159,7 @@ console.log("\n§4  the defaults, the knobs, the doors, the tools, the rows, the
   eq("the strength knob is 0–1", [alpha?.kind, alpha?.min, alpha?.max, alpha?.path], ["number", 0, 1, ["video", "engines", "h3", "bridgeAlpha"]]);
   ok("...and both carry the authors' own figures and the reference-path warning", /6 in 10 renders better/.test(adapter?.effect || "") && /REFERENCE path worse/.test(adapter?.effect || ""));
   ok("the engine deploys the studio nodes before it starts", /deployStudioNodes\(path\.join\(config\.comfyDir, "custom_nodes"\)\)/.test(comfy));
-  ok("create and extend take bridge and bridgeAlpha", (index.match(/bridge: typeof b\.bridge === "string" && b\.bridge \? path\.basename\(b\.bridge\) : undefined,/g) || []).length === 2);
+  ok("create and extend preserve safe relative bridge names and bridgeAlpha", (index.match(/bridge: typeof b\.bridge === "string" && b\.bridge \? requireModelName\(b\.bridge\) : undefined,/g) || []).length === 2);
   ok("make_clip and extend_clip declare bridge and bridge_alpha and forward them",
     (mcp.match(/bridge_alpha: \{ type: "number", minimum: 0, maximum: 1/g) || []).length === 2
     && (mcp.match(/bridgeAlpha: Number\.isFinite\(a\.bridge_alpha\) \? a\.bridge_alpha : undefined,/g) || []).length === 2);

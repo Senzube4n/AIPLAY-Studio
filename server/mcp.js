@@ -62,6 +62,7 @@ import { standRigTools } from "./mcp-standrig.js";
 import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
 import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
+import { requireModelName } from "./localmodels.js";
 import { waitForArtJob, emptyResultNote } from "./art-wait.js";
 import { WHISPER_MODELS } from "./config.js";
 
@@ -677,12 +678,12 @@ export const TOOLS = [
         planTopP: Number.isFinite(a.plan_top_p) ? a.plan_top_p : undefined,
         planTemperature: Number.isFinite(a.plan_temperature) ? a.plan_temperature : undefined,
         engine: a.engine,
-        checkpoint: typeof a.checkpoint === "string" ? safeName(a.checkpoint, "checkpoint") : undefined,
+        checkpoint: typeof a.checkpoint === "string" ? requireModelName(a.checkpoint) : undefined,
         postprocess: typeof a.postprocess === "boolean" ? a.postprocess : undefined,
         /* "" is an explicit none; undefined lets the route use the saved choice. */
-        lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
+        lora: typeof a.lora === "string" ? (a.lora ? requireModelName(a.lora) : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
-        loraClip: typeof a.lora_clip === "string" ? (a.lora_clip ? safeName(a.lora_clip, "LoRA") : "") : undefined,
+        loraClip: typeof a.lora_clip === "string" ? (a.lora_clip ? requireModelName(a.lora_clip) : "") : undefined,
         ...(typeof a.cover_of === "string" && a.cover_of
           ? { coverOf: { file: safeName(a.cover_of, "song"),
                          ...(Number.isFinite(a.cover_seconds) ? { seconds: a.cover_seconds } : {}),
@@ -2542,7 +2543,7 @@ export const TOOLS = [
       additionalProperties: false,
     },
     async run(a) {
-      const q = a.for ? `?for=${encodeURIComponent(safeName(a.for, "checkpoint"))}` : "";
+      const q = a.for ? `?for=${encodeURIComponent(requireModelName(a.for))}` : "";
       return await api("GET", `/api/loras${q}`);
     },
   },
@@ -2987,7 +2988,7 @@ export const TOOLS = [
       const body = {
         ...(use !== "pictures" ? { engine: a.engine, ...(a.engine === "auto" ? {} : { choose: true }) } : {}),
         ...(use !== "covers" ? { imageEngine: a.engine } : {}),
-        ...(a.checkpoint && use !== "pictures" ? { checkpoint: safeName(a.checkpoint, "checkpoint") } : {}),
+        ...(a.checkpoint && use !== "pictures" ? { checkpoint: requireModelName(a.checkpoint) } : {}),
       };
       const r = await api("POST", "/api/artconfig", body);
       if (r.error) throw new Error(r.error);

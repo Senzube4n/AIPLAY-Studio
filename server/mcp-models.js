@@ -91,7 +91,7 @@ export function modelTools(api) {
     },
     {
       name: "model_override",
-      description: "Map a catalogue filename to an installed file in the same model shelf, or clear the mapping with use:null. Uses the Models page validation. The mapping takes effect for subsequent graphs; this does not prove a different architecture or quantization is compatible.",
+      description: "Map a catalogue filename to an installed file in the same model shelf, including a relative subfolder path, or clear the mapping with use:null. Uses the Models page validation. The mapping takes effect for subsequent graphs; this does not prove a different architecture or quantization is compatible.",
       inputSchema: { type: "object", required: ["file", "use"], properties: { file: { type: "string" }, use: { type: ["string", "null"] } }, additionalProperties: false },
       async run(a) { return await api("POST", "/api/models", { action: "override", file: a.file, use: a.use }); },
     },

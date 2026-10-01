@@ -37,10 +37,10 @@
  * touched: `steps` stays what the owner asked for.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 
 import { config, loraStepsOf } from "../config.js";
+import { scanBasesSync, findShelfModel } from "../localmodels.js";
 import { imageCostSeconds } from "../art.js";
 import { CATALOG } from "../models.js";
 import { alignFrames, h3TurboLoraFor, videoEngine } from "../workflow.js";
@@ -152,9 +152,8 @@ export function withFrameGrid(orderRow) {
 export function loraOnDisk(name, cfg = config) {
   if (!name) return false;
   const bases = [cfg.modelsDir, ...(Array.isArray(cfg.modelsAlso) ? cfg.modelsAlso : [])].filter(Boolean);
-  return bases.some((b) => {
-    try { return fs.statSync(path.join(b, "loras", String(name))).size > 0; } catch { return false; }
-  });
+  try { return !!findShelfModel(scanBasesSync(bases), "loras", name); }
+  catch { return false; }
 }
 
 /**

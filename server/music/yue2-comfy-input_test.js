@@ -30,6 +30,7 @@ import { buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA } from "../workflow.js";
 import { createMusicTools } from "../chat/music-tools.js";
 import { prepareGgufJob } from "../music-gguf-input.js";
 import { validateYue2StyleAdapter } from "./yue2-style-adapters.js";
+import { requireModelName, modelLeaf, findShelfModel } from "../localmodels.js";
 
 let pass = 0;
 const failures = [];
@@ -149,7 +150,7 @@ console.log("\n§3  the route lane: a score on yue2-comfy reaches the graph, or 
   ];
   /* Every free name of the sliced branch, injected. A new one fails loudly
    * here (ReferenceError), which is the point of the slice. */
-  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields, validateYue2StyleAdapter,
+  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields, validateYue2StyleAdapter, requireModelName, modelLeaf, findShelfModel,
     config: { music: { yue2Checkpoint: "yue2_3b_bf16.safetensors", yue2Lora: null, yue2LoraClip: null,
       engines: { "yue2-comfy": { maxDuration: 360 } }, precision: "int8" }, audioRef: { denoise: 0.5 } },
     scanBases: async () => shelf, modelBases: async () => [], probeModel: async () => ({ family: "yue2" }),

@@ -469,6 +469,12 @@ Studio hosts no weights and mirrors none: every download goes straight to the pu
 
 Some things worth knowing before you click:
 
+- **Model subfolders are supported.** Choose the root folder, for example
+  `A:\Data\models`. Files inside `diffusion_models\minimax\` and
+  `checkpoints\yue2\` appear in the model pickers and can stay where they are.
+  If two subfolders contain the same filename, choose its specific relative
+  path. Give copies with identical relative paths in different model roots
+  distinct paths so the renderer can identify the selected file.
 - **Downloads resume.** A dropped connection three quarters of the way through a
   12 GB file does not cost you the file. The partial is written as `.part` and
   only moved into place when the size matches to the byte, so an interrupted

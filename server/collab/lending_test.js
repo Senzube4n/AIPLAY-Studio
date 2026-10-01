@@ -37,6 +37,20 @@ const SHA = createHash("sha256").update(PNG).digest("hex");
 const FP = "ab".repeat(16);
 const src = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
 
+test("lending discovers nested speed-up LoRAs without guessing duplicates", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "aiplay-lending-nested-"));
+  try {
+    const cfg = { modelsDir: dir, modelsAlso: [] };
+    await mkdir(path.join(dir, "loras", "minimax"), { recursive: true });
+    await writeFile(path.join(dir, "loras", "minimax", "turbo.safetensors"), "weights");
+    assert.equal(L.loraOnDisk("turbo.safetensors", cfg), true);
+    await mkdir(path.join(dir, "loras", "other"));
+    await writeFile(path.join(dir, "loras", "other", "turbo.safetensors"), "weights");
+    assert.equal(L.loraOnDisk("turbo.safetensors", cfg), false);
+    assert.equal(L.loraOnDisk("minimax/turbo.safetensors", cfg), true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 /** An order the way the door builds one: a shot packet and its pictures. */
 function order({ seconds = 5, engineMode = "hybrid", refs = true, steps = 8, songUnder = null, id = null } = {}) {
   return O.makeOrder({

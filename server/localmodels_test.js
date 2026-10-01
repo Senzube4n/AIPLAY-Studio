@@ -20,7 +20,7 @@
  *     object, because the ledger hashes it and an untouched render must hash
  *     exactly as it did before this feature existed.
  *
- *   THE SCAN IS A PROMISE ABOUT WHAT COMFYUI WILL SEE. Top level only, weight
+ *   THE SCAN IS A PROMISE ABOUT WHAT COMFYUI WILL SEE. Relative subfolder paths, weight
  *     extensions only, zero-byte files skipped (a half-finished download is not
  *     a model), and `diffusion_models` ≡ `unet` / `text_encoders` ≡ `clip`,
  *     because a loader reading one lists the other.
@@ -35,7 +35,8 @@ import path from "node:path";
 import os from "node:os";
 import {
   MODEL_FOLDERS, folderGroup, shelfOf, samePath, uniqueDirs,
-  extraBases, scanBases, countByFolder, writeModelPathsYaml, applyModelOverrides,
+  extraBases, scanBases, scanBasesSync, findShelfModel, modelName, resolveGraphModels,
+  countByFolder, writeModelPathsYaml, applyModelOverrides,
 } from "./localmodels.js";
 
 let pass = 0;
@@ -102,7 +103,8 @@ const base = path.join(tmp, "models");
   ok("a .gguf is a weight too", names.includes("style.gguf"));
   ok("a .txt beside the weights is not a model", !names.includes("notes.txt"));
   ok("a zero-byte file is not a model (a half-finished download)", !names.includes("half_downloaded.safetensors"));
-  ok("nested files are not listed — a loader names files inside the folder", !names.includes("deep.safetensors"));
+  ok("nested files retain their relative loader path", names.includes(path.join("nested", "deep.safetensors")));
+  ok("sync startup and async scanning agree", JSON.stringify(scanBasesSync([base])) === JSON.stringify(files));
   ok("a folder ComfyUI does not load from is not scanned", !names.includes("stray.safetensors"));
   const unet = files.find((f) => f.name === "some_dit_fp16.safetensors");
   ok("a unet file is shelved as diffusion_models", unet.folder === "unet" && unet.shelf === "diffusion_models");
@@ -112,9 +114,53 @@ const base = path.join(tmp, "models");
     (await scanBases([base, path.join(base, "..", "models")])).length === files.length);
 
   const counts = countByFolder(files);
-  ok("counts are per folder, with bytes", counts.checkpoints.files === 1 && counts.checkpoints.bytes === 1000
+  ok("counts include subfolders with bytes", counts.checkpoints.files === 2 && counts.checkpoints.bytes === 1010
     && counts.unet.files === 1 && counts.vae.bytes === 500);
   ok("a folder with nothing in it is not counted", !("controlnet" in counts));
+}
+
+/* Nested names never collapse to a different model or edit a prompt. */
+{
+  ok("both separators normalize to the native loader path", modelName("minimax/h3.safetensors") === path.join("minimax", "h3.safetensors")
+    && modelName("minimax\\h3.safetensors") === path.join("minimax", "h3.safetensors"));
+  for (const bad of ["../x.safetensors", "a/../x.safetensors", "a\\..\\x.safetensors", "/x.safetensors", "C:\\x.safetensors", "\\\\host\\x", "a//x", "x\0.bin"]) {
+    ok(`refuses outside/invalid model path ${JSON.stringify(bad)}`, modelName(bad) === null);
+  }
+  const files = await scanBases([base]);
+  ok("a bare name locates a unique nested model", findShelfModel(files, "checkpoints", "deep.safetensors")?.name === path.join("nested", "deep.safetensors"));
+  ok("a nested typo never falls back to another subfolder", findShelfModel(files, "checkpoints", "wrong/deep.safetensors") === null);
+  const graph = {
+    1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "deep.safetensors" } },
+    2: { class_type: "CLIPTextEncode", inputs: { text: "deep.safetensors" } },
+    3: { class_type: "LoadImage", inputs: { image: "deep.safetensors", filename_prefix: "deep.safetensors" } },
+  };
+  const out = resolveGraphModels(graph, files);
+  ok("a loader receives the relative subfolder path", out[1].inputs.ckpt_name === path.join("nested", "deep.safetensors"));
+  ok("text and media inputs are unchanged", out[2] === graph[2] && out[3] === graph[3]);
+  ok("original graph survives resolution", graph[1].inputs.ckpt_name === "deep.safetensors");
+  ok("already resolved graph retains object identity", resolveGraphModels(out, files) === out);
+  const bridge = { folder: "conditioning_bridges", name: path.join("h3", "bridge.safetensors"), full: path.join(base, "conditioning_bridges", "h3", "bridge.safetensors") };
+  const encoder = { folder: "audio_encoders", name: path.join("yue2", "score.safetensors"), full: path.join(base, "audio_encoders", "yue2", "score.safetensors") };
+  const specialized = resolveGraphModels({
+    1: { class_type: "AiplayH3ConditioningBridge", inputs: { adapter: "bridge.safetensors" } },
+    2: { class_type: "UnrelatedAdapter", inputs: { adapter: "bridge.safetensors" } },
+    3: { class_type: "AudioEncoderLoader", inputs: { audio_encoder_name: "score.safetensors" } },
+  }, [bridge, encoder]);
+  ok("conditioning bridges and audio encoders keep their subfolder", specialized[1].inputs.adapter === bridge.name && specialized[3].inputs.audio_encoder_name === encoder.name);
+  ok("an unrelated adapter field is unchanged", specialized[2].inputs.adapter === "bridge.safetensors");
+  let rootsAmbiguous = null;
+  try { findShelfModel([bridge, { ...bridge, full: path.join(tmp, "other-root", bridge.name) }], "conditioning_bridges", bridge.name); }
+  catch (err) { rootsAmbiguous = err; }
+  ok("identical relative paths in distinct roots cannot select an arbitrary copy", rootsAmbiguous?.status === 400 && /several configured/.test(rootsAmbiguous.message));
+  await mkdir(path.join(base, "checkpoints", "other"));
+  await writeFile(path.join(base, "checkpoints", "other", "deep.safetensors"), "other");
+  const duplicates = await scanBases([base]);
+  let ambiguity = null;
+  try { findShelfModel(duplicates, "checkpoints", "deep.safetensors"); } catch (err) { ambiguity = err; }
+  ok("ambiguous nested basenames require an explicit path", ambiguity?.status === 400 && /subfolder/.test(ambiguity.message));
+  ok("an explicit path disambiguates", findShelfModel(duplicates, "checkpoints", "other/deep.safetensors")?.bytes === 5);
+  await writeFile(path.join(base, "checkpoints", "deep.safetensors"), "top");
+  ok("top-level file takes precedence over nested duplicates", findShelfModel(await scanBases([base]), "checkpoints", "deep.safetensors")?.bytes === 3);
 }
 
 /* ── the YAML that makes ComfyUI look there ────────────────────────────── */
@@ -174,6 +220,12 @@ const base = path.join(tmp, "models");
     && applyModelOverrides(graph, null) === graph);
   ok("an override mapped to nothing is ignored", applyModelOverrides(graph, { "minimax_music3_dit_int8_convrot.safetensors": "" }) === graph);
   ok("a node without inputs survives", applyModelOverrides({ "1": { class_type: "X" } }, overrides)["1"].class_type === "X");
+  const bridges = applyModelOverrides({
+    1: { class_type: "AiplayH3ConditioningBridge", inputs: { adapter: "bridge.safetensors" } },
+    2: { class_type: "UnrelatedAdapter", inputs: { adapter: "bridge.safetensors" } },
+  }, { "bridge.safetensors": path.join("h3", "chosen.safetensors") });
+  ok("a bridge override uses the selected nested file", bridges[1].inputs.adapter === path.join("h3", "chosen.safetensors"));
+  ok("bridge overrides leave unrelated adapter fields unchanged", bridges[2].inputs.adapter === "bridge.safetensors");
   ok("a non-graph is handed back unchanged", applyModelOverrides(null, overrides) === null);
 }
 

@@ -72,6 +72,43 @@ test("duplicate shelf filenames are refused rather than fingerprinting the wrong
   assert.equal(cap.ready, false); assert.equal(cap.adapters.length, 0); assert.match(cap.issues.join(" "), /More than one/);
 });
 
+test("nested model selections keep their native relative names and exact selected identities", async t => {
+  const f = await fixture(t);
+  const add = async (folder, name, contents) => {
+    const full = path.join(f.directory, "nested-models", folder, name);
+    await mkdir(path.dirname(full), { recursive: true }); await writeFile(full, contents);
+    f.files.push({ folder, name, full, bytes: contents.length });
+  };
+  const checkpoint = path.join("owner", "base.safetensors"), adapter = path.join("one", "mine_audio.safetensors");
+  await add("checkpoints", checkpoint, "nested checkpoint");
+  await add("loras", adapter, "first nested adapter");
+  await add("loras", path.join("two", "mine_audio.safetensors"), "second nested adapter");
+  f.info.CheckpointLoaderSimple = { input: { required: { ckpt_name: [[checkpoint]] } } };
+  f.info.LoraLoaderModelOnly = { input: { required: { lora_name: [[adapter, path.join("two", "mine_audio.safetensors")]] } } };
+  const cap = await f.runtime.capabilities({ checkpoint: "owner\\base.safetensors", adapter: "one/mine_audio.safetensors" });
+  assert.equal(cap.ready, true);
+  assert.equal(cap.checkpoints[0].name, checkpoint);
+  assert.equal(cap.checkpoints[0].identity, `sha256:${sha("nested checkpoint")}`);
+  assert.equal(cap.adapters.find(row => row.name === adapter).identity, `sha256:${sha("first nested adapter")}`);
+  assert.equal(cap.adapters.find(row => row.name === adapter).training, null, "a nested adapter does not inherit a flat training receipt");
+  assert.equal(cap.adapters.find(row => row.name.startsWith("two" + path.sep)).identity, undefined);
+  assert.ok(!JSON.stringify(cap).includes(f.directory));
+});
+
+test("relative model selection validation does not relax flat source or receipt guards", async t => {
+  const f = await fixture(t);
+  for (const name of ["../base.safetensors", "owner/../base.safetensors", "owner\\..\\base.safetensors",
+    "C:\\base.safetensors", "C:base.safetensors", "/base.safetensors", "\\\\server\\base.safetensors", "bad\0.safetensors"])
+    await assert.rejects(f.runtime.capabilities({ checkpoint: name }), /local shelf/);
+  const input = receipt();
+  await saveTrainingReceipt(f.appData, { ...input, checkpoint: "owner/base.safetensors" });
+  assert.equal((await readTrainingReceipt(f.appData, input.runId)).checkpoint, path.join("owner", "base.safetensors"));
+  await assert.rejects(lookupTrainingReceipt(f.appData, { name: "owner/mine_audio.safetensors", identity: sha("adapter") }), /local shelf/);
+  await assert.rejects(completeTrainingReceipt(f.appData, { runId: input.runId, name: "owner/mine_audio.safetensors",
+    adapterFullPath: f.files.find(row => row.name === "mine_audio.safetensors").full }), /local shelf/);
+  await assert.rejects(f.runtime.inspectSource("owner/source.wav"));
+});
+
 test("a selected model changed during hashing cannot receive a verified identity", async t => {
   const f = await fixture(t), runtime = createListeningLabRuntime({ ...f.options,
     hashFile: async file => { await writeFile(file, "changed during hashing"); return sha(await readFile(file)); } });

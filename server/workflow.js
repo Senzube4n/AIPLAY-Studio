@@ -24,6 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config, loraStepsOf } from "./config.js";
+import { scanBasesSync, findShelfModel, folderGroup, modelName, modelLeaf } from "./localmodels.js";
 import { h3OptionalOptions, REFMOD_NODES, FIZGIG_NODE, refModLoaderInputs, refModApplyInputs } from "./h3-refmod-options.js";
 import { probeH3W6a8, resolveH3Checkpoint, isH3W6A8File } from "./h3-w6a8.js";
 import { validateYue2StyleAdapter } from "./music/yue2-style-adapters.js";
@@ -824,8 +825,15 @@ export function ideogramRefusalMessage(ladderLength, tried) {
 
 /* In the models folder or one of the extra ones (config.modelsAlso): the
  * engine loads from all of them. */
-const onDisk = (sub, file) => [config.modelsDir, ...(config.modelsAlso || [])]
-  .some((b) => { try { return fs.statSync(path.join(b, sub, file)).size > 0; } catch { return false; } });
+const onDisk = (sub, file, snapshot = null) => {
+  const name = modelName(file);
+  if (!name) return false;
+  const bases = [config.modelsDir, ...(config.modelsAlso || [])];
+  if (bases.some((b) => folderGroup(sub).some((folder) => {
+    try { const st = fs.statSync(path.join(b, folder, name)); return st.isFile() && st.size > 0; } catch { return false; }
+  }))) return true;
+  try { return !!findShelfModel(snapshot?.() || scanBasesSync(bases), sub, name); } catch { return false; }
+};
 
 /* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
  * encoder (models.js downloads it there), and ONLY that: ROCm has no kernel for
@@ -1363,10 +1371,12 @@ const VIDEO_MODEL_DIRS = {
 export function videoReady(name) {
   const e = videoEngine(name);
   const missing = [];
+  let files = null;
+  const snapshot = () => files ||= scanBasesSync([config.modelsDir, ...(config.modelsAlso || [])]);
   for (const [key, sub] of Object.entries(VIDEO_MODEL_DIRS)) {
     const file = e[key];
     if (!file) continue;
-    if (onDisk(sub, file)) continue;
+    if (onDisk(sub, file, snapshot)) continue;
     missing.push(file);
   }
   return { ready: missing.length === 0, missing };
@@ -1985,7 +1995,7 @@ export function h3SamplerFor(eng, opts = {}) {
  */
 export function h3SigmaShiftFor(eng, { steps, refs = false } = {}) {
   const { turbo, lora } = h3TurboLoraFor(eng, { steps, refs });
-  const trained = (turbo && lora && eng.turboShiftByLora?.[lora]) || null;
+  const trained = (turbo && lora && (eng.turboShiftByLora?.[lora] || eng.turboShiftByLora?.[modelLeaf(lora)])) || null;
   const choose = (panel, mine, base) => (turbo && panel > 0) ? [panel, "panel"]
     : (trained && mine > 0) ? [mine, "lora"] : [base, "base"];
   const [video, source] = choose(eng.turboShiftVideo, trained?.video, eng.shiftVideo);

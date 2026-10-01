@@ -92,6 +92,11 @@ try {
     eq("...audio from the same row", s.audio, 3);
   }
   {
+    const nested = h3SigmaShiftFor({ ...eng(), turboLora4: `minimax/${A4}` }, { steps: 4 });
+    eq("a nested turbo keeps the shift it was distilled at", nested.video, 6);
+    eq("...and its full loader selection", nested.lora, `minimax/${A4}`);
+  }
+  {
     const s = h3SigmaShiftFor(eng(), { steps: 8 });
     eq("a LoRA the table does not know runs the base shift", s.video, 12);
     eq("...and says so", s.source, "base");
