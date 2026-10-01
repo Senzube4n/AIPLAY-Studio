@@ -299,7 +299,7 @@ export function buildYue2ComfyGraph({
    * (temperature, top_p, top_k, repetition_penalty), `planSampling` node 4's
    * (temperature, top_p). server/music/yue2-comfy-input.js validates all three. */
   abc = null, sampling = null, planSampling = null,
-  prefix = "aiplay",
+  prefix = "aiplay", scoreCaptureKey = "", captureScore = true,
 }) {
   validateYue2StyleAdapter({ engine: "yue2-comfy", lora, loraClip, cot });
   const plan = cot !== "off";
@@ -377,6 +377,11 @@ export function buildYue2ComfyGraph({
     },
     8: { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["1", 2] } },
     9: saveAudioNode(prefix),
+    /* A sibling output branch: music consumes the unchanged ABC wire. Its
+     * exact text reaches history, including when the planner was cached. */
+    ...(plan && captureScore ? { 11: { class_type: "AiplayYuE2Score", inputs: {
+      abc: score ?? ["4", 0], seconds: ["5", 1], capture_key: scoreCaptureKey,
+    } } } : {}),
   };
 }
 

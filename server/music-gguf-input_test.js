@@ -330,6 +330,9 @@ await test("actual browser currentSpec + generate send only helper-compatible na
     yTemp: "0.8", yTopP: "", yPlanTemp: "" };
   const elements = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
   elements.btnCreate = { disabled: false }; elements.btnPreview = { disabled: false };
+  // This shared outcome control belongs to every music engine, not to a legacy
+  // sampler. A fresh Create clears the previous failure's Details action.
+  elements.musicOutcomeDetails = { hidden: false };
   elements.yAbcUse = { checked: false }; elements.yAbc = { value: "" }; elements.scoreUse = { checked: false };
   // seedLocked is LOCKED here so the request carries seed 17 and can be asserted.
   // The app's own default is unlocked, which re-rolls the seed on every Create.
@@ -356,6 +359,7 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   }, { timeout: 1000 });
   await browser.generate(false, undefined);
   assert.equal(requests.length, 2); assert.deepEqual(alerts, []);
+  assert.equal(elements.musicOutcomeDetails.hidden, true, "a fresh native Create clears the shared failure Details action");
   for (const { body, prepared } of requests) {
     assert.equal(body.engine, "yue2-gguf"); assert.equal(body.quantization, "q4_0");
     assert.equal(prepared.cfgScale, 2.5); assert.equal(prepared.narSteps, 16);

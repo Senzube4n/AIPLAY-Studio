@@ -559,7 +559,7 @@ export const TOOLS = [
     description:
       "Every finished track, newest first: file name, title, length, and whether it already "
       + "has cover art, stems, timed lyrics or a video clip. Also returns generation warnings when recorded; "
-      + "an empty warning list does not certify lyric coverage or audio quality. Use the `file` value with the other tools. "
+      + "an empty warning list does not certify lyric coverage or audio quality. `score` links the saved sheet; `score_warning` explains a missing capture. Use the `file` value with the other tools. "
       + "`rights` says whether the song may be sold, worked out from the model catalogue as it is now: "
       + "{ class (unrestricted | yours-with-conditions | not-for-sale | unknown), sellable, label, short, capability, "
       + "licence, url, basis (licence | authors-statement | imported), add_ons (catalogue rows the song used that made it "
@@ -584,6 +584,9 @@ export const TOOLS = [
         has_cover: !!t.cover, has_stems: !!(t.stems || []).length,
         has_lyrics: !!t.lrc, clip: t.clip || null,
         warnings: Array.isArray(t.warnings) ? t.warnings : [],
+        has_score: !!(t.scoreSlug && t.scoreVersion),
+        score: t.scoreSlug && t.scoreVersion ? { slug: t.scoreSlug, version: t.scoreVersion } : null,
+        score_warning: t.scoreWarning || null,
         generation_limits: t.generationLimits ?? null,
         rights: t.rights && typeof t.rights === "object" ? {
           class: t.rights.class, sellable: t.rights.sellable ?? null, label: t.rights.label ?? null,

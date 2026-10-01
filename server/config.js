@@ -837,7 +837,7 @@ export const config = {
   },
   yue: {
     python: process.env.AIPLAY_YUE_PYTHON || saved.yuePython
-      || path.join(RIG, "venv-yue", "Scripts", "python.exe"),
+      || path.join(RIG, "venv-yue", ...(process.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"])),
     model: process.env.AIPLAY_YUE_MODEL || saved.yueModel
       || path.join(RIG, "yue2-kit", "models", "YuE2-3B"),
     vae: process.env.AIPLAY_YUE_VAE || saved.yueVae

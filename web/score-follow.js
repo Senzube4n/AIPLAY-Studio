@@ -87,7 +87,7 @@ export async function mountScoreFollow() {
   if (!row?.score?.text) throw new Error('This version has no readable notation.');
   $('title').textContent = nativeRun?'Native YuE2 score · seed '+data.run.request.seed:data.score.title || slug;
   const audio = $('audio');
-  const name = row.artifacts.find(a => /\.(flac|wav|mp3)$/i.test(a.name))?.name;
+  const name = row.artifacts.find(a => /\.(flac|wav|mp3|opus)$/i.test(a.name))?.name;
   if(nativeRun && data.run.outputUrl)audio.src=data.run.outputUrl;
   else if (name) audio.src = '/api/score/file/' + [slug, version, name].map(encodeURIComponent).join('/');
   else $('status').textContent = 'Draft score. Choose a recording to follow.';

@@ -776,6 +776,17 @@ async function main() {
   console.log("\n  -- score_get reports that the version you inherited is itself broken --");
 
   {
+    const { api, versions } = makeApi();
+    versions[0].producer = "aiplay-yue2-comfy-score-v1";
+    versions[0].source = { engine: "yue2-comfy", promptId: "prompt-comfy-1", checkpoint: "nested/yue2.safetensors" };
+    const r = await call("score_get", { score: "rain", version: "v1" }, api);
+    ok("a saved Comfy score identifies its renderer rather than implying Python artifacts",
+      r.result?.rendered?.producer === "aiplay-yue2-comfy-score-v1"
+      && r.result.rendered.source?.engine === "yue2-comfy"
+      && r.result.rendered.source?.promptId === "prompt-comfy-1");
+  }
+
+  {
     const { api } = makeApi();
     const r = await call("score_get", { score: "rain", version: "v1" }, api);
     ok("v1 comes back with its check attached", r.result?.check?.ok === false);

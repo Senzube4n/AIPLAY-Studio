@@ -378,6 +378,114 @@ test("the Jobs page: stopping… while a stop is under way, stopped (not failed)
   assert.match(APP, /a\.stopping \? `stopping \$\{a\.wasRunning\}…` : `stopped \$\{a\.wasRunning\}`/);
 });
 
+test("Python Create follows its own runtime readiness, independently of ComfyUI", () => {
+  const p = page("yue2");
+  const engine = p.state.musicEngines.yue2;
+  engine.ready = false;
+  engine.readinessNote = "Python dependencies missing. Choose YuE2 (ComfyUI), or finish the separate Python kit setup.";
+  p.ctx.musicEnginePaint();
+  assert.equal(p.$("btnCreate").disabled, true);
+  assert.equal(p.$("musicEngineWarn").hidden, false);
+  assert.equal(p.$("musicEngineWarn").textContent, engine.readinessNote);
+  engine.ready = true; p.state.engineReady = false;
+  p.ctx.musicEnginePaint();
+  assert.equal(p.$("btnCreate").disabled, false, "a ready separate Python kit does not require ComfyUI");
+  assert.equal(p.$("musicEngineWarn").hidden, true);
+  p.state.musicEngine = "yue2-comfy";
+  p.ctx.musicEnginePaint();
+  assert.equal(p.$("btnCreate").disabled, true, "ComfyUI routes still need ComfyUI");
+});
+
+test("ComfyUI score capability exposes the same PDF and score controls", () => {
+  const p = page("yue2-comfy");
+  p.state.musicEngines["yue2-comfy"].score = true;
+  p.ctx.musicEnginePaint();
+  assert.equal(p.$("sheetPdfRow").hidden, false);
+  assert.equal(p.$("scorePanel").hidden, false);
+  p.state.musicEngine = "minimax-music3";
+  p.ctx.musicEnginePaint();
+  assert.equal(p.$("sheetPdfRow").hidden, true);
+});
+
+function outcomePage() {
+  const elements = new Map();
+  const $ = id => {
+    if (!elements.has(id)) {
+      const classes = new Set();
+      elements.set(id, { hidden: true, textContent: "", addEventListener() {},
+        classList: { add: s => classes.add(s), remove: s => classes.delete(s), contains: s => classes.has(s) } });
+    }
+    return elements.get(id);
+  };
+  const dialogs = [];
+  const ctx = vm.createContext({ $, appAlert: (message, title) => dialogs.push({ message, title }) });
+  vm.runInContext(between("const musicOutcomeSeen =", "/* WHETHER COMFYUI IS HOLDING"), ctx);
+  return { $, ctx, dialogs };
+}
+
+test("a failed take remains visible when a later success arrives between polls", () => {
+  const p = outcomePage();
+  p.ctx.noticeMusicOutcome({ history: [{ id: "old", state: "done", file: "old.flac" }] });
+  const fail = { id: "failed", engine: "yue2", title: "Midnight", state: "failed", error: "Missing module\nFull Python traceback" };
+  p.ctx.noticeMusicOutcome({ history: [{ id: "newer", state: "done", file: "ok.flac" }, fail] });
+  assert.match(p.$("ctaNote").textContent, /Midnight.*Missing module/);
+  assert.doesNotMatch(p.$("ctaNote").textContent, /traceback/, "the footer remains short");
+  assert.equal(p.$("ctaNote").classList.contains("stick"), true);
+  assert.equal(p.$("musicOutcomeDetails").hidden, false);
+  p.$("ctaNote").textContent = "Loaded another library song";
+  p.ctx.setCta("about 3:00 on your card");
+  assert.match(p.$("ctaNote").textContent, /Midnight.*Missing module/, "the next painter restores the failure");
+  p.ctx.noticeMusicOutcome({ history: [{ id: "newer", state: "done", file: "ok.flac" }, fail] });
+  assert.match(p.$("ctaNote").textContent, /Midnight/);
+  p.ctx.musicJobDetails(fail);
+  assert.match(p.dialogs[0].message, /Full Python traceback/);
+  assert.match(p.dialogs[0].message, /Job: failed\nEngine: yue2/);
+});
+
+test("reload recovers the latest failure, while completed songs and stopped jobs stay quiet", () => {
+  const fail = outcomePage();
+  fail.ctx.noticeMusicOutcome({ history: [{ id: "bad", state: "failed", title: "Song", error: "Out of memory" }] });
+  assert.match(fail.$("ctaNote").textContent, /Out of memory/);
+  const quiet = outcomePage();
+  quiet.ctx.noticeMusicOutcome({ history: [{ id: "old", state: "done", file: "ok.flac" }] });
+  quiet.ctx.noticeMusicOutcome({ history: [{ id: "stop", state: "cancelled", error: "Stopped by user" }] });
+  assert.equal(quiet.$("ctaNote").textContent, "");
+});
+
+test("live socket reports a finished failure immediately rather than waiting for the status poll", () => {
+  const p = outcomePage();
+  p.ctx.noticeMusicOutcome({ history: [] });
+  let socket;
+  Object.assign(p.ctx, {
+    WebSocket: class { constructor() { socket = this; } }, location: { host: "fixture" },
+    state: { lastStatus: {} }, renderNow() {}, renderQueue() {}, renderList() {}, applyBatch() {},
+    paintImgProgress() {}, imgSeeFinished() {}, poll() {}, setTimeout() {}, window: { dispatchEvent() {} },
+  });
+  vm.runInContext(between("function connect()", '$("plNew").onclick'), p.ctx);
+  p.ctx.connect();
+  socket.onmessage({ data: JSON.stringify({ type: "state", queue: [], current: null,
+    history: [{ id: "live-fail", state: "failed", title: "Song", error: "CUDA allocation failed" }] }) });
+  assert.match(p.$("ctaNote").textContent, /CUDA allocation failed/);
+});
+
+test("Jobs retains music failures beside other jobs with an escaped reason and Details action", () => {
+  const fields = { jobList: {}, jobSummary: {}, jobFilter: {} };
+  const escape = s => String(s ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+  const ctx = vm.createContext({ $: id => fields[id], esc: escape, jobFilter: "all", paintJobQueue() {},
+    jobDur: () => "", jobOutput: () => "picture.png", JOB_LABEL: { music: "song", cover: "image" }, JOB_VIEW: { music: "create", cover: "images" } });
+  vm.runInContext(between("function paintJobs(s)", 'document.addEventListener("click", (e) => {\n  const detail'), ctx);
+  ctx.paintJobs({ art: { recent: [{ kind: "cover", title: "Cover", at: 10 }] }, history: [
+    { id: "bad", title: "Song", state: "failed", createdAt: 20, error: '<missing module>\nTraceback' },
+    { id: "stopped", title: "Stopped song", state: "cancelled", createdAt: 15, error: "Stopped" },
+  ] });
+  assert.match(fields.jobList.innerHTML, /data-music-job="bad">Failure details/);
+  assert.match(fields.jobList.innerHTML, /&lt;missing module>/);
+  assert.doesNotMatch(fields.jobList.innerHTML, /<missing module>/);
+  assert.match(fields.jobList.innerHTML, /Stopped song[\s\S]*?jobstopped/);
+  assert.match(fields.jobSummary.innerHTML, /<b>3<\/b><span>jobs/);
+  assert.match(fields.jobSummary.innerHTML, /<b>1<\/b><span>failed/);
+});
+
 test("rights: the catalogue's own chip, the licence-file line, the reason a label changed, and add-ons that raised it", () => {
   const ctx = vm.createContext({ esc: (s) => String(s ?? "") });
   vm.runInContext(`${between("const RIGHTS_WORDS = {", "/** A capability's short rights words")}

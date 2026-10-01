@@ -364,14 +364,14 @@ import { cudaCapability } from "./mesh/runner.js";
  * job minutes later: bracketed section labels, and a kit that is not there.
  * YUE_MODEL is the name the door writes as data.model on its own ledger rows
  * — "yue2", the key models.js's rights map is keyed by. */
-import { refuseLyrics, yueStatus, YUE_MODEL } from "./music/yue.js";
+import { refuseLyrics, yueStatus, yueReadinessNote, YUE_MODEL } from "./music/yue.js";
 import { yueGgufStatus } from "./music/yue-gguf.js";
 import { prepareGgufJob } from "./music-gguf-input.js";
 import { yue2ComfyFields } from "./music/yue2-comfy-input.js";
 import { GgufSetup } from "./music/gguf-setup.js";
 /* Where a YuE2 render lands its score: the run folder is adopted by its
  * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
-import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
+import { createScore, adoptVersion, adoptComfyVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { tokenizerStatus, tokenizeTrack, codesDirFor } from "./music/tokenize.js";
@@ -1496,7 +1496,7 @@ jobs.on("update", async (snap) => {
    * otherwise a score is created under the song's title. Failure here loses
    * the sheet, never the song — the audio is already filed by the runner. */
   let score = null;
-  if (job.engine === "yue2" && job.yue?.dir) {
+  if ((job.engine === "yue2" && job.yue?.dir) || (isYueComfy && job.yueComfyScore?.abc)) {
     try {
       let slug = job.scoreSlug || null;
       /* The parent is kept only when it still exists in the score it was
@@ -1508,7 +1508,16 @@ jobs.on("update", async (snap) => {
       if (!slug) slug = (await createScore(h.title || job.title || "Untitled")).slug;
       const parent = loaded && job.scoreVersion && findVersion(loaded, job.scoreVersion) ? job.scoreVersion : null;
       const by = prov.normalizeActor(job.actor);
-      const adopted = await adoptVersion(slug, {
+      const adopted = isYueComfy ? await adoptComfyVersion(slug, {
+        abc: job.yueComfyScore.abc, file: h.file, promptId: job.promptId,
+        audioSeconds: job.audioSeconds ?? null, checkpoint: job.yue2Checkpoint || null,
+        request: { style: job.caption || "", lyrics: job.lyrics || "", cot: job.cot || "full", seed: job.seed,
+          sampling: yue2ComfySamplingReceipt(job).audio, planSampling: job.planSampling || null,
+          narSteps: job.narSteps || 32,
+          lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
+          loraClip: job.loraClip || null, loraClipStrength: job.loraClip ? (job.loraClipStrength ?? 1) : null },
+        by, parent, note: "Rendered through ComfyUI; notation timing is approximate",
+      }) : await adoptVersion(slug, {
         dir: job.yue.dir, by, parent,
         note: `rendered from Create — ${job.rung?.label || "Standard"} configuration`
           + (job.quantization === "fp8" ? ", 8-bit AR" : "")
@@ -1516,7 +1525,11 @@ jobs.on("update", async (snap) => {
       });
       score = { slug, version: adopted.id };
     } catch (err) {
-      console.error(`  [score] ${h.file}: the run was not adopted — ${err.message}`);
+      const why = String(err?.message || err).slice(0, 300);
+      job.scoreWarning = `Sheet music could not be saved. ${why}`;
+      console.error(`  [score] ${h.file}: the run was not adopted — ${why}`);
+      library.remember(h.file, { scoreWarning: job.scoreWarning });
+      await library.save().catch(saveErr => console.error(`  [score] ${h.file}: warning not saved — ${saveErr.message}`));
     }
   }
   /* The sheet is engraved AFTER the song is filed (see the end of this
@@ -1634,10 +1647,10 @@ jobs.on("update", async (snap) => {
           : isYueComfy
           ? { runtime: "comfy", checkpoint: job.yue2Checkpoint || null, cot: job.cot || "full",
               scoreSupplied: !!job.abc, sampling: job.sampling || null, planSampling: job.planSampling || null,
-              /* The saved score version it was sung from, as written (this
-               * build makes no score of its own to adopt, unlike the Python
-               * kit's `score` below, which is the version its run wrote). */
+              /* Preserve the supplied-score lineage beside the exact score
+               * captured from this completed prompt. */
               scoreFrom: job.scoreSlug ? (job.scoreVersion ? `${job.scoreSlug}/${job.scoreVersion}` : job.scoreSlug) : null,
+              score: score ? `${score.slug}/${score.version}` : null,
               narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null,
               lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null }
           : isYue
@@ -1702,9 +1715,12 @@ jobs.on("update", async (snap) => {
     } : {}),
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
+      scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
+      scoreWarning: job.scoreWarning || null,
+      durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
       /* Sung from a score you supplied (hummed, pasted, transcribed), not
-       * from the model's own plan. The version it came from is in the ledger
-       * (params.scoreFrom); the ♪ badge's scoreSlug stays the Python kit's. */
+       * from the model's own plan. Its source version stays in the ledger
+       * (params.scoreFrom), while the ♪ badge links this prompt's capture. */
       scoreSupplied: !!job.abc,
       /* This explicit comparison receipt lets Training distinguish a matched
        * baseline/adapter pair from older rows whose sampler inputs were never
@@ -1805,7 +1821,11 @@ jobs.on("update", async (snap) => {
         origin: `http://127.0.0.1:${config.uiPort}` });
       await setSheet(score.slug, score.version, sheet);
     } catch (err) {
-      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${err.message}`);
+      const why = String(err?.message || err).slice(0, 300);
+      job.scoreWarning = `Sheet music could not be engraved. ${why}`;
+      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${why}`);
+      library.remember(h.file, { scoreWarning: job.scoreWarning });
+      await library.save().catch(saveErr => console.error(`  [score] ${h.file}: warning not saved — ${saveErr.message}`));
     }
   }
 
@@ -2094,9 +2114,11 @@ async function musicModelChoices(cat) {
     }
   }
   if (config.music.engines.yue2 && byId.musicYue2 && !config.musicOnly) {
+    const kit = await yueStatus();
     out.push({
       value: "yue2", engine: "yue2", precision: null, label: "YuE2 3B (Python kit)",
-      available: !!byId.musicYue2.ready, note: byId.musicYue2.ready ? null : "not installed",
+      available: kit.installed, note: kit.installed ? null : kit.runtime?.issue || "Python kit setup needed",
+      readinessNote: yueReadinessNote(kit), runtimeReadiness: kit.runtime,
     });
   }
   /* RUNPOD GPU MODE: the ComfyUI engines render on the Pod, so this PC's disk
@@ -3581,6 +3603,9 @@ const server = http.createServer(async (req, res) => {
           tokenizer: await tokenizerStatus(),
           musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
+            ...(k === "yue2" ? await yueStatus().then(s => ({
+              ready: s.installed, readinessNote: yueReadinessNote(s),
+            })) : {}),
             ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => {
               const ready = Object.values(s.variants || {}).some(v => v.ready) || s.ready;
               return {ready, variants:s.variants, readinessNote:ready?null:s.message, experimental:true};

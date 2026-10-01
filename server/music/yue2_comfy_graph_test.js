@@ -331,7 +331,7 @@ console.log("\n§  the pump names the score and the dials, or the route's valida
 {
   const jobs = src("../jobs.js");
   ok("jobs.js hands abc, sampling and planSampling to buildYue2ComfyGraph",
-    /abc: job\.abc,\n\s+sampling: job\.sampling,\n\s+planSampling: job\.planSampling,\n\s+prefix: "aiplay",\n\s+\}\) : buildGraph\(\{/.test(jobs));
+    /abc: job\.abc,\n\s+sampling: job\.sampling,\n\s+planSampling: job\.planSampling,\n\s+prefix: "aiplay",\n\s+scoreCaptureKey: job\.id,\n\s+captureScore: !this\.remote,\n\s+\}\) : buildGraph\(\{/.test(jobs));
   const index = src("../index.js");
   ok("the route enqueues them from the validator",
     /abc: yueComfy\.abc, sampling: yueComfy\.sampling, planSampling: yueComfy\.planSampling,/.test(index));

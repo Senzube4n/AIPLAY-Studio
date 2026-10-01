@@ -261,7 +261,9 @@ console.log("\n§3  the route lane: a score on yue2-comfy reaches the graph, or 
   eq("...and never without one", [queued[queued.length - 1].scoreSlug, queued[queued.length - 1].scoreVersion], [null, null]);
   ok("...and the ledger files it (params.scoreFrom), beside scoreSupplied",
     /scoreFrom: job\.scoreSlug \? \(job\.scoreVersion \? `\$\{job\.scoreSlug\}\/\$\{job\.scoreVersion\}` : job\.scoreSlug\) : null,/.test(index));
-  ok("the Library row says a score was supplied", /\.\.\.\(isYueComfy \? \{\n\s+cot: job\.cot \|\| "full", checkpoint: job\.yue2Checkpoint \|\| null,\n(?:\s+\/?\*.*\n)+\s+scoreSupplied: !!job\.abc,/.test(index));
+  /* Both engines now link captured notation; source-score disclosure remains
+   * beside those links rather than being replaced by a generic sheet flag. */
+  ok("the Library row says a score was supplied", /\.\.\.\(isYueComfy \? \{[\s\S]*?scoreSupplied: !!job\.abc,/.test(index));
   ok("the queue view says so too, and names the plan mode (the flag, never the text)",
     /\.\.\.\(j\.engine === "yue2-comfy" \? \{ cot: j\.cot \|\| "full", scoreSupplied: !!j\.abc \} : \{\}\),/.test(runner));
 

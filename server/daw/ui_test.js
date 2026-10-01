@@ -911,7 +911,7 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
   const connect = bodyOf(app, "function connect()");
   ok("the Studio's real live listener is available to exercise", !!connect);
   if (connect) {
-    let socket, current, queue, polls = 0;
+    let socket, current, queue, polls = 0, outcomes = 0;
     const calls = [], engine = { ready: true };
     const deps = {
       WebSocket: class { constructor(url) { this.url = url; socket = this; } },
@@ -921,12 +921,14 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
       renderList: (snap) => { calls.push("list"); snap.queue.map((job) => job.id); },
       applyBatch: () => calls.push("batch"), paintImgProgress: () => calls.push("art"),
       imgSeeFinished: () => calls.push("finished"), poll: () => { polls++; },
+      noticeMusicOutcome: () => { outcomes++; },
     };
     try {
       new Function(...Object.keys(deps), `${connect}\nconnect();`)(...Object.values(deps));
       const busy = { type: "state", current: { id: "running" }, queue: [{ id: "next" }], history: [] };
       socket.onmessage({ data: JSON.stringify(busy) });
       ok("job-state frames still update every Studio live surface", calls.length === 6 && current.id === "running" && queue[0].id === "next");
+      ok("a valid music state frame reaches the outcome observer once", outcomes === 1);
       const before = calls.length;
       for (const frame of [frameFor("song", { updatedAt: 2 }), { type: "engine", ready: false }, null,
         { type: "state", current: null }, { type: "state", queue: [] }, { type: "state", current: null, queue: {} }]) {
@@ -935,12 +937,15 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
       socket.onmessage({ data: "not JSON" });
       ok("DAW, unrelated and incomplete frames preserve the current job, queued jobs and all live surfaces",
         calls.length === before && current.id === "running" && queue[0].id === "next" && polls === 0);
+      ok("DAW, unrelated, incomplete and invalid JSON frames never reach the music outcome observer", outcomes === 1);
       const idle = { type: "state", current: null, queue: [], history: [] };
       socket.onmessage({ data: JSON.stringify(idle) });
       ok("the next real idle snapshot still refreshes the completed library exactly once", current === null && queue.length === 0 && polls === 1);
+      ok("the real idle music state also reaches the outcome observer once", outcomes === 2);
       socket.onmessage({ data: JSON.stringify(frameFor("song", { updatedAt: 3 })) });
       socket.onmessage({ data: JSON.stringify(idle) });
       ok("unrelated frames do not create a false completion or another library refresh", polls === 1);
+      ok("only the additional valid idle state reaches the music outcome observer", outcomes === 3);
     } catch (err) {
       ok("mixed live frames run without a renderList queue crash", false, err.message);
     }

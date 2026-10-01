@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { imageWorkflowOptions, modelChoices, videoWorkflowOptions } from "../../web/runpod-integrated.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -114,5 +115,19 @@ test("RunPod GPU mode renders music on the Pod too", () => {
   assert.match(server, /if \(cap && !cap\.ready && !config\.remoteOnly\) \{/, "the Pod, not this disk, decides");
   assert.match(server, /c\.note = "on your RunPod";/);
   const app = read("web", "app.js");
-  assert.match(app, /create\.disabled = noPath \|\| \(eng\.runtime === "audiocpp" \? !nativeReady : !state\.engineReady && !state\.remoteOnly\);/);
+  /* The Python kit now answers for its own runtime. Run the actual button
+   * condition so adding that branch cannot break remote ComfyUI readiness. */
+  const gate = /create\.disabled = ([^;]+);/.exec(app)?.[0];
+  assert.ok(gate, "the Music button still has a readiness condition");
+  const disabled = ({ runtime = "comfy", ready, engineReady = false, remoteOnly = true, nativeReady = false, noPath = false } = {}) => {
+    const create = {};
+    runInNewContext(gate, { create, noPath, nativeReady, eng: { runtime, ready }, state: { engineReady, remoteOnly } });
+    return create.disabled;
+  };
+  assert.equal(disabled(), false, "remote ComfyUI does not require a local engine");
+  assert.equal(disabled({ remoteOnly: false }), true, "local ComfyUI still requires its engine");
+  assert.equal(disabled({ runtime: "python", ready: false }), true, "a Pod does not repair a missing local Python kit");
+  assert.equal(disabled({ runtime: "python", ready: true, remoteOnly: false }), false, "a ready separate Python kit does not require ComfyUI");
+  assert.equal(disabled({ runtime: "audiocpp" }), true, "local native music still requires its runtime");
+  assert.equal(disabled({ noPath: true }), true, "no launch mode enables an absent render path");
 });

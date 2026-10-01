@@ -3,8 +3,8 @@
  * lie about having finished.
  *
  * ⚠ EVERY CHECK IN HERE IS FREE. No GPU, no weights, no card, no network, and —
- * except for four ~150 ms interpreter starts that are SKIPPED LOUDLY when
- * venv-yue is absent — no python either. The whole value of refusing before
+ * except for a cached dependency-import check and four short driver selftests
+ * that are SKIPPED LOUDLY when venv-yue is absent — no python either. The whole value of refusing before
  * spend is that the refusal can be proven without spending, and the whole value
  * of a progress parser is that it can be proven against recorded output.
  *
@@ -51,10 +51,12 @@
  */
 import path from "node:path";
 import os from "node:os";
+import vm from "node:vm";
 import { EventEmitter } from "node:events";
 import { mkdir, writeFile, rm, readFile, stat } from "node:fs/promises";
 import {
-  YUE, YueRefusal, yueStatus, refuse, refuseVram, refuseAudioInput, refuseLyrics, refuseRequest,
+  YUE, YueRefusal, yueStatus, createYueStatusReader, yueReadinessNote, YUE_SIDECARS,
+  refuse, refuseVram, refuseAudioInput, refuseLyrics, refuseRequest,
   parseProgressLine, createProgressReader, assumedTokenTotal, readTokenCaps,
   PROGRESS_RE, PROGRESS_PREFIXES, STAGES, STAGE_ORDER, TOKEN_CAPS, TOKENS_PER_AUDIO_SECOND,
   PEAK_GIB, HEADROOM_GIB, VRAM_MIN_GIB, DERIVED_MIN_GIB, VENDOR_RECOMMENDED_GIB, vramFloorGib,
@@ -907,10 +909,113 @@ console.log("\nTHE RECORD, AND THE DOOR IT ADMITS TO BEING");
       via: "test.dry", dryRun: true }))) === null);
 }
 
+console.log("\nPYTHON READINESS — full kit, cached imports, no model loading");
+{
+  const py = path.join(dir, "kit", "venv", "python.exe");
+  const fixture = { python: py, model: path.join(dir, "kit", "model"), vae: path.join(dir, "kit", "vae") };
+  const declared = [
+    { role: "mot", label: "YuE2-3B", setting: "AIPLAY_YUE_MODEL", dest: path.join(fixture.model, "model.safetensors"), bytes: 3 },
+    { role: "vae", label: "YuE2-Vae", setting: "AIPLAY_YUE_VAE", dest: path.join(fixture.vae, "model.safetensors"), bytes: 2 },
+  ];
+  const files = new Map([[py, { size: 5, mtimeMs: 1 }], ...declared.map(w => [w.dest, { size: w.bytes }])]);
+  for (const s of YUE_SIDECARS) files.set(path.join(fixture[s.folder], s.name), { size: 1 });
+  const statFile = async file => {
+    const s = files.get(file);
+    if (!s) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    return { ...s, isFile: () => true };
+  };
+  let clock = 1, probes = 0, corrupt = false;
+  const options = { getYue: () => fixture, getWeights: () => declared, statFile,
+    readText: async () => corrupt ? "{" : "{}", now: () => clock };
+  const goodProbe = async (_py, modules, opts) => {
+    probes++;
+    ok("dependency probe is bounded and uses the separate interpreter", _py === py && opts.timeoutMs === 20_000);
+    return Object.fromEntries(modules.map(m => [m, true]));
+  };
+  const reader = createYueStatusReader({ ...options, probeRuntime: goodProbe });
+  files.delete(py);
+  let s = await reader();
+  ok("complete weights do not make a missing Python runtime ready", !s.installed && probes === 0 && /runtime missing/.test(s.runtime.issue));
+  files.set(py, { size: 5, mtimeMs: 1 });
+  const tokenizer = path.join(fixture.model, "qwen.tiktoken");
+  files.delete(tokenizer);
+  s = await reader();
+  ok("missing tokenizer prevents queueing before dependency imports", !s.installed && probes === 0 && s.why.some(w => w.includes(tokenizer)));
+  files.set(tokenizer, { size: 1 });
+  corrupt = true;
+  s = await reader();
+  ok("malformed model configuration is not reported ready", !s.installed && probes === 0 && s.sidecars.filter(x => !x.present).length === 2);
+  corrupt = false;
+  s = await reader();
+  ok("complete kit and real dependency imports are ready without optional generation config", s.installed && !s.capsPresent && probes === 1);
+  ok("ready kit has no readiness warning", yueReadinessNote(s) === null);
+  await reader();
+  ok("repeated status reads reuse the dependency answer", probes === 1);
+  clock += 300_001;
+  await reader();
+  ok("successful dependency answer is refreshed after five minutes", probes === 2);
+  await reader({ refreshRuntime: true });
+  ok("a repair can explicitly request a fresh dependency check", probes === 3);
+  files.get(py).mtimeMs++;
+  await reader();
+  ok("replacing the interpreter invalidates the cached answer", probes === 4);
+  files.delete(tokenizer);
+  s = await reader();
+  ok("sidecar removal is detected while the import success is cached", !s.installed && probes === 4);
+  files.set(tokenizer, { size: 1 });
+
+  let release, concurrentProbes = 0;
+  const concurrent = createYueStatusReader({ ...options, probeRuntime: async (_py, modules) => {
+    concurrentProbes++;
+    await new Promise(resolve => { release = resolve; });
+    return Object.fromEntries(modules.map(m => [m, true]));
+  } });
+  const together = Promise.all([concurrent(), concurrent()]);
+  await new Promise(resolve => setImmediate(resolve));
+  ok("concurrent UI and MCP readers share one dependency child", concurrentProbes === 1);
+  release();
+  ok("both readers receive the same ready result", (await together).every(x => x.installed));
+
+  let brokenProbes = 0;
+  const broken = createYueStatusReader({ ...options, probeRuntime: async (_py, modules) => {
+    brokenProbes++;
+    return Object.fromEntries(modules.map(m => [m, m === "yue2.pipeline" ? "ImportError: broken torch DLL" : true]));
+  } });
+  s = await broken();
+  ok("installed package folders with an import failure are unavailable", !s.installed && s.runtime.issue === "Python dependencies missing");
+  ok("failed import names its actual interpreter and dependency", s.why.some(w => w.includes(py) && w.includes("broken torch DLL")));
+  ok("readiness warning offers an actionable compatible route", /Choose YuE2 \(ComfyUI\)/.test(yueReadinessNote(s)) && yueReadinessNote(s).length <= 120);
+  await broken();
+  ok("failed probes do not restart on every poll", brokenProbes === 1);
+  clock += 30_001;
+  await broken();
+  ok("failed dependency check retries promptly after a repair", brokenProbes === 2);
+  const timedOut = await createYueStatusReader({ ...options, probeRuntime: async () => null })();
+  ok("timeout or failed interpreter never becomes a ready engine", !timedOut.installed && timedOut.runtime.issue === "Python check failed");
+}
+{
+  const index = (await readFile(new URL("../index.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const start = index.indexOf("async function musicModelChoices(cat) {");
+  const end = index.indexOf("\n/* Which collapsible section", start);
+  let verdict = { installed: false, runtime: { ready: false, issue: "Python dependencies missing" } };
+  const context = vm.createContext({ config: { music: { engines: { yue2: {} } } },
+    musicChoicesCache: { at: 0, value: null }, yueStatus: async () => verdict, yueReadinessNote });
+  vm.runInContext(index.slice(start, end), context);
+  let rows = await context.musicModelChoices([{ id: "musicYue2", ready: true }]);
+  ok("Music picker refuses a broken Python kit even when catalogue weights are installed", rows.length === 1 && rows[0].available === false);
+  ok("picker carries runtime details and an actionable correction", rows[0].runtimeReadiness === verdict.runtime && /ComfyUI/.test(rows[0].readinessNote));
+  context.config.remoteOnly = true;
+  rows = await context.musicModelChoices([{ id: "musicYue2", ready: true }]);
+  ok("RunPod mode cannot mark the local Python kit ready", rows[0].available === false);
+  verdict = { installed: true, runtime: { ready: true, issue: null } };
+  rows = await context.musicModelChoices([{ id: "musicYue2", ready: true }]);
+  ok("complete Python kit remains selectable without a setup warning", rows[0].available === true && rows[0].note === null && rows[0].readinessNote === null);
+}
+
 console.log("\nTHE RUNTIME, AND THE LEDGER-BEFORE-SPEND RULE");
 {
   const st = await yueStatus();
-  ok("yueStatus answers without spawning anything", typeof st.installed === "boolean");
+  ok("yueStatus answers without loading models or spending GPU work", typeof st.installed === "boolean");
   ok("...and names the interpreter it looked for", /python/i.test(st.python), st.python);
   if (!st.installed) {
     ok("not installed ⇒ at least one sentence saying which file is missing", st.why.length >= 1,

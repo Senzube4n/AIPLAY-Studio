@@ -198,6 +198,9 @@ node server/music/yue_fit_test.js || exit 1
 # job pump, MCP schema, Music tab — names it, because one silent list is how
 # the audio reference was dead on arrival. No GPU, no ComfyUI, milliseconds.
 node server/music/yue2_comfy_graph_test.js || exit 1
+# The exact generated/supplied ABC stays bound to its completed Comfy prompt,
+# then uses the same score store/player/MCP doors without claiming Python replay.
+node server/music/yue2-comfy-score_test.js || exit 1
 # A SUPPLIED SCORE ON YuE2 THROUGH COMFYUI IS SUNG OR REFUSED, NEVER DROPPED:
 # the validator row by row, the real /api/generate branch sliced and run with
 # the real jobs.js graph call behind it (every score reaches node 5 or nothing
@@ -1411,6 +1414,7 @@ node --test server/qwen-draft_test.js || exit 1
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/sparsectrl_pairs_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/sparsectrl_lifecycle_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/yue2_continue_test.py || exit 1; fi
+if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/yue2_score_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy, scipy" >/dev/null 2>&1; then "$ADAPTER_PY" server/reactive_rms_test.py || exit 1; fi
 # The minors rule's backstop INSIDE ComfyUI (server/comfy_nodes/aiplay_safety_gate.py):
 # stdlib only, so it runs on whatever python is here. It must never raise, since

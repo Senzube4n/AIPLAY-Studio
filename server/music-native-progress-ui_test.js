@@ -206,6 +206,35 @@ test("older rows do not gain warnings and switching songs clears a prior warning
   assert.equal(h.musicWarningHtml({ warnings: [null, {}, { message: "" }] }), "");
 });
 
+test("score capture warnings are visible on playable songs without turning audio success into a failure", () => {
+  const h = harness();
+  const track = { file: "Comfy take.flac", title: "Take", lyrics: "words", engine: "yue2-comfy",
+    scoreWarning: 'The audio finished, but ComfyUI returned no readable score. <check> "capture"' };
+  h.state.library = [track, { file: "Other.flac", lyrics: "words" }];
+  assert.match(h.rowHtml(track), />Check score<\/button>/);
+  assert.doesNotMatch(h.rowHtml(track), /<check>/);
+  h.openSong(track.file);
+  assert.equal(h.$("spWarnings").hidden, false);
+  assert.match(h.$("spWarnings").innerHTML, />Sheet music unavailable\.<\/p>/);
+  assert.match(h.$("spWarnings").innerHTML, /title="The audio finished/);
+  assert.match(h.$("spWarnings").innerHTML, /&lt;check&gt; &quot;capture&quot;/);
+  assert.equal(h.$("songPanel").hidden, false, "the successful audio still has its normal song details");
+  h.openSong("Other.flac");
+  assert.equal(h.$("spWarnings").hidden, true);
+});
+
+test("PDF engraving and remote score warnings retain their own reason, and do not mislabel an available editable score", () => {
+  const h = harness();
+  const engrave = h.musicWarningHtml({ scoreSlug: "editable", scoreWarning: "PDF engraving failed. Retry the export." });
+  assert.match(engrave, />Sheet music needs attention\.<\/p>/);
+  assert.match(engrave, /title="PDF engraving failed/);
+  assert.doesNotMatch(engrave, /Sheet music unavailable/);
+  const remote = h.musicWarningHtml({ scoreWarning: "Remote rendering returned audio without the score capture artifact." });
+  assert.match(remote, />Sheet music unavailable\.<\/p>/);
+  assert.match(remote, /Remote rendering returned audio/);
+  assert.equal(h.musicWarningHtml({ scoreWarning: "   " }), "");
+});
+
 test("progress accessibility and warning targets exist in the shipped page", () => {
   assert.match(html, /id="nowProgress" role="progressbar"/);
   assert.match(html, /id="spWarnings" hidden/);

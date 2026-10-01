@@ -131,6 +131,22 @@ section("graphs: negatives are not intent, songs are not pictures, hidden prompt
 
   const song = workflow.buildYue2ComfyGraph({ caption: "punk", lyrics: "teenage kicks, sexy nights", seed: 1, checkpoint: "y.safetensors" });
   ok("a song's lyrics are not a picture: a YuE2 graph is not read", graphTexts(song).visual === false && checkGraph(song).ok);
+  ok("the real YuE2 graph carries the known nonvisual Studio score sink", song[11]?.class_type === "AiplayYuE2Score");
+  const suppliedSong = workflow.buildYue2ComfyGraph({ caption: PAIR, lyrics: PAIR, seed: 1, checkpoint: "y.safetensors",
+    abc: `X:1\nK:C\n% ${PAIR}\nC|` });
+  ok("supplied ABC captured beside audio remains a song", graphTexts(suppliedSong).visual === false && checkGraph(suppliedSong).ok);
+  const unknownScoreSink = { ...suppliedSong, 11: { ...suppliedSong[11], class_type: "AiplayYuE2ScorePreview" } };
+  ok("a similar but unknown score sink is still read (fail closed)", graphTexts(unknownScoreSink).visual && checkGraph(unknownScoreSink).ok === false);
+  const mixedSong = { ...song,
+    21: { class_type: "CLIPTextEncode", inputs: { text: PAIR } },
+    22: { class_type: "KSampler", inputs: { positive: ["21", 0], cfg: 1 } },
+    23: { class_type: "SaveImage", inputs: { images: ["22", 0] } },
+  };
+  ok("a song with score capture and a picture output still checks the visual request", graphTexts(mixedSong).visual && checkGraph(mixedSong).ok === false);
+  const pictureWithScore = { ...pictureGraph(PAIR),
+    11: { class_type: "AiplayYuE2Score", inputs: { abc: "X:1\nK:C\nC|", seconds: 1, capture_key: "test" } },
+  };
+  ok("a known score sink cannot make an otherwise visual graph nonvisual", graphTexts(pictureWithScore).visual && checkGraph(pictureWithScore).ok === false);
   const mm = workflow.buildGraph({ caption: "pop", lyrics: "baby, teen, sexy", seed: 1, model: "m.safetensors" });
   ok("...nor a MiniMax Music graph", graphTexts(mm).visual === false);
   const chat = { 1: { class_type: "TextGenerate", inputs: { prompt: PAIR } }, 2: { class_type: "PreviewAny", inputs: { source: ["1", 0] } } };

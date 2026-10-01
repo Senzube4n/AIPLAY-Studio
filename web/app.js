@@ -778,6 +778,10 @@ function paintModelMusicPanel() {
       if (c && !c.available && !c.api && c.engine !== "yue2-gguf") {
         $("modelMusicPick").dataset.sig = "";
         paintMusicModelSelect($("modelMusicPick"));
+        if (c.engine === "yue2" && c.runtimeReadiness?.ready === false) {
+          $("modelMusicNote").textContent = c.readinessNote || c.note || "The separate Python kit needs setup.";
+          return;
+        }
         presetPoint(MUSIC_CAP[c.engine]);
         return;
       }
@@ -912,6 +916,10 @@ async function chooseMusicModel(value) {
   if (!c.available && c.engine !== "yue2-gguf") {
     /* Put every picker back on what is really selected, then offer the model. */
     document.querySelectorAll("#musicEngine, #modelMusicPick").forEach((s) => { s.dataset.sig = ""; paintMusicModelSelect(s); s.value = musicModelValue(); });
+    if (c.engine === "yue2" && c.runtimeReadiness?.ready === false) {
+      await appAlert(c.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup.", { title: c.note || "Python kit needs setup" });
+      return;
+    }
     needModel("music", c.api
       ? { title: `${c.label} needs your own key`, lead: `Paste your own key in ${c.keyPlace || "Settings"} (every song asks before it is billed), or pick a model that runs on this machine.`, focus: null }
       : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
@@ -1062,11 +1070,14 @@ function musicEnginePaint() {
    * this is the sentence, not the enforcement. */
   const noPath = eng.renderPath === false;
   const nativeReady = eng.runtime === "audiocpp" && nativeMusicReady(eng);
+  const pythonNotReady = eng.runtime === "python" && eng.ready === false;
   const warn = $("musicEngineWarn");
   if (warn) {
-    warn.hidden = !noPath && !(eng.runtime === "audiocpp" && !nativeReady);
+    warn.hidden = !noPath && !pythonNotReady && !(eng.runtime === "audiocpp" && !nativeReady);
     warn.textContent = eng.runtime === "audiocpp" && !nativeReady
       ? `${ggufPrecisionLabel()} is not ready. Review its optional runtime and weights below; selecting it does not download anything.`
+      : pythonNotReady
+      ? eng.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup."
       : noPath
       ? `${eng.label} cannot render from the Create button yet — it works through its own `
         + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
@@ -1082,8 +1093,11 @@ function musicEnginePaint() {
      * STARTING… — caught in review before it shipped. The painter may add a
      * reason to disable; it may not remove one it does not own. */
     /* RunPod GPU mode (state.remoteOnly): the queue renders on the Pod. */
-    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady : !state.engineReady && !state.remoteOnly);
-    create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
+    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady
+      : eng.runtime === "python" && typeof eng.ready === "boolean" ? !eng.ready
+      : !state.engineReady && !state.remoteOnly);
+    create.title = pythonNotReady ? warn?.textContent || "The separate Python kit needs setup."
+      : noPath ? `${eng.label} has no render path from this button yet.` : "";
   }
 
   /* Controls only one engine can honour. These ids were READ OUT OF THE LIVE
@@ -3428,11 +3442,20 @@ async function generate(preview, mixSeed) {
    * new audio and no message. A re-roll (mixSeed set) keeps the seed on purpose. */
   if (!state.seedLocked && mixSeed == null) $("seed").value = Math.floor(Math.random() * 4294967296);
   musicOutcomeMsg = null;   // a new Create replaces the last song's warning
+  musicOutcomeJob = null;
+  if ($("musicOutcomeDetails")) $("musicOutcomeDetails").hidden = true;
   let spec;
   try { spec = currentSpec(preview, mixSeed); }
   catch (error) { alert(error.message); return; }
   if (spec.engine === "yue2-gguf" && !nativeMusicReady(state.musicEngines?.[spec.engine])) {
     alert(`${ggufPrecisionLabel()} is not ready. Review its optional setup before generating.`);
+    return;
+  }
+  const chosenEngine = state.musicEngines?.[spec.engine || state.musicEngine];
+  if (chosenEngine?.runtime === "python" && chosenEngine.ready === false) {
+    if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("ctaNote", {
+      error: chosenEngine.readinessNote || "The separate Python kit needs setup.",
+    });
     return;
   }
   if (!spec.caption.trim()) { $("caption").focus(); return; }
@@ -3484,7 +3507,9 @@ async function generate(preview, mixSeed) {
   } finally {
     setTimeout(() => {
       const eng = (state.musicEngines || {})[state.musicEngine];
-      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng) : !state.engineReady && !state.remoteOnly;
+      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng)
+        : eng?.runtime === "python" && typeof eng.ready === "boolean" ? !eng.ready
+        : !state.engineReady && !state.remoteOnly;
     }, 400);
   }
 }
@@ -3681,12 +3706,19 @@ function musicWarningHtml(track, compact = false) {
   const warnings = Array.isArray(track?.warnings)
     ? track.warnings.filter((w) => w && typeof w.message === "string" && w.message.trim()).slice(0, 5)
     : [];
+  /* Score capture or PDF engraving can fail after the audio has succeeded.
+   * Keep this scoped to the score, alongside existing per-take warnings. */
+  if (typeof track?.scoreWarning === "string" && track.scoreWarning.trim())
+    warnings.push({ code: "score_unavailable", message: track.scoreWarning });
   if (!warnings.length) return "";
   if (compact) {
-    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending" : "Check take";
+    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending"
+      : warnings.some((w) => w.code === "score_unavailable") ? "Check score" : "Check take";
     return `<button type="button" class="badge generation-warning" data-info="${encodeURIComponent(track.file)}" title="${esc(warnings.map((w) => w.message).join("\n"))}">${label}</button>`;
   }
-  return warnings.map((w) => `<p>${esc(w.message)}</p>`).join("");
+  return warnings.map((w) => w.code === "score_unavailable"
+    ? `<p title="${esc(w.message)}">${track.scoreSlug ? "Sheet music needs attention." : "Sheet music unavailable."}</p>`
+    : `<p>${esc(w.message)}</p>`).join("");
 }
 
 /**
@@ -21545,25 +21577,41 @@ let musicOutcomeArmed = false;
  * same line on every status poll, and without this it erased the warning
  * within the same applyStatus call that put it there. */
 let musicOutcomeMsg = null;
+let musicOutcomeJob = null;
 /* An estimate is a hover drop-up again: the .stick a warning put on the note
  * comes off with the first estimate after the next Create (generate() clears
  * musicOutcomeMsg; it is lifted into slice-and-eval tests with no ctaNote). */
 function setCta(text) {
   if (!musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = text; $("ctaNote").classList.remove("stick"); }
+  else if (musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = musicOutcomeMsg; $("ctaNote").classList.add("stick"); }
 }
+function musicJobDetails(job) {
+  if (!job) return;
+  appAlert(`${job.error || job.note || "No audio file was found."}\n\nJob: ${job.id || "unknown"}\nEngine: ${job.engine || "music"}`,
+    { title: `${job.title || "Untitled"}: ${job.state === "failed" ? "generation failed" : "generation details"}` });
+}
+$("musicOutcomeDetails")?.addEventListener("click", () => musicJobDetails(musicOutcomeJob));
 function noticeMusicOutcome(s) {
-  const h = s.history?.[0];
-  const key = h ? `${h.id}:${h.state}` : null;
-  if (!musicOutcomeArmed) { musicOutcomeArmed = true; if (key) musicOutcomeSeen.add(key); return; }
-  if (!key || musicOutcomeSeen.has(key)) return;
-  musicOutcomeSeen.add(key);
+  // Library actions can write the same note; a live outcome owns it until Create.
+  if (musicOutcomeMsg) setCta();
+  const rows = Array.isArray(s.history) ? s.history : [];
+  /* A finished take can overtake a failed one between polls. Observe every new
+   * terminal row, and let a reload recover the latest failure in this session. */
+  const fresh = musicOutcomeArmed ? rows.filter(h => !musicOutcomeSeen.has(`${h.id}:${h.state}`)) : rows.slice(0, 1);
+  musicOutcomeArmed = true;
+  for (const h of rows) musicOutcomeSeen.add(`${h.id}:${h.state}`);
+  const h = fresh.find(h => h.state === "failed" || h.state === "done" && (h.note || !h.file));
+  if (!h) return;
   const title = h.title || "Untitled";
-  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${h.error || "no reason was given"}`
+  const reason = String(h.error || "no reason was given").split(/\r?\n/)[0];
+  const shortReason = reason.length > 180 ? `${reason.slice(0, 177)}…` : reason;
+  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${shortReason}`
     : h.state === "done" && h.note ? `⚠ ${h.note}`
     : h.state === "done" && !h.file ? `⚠ “${title}” finished, but no audio file was found in the output folder.`
     : null;
   // .stick: the warning stays under Create, not only under the pointer (styles.css).
   if (msg) { musicOutcomeMsg = msg; if ($("ctaNote")) { $("ctaNote").textContent = msg; $("ctaNote").classList.add("stick"); } }
+  if (msg) { musicOutcomeJob = h; if ($("musicOutcomeDetails")) $("musicOutcomeDetails").hidden = false; }
 }
 
 /* WHETHER COMFYUI IS HOLDING THE MUSIC MODEL — and two optional buttons.
@@ -22119,6 +22167,7 @@ function connect() {
     // /live also carries DAW document revisions. Only job-state snapshots
     // may repaint these queues or change the remembered busy-to-idle transition.
     if (snap?.type !== "state" || !Array.isArray(snap.queue) || !("current" in snap)) return;
+    noticeMusicOutcome(snap);
     renderNow(snap.current, (snap.queue || []).length);
     renderQueue(snap);
     renderList(snap);
@@ -22185,7 +22234,7 @@ const JOB_VIEW = {
 const JOB_LABEL = {
   video: "clip", cover: "image", image: "image", stems: "stems",
   lrc: "lyrics", sfx: "sfx", enhance: "enhance", restyle: "restyle",
-  upscale: "upscale", vfx: "vfx",
+  upscale: "upscale", vfx: "vfx", music: "song",
 };
 
 function jobDur(ms) {
@@ -22276,7 +22325,14 @@ function paintJobs(s) {
   const list = $("jobList");
   if (!list) return;
   paintJobQueue(s);
-  const jobs = (s && s.art && s.art.recent) || [];
+  /* Music failures have no library asset. Keep them beside the other completed
+   * jobs, with their own reason, rather than making them vanish with the queue. */
+  const music = (s?.history || []).map(j => ({ ...j, kind: "music", musicJob: true,
+    cancelled: j.state === "cancelled", at: j.createdAt,
+    // The queue's durationSeconds is render time; audio length is audioSeconds.
+    ms: Number.isFinite(j.elapsedSeconds) ? j.elapsedSeconds * 1000
+      : Number.isFinite(j.durationSeconds) ? j.durationSeconds * 1000 : null }));
+  const jobs = [...((s && s.art && s.art.recent) || []), ...music].sort((a, b) => (b.at || 0) - (a.at || 0));
 
   /* ⚠ SAY SO WHEN THERE IS NOTHING, and say WHY. An empty list on a night that
    * clearly rendered things reads as a broken page; the real reason is that
@@ -22317,22 +22373,25 @@ function paintJobs(s) {
   const shown = jobs.filter((j) => jobFilter === "all" || j.kind === jobFilter);
   list.innerHTML = shown.map((j) => {
     const view = JOB_VIEW[j.kind] || "create";
-    const out = jobOutput(j);
+    const out = j.musicJob ? j.file || String(j.error || "").split(/\r?\n/)[0] : jobOutput(j);
     const when = j.at ? new Date(j.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
     return `<div class="jobrow${j.error && !j.cancelled ? " bad" : ""}">
       <span class="jobkind">${esc(JOB_LABEL[j.kind] || j.kind)}</span>
       <span class="jobtitle">${esc(j.title || j.file || "—")}</span>
-      <span class="jobout">${esc(out)}</span>
+      <span class="jobout"${j.musicJob && j.error ? ` title="${esc(j.error)}"` : ""}>${esc(out)}</span>
       <span class="jobms">${jobDur(j.ms)}</span>
       <span class="jobat">${esc(when)}</span>
       ${j.cancelled ? `<span class="jobstopped" title="${esc(j.error || "Stopped before it finished.")}">stopped</span>`
-        : j.error ? `<span class="joberr" title="${esc(j.error)}">failed</span>`
+        : j.error ? (j.musicJob ? `<button type="button" class="edtool" data-music-job="${esc(j.id)}">Failure details</button>`
+          : `<span class="joberr" title="${esc(j.error)}">failed</span>`)
                 : `<a href="#" class="jobgo" data-go="${view}">open ${esc(view)} &rsaquo;</a>`}
     </div>`;
   }).join("");
 }
 
 document.addEventListener("click", (e) => {
+  const detail = e.target.closest("[data-music-job]");
+  if (detail) { musicJobDetails(state.lastStatus?.history?.find(j => j.id === detail.dataset.musicJob)); return; }
   const chip = e.target.closest("[data-jobfilter]");
   if (!chip) return;
   jobFilter = chip.dataset.jobfilter;

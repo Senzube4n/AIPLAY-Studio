@@ -65,7 +65,8 @@
  * folds the SLUG into the vendor's identity hash, and adoptVersion() refuses a
  * duplicate key by naming the version that already answers to it.
  */
-import { readFile, writeFile, rename, mkdir, readdir, stat, rm, copyFile } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, mkdtemp, readdir, stat, rm, copyFile, lstat, realpath } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -254,7 +255,7 @@ export const shortKey = (key) => {
 /** sha256 of a file, hex. The same digest the receipt states. */
 async function sha256File(file) {
   const h = createHash("sha256");
-  h.update(await readFile(file));
+  for await (const bytes of createReadStream(file)) h.update(bytes);
   return h.digest("hex");
 }
 
@@ -426,6 +427,10 @@ export async function adoptVersion(slug, {
       note: note === null || note === undefined ? null : String(note).slice(0, NOTE_CAP),
       /* ── straight off the receipt. Copied, never recomputed. ───────────── */
       identity: receipt.identity,
+      /* Comfy captures have a Studio receipt, never a Python runtime/weight
+       * receipt. Keep that distinction on read and in exported versions. */
+      producer: receipt.producer ?? "yue2-infer",
+      source: receipt.source ?? null,
       status: receipt.status ?? null,
       audioSeconds: Number.isFinite(receipt.audio_seconds) ? receipt.audio_seconds : null,
       sampleRate: receipt.sample_rate ?? null,
@@ -464,6 +469,64 @@ export async function adoptVersion(slug, {
                         unreceipted: read.unreceipted.length });
     return doc;
   }).then((doc) => ({ id: versionId, key, version: findVersion(doc, versionId), doc }));
+}
+
+/** Adopt ComfyUI's exact score and the audio from the same completed prompt.
+ * The receipt hashes these saved bytes. It makes no claim to Python's latent,
+ * semantic tokens, runtime identity or weight integrity, and cannot be replayed
+ * through the Python saved-stage adapter. The complete audio is copied so the
+ * standalone following-score player works for every configured output format.
+ */
+export async function adoptComfyVersion(slug, {
+  abc, file, promptId, request = {}, checkpoint = null, audioSeconds = null,
+  by, parent = null, note = "Rendered through ComfyUI", id = null,
+} = {}) {
+  if (typeof abc !== "string" || !abc.trim() || Buffer.byteLength(abc) > 65536)
+    throw new Error("ComfyUI score capture needs nonempty ABC of at most 64 KiB.");
+  if (!by) throw new Error("ComfyUI score capture needs the actor.");
+  if (!/^[\w-]{1,80}$/.test(promptId || "")) throw new Error("ComfyUI score capture needs the completed prompt ID.");
+  if (typeof file !== "string" || path.isAbsolute(file)) throw new Error("Choose audio in the Studio library.");
+  const root = path.resolve(config.outputDir), audio = path.resolve(root, file), relative = path.relative(root, audio);
+  const ext = path.extname(audio).toLowerCase();
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || ![".flac", ".mp3", ".opus", ".wav"].includes(ext))
+    throw new Error("Choose audio in the Studio library.");
+  const info = await lstat(audio);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error("The score's audio must be a regular library file.");
+  /* A regular file can still live beneath a directory junction. Resolve both
+   * ends and copy the checked canonical source, not the caller's linked path. */
+  const canonicalRoot = await realpath(root), canonicalAudio = await realpath(audio);
+  const canonicalRelative = path.relative(canonicalRoot, canonicalAudio);
+  if (!canonicalRelative || canonicalRelative.startsWith("..") || path.isAbsolute(canonicalRelative))
+    throw new Error("Choose audio in the Studio library.");
+  await mkdir(SCORE_DIR(), { recursive: true });
+  const temporary = await mkdtemp(path.join(SCORE_DIR(), ".comfy-capture-"));
+  try {
+    const audioName = `audio${ext}`;
+    await copyFile(canonicalAudio, path.join(temporary, audioName));
+    await writeFile(path.join(temporary, "score.abc"), abc, "utf8");
+    await writeFile(path.join(temporary, "request.json"), JSON.stringify(request, null, 2), "utf8");
+    const artifacts = {};
+    for (const name of [audioName, "score.abc", "request.json"]) {
+      const artifact = path.join(temporary, name);
+      artifacts[name] = { bytes: (await stat(artifact)).size, sha256: await sha256File(artifact) };
+    }
+    const source = { engine: "yue2-comfy", promptId, file, checkpoint, settings: {
+      lora: request.lora ?? null, loraStrength: request.loraStrength ?? null,
+      loraClip: request.loraClip ?? null, loraClipStrength: request.loraClipStrength ?? null,
+      sampling: request.sampling ?? null, narSteps: request.narSteps ?? null,
+    } };
+    const identity = createHash("sha256").update(JSON.stringify({ source, artifacts })).digest("hex");
+    await writeFile(path.join(temporary, "result.json"), JSON.stringify({
+      producer: "aiplay-yue2-comfy-score-v1", status: "complete", identity, source,
+      audio_seconds: Number.isFinite(audioSeconds) && audioSeconds > 0 ? audioSeconds : null,
+      sample_rate: null, weights: null, artifacts,
+    }, null, 2), "utf8");
+    return await adoptVersion(slug, { dir: temporary, by, parent, note, id });
+  } finally {
+    // mkdtemp returned this exact child of SCORE_DIR, never a caller's path.
+    if (path.dirname(path.resolve(temporary)) !== path.resolve(SCORE_DIR())) throw new Error("Unexpected score capture directory.");
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 
 /* ─────────────────────────────────────────────── a version with no render yet */
@@ -552,6 +615,9 @@ export async function draftVersion(slug, {
       author: author === undefined ? (doc.author ?? null) : (author === null ? null : String(author).slice(0, 200)),
       note: note === null || note === undefined ? null : String(note).slice(0, NOTE_CAP),
       identity: `abc:${sha}`,
+      /* An edit retains the engine/weights/settings it came from. Its new
+       * notes and words live in request; source still names the heard take. */
+      source: parent ? structuredClone(findVersion(doc, parent)?.source ?? null) : null,
       /* ⚠ `drafted`, AND EVERY RENDER FIELD EXPLICITLY NULL rather than absent.
        * A reader asking "how long is this take" must get null and not undefined:
        * absent reads as "nobody recorded it", null reads as "there is no take".

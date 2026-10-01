@@ -484,6 +484,7 @@ export class Library {
          * cannot show, which is how 32 imported songs sat without a badge. */
         scoreSlug: m.scoreSlug || null,
         scoreVersion: m.scoreVersion || null,
+        scoreWarning: m.scoreWarning || null,
         // Only tracks captured since the resume patch carry a trajectory, so the
         // UI must gate "Extend" on this rather than offering it everywhere.
         codes: m.codes || null,
