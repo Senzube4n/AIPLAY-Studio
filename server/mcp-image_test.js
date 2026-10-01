@@ -7,11 +7,13 @@
  * does nothing. `additionalProperties: false` means a client trusts the
  * schema, so a schema that lies is a feature that appears to work.
  *
- * The check is a heuristic: it reads each tool's run source and asks whether
- * the parameter's name appears in it or in an explicitly forwarded helper.
- * That cannot prove the value is used correctly, but catches "declared and
- * dropped", which is the class that has actually happened. A tool that
- * forwards its whole argument object is
+ * Most checks read each tool's run source and ask whether the parameter's name
+ * appears in it or an explicitly forwarded helper. The native music factory
+ * instead runs valid schema-bound witnesses through its real shared POST
+ * helper and checks the values at the HTTP seam; mutation pins prove that a
+ * helper can still fail this same sweep. The name heuristic cannot prove that
+ * a value is used correctly, but catches "declared and dropped", which is the
+ * class that has actually happened. Older wholesale argument forwarding is
  * listed in IGNORED, with the reason written down.
  *
  * Plus the structural checks for the routes the image panels lean on — the
@@ -26,6 +28,10 @@ import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { ZIMAGE_PRESET } from "./workflow.js";
 import { h3OptionalMcpBody } from "./mcp-h3-refmods.js";
 import { videoLoraInput } from "./video-lora-validation.js";
+import { isDeepStrictEqual } from "node:util";
+import { musicWorkbenchTools } from "./mcp-music-workbench.js";
+import { plannerRequest } from "./music/community-planner.js";
+import { trainingRecipe } from "./music/community-recipes.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,13 +86,114 @@ function forwardingSource(tool, runSource = String(tool.run)) {
   return tool.name === "make_clip" && h3BodyCall.test(runSource)
     ? `${runSource}\n${String(h3OptionalMcpBody)}` : runSource;
 }
-function unnamedParameters(tool, runSource = String(tool.run)) {
+
+/* The native workbench factory validates against each closed schema and then
+ * spreads the request through its local post helper. Reading the entire module
+ * would always find every schema name, including a parameter that helper drops.
+ * Execute the REAL factory instead, using valid schema-bound witnesses, and
+ * compare the exact values arriving at its existing HTTP boundary. No worker,
+ * file write, network request or install occurs: api is the recording seam.
+ * Separate dataset witnesses exercise its mutually exclusive source fields.
+ * A new declaration without a witness remains missing, rather than exempted. */
+const nativeRun = "e".repeat(32);
+const nativeExamples = new Map([
+  ["music_workbench_status", [{}]],
+  ["music_workbench_run", [{ run: nativeRun }]],
+  ["music_workbench_stop", [{}]],
+  ["music_native_install", [{ kind: "midi", size: "medium" }]],
+  ["music_dataset_create", [{ name: "Reviewed recordings", files: ["take.wav", "second.flac"] },
+    { name: "Local recordings", folder: path.resolve("fixtures", "training") }]],
+  ["music_dataset_edit", [{ id: nativeRun, item: "song_0", style: "Gentle acoustic", lyrics: "[Verse]\nHold on  \n", instrumental: false }]],
+  ["music_dataset_prepare", [{ dataset: nativeRun }]],
+  ["music_native_train", [{ dataset: nativeRun, recipe: { preset: "custom", steps: 250, accumulation: 3,
+    optimizer: "adamw", adapter: "lokr", rank: 8, alpha: 64, lokrDim: 32, lokrFactor: 4,
+    learningRate: .001, targetKl: .02, seed: 987, saveEvery: 50 } }]],
+  ["music_native_continue", [{ run: nativeRun, steps: 600 }]],
+  ["music_native_plan", [{ style: "Gentle acoustic", lyrics: "[Verse]\nHold on  \n", stage: "audio", seed: 123,
+    abc: "X:1\nM:4/4\nL:1/4\nK:C\nC D E F |", quantization: "q8_0", narSteps: 16, maxTokens: 800 }]],
+  ["music_native_replay", [{ run: nativeRun, abc: "X:1\nK:C\nC D E F |", useTokens: false, seed: 125 }]],
+  ["music_native_keep", [{ run: nativeRun }]],
+  ["music_audio_transcribe", [{ file: "take.flac", size: "large", device: "cpu" }]],
+  ["music_midi_to_daw", [{ run: nativeRun, bpm: 128 }]],
+  ["music_adapter_export", [{ run: nativeRun }]],
+  ["music_adapter_install", [{ run: nativeRun }]],
+  ["music_process_preview", [{ file: "take.flac", reference: "reference.wav", denoise: true, smoothing: .5,
+    plugins: [{ path: path.resolve("plugins", "Master.vst3"), parameters: { gain: .4, bypass: false, mode: "Clean" } }] }]],
+  ["music_process_keep", [{ run: nativeRun }]],
+]);
+async function nativeForwarding(factory) {
+  let posts = [];
+  const tools = factory(async (method, route, body) => {
+    if (method === "POST" && route === "/api/music-tools") posts.push(structuredClone(body));
+    return { ok: true };
+  });
+  const evidence = new Map(), errors = [];
+  for (const tool of tools) {
+    const forwarded = new Set();
+    for (const witness of nativeExamples.get(tool.name) || []) {
+      posts = [];
+      try { await tool.run(structuredClone(witness)); }
+      catch (error) { errors.push(`${tool.name}: ${error.message}`); }
+      for (const field of Object.keys(tool.inputSchema.properties || {})) {
+        if (Object.hasOwn(witness, field) && posts.some(body => Object.hasOwn(body, field)
+          && isDeepStrictEqual(body[field], witness[field]))) forwarded.add(field);
+      }
+    }
+    evidence.set(tool.name, { runSource: String(tool.run), forwarded });
+  }
+  return { tools, evidence, errors };
+}
+const nativeForwarded = await nativeForwarding(musicWorkbenchTools);
+ok("native factory witnesses execute its real validators and shared POST helper", nativeForwarded.errors.length === 0,
+  nativeForwarded.errors.join(", "));
+ok("every registered native tool uses the factory whose actual forwarding was checked",
+  nativeForwarded.tools.every(tool => OURS.some(registered => registered.name === tool.name
+    && String(registered.run) === String(tool.run))));
+
+function unnamedParameters(tool, runSource = String(tool.run), evidence = nativeForwarded.evidence) {
+  const observed = evidence.get(tool.name);
+  if (observed && observed.runSource === runSource) {
+    return Object.keys(tool.inputSchema.properties || {}).filter(field => !observed.forwarded.has(field));
+  }
   const src = forwardingSource(tool, runSource);
   return Object.keys(tool.inputSchema.properties || {}).filter((p) => {
     const camel = p.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
     return !src.includes(p) && !src.includes(camel);
   });
 }
+
+/* Mutation pins execute changed COPIES of the real module. The assertions use
+ * the same census above, not a separate success-only wire test. Removing the
+ * generic spread, deleting a still-named input, or dropping a value inside post
+ * must each remain visible even though the schemas still declare every name. */
+const nativeModule = readFileSync(new URL("./mcp-music-workbench.js", import.meta.url), "utf8");
+function mutatedNativeFactory(before, after) {
+  if (!nativeModule.includes(before)) throw new Error("Native forwarding mutation no longer matches its real helper.");
+  const source = nativeModule.replace(before, after).replace(/^import[^\r\n]*\r?\n/gm, "").replace(/^export\s+/gm, "");
+  return new Function("path", "plannerRequest", "trainingRecipe", `${source}\nreturn musicWorkbenchTools;`)(path, plannerRequest, trainingRecipe);
+}
+const nativeMissing = result => result.tools.flatMap(tool => unnamedParameters(tool, String(tool.run), result.evidence)
+  .map(field => `${tool.name}.${field}`));
+const withoutNativeSpread = await nativeForwarding(mutatedNativeFactory("return post({ action, ...input });", "return post({ action });"));
+const nativeDeclared = nativeForwarded.tools.flatMap(tool => Object.keys(tool.inputSchema.properties || {})
+  .map(field => `${tool.name}.${field}`));
+ok("the census detects every native parameter when the factory drops its real input spread",
+  nativeDeclared.length > 30 && nativeDeclared.every(field => nativeMissing(withoutNativeSpread).includes(field)));
+const deletedNativeSize = await nativeForwarding(mutatedNativeFactory("return post({ action, ...input });",
+  "delete input.size; return post({ action, ...input });"));
+ok("the census detects a deleted input even when its name remains in run source",
+  nativeMissing(deletedNativeSize).includes("music_native_install.size")
+  && String(deletedNativeSize.tools.find(tool => tool.name === "music_native_install").run).includes("input.size"));
+const withoutNativePlugins = await nativeForwarding(mutatedNativeFactory(
+  "const result = await api('POST', '/api/music-tools', body, 900_000);",
+  "const { plugins, ...forwardedBody } = body; const result = await api('POST', '/api/music-tools', forwardedBody, 900_000);"));
+ok("the census detects a parameter dropped inside the shared POST body helper",
+  isDeepStrictEqual(nativeMissing(withoutNativePlugins), ["music_process_preview.plugins"]));
+const nativeInstall = OURS.find(tool => tool.name === "music_native_install");
+ok("schema names alone cannot hide an unrelated new native declaration",
+  unnamedParameters({ ...nativeInstall, inputSchema: { ...nativeInstall.inputSchema,
+    properties: { ...nativeInstall.inputSchema.properties, missing_forwarding_regression: { type: "string" } } } })
+    .includes("missing_forwarding_regression"));
 const clip = OURS.find((t) => t.name === "make_clip");
 ok("make_clip spreads the real H3 optional body helper with its arguments and selected engine",
   h3BodyCall.test(String(clip.run)));
@@ -107,7 +214,7 @@ for (const t of OURS) {
     dropped.push(`${t.name}.${p}`);
   }
 }
-ok("every declared parameter is named in its run() or an explicitly forwarded helper", dropped.length === 0,
+ok("every declared parameter is named in its run/helper or observed in its factory's forwarded HTTP body", dropped.length === 0,
   dropped.length
     ? `${dropped.join(", ")}\n          Either forward it, or add it to IGNORED with a reason.`
     : "");

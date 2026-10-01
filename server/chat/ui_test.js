@@ -38,7 +38,8 @@ import { systemPrompt } from "./loop.js";
  * one function that can put a tag on the page that the model asked for. Nothing
  * in web/chat.js touches the DOM at module scope (the bootstrap is guarded), so
  * importing it here costs nothing. */
-import { renderMarkdown } from "../../web/chat.js";
+import { renderMarkdown, gpuWarning, cancelGpuWarning } from "../../web/chat.js";
+import { createCommunityRoutes } from "../music/community-tools.js";
 
 let pass = 0;
 const failures = [];
@@ -60,6 +61,7 @@ const ROUTES = read(HERE, "routes.js");
 const LOOP = read(HERE, "loop.js");
 const TOOLSRC = read(HERE, "tools.js");
 const INDEXJS = read(ROOT, "server", "index.js");
+const COMMUNITYCODE = read(ROOT, "server", "music", "community-tools.js");
 const CATALOGUE = read(ROOT, "server", "welcome", "catalogue.js");
 const README = read(ROOT, "README.md");
 
@@ -92,11 +94,17 @@ const served = new Set();
 for (const m of ROUTECODE.matchAll(/p\s*(?:!==|===)\s*"(\/api\/chat[^"]*)"/g)) served.add(m[1]);
 ok(`the route's paths were found and read (${[...served].join(", ")})`, served.size >= 2, [...served].join(", "));
 
-const orphans = fetches.filter((f) => !served.has(f.path));
+// Native GPU cancellation uses its own existing worker route. Read its guard
+// and verify the real handler mount, rather than exempting the extra fetch.
+const nativeServed = new Set([...noComments(COMMUNITYCODE).matchAll(/p\s*(?:!==|===)\s*['"]([^'"]+)['"]/g)].map((match) => match[1]));
+ok("native cancellation's route is served by the mounted community handler",
+  nativeServed.has("/api/music-tools") && /communityRoutes\(req, res, url\)/.test(INDEXJS)
+  && /action==='stop'/.test(noComments(COMMUNITYCODE)));
+const orphans = fetches.filter((f) => !served.has(f.path) && !nativeServed.has(f.path));
 ok("every path the page fetches is one the route handles",
   orphans.length === 0,
   `${orphans.map((f) => `${f.method} ${f.path}`).join(", ")} — posted by web/chat.js and matched by `
-  + "nothing in server/chat/routes.js. A button posting into a 404 looks exactly like a button "
+  + "nothing in the mounted chat/native-worker routes. A button posting into a 404 looks exactly like a button "
   + "that is merely slow.");
 
 const unreached = [...served].filter((p) => !fetches.some((f) => f.path === p));
@@ -512,6 +520,51 @@ ok("...and it marks the three that spend, which are the three the loop gates",
 ok("...and each tool the model is given has a plain-words name on this screen too",
   tools.names.every((n) => new RegExp(`${n}:`).test(CODE)),
   tools.names.filter((n) => !new RegExp(`${n}:`).test(CODE)).join(", "));
+
+console.log("\nOWNED GPU CANCELLATION");
+{
+  const nativeMarkup = gpuWarning({ text: "Native planning started", cancelScope: "music-workbench" });
+  ok("a native GPU warning visibly targets native work; ordinary renders retain their Stop button",
+    nativeMarkup.includes('data-cancel-scope="music-workbench"') && nativeMarkup.includes("Cancel native work")
+    && !gpuWarning({ text: "Studio render started" }).includes("data-cancel-scope")
+    && !gpuWarning({ cancelScope: "https://untrusted.example/stop" }).includes("data-cancel-scope"));
+  const requests = [];
+  let engineStops = 0, response;
+  const nativeHandle = createCommunityRoutes({
+    json: (_res, status, body) => { response = { status, body }; },
+    readBody: async (req) => JSON.parse(req.body),
+  });
+  {
+    const dispatch = (detail) => { engineStops++; detail.done = Promise.resolve(true); return true; };
+    const request = async (url, options) => {
+      requests.push({ url, options });
+      const handled = await nativeHandle({ method: options.method, body: options.body }, {}, new URL(url, "http://localhost"));
+      return { ok: handled && response.status === 200, json: async () => response.body };
+    };
+    const deps = { fetch: request, dispatch };
+    const nativeButton = { disabled: false, textContent: "Cancel native work", dataset: { cancelScope: "music-workbench" } };
+    const cancelled = await cancelGpuWarning(nativeButton, deps);
+    ok("the native Cancel button executes the real workbench stop route, never the Studio engine Stop",
+      cancelled && requests.length === 1 && requests[0].url === "/api/music-tools"
+      && requests[0].options.method === "POST" && JSON.parse(requests[0].options.body).action === "stop"
+      && engineStops === 0 && response.body.ok === true
+      && nativeButton.disabled === true && nativeButton.textContent === "Cancelled",
+      JSON.stringify({ cancelled, requests, engineStops, response, nativeButton }));
+    await cancelGpuWarning(nativeButton, deps);
+    ok("a disabled Cancel button does not submit another stop", requests.length === 1);
+    const regularButton = { disabled: false, dataset: {}, textContent: "Cancel" };
+    await cancelGpuWarning(regularButton, deps);
+    ok("ordinary Studio GPU Cancel still dispatches the app's established Stop event",
+      engineStops === 1 && requests.length === 1 && regularButton.textContent === "Cancelled");
+    const retryButton = { disabled: false, dataset: { cancelScope: "music-workbench" } };
+    const failed = await cancelGpuWarning(retryButton, { fetch: async () => ({ ok: false }), dispatch });
+    ok("a rejected native Stop stays available to retry and reports failure",
+      failed === false && retryButton.disabled === false && retryButton.textContent === "Could not cancel" && engineStops === 1);
+    ok("a disconnected native Stop reports failure without falling back to another worker",
+      await cancelGpuWarning(retryButton, { fetch: async () => { throw new Error("offline"); }, dispatch }) === false
+      && retryButton.disabled === false && engineStops === 1);
+  }
+}
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

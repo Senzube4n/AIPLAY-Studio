@@ -38,7 +38,8 @@ and video queue behind it.
 The economics drive the order: PLANNING IS FREE (brief, bible, lint, crime
 board), a render costs GPU-minutes, and every render KEEPS its takes. So plan
 fully, render once, pick takes, repair the stale minimum, and polish with VFX
-instead of re-rendering. Topics: stages, series, engines, example, vectors. Read vectors for logo finishing.`;
+instead of re-rendering. Topics: stages, series, engines, example, vectors, music-workbench.
+Read vectors for logos; music-workbench for native YuE2 tools.`;
 
 const STAGES = `THE FIVE STAGES OF A MUSIC VIDEO
 
@@ -325,7 +326,45 @@ const VECTORS = `VECTOR ART: TRACE, SELECT, FINISH, LOOK
 
 Full guide: https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md`;
 
-const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS, vectors: VECTORS };
+const MUSIC_WORKBENCH = `NATIVE MUSIC WORKBENCH
+
+UI: Music Lab > Native tools. The main full-window player’s Score view follows a linked
+YuE2 score; the workbench's saved native runs also offer Follow playback. Timing is approximate.
+
+1 READ: \`music_workbench_status\` lists installed packs, datasets and runs without work.
+  Installation is explicit through \`music_native_install\`; optional planner/trainer packs
+  require NVIDIA CUDA. Existing Studio generation and single-recording training remain separate.
+
+2 PLAN: \`music_native_plan\` saves exact style/lyrics/settings and model/runtime hashes.
+  Choose score, semantic tokens or audio. Poll \`music_workbench_run\`, inspect returned
+  artifact URLs, then \`music_native_replay\` for an edited score or saved tokens. Token reuse
+  cannot accompany changed ABC. \`music_native_keep\` saves completed audio to the library.
+  Score changes steer a new performance; identical waveform or precise duration is not guaranteed.
+
+3 TRAIN: \`music_dataset_create\` reads library audio or an owner's absolute local folder.
+  Review each entry with \`music_dataset_edit\`; \`music_dataset_prepare\` converts recordings.
+  \`music_native_train\` handles full code/latent/score preparation and joint adapter training.
+  \`music_native_continue\` uses a saved optimizer checkpoint and a higher TOTAL step count.
+  \`music_adapter_export\` creates a ComfyUI LoRA; \`music_adapter_install\` copies it to its shelf.
+  Select its returned filename in both Audio LoRA and Planner LoRA on YuE2 through ComfyUI.
+  Completion/loss is not proof of quality: audition held-out cases, using
+  \`music_listening_lab\` and \`music_listening_lab_start\` where the exported adapter is compatible.
+
+4 TRANSCRIBE: \`music_audio_transcribe\` predicts multi-instrument MIDI with MuScriptor
+  (CC BY-NC weights). \`music_midi_to_daw\` imports notes onto a provisional 4/4 timeline,
+  default 120 BPM/pluck sounds. It does not reconstruct the original tempo or timbres.
+
+5 FINISH: \`music_process_preview\` offers separate cleanup, optional offline VST3 and
+  reference loudness matching. Compare the preview, then \`music_process_keep\` preserves it.
+  For actual mastering use the DAW chain, \`daw_analyze\`, loudness-matched \`daw_reference\`,
+  \`daw_critique\` and \`daw_bounce\`; final export meters matter more than knob labels.
+  \`music_workbench_stop\` stops only the active owned native tool.
+
+Source recordings survive. GPU work is exclusive and refuses to overlap active Studio rendering.
+Generation, installation, training, replay and keeping results are distinct actions. No loop judge,
+Ozone-equivalent neural mastering or guaranteed hybrid-genre control is claimed.`;
+
+const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS, vectors: VECTORS, 'music-workbench': MUSIC_WORKBENCH };
 
 /** Every section, for the test that proves no tool name here is a phantom. */
 export const GUIDE_SECTIONS = { head: HEAD, ...TOPICS };
@@ -339,11 +378,11 @@ export function guideTools() {
         + "at each of the five stages of a music video (song, plan, assets, polish, "
         + "assemble), the episodic-series variant, the engine and licence rules, and a "
         + "worked scene. Costs nothing and answers instantly. `topic` narrows it: "
-        + "stages | series | engines | example | pitfalls | vectors. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline. Use topic=vectors for vector logos and selected cleanup.",
+        + "stages | series | engines | example | pitfalls | vectors | music-workbench. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline. Use topic=vectors for vector logos; topic=music-workbench for native YuE2 planning, training and processing.",
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls", "vectors"],
+          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls", "vectors", "music-workbench"],
             description: "One section instead of the whole map." },
         },
         additionalProperties: false,

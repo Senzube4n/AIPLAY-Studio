@@ -28,7 +28,8 @@ import {
 } from "./router.js";
 import { TOOLS as MCP_TOOLS } from "../mcp.js";
 import { createChatTools } from "./tools.js";
-import { systemPrompt, describeTool, gateLabel } from "./loop.js";
+import { systemPrompt, describeTool, gateLabel, runTurn, newSession } from "./loop.js";
+import { musicWorkbenchTools } from "../mcp-music-workbench.js";
 
 let pass = 0;
 const failures = [];
@@ -564,6 +565,137 @@ ok("h3_refmod_create is reachable and asks before using the card",
   await adapted.run({ name: "singer", images: JSON.stringify(["singer.png"]) });
   ok("the flat chat image list is decoded for the bounded RefMod tool",
     adapted.args.images.type === "string" && calls[0].images[0] === "singer.png");
+}
+
+/* Native workers must be reachable without offering filesystem/program paths,
+ * or sampling the local chat model immediately after launching their worker. */
+head("§12  native workbench routes, exact controls and owned cancellation");
+{
+  const decisions = {
+    music_workbench_status: null, music_workbench_run: null, music_workbench_stop: "writes",
+    music_native_install: "withheld", music_dataset_create: "writes", music_dataset_edit: "writes",
+    music_dataset_prepare: "writes", music_native_train: "gpu", music_native_continue: "gpu",
+    music_native_plan: "gpu", music_native_replay: "gpu", music_native_keep: "writes",
+    music_audio_transcribe: "gpu", music_midi_to_daw: "writes", music_adapter_export: "writes",
+    music_adapter_install: "writes", music_process_preview: "writes", music_process_keep: "writes",
+  };
+  const calls = [];
+  const nativeTools = musicWorkbenchTools(async (method, path, body) => {
+    calls.push({ method, path, body });
+    return { ok: true, run: { id: "native_run_1", state: "running" } };
+  });
+  const nativeByName = new Map(nativeTools.map((tool) => [tool.name, tool]));
+  const chatTool = (name) => adaptTool(nativeByName.get(name), ROUTABLE[name]);
+  ok("the reviewed native decisions cover the real factory exactly",
+    nativeTools.length === 18 && nativeTools.every((tool) => Object.hasOwn(decisions, tool.name)));
+  for (const [name, decision] of Object.entries(decisions)) {
+    const reached = index().find((entry) => entry.tool.name === name)?.tool;
+    if (decision === "withheld") {
+      ok(`${name} stays explicitly withheld for downloads and licence review`, !reached && !(name in ROUTABLE)
+        && /gigabytes/.test(WITHHELD[name]) && /licence/.test(WITHHELD[name]) && /Native tools/.test(WITHHELD[name]));
+      ok("an installation request or pinned name cannot bypass that decision",
+        !routedRegistry(core, "music_native_install planner", { pinned: [name] }).get(name));
+    } else {
+      ok(`${name} is discoverable with its reviewed ${decision || "free"} gate`, !!reached
+        && ROUTABLE[name] === decision && reached.gate === decision && reached.spends === !!decision
+        && chooseTools(name).some((tool) => tool.name === name));
+    }
+  }
+  await chatTool("music_workbench_status").run({});
+  await chatTool("music_workbench_run").run({ run: "saved_1" });
+  ok("free native reads use the existing status and saved-run routes",
+    calls[0].method === "GET" && calls[0].path === "/api/music-tools"
+    && calls[1].method === "POST" && calls[1].body.action === "read" && calls[1].body.run === "saved_1");
+
+  const dataset = chatTool("music_dataset_create"), processing = chatTool("music_process_preview");
+  ok("library dataset files are offered as flat JSON, while folder and plugin paths are absent",
+    dataset.args.files?.type === "string" && /^JSON array/.test(dataset.args.files.note)
+    && !("folder" in dataset.args) && !("plugins" in processing.args));
+  ok("chat descriptions name the narrower controls and their explicit UI destination",
+    /JSON files array/.test(dataset.description) && /Folder imports require Music Lab/.test(dataset.description)
+    && /built-in denoise/.test(processing.description) && /Executable VST3 plugins require Music Lab/.test(processing.description));
+  await dataset.run({ name: "My takes", files: '["take.flac","alternate.wav"]' });
+  ok("the real MCP validator receives the decoded library filenames, not a dropped JSON argument",
+    calls.at(-1).body.action === "dataset" && calls.at(-1).body.name === "My takes"
+    && calls.at(-1).body.files.join(",") === "take.flac,alternate.wav");
+  for (const [tool, args, field] of [
+    [dataset, { files: '["take.flac"]', folder: "C:\\Private" }, "folder"],
+    [processing, { file: "take.flac", plugins: [{ path: "C:\\Plugins\\effect.vst3" }] }, "plugins"],
+  ]) {
+    const before = calls.length;
+    let refusal = "";
+    try { await tool.run(args); } catch (error) { refusal = error.message; }
+    ok(`forcing the withheld ${field} fails before an API call rather than silently dropping it`,
+      refusal.startsWith(`${field} is not available in this chat`) && calls.length === before, refusal);
+  }
+  for (const files of ['{"file":"take.flac"}', '["take.flac"', '["../outside.flac"]']) {
+    const before = calls.length;
+    let refusal = "";
+    try { await dataset.run({ files }); } catch (error) { refusal = error.message; }
+    ok(`malformed or path-bearing dataset input is refused before posting (${files})`,
+      !!refusal && calls.length === before, refusal);
+  }
+  await nativeByName.get("music_dataset_create").run({ folder: "C:\\ReviewedAudio" });
+  await nativeByName.get("music_process_preview").run({ file: "take.flac", plugins: [{ path: "C:\\Plugins\\effect.vst3" }] });
+  ok("external MCP retains the separately reviewed local folder and VST controls",
+    calls.at(-2).body.folder === "C:\\ReviewedAudio" && calls.at(-1).body.plugins[0].path === "C:\\Plugins\\effect.vst3");
+
+  const recipe = { preset: "custom", optimizer: "adamw", adapter: "lora", steps: 800, rank: 24, accumulation: 4 };
+  const training = chatTool("music_native_train");
+  await training.run({ dataset: "dataset_1", recipe: JSON.stringify(recipe) });
+  ok("advanced training recipe JSON reaches the real typed MCP body intact",
+    training.args.recipe?.type === "string" && calls.at(-1).body.action === "train"
+    && JSON.stringify(calls.at(-1).body.recipe) === JSON.stringify(recipe));
+  const lyrics = "[verse]\r\nA different phrase  \n", abc = "X:1\nK:C\nC D E F|\n";
+  await chatTool("music_native_plan").run({ style: "Acoustic pop", lyrics, stage: "semantic", abc, seed: 42, narSteps: 24, maxTokens: 600 });
+  ok("planner text whitespace and advanced controls survive the chat boundary exactly",
+    calls.at(-1).body.lyrics === lyrics && calls.at(-1).body.abc === abc
+    && calls.at(-1).body.stage === "semantic" && calls.at(-1).body.seed === 42
+    && calls.at(-1).body.narSteps === 24 && calls.at(-1).body.maxTokens === 600);
+  ok("training cards explain hours and resumed total steps",
+    /hours/.test(training.cost) && /hours/.test(chatTool("music_native_continue").cost)
+    && /new total/.test(chatTool("music_native_continue").cost));
+  const stop = chatTool("music_workbench_stop"), midi = chatTool("music_midi_to_daw");
+  ok("native Stop and note import cards describe their actual scope, not a new library recording",
+    /native workbench worker/.test(stop.cost) && /no new file/.test(stop.cost)
+    && gateLabel(stop).includes("STOPS NATIVE WORK") && /DAW project/.test(midi.cost)
+    && /provisional tempo/.test(midi.cost) && gateLabel(midi).includes("SAVES A DAW PROJECT"));
+  ok("processing card explains CPU preview work and loudness-only reference matching",
+    /processor time/.test(processing.cost) && /loudness-only/.test(processing.cost)
+    && !/holds the card/.test(processing.cost));
+  const starts = ["music_dataset_prepare", "music_native_train", "music_native_continue", "music_native_plan",
+    "music_native_replay", "music_audio_transcribe", "music_adapter_export", "music_process_preview"];
+  ok("all eight worker starts end the chat turn; only GPU starts advertise native cancellation",
+    starts.every((name) => {
+      const tool = chatTool(name);
+      return tool.endsTurn === true && (tool.gate === "gpu" ? tool.cancelScope === "music-workbench" : !tool.cancelScope);
+    }) && !chatTool("music_workbench_run").endsTurn);
+
+  const registry = (tool) => ({ all: [tool], get: (name) => name === tool.name ? tool : null });
+  const engine = { status: async () => ({ ready: true, running: [], queue: { running: 0, pending: 0 } }) };
+  const trainingArgs = { dataset: "dataset_1", recipe: JSON.stringify(recipe) };
+  const session = newSession("native_confirm"), events = [];
+  let modelCalls = 0;
+  const model = async () => { modelCalls++; return JSON.stringify({ tool: training.name, args: trainingArgs }); };
+  let before = calls.length;
+  await runTurn({ tools: registry(training), engine, model }, session, "train this dataset", (event) => events.push(event));
+  ok("a native training proposal does not start work and shows the hours cost",
+    calls.length === before && session.pending?.tool === training.name
+    && /hours/.test(events.find((event) => event.type === "proposal")?.cost || ""));
+  await runTurn({ tools: registry(training), engine, model }, session, "yes", (event) => events.push(event));
+  ok("confirmation forwards the reviewed recipe once and never samples the model onto the running worker",
+    calls.length === before + 1 && modelCalls === 1 && session.pending === null
+    && JSON.stringify(calls.at(-1).body.recipe) === JSON.stringify(recipe)
+    && events.find((event) => event.type === "gpu")?.cancelScope === "music-workbench"
+    && events.some((event) => event.type === "say" && /native_run_1/.test(event.text)));
+  const plan = chatTool("music_native_plan"), autoEvents = [];
+  modelCalls = 0; before = calls.length;
+  await runTurn({ tools: registry(plan), engine, autoSpend: true,
+    model: async () => { modelCalls++; return JSON.stringify({ tool: plan.name, args: { style: "Pop", lyrics: "Sing this  \n" } }); } },
+    newSession("native_auto"), "generate a native take", (event) => autoEvents.push(event));
+  ok("the owner's automatic-spend mode emits the native Cancel destination and stops after the receipt",
+    calls.length === before + 1 && modelCalls === 1 && autoEvents.find((event) => event.type === "gpu")?.cancelScope === "music-workbench"
+    && autoEvents.some((event) => event.type === "say" && /Music Lab > Native tools/.test(event.text)));
 }
 
 console.log(`\n${pass} passed, ${failures.length} failed`);

@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="galleries.css">
 <link rel="stylesheet" href="music-input.css">
 <link rel="stylesheet" href="music-workflows.css">
+<link rel="stylesheet" href="music-workbench.css">
+<link rel="stylesheet" href="full-player-score.css">
 <link rel="stylesheet" href="music-artifacts.css">
 <link rel="stylesheet" href="music-listening-lab.css">
 <link rel="stylesheet" href="music-auditions.css">
@@ -845,6 +847,7 @@
       <button type="button" class="tag" data-n="2">2</button>
       <button type="button" class="tag" data-n="3">3</button>
       <button type="button" class="tag" data-n="4">4</button>
+      <button type="button" class="tag" data-n="8" title="Queue eight takes with different seeds">8</button>
       <button class="edtool" type="button" id="btnToOvernight" title="Queue this prompt for an overnight run">☾ overnight</button>
     </div>
 
@@ -900,7 +903,7 @@
       <div class="frow">
         <button class="btn sm" type="button" id="scoreSave">Save as a new version</button>
         <button class="btn sm" type="button" id="scoreEngrave">Engrave</button>
-        <a class="btn sm" href="/music-workbench.html" target="_blank" rel="noopener">Music workbench</a>
+        <a class="btn sm" href="/?view=musiclab&amp;tool=native">Music workbench</a>
         <button class="btn sm" type="button" id="scoreFollow">Follow playback</button>
         <a class="btn sm" id="scoreSheetLink" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a>
         <a class="btn sm" id="scorePdfLink" href="#" target="_blank" rel="noopener" hidden>PDF</a>
@@ -2439,7 +2442,7 @@
       </style>
       <div class="stagehead">
         <h2>Train a music LoRA</h2>
-        <a class="btn sm" href="/music-workbench.html" target="_blank" rel="noopener">Dataset and native tools</a>
+        <a class="btn sm" href="/?view=musiclab&amp;tool=native">Dataset and native tools</a>
         <span class="count" id="trCount"></span>
       </div>
       <p class="hint"><b>Experimental.</b> Train a YuE2 adapter from a recording you own, then test whether it changes the sound usefully. The training loop runs; audible improvement is not validated. Audio and training stay on this computer.</p>
@@ -4830,12 +4833,14 @@
       <button id="musicReferencesTab" role="tab" aria-controls="musicReferences" aria-selected="false" tabindex="-1" type="button"><b>Reference music</b><span>Audio or footage → reviewed brief</span></button>
       <button id="musicArtifactsTab" role="tab" aria-controls="musicArtifacts" aria-selected="false" tabindex="-1" type="button"><b>Saved stages</b><span>Replay a plan, tokens or sound</span></button>
       <button id="musicListeningLabTab" role="tab" aria-controls="musicListeningLab" aria-selected="false" tabindex="-1" type="button"><b>Listening lab</b><span>Compare base model and LoRA</span></button>
+      <button id="musicNativeToolsTab" role="tab" aria-controls="musicNativeTools" aria-selected="false" tabindex="-1" type="button"><b>Native tools</b><span>Plan, train and transcribe</span></button>
     </div>
     <section id="musicAuditions" role="tabpanel" aria-labelledby="musicAuditionsTab"></section>
     <section id="musicKits" role="tabpanel" aria-labelledby="musicKitsTab" hidden></section>
     <section id="musicReferences" role="tabpanel" aria-labelledby="musicReferencesTab" hidden></section>
     <section id="musicArtifacts" role="tabpanel" aria-labelledby="musicArtifactsTab" hidden></section>
     <section id="musicListeningLab" role="tabpanel" aria-labelledby="musicListeningLabTab" hidden></section>
+    <section id="musicNativeTools" role="tabpanel" aria-labelledby="musicNativeToolsTab" hidden></section>
     </div>
 
     <div id="engine" hidden class="page">
@@ -5485,8 +5490,30 @@
       </div>
       <!-- Fades at both ends instead of a scrollbar: the words should look like
            they continue past the edge rather than sit in a box. -->
+      <div class="fp-reading">
+        <div class="fp-reading-tabs" role="tablist" aria-label="Player view">
+          <button class="btn2" id="fpLyricsTab" type="button" role="tab" aria-controls="fpLyrics" aria-selected="true">Lyrics</button>
+          <button class="btn2" id="fpScoreTab" type="button" role="tab" aria-controls="fpScore" aria-selected="false" tabindex="-1" disabled>Score</button>
+        </div>
       <div class="fpscroll" id="fpScroll">
         <pre class="fplyrics" id="fpLyrics"></pre>
+        <section id="fpScore" hidden role="tabpanel" aria-labelledby="fpScoreTab">
+          <div class="fp-score-controls">
+            <label><input id="fpScoreFollow" type="checkbox" checked> Follow</label>
+            <span class="chip" id="fpScorePosition">Ready</span>
+            <span class="chip" id="fpScoreStatus" role="status"></span>
+          </div>
+          <details class="more fp-score-timing"><summary>Timing</summary>
+            <div class="fp-score-controls">
+              <label>Start offset <input class="in2" id="fpScoreOffset" type="number" value="0" step="0.1"> s</label>
+              <label>Time scale <input class="in2" id="fpScoreScale" type="number" value="1" min="0.1" max="10" step="0.001"></label>
+              <button class="btn2" id="fpScoreFit" type="button">Fit duration</button>
+            </div>
+            <p class="hint">Notation timing can drift; adjust the offset or fit the whole score to this recording.</p>
+          </details>
+          <div id="fpScoreScroll"><div id="fpScorePaper"></div></div>
+        </section>
+      </div>
       </div>
     </div>
   </div>

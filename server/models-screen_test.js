@@ -8,12 +8,14 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { CATALOG, markRequired } from "./models.js";
 import { config } from "./config.js";
+import { scanBasesSync, modelLeaf, findShelfModel, applyModelOverrides } from "./localmodels.js";
+import { paintLocal } from "../web/modellocal.js";
 
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const app = src("../web/app.js"), index = src("./index.js"), pick = src("../web/modelpick.js");
@@ -21,6 +23,84 @@ const app = src("../web/app.js"), index = src("./index.js"), pick = src("../web/
 /* index.js's own section rule, run against the real catalogue. */
 const ruleSrc = index.match(/function modelGroupOf\(c\) \{[\s\S]*?\n\}/)[0];
 const modelGroupOf = new Function(`${ruleSrc}; return modelGroupOf;`)();
+
+/* Exercise the actual card renderer without a browser or model weights. */
+function localCardRoot(id) {
+  let panel = null;
+  const card = {
+    querySelector: (selector) => selector === ".mlocal" ? panel : null,
+    insertBefore: (el) => { panel = el; el.remove = () => { panel = null; }; },
+  };
+  const elements = {
+    modelList: { querySelector: (selector) => selector === `[data-cap="${id}"]` ? card : null },
+    modelFolder: {}, modelExtra: { open: false },
+  };
+  return { getElementById: (name) => elements[name] || null, createElement: () => ({}),
+    panel: () => panel, elements };
+}
+
+test("stand-ins retain exact catalogue basenames in external nested folders", (t) => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "aiplay-model-card-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const css = globalThis.CSS;
+  globalThis.CSS = { escape: (value) => value };
+  t.after(() => { if (css === undefined) delete globalThis.CSS; else globalThis.CSS = css; });
+  const primary = path.join(tmp, "primary"), external = path.join(tmp, "external");
+  for (const [base, folder, name] of [
+    [primary, "vae", "flux2_vae.safetensors"],
+    [external, "vae", path.join("flux2", "flux2-vae.safetensors")],
+    [external, "vae", path.join("flux2", "flux2-vae1.safetensors")],
+    [external, "vae", path.join("flux2", "dav_decoder.safetensors")],
+    [external, "text_encoders", path.join("wrong-shelf", "flux2-vae.safetensors")],
+    [external, "vae", "flux2-vae.safetensors"],
+  ]) {
+    const dest = path.join(base, folder, name);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    writeFileSync(dest, "fixture weight");
+  }
+  const known = new Set(["flux2-vae.safetensors", "dav_decoder.safetensors"]);
+  const files = scanBasesSync([primary, external]).map((file) => ({ ...file, known: known.has(modelLeaf(file.name)) }));
+  const nested = path.join("flux2", "flux2-vae.safetensors");
+  assert.equal(files.find((f) => f.name === nested)?.known, true,
+    "the API's leaf-based known flag reproduces the original filename-sensitive bug");
+  const root = localCardRoot("flux2");
+  paintLocal({ local: { modelsDir: primary, bases: [primary, external], also: [external], files },
+    capabilities: [{ id: "flux2", files: [{ name: "flux2-vae.safetensors", shelf: "vae", present: false }] }] }, root);
+  const html = root.panel().innerHTML;
+  assert.ok(html.includes(`<option value="${nested}">`), "the exact nested alias is offered without renaming");
+  assert.ok(html.includes(`<option value="${path.join("flux2", "flux2-vae1.safetensors")}">`), "other external candidates remain available");
+  assert.ok(html.includes('<option value="flux2_vae.safetensors">'), "primary-folder candidates remain available");
+  assert.ok(!html.includes("dav_decoder"), "a catalogue-known different model is not offered for this slot");
+  assert.ok(!html.includes("wrong-shelf"), "a matching basename on another shelf is not a VAE candidate");
+  assert.ok(!html.includes('<option value="flux2-vae.safetensors">'), "the catalogue's own bare alias is not a stand-in");
+  assert.equal(root.panel().open, true, "a matching leaf opens the panel even inside a subfolder");
+  assert.ok(html.indexOf(`<option value="${nested}">`) < html.indexOf('<option value="flux2_vae.safetensors">'),
+    "matching leaves rank ahead of renamed files regardless of their folder prefix");
+  const chosen = findShelfModel(files, "vae", nested, { fallback: false });
+  assert.equal(chosen.full, path.join(external, "vae", nested), "the offered full alias resolves to the external file");
+  const graph = { 1: { class_type: "VAELoader", inputs: { vae_name: "flux2-vae.safetensors" } },
+    2: { class_type: "CLIPTextEncode", inputs: { text: "flux2-vae.safetensors" } } };
+  const rewritten = applyModelOverrides(graph, { "flux2-vae.safetensors": nested });
+  assert.equal(rewritten[1].inputs.vae_name, nested, "selection reaches the loader with its subfolder intact");
+  assert.equal(rewritten[2], graph[2], "the stand-in still leaves the prompt unchanged");
+});
+
+test("stand-ins recognize POSIX nested aliases and still skip present or package-managed files", (t) => {
+  const css = globalThis.CSS;
+  globalThis.CSS = { escape: (value) => value };
+  t.after(() => { if (css === undefined) delete globalThis.CSS; else globalThis.CSS = css; });
+  const local = { modelsDir: "/primary", bases: ["/primary", "/external"], files: [
+    { base: "/external", folder: "vae", shelf: "vae", name: "flux2/flux2-vae.safetensors", known: true, bytes: 1 },
+  ] };
+  const root = localCardRoot("flux2");
+  const files = [{ name: "flux2-vae.safetensors", shelf: "vae", present: false }];
+  paintLocal({ local, capabilities: [{ id: "flux2", files }] }, root);
+  assert.ok(root.panel().innerHTML.includes('value="flux2/flux2-vae.safetensors"'));
+  paintLocal({ local, capabilities: [{ id: "flux2", files: [{ ...files[0], present: true }] }] }, root);
+  assert.equal(root.panel(), null, "an installed slot does not offer stand-ins");
+  paintLocal({ local, capabilities: [{ id: "flux2", files, managedByPackage: true }] }, root);
+  assert.equal(root.panel(), null, "package-managed models retain their own setup flow");
+});
 
 test("Music & audio holds music: no checkpoint, ControlNet, depth or H3 bridge lands there", () => {
   const music = CATALOG.filter((c) => modelGroupOf(c) === "music").map((c) => c.id);

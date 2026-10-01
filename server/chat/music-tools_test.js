@@ -35,7 +35,8 @@ ok("a song without lyrics is refused unless instrumental", /lyrics are required/
 
 const c = await tools.get("change_settings").run({ length_seconds: 900, takes: 9, tempo: 120, key: "F#m", meter: "6/8", thinking: "Melody", random_seed: true });
 ok("change_settings clamps to the panel's ranges",
-  c.form.lengthSeconds === 360 && c.form.takes === 4 && c.form.tempo === 120 && c.form.key === "F#m"
+  // Eight requested takes are queued separately; the form now includes that choice.
+  c.form.lengthSeconds === 360 && c.form.takes === 8 && c.form.tempo === 120 && c.form.key === "F#m"
   && c.form.meter === "6/8" && c.form.thinking === "melody" && c.form.randomSeed === true, JSON.stringify(c.form));
 threw = null;
 try { await tools.get("change_settings").run({ key: "H major" }); } catch (e) { threw = e.message; }

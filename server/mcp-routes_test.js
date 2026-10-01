@@ -84,7 +84,7 @@ const MCP_FILES = [
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-cloud.js", "server/mcp-music-input.js",
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
-  "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js",
+  "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js", "server/mcp-music-workbench.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
   "server/mcp-setup.js", "server/mcp-runpod.js", "server/mcp-fastcovers.js", "server/mcp-h3-refmods.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
@@ -100,7 +100,7 @@ const ROUTE_FILES = [
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",
   "server/music-plan.js", "server/mesh/avatar.js", "server/mesh/avatar-handoff.js", "server/mesh/avatar-playback.js", "server/mesh/pngtuber.js", "server/mesh/avatar-weight-transfer.js", "server/mesh/avatar-fitting.js", "server/mesh/avatar-wardrobe.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
-  "server/music/artifacts.js", "server/music/listening-lab.js",
+  "server/music/artifacts.js", "server/music/listening-lab.js", "server/music/community-tools.js",
   "server/setup/routes.js", "server/cloud-switch.js", "server/whisper.js", "server/h3-refmod.js",
 ];
 
@@ -394,6 +394,7 @@ for (const [route, moduleFile, factory, method, mountingFile = "server/index.js"
   ["/api/music-references", "server/music/references.js", "createMusicWorkflowRoutes", "musicWorkflowRoutes(req"],
   ["/api/music-artifacts", "server/music/artifacts.js", "createMusicArtifactRoutes", "musicArtifactRoutes(req"],
   ["/api/music-listening-lab", "server/music/listening-lab.js", "createListeningLabRoutes", "listeningLabRoutes(req"],
+  ["/api/music-tools", "server/music/community-tools.js", "createCommunityRoutes", "communityRoutes(req"],
 ]) {
   const indexSource = routeSource.get(mountingFile);
   const mounted = indexSource.includes(factory) && indexSource.includes(method) && exactPaths.has(route);
@@ -487,6 +488,7 @@ function wrappersIn(src) {
 const mcpSource = new Map();
 const wrapperByFile = new Map();
 const ownerOf = new Map();
+const factoryAction = new Map();
 for (const f of MCP_FILES) {
   const src = blankComments(read(f));
   mcpSource.set(f, src);
@@ -495,6 +497,14 @@ for (const f of MCP_FILES) {
   // Local typed-tool factories take the literal name as their first argument.
   // Resolve ownership from that call so their HTTP wrappers remain censused.
   for (const m of src.matchAll(/\btool\s*\(\s*(["'])([a-z0-9_]+)\1/g)) if (!ownerOf.has(m[2])) ownerOf.set(m[2], f);
+  // A local factory with (name, description, action, ...) closes over a
+  // literal third argument. Read it from its call instead of treating every
+  // resulting run() as an unjudged dynamic action.
+  if (/\bconst\s+tool\s*=\s*\(\s*name\s*,\s*description\s*,\s*action\b/.test(src)) {
+    for (const m of src.matchAll(/\btool\s*\(\s*(["'])([a-z0-9_]+)\1\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*(["'])([A-Za-z0-9_]+)\4/g)) {
+      factoryAction.set(m[2], m[5]);
+    }
+  }
 }
 
 /* A sub-module's tools are built by a factory that is HANDED the parent's
@@ -589,6 +599,8 @@ function callsOf(tool) {
   };
   if (calls.length === 1 && !calls[0].actions.length) {
     const c = calls[0];
+    const closedAction = factoryAction.get(tool.name);
+    if (closedAction && /\baction\s*(?:,|\})/.test(c.args)) c.actions = [closedAction];
     const plain = c.args.match(/\baction\s*:\s*(?:a|args)\.([A-Za-z_$][\w$]*)/);
     /* And the one template form: `action: ` + backtick + `render_${a.action}` —
      * a fixed head in front of the same enum, which is still a closed set. */
@@ -615,6 +627,14 @@ ok(`the doors that dispatch on an action were found (${actionsByPath.size})`,
 ok("a known door's known action list is intact (/api/score)",
   actionsByPath.get("/api/score")?.has("to_daw") && actionsByPath.get("/api/score")?.has("draft"),
   "the /api/score switch did not parse — every /api/score verdict below is worthless");
+
+const nativeTools = TOOLS.filter((tool) => ownerOf.get(tool.name) === "server/mcp-music-workbench.js" && tool.name !== "music_workbench_status");
+ok("native music factory actions are all read and checked against their real route",
+  nativeTools.length === 17 && nativeTools.every((tool) => {
+    const { calls } = callsOf(tool);
+    return calls.length === 1 && calls[0].path === "/api/music-tools" && calls[0].actions.length === 1
+      && actionsByPath.get("/api/music-tools")?.has(calls[0].actions[0]);
+  }));
 
 /* THE PARSER'S OWN PIN. A door that answers "Unknown action" dispatches on the
  * word by its own admission; if this file found none for it, the action check

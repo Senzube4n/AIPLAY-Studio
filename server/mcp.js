@@ -40,6 +40,7 @@ import { musicKitTools } from "./mcp-music-kits.js";
 import { musicReferenceTools } from "./mcp-music-references.js";
 import { musicArtifactTools } from "./mcp-music-artifacts.js";
 import { musicListeningLabTools } from "./mcp-music-listening-lab.js";
+import { musicWorkbenchTools } from "./mcp-music-workbench.js";
 /* AUDIO FINISHING. Four routes that existed, worked, and that no tool posted
  * to — /api/edit, /api/merge, /api/export and /api/timeline/render. The header
  * of mcp-audio.js carries the audit that found them and the reason an agent
@@ -459,6 +460,7 @@ export const TOOLS = [
   ...musicReferenceTools(api),
   ...musicArtifactTools(api),
   ...musicListeningLabTools(api),
+  ...musicWorkbenchTools(api),
   /* Beside the music family, because that is where they are reached FROM: the
    * take comes out of make_song and these are what happens to it next — trim
    * the silence off the front, merge the continuations, convert it, and render
@@ -2327,8 +2329,10 @@ export const TOOLS = [
         cap: { type: "integer", description: "Stop after this many renders in total." },
         items: {
           type: "array", maxItems: 40,
-          description: "The ideas. For music: caption (the style) plus optional title/lyrics/instrumental/"
-            + "maxDuration. For image and video: prompt (a template) plus optional engine/checkpoint/"
+          description: "The ideas. Music preserves the selected engine, its supported advanced controls and exact lyric/ABC whitespace. "
+            + "Each take rolls a fresh seed and uses normal song readiness, model, sampler and reference validation. "
+            + "Omitted music engine captures the Studio's current engine at Start. Unsupported cross-engine fields are refused. "
+            + "For image and video: prompt (a template) plus optional engine/checkpoint/"
             + "negative/width/height/steps/cfg/count, and seconds on video. Images also preserve persona, ordered refImages, "
             + "native model filenames, refSizing/refResolution/transparent, Qwen's Fast draft and sampler/LoRA choices. Omitted image engine uses Qwen Image 2.1; "
             + "each take uses the normal image readiness and reference checks.",
@@ -2338,6 +2342,36 @@ export const TOOLS = [
               caption: { type: "string" }, prompt: { type: "string" }, title: { type: "string" },
               lyrics: { type: "string" }, instrumental: { type: "boolean" },
               maxDuration: { type: "integer" },
+              model: { type: "string", enum: ["int8", "fp16", "fp32"], description: "MiniMax precision only." },
+              arCfg: { type: "number", minimum: 0, maximum: 20 }, flowCfg: { type: "number", minimum: 0, maximum: 20 },
+              audioRef: { type: "string", description: "MiniMax only: an already encoded .latent filename." },
+              audioRefDenoise: { type: "number", minimum: 0.05, maximum: 1 },
+              cot: { type: "string", enum: ["full", "melody", "off"] },
+              narSteps: { type: "integer", minimum: 1, maximum: 256, description: "YuE2 audio steps: Python 16/32, ComfyUI 8-64, GGUF 1-256." },
+              cfgScale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. ComfyUI accepts only its fixed 1." },
+              quantization: { type: "string", enum: ["none", "fp8", "q4_0", "q8_0"], description: "Python none/fp8; native GGUF q4_0/q8_0." },
+              abc: { type: "string", maxLength: 65536, description: "Exact ABC score, at most 64 KiB UTF-8, with Thinking full or melody." },
+              abcOpen: { type: "boolean", description: "Python YuE2 only: let the planner continue the supplied score." },
+              allowSectionLabels: { type: "boolean" },
+              temperature: { type: "number", minimum: 0, maximum: 5 }, topP: { type: "number", minimum: 0.01, maximum: 1 },
+              topK: { type: "integer", minimum: 1, maximum: 32768, description: "Python/ComfyUI YuE2 only." },
+              repetitionPenalty: { type: "number", minimum: 0.01, maximum: 10, description: "Python/ComfyUI YuE2 only." },
+              planTemperature: { type: "number", minimum: 0, maximum: 5 }, planTopP: { type: "number", minimum: 0.01, maximum: 1 },
+              scoreSlug: { type: "string" }, scoreVersion: { type: "string" },
+              key: { type: "string" }, bpm: { type: "integer", minimum: 30, maximum: 300 }, meter: { type: "string" },
+              coverOf: { type: "object", required: ["file"], properties: {
+                file: { type: "string" }, seconds: { type: "number", minimum: 1, maximum: 30 },
+                stem: { type: "string", enum: ["vocals", "drums", "bass", "other", "guitar", "piano"] },
+              }, additionalProperties: false, description: "Python YuE2 only: prime from a library song." },
+              lora: { type: "string", description: "ComfyUI YuE2 or ACE audio LoRA; empty string explicitly disables it." },
+              loraStrength: { type: "number", minimum: -4, maximum: 4 },
+              loraClip: { type: "string", description: "ComfyUI YuE2 planner LoRA; empty string explicitly disables it." },
+              loraClipStrength: { type: "number", minimum: -4, maximum: 4 },
+              keyscale: { type: "string" }, timesignature: { type: "string" }, language: { type: "string" },
+              aceSteps: { type: "integer", minimum: 1, maximum: 100 }, aceCfg: { type: "number", minimum: 0.01, maximum: 20 },
+              aceCodes: { type: "boolean" }, acePlanTemp: { type: "number", minimum: 0, maximum: 2 },
+              aceCover: { type: "object", properties: { upload: { type: "string" }, song: { type: "string" } },
+                additionalProperties: false, description: "ACE only: exactly one uploaded filename or library song." },
               engine: { type: "string" }, checkpoint: { type: "string" }, negative: { type: "string" },
               width: { type: "integer" }, height: { type: "integer" },
               steps: { type: "integer" }, cfg: { type: "number" },

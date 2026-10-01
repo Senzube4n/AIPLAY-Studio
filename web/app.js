@@ -3,6 +3,8 @@ import { reactiveSourceWindow } from './reactive-source-window.js';
 import { mountH3RefMods } from './h3-refmods.js';
 import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
 import { createVectorizer } from './vectorize-controls.js';
+import { mountFullPlayerScore } from './full-player-score.js';
+import { musicBatchIdea } from './music-batch-spec.js';
 var iedVectorizer = null;
 /* AIPLAY Studio — UI.
  *
@@ -79,6 +81,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 // in the temporal dead zone throws at module load and kills the whole file.
 // Module-level DOM singletons belong at the top.
 const audio = $("audio");
+const fullPlayerScore = mountFullPlayerScore({audio});
 
 // Disk, in the units people actually think in. Base 1000 to match what Explorer
 // reports for the same folder, so the two never appear to disagree.
@@ -2196,6 +2199,7 @@ function attachHelp() {
 async function openFullPlayer() {
   const file = state.playingFile;
   const t = (state.library || []).find((x) => x.file === file);
+  fullPlayerScore.setTrack(t);
   // Nothing playing yet — leave the panel open but empty rather than silently
   // ignoring the click, which reads as a broken button.
   if (!t) {
@@ -2234,6 +2238,7 @@ function setFullPlayer(open) {
   $("pExpand").title = open ? "Close the full player" : "Open the full player";
   $("pExpand").setAttribute("aria-expanded", String(open));
   if (open) openFullPlayer();
+  fullPlayerScore.setOpen(open);
 }
 $("pExpand").onclick = () => setFullPlayer($("fullPlayer").hidden);
 $("fpClose").onclick = () => setFullPlayer(false);
@@ -3498,20 +3503,25 @@ for (const b of document.querySelectorAll("[data-n]")) {
 }
 
 // Send the current prompt to the overnight list instead of rendering it now.
+function ovMusicIdea() {
+  const spec = currentSpec(false);
+  const idea = musicBatchIdea(spec, spec.engine || state.musicEngine || "minimax-music3");
+  if (idea.engine === "yue2-comfy" && state.musicYue2Checkpoint) idea.checkpoint = state.musicYue2Checkpoint;
+  // The exact text is part of YuE2 conditioning, including trailing spaces.
+  if (idea.abc !== undefined && $("yAbcUse")?.checked) idea.abc = $("yAbc").value;
+  return idea;
+}
 $("btnToOvernight").onclick = () => {
   const caption = captionValue().trim();
   if (!caption) { $("caption").focus(); return; }
-  const instrumental = state.mode === "instrumental";
-  ov.ideas.push({
-    title: $("title").value.trim() || "Untitled",
-    caption,
-    lyrics: instrumental ? $("scaffold").value : $("lyrics").value,
-    instrumental,
-    maxDuration: +$("maxDur").value,
-  });
+  let idea;
+  try { idea = ovMusicIdea(); }
+  catch (err) { $("ctaNote").textContent = err.message; return; }
+  if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  ov.ideas.push(idea);
   ovRender();
   $("ctaNote").textContent =
-    `Added to the overnight list — ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} queued. Set takes and start it in Overnight.`;
+    `Added to Overnight. ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} ready.`;
 };
 
 $("btnCreate").onclick = () => (xt.file ? runExtend() : generate(false));
@@ -4315,7 +4325,7 @@ function rowHtml(j) {
                Both halves are still required: the sheet route resolves a
                version id, so a row that knows its score but not a version
                gets no menu items rather than broken ones. */
-            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet — open it from the ⋯ menu">♪</span>' : ""}
+            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet. Open Score in the full player.">♪</span>' : ""}
           ${/* What is being made FOR THIS TRACK right now.
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
@@ -20767,15 +20777,9 @@ function dur(s) {
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 $("ovAdd").onclick = () => {
-  const caption = $("caption").value.trim();
-  if (!caption) { $("ovEst").textContent = "Write a style in Create first — that is the one required field."; return; }
-  ov.ideas.push({
-    title: $("title").value.trim() || "Untitled",
-    caption,
-    lyrics: state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value,
-    instrumental: state.mode === "instrumental",
-    maxDuration: +$("maxDur").value,
-  });
+  if (!captionValue().trim()) { $("ovEst").textContent = "Write a style in Create first."; return; }
+  try { ov.ideas.push(ovMusicIdea()); }
+  catch (err) { $("ovEst").textContent = err.message; return; }
   ovRender();
 };
 $("ovClear").onclick = () => { ov.ideas = []; ovRender(); };

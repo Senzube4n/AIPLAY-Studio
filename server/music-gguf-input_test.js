@@ -176,6 +176,7 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   } };
   const route = runInNewContext(`(async(payload)=>{const req={},res={};const readBody=async()=>payload;
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
+    batchMusicBridge: {metadata: () => ({}), beforeQueue() {}, record() {}},
     config: app, ggufSetup: setup, prov: { actorFrom: () => "agent:test" },
     /* Unlabelled YuE2 lyrics get [Verse]/[Chorus] before any build (music/yue-lyrics.js). */
     labelYueLyrics, validateYue2StyleAdapter, console: { log() {}, warn() {} },
@@ -283,7 +284,7 @@ await test("Models response preserves catalogue variant rows and exposes separat
 await test("Python YuE2 refuses native Q4/Q8 before its kit, hardware checks or queue", async () => {
   const src = text("./index.js"), routeStart = src.indexOf('if (p === "/api/generate" && req.method === "POST")');
   const start = src.indexOf('if (musicEngine === "yue2") {', routeStart);
-  const end = src.indexOf("\n      const job = jobs.enqueue({", start);
+  const end = src.indexOf("\n      batchMusicBridge.beforeQueue(req);", start);
   assert.ok(routeStart >= 0 && start > routeStart && end > start);
   const events = [];
   const route = runInNewContext(`(async(body)=>{const musicEngine="yue2",res={};

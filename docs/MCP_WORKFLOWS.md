@@ -20,6 +20,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Per-image privacy blur | `image_set_blur` with `blur:true` or `false` |
 | Reactive video | `reactive_status`, `reactive_render`, then `vfx_render_status`; compositions remain editable through `vfx_*` |
 | YuE2 training | `training_status`, `audio_waveform`, `train_lora`, `list_trained_loras`, `list_loras`, `make_song` |
+| Native music workbench | `pipeline_guide` with `topic:"music-workbench"` discovers the 18 typed tools for readiness, datasets, training, planning, saved-stage replay, MIDI/DAW import and mastering previews; see [the workbench workflow](music-workbench.md) |
 | Episode planning and allocation | `collab_plan`: get, update_episode, update_shot, preview_allocation, allocate, apply_draft |
 | Peer identity and permissions | `collab_me`, `collab_roster`, `collab_add_peer`, `collab_verify`, `collab_set_role`, `collab_set_lend_minutes`, `collab_remove_peer` |
 | Public community discovery | `community_feed`: the Community page's public live-session, upcoming-event, station, recent-track and article listings |
@@ -28,6 +29,10 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Standalone Qwen image lending | `collab_image_preview`, `collab_pack`, `collab_open`, `collab_image_accept`, `collab_image_render`, `collab_image_send_back`, `collab_image_receive`, `collab_quarantine`, `collab_image_review_return`, `collab_image_adopt`, `collab_image_drop` |
 | RunPod GPU mode | `runpod_status`, `runpod_worker_connect`, `runpod_models`, `runpod_workflow_preview`, `runpod_upload_asset`, `runpod_submit_job`, `runpod_cancel_job`; `runpod_account_status`, `runpod_account_connect`, `runpod_account_overview`, `runpod_account_disconnect`, `runpod_pod_create`, `runpod_pod_start`, `runpod_pod_stop` |
 | Other existing JSON API operations | `studio_api_reference` searches API.md; `studio_api_request` calls an existing `/api/` endpoint when no typed tool covers it |
+
+Open **MusicLab → Native tools** for the workbench UI. Its actions and the typed
+MCP tools share the same server handlers. The focused guide records which advanced
+settings are available through MCP and which controls are present in the UI.
 
 `community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
 returned rows and fields, and reports whether the desktop feed was offline when

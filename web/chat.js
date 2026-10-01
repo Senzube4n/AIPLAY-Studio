@@ -242,25 +242,36 @@ function scroll() {
 }
 
 /** One row in the transcript. `kind` is also the CSS hook. */
-/* The warning a GPU tool shows when it starts, in either assistant. Cancel
- * is the app's one Stop (app.js aiplay:gpu-cancel -> /api/cancel: the song,
- * pictures and clips in progress), which also drops a remix transcription the
- * page was about to follow with Create. */
-function gpuWarning(ev) {
+/* Native workbench workers own a separate stop route. Ordinary Studio renders
+ * retain the app's Stop event, including pending remix transcription. */
+export function gpuWarning(ev) {
+  const native = ev.cancelScope === "music-workbench";
   return `<span class="gpuwarn">⚠ ${esc(ev.text || "Using the graphics card.")}</span> `
-    + `<button type="button" class="btn sm ghost gpucancel">Cancel</button>`;
+    + `<button type="button" class="btn sm ghost gpucancel"${native ? ' data-cancel-scope="music-workbench" title="Stops the current native workbench worker"' : ""}>${native ? "Cancel native work" : "Cancel"}</button>`;
 }
-if (typeof document !== "undefined") document.addEventListener("click", async (e) => {
-  const b = e.target.closest?.(".gpucancel");
-  if (!b || b.disabled) return;
+export async function cancelGpuWarning(b, {
+  fetch = globalThis.fetch,
+  dispatch = (detail) => document.dispatchEvent(new CustomEvent("aiplay:gpu-cancel", { detail })),
+} = {}) {
+  if (!b || b.disabled) return false;
   b.disabled = true;
   b.textContent = "Cancelling…";
-  /* The Stop itself is app.js's (it owns /api/cancel); it answers in `detail`. */
-  const detail = { done: null };
-  document.dispatchEvent(new CustomEvent("aiplay:gpu-cancel", { detail }));
-  const ok = await (detail.done || Promise.resolve(false));
+  let ok;
+  if (b.dataset?.cancelScope === "music-workbench") {
+    ok = await fetch("/api/music-tools", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "stop" }) }).then(async (r) => r.ok && (await r.json()).ok === true).catch(() => false);
+  } else {
+    /* The Studio Stop itself is app.js's; it answers in `detail`. */
+    const detail = { done: null };
+    dispatch(detail);
+    ok = await (detail.done || Promise.resolve(false));
+  }
   b.textContent = ok ? "Cancelled" : "Could not cancel";
   b.disabled = ok;
+  return ok;
+}
+if (typeof document !== "undefined") document.addEventListener("click", async (e) => {
+  await cancelGpuWarning(e.target.closest?.(".gpucancel"));
 });
 
 function row(kind, html) {

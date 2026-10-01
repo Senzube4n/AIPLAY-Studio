@@ -493,6 +493,7 @@ export class Library {
         // A YuE2 take's run folder: its whole performance, which is what Extend
         // replays for that engine (MiniMax keeps `codes` for the same purpose).
         yueDir: m.yueDir || null,
+        musicToolsRun: m.musicToolsRun || null,
         // Seconds where a replaced section hands back to the original (replace only).
         replacedTo: m.replacedTo ?? null,
         // Seconds into the PARENT where the model rejoined. Everything after this

@@ -280,12 +280,12 @@ export function createCommunityRoutes({json,readBody,library,jobs,engine,provena
         if(row.daw){json(res,200,{ok:true,slug:row.daw,ready:!!row.dawReady});return true;}
         const notesFile=path.join(runDir(row.id),'notes.json');
         if(row.notesHash&&await hashFile(notesFile)!==row.notesHash)throw new Error('Predicted notes changed after transcription.');
-        const plan=midiDawPlan(await read(notesFile),b.bpm??120),by='user';
-        const project=await daw({action:'create',name:'MuScriptor · '+row.body.file,bpm:plan.bpm,num:4,den:4,length_bars:plan.bars,by},provenance.actorFrom(req));
+        const plan=midiDawPlan(await read(notesFile),b.bpm??120),actor=provenance.actorFrom(req),by=actor==='user'?'user':'agent';
+        const project=await daw({action:'create',name:'MuScriptor · '+row.body.file,bpm:plan.bpm,num:4,den:4,length_bars:plan.bars,by},actor);
         row.daw=project.slug;row.dawReady=false;await save(runFile(row.id),row);
         for(const track of plan.tracks){
-          const created=await daw({action:'add_track',slug:row.daw,name:track.name,instrument:'pluck',by},provenance.actorFrom(req));
-          for(let start=0;start<track.notes.length;start+=2000)await daw({action:'record_notes',slug:row.daw,track:created.trackId||created.track.id,notes:track.notes.slice(start,start+2000),by},provenance.actorFrom(req));
+          const created=await daw({action:'add_track',slug:row.daw,name:track.name,instrument:'pluck',by},actor);
+          for(let start=0;start<track.notes.length;start+=2000)await daw({action:'record_notes',slug:row.daw,track:created.trackId||created.track.id,notes:track.notes.slice(start,start+2000),by},actor);
         }
         row.dawReady=true;row.dawOmitted=plan.omitted;row.dawTempo=plan.bpm;await save(runFile(row.id),row);
         json(res,200,{ok:true,slug:row.daw,omitted:plan.omitted});return true;

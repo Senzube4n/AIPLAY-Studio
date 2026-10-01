@@ -2,11 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {trainingRecipe,nativeTrainingArgs} from './community-recipes.js';
 import {plannerRequest,plannerArgs} from './community-planner.js';
-import {datasetFingerprint,nativePreparationStages} from './community-tools.js';
+import {datasetFingerprint,nativePreparationStages,createCommunityRoutes} from './community-tools.js';
 import {installationFiles} from './community-install.js';
 import {externalMusicWork} from './exclusive.js';
 import {runTool} from './community-process.js';
 import {midiDawPlan} from './community-midi-daw.js';
+import path from 'node:path';
+import os from 'node:os';
+import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {config} from '../config.js';
+import {actorFrom} from '../provenance.js';
 
 test('dataset receipts detect lyric whitespace and source or style changes',()=>{
  const original={items:[{sha256:'abc',style:'pop',lyrics:'hello ',instrumental:false,prepared:false}]};
@@ -18,6 +23,37 @@ test('MIDI import preserves elapsed note times on the DAW tick grid',()=>{
  const plan=midiDawPlan([{pitch:60,start:.5,end:.75,instrument:'piano'},{pitch:62,start:2.125,end:2.625,instrument:'piano'}],120);
  assert.deepEqual(plan.tracks[0].notes.map(n=>[n.bar,n.beat,n.tick,n.dur_ticks]),[[1,2,0,480],[2,1,240,960]]);
  assert.equal(plan.bars,2);assert.throws(()=>midiDawPlan([],120));assert.throws(()=>midiDawPlan([{pitch:60,start:0,end:1}],0));
+});
+test('native MIDI imports preserve human or automation attribution on every DAW write and retries do not duplicate a project',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'aiplay-native-midi-')),original=config.paths.appData;
+ config.paths.appData=dir;
+ try{
+  for(const [index,headers,actor,by] of [
+   [0,{},'user','user'],
+   [1,{'x-aiplay-actor':'agent:codex'},'agent:codex','agent'],
+   [2,{'x-aiplay-actor':'script:gate'},'script:gate','agent'],
+   [3,{'x-aiplay-actor':'user'},'system','agent'],
+  ]){
+   const id='midi_attribution_'+index,runDir=path.join(dir,'music-tools','runs',id),writes=[];
+   await mkdir(runDir,{recursive:true});
+   await writeFile(path.join(runDir,'run.json'),JSON.stringify({id,kind:'midi',state:'done',body:{file:'take.wav'}}));
+   await writeFile(path.join(runDir,'notes.json'),JSON.stringify([{pitch:60,start:.5,end:.75,instrument:'piano'}]));
+   let result;
+   const route=createCommunityRoutes({json:(_res,status,body)=>{result={status,body};},readBody:async req=>req.body,
+    provenance:{actorFrom},daw:async(body,passedActor)=>{
+     writes.push({body,actor:passedActor});
+     return body.action==='create'?{slug:'predicted_'+index}:{trackId:'piano'};
+    }});
+   const req={method:'POST',headers,body:{action:'toDaw',run:id,bpm:128,by:'user'}},url=new URL('http://localhost/api/music-tools');
+   assert.equal(await route(req,{},url),true);assert.equal(result.status,200);
+   assert.deepEqual(writes.map(write=>write.body.action),['create','add_track','record_notes']);
+   for(const write of writes){assert.equal(write.body.by,by);assert.equal(write.actor,actor);}
+   assert.equal(writes[0].body.bpm,128);
+   const receipt=JSON.parse(await readFile(path.join(runDir,'run.json'),'utf8'));
+   assert.equal(receipt.daw,result.body.slug);assert.equal(receipt.dawReady,true);
+   await route(req,{},url);assert.equal(result.status,200);assert.equal(result.body.ready,true);assert.equal(writes.length,3);
+  }
+ }finally{config.paths.appData=original;await rm(dir,{recursive:true,force:true});}
 });
 test('native planning preserves exact text and replay forces the complete token stream',()=>{
  const r=plannerRequest({style:'pop',lyrics:'[Verse]\nhello  \n',seed:123,stage:'semantic',maxTokens:32});

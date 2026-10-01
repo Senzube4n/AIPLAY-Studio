@@ -1,3 +1,4 @@
+import {createBatchMusicBridge} from './batch-music-context.js';
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
 import { createStandRigRoutes } from './standrig/routes.js';
@@ -63,7 +64,7 @@ import { awaitRemoteMusicJob } from "./engine/remote-music.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { isNativeLibraryWav } from "./library-wav.js";
-import { BatchRunner, plannedSongs } from "./batch.js";
+import { BatchRunner, plannedPaidSongs } from "./batch.js";
 import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
@@ -459,6 +460,7 @@ const library = new Library();
  * reads, so a night an agent scheduled is stamped agent:* on every picture,
  * rather than becoming "user" because the request came from localhost.
  */
+const batchMusicBridge = createBatchMusicBridge({submit:submitStudioJson});
 async function renderMediaForBatch(kind, item, take, actor) {
   const base = `http://127.0.0.1:${config.uiPort}`;
   const headers = { "Content-Type": "application/json" };
@@ -563,6 +565,7 @@ async function renderMediaForBatch(kind, item, take, actor) {
 
 
 const batch = new BatchRunner(jobs, {
+  enqueueMusic: spec => batchMusicBridge.enqueue(spec),
   renderMedia: renderMediaForBatch,
   postBusy: () => art.queue.length > 0 || !!art.current,
 });
@@ -2877,12 +2880,12 @@ const communityRoutes = createCommunityRoutes({ json, readBody, library, jobs, e
 // Workflow modules submit through the ordinary validated API. Keeping a
 // receipt for the exact id matters when another song is already rendering.
 function jobReceipt(job) { return exactJobReceipt(job, jobs.snapshot()); }
-function submitStudioJson(apiPath, body, actor = "system") {
+function submitStudioJson(apiPath, body, actor = "system", internalHeaders = {}) {
   return new Promise((resolve, reject) => {
     const payload = Buffer.from(JSON.stringify(body));
     const call = http.request({ hostname: "127.0.0.1", port: config.uiPort, path: apiPath, method: "POST",
       headers: { "content-type": "application/json", "content-length": payload.length,
-        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }) }, timeout: 900_000 }, answer => {
+        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }), ...internalHeaders }, timeout: 900_000 }, answer => {
       const chunks = []; answer.on("data", chunk => chunks.push(chunk));
       answer.on("error", reject);
       answer.on("end", () => {
@@ -3746,11 +3749,12 @@ const server = http.createServer(async (req, res) => {
          * not be able to claim to be a human. Every picture the run makes is
          * then stamped with it. */
         if (b.action === "start") {
-          /* A music night with the hosted engine on bills every song: asked
+          /* The hosted MiniMax steps of a music night are priced and asked
            * once, with the night's estimate, and carried on each job as
            * paidConfirmed (server/cloud-switch.js). Never assumed. */
-          const paidNight = (b.kind || "music") === "music" && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: null });
-          const night = paidNight ? plannedSongs(b) : null;
+          const night = (b.kind || "music") === "music" && config.api.enabled
+            ? plannedPaidSongs({ ...b, defaultEngine: config.music?.engine || "minimax-music3" }) : { songs: 0 };
+          const paidNight = night.songs > 0 && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: "minimax-music3" });
           /* No idea with a style: nothing to pay for, and start() says so. */
           if (paidNight && b.confirmSpend !== true && night.songs) {
             const refusal = paidRefusal(await hostedQuote(night.longestSeconds), { songs: night.songs });
@@ -4510,6 +4514,7 @@ const server = http.createServer(async (req, res) => {
        * fal.ai or MiniMax key: only Studio's page and local clients queue one. */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Songs are only queued from Studio's own page or a local client." });
       const body = await readBody(req);
+      const batchMusicMetadata = batchMusicBridge.metadata(req);
       if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
       if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
       // No engine named: the default follows the disk when nobody chose (machineDefaults).
@@ -4542,7 +4547,9 @@ const server = http.createServer(async (req, res) => {
           if (!named && kit.quantization) nativeJob.quantization=kit.quantization;
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
           if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
-          const job=jobs.enqueue({ ...nativeJob, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
+          batchMusicBridge.beforeQueue(req);
+          const job=jobs.enqueue({ ...nativeJob, ...batchMusicMetadata, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
+          batchMusicBridge.record(req,job);
           return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf",quantization:job.quantization}});
         } catch(err) {return json(res, 400, {error:err.message,reason:err.refusal||"request",engine:"yue2-gguf"});}
       }
@@ -4813,7 +4820,9 @@ const server = http.createServer(async (req, res) => {
           coverFit = fit((want || 180) + coverSeconds, { capability });
         }
         const cfgRaw = body.cfgScale === "" || body.cfgScale == null ? null : Number(body.cfgScale);
+        batchMusicBridge.beforeQueue(req);
         const job = jobs.enqueue({
+          ...batchMusicMetadata,
           engine: "yue2",
           actor: prov.actorFrom(req),
           ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}),
@@ -4876,6 +4885,7 @@ const server = http.createServer(async (req, res) => {
             fitCeiling: coverFit.ceiling,
           } : {}),
         });
+        batchMusicBridge.record(req,job);
         return json(res, 200, {
           job: jobReceipt(job), engine: "yue2",
           rung: coverCodes ? { id: coverFit.rung.id, label: coverFit.rung.label } : rung,
@@ -5060,7 +5070,9 @@ const server = http.createServer(async (req, res) => {
         try { validateYue2StyleAdapter({ engine: musicEngine, lora: yueLora, loraClip: yueLoraClip, cot: body.cot || "full" }); }
         catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
       }
+      batchMusicBridge.beforeQueue(req);
       const job = jobs.enqueue({
+        ...batchMusicMetadata,
         ...(aceJob || {}),
         ...(musicEngine === "yue2-comfy" ? {
           engine: "yue2-comfy",
@@ -5119,6 +5131,7 @@ const server = http.createServer(async (req, res) => {
           ? Math.min(Math.max(Number(body.audioRefDenoise), 0.05), 1)
           : config.audioRef.denoise,
       });
+      batchMusicBridge.record(req,job);
       return json(res, 200, { job: jobReceipt(job), engine: musicEngine });
     }
 

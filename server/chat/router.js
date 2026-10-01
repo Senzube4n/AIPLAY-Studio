@@ -214,6 +214,27 @@ export const ROUTABLE = {
   music_listening_lab: null,
   music_listening_lab_start: "gpu",
 
+  /* Native tools share the workbench's validated routes and owned worker.
+   * Starting a worker returns a receipt, rather than holding this turn until
+   * it completes. CPU preparation and copying still ask before saving work. */
+  music_workbench_status: null,
+  music_workbench_run: null,
+  music_workbench_stop: "writes",
+  music_dataset_create: "writes",
+  music_dataset_edit: "writes",
+  music_dataset_prepare: "writes",
+  music_native_train: "gpu",
+  music_native_continue: "gpu",
+  music_native_plan: "gpu",
+  music_native_replay: "gpu",
+  music_native_keep: "writes",
+  music_audio_transcribe: "gpu",
+  music_midi_to_daw: "writes",
+  music_adapter_export: "writes",
+  music_adapter_install: "writes",
+  music_process_preview: "writes",
+  music_process_keep: "writes",
+
   /* finishing a take that already exists — see server/mcp-audio.js
    *
    * ⚠ NOT ONE OF THESE IS "destroys", AND THAT WAS CHECKED RATHER THAN
@@ -615,6 +636,7 @@ export const WITHHELD = {
   timed_lyrics_python: "names a program Studio will execute; a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
   stems_python: "names a program Studio will execute (stem separation and the audio-reference encoder); a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
+  music_native_install: "Downloads optional runtimes and model weights measured in gigabytes, including MuScriptor's CC BY-NC licence. Installation and licence review belong to Music Lab > Native tools or an explicitly requested external MCP installation; a generic chat confirmation does not replace that review.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",
   cancel_download: "the twin of download_model, which is withheld for the same reason: what the Models page's buttons do stays with the person at that page",
@@ -695,6 +717,12 @@ export const CHAT_WITHHELD_ARGS = {
   whisper_status: {
     model: "saves which whisper model every later transcription and timed lyrics use (the first use downloads it); a setting for a person, not a sentence in a chat box",
   },
+  music_dataset_create: {
+    folder: "scans an arbitrary local folder and its metadata sidecars; a person supplies that folder in Music Lab > Native tools or external MCP. This chat can choose library recordings with files",
+  },
+  music_process_preview: {
+    plugins: "loads executable VST3 plugins from local program paths; a person chooses those plugins in Music Lab > Native tools or external MCP. This chat can use the built-in denoise, EQ and reference loudness controls",
+  },
 };
 
 /* Every audiobook tool, withheld as a group rather than one line each. */
@@ -724,6 +752,17 @@ export const COST_TEXT = {
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
   stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
+  music_workbench_stop: "no graphics card time and no new file — it stops the currently active native workbench worker, including training; Studio generation jobs and completed artifacts are retained",
+  music_dataset_create: "no graphics card time — it saves a training dataset from the selected library recordings and retains their originals",
+  music_dataset_edit: "no graphics card time — it saves this dataset song's metadata and invalidates the dataset's derived preparation caches; original recordings are retained",
+  music_dataset_prepare: "processor time — it saves prepared audio copies and metadata for the reviewed dataset; this step does not train on the graphics card",
+  music_native_train: "graphics card time — training can take hours and saves adapter checkpoints; it holds the card while it runs. Poll the saved run before exporting or using its adapter",
+  music_native_continue: "graphics card time — resumed training can take hours and saves new checkpoints; it holds the card while it runs. The requested steps are the new total, not extra steps",
+  music_audio_transcribe: "graphics card or processor time, depending on the selected device — it saves predicted MIDI and note events for review, without changing the recording",
+  music_midi_to_daw: "no graphics card time — it saves an editable DAW project from predicted notes, using provisional tempo and pluck sounds; it does not reconstruct the original timbres",
+  music_adapter_export: "processor time — it saves a combined ComfyUI adapter from a complete native checkpoint and retains the checkpoint",
+  music_adapter_install: "no graphics card time or model download — it copies this saved exported adapter into the local ComfyUI LoRA shelf; selecting it for generation remains a separate choice",
+  music_process_preview: "processor time — it saves a separate audio preview with denoise, high-frequency EQ and optional loudness-only reference matching; the original recording is retained",
   standrig_parameters: "no graphics card time and no new file; it changes the local performer's current expression until replaced",
   standrig_control: "no graphics card time and no new file; it changes the local performer's playback state",
   /* The router gates the whole tool, so a plain read asks too: the card says
@@ -738,7 +777,29 @@ export const GATE_WORDS_BY_TOOL = {
   video_settings: "SAVES A SETTING",
   standrig_parameters: "CHANGES PERFORMER",
   standrig_control: "CHANGES PERFORMER",
+  music_workbench_stop: "STOPS NATIVE WORK",
+  music_dataset_create: "SAVES A DATASET",
+  music_dataset_edit: "CHANGES DATASET METADATA",
+  music_dataset_prepare: "PREPARES DATASET AUDIO",
+  music_midi_to_daw: "SAVES A DAW PROJECT",
+  music_adapter_export: "EXPORTS AN ADAPTER",
+  music_adapter_install: "COPIES AN ADAPTER",
 };
+
+// Describe the narrower chat capability, not the withheld path-bearing options
+// still available to the person in the workbench and external MCP clients.
+const CHAT_DESCRIPTION_BY_TOOL = {
+  music_dataset_create: "Create a local native-training dataset from 1–200 library recording filenames supplied as a JSON files array. Retains originals. Review style, exact lyrics and instrumental status before preparation. Folder imports require Music Lab > Native tools or external MCP.",
+  music_process_preview: "Make a separate audio preview from a library recording with built-in denoise, high-frequency EQ smoothing and optional reference loudness matching. Compare before keeping. Reference matching is loudness-only. Executable VST3 plugins require Music Lab > Native tools or external MCP.",
+};
+
+// These starts unload the local chat model and acquire the native workbench
+// lease before returning. Do not sample a follow-up reply onto that worker.
+const WORKBENCH_STARTS = new Set([
+  "music_dataset_prepare", "music_native_train", "music_native_continue",
+  "music_native_plan", "music_native_replay", "music_audio_transcribe",
+  "music_adapter_export", "music_process_preview",
+]);
 
 /* ─────────────────────────────────────────────── the flat-argument rule
  *
@@ -761,6 +822,7 @@ const JSON_ARGUMENT_TOOLS = new Set([
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
   "standrig_parameters", "h3_refmod_create",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
+  "music_dataset_create", "music_native_train",
   /* The score tools take `source` as an object and the note editor takes an
    * array of notes; without these three the chat could not reach them at all
    * ("turn my hum into a score" went to score_* tools). hum_to_score and
@@ -818,7 +880,7 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     };
   }
 
-  let description = String(tool.description);
+  let description = String(CHAT_DESCRIPTION_BY_TOOL[tool.name] || tool.description);
   if (description.length > budget) {
     const cut = description.slice(0, budget);
     const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("\n"));
@@ -833,6 +895,8 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     gate: gate || null,
     cost: gate ? (COST_TEXT_BY_TOOL[tool.name] || COST_TEXT[gate]) : undefined,
     gateWords: gate ? GATE_WORDS_BY_TOOL[tool.name] || null : null,
+    endsTurn: WORKBENCH_STARTS.has(tool.name),
+    cancelScope: WORKBENCH_STARTS.has(tool.name) && gate === "gpu" ? "music-workbench" : undefined,
     routed: true,
     run: (a) => {
       const decoded = { ...a };
@@ -852,7 +916,14 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
           throw new Error(`${name} must decode to ${type}.`);
         decoded[name] = value;
       }
-      return tool.run(decoded);
+      const result = tool.run(decoded);
+      if (!WORKBENCH_STARTS.has(tool.name)) return result;
+      return Promise.resolve(result).then((receipt) => ({
+        ...receipt,
+        say: receipt?.run?.id
+          ? `Native workbench run ${receipt.run.id} started. Follow its progress in Music Lab > Native tools, or read it with music_workbench_run.`
+          : `${tool.name} ran. Follow its progress in Music Lab > Native tools.`,
+      }));
     },
   };
 }

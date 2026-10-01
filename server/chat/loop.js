@@ -704,6 +704,11 @@ export async function runTurn(deps, session, userText, emit = () => {}) {
       session.turns.push({ role: "user", text, at: Date.now() });
       emit({ type: "confirmed", tool: pending.tool, args: pending.args });
       const ran = await callTool(deps, session, pending.tool, pending.args, emit);
+      const confirmedTool = deps.tools.get(pending.tool);
+      if (ran.ok && confirmedTool?.gate === "gpu" && confirmedTool.cancelScope === "music-workbench") {
+        emit({ type: "gpu", tool: pending.tool, cost: confirmedTool.cost, cancelScope: confirmedTool.cancelScope,
+          text: `Using the graphics card: ${pending.tool} (${confirmedTool.cost}).` });
+      }
       /* A tool that ENDS THE TURN (Simple mode's generate) answers for itself:
        * the render now holds the card the model would need to say so. */
       if (deps.tools.get(pending.tool)?.endsTurn) {
@@ -940,7 +945,8 @@ async function think(deps, session, model, emit, used, seeded = null) {
        * somebody else's render. A `writes` tool is already reported by
        * tool_call and tool_result, which is the right amount for a file. */
       if (_kind === "gpu") {
-        emit({ type: "gpu", tool: reply.tool.name, cost, text: `Using the graphics card: ${reply.tool.name} (${cost}).` });
+        emit({ type: "gpu", tool: reply.tool.name, cost, cancelScope: reply.tool.cancelScope,
+          text: `Using the graphics card: ${reply.tool.name} (${cost}).` });
       }
       session.turns.push({ role: "note", at: Date.now(),
         text: _kind === "gpu"

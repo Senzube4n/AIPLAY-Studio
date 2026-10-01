@@ -43,7 +43,7 @@ const h3tier = await import("./h3tier.js");
 const { generateViaApi } = await import("./apiEngine.js");
 const { secretStatus } = await import("./secrets.js");
 const { JobRunner } = await import("./jobs.js");
-const { plannedSongs } = await import("./batch.js");
+const { plannedPaidSongs } = await import("./batch.js");
 const { createRouterRoutes } = await import("./router/routes.js");
 const { cloudTools } = await import("./mcp-cloud.js");
 const { TOOLS } = await import("./mcp.js");
@@ -281,12 +281,12 @@ test("/api/batch: a music night on the hosted engine is asked for once, with the
   assert.match(head, /if \(!sameOriginLocalJson\(req\)\) return json\(res, 403/, "a night of bills is a same-origin door");
   const start = INDEX.indexOf('        if (b.action === "start") {', at);
   const end = INDEX.indexOf('        if (b.action === "pause")', start);
-  const branch = new AsyncFunction("b", "config", "json", "res", "req", "hostedWouldBill", "paidRefusal", "hostedQuote", "batch", "prov", "plannedSongs",
+  const branch = new AsyncFunction("b", "config", "json", "res", "req", "hostedWouldBill", "paidRefusal", "hostedQuote", "batch", "prov", "plannedPaidSongs",
     `${INDEX.slice(start, end)}\nreturn { fellThrough: true };`);
   const started = [];
   const run = (apiEnabled, b) => branch(b, { api: { enabled: apiEnabled } }, (_r, status, body) => ({ status, body }), null, {},
     cloud.hostedWouldBill, cloud.paidRefusal, async (seconds) => ({ ...QUOTE, seconds }),
-    { start: (x) => { started.push(x); return { ok: true }; } }, { actorFrom: () => "agent:test" }, plannedSongs);
+    { start: (x) => { started.push(x); return { ok: true }; } }, { actorFrom: () => "agent:test" }, plannedPaidSongs);
   const items = [{ caption: "a", maxDuration: 120 }, { caption: "b", maxDuration: 200 }, { caption: "" }];
 
   let r = await run(true, { action: "start", items, takes: 3 });
@@ -309,9 +309,20 @@ test("/api/batch: a music night on the hosted engine is asked for once, with the
   assert.equal(started.pop().paidConfirmed, false, "switch off: never a paid night, whatever the body claims");
   r = await run(true, { action: "start", kind: "image", items: [{ prompt: "p" }] });
   assert.equal(started.pop().paidConfirmed, false, "pictures never bill the hosted engine");
+  r = await run(true, { action: "start", items: [{ caption: "native", engine: "yue2-gguf" }, { caption: "Comfy", engine: "yue2-comfy" }], takes: 8 });
+  assert.equal(r.status, 200, "local engine snapshots never ask for hosted spend when the switch is on");
+  assert.equal(started.pop().paidConfirmed, false);
+  const mixed = [{ caption: "local", engine: "yue2-gguf", maxDuration: 300 }, { caption: "paid", engine: "minimax-music3", maxDuration: 90 }];
+  r = await run(true, { action: "start", items: mixed, takes: 8, cap: 3 });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.paid.runs, 1, "only the paid step reached before the cap is quoted");
+  assert.equal(r.body.paid.seconds, 90, "a longer local song cannot inflate the paid estimate");
+  r = await run(true, { action: "start", items: mixed, takes: 8, cap: 1 });
+  assert.equal(r.status, 200, "a cap reached before the first hosted step starts locally without a spend question");
+  assert.equal(started.pop().paidConfirmed, false);
   const batchSrc = read("server/batch.js");
   assert.match(batchSrc, /paidConfirmed: paidConfirmed === true,/);
-  assert.match(batchSrc, /batchId: r\.id,\n\s+paidConfirmed: r\.paidConfirmed === true,/, "each song of the night carries the night's answer");
+  assert.match(batchSrc, /batchId: r\.id,\n\s+actor: r\.actor,\n\s+paidConfirmed: r\.paidConfirmed === true,/, "each song of the night carries the night's answer");
 });
 
 /* ── the Comfy API run door ─────────────────────────────────────────────── */

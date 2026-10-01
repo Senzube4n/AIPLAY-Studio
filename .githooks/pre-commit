@@ -11,9 +11,20 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+node --check web/full-player-score.js || exit 1
+node --check web/score-follow.js || exit 1
+node --check web/music-workbench.js || exit 1
+node --check web/music-workflows.js || exit 1
+node --test server/music/full-player-score_test.js server/batch-music-context_test.js || exit 1
+node --check web/music-batch-spec.js || exit 1
+node --check server/batch-music.js || exit 1
+node --check server/batch-music-context.js || exit 1
+node --test server/overnight-music_test.js || exit 1
 node --check web/vectorize-controls.js || exit 1
 node --test server/vectorize_test.js server/vectorize-ui_test.js server/vector-import_test.js || exit 1
 node --test server/music/community-tools_test.js server/music/score-follow_test.js server/music/native-adapter-export_test.js || exit 1
+node --check server/mcp-music-workbench.js || exit 1
+node --test server/mcp-music-workbench_test.js || exit 1
 # RunPod transport and its UI: mock HTTP services only; no GPU or paid cloud resources.
 node --test server/engine/remote_test.js server/engine/remote_ui_test.js server/engine/runpod-account_test.js server/mcp-runpod_test.js || exit 1
 node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
