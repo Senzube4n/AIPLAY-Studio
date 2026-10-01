@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe"><b>Download for Windows</b></a>
+  &nbsp;·&nbsp; <a href="https://senzube4n.github.io/AIPLAY-Studio/#quick-tour">31-second Studio tour</a>
   &nbsp;·&nbsp; <a href="#yue2-music-only-quickstart">Quickstart</a>
   &nbsp;·&nbsp; <a href="INSTALL.md">Full install</a>
   &nbsp;·&nbsp; <a href="docs/YUE2_GGUF.md">YuE2 guide</a>

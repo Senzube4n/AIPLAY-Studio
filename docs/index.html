@@ -143,16 +143,18 @@ footer a{color:var(--faint)}
     <figcaption>One place for the song and the project around it. Install the engines you choose.</figcaption>
   </figure>
 
-  <!-- The convincer. A whole music video, start to finish, from the program on
-       this page: the song, the voice, every shot and the edit. preload="none"
-       so a 15 MB file costs a visitor nothing until they press play. -->
-  <figure class="shot" style="margin-top:26px">
-    <video controls preload="none" playsinline poster="demo/hex-appeal-poster.jpg"
-           src="demo/hex-appeal.mp4" style="width:100%;display:block"></video>
-    <figcaption><strong>&ldquo;Hex Appeal&rdquo;</strong> &mdash; 3:28, forty-four scenes.
-      The song, the singing, every shot and the edit came out of this program, on one
-      desktop with a 16&nbsp;GB graphics card. <strong>Nothing was uploaded and nothing
-      was paid for.</strong></figcaption>
+  <!-- A short tour first. Keep the approved export intact and defer its download
+       until playback; the longer generated films remain in the proof section. -->
+  <figure class="shot" id="quick-tour" style="margin-top:26px">
+    <video controls preload="none" playsinline poster="demo/make-it-yours-poster.jpg"
+           src="demo/make-it-yours.mp4" width="960" height="540"
+           aria-label="Make It Yours: a 31-second tour of AIPLAY Studio">
+      <track kind="captions" src="demo/make-it-yours.en.vtt" srclang="en" label="English">
+      <a href="demo/make-it-yours.mp4">Watch the Studio tour.</a>
+    </video>
+    <figcaption><strong>&ldquo;Make It Yours&rdquo;: the 31-second Studio tour.</strong>
+      Music, editable scores, the DAW, Pictures and Production. Made locally through
+      MCP with a YuE2 song, animated Studio screenshots and native VFX.</figcaption>
   </figure>
 
 </header>
@@ -229,6 +231,15 @@ footer a{color:var(--faint)}
   <p class="lede">The song, the words, the singing, every frame, the cover — all of it generated
      on a single consumer graphics card, in this program. No cloud service was called, no
      credits were spent, and nothing was uploaded.</p>
+
+  <figure class="shot" style="margin-top:26px">
+    <video controls preload="none" playsinline poster="demo/hex-appeal-poster.jpg"
+           src="demo/hex-appeal.mp4" style="width:100%;display:block"></video>
+    <figcaption><strong>&ldquo;Hex Appeal&rdquo;</strong> &mdash; 3:28, forty-four scenes.
+      The song, the singing, every shot and the edit came out of this program, on one
+      desktop with a 16&nbsp;GB graphics card. <strong>Nothing was uploaded and nothing
+      was paid for.</strong></figcaption>
+  </figure>
 
   <figure class="shot" style="margin-top:26px">
     <video controls preload="none" playsinline poster="demo/measure-twice-poster.jpg"
