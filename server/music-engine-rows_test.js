@@ -486,6 +486,25 @@ test("Jobs retains music failures beside other jobs with an escaped reason and D
   assert.match(fields.jobSummary.innerHTML, /<b>1<\/b><span>failed/);
 });
 
+test("Jobs uses Python and Comfy render durations, preserving native elapsed zero and unknown timings", () => {
+  const fields = { jobList: {}, jobSummary: {}, jobFilter: {} };
+  const ctx = vm.createContext({ $: id => fields[id], esc: s => String(s ?? ""), jobFilter: "all", paintJobQueue() {},
+    jobDur: ms => Number.isFinite(ms) && ms > 0 ? `${ms / 1000}s` : "", jobOutput: () => "picture.png",
+    JOB_LABEL: { music: "song", cover: "image" }, JOB_VIEW: { music: "create", cover: "images" } });
+  vm.runInContext(between("function paintJobs(s)", 'document.addEventListener("click", (e) => {\n  const detail'), ctx);
+  ctx.paintJobs({ art: { recent: [{ kind: "cover", ms: 1000 }] }, history: [
+    { id: "python", title: "Python", state: "done", durationSeconds: 947, audioSeconds: 200, file: "python.flac" },
+    { id: "comfy", title: "Comfy", state: "done", durationSeconds: 120, file: "comfy.flac" },
+    { id: "native", title: "Native", state: "done", elapsedSeconds: 0, durationSeconds: 90, file: "native.flac" },
+    { id: "unknown", title: "Unknown", state: "failed", error: "Missing runtime" },
+  ] });
+  assert.match(fields.jobList.innerHTML, /Python[\s\S]*?<span class="jobms">947s<\/span>/);
+  assert.match(fields.jobList.innerHTML, /Comfy[\s\S]*?<span class="jobms">120s<\/span>/);
+  assert.match(fields.jobList.innerHTML, /Native[\s\S]*?<span class="jobms"><\/span>/, "real zero wins over a legacy timing");
+  assert.match(fields.jobList.innerHTML, /Unknown[\s\S]*?<span class="jobms"><\/span>/, "no invented time for an early failure");
+  assert.match(fields.jobSummary.innerHTML, /<b>1068s<\/b><span>total render/);
+});
+
 test("rights: the catalogue's own chip, the licence-file line, the reason a label changed, and add-ons that raised it", () => {
   const ctx = vm.createContext({ esc: (s) => String(s ?? "") });
   vm.runInContext(`${between("const RIGHTS_WORDS = {", "/** A capability's short rights words")}
