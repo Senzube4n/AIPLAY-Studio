@@ -29,16 +29,14 @@
 
 const HEAD = `AIPLAY STUDIO — WHEN TO USE WHAT
 
-Families: mv_*/ab_* = the workflow store (projects, scenes, cast, takes,
-timeline); vfx_* = the compositor; image_* = the editor; engine_* = the raw graph and the record of
-every render; the rest = generation
-and the library. One local GPU renders everything — music has priority, art
-and video queue behind it.
+UI: Production holds video, episode and audiobook projects.
+Families: mv_*/ab_* = projects, scenes, cast, takes and timeline; vfx_* = the
+compositor; image_* = the editor; engine_* = raw graphs and render receipts;
+the rest = generation and library. One GPU renders everything, music first.
 
-The economics drive the order: PLANNING IS FREE (brief, bible, lint, crime
-board), a render costs GPU-minutes, and every render KEEPS its takes. So plan
-fully, render once, pick takes, repair the stale minimum, and polish with VFX
-instead of re-rendering. Topics: stages, series, engines, example, vectors, music-workbench, music-editing.
+PLANNING IS FREE (brief, bible, lint, crime board). Renders cost GPU-minutes
+and keep takes. Plan fully, pick takes, repair the stale minimum, then polish
+with VFX. Topics: stages, series, engines, example, vectors, music-workbench, music-editing.
 Read vectors for logos; music-workbench for native YuE2 tools.`;
 
 const STAGES = `THE FIVE STAGES OF A MUSIC VIDEO
@@ -124,7 +122,7 @@ BIBLE FIRST, before any pixel: \`mv_bible_spec\` → author the story, style
 bible, characters, backgrounds and boards → \`mv_set_bible\`. The bible merges
 by NAME, so re-committing it never destroys rendered sheets.
 
-One project per episode, one shared cast. Projects do not share a store, so
+One video project per episode on Production, one shared cast. Projects do not share a store, so
 carry the bible document itself between episodes and commit the SAME
 characters/backgrounds into each with \`mv_set_bible\` — then carry the chosen
 FACES with \`mv_import_asset\` (import the previous episode's picked sheet
@@ -328,7 +326,8 @@ Full guide: https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md`
 
 const MUSIC_WORKBENCH = `NATIVE MUSIC WORKBENCH
 
-UI: Music Lab > Native tools. The main full-window player’s Score view follows a linked
+UI: Music Lab > Native tools. For different song ideas, Music > Batch & schedule.
+The main full-window player’s Score view follows a linked
 YuE2 score; the workbench's saved native runs also offer Follow playback. Timing is approximate.
 
 1 READ: \`music_workbench_status\` lists installed packs, datasets and runs without work.
@@ -359,6 +358,15 @@ YuE2 score; the workbench's saved native runs also offer Follow playback. Timing
   For actual mastering use the DAW chain, \`daw_analyze\`, loudness-matched \`daw_reference\`,
   \`daw_critique\` and \`daw_bounce\`; final export meters matter more than knob labels.
   \`music_workbench_stop\` stops only the active owned native tool.
+
+6 BATCH: Music's Takes varies one idea; Batch & schedule holds different title/style/lyric
+  snapshots and accepted engine settings. \`overnight_start\` accepts items, takes per idea,
+  and optional start_at as a future ISO UTC timestamp. Omit it to start now. Songs render
+  one at a time with fresh seeds. \`overnight_status\` reads the saved plan/history;
+  \`overnight_control\` pauses, resumes immediately, stops or clears. Studio must be running
+  and the computer awake; it cannot wake them. A future appointment restores after restart,
+  while a missed appointment pauses for review. Only one live plan is allowed. Exact
+  lyrics/ABC survive; normal readiness and hosted spending confirmations still apply.
 
 Source recordings survive. GPU work is exclusive and refuses to overlap active Studio rendering.
 Generation, installation, training, replay and keeping results are distinct actions. No loop judge,

@@ -231,7 +231,7 @@ export function mvTools(api, safeName) {
     },
     {
       name: "mv_list_projects",
-      description: "Every music video project (the Music video screen) with its derived stage and artefact counts.",
+      description: "Every video project on the Production screen, with its derived stage and artefact counts. Includes music-video and episode projects; internal project kinds remain unchanged.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       async run() { return (await api("GET", "/api/mv/projects")).projects; },
     },

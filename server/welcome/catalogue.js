@@ -548,7 +548,7 @@ const TABS = [
       "It spends real credits and cannot quote a price before a run; the Router reports a cost after "
       + "some runs and not others, and your Comfy workspace has the full usage. Results are downloaded "
       + "as they finish, because their links expire within a day. It cannot make a music video: the mode "
-      + "has no Music, Music video or Collab screen, and its results do not reach a project's scenes.",
+      + "has no Music, Production or Collab screen, and its results do not reach a project's scenes.",
   },
   {
     id: "musiclab", icon: "♫", name: "Music Lab", group: "make",
@@ -680,20 +680,21 @@ const TABS = [
     cant:
       "Looks configure components already inside the model. This page does not fit arbitrary outfits, "
       + "create face or hair rigs, generate dance clips or infer phonemes from speech. "
-      + "Image-to-3D and local body rigging remain in Music video. VRM workshop and World GLB use separate "
+      + "Image-to-3D and local body rigging remain in Production. VRM workshop and World GLB use separate "
       + "import budgets; local VRM acceptance does not grant Agent World admission. A persona ID is "
       + "local attribution, not account ownership. Review deformation visually before handoff.",
   },
 
   {
-    id: "workflow", icon: "❖", name: "Music video", group: "assemble",
+    id: "workflow", icon: "❖", name: "Production", group: "assemble",
     lead:
-      "The music-video pipeline, as a project rather than a pile of files. It cuts the song into scenes, "
-      + "holds a brief and a bible (the cast, the places, the rules the whole video obeys), storyboards "
+      "Plan videos, film scenes and episodes as projects. It holds a brief and a bible "
+      + "(the cast, the places, the rules the whole production obeys), storyboards "
       + "every scene, renders character sheets and background plates, keeps every take, and tracks what "
       + "went stale when you changed your mind. Planning here is free; only rendering costs the card. "
-      + "Audiobooks use the same machinery with a different last step.",
-    makes: ["A scene-by-scene plan bound to the song's bars", "Character sheets and background plates that stay consistent", "Storyboards that name the shot", "A timeline handed to Studio to finish"],
+      + "A soundtrack gives video projects their scene timing; audiobooks have their own chapter and narration path. "
+      + "For a series, use a project per episode and carry the same bible and chosen reference sheets between them.",
+    makes: ["Scene plans around a soundtrack", "Reusable character sheets and background plates", "Storyboards that name the shot", "A timeline handed to Studio to finish", "Narrated audiobook projects"],
     start: "New video…, attach a song, segment it, then write the brief before rendering anything.",
     /* Planning is free and needs nothing. Everything this screen RENDERS it
      * renders with the Images and Video engines, so its needs are theirs —
@@ -841,12 +842,14 @@ const TABS = [
   },
 
   {
-    id: "overnight", icon: "☾", name: "Overnight", group: "run",
+    id: "overnight", icon: "☾", name: "Batch & schedule", group: "run",
     lead:
-      "Write down ideas at bedtime and let the machine render them while you sleep — songs, covers, stems, "
-      + "even clips. The plan lives on disk, so a crash or a closed browser does not lose the run.",
-    makes: ["A night's worth of songs", "Batches of images", "Batches of clips"],
-    start: "List a few ideas, choose the stages, press Start, go to bed.",
+      "Collect different song ideas with their exact lyrics, styles and accepted engine settings, "
+      + "choose how many takes to make, and start now or schedule a later start. Songs render one at a time, "
+      + "with new seeds for each take. Images and clips can use the same planner. The plan lives on disk; "
+      + "a future schedule is restored when Studio restarts, while a missed start pauses for review.",
+    makes: ["Different songs with multiple takes", "Scheduled local runs", "Batches of images", "Batches of clips"],
+    start: "Open Batch & schedule from Music, add your ideas, review the plan and choose when to start.",
     /* A stage is only offered if its model is installed — the `cant` says so.
      * Which stages exist is which of these you have, so the needs are the union
      * of what the stages call, spread from the same derived sets. */
@@ -858,7 +861,8 @@ const TABS = [
       ...VIDEO_NEEDS,
     ],
     cant:
-      "The computer has to stay on and awake; Studio keeps it awake but cannot open a closed lid. Stages "
+      "Studio must be running when the start time arrives; scheduling cannot wake the computer. "
+      + "The computer has to stay on and awake. Stages "
       + "whose models are not installed are greyed out rather than silently skipped.",
   },
   {
@@ -943,20 +947,19 @@ const TABS = [
       + "it here is how two copies start to disagree.",
   },
   {
-    id: "community", icon: "◎", name: "Community", group: "run",
+    id: "community", icon: "◎", name: "Community sessions", group: "run",
     lead:
-      "A window onto aiplay.live — live listening rooms, events starting soon, and style packs that fill "
-      + "the Music form with a starting point. It is the \"when you want people to hear it\" door; nothing "
-      + "walks through it on its own.",
-    makes: ["A way out of your own headphones"],
-    start: "Have a look at what is playing, or borrow a style pack.",
+      "Browse aiplay.live's public listening rooms and upcoming events, or borrow a style pack for "
+      + "the Music form. The Community entry stays visible above the sidebar's scrolling tools, "
+      + "with a live-session indicator when the feed reports one.",
+    makes: ["Live session and upcoming event links", "Reusable style packs"],
+    start: "Open Community in the sidebar, choose a session or event, or borrow a style pack.",
     needs: [],
     needsNote:
-      "An internet connection — the only screen in the app that wants one. No account, no sign-in, and "
-      + "nothing you have made is uploaded to look at it.",
+      "Public listings need an internet connection. Browsing does not upload your local creations.",
     cant:
-      "Offline or behind a firewall it degrades to \"not reachable\", and that is fine — no feature in the "
-      + "app needs a connection or an account, and nothing you make is uploaded anywhere.",
+      "An offline or unreachable feed cannot report live sessions. This page links to community activities; "
+      + "browsing does not publish a song or start a stream. Local creation remains available while the feed is offline.",
   },
   {
     id: "radio", icon: "∿", name: "Radio", group: "run",

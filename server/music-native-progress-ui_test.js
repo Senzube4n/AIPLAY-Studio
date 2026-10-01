@@ -141,6 +141,23 @@ test("non-native queues still use their existing estimates", () => {
   assert.doesNotMatch(h.$("wbEta").textContent, /unknown/);
 });
 
+test("a future batch stays visible without claiming that the GPU is rendering", () => {
+  const h = harness();
+  const startAt = Date.now() + 3600000;
+  const run = { state: "scheduled", startAt, total: 8, name: "Eight song ideas" };
+  h.renderQueue({ queue: [], run });
+  assert.equal(h.$("workBox").hidden, false);
+  assert.equal(h.$("wbState").textContent, "scheduled");
+  assert.equal(h.$("wbNow").textContent, "Eight song ideas");
+  assert.equal(h.$("wbRest").textContent, "8 planned");
+  assert.equal(h.$("workBox").classList.contains("busy"), false);
+  assert.match(h.$("wbLine").textContent, /batch scheduled/);
+  assert.doesNotMatch(h.$("wbEta").textContent, /by CLOCK/);
+  h.renderQueue({ current: native({ etaSeconds: null }), queue: [], run });
+  assert.equal(h.$("wbState").textContent, "working");
+  assert.match(h.$("wbRest").textContent, /batch scheduled/);
+});
+
 test("one box, and it says what is being made, what waits, and the day's tally", () => {
   const h = harness();
   const midday = new Date(); midday.setHours(12, 0, 0, 0);

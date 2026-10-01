@@ -140,7 +140,7 @@ export function gbWithArticle(n) {
 /** The rail's name for the music-video screen: the one copy. server/collab/
  *  lending.js (WORKFLOW_SCREEN) and server/cloud-switch.js read it from here,
  *  and lending_test.js pins it to the rail's own label. */
-export const H3_MV_SCREEN = "Music video";
+export const H3_MV_SCREEN = "Production";
 
 /** Lending is built and has passed its tests on one machine; a render between
  *  two PCs has not been tried. Every surface that offers it says so, in these

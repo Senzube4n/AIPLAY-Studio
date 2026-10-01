@@ -6,11 +6,10 @@ MuScriptor and separate audio-processing previews. The main full-window playerâ€
 following-score player. Timing is approximate, and MIDI prediction is not a
 faithful transcription guarantee.
 
-On **Music**, Takes offers 1, 2, 3, 4 or 8 separate queued performances with
-different seeds. This does not promise simultaneous GPU batching. **Overnight**
-retains the selected engine and its accepted per-song settings, exact lyrics and
-score text; each take receives a fresh seed and passes through the ordinary
-generation door. ACE's base model remains an engine-wide setting.
+On **Music**, Takes offers 1, 2, 3, 4 or 8 separate queued performances of the
+current idea with different seeds. Open **Batch & schedule** for multiple
+different ideas and a later start time. Both use the ordinary generation door;
+neither promises simultaneous GPU batching.
 
 An MCP agent can discover the workflow with
 `pipeline_guide({"topic":"music-workbench"})`. All tools below call the same
@@ -76,3 +75,41 @@ loudness-matched comparisons. Ozone-equivalent neural processing is not implemen
 Music page take choices make separate queued performances, rather than parallel
 model batches. The workbench does not contain an automatic dance-loop judge,
 protected-passage guarantees, a syllable stress editor or real-time model synthesis.
+
+## Batch & schedule
+
+On **Music**, **Takes** makes variations of the current song idea. For different
+songs, press **Batch & schedule** beside it. **Add to batch** captures the current
+form's title, style, exact lyrics, instrumental choice and accepted engine
+settings. In the planner, add blank ideas or use the 2/4/8-song shortcuts, then
+review each card's title, style and lyrics. Preserved advanced settings are
+available in the card's disclosure. The plan's **Takes** count applies to every
+idea: four ideas with two takes make eight separate recordings.
+
+The planner retains exact lyrics and score whitespace, which can affect YuE2's
+interpretation. Each take receives a fresh seed; supported model, sampler,
+reference and score controls pass through the ordinary song validation. Different
+ideas can retain different engines. ACE's base model remains engine-wide.
+Songs render one at a time and cycle through the ideas before making their next
+takes, so a partial run still covers the list.
+
+Choose **Now** to start after reviewing the plan, or **Later** and a local date
+and time to schedule it. The browser converts that choice to an explicit UTC
+timestamp. Studio must be running and the computer awake at the start time;
+this does not wake the computer or launch Studio. Closing the browser does not
+stop the server. A future appointment is restored when Studio restarts, while
+a missed appointment and an interrupted running plan pause for review.
+
+Only one active, scheduled or paused plan is allowed. **Pause** cancels a pending
+start timer; **Start now** resumes a paused or scheduled plan immediately.
+Stop and Clear use the existing batch controls. Optional hosted music still
+requires its spending confirmation.
+
+MCP uses the same planner: `overnight_start` takes the list in `items`, the
+per-idea count in `takes`, and optional `start_at` as a future ISO UTC timestamp
+(for example `2026-10-02T20:00:00Z`). Omit `start_at` to start now. Existing
+`overnight_status` reports the saved plan and history. A scheduled plan has
+`state:"scheduled"`, `startAt` in epoch milliseconds and `startedAt:null` until
+it starts. `overnight_control` supports `pause`, `resume`, `stop` and `clear`;
+`resume` starts immediately. Tool names and the `?view=overnight` deep link are
+unchanged for existing integrations.

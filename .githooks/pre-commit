@@ -28,9 +28,11 @@ node --check server/music/shared-cues.js || exit 1
 node --test server/music/daw-score_test.js server/music/daw-passages_test.js server/music/take-comparison_test.js server/mcp-take-comparison_test.js server/music/shared-cues_test.js server/mcp-shared-cues_test.js || exit 1
 node --test server/music/full-player-score_test.js server/batch-music-context_test.js || exit 1
 node --check web/music-batch-spec.js || exit 1
+node --check web/music-batch-editor.js || exit 1
 node --check server/batch-music.js || exit 1
 node --check server/batch-music-context.js || exit 1
 node --test server/overnight-music_test.js || exit 1
+node --test server/music-batch-ui_test.js || exit 1
 node --check web/vectorize-controls.js || exit 1
 node --test server/vectorize_test.js server/vectorize-ui_test.js server/vector-import_test.js || exit 1
 node --test server/music/community-tools_test.js server/music/score-follow_test.js server/music/native-adapter-export_test.js || exit 1

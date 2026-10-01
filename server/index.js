@@ -3792,12 +3792,16 @@ const server = http.createServer(async (req, res) => {
             const refusal = paidRefusal(await hostedQuote(night.longestSeconds), { songs: night.songs });
             return json(res, refusal.status, refusal.body);
           }
-          return json(res, 200, batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true }));
+          const started = batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true });
+          // Confirm a future appointment only after its engine, actor and paid
+          // answer are saved. The timer is not armed if that write fails.
+          if (b.startAt !== undefined) { await batch.persist(); return json(res, 200, batch.status()); }
+          return json(res, 200, started);
         }
-        if (b.action === "pause") return json(res, 200, batch.pause());
-        if (b.action === "resume") return json(res, 200, batch.resume());
-        if (b.action === "stop") return json(res, 200, batch.stop());
-        if (b.action === "clear") return json(res, 200, batch.clear());
+        if (b.action === "pause") { batch.pause(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "resume") { batch.resume(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "stop") { batch.stop(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "clear") { batch.clear(); await batch.persist(); return json(res, 200, batch.status()); }
         return json(res, 400, { error: "Unknown action." });
       } catch (err) {
         /* An overnight plan refused under the minors rule (batch.js) says so. */
@@ -13480,7 +13484,7 @@ async function gpuWorkRunning() {
  *  cancelled work is discarded cleanly rather than cut off mid-write. */
 async function stopForBattery(why) {
   const what = [];
-  if (batch.run && ["running", "paused"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
+  if (batch.run && ["running", "paused", "scheduled"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
   if (jobs.current || jobs.queue.length) {
     what.push(jobs.current?.title ? `"${jobs.current.title}"` : "a song");
     for (const j of [...jobs.queue]) await jobs.cancelById(j.id).catch(() => {});

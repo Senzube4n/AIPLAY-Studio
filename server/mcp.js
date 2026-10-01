@@ -2325,7 +2325,9 @@ export const TOOLS = [
       + "Prompts are TEMPLATES: `{a|b|c}` expands per take, so ten takes of one idea are ten different "
       + "pictures rather than one picture ten times. Seeds are rolled per take and repeats are caught and "
       + "re-rolled, which is what makes a run safe to leave. Use preview_prompt first — a template that "
-      + "reads well and expands badly costs a night to discover otherwise.",
+      + "reads well and expands badly costs a night to discover otherwise. "
+      + "Optional start_at schedules a future ISO UTC start while Studio is running; it does not wake the computer. "
+      + "Future appointments restore after a restart, but missed appointments pause for review. Only one live plan is allowed.",
     inputSchema: {
       type: "object", required: ["items"],
       properties: {
@@ -2333,6 +2335,7 @@ export const TOOLS = [
         name: { type: "string", description: "What to call this run in the history." },
         takes: { type: "integer", description: "How many of each idea. 1-20, default 3." },
         cap: { type: "integer", description: "Stop after this many renders in total." },
+        start_at: { type: "string", format: "date-time", description: "Optional future ISO UTC time, such as 2026-10-02T20:00:00Z. Omit to start now. Studio must be running and the computer awake." },
         items: {
           type: "array", maxItems: 40,
           description: "The ideas. Music preserves the selected engine, its supported advanced controls and exact lyric/ABC whitespace. "
@@ -2417,6 +2420,7 @@ export const TOOLS = [
       const r = await api("POST", "/api/batch", {
         action: "start",
         kind: a.kind, name: a.name, takes: a.takes, cap: a.cap,
+        startAt: a.start_at,
         items: a.items, stages: a.stages,
         confirmSpend: a.confirm_spend === true ? true : undefined,
       });
@@ -2429,7 +2433,8 @@ export const TOOLS = [
     name: "overnight_control",
     description:
       "Pause, resume or stop the run, or clear the history. Pause lets whatever is rendering finish first "
-      + "— killing a nearly-complete render throws away GPU time already spent; stop is there for ending it now.",
+      + "— killing a nearly-complete render throws away GPU time already spent; stop is there for ending it now. "
+      + "Pause cancels a scheduled timer; resume starts a paused or scheduled plan now. Stop and clear cancel scheduled starts.",
     inputSchema: {
       type: "object", required: ["action"],
       properties: { action: { type: "string", enum: ["pause", "resume", "stop", "clear"] } },
@@ -2446,13 +2451,14 @@ export const TOOLS = [
     name: "overnight_status",
     description:
       "What the run is doing: kind, state, how far through the plan, what it has produced, what failed and "
-      + "why, and the finished runs before it. Safe to call while one is going.",
+      + "why, and the finished runs before it. A scheduled run reports startAt and createdAt in epoch milliseconds; "
+      + "startedAt stays null until it actually starts. Safe to call while one is going.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run() {
       /* /api/batch is POST-only; the run's state is merged into /api/status,
        * which is where the page reads it from too. */
       const st = await api("GET", "/api/status");
-      return { run: st.run ?? null, runs: st.runs ?? [], art: st.art ?? null };
+      return { run: st.run ?? null, runs: st.runs ?? [], postStages: st.postStages ?? { waiting: 0, failed: 0 }, art: st.art ?? null };
     },
   },
 

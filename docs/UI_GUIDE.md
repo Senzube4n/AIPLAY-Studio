@@ -182,10 +182,14 @@ now **Music Lab** in the rail.
 
 1. The rail link in `web/index.html`: `<a href="#" data-view="mypage" …>`.
    **Where in the rail:** the Make group holds only what a newcomer comes for
-   (Home, Music, Pictures, Video, Music video). Everything else goes inside the
+   (Music, Pictures, Video, Production). Home and Community sessions stay
+   pinned in `.navfeatured`, above the scrollable tools, so sessions remain
+   visible when More tools is open. Further tools go inside the
    "More tools" fold (`<details id="navMore">`), and housekeeping in
    `.navbottom` (Models and Settings stay there, never below the fold).
-   `server/welcome/level_test.js` pins all three lists.
+   `server/welcome/level_test.js` pins these lists. Music also provides a
+   visible Batch & schedule entry beside the Takes controls; batch composition
+   uses the existing planner instead of opening a modal.
 2. The toggle in `setView()` in `web/app.js`: `$("mypage").hidden = name !== "mypage";`.
 3. The ⓘ mount: a line in `INFO_HOSTS` in `web/app.js`.
 4. A paragraph in `server/welcome/catalogue.js`, and bump the count in its

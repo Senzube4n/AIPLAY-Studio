@@ -206,9 +206,9 @@ ok("chat is in the rail", railViews.includes("chat"), railViews.join(", "));
 /* The rail was Home, Chat, Music (the owner's ask, 2026-09-19) until UI_PLAN
  * B1, approved 2026-09-24: Make first (Home, Music, Pictures, Video, Music
  * video), and Chat heads the "More tools" fold, one click away. */
-ok("...and the rail opens Home, then Make: Music, Pictures, Video, Music video",
-  railViews[0] === "home" && railViews[1] === "create" && railViews[2] === "router"
-    && railViews[3] === "images" && railViews[4] === "video" && railViews[5] === "workflow", railViews.join(", "));
+ok("...and the rail opens Home and Community, then Make: Music, Pictures, Video, Production",
+  railViews[0] === "home" && railViews[1] === "community" && railViews[2] === "create" && railViews[3] === "router"
+    && railViews[4] === "images" && railViews[5] === "video" && railViews[6] === "workflow", railViews.join(", "));
 ok("...and Chat heads the More tools fold",
   /<details class="navgroup navmore" id="navMore">\s*<summary[^>]*>[\s\S]*?<\/summary>\s*<a href="#" data-view="chat"/.test(HTML));
 

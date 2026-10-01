@@ -285,7 +285,7 @@ async function loadList() {
       `<option value="${esc(p.slug)}">${esc(p.title)} · ${esc(stageLabel(kind, p.stage))}`
       + `${p.updatedAt ? ` · ${esc(ago(p.updatedAt))} ago` : ""}</option>`).join("")}</optgroup>` : "";
   };
-  sel.innerHTML = (group("mv", "🎬 Music videos") + group("audiobook", "📖 Audiobooks"))
+  sel.innerHTML = (group("mv", "🎬 Video projects") + group("audiobook", "📖 Audiobooks"))
     || '<option value="">No projects yet</option>';
   if (wf.slug) sel.value = wf.slug;
   $("wfDelete").hidden = !wf.list.length;
@@ -411,7 +411,7 @@ function renderHome() {
         </button>`).join("") || `<p class="hint">${hint}</p>`}</div></section>`;
   };
   return `<div class="homewrap">
-    ${section("mv", "🎬 Music videos", "None yet — press New video…")}
+    ${section("mv", "🎬 Video projects", "None yet. Press New video…")}
     ${section("audiobook", "📖 Audiobooks", "None yet — press New audiobook…")}
   </div>`;
 }
@@ -455,7 +455,7 @@ function renderHero() {
   }
   return `<header class="wfhero">
     <div class="wfheroid"><h2>${esc(d.title)}</h2>
-      <span class="kindchip">${isAb ? "📖 Audiobook" : "🎬 Music video"}</span></div>
+      <span class="kindchip">${isAb ? "📖 Audiobook" : "🎬 Video project"}</span></div>
     <div class="wfstats2">${stats.map(([v, l]) =>
       `<div class="wfstat"><b>${esc(String(v))}</b><span>${esc(l)}</span></div>`).join("")}</div>
   </header>`;

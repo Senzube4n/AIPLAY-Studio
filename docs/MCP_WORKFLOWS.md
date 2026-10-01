@@ -9,6 +9,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Qwen native weights and readiness | `model_inventory`, `models_for_this_machine`, `download_model`, `cancel_download`, `qwen_image_status` |
 | Automatic song-cover and picture preference | `set_image_engine`: persistent cover engine, or with `use_for` `pictures` / `both` the engine `make_image` uses when it names none; `auto` forgets the choice; with no saved choice both use the recommended picture model on this PC (`studio_status` `defaults`), and saved choices are preserved |
 | Music model | `set_music_engine`: persistent music model (an engine, an exact build, or `auto`); with no saved choice Studio uses what is installed and ready |
+| Multiple song ideas and scheduling | `overnight_start` with `items`, `takes` and optional `start_at` (future ISO UTC); `overnight_status`, `overnight_control` for the same **Music → Batch & schedule** planner. Future appointments restore after restart; missed starts pause for review. Studio must be running and the computer awake. [Batch guide](music-workbench.md#batch--schedule) |
 | Installed model choices | `list_checkpoints`, `list_dits`, `list_loras`, `sampling_options`, `models_folder`, `model_override` |
 | Image creation and ordered references | `make_image`: refs, reference sizing/resolution, dimensions, alpha, native DiT/encoder/VAE, seed and sampling settings |
 | Local reference/media upload | `import_local_media`: reference image/audio or Studio bin; returns the server's reusable filename |
@@ -26,7 +27,7 @@ keeps the `agent:<name>` provenance prefix, including binary uploads.
 | Shared music/visual cues | `music_cue_status`, `music_cue_save`, `music_cue_read`, `music_cue_preview`, `music_cue_audition`, `music_cue_apply`, `music_cue_undo`; preview and apply an editable builtin accent plus flash at one musical position; see [shared cues](shared-cues.md) |
 | Episode planning and allocation | `collab_plan`: get, update_episode, update_shot, preview_allocation, allocate, apply_draft |
 | Peer identity and permissions | `collab_me`, `collab_roster`, `collab_add_peer`, `collab_verify`, `collab_set_role`, `collab_set_lend_minutes`, `collab_remove_peer` |
-| Public community discovery | `community_feed`: the Community page's public live-session, upcoming-event, station, recent-track and article listings |
+| Public community discovery | `community_feed`: the **Community sessions** page's public live-session, upcoming-event, station, recent-track and article listings |
 | Reviewed outgoing bundles | `collab_resources`, `collab_preview`, `collab_pack`, `collab_send_back`, `collab_orders`, `collab_credit` |
 | Incoming work and returned takes | `collab_inbox`, `collab_open`, `collab_accept`, `collab_receive`, `collab_quarantine`, `collab_adopt`, `collab_drop`, `collab_set_resources`, `collab_free` |
 | Standalone Qwen image lending | `collab_image_preview`, `collab_pack`, `collab_open`, `collab_image_accept`, `collab_image_render`, `collab_image_send_back`, `collab_image_receive`, `collab_quarantine`, `collab_image_review_return`, `collab_image_adopt`, `collab_image_drop` |
@@ -41,6 +42,12 @@ Use the DAW's **AI passage** dock for score edits. Open **Music Lab → Takes**
 for saved-song comparisons and **Music Lab → Shared cues** to coordinate a
 musical accent with an editable flash. These tools preserve original recordings
 and use the same validated actions from their UI and typed MCP faces.
+
+The **Production** screen holds video and audiobook projects, including the
+scene/cast/storyboard workflow used for music videos and episode projects.
+`pipeline_guide` with `topic:"series"` explains how to carry a shared bible and
+chosen reference sheets between episode projects. Existing `mv_*` and `ab_*`
+tools, project kinds and `?view=workflow` links retain their names.
 
 `community_feed` reads Studio's existing `GET /api/community` proxy. It limits the
 returned rows and fields, and reports whether the desktop feed was offline when

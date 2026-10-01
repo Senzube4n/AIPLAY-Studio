@@ -53,6 +53,7 @@
   <link rel="stylesheet" href="chat.css">
   <!-- The Agent page (cloud models + MCP). -->
   <link rel="stylesheet" href="agent.css">
+  <link rel="stylesheet" href="music-batch.css">
   <!-- The shell: the rail's "More tools" fold, the Simple level's switches,
        the Home first-run lines and the phone layout (UI_PLAN B1, B3, B5, B6,
        E1). LAST, because it re-lays the grid the sheets above set up; it
@@ -88,16 +89,13 @@
       <div class="wordmark"><b>AI PLAY</b><span>STUDIO</span></div>
       <button class="railtoggle" type="button" id="railToggle" title="Collapse the menu" aria-label="Collapse the menu" aria-expanded="true">&#10094;</button>
     </div>
-    <!-- MAKE FIRST, THE REST FOLDED (UI_PLAN B1). The five things a newcomer
-         comes for sit on top; every other screen is one click away under
-         "More tools", a <details> whose open or folded state web/rail.js
-         remembers in this browser. Models and Settings are pinned in the
-         bottom block so they are never below the fold. Only labels changed:
-         every data-view is the one it was, so setView(), INFO_HOSTS and the
-         catalogue find every entry through ".nav a" exactly as before.
-         ❮ collapses the rail to icons only. -->
-    <div class="nav navmain">
+    <!-- Home and community sessions remain visible while the creation tools
+         scroll. Stable data-view names preserve links and agent navigation. -->
+    <div class="nav navfeatured">
       <a href="#" class="on" data-view="home" title="Home"><i>&#8962;</i><span class="lbl">Home</span></a>
+      <a href="#" data-view="community" title="Community sessions" aria-label="Community sessions"><i>◎</i><span class="navsessioncopy"><span class="lbl">Community</span><small id="commRailStatus">Sessions &amp; challenges</small></span><span class="pip" id="commPip" hidden></span></a>
+    </div>
+    <div class="nav navmain">
       <div class="navgroup navmake"><div class="navhead"><span class="lbl">Make</span></div>
       <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
       <!-- Shown only in the launcher's "Use Comfy API" mode (web/app.js applyStatus),
@@ -106,7 +104,7 @@
       <a href="#" data-view="router" title="Comfy API" hidden><i>&#9729;</i><span class="lbl">Comfy API</span></a>
       <a href="#" data-view="images" title="Pictures"><i>▣</i><span class="lbl">Pictures</span></a>
       <a href="#" data-view="video" title="Video"><i>▷</i><span class="lbl">Video</span></a>
-      <a href="#" data-view="workflow" title="Music video"><i>❖</i><span class="lbl">Music video</span></a>
+      <a href="#" data-view="workflow" title="Production"><i>❖</i><span class="lbl">Production</span></a>
       </div>
       <details class="navgroup navmore" id="navMore">
         <summary class="navhead navmorehead" title="More tools"><i aria-hidden="true">&#8943;</i><span class="lbl">More tools</span><b class="navcaret" aria-hidden="true">&#9662;</b></summary>
@@ -119,8 +117,7 @@
       <a href="#" data-view="reactive" title="Reactive"><i>◉</i><span class="lbl">Reactive</span><span class="pip" id="reactPip" hidden></span></a>
       <a href="#" data-view="training" title="Training"><i>⚙</i><span class="lbl">Training</span></a>
       <a href="#" data-view="collab" title="Collab"><i>&#9901;</i><span class="lbl">Collab</span></a>
-      <a href="#" data-view="overnight" title="Overnight"><i>☾</i><span class="lbl">Overnight</span><span class="pip run" id="ovPip" hidden></span></a>
-      <a href="#" data-view="community" title="Community"><i>◎</i><span class="lbl">Community</span><span class="pip" id="commPip" hidden></span></a>
+      <a href="#" data-view="overnight" title="Batch &amp; schedule"><i>☾</i><span class="lbl">Batch &amp; schedule</span><span class="pip run" id="ovPip" hidden></span></a>
       <a href="#" data-view="radio" title="Radio"><i>&#8767;</i><span class="lbl">Radio</span></a>
       <a href="#" data-view="blog" title="Blog"><i>&#9998;</i><span class="lbl">Blog</span></a>
       <a href="#" data-view="games" title="Games"><i>⚄</i><span class="lbl">Games</span></a>
@@ -850,7 +847,6 @@
       <button type="button" class="tag" data-n="3">3</button>
       <button type="button" class="tag" data-n="4">4</button>
       <button type="button" class="tag" data-n="8" title="Queue eight takes with different seeds">8</button>
-      <button class="edtool" type="button" id="btnToOvernight" title="Queue this prompt for an overnight run">☾ overnight</button>
     </div>
 
     <!-- SHEET MUSIC, for engines that write a score. Hidden entirely on an
@@ -947,6 +943,10 @@
           </div>
         </div>
       </div>
+      <div class="music-batch-entry" id="musicBatchEntry">
+        <button class="btn2" type="button" id="btnMusicBatch">Batch &amp; schedule</button>
+        <button class="edtool" type="button" id="btnToOvernight" title="Save this song and its settings in the batch planner">Add to batch</button>
+      </div>
       <p class="ctanote" id="ctaNote">—</p>
     </div>
   </section>
@@ -956,10 +956,8 @@
        the same way Create does: compose on the left, watch the results on the
        right. Only one of the two is ever visible. -->
   <section class="ovcol" id="ovPanel" hidden>
-    <div class="ovhead"><h2>Overnight</h2></div>
-    <p class="hint">Queue ideas and leave it. Every take gets its own seed, and a
-      prompt with <code>{a|b|c}</code> in it expands differently each take — so a
-      night makes real alternates rather than one thing repeated.</p>
+    <div class="ovhead"><h2>Batch &amp; schedule</h2></div>
+    <p class="hint">Plan different songs, choose takes for each, then start now or later.</p>
 
     <!-- WHAT TONIGHT MAKES. The runner drains the identical plan for all three;
          only what one step asks for differs. Music keeps preempting, so an image
@@ -976,10 +974,16 @@
     <div class="ovplan">
 
     <div class="field">
-      <label class="flabel">Ideas <span class="meta" id="ovCount"></span></label>
+      <label class="flabel">Song ideas <span class="meta" id="ovCount"></span></label>
+      <div class="ovb-presets" id="ovMusicPresets" role="group" aria-label="Distinct song ideas">
+        <button class="btn2" type="button" data-ov-count="2">2 songs</button>
+        <button class="btn2" type="button" data-ov-count="4">4 songs</button>
+        <button class="btn2" type="button" data-ov-count="8">8 songs</button>
+        <button class="btn2" type="button" id="ovNewSong">New song</button>
+      </div>
       <div class="ovideas" id="ovIdeas"></div>
       <div class="edbar">
-        <button class="btn sm" type="button" id="ovAdd">+ Add what's in Create</button>
+        <button class="btn2" type="button" id="ovAdd">Add current song</button>
         <!-- The Pictures screen already holds an engine, a model, a size, steps,
              cfg and a prompt. Re-typing them here would be a second place for
              them to drift, so the button takes what is on that screen. -->
@@ -1013,26 +1017,32 @@
     </div>
 
     <div class="params ovparams">
-      <label for="ovTakes">takes of each idea</label>
-      <span class="pv"><input id="ovTakes" type="range" min="1" max="20" step="1" value="4"><b id="ovTakesV">4</b></span>
+      <label for="ovTakes">takes per idea</label>
+      <span class="pv"><input id="ovTakes" type="range" min="1" max="20" step="1" value="1"><b id="ovTakesV">1</b></span>
       <label for="ovCap">stop after</label>
       <span class="pv"><input id="ovCap" type="range" min="1" max="200" step="1" value="50"><b id="ovCapV">50</b></span>
     </div>
+    <div class="ovb-summary"><span class="chip" id="ovTotalCount" role="status" aria-live="polite">0 songs planned</span></div>
+    <p class="hint">Each take uses a different seed and runs through the normal queue.</p>
+    <div class="params ovparams">
+      <label for="ovWhen">start</label><span class="pv"><select class="sel2" id="ovWhen"><option value="now">Now</option><option value="later">Later</option></select></span>
+      <label for="ovStartAt" id="ovScheduleLabel" hidden>local time</label><span class="pv" id="ovScheduleRow" hidden><input class="in2" type="datetime-local" id="ovStartAt" step="60"></span>
+    </div>
+    <p class="hint ovb-timezone" id="ovTimezone">Studio must stay open for a scheduled start.</p>
 
     <!-- What the whole plan costs, before committing to it overnight. -->
     <div class="ovbudget" id="ovBudget"></div>
 
     <div class="ctawrap">
       <div class="cta">
-        <button class="btn" type="button" id="ovStart">Start overnight run</button>
+        <button class="btn" type="button" id="ovStart">Start batch</button>
       </div>
       <p class="ctanote" id="ovEst">Add an idea to see what it would cost.</p>
     </div>
 
     </div><!-- /.ovplan -->
 
-    <p class="ovlivehint">A run is going. Watch it on the right — pause or stop it
-      there. Your ideas are kept, so you can start another once this one ends.</p>
+    <p class="ovlivehint">Follow the batch on the right, or pause and stop it there.</p>
   </section>
 
   <!-- ─────────────── video creator ───────────────
@@ -1417,7 +1427,7 @@
       <div class="cta">
         <button class="btn" type="button" id="vidCreate">Render clip</button>
         <button class="btn2" type="button" id="vidRecipeClear" hidden title="Return to this machine's normal conditioning-bridge settings; keep the form values.">Clear recipe mode</button>
-        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Workflow → Video clips → Ask friend.">Ask friend</button>
+        <button class="btn2" type="button" id="vidAskFriend" title="Prepare a signed 20-step base H3 render job for a verified friend. They review, accept and render separately; you review the returned clip. To send reference pictures, use Production → Video clips → Ask friend.">Ask friend</button>
       </div>
       <p class="ctanote" id="vidEst"></p>
       <!-- At render time: the RAM warning under 32 GB (server/h3tier.js), and
@@ -1797,6 +1807,51 @@
          and setView used to hide the three of them separately. Wrapping them
          without moving that to the wrapper left the wrapper’s own padding and
          hairline as a 10px bar across the top of every other screen. -->
+    <div id="overnight" hidden>
+      <div class="stagehead">
+        <h2>Batch run</h2>
+        <span class="count" id="ovRunCount"></span>
+      </div>
+
+      <!-- running -->
+      <div id="ovLive" class="ovlive" hidden>
+        <div class="ovtop">
+          <div>
+            <div class="ovbig" id="ovProgress">0 of 0</div>
+            <div class="ovsub" id="ovNow">—</div>
+          </div>
+          <div class="ovright">
+            <div class="ovbig" id="ovDoneBy">—</div>
+            <div class="ovsub" id="ovLeft"></div>
+          </div>
+        </div>
+        <div class="bar"><i id="ovBar"></i></div>
+        <div class="ovfoot">
+          <span class="ovnote" id="ovNote"></span>
+          <button class="edtool" type="button" id="ovPause">Pause</button>
+          <button class="btn2 go" type="button" id="ovStartNow" hidden>Start now</button>
+          <button class="cancel" type="button" id="ovStop">Stop</button>
+        </div>
+
+        <!-- What each song is still owed. The headline count above is MUSIC
+             only: covers, stems, lyrics and clips drain afterwards against an
+             idle card, so a run reads as finished while an hour of work is
+             outstanding. This is the rest of the pipeline, made visible. -->
+        <details class="ovchain" id="ovChain" hidden>
+          <summary>After the singing <span class="sp meta" id="ovChainState"></span></summary>
+          <div class="ovsongs" id="ovSongs"></div>
+        </details>
+      </div>
+
+      <!-- The planning controls moved to the LEFT column (#ovPanel), mirroring
+           Create. What stays here is the record: what ran, whether it worked,
+           and what it cost. -->
+      <details class="more"><summary>Past runs</summary>
+        <div class="ovruns" id="ovRuns"></div>
+      </details>
+      <p class="hint">Studio keeps your computer awake while a batch runs.</p>
+    </div>
+
     <div class="libhead spaced" id="musicHead">
     <div class="stagehead">
       <h2 id="listTitle">Library</h2>
@@ -2147,7 +2202,7 @@
             <pre id="cbOrderPrompt" class="cbopened" hidden></pre>
             <p class="hint warnhint cbactionnote">Review the prompt and references; accepting creates a plan that is <b>proposed</b> without rendering.</p>
             <p class="hint warnhint">A busy card or used daily minutes requires another confirmation.</p>
-            <details class="adv"><summary>How scene jobs work</summary><p class="hint">Open <b data-screen="workflow">Workflow</b> &rarr; the &ldquo;Order from your friend&rdquo; project to approve its plan. Acceptance asks before overriding a busy card or used daily minutes.</p></details>
+            <details class="adv"><summary>How scene jobs work</summary><p class="hint">Open <b data-screen="workflow">Production</b> &rarr; the &ldquo;Order from your friend&rdquo; project to approve its plan. Acceptance asks before overriding a busy card or used daily minutes.</p></details>
           </div>
 
           <div id="cbImageFace" hidden>
@@ -2211,7 +2266,7 @@
         <section id="cbTakesWrap" hidden class="cbsection">
           <b class="subhead">Returned scenes</b>
           <div id="cbTakes" class="cblist"></div>
-          <p class="hint warnhint">Watch each take first; keeping files a take <b>nobody has picked</b> until you select it in Workflow.</p>
+          <p class="hint warnhint">Watch each take first; keeping files a take <b>nobody has picked</b> until you select it in Production.</p>
           <p class="hint warnhint">A failed check or unplayable clip needs another confirmation to keep.</p>
           <details class="adv"><summary>How returned takes are filed</summary><p class="hint">Keeping a take files it on its scene with the sender's model and licence. A failed check or unplayable clip requires a separate Keep anyway confirmation.</p></details>
         </section>
@@ -2529,50 +2584,6 @@
       <p class="hint" id="trHonest"></p>
     </div>
 
-    <div id="overnight" hidden>
-      <div class="stagehead">
-        <h2>Overnight run</h2>
-        <span class="count" id="ovRunCount"></span>
-      </div>
-
-      <!-- running -->
-      <div id="ovLive" class="ovlive" hidden>
-        <div class="ovtop">
-          <div>
-            <div class="ovbig" id="ovProgress">0 of 0</div>
-            <div class="ovsub" id="ovNow">—</div>
-          </div>
-          <div class="ovright">
-            <div class="ovbig" id="ovDoneBy">—</div>
-            <div class="ovsub" id="ovLeft"></div>
-          </div>
-        </div>
-        <div class="bar"><i id="ovBar"></i></div>
-        <div class="ovfoot">
-          <span class="ovnote" id="ovNote"></span>
-          <button class="edtool" type="button" id="ovPause">Pause</button>
-          <button class="cancel" type="button" id="ovStop">Stop</button>
-        </div>
-
-        <!-- What each song is still owed. The headline count above is MUSIC
-             only: covers, stems, lyrics and clips drain afterwards against an
-             idle card, so a run reads as finished while an hour of work is
-             outstanding. This is the rest of the pipeline, made visible. -->
-        <details class="ovchain" id="ovChain" hidden>
-          <summary>After the singing <span class="sp meta" id="ovChainState"></span></summary>
-          <div class="ovsongs" id="ovSongs"></div>
-        </details>
-      </div>
-
-      <!-- The planning controls moved to the LEFT column (#ovPanel), mirroring
-           Create. What stays here is the record: what ran, whether it worked,
-           and what it cost. -->
-      <div class="subhead">Past runs</div>
-      <div class="ovruns" id="ovRuns"></div>
-      <p class="hint">Your PC is kept awake until a run finishes. The screen still
-        sleeps, and closing this window does not stop it.</p>
-    </div>
-
     <!-- Settings. Machine setup and things you decide once, moved out of the
          Create panel — they were sharing space with the controls people touch on
          every song, which is what made that column feel heavy. -->
@@ -2763,9 +2774,8 @@
          is where you watch it and override it. -->
     <div id="workflow" hidden>
       <div class="wfhead">
-        <h2>Music video</h2>
-        <p class="hint" id="wfIntro">Turn a finished song into a music video, one
-          stage at a time. Nothing here spends GPU until you ask it to.</p>
+        <h2>Production</h2>
+        <p class="hint" id="wfIntro">Build music videos, films and episodes from scenes to a finished timeline.</p>
       </div>
 
       <div class="wfbar">
@@ -3636,11 +3646,11 @@
         <h2>Comfy API</h2>
         <p>Hosted image, video, audio, 3D and text models, run with your Comfy API key and credits.</p>
         <!-- Said plainly, because Use Comfy API hides Music video: a music
-             video is made in Full Studio's Music video screen, and without a strong card a
+             video is made in Full Studio's Production screen, and without a strong card a
              friend renders its scenes (Collab), before any paid route. The
              sentence is the server's (GET /api/cloud comfy.note, worded for the
              mode this page is open in); web/router.js paints it here. -->
-        <p class="hint" id="rtNoMv"><b>Music videos are made in Full Studio's Music video screen.</b> Without a strong
+        <p class="hint" id="rtNoMv"><b>Music videos are made in Full Studio's Production screen.</b> Without a strong
           graphics card, ask a friend on Collab to render the scenes (free).</p>
       </header>
       <nav class="pnav" aria-label="Comfy API sections"></nav>
@@ -5324,7 +5334,7 @@
          of ways in. Nothing else, on purpose. data-go is app.js's existing
          view switch; Explore is Community (to be reworked). -->
     <div id="avatars" hidden class="page page-wide">
-  <header class="page-head stagehead"><h2>3D workshop</h2><a class="btn2" href="/?view=workflow" data-go="workflow" title="Generate a mesh from an image in Music video">Image to 3D ↗</a></header>
+  <header class="page-head stagehead"><h2>3D workshop</h2><a class="btn2" href="/?view=workflow" data-go="workflow" title="Generate a mesh from an image in Production">Image to 3D ↗</a></header>
   <iframe id="avatarFrame" title="3D avatar workshop" allow="autoplay"></iframe>
 </div>
 
@@ -5371,10 +5381,9 @@
            is about aiplay.live), who is on right now, and three quiet buttons. -->
       <div class="commhero">
         <img class="commlogo" src="assets/aiplay-logo.png?v=1" alt="">
-        <h2>AI PLAY</h2>
+        <h2>Community sessions</h2>
         <p class="commonline" id="commOnline" hidden></p>
-        <p>When you want people to hear it, aiplay.live is where the listening
-          happens: live rooms, challenges and other people making the same thing you are.</p>
+        <p>Join listening rooms, share your music and take on community challenges at aiplay.live.</p>
         <div class="commacts">
           <button class="edtool" type="button" id="commOpen">Open aiplay.live ↗</button>
           <!-- The invite comes from the feed's primary Discord, not a constant

@@ -6,7 +6,7 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
-import { BatchRunner, plannedPaidSongs } from "./batch.js";
+import { BatchRunner, plannedPaidSongs, batchStartAt } from "./batch.js";
 import { cleanMusicItem } from "./batch-music.js";
 import { MUSIC_BATCH_FIELDS, musicBatchIdea } from "../web/music-batch-spec.js";
 import { TOOLS } from "./mcp.js";
@@ -19,11 +19,12 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 const app = readFileSync(new URL("../web/app.js", import.meta.url), "utf8");
 
 function musicForm(spec, engine = spec.engine) {
-  const fields = { btnToOvernight: {}, ovAdd: {}, caption: { focus() {} }, ctaNote: {}, ovEst: {},
+  const fields = { btnToOvernight: {}, btnMusicBatch: {}, ovAdd: {}, ovNewSong: {}, caption: { focus() {} }, ctaNote: {}, ovEst: {},
     yAbcUse: { checked: !!spec.abc }, yAbc: { value: abc } };
   const context = vm.createContext({
     musicBatchIdea, currentSpec: () => spec, state: { musicEngine: engine, musicYue2Checkpoint: "chosen.safetensors" },
-    captionValue: () => spec.caption, $: id => fields[id], ov: { kind: "music", ideas: [] }, ovRender() {},
+    captionValue: () => spec.caption, $: id => fields[id], ov: { kind: "music", ideas: [] }, ovRender() {}, setView() {},
+    document: { querySelectorAll: () => [] },
   });
   const start = app.indexOf("function ovMusicIdea() {");
   const end = app.indexOf('$("btnCreate").onclick', start);
@@ -48,12 +49,12 @@ class FakeJobs extends EventEmitter {
   cancelById(id) { this.cancelled.push(id); const job = this.queue.find(j => j.id === id); if (job) this.finish(job, "cancelled"); }
   snapshot() { return { queue: this.queue, current: null, history: this.history }; }
 }
-async function fixture(t, enqueue) {
+async function fixture(t, enqueue, options = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aiplay-overnight-music-"));
   const jobs = new FakeJobs();
   const runner = new BatchRunner(jobs, { stateFile: path.join(dir, "batch.json"), keepAwake() {},
-    enqueueMusic: enqueue ? spec => enqueue(spec, jobs) : spec => jobs.enqueue(spec) });
-  t.after(async () => { runner.stop(); await tick(); await new Promise(resolve => setTimeout(resolve, 20)); await rm(dir, { recursive: true, force: true }); });
+    enqueueMusic: enqueue ? spec => enqueue(spec, jobs) : spec => jobs.enqueue(spec), ...options });
+  t.after(async () => { runner.stop(); await tick(); await runner.persist().catch(() => {}); await rm(dir, { recursive: true, force: true }); });
   return { jobs, runner, dir };
 }
 const idea = (engine = "yue2-comfy") => ({ engine, caption: "Warm synth pop", lyrics, instrumental: false, cot: "full", narSteps: 32 });
@@ -243,4 +244,204 @@ test("legacy disk plans resume on MiniMax while a new omitted engine captures th
     runner.start({ items: [{ caption: "A new vocal song", lyrics }], takes: 1 }); await tick();
     assert.equal(jobs.submitted[1].engine, "yue2-gguf");
   } finally { config.music.engine = previous; }
+});
+
+class ScheduleClock {
+  time = Date.UTC(2026, 9, 1, 12);
+  tasks = new Map();
+  id = 0;
+  now = () => this.time;
+  setTimer = (callback, delay) => { const id = ++this.id; this.tasks.set(id, { callback, due: this.time + delay, delay }); return id; };
+  clearTimer = id => this.tasks.delete(id);
+  options() { return { now: this.now, setTimer: this.setTimer, clearTimer: this.clearTimer }; }
+  iso(delay = 60_000) { return new Date(this.time + delay).toISOString(); }
+  async advance(ms) {
+    this.time += ms;
+    for (;;) {
+      const due = [...this.tasks].filter(([, task]) => task.due <= this.time).sort((a, b) => a[1].due - b[1].due)[0];
+      if (!due) break;
+      this.tasks.delete(due[0]); due[1].callback();
+      await tick();
+    }
+  }
+}
+
+test("scheduled music is persisted without a job or sleep lock, then drains its frozen round-robin plan", async t => {
+  const clock = new ScheduleClock(), awake = [];
+  const { runner, jobs } = await fixture(t, undefined, { ...clock.options(), keepAwake: on => awake.push(on) });
+  const first = { ...idea(), title: "First", temperature: .7, checkpoint: "yue2/chosen.safetensors" };
+  const second = { engine: "minimax-music3", caption: "Second style", title: "Second", lyrics };
+  const chosen = clock.iso();
+  const status = runner.start({ items: [first, second], takes: 2, cap: 3, startAt: chosen,
+    actor: "agent:schedule-test", paidConfirmed: true, stages: { cover: false, lrc: true } });
+  first.lyrics = "changed"; first.temperature = 3;
+  await runner.persist(); await tick();
+  assert.equal(status.run.state, "scheduled"); assert.equal(status.run.total, 3);
+  assert.equal(status.run.startAt, Date.parse(chosen)); assert.equal(status.run.startedAt, null);
+  assert.equal(status.run.createdAt, clock.now()); assert.equal(status.run.keepingAwake, false);
+  assert.equal(jobs.submitted.length, 0); assert.deepEqual(awake, []); assert.equal(clock.tasks.size, 1);
+  const saved = JSON.parse(await readFile(runner.stateFile, "utf8")).run;
+  assert.equal(saved.state, "scheduled"); assert.equal(saved.actor, "agent:schedule-test");
+  assert.equal(saved.paidConfirmed, true); assert.equal(saved.items[0].lyrics, lyrics);
+  assert.equal(saved.items[0].checkpoint, "yue2/chosen.safetensors"); assert.equal(saved.items[0].temperature, .7);
+  await clock.advance(59_999); assert.equal(jobs.submitted.length, 0);
+  await clock.advance(1); assert.equal(jobs.submitted.length, 1);
+  assert.equal(runner.status().run.startedAt, clock.now()); assert.equal(runner.run.state, "running");
+  assert.deepEqual(awake, [true]); assert.equal(jobs.submitted[0].actor, "agent:schedule-test");
+  assert.equal(jobs.submitted[0].paidConfirmed, true); assert.equal(jobs.submitted[0].lyrics, lyrics);
+  assert.equal(jobs.submitted[0].temperature, .7);
+  jobs.finish(jobs.submitted[0]); await tick(); assert.equal(jobs.submitted.length, 2);
+  assert.equal(jobs.submitted[1].engine, "minimax-music3"); assert.equal(jobs.queue.length, 1);
+  jobs.finish(jobs.submitted[1]); await tick(); assert.equal(jobs.submitted.length, 3);
+  assert.equal(jobs.submitted[2].engine, "yue2-comfy"); assert.equal(jobs.queue.length, 1);
+  jobs.finish(jobs.submitted[2]); await tick();
+  assert.equal(runner.run.state, "done"); assert.equal(runner.run.done, 3);
+  assert.equal(runner.runs[0].startAt, Date.parse(chosen)); assert.deepEqual(awake, [true, false]);
+});
+
+test("scheduled dates refuse past, ambiguous and normalised values before replacing an existing plan", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs } = await fixture(t, undefined, clock.options());
+  for (const startAt of [null, "", clock.iso(0), clock.iso(-1), Date.parse(clock.iso()),
+    "2026-10-02T12:00", "2026-10-02T12:00:00+02:00", "2026-13-01T12:00:00Z", "2027-02-30T12:00:00Z"]) {
+    assert.throws(() => runner.start({ items: [idea()], startAt }), /start|future|past/i);
+    assert.equal(runner.run, null); assert.equal(jobs.submitted.length, 0);
+  }
+  assert.equal(batchStartAt("2026-10-02T12:00:00Z", clock.now()), Date.UTC(2026, 9, 2, 12));
+  assert.equal(batchStartAt("2026-10-02T12:00:00.1Z", clock.now()), Date.UTC(2026, 9, 2, 12, 0, 0, 100));
+  runner.start({ items: [idea()], startAt: clock.iso() }); await runner.persist();
+  const id = runner.run.id;
+  assert.throws(() => runner.start({ items: [idea()], startAt: clock.iso(120_000) }), /already going/);
+  assert.throws(() => runner.start({ items: [idea()] }), /already going/);
+  assert.equal(runner.run.id, id); assert.equal(clock.tasks.size, 1);
+});
+
+test("pause, start now, stop and clear fence off scheduled callbacks", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs } = await fixture(t, undefined, clock.options());
+  runner.start({ items: [idea()], takes: 2, startAt: clock.iso() }); await runner.persist();
+  const stale = [...clock.tasks.values()][0].callback;
+  runner.pause(); await runner.persist();
+  assert.equal(runner.run.state, "paused"); assert.equal(clock.tasks.size, 0);
+  await clock.advance(60_000); stale(); await tick(); assert.equal(jobs.submitted.length, 0);
+  runner.resume(); await tick(); assert.equal(jobs.submitted.length, 1);
+  assert.equal(runner.run.startedAt, clock.now()); stale(); await tick(); assert.equal(jobs.submitted.length, 1);
+  runner.stop(); await runner.persist();
+  runner.start({ items: [idea()], takes: 1, startAt: clock.iso() }); await runner.persist();
+  runner.resume(); await tick(); assert.equal(jobs.submitted.length, 2); assert.equal(clock.tasks.size, 0);
+  runner.stop(); await runner.persist();
+  runner.start({ items: [idea()], startAt: clock.iso() }); await runner.persist();
+  const beforeStop = [...clock.tasks.values()][0].callback;
+  runner.stop(); await runner.persist(); beforeStop(); await clock.advance(60_000);
+  assert.equal(jobs.submitted.length, 2); assert.equal(clock.tasks.size, 0);
+  runner.start({ items: [idea()], startAt: clock.iso() }); await runner.persist();
+  runner.clear(); await runner.persist(); await clock.advance(60_000);
+  assert.equal(runner.run, null); assert.equal(jobs.submitted.length, 2); assert.equal(clock.tasks.size, 0);
+});
+
+test("boot restores future appointments and pauses missed appointments without changing trusted snapshots", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs } = await fixture(t, undefined, clock.options());
+  runner.start({ items: [idea()], takes: 2, startAt: clock.iso(), actor: "agent:restore", paidConfirmed: true });
+  await runner.persist();
+  await runner.load();
+  assert.equal(runner.run.state, "scheduled"); assert.equal(clock.tasks.size, 1);
+  assert.equal(runner.run.actor, "agent:restore"); assert.equal(runner.run.paidConfirmed, true);
+  assert.equal(jobs.submitted.length, 0);
+  // The next load represents reopening Studio after the saved time has passed;
+  // advancing the clock without running its timers models a closed process.
+  clock.time += 120_000;
+  await runner.load();
+  assert.equal(runner.run.state, "paused"); assert.match(runner.run.note, /missed while Studio was closed/);
+  assert.equal(clock.tasks.size, 0); assert.equal(jobs.submitted.length, 0);
+  assert.equal(JSON.parse(await readFile(runner.stateFile, "utf8")).run.state, "paused");
+  runner.resume(); await tick(); assert.equal(jobs.submitted.length, 1);
+  assert.equal(jobs.submitted[0].actor, "agent:restore"); assert.equal(jobs.submitted[0].paidConfirmed, true);
+});
+
+test("long appointments use bounded timers and transitions remain valid on disk", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs } = await fixture(t, undefined, clock.options());
+  const delay = 40 * 24 * 60 * 60_000;
+  runner.start({ items: [idea()], startAt: clock.iso(delay) }); await runner.persist();
+  assert.equal([...clock.tasks.values()][0].delay, 2 ** 31 - 1);
+  await clock.advance(2 ** 31 - 1); assert.equal(jobs.submitted.length, 0); assert.equal(clock.tasks.size, 1);
+  assert.equal([...clock.tasks.values()][0].delay, delay - (2 ** 31 - 1));
+  // Fast user transitions queue distinct atomic snapshots, with the last one
+  // authoritative even while earlier writes have not reached the filesystem.
+  runner.pause(); runner.resume(); runner.pause(); runner.stop(); runner.clear();
+  await runner.persist();
+  const saved = JSON.parse(await readFile(runner.stateFile, "utf8"));
+  assert.equal(saved.run, null); assert.equal(saved.runs[0].state, "stopped");
+  assert.equal(clock.tasks.size, 0);
+});
+
+test("an unsaved schedule never arms its timer or queues a song", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs, dir } = await fixture(t, undefined, clock.options());
+  const blocker = path.join(dir, "not-a-directory");
+  await writeFile(blocker, "file"); runner.stateFile = path.join(blocker, "batch.json");
+  runner.start({ items: [idea()], startAt: clock.iso() });
+  await assert.rejects(runner.persist(), /could not be saved/); await tick();
+  assert.equal(runner.run.state, "paused"); assert.match(runner.run.note, /schedule could not be saved/);
+  assert.equal(clock.tasks.size, 0); await clock.advance(60_000); assert.equal(jobs.submitted.length, 0);
+});
+
+test("MCP scheduling exposes and forwards its optional typed time through the ordinary batch door", () => {
+  const start = TOOLS.find(tool => tool.name === "overnight_start");
+  assert.equal(start.inputSchema.properties.start_at.type, "string");
+  assert.equal(start.inputSchema.properties.start_at.format, "date-time");
+  assert.match(String(start.run), /startAt: a\.start_at/);
+  assert.match(start.description, /missed appointments pause for review/);
+  assert.match(String(TOOLS.find(tool => tool.name === "overnight_status").run), /postStages: st\.postStages/);
+  const source = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  const branch = source.slice(source.indexOf('if (p === "/api/batch" && req.method === "POST") {'), source.indexOf('if (p === "/api/music-gguf" && req.method === "GET") {'));
+  assert.match(branch, /if \(b\.startAt !== undefined\) \{ await batch\.persist\(\); return json\(res, 200, batch\.status\(\)\); \}/);
+  assert.match(branch, /actor: prov\.actorFrom\(req\), paidConfirmed: paidNight && b\.confirmSpend === true/);
+});
+
+test("the real API start branch keeps paid confirmation and request provenance when saving a scheduled run", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs } = await fixture(t, undefined, clock.options());
+  const source = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  const begin = source.indexOf('        if (b.action === "start") {', source.indexOf('if (p === "/api/batch" && req.method === "POST") {'));
+  const end = source.indexOf('        if (b.action === "pause")', begin);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const branch = new AsyncFunction("b", "config", "json", "res", "req", "hostedWouldBill", "paidRefusal", "hostedQuote", "batch", "prov", "plannedPaidSongs", source.slice(begin, end));
+  const call = body => branch(body, { api: { enabled: true }, music: { engine: "yue2-comfy" } },
+    (_res, status, reply) => ({ status, reply }), null, {}, () => true,
+    (quote, { songs }) => ({ status: 409, body: { reason: "confirm-spend", paid: { ...quote, songs } } }),
+    async seconds => ({ seconds }), runner, { actorFrom: () => "agent:scheduled-api" }, plannedPaidSongs);
+  const body = { action: "start", startAt: clock.iso(), takes: 2, items: [
+    idea(), { engine: "minimax-music3", caption: "Hosted take", lyrics, maxDuration: 120 },
+  ], actor: "user", paidConfirmed: true };
+  const refusal = await call(body);
+  assert.equal(refusal.status, 409); assert.equal(refusal.reply.reason, "confirm-spend");
+  assert.equal(refusal.reply.paid.songs, 2); assert.equal(runner.run, null); assert.equal(jobs.submitted.length, 0);
+  const result = await call({ ...body, confirmSpend: true });
+  assert.equal(result.status, 200); assert.equal(result.reply.run.state, "scheduled");
+  assert.equal(result.reply.run.actor, "agent:scheduled-api");
+  const saved = JSON.parse(await readFile(runner.stateFile, "utf8")).run;
+  assert.equal(saved.state, "scheduled"); assert.equal(saved.paidConfirmed, true);
+  assert.equal(saved.actor, "agent:scheduled-api"); assert.equal(saved.items[1].engine, "minimax-music3");
+  assert.equal(saved.startAt, Date.parse(body.startAt)); assert.equal(jobs.submitted.length, 0);
+});
+
+test("the API confirms pause, stop and clear only after scheduled cancellations reach disk", async t => {
+  const clock = new ScheduleClock();
+  const { runner, jobs } = await fixture(t, undefined, clock.options());
+  const source = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  const begin = source.indexOf('        if (b.action === "pause")', source.indexOf('if (p === "/api/batch" && req.method === "POST") {'));
+  const end = source.indexOf('        return json(res, 400, { error: "Unknown action." });', begin);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const branch = new AsyncFunction("b", "batch", "json", "res", source.slice(begin, end));
+  const call = action => branch({ action }, runner, (_res, status, reply) => ({ status, reply }), null);
+  runner.start({ items: [idea()], startAt: clock.iso() }); await runner.persist();
+  for (const [action, state] of [["pause", "paused"], ["stop", "stopped"], ["clear", null]]) {
+    const result = await call(action);
+    assert.equal(result.status, 200); assert.equal(result.reply.run?.state ?? null, state);
+    const saved = JSON.parse(await readFile(runner.stateFile, "utf8"));
+    assert.equal(saved.run?.state ?? null, state); assert.equal(clock.tasks.size, 0);
+  }
+  await clock.advance(60_000); assert.equal(jobs.submitted.length, 0);
 });

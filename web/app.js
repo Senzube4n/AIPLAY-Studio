@@ -3518,10 +3518,16 @@ $("btnToOvernight").onclick = () => {
   try { idea = ovMusicIdea(); }
   catch (err) { $("ctaNote").textContent = err.message; return; }
   if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  if (ov.ideas.length >= 40) { $("ctaNote").textContent = "The batch has 40 ideas. Remove one before adding another."; return; }
   ov.ideas.push(idea);
   ovRender();
   $("ctaNote").textContent =
-    `Added to Overnight. ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} ready.`;
+    `Added to batch. ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} ready.`;
+  setView("overnight");
+};
+$("btnMusicBatch").onclick = () => {
+  if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  setView("overnight");
 };
 
 $("btnCreate").onclick = () => (xt.file ? runExtend() : generate(false));
@@ -3738,10 +3744,28 @@ function renderQueue(s) {
     rest += n * (a.stats?.[kind]?.avg ?? KIND_FALLBACK[kind] ?? 180);
   }
   const run = s.run;
+  const scheduledBatch = run?.state === "scheduled" && Number.isFinite(run.startAt);
+  if (scheduledBatch) {
+    const at = new Date(run.startAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    waiting.push(`batch scheduled ${at}`);
+    if (!now && waiting.length === 1) {
+      renderQueue.emptyAt = 0;
+      box.hidden = false;
+      box.classList.add("resting");
+      $("wbState").textContent = "scheduled";
+      $("wbEta").textContent = at;
+      $("wbNow").textContent = run.name || "Batch";
+      $("wbRest").hidden = false;
+      $("wbRest").textContent = `${run.total || 0} planned`;
+      wbLine("batch scheduled", clock(run.startAt), false);
+      if ($("wbStrip")) $("wbStrip").title = `Batch scheduled ${at}. Open for the queue and controls.`;
+      return;
+    }
+  }
   if (run && (run.state === "running" || run.state === "paused")) {
     const left = Math.max(0, (run.total || 0) - (run.done || 0));
     const kind = run.kind === "image" ? "picture" : run.kind === "video" ? "clip" : "song";
-    waiting.push(`overnight: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
+    waiting.push(`batch: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
     rest += Number(run.secondsLeft) || 0;
   }
 
@@ -4482,7 +4506,7 @@ function openRowMenu(file, anchor) {
   m.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
 }
 
-/* ── community — advertising, not the draw ────────────── */
+/* ── community sessions ──────────────────────────────── */
 /* Hidden entirely when the feed is empty. "0 sessions live" advertises exactly
  * the wrong thing for a community that is still small. */
 
@@ -4513,6 +4537,11 @@ async function loadCommunity() {
   const soon = (feed?.parties || []).length;
   state.commLive = live;
   $("commPip").hidden = !live;
+  if ($("commRailStatus")) $("commRailStatus").textContent = live
+    ? `${live} live${soon ? ` · ${soon} soon` : ""}`
+    : soon ? `${soon} starting soon` : "Sessions & challenges";
+  const communityLink = document.querySelector('.nav [data-view="community"]');
+  if (communityLink) communityLink.title = `Community sessions${live ? `: ${live} live` : soon ? `: ${soon} starting soon` : ""}`;
 
   // The condensed banner, shown on the working views only. Leads with the
   // challenge if there is one, because that is the item that gives someone a
@@ -6171,7 +6200,7 @@ function cbConfirm({ title, body, yes }) {
  * asks the Workflow view to open that project (web/mv.js listens) and goes
  * there. */
 /* ⚠ A SCREEN IS NAMED BY THE RAIL'S OWN LABEL, NEVER BY A WORD TYPED HERE.
- * The agreed UI plan relabels rail entries (Workflow is to read "Music video"),
+ * The rail names the multipurpose workflow screen "Production",
  * and every sentence in this section that says where to go reads the label
  * off the rail itself, so a relabel reaches them all. `fallback` is only for a
  * page with no rail (a test's fake DOM). The server's sentences use one
@@ -6183,7 +6212,7 @@ function cbScreen(view, fallback) {
     return text || fallback;
   } catch { return fallback; }
 }
-/* The static hints carry <b data-screen="workflow">Workflow</b>: filled from
+/* The static hints carry <b data-screen="workflow">Production</b>: filled from
  * the rail on every Collab paint, so the markup and the rail cannot disagree. */
 function cbFillScreens() {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
@@ -7456,7 +7485,7 @@ async function paintErrands() {
       <span class="meta">seed ${esc(String(o.order?.seed ?? "?"))} · ${esc(String(o.order?.steps ?? "?"))} steps · ${esc(o.order?.engineMode || "?")}</span>
       <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "landed")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}${o.planId ? ` · plan ${esc(o.planId)}` : ""}</span>
-      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Workflow"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Workflow"))}</button>` : ""}
+      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Production"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Production"))}</button>` : ""}
       ${o.state === "rendered" ? "" : '<button class="btn sm cbsend" type="button">Send the take back</button>'}
     </div>`).join("");
 }
@@ -7639,7 +7668,7 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
   if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
     const go = await cbConfirm({
       title: "Accept anyway?",
-      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Workflow")}.`,
+      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Production")}.`,
       yes: "Accept anyway",
     });
     if (!go) {
@@ -7649,7 +7678,7 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
     if (card?.dataset.armed !== file) { cbSay("That is not the file whose prompt you just read. Press “Show me exactly what they want” again for this one."); disarmCollab(); return; }
     r = await cb({ action: "accept", file, seen: true, anyway: true });
   }
-  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Workflow")}” under “What you agreed to render for friends”.`);
+  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Production")}” under “What you agreed to render for friends”.`);
   if (!r.error) disarmCollab();
   await refreshCollab();
 });
@@ -8819,7 +8848,7 @@ function vidPaint() {
   if ($("vidAskFriend")) {
     const h3Job = cur === "h3";
     $("vidAskFriend").disabled = !h3Job;
-    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
+    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Production") : "Production";
     $("vidAskFriend").title = h3Job
       ? `Send a signed 20-step H3 text-to-video job for a friend to review and render. For scenes with pictures, use ${wfName} → Video clips → Ask friend.`
       : "Friend render jobs currently use MiniMax H3. Select H3 to ask a friend.";
@@ -9835,7 +9864,7 @@ function videoFriendRecipe() {
    * a person holding reference pictures was told to remove them and nothing
    * else — while Workflow's Ask friend packs a scene with its pictures. */
   if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || $("vidCharacter")?.value || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
-    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow"} → Video clips → Ask friend, which carries them.`);
+    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Production") : "Production"} → Video clips → Ask friend, which carries them.`);
   if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
@@ -20483,6 +20512,7 @@ document.addEventListener("click", (e) => {
 });
 
 /* ── overnight ────────────────────────────────────────── */
+import { renderMusicBatchIdea, updateMusicBatchField, musicBatchSubmission, syncMusicBatchPlannerFields } from './music-batch-editor.js';
 /* Deliberately three controls. Anything more is a decision to make at bedtime,
    which is exactly when nobody wants to make one. */
 /* Ideas survive a reload.
@@ -20508,6 +20538,7 @@ function ovSetKind(k) {
    * picture, so it is hidden rather than shown doing nothing. */
   $("ovStagesField").hidden = media;
   $("ovAdd").hidden = media;
+  $("ovMusicPresets").hidden = media;
   $("ovAddImage").hidden = !media;
   $("ovAddImage").textContent = ov.kind === "image"
     ? "+ Add what's on the Pictures screen" : "+ Add what's on the Video screen";
@@ -20515,7 +20546,7 @@ function ovSetKind(k) {
 }
 const OV_KEYS = { music: "aiplayIdeas", image: "aiplayIdeasImage", video: "aiplayIdeasVideo" };
 function ovLoadIdeas() {
-  try { ov.ideas = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]") || []; }
+  try { const saved = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]"); ov.ideas = Array.isArray(saved) ? saved.filter(idea => idea && typeof idea === "object" && !Array.isArray(idea)).slice(0, 40) : []; }
   catch { ov.ideas = []; }
 }
 ovLoadIdeas();
@@ -20528,7 +20559,7 @@ function ovRender() {
   const box = $("ovIdeas");
   if (!ov.ideas.length) {
     box.innerHTML = `<div class="ovempty">${ov.kind === "music"
-      ? "No ideas yet. Write one in Create, then add it here."
+      ? "Choose 2, 4 or 8 songs, or add your current song."
       : `No prompts yet. Set one up on the ${ov.kind === "image" ? "Pictures" : "Video"} screen, then add it here. A prompt with {a|b|c} in it makes a different picture each take.`}</div>`;
   } else {
     box.innerHTML = ov.ideas.map((it, i) => {
@@ -20549,21 +20580,32 @@ function ovRender() {
           <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
         </div>`;
       }
-      return `<div class="ovidea">
-        <div><div class="t">${esc(it.title)}${it.instrumental ? ' <span class="badge">instrumental</span>' : ""}</div>
-          <div class="s">${esc(it.caption)}</div></div>
-        <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
-      </div>`;
+      return renderMusicBatchIdea(it, i);
     }).join("");
   }
+  ovUpdatePlan();
+}
+
+function ovUpdatePlan() {
   const takes = +$("ovTakes").value;
   const cap = +$("ovCap").value;
   const total = Math.min(ov.ideas.length * takes, cap);
-  $("ovStart").disabled = !ov.ideas.length;
   $("ovCount").textContent = ov.ideas.length
     ? `${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""}` : "";
 
+  const noun = ov.kind === "music" ? "song" : ov.kind === "image" ? "picture" : "clip";
+  $("ovTotalCount").textContent = `${total} ${noun}${total === 1 ? "" : "s"} planned${ov.ideas.length ? ` · ${ov.ideas.length} idea${ov.ideas.length === 1 ? "" : "s"} × ${takes} take${takes === 1 ? "" : "s"}` : ""}`;
   ovPaintPlan(total);
+}
+
+function ovCannotStart() {
+  if (!ov.ideas.length || (ov.kind === "music" && ov.ideas.some(idea => !idea.caption?.trim()))) return true;
+  try { ovScheduledStart(); } catch { return true; }
+  return false;
+}
+
+function ovPlanStartTime() {
+  try { return Date.parse(ovScheduledStart()) || Date.now(); } catch { return Date.now(); }
 }
 
 /**
@@ -20664,6 +20706,7 @@ function ovPaintPlan(total) {
   }
 
   if (!total) {
+    $("ovStart").disabled = true;
     $("ovEst").textContent = "Add an idea to see what it would cost.";
     $("ovBudget").innerHTML = "";
     return;
@@ -20688,14 +20731,14 @@ function ovPaintPlan(total) {
     $("ovBudget").innerHTML = `
       <div><span>${ov.kind === "image" ? "pictures" : "clips"}</span><b>${total} · ${dur(secs)}</b></div>
       <div><span>disk</span><b>${size(bytes)}${tight ? " — not enough free" : ""}</b></div>
-      <div><span>total</span><b>${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}</b></div>`;
+      <div><span>total</span><b>${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}</b></div>`;
     $("ovEst").textContent =
-      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`
+      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}`
       /* Fast draft ideas are costed from measurements; only a full Qwen render
        * still carries the unmeasured allowance. */
       + (ov.kind === "image" && ov.ideas.some((it) => (it.effectiveEngine || it.engine || "qwen-image-2.1") === "qwen-image-2.1" && it.draft !== true)
         ? " · Qwen time is an unmeasured planning estimate." : "");
-    $("ovStart").disabled = !ov.ideas.length || tight;
+    $("ovStart").disabled = ovCannotStart() || tight;
     return;
   }
 
@@ -20721,9 +20764,9 @@ function ovPaintPlan(total) {
       free === Infinity ? "unknown" : size(free)}${tight ? " — not enough" : ""}</b></div>`;
 
   $("ovEst").textContent =
-    `${total} song${total > 1 ? "s" : ""} · done by ${clock(Date.now() + secs * 1000)}`;
+    `${total} song${total > 1 ? "s" : ""} · done by ${clock(ovPlanStartTime() + secs * 1000)}`;
   // Refuse a plan that cannot fit rather than filling the disk at 3am.
-  $("ovStart").disabled = !ov.ideas.length || tight;
+  $("ovStart").disabled = ovCannotStart() || tight;
 }
 for (const id of ["ovStCover", "ovStLrc", "ovStStems", "ovStVideo"]) {
   $(id).onchange = () => ovPaintPlan();
@@ -20777,15 +20820,56 @@ function dur(s) {
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 $("ovAdd").onclick = () => {
-  if (!captionValue().trim()) { $("ovEst").textContent = "Write a style in Create first."; return; }
+  if (!captionValue().trim()) { $("ovEst").textContent = "Write a style in Music first."; return; }
+  if (ov.ideas.length >= 40) { $("ovEst").textContent = "The batch has 40 ideas. Remove one before adding another."; return; }
   try { ov.ideas.push(ovMusicIdea()); }
   catch (err) { $("ovEst").textContent = err.message; return; }
   ovRender();
 };
+function ovBlankSong() {
+  let idea;
+  try { idea = ovMusicIdea(); }
+  catch { idea = { engine: state.musicEngine || "minimax-music3" }; }
+  for (const key of ["abc", "scoreSlug", "scoreVersion", "coverOf", "aceCover", "audioRef", "audioRefDenoise"]) delete idea[key];
+  return { ...idea, title: "", caption: "", lyrics: "", instrumental: false };
+}
+function ovFillSongCount(count) {
+  if (ov.kind !== "music") return;
+  while (ov.ideas.length < Math.min(40, count)) ov.ideas.push(ovBlankSong());
+  ovRender();
+}
+$("ovNewSong").onclick = () => { if (ov.ideas.length >= 40) { $("ovEst").textContent = "The batch has 40 ideas."; return; } ovFillSongCount(ov.ideas.length + 1); };
+for (const button of document.querySelectorAll("[data-ov-count]")) button.onclick = () => ovFillSongCount(Number(button.dataset.ovCount));
 $("ovClear").onclick = () => { ov.ideas = []; ovRender(); };
 $("ovIdeas").addEventListener("click", (e) => {
   const rm = e.target.closest("[data-rm]");
   if (rm) { ov.ideas.splice(+rm.dataset.rm, 1); ovRender(); }
+});
+$("ovIdeas").addEventListener("input", async event => {
+  const input = event.target.closest("[data-ov-field]"), card = input?.closest("[data-ov-idea]");
+  if (!input || !card || ov.kind !== "music") return;
+  const index = Number(card.dataset.ovIdea), idea = ov.ideas[index];
+  if (!idea) return;
+  try {
+    if (input.dataset.ovField === "engine" && input.value !== idea.engine
+      && Object.keys(idea).some(key => !["engine", "title", "caption", "lyrics", "instrumental"].includes(key))) {
+      input.disabled = true;
+      const confirmed = await appConfirm("Changing engine clears this song's saved score, references and engine settings. Keep its title, style and lyrics and change engine?",
+        { title: "Change song engine?", ok: "Change engine" });
+      input.disabled = false;
+      if (!confirmed || ov.ideas[index] !== idea) { input.value = idea.engine; return; }
+    }
+    ov.ideas[index] = updateMusicBatchField(idea, input.dataset.ovField, input.type === "checkbox" ? input.checked : input.value);
+    ovSaveIdeas();
+    if (input.dataset.ovField === "engine") ovRender();
+    else {
+      if (["cot", "abc"].includes(input.dataset.ovField)) syncMusicBatchPlannerFields(card, ov.ideas[index]);
+      const chip = card.querySelector(".chip");
+      chip.textContent = ov.ideas[index].caption?.trim() ? "Ready to review" : "Style needed";
+      chip.className = `chip ${ov.ideas[index].caption?.trim() ? "ok" : "warn"}`;
+      ovUpdatePlan();
+    }
+  } catch (error) { if (input.dataset.ovField === "engine") input.value = idea.engine; $("ovEst").textContent = error.message; }
 });
 $("ovTakes").oninput = () => { $("ovTakesV").textContent = $("ovTakes").value; ovRender(); };
 $("ovCap").oninput = () => { $("ovCapV").textContent = $("ovCap").value; ovRender(); };
@@ -20806,9 +20890,9 @@ const ovPost = (body) =>
         if (await confirmPaidRun(s)) return ovPost({ ...body, confirmSpend: true });
         return;
       }
-      if (s?.error) { alert(s.error); return; } applyBatch(s);
+      if (s?.error) { $("ovEst").textContent = s.error; return; } applyBatch(s);
     })
-    .catch(() => {});
+    .catch(error => { $("ovEst").textContent = error.message || "The batch could not be updated."; });
 
 /* Snapshot references and model choices as well as the prompt. The backend
  * persists this whitelist and forwards it to the ordinary image route. */
@@ -20873,19 +20957,56 @@ $("ovAddImage").onclick = async () => {
 };
 
 for (const b of document.querySelectorAll("#ovKind [data-kind]")) {
-  b.onclick = () => { ovSetKind(b.dataset.kind); ovLoadIdeas(); ovRender(); };
+  b.onclick = () => { ovSaveIdeas(); ov.kind = b.dataset.kind; ovLoadIdeas(); ovSetKind(ov.kind); };
 }
 ovSetKind(ov.kind);
 
-$("ovStart").onclick = () => ovPost({
-  action: "start", kind: ov.kind, items: ov.ideas,
+function ovScheduledStart() {
+  if ($("ovWhen").value !== "later") return undefined;
+  const value = $("ovStartAt").value;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  const date = new Date(value);
+  if (!parts || !Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) throw new Error("Choose a future local start time.");
+  // Browser dates normalize a nonexistent daylight-saving time. Refuse that shift.
+  const local = [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes()];
+  if (local.some((part, index) => part !== Number(parts[index + 1]))) throw new Error("That local time does not exist. Choose another start time.");
+  return date.toISOString();
+}
+function ovSchedulePaint() {
+  const later = $("ovWhen").value === "later";
+  $("ovScheduleRow").hidden = $("ovScheduleLabel").hidden = !later;
+  $("ovStart").textContent = later ? "Schedule batch" : "Start batch";
+  $("ovTimezone").textContent = `${Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time"}. Studio must stay open for a scheduled start.`;
+  ovUpdatePlan();
+}
+$("ovWhen").onchange = ovSchedulePaint;
+$("ovStartAt").oninput = ovUpdatePlan;
+ovSchedulePaint();
+$("ovStart").onclick = () => {
+  let startAt, items;
+  try {
+    if (!ov.ideas.length) throw new Error("Add a song idea first.");
+    if (ov.kind === "music" && ov.ideas.some(idea => !idea.caption?.trim())) throw new Error("Add a style to every song.");
+    for (const input of $("ovIdeas").querySelectorAll("input,select,textarea")) {
+      if (input.checkValidity && !input.checkValidity()) {
+        let fold = input.closest("details");
+        while (fold) { fold.open = true; fold = fold.parentElement?.closest("details"); }
+        input.reportValidity(); return;
+      }
+    }
+    startAt = ovScheduledStart();
+    items = ov.kind === "music" ? ov.ideas.map(musicBatchSubmission) : ov.ideas;
+  } catch (error) { $("ovEst").textContent = error.message; return; }
+  return ovPost({
+  action: "start", kind: ov.kind, items,
+  ...(startAt ? { startAt } : {}),
   takes: +$("ovTakes").value, cap: +$("ovCap").value,
   /* A name, so the history is readable. Nothing ever sent one, so the server
    * fell back to the literal string "Overnight run" and every archived row was
    * identical. Built from the first idea and the date, which is how you would
    * describe the run to yourself the next morning. */
   name: [ov.ideas[0]?.title || ov.ideas[0]?.caption?.slice(0, 28)
-           || ov.ideas[0]?.prompt?.slice(0, 28) || "Overnight",
+           || ov.ideas[0]?.prompt?.slice(0, 28) || "Batch",
          ov.ideas.length > 1 ? `+${ov.ideas.length - 1}` : "",
          new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })]
     .filter(Boolean).join(" · "),
@@ -20903,31 +21024,36 @@ $("ovStart").onclick = () => ovPost({
     // otherwise, so a run can never sit waiting on an input that never comes.
     enhance: $("ovStVideo").checked && $("ovStEnhance").checked,
   },
-});
+  });
+};
 $("ovPause").onclick = () => ovPost({ action: state.batchState === "paused" ? "resume" : "pause" });
+$("ovStartNow").onclick = () => ovPost({ action: "resume" });
 $("ovStop").onclick = () => ovPost({ action: "stop" });
 
 function applyBatch(s) {
   const r = s?.run;
   state.batchState = r?.state || null;
-  const live = r && (r.state === "running" || r.state === "paused");
+  const live = r && ["running", "paused", "scheduled"].includes(r.state);
   $("ovPip").hidden = !live;
   $("ovLive").hidden = !r;
   // The planning controls live in the LEFT column now; while a run is live they
   // are replaced by the run itself rather than sitting there inviting a second
   // start.
   $("ovPanel").classList.toggle("running", Boolean(live));
+  $("ovPause").hidden = $("ovStop").hidden = !live;
+  $("ovStartNow").hidden = r?.state !== "scheduled";
   ovPaintRuns(s);
   if (!r) return;
 
   $("ovProgress").textContent = `${r.done} of ${r.total}`;
   $("ovNow").textContent = r.state === "running"
     ? `now making ${r.currentItem || "—"}`
-    : r.state === "done" ? "finished" : r.state;
+    : r.state === "scheduled" ? `Scheduled for ${new Date(r.startAt).toLocaleString()}` : r.state === "done" ? "finished" : r.state;
   $("ovBar").style.width = `${(r.total ? r.done / r.total : 0) * 100}%`;
   $("ovDoneBy").textContent = r.etaAt ? clock(r.etaAt) : "—";
   $("ovLeft").textContent = r.secondsLeft ? `about ${dur(r.secondsLeft)} left` : "";
   $("ovPause").textContent = r.state === "paused" ? "Resume" : "Pause";
+  $("ovPause").title = r.state === "paused" ? "Resume starts the batch now" : "Pause this batch";
   $("ovNote").textContent = r.note
     || [r.failed ? `${r.failed} failed` : null, r.keepingAwake ? "keeping your PC awake" : null]
        .filter(Boolean).join(" · ");

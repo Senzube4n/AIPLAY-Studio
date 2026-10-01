@@ -586,18 +586,22 @@ ok("...and the Video card names every engine that excludes territories, not \"on
 /* ── 6. the rail ───────────────────────────────────────────────────────────── */
 console.log("\nTHE RAIL");
 const between = (a, b) => { const i = HTML.indexOf(a); return i < 0 ? "" : HTML.slice(i, HTML.indexOf(b, i)); };
+const featured = between('<div class="nav navfeatured">', "</div>");
 const make = between('<div class="navgroup navmake">', "</div>\n      <details");
 const more = between('<details class="navgroup navmore" id="navMore">', "</details>");
 const bottom = between('<div class="nav navbottom">', "</div>");
 const views = (s) => [...s.matchAll(/data-(?:view|page)="([a-z]+)"/g)].map((m) => m[1]);
-ok("Make holds Music, Pictures, Video and Music video, in that order (Comfy API rides along, hidden)",
+ok("Home and Community sessions stay above the scrolling tool list",
+  views(featured).join(",") === "home,community" && HTML.indexOf('class="nav navfeatured"') < HTML.indexOf('class="nav navmain"')
+  && /id="commRailStatus"/.test(featured), views(featured).join(","));
+ok("Make holds Music, Pictures, Video and Production, in that order (Comfy API rides along, hidden)",
   views(make).join(",") === "create,router,images,video,workflow", views(make).join(","));
 ok("...labelled as a newcomer says them",
   /data-view="home" title="Home"><i>[^<]*<\/i><span class="lbl">Home</.test(HTML)
   && /data-view="images" title="Pictures"><i>[^<]*<\/i><span class="lbl">Pictures</.test(make)
-  && /data-view="workflow" title="Music video"><i>[^<]*<\/i><span class="lbl">Music video</.test(make));
-ok("More tools folds every other screen",
-  views(more).join(",") === "chat,musiclab,vfx,avatars,studio,daw,reactive,training,collab,overnight,community,radio,blog,games,engine",
+  && /data-view="workflow" title="Production"><i>[^<]*<\/i><span class="lbl">Production</.test(make));
+ok("More tools folds the remaining screens",
+  views(more).join(",") === "chat,musiclab,vfx,avatars,studio,daw,reactive,training,collab,overnight,radio,blog,games,engine",
   views(more).join(","));
 ok("Models and Settings are pinned in the bottom block, never below the fold",
   views(bottom).includes("models") && views(bottom).includes("settings"), views(bottom).join(","));

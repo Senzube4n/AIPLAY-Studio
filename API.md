@@ -813,6 +813,24 @@ part of your film). Design and the owner's answers: `docs/COLLAB.md`.
 run is refused with the whole night's estimate (`reason: "confirm-spend"`) until `start`
 carries `"confirmSpend": true` (MCP `overnight_start`: `confirm_spend`).
 
+Optional `startAt` is a future ISO UTC timestamp, for example
+`"2026-10-02T20:00:00Z"`. Omit it to start immediately. The scheduled plan is
+saved before the start response returns; its `run.state` is `"scheduled"`,
+`startAt` is epoch milliseconds and `startedAt` remains `null` until kickoff.
+Studio must be running and the computer awake at that time. Scheduling does
+not wake the computer or launch Studio. Future schedules rearm on server boot;
+missed schedules pause for review, as do interrupted running plans. `pause`
+cancels a pending timer; `resume` on a scheduled or paused plan starts it now.
+Only one running, scheduled or paused plan is accepted. MCP uses the existing
+`overnight_start` argument `start_at` and `overnight_status`/`overnight_control`.
+The UI is **Music → Batch & schedule**; its existing `overnight` view ID is stable.
+
+Music items retain their chosen engine, accepted advanced controls and exact
+lyric/ABC whitespace. Seeds are rolled per take and ordinary song readiness,
+model, sampler, reference and hosted spending validation still apply. The
+runner holds at most one owned song submission while awaiting its job receipt
+and completion; it does not enqueue the rest of the plan concurrently.
+
 Round-robin by design: take 1 of every idea, then take 2. A run that only gets
 60% through overnight leaves you covered on every idea rather than twenty takes
 of the first and none of the rest.

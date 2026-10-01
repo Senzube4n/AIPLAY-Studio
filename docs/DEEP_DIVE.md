@@ -18,7 +18,7 @@ was measured on a real machine, and the scripts that measured them ship in
 - [The engine door and the ledger](#the-engine-door-and-the-ledger)
 - [Blocking a camera, and steering a render with it](#blocking-a-camera-and-steering-a-render-with-it)
 - [A picture becomes a 3D model](#a-picture-becomes-a-3d-model)
-- [The music-video workflow](#the-music-video-workflow)
+- [Production: videos and episodes](#production-videos-and-episodes)
 - [The audiobook workflow](#the-audiobook-workflow)
 - [Audio reference — starting from a real song](#audio-reference--starting-from-a-real-song)
 - [Music input — continuing from a recording (experimental, opt-in)](#music-input--continuing-from-a-recording-experimental-opt-in)
@@ -655,8 +655,12 @@ belong to the full suite and may require ComfyUI, Python or additional models.
   See *A picture becomes a 3D model* below.
 - **A small editor** — stacked tracks, drag clips to overlap them into a
   crossfade, a karaoke overlay driven by the timed lyrics, and a visualiser.
-- **Overnight runs** — songs, images or video: a list of ideas, N takes each,
-  and a full library by morning. The panel sums the whole queue and tells you
+- **Batch & schedule** — open it from Music for different song ideas, with exact
+  lyrics, styles and accepted engine settings. Choose N takes each and start now
+  or at a later time while Studio runs and the computer stays awake. Images and
+  video use the same planner. A future schedule restores after a restart; a
+  missed start pauses for review. [Batch guide](music-workbench.md#batch--schedule).
+  The panel sums the whole queue and tells you
   what time it will finish, so a night can be planned against the hours you
   actually have. Repeats are caught and re-rolled, so a forgotten fixed seed
   makes different pictures instead of one picture two hundred times.
@@ -1048,7 +1052,17 @@ Four `avatar_*` MCP tools, three `mv_mesh_*` tools.
 
 ---
 
-## The music-video workflow
+<a id="the-music-video-workflow"></a>
+
+## Production: videos and episodes
+
+**Production** is the screen previously called Music video. It holds video and
+audiobook projects: briefs, reusable cast and location references, scenes,
+storyboards, saved takes and a bridge to the Studio timeline. For a series,
+use one project per episode, commit the same bible and import the same chosen
+character sheets into each. The MCP guide's `series` topic describes the
+episode and narration paths; tool names, project
+kinds and the `?view=workflow` deep link stay unchanged.
 
 A song in, a cut video out, in eleven stages you can stop at any point:
 
@@ -1494,7 +1508,7 @@ slow app with no explanation is worse than a failure.
 
 **Ask a friend first.** Without a strong graphics card, the first answer is a
 friend who has one: on **Collab** you add each other once, press **Ask friend**
-beside a scene (Music video → Video clips) and send them the sealed file it makes;
+beside a scene (Production → Video clips) and send them the sealed file it makes;
 they send the finished clip back as a file for you to look at before you keep
 it. It is free, nothing connects to anybody, both of you run Full Studio, and it
 lends video scenes, not songs. Lending is built but not yet tried between two

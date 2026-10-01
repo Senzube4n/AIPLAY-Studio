@@ -56,7 +56,7 @@ video models.
 
 1. **Ask a friend with a strong card to render for you.** It is free. In Full
    Studio, add each other once on **Collab**, then press **Ask friend** beside a
-   scene (Music video → Video clips) and send them the sealed file it makes; they
+   scene (Production → Video clips) and send them the sealed file it makes; they
    send the finished clip back as a file for you to look at before you keep it.
    Nothing connects to anybody: you pass the files on however you already send
    files. It lends video scenes, not songs, one scene per sealed file. Lending
@@ -76,7 +76,7 @@ video models.
      on your own Comfy API key and credits, with no ComfyUI and no card. Get a
      key at [platform.comfy.org](https://platform.comfy.org/profile/api-keys),
      choose **Use Comfy API** in the launcher and paste it on the page, or run
-     `npm run start:cloud`. That mode has no Music, Music video or Collab screen,
+     `npm run start:cloud`. That mode has no Music, Production or Collab screen,
      so a music video still needs Full Studio. Full Studio and Music only never
      spend Comfy credits.
 
@@ -152,6 +152,7 @@ and hardware requirements.
 | | |
 |---|---|
 | 🎵 **Music** | Generate songs from lyrics and a style with native YuE2 GGUF, Python YuE2, ComfyUI YuE2, MiniMax Music 3 or [ACE-Step 1.5](docs/DEEP_DIVE.md#ace-step-15). Model-specific controls cover references, continuation, covers and instrumentals where supported. Queue different seeds and keep the results in your library. |
+| ☾ **Batch & schedule** | Open it from Music to collect different song ideas with their own exact lyrics, styles and engine settings. Choose takes per idea, review the queue and start now or at a later time. Studio must be running and the computer awake; songs render one at a time. [Batch guide](docs/music-workbench.md#batch--schedule). |
 | ♩ **Follow the score** | Open a saved score in the main fullscreen player: note highlights, Follow scrolling and timing adjustments. Edit ABC, print notation or export MIDI. Generated notation timing can drift from the recording. |
 | 🎹 **DAW to AI takes** | Edit melody notes in the piano roll, preview their YuE2 ABC, then generate **2 or 3 alternatives** for reviewed bars against a compatible saved Python YuE2 song. Keep the rest of the recording, with **80 ms blends at the seams**; compare before keeping. This is background generation, not instant note-level audio inpainting. [Workflow and limits](docs/daw-passages.md). |
 | 🎧 **Takes** | Compare **2, 4 or 8 saved recordings** with loudness-matched playback, switch A–H at the same time position, save a favourite and inspect exact receipts and choice history. This compares saved audio; new songs are queued separately. [Take comparison](docs/take-comparison.md). |
@@ -160,12 +161,13 @@ and hardware requirements.
 | ✨ **Enhance and galleries** | One click turns a rough style line or lyrics into a fuller one. Save the ones you like and reuse them later. |
 | 🎰 **Genre Roulette** | Spin six reels (genre, vocals, instrument, mood, rhythm, production) when you have no idea where to start. |
 | 🖼️ **Covers, layers and vectors** | Generate cover art with Qwen Image 2.1 when installed, or choose another available engine. Use the layer image editor for masks, selections and text. Trace a raster to SVG, review detail crops and clean selected geometry through the UI or MCP. [Vector workflow](docs/vector.md). |
-| 🎬 **Video** | Clips under a finished track, a music-video workflow from song to final cut, and a camera you can block in Blender for the render to follow. |
+| 🎬 **Video and Production** | Generate individual clips or plan a whole project on the **Production** screen: scenes, cast, reference sheets, storyboards, saved takes and a timeline to finish. Music videos and episode projects use the same tools; for a series, carry the bible and chosen references between episode projects. Block a camera in Blender for the render to follow. |
 | 🌀 **Reactive** | Pictures that move with a song: cut on the beat, pulse with the bass, flash on the hits. Five cut-and-dissolve styles run on the compositor alone and work on any card, AMD included. Two more repaint a clip frame by frame so the figure moves and the look turns with the music, with a black circle that opens on the bass. |
 | ⚭ **Collab** | Make an episode with friends, and **lend each other a graphics card**. A project or one scene travels as a sealed file addressed to one person; an order asking a friend to render a scene carries four words and nothing else, and the take comes home to quarantine for you to adopt or throw away. Nothing on the screen opens a connection and there is no server in it. See [COLLAB.md](docs/COLLAB.md). |
+| ◎ **Community sessions** | Open the pinned **Community** entry to find public live listening rooms and upcoming events, or borrow a style pack for your next song. Browsing does not publish your local creations. |
 | ✂️ **Edit, mix and finish** | A timeline editor, a VFX compositor and a DAW with recording, piano roll, instruments, insert racks, sends and returns. Master with EQ, dynamics and stereo tools; inspect loudness, true peak, reference differences and delivery checks. |
 | 🧪 **Native workbench** | Optional YuE2 planning and saved-stage replay, dataset preparation and adapter training, audio-to-MIDI/DAW import and processing previews. Advanced tools have separate runtime and model requirements; the current native planner/trainer needs NVIDIA CUDA. [Workbench guide](docs/music-workbench.md). |
-| 📚 **More** | An audiobook workflow, stems, timed lyrics, 3D models from a picture, overnight batch runs, and a little game for while you wait. |
+| 📚 **More** | Audiobooks in Production, stems, timed lyrics, 3D models from a picture, batches of images and clips, and a little game for while you wait. |
 
 The [deep dive](docs/DEEP_DIVE.md) covers every one of these in detail, and
 [`examples/`](examples/) shows real requests next to what they produced.
