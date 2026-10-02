@@ -51,6 +51,18 @@ const loraStrip = (k) => k
   .replace(/^(diffusion_model\.|transformer\.|model\.diffusion_model\.)/, "")
   .replace(/\.(lora_down|lora_up|lora_A|lora_B|hada_w1_a|hada_w1_b|hada_w2_a|hada_w2_b|lokr_w1|lokr_w2|alpha|diff|diff_b)(\.weight)?$/, "");
 
+/** The native YuE2 MODEL and CLIP namespaces, from adapter tensor names.
+ * A Qwen text encoder shares fused layer names but lives under qwen3, not
+ * text_encoders.model. Metadata and filenames cannot add a missing branch. */
+export function yue2LoraParts(allKeys) {
+  const modules = allKeys.filter(key => /\.(?:lora_down|lora_up|lora_A|lora_B|hada_w1_a|hada_w1_b|hada_w2_a|hada_w2_b|lokr_w1|lokr_w2|diff|diff_b)(?:\.weight)?$/.test(key)).map(loraStrip);
+  const fusedLayer = /model\.layers\.\d+\.(?:(?:self_attn\.)?qkv_proj|(?:mlp\.)?gate_up_proj)$/;
+  const audio = modules.some(key => /^(?:vae2llm|llm2vae|latent_pos_embed)(?:\.|$)/.test(key)
+    || (key.startsWith("model.layers.") && fusedLayer.test(key)));
+  const planner = modules.some(key => key.startsWith("text_encoders.model.layers.") && fusedLayer.test(key));
+  return { audio, planner, fused: audio && planner };
+}
+
 export function loraTarget(allKeys, shapes = {}) {
   const base = [...new Set(allKeys.map(loraStrip))];
   const has = (s) => base.some((k) => k.includes(s));
@@ -78,9 +90,10 @@ export function loraTarget(allKeys, shapes = {}) {
       ? { variant: "ACE-Step 1.5 (nested PEFT prefix, ComfyUI cannot load it)", confidence: "certain" }
       : { variant: "ACE-Step 1.5", confidence: "certain" };
   }
-  if (has("vae2llm") || has("llm2vae") || has("latent_pos_embed")) return { variant: "YuE2", confidence: "certain" };
-  if (has("model.layers.") && (has("qkv_proj") || has("gate_up_proj")) && !has("text_encoders."))
-    return { variant: "YuE2", confidence: "likely" };
+  const loraParts = yue2LoraParts(allKeys);
+  if (has("vae2llm") || has("llm2vae") || has("latent_pos_embed")) return { variant: "YuE2", confidence: "certain", loraParts };
+  if (loraParts.audio || loraParts.planner)
+    return { variant: "YuE2", confidence: "likely", loraParts };
   if (has("txt_norm")) return { variant: "Qwen-Image", confidence: "certain" };
   /* Krea 2's text-fusion tower — layerwise and refiner blocks behind a
    * projector — under the diffusers spelling its LoRAs are published in
@@ -344,7 +357,7 @@ export const ARCH_PRESETS = {
  */
 export function loraFits(loraVariant, ckptVariant) {
   const L = String(loraVariant || ""), C = String(ckptVariant || "");
-  if (!L || !C) return { fit: "unknown", why: "one of the two could not be identified" };
+  if (!L || !C || L === "unknown base" || C === "unknown base") return { fit: "unknown", why: "one of the two could not be identified" };
   if (L === C) return { fit: "yes", why: `both ${C}` };
 
   const sdFamily = (v) => v === "SD1.5" || v === "SD2.x" || v === "SDXL" || v === "SDXL refiner";

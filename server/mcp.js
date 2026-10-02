@@ -2616,7 +2616,8 @@ export const TOOLS = [
       + "unknown. `unknown` means the file does not state which SD base it targets — worth trying, not "
       + "worth assuming. `for` may also name a file in models/diffusion_models or unet (a bare DiT such as "
       + "Krea 2). Checkpoint-engine pictures take LoRAs, and so does YuE2 through ComfyUI "
-      + "(make_song with engine yue2-comfy and `lora`): pass the YuE2 checkpoint as `for` to see which fit.",
+      + "(make_song with engine yue2-comfy and `lora`): pass the YuE2 checkpoint as `for` to see which fit. "
+      + "Fused YuE2 files expose tensor-derived loraParts and styleAdapter metadata for the paired picker, including local files outside the download catalogue. Unknown recipes do not infer triggers, licences or a score mode.",
     inputSchema: {
       type: "object",
       properties: { for: { type: "string", description: "Checkpoint filename to judge compatibility against." } },
@@ -3030,11 +3031,11 @@ export const TOOLS = [
 
   {
     name: "set_yue2_style_adapter",
-    description: "Select an installed YuE2 style adapter for both planner and audio slots, at strength 1. Requires the YuE2 ComfyUI engine. Use download_model first if missing. Pass an empty file to clear both slots. Generation requires Thinking Full and the adapter trigger in Style. These becausereasons adapters are CC BY-NC 4.0; Studio labels their songs not for sale. Does not download weights or generate music.",
+    description: "Select an installed fused YuE2 adapter for both planner and audio slots. Call list_loras with the YuE2 checkpoint as for; tensor-verified fused files include styleAdapter metadata even when absent from the download catalogue. Known recipes set strengths and Thinking; local files without a recipe preserve Thinking and start both strengths at 1. Use the publisher's trigger and terms. Pass an empty file to clear both slots. Requires the YuE2 ComfyUI engine. Does not download weights or generate music.",
     inputSchema: { type: "object", required: ["file"], additionalProperties: false,
-      properties: { file: { type: "string", maxLength: 240, description: "Installed adapter filename from models_for_this_machine, or empty to clear." } } },
+      properties: { file: { type: "string", maxLength: 240, description: "Installed fused adapter name from list_loras, including any relative subfolder, or empty to clear." } } },
     async run(a) {
-      return await api("POST", "/api/music", { action: "style-adapter", value: a.file ? safeName(a.file, "LoRA") : "" });
+      return await api("POST", "/api/music", { action: "style-adapter", value: a.file ? requireModelName(a.file) : "" });
     },
   },
 

@@ -3058,8 +3058,9 @@ $("melodyUseYue")?.addEventListener("click", async () => {
 
 /* ── the YuE2 LoRA picker (Melody & score, ComfyUI engine only) ──────────── */
 let musicLoraShelfKey = null;
+let musicStyleAdapterShelf = [];
 const yueStyleAdapters = mountYue2StyleAdapters({
-  getState: () => state, getAdapters: () => state.models?.capabilities || [],
+  getState: () => state, getAdapters: () => [...(state.models?.capabilities || []), ...musicStyleAdapterShelf],
   onSelect: async (patch) => {
     const result = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "style-adapter", value: patch.lora }) })).json();
@@ -3082,6 +3083,9 @@ async function musicLoadLoras(force = false) {
     const d = await (await fetch(`/api/loras${ck ? `?for=${encodeURIComponent(ck)}` : ""}`)).json();
     rows = (d.loras || []).filter((l) => l.isLora);
   } catch { rows = []; }
+  musicStyleAdapterShelf = rows.filter(row => row.styleAdapter).map(row => ({
+    styleAdapter: row.styleAdapter, installed: true, discovered: true,
+  }));
   const fit = (l) => l.fits?.fit || "unknown";
   const chosen = state.musicYue2Lora || "";
   sel.innerHTML = '<option value="">none</option>' + rows.map((l) => {

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { YUE2_STYLE_ADAPTERS, validateYue2StyleAdapter } from "./yue2-style-adapters.js";
-import { mountYue2StyleAdapters, yue2StyleAdapterPatch, yue2StyleSelectionIssue } from "../../web/yue2-style-adapters.js";
+import { mountYue2StyleAdapters, yue2StyleAdapterPatch, yue2StyleSelectionIssue, yue2StyleAdapterRows } from "../../web/yue2-style-adapters.js";
 
 class Element {
   constructor(tag = "div") { Object.assign(this, { tag, children: [], listeners: [], value: "", textContent: "", disabled: false, hidden: false, title: "" }); }
@@ -100,6 +100,45 @@ test("a failed persistence hook restores the form and displays an error", async 
   d.api.destroy(); assert.equal(d.document.getElementById("yStyleAdapter"), null);
 });
 
+test("a newly discovered local adapter is selectable without changing Thinking or inventing publisher metadata", async () => {
+  const d = fixture(), file = "community/new-voice.safetensors";
+  const adapter = { file, label: "new-voice", engine: "yue2-comfy", fused: true, source: "local",
+    recipe: { audioStrength: 1, plannerStrength: 1 } };
+  d.catalog.push({ styleAdapter: adapter, installed: true, discovered: true });
+  for (const id of ["yLora", "yLoraClip"]) {
+    const option = new Element("option"); option.value = file; d.controls.get(id).append(option);
+  }
+  d.api.refresh();
+  assert.ok(d.document.getElementById("yStyleAdapter").options.some(option => option.value === file && !option.disabled));
+  assert.equal(await d.api.select(file), true);
+  assert.deepEqual(d.selected.at(-1).patch, { lora: file, loraClip: file, loraStrength: 1, loraClipStrength: 1 });
+  assert.equal(d.controls.get("yCot").value, "off", "an unknown publisher recipe cannot force Full");
+  assert.equal(d.document.getElementById("yStyleAdapterHint").children[2].textContent, "Licence unknown");
+  assert.doesNotMatch(d.document.getElementById("yStyleAdapterHint").children[0].textContent, /undefined|Full|Start Style/);
+  assert.equal(d.api.validate({ engine: "yue2-comfy", lora: file, loraClip: "", cot: "off" }), null,
+    "a locally discovered file may also be used in just one advanced slot");
+});
+
+test("installed subfolder paths replace bare catalogue choices and duplicate basenames stay distinct", async () => {
+  const d = fixture(), known = YUE2_STYLE_ADAPTERS[0];
+  for (const folder of ["one", "two"]) {
+    const file = `${folder}/${known.file}`;
+    d.catalog.push({ styleAdapter: { ...known, file, source: "catalog" }, installed: true, discovered: true });
+    for (const id of ["yLora", "yLoraClip"]) {
+      const option = new Element("option"); option.value = file; d.controls.get(id).append(option);
+    }
+  }
+  d.api.refresh();
+  const rows = yue2StyleAdapterRows(d.catalog);
+  assert.ok(!rows.some(row => row.file === known.file), "the disabled bare preset is replaced by actual shelf paths");
+  assert.ok(rows.some(row => row.file === `one/${known.file}`));
+  assert.ok(rows.some(row => row.file === `two/${known.file}`));
+  assert.throws(() => yue2StyleAdapterPatch(known.file, d.catalog), { reason: "yue2-style-unknown" });
+  assert.equal(await d.api.select(`two/${known.file}`), true);
+  assert.equal(d.selected.at(-1).patch.lora, `two/${known.file}`);
+  assert.equal(d.controls.get("yLoraClip").value, `two/${known.file}`);
+});
+
 test("UI validation agrees with the server for native, paired, mismatched and score modes", async () => {
   const file = YUE2_STYLE_ADAPTERS[0].file;
   for (const engine of ["yue2-comfy", "yue2", "yue2-gguf"]) for (const explicit of [true, false]) for (const loraClip of [file, "", "custom.safetensors"]) for (const cot of ["full", "off", "melody"]) {
@@ -111,4 +150,17 @@ test("UI validation agrees with the server for native, paired, mismatched and sc
   assert.throws(() => yue2StyleAdapterPatch("unknown.safetensors", YUE2_STYLE_ADAPTERS), { reason: "yue2-style-unknown" });
   const html = await readFile(new URL("../../web/index.html", import.meta.url), "utf8");
   for (const id of ["yLora", "yLoraClip", "yLoraStrength", "yLoraClipStrength", "yCot", "yLoraNote"]) assert.match(html, new RegExp(`id="${id}"`));
+});
+
+test("case-distinct local files remain independently selectable with exact paths", () => {
+  const catalog = ["voices/Voice.safetensors", "voices/voice.safetensors"].map(file => ({
+    styleAdapter: { file, label: file, engine: "yue2-comfy", fused: true, source: "local" },
+    installed: true, discovered: true,
+  }));
+  assert.equal(yue2StyleAdapterRows(catalog).length, 2);
+  for (const { styleAdapter } of catalog) {
+    assert.equal(yue2StyleAdapterPatch(styleAdapter.file, catalog).lora, styleAdapter.file);
+    assert.equal(yue2StyleAdapterPatch(styleAdapter.file.replaceAll("/", "\\"), catalog).loraClip, styleAdapter.file);
+  }
+  assert.throws(() => yue2StyleAdapterPatch("voices/VOICE.safetensors", catalog), { reason: "yue2-style-unknown" });
 });

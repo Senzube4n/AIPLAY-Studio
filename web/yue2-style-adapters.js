@@ -1,25 +1,39 @@
-/** Optional fused YuE2 adapters. Metadata comes from /api/models, not a second
- * browser catalogue. Mount/refresh never downloads weights or selects a style. */
+/** Optional fused YuE2 adapters. Metadata comes from /api/models and /api/loras,
+ * not a browser catalogue. Mount/refresh never downloads weights or selects a style. */
 const basename = value => String(value || "").split(/[\\/]/).pop().toLowerCase();
+const filename = value => String(value || "").replace(/\\/g, "/");
 const mounted = new WeakMap();
 
 export function yue2StyleAdapterRows(catalog = []) {
-  return catalog.flatMap(row => {
+  const rows = catalog.flatMap(row => {
     const adapter = row?.styleAdapter || (row?.fused && row?.engine === "yue2-comfy" ? row : null);
-    return adapter?.file ? [{ ...adapter, installed: row.installed === true || row.ready === true }] : [];
+    return adapter?.file ? [{ ...adapter, discovered: row.discovered === true,
+      installed: row.installed === true || row.ready === true }] : [];
   });
+  const local = rows.filter(row => row.discovered), seen = new Set();
+  return rows.filter(row => (row.discovered || !local.some(item => basename(item.file) === basename(row.file)))
+    && !seen.has(filename(row.file)) && seen.add(filename(row.file)));
 }
 
-const find = (file, rows) => rows.find(row => basename(row.file) === basename(file)) || null;
+const find = (file, rows) => {
+  const exact = rows.find(row => filename(row.file) === filename(file));
+  if (exact) return exact;
+  const folded = rows.filter(row => filename(row.file).toLowerCase() === filename(file).toLowerCase());
+  if (folded.length === 1) return folded[0];
+  if (folded.length > 1) return null;
+  const matches = rows.filter(row => basename(row.file) === basename(file));
+  return matches.length === 1 ? matches[0] : null;
+};
 const refuse = (reason, message) => Object.assign(new Error(message), { reason });
 
 /** An explicit selection changes both halves. Engine changes and refreshes do not. */
 export function yue2StyleAdapterPatch(file, catalog, engine = "yue2-comfy") {
   const adapter = find(file, yue2StyleAdapterRows(catalog));
-  if (file && !adapter) throw refuse("yue2-style-unknown", "This style adapter is not in the model catalogue.");
+  if (file && !adapter) throw refuse("yue2-style-unknown", "Refresh LoRAs and choose an installed style adapter.");
   if (adapter && engine !== "yue2-comfy") throw refuse("yue2-style-engine", "YuE2 style adapters require the ComfyUI engine; Python and GGUF do not support them.");
   return adapter ? { lora: adapter.file, loraClip: adapter.file,
-    loraStrength: adapter.recipe?.audioStrength ?? 1, loraClipStrength: adapter.recipe?.plannerStrength ?? 1, cot: "full" }
+    loraStrength: adapter.recipe?.audioStrength ?? 1, loraClipStrength: adapter.recipe?.plannerStrength ?? 1,
+    ...(adapter.recipe?.cot ? { cot: adapter.recipe.cot } : {}) }
     : { lora: "", loraClip: "" };
 }
 
@@ -30,8 +44,10 @@ export function yue2StyleSelectionIssue({ engine, lora, loraClip, cot = "full", 
   if (!audio && !planner) return null;
   if (engine !== "yue2-comfy") return explicit
     ? { reason: "yue2-style-engine", message: "YuE2 style adapters require the ComfyUI engine; Python and GGUF do not support them." } : null;
-  if (!audio || !planner || audio.file !== planner.file) return { reason: "yue2-style-pair", message: "Choose the same style adapter for Audio LoRA and Planner LoRA." };
-  if (cot !== "full") return { reason: "yue2-style-score", message: "This style adapter needs Thinking Full." };
+  if ([audio, planner].some(adapter => adapter && adapter.source !== "local")
+    && (!audio || !planner || audio.file !== planner.file)) return { reason: "yue2-style-pair", message: "Choose the same style adapter for Audio LoRA and Planner LoRA." };
+  const required = (audio || planner).recipe?.cot;
+  if (required && cot !== required) return { reason: "yue2-style-score", message: `This style adapter needs Thinking ${required[0].toUpperCase() + required.slice(1)}.` };
   return null;
 }
 
@@ -57,7 +73,7 @@ export function mountYue2StyleAdapters({ document: doc = globalThis.document, ro
   const label = doc.createElement("label"); label.htmlFor = "yStyleAdapter"; label.textContent = "Style adapter";
   const value = doc.createElement("span"); value.className = "pv";
   const pick = doc.createElement("select"); pick.id = "yStyleAdapter"; pick.className = "sel2";
-  pick.title = "Optional ComfyUI adapters by becausereasons, licensed CC BY-NC 4.0 for noncommercial use only. Choosing one fills both LoRA slots and sets Thinking Full.";
+  pick.title = "Installed fused YuE2 adapters are detected from their weights. Choosing one fills both LoRA slots; known recipes also set Thinking.";
   value.append(pick); row.append(label, value);
   const hint = doc.createElement("p"); hint.id = "yStyleAdapterHint"; hint.className = "hint tipsrc";
   hint.setAttribute("data-comfy-yue", ""); hint.setAttribute("role", "status"); hint.setAttribute("aria-live", "polite");
@@ -73,7 +89,7 @@ export function mountYue2StyleAdapters({ document: doc = globalThis.document, ro
   const selection = () => ({ engine: getEngine(), lora: controls.audio.value || "",
     loraClip: controls.planner.value || "", cot: controls.cot.value || "full" });
   const onShelf = file => [controls.audio, controls.planner].every(control =>
-    [...control.options].some(option => basename(option.value) === basename(file) && !option.disabled));
+    [...control.options].some(option => filename(option.value) === filename(file) && !option.disabled));
   function refresh() {
     if (!alive) return;
     const rows = yue2StyleAdapterRows(getAdapters()), current = selection(), adapter = find(current.lora, rows) || find(current.loraClip, rows);
@@ -86,16 +102,22 @@ export function mountYue2StyleAdapters({ document: doc = globalThis.document, ro
       const available = onShelf(item.file);
       option(`${item.label}${available ? "" : item.installed ? " · refresh LoRAs" : " · download in Models"}`, item.file, !available);
     }
-    pick.value = current.lora === current.loraClip && adapter ? adapter.file : "";
+    const audio = find(current.lora, rows), planner = find(current.loraClip, rows);
+    pick.value = audio && planner && audio.file === planner.file ? audio.file : "";
     pick.disabled = busy || current.engine !== "yue2-comfy";
     const issue = error || yue2StyleSelectionIssue(current, getAdapters());
     row.hidden = current.engine !== "yue2-comfy" && !error;
     hint.hidden = row.hidden || (!adapter && !issue);
     hint.className = issue ? "hint tipsrc warnhint" : "hint tipsrc";
-    note.textContent = issue?.message || (adapter ? `Start Style with ${adapter.trigger}; both LoRA slots use this file with Thinking Full.` : "");
-    note.title = adapter ? `${adapter.prompt}\n${adapter.caution}\nPublisher tests used the BF16 checkpoint; INT8 quality is unverified.` : "";
+    note.textContent = issue?.message || (adapter ? adapter.source === "local"
+      ? `Contains audio and planner weights${adapter.trigger ? `; trigger: ${adapter.trigger}` : ""}.`
+      : `${adapter.trigger ? `Start Style with ${adapter.trigger}; ` : ""}both LoRA slots use this file${adapter.recipe?.cot ? ` with Thinking ${adapter.recipe.cot[0].toUpperCase() + adapter.recipe.cot.slice(1)}` : ""}.` : "");
+    note.title = adapter ? [adapter.prompt, adapter.caution,
+      adapter.publisherTestedCheckpoint ? "Publisher tests used the BF16 checkpoint; INT8 quality is unverified." : "Use the publisher's trigger and score settings, if provided."].filter(Boolean).join("\n") : "";
     licence.hidden = !adapter;
-    licence.title = adapter ? `${adapter.licence || "CC BY-NC 4.0"}: noncommercial use only. ${adapter.outputRights?.attribution || "LoRAs by becausereasons"}. Songs made with this adapter are labelled not for sale. See Models for the publisher's terms.` : "";
+    licence.textContent = adapter?.licence === "CC BY-NC 4.0" ? "CC BY-NC" : adapter?.licence || "Licence unknown";
+    licence.title = adapter ? [adapter.licence || "This local file does not declare a licence.",
+      adapter.outputRights?.attribution, adapter.outputRights?.sellable === false ? "noncommercial use only. Songs made with this adapter are labelled not for sale." : "Check the publisher's terms."].filter(Boolean).join(" ") : "";
   }
   function apply(patch) {
     controls.audio.value = patch.lora; controls.planner.value = patch.loraClip;
@@ -113,7 +135,7 @@ export function mountYue2StyleAdapters({ document: doc = globalThis.document, ro
     let before, disabled;
     try {
       const catalog = getAdapters(), patch = yue2StyleAdapterPatch(file, catalog, getEngine()), adapter = find(file, yue2StyleAdapterRows(catalog));
-      if (adapter && !onShelf(adapter.file)) throw refuse("yue2-style-missing", "Download this adapter in Models, then refresh the LoRA shelf.");
+      if (adapter && !onShelf(adapter.file)) throw refuse("yue2-style-missing", "Add this adapter to a loras folder, then refresh LoRAs.");
       before = snapshot(); busy = true; error = null;
       disabled = Object.values(controls).filter(Boolean).map(control => [control, control.disabled]);
       for (const [control] of disabled) control.disabled = true;

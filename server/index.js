@@ -60,7 +60,7 @@ import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-
 import { createEngineRoutes } from "./engine/routes.js";
 import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
 import { stageRefModImage } from "./refmod-stage.js";
-import { validateYue2StyleAdapter, yue2StyleAdapterFor } from "./music/yue2-style-adapters.js";
+import { validateYue2StyleAdapter, yue2StyleAdapterFor, yue2StyleAdapterFromProbe } from "./music/yue2-style-adapters.js";
 /* RunPod rendering (the launcher's "RunPod GPU" mode): the worker client, the
  * account (Pods and billing) and their routes, contributed by nemesisone-dev. */
 import { createRemoteRoutes } from "./engine/remote-routes.js";
@@ -1080,6 +1080,13 @@ async function clipCharacters() {
 const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_prompts.json"));
 
 const ckptProbeCache = new Map();
+async function probeShelfLora(file) {
+  const info = await stat(file.full).catch(() => ({}));
+  const key = `lora:${file.full}:${info.size ?? 0}:${info.mtimeMs ?? 0}`;
+  let probe = ckptProbeCache.get(key);
+  if (!probe) { probe = await probeModel(file.full); ckptProbeCache.set(key, probe); }
+  return probe;
+}
 
 /* ⚠ A LineageMap, NOT A PLAIN Map (server/safety/lineage.js). Every row
  * written here gets its wordless minors fingerprint, `safety: {minor,
@@ -8895,20 +8902,21 @@ const server = http.createServer(async (req, res) => {
           savePrefs();
           return json(res, 200, { ok: true, music: { yue2Lora: null, yue2LoraClip: null } });
         }
-        const adapter = yue2StyleAdapterFor(b.value);
-        if (!adapter) return json(res, 400, { error: "Choose a listed YuE2 style adapter." });
         if (config.music.engine !== "yue2-comfy") return json(res, 400, { error: "Choose YuE2 ComfyUI before selecting this adapter." });
         const shelf = await scanBases(await modelBases());
-        const installed = findShelfModel(shelf, "loras", adapter.file);
+        const installed = findShelfModel(shelf, "loras", requireModelName(b.value));
         if (!installed)
-          return json(res, 400, { error: `${adapter.label} is not installed. Open Models to download it.` });
+          return json(res, 400, { error: "This adapter is not installed. Add it to a loras folder, then refresh LoRAs." });
+        const adapter = yue2StyleAdapterFromProbe(installed.name, await probeShelfLora(installed));
+        if (!adapter) return json(res, 400, { error: "Choose a fused YuE2 adapter with planner and audio weights." });
         config.music.yue2Lora = installed.name;
         config.music.yue2LoraClip = installed.name;
-        config.music.yue2LoraStrength = 1;
-        config.music.yue2LoraClipStrength = 1;
+        config.music.yue2LoraStrength = adapter.recipe?.audioStrength ?? 1;
+        config.music.yue2LoraClipStrength = adapter.recipe?.plannerStrength ?? 1;
         savePrefs();
         return json(res, 200, { ok: true, music: { yue2Lora: installed.name, yue2LoraClip: installed.name,
-          yue2LoraStrength: 1, yue2LoraClipStrength: 1 }, cot: "full" });
+          yue2LoraStrength: config.music.yue2LoraStrength, yue2LoraClipStrength: config.music.yue2LoraClipStrength },
+          ...(adapter.recipe?.cot ? { cot: adapter.recipe.cot } : {}), styleAdapter: adapter });
       }
       if (b.action === "lora") {
         /* The Music tab's LoRA choice for YuE2 through ComfyUI, remembered.
@@ -10123,13 +10131,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       const rows = await Promise.all(files.map(async ({ name, full }) => {
-        const key = `lora:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
-        let probe = ckptProbeCache.get(key);
-        if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
+        const probe = await probeShelfLora({ name, full });
         const base = probe.family === "lora" ? probe.variant : null;
+        const styleAdapter = yue2StyleAdapterFromProbe(name, probe);
         return {
           name, bytes: probe.bytes, at: probe.at,
           base, confidence: probe.confidence ?? null,
+          ...(probe.loraParts ? { loraParts: probe.loraParts } : {}),
+          ...(styleAdapter ? { styleAdapter } : {}),
           /* A file in models/loras that is not a LoRA is worth saying out loud
            * rather than listing as one — the three MiniMax turbo files here are
            * genuinely LoRAs, but a checkpoint dropped in the wrong folder is a

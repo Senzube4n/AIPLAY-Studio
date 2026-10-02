@@ -12,7 +12,9 @@
  * read — the keys below are the real file's names, copied.
  */
 import fs from "node:fs";
-import { loraTarget, detect, loraFits } from "./detect.js";
+import os from "node:os";
+import path from "node:path";
+import { loraTarget, detect, loraFits, probeModel, yue2LoraParts } from "./detect.js";
 
 let pass = 0;
 const failures = [];
@@ -70,6 +72,44 @@ console.log("\n§3  /api/loras judges `for=` against a bare DiT as well as a che
     /const ck = findShelfModel\(shelf, \["checkpoints", "diffusion_models", "unet"\], forName\);/.test(index));
   const mcp = fs.readFileSync(new URL("./mcp.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   ok("list_loras says so", /`for` may also name a file in models\/diffusion_models or unet/.test(mcp));
+}
+
+console.log("\n§4  YuE2 discovery separates the audio and planner tensor namespaces");
+{
+  const audio = ["diffusion_model.model.layers.0.self_attn.qkv_proj.lora_down.weight",
+    "diffusion_model.model.layers.0.self_attn.qkv_proj.lora_up.weight"];
+  const planner = ["text_encoders.model.layers.0.mlp.gate_up_proj.lora_down.weight",
+    "text_encoders.model.layers.0.mlp.gate_up_proj.lora_up.weight"];
+  const fused = [...audio, ...planner];
+  eq("both halves stay YuE2 even without latent bridge deltas", loraTarget(fused).variant, "YuE2");
+  eq("the probe exposes both branches", detect(new Set(fused), {}).loraParts, { audio: true, planner: true, fused: true });
+  eq("audio-only remains an ordinary adapter", yue2LoraParts(audio), { audio: true, planner: false, fused: false });
+  eq("planner-only is detected from its own native namespace", loraTarget(planner).variant, "YuE2");
+  eq("planner-only is not a fused style", yue2LoraParts(planner), { audio: false, planner: true, fused: false });
+  const qwen = ["text_encoders.qwen3.transformer.model.layers.0.self_attn.qkv_proj.lora_down.weight"];
+  ok("Qwen's text encoder is not identified as the YuE2 planner", loraTarget(qwen).variant !== "YuE2");
+  eq("Qwen alongside an audio adapter cannot invent a planner half", yue2LoraParts([...audio, ...qwen]), { audio: true, planner: false, fused: false });
+  eq("full checkpoint tensors cannot count as LoRA branches", yue2LoraParts(fused.map(key => key.replace(/\.lora_(?:down|up)\.weight$/, ".weight"))), { audio: false, planner: false, fused: false });
+  eq("an unidentified architecture stays unverified, not disabled", loraFits("unknown base", "YuE2").fit, "unknown");
+  eq("a verified wrong architecture remains refused", loraFits("FLUX", "YuE2").fit, "no");
+
+  const temporary = await fs.promises.mkdtemp(path.join(os.tmpdir(), "aiplay-yue2-discovery-"));
+  try {
+    // A valid small safetensors fixture exercises the same header reader as the shelf.
+    const tensors = Object.fromEntries(fused.map((key, i) => [key, { dtype: "F32", shape: [1, 1], data_offsets: [i * 4, (i + 1) * 4] }]));
+    const header = Buffer.from(JSON.stringify({ __metadata__: { name: "New local voice", trigger: "voice" }, ...tensors }));
+    const length = Buffer.alloc(8); length.writeBigUInt64LE(BigInt(header.length));
+    const file = path.join(temporary, "renamed-unlisted.safetensors");
+    await fs.promises.writeFile(file, Buffer.concat([length, header, Buffer.alloc(fused.length * 4)]));
+    const probe = await probeModel(file);
+    eq("an unlisted filename probes as a LoRA", probe.family, "lora");
+    eq("its tensor architecture, not name, is YuE2", probe.variant, "YuE2");
+    eq("its separate parts survive probeModel", probe.loraParts, { audio: true, planner: true, fused: true });
+    eq("explicit trigger metadata remains available for discovery", probe.metadata.trigger, "voice");
+  } finally {
+    if (path.dirname(path.resolve(temporary)) !== path.resolve(os.tmpdir())) throw new Error("Unexpected discovery fixture path");
+    await fs.promises.rm(temporary, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);

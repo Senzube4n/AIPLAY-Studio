@@ -2,6 +2,8 @@
  * These are ComfyUI files, not adapters supported by the Python or audio.cpp runners.
  * Each file contains both text_encoders.* (planner) and diffusion_model.* (audio).
  * No file is selected or downloaded by importing this metadata. */
+import { modelName } from "../localmodels.js";
+
 const HF = "https://huggingface.co";
 const families = [
   { id: "trbdr", label: "TRBDR folk troubadour", repo: "becausereasons/yue2-trbdr-folk-troubadour",
@@ -54,9 +56,48 @@ export const YUE2_STYLE_ADAPTERS = Object.freeze(families.flatMap((family) => fa
   },
 )));
 
-export function yue2StyleAdapterFor(file) {
+const relativeKey = file => modelName(file)?.replace(/\\/g, "/") || null;
+const sameShelfPath = (a, b) => {
+  const left = relativeKey(a), right = relativeKey(b);
+  return left !== null && right !== null && (process.platform === "win32"
+    ? left.toLowerCase() === right.toLowerCase() : left === right);
+};
+
+export function yue2StyleAdapterFor(file, discovered = []) {
+  if (!file) return null;
+  const key = relativeKey(file);
+  const exact = key ? discovered.filter(adapter => relativeKey(adapter?.file) === key) : [];
+  if (exact.length) return exact.length === 1 ? exact[0] : null;
+  if (key && process.platform === "win32") {
+    const aliases = discovered.filter(adapter => {
+      const candidate = relativeKey(adapter?.file);
+      return candidate && candidate.toLowerCase() === key.toLowerCase();
+    });
+    if (aliases.length) return aliases.length === 1 ? aliases[0] : null;
+  }
   const name = String(file || "").split(/[\\/]/).pop().toLowerCase();
   return YUE2_STYLE_ADAPTERS.find((adapter) => adapter.file.toLowerCase() === name) || null;
+}
+
+/** Turn a tensor-verified installed fused adapter into a shared UI/MCP row.
+ * The catalogue enriches known files; an unfamiliar file gets no guessed
+ * trigger, licence, or score mode. Its exact shelf path remains its identity. */
+export function yue2StyleAdapterFromProbe(file, probe) {
+  const name = modelName(file);
+  if (!name || !/\.safetensors$/i.test(name) || probe?.family !== "lora" || probe.variant !== "YuE2"
+    || probe.loraParts?.audio !== true || probe.loraParts?.planner !== true) return null;
+  const known = yue2StyleAdapterFor(name);
+  if (known) return { ...known, file: name, installed: true, source: "catalog" };
+  const metadata = probe.metadata && typeof probe.metadata === "object" ? probe.metadata : {};
+  const text = (value, cap) => typeof value === "string"
+    ? value.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, cap) : "";
+  const label = text(metadata.name || metadata.ss_output_name, 160)
+    || name.split(/[\\/]/).pop().replace(/\.safetensors$/i, "");
+  const trigger = text(metadata.trigger || metadata.trigger_word || metadata.ss_trigger_word, 200);
+  const licence = text(metadata.license || metadata.licence || metadata.ss_license, 160);
+  return { file: name, label, engine: "yue2-comfy", fused: true, installed: true, source: "local",
+    recipe: { audioStrength: 1, plannerStrength: 1 },
+    ...(trigger ? { trigger } : {}), ...(licence ? { licence } : {}) };
 }
 
 /** Validate an active/requested adapter, not dormant saved ComfyUI preferences.
@@ -72,7 +113,8 @@ export function validateYue2StyleAdapter({ engine, lora, loraClip, cot = "full",
     throw error;
   };
   if (engine !== "yue2-comfy") refuse("yue2-style-engine", "These YuE2 style adapters require the YuE2 ComfyUI engine. The native Python and GGUF engines do not support these LoRAs.");
-  if (!audio || !planner || audio.file !== planner.file) refuse("yue2-style-pair", "Choose the same fused YuE2 style adapter for the planner and audio slots; each file patches both halves.");
+  // Catalog names provide recipes; only actual shelf paths can identify a pair.
+  if (!audio || !planner || !sameShelfPath(lora, loraClip)) refuse("yue2-style-pair", "Choose the same fused YuE2 style adapter for the planner and audio slots; each file patches both halves.");
   if (cot !== "full") refuse("yue2-style-score", "These YuE2 style adapters use Thinking Full. Select Full before generating with this adapter.");
   return audio;
 }

@@ -82,6 +82,21 @@ requested. Select its returned filename in **Audio LoRA** and **Planner LoRA** o
 does not automatically load this trained adapter. Evaluate compatible exports with
 the paired listening lab and actual held-out audio.
 
+The **Style adapter** picker discovers installed fused YuE2 `.safetensors` files
+from their audio and planner tensor names, including files inside subfolders.
+Put compatible adapters in a configured `loras` folder and press **Refresh LoRAs**;
+an unfamiliar filename does not need a catalogue entry. Audio-only and planner-only
+adapters remain available in their individual slots. The picker fills both slots
+with the same exact shelf path. Known catalogue recipes retain their settings;
+unlisted files start both strengths at 1 and preserve the current Thinking mode.
+Use the publisher's trigger, score settings and terms; missing metadata remains
+unknown. These ComfyUI adapters do not load in the native Python or GGUF engines.
+
+MCP callers use `list_loras` with `for` set to the YuE2 checkpoint, inspect each
+row's `loraParts` and `styleAdapter`, then call `set_yue2_style_adapter` with the
+returned filename, including its subfolder. Passing an empty filename clears both
+slots. Listing and selecting do not download weights or generate audio.
+
 MuScriptor weights use CC BY-NC 4.0. DAW import retains valid predicted event timing
 on a provisional 4/4 timeline, default 120 BPM and pluck sounds. Choose instruments
 and review tempo/alignment in the DAW. Partial imports and project limits remain
