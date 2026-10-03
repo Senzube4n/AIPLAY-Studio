@@ -88,6 +88,7 @@ export const SYNC_QUARTERS = {
 const SYNCS = Object.keys(SYNC_QUARTERS).sort((a, b) => SYNC_QUARTERS[a] - SYNC_QUARTERS[b]);
 
 export const MIXER_CATALOG = {
+  vst3: { label: "VST3 effect", stateful: true, external: true, params: {} },
   eq: {
     label: "Parametric EQ", stateful: true,
     params: {
@@ -314,17 +315,87 @@ export function normParams(type, raw) {
   return out;
 }
 
+const VST_LIMITS = { parameters: 256, choices: 256, stateBytes: 4 * 1024 * 1024 };
+const ownObject = value => value && typeof value === "object" && !Array.isArray(value);
+const vstText = (value, cap, fallback = "") => typeof value === "string"
+  ? value.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, cap) : fallback;
+const vstKey = key => /^[A-Za-z_][A-Za-z0-9_]{0,119}$/.test(key)
+  && !["__proto__", "prototype", "constructor"].includes(key);
+
+/** A project stores identity, schema and state, never an executable path.
+ * Registry availability is deliberately not consulted while opening a project. */
+export function normVst3Plugin(raw) {
+  const fail = message => { throw new Error(`VST3 effect: ${message}`); };
+  if (!ownObject(raw) || typeof raw.id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(raw.id))
+    fail("choose a registered plugin ID.");
+  if (typeof raw.fingerprint !== "string" || !/^[a-f0-9]{64}$/i.test(raw.fingerprint))
+    fail("the saved plugin fingerprint is invalid.");
+  const label = vstText(raw.label, 160, raw.id), hostVersion = vstText(raw.hostVersion, 80);
+  if (!hostVersion) fail("the saved host version is missing.");
+  if (typeof raw.state !== "string" || raw.state.length > Math.ceil(VST_LIMITS.stateBytes / 3) * 4
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw.state)
+    || Buffer.from(raw.state, "base64").length > VST_LIMITS.stateBytes)
+    fail("the saved plugin state must be bounded base64.");
+  if (!ownObject(raw.parameters) || Object.keys(raw.parameters).length > VST_LIMITS.parameters)
+    fail(`the parameter schema must contain at most ${VST_LIMITS.parameters} controls.`);
+  const parameters = {};
+  for (const [key, spec] of Object.entries(raw.parameters)) {
+    if (!vstKey(key) || !ownObject(spec)) fail("the saved parameter schema is invalid.");
+    const name = vstText(spec.label, 160, key), type = spec.type;
+    if (type === "number") {
+      const { min, max, default: value } = spec;
+      if (![min, max, value].every(v => typeof v === "number" && Number.isFinite(v))
+        || min > max || value < min || value > max) fail(`invalid range for ${key}.`);
+      if (spec.step !== undefined && (typeof spec.step !== "number" || !Number.isFinite(spec.step) || spec.step <= 0))
+        fail(`invalid step for ${key}.`);
+      parameters[key] = { type, label: name, default: value, min, max,
+        ...(spec.step === undefined ? {} : { step: spec.step }) };
+    } else if (type === "bool") {
+      if (typeof spec.default !== "boolean") fail(`invalid default for ${key}.`);
+      parameters[key] = { type, label: name, default: spec.default };
+    } else if (type === "enum") {
+      if (!Array.isArray(spec.values) || !spec.values.length || spec.values.length > VST_LIMITS.choices
+        || spec.values.some(value => typeof value !== "string" || value.length > 256 || /[\x00-\x1f\x7f]/.test(value))
+        || !spec.values.includes(spec.default)) fail(`invalid choices for ${key}.`);
+      parameters[key] = { type, label: name, default: spec.default, values: [...spec.values] };
+    } else fail(`unsupported parameter type for ${key}.`);
+  }
+  if (raw.latencySamples !== undefined && (!Number.isSafeInteger(raw.latencySamples)
+    || raw.latencySamples < 0 || raw.latencySamples > 48000 * 60)) fail("the saved plugin latency is invalid.");
+  return { id: raw.id, label: label || raw.id, fingerprint: raw.fingerprint.toLowerCase(), hostVersion,
+    parameters, state: raw.state, ...(raw.latencySamples === undefined ? {} : { latencySamples: raw.latencySamples }) };
+}
+
+/** Plugins use their saved schema. First-phase controls are static, with no
+ * coercion, clamping, unknown keys or keyframe automation. */
+export function normVst3Params(plugin, raw, { tolerant = false } = {}) {
+  if (raw !== undefined && !ownObject(raw) && !tolerant) throw new Error("VST3 parameters must be an object.");
+  const src = ownObject(raw) ? raw : {}, out = {};
+  const unknown = Object.keys(src).filter(key => !Object.hasOwn(plugin.parameters, key));
+  if (unknown.length && !tolerant) throw new Error(`VST3 ${plugin.label} has no parameter ${unknown.join(", ")}.`);
+  for (const [key, spec] of Object.entries(plugin.parameters)) {
+    const value = src[key] === undefined ? spec.default : src[key];
+    const valid = spec.type === "number" ? typeof value === "number" && Number.isFinite(value)
+      && value >= spec.min && value <= spec.max
+      && (!spec.step || Math.abs((value - spec.min) / spec.step
+        - Math.round((value - spec.min) / spec.step)) <= 1e-6)
+      : spec.type === "bool" ? typeof value === "boolean" : typeof value === "string" && spec.values.includes(value);
+    if (!valid && !tolerant) throw new Error(`VST3 ${plugin.label}.${key} is outside its saved ${spec.type} schema.`);
+    out[key] = valid ? value : spec.default;
+  }
+  return out;
+}
+
 export function normInserts(list, label = "chain") {
   const rows = (Array.isArray(list) ? list : []).filter((i) => i && typeof i === "object");
   if (rows.length > MIXER_LIMITS.insertsPerChain) {
     throw new Error(`${label}: at most ${MIXER_LIMITS.insertsPerChain} inserts.`);
   }
-  return rows.map((i) => ({
-    id: i.id || newId("ins"),
-    type: String(i.type),
-    enabled: i.enabled !== false,
-    params: normParams(String(i.type), i.params),
-  }));
+  return rows.map((i) => {
+    const type = String(i.type), plugin = type === "vst3" ? normVst3Plugin(i.plugin) : null;
+    return { id: i.id || newId("ins"), type, enabled: i.enabled !== false,
+      ...(plugin ? { plugin } : {}), params: plugin ? normVst3Params(plugin, i.params) : normParams(type, i.params) };
+  });
 }
 
 /* ─────────────────────────────────────────────────────────── migration */
@@ -335,6 +406,15 @@ function migrateInserts(list) {
   const out = [];
   for (const i of Array.isArray(list) ? list : []) {
     if (!i || typeof i !== "object" || !MIXER_CATALOG[i.type]) continue;
+    if (i.type === "vst3") {
+      try {
+        const plugin = normVst3Plugin(i.plugin);
+        out.push({ id: i.id || newId("ins"), type: "vst3", enabled: i.enabled !== false,
+          plugin, params: normVst3Params(plugin, i.params, { tolerant: true }) });
+      } catch { /* Invalid document data cannot supply an executable plugin. */ }
+      if (out.length >= MIXER_LIMITS.insertsPerChain) break;
+      continue;
+    }
     const spec = MIXER_CATALOG[i.type].params;
     const params = {};
     for (const [name, d] of Object.entries(spec)) {
@@ -461,7 +541,9 @@ export function trackStatefulPath(doc, track) {
  * { back, fwd } seconds — fwd Infinity when state is in the path. */
 export function mixerFutureSeconds(doc) {
   const chain = (rows) => (rows || []).reduce((seconds, i) => {
-    if (i.enabled === false || !["limiter", "maximizer"].includes(i.type)) return seconds;
+    if (i.enabled === false) return seconds;
+    if (i.type === "vst3") return seconds + (i.plugin?.latencySamples || 0) / 48000;
+    if (!["limiter", "maximizer"].includes(i.type)) return seconds;
     const p = i.params?.lookahead_ms ?? 5;
     const values = typeof p === "object" ? (p.keys || []).map((k) => Number(k.v)) : [Number(p)];
     const v = Math.max(...(values.length ? values : [5]));
@@ -644,7 +726,7 @@ const chainOut = (host) => (host.inserts || []).map((i) => ({
 }));
 
 export async function handleMixerAction(action, b, ctx) {
-  const { mutate, readProject, runEngineFast, safe } = ctx;
+  const { mutate, readProject, runEngineFast, safe, plugins } = ctx;
   const slug = safe(b.slug);
 
   switch (action) {
@@ -652,6 +734,21 @@ export async function handleMixerAction(action, b, ctx) {
       const type = String(b.type || "");
       if (!MIXER_CATALOG[type]) {
         throw new Error(`Unknown device "${type}". The rack has: ${Object.keys(MIXER_CATALOG).join(", ")}.`);
+      }
+      let external = null;
+      if (type === "vst3") {
+        if (typeof b.plugin !== "string") throw new Error("Choose a registered VST3 plugin ID.");
+        if (b.plugin_snapshot !== undefined) {
+          if (b.enabled !== false) throw new Error("A saved VST3 snapshot can only restore a bypassed insert.");
+          const plugin = normVst3Plugin(b.plugin_snapshot);
+          if (plugin.id !== b.plugin) throw new Error("The saved VST3 snapshot must match the plugin ID.");
+          external = { plugin, params: normVst3Params(plugin, b.params) };
+        } else {
+          if (!plugins?.validateInsert) throw new Error("VST3 host is unavailable. Set up the plugin host before adding an effect.");
+          const checked = await plugins.validateInsert(b.plugin, b.params);
+          const plugin = normVst3Plugin(checked.plugin);
+          external = { plugin, params: normVst3Params(plugin, checked.params) };
+        }
       }
       const m = await mutate(slug, b, "insert_add", (d) => {
         const { host, id } = resolveChainHost(d, b.target);
@@ -662,7 +759,7 @@ export async function handleMixerAction(action, b, ctx) {
         const ins = {
           id: newId("ins"), type,
           enabled: b.enabled !== false,
-          params: normParams(type, b.params),
+          ...(external || { params: normParams(type, b.params) }),
         };
         const at = b.index === undefined
           ? host.inserts.length
@@ -675,11 +772,34 @@ export async function handleMixerAction(action, b, ctx) {
     }
 
     case "insert_set": {
+      let checkedVst = null;
+      if (b.params !== undefined || b.enabled === true) {
+        const currentDoc = await readProject(slug);
+        if (!currentDoc) throw new Error("This DAW project no longer exists.");
+        const current = findInsert(resolveChainHost(currentDoc, b.target).host, b.insert);
+        if (current.type === "vst3") {
+          if (b.params !== undefined && !ownObject(b.params)) throw new Error("VST3 parameters must be an object.");
+          const plugin = normVst3Plugin(current.plugin);
+          const params = normVst3Params(plugin, { ...current.params, ...b.params });
+          if (b.enabled === true || (b.enabled !== false && current.enabled !== false)) {
+            if (!plugins?.validateInsert) throw new Error("VST3 host is unavailable. Bypass or remove this effect to continue.");
+            const resolved = await plugins.validateInsert(plugin.id, params);
+            const installed = normVst3Plugin(resolved.plugin);
+            if (installed.fingerprint !== plugin.fingerprint || installed.hostVersion !== plugin.hostVersion)
+              throw new Error(`VST3 ${plugin.label} or its host changed. Remove and add the effect again to review its new state.`);
+          }
+          checkedVst = { before: JSON.stringify(current), params };
+        }
+      }
       const m = await mutate(slug, b, "insert_set", (d) => {
         const { host, id } = resolveChainHost(d, b.target);
         const ins = findInsert(host, b.insert);
+        if (checkedVst && JSON.stringify(ins) !== checkedVst.before)
+          throw new Error("This VST3 insert changed while it was being checked. Refresh and try again.");
         if (b.params !== undefined) {
-          ins.params = normParams(ins.type, { ...ins.params, ...b.params });
+          ins.params = ins.type === "vst3" ? (checkedVst?.params
+            || normVst3Params(normVst3Plugin(ins.plugin), { ...ins.params, ...b.params }))
+            : normParams(ins.type, { ...ins.params, ...b.params });
         }
         if (b.enabled !== undefined) ins.enabled = !!b.enabled;
         if (b.index !== undefined) {
@@ -856,6 +976,7 @@ export async function handleMixerAction(action, b, ctx) {
         if (!MIXER_CATALOG[type]) {
           throw new Error(`device.type "${type}" is not in the rack. It has: ${Object.keys(MIXER_CATALOG).join(", ")}.`);
         }
+        if (MIXER_CATALOG[type].external) throw new Error("VST3 per-device analysis is unavailable. Analyze the rendered track or master instead.");
         job.device = { type, params: normParams(type, b.device.params) };
       }
       const r = await runEngineFast("analyze", job, 600_000);
@@ -880,6 +1001,7 @@ export async function handleMixerAction(action, b, ctx) {
       if (!MIXER_CATALOG[type]) {
         throw new Error(`Unknown device "${type}". The rack has: ${Object.keys(MIXER_CATALOG).join(", ")}.`);
       }
+      if (MIXER_CATALOG[type].external) throw new Error("VST3 effects do not expose a built-in frequency-response curve. Analyze the rendered track or master instead.");
       const r = await runEngineFast("device_response", {
         type, params: normParams(type, params), sr: 48000,
         points: b.points === undefined ? undefined : clamp(Math.round(Number(b.points)), 32, 2048),

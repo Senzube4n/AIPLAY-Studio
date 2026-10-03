@@ -151,8 +151,11 @@ test("each take passes its frozen engine and advanced controls to the shared son
   assert.equal(jobs.submitted[1].temperature, .75);
   jobs.finish(jobs.submitted[1]); await tick();
   assert.equal(runner.run.state, "done"); assert.equal(runner.run.done, 2);
-  await new Promise(resolve => setTimeout(resolve, 30));
+  // Disk commits are queued atomic writes. Wait for their completion rather
+  // than assuming the filesystem finishes within a fixed delay under load.
+  await runner.persist();
   const saved = JSON.parse(await readFile(path.join(runner.stateFile), "utf8"));
+  assert.equal(saved.run.state, "done"); assert.equal(saved.run.done, 2);
   assert.equal(saved.run.items[0].lyrics, lyrics); assert.equal(saved.run.items[0].engine, "yue2-gguf");
 });
 

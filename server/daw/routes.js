@@ -39,6 +39,7 @@ import { createReadStream } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { createRegionCache, regionWavReady } from "./cache.js";
 import { previewAudioKey } from "./preview-key.js";
+import { createPluginManager } from "./plugins.js";
 import {
   LIMITS, INSTRUMENTS, TAILS, TICKS_PER_BEAT, REGION_BARS,
   PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
@@ -352,8 +353,11 @@ export function validateCueAccentJob(job) {
 
 export function createDawRoutes(deps) {
   const { json, readBody, config } = deps;
-  const spawnPython = deps.spawnPython
+  const plugins = deps.plugins ?? createPluginManager({ config });
+  const spawnPythonBase = deps.spawnPython
     ?? ((args, opts = {}) => spawn(config.python, args, { windowsHide: true, ...opts }));
+  const spawnPython = (args, opts = {}) => spawnPythonBase(args, { ...opts,
+    env: { ...process.env, ...(opts.env || {}), ...plugins.env() } });
 
   /** The engine's python could not import a module: the refusal as an Error
    *  (status 409, reason "missing-module"), else null. */
@@ -984,6 +988,9 @@ export function createDawRoutes(deps) {
    */
   const regionCache = createRegionCache();
   async function ensureRegions(slug, doc, fromBar, toBar, opts = {}) {
+    // Validate before a cache hit: a missing/replaced binary cannot masquerade
+    // as an available effect merely because an earlier region is on disk.
+    await plugins.validateProject(doc);
     const { missing: missingPacks, dead } = await silencedByMissingPacks(doc);
     const events = dead.size
       ? noteEvents(doc).filter((e) => !dead.has(e.trackId))
@@ -1103,6 +1110,7 @@ export function createDawRoutes(deps) {
    * only be told that from rows it can see.
    */
   async function regionPlan(slug, doc) {
+    await plugins.validateProject(doc);
     const { dead } = await silencedByMissingPacks(doc);
     const events = dead.size ? noteEvents(doc).filter((e) => !dead.has(e.trackId)) : noteEvents(doc);
     const regions = regionsOf(doc);
@@ -1293,6 +1301,36 @@ export function createDawRoutes(deps) {
     const p = url.pathname;
 
     /* ---- reads ---- */
+    if (p === "/api/daw/plugins" && req.method === "GET") {
+      try { json(res, 200, await plugins.list({ refresh: url.searchParams.get("refresh") === "1" })); }
+      catch (error) { failWith(res, error, 400); }
+      return true;
+    }
+    if (p === "/api/daw/plugins/upload" && req.method === "POST") {
+      const name = url.searchParams.get("name");
+      let temporary;
+      try {
+        if (!name || name !== path.basename(name) || !/\.zip$/i.test(name) || name.length > 240 || /[\\/:\x00-\x1f]/.test(name))
+          throw new Error("Choose a plugin ZIP file.");
+        if (Number(req.headers?.["content-length"]) > 256 * 1024 * 1024) throw new Error("Plugin ZIP exceeds 256 MiB.");
+        await mkdir(plugins.stagingDir, { recursive: true });
+        temporary = path.join(plugins.stagingDir, "upload-" + randomUUID() + ".zip");
+        const { open } = await import("node:fs/promises");
+        const file = await open(temporary, "wx", 0o600);
+        let bytes = 0;
+        try {
+          for await (const block of req) {
+            bytes += block.length;
+            if (bytes > 256 * 1024 * 1024) throw new Error("Plugin ZIP exceeds 256 MiB.");
+            await file.writeFile(block);
+          }
+        } finally { await file.close(); }
+        if (!bytes) throw new Error("The plugin ZIP is empty.");
+        json(res, 200, await plugins.install({ path: temporary }));
+      } catch (error) { failWith(res, error, 400); }
+      finally { if (temporary) await unlink(temporary).catch(() => {}); }
+      return true;
+    }
 
     /* The patch registry — what exists, what is installed, and every
      * licence in full BEFORE anything is downloaded. This is the endpoint
@@ -1633,7 +1671,7 @@ export function createDawRoutes(deps) {
 
     /* ---- writes ---- */
 
-    if (p !== "/api/daw" || req.method !== "POST") return false;
+    if (!["/api/daw", "/api/daw/plugins"].includes(p) || req.method !== "POST") return false;
 
     let b;
     try {
@@ -1653,11 +1691,16 @@ export function createDawRoutes(deps) {
   async function dispatch(req, res, b) {
     const action = String(b.action || "");
     try {
+      const pluginActions = { plugin_scan: () => plugins.list({ refresh: true, folders: b.folders }),
+        plugin_inspect: () => plugins.inspect({ path: b.path, plugin: b.plugin }),
+        plugin_install: () => plugins.install({ path: b.path }), plugin_setup: () => plugins.setup() };
+      const pluginAction = Object.hasOwn(pluginActions, action) ? pluginActions[action] : null;
+      if (pluginAction) return json(res, 200, await pluginAction()), true;
       /* ── CHAIN STAGE: the mixer's actions (insert_*, mixer_set, send_*,
        * return_*, meters) live in mixer.js and share this catch, this
        * `mutate` and this ledger — one document, one reducer path. */
       const mixerReply = await handleMixerAction(action, b, {
-        mutate, readProject, runEngineFast, safe, noteEvents, buildTimeline,
+        mutate, readProject, runEngineFast, safe, noteEvents, buildTimeline, plugins,
         /* [DAWREC] so the meters/analyze/check_delivery job carries the same
          * file-backed clips the region render carries — one graph, measured. */
         audioJobClips,

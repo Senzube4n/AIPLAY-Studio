@@ -36,6 +36,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIXER_CATALOG, MIXER_ACTIONS } from "./mixer.js";
+import { PLUGIN_ACTIONS } from "./plugins.js";
 import { stemResultDetails } from "../../web/daw-audio-results.js";
 /* THE THIRD DISPATCHER. routes.js mounts server/daw/voicelab.js the way it
  * mounts mixer.js — one call before the switch — and that module OPTIONALLY
@@ -88,7 +89,8 @@ const CODE = stripComments(JS);
  * here: it posts to /api/daw/ear, a different dispatcher, and ear_test.js
  * owns that door. */
 const VOICEJS = readFileSync(path.join(WEB, "voicelab.js"), "utf8");
-const PAGES = `${CODE}\n${stripComments(VOICEJS)}`;
+const PLUGINJS = readFileSync(path.join(WEB, "daw-plugins.js"), "utf8");
+const PAGES = `${CODE}\n${stripComments(VOICEJS)}\n${stripComments(PLUGINJS)}`;
 
 /** The object literal an `action: "<name>"` sits inside — i.e. the body a page
  *  really posts, read from the call rather than grepped for by field name. */
@@ -153,6 +155,7 @@ console.log("\n  -- every gesture posts an action the server actually has --");
 {
   const routeActions = new Set([...ROUTES.matchAll(/^\s*case "([a-z_]+)": \{/gm)].map((m) => m[1]));
   for (const a of MIXER_ACTIONS) routeActions.add(a);
+  for (const a of PLUGIN_ACTIONS) routeActions.add(a);
   for (const a of voicelab?.VOICELAB_ACTIONS || []) routeActions.add(a);
   for (const a of refprofile?.REFPROFILE_ACTIONS || []) routeActions.add(a);
   ok(`routes.js + its three mounts dispatch ${routeActions.size} actions`, routeActions.size > 30);
@@ -1449,6 +1452,19 @@ console.log("\n  -- project startup and the explicit selection toolbar --");
       ok("the actual boot function runs with an isolated project-list response", false, err.message);
     }
   }
+}
+
+// Native stepped controls must accept a normal knob gesture, not just typed values.
+{
+  const source = bodyOf(JS, 'function pluginParamValue(');
+  const snap = new Function(`${source}; return pluginParamValue;`)();
+  const insert = { type: 'vst3', plugin: { parameters: {
+    wet: { type: 'number', min: 0, max: 1, step: .001 },
+    level: { type: 'number', min: -120, max: 18, step: .1 },
+  } } };
+  ok('ordinary VST3 knob drags snap to the native 0.001 parameter grid', near(snap(insert, 'wet', .494444444), .494));
+  ok('native dB controls snap across a negative range and respect its ceiling', near(snap(insert, 'level', -6.125), -6.1) && snap(insert, 'level', 25) === 18);
+  ok('native snapping leaves choice values and built-in automation intact', snap(insert, 'choice', 'Mono') === 'Mono' && snap({ type: 'eq' }, 'wet', .494444444) === .494444444);
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

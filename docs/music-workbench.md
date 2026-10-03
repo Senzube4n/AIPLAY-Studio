@@ -107,6 +107,9 @@ VST3 plugins and reference loudness matching. An installed Pedalboard host alone
 does not establish compatibility with every plugin. The chain currently processes
 the source duration without flushing effect tails. This is separate from the
 DAW's EQ, dynamics, imager, exciter, reference comparison and measured bounce.
+The DAW also has a [VST3 Plugins dock](daw-plugins.md) for installing and inspecting
+native effects, adding them to track/return/master chains and controlling them
+through the UI or MCP. DAW playback and export share those chains.
 For mastering, inspect the final exported audio with the DAW meters and use
 loudness-matched comparisons. Ozone-equivalent neural processing is not implemented.
 

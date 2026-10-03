@@ -42,6 +42,7 @@
 import { resizeNoteDurations } from "./daw-editing.js";
 import { EXPORT_PRESETS, exportSettings, exportFacts, exportDownloadUrl } from "./daw-export.js";
 import { audioResultDetails, stemResultDetails } from "./daw-audio-results.js";
+import { initDawPlugins } from "./daw-plugins.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (msg) => { $("status").textContent = msg; };
@@ -3079,6 +3080,23 @@ function showPane(p) {
  * parameter name; adding a device to rack.py grows this panel for free. */
 
 const RACK = { devices: null, agree: null };
+const pluginUI = initDawPlugins({ api, get, context: chainHost,
+  addInsert: async (id) => { await addRackDevice('vst3', id); showDock('chain'); },
+  changed: () => { paintRackPicker(); drawDevices(); },
+});
+
+function paintRackPicker() {
+  const sel = $('devAdd');
+  sel.replaceChildren(new Option('＋ insert…', ''));
+  const builtins = document.createElement('optgroup'); builtins.label = 'Studio effects';
+  for (const [id, d] of Object.entries(RACK.devices || {})) {
+    if (id !== 'vst3') builtins.append(new Option(d.label || id, id));
+  }
+  sel.append(builtins);
+  const external = document.createElement('optgroup'); external.label = 'VST3 plugins';
+  for (const plugin of pluginUI.ready()) external.append(new Option(plugin.label || plugin.name, `vst3:${plugin.id}`));
+  if (external.childElementCount) sel.append(external);
+}
 
 async function loadRack() {
   try {
@@ -3090,9 +3108,8 @@ async function loadRack() {
     RACK.devices = null;
     status(`rack catalog unavailable: ${err.message}`);
   }
-  const sel = $("devAdd");
-  sel.innerHTML = `<option value="">＋ insert…</option>`
-    + Object.entries(RACK.devices || {}).map(([id, d]) => `<option value="${id}">${d.label || id}</option>`).join("");
+  paintRackPicker();
+  pluginUI.refresh().catch(err => { $('pluginMessage').textContent = err.message; });
   /* A CATALOG DISAGREEMENT HAS ONE CAUSE IN PRACTICE.
    * mixer.js (the store's device table) and rack.py (the engine's) are
    * read from the same tree, so they only differ when the running server
@@ -3135,6 +3152,7 @@ function drawDevices() {
   box.innerHTML = "";
   const h = chainHost();
   $("devTarget").textContent = h ? h.name : "—";
+  pluginUI.contextChanged();
   if (!h) return;
   const inserts = h.host.inserts || [];
   if (!inserts.length) {
@@ -3147,7 +3165,7 @@ function drawDevices() {
     return;
   }
   inserts.forEach((ins, idx) => {
-    const spec = RACK.devices?.[ins.type];
+    const spec = ins.type === 'vst3' ? { label: ins.plugin?.label || 'VST3 plugin', params: ins.plugin?.parameters || {} } : RACK.devices?.[ins.type];
     if (idx) {
       /* THE CHAIN, READ LEFT TO RIGHT. The order of a chain is the whole
        * of what it does, so it gets an arrow rather than a gap. */
@@ -3163,8 +3181,9 @@ function drawDevices() {
       + (S.devInsert === ins.id ? " d-cur" : "");
     const head = document.createElement("div");
     head.className = "d-devhead";
-    head.innerHTML = `<span class="d-ix" title="position in the chain">${idx + 1}</span>`
-      + `<span class="d-nm">${spec?.label || ins.type}</span>`;
+    const position = document.createElement('span'); position.className = 'd-ix'; position.textContent = idx + 1;
+    const deviceName = document.createElement('span'); deviceName.className = 'd-nm'; deviceName.textContent = spec?.label || ins.type;
+    head.append(position, deviceName);
     const mkBtn = (txt, title, fn) => {
       const b = document.createElement("button");
       b.className = "d-btn d-sm"; b.textContent = txt; b.title = title;
@@ -3185,7 +3204,8 @@ function drawDevices() {
       mkBtn("✕", "remove (insert_remove)", () =>
         act({ action: "insert_remove", slug: S.slug, target: h.target, insert: ins.id },
           { action: "insert_add", slug: S.slug, target: h.target, type: ins.type,
-            index: idx, params: plainParams(ins.params) },
+            plugin: ins.plugin?.id, plugin_snapshot: ins.type === 'vst3' && !ins.enabled ? ins.plugin : undefined,
+            enabled: ins.enabled, index: idx, params: plainParams(ins.params) },
           `remove ${ins.type}`)),
     );
     if (ins.enabled) head.querySelector(".d-btn").classList.add("d-on");
@@ -3210,7 +3230,10 @@ function drawDevices() {
     const note = document.createElement("div");
     note.className = "d-curvenote";
     body.appendChild(note);
-    wantCurve(h, ins, curve, note);
+    if (ins.type === 'vst3') {
+      curve.remove(); note.textContent = 'Native VST3 effect';
+      note.title = 'Changes re-render the affected audio. Extend the project to leave room for reverb and delay tails.';
+    } else wantCurve(h, ins, curve, note);
 
     for (const [pname, pspec] of Object.entries(spec?.params || {})) {
       body.appendChild(paramControl(h, ins, pname, pspec));
@@ -3330,14 +3353,16 @@ function paramControl(h, ins, pname, pspec) {
   if (keyed) wrap.classList.add("d-keyed");
   const lab = document.createElement("div");
   lab.className = "d-plab";
-  lab.textContent = pname.replace(/_/g, " ");
+  lab.textContent = pspec.label || pname.replace(/_/g, " ");
   lab.title = `${pspec.desc || pname}${pspec.unit ? ` (${pspec.unit})` : ""}`
     + (pspec.animatable ? " — automatable" : "");
 
   if (pspec.type === "bool") {
-    const t = document.createElement("div");
+    const t = document.createElement(ins.type === 'vst3' ? 'button' : 'div');
     t.className = "d-toggle" + (raw ? " d-on" : "");
     t.innerHTML = "<i></i>";
+    t.setAttribute('aria-label', pname.replace(/_/g, ' '));
+    t.setAttribute('aria-pressed', String(!!raw));
     t.addEventListener("click", () => setParam(h, ins, pname, !raw, !!raw));
     wrap.append(t, lab);
     return wrap;
@@ -3348,11 +3373,12 @@ function paramControl(h, ins, pname, pspec) {
     s.className = "d-sel";
     const values = pspec.type === "enum" ? pspec.values
       : ["", ...(S.proj?.tracks || []).map((t) => t.id)];
-    s.innerHTML = values.map((v) => {
+    for (const v of values) {
       const label = pspec.type === "track"
         ? (v ? (S.proj.tracks.find((t) => t.id === v)?.name ?? v) : "— none —") : v;
-      return `<option value="${v}"${v === raw ? " selected" : ""}>${label}</option>`;
-    }).join("");
+      s.append(new Option(label, v, false, v === raw));
+    }
+    s.setAttribute('aria-label', pname.replace(/_/g, ' '));
     s.addEventListener("change", () => setParam(h, ins, pname, s.value, raw));
     wrap.append(s, lab);
     return wrap;
@@ -3384,14 +3410,14 @@ function paramControl(h, ins, pname, pspec) {
     drag.cur = Math.max(pspec.min, Math.min(pspec.max, drag.cur - (e.clientY - drag.y) * step));
     drag.y = e.clientY;
     paint(drag.cur);
-    if (S.autoWrite && S.playing) drag.ride.push({ t: barFloatNow(), v: drag.cur });
+    if (pspec.animatable && S.autoWrite && S.playing) drag.ride.push({ t: barFloatNow(), v: drag.cur });
   });
   k.addEventListener("pointerup", async (e) => {
     const d = drag; drag = null;
     S.dragging = false;
     if (!d) return;
     releasePointer(k, e.pointerId);
-    if (S.autoWrite && d.ride.length > 1) {
+    if (pspec.animatable && S.autoWrite && d.ride.length > 1) {
       const key = `${h.target === "master" ? "mst:master" : (h.host.id ? (S.proj.returns || []).some((r) => r.id === h.host.id) ? `ret:${h.host.id}` : `trk:${h.host.id}` : "mst:master")}:ins:${ins.id}:${pname}`;
       const ref = laneRef(key);
       if (ref) { await writeRide(ref, d.ride); return; }
@@ -3400,29 +3426,48 @@ function paramControl(h, ins, pname, pspec) {
   });
   k.addEventListener("dblclick", () => setParam(h, ins, pname, pspec.default, v));
   wrap.append(k, val, lab);
+  if (ins.type === 'vst3') {
+    const input = document.createElement('input'); input.type = 'number'; input.className = 'd-num d-pedit';
+    input.min = pspec.min; input.max = pspec.max; input.step = pspec.step || 'any'; input.value = v;
+    input.setAttribute('aria-label', pname.replace(/_/g, ' '));
+    input.onchange = () => { const n = Number(input.value); if (input.value !== '' && Number.isFinite(n)) setParam(h, ins, pname, n, v); };
+    wrap.append(input);
+  }
   return wrap;
 }
 
 const setParam = (h, ins, pname, value, before) => act(
-  { action: "insert_set", slug: S.slug, target: h.target, insert: ins.id, params: { [pname]: value } },
+  { action: "insert_set", slug: S.slug, target: h.target, insert: ins.id, params: { [pname]: pluginParamValue(ins, pname, value) } },
   { action: "insert_set", slug: S.slug, target: h.target, insert: ins.id, params: { [pname]: before } },
   `${ins.type}.${pname} → ${typeof value === "number" ? fmt(value) : value}`);
 
+function pluginParamValue(ins, name, value) {
+  const spec = ins.type === 'vst3' && ins.plugin?.parameters?.[name];
+  if (spec?.type !== 'number' || typeof value !== 'number') return value;
+  const snapped = spec.step > 0 ? spec.min + Math.round((value - spec.min) / spec.step) * spec.step : value;
+  return Math.max(spec.min, Math.min(spec.max, snapped));
+}
+
 $("devAdd").addEventListener("change", async () => {
-  const type = $("devAdd").value;
+  const value = $("devAdd").value;
   $("devAdd").value = "";
+  if (value.startsWith('vst3:')) return addRackDevice('vst3', value.slice(5));
+  return addRackDevice(value);
+});
+
+async function addRackDevice(type, plugin) {
   const h = chainHost();
   if (!type || !h) return;
-  const r = await act({ action: "insert_add", slug: S.slug, target: h.target, type }, null, `add ${type}`);
+  const r = await act({ action: "insert_add", slug: S.slug, target: h.target, type, plugin }, null, `add ${type}`);
   if (r?.insertId) {
     pushUndo({ body: { action: "insert_remove", slug: S.slug, target: h.target, insert: r.insertId },
-               forward: { action: "insert_add", slug: S.slug, target: h.target, type },
+               forward: { action: "insert_add", slug: S.slug, target: h.target, type, plugin },
                inverseFrom: (rr) => ({ body: { action: "insert_remove", slug: S.slug,
                                                target: h.target, insert: rr?.insertId } }),
                label: `add ${type}` });
     S.devInsert = r.insertId;
   }
-});
+}
 
 /* ═══════════════════════════════════════════════════ THE MIXER ══════════
  * Channel strips with a real dB-law fader, pan, sends, solo/mute/arm.
@@ -4116,6 +4161,7 @@ function showDock(tab) {
   $("dockBtn").classList.add("d-on");
   if (wasFolded && viewOf()?.dock?.folded) saveView({ dock: { folded: false } });
   for (const [id, pane, t] of [["tabChain", "paneChain", "chain"],
+                               ["tabPlugins", "panePlugins", "plugins"],
                                ["tabAnalysis", "paneAnalysis", "analysis"],
                                ["tabEar", "paneEar", "ear"],
                                ["tabPassage", "panePassage", "passage"]]) {
@@ -4130,6 +4176,10 @@ function showDock(tab) {
     $("centre").style.setProperty("--d-dock-h", `${Math.min(420, Math.round(innerHeight * 0.42))}px`);
   }
   if (tab === "analysis") { sizeAnalysis(); drawAnalysis(); }
+  if (tab === 'plugins') pluginUI.refresh().catch(err => { $('pluginMessage').textContent = err.message; });
+  if (tab === 'plugins' && $('dock').getBoundingClientRect().height < 260) {
+    $('centre').style.setProperty('--d-dock-h', `${Math.min(340, Math.max(220, Math.round(innerHeight * .42)))}px`);
+  }
   if (tab === "ear") document.querySelector(".ear-fab")?.setAttribute("data-open", "1");
   passageDock?.setVisible(tab === 'passage');
   if (tab === 'passage') {
@@ -4144,6 +4194,7 @@ function showDock(tab) {
 }
 $("tabPassage").addEventListener('click', () => { showDock('passage'); passageDock?.refresh(); });
 $("tabChain").addEventListener("click", () => showDock("chain"));
+$("tabPlugins").addEventListener('click', () => showDock('plugins'));
 $("tabAnalysis").addEventListener("click", () => showDock("analysis"));
 $("tabEar").addEventListener("click", () => {
   showDock("ear");

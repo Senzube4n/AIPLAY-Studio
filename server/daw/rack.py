@@ -27,7 +27,7 @@ format, no parallel maths). Key times arrive in SECONDS: store.js converts
 musical positions (float bars) at the render boundary, the same place all
 other seconds are born.
 
-DETERMINISM. The chain stage is a pure function of (dry buffers, mixer,
+DETERMINISM. The built-in chain stage is a pure function of (dry buffers, mixer,
 window): no RNG, no wall clock, no state that survives a call. Stateful
 devices (filters, delays, reverbs) are stateful only WITHIN a render, and
 every render processes from absolute sample 0 to the end of its window, so a
@@ -37,9 +37,13 @@ region re-synthesises the track from the top -- is measured and reported,
 not hidden. The consequence for the dirty graph (a note through a STATEFUL
 chain reaches every later region) lives in server/daw/mixer.js, beside the
 hasher that enforces it.
+External effects start from their saved state too, but their own randomness,
+block-size dependence or unreported latency can weaken this seam guarantee.
 
-THE SOUND. In-house DSP, numpy/scipy, offline; no GPL anywhere near this
-file. Envelope followers run at a 16-sample control rate (0.33 ms @48k) --
+THE SOUND. Built-in DSP uses numpy/scipy offline. Optional VST3 inserts run
+in a separate host process, restored from their saved state on every render;
+third-party effects may still contain their own randomness. Envelope
+followers run at a 16-sample control rate (0.33 ms @48k) --
 sequential by nature, so the loop is short on purpose. Automated insert
 params are evaluated per 1024-sample block with filter state carried across
 blocks; fader/pan/send levels are evaluated per block and linearly
@@ -135,6 +139,7 @@ import interp  # noqa: E402
 # arguments; the two lanes must agree note for note or a mixer setting would
 # change the notes themselves.
 import instruments as dawinst  # noqa: E402
+import plugin_chain  # noqa: E402
 
 RACK_VERSION = 1
 
@@ -183,6 +188,11 @@ SYNC_QUARTERS = {
 }
 
 CATALOG = {
+    "vst3": {
+        "label": "VST3 effect", "stateful": True, "external": True,
+        "why": "Registered audio effect in an isolated host. Static controls and saved state; extend project bars for final tails.",
+        "params": {},
+    },
     "eq": {
         "label": "Parametric EQ",
         "why": "Four bells plus high-pass and low-pass, RBJ-cookbook biquads. "
@@ -828,6 +838,7 @@ def dev_utility(x, p, ctx):
 
 
 DEVICES = {
+    "vst3": plugin_chain.run_vst3,
     "eq": dev_eq, "compressor": dev_compressor, "limiter": dev_limiter,
     "saturator": dev_saturator, "chorus": dev_chorus, "delay": dev_delay,
     "reverb": dev_reverb, "gate": dev_gate, "utility": dev_utility,
@@ -839,6 +850,9 @@ DEVICES = {
 def run_chain(x, inserts, ctx):
     for ins in inserts or []:
         if not isinstance(ins, dict) or ins.get("enabled") is False:
+            continue
+        if ins.get("type") == "vst3":
+            x = plugin_chain.run_vst3(x, ins, ctx)
             continue
         fn = DEVICES.get(ins.get("type"))
         if fn is None:
@@ -933,7 +947,7 @@ def _mix_audio(job, sr, total, stereo, dry):
     return dry
 
 
-def graph_future_seconds(mixer):
+def graph_future_seconds(mixer, sr=48000):
     """Future required by centered limiter detection/smoothing along a path.
 
     Keep in sync with mixer.js mixerFutureSeconds, which includes those
@@ -942,7 +956,12 @@ def graph_future_seconds(mixer):
     def chain(rows):
         seconds = 0.0
         for ins in rows or []:
-            if ins.get("enabled") is False or ins.get("type") not in ("limiter", "maximizer"):
+            if ins.get("enabled") is False:
+                continue
+            if ins.get("type") == "vst3":
+                seconds += (ins.get("plugin") or {}).get("latencySamples", 0) / sr
+                continue
+            if ins.get("type") not in ("limiter", "maximizer"):
                 continue
             value = (ins.get("params") or {}).get("lookahead_ms", 5)
             if isinstance(value, dict):
@@ -972,7 +991,7 @@ def chain_graph(job, synths, capture=False):
     requested_total = w0 + n
     # A region must see the same following transient as a whole-song render.
     # Compute beyond its end, then crop every returned bus to the contract.
-    future = int(math.ceil(graph_future_seconds(mixer) * sr))
+    future = int(math.ceil(graph_future_seconds(mixer, sr) * sr))
     total = requested_total + future
     stereo = stereo_on(mixer)
     dry = _synth_notes(job, synths, sr, total, stereo)

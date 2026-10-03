@@ -507,6 +507,8 @@ work = {
 }
 print(f"        {'device':<12} {'ms/4bar':>8}")
 for name in sorted(rack.DEVICES):
+    if rack.CATALOG[name].get("external"):
+        continue  # External hosts have their own integration and timeout gate.
     t0 = time.perf_counter()
     # .get, not [] : master.py registers the mastering suite into this same
     # table, and those devices are timed (with their own working params) in
@@ -517,7 +519,7 @@ for name in sorted(rack.DEVICES):
     print(f"        {name:<12} {ms:8.1f}")
     if ms > 1000:
         budget_fail.append(f"{name} {ms:.0f}ms")
-ok("every device renders a 4-bar region in under a second", not budget_fail,
+ok("every built-in device renders a 4-bar region in under a second", not budget_fail,
    ", ".join(budget_fail))
 
 
