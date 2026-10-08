@@ -720,8 +720,12 @@ export const KNOBS = [
     path: ["video", "freeBeforeClip"],
     effect: "Restarts the engine before an H3 or FastH3 clip when it has already rendered something. Measured on an "
       + "RX 9060 XT: a second clip in the same engine spilled into shared memory and took about 152 s a step "
-      + "instead of 82 s; unloading the models did not help, a restart did (78 s). Auto does it on any card that is "
-      + "not NVIDIA. The restart costs about 45 s.",
+      + "instead of 82 s; unloading the models did not help, a restart did (78 s). Auto does it on AMD and Intel "
+      + "cards, where it was measured, and on a PC without a graphics card, and not on NVIDIA or a card Studio "
+      + "could not read. On every card it "
+      + "never restarts while something else is running on the engine (a Reactive look or a chat turn between two "
+      + "of its runs included), a song is rendering, or a plan is mid-step: "
+      + "it waits up to 20 minutes, then renders without the restart. The restart costs about 45 s.",
     cite: DOCS.config,
   },
   {

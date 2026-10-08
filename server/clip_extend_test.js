@@ -105,6 +105,45 @@ console.log("\n§4  the door, the queue, the tool, the router, the page and the 
   ok("the API doc describes it", /### `POST \/api\/video` · `\{ "action": "extend" \}`/.test(api) && /extend_clip/.test(api));
 }
 
+console.log("\n§5  the count a continuation runs (art.js extendSteps)");
+{
+  /* Keep my character's default on H3 + "Video references" is the ref2v
+   * 4-step at 4; a continuation runs on the plain path, whose 4 is the fl2v
+   * 4-step file, not on that disk. Every such clip was refused, and the Clips
+   * page's Extend has no step control (review of the port, 2026-10-08). */
+  const { extendSteps } = await import("./art.js");
+  const F = { fl8: "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+    fl4: "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+    ref4: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors" };
+  /* config.js's slots and readings on that disk, NVIDIA (per path). */
+  const h3 = { turboLora: F.fl8, turboLora4: F.fl8, turboLora3: F.fl4, refTurboLora: F.ref4, refTurboLora4: F.ref4,
+    turboMaxSteps: 12, turbo4MaxSteps: 5, turbo3MaxSteps: 3, refTurboSteps: 4,
+    turboBuilds: { three: false, four: false, eight: true }, plainBuilds: { three: false, four: false, eight: true },
+    refBuilds: { four: true, eight: false }, stepDefaults: { fast: 8, standard: 8, best: 20 }, steps: 8 };
+  const nv = { video: { engine: "h3", engines: { h3 } } };
+  const onDisk = (n) => n === F.fl8 || n === F.ref4;
+  const mira = { steps: 4, refImages: ["mira.png"], prompt: "Mira runs" };
+  const cont = extendSteps({}, mira, nv, { onDisk });
+  ok("a character clip's 4 gives way to the plain path's own 8, and says why", cont.steps === 8
+    && /^The clip ran 4 steps with reference pictures; a continuation runs without them, where 4 steps would need a speed-up that is not on this PC, so it runs this engine's own 8\.$/.test(cont.note || ""),
+    JSON.stringify(cont));
+  eq("a count the request names stays (the route refuses it with its row)", extendSteps({ steps: 4 }, mira, nv, { onDisk }), { steps: 4, note: null });
+  eq("a clip whose own count renders keeps it", extendSteps({}, { steps: 8 }, nv, { onDisk }), { steps: 8, note: null });
+  eq("a clip with no count gets the engine's own", extendSteps({}, null, nv, { onDisk }), { steps: 8, note: null });
+  /* AMD, Intel and the CPU: main's rule. The 8-step file loads at 4 there and
+   * renders, so the clip keeps its 4, as main does. */
+  const amd = { video: { engine: "h3", engines: { h3: { ...h3, plainBuilds: null, refBuilds: null,
+    turboBuilds: { three: false, four: false, eight: false }, stepDefaults: { fast: 20, standard: 20, best: 20 }, steps: 20 } } } };
+  eq("on AMD the same disk keeps the clip's 4", extendSteps({}, mira, amd, { onDisk }), { steps: 4, note: null });
+  const bare = extendSteps({}, mira, amd, { onDisk: () => false });
+  ok("...and with no speed-up on disk at all, the engine's own 20 rather than a refusal (on every card)", bare.steps === 20 && /own 20\.$/.test(bare.note || ""), JSON.stringify(bare));
+  const index = src("./index.js"), app = src("../web/app.js");
+  ok("the door reads it, and says the note in its answer",
+    /const \{ steps, note: stepsNote \} = extendSteps\(b, prior\);/.test(index) && /steps, \.\.\.\(stepsNote \? \{ stepsNote \} : \{\}\),/.test(index));
+  ok("the Extend sheet opens the model window on a refusal's row",
+    /if \(r\.error\) \{ \$\("cextWarn"\)\.textContent = r\.error; \$\("cextWarn"\)\.hidden = false; offerModel\(r\); return; \}/.test(app));
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  · ${f}`);
 process.exit(failures.length ? 1 : 0);

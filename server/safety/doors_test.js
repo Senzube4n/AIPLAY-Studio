@@ -961,7 +961,7 @@ section("read: the review's wiring (2026-09-24), each pin two-sided");
     (t) => before('door: "collab.shot"', "const wrote = await sealFor(packet")(t), INDEX,
     (t) => t.replace('door: "collab.shot"', 'door: "collab.shoot"'), "the check is renamed away");
   both("Reactive Paint is judged with its source clip's and style pictures' history before a frame is painted",
-    (t) => /door: "reactive\.paint"[\s\S]{0,200}context: lin\.texts, flags: lin\.flags[\s\S]{0,80}return paintClip\(/.test(t), INDEX,
+    (t) => /door: "reactive\.paint"[\s\S]{0,200}context: lin\.texts, flags: lin\.flags[\s\S]{0,200}return await paintClip\(/.test(t), INDEX,
     (t) => t.replace('door: "reactive.paint"', 'door: "reactive.painted"'), "the check is renamed away");
   both("...and the Motion look hands that history to the engine door",
     (t) => /motionClip\(\{ \.\.\.mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin\.texts, safetyFlags: lin\.flags \}/.test(t), INDEX,

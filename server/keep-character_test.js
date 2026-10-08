@@ -110,12 +110,25 @@ const L = {
   tao: "taomate_h3_3step_comfy.safetensors",
 };
 const VAE8 = "minimax_h3_video_vae_int8_convrot.safetensors";
+/* EVERY READING OF THE DISK IS NAMED, the per-path ones too (config.js
+ * plainBuilds and refBuilds, made on NVIDIA and a PC whose settings name no
+ * card): spread over the live engine, these disks inherited THIS PC's, so the
+ * reference renders were judged by whatever the PC running the lane holds,
+ * and a fresh NVIDIA install with the H3 row's file alone refused them (2 of
+ * 15 tests failed; 5 with no settings and an empty disk). Each reading here is
+ * the one config.js makes from the named files: a slot counts for its band
+ * only with a file made for that count. */
 const DISK8 = eng({ turboLora: L.fl8, turboLora4: L.fl4, turboLora3: L.tao, refTurboLora: L.ref8, refTurboLora4: L.ref4,
   refTurboSteps: 8, stepDefaults: { fast: 3, standard: 8, best: 20 }, steps: 8, videoVae: VAE8,
-  turboBuilds: { three: true, four: true, eight: true } });
+  turboBuilds: { three: true, four: true, eight: true },
+  plainBuilds: { three: true, four: true, eight: true }, refBuilds: { four: true, eight: true } });
 const DISK4 = eng({ turboLora: L.fl4, turboLora4: L.fl4, turboLora3: L.tao, refTurboLora: L.ref4, refTurboLora4: L.ref4,
   refTurboSteps: 4, stepDefaults: { fast: 3, standard: 4, best: 20 }, steps: 4, videoVae: VAE8,
-  turboBuilds: { three: true, four: true, eight: false } });
+  turboBuilds: { three: true, four: true, eight: false },
+  plainBuilds: { three: true, four: true, eight: false }, refBuilds: { four: true, eight: false } });
+/* The same disks read by main's rule (AMD, Intel and the CPU: no per-path
+ * readings, Bucky's tests), which must plan the same. */
+const mainsRule = (d) => ({ ...d, plainBuilds: null, refBuilds: null });
 const MIRA = { name: "Mira", fragment: "a tall woman with cropped silver hair", refImages: ["m1.png", "m2.png", "m3.png", "m4.png"] };
 const plan = (b, o = {}) => videoPlan({ prompt: "Mira runs through the rain", ...b }, { engineKey: "h3", eng: DISK8, ...o });
 
@@ -136,6 +149,17 @@ test("3: with references and no count named, the reference build's own count run
   assert.equal(text.notes.find((n) => n.id === "steps-measured"), undefined, "no character, nothing measured to fall short of");
   /* The live config reads the same way (whatever this PC holds). */
   assert.equal(videoPlan({ prompt: "a", refImages: ["a.png"] }, { engineKey: "h3", eng: H3 }).steps, referenceSteps(H3));
+});
+
+test("3: the named disks plan the same on NVIDIA's per-path rule and on main's (AMD, Intel, the CPU)", () => {
+  for (const [name, d, steps] of [["DISK8", DISK8, 8], ["DISK4", DISK4, 4]]) {
+    for (const [rule, e] of [["per path", d], ["main's", mainsRule(d)]]) {
+      const p = videoPlan({ prompt: "<Picture 1> is Mira. Mira runs", refImages: ["a.png"] }, { engineKey: "h3", eng: e });
+      assert.equal(p.refusal ?? null, null, `${name}, ${rule}: renders`);
+      assert.equal(p.steps, steps, `${name}, ${rule}: the reference build's own count`);
+      assert.equal(p.character.receipt, `1 reference picture + ${steps} steps${steps === 8 ? "" : " (measured with 8, not on this PC)"}`, `${name}, ${rule}`);
+    }
+  }
 });
 
 test("3: on a disk with only the 4-step reference file, keeping a character is said to run an unmeasured setup", () => {

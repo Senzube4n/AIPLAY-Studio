@@ -51,7 +51,7 @@ test("the clip deadline allows for this PC's own speed", () => {
   assert.equal(clipBudgetMs(299, "nvidia", null, "ltx"), clipBudgetMs(299, "nvidia"),
     "the longer floor does not delay unrelated engines");
   const art = read("./art.js");
-  assert.match(art, /const budgetMs = clipBudgetMs\(expected, vendorOf\(config\.gpu, config\.torchBackend\), videoSpeed\.factor\(engine\), engine\);/);
+  assert.match(art, /const vendor = cardVendor\(\);\s*const budgetMs = clipBudgetMs\(expected, vendor, videoSpeed\.factor\(engine\), engine\);/);
   assert.match(art, /if \(!done\.cached\) videoSpeed\.record\(engine, done\.runningSec \?\? done\.elapsedSec, expected\);/,
     "a real render is measured; a cache hit is not a speed");
 });

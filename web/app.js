@@ -8693,18 +8693,24 @@ function vidQualitySteps(eng, keeping = false) {
  * is TaoMate, 4 steps the 4-step file, 6 to 12 the 8-step file, and 13 and up
  * the bare model, which needs none. The server refuses a step count whose
  * file is missing and offers its download (video-plain.js speedupNeeded);
- * this is the same rule, so the page can offer it first. Null when nothing
- * is missing, else { build, row }. */
+ * this is the same rule, so the page can offer it first. Each path is judged
+ * by its own files where the server sends them (plainBuilds and refBuilds,
+ * NVIDIA and a card nobody could read): with references the reference path's
+ * file for the band, never a plain one. AMD, Intel and the CPU get no
+ * per-path reading, and there the rule is main's, exactly (Bucky's rule).
+ * Null when nothing is missing, else { build, row }. */
 const VID_SPEEDUP_ROWS = { 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" };
 function vidSpeedupNeed(eng, steps, hasRefs) {
   const tb = eng?.turboBuilds;
   const n = Number(steps);
   if (!tb || eng.fixedSteps || !Number.isFinite(n) || n > (eng.turboMaxSteps ?? 12)) return null;
-  const build = hasRefs ? (n <= (eng.turbo4MaxSteps ?? 5)
-    ? (tb.four ? null : 4) : (tb.eight ? null : 8))
-    : n <= (eng.turbo3MaxSteps ?? 3) ? (tb.three ? null : 3)
-    : n <= (eng.turbo4MaxSteps ?? 5) ? (tb.four ? null : 4)
-    : (tb.eight ? null : 8);
+  const band4 = n <= (eng.turbo4MaxSteps ?? 5);
+  const rb = eng.refBuilds, perPath = !!(rb && eng.plainBuilds), pb = perPath ? eng.plainBuilds : tb;
+  const build = hasRefs ? (band4
+    ? ((perPath ? rb.four : tb.four) ? null : 4) : ((perPath ? rb.eight : tb.eight) ? null : 8))
+    : n <= (eng.turbo3MaxSteps ?? 3) ? (pb.three ? null : 3)
+    : band4 ? (pb.four ? null : 4)
+    : (pb.eight ? null : 8);
   return build ? { build, row: VID_SPEEDUP_ROWS[build] } : null;
 }
 /** The words for a missing speed-up, and the model window on its row. */
@@ -10548,7 +10554,10 @@ $("cextGo").onclick = async () => {
         seconds: Number($("cextSecs").value) || 3,
       }),
     })).json();
-    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; return; }
+    /* A missing speed-up names its row (needsModel): the model window opens
+     * on it, as every other refusal does, instead of words with nothing to
+     * press (this sheet has no step control). */
+    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; offerModel(r); return; }
     $("cext").hidden = true;
     loadClips();
   } finally {

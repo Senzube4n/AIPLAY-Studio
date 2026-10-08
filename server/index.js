@@ -70,7 +70,7 @@ import { Library } from "./library.js";
 import { isNativeLibraryWav } from "./library-wav.js";
 import { BatchRunner, plannedPaidSongs } from "./batch.js";
 import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
-import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed } from "./art.js";
+import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed, clipSpeedupNeeded, extendSteps } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
 import { whisperPythonMissing, pythonVerdict } from "./lrc.js";
 import { createWhisperRoutes } from "./whisper.js";
@@ -577,6 +577,20 @@ const batch = new BatchRunner(jobs, {
 // Draws covers only while the music queue is empty — see art.js for why that is
 // a hard requirement rather than politeness.
 const art = new ArtRunner(comfy, jobs);
+/* THE PLAN RUNNERS, the third queue the fresh-engine restart waits for
+ * (art.js otherWorkOnEngine): an overnight run in the middle of a step that is
+ * not a picture or clip it is waiting on (a music step, or between two), or a
+ * music-video plan whose step is not a job in the art queue (its jobs are
+ * named `…:mv_<slug>_…`, mv/generate.js). A plan waiting on the art queue is
+ * waiting on this clip or on one behind it, which the restart does not touch.
+ * On every card: it is part of the wait before Bucky's restart. */
+art.planBusy = () => {
+  const r = batch.run;
+  if (r && r.state === "running" && !batch.pendingMedia) return "an overnight run";
+  const artFiles = [art.current, ...art.queue].map((j) => String(j?.file || ""));
+  const mid = plansRunningNow().find((slug) => !artFiles.some((f) => f.includes(`:mv_${slug}_`)));
+  return mid ? `the music-video plan for ${mid}` : null;
+};
 const h3RefModService = createH3RefModService({
   config, objectInfo: (name) => engineDoor.objectInfo(name),
   workflowAssigned: () => assignedTo("video"),
@@ -3835,6 +3849,12 @@ const server = http.createServer(async (req, res) => {
                * (video-plain.js keepFast), H3 only. */
               keepFast: k === "h3" ? keepFast(e) : null,
               turboBuilds: e.turboBuilds ?? null,
+              /* Each path's own files (config.js resolveH3Steps): what a
+               * render is checked by. Null on AMD, Intel and the CPU
+               * (config.js offNvidia), where turboBuilds, main's both-paths
+               * reading, is the check (Bucky's rule). */
+              plainBuilds: e.plainBuilds ?? null,
+              refBuilds: e.refBuilds ?? null,
               /* This PC's measured speed against the cost curve (video-speed.js):
                * the page multiplies its estimate by it. Null before a clip. */
               speedFactor: videoSpeed.factor(k), speedSamples: videoSpeed.samples(k),
@@ -4502,23 +4522,36 @@ const server = http.createServer(async (req, res) => {
            * and the style pictures were made from (server/safety/lineage.js).
            * Paint's frames reach the engine one by one through /api/engine,
            * which sees the words but not this history, so it is judged here. */
-          paint: (po) => {
+          /* ⚠ A HOLD ON THE ENGINE DOOR, from the first frame to the last
+           * (engine/client.js hold()). The frames are hundreds of door runs
+           * with a few hundred ms between them, and the fresh-engine restart
+           * before an H3 clip (art.js) waits for runs in flight: without the
+           * hold it restarted in a gap, the next frame was refused and the
+           * whole render was lost. */
+          paint: async (po) => {
             const lin = lineage([po.clip, ...(Array.isArray(po.styles) ? po.styles : [])]);
             const d = paintDials(po.dials || {});
             assertSafe({ door: "reactive.paint", via: "reactive.paint", actor: who, texts: [d.styleA, d.styleB],
               context: lin.texts, flags: lin.flags });
-            return paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
-              actor: who,
-              onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
-            });
+            const release = engineDoor.hold("a Reactive Paint look");
+            try {
+              return await paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
+                actor: who,
+                onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
+              });
+            } finally { release(); }
           },
           /* The Motion look: AnimateDiff through the engine door, adopted
            * into the clips library like any other render. The door judges
-           * its graph with the source clip's and the pictures' history. */
-          motion: (mo) => {
+           * its graph with the source clip's and the pictures' history. Two
+           * door runs, held together like Paint's frames. */
+          motion: async (mo) => {
             const lin = lineage([mo.clip, ...(Array.isArray(mo.pictures) ? mo.pictures : [])]);
-            return motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
-              { engine: engineDoor, actor: who });
+            const release = engineDoor.hold("a Reactive Motion look");
+            try {
+              return await motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
+                { engine: engineDoor, actor: who });
+            } finally { release(); }
           },
         });
         return json(res, 200, out);
@@ -8270,12 +8303,26 @@ const server = http.createServer(async (req, res) => {
         if (!vr.ready) return json(res, 400, { error: `Continuing a clip needs MiniMax H3, which is not installed: ${vr.missing.join(", ")}` });
         try { b.loras = await checkedVideoLoras(b.loras, "h3"); }
         catch (err) { return json(res, 400, { error: err.message }); }
+        const prior = clipMeta.get(name);
+        /* The request's count, else the clip's own, unless the clip ran it on
+         * the reference path and the plain path the continuation runs on
+         * cannot: then the engine's own, said in `stepsNote` (art.js
+         * extendSteps). */
+        const { steps, note: stepsNote } = extendSteps(b, prior);
+        /* A speed-up this count loads that is not on disk is refused here, in
+         * the sentence the Video screen says, with the row that brings it,
+         * before anything is staged (art.js clipSpeedupNeeded, which the runner
+         * asks again). It used to queue, and the job failed in ComfyUI. */
+        const missingSpeedup = clipSpeedupNeeded({ engine: "h3", steps });
+        if (missingSpeedup) {
+          return json(res, 400, { error: missingSpeedup.error, reason: missingSpeedup.build === 3 ? "taomate-missing" : "speedup-missing",
+            needsModel: missingSpeedup.row });
+        }
         const probe = await probeClip(src);
         if (probe.error) return json(res, 400, { error: `The clip could not be measured — ${probe.error}`, reason: "probe" });
         const overlap = overlapFor(probe.frames, Number(b.overlapFrames) || 22);
         if (!overlap) return json(res, 400, { error: `${name} has ${probe.frames} frames; a continuation needs at least 5.`, reason: "too-short" });
         const ext = extensionFrames(Math.min(Math.max(Number(b.seconds) || 3, 1), 20), probe.fps || videoEngine("h3").fps);
-        const prior = clipMeta.get(name);
         const prompt = String(b.prompt || prior?.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe what happens next — this clip carries no prompt of its own." });
         /* ⚠ THE MINORS RULE: the continuation's words, with the clip it
@@ -8303,7 +8350,7 @@ const server = http.createServer(async (req, res) => {
             seconds: (overlap + ext) / (probe.fps || 24),
             width: probe.width || videoEngine("h3").width,
             height: probe.height || videoEngine("h3").height,
-            steps: Math.min(Math.max(Number(b.steps) || prior?.steps || videoEngine("h3").steps || 20, 2), 40),
+            steps,
             keepAudio: b.keepAudio === false ? false : probe.hasAudio,
             continueFrom: {
               file: staged, frames: probe.frames, fps: probe.fps || 24, hasAudio: !!probe.hasAudio,
@@ -8320,7 +8367,7 @@ const server = http.createServer(async (req, res) => {
         });
         if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 200, {
-          ok: true, id, job: job && { id: job.id },
+          ok: true, id, job: job && { id: job.id }, steps, ...(stepsNote ? { stepsNote } : {}),
           overlapFrames: overlap, extensionFrames: ext, windowFrames: overlap + ext,
           extensionSeconds: Number((ext / (probe.fps || 24)).toFixed(2)),
           ...art.status(),

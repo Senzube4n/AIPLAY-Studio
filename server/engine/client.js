@@ -503,6 +503,8 @@ export function createEngineClient(deps = {}) {
         queuedSec: r.startedAt ? (r.startedAt - r.t0) / 1000 : null,
         runningSec: r.startedAt ? (Date.now() - r.startedAt) / 1000 : null,
       })),
+      /* Work made of several runs, between two of them (hold() below). */
+      held: heldBy(),
       hashModels: s.hashModels === true,
       graphStore: g,
     };
@@ -512,6 +514,46 @@ export function createEngineClient(deps = {}) {
 
   /** Runs the app knows about right now, for `status()` and the panel. */
   const inFlight = new Map();
+  /* When the door last let a run go (dropRun), for a hold with idleMs. */
+  let lastRunEnd = 0;
+  const dropRun = (runId) => { if (inFlight.delete(runId)) lastRunEnd = Date.now(); };
+
+  /**
+   * HOLDS: WORK MADE OF SEVERAL RUNS IN A ROW, BETWEEN TWO OF THEM.
+   *
+   * A Reactive Paint look posts one run per frame (scripts/reactive_video.mjs,
+   * hundreds of them), the Motion look two, a chat turn up to six model calls.
+   * Between two runs the door has nothing in flight and ComfyUI's queue is
+   * empty for 150 to 500 ms, and a restart there (art.js, the fresh engine
+   * before an H3 clip, which waits for the door's runs) stops the engine under
+   * the next one: dispatch refuses it ("the engine is not running") and the
+   * whole job is lost mid-way. So such work holds the door from its first run
+   * to its last: `const release = engine.hold("a Reactive Paint look")`, and
+   * release() in a finally. status().held names every hold, and the restart
+   * waits for them as for a run (art.js otherWorkOnEngine).
+   *
+   * `idleMs`: a hold that lapses once the door has had no run in flight for
+   * that long, for work that may wait on something else between its runs. A
+   * chat turn's tool can wait minutes for a picture queued behind the very
+   * clip that waits for this hold; the lapse lets that clip go first instead
+   * of both waiting out the tool's own limit.
+   */
+  const holds = new Map();
+  let holdSeq = 0;
+  function hold(label, { idleMs = null } = {}) {
+    const id = ++holdSeq;
+    holds.set(id, { label: String(label || "work on the engine").slice(0, 120), since: Date.now(),
+      idleMs: Number(idleMs) > 0 ? Number(idleMs) : null });
+    return () => { holds.delete(id); };
+  }
+  function heldBy(now = Date.now()) {
+    const out = [];
+    for (const h of holds.values()) {
+      if (h.idleMs && inFlight.size === 0 && now - Math.max(h.since, lastRunEnd) >= h.idleMs) continue;
+      out.push(h.label);
+    }
+    return out;
+  }
 
   /** Prompt ids this app has asked the engine to drop, held only until their
    *  own watcher ends. It is what makes "we stopped it" and "the engine lost
@@ -701,7 +743,7 @@ export function createEngineClient(deps = {}) {
 
     const running = watch({ runId, promptId, record, actor, spec, t0, delegate, timeoutMs, pollMs, cachedCandidate: stored.existed })
       .catch((e) => {
-        inFlight.delete(runId);
+        dropRun(runId);
         console.error(`  [engine] ${runId} watcher failed: ${e.message}`);
         return { ok: false, runId, promptId, status: "error", error: e.message, outputs: [], record };
       });
@@ -721,7 +763,7 @@ export function createEngineClient(deps = {}) {
    *  delegate is never left dangling — a request with no answer looks exactly
    *  like a crashed app. */
   async function finishNow({ runId, record, actor, t0, delegate, status, error, throws }) {
-    inFlight.delete(runId);
+    dropRun(runId);
     const data = {
       runId, promptId: null, status, error,
       elapsedSec: (Date.now() - t0) / 1000, queuedSec: null, runningSec: null, cached: false,
@@ -1035,7 +1077,7 @@ export function createEngineClient(deps = {}) {
       via: record.via, label: record.label, project: record.project, shot: record.shot,
     };
 
-    inFlight.delete(runId);
+    dropRun(runId);
     cancelling.delete(promptId);
     if (status === "completed" && !data.cached) ranSinceStart++;
     const generate = await prov.append("library", { actor, type: "generate", asset: `engine/${runId}`, data })
@@ -1181,7 +1223,7 @@ export function createEngineClient(deps = {}) {
     // wire — everyone else
     dispatch, run, submit, socket, cancelRun, interrupt, clearQueue, freeMemory,
     history, queue, objectInfo, systemStats, identity, probePort, refreshFacts,
-    status, activity, runRecord, reveal,
+    status, activity, runRecord, reveal, hold,
     ranSinceStart: () => ranSinceStart,
     // events
     on: (...a) => bus.on(...a), off: (...a) => bus.off(...a), once: (...a) => bus.once(...a),

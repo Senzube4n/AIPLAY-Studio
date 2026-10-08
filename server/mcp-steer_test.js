@@ -95,27 +95,33 @@ console.log("\n§1  the simple way on the Video screen");
     tao: "taomate_h3_3step_comfy.safetensors",
   };
   const url = (rel) => JSON.stringify(new URL(rel, import.meta.url).href);
-  const probe = `import { config, loraStepsOf } from ${url("./config.js")}; import { h3TurboLoraFor } from ${url("./workflow.js")};`
+  const probe = `import { config, loraStepsOf } from ${url("./config.js")}; import { h3TurboLoraFor, referenceSteps } from ${url("./workflow.js")};`
+    + `import { speedupNeeded } from ${url("./video-plain.js")};`
     + "const h3 = config.video.engines.h3, eng = { ...config.video, ...h3 };"
     + "const slots = ['turboLora', 'turboLora4', 'turboLora3', 'refTurboLora', 'refTurboLora4'];"
-    + "const at = (refs) => loraStepsOf(h3TurboLoraFor(eng, { refs }).lora);"
+    + "const at = (refs, steps) => loraStepsOf(h3TurboLoraFor(eng, { refs, steps }).lora);"
+    + "const refSteps = referenceSteps(h3);"
     + "console.log(JSON.stringify({ steps: h3.steps, stepDefaults: h3.stepDefaults, turboBuilds: h3.turboBuilds,"
     + " loraSteps: Object.fromEntries(slots.map((k) => [k, loraStepsOf(h3[k])])), loaded: { fl2v: at(false), refs: at(true) },"
+    + " refSteps, loadedRef: at(true, refSteps), refBuilds: h3.refBuilds ?? null,"
+    + " keep8: speedupNeeded(eng, { steps: 8, refs: true }) ?? null, keep4: speedupNeeded(eng, { steps: 4, refs: true }) ?? null,"
     + " turboMaxSteps: h3.turboMaxSteps, turbo3MaxSteps: h3.turbo3MaxSteps, turbo4MaxSteps: h3.turbo4MaxSteps }));";
   /* `extra`: the files go in a SECOND models folder named in settings
    * `modelsAlso` ("Add as extra", or the folder "Use this folder" left
    * behind), and the main folder holds no LoRA at all. The engine loads from
-   * both, so pick() and the step defaults must both look in both. */
-  const disk = (files, { extra = false, nested = false } = {}) => {
+   * both, so pick() and the step defaults must both look in both.
+   * `settings`: more of that settings.json (a saved card). */
+  const disk = (files, { extra = false, nested = false, settings = null } = {}) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "h3-disk-"));
     try {
       const shelf = path.join(dir, extra ? "extra" : "models", "loras", ...(nested ? ["minimax"] : []));
       fs.mkdirSync(path.join(dir, "models", "loras"), { recursive: true });
       fs.mkdirSync(shelf, { recursive: true });
       for (const f of files) fs.writeFileSync(path.join(shelf, f), "x");
-      if (extra) {
+      if (extra || settings) {
         fs.mkdirSync(path.join(dir, "settings"), { recursive: true });
-        fs.writeFileSync(path.join(dir, "settings", "settings.json"), JSON.stringify({ modelsAlso: [path.join(dir, "extra")] }));
+        fs.writeFileSync(path.join(dir, "settings", "settings.json"),
+          JSON.stringify({ ...(extra ? { modelsAlso: [path.join(dir, "extra")] } : {}), ...(settings || {}) }));
       }
       const env = { ...process.env, AIPLAY_APPDATA: path.join(dir, "settings"), AIPLAY_MODELS_DIR: path.join(dir, "models"),
         AIPLAY_RIG: path.join(dir, "rig"), AIPLAY_OUTPUT: path.join(dir, "output") };
@@ -130,6 +136,18 @@ console.log("\n§1  the simple way on the Video screen");
   const shop = disk([L.fl2v4, L.ref4]);                                 // the Models screen's "video" + "videoRefs"
   const shopTao = disk([L.fl2v4, L.ref4, L.tao]);                        // ...plus its TaoMate row
   const halfEight = disk([L.fl2v8, L.fl2v4, L.ref4]);                    // an 8-step file on ONE path only
+  const AMD = { gpu: { vendor: "amd", totalMb: 16304 }, torchBackend: "rocm" };
+  const halfEightAmd = disk([L.fl2v8, L.fl2v4, L.ref4], { settings: AMD });
+  /* main's three disks again, on AMD (Bucky's rule): rig, shop and shopTao
+   * save no card, so above they are read by NVIDIA's rule. */
+  const rigAmd = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { settings: AMD });
+  const shopAmd = disk([L.fl2v4, L.ref4], { settings: AMD });
+  const shopTaoAmd = disk([L.fl2v4, L.ref4, L.tao], { settings: AMD });
+  /* The reference path by the file it loads, AT ITS OWN COUNT (review of the
+   * port, 2026-10-08): refTurboLora falls back to the ref2v 4-step and then to
+   * the fl2v 4-step, and refBuilds asked only whether that file was there. */
+  const fourOnly = disk([L.fl2v4]);                                     // the 4-step speed-up row alone
+  const h3Refs = disk([L.fl2v8, L.ref4]);                               // the H3 row (8-step) + "Video references"
   ok("a disk with both 8-step builds defaults to 8: Fast 3 with TaoMate, Best 20",
     rig.steps === 8 && same(rig.stepDefaults, { fast: 3, standard: 8, best: 20 })
     && same(rig.turboBuilds, { three: true, four: true, eight: true }), JSON.stringify(rig));
@@ -138,8 +156,17 @@ console.log("\n§1  the simple way on the Video screen");
     && same(shop.turboBuilds, { three: false, four: true, eight: false }), JSON.stringify(shop));
   ok("...with TaoMate installed, Fast is 3 and Standard stays 4",
     shopTao.steps === 4 && same(shopTao.stepDefaults, { fast: 3, standard: 4, best: 20 }), JSON.stringify(shopTao));
-  ok("8 needs BOTH paths: the fl2v 8-step alone, with only the ref2v 4-step, stays 4",
-    halfEight.steps === 4 && halfEight.stepDefaults?.standard === 4 && halfEight.turboBuilds?.eight === false, JSON.stringify(halfEight));
+  /* EACH PATH ITS OWN COUNT. Keep my character runs the reference file's own
+   * count (workflow.js referenceSteps), so on NVIDIA and a card nobody could
+   * read Standard follows the plain path's file: with the fl2v 8-step on disk
+   * it is 8, and the reference row's 4-step file no longer drags it to 4 (or,
+   * with no fl2v 4-step, to the bare 20). AMD, Intel and the CPU keep main's
+   * rule: 8 there needs both paths. */
+  ok("the fl2v 8-step with only the ref2v 4-step: Standard 8, Keep my character 4, each on its own file",
+    halfEight.steps === 8 && halfEight.stepDefaults?.standard === 8 && halfEight.turboBuilds?.eight === true
+    && halfEight.refSteps === 4 && halfEight.loadedRef === 4, JSON.stringify(halfEight));
+  ok("...and the same disk on AMD keeps main's rule: 8 needs both paths, so it stays 4",
+    halfEightAmd.steps === 4 && halfEightAmd.stepDefaults?.standard === 4 && halfEightAmd.refSteps === 4, JSON.stringify(halfEightAmd));
   /* THE SECOND MODELS FOLDER. pick() and the step defaults ask one onDisk(),
    * and it searches every folder the engine loads from. Asked two ways, a
    * LoRA only in the extra folder made pick() choose the 8-step file while
@@ -159,13 +186,34 @@ console.log("\n§1  the simple way on the Video screen");
   const nestedRig = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { extra: true, nested: true });
   ok("nested H3 LoRAs in an extra models folder select the same matched step defaults",
     !nestedRig.error && same(nestedRig, rig), JSON.stringify(nestedRig));
-  /* The point of all of it: on every disk the default loads a file distilled
-   * for exactly that many steps, on both paths, which is what workflow.js
-   * h3TurboLoraFor picks when a render names no step count. */
-  for (const [name, d] of [["the hand-fetched disk", rig], ["the Models screen's disk", shop], ["Models screen + TaoMate", shopTao], ["the one-path 8-step disk", halfEight]]) {
-    ok(`${name}: the default step count loads a matched file on both paths`,
-      !d.error && d.loaded?.fl2v === d.steps && d.loaded?.refs === d.steps && d.steps <= d.turboMaxSteps, JSON.stringify(d));
+  /* The point of all of it: on every disk each path's default loads a file
+   * distilled for exactly that many steps, which is what workflow.js
+   * h3TurboLoraFor picks: Standard on the plain path, and Keep my
+   * character's own count (referenceSteps) on the reference path. */
+  for (const [name, d] of [["the hand-fetched disk", rig], ["the Models screen's disk", shop], ["Models screen + TaoMate", shopTao],
+    ["the one-path 8-step disk", halfEight], ["the one-path 8-step disk on AMD", halfEightAmd]]) {
+    ok(`${name}: each path's default step count loads a file made for it`,
+      !d.error && d.loaded?.fl2v === d.steps && d.loadedRef === d.refSteps && d.steps <= d.turboMaxSteps, JSON.stringify(d));
   }
+  /* MAIN'S INVARIANT, ON AMD, AS 7b241ea ASSERTED IT FOR EVERY DISK: the one
+   * default step count loads a matched file on BOTH paths. Bucky's rule keeps
+   * it there; NVIDIA's per-path rule replaced it with the line above. */
+  for (const [name, d] of [["the hand-fetched disk on AMD", rigAmd], ["the Models screen's disk on AMD", shopAmd],
+    ["Models screen + TaoMate on AMD", shopTaoAmd], ["the one-path 8-step disk on AMD", halfEightAmd]]) {
+    ok(`${name}: the default step count loads a matched file on both paths (main's rule)`,
+      !d.error && d.loaded?.fl2v === d.steps && d.loaded?.refs === d.steps && d.steps <= d.turboMaxSteps && d.refBuilds === null, JSON.stringify(d));
+  }
+  ok("...and on AMD those disks keep main's numbers",
+    same(rigAmd.stepDefaults, { fast: 3, standard: 8, best: 20 }) && same(shopAmd.stepDefaults, { fast: 4, standard: 4, best: 20 })
+    && same(shopTaoAmd.stepDefaults, { fast: 3, standard: 4, best: 20 }), JSON.stringify([rigAmd.stepDefaults, shopAmd.stepDefaults, shopTaoAmd.stepDefaults]));
+  ok("the 4-step speed-up alone: the reference path's 8-step band is NOT counted, so Keep my character at 8 is refused, offering the 8-step file",
+    same(fourOnly.refBuilds, { four: true, eight: false }) && fourOnly.keep8?.row === "videoH3Turbo8" && fourOnly.keep4 === null,
+    JSON.stringify(fourOnly));
+  ok("H3 + Video references: the ref2v 4-step is not an 8-step build, Keep runs its own 4, and 8 is refused without offering a row that changes nothing",
+    same(h3Refs.refBuilds, { four: true, eight: false }) && h3Refs.refSteps === 4 && h3Refs.loadedRef === 4 && h3Refs.keep4 === null
+    && h3Refs.keep8?.row === null && /needs the 8-step reference build, which is not on this PC/.test(h3Refs.keep8?.error || "")
+    && h3Refs.steps === 8, JSON.stringify(h3Refs));
+  ok("...where both reference builds are on disk, both bands count", same(rig.refBuilds, { four: true, eight: true }) && rig.keep8 === null, JSON.stringify(rig.refBuilds));
   ok("...and the screen's chips read those numbers as they are",
     same(vidQualitySteps({ stepDefaults: shop.stepDefaults }), shop.stepDefaults)
     && same(vidQualitySteps({ stepDefaults: rig.stepDefaults }), rig.stepDefaults));

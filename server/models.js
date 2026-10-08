@@ -59,7 +59,7 @@ import { EventEmitter, once } from "node:events";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { config, isLightH3 } from "./config.js";
+import { config, isLightH3, offNvidia } from "./config.js";
 import { MODEL_FOLDERS, scanBases, findShelfModel, engineBases } from "./localmodels.js";
 import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
 import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
@@ -103,14 +103,22 @@ const M = (p) => path.join(config.modelsDir, p);
 export const cardIsAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "amd";
 const noFp4Card = () => cardIsAmd() || config.gpu?.vendor === "intel" || config.torchBackend === "xpu";
 export const fp4Blocked = (f) => noFp4Card() && /fp4/i.test(path.basename(String(f?.dest || f?.url || "")));
-/** A light machine for H3 (config.js h3Light: an AMD or Intel card, under
- *  16 GB of VRAM or under 32 GB of RAM) takes a file's `light` build. */
+/** A card the settings name that is not NVIDIA (config.js offNvidia: AMD,
+ *  Intel, the CPU): the PCs that keep main's H3 set exactly, as Bucky's tests
+ *  left it. */
+export const cardIsOffNvidia = () => offNvidia(config);
+/** A light machine for H3 (config.js isLightH3: main's rule, on AMD, Intel
+ *  and the CPU only) takes a file's `light` build. */
 export const lightMachine = () => isLightH3(config);
 /** A file list with each entry's `light` build swapped in on a light machine
- *  and its `amd` build on an AMD card. */
+ *  and its `amd` build on an AMD card, and without the entries marked
+ *  `nvidiaOnly` where the settings name another card (the H3 row's 8-step
+ *  speed-up, an optional add-on there). */
 const forCard = (files) => {
-  const light = lightMachine(), amd = cardIsAmd();
-  return light || amd ? files.map((f) => (light && f.light) || (amd && f.amd) || f) : files;
+  const light = lightMachine(), amd = cardIsAmd(), offNv = cardIsOffNvidia();
+  if (!light && !amd && !offNv) return files;
+  return files.filter((f) => !(offNv && f.nvidiaOnly))
+    .map((f) => (light && f.light) || (amd && f.amd) || f);
 };
 /**
  * The one shelf that is NOT models/.
@@ -565,6 +573,17 @@ const YUE2_LICENCE_FILE_RIGHTS = Object.freeze({
   note: "The weights are licensed for noncommercial use. Studio conservatively labels results noncommercial / not for sale; this is not a legal determination that every output inherits the checkpoint licence. Native runtime/code licences do not expand the rights granted for the weights. Review the publisher terms for your intended use.",
 });
 
+/* H3'S 8-STEP SPEED-UP (Comfy-Org/MiniMax-H3, revision pinned, LFS sha256
+ * and size as HuggingFace lists them, read 2026-09-24). One entry, two rows:
+ * its own add-on row (videoH3Turbo8) and, on NVIDIA and a card nobody could
+ * read, the H3 row itself (`nvidiaOnly`, see there). */
+const H3_TURBO8_FILE = Object.freeze({
+  url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`,
+  dest: M("loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"),
+  bytes: 1_956_193_000,
+  sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+});
+
 /* H3's text encoder and two VAEs. FastH3 loads the same three, so both rows
  * name the same files and a machine holding one engine fetches only the other
  * engine's DiT. */
@@ -952,13 +971,8 @@ export const CATALOG = [
     required: false,
     addonFor: "video",
     stepsFor: 8,
-    files: [
-      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`,
-        dest: M("loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"),
-        bytes: 1_956_193_000,
-        sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e" },
-    ],
-    note: "1.96 GB, one file in models/loras. Optional: without it, 6 to 12 steps are refused with this download offered, and H3 still renders at 3 (TaoMate), 4 (the 4-step file) or 20 steps.",
+    files: [{ ...H3_TURBO8_FILE }],
+    note: "1.96 GB, one file in models/loras. Comes with H3 on NVIDIA, where 8 steps is Standard; optional on AMD, Intel and PCs without a graphics card. Without it, 6 to 12 steps are refused with this download offered, and H3 still renders at 3 (TaoMate), 4 (the 4-step file) or 20 steps.",
     requires: h3Requires("The same H3 render, 8 steps of it."),
   },
   {
@@ -1758,15 +1772,23 @@ export const CATALOG = [
           sha256: "8b624de0ab7554bb507c4486093d4c93e0bf2eb2a40c2382f26eb0af7cd97407",
           alt: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int4_convrot.safetensors"] } },
       ...H3_SHARED_FILES,
-      /* NO SPEED-UP LORA HERE. H3 renders without one (the bare model, Best,
-       * 20 steps), so a missing LoRA must not make the engine "not
-       * downloaded": that refused H3 on a disk holding everything but the
-       * 4-step file. The 3-, 4- and 8-step speed-ups are their own optional
-       * rows (addonFor "video"), and a step count whose file is missing is
-       * refused with its download offered (video-plain.js videoPlan). */
+      /* THE 8-STEP SPEED-UP COMES WITH H3 ON NVIDIA, and on a card nobody
+       * could read. 8 steps is Standard there: the lab's A/B (2026-09-12) had
+       * bare H3 at 20 steps look about the same as the 8-step build at 2.4x
+       * the time, and the owner handed the video tiers over on that finding.
+       * Without this entry a fresh NVIDIA install that fetched H3 alone
+       * rendered Standard bare, at 20.
+       * AMD, INTEL AND THE CPU KEEP BUCKY'S DESIGN (measured on AMD): no
+       * speed-up in this row; the 3-, 4- and 8-step files are their own
+       * optional rows (addonFor "video"), and a step count whose file is
+       * missing is refused with its download offered (video-plain.js
+       * videoPlan). `nvidiaOnly` drops this entry there (forCard). A missing
+       * speed-up never makes H3 unselectable: /api/video's engine switch asks
+       * the renderer (videoReady), and the renderer needs no LoRA. */
+      { ...H3_TURBO8_FILE, nvidiaOnly: true },
     ],
-    note: "41 GB, or 30 GB on AMD, Intel and lower-end PCs, which get lighter builds measured as good and a little faster — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
-      + "The speed-ups (3, 4 and 8 steps) are optional add-ons below; without one, H3 renders at 20 steps. "
+    note: "43 GB on NVIDIA, with the 8-step speed-up Standard renders at; 30 GB on AMD and Intel (and on a PC without a graphics card that has under 32 GB of RAM), which get lighter builds measured as good and a little faster — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
+      + "The other speed-ups (3 and 4 steps) are optional add-ons below, and on AMD, Intel and PCs without a graphics card the 8-step one is too; without one, H3 renders at 20 steps. "
       + H3_AMD_NOTE,
     /* The card decides the size, not a floor (server/h3tier.js, from the H3
      * lab of 2026-09-24): this row used to say 16 GB minimum, which told a
@@ -1817,7 +1839,7 @@ export const CATALOG = [
         alt: ["fastvideo_fasth3_8step_v2_pruned_bf16.safetensors"] },
       ...H3_SHARED_FILES,
     ],
-    note: "22.1 GB on a machine that already has H3; 42 GB without it (40 GB on AMD, Intel and lower-end PCs, which get the lighter int8 video VAE). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
+    note: "22.1 GB on a machine that already has H3; 42 GB without it (40 GB on AMD and Intel, and on a PC without a graphics card that has under 32 GB of RAM, which get the lighter int8 video VAE). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
       + "⚠ Experimental. Measured 2026-09-24 on a 16 GB card against H3's Fast setting (TaoMate 3-step): about 1.4x the wait at 1344x768, 8 s (236 s against 172 s); good on 1 of 3 prompts, "
       + "while the others showed a recurring white blob and a subject changing colour, so check each take. VSA made it about 1.45x faster than dense on the whole clip. "
       + H3_AMD_NOTE,
@@ -3093,12 +3115,13 @@ CATALOG.push(...YUE2_STYLE_ADAPTERS.map((adapter) => ({
     note: "Needs the YuE2 ComfyUI checkpoint. Adapter memory and quality have not been measured separately here." },
 })));
 
-/* Rows with an `amd` or `light` build answer `files` for the machine they
- * run on: status, sizes and the downloader all read the same list, so none of
- * them can offer one build and fetch the other. */
+/* Rows with an `amd` or `light` build, or an entry only NVIDIA fetches,
+ * answer `files` for the machine they run on: status, sizes and the
+ * downloader all read the same list, so none of them can offer one build and
+ * fetch the other. */
 for (const cap of CATALOG) {
   const all = cap.files;
-  if (!Array.isArray(all) || !all.some((f) => f.amd || f.light)) continue;
+  if (!Array.isArray(all) || !all.some((f) => f.amd || f.light || f.nvidiaOnly)) continue;
   Object.defineProperty(cap, "files", { get: () => forCard(all), enumerable: true, configurable: true });
   // The published list, the same on every machine: the docs tables read this.
   Object.defineProperty(cap, "defaultFiles", { value: all, enumerable: false });

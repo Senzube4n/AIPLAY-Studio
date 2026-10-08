@@ -27,6 +27,9 @@
  *                     `trapBand`, the rule the Plan card and the borrower's
  *                     notes use too, and names files from the engine's own
  *                     table of them and the Models screen's own catalogue.
+ *                     A count the runner refuses outright (a speed-up not
+ *                     on disk, video-plain.js speedupNeededAtClip) is said
+ *                     first, with the row the refusal names.
  *   minutes a day     the friend row stored a number nothing read. Accept now
  *                     checks it against what this card has spent (timed here)
  *                     and promised (estimated by the plan's own estimator).
@@ -47,6 +50,7 @@ import { alignFrames, h3TurboLoraFor, videoEngine } from "../workflow.js";
 import { findBoard, resolveShot } from "../mv/shot.js";
 import { estimateOne } from "../mv/plan.js";
 import { trapBand } from "../mv/plancost.js";
+import { speedupNeededAtClip } from "../video-plain.js";
 import { ERRAND_SEGMENT, errandDoc, errandName } from "./errand.js";
 import { orderPlanItem } from "./order.js";
 import { H3_MV_SCREEN } from "../h3tier.js";
@@ -221,6 +225,27 @@ export function speedUpCheck({ engine, steps, refs = false } = {}, { cfg = confi
   const needs = builds.files.filter((name) => loraStepsOf(name) === n);
   const out = { ...quiet, loads: choice.lora, madeFor, present, builds: builds.steps, needs };
   const pathWords = refs ? "with reference pictures" : "without reference pictures";
+  /* THE RUNNER'S OWN REFUSAL FIRST. A lent errand renders through
+   * ArtRunner.#clip, which refuses a count whose speed-up is not on disk
+   * (video-plain.js speedupNeededAtClip, read from the engine's settings as
+   * the runner reads them). Where it would refuse, the card says so before
+   * anybody accepts, and names the row the refusal names. It used to stay
+   * quiet about a 4-step order on a PC with only the 8-step file (a file run
+   * below its count says nothing here), so the minutes were promised and the
+   * render refused; and for a 3-step order it offered the 4-step file while
+   * the runner asked for TaoMate. Null on AMD, Intel and the CPU, where this
+   * card reads as main has it (Bucky's rule); a file that is not on disk there
+   * is still said just below, as the runner refuses it on every card. */
+  const refused = speedupNeededAtClip(v, { steps: n, refs: !!refs });
+  if (refused) {
+    const row = CATALOG.find((r) => r.id === refused.row);
+    const what = refused.build === 3 ? "the TaoMate 3-step speed-up (182 MB)" : `H3's ${refused.build}-step speed-up (1.96 GB)`;
+    return { ...out, problem: "missing", needsModel: refused.row,
+      why: `This scene renders on H3 at ${n} steps ${pathWords}, which needs ${what}, and it is not on this PC, so the render would be refused. `
+        + (row
+          ? `Download it from the Models screen (“${row.label}”) before you approve the plan.`
+          : "The Models screen does not offer it, so leave this order unaccepted and tell your friend.") };
+  }
   if (!present) {
     const row = catalogue(choice.lora);
     return { ...out, problem: "missing",

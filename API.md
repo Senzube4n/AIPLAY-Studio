@@ -518,9 +518,15 @@ default 22) are anchored as a native guide at frame 0 of a window of
 overlap + extension frames; the model carries on; the overlap is dropped in the
 graph; ffmpeg joins source + new frames into a NEW clip under its own id, with
 the new frames alone kept beside it as `<id>_new.mp4`. The source is untouched.
-`seconds` snaps up to a multiple of 17 frames. Returns `overlapFrames`,
-`extensionFrames`, `windowFrames` and the art queue. Refused by `reason`:
-`probe` (no ffprobe — this app ships without ffmpeg by promise), `too-short`.
+`seconds` snaps up to a multiple of 17 frames. `steps` defaults to the clip's
+own count; a continuation runs without references, so where the clip ran its
+count on the reference path and the plain path would need a speed-up that is
+not on this PC, the engine's own count runs instead and `stepsNote` says so (a
+`steps` you name is kept, and refused with `needsModel` when its speed-up is
+missing). Returns `steps`, `overlapFrames`, `extensionFrames`, `windowFrames`
+and the art queue. Refused by `reason`:
+`probe` (no ffprobe — this app ships without ffmpeg by promise), `too-short`,
+`speedup-missing` / `taomate-missing` (with `needsModel`).
 Without ffmpeg the new frames come back as the clip and its record's
 `continuation.joined` is false with the reason. MCP: `extend_clip`.
 

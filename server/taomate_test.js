@@ -25,7 +25,13 @@ const { config } = await import("./config.js");
 const { videoPlan, taomateNeeded, TAOMATE_ROW, SPEEDUP_ROWS, speedupNeeded } = await import("./video-plain.js");
 const { CATALOG } = await import("./models.js");
 
-const h3 = (builds) => ({ ...config.video.engines.h3, turboBuilds: { three: false, four: false, eight: false, ...builds } });
+/* MAIN'S RULE, AS AMD, INTEL AND THE CPU KEEP IT: no per-path reading
+ * (config.js makes plainBuilds and refBuilds null where the settings name a
+ * card that is not NVIDIA), so turboBuilds, the both-paths reading, decides.
+ * The per-path rule NVIDIA and a card nobody could read get is pinned below
+ * (nv(), "each path by the file it loads"). */
+const h3 = (builds) => ({ ...config.video.engines.h3, plainBuilds: null, refBuilds: null,
+  turboBuilds: { three: false, four: false, eight: false, ...builds } });
 const plan = (b, eng, engineKey = "h3") => videoPlan({ prompt: "a kite over a hill", width: 1344, height: 768, seconds: 5, ...b }, { engineKey, eng });
 
 test("3 steps without TaoMate is refused, with the download offered", () => {
@@ -91,10 +97,68 @@ test("everything with its file renders as before, and Best needs none", () => {
   assert.equal(plan({ steps: 3 }, unknown).refusal, null, "an engine that reports no builds is not judged");
 });
 
-test("the speed-ups are optional add-on rows of H3, and H3's own row needs none", () => {
+/* ON NVIDIA AND A CARD NOBODY COULD READ, EACH PATH BY THE FILE IT LOADS
+ * (config.js plainBuilds, refBuilds; video-plain.js perPath). main's
+ * both-paths reading refused Keep my character on the "Video references"
+ * row's own ref2v 4-step file, offering the fl2v 4-step file the reference
+ * path never loads, and refused plain 8-step renders beside that row,
+ * offering the 8-step file already on disk. */
+const nv = ({ plain = {}, ref = {} }) => ({ ...config.video.engines.h3,
+  plainBuilds: { three: false, four: false, eight: false, ...plain }, refBuilds: { four: false, eight: false, ...ref },
+  turboBuilds: { three: false, four: false, eight: false, ...plain } });
+
+test("NVIDIA: each path is checked by the file it loads, never by the other path's", () => {
+  /* H3 + the "Video references" row (ref2v 4-step) and no fl2v file. */
+  const refsRow = nv({ ref: { four: true, eight: true } });
+  for (const steps of [3, 4, 5]) {
+    assert.equal(speedupNeeded(refsRow, { steps, refs: true }), null, `${steps} steps with a character: the reference file is here (main refused it, offering the fl2v 4-step)`);
+  }
+  assert.equal(speedupNeeded(refsRow, { steps: 4 })?.row, "videoH3Turbo4", "a plain 4-step render still needs the plain path's file");
+  /* H3 + the 8-step file + the references row (REVIEW T1). */
+  const eightRefs = nv({ plain: { eight: true }, ref: { four: true, eight: true } });
+  assert.equal(speedupNeeded(eightRefs, { steps: 8 }), null, "a plain 8-step render: the 8-step file is on disk (main offered it again)");
+  assert.equal(speedupNeeded(eightRefs, { steps: 4, refs: true }), null);
+  /* A band whose reference file is missing is offered by its band. */
+  const noRef8 = nv({ plain: { eight: true }, ref: { four: true, eight: false } });
+  assert.equal(speedupNeeded(noRef8, { steps: 8, refs: true })?.row, "videoH3Turbo8");
+  assert.equal(speedupNeeded(nv({ ref: { eight: true } }), { steps: 4, refs: true })?.row, "videoH3Turbo4");
+  /* The plain path keeps its own three bands. */
+  assert.equal(speedupNeeded(nv({ plain: { four: true, eight: true } }), { steps: 3 })?.row, "videoH3Turbo3Small");
+  assert.equal(speedupNeeded(nv({ plain: { three: true, eight: true } }), { steps: 4 })?.row, "videoH3Turbo4");
+  assert.equal(speedupNeeded(nv({ plain: { three: true, four: true } }), { steps: 8 })?.row, "videoH3Turbo8");
+  /* The same disks under main's rule (AMD, Intel, the CPU) keep main's answers. */
+  assert.equal(speedupNeeded(h3({}), { steps: 4, refs: true })?.row, "videoH3Turbo4", "main: both paths' four");
+  assert.equal(speedupNeeded(h3({ four: false, eight: false }), { steps: 8 })?.row, "videoH3Turbo8");
+});
+
+test("NVIDIA: the clip runner refuses what videoPlan refuses; AMD refuses only a file that is not on disk", async () => {
+  const { speedupNeededAtClip } = await import("./video-plain.js");
+  const eightOnly = nv({ plain: { eight: true }, ref: { eight: true } });
+  assert.equal(speedupNeededAtClip(eightOnly, { steps: 4 })?.row, "videoH3Turbo4", "the 8-step file at 4 steps is refused on NVIDIA");
+  /* main's rule: refused only where the file the graph loads is absent. */
+  const amd = { ...h3({ eight: true }), turboLora4: "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors" };
+  assert.equal(speedupNeededAtClip(amd, { steps: 4 }, { onDisk: () => true }), null, "AMD: the 8-step file at 4 steps renders as main renders it");
+  assert.equal(speedupNeededAtClip(amd, { steps: 4 }, { onDisk: () => false })?.row, "videoH3Turbo4",
+    "AMD: a file that is not on disk is refused before ComfyUI rejects it (a bug fix on every card)");
+  assert.equal(speedupNeededAtClip(amd, { steps: 4 }), null, "and without a way to look, nothing is refused there");
+});
+
+test("the speed-ups are optional add-on rows of H3; its own row brings the 8-step one on NVIDIA", async () => {
   const row = (id) => CATALOG.find((c) => c.id === id);
   const names = (id) => row(id).files.map((f) => path.basename(f.dest));
-  assert.ok(!names("video").some((n) => /turbo|taomate/i.test(n)), "the H3 row holds no speed-up");
+  const { cardIsOffNvidia } = await import("./models.js");
+  const saved = { gpu: config.gpu, torchBackend: config.torchBackend };
+  try {
+    for (const [gpu, torchBackend, nvidia] of [[{ vendor: "nvidia", totalMb: 16376 }, "cuda", true], [null, null, true], [null, "cuda", true],
+      [{ vendor: "amd", totalMb: 16304 }, "rocm", false], [{ vendor: "intel", totalMb: 16000 }, "xpu", false], [{ vendor: "cpu", totalMb: 0 }, "cpu", false]]) {
+      config.gpu = gpu; config.torchBackend = torchBackend;
+      assert.equal(cardIsOffNvidia(), !nvidia, JSON.stringify({ gpu, torchBackend }));
+      assert.deepEqual(names("video").filter((n) => /turbo|taomate/i.test(n)),
+        nvidia ? ["minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"] : [],
+        nvidia ? "NVIDIA and an unread card: the H3 row brings the 8-step file Standard renders at" : "AMD, Intel and the CPU: the H3 row holds no speed-up, as main has it");
+    }
+  } finally { config.gpu = saved.gpu; config.torchBackend = saved.torchBackend; }
+  assert.equal(row("video").defaultFiles.find((f) => /turbo_8step/.test(f.dest))?.nvidiaOnly, true, "the published list marks it NVIDIA-only");
   for (const [id, file, steps] of [
     ["videoH3Turbo4", "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors", 4],
     ["videoH3Turbo8", "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors", 8],

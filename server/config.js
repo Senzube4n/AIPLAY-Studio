@@ -4,7 +4,7 @@
  * data that withdrew it stays in the file beside it.
  */
 import fs from "node:fs";
-import { autoVramFlags } from "./comfyargs.js";
+import { autoVramFlags, vendorOf } from "./comfyargs.js";
 /* The card tiers' sizes join H3's size list (below the engines): pure data. */
 import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION, H3_BLOCK_CACHE } from "./h3tier.js";
 import path from "node:path";
@@ -170,15 +170,62 @@ export const loraStepsOf = (name) => {
 /* The card first-run setup saved. Same test as index.js onAmd() and
  * models.js cardIsAmd(): ROCm has no kernel for NVIDIA's fp4 formats. */
 const AMD_CARD = saved.torchBackend === "rocm" || saved.gpu?.vendor === "amd";
-/* A LIGHT MACHINE for H3: an AMD or Intel card, a card under 16 GB, or under
- * 32 GB of RAM. It downloads and loads H3's lighter builds: the w4a8 DiT and
- * the int8 video VAE (models.js `light` entries; the int4 text encoder is
- * everyone's). MEASURED 2026-09-25 on an RX 9060 XT 16 GB, TaoMate 3-step
- * 1344x768 5 s, same seed, each on a fresh engine: int8 DiT + int8 TE + fp16
- * VAE 357 s; int8 VAE 316 s (frames PSNR 35.8 dB, SSIM 0.975 against fp16);
- * int4 TE 299 s (13.5 GB staged against 25.9); w4a8 DiT 293 s; all three
- * 290 s, every one as good to the eye. 30 GB to fetch instead of 41. */
-export function isLightH3({ gpu, torchBackend } = {}, ramBytes = os.totalmem()) {
+/* THE CARD AS THE SETTINGS NAME IT (what setup and the engine installer
+ * saved in settings.json): comfyargs.js vendorOf (the card they read, else a
+ * "rocm" torch AMD's and a "cuda" one NVIDIA's), then a torch that names no
+ * card's maker: "xpu" Intel's, "cpu" the CPU's (a CPU-only install or a Mac:
+ * install-engine.mjs saves gpu.vendor "cpu" there, setup a "cpu" torch).
+ * null: the settings name no card. art.js cardVendor reads this first. */
+export const savedCardVendor = (s) => vendorOf(s?.gpu, s?.torchBackend)
+  || (s?.torchBackend === "xpu" ? "intel" : s?.torchBackend === "cpu" ? "cpu" : null);
+/* WHOSE RULES THIS PC TAKES. Bucky's rule, relayed by the owner: "Make it
+ * available only for Nvidia. AMD is locked by my tests." So a PC whose
+ * settings name a card that is not NVIDIA keeps main's rules exactly: AMD and
+ * Intel (by the card, or by a rocm or xpu torch), and the CPU (a CPU-only
+ * install, a Mac), which main groups with them too (prefers720p below).
+ * What changed since (the light rule, the per-path readings and checks,
+ * resolveH3Steps, the 8-step file in the H3 row, models.js) is for NVIDIA and
+ * for a PC whose settings name no card: the owner's NVIDIA rig saved none.
+ *
+ * AS THE SETTINGS NAME IT, DECIDED AT IMPORT. What is picked here (the light
+ * builds, the per-path readings, the catalogue) is decided when this module
+ * loads, and gpu.js's live reading does not exist then: gpu.js imports this
+ * file, and its first reading lands about 2.5 s after start (nvidia-smi, the
+ * Windows counters, amdgpu's files). So a PC whose settings name no card is
+ * read here as one nobody could read, even where the live reading later names
+ * AMD or Intel (a Linux AMD PC whose setup saved no gpu and whose torch probe
+ * failed), while the fresh engine and the clip deadline, decided per clip,
+ * read the live card after the settings (art.js cardVendor) and give it
+ * main's answer. Such a PC gets main's rules here too once its
+ * settings.json names the card (gpu.vendor, or the torch it runs).
+ * models.js cardIsOffNvidia() is this test. */
+export function offNvidia(settings = {}) {
+  const s = settings || {};
+  if (s.torchBackend === "rocm" || s.torchBackend === "xpu") return true;
+  const v = savedCardVendor(s);
+  return v != null && v !== "nvidia";
+}
+const OFF_NVIDIA = offNvidia(saved);
+/* A LIGHT MACHINE for H3, as main has it: an AMD or Intel card, a card
+ * under 16 GB, or under 32 GB of RAM. It downloads and loads H3's lighter
+ * builds: the w4a8 DiT and the int8 video VAE (models.js `light` entries; the
+ * int4 text encoder is everyone's). MEASURED 2026-09-25 on an RX 9060 XT
+ * 16 GB, TaoMate 3-step 1344x768 5 s, same seed, each on a fresh engine: int8
+ * DiT + int8 TE + fp16 VAE 357 s; int8 VAE 316 s (frames PSNR 35.8 dB, SSIM
+ * 0.975 against fp16); int4 TE 299 s (13.5 GB staged against 25.9); w4a8 DiT
+ * 293 s; all three 290 s, every one as good to the eye. 30 GB to fetch
+ * instead of 41.
+ * NOT NVIDIA, OF ANY SIZE, AND NOT A CARD NOBODY COULD READ (the owner's
+ * decision, 2026-09-25): the rule also caught NVIDIA cards under 15,000 MB and
+ * PCs under 30 GiB of RAM, which then fetched the third-party w4a8 DiT. It
+ * has never been rendered on NVIDIA, and the measured NVIDIA path is the
+ * official int8 (docs/ENGINE_TRAPS.md). So an NVIDIA card, and a PC whose
+ * settings name no card, keeps the standard files until a same-seed A/B on
+ * NVIDIA says otherwise. Every other PC (offNvidia above: AMD, Intel, the
+ * CPU) keeps that rule, RAM and card size included. */
+export function isLightH3(settings = {}, ramBytes = os.totalmem()) {
+  const { gpu, torchBackend } = settings || {};
+  if (!offNvidia(settings)) return false;
   return torchBackend === "rocm" || gpu?.vendor === "amd" || gpu?.vendor === "intel" || torchBackend === "xpu"
     || (Number(gpu?.totalMb) > 0 && Number(gpu.totalMb) < 15000)
     || ramBytes < 30 * 2 ** 30;
@@ -1246,8 +1293,16 @@ export const config = {
      * --disable-dynamic-vram was far worse (580 s for one step, RAM paging).
      * A restarted engine did: 78 s a step on the render after a TaoMate one.
      * So an engine that has rendered anything is restarted before an H3 or
-     * FastH3 clip: "auto" does it on any card that is not NVIDIA (not seen
-     * there), "always" and "never" force it. art.js clipNeedsCleanCard();
+     * FastH3 clip: "auto" does it on every card that is not NVIDIA, as
+     * main did (AMD and Intel, where it was measured, and the CPU), and
+     * not on NVIDIA (not seen there) or on a card nobody could read (art.js
+     * cardVendor: the settings first, then the live reading); "always" and
+     * "never" force it. On every card the restart first waits until nothing
+     * else is on the engine: a song, ComfyUI's own queue, the engine door's
+     * runs and holds (a Reactive look or a chat turn between two runs), a
+     * plan mid-step (art.js waitForQuietEngine, Bucky's wait with
+     * otherWorkOnEngine read inside it), at most 20 minutes, and the clip
+     * renders unrestarted if it never frees. art.js clipNeedsCleanCard();
      * video_settings free_before_clip. */
     freeBeforeClip: "auto",
 
@@ -2118,30 +2173,75 @@ live = config;
  * named no step count, the move the turboLora4 comment calls "a different one
  * used wrongly". So each number is what this disk can run matched:
  *
- *   standard  8 where pick() resolved BOTH turboLora and refTurboLora to an
- *             8-step file, else 4, the matched 4-step setting. Never the
- *             bare model by default: 20 costs 2.4x the time (arm H vs C).
- *   fast      3 where a TaoMate 3-step file resolved, else 4 where both
- *             4-step slots did, else the same as standard (one chip then,
- *             not two that do the same thing).
+ *   standard  8 where pick() resolved turboLora to an 8-step file (on AMD,
+ *             Intel and the CPU, refTurboLora too), else 4, the matched 4-step
+ *             setting, else 20, the bare model (resolveH3Steps below). On
+ *             NVIDIA the H3 row brings the 8-step file (models.js), since 20
+ *             costs 2.4x the time for about the same look (arm H vs C).
+ *   fast      3 where a TaoMate 3-step file resolved, else 4 where the
+ *             4-step slot did (on AMD, Intel and the CPU, both 4-step
+ *             slots), else the
+ *             same as standard (one chip then, not two that do the same thing).
  *   best      20, the bare model, which no LoRA file gates.
  *
- * `steps` is standard. /api/status sends stepDefaults and turboBuilds, and
- * the Video screen's slider and chips and make_clip's `quality` read them
- * there rather than keeping a literal. Resolved once, at import, like pick()
- * itself: a file downloaded later loads after a restart, and so does the
- * default that matches it. A file's step count is read off its name
+ * `steps` is standard. /api/status sends stepDefaults, turboBuilds and
+ * refBuilds, and the Video screen's slider and chips and make_clip's
+ * `quality` read them there rather than keeping a literal. Resolved at
+ * import like pick() itself, and again when a speed-up lands
+ * (refreshH3Speedups below). A file's step count is read off its name
  * (loraStepsOf), and only for a file that is on disk, because pick() returns
  * its last name when none is.
  * server/mcp-steer_test.js builds both disks in a temp folder and pins this. */
 /* With no speed-up on disk at all, Standard is the bare model's 20: every
  * speed-up is optional (models.js, addonFor "video"), and a step count whose
- * file is missing is refused with its download offered (video-plain.js). */
-function resolveH3Steps(h3) {
+ * file is missing is refused with its download offered (video-plain.js).
+ *
+ * EACH PATH READS ITS OWN FILES (2026-09-25). The plain path loads turboLora3,
+ * turboLora4 or turboLora, the reference path refTurboLora4 or refTurboLora
+ * (workflow.js h3TurboLoraFor), so what a render is CHECKED by is per path:
+ *   plainBuilds  {three, four, eight}: the plain path's file for that count
+ *                is on disk and made for it. What video-plain.js
+ *                speedupNeeded and the Video screen check a plain render by.
+ *   refBuilds    {four, eight}: the file the reference path loads in the
+ *                4-step band (up to turbo4MaxSteps) and in the 8-step band is
+ *                on disk AND made for that count, as plainBuilds asks of the
+ *                plain path. What Keep my character is checked by. It asked
+ *                only whether the file was there, and refTurboLora falls back
+ *                to the ref2v 4-step v0.1 and then to the fl2v 4-step, so a
+ *                disk with the 4-step speed-up alone ran Keep my character at
+ *                8 on the fl2v 4-step file, and H3 + "Video references" ran
+ *                the ref2v 4-step at 6 to 12: the "different model used
+ *                wrongly" this file refuses on the plain path (review of the
+ *                port, 2026-10-08). main refused both.
+ * Before, the check read `eight` and `four` as BOTH paths at that count, so a
+ * disk with the 8-step file and the reference row's 4-step file (T1 in the
+ * lab's add-on probe) refused every 8-step render offering the file already
+ * on it, and a character render asked for a file its path never loads.
+ *
+ * NULL, BOTH OF THEM, WHERE THE SETTINGS NAME A CARD THAT IS NOT NVIDIA
+ * (offNvidia above: AMD, Intel, the CPU). Bucky's rule (2026-09-25, relayed by
+ * the owner): "Make it available only for Nvidia. AMD is locked by my tests."
+ * Every rule that reads the per-path readings (video-plain.js speedupNeeded,
+ * keepFast and the refusal every door gets, the Video screen's copy of the
+ * rule) keeps main's behaviour where they are null, so an AMD or Intel
+ * card is checked, offered and refused exactly as his tests left it.
+ *
+ * THE DEFAULTS, and `turboBuilds` behind them (the chips and fit.js read it):
+ * on AMD, Intel and the CPU exactly main's, both paths at the count, as
+ * Bucky's tests left them. Elsewhere, NVIDIA and a card nobody could read, the plain path's own
+ * file decides (turboBuilds is plainBuilds there): Keep my character runs its
+ * own count (workflow.js referenceSteps), so downloading the reference row no
+ * longer drops Standard to the bare 20. */
+function resolveH3Steps(h3, { offNv = OFF_NVIDIA } = {}) {
   const stepsOnDisk = (name) => (onDisk("loras", name) ? loraStepsOf(name) : null);
-  const eight = stepsOnDisk(h3.turboLora) === 8 && stepsOnDisk(h3.refTurboLora) === 8;
-  const four = stepsOnDisk(h3.turboLora4) === 4 && stepsOnDisk(h3.refTurboLora4) === 4;
+  const plain8 = stepsOnDisk(h3.turboLora) === 8;
+  const plain4 = stepsOnDisk(h3.turboLora4) === 4;
   const three = stepsOnDisk(h3.turboLora3) === 3;
+  h3.plainBuilds = offNv ? null : { three, four: plain4, eight: plain8 };
+  h3.refBuilds = offNv ? null : { four: !!h3.refTurboLora4 && stepsOnDisk(h3.refTurboLora4) === 4,
+    eight: !!h3.refTurboLora && stepsOnDisk(h3.refTurboLora) === 8 };
+  const eight = plain8 && (!offNv || stepsOnDisk(h3.refTurboLora) === 8);
+  const four = plain4 && (!offNv || stepsOnDisk(h3.refTurboLora4) === 4);
   const standard = eight ? 8 : four ? 4 : 20;
   h3.turboBuilds = { three, four, eight };
   h3.stepDefaults = { fast: three ? 3 : four ? 4 : standard, standard, best: 20 };
@@ -2230,7 +2330,7 @@ config.video.engines.fasth3 = {
   steps: 8, fixedSteps: 8,
   /* The H3 step-defaults block above ran before this spread, so H3's chips and
    * turbo builds would travel with it. A fixed schedule has neither. */
-  stepDefaults: null, turboBuilds: null,
+  stepDefaults: null, turboBuilds: null, plainBuilds: null, refBuilds: null,
   sampler: "res_multistep", scheduler: "simple",
   shiftVideo: 10, shiftAudio: 3,
   /* The checkpoint was trained with FastVideo's VSA at 10% of video cubes.

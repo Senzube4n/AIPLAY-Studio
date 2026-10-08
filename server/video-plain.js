@@ -103,6 +103,20 @@ export const SPEEDUP_ROWS = Object.freeze({ 3: TAOMATE_ROW, 4: "videoH3Turbo4", 
  * h3TurboLoraFor would otherwise name a file that is absent. `eng.turboBuilds`
  * is config.js's reading of the disk; an engine without it (LTX) or with fixed
  * steps (FastH3) is not judged.
+ *
+ * ON NVIDIA AND A CARD NOBODY COULD READ, EACH PATH BY THE FILE IT LOADS
+ * (perPath below: config.js plainBuilds and refBuilds). turboBuilds' `four`
+ * and `eight` are both-path readings, so a disk with the "Video references"
+ * row's ref2v 4-step file and no fl2v 4-step one refused Keep my character by
+ * default, offering the fl2v file the reference path never loads, and a disk
+ * with the 8-step file beside that row refused plain 8-step renders, offering
+ * the 8-step file already on it. Now a plain render is checked by the plain
+ * path's own file, and one with references by the file the reference path
+ * loads in that band (h3TurboLoraFor), the build it offers being the band's.
+ *
+ * AMD, INTEL AND THE CPU: MAIN'S RULE, EXACTLY (perPath is false there: the
+ * per-path readings are null, config.js offNvidia). Bucky's rule, relayed by
+ * the owner: "Make it available only for Nvidia. AMD is locked by my tests."
  */
 export function speedupNeeded(eng, { steps, refs = false } = {}) {
   const tb = eng?.turboBuilds;
@@ -112,12 +126,65 @@ export function speedupNeeded(eng, { steps, refs = false } = {}) {
     error: build === 3 ? taomateNeeded(n)
       : `${n} steps needs H3's ${build}-step speed-up (1.96 GB), which is not downloaded. Download it, or pick `
         + "another step count." });
-  if (refs) return n <= (eng.turbo4MaxSteps ?? 5)
-    ? (tb.four ? null : need(4))
-    : (tb.eight ? null : need(8));
-  if (n <= (eng.turbo3MaxSteps ?? 3)) return tb.three ? null : need(3);
-  if (n <= (eng.turbo4MaxSteps ?? 5)) return tb.four ? null : need(4);
-  return tb.eight ? null : need(8);
+  const band4 = n <= (eng.turbo4MaxSteps ?? 5);
+  if (refs) {
+    if (!perPath(eng)) return band4 ? (tb.four ? null : need(4)) : (tb.eight ? null : need(8));
+    const { turbo, use4, lora } = h3TurboLoraFor(eng, { steps: n, refs: true });
+    if (!turbo || !lora) return null;
+    if (use4 ? eng.refBuilds.four : eng.refBuilds.eight) return null;
+    /* The 8-step band, where the reference path loads a ref2v file made for
+     * another count (the "Video references" row's 4-step v0.1, which
+     * refTurboLora takes before any fl2v file): the 8-step speed-up row
+     * would not change what loads, and it may be on disk already, so it is
+     * not offered. The 8-step reference build is the fix, and no Models row
+     * fetches it yet. */
+    const made = loraStepsOf(lora);
+    if (!use4 && /ref2v/i.test(lora) && Number.isFinite(made) && made !== 8) {
+      return { build: 8, row: null,
+        error: `${n} steps with reference pictures needs the 8-step reference build, which is not on this PC (the Models `
+          + `screen does not fetch it yet). The reference build here is made for ${made} steps: pick ${made} steps, or `
+          + "leave out the reference pictures." };
+    }
+    return need(use4 ? 4 : 8);
+  }
+  const pb = perPath(eng) ? eng.plainBuilds : tb;
+  if (n <= (eng.turbo3MaxSteps ?? 3)) return pb.three ? null : need(3);
+  if (band4) return pb.four ? null : need(4);
+  return pb.eight ? null : need(8);
+}
+
+/**
+ * WHETHER THIS ENGINE IS JUDGED PER PATH: config.js made both per-path
+ * readings (plainBuilds, refBuilds), which it does on NVIDIA and on a card
+ * nobody could read, never where the settings name another card (config.js
+ * offNvidia: AMD, Intel, the CPU). Where it is false, every rule in this file
+ * that has a per-path form keeps main's instead (speedupNeeded, keepFast,
+ * speedupNeededAtClip).
+ */
+export function perPath(eng) {
+  return !!(eng?.plainBuilds && eng?.refBuilds);
+}
+
+/**
+ * THE REFUSAL EVERY DOOR GETS, not only /api/video: what ArtRunner.#clip
+ * refuses a clip job for (art.js clipSpeedupNeeded; the music-video runner
+ * and Extend never ran videoPlan), and what the lender's accept card warns of
+ * first (collab/lending.js speedUpCheck), so a lender is never promised a
+ * render the runner then refuses.
+ *   - A speed-up the graph would load that is NOT ON DISK is refused on every
+ *     card: ComfyUI rejects such a graph anyway, minutes later and in its own
+ *     words, so nothing that renders today is lost (a bug fix on every card).
+ *   - Where the engine is judged per path (NVIDIA and a card nobody could
+ *     read) also a file that IS on disk but made for another count, which
+ *     videoPlan refuses there: the 8-step file run at 4 steps.
+ * `onDisk(name)` says whether the file the graph would load is there.
+ */
+export function speedupNeededAtClip(eng, opts = {}, { onDisk = null } = {}) {
+  if (perPath(eng)) return speedupNeeded(eng, opts);
+  const missing = speedupNeeded(eng, opts);
+  if (!missing || typeof onDisk !== "function") return null;
+  const { turbo, lora } = h3TurboLoraFor(eng, { steps: Number(opts.steps), refs: !!opts.refs });
+  return turbo && lora && !onDisk(lora) ? missing : null;
 }
 
 /* ── references on an engine that takes none ─────────────────────────────── */
@@ -344,8 +411,21 @@ export function songUnderSay(engineKey, { label = engineKey, pictures = 0 } = {}
 export function keepFast(eng) {
   if (!eng?.stepDefaults || eng.fixedSteps) return null;
   const fast = Number(eng.stepDefaults.fast);
-  const { steps } = h3MatchedSteps(eng, { steps: fast, refs: true });
+  const { steps, made } = h3MatchedSteps(eng, { steps: fast, refs: true });
   if (!Number.isFinite(steps)) return null;
+  /* Where the engine is judged per path (perPath: NVIDIA and a card nobody
+   * could read), null too, so the chip folds into Standard, when Fast would
+   * not be a matched render at most Standard's count: its file is not on disk
+   * (it was offered, lit, and the server refused it), or the count is above
+   * Standard's (referenceSteps) or above what the loaded file was made for
+   * (Keep's Fast at 20, the bare model, beside a Standard of 4). AMD, Intel
+   * and the CPU keep main's chip exactly. */
+  if (perPath(eng)) {
+    if (speedupNeeded(eng, { steps, refs: true })) return null;
+    const standard = Number(referenceSteps(eng) ?? NaN);
+    if (standard > 0 && steps > standard) return null;
+    if (Number.isFinite(made) && steps > made) return null;
+  }
   return { steps, note: `Fast with a character: ${steps} steps on ${buildWords(eng, { steps, refs: true })}`
     + (fast === 3 ? " (the TaoMate 3-step build takes no pictures)" : "")
     + `. Keeping a character was measured at ${KEEP_MEASURED.steps} steps on the ${KEEP_MEASURED.steps}-step reference build.` };

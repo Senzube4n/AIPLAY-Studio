@@ -32,6 +32,9 @@ import { fileURLToPath } from "node:url";
 const OUT = path.join(os.tmpdir(), `mv-blockout-test-${process.pid}-${Date.now().toString(36)}`);
 process.env.AIPLAY_OUTPUT = OUT;
 process.env.AIPLAY_APPDATA = path.join(OUT, "appdata");
+/* Staged copies (controlRender's stageIn) go to a temp input folder, never
+ * the rig's ComfyUI/input. */
+process.env.AIPLAY_INPUT = path.join(OUT, "input");
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const store = await import("./store.js");
@@ -205,6 +208,50 @@ if (haveFfmpeg) {
   skipped += 4;
   console.log("  SKIP  the clip half — ffmpeg is not on PATH, so no fixture could be forged.\n"
     + "          4 assertions were NOT made. Install ffmpeg to run them.");
+}
+
+console.log("\n-- the engine door is held from the first run to the last --");
+
+/* A depth render is two door runs (the depth map, then VACE) with an ffprobe
+ * check, a ledger row and a staging copy between them. An H3 clip waiting for
+ * a quiet engine (art.js, AMD, Intel and the CPU) read that gap as quiet and
+ * restarted ComfyUI under the second run (review of the port, 2026-10-08).
+ * engine.run is stubbed: no GPU, no ComfyUI. */
+if (haveFfmpeg) {
+  const { engine } = await import("../engine/client.js");
+  const { copyFileSync } = await import("node:fs");
+  const saved = { run: engine.run, hold: engine.hold };
+  const log = [];
+  let holding = 0;
+  engine.hold = (label) => { holding++; log.push(`hold: ${label}`); let done = false;
+    return () => { if (!done) { done = true; holding--; log.push("release"); } }; };
+  const DRIVE = "drive_121.mp4";
+  copyFileSync(GOOD, path.join(CLIPS, DRIVE));
+  copyFileSync(GOOD, path.join(CLIPS, "depth_out.mp4"));
+  engine.run = async (spec) => {
+    log.push(`run ${spec.via} (held: ${holding > 0})`);
+    const file = spec.via === "mv.control.depth" ? "depth_out.mp4" : "vace_out.mp4";
+    return { status: "completed", runId: `r-${spec.via}`, outputs: [{ file, type: "output", adoptedAs: `clips/${file}` }] };
+  };
+  try {
+    out = await controlRender(deps, SLUG, { source: "clip", clip: DRIVE, mode: "depth", prompt: "a corridor at night", seed: 7 });
+    ok("a depth control render holds the door across both of its runs, and lets go after",
+      JSON.stringify(log) === JSON.stringify(["hold: a music-video control render (depth)",
+        "run mv.control.depth (held: true)", "run mv.control (held: true)", "release"]) && holding === 0,
+      JSON.stringify(log));
+    log.length = 0;
+    engine.run = async (spec) => { log.push(`run ${spec.via} (held: ${holding > 0})`); return { status: "error", error: "boom" }; };
+    msg = await why(() => controlRender(deps, SLUG, { source: "clip", clip: DRIVE, mode: "depth", prompt: "a corridor at night", seed: 7 }));
+    ok("...and a run that fails lets go of it too", names(msg, "boom") && log.at(-1) === "release" && holding === 0, JSON.stringify(log));
+    log.length = 0;
+    out = await controlRender(deps, SLUG, { source: "clip", clip: DRIVE, mode: "check" });
+    ok("...while a check, which runs nothing, holds nothing", log.length === 0, JSON.stringify(log));
+  } finally {
+    engine.run = saved.run; engine.hold = saved.hold;
+  }
+} else {
+  skipped += 3;
+  console.log("  SKIP  the hold half — ffmpeg is not on PATH, so no clip could be forged. 3 assertions were NOT made.");
 }
 
 console.log("\n-- newest wins, and the others are still named --");

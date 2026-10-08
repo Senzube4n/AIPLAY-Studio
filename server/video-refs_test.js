@@ -100,6 +100,9 @@ test("cache-only H3 plans match reference Turbo steps, required speed-up and den
   const eng = { ...E.h3, sampler: "auto", steps: 3, refTurboSteps: 8,
     turboLora3: "taomate_3step.safetensors", refTurboLora4: "ref2v_4step.safetensors",
     refTurboLora: "ref2v_8step.safetensors", turboBuilds: { three: true, four: true, eight: true },
+    /* main's both-paths reading (AMD, Intel, the CPU); the per-path one
+     * NVIDIA gets is checked below with its own readings. */
+    plainBuilds: null, refBuilds: null,
     sparse: "sol-attn", sparseAll: true, solAttn: { tau: 1.5 } };
   const body = { prompt: "<Picture 1> sings", refMods: [{ name: "singer", strength: 1, copies: 1 }] };
   const plan = (b, e = eng) => videoPlan({ ...body, ...b }, { engineKey: "h3", eng: e });
@@ -116,6 +119,11 @@ test("cache-only H3 plans match reference Turbo steps, required speed-up and den
   const missing = plan({ steps: 3 }, { ...eng, turboBuilds: { three: true, four: false, eight: true } });
   assert.equal(missing.refusal?.reason, "speedup-missing");
   assert.equal(missing.refusal?.needsModel, "videoH3Turbo4");
+  /* NVIDIA and a card nobody could read: the reference path's own file. */
+  const perPath = { ...eng, plainBuilds: { three: true, four: true, eight: true }, refBuilds: { four: false, eight: true } };
+  assert.equal(plan({ steps: 3 }, perPath).refusal?.needsModel, "videoH3Turbo4", "the 4-step reference file is not on disk");
+  assert.equal(plan({ steps: 3 }, { ...perPath, turboBuilds: { three: true, four: false, eight: true },
+    refBuilds: { four: true, eight: true } }).refusal, null, "it is, whatever the plain path holds");
   const text = videoPlan({ prompt: "A singer", steps: 3 }, { engineKey: "h3", eng });
   assert.equal(text.steps, 3, "ordinary text-only Fast remains unchanged");
   assert.equal(text.sparse, "sol-attn");

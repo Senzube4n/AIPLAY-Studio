@@ -40,9 +40,9 @@ import { deployStudioNodes } from "./comfy_nodes.js";
 import { backstopEnv } from "./safety/backstop.js";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { config } from "./config.js";
+import { config, savedCardVendor } from "./config.js";
 import { engine } from "./engine/client.js";
-import { setGpuFallback } from "./gpu.js";
+import { setGpuFallback, gpuFirstReading } from "./gpu.js";
 import { writeModelPathsYaml, samePath } from "./localmodels.js";
 import { desktopReserve } from "./vramreserve.js";
 
@@ -142,8 +142,19 @@ export class ComfySupervisor extends EventEmitter {
      * (server/vramreserve.js): on AMD and Intel under Windows, Dynamic VRAM
      * cannot see them, and a render that crowds them out ends in a driver
      * timeout. Before the port is reserved: the reading takes a second. */
+    /* The card as the settings name it (config.js savedCardVendor: a "cuda"
+     * torch reads as NVIDIA now). Where they name none, the first live
+     * reading (gpu.js), waited for only then and only where an automatic
+     * reserve can apply: an NVIDIA PC whose setup saved no card was kept
+     * 3.3 GB short at every start, the reserve meant for AMD and Intel.
+     * NVIDIA only changes: a saved AMD or Intel card reads as before and is
+     * not delayed, and a card nobody could read keeps the reserve (it costs
+     * VRAM, never a render). */
+    const reserveVendor = savedCardVendor(config)
+      || (process.platform === "win32" && config.comfy.autoReserve === "auto" ? (await gpuFirstReading(8000))?.vendor : null)
+      || null;
     const reserve = await desktopReserve({
-      mode: config.comfy.autoReserve, vendor: vendorOf(config.gpu, config.torchBackend),
+      mode: config.comfy.autoReserve, vendor: reserveVendor,
       totalMb: config.gpu?.totalMb, options: config.comfy.options,
       installFlags: config.comfy.extraArgs, useInstallFlags: config.comfy.useInstallFlags,
     });

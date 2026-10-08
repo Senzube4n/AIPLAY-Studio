@@ -289,8 +289,9 @@ export const OPTIONS_REV = 3;
 export const FIX_MODES = ["auto", "on", "off"];
 export const fixMode = (v) => (FIX_MODES.includes(v) ? v : "auto");
 /** The card's vendor as the settings know it: the launcher's reading, or the
- *  torch backend when only that was recorded (ROCm is AMD). */
-export const vendorOf = (gpu, torchBackend) => gpu?.vendor || (torchBackend === "rocm" ? "amd" : null);
+ *  torch backend when only that was recorded (ROCm is AMD, CUDA NVIDIA's). */
+export const vendorOf = (gpu, torchBackend) => gpu?.vendor
+  || (torchBackend === "rocm" ? "amd" : torchBackend === "cuda" ? "nvidia" : null);
 export function fixApplies(mode, vendor) {
   const m = fixMode(mode);
   if (m === "on") return true;

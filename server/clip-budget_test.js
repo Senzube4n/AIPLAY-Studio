@@ -26,7 +26,10 @@ test("any other card gets three times the room", () => {
   assert.ok(clipBudgetMs(299, "amd") > 1617_000, "the measured AMD render fits inside it");
 });
 
-test("the clip job uses it, with the card's vendor", () => {
+test("the clip job uses it, with the card this PC has", () => {
   const art = readFileSync(new URL("./art.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  assert.match(art, /const budgetMs = clipBudgetMs\(expected, vendorOf\(config\.gpu, config\.torchBackend\), videoSpeed\.factor\(engine\), engine\);/);
+  /* cardVendor: the settings first, then gpu.js's live reading. On settings
+   * alone an NVIDIA PC that saved no card, or only a "cuda" torch, read as
+   * null and got three times the room. */
+  assert.match(art, /const vendor = cardVendor\(\);\s*const budgetMs = clipBudgetMs\(expected, vendor, videoSpeed\.factor\(engine\), engine\);/);
 });

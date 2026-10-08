@@ -849,6 +849,10 @@ const onDisk = (sub, file, snapshot = null, bases = engineBasesSync(config)) => 
   const standIn = config.modelOverrides?.[String(file)];
   return typeof standIn === "string" && !!standIn && here(standIn);
 };
+/** A speed-up LoRA by the name a graph would load it under, looked for now:
+ *  the clip runner's "is the file this render loads on disk" (art.js
+ *  clipSpeedupNeeded). */
+export const loraOnDisk = (name) => !!name && onDisk("loras", name);
 
 /* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
  * encoder (models.js downloads it there), and ONLY that: ROCm has no kernel for

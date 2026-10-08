@@ -703,6 +703,16 @@ export async function controlRender(deps, slug, {
     return out;
   }
 
+  /* ⚠ A HOLD ON THE ENGINE DOOR from the first staging to the last run
+   * (engine/client.js hold()), as the Reactive Paint and Motion looks hold it.
+   * pose and depth are two door runs, then the VACE render a third, with an
+   * ffprobe check, a ledger row and a staging copy between them, and this path
+   * is not a plan item, so art.planBusy does not cover it. On AMD, Intel and
+   * the CPU an H3 clip waiting for a quiet engine read such a gap as quiet,
+   * restarted ComfyUI, and the next run was refused or killed: the control
+   * render was lost (review of the port, 2026-10-08). The clip now waits for
+   * the hold (art.js otherWorkOnEngine). */
+  const release = typeof engine.hold === "function" ? engine.hold(`a music-video control render (${mode})`) : null;
   try {
     stagedSource = await stageIn(src, "src");
 
@@ -840,6 +850,7 @@ export async function controlRender(deps, slug, {
     await recordRow(slug, out, { seed: usedSeed, strength: Number(strength) });
     return out;
   } finally {
+    if (typeof release === "function") release();
     /* Best effort, always: a staged copy left behind is a file in the engine's
      * dropdown that nobody put there on purpose. */
     await unstage(stagedSource);
