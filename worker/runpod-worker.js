@@ -1,9 +1,9 @@
 /** Authenticated, durable ComfyUI worker. Run beside ComfyUI on a dedicated Pod. */
 import http from "node:http";
 import path from "node:path";
-import { createHash, timingSafeEqual, randomUUID } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,13 @@ import { PROTOCOL, MAX_ASSET, TERMINAL, MEDIA_EXT, jobId, relativeFile, containe
   hashFile, digest, readJSON, jsonStore, readBody, sendJSON, validateGraph } from "../server/engine/remote-common.js";
 import { checkComfyLoopback } from "./check-comfy-loopback.js";
 import { createModelManager } from "./model-manager.js";
+/* The Studio's minors check, dependency-free, so the Pod refuses too: a
+ * Studio of another version, or anything else holding the token, still
+ * cannot have it render (the Studio's own submit refuses first). */
+import { checkGraph } from "../server/safety/graph.js";
+import { REFUSAL } from "../server/safety/minors.js";
+/* Dependency-free too: "Don't record the prompt" holds on the Pod's disk. */
+import { stripPngText } from "../server/pngtext.js";
 
 export async function createWorker({ token, comfyURL, inputDir, outputDir, stateDir,
   modelsDir = path.join(path.dirname(inputDir), "models"), fetchFn = fetch, pollMs = 2000, modelBundles }) {
@@ -19,6 +26,19 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   if (backend.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(backend.hostname)) throw new Error("ComfyUI must be on the worker's loopback interface.");
   const base = backend.href.replace(/\/+$/, "");
   const secretHash = createHash("sha256").update(`Bearer ${token}`).digest();
+  /* "DON'T RECORD THE PROMPT" ON THE POD (`private` on POST /v1/jobs). The
+   * state file sits on the persistent /workspace volume with no expiry, so a
+   * private job keeps its graph only until ComfyUI has accepted it, its
+   * request is remembered by a KEYED hash (sha256 of a graph that holds a
+   * prompt is a lookup key for a guessed prompt, the reason record.js drops
+   * promptHash), it reports no executedGraphHash, its PNGs lose ComfyUI's
+   * text chunks before they are hashed, and the Studio asks the worker to
+   * forget the job once it holds its own verified copies (POST
+   * /v1/jobs/<id>/forget: the output files and ComfyUI's history entry go).
+   * An open job keeps what it always kept. */
+  const requestKey = (body) => body?.private === true
+    ? createHmac("sha256", token).update(digest(body)).digest("hex") : digest(body);
+  const dropWords = (job) => { if (job.private === true) job.graph = null; };
   await Promise.all([inputDir, outputDir, stateDir].map(dir => mkdir(dir, { recursive: true })));
   const assetsDir = path.join(inputDir, "aiplay_remote");
   await mkdir(assetsDir, { recursive: true });
@@ -36,10 +56,11 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   const post = (route, body) => request(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const publicJob = job => ({ id: job.id, state: job.state, createdAt: job.createdAt, startedAt: job.startedAt,
     finishedAt: job.finishedAt, error: job.error || null, outputs: job.outputs || [], promptId: job.promptId || null,
-    executedGraphHash: digest(job.graph) });
+    executedGraphHash: job.private === true ? null : digest(job.graph),
+    ...(job.private === true ? { private: true } : {}), ...(job.forgotten ? { forgotten: true } : {}) });
 
   async function finish(job, stateName, error = null) {
-    job.state = stateName; job.error = error; job.finishedAt = Date.now(); await save(state);
+    job.state = stateName; job.error = error; job.finishedAt = Date.now(); dropWords(job); await save(state);
   }
   async function findSubmitted(id) {
     const [q, h] = await Promise.all([request("/queue"), request("/history")]);
@@ -56,6 +77,12 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
           if (!MEDIA_EXT.test(relative) || seen.has(relative)) continue;
           seen.add(relative);
           const full = await containedFile(outputDir, relative);
+          /* A private job's picture loses ComfyUI's text chunks (the graph,
+           * with its words) here, before it is hashed, so neither the copy on
+           * the Pod nor the one the Studio downloads holds them. pngtext.js
+           * keeps the app's own XMP disclosure; a file that is not a PNG is
+           * left as it is and goes when the Studio has its copy (forget). */
+          if (job.private === true && /\.png$/i.test(relative)) await stripPngText(full);
           const size = (await stat(full)).size;
           if (size > MAX_ASSET) throw new Error("A result exceeds the 512 MiB transfer limit.");
           found.push({ id: String(found.length), filename: path.basename(relative), kind, node,
@@ -85,7 +112,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
         try {
           const submitted = await post("/prompt", { prompt: job.graph, client_id: `aiplay-remote-${job.id}`, extra_data: { aiplay_remote_id: job.id } });
           if (!submitted.prompt_id) throw new Error("ComfyUI did not return a prompt ID.");
-          job.promptId = submitted.prompt_id; job.state = "running"; await save(state);
+          job.promptId = submitted.prompt_id; job.state = "running"; dropWords(job); await save(state);
         } catch { job.error = "Submission response was lost. Reconciling with ComfyUI; the render will not be resubmitted."; await save(state); }
         return;
       }
@@ -95,7 +122,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
           await finish(job, "uncertain", "Cannot establish whether ComfyUI accepted the job. Check the Pod before creating another render; no automatic resubmission occurred.");
           return;
         }
-        job.promptId = existing; job.state = "running"; job.error = null; await save(state);
+        job.promptId = existing; job.state = "running"; job.error = null; dropWords(job); await save(state);
       }
       const entry = (await request(`/history/${encodeURIComponent(job.promptId)}`))[job.promptId];
       if (entry?.status?.status_str === "error") {
@@ -111,6 +138,25 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     } catch {
       // A network outage is not proof of render failure. Keep the durable ID for recovery.
     } finally { busy = false; }
+  }
+
+  /* THE STUDIO HAS ITS COPIES (it asks this for a private job): the outputs
+   * on this volume, the job's own output folder and ComfyUI's history entry
+   * (which holds the graph in ComfyUI's memory until it restarts) go. The
+   * state row stays, wordless, so a later status read still answers. */
+  async function forget(job) {
+    if (!TERMINAL.has(job.state)) throw new Error("Only a finished job can be forgotten.");
+    for (const file of job.outputs || []) {
+      const full = await containedFile(outputDir, file.relative).catch(() => null);
+      if (full) await unlink(full).catch(() => {});
+    }
+    await rm(path.join(outputDir, "aiplay_remote", jobId(job.id)), { recursive: true, force: true }).catch(() => {});
+    if (job.promptId) {
+      await fetchFn(`${base}/history`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delete: [job.promptId] }), redirect: "error", signal: AbortSignal.timeout(30000) }).catch(() => null);
+    }
+    job.outputs = []; job.graph = null; job.forgotten = true; await save(state);
+    return publicJob(job);
   }
 
   async function cancel(job) {
@@ -169,7 +215,10 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
         const body = JSON.parse((await readBody(req)).toString("utf8"));
         const id = jobId(body.id);
         validateGraph(body.graph);
-        const requestHash = digest(body);
+        /* Refused before anything is kept: no state row, no graph on disk. */
+        const safety = checkGraph(body.graph);
+        if (!safety.ok) return sendJSON(res, 422, { error: REFUSAL, code: safety.code });
+        const requestHash = requestKey(body);
         if (state.jobs[id]) {
           if (state.jobs[id].requestHash !== requestHash) return sendJSON(res, 409, { error: "This job ID belongs to a different request." });
           return sendJSON(res, 200, publicJob(state.jobs[id]));
@@ -191,17 +240,19 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
           if (state.jobs[id].requestHash !== requestHash) return sendJSON(res, 409, { error: "This job ID belongs to a different request." });
           return sendJSON(res, 200, publicJob(state.jobs[id]));
         }
-        const job = { id, graph, requestHash, state: "queued", createdAt: Date.now(), outputs: [] };
+        const job = { id, graph, requestHash, state: "queued", createdAt: Date.now(), outputs: [],
+          ...(body.private === true ? { private: true } : {}) };
         state.jobs[id] = job;
         try { await save(state); } catch (e) { delete state.jobs[id]; throw e; }
         return sendJSON(res, 202, publicJob(job));
       }
-      const match = /^\/v1\/jobs\/([a-zA-Z0-9_-]+)(?:\/(cancel|files)(?:\/([0-9]+))?)?$/.exec(url.pathname);
+      const match = /^\/v1\/jobs\/([a-zA-Z0-9_-]+)(?:\/(cancel|forget|files)(?:\/([0-9]+))?)?$/.exec(url.pathname);
       if (match) {
         const job = state.jobs[match[1]];
         if (!job) return sendJSON(res, 404, { error: "Unknown job." });
         if (req.method === "GET" && !match[2]) return sendJSON(res, 200, publicJob(job));
         if (req.method === "POST" && match[2] === "cancel") return sendJSON(res, 200, await cancel(job));
+        if (req.method === "POST" && match[2] === "forget") return sendJSON(res, 200, await forget(job));
         if (req.method === "GET" && match[2] === "files") {
           const file = job.outputs?.find(f => f.id === match[3]);
           if (!file || job.state !== "completed") return sendJSON(res, 404, { error: "Output is not available." });

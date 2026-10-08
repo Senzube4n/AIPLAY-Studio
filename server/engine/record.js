@@ -446,7 +446,14 @@ export function buildRecord(graph, ctx = {}) {
   const seconds = frames !== null && fps ? Math.round((frames / fps) * 1000) / 1000 : null;
 
   const model = modelKeyFromFiles(engineFiles);
-  const graphHash = sha256(sortedJSON(graph ?? {}));
+  /* ⚠ NOT FOR A PRIVATE RUN. The graph holds the prompt, and a graph built by
+   * the app is deterministic (the Images screen's checkpointGraph, the clip
+   * graphs): rebuilding it from a guessed prompt with the seed, steps, size
+   * and model this record keeps, and hashing it, confirmed the guess (review
+   * of the port, 2026-10-08). That is promptHash's leak (below) by another
+   * name, so it goes with it. A private graph is never filed, so nothing is
+   * looked up by it either (engine/client.js). */
+  const graphHash = ctx.private === true ? null : sha256(sortedJSON(graph ?? {}));
 
   return {
     runId: ctx.runId ?? null,
@@ -483,7 +490,7 @@ export function buildRecord(graph, ctx = {}) {
     ...(ctx.private === true ? {
       prompt: null, promptTruncated: false, promptHash: null,
       negative: null, negativeHash: null, texts: [],
-      redacted: ["prompt", "negative", "texts", "promptHash", "negativeHash", "label"],
+      redacted: ["prompt", "negative", "texts", "promptHash", "negativeHash", "label", "graphHash"],
     } : {
       prompt: cap(positive),
       promptTruncated: typeof positive === "string" && positive.length > PROMPT_CAP,

@@ -677,6 +677,119 @@ section("run: the Comfy Router (the cloud path the engine door never sees)");
   jobs.stop();
 }
 
+section("run: the RunPod door (a render on somebody's Pod never passes the engine door)");
+{
+  /* RunPod GPU mode sends every picture, clip and song through
+   * remote-client.js submit(), never through engine.dispatch: the Images and
+   * Video buttons, the Advanced panel's imported graphs, a script's POST and
+   * the music queue. A probe on 40f5859 sent this very pair to the worker and
+   * filed no refusal (review, 2026-09-25). */
+  const { createRemoteClient } = await import("../engine/remote-client.js");
+  const { createRemoteRoutes } = await import("../engine/remote-routes.js");
+  const { createWorker } = await import("../../worker/runpod-worker.js");
+  const { Readable } = await import("node:stream");
+  const http = await import("node:http");
+  const { randomUUID } = await import("node:crypto");
+  const dir = path.join(TMP, "runpod");
+  const ledger = [];
+  const calls = [];
+  const client = await createRemoteClient({ dataDir: dir, outputDir: path.join(dir, "out"),
+    getToken: async () => "t".repeat(40), setToken: async () => {},
+    append: async (_scope, e) => { ledger.push(e); return { id: String(ledger.length) }; },
+    fetchFn: async (url) => { calls.push(String(url)); throw new Error("no network in this test"); }, pollMs: 3_600_000 });
+  const before = announced.length;
+  let err = null;
+  try { await client.submit({ graph: pictureGraph(PAIR), label: `AIPLAY image · ${PAIR}`, actor: "agent:t" }); } catch (e) { err = e; }
+  ok("submit(): refused with the sentence and a 422, before anything else", err?.status === 422 && err.safety === true && err.message === REFUSAL && err.code === CODE,
+    String(err?.message));
+  ok("...the worker was never asked (not even its health)", calls.length === 0, calls.join(", "));
+  ok("...no delegate line, no job, and no words on disk", ledger.length === 0 && client.status().jobs.length === 0
+    && !(existsSync(path.join(dir, "runpod", "jobs.json")) && holdsWords(readFileSync(path.join(dir, "runpod", "jobs.json"), "utf8"))));
+  ok("...announced once as door runpod.submit, with no words", announced.length === before + 1
+    && lastAnnounced().data.door === "runpod.submit" && lastAnnounced().data.via === "runpod" && !holdsWords(lastAnnounced()));
+  err = null;
+  try { await client.submit({ graph: pictureGraph("a lighthouse at dusk"), label: "AIPLAY image · a lighthouse" }); } catch (e) { err = e; }
+  ok("an ordinary picture passes the check (it then needs a worker)", err && !err.safety && /Connect a RunPod worker first/.test(err.message), String(err?.message));
+  client.close();
+
+  /* The route: 422 with the one body every door answers. */
+  const out = [];
+  const routes = createRemoteRoutes({ config: { dataDir: path.join(TMP, "runpod-route"), outputDir: path.join(TMP, "runpod-route", "out"), uiPort: 4173 },
+    getSecret: async () => null, setSecret: async () => {}, clearSecret: async () => {},
+    append: async (_scope, e) => { ledger.push(e); }, actorFrom: () => "agent:t", adopt: async () => null,
+    sameOriginLocalJson: () => true });
+  const req = Object.assign(Readable.from([Buffer.from(JSON.stringify({ graph: pictureGraph("kid nude"), label: "AIPLAY image · kid nude" }))]), {
+    method: "POST", headers: { host: "127.0.0.1:4173", "content-type": "application/json", "x-aiplay-actor": "agent:t" } });
+  const res = { headersSent: false, writeHead(status) { this.status = status; this.headersSent = true; }, end(body) { out.push({ status: this.status, body: JSON.parse(body) }); } };
+  await routes(req, res, new URL("http://127.0.0.1:4173/api/runpod/jobs"));
+  const r = out.pop();
+  ok("POST /api/runpod/jobs: 422 with the sentence and the code", r?.status === 422 && r.body.error === REFUSAL && r.body.code === CODE, JSON.stringify(r));
+  ok("...and nothing filed but the refusal", ledger.length === 0);
+  (await routes.start()).close();
+
+  /* MCP runpod_submit_job (new on 7b241ea): an agent queues any graph through
+   * the same route. Driven over real HTTP with the headers mcp.js api() sends
+   * (x-aiplay-actor, JSON, this PC's Host), through the house guard. */
+  const { runpodTools } = await import("../mcp-runpod.js");
+  const { refusalText } = await import("./refusal.js");
+  const mcpConfig = { dataDir: path.join(TMP, "runpod-mcp"), outputDir: path.join(TMP, "runpod-mcp", "out"), uiPort: 0 };
+  const guardSrc = /function sameOriginLocalJson\(req\) \{[\s\S]*?\n\}/.exec(src("server/index.js"))?.[0] || "";
+  const mcpPodCalls = [];
+  let mcpStatus = null;
+  const mcpRoutes = createRemoteRoutes({ config: mcpConfig, getSecret: async () => "t".repeat(40), setSecret: async () => {}, clearSecret: async () => {},
+    append: async (_scope, e) => { ledger.push(e); }, actorFrom: (rq) => String(rq.headers["x-aiplay-actor"] || "system"), adopt: async () => null,
+    sameOriginLocalJson: new Function("config", `${guardSrc}\nreturn sameOriginLocalJson;`)(mcpConfig),
+    fetchFn: async (url) => { mcpPodCalls.push(String(url)); throw new Error("no network in this test"); } });
+  const mcpServer = http.createServer((rq, rs) => mcpRoutes(rq, rs, new URL(rq.url, "http://local")));
+  await new Promise((resolve) => mcpServer.listen(0, "127.0.0.1", resolve));
+  mcpConfig.uiPort = mcpServer.address().port;
+  const mcpApi = (method, route, body) => new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const rq = http.request({ host: "127.0.0.1", port: mcpConfig.uiPort, path: route, method,
+      headers: { "x-aiplay-actor": "agent:claude", ...(payload ? { "Content-Type": "application/json", "Content-Length": payload.length } : {}) } }, (rs) => {
+      let t = ""; rs.on("data", (c) => { t += c; });
+      rs.on("end", () => { mcpStatus = rs.statusCode; const parsed = JSON.parse(t || "{}"); rs.statusCode >= 400 ? reject(new Error(refusalText(parsed), { cause: { status: rs.statusCode } })) : resolve(parsed); });
+    });
+    rq.on("error", reject); rq.end(payload || undefined);
+  });
+  const submitTool = runpodTools(mcpApi).find((tool) => tool.name === "runpod_submit_job");
+  const beforeMcp = announced.length, ledgerBefore = ledger.length;
+  let mcpErr = null;
+  try { await submitTool.run({ graph: pictureGraph(PAIR), label: "MCP render" }); } catch (e) { mcpErr = e; }
+  ok("MCP runpod_submit_job: a 422 with the one sentence reaches the agent", mcpStatus === 422 && String(mcpErr?.message).startsWith(REFUSAL), String(mcpErr?.message));
+  ok("...the Pod was never asked, and nothing was filed", mcpPodCalls.length === 0 && ledger.length === ledgerBefore, mcpPodCalls.join(", "));
+  ok("...one refused event without words, as an agent's", announced.length === beforeMcp + 1 && lastAnnounced().data.door === "runpod.submit"
+    && lastAnnounced().actor === "agent:claude" && !holdsWords(lastAnnounced()), JSON.stringify(lastAnnounced()));
+  await new Promise((resolve) => mcpServer.close(resolve));
+  (await mcpRoutes.start()).close();
+
+  /* The Pod's own backstop: a Studio of another version, or anything else
+   * holding the worker token, is refused there too, and nothing is kept. */
+  const wdir = path.join(TMP, "runpod-worker");
+  const token = "w".repeat(40);
+  const worker = await createWorker({ token, comfyURL: "http://127.0.0.1:9", inputDir: path.join(wdir, "in"), outputDir: path.join(wdir, "out"),
+    stateDir: path.join(wdir, "state"), fetchFn: async () => { throw new Error("no ComfyUI in this test"); }, pollMs: 3_600_000 });
+  await new Promise((resolve) => worker.server.listen(0, "127.0.0.1", resolve));
+  const post = await new Promise((resolve, reject) => {
+    const body = JSON.stringify({ id: randomUUID(), graph: pictureGraph(PAIR), bindings: [] });
+    const rq = http.request({ host: "127.0.0.1", port: worker.server.address().port, path: "/v1/jobs", method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, (rs) => {
+      let t = ""; rs.on("data", (c) => { t += c; }); rs.on("end", () => resolve({ status: rs.statusCode, body: JSON.parse(t) }));
+    });
+    rq.on("error", reject); rq.end(body);
+  });
+  ok("the worker refuses it with a 422 and the sentence", post.status === 422 && post.body.error === REFUSAL && post.body.code === CODE, JSON.stringify(post));
+  ok("...and keeps no job and no words", Object.keys(worker.state.jobs).length === 0
+    && !holdsWords(readFileSync(path.join(wdir, "state", "jobs.json"), "utf8")));
+  await worker.close();
+  const clientSrc = src("server/engine/remote-client.js");
+  ok("the client treats the worker's 422 as final, not as a lost answer to retry",
+    /\[400, 409, 422\]\.includes\(e\.status\)/.test(clientSrc));
+  ok("the check runs before the worker, the record and the ledger",
+    clientSrc.indexOf("checkGraph(graph)") > 0 && clientSrc.indexOf("checkGraph(graph)") < clientSrc.indexOf("await verify();", clientSrc.indexOf("async function submit("))
+    && clientSrc.indexOf("checkGraph(graph)") < clientSrc.indexOf("buildRecord(graph"));
+}
+
 section("run: the enhancer checks what it is asked AND what it writes");
 {
   let asked = 0;

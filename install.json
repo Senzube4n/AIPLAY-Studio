@@ -6,6 +6,7 @@
     "workflows",
     "launcher",
     "scripts",
+    "worker",
     "package.json",
     "package-lock.json",
     "AIPLAY Studio.exe",

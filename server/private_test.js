@@ -110,10 +110,16 @@ head("§2  the engine record keeps its shape and loses the words");
 
   /* The shape is the point: a private render is still reproducible-adjacent —
    * same model, same seed, same node count — it simply has no words. */
-  ok("the SHAPE survives: same graph hash, seed, steps, node count",
-    shut.graphHash === open.graphHash && shut.seed === open.seed
-    && shut.steps === open.steps && shut.graphNodes === open.graphNodes,
-    JSON.stringify({ h: shut.graphHash === open.graphHash, seed: shut.seed, steps: shut.steps }));
+  ok("the SHAPE survives: seed, steps, node count",
+    shut.seed === open.seed && shut.steps === open.steps && shut.graphNodes === open.graphNodes,
+    JSON.stringify({ seed: shut.seed, steps: shut.steps, nodes: shut.graphNodes }));
+  /* ⚠ ...BUT NOT THE GRAPH'S HASH (2026-10-08). The graph holds the prompt,
+   * and a graph the app builds is deterministic: rebuilt from a guessed prompt
+   * with the seed, steps and size kept just above, its sha256 matched the
+   * record's and confirmed the guess. promptHash's leak by another name. */
+  ok("...and no graphHash, which is a lookup key for a guessed prompt the way promptHash is",
+    shut.graphHash === null && /^sha256:[0-9a-f]{64}$/.test(open.graphHash) && shut.redacted.includes("graphHash"),
+    JSON.stringify({ shut: shut.graphHash, open: open.graphHash }));
 }
 
 head("§3  the graph is not filed, and the ledger line still is");

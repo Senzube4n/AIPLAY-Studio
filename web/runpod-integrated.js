@@ -280,7 +280,7 @@ async function submit(kind) {
   try {
     await ensureWorker();
     const [width, height] = dimensions(kind);
-    let template, options, label;
+    let template, options, label, isPrivate = false;
     if (kind === "img") {
       noRemoteImageInputs();
       const prompt = $("imgPrompt").value.trim();
@@ -293,7 +293,10 @@ async function submit(kind) {
         steps: Number($("imgSteps").value) || 20, seed: raw ? Number(raw) : randomSeed(),
         count: Number($("imgCount").value) || 1, negative: $("imgRunPodNegative").value.trim(),
         cfg: Number($("imgRunPodCfg").value) || 6 });
-      label = `AIPLAY image · ${prompt.slice(0, 100)}`;
+      /* "Don't record the prompt": no words in the label, and the server
+       * records the job the way the local door records a private render. */
+      isPrivate = !!$("imgPrivate")?.checked;
+      label = isPrivate ? "AIPLAY image · prompt not recorded" : `AIPLAY image · ${prompt.slice(0, 100)}`;
     } else {
       noRemoteVideoInputs();
       const prompt = $("vidPrompt").value.trim();
@@ -307,7 +310,7 @@ async function submit(kind) {
     }
     note(kind, "Building and validating the remote workflow…");
     const built = await api("/workflow", { template, options });
-    const job = await api("/jobs", { graph: built.graph, bindings: [], label });
+    const job = await api("/jobs", { graph: built.graph, bindings: [], label, ...(isPrivate ? { private: true } : {}) });
     active.set(kind, job.id);
     note(kind, `RunPod job ${job.id.slice(0, 8)} queued. You can keep using AIPLAY.`);
     watch(kind, job.id);
@@ -421,6 +424,17 @@ async function init() {
       $("runpodTemplateState").textContent = error.message; $("runpodTemplateState").classList.add("warnline");
     } finally { button.disabled = false; button.textContent = "Create private templates"; }
   });
+  /* The install command is the Studio's own, pinned to its commit
+   * (server/engine/runpod-bootstrap.js), so it is asked for, not typed in the
+   * page. Where the Studio cannot name its commit there is no command. */
+  api("/bootstrap").then((b) => {
+    $("runpodBootstrapCommand").value = b.command || "";
+    $("runpodCopyBootstrap").disabled = !b.command;
+    $("runpodBootstrapState").textContent = b.command
+      ? `Installs the worker from ${b.repo} at this Studio's commit ${b.commit.slice(0, 7)}, checked before it runs. A commit that is not on GitHub yet cannot be fetched by the Pod.`
+        + (b.note ? ` ${b.note}` : "")
+      : [b.problem, b.note].filter(Boolean).join(" ");
+  }).catch((error) => { $("runpodCopyBootstrap").disabled = true; $("runpodBootstrapState").textContent = error.message; });
   $("runpodCopyBootstrap").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("runpodBootstrapCommand").value); $("runpodBootstrapState").textContent = "Bootstrap command copied."; }
     catch { $("runpodBootstrapCommand").select(); $("runpodBootstrapState").textContent = "Press Ctrl+C to copy the selected command."; }

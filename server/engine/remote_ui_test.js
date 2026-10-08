@@ -88,12 +88,18 @@ test("RunPod lives in its own launch mode and nowhere else", () => {
   assert.match(read("scripts", "start-remote.mjs"), /AIPLAY_REMOTE_ONLY = "1"/);
 });
 
-test("the Pod bootstrap installs this repository, not a contributor's branch", () => {
+test("the Pod bootstrap installs this Studio's own commit, never a branch that moves", () => {
+  /* Review of 40f5859, S2, and again on 7b241ea: the page showed a curl | bash
+   * of a branch's head with no checksum, and the script fast-forwarded that
+   * branch at every rerun. The command is now the Studio's own
+   * (runpod-bootstrap.js, remote_guard_test §6). */
   const sh = read("worker", "bootstrap-runpod.sh");
-  assert.match(sh, /AIPLAY_REPOSITORY:-https:\/\/github\.com\/Senzube4n\/AIPLAY-Studio\.git/);
-  assert.match(sh, /AIPLAY_BRANCH:-main\}/);
+  assert.match(sh, /REPO="\$\{AIPLAY_REPOSITORY:-\}"\s*COMMIT="\$\{AIPLAY_COMMIT:-\}"/, "no default repository, no branch");
+  assert.doesNotMatch(sh, /AIPLAY_BRANCH|merge --ff-only|--branch|bani4kaskashka/);
   const html = read("web", "index.html");
-  assert.match(html, /raw\.githubusercontent\.com\/Senzube4n\/AIPLAY-Studio\/main\/worker\/bootstrap-runpod\.sh/);
+  assert.match(html, /id="runpodBootstrapCommand"[^>]*readonly[^>]*><\/textarea>/, "the page holds no command of its own");
+  assert.doesNotMatch(html, /raw\.githubusercontent\.com/);
+  assert.match(read("web", "runpod-integrated.js"), /api\("\/bootstrap"\)\.then\(\(b\) => \{\s*\$\("runpodBootstrapCommand"\)\.value = b\.command \|\| "";/, "it asks the Studio");
   assert.match(sh, /check-comfy-loopback\.js/);
   assert.match(sh, /different Git origin/);
   assert.match(read("worker", "runpod-worker.js"), /await checkComfyLoopback\(\);/, "worker autostart also verifies the listener");

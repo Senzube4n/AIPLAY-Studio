@@ -2,14 +2,29 @@
 set -euo pipefail
 
 # Install the AIPLAY worker beside the official RunPod ComfyUI template.
-# This script is idempotent: it preserves the worker token and only fast-forwards
-# an existing source checkout. Model weights are deliberately not downloaded.
+# This script is idempotent: it preserves the worker token. Model weights are
+# deliberately not downloaded.
+#
+# PINNED, NEVER A BRANCH. It installs exactly the commit of the Studio you
+# connect from: AIPLAY Studio's RunPod screen shows the command, which names
+# the repository and the full commit (AIPLAY_REPOSITORY, AIPLAY_COMMIT) and
+# checks this script's sha256 before running it (server/engine/
+# runpod-bootstrap.js). It used to clone a branch and fast-forward it at every
+# rerun, so whatever that branch held when somebody pasted or reran the
+# command ran here as root, with every prompt, render and the worker token.
 
 ROOT="${AIPLAY_WORKER_SOURCE:-/workspace/aiplay-worker-src}"
 STATE="${AIPLAY_WORKER_STATE:-/workspace/aiplay-worker}"
 RUNTIME="${AIPLAY_RUNTIME:-/workspace/aiplay-runtime}"
-REPO="${AIPLAY_REPOSITORY:-https://github.com/Senzube4n/AIPLAY-Studio.git}"
-BRANCH="${AIPLAY_BRANCH:-main}"
+REPO="${AIPLAY_REPOSITORY:-}"
+COMMIT="${AIPLAY_COMMIT:-}"
+
+if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ || ! "$REPO" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$ ]]; then
+  echo "Run the command AIPLAY Studio shows on its RunPod screen. It names the repository and the exact commit" >&2
+  echo "of the Studio you connect from (AIPLAY_REPOSITORY, AIPLAY_COMMIT), so this Pod runs that Studio's worker" >&2
+  echo "and never a branch that moves. Nothing was installed." >&2
+  exit 1
+fi
 
 if [[ -d /workspace/runpod-slim/ComfyUI ]]; then
   COMFY="/workspace/runpod-slim/ComfyUI"
@@ -46,18 +61,35 @@ if [[ ! -x "$RUNTIME/current/bin/node" ]]; then
   rm -f "$RUNTIME/$NODE_FILE"
 fi
 
+BEFORE=""
 if [[ -d "$ROOT/.git" ]]; then
   if [[ "$(git -C "$ROOT" remote get-url origin)" != "$REPO" ]]; then
-    echo "$ROOT has a different Git origin. Review it and set AIPLAY_REPOSITORY explicitly or move that checkout aside before retrying." >&2
+    echo "$ROOT has a different Git origin. Review it and move that checkout aside before retrying." >&2
     exit 1
   fi
-  git -C "$ROOT" fetch --depth 1 origin "$BRANCH"
-  git -C "$ROOT" merge --ff-only FETCH_HEAD
+  BEFORE="$(git -C "$ROOT" rev-parse -q --verify HEAD 2>/dev/null || true)"
 elif [[ -e "$ROOT" ]]; then
   echo "$ROOT exists but is not an AIPLAY Git checkout; move it aside and retry." >&2
   exit 1
 else
-  git clone --depth 1 --branch "$BRANCH" "$REPO" "$ROOT"
+  git init -q "$ROOT"
+  git -C "$ROOT" remote add origin "$REPO"
+fi
+# The commit itself, from the named repository: never a branch, never a merge.
+git -C "$ROOT" fetch --depth 1 origin "$COMMIT" || {
+  echo "Commit $COMMIT is not in $REPO. A Studio built from a commit that is not on GitHub yet cannot install its worker here." >&2
+  exit 1
+}
+git -C "$ROOT" checkout -q --force --detach FETCH_HEAD
+if [[ "$(git -C "$ROOT" rev-parse HEAD)" != "$COMMIT" ]]; then
+  echo "The checkout in $ROOT is not commit $COMMIT; nothing was started." >&2
+  exit 1
+fi
+# A worker still running an earlier checkout would keep answering with the old
+# code: stop it, so the pinned one starts below (and at every ComfyUI start).
+if [[ -n "$BEFORE" && "$BEFORE" != "$COMMIT" ]] && command -v pkill >/dev/null; then
+  pkill -f "worker/runpod-worker.js" || true
+  sleep 2
 fi
 
 # Raw ComfyUI must stay on loopback; the bearer-authenticated worker is the

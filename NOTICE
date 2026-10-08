@@ -556,13 +556,19 @@ RUNTIME DEPENDENCIES (separate installations)
                            Preserve the original model/source attribution;
                            the weights and native code have separate terms.
     ComfyUI                GPL-3.0 — a separate program that Studio drives over
-                           its HTTP API. Not linked, not bundled, not modified.
+                           its HTTP API. Not linked, not bundled, and its own
+                           code is not modified. Studio does copy custom nodes
+                           into its custom_nodes folder when the engine starts:
+                           its own (server/comfy_nodes/, the safety gate among
+                           them) and the T8 block cache listed under BUNDLED
+                           THIRD-PARTY CODE below. They run inside ComfyUI.
     ws (npm)               MIT — the WebSocket client Studio uses to follow a
                            ComfyUI job's progress, and the WebSocket server
                            behind the live panels. REQUIRED FOR BOOT.
     abcjs 6.4.4            MIT (Paul Rosen and Gregory Dyke) — the ABC engraver
-                           behind the sheet-music PDF. ⚠ THE ONE EXCEPTION to
-                           "not redistributed here": it is VENDORED at
+                           behind the sheet-music PDF. ⚠ AN EXCEPTION to "not
+                           redistributed here" (the others are listed under
+                           BUNDLED THIRD-PARTY CODE below): it is VENDORED at
                            web/vendor/abcjs/ beside its LICENSE.md and served
                            to the browser from there, never from a CDN, so an
                            offline machine can still print a lead sheet.

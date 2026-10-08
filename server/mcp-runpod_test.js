@@ -130,7 +130,12 @@ test("MCP asset upload is bounded, sends bytes only to the worker route and reje
 
 test("the RunPod HTTP start route rejects an empty POST before billing and accepts the confirmation phrase", async t => {
   let resumes = 0;
-  const route = createRemoteRoutes({ config: { uiPort: 4173 },
+  /* /api/runpod answers only this PC's Studio address on the UI port, and its
+   * JSON POSTs pass index.js sameOriginLocalJson, lifted here as it is. */
+  const config = { uiPort: 4173 };
+  const guardSrc = /function sameOriginLocalJson\(req\) \{[\s\S]*?\n\}/.exec(readFileSync(new URL("./index.js", import.meta.url), "utf8"))?.[0] || "";
+  const sameOriginLocalJson = new Function("config", `${guardSrc}\nreturn sameOriginLocalJson;`)(config);
+  const route = createRemoteRoutes({ config, sameOriginLocalJson,
     getSecret: async name => name === "RUNPOD_ACCOUNT_API_KEY" ? KEY : null,
     setSecret: async () => {}, clearSecret: async () => {}, append: async () => {}, actorFrom: () => "agent:test", adopt: async () => {},
     fetchFn: async (_url, init) => {
@@ -142,6 +147,7 @@ test("the RunPod HTTP start route rejects an empty POST before billing and accep
   const server = http.createServer((req, res) => route(req, res, new URL(req.url, "http://local")));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
+  config.uiPort = server.address().port;
   const url = `http://127.0.0.1:${server.address().port}/api/runpod/account/pods/pod_1/start`;
   const post = body => fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "x-aiplay-actor": "agent:test" }, body: JSON.stringify(body) });
   const denied = await post({});

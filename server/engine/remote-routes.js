@@ -3,12 +3,16 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createRemoteClient } from "./remote-client.js";
 import { createRunpodAccount } from "./runpod-account.js";
+import { studioBootstrap } from "./runpod-bootstrap.js";
 import { containedFile, readBody, sendJSON } from "./remote-common.js";
+import { bodyOfError } from "../safety/refusal.js";
 import { checkpointGraph, buildAceStep15Graph, buildYue2ComfyGraph, videoGraph } from "../workflow.js";
 import { qwenImageGraph } from "../qwen-image.js";
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
-export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, fetchFn = fetch }) {
+export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
+  bootstrap = studioBootstrap }) {
+  if (typeof sameOriginLocalJson !== "function") throw new Error("createRemoteRoutes needs index.js sameOriginLocalJson: a door that spends a paid GPU without it is open to a rebound page.");
   let clientPromise;
   const client = () => clientPromise ||= createRemoteClient({ dataDir: config.dataDir, outputDir: config.outputDir,
     getToken: () => getSecret("RUNPOD_WORKER_TOKEN"), setToken: token => setSecret("RUNPOD_WORKER_TOKEN", token), append, adopt });
@@ -17,6 +21,13 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
     try {
+      /* THIS MACHINE, ON THE UI PORT, FOR EVERY REQUEST. A same-origin GET
+       * carries no Origin, so the Origin rule below never saw a page on a
+       * rebound DNS name: it read the job labels (the first words of every
+       * prompt), the balance, the Pod IDs and worker URLs, and the renders
+       * (review, 2026-09-25). The Host is what such a page cannot fake. */
+      const local = [`127.0.0.1:${config.uiPort}`, `localhost:${config.uiPort}`, `[::1]:${config.uiPort}`];
+      if (!local.includes(String(req.headers.host || ""))) { sendJSON(res, 403, { error: "RunPod requests are answered only on this PC's own Studio address." }); return true; }
       // Protect local credentials and paid renders against cross-origin browser requests.
       const origin = req.headers.origin;
       const allowed = [`http://127.0.0.1:${config.uiPort}`, `http://localhost:${config.uiPort}`];
@@ -24,7 +35,17 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       if (req.method !== "GET" && !origin && !req.headers["x-aiplay-actor"]) {
         sendJSON(res, 403, { error: "Send an Origin from AIPLAY or x-aiplay-actor for scripted requests." }); return true;
       }
-      if (req.method === "GET" && url.pathname === "/api/runpod/account") sendJSON(res, 200, await account.status());
+      /* Every POST but a reference upload is JSON, behind the house guard
+       * (index.js sameOriginLocalJson): this Host, this Origin or none, and
+       * application/json, which a cross-site page cannot send without a
+       * preflight. The upload's body is the file itself. */
+      if (req.method !== "GET" && url.pathname !== "/api/runpod/assets" && !sameOriginLocalJson(req)) {
+        sendJSON(res, 403, { error: "Send JSON (Content-Type: application/json) from this PC's Studio." }); return true;
+      }
+      /* The Pod's install command, pinned to this Studio's commit
+       * (runpod-bootstrap.js). Read by the setup window; never a branch. */
+      if (req.method === "GET" && url.pathname === "/api/runpod/bootstrap") sendJSON(res, 200, bootstrap());
+      else if (req.method === "GET" && url.pathname === "/api/runpod/account") sendJSON(res, 200, await account.status());
       else if (req.method === "GET" && url.pathname === "/api/runpod/account/overview") sendJSON(res, 200, await account.overview());
       else if (req.method === "POST" && url.pathname === "/api/runpod/account/connect") {
         const b = JSON.parse((await readBody(req)).toString("utf8")); sendJSON(res, 200, await account.connect(b.apiKey));
@@ -74,7 +95,7 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
             sendJSON(res, 200, { graph: builders[b.template](options) });
           } else if (req.method === "POST" && url.pathname === "/api/runpod/jobs") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
-            sendJSON(res, 202, await c.submit({ graph: b.graph, bindings: b.bindings, label: b.label, actor: actorFrom(req) }));
+            sendJSON(res, 202, await c.submit({ graph: b.graph, bindings: b.bindings, label: b.label, actor: actorFrom(req), private: b.private === true }));
           } else {
             const cancel = /^\/api\/runpod\/jobs\/([a-f0-9-]+)\/cancel$/.exec(url.pathname);
             const media = /^\/api\/runpod\/jobs\/([a-f0-9-]+)\/files\/([0-9]+)$/.exec(url.pathname);
@@ -104,7 +125,11 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           }
         }
       }
-    } catch (e) { if (!res.headersSent) sendJSON(res, 400, { error: e.message }); }
+    } catch (e) {
+      /* A minors refusal (remote-client.js submit) is the one sentence and a
+       * 422, as at every other door; anything else stays a 400. */
+      if (!res.headersSent) sendJSON(res, e?.safety ? 422 : 400, e?.safety ? bodyOfError(e) : { error: e.message });
+    }
     return true;
   };
   route.start = client;

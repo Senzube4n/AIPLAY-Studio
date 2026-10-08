@@ -5782,8 +5782,8 @@
     <details class="runpod-bootstrap">
       <summary>Install the AIPLAY worker after the Pod starts</summary>
       <p class="hint">Open a Pod terminal or SSH session, paste this command, then copy the printed worker URL and token into the connection fields above. The bootstrap checks that ComfyUI listens only on loopback.</p>
-      <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly>curl -fsSL https://raw.githubusercontent.com/Senzube4n/AIPLAY-Studio/main/worker/bootstrap-runpod.sh -o /tmp/aiplay-bootstrap.sh &amp;&amp; bash /tmp/aiplay-bootstrap.sh</textarea>
-      <button class="edtool" id="runpodCopyBootstrap" type="button">Copy bootstrap command</button>
+      <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly placeholder="The command pinned to this Studio's commit appears here."></textarea>
+      <button class="edtool" id="runpodCopyBootstrap" type="button" disabled>Copy bootstrap command</button>
       <p class="hint" id="runpodBootstrapState"></p>
     </details>
   </details>

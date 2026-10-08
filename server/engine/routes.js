@@ -47,6 +47,7 @@
  * guard is against accident, which is this whole design's stance.
  */
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { rename, stat, mkdir } from "node:fs/promises";
 
 const HELP_ACTOR =
@@ -62,7 +63,7 @@ const IMAGE_RE = /\.(png|jpe?g|webp|gif)$/i;
 export function createEngineRoutes(deps) {
   const {
     json, readBody, config, provenance: prov, engine,
-    IMAGE_DIR, CLIP_DIR, rememberClip = () => {},
+    IMAGE_DIR, CLIP_DIR, rememberClip = () => {}, rememberImage = () => {},
   } = deps;
   const store = deps.store ?? engine.store;
   /** The supervisor, for the two facts it owns and the client does not: which
@@ -99,7 +100,7 @@ export function createEngineRoutes(deps) {
    * its name, bytes and SHA-256 either way; adoption is about the shelf, not
    * about the evidence.
    */
-  async function adopt({ runId, record, output }) {
+  async function adopt({ runId, record, output, spec = null }) {
     const src = path.join(config.outputDir, output.subfolder || "", output.file);
     const dir = VIDEO_RE.test(output.file) ? CLIP_DIR
       : IMAGE_RE.test(output.file) ? IMAGE_DIR : null;
@@ -114,9 +115,20 @@ export function createEngineRoutes(deps) {
     const ext = name.slice(stem.length);
     const dest = () => path.join(dir, name);
     if (path.resolve(src) !== path.resolve(dest())) {
-      for (let n = 2; n < 500; n++) {
-        try { await stat(dest()); } catch { break; }
-        name = `${stem}_${n}${ext}`;
+      const taken = async () => { try { await stat(dest()); return true; } catch { return false; } };
+      for (let n = 2; n < 500 && await taken(); n++) name = `${stem}_${n}${ext}`;
+      /* ⚠ THE 500TH WAS OVERWRITTEN. The loop above gives up at _499 and
+       * rename() on Windows replaces what is there, so from the 500th file of
+       * one name on, each new one silently took the place of `<stem>_499` and
+       * its row was merged over the old one's. Every Pod picture is named
+       * 0-runpod_00001_.png (the worker gives each job its own folder, so
+       * ComfyUI's counter starts again), so a RunPod user reached it. Past
+       * the counter the name takes the run's id and a random tail, and a name
+       * still taken is refused rather than replaced. On every card. */
+      for (let tries = 0; await taken(); tries++) {
+        if (tries >= 8) throw new Error(`No free name for ${path.basename(output.file)} in ${path.basename(dir)}; nothing was replaced.`);
+        const run = String(runId || "run").replace(/[^A-Za-z0-9-]/g, "").slice(-12) || "run";
+        name = `${stem}_${run}_${randomBytes(3).toString("hex")}${ext}`;
       }
       try { await rename(src, dest()); }
       catch (e) {
@@ -127,11 +139,27 @@ export function createEngineRoutes(deps) {
         return null;
       }
     }
+    /* THE WORDLESS FINGERPRINT, where the caller hands one (`spec.safety`,
+     * {minor, sexual}: safety/lineage.js). A RunPod render does
+     * (remote-client.js, computed from its graph before a private job's words
+     * were dropped), and its picture gets a row for it: without one, an edit
+     * of it back in full mode was judged by the edit's words alone, and a
+     * private render's clip row kept no words at all. A local door run hands
+     * none, and its picture is adopted as before. */
+    const safety = spec?.safety && typeof spec.safety === "object"
+      ? { minor: spec.safety.minor === true, sexual: spec.safety.sexual === true } : null;
     if (VIDEO_RE.test(name)) {
       rememberClip(name, null, {
         source: "engine", runId, via: record.via, label: record.label,
         model: record.model, prompt: record.prompt, seed: record.seed,
         width: record.width, height: record.height, project: record.project, shot: record.shot,
+        ...(safety ? { safety } : {}),
+      });
+    } else if (safety) {
+      rememberImage(name, {
+        source: "engine", runId, via: record.via, label: record.label, model: record.model,
+        ...(spec?.private === true ? { promptRedacted: true } : { prompt: record.prompt }),
+        seed: record.seed, width: record.width, height: record.height, safety, at: Date.now(),
       });
     }
     return `${VIDEO_RE.test(name) ? "clips" : "images"}/${name}`;

@@ -2574,7 +2574,10 @@ export class ArtRunner extends EventEmitter {
         if (!bumpSavePrefix(graph, Date.now().toString(36).slice(-6))) throw err;
         continue;
       }
-      await noteRender(key, name, { engine, seed: job.seed ?? null });
+      /* Not for a private clip: the graph's hash beside the clip's name is a
+       * lookup key for a guessed prompt, the reason a private run's record
+       * keeps no graphHash (engine/record.js). It costs that clip a cache hit. */
+      if (job.private !== true) await noteRender(key, name, { engine, seed: job.seed ?? null });
       return name;
     }
   }

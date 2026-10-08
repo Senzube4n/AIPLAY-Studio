@@ -3303,6 +3303,13 @@ const engineRoutes = createEngineRoutes({
     if (meta) clipMeta.set(name, { ...(clipMeta.get(name) || {}), ...meta });
     saveClipStore();
   },
+  /* A picture adopted with a fingerprint (a RunPod render): its row, so the
+   * minors rule reads what it was made as when it is edited or referenced. */
+  rememberImage: (name, meta) => {
+    if (!name) return;
+    imageMeta.set(name, { ...(imageMeta.get(name) || {}), ...(meta || {}) });
+    saveImageStore();
+  },
 });
 /* The one line that closes the last seam in the door: until this runs, a
  * dispatch with `adopt` on records `adoptedAs: null` because nothing in the
@@ -3316,7 +3323,7 @@ engineDoor.setAdopter(engineRoutes.adopt);
  * are adopted into the same library as a local render; audio goes to the
  * music library under a runpod- name. */
 const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret,
-  append: prov.append, actorFrom: prov.actorFrom,
+  append: prov.append, actorFrom: prov.actorFrom, sameOriginLocalJson,
   adopt: async (details) => {
     if (/\.(wav|flac|mp3|ogg|opus)$/i.test(details.output.file)) {
       /* "aiplay_" first: the library lists only its own prefixes (library.js
@@ -3367,7 +3374,20 @@ function imgWorker() {
   return _imgWorker;
 }
 
+/* ⚠ THIS PC'S STUDIO ANSWERS ONLY ITS OWN ADDRESS, ON EVERY ROUTE (review of
+ * the port, 2026-10-08). Studio listens on 127.0.0.1 alone, but a page on a
+ * DNS name that a rebinding attack points at 127.0.0.1 reaches it with that
+ * name as the Host and, for a GET, no Origin. /api/runpod refused it already
+ * (remote-routes.js), and the doors that choose what runs refuse it through
+ * sameOriginLocalJson; a GET elsewhere did not, so such a page could read
+ * /api/provenance (every non-private render's full prompt), /api/images and
+ * the pictures and clips themselves. The Host is what such a page cannot fake,
+ * so every request is asked first, and so is the live socket (wss below). */
+const foreignHost = (req) => !localUiHost(req, config.uiPort);
 const server = http.createServer(async (req, res) => {
+  if (foreignHost(req)) {
+    return json(res, 403, { error: "Studio answers only on this PC's own address (127.0.0.1, localhost or [::1] on its port)." });
+  }
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
 
@@ -13455,7 +13475,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 // Push job state to the UI so progress is live rather than polled.
-const wss = new WebSocketServer({ server, path: "/live" });
+const wss = new WebSocketServer({ server, path: "/live",
+  /* The same Host rule as every request (foreignHost above), and an Origin, when
+   * a page sends one, that is that same address: the socket carries every job's
+   * state, titles included. */
+  verifyClient: ({ req }) => !foreignHost(req) && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`) });
 function push(snap) {
   /* ⚠ AND THE ART LANE'S OWN STATE. The socket fires on every art progress
    * tick (art.on("update") below) and carried nothing about art, so anything
