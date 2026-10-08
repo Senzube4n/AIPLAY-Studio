@@ -819,8 +819,9 @@ untested rather than unsupported.
 **macOS is out.** Not a packaging problem — the music model's first stage
 requires CUDA, and Apple silicon has none.
 
-**Linux with an NVIDIA card should work**, with two edits. The launcher and its
-exe are Windows-only, so run setup and the server yourself:
+**Linux with an NVIDIA card should work.** Nobody has tested it yet. The launcher
+and its exe are Windows-only, so you run setup and the server yourself. No source
+file needs editing:
 
 ```
 node scripts/setup.mjs
@@ -830,12 +831,17 @@ node scripts/setup.mjs
 npm install --omit=dev && npm start
 ```
 
-And `server/config.js` line 47 points at a Windows path. Change it to your venv's
-actual Python:
+Setup looks for the folder that holds `ComfyUI/` (or asks for it), then records
+the folder and its python in `~/.aiplay-studio/settings.json`. It finds the python
+in two places: `venv/bin/python` beside the `ComfyUI` folder, and
+`ComfyUI/.venv/bin/python`. If yours is anywhere else (a venv inside the ComfyUI
+folder, conda, uv), name both when you start:
 
 ```
-  python: path.join(RIG, "venv", "bin", "python"),
+AIPLAY_RIG=/path/to/folder-holding-ComfyUI AIPLAY_PYTHON=/path/to/python npm start
 ```
+
+`AIPLAY_RIG` is the folder that contains `ComfyUI/`, not ComfyUI itself.
 
 Everything else — the model catalogue, the download logic, the backend check — is
 platform-neutral. If you get it running, the project would like to hear about it.
@@ -846,15 +852,15 @@ platform-neutral. If you get it running, the project would like to hear about it
 
 | | |
 |---|---|
-| Your settings | `%USERPROFILE%\.aiplay-studio\settings.json` |
-| The engine's log | `%USERPROFILE%\.aiplay-studio\comfy.log` |
+| Your settings | `%USERPROFILE%\.aiplay-studio\settings.json` (on Linux `~/.aiplay-studio/settings.json`) |
+| The engine's log | `%USERPROFILE%\.aiplay-studio\comfy.log` (on Linux `~/.aiplay-studio/comfy.log`) |
 | Finished songs | `<your-comfy-folder>\ComfyUI\output\` by default, changeable in Settings → Folders |
 | Model weights | `<your-comfy-folder>\ComfyUI\models\` |
 | The interface | `http://127.0.0.1:4173` |
 | The engine | an unpublished loopback port Studio picks fresh at every start |
 
-Folders and the interface port can be overridden with `AIPLAY_UI_PORT`,
-`AIPLAY_RIG` and `AIPLAY_OUTPUT`.
+Folders, the python and the interface port can be overridden with
+`AIPLAY_UI_PORT`, `AIPLAY_RIG`, `AIPLAY_PYTHON` and `AIPLAY_OUTPUT`.
 
 **The engine's port is deliberately not a fixed number.** Studio binds ComfyUI to
 a loopback port it chooses at each start and does not publish, so nothing else on
