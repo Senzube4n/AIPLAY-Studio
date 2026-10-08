@@ -400,7 +400,8 @@ console.log("\n  -- 5. hybrid sends a scene with no cast to LTX only when LTX is
   } finally {
     shot.setLtxReady(null);
   }
-  ok("index.js hands the routes LTX's own readiness", /ltxReady: \(\) => videoReady\("ltx"\)\.ready,/.test(read("server/index.js")));
+  /* videoReadyFresh since setF: LTX's files are looked for once more first. */
+  ok("index.js hands the routes LTX's own readiness", /ltxReady: \(\) => videoReadyFresh\("ltx"\)\.ready,/.test(read("server/index.js")));
   ok("the shot inspector words the new warning as what it is",
     /w\.kind === "ltx-not-here"[\s\S]{0,120}Renders on H3: LTX is not on this PC/.test(read("web/mv.js")));
 }

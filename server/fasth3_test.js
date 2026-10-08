@@ -214,7 +214,7 @@ test("the route, the job and the Video screen carry the attention choice; refere
   assert.match(index, /steps: videoEngine\(eng\)\.fixedSteps \|\|/);
   /* References on FastH3 or LTX: refused by the plan (server/video-plain.js),
    * in the one sentence the page and make_clip show. */
-  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios \}/);
+  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios, audioTrack \}/);
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   const art = read("./art.js");
   assert.match(art, /const attention = graph \? null : await this\.videoAttention\(job\);/);

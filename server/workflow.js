@@ -24,7 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config, loraStepsOf } from "./config.js";
-import { scanBasesSync, findShelfModel, folderGroup, modelName, modelLeaf } from "./localmodels.js";
+import { scanBasesSync, findShelfModel, folderGroup, modelName, modelLeaf, engineBasesSync } from "./localmodels.js";
 import { h3OptionalOptions, REFMOD_NODES, FIZGIG_NODE, refModLoaderInputs, refModApplyInputs } from "./h3-refmod-options.js";
 import { probeH3W6a8, resolveH3Checkpoint, isH3W6A8File } from "./h3-w6a8.js";
 import { validateYue2StyleAdapter } from "./music/yue2-style-adapters.js";
@@ -828,16 +828,26 @@ export function ideogramRefusalMessage(ladderLength, tried) {
     + `FLUX.2 / a checkpoint instead.`;
 }
 
-/* In the models folder or one of the extra ones (config.modelsAlso): the
- * engine loads from all of them. */
-const onDisk = (sub, file, snapshot = null) => {
-  const name = modelName(file);
-  if (!name) return false;
-  const bases = [config.modelsDir, ...(config.modelsAlso || [])];
-  if (bases.some((b) => folderGroup(sub).some((folder) => {
-    try { const st = fs.statSync(path.join(b, folder, name)); return st.isFile() && st.size > 0; } catch { return false; }
-  }))) return true;
-  try { return !!findShelfModel(snapshot?.() || scanBasesSync(bases), sub, name); } catch { return false; }
+/* In any folder the engine loads from (localmodels.js engineBasesSync: the
+ * models folder, the extra ones, the extra_model_paths YAML bases and the
+ * install's own ComfyUI/models), the same folders config.js picks from and
+ * the Models screen counts. A Models-screen stand-in counts for the name it
+ * stands in for, on the same shelf, as config.js pick() counts it: the graph
+ * keeps the catalogue name and the engine door renames it (setF on 7b241ea,
+ * from a tester's report). `snapshot` is a shared lazy shelf scan, `bases`
+ * the folders when the caller already has them. */
+const onDisk = (sub, file, snapshot = null, bases = engineBasesSync(config)) => {
+  const here = (n) => {
+    const name = modelName(n);
+    if (!name) return false;
+    if (bases.some((b) => folderGroup(sub).some((folder) => {
+      try { const st = fs.statSync(path.join(b, folder, name)); return st.isFile() && st.size > 0; } catch { return false; }
+    }))) return true;
+    try { return !!findShelfModel(snapshot?.() || scanBasesSync(bases), sub, name); } catch { return false; }
+  };
+  if (here(file)) return true;
+  const standIn = config.modelOverrides?.[String(file)];
+  return typeof standIn === "string" && !!standIn && here(standIn);
 };
 
 /* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
@@ -1371,20 +1381,56 @@ const VIDEO_MODEL_DIRS = {
  *
  * Cheap enough to call per song: a handful of `statSync`s, no hashing.
  *
- * @returns {{ready: boolean, missing: string[]}}
+ * "On disk" reads the folders config.js picks the names from, and a
+ * Models-screen stand-in counts for the name it stands in for (onDisk above;
+ * setF, from a tester's report). `files` says, for each missing name, where
+ * it was looked for and why it did not count, so a refusal can name the file
+ * and its path.
+ *
+ * @returns {{ready: boolean, missing: string[], files: {name: string, folder: string, standIn: string|null, path: string, reason: string}[]}}
  */
 export function videoReady(name) {
   const e = videoEngine(name);
   const missing = [];
-  let files = null;
-  const snapshot = () => files ||= scanBasesSync([config.modelsDir, ...(config.modelsAlso || [])]);
+  const at = [];
+  let shelf = null;
+  const bases = engineBasesSync(config);
+  const snapshot = () => shelf ||= scanBasesSync(bases);
   for (const [key, sub] of Object.entries(VIDEO_MODEL_DIRS)) {
     const file = e[key];
     if (!file) continue;
-    if (onDisk(sub, file, snapshot)) continue;
+    if (onDisk(sub, file, snapshot, bases)) continue;
     missing.push(file);
+    at.push([sub, file]);
   }
-  return { ready: missing.length === 0, missing };
+  /* `files` is worked out when it is read (the video gate's refusal), not on
+   * every call: /api/status resolves every engine on every poll. Not
+   * enumerable, so a reply that sends this object whole (the lending doors)
+   * says what it said before. */
+  let files = null;
+  return Object.defineProperty({ ready: missing.length === 0, missing }, "files", {
+    get: () => (files ||= at.map(([sub, file]) => whyNotOnDisk(sub, file))), enumerable: false });
+}
+
+/* Where a file the renderer needs was looked for, and why it did not count:
+ * "missing", "empty" (0 bytes) or "unreadable (<code>)". The path is the
+ * first folder that has something under that name, else the models folder,
+ * where a download would put it. A stand-in is looked for under its own
+ * name, as onDisk() looks for it. */
+function whyNotOnDisk(sub, name) {
+  const standIn = config.modelOverrides?.[name] || null;
+  const file = modelName(standIn || name) || String(standIn || name);
+  for (const base of engineBasesSync(config)) {
+    for (const folder of folderGroup(sub)) {
+      const p = path.join(base, folder, file);
+      try {
+        if (fs.statSync(p).size === 0) return { name, folder, standIn, path: p, reason: "empty" };
+      } catch (err) {
+        if (err?.code && err.code !== "ENOENT" && err.code !== "ENOTDIR") return { name, folder, standIn, path: p, reason: `unreadable (${err.code})` };
+      }
+    }
+  }
+  return { name, folder: sub, standIn, path: path.join(config.modelsDir, sub, file), reason: "missing" };
 }
 
 /**

@@ -16,7 +16,7 @@
  * Nothing here downloads, deletes or moves a file.
  */
 import { readdir, stat, readFile, writeFile, mkdir } from "node:fs/promises";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 
@@ -122,6 +122,37 @@ export async function extraBases(args = []) {
   }
   return out;
 }
+
+/** extraBases, read synchronously: for config.js's picks and workflow.js
+ *  videoReady(), which run where nothing can wait (an import, a status poll). */
+export function extraBasesSync(args = []) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--extra-model-paths-config" || !args[i + 1]) continue;
+    try {
+      const t = readFileSync(args[i + 1], "utf-8");
+      for (const m of t.matchAll(/^\s*base_path:\s*['"]?([^'"\r\n]+?)['"]?\s*$/gm)) out.push(m[1].trim());
+    } catch { /* an unreadable YAML is ComfyUI's to report, in its own log */ }
+  }
+  return out;
+}
+
+/**
+ * EVERY FOLDER THE ENGINE LOADS WEIGHTS FROM, one answer for every reader
+ * (setF on 7b241ea): the models folder, the extra ones (modelsAlso), the
+ * base_path of each extra_model_paths YAML the engine is launched with, and
+ * the install's own ComfyUI/models. The Models screen (models.js), the engine
+ * door (engine/client.js) and the Models-screen scan (index.js modelBases)
+ * read all four; config.js's file picks and workflow.js videoReady() read only
+ * the first two, so a pinned models folder with H3 in the rig's own
+ * ComfyUI/models read "installed" on the Models screen and was refused with
+ * "Get MiniMax H3 (0.0 GB)" on the Video screen, after a restart too.
+ * `cfg` is config's shape: { modelsDir, modelsAlso, comfyDir, comfy: { extraArgs } }.
+ */
+const basesOf = (cfg, extra) => uniqueDirs([cfg?.modelsDir, ...(cfg?.modelsAlso || []), ...extra,
+  cfg?.comfyDir ? path.join(cfg.comfyDir, "models") : null].filter(Boolean));
+export const engineBasesSync = (cfg) => basesOf(cfg, extraBasesSync(cfg?.comfy?.extraArgs || []));
+export const engineBases = async (cfg) => basesOf(cfg, await extraBases(cfg?.comfy?.extraArgs || []));
 
 /**
  * Every weight file under each standard folder of each base. `name` is the

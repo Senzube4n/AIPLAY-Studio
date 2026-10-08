@@ -17,6 +17,7 @@ import path from "node:path";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { config } from "../config.js";
+import { stageLibrarySong } from "../songstage.js";
 import { updateProject, readProject, assetsDir, stageAsset, noteRun } from "./store.js";
 /* ⚠ THE RESOLUTION LIVES IN shot.js NOW, and this file is one of its callers
  * rather than its owner. Everything a clip render is given — which sheets
@@ -211,16 +212,12 @@ async function stageForComfy(slug, assetName) {
 }
 
 /** Same, for the song: LoadAudio only reads the input dir, and the library
- *  lives in the output dir. Content-addressed by path like the video route's
- *  own stageSong, so one song staged twice is one file. */
+ *  lives in the output dir. The one staging helper the video route and the
+ *  cover door use (songstage.js): named from the song's path, size and time,
+ *  so one song staged twice is one file and a song replaced under the same
+ *  name is copied again (this copy used to keep its first one for ever). */
 async function stageSongForComfy(file) {
-  const src = path.join(config.outputDir, path.basename(file));
-  await stat(src);
-  const name = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(src).toLowerCase()}`;
-  await mkdir(config.inputDir, { recursive: true });
-  const dest = path.join(config.inputDir, name);
-  try { await stat(dest); } catch { await writeFile(dest, await readFile(src)); }
-  return name;
+  return stageLibrarySong(path.basename(String(file)), { outputDir: config.outputDir, inputDir: config.inputDir });
 }
 
 /**

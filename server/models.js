@@ -60,7 +60,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { config, isLightH3 } from "./config.js";
-import { MODEL_FOLDERS, scanBases, extraBases, uniqueDirs, findShelfModel } from "./localmodels.js";
+import { MODEL_FOLDERS, scanBases, findShelfModel, engineBases } from "./localmodels.js";
 import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
 import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
@@ -1741,14 +1741,22 @@ export const CATALOG = [
     files: [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
         dest: M("diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"), bytes: 20970379616,
-        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"],
+        /* Every name here is one config.js's DiT list loads (setF, from a
+         * tester's report). A third, MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot,
+         * was counted as the DiT since the first commit, but no list ever
+         * loaded it and nothing here has rendered it: a PC holding only that
+         * file read "installed" on the Models screen while the Video screen
+         * refused with "Get MiniMax H3 (0.0 GB)", after a restart too. It no
+         * longer counts; server/videopicks_test.js holds the two lists to
+         * each other. */
+        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"],
         /* A light machine (config.js h3Light) fetches the w4a8 build: 12.5 GB
          * instead of 21. Rendered 2026-09-25 on an RX 9060 XT, same seed as
          * the int8: sampling ~7% faster, as good to the eye. */
         light: { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/6387f8cd370fd8b4deaa9aa7e9e1be4d7298e7df/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors`,
           dest: M("diffusion_models/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"), bytes: 12540857840,
           sha256: "8b624de0ab7554bb507c4486093d4c93e0bf2eb2a40c2382f26eb0af7cd97407",
-          alt: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int4_convrot.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] } },
+          alt: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int4_convrot.safetensors"] } },
       ...H3_SHARED_FILES,
       /* NO SPEED-UP LORA HERE. H3 renders without one (the bare model, Best,
        * 20 steps), so a missing LoRA must not make the engine "not
@@ -3096,6 +3104,22 @@ for (const cap of CATALOG) {
   Object.defineProperty(cap, "defaultFiles", { value: all, enumerable: false });
 }
 
+/**
+ * A ROW WHOSE FILES A VIDEO ENGINE LOADS, so index.js has config.js pick
+ * every video file again when one lands or goes (refreshVideoPicks): each
+ * video engine's own row (config.video.engines, through MODEL_TO_CAPABILITY:
+ * H3, LTX, FastH3), H3's references row and the rows that sit on either
+ * (addonFor "video" or "videoRefs": the speed-ups, the W6A8 builds). On every
+ * card (setF, from a tester's report): a restart picks the same files, this
+ * only stops a running Studio from holding on to the names it chose before.
+ */
+export function isVideoRow(id) {
+  const cap = CATALOG.find((c) => c.id === id);
+  if (!cap) return false;
+  if (cap.id === "videoRefs" || cap.addonFor === "video" || cap.addonFor === "videoRefs") return true;
+  return Object.keys(config.video?.engines || {}).some((k) => MODEL_TO_CAPABILITY[k] === cap.id);
+}
+
 /* ───────────────────────────── what a capability MAKES, said POSITIVELY
  *
  * `makes: "picture"` sits on the five rows an image render can come out of and
@@ -3539,9 +3563,10 @@ function sha256Of(file, cancelled = () => false) {
  * stalled. The .part stays, so pressing Download again resumes it. */
 const DOWNLOAD_STALL_MS = Number(process.env.AIPLAY_DOWNLOAD_STALL_MS) || 90_000;
 
+/* Every folder the engine loads from (localmodels.js engineBases): the same
+ * answer config.js's picks, workflow.js videoReady() and the engine door read. */
 async function catalogShelf() {
-  return scanBases(uniqueDirs([config.modelsDir, ...(config.modelsAlso || []),
-    ...(await extraBases(config.comfy.extraArgs)), path.join(config.comfyDir, "models")]));
+  return scanBases(await engineBases(config));
 }
 
 function catalogModelFile(f, files, override = null) {
@@ -3666,6 +3691,7 @@ export class ModelManager extends EventEmitter {
   /** Catalogue with live presence, for the UI. */
   async status() {
     const out = [];
+    const found = new Map();
     const shelf = await catalogShelf();
     const w6a8 = CATALOG.some((cap) => cap.compatibilityKind === "h3-w6a8") ? probeH3W6a8(config) : null;
     for (const cap of CATALOG) {
@@ -3697,6 +3723,8 @@ export class ModelManager extends EventEmitter {
         have: await fileHave(f),
         };
       }));
+      /* Which file on disk counted for each of the row's files (#noteChanges). */
+      found.set(cap.id, files.map((f) => (f.present ? f.resolvedPath || f.dest : "")).join("|"));
       const totalBytes = cap.files.reduce((s, f) => s + f.bytes, 0) || cap.approxBytes || 0;
       const haveBytes = files.reduce((s, f) => s + (f.present ? f.bytes : f.have), 0);
       const installed = cap.files.length > 0 && files.every((f) => f.present);
@@ -3770,7 +3798,27 @@ export class ModelManager extends EventEmitter {
         progress: this.progress.get(cap.id) || null,
       });
     }
+    this.#noteChanges(found);
     return markRequired(out);
+  }
+
+  /* WHAT CAME OR WENT SINCE THE LAST LOOK (setF, from a tester's report). A
+   * download that finishes says so ("ready"), but a file copied in by hand, a
+   * stand-in chosen, or a file deleted says nothing, and Studio has no delete
+   * button of its own. So each status() compares, row by row, which file on
+   * disk counted for each of its files with the last look, and emits
+   * "changed" with the ids where one came, went or was swapped for another
+   * build the row accepts; the first look only records. index.js picks the
+   * video files again on it (config.js refreshVideoPicks). /api/status reads
+   * this at least once a minute (modelsDisk), the Models screen and the video
+   * gate at once. */
+  #seen = null;
+  #noteChanges(now) {
+    const before = this.#seen;
+    this.#seen = now;
+    if (!before) return;
+    const changed = [...now].filter(([id, sig]) => before.has(id) && before.get(id) !== sig).map(([id]) => id);
+    if (changed.length) this.emit("changed", changed);
   }
 
   /* The fetch of each running download, so Cancel can stop it mid-wait. */

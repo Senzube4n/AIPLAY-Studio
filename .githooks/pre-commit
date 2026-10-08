@@ -940,6 +940,14 @@ node --test server/modelsdir_test.js || exit 1
 # FastH3: the third video engine's graph, its attention pair and its download row.
 node --test server/fasth3_test.js || exit 1
 node --test server/taomate_test.js || exit 1
+# The Models screen and the Video screen agree about the video files without a
+# restart: every pick made again when a video row lands or goes, read from
+# every folder the engine loads from, and the gate never offering a 0.0 GB
+# download (setF, from a tester's report). Temp folders, no GPU.
+node --test server/videopicks_test.js || exit 1
+# A Library song rides under a clip whatever its name (brackets, commas,
+# accents, .opus), and one that cannot is refused or said, never dropped.
+node --test server/songstage_test.js || exit 1
 node --test server/video-speed_test.js || exit 1
 node --test server/fresh-engine_test.js || exit 1
 node --test server/blockcache_test.js || exit 1

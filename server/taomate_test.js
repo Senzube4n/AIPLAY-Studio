@@ -109,19 +109,25 @@ test("the speed-ups are optional add-on rows of H3, and H3's own row needs none"
   for (const id of ["videoH3Turbo3", "videoH3Turbo3Small"]) assert.equal(row(id).addonFor, "video");
   const ltxVae = row("videoLtx").files.find((f) => /ltx-2\.5-video-vae-conv-bf16/.test(f.dest));
   assert.deepEqual(ltxVae.alt, ["ltx-2.5-video-vae-bf16.safetensors"], "LTX's template VAE counts as present");
-  assert.match(read("./config.js"), /videoVae: pick\("vae", "ltx-2\.5-video-vae-conv-bf16\.safetensors", "ltx-2\.5-video-vae-bf16\.safetensors"\),/,
+  /* videoPick() since setF, and the conv name repeated last: it is the file the
+   * LTX row fetches, so a machine holding neither is told that one. */
+  assert.match(read("./config.js"), /videoVae: videoPick\("ltx", "videoVae", "vae", "ltx-2\.5-video-vae-conv-bf16\.safetensors", "ltx-2\.5-video-vae-bf16\.safetensors",\s*"ltx-2\.5-video-vae-conv-bf16\.safetensors"\),/,
     "and it is the one loaded when the conv one is absent");
 });
 
 test("the engine switch asks the renderer, and a speed-up is not part of it", () => {
   const index = read("./index.js");
-  assert.match(index, /if \(cap && !cap\.ready && !videoReady\(e\)\.ready\) \{/,
+  /* videoReadyFresh since setF: the files are looked for once more first. */
+  assert.match(index, /if \(cap && !cap\.ready && !videoReadyFresh\(e\)\.ready\) \{/,
     "an engine the renderer can run is not refused for its Models row");
   assert.doesNotMatch(read("./workflow.js").match(/const VIDEO_MODEL_DIRS = \{[\s\S]*?\};/)[0], /^\s*turboLora:/m,
     "no speed-up is needed for an engine to render");
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/,
     "POST /api/video passes needsModel on, which the Video screen's Fix button opens");
-  assert.match(index, /models\.on\("ready", \(id\) => \{\s*if \(CATALOG\.find\(\(c\) => c\.id === id\)\?\.addonFor === "video"\) refreshH3Speedups\(\);/,
+  /* Since setF with every other video file too, on any video row
+   * (models.js isVideoRow, which counts the speed-up rows; config.js
+   * refreshVideoPicks; server/videopicks_test.js). */
+  assert.match(index, /models\.on\("ready", \(id\) => \{\s*if \(isVideoRow\(id\)\) refreshVideoPicks\(\);/,
     "a speed-up that lands is looked for again");
 });
 

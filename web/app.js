@@ -671,15 +671,39 @@ globalThis.aiplayOfferModel = offerModel;
  * Returns false when the reply is not about a missing model.
  */
 function offerModel(r) {
+  /* THE ROW IS INSTALLED, BUT THE RENDERER COULD NOT OPEN A FILE (setF,
+   * 2026-09-26). The video gate says so with `recheck`, naming each file and
+   * the path it looked at. The window opens on that row with "Look again",
+   * which asks the gate again, and the gate looks at the disk before it
+   * answers. Opened as "this needs a download" it showed a row reading
+   * Installed with nothing to press: where a tester's Fix ended. */
+  if (r?.recheck?.capabilityId) {
+    const files = Array.isArray(r.recheck.files) ? r.recheck.files : [];
+    openModelPicker({
+      kind: "auto", focus: r.recheck.capabilityId, recheck: true,
+      title: `Studio cannot open ${files.length === 1 ? "a file" : "files"} ${r.recheck.label || "the video engine"} needs`,
+      lead: files.map((f) => `${f.standIn || f.name}: ${f.reason === "missing" ? "not found" : f.reason} at ${f.path}.`).join(" ")
+        + ` Nothing needs downloading. ${files.length === 1 ? "Put it" : "Put them"} back there, then press Look again.`,
+      onRecheck: (found) => { if (found && typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst"); },
+    });
+    return true;
+  }
   const id = typeof r?.needsModel === "string" ? r.needsModel : r?.needsModel?.id || r?.capability || null;
   if (!id) return false;
   const title = String(r.error || "").split(/(?<=\.)\s/)[0] || "This needs a model";
   if (id === "chatQwen3") { needModel("chat", { title }); return true; }
   if (Object.values(MUSIC_CAP).includes(id)) { needModel("music", { title, focus: id }); return true; }
+  /* A VIDEO GATE REFUSAL (it names configuredEngine) whose download has
+   * finished since (setF): the row turns Installed, and the Video screen's
+   * "Couldn't start" with its Fix stayed, which opened this window on a row
+   * with nothing to press. The installed row gets Look again, as above. */
+  const fromVideoGate = !!r && Object.prototype.hasOwnProperty.call(r, "configuredEngine");
   openModelPicker({
     kind: "auto", focus: id, title,
     lead: r.gated ? "Studio cannot download this one itself. Here is how to get it, and what else does the job."
       : "Download it here, or pick one that fits this machine.",
+    ...(fromVideoGate ? { recheck: true,
+      onRecheck: (found) => { if (found && typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst"); } } : {}),
   });
   return true;
 }

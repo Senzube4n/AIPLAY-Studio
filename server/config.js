@@ -10,7 +10,7 @@ import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION, H3_BLOCK_CACHE } from "./h3tier.
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { scanBasesSync, findShelfModel, modelName } from "./localmodels.js";
+import { scanBasesSync, findShelfModel, modelName, engineBasesSync } from "./localmodels.js";
 
 /**
  * Where the settings a user can change actually live.
@@ -78,10 +78,44 @@ const MODELS_ALSO = Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d
  *
  * Order is preference: measured build first, downloadable substitute last.
  */
+/* The Models screen's stand-ins as saved ({ "<catalogue file>": "<local file>" }),
+ * `config.modelOverrides` below. Read here too, so the picks made while this
+ * file loads already count a stand-in (localFile). */
+const SAVED_OVERRIDES = saved.modelOverrides && typeof saved.modelOverrides === "object"
+  ? Object.fromEntries(Object.entries(saved.modelOverrides).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
+  : {};
+/* WHERE THE PICKS LOOK, AND WHAT COUNTS (setF on 7b241ea, from a tester's
+ * report). Every folder the engine loads from (localmodels.js
+ * engineBasesSync: the models folder, the extra ones, the extra_model_paths
+ * YAML bases and the install's own ComfyUI/models), as the Models screen and
+ * the engine door read them. And a Models-screen stand-in counts for the name
+ * it stands in for, on the same shelf (unet with diffusion_models): models.js
+ * counts the row installed then, and the engine door renames the catalogue
+ * name to the stand-in in every graph (localmodels.js applyModelOverrides).
+ * Before, the picks read only the first two folders and no stand-in, so the
+ * Models screen said "installed" while the Video screen refused with "Get
+ * MiniMax H3 (0.0 GB)", after a restart too.
+ *
+ * `live` is `config` once it exists: from then on the folders and the
+ * stand-ins are read from it, where a later change (the override route, a
+ * test pointing the rig elsewhere) is, and where workflow.js videoReady()
+ * reads them. While this file loads they come from the settings, which is the
+ * same. */
+let live = null;
+const shelfBases = () => engineBasesSync(live || { modelsDir: MODELS_DIR, modelsAlso: MODELS_ALSO,
+  comfyDir: path.join(RIG, "ComfyUI"), comfy: { extraArgs: Array.isArray(saved.comfyExtraArgs) ? saved.comfyExtraArgs.map(String) : [] } });
 let modelSnapshot = null;
 const localFile = (sub, name) => {
-  modelSnapshot ||= scanBasesSync([MODELS_DIR, ...MODELS_ALSO]);
-  try { return findShelfModel(modelSnapshot, sub, name); } catch { return null; }
+  modelSnapshot ||= scanBasesSync(shelfBases());
+  try {
+    const found = findShelfModel(modelSnapshot, sub, name);
+    if (found) return found;
+  } catch { return null; }
+  const standIn = (live ? live.modelOverrides : SAVED_OVERRIDES)?.[String(name)];
+  if (typeof standIn !== "string" || !standIn) return null;
+  /* Found by its stand-in: the graph keeps the catalogue name, which the
+   * engine door renames. */
+  try { return findShelfModel(modelSnapshot, sub, standIn) ? { name: String(name), standIn } : null; } catch { return null; }
 };
 const pick = (sub, ...names) => {
   for (const name of names) {
@@ -93,11 +127,20 @@ const pick = (sub, ...names) => {
 
 /* "Is this file on disk, with bytes in it", asked one way for pick() and for
  * the H3 step defaults below `config`, so the two cannot disagree about it.
- * Every folder the engine loads from counts: the models folder and the extra
- * ones (config.modelsAlso). A declaration, so pick() above can use it. */
+ * Every folder the engine loads from counts, and a stand-in counts for the
+ * name it stands in for (localFile above). A declaration, so pick() above can
+ * use it. */
 function onDisk(sub, name) {
   return !!localFile(sub, name);
 }
+
+/* THE VIDEO ENGINES' FILE PICKS and their candidate lists, kept so every one
+ * can be made again when a video row lands or goes, without a restart
+ * (refreshVideoPicks below). videoPick() is pick() that also remembers
+ * [engine, field, folder, names]. The H3 speed-up slots keep their own list
+ * (H3_LORA_SLOTS), and refreshVideoPicks() refreshes them too. */
+const VIDEO_PICKS = [];
+const videoPick = (engine, field, sub, ...names) => { VIDEO_PICKS.push([engine, field, sub, names]); return pick(sub, ...names); };
 
 /* THE H3 SPEED-UP SLOTS and their candidate lists, kept so a speed-up that
  * lands (a Models download) is picked again without a restart
@@ -344,9 +387,7 @@ export const config = {
       ? Object.fromEntries(Object.entries(saved.llm.bases).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
       : {},
   },
-  modelOverrides: saved.modelOverrides && typeof saved.modelOverrides === "object"
-    ? Object.fromEntries(Object.entries(saved.modelOverrides).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
-    : {},
+  modelOverrides: { ...SAVED_OVERRIDES },
   /* The python that runs ComfyUI.
    *
    * Layout differs by install route and there is no way to guess from the rig
@@ -1310,47 +1351,61 @@ export const config = {
      * builds stay as fallbacks for machines that only have those. */
     /* A light machine (LIGHT_H3) loads the w4a8 build first: measured as good
      * and a little faster on an RX 9060 XT, 8 GB smaller. Repeated last so a
-     * light machine holding none is told to fetch it. */
+     * light machine holding none is told to fetch it.
+     * EVERY LIST ENDS IN THE FILE THIS MACHINE'S MODELS ROW DOWNLOADS (setF,
+     * from a tester's report). pick() returns the last name when none is on
+     * disk, and these are picked again when a row lands (refreshVideoPicks),
+     * so the last name is the one a message names as missing. The other
+     * machines' list ended in the w4a8 while the H3 row fetches the int8
+     * there, and the audio VAE's in the bf16 while every machine fetches the
+     * fp32. server/videopicks_test.js holds every list to the catalogue: each
+     * name the Models row accepts is here, and the last name is its download. */
     dit: LIGHT_H3
-      ? pick("diffusion_models",
+      ? videoPick("h3", "dit", "diffusion_models",
         "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
         "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
         "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors")
-      : pick("diffusion_models",
+      : videoPick("h3", "dit", "diffusion_models",
         "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
-        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
+        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
     /* References render on the checkpoint BUILT for them — the vendor's r2v
      * template uses ref2va, not fl2va. Falls back to the fl2va builds so refs
-     * keep working (measured working 08-23) where ref2va is not downloaded. */
-    ditRef: pick("diffusion_models",
+     * keep working (measured working 08-23) where ref2va is not downloaded.
+     * Ends in this machine's H3 DiT, the one its H3 row fetches. */
+    ditRef: videoPick("h3", "ditRef", "diffusion_models",
       "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
-      "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
+      "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+      ...(LIGHT_H3 ? [] : ["minimax_h3_fl2va_pruned_int8_convrot.safetensors"])),
     /* The int4 build on every card. AMD used to take the int8 one on the
      * belief that ROCm ran int4 on a slow fallback; measured 2026-09-25 on an
      * RX 9060 XT it was a little FASTER than int8 (299 s against 316 s a
      * clip) and staged 13.5 GB instead of 25.9. The int4 name is repeated
      * last so a machine holding neither is told to fetch the int4. */
-    textEncoder: pick("text_encoders",
+    textEncoder: videoPick("h3", "textEncoder", "text_encoders",
       "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
       "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
       "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
     /* int8 first where it is on disk; a light machine (LIGHT_H3) is told to
      * fetch it, others the fp16 (the build the H3 lab measured with). */
     videoVae: LIGHT_H3
-      ? pick("vae",
+      ? videoPick("h3", "videoVae", "vae",
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "minimax_h3_video_vae_fp16.safetensors",
         "minimax_h3_video_vae_int8_convrot.safetensors")
-      : pick("vae",
+      : videoPick("h3", "videoVae", "vae",
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "minimax_h3_video_vae_fp16.safetensors"),
-    audioVae: pick("vae",
+    /* The fp32 is what the H3 row fetches on every card, so it is repeated
+     * last; a bf16 already on disk still loads. */
+    audioVae: videoPick("h3", "audioVae", "vae",
       "minimax_h3_audio_vae_fp32.safetensors",
-      "minimax_h3_audio_vae_bf16.safetensors"),
+      "minimax_h3_audio_vae_bf16.safetensors",
+      "minimax_h3_audio_vae_fp32.safetensors"),
     // Full-rank on purpose. The 440 MB resized-rank LoRA saves 1.5 GB and has
     // two independent reports of camera-movement degradation and I2V
     // prompt-following failure.
@@ -1746,8 +1801,12 @@ export const config = {
      * The diffusion-decoder VAE (CausalDiffusionVAE) is what ComfyUI's own
      * LTX 2.5 template loads under the plain name; ComfyUI's VAELoader reads it
      * (comfy/sd.py, "lightricks LTX 2.4 diffusion VAE decoder"). Taken when
-     * the conv one is not on disk, so a template install renders here too. */
-    videoVae: pick("vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors"),
+     * the conv one is not on disk, so a template install renders here too.
+     * The conv name is repeated last because it is the file the LTX row
+     * fetches on every card (setF on 7b241ea): a machine holding neither is
+     * told the file it would download, not the template's. */
+    videoVae: videoPick("ltx", "videoVae", "vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors",
+      "ltx-2.5-video-vae-conv-bf16.safetensors"),
     audioVae: "ltx-2.5-audio-vae-bf16.safetensors",
     upscaler: "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
 
@@ -2045,6 +2104,9 @@ export const config = {
 
   paths: { appData: APPDATA },
 };
+/* From here on the picks read the folders and the stand-ins from `config`
+ * (localFile, above). */
+live = config;
 
 /* H3'S DEFAULT STEP COUNT, AND THE THREE QUALITY CHIPS, FOLLOW THE DISK.
  *
@@ -2098,8 +2160,8 @@ config.video.engines.h3.steps = resolveH3Steps(config.video.engines.h3);
  *  the builds and step defaults follow. The step count in use moves only
  *  while it is still the machine's default (Standard), never a person's.
  *  Returns turboBuilds. */
-export function refreshH3Speedups() {
-  modelSnapshot = scanBasesSync([config.modelsDir, ...(config.modelsAlso || [])]);
+export function refreshH3Speedups({ rescan = true } = {}) {
+  if (rescan || !modelSnapshot) modelSnapshot = scanBasesSync(shelfBases());
   const h3 = config.video.engines.h3;
   const before = h3.stepDefaults?.standard;
   for (const [slot, names] of Object.entries(H3_LORA_SLOTS)) h3[slot] = pick("loras", ...names);
@@ -2154,7 +2216,7 @@ export const refreshTaoMate = () => refreshH3Speedups().three;
 config.video.engines.fasth3 = {
   ...config.video.engines.h3,
   label: "FastH3",
-  dit: pick("diffusion_models",
+  dit: videoPick("fasth3", "dit", "diffusion_models",
     "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
     "fastvideo_fasth3_8step_v2_pruned_bf16.safetensors",
     "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors"),
@@ -2195,6 +2257,49 @@ config.video.engines.fasth3 = {
    * until the lab: the default a person got was a speed nobody had measured. */
   attention: "kitchen",
 };
+
+/* What FastH3 takes from H3 by the spread above and must take again when
+ * H3's picks change: the same text encoder and VAEs (models.js H3_SHARED_FILES). */
+const FASTH3_FROM_H3 = ["textEncoder", "videoVae", "audioVae"];
+
+/** LOOK FOR EVERY VIDEO FILE AGAIN (setF, from a tester's report).
+ *
+ *  Every file name a video graph loads was picked once, while this file
+ *  loaded: H3's DiT, reference DiT, text encoder and two VAEs, FastH3's DiT
+ *  and its copies of H3's encoder and VAEs, LTX's video VAE, and H3's
+ *  speed-ups. Only the speed-ups were ever picked again. So a Studio started
+ *  before its H3 download finished kept the names pick() had chosen on an
+ *  empty disk, and two of them were not the files the Models screen fetches
+ *  (the audio VAE everywhere, the DiT off the light machines). The Models
+ *  screen then said "installed", videoReady() missed the stale names, and
+ *  the Video screen refused with "Get MiniMax H3 (0.0 GB)" until a restart.
+ *
+ *  This scans the shelf again, picks every one of them again from its own
+ *  list, copies H3's shared files into FastH3 again, and looks for the
+ *  speed-ups and the step defaults again (refreshH3Speedups, whose rule is
+ *  unchanged: a person's own step count never moves). Called when Studio
+ *  starts and whenever a video row lands or goes (server/index.js), and by
+ *  the video gate once before it refuses. A shelf scan and no file is read
+ *  or hashed. On every card: what it picks is what a restart would pick.
+ *  Returns the fields that changed, as "engine.field". */
+export function refreshVideoPicks() {
+  modelSnapshot = scanBasesSync(shelfBases());
+  const engines = config.video.engines;
+  const changed = [];
+  const set = (engine, field, value) => {
+    const e = engines[engine];
+    if (!e || e[field] === value) return;
+    e[field] = value;
+    changed.push(`${engine}.${field}`);
+  };
+  for (const [engine, field, sub, names] of VIDEO_PICKS) set(engine, field, pick(sub, ...names));
+  if (engines.h3 && engines.fasth3) for (const field of FASTH3_FROM_H3) set("fasth3", field, engines.h3[field]);
+  const h3 = engines.h3;
+  const before = Object.fromEntries(Object.keys(H3_LORA_SLOTS).map((slot) => [slot, h3[slot]]));
+  refreshH3Speedups({ rescan: false });
+  for (const slot of Object.keys(H3_LORA_SLOTS)) if (h3[slot] !== before[slot]) changed.push(`h3.${slot}`);
+  return changed;
+}
 
 /**
  * The settings that survive a restart.

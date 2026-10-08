@@ -52,7 +52,8 @@ test("the plan refuses references on FastH3 and LTX, in that sentence, and takes
   assert.equal(h3.refusal, null);
   assert.equal(h3.prompt, "<Picture 1> walks", "a tag an attached picture answers stays");
   const index = read("./index.js");
-  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios \}, \{ engineKey: eng, eng: videoEngine\(eng\),/,
+  /* ...and the soundtrack that really staged (songstage.js, 2026-10-08). */
+  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios, audioTrack \}, \{ engineKey: eng, eng: videoEngine\(eng\),/,
     "the door plans on the references that really staged");
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   assert.doesNotMatch(index, /References need MiniMax H3/, "no second, hand-kept copy of the sentence");

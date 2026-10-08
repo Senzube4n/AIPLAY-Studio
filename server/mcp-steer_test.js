@@ -154,7 +154,8 @@ console.log("\n§1  the simple way on the Video screen");
   ok("config.js: pick() and the step defaults share ONE onDisk(), and it reads the extra folders",
     /const found = localFile\(sub, name\);/.test(src("./config.js"))
     && (src("./config.js").match(/function onDisk\(/g) || []).length === 1
-    && /scanBasesSync\(\[MODELS_DIR, \.\.\.MODELS_ALSO\]\)/.test(src("./config.js")));
+    /* Every folder the engine loads from (localmodels.js engineBasesSync), since setF. */
+    && /const shelfBases = \(\) => engineBasesSync\(live \|\| \{ modelsDir: MODELS_DIR, modelsAlso: MODELS_ALSO,/.test(src("./config.js")));
   const nestedRig = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { extra: true, nested: true });
   ok("nested H3 LoRAs in an extra models folder select the same matched step defaults",
     !nestedRig.error && same(nestedRig, rig), JSON.stringify(nestedRig));

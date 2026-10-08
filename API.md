@@ -558,6 +558,24 @@ The door takes Studio's own page or a local client only, with a 1 MB body, and
 so does `POST /api/videolab`. MCP: `make_clip` `check_only` (with `notes`),
 `sparse`, and its reply's `warnings`.
 
+**When the video files are not there.** `check`, `create` and `run` first ask
+which engine the files on disk can render (workflow.js `resolveVideoEngine`),
+and Studio looks at the disk again once before it refuses, or before it
+renders on another engine than the chosen one. `check` answers a
+refusal as `refusal` with `ok: false` and no `engine`. It is either
+`needsModel` (the Models row to download, the size left in its sentence,
+`needsRegionAck`, `region`, `alsoGated`), or, when that row already reads
+installed and a file still cannot be opened, `reason: "weights-unreadable"`,
+`needsModel: null` and `recheck: { engine, label, capabilityId, files: [{ name,
+folder, standIn, path, reason }] }`, `reason` being `missing`, `empty` or
+`unreadable (<code>)`. Nothing needs downloading then: put the file back at
+`path` and ask again (the page's Fix, then Look again, does a `check`). A size
+is never "0.0 GB": under 0.05 GB it is said in MB. Studio picks every video
+file name again (config.js `refreshVideoPicks`) at start, when a video row's
+download finishes, when a Models-screen look (`GET /api/models`, and the disk
+reading behind `/api/status` once a minute) finds a row's files came, went or
+changed, and when a stand-in is chosen, so none of this needs a restart.
+
 **Keeping a character** (the REWIND A/B, 2026-09-24, DIRECTING.md §2). `create`
 and `check` take `"persona": "<saved character>"`: it is resolved before the
 safety check (so the check sees its pictures and words), up to three of its

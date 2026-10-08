@@ -18,7 +18,12 @@
  */
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const gb = (b) => `${(Number(b || 0) / 1073741824).toFixed(1)} GB`;
+/* Never "0.0 GB" (setF, 2026-09-26): what is left under 0.05 GB is said in MB,
+ * as the video gate says it. */
+const gb = (b) => {
+  const n = Number(b || 0);
+  return n >= 0.05 * 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1048576))} MB`;
+};
 
 /* Which Models-screen rows answer each kind of question. The music and video
  * lists are the engines their pickers offer; images are every picture model. */
@@ -147,7 +152,10 @@ async function paint() {
       const pct = pr?.total ? Math.round((100 * pr.received) / pr.total) : 0;
       const left = Math.max(0, (c.totalBytes || 0) - (c.haveBytes || 0));
       const act = c.ready
-        ? `<span class="mp-ok">Installed</span>`
+        /* Installed, but the renderer could not open a file (o.recheck, from
+         * the video gate): Look again asks the gate once more. */
+        ? `<span class="mp-ok">Installed</span>${current.recheck && c.id === current.focus
+          ? ` <button class="btn sm mp-get" type="button" data-recheck="${esc(c.id)}">Look again</button>` : ""}`
         : c.downloading
           ? `<span class="mp-pct">${pct}%</span>`
           : c.nativeSetup
@@ -179,6 +187,27 @@ async function paint() {
 }
 
 async function onRow(e) {
+  /* Look again (o.recheck): the video gate answers a plan check only after
+   * it has looked at the disk again (server/index.js videoWeightsGate). An
+   * answer naming an engine means every file is there now. */
+  const again = e.target.closest("[data-recheck]");
+  if (again) {
+    again.disabled = true;
+    say("Looking at the disk again…");
+    let found = false;
+    try {
+      const r = await (await fetch("/api/video", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "check" }) })).json();
+      found = !!r?.engine;
+      if (found) say("Studio found every file. Start the render again.");
+      else say(r?.refusal?.error || r?.error || "Studio still cannot open that file.", true);
+    } catch { say("Could not reach Studio's server.", true); }
+    again.disabled = false;
+    current?.onRecheck?.(found);
+    /* The rows as they are now: a file that went makes the row a Download. */
+    paint();
+    return;
+  }
   const how = e.target.closest("[data-how]");
   if (how) {
     const box = win.querySelector(`[data-howfor="${CSS.escape(how.dataset.how)}"]`);

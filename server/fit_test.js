@@ -331,9 +331,16 @@ const realRig = config.rig;
  * so a machine whose settings name one would find real weights there and fail
  * this lane. Emptied for the block, restored with the rig. */
 const realAlso = config.modelsAlso;
+/* ...and every other folder the engine loads from (localmodels.js
+ * engineBases, which videoReady() reads since setF): the install's own
+ * ComfyUI/models and the extra_model_paths YAML bases. */
+const realComfyDir = config.comfyDir;
+const realExtraArgs = config.comfy.extraArgs;
 config.rig = path.join(os.tmpdir(), "aiplay-fit-test-no-models");
 try {
   config.modelsAlso = [];
+  config.comfyDir = path.join(config.rig, "ComfyUI");
+  config.comfy.extraArgs = [];
   const r = resolveVideoEngine();
   ok("with no weights anywhere, it does not claim to be ready", r.ready === false);
   ok("...it leaves the user's saved choice alone",
@@ -353,6 +360,8 @@ try {
 } finally {
   config.rig = realRig;
   config.modelsAlso = realAlso;
+  config.comfyDir = realComfyDir;
+  config.comfy.extraArgs = realExtraArgs;
 }
 
 console.log("\n── what counts as a picture model ──────────────────────────────");

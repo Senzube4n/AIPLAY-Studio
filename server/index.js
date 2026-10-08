@@ -24,7 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshH3Speedups } from "./config.js";
+import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshVideoPicks } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
 import { createCommunityRoutes } from "./music/community-tools.js";
@@ -85,7 +85,8 @@ import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost, LENDER_ROLE_LABEL } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp } from "./models.js";
+import { stageLibrarySong, STAGED_SONG } from "./songstage.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp, isVideoRow } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -310,7 +311,7 @@ function missingSupport(cap, ownDit, own = {}) {
     + `already have in the rows under the model file.`;
 }
 import {
-  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath, requireModelName, modelLeaf, findShelfModel,
+  scanBases, engineBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath, requireModelName, modelLeaf, findShelfModel,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
 import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
@@ -1311,10 +1312,41 @@ async function modelsDisk() {
 }
 const ggufSetup = new GgufSetup();
 models.on("update", () => push(jobs.snapshot()));
-/* An H3 speed-up that lands (3, 4 or 8 steps) is used at once, not after a restart. */
+/* EVERY VIDEO FILE IS LOOKED FOR AT START, AND AGAIN WHENEVER A VIDEO ROW
+ * LANDS OR GOES (setF, from a tester's report). config.js picks the file names
+ * each video graph loads (H3's DiT, encoder and VAEs, the reference DiT,
+ * FastH3's, LTX's VAE, the speed-ups) when it loads, and only the speed-ups
+ * were picked again. A Studio started before its H3 download finished kept
+ * the names chosen on an empty disk, so the Models screen said "installed"
+ * and the Video screen refused with "Get MiniMax H3 (0.0 GB)" until a restart.
+ * Now:
+ *   - "ready": a download finished. Any video row (models.js isVideoRow: H3,
+ *     its references row, LTX, FastH3 and the rows on them, the speed-ups
+ *     among them) picks every file again;
+ *   - "changed": a status() found a row's files came or went without a
+ *     download (a copy by hand, a stand-in, a file deleted);
+ *   - and the doors that refuse for missing video files look once more first
+ *     (videoReadyFresh, the video gate).
+ * refreshVideoPicks() is the one function, on every card. /api/status reads
+ * the picks on every poll, so the page has the new state at its next one. */
+refreshVideoPicks();
 models.on("ready", (id) => {
-  if (CATALOG.find((c) => c.id === id)?.addonFor === "video") refreshH3Speedups();
+  if (isVideoRow(id)) refreshVideoPicks();
 });
+models.on("changed", (ids) => {
+  if (ids.some((id) => isVideoRow(id))) refreshVideoPicks();
+});
+/* The first look, which "changed" compares the next ones with. */
+models.status().catch(() => {});
+
+/** videoReady(), looked for again once before a door refuses (setF): a file
+ *  that landed or was copied in while Studio ran is found here too. */
+function videoReadyFresh(engine) {
+  const r = videoReady(engine);
+  if (r.ready) return r;
+  refreshVideoPicks();
+  return videoReady(engine);
+}
 
 /**
  * MAY A CLIP BE RENDERED — and if so, on WHICH engine.
@@ -1334,21 +1366,80 @@ models.on("ready", (id) => {
  * The refusal it does produce carries a capability id that the Models screen
  * has an actual button for, plus the licence acknowledgement that button will
  * demand — a suggestion that bounces at the downloader is not a fix either.
+ *
+ * IT NEVER CONTRADICTS THE MODELS SCREEN (setF, from a tester's report). The
+ * Models screen listed H3 as installed while this refused with "Get MiniMax
+ * H3 (0.0 GB)": config.js still held the file names it picked before the
+ * download finished, and "0.0" is a string, so it was printed.
+ *   1. Before refusing it has config.js look at the disk again
+ *      (refreshVideoPicks) and asks once more. That alone renders the
+ *      tester's case, and a file copied in by hand. Before rendering on
+ *      ANOTHER engine than the chosen one too: an H3 copied in by hand under
+ *      a build name config.js had not picked yet, beside FastH3, read "H3
+ *      missing, FastH3 here", so the clip went to FastH3 until the next look.
+ *   2. If an engine's Models row still reads complete while the renderer
+ *      cannot find its files, the refusal names each file, why it did not
+ *      count and the path it was looked for at, and offers no download:
+ *      `recheck` instead of `needsModel`, so the page's Fix looks again
+ *      rather than opening a window whose row says "Installed".
+ *   3. A download it does offer is never "0.0 GB": what is left is said in MB
+ *      under 0.05 GB (downloadSize), and not at all when nothing is. It is
+ *      the chosen engine's own row where Studio can fetch it (FastH3), not
+ *      always H3's.
  */
+function downloadSize(bytes) {
+  const n = Math.max(0, Number(bytes) || 0);
+  return n >= 5e7 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
+}
 async function videoWeightsGate() {
-  const resolution = resolveVideoEngine();
+  let resolution = resolveVideoEngine();
+  if (resolution.ready && !resolution.substituted) return { engine: resolution.key, resolution };
+  refreshVideoPicks();
+  resolution = resolveVideoEngine();
   if (resolution.ready) return { engine: resolution.key, resolution };
 
   const cat = await models.status();
-  const want = resolution.get;
+  /* status() may have found files that came since (models "changed" picks
+   * again), so ask once more before reading the rows against it. */
+  resolution = resolveVideoEngine();
+  if (resolution.ready) return { engine: resolution.key, resolution };
+  const rowOf = (k) => cat.find((c) => c.id === MODEL_TO_CAPABILITY[k]) || null;
+  const stuck = [resolution.configured, resolution.get?.engine, ...Object.keys(resolution.present || {})]
+    .find((k) => k && rowOf(k)?.ready && !resolution.present?.[k]);
+  if (stuck) {
+    const label = config.video.engines[stuck]?.label || stuck;
+    const files = videoReady(stuck).files || [];
+    const words = { missing: "was not found at", empty: "is empty (0 bytes) at" };
+    const said = files.map((f) => `${f.standIn ? `${f.standIn} (standing in for ${f.name})` : f.name} `
+      + `${words[f.reason] || `could not be read ${String(f.reason).replace(/^unreadable /, "")} at`} ${f.path}`);
+    return {
+      error: {
+        error: `The Models screen lists ${label} as installed, but Studio cannot open `
+          + `${files.length === 1 ? "one of its files" : `${files.length} of its files`}: ${said.join("; ")}. `
+          + `Studio looked at the disk again just now. Put ${files.length === 1 ? "the file" : "them"} back there, then press Fix to look again; nothing needs downloading.`,
+        reason: "weights-unreadable",
+        needsModel: null,
+        recheck: { engine: stuck, label, capabilityId: MODEL_TO_CAPABILITY[stuck] || null, files },
+        alsoGated: resolution.alsoGated || [],
+        configuredEngine: resolution.configured,
+      },
+    };
+  }
+  /* The chosen engine's own row where Studio can fetch it (a FastH3 choice
+   * gets FastH3's row), else the engine resolveVideoEngine names. */
+  const ownRow = rowOf(resolution.configured);
+  const want = ownRow && !ownRow.gated && !ownRow.ready
+    ? { engine: resolution.configured, capabilityId: ownRow.id, label: config.video.engines[resolution.configured]?.label || ownRow.label,
+      region: ownRow.region || null }
+    : resolution.get;
   const cap = want ? cat.find((c) => c.id === want.capabilityId) : null;
-  const missingGb = cap ? ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1) : null;
+  const left = cap ? Math.max(0, cap.totalBytes - cap.haveBytes) : 0;
 
   return {
     error: {
       error: want
         ? `No video weights on this machine yet. Get ${want.label}`
-          + (missingGb ? ` (${missingGb} GB)` : "")
+          + (left > 0 ? ` (${downloadSize(left)})` : "")
           + " from the Models screen — it is the video engine Studio can download for you."
           + (want.region ? ` Its licence grants no rights inside ${want.region.excluded.join(", ")}; the download asks you to confirm first.` : "")
         : `${resolution.label} is not downloaded yet. Open the Models screen.`,
@@ -1890,7 +1981,9 @@ jobs.on("update", async (snap) => {
      * — and a stage that cannot run is FAILED rather than left waiting, because
      * a row stuck at "waiting" is indistinguishable from one still queued. */
     if (want("video", config.video.when)) {
-      const vr = videoReady();
+      /* Looked for again once before the stage fails, as the video gate does
+       * (setF): a file copied in while Studio ran is found here too. */
+      const vr = videoReadyFresh();
       if (vr.ready) {
         art.request({ file: h.file, title: h.title, caption: job.caption, seed: h.seed, kind: "video" });
       } else {
@@ -1924,14 +2017,10 @@ jobs.on("update", async (snap) => {
 /* ── Models screen: what is already on disk ────────────────────────────────
  * Every folder the engine loads weights from: the chosen models folder, the
  * base_path of every extra_model_paths YAML the engine is launched with, and
- * the install's own models folder. */
+ * the install's own models folder. One answer with the video picks, the
+ * Models screen and the engine door (localmodels.js engineBases). */
 async function modelBases() {
-  return uniqueDirs([
-    config.modelsDir,
-    ...(config.modelsAlso || []),
-    ...(await extraBases(config.comfy.extraArgs)),
-    path.join(config.comfyDir, "models"),
-  ]);
+  return engineBases(config);
 }
 
 /** Merge keys into settings.json without touching the rest of it. */
@@ -2282,7 +2371,7 @@ const mvRoutes = createMvRoutes({
   cardReading: () => ({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
   /* Whether LTX's weights are on disk: "hybrid" sends a scene with no cast
    * there only when they are (server/mv/shot.js). */
-  ltxReady: () => videoReady("ltx").ready,
+  ltxReady: () => videoReadyFresh("ltx").ready,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
    *
    * `provenance` is the same module every other surface writes through, so a
@@ -4094,6 +4183,9 @@ const server = http.createServer(async (req, res) => {
           }
           config.modelOverrides = next;
           musicChoicesCache.at = 0;
+          /* A stand-in counts for the name it stands in for (config.js
+           * localFile), so the video picks follow it at once. */
+          refreshVideoPicks();
           await mergeSettings({ modelOverrides: next });
           return json(res, 200, { ok: true, overrides: next });
         }
@@ -5014,19 +5106,14 @@ const server = http.createServer(async (req, res) => {
         if (c && typeof c === "object") {
           if (c.upload) {
             const nm = path.basename(String(c.upload));
-            if (!/^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
+            if (!STAGED_SONG.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
             if (!(await stat(path.join(config.inputDir, nm)).catch(() => null))) return json(res, 400, { error: "The uploaded cover source is gone. Add it again.", reason: "cover-missing" });
             cover = nm;
           } else if (c.song) {
-            const base = path.basename(String(c.song));
-            const src = path.join(config.outputDir, base);
-            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a|opus)$/i.test(base) || !(await stat(src).catch(() => null))) {
-              return json(res, 400, { error: "That Library song is not in the output folder any more.", reason: "cover-missing" });
-            }
-            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, nm), await readFile(src));
-            cover = nm;
+            /* songstage.js: any name the Library lists (it refused brackets,
+             * commas and accents with "not in the output folder any more"). */
+            try { cover = await stageLibrarySong(c.song, { outputDir: config.outputDir, inputDir: config.inputDir }); }
+            catch (err) { return json(res, 400, { error: err.message, reason: "cover-missing", song: err.song || null }); }
           }
         }
         const seedNow = Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296);
@@ -5850,7 +5937,7 @@ const server = http.createServer(async (req, res) => {
           const order = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
           if (order.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer.", reason: "return-address" });
           const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
-          const readiness = videoReady("h3");
+          const readiness = videoReadyFresh("h3");
           const reviewMinutes = b.seen !== true ? await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
             rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() }) : null;
           if (b.seen !== true) return json(res, 409, { error: "Review the complete job and this machine's H3 readiness, then accept explicitly. Accepting does not render.", reason: "not-seen",
@@ -5908,7 +5995,7 @@ const server = http.createServer(async (req, res) => {
           const order = readStoredVideoJob(row.videoJob, { now: Date.now(), myFp: me.fp });
           if (order.returnTo.fp !== sender.fp || !config.video.enabled) return json(res, 409, { error: "The accepted order changed or Video is disabled on this machine.", reason: "video-disabled" });
           if (assignedTo("video")) return json(res, 409, { error: "A custom Video workflow is active; this job needs the built-in H3 graph. Unassign it and review again.", reason: "workflow-incompatible" });
-          const readiness = videoReady("h3");
+          const readiness = videoReadyFresh("h3");
           if (!readiness.ready) return json(res, 409, { error: "MiniMax H3 is not ready on this machine.", reason: "model-not-ready", readiness });
           const renderReadings = await readWorkload({
             artStatus: async () => art.status(),
@@ -8178,7 +8265,8 @@ const server = http.createServer(async (req, res) => {
         const src = path.join(CLIP_DIR, name);
         const st = await stat(src).catch(() => null);
         if (!st?.isFile()) return json(res, 404, { error: `No clip called ${name}.` });
-        const vr = videoReady("h3");
+        /* Looked for again once before refusing, as the video gate does. */
+        const vr = videoReadyFresh("h3");
         if (!vr.ready) return json(res, 400, { error: `Continuing a clip needs MiniMax H3, which is not installed: ${vr.missing.join(", ")}` });
         try { b.loras = await checkedVideoLoras(b.loras, "h3"); }
         catch (err) { return json(res, 400, { error: err.message }); }
@@ -8252,6 +8340,15 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: false, refusal: { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" }, warnings: [] });
         const gate = await videoWeightsGate();
         if (gate.error) return json(res, 200, { ok: false, refusal: gate.error, warnings: [] });
+        /* The soundtrack is looked for (not copied), so check_only, the
+         * Advanced line and create agree about a song that cannot be staged. */
+        if (b.audioTrack?.name && !STAGED_SONG.test(String(b.audioTrack.name))) {
+          try { await stageLibrarySong(b.audioTrack.name, { outputDir: config.outputDir, inputDir: config.inputDir, check: true }); }
+          catch (err) {
+            return json(res, 200, { ok: false, engine: gate.engine, refusal: { error: `${err.message} The clip would not be queued: without it there is no song under the clip and no lip-sync.`,
+              reason: "song-missing", song: err.song || String(b.audioTrack.name) }, warnings: [] });
+          }
+        }
         let optionalH3;
         try { optionalH3 = await h3RefModService.checkRender(b, { engine: gate.engine }); }
         catch (error) { return json(res, 200, { ok: false, refusal: { error: error.message, reason: error.reason }, warnings: [] }); }
@@ -8398,6 +8495,10 @@ const server = http.createServer(async (req, res) => {
           control.end = num(b.controlEnd ?? b.control_end, 1, 0, 1);
         }
         let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack, personaStaged = null, personaLost = 0;
+        /* A song that could not be staged (songstage.js): the soundtrack is
+         * refused below, a reference audio is said as a warning. */
+        let songRefusal = null;
+        const refAudioLost = [];
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -8431,45 +8532,48 @@ const server = http.createServer(async (req, res) => {
            * the library. A library file is copied into ComfyUI's input dir the
            * same way a cover is — content of the graph, not a path, so the
            * render route still cannot be talked into reading anywhere else. */
+          /* An upload /api/refaudio named, or a Library song by its file name
+           * (songstage.js: any name the Library lists, brackets, commas,
+           * accents and .opus included; never a path). */
           const stagedAud = (v) => {
             if (!v) return undefined;
-            const nm = path.basename(String(v));
-            return /^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm) ? nm : undefined;
+            const nm = String(v);
+            return STAGED_SONG.test(nm) ? nm : undefined;
           };
-          const stageSong = async (name) => {
-            const base = path.basename(String(name));
-            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a)$/i.test(base)) return undefined;
-            const src = path.join(config.outputDir, base);
-            await stat(src);
-            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, nm), await readFile(src));
-            return nm;
-          };
+          const stageSong = (name) => stageLibrarySong(name, { outputDir: config.outputDir, inputDir: config.inputDir });
           const wantedAuds = Array.isArray(b.refAudios) ? b.refAudios.slice(0, 3) : [];
-          refAudios = (await Promise.all(wantedAuds.map(async (a) => {
+          const audsStaged = await Promise.all(wantedAuds.map(async (a) => {
             if (!a) return undefined;
             const start = Math.min(Math.max(Number(a.start) || 0, 0), 7200);
             try {
               const name = stagedAud(a.name) || await stageSong(a.name);
               return name ? { name, start } : undefined;
-            } catch { return undefined; }
-          }))).filter(Boolean);
+            } catch (err) { return { lost: err.song || String(a.name || "") }; }
+          }));
+          refAudios = audsStaged.filter((a) => a && !a.lost);
+          refAudioLost.push(...audsStaged.filter((a) => a?.lost).map((a) => a.lost));
           /* SONG UNDER THE CLIP, both engines — one audio the clip is generated
            * ON: its latent is frozen during sampling and the output's sound IS
            * this segment; on H3 it is also anchored at frame 0, so the model
            * hears the vocal (frozen + anchored = lip-sync). Staged exactly like
-           * a reference audio. */
+           * a reference audio. NEVER DROPPED UNSAID: a render is minutes and the
+           * song is the lip-sync, so one that cannot be staged refuses the clip
+           * with its name (it used to render without it, the plan still saying
+           * "+ song (lip-sync)"). */
           if (b.audioTrack && b.audioTrack.name) {
             const start = Math.min(Math.max(Number(b.audioTrack.start) || 0, 0), 7200);
             try {
               const name = stagedAud(b.audioTrack.name) || await stageSong(b.audioTrack.name);
               if (name) audioTrack = { name, start };
-            } catch { /* a missing soundtrack drops silently like a bad ref */ }
+            } catch (err) {
+              songRefusal = { error: `${err.message} The clip was not queued: without it there is no song under the clip and no lip-sync.`,
+                reason: "song-missing", song: err.song || String(b.audioTrack.name) };
+            }
           }
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
+        if (songRefusal) return json(res, 400, songRefusal);
         /* THE PLAN (server/video-plain.js videoPlan), on the references that
          * really staged. References are an H3 capability: FastH3 was distilled
          * without them, and every LTX node that takes an image pins it to a
@@ -8483,7 +8587,9 @@ const server = http.createServer(async (req, res) => {
         let optionalH3;
         try { optionalH3 = await h3RefModService.checkRender(b, { engine: eng }); }
         catch (error) { return json(res, error.status || 400, { error: error.message, reason: error.reason }); }
-        const plan = videoPlan({ ...b, ...optionalH3, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
+        /* The plan reads what really staged: the soundtrack too, so a receipt
+         * never says "+ song (lip-sync)" for a song the render does not carry. */
+        const plan = videoPlan({ ...b, ...optionalH3, refImages, refAudios, audioTrack }, { engineKey: eng, eng: videoEngine(eng),
           persona: personaStaged,
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }), framed: !!(firstFrame || lastFrame),
           control: !!control.video });
@@ -8495,6 +8601,11 @@ const server = http.createServer(async (req, res) => {
         refImages = plan.refImages || refImages;
         if (persona && personaLost > 0) {
           plan.warnings.push({ id: "persona-missing", text: personaMissing(persona.name, personaLost) });
+        }
+        /* A reference audio that could not be staged rides without it, and the
+         * reply says which (it was dropped unsaid). */
+        if (refAudioLost.length) {
+          plan.warnings.push({ id: "ref-audio-missing", text: `${refAudioLost.length === 1 ? "A reference audio was" : `${refAudioLost.length} reference audios were`} left out: ${refAudioLost.map((n) => `"${n}"`).join(", ")} ${refAudioLost.length === 1 ? "is" : "are"} not a song in the Library's folder.` });
         }
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
          * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
@@ -8625,15 +8736,16 @@ const server = http.createServer(async (req, res) => {
          * config.js resolved, stand-ins included). The Models row alone said
          * "not downloaded" for an H3 missing one optional speed-up, and for an
          * LTX holding the template's VAE, and left FastH3 the only choice. */
-        if (cap && !cap.ready && !videoReady(e).ready) {
-          const gb = ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1);
+        if (cap && !cap.ready && !videoReadyFresh(e).ready) {
+          /* Never "0.0 GB" (setF): under 0.05 GB the size is said in MB. */
+          const gb = downloadSize(cap.totalBytes - cap.haveBytes);
           return json(res, 400, {
             /* A gated engine gets the hand-fetch, not "open the Models screen"
              * — there is no button there for it, which is the whole reason this
              * app pointed a fresh install at a dead end for as long as it did. */
             error: cap.gated
-              ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
-              : `${config.video.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
+              ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb}, access-gated repository). ${cap.gated.how}`
+              : `${config.video.engines[e].label} is not downloaded yet (${gb} missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
             capability: capId,
             gated: cap.gated || null,
@@ -12752,7 +12864,7 @@ const server = http.createServer(async (req, res) => {
           context: restyleLineage.texts, flags: restyleLineage.flags });
         if (refused) return json(res, 422, refused);
       }
-      const vr = videoReady("ltx");
+      const vr = videoReadyFresh("ltx");
       if (!vr.ready) return json(res, 400, { error: `LTX is not installed: ${vr.missing.join(", ")}` });
 
       const every = Math.min(Math.max(Number(b.guideEvery) || 16, 4), 48);

@@ -86,7 +86,7 @@ console.log("\n§4  the door, the queue, the tool, the router, the page and the 
 {
   const index = src("./index.js"), art = src("./art.js"), mcp = src("./mcp.js"), router = src("./chat/router.js"),
     html = src("../web/index.html"), app = src("../web/app.js"), api = src("../API.md");
-  ok("the door takes action extend and needs H3", /if \(b\.action === "extend"\) \{/.test(index) && /const vr = videoReady\("h3"\);/.test(index));
+  ok("the door takes action extend and needs H3", /if \(b\.action === "extend"\) \{/.test(index) && /const vr = videoReadyFresh\("h3"\);/.test(index));
   ok("...measures the clip and refuses by reason", /reason: "probe"/.test(index) && /reason: "too-short"/.test(index));
   ok("...stages the source under a content name", /aiplay_cont_\$\{createHash\("sha1"\)/.test(index));
   ok("...and queues a video job that continues it", /continueFrom: \{\n\s+file: staged, frames: probe\.frames/.test(index) && /extendedFrom: name,/.test(index));

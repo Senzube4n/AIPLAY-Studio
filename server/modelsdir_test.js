@@ -89,9 +89,11 @@ test("a second models folder can be added on purpose, beside the main one", () =
   assert.match(page, /data-mf="also" disabled>Add as extra</);
   assert.match(page, /action: "addAlso", dir: root\.getElementById\("mfPath"\)\.value/);
   const conf = readFileSync(new URL("./config.js", import.meta.url), "utf8");
-  assert.match(conf, /scanBasesSync\(\[MODELS_DIR, \.\.\.MODELS_ALSO\]\)/, "the engine's file choices look in the extra folders too");
+  /* Every folder the engine loads from, the extra ones among them
+   * (localmodels.js engineBasesSync), since setF on 7b241ea. */
+  assert.match(conf, /const shelfBases = \(\) => engineBasesSync\(live \|\| \{ modelsDir: MODELS_DIR, modelsAlso: MODELS_ALSO,/, "the engine's file choices look in the extra folders too");
   const wf = readFileSync(new URL("./workflow.js", import.meta.url), "utf8");
-  assert.match(wf, /if \(onDisk\(sub, file, snapshot\)\) continue;/, "so does the video ready check");
+  assert.match(wf, /const bases = engineBasesSync\(config\);[\s\S]{0,200}if \(onDisk\(sub, file, snapshot, bases\)\) continue;/, "so does the video ready check");
 });
 
 test("catalogue and downloader reuse complete nested weights without moving or downloading", async () => {
@@ -241,6 +243,10 @@ test("an AMD card holding the older int8 H3 encoder: the Models screen and the g
     process.exit(0);`;
   const env = { ...process.env, AIPLAY_APPDATA: appdata };
   delete env.AIPLAY_MODELS_DIR;
+  /* The settings name this box's own rig: the engine also loads from the
+   * rig's ComfyUI/models (localmodels.js engineBases), so a real rig named by
+   * the gate's AIPLAY_RIG must not stand in for it. */
+  delete env.AIPLAY_RIG;
   const out = execFileSync(process.execPath, ["--input-type=module", "-e", child], { env, encoding: "utf8", timeout: 60_000 });
   const r = JSON.parse(out.trim().split(/\r?\n/).pop());
   assert.equal(r.amd, true, "the child really is on an AMD card");
