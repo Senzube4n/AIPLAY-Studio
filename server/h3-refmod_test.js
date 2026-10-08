@@ -199,13 +199,21 @@ test("inactive cache controls stay text-only and active caches choose the matche
   const spec = new Function("getEngine", "find", "rows", `${body}\nreturn spec;`)(() => engine, (id) => ({ value: values[id] }), rows);
   const keepingLine = /\n  const keeping = [^\n]+;/.exec(app)?.[0];
   assert.ok(keepingLine?.includes("h3RefModPanel"), "the Fast chip reads the active cache selection");
-  const keeping = new Function("$", "state", "cur", "h3RefModPanel", `${keepingLine}\nreturn keeping;`);
-  const retained = () => keeping(() => null, { refImages: [] }, engine, { spec });
+  /* `eng`: the line also reads the engine's chips (a reference song keeps
+   * where the server sends them); none here. */
+  const keeping = new Function("$", "state", "cur", "h3RefModPanel", "eng", `${keepingLine}\nreturn keeping;`);
+  const retained = () => keeping(() => null, { refImages: [] }, engine, { spec }, {});
   const qualitySrc = /\nfunction vidQualitySteps\(eng, keeping = false\) \{[\s\S]*?\n\}/.exec(app)?.[0];
   const speedSrc = /\nfunction vidSpeedupNeed\(eng, steps, hasRefs\) \{[\s\S]*?\n\}/.exec(app)?.[0];
   const quality = new Function(`${qualitySrc}\nreturn vidQualitySteps;`)();
-  const speed = new Function("VID_SPEEDUP_ROWS", `${speedSrc}\nreturn vidSpeedupNeed;`)({ 3: "three", 4: "four", 8: "eight" });
-  const eng = { stepDefaults: { fast: 3, standard: 4, best: 20 }, referenceSteps: 8, keepFast: { steps: 4 }, turboBuilds: { three: true, four: false, eight: false } };
+  /* The page looks the missing speed-up up in the server's table
+   * (video-plain.js speedupTable, per engine `speedupNeeds`); here the table
+   * the server sends for these builds: 3 steps with references needs the
+   * reference 4-step build, and without them TaoMate is on disk. */
+  const speed = new Function("VID_SPEEDUP_ROWS", "VID_ROW_BUILD", `${speedSrc}\nreturn vidSpeedupNeed;`)(
+    { 3: "three", 4: "four", 8: "eight" }, { three: 3, four: 4, eight: 8 });
+  const eng = { stepDefaults: { fast: 3, standard: 4, best: 20 }, referenceSteps: 8, keepFast: { steps: 4 }, turboBuilds: { three: true, four: false, eight: false },
+    speedupNeeds: { plain: { 3: null }, refs: { 3: "four" } } };
   for (const inactive of [() => { rows[0].strength = 0; values.h3CacheRetention = "1"; },
     () => { rows[0].strength = 1; values.h3CacheRetention = "0"; }]) {
     inactive();

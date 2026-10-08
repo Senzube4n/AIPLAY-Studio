@@ -23,7 +23,15 @@ export function h3OptionalMcpBody(args, engine) {
       promptStrength: args.h3_tweaks.prompt_strength, detailMode: args.h3_tweaks.detail_mode } : undefined,
     sparse: args.sparse, bridge: args.bridge, bridgeAlpha: args.bridge_alpha, sourceVideo: args.source_video,
   }, engine);
-  return { refMods: options.refMods, refModOptions: options.refModOptions, h3Tweaks: options.h3Tweaks };
+  const body = { refMods: options.refMods, refModOptions: options.refModOptions, h3Tweaks: options.h3Tweaks };
+  /* Whether these inputs put the render on the reference path (a RefMod
+   * does: video-plain.js refsOn, art.js clipSpeedupNeeded, the page's
+   * `keeping`), so make_clip takes Keep my character's chips. Not
+   * enumerable: it is not spread into the request. Read here, where the
+   * inputs are forwarded, so make_clip's own source names none of them
+   * (mcp-image_test's census reads a named input as a forwarded one). */
+  Object.defineProperty(body, "keeps", { value: Array.isArray(options.refMods) && options.refMods.length > 0 });
+  return body;
 }
 
 export function h3RefModTools(api) {

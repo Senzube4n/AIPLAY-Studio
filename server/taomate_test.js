@@ -143,6 +143,50 @@ test("NVIDIA: the clip runner refuses what videoPlan refuses; AMD refuses only a
   assert.equal(speedupNeededAtClip(amd, { steps: 4 }), null, "and without a way to look, nothing is refused there");
 });
 
+test("NVIDIA: the chips and every count's missing speed-up come from the server, the same numbers make_clip sends", async () => {
+  const { qualityChips, speedupTable, keepFast } = await import("./video-plain.js");
+  /* H3 alone: Fast 3 and Standard 8 are offered (dimmed) with their rows,
+   * Best is the bare model; make_clip "fast" sends the chip's 3, refused with
+   * TaoMate offered, where it ran the bare 20 as "fast". */
+  const bare = { ...nv({}), stepDefaults: { fast: 20, standard: 20, best: 20 }, refTurboSteps: null, steps: 20 };
+  const c = qualityChips(bare);
+  assert.deepEqual(c.plain, { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" },
+    best: { steps: 20, needsModel: null } });
+  /* H3 + references + 8-step: Standard 8 is lit (main dimmed it, offering the
+   * file on disk), and the kept Standard is the reference file's own 4. */
+  const eightRefs = { ...nv({ plain: { eight: true }, ref: { four: true, eight: true } }), stepDefaults: { fast: 8, standard: 8, best: 20 },
+    refTurboSteps: 4, steps: 8, refTurboLora: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+    refTurboLora4: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors" };
+  const e = qualityChips(eightRefs);
+  assert.deepEqual(e.plain.standard, { steps: 8, needsModel: null }, "the 8-step chip is lit on the disk that holds it");
+  assert.deepEqual(e.keep.standard, { steps: 4, needsModel: null }, "Keep my character's Standard is the reference file's own count");
+  assert.ok(e.keep.fast.steps <= e.keep.standard.steps, "Keep's Fast is never above its Standard (it was the bare 20 beside a 4)");
+  assert.equal(e.keep.fast.needsModel, null, "and never a chip whose file is missing");
+  assert.equal(keepFast({ ...eightRefs, stepDefaults: { fast: 20, standard: 8, best: 20 } }), null, "a Fast above Standard folds into it");
+  const t = speedupTable(eightRefs);
+  assert.equal(t.plain[8], null);
+  assert.equal(t.plain[4], "videoH3Turbo4");
+  assert.equal(t.refs[4], null, "the reference file is here");
+  /* AMD, Intel and the CPU: no chips; the page draws main's and make_clip
+   * sends stepDefaults (Bucky's rule). The table is main's rule there. */
+  assert.equal(qualityChips({ ...h3({ eight: true }), stepDefaults: { fast: 8, standard: 8, best: 20 } }), null);
+  assert.equal(speedupTable(h3({ eight: true })).plain[4], "videoH3Turbo4", "main's rule, which the page drew before");
+  assert.equal(speedupTable(h3({})).refs[8], "videoH3Turbo8");
+});
+
+test("a refused speed-up keeps the Keep my character line and the song line", () => {
+  /* The refusal used to carry neither, so the Video screen blanked the Keep
+   * line and its receipt and kept the last check's song line while the
+   * slider sat on a missing speed-up (web/vidfit.js paintKeep, paintSong).
+   * Words only: on every card. */
+  for (const eng of [h3({ eight: true }), nv({ plain: { eight: true }, ref: { eight: true } })]) {
+    const p = plan({ steps: 4, refImages: ["a.png"], audioTrack: { name: "song.wav" } }, eng);
+    assert.equal(p.refusal?.reason, "speedup-missing");
+    assert.equal(typeof p.character?.hint, "string", "the Keep line rides with the refusal");
+    assert.ok(p.songLine && typeof p.songLine.hint === "string", "and the song line");
+  }
+});
+
 test("the speed-ups are optional add-on rows of H3; its own row brings the 8-step one on NVIDIA", async () => {
   const row = (id) => CATALOG.find((c) => c.id === id);
   const names = (id) => row(id).files.map((f) => path.basename(f.dest));
@@ -198,10 +242,17 @@ test("the engine switch asks the renderer, and a speed-up is not part of it", ()
 test("the page dims a missing speed-up, offers it on a press, and before a render", () => {
   const app = read("../web/app.js");
   assert.match(app, /const VID_SPEEDUP_ROWS = \{ 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" \};/);
-  assert.match(app, /const getFor = \{ fast: tb && !tb\.three \? 3 : null, standard: tb && !tb\.eight && !tb\.four \? 8 : null, best: null \};/,
-    "Fast is TaoMate's, Standard the 8-step (or 4-step) file, Best never needs one");
+  /* The chips and the table are the server's (video-plain.js qualityChips,
+   * speedupTable); main's own chips stay only where no chips come (AMD,
+   * Intel, the CPU: Bucky's rule). */
+  assert.match(app, /if \(chipOf\) \{\s*getFor = \{ fast: chipOf\.fast\?\.needsModel \|\| null, standard: chipOf\.standard\?\.needsModel \|\| null, best: chipOf\.best\?\.needsModel \|\| null \};/,
+    "each chip's Models row is the server's, the kept chips' too");
+  assert.match(app, /getFor = \{ fast: tb && !tb\.three \? VID_SPEEDUP_ROWS\[3\] : null, standard: tb && !tb\.eight && !tb\.four \? VID_SPEEDUP_ROWS\[8\] : null, best: null \};/,
+    "without chips: Fast is TaoMate's, Standard the 8-step (or 4-step) file, Best never needs one, as main draws them");
+  assert.match(app, /const row = eng\?\.speedupNeeds\?\.\[hasRefs \? "refs" : "plain"\]\?\.\[Number\(steps\)\] \|\| null;/,
+    "the page's missing speed-up is the server's table, not a copy of the rule");
   assert.match(app, /b\.classList\.toggle\("off", !!get\);/);
-  assert.match(app, /if \(b\.dataset\.get\) \{ vidOfferSpeedup\(Number\(b\.dataset\.get\)\); return; \}/, "a dimmed chip offers, never chooses");
+  assert.match(app, /if \(b\.dataset\.get\) \{ vidOfferSpeedup\(VID_ROW_BUILD\[b\.dataset\.get\]\); return; \}/, "a dimmed chip offers, never chooses");
   assert.match(app, /const need = eng\.fixedSteps \? null : vidSpeedupNeed\(eng, \+\$\("vidSteps"\)\.value, hasRefs\);\s*if \(need\) \{ vidOfferSpeedup\(need\.build\); return; \}/,
     "Make clip offers the download instead of sending a render that would be refused");
   assert.match(app, /\(needSpeedup \? " · ⚠ " \+ st \+ " steps needs " \+ vidSpeedupWords\(needSpeedup\.build\)/, "the estimate says it first");

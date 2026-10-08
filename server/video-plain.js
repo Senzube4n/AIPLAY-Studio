@@ -159,7 +159,7 @@ export function speedupNeeded(eng, { steps, refs = false } = {}) {
  * nobody could read, never where the settings name another card (config.js
  * offNvidia: AMD, Intel, the CPU). Where it is false, every rule in this file
  * that has a per-path form keeps main's instead (speedupNeeded, keepFast,
- * speedupNeededAtClip).
+ * qualityChips, speedupNeededAtClip).
  */
 export function perPath(eng) {
   return !!(eng?.plainBuilds && eng?.refBuilds);
@@ -185,6 +185,59 @@ export function speedupNeededAtClip(eng, opts = {}, { onDisk = null } = {}) {
   if (!missing || typeof onDisk !== "function") return null;
   const { turbo, lora } = h3TurboLoraFor(eng, { steps: Number(opts.steps), refs: !!opts.refs });
   return turbo && lora && !onDisk(lora) ? missing : null;
+}
+
+/**
+ * THE QUALITY CHIPS, FROM THE SERVER: Fast · Standard · Best, each as {steps,
+ * needsModel}, the count a press sets and the Models row it needs first (null
+ * when its file is on disk). One copy for the three that show them:
+ * /api/status (per engine `chips`), the Video screen, which draws them and
+ * keeps no number of its own, and make_clip's `quality`. The page kept its
+ * own (Fast always 3, Standard 8 or 4, its own copy of speedupNeeded), and
+ * make_clip sent stepDefaults: on H3 alone the Fast chip said 3 (dimmed)
+ * while make_clip "fast" ran the bare model at 20.
+ *   plain  Fast is TaoMate's 3 (turbo3MaxSteps); Standard the engine's own
+ *          default where that is a speed-up count (8 or 4), else the 8-step
+ *          file's 8; Best the bare model's 20. The numbers Bucky's page drew.
+ *   keep   while a character is kept: Standard is the reference build's own
+ *          count (workflow.js referenceSteps), Fast keepFast's (else
+ *          Standard's: one chip), Best 20.
+ * null for an engine without chips (LTX; FastH3's fixed schedule), and null on
+ * AMD, Intel and the CPU (perPath): there the Video screen draws main's chips
+ * and make_clip's `quality` sends main's numbers (stepDefaults), exactly as
+ * Bucky's tests left them.
+ */
+export function qualityChips(eng) {
+  if (!eng?.stepDefaults || eng.fixedSteps || !perPath(eng)) return null;
+  const d = eng.stepDefaults;
+  const std = Number(d.standard);
+  const chip = (steps, refs = false) => ({ steps, needsModel: speedupNeeded(eng, { steps, refs })?.row ?? null });
+  const best = { steps: Number(d.best) || 20, needsModel: null };
+  const plain = eng.turboBuilds
+    ? { fast: chip(eng.turbo3MaxSteps ?? 3), standard: chip(std <= (eng.turboMaxSteps ?? 12) ? std : 8), best }
+    : { fast: chip(Number(d.fast) || std), standard: chip(std), best };
+  const keepStd = referenceSteps(eng) ?? std;
+  const keep = { fast: chip(keepFast(eng)?.steps ?? keepStd, true), standard: chip(keepStd, true), best };
+  return { plain, keep };
+}
+
+/**
+ * speedupNeeded for every count the speed-ups cover, by path: {plain: {n:
+ * row|null}, refs: {n: row|null}} for n = 1 to turboMaxSteps (above that the
+ * bare model needs nothing). /api/status sends it (per engine
+ * `speedupNeeds`), so the Video screen says a missing speed-up while the
+ * slider sits on it, and offers it before a render, without a copy of the
+ * rule. On every card: off NVIDIA it is main's rule (perPath), so the page
+ * says what it said. null where there is nothing to judge.
+ */
+export function speedupTable(eng) {
+  if (!eng?.turboBuilds || eng.fixedSteps) return null;
+  const table = { plain: {}, refs: {} };
+  for (let n = 1; n <= (eng.turboMaxSteps ?? 12); n++) {
+    table.plain[n] = speedupNeeded(eng, { steps: n })?.row ?? null;
+    table.refs[n] = speedupNeeded(eng, { steps: n, refs: true })?.row ?? null;
+  }
+  return table;
 }
 
 /* ── references on an engine that takes none ─────────────────────────────── */
@@ -619,16 +672,36 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
     }
   }
 
+  /* What this render keeps of a person (characterSay), H3 only: the Keep my
+   * character line and receipt. The song flag is the soundtrack the render
+   * carries (`audioTrack`), or `song: true` from the Video screen's check,
+   * whose upload lives in the page. The person's own pictures (numbered
+   * first) that the words never name are counted: a picture the words never
+   * name barely shapes the clip, so the receipt and the Keep line say it (the
+   * A/B's winning arm named every picture). */
+  const keepSay = () => {
+    const song = !!(b.audioTrack?.name || b.song === true);
+    const own = Math.min(bound ? refList.length - bound.used : refList.length, 9);
+    const ownUnnamed = [];
+    for (let i = 1; i <= own; i++) if (!new RegExp(`<\\s*Picture\\s+${i}\\s*>`, "i").test(prompt)) ownUnnamed.push(i);
+    return characterSay({ eng, pictures, own, ownUnnamed, audios, persona, bound, steps, song, prompt, characters });
+  };
+
   /* A step count whose speed-up is not on disk: each slot falls back to
    * another build's name (which may not be on disk either), and a build run
    * at another build's step count is a different model used wrongly.
    * Refused, with the download offered (needsModel opens the model window on
-   * that row). The speed-ups are optional; Best (20) needs none. */
+   * that row). The speed-ups are optional; Best (20) needs none.
+   * The refusal carries the Keep my character line and Song under the clip's
+   * words like every other refusal here: without them the Video screen
+   * blanked the Keep line and its receipt, and kept the last check's song
+   * line, while the slider sat on a missing speed-up (web/vidfit.js paintKeep
+   * and paintSong read them from the check). Words only, so on every card. */
   if (engineKey === "h3") {
     const need = speedupNeeded(eng, { steps, refs: refsOn });
     if (need) {
       return { refusal: { error: need.error, reason: need.build === 3 ? "taomate-missing" : "speedup-missing",
-        needsModel: need.row }, warnings, notes };
+        needsModel: need.row }, warnings, notes, character: keepSay(), sampler: null, songLine };
     }
   }
 
@@ -672,21 +745,13 @@ export function videoPlan(b = {}, { engineKey, eng = {}, h3 = null, framed = fal
     }
   }
 
-  /* KEEPING A CHARACTER, on H3 (the only engine with a picture input). The
-   * song flag is the soundtrack the render carries (`audioTrack`), or `song:
-   * true` from the Video screen's check, whose upload lives in the page. */
+  /* KEEPING A CHARACTER, on H3 (the only engine with a picture input):
+   * keepSay above, and the notes about it. */
   let character = null, sampler = null;
   if (engineKey === "h3") {
-    const song = !!(b.audioTrack?.name || b.song === true);
     const measured = KEEP_MEASURED.steps;
     sampler = h3SamplerFor(eng, { steps, refs: refsOn });
-    /* The person's own pictures (numbered first) that the words never name:
-     * a picture the words never name barely shapes the clip, so the receipt
-     * and the Keep line say it (the A/B's winning arm named every picture). */
-    const own = Math.min(bound ? refList.length - bound.used : refList.length, 9);
-    const ownUnnamed = [];
-    for (let i = 1; i <= own; i++) if (!new RegExp(`<\\s*Picture\\s+${i}\\s*>`, "i").test(prompt)) ownUnnamed.push(i);
-    character = characterSay({ eng, pictures, own, ownUnnamed, audios, persona, bound, steps, song, prompt, characters });
+    character = keepSay();
     if (bound && bound.extra > 0) {
       const total = Number.isFinite(persona.pictures) ? persona.pictures : (persona.refImages || []).filter(Boolean).length;
       warnings.push({ id: "persona-pictures", text: bound.room > 0

@@ -435,12 +435,23 @@ test("5: Keep my character sits under the description, shows in Simple, and hold
   assert.match(read("./index.js"), /\.\.\.\(eng === "h3" \? \{ clipPictures: CLIP_PERSONA_PICTURES \} : \{\}\),/);
   /* vidPaint's lines are lifted and run alone, so every new name is guarded. */
   const line = /\n  const keeping = [^\n]+;/.exec(app)?.[0] || "";
-  const keeping = (dollar, state, cur) => new Function("$", "state", "cur", `${line}\nreturn keeping;`)(dollar, state, cur);
+  const keeping = (dollar, state, cur, eng = {}) => new Function("$", "state", "cur", "eng", `${line}\nreturn keeping;`)(dollar, state, cur, eng);
   assert.equal(keeping(() => null, { refImages: [] }, "h3"), false, "no select, no pictures: text only");
   assert.equal(keeping(() => null, {}, "h3"), false, "no state yet");
   assert.equal(keeping(() => null, { refImages: [{}] }, "h3"), true, "a picture keeps");
   assert.equal(keeping(() => ({ value: "Mira" }), { refImages: [] }, "h3"), true, "a saved character keeps");
   assert.equal(keeping(() => ({ value: "Mira" }), { refImages: [{}] }, "ltx"), false, "LTX keeps no one");
+  /* A reference song alone puts the render on the reference path and its
+   * count (videoPlan), and make_clip sends the kept character's chips for
+   * ref_song: where the server sends chips (NVIDIA, a card nobody could
+   * read) the page draws the same ones. AMD and Intel (no chips) read it as
+   * 40f5859 did. */
+  const chips = { plain: {}, keep: {} };
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [{ name: "v.flac" }] }, "h3", { chips }), true, "a reference song keeps where chips come");
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [{ name: "v.flac" }] }, "h3", {}), false, "not on AMD and Intel, as on main");
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [{ name: "v.flac" }] }, "h3", undefined), false, "nor before a status");
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [] }, "h3", { chips }), false, "no song, no picture: text only");
+  assert.equal(keeping(() => null, { refAudios: [{ name: "v.flac" }] }, "ltx", { chips }), false);
   /* The Standard chip is the reference build's own count while keeping. */
   const qsSrc = /\nfunction vidQualitySteps\(eng, keeping = false\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
   const vidQualitySteps = new Function(`${qsSrc}return vidQualitySteps;`)();

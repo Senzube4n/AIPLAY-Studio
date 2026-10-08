@@ -524,11 +524,16 @@ export const TOOLS = [
           models_installed: st.config?.video?.ready !== false,
           engine: st.config?.video?.engine,
           missing: st.config?.video?.missing || [],
-          /* The step counts make_clip's `quality` maps to on THIS disk, and
-           * the turbo builds behind them (config.js resolves both from what
-           * pick() found): standard is 8 only where both 8-step files are on
-           * disk, else 4, and is the default a render with no quality gets. */
+          /* The engine's step defaults on THIS disk and the turbo builds
+           * behind them (config.js resolves both from what pick() found):
+           * standard is the default a render with no quality gets (8 or 4
+           * where that speed-up is on disk, else the bare 20). */
           h3_quality_steps: st.config?.video?.engines?.h3?.stepDefaults ?? null,
+          /* The Video screen's chips, which make_clip's `quality` sends:
+           * {plain, keep} of {fast, standard, best}, each {steps, needsModel}
+           * (server/video-plain.js qualityChips). Null on AMD, Intel and the
+           * CPU, where quality keeps its earlier numbers. */
+          h3_quality_chips: st.config?.video?.engines?.h3?.chips ?? null,
           /* The number behind "keep my character": the reference build's own
            * step count (workflow.js referenceSteps), which a render with
            * references or a persona and no quality runs. */
@@ -3124,8 +3129,8 @@ export const TOOLS = [
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
         h3_model_build: { type: "string", enum: ["auto", "w6a8"], description: "Built-in H3 workflow only: choose the checkpoint build for this render without changing saved settings. Refused while a custom Video workflow is assigned. W6A8 requires compatible loader support and downloaded weights; checkpoint_receipts reports the actual checkpoint and any fallback." },
-        quality: { type: "string", enum: ["fast", "best"],
-          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. With references or a persona and no quality, the reference build's own count runs (studio_status video.h3_reference_steps). All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
+        quality: { type: "string", enum: ["fast", "standard", "best"],
+          description: "The Video screen's three chips, with the same numbers (studio_status video.h3_quality_chips). fast = 3 steps on the TaoMate build, measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. standard = the 8-step speed-up (the 4-step build where only it is on disk). best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. A chip whose speed-up file is not on disk is refused with the download named (needsModel; download_model fetches it), as the page dims that chip. With references, a reference song, a persona or ref_mods the chips are Keep my character's: standard is the reference build's own count (video.h3_reference_steps) and fast that path's own. No quality: the engine's own default (video.h3_quality_steps.standard, the bare 20 where no speed-up is on disk), or with references the reference build's own count. All of it follows which files are on disk (video.h3_turbo_builds). On an AMD or Intel card, or a PC without a graphics card, there are no chips (video.h3_quality_chips is null) and quality keeps its earlier numbers: fast = video.h3_quality_steps.fast, best = 20, standard = the engine's own default. Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Direct clip length, 1–20 s (default 5). H3 is trained for about 4–15 s; longer requests are experimental. More than 20 s is clamped and reported in warnings. Continue a clip for more output." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
@@ -3237,8 +3242,27 @@ export const TOOLS = [
        * build where it is not (a 4-step LoRA sampled at 3 is the wrong model).
        * References always keep their own builds; the graph decides. LTX has
        * no stepDefaults and ignores steps; the fallbacks are for it. */
-      const qs = engine === "h3" ? st.config?.video?.engines?.h3?.stepDefaults : null;
+      /* THE VIDEO SCREEN'S CHIPS, the same numbers (server/video-plain.js
+       * qualityChips, per engine `chips` in /api/status): `plain`, or `keep`
+       * when references, a reference song, a persona or a RefMod ride. A chip whose
+       * speed-up is not on disk is sent as it is and the route refuses it with
+       * the download named (needsModel), as the page's dimmed chip offers it.
+       * A Studio whose status has no chips falls back to stepDefaults: an
+       * older one, and AMD, Intel and CPU-only PCs, where main's numbers stand
+       * exactly (Bucky's rule). */
+      const h3s = engine === "h3" ? st.config?.video?.engines?.h3 : null;
+      /* A RefMod keeps too: it puts the render on the reference path, as the
+       * page counts it (web/app.js vidPaint `keeping`) and the server does
+       * (video-plain.js refsOn, art.js clipSpeedupNeeded). Without it make_clip
+       * sent the PLAIN chips' numbers for a RefMod render: "fast" sent 3, which
+       * the reference path refused, while the page's Fast rendered (review of
+       * the port, 2026-10-08). Read from the helper that forwards it, the
+       * one the body spreads below (H3 only: no other engine has chips). */
+      const keeps = wantsRefs || (engine === "h3" && h3OptionalMcpBody(a, engine).keeps === true);
+      const chips = h3s?.chips?.[keeps ? "keep" : "plain"] || null;
+      const qs = h3s?.stepDefaults || null;
       const steps = Number.isFinite(a.steps) ? a.steps
+        : a.quality && Number.isFinite(chips?.[a.quality]?.steps) ? chips[a.quality].steps
         : a.quality === "fast" ? (qs?.fast ?? 4)
         : a.quality === "best" ? (qs?.best ?? 20)
         : undefined;

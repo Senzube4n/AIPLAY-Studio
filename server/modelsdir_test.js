@@ -178,22 +178,35 @@ test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
     config.torchBackend = "cuda"; config.gpu = { vendor: "nvidia", totalMb: 16376 };
     assert.equal(cardIsAmd(), false);
     assert.ok(names("video").includes("qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), "NVIDIA keeps the measured int4");
-    /* A 16 GB NVIDIA card on a PC with 32 GB or more keeps the official set
-     * the H3 lab measured; the RAM is the machine's own, so it is passed in. */
+    /* An NVIDIA card keeps the official set the H3 lab measured. Asserted on
+     * every machine: these two lines used to sit behind `if
+     * (!isLightH3(config))`, which read the test machine's own RAM and skipped
+     * them without a word under 32 GB. The rule does not read RAM on NVIDIA,
+     * and the card is the one set above. */
     const { isLightH3 } = await import("./config.js");
-    if (!isLightH3(config)) {
-      /* This test machine has 32 GB or more: the catalogue itself follows. */
-      assert.ok(names("video").includes("minimax_h3_fl2va_pruned_int8_convrot.safetensors"), "the official int8 DiT");
-      assert.ok(names("video").includes("minimax_h3_video_vae_fp16.safetensors"), "and the fp16 VAE the lab measured");
+    assert.equal(isLightH3(config), false, "the card set above is not light");
+    assert.ok(names("video").includes("minimax_h3_fl2va_pruned_int8_convrot.safetensors"), "the official int8 DiT");
+    assert.ok(names("video").includes("minimax_h3_video_vae_fp16.safetensors"), "and the fp16 VAE the lab measured");
+    assert.ok(names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "and H3's 8-step speed-up");
+    /* The light rule is off on NVIDIA and on a PC whose settings name no card
+     * (the owner's decision, 2026-09-25): the w4a8 DiT was never rendered on
+     * NVIDIA, whatever the card's size or the PC's RAM. */
+    const GiB = 2 ** 30;
+    for (const ram of [8 * GiB, 16 * GiB, 64 * GiB]) {
+      assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 16376 }, torchBackend: "cuda" }, ram), false);
+      assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 12282 }, torchBackend: "cuda" }, ram), false, "a 12 GB NVIDIA card keeps the standard files");
+      assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 8188 } }, ram), false, "so does an 8 GB one");
+      assert.equal(isLightH3({ torchBackend: "cuda" }, ram), false, "and one only its torch names");
+      assert.equal(isLightH3({}, ram), false, "and a card nobody could read");
     }
-    /* The light rule is AMD and Intel only (the owner's decision, 2026-09-25):
-     * the w4a8 DiT was never rendered on NVIDIA, whatever the card's size or
-     * the PC's RAM. The RAM is no longer an input at all. */
-    assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 16376 }, torchBackend: "cuda" }), false);
-    assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 12282 }, torchBackend: "cuda" }), false, "a 12 GB NVIDIA card keeps the standard files");
-    assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 8188 } }), false, "so does an 8 GB one");
-    assert.equal(isLightH3({ torchBackend: "cuda" }), false, "and one only its torch names");
-    assert.equal(isLightH3({}), false, "and a card nobody could read");
+    /* Everywhere else it is main's rule exactly (config.js offNvidia):
+     * AMD and Intel always, and a CPU-only install or a Mac (gpu.vendor
+     * "cpu", or a "cpu" torch) under 30 GiB of RAM, as main has it. */
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", name: "CPU only", totalMb: 0 }, torchBackend: "cpu" }, 16 * GiB), true, "a CPU install with 16 GB of RAM: light, as main");
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", name: "CPU only", totalMb: 0 }, torchBackend: "cpu" }, 64 * GiB), false, "with 64 GB: not light, as main");
+    assert.equal(isLightH3({ torchBackend: "cpu" }, 16 * GiB), true, "a PC only its cpu torch names, as main");
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", totalMb: 0 }, torchBackend: "rocm" }, 64 * GiB), true, "a CPU install later pointed at ROCm: AMD's rule");
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", totalMb: 0 }, torchBackend: "xpu" }, 64 * GiB), true, "and at XPU: Intel's");
     assert.equal(isLightH3({ gpu: { vendor: "intel", totalMb: 16000 } }), true, "Intel: light");
     assert.equal(isLightH3({ torchBackend: "xpu" }), true, "Intel by its torch");
     assert.equal(isLightH3({ gpu: { vendor: "amd", totalMb: 16304 } }), true, "AMD: light");
@@ -202,13 +215,13 @@ test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
     assert.ok(names("video").includes("minimax_h3_fl2va_pruned_int8_convrot.safetensors"), "a 12 GB NVIDIA card fetches the official int8 DiT");
     assert.ok(names("video").includes("minimax_h3_video_vae_fp16.safetensors"), "and the fp16 VAE the lab measured");
     assert.ok(!names("video").includes("minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"), "never the w4a8");
-    /* A CPU-only install or a Mac keeps 40f5859's H3 row: no 8-step file in
+    /* A CPU-only install or a Mac keeps main's H3 row: no 8-step file in
      * it (models.js cardIsOffNvidia), whatever the RAM decides about the light
      * builds. */
     const { cardIsOffNvidia } = await import("./models.js");
     config.torchBackend = "cpu"; config.gpu = { vendor: "cpu", name: "CPU only", totalMb: 0 };
     assert.equal(cardIsOffNvidia(), true);
-    assert.ok(!names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "a CPU install's H3 row is 40f5859's");
+    assert.ok(!names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "a CPU install's H3 row is main's");
     config.torchBackend = null; config.gpu = null;
     assert.equal(cardIsOffNvidia(), false, "a PC whose settings name no card is not");
     assert.ok(names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "and gets NVIDIA's row");

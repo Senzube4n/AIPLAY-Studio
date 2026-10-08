@@ -8665,53 +8665,59 @@ function vidWH() {
   return ($("vidSize").value || "1280x704").split("x").map(Number);
 }
 
-/* THE QUALITY CHIPS' STEP COUNTS, as the server resolved them from the disk
- * (config.js, the step-defaults block after `config`; /api/status sends them
- * as stepDefaults). Standard is 8 only where both 8-step turbo files are on
- * disk, else 4, and Fast is 3 only where the TaoMate build is, else the 4-step
- * build. A literal 8 here opened a Models-screen install, which has the 4-step
- * files alone, on a 4-step LoRA run at 8 steps. The fallbacks serve an engine
- * that sends none (LTX, which hides the chips): 4 is matched on every disk
- * that has any H3 turbo file.
+/* THE QUALITY CHIPS' STEP COUNTS ARE THE SERVER'S, as it sends them per
+ * engine (`chips`, server/video-plain.js qualityChips): the same numbers
+ * make_clip's `quality` sends, so the chips and the tool cannot disagree.
+ * The page used to keep its own (Fast 3, Standard 8 or 4) beside the
+ * server's, and on some disks they named different counts. Plain: Fast is
+ * TaoMate's 3, Standard the 8-step file's 8 (the 4-step file's 4 where only
+ * it is on disk), Best the bare 20. KEEPING A CHARACTER (a saved character,
+ * reference pictures or a RefMod on H3): Standard is the reference build's
+ * own count (the REWIND A/B kept its character on that build at that count,
+ * 2026-09-24), Fast the count the reference path really runs for Fast (the
+ * TaoMate 3-step build takes no pictures); where that is Standard's count,
+ * Fast hides as two chips doing one thing. Each chip's `needsModel` is the
+ * Models row its file needs first (vidPaint dims it and a press offers it).
  *
- * KEEPING A CHARACTER (a saved character or reference pictures on H3),
- * Standard is the reference build's own count instead, the server's
- * `referenceSteps` (8 where the 8-step reference file is on disk): the REWIND
- * A/B kept its character on that build at that count (2026-09-24). Fast is
- * the count the reference path really runs for Fast, the server's
- * `keepFast.steps` (the TaoMate 3-step build takes no pictures, so the
- * reference build loads at its own count); where that is Standard's count,
- * Fast hides as two chips doing one thing. */
+ * A status without chips (LTX, which hides the chips; AMD, Intel and the CPU,
+ * where the page keeps main's chips, Bucky's rule) falls back to the
+ * engine's own defaults: stepDefaults, `referenceSteps` and
+ * `keepFast.steps`, as config.js resolved them from the disk. That is also
+ * vidDefaultSteps below, and it is self-contained on purpose: the tests lift
+ * this function out of the page and run it alone. */
 function vidQualitySteps(eng, keeping = false) {
+  const c = eng?.chips?.[keeping ? "keep" : "plain"];
+  const n = (chip) => Number(chip?.steps) || 0;
+  if (n(c?.fast) && n(c?.standard) && n(c?.best)) return { fast: n(c.fast), standard: n(c.standard), best: n(c.best) };
   const d = eng?.stepDefaults || {};
   const standard = (keeping && Number(eng?.referenceSteps)) || Number(d.standard) || 4;
   const fast = (keeping ? Number(eng?.keepFast?.steps) : Number(d.fast)) || standard;
   return { fast, standard, best: Number(d.best) || 20 };
 }
 
+/* THE ENGINE'S OWN DEFAULT COUNTS: what a render that names no count runs,
+ * and where the slider opens. Standard there is 8 or 4 where that speed-up
+ * is on disk, else the bare model's 20, while the Standard CHIP on such a
+ * disk is the 8-step file's 8, dimmed with its download offered. */
+function vidDefaultSteps(eng, keeping = false) {
+  const { chips, ...defaults } = eng || {};
+  return vidQualitySteps(defaults, keeping);
+}
+
 /* H3'S SPEED-UPS ARE OPTIONAL ADD-ONS (models.js, addonFor "video"): 3 steps
  * is TaoMate, 4 steps the 4-step file, 6 to 12 the 8-step file, and 13 and up
  * the bare model, which needs none. The server refuses a step count whose
- * file is missing and offers its download (video-plain.js speedupNeeded);
- * this is the same rule, so the page can offer it first. Each path is judged
- * by its own files where the server sends them (plainBuilds and refBuilds,
- * NVIDIA and a card nobody could read): with references the reference path's
- * file for the band, never a plain one. AMD, Intel and the CPU get no
- * per-path reading, and there the rule is main's, exactly (Bucky's rule).
- * Null when nothing is missing, else { build, row }. */
+ * file is missing and offers its download (video-plain.js speedupNeeded),
+ * and sends that rule's answer for every count, per path (`speedupNeeds`,
+ * speedupTable): the page looks it up, so it says a missing speed-up while
+ * the slider sits on it and offers it before a render, with no copy of the
+ * rule of its own (it kept one, which judged both paths by one reading). Null
+ * when nothing is missing, else { build, row }. */
 const VID_SPEEDUP_ROWS = { 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" };
+const VID_ROW_BUILD = Object.fromEntries(Object.entries(VID_SPEEDUP_ROWS).map(([b, row]) => [row, Number(b)]));
 function vidSpeedupNeed(eng, steps, hasRefs) {
-  const tb = eng?.turboBuilds;
-  const n = Number(steps);
-  if (!tb || eng.fixedSteps || !Number.isFinite(n) || n > (eng.turboMaxSteps ?? 12)) return null;
-  const band4 = n <= (eng.turbo4MaxSteps ?? 5);
-  const rb = eng.refBuilds, perPath = !!(rb && eng.plainBuilds), pb = perPath ? eng.plainBuilds : tb;
-  const build = hasRefs ? (band4
-    ? ((perPath ? rb.four : tb.four) ? null : 4) : ((perPath ? rb.eight : tb.eight) ? null : 8))
-    : n <= (eng.turbo3MaxSteps ?? 3) ? (pb.three ? null : 3)
-    : band4 ? (pb.four ? null : 4)
-    : (pb.eight ? null : 8);
-  return build ? { build, row: VID_SPEEDUP_ROWS[build] } : null;
+  const row = eng?.speedupNeeds?.[hasRefs ? "refs" : "plain"]?.[Number(steps)] || null;
+  return row ? { build: VID_ROW_BUILD[row] ?? null, row } : null;
 }
 /** The words for a missing speed-up, and the model window on its row. */
 const vidSpeedupWords = (b) => b === 3 ? "TaoMate (182 MB)" : "the " + b + "-step speed-up (1.96 GB)";
@@ -8735,20 +8741,40 @@ function vidPaint() {
    * what shows before that status lands. */
   if (!state.vidStepsOpened && eng.stepDefaults) {
     state.vidStepsOpened = true;
-    $("vidSteps").value = String(vidQualitySteps(eng).standard);
+    $("vidSteps").value = String(vidDefaultSteps(eng).standard);
   }
 
   /* KEEP MY CHARACTER: a saved character or reference pictures on H3. The
    * slider follows Standard across the switch only when it sits on the old
    * Standard; a count the person chose stays theirs, and the server's
    * "steps-measured" note says what the character was measured at. Every name
-   * here is optional-chained: vidPaint's lines are lifted and run alone. */
-  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0 || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length));
+   * here is optional-chained: vidPaint's lines are lifted and run alone.
+   * A reference song alone counts where the server sends the chips (`chips`:
+   * NVIDIA and a card nobody could read): it puts the render on the reference
+   * path and its count too (video-plain.js videoPlan), and make_clip sends the
+   * kept character's chips for ref_song, so the page draws the same ones. On
+   * AMD, Intel and the CPU the page reads it as main did. */
+  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0 || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length) || (!!eng?.chips && (state.refAudios || []).length > 0));
   if (eng.stepDefaults && state.vidKeeping !== undefined && state.vidKeeping !== keeping) {
-    const was = vidQualitySteps(eng, state.vidKeeping).standard, now = vidQualitySteps(eng, keeping).standard;
+    const was = vidDefaultSteps(eng, state.vidKeeping).standard, now = vidDefaultSteps(eng, keeping).standard;
     if (+$("vidSteps").value === was && was !== now) $("vidSteps").value = String(now);
   }
   state.vidKeeping = keeping;
+  /* THE DEFAULT MOVED UNDER THE SLIDER. A speed-up that lands while Studio
+   * runs moves the engine's own default (config.js refreshVideoPicks: the H3
+   * row's 8-step file takes Standard from the bare 20 to 8), and the Standard
+   * chip follows at once, but the slider opened once and stayed on 20: Best
+   * read as pressed, and Make clip sent 20, the bare model at about 2.4x the
+   * time, until the person pressed Standard or reloaded (review of the port,
+   * 2026-10-08, the tester's own path). So while the slider still sits on the
+   * default it last showed, for this engine and this Keep state, it follows the
+   * new one; a count the person chose stays theirs. */
+  if (eng.stepDefaults) {
+    const std = vidDefaultSteps(eng, keeping).standard;
+    if (state.vidStdShown != null && state.vidStdFor === cur && state.vidStdKeep === keeping
+        && std !== state.vidStdShown && +$("vidSteps").value === state.vidStdShown) $("vidSteps").value = String(std);
+    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;
+  }
 
   // Painted once; after that the select is left alone so it cannot fight a change.
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
@@ -8834,22 +8860,34 @@ function vidPaint() {
     qRow.hidden = noSteps;
     const qs = vidQualitySteps(eng, keeping);
     const stNow = +$("vidSteps").value;
-    /* Optional speed-ups: Fast is TaoMate's 3 steps and Standard the 8-step
-     * file (the 4-step one where only it is on disk). A chip whose file is
-     * missing stays in place, dimmed, and a press offers the download
-     * (data-get) instead of choosing it. Best needs nothing. While a character
-     * is kept the reference path's own numbers stand (vidQualitySteps). */
+    /* Optional speed-ups: a chip whose file is missing stays in place,
+     * dimmed, and a press offers the download (data-get, its Models row)
+     * instead of choosing it. Which chip needs which file is the server's too
+     * (the chip's needsModel), the plain chips' and a kept character's alike,
+     * so a kept chip whose file is missing is dimmed as well (it was lit, and
+     * the server refused it). Best needs nothing.
+     * AMD, INTEL AND THE CPU: the server sends no chips there (video-plain.js
+     * qualityChips, Bucky's rule), and the page draws main's, exactly: Fast
+     * is TaoMate's 3 and Standard the 8-step file's 8 (the 4-step one's 4
+     * where only it is on disk), dimmed by its both-paths reading
+     * (turboBuilds); while a character is kept, the server's own numbers. */
     const tb = keeping ? null : eng.turboBuilds;
-    if (tb) {
-      qs.fast = 3;
-      qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+    const chipOf = eng.chips?.[keeping ? "keep" : "plain"];
+    let getFor;
+    if (chipOf) {
+      getFor = { fast: chipOf.fast?.needsModel || null, standard: chipOf.standard?.needsModel || null, best: chipOf.best?.needsModel || null };
+    } else {
+      if (tb) {
+        qs.fast = 3;
+        qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+      }
+      getFor = { fast: tb && !tb.three ? VID_SPEEDUP_ROWS[3] : null, standard: tb && !tb.eight && !tb.four ? VID_SPEEDUP_ROWS[8] : null, best: null };
     }
-    const getFor = { fast: tb && !tb.three ? 3 : null, standard: tb && !tb.eight && !tb.four ? 8 : null, best: null };
     for (const b of qRow.querySelectorAll("[data-vq]")) {
       const want = qs[b.dataset.vq];
       const get = getFor[b.dataset.vq];
       b.classList.toggle("off", !!get);
-      if (get) b.dataset.get = String(get); else delete b.dataset.get;
+      if (get) b.dataset.get = get; else delete b.dataset.get;
       b.setAttribute("aria-pressed", !get && stNow === want ? "true" : "false");
       const small = b.querySelector("small");
       if (small) small.textContent = want + " steps";
@@ -8860,11 +8898,11 @@ function vidPaint() {
      * While a character is kept it is the server's keepFast note instead: the
      * TaoMate claim is about the text path, which a kept character never takes.
      * A speed-up that is not on disk says so, and a press offers it. */
-    const getTitle = (g) => "Needs " + vidSpeedupWords(g) + ", an optional add-on. Click to get it.";
-    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(3) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
+    const getTitle = (row) => "Needs " + vidSpeedupWords(VID_ROW_BUILD[row]) + ", an optional add-on. Click to get it.";
+    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(getFor.fast) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
     qRow.querySelector('[data-vq="standard"]').title = keeping
       ? (qs.standard === 8 ? "The 8-step reference build, at its own count" : "The " + qs.standard + "-step reference build, at its own count")
-      : getFor.standard ? getTitle(8) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
+      : getFor.standard ? getTitle(getFor.standard) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
     /* Where Fast would be the same number as Standard it is two chips doing
      * one thing, lit together. With the speed-ups known (turboBuilds) Fast is
      * always TaoMate's 3, dimmed when it is missing, so it always shows. */
@@ -9097,7 +9135,7 @@ if ($("vidAttn")) {
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     /* A dimmed chip is an optional speed-up that is not on disk: offer it. */
-    if (b.dataset.get) { vidOfferSpeedup(Number(b.dataset.get)); return; }
+    if (b.dataset.get) { vidOfferSpeedup(VID_ROW_BUILD[b.dataset.get]); return; }
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
     // The same numbers the chips are lit and labelled by: the server's.
     const steps = vidQualitySteps(eng, !!state.vidKeeping)[b.dataset.vq];

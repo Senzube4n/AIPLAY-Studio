@@ -65,8 +65,61 @@ console.log("\n§1  the simple way on the Video screen");
    * shows, dimmed when its file is missing (server/taomate_test.js). */
   ok("...and Fast hides where it would equal Standard, only without the builds",
     /\$\("vidQFast"\)\.hidden = !tb && qs\.fast === qs\.standard;/.test(app));
-  ok("the slider opens on Standard, once, from the status",
-    /if \(!state\.vidStepsOpened && eng\.stepDefaults\) \{\n\s+state\.vidStepsOpened = true;\n\s+\$\("vidSteps"\)\.value = String\(vidQualitySteps\(eng\)\.standard\);/.test(app));
+  ok("the slider opens on the engine's own default, once, from the status",
+    /if \(!state\.vidStepsOpened && eng\.stepDefaults\) \{\n\s+state\.vidStepsOpened = true;\n\s+\$\("vidSteps"\)\.value = String\(vidDefaultSteps\(eng\)\.standard\);/.test(app)
+    && /function vidDefaultSteps\(eng, keeping = false\) \{\n\s+const \{ chips, \.\.\.defaults \} = eng \|\| \{\};\n\s+return vidQualitySteps\(defaults, keeping\);\n\}/.test(app));
+  /* THE SLIDER FOLLOWS A DEFAULT THAT MOVES UNDER IT (review of the port,
+   * 2026-10-08). Studio started before H3's row landed opens the slider on
+   * the bare 20; the row's 8-step file then moves Standard to 8, and the
+   * slider stayed on 20 (Best lit, Make clip sending 20). vidPaint's lines
+   * from the opening to the follow are lifted and run against a sequence of
+   * statuses, with only the names they read. */
+  {
+    const open = app.indexOf("  if (!state.vidStepsOpened && eng.stepDefaults) {");
+    const close = app.indexOf("    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;\n  }\n", open);
+    const lines = open > 0 && close > open ? app.slice(open, close) + "    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;\n  }\n" : "";
+    const ddSrc = /\nfunction vidDefaultSteps\(eng, keeping = false\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
+    const paintOnce = (() => {
+      try { return new Function("state", "eng", "cur", "$", qsSrc + ddSrc + lines); } catch (e) { return () => { throw e; }; }
+    })();
+    const slider = { value: "8" }, character = { value: "" };
+    const $ = (id) => (id === "vidSteps" ? slider : id === "vidCharacter" ? character : null);
+    const state = { refImages: [], refAudios: [] };
+    const chips = { plain: { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" }, best: { steps: 20, needsModel: null } },
+      keep: { fast: { steps: 20, needsModel: null }, standard: { steps: 20, needsModel: null }, best: { steps: 20, needsModel: null } } };
+    const before = { stepDefaults: { fast: 20, standard: 20, best: 20 }, referenceSteps: 20, chips };
+    const landed = { stepDefaults: { fast: 8, standard: 8, best: 20 }, referenceSteps: 8, chips: { ...chips, plain: { ...chips.plain, standard: { steps: 8, needsModel: null } } } };
+    const seen = [];
+    try {
+      paintOnce(state, before, "h3", $); seen.push(slider.value);           // opens on the empty disk's 20
+      paintOnce(state, before, "h3", $); seen.push(slider.value);           // a status poll: nothing moves
+      paintOnce(state, landed, "h3", $); seen.push(slider.value);           // the H3 row lands: 8
+      slider.value = "12";
+      paintOnce(state, { ...landed, stepDefaults: { fast: 4, standard: 4, best: 20 } }, "h3", $); seen.push(slider.value); // the person's 12 stays
+    } catch (e) { seen.push(String(e)); }
+    ok("the slider follows Standard when a speed-up lands while Studio runs, and a count the person chose stays",
+      JSON.stringify(seen) === JSON.stringify(["20", "20", "8", "12"]), JSON.stringify(seen));
+  }
+
+  /* THE CHIPS ARE THE SERVER'S: the page drew its own Fast 3 and Standard
+   * 8-or-4 over the server's numbers, and make_clip sent stepDefaults, so on
+   * some disks the chip and the tool named different counts. Now /api/status
+   * sends them per engine (video-plain.js qualityChips) and vidQualitySteps
+   * reads them first. */
+  ok("the status sends the chips and every count's missing speed-up",
+    /chips: k === "h3" \? qualityChips\(e\) : null,\s*speedupNeeds: k === "h3" \? speedupTable\(e\) : null,/.test(index));
+  const withChips = { stepDefaults: { fast: 4, standard: 20, best: 20 }, referenceSteps: 4, keepFast: { steps: 4 },
+    chips: { plain: { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" }, best: { steps: 20, needsModel: null } },
+      keep: { fast: { steps: 4, needsModel: null }, standard: { steps: 4, needsModel: null }, best: { steps: 20, needsModel: null } } } };
+  ok("the chips read the server's numbers, not the defaults, where the status sends them",
+    JSON.stringify(vidQualitySteps(withChips)) === JSON.stringify({ fast: 3, standard: 8, best: 20 })
+    && JSON.stringify(vidQualitySteps(withChips, true)) === JSON.stringify({ fast: 4, standard: 4, best: 20 }),
+    JSON.stringify(vidQualitySteps(withChips)));
+  /* AMD, Intel and the CPU get no chips (video-plain.js qualityChips, Bucky's
+   * rule): there, and only there, the page keeps main's own numbers. */
+  ok("...and no chip number is typed in the page, but for main's where no chips come (AMD, Intel, the CPU)",
+    (app.match(/qs\.fast = 3;/g) || []).length === 1
+    && /if \(chipOf\) \{\s*getFor = \{ fast: chipOf\.fast\?\.needsModel \|\| null, standard: chipOf\.standard\?\.needsModel \|\| null, best: chipOf\.best\?\.needsModel \|\| null \};\s*\} else \{\s*if \(tb\) \{\s*qs\.fast = 3;\s*qs\.standard = tb\.eight \? 8 : tb\.four \? 4 : 8;/.test(app));
   /* Before the first status lands the page shows index.html's typed numbers,
    * so they must be vidQualitySteps' own fallbacks: the slider, its readout
    * and the Standard chip on one number no chip is missing, Fast hidden
@@ -274,14 +327,14 @@ console.log("\n§1  the simple way on the Video screen");
     !/currently \d+ steps?/i.test(qDesc) && /studio_status/.test(qDesc) && /h3_quality_steps/.test(qDesc), qDesc);
   const posts = [];
   const songs = [], loraQueries = [];
-  let defaults = null;
+  let defaults = null, chipsNow = null;
   const stub = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
     res.setHeader("Content-Type", "application/json");
     if (req.method === "GET" && req.url === "/api/status") {
       return res.end(JSON.stringify({ art: {}, config: { video: { enabled: true, engine: "h3",
-        engines: { h3: { stepDefaults: defaults, turboBuilds: { three: defaults?.fast === 3 } } } } } }));
+        engines: { h3: { stepDefaults: defaults, turboBuilds: { three: defaults?.fast === 3 }, ...(chipsNow ? { chips: chipsNow } : {}) } } } } }));
     }
     if (req.method === "GET" && req.url === "/api/clips") return res.end(JSON.stringify({ clips: [] }));
     if (req.method === "POST" && req.url === "/api/video") {
@@ -322,14 +375,50 @@ console.log("\n§1  the simple way on the Video screen");
       const status = await call("studio_status", {});
       const shown = (() => { try { return JSON.parse(status.result?.content?.[0]?.text || "{}").video?.h3_quality_steps; } catch { return null; } })();
       ok(`${name}: studio_status shows the quality steps`, same(shown, d.stepDefaults), JSON.stringify(status).slice(0, 300));
-      for (const quality of ["fast", "best", undefined]) {
+      /* A status with no chips: an AMD or Intel card or the CPU
+       * (video-plain.js qualityChips is null there, Bucky's rule) or an older
+       * Studio. make_clip sends main's numbers: fast and best from
+       * stepDefaults, and standard, which main did not name, leaves the
+       * engine's default as no quality does. */
+      for (const quality of ["fast", "best", undefined, "standard"]) {
         const r = await call("make_clip", { prompt: "a lamp", ...(quality ? { quality } : {}) });
         if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
       }
       const sent = posts.map((p) => p.failed ?? (p.steps === undefined ? "unset" : p.steps));
-      ok(`${name}: make_clip sends fast ${d.stepDefaults?.fast}, best ${d.stepDefaults?.best}, and no quality leaves the engine's default`,
-        same(sent, [d.stepDefaults?.fast, d.stepDefaults?.best, "unset"]), JSON.stringify(sent));
+      ok(`${name}: make_clip sends fast ${d.stepDefaults?.fast}, best ${d.stepDefaults?.best}, and no quality or standard leaves the engine's default`,
+        same(sent, [d.stepDefaults?.fast, d.stepDefaults?.best, "unset", "unset"]), JSON.stringify(sent));
     }
+    /* A Studio that sends the chips: make_clip sends the chip's number, the
+     * page's, even where the engine's default differs (a disk with no
+     * speed-up: Standard's chip is the 8-step file's 8, dimmed; the default
+     * runs 20). With a persona the kept character's chips. */
+    defaults = { fast: 20, standard: 20, best: 20 };
+    chipsNow = { plain: { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" }, best: { steps: 20, needsModel: null } },
+      keep: { fast: { steps: 4, needsModel: null }, standard: { steps: 4, needsModel: null }, best: { steps: 20, needsModel: null } } };
+    posts.length = 0;
+    const shownChips = await call("studio_status", {});
+    ok("studio_status shows the chips make_clip sends",
+      (() => { try { return same(JSON.parse(shownChips.result?.content?.[0]?.text || "{}").video?.h3_quality_chips, chipsNow); } catch { return false; } })());
+    for (const quality of ["fast", "standard", "best", undefined]) {
+      const r = await call("make_clip", { prompt: "a lamp", ...(quality ? { quality } : {}) });
+      if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
+    }
+    for (const quality of ["fast", "standard"]) {
+      const r = await call("make_clip", { prompt: "Mira walks", persona: "Mira", quality });
+      if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
+    }
+    /* A RefMod alone keeps too (the page's `keeping`, the server's refsOn). */
+    for (const quality of ["fast", "standard"]) {
+      const r = await call("make_clip", { prompt: "a lamp", ref_mods: [{ name: "my_cache" }], quality });
+      if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
+    }
+    const sentChips = posts.map((p) => p.failed ?? (p.steps === undefined ? "unset" : p.steps));
+    ok("with chips: make_clip sends the chips' 3, 8 and 20, no quality leaves the default, and a persona or a RefMod the kept character's 4 and 4",
+      same(sentChips, [3, 8, 20, "unset", 4, 4, 4, 4]), JSON.stringify(sentChips));
+    ok("...the RefMod rides to the door", posts.slice(-2).every((p) => Array.isArray(p.refMods) && p.refMods[0]?.name === "my_cache"),
+      JSON.stringify(posts.slice(-2)));
+    ok("make_clip's quality names all three chips", same(clip?.inputSchema?.properties?.quality?.enum, ["fast", "standard", "best"]));
+    chipsNow = null;
     const nestedSong = await call("make_song", { caption: "Warm folk", lyrics: "Words", engine: "yue2-comfy",
       checkpoint: "yue2/base.safetensors", lora: "voices/audio.safetensors", lora_clip: "voices/planner.safetensors" });
     ok("the native MCP transport preserves nested checkpoint and both adapter names",

@@ -316,7 +316,7 @@ import {
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
 import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
 /* The Video screen's sentences and the one plan behind a render (UI_PLAN C3/E4, the H3 lab's #5-#7). */
-import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast } from "./video-plain.js";
+import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast, qualityChips, speedupTable } from "./video-plain.js";
 import { createPersonaStore, applyPersona, personaFits, bindPersonaForClip, stagePersonaForClip, CLIP_PERSONA_PICTURES } from "./personas.js";
 import { referenceSteps } from "./workflow.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
@@ -3855,6 +3855,15 @@ const server = http.createServer(async (req, res) => {
                * reading, is the check (Bucky's rule). */
               plainBuilds: e.plainBuilds ?? null,
               refBuilds: e.refBuilds ?? null,
+              /* The quality chips as the page draws them and make_clip's
+               * `quality` sends them, {plain, keep} of {fast, standard,
+               * best} each {steps, needsModel}, and every count's missing
+               * speed-up by path (video-plain.js qualityChips, speedupTable):
+               * the page keeps no number or rule of its own. No chips on AMD,
+               * Intel and the CPU: the page draws main's there, and make_clip
+               * sends stepDefaults. */
+              chips: k === "h3" ? qualityChips(e) : null,
+              speedupNeeds: k === "h3" ? speedupTable(e) : null,
               /* This PC's measured speed against the cost curve (video-speed.js):
                * the page multiplies its estimate by it. Null before a clip. */
               speedFactor: videoSpeed.factor(k), speedSamples: videoSpeed.samples(k),
