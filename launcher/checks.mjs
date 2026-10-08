@@ -21,6 +21,8 @@ import { MODULE_WORDS, STUDIO_MODULES, STUDIO_USES, ADDED_BY_STUDIO, diskWords, 
 import { ramBoxGb, RAM_RESERVED_GB, h3TierFor, gbWithArticle, H3_RAM_FLOOR_GB, H3_VRAM_OFFERED_GB } from "../server/h3tier.js";
 import { LENDING_UNTRIED } from "../server/cloud-switch.js";
 import { yue2ComfyFit } from "../server/music-default.js";
+/* The level Studio opens on (import-free, the same rule config.js uses). */
+import { levelFromSettingsText } from "../server/welcome/startlevel.js";
 
 export { RAM_RESERVED_GB };
 
@@ -153,6 +155,30 @@ export function cardAdvice({ gpu = null, torchOnCard = false, fullAvailable = tr
     cloud: "Hosted models, below, on your own Comfy API key, paid per run in Comfy credits.",
   };
 }
+
+/**
+ * THE LAUNCH MODES THAT ARE ADVANCED ONLY. The owner's decision of 2026-09-26:
+ * RunPod GPU ships in the public build, but in Advanced only. On Simple the
+ * launcher offers no RunPod card, no favourite star for it and no launch of
+ * it, and a saved RunPod favourite is not started; Studio's Simple screens
+ * show no RunPod box and no Remote numbers (web/styles.css, and
+ * server/welcome/level.js advancedOnly). A friend's card stays the first
+ * advice for a weak card (cardAdvice above: a friend, then Comfy API, and no
+ * Pod). The level is Studio's own (server/welcome/startlevel.js, read from the
+ * same settings.json), so "Show every setting" in Studio's Settings is the way
+ * to the RunPod card; Advanced keeps the whole RunPod mode as main has it.
+ */
+export const ADVANCED_MODES = Object.freeze(["runpod"]);
+/** Whether a launch mode is offered at this level ("simple" | "advanced"). */
+export const modeAllowed = (mode, level) => level === "advanced" || !ADVANCED_MODES.includes(mode);
+/** The system check's modes, without the ones this level is not offered. */
+export function modesForLevel(modes, level) {
+  return Object.fromEntries(Object.entries(modes || {}).filter(([m]) => modeAllowed(m, level)));
+}
+/** The level from settings.json's text (null: no file), read as Studio reads it. */
+export const launcherLevel = (text) => levelFromSettingsText(text).level;
+/** The sentence a mode this level is not offered answers with. */
+export const advancedOnlyLine = (name) => `${name} is in Advanced only. Turn on "Show every setting" in Studio's Settings, then open the launcher again.`;
 
 /** Music only's note, which says where lending lives. */
 export function musicOnlyNote(startsComfy) {

@@ -560,8 +560,9 @@ RUNTIME DEPENDENCIES (separate installations)
                            code is not modified. Studio does copy custom nodes
                            into its custom_nodes folder when the engine starts:
                            its own (server/comfy_nodes/, the safety gate among
-                           them) and the T8 block cache listed under BUNDLED
-                           THIRD-PARTY CODE below. They run inside ComfyUI.
+                           them), and, only while its switch is on, the T8
+                           block cache listed under BUNDLED THIRD-PARTY CODE
+                           below. They run inside ComfyUI.
     ws (npm)               MIT — the WebSocket client Studio uses to follow a
                            ComfyUI job's progress, and the WebSocket server
                            behind the live panels. REQUIRED FOR BOOT.
@@ -652,9 +653,10 @@ BUNDLED THIRD-PARTY CODE
                            Shipped unmodified at commit 36336dcee1ecb49a5ee98
                            426456aeb353c8535bd (v1.0.4) in
                            server/comfy_nodes/comfyui-minimax-h3-blockcache-T8/
-                           with its LICENSE, and copied into ComfyUI's
-                           custom_nodes when the engine starts. Used only when
-                           video_settings block_cache is switched on.
+                           with its LICENSE. Copied into ComfyUI's
+                           custom_nodes only when the engine starts with
+                           video_settings block_cache switched on, and Studio's
+                           copy is removed again when it starts with it off.
 
     Supra2-IMG model code  Apache-2.0, SupraLabs.
                            Source: https://huggingface.co/SupraLabs/Supra2-IMG

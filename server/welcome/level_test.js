@@ -219,6 +219,10 @@ ok("level with no value reads it: the level, who chose, the line and every scree
   JSON.stringify(got.body).slice(0, 300));
 ok("...and names the screens that open on it, so the page keeps no list of its own",
   JSON.stringify(got.body.screens) === JSON.stringify(["create", "images", "video"]), JSON.stringify(got.body.screens));
+/* RunPod GPU is Advanced only (the owner, 2026-09-26): only that launch mode
+ * locks the screens to Advanced (server/engine/remote_ui_test.js runs it). */
+ok("outside the launcher's RunPod GPU mode the level locks no screen (no advancedOnly)",
+  config.remoteOnly === false && got.body.advancedOnly === undefined, JSON.stringify(got.body.advancedOnly));
 const foreign = await call({ action: "level", level: "advanced" }, { local: false });
 ok("saving refuses a request that is not Studio's own page or a local client", foreign.code === 403);
 const unguarded = await call({ action: "level", level: "advanced" }, { guard: false });
@@ -257,7 +261,7 @@ ok("the first start saves it, and the welcome door gets the same-origin guard",
 /* ── 3. web/level.js: a Home card opens Simple either way ──────────────────── */
 console.log("\nA HOME CARD OPENS SIMPLE");
 let pageN = 0;
-async function page(level, { refuse = null } = {}) {
+async function page(level, { refuse = null, only = null } = {}) {
   const listeners = {};
   const el = () => ({ hidden: false, checked: false, textContent: "", title: "", addEventListener() {} });
   const els = { levelFoot: el(), levelAll: el(), levelNote: el() };
@@ -274,7 +278,8 @@ async function page(level, { refuse = null } = {}) {
     const lv = b.level || level;
     return { json: async () => ({ ok: true, level: lv, levelBy: b.level ? "you" : "studio", line: "x",
       screens: ["create", "images", "video"],
-      advancedAdds: { create: "Advanced adds a", images: "Advanced adds b", video: "Advanced adds c" } }) };
+      advancedAdds: { create: "Advanced adds a", images: "Advanced adds b", video: "Advanced adds c" },
+      ...(only ? { advancedOnly: only } : {}) }) };
   };
   const mod = await import(`${pathToFileURL(path.join(ROOT, "web", "level.js")).href}?${level}${++pageN}`);
   const news = [];
@@ -320,6 +325,18 @@ for (const level of ["advanced", "simple"]) {
     && /^Not saved: settings\.json could not be parsed/.test(p.els.levelNote.textContent)
     && /^Not saved: /.test(p.els.levelFoot.title), JSON.stringify({ note: p.els.levelNote.textContent, foot: p.els.levelFoot.title }));
 }
+{
+  /* The launcher's RunPod GPU mode: every screen hears the lock, a Home card's
+   * news included, and Settings' line says why. */
+  const only = { screens: ["create", "images", "video"], why: "RunPod GPU is an Advanced launch mode." };
+  const p = await page("simple", { only });
+  const bootNews = p.news.find((n) => n.boot);
+  p.news.length = 0;
+  p.click("video");
+  ok("RunPod GPU mode: the boot news and a Home card's both carry advancedOnly, and Settings' line says why",
+    !!bootNews?.advancedOnly?.screens?.includes("video") && !!p.news[0]?.advancedOnly?.screens?.includes("video")
+    && p.els.levelNote.textContent === `x ${only.why}`, JSON.stringify({ note: p.els.levelNote.textContent }));
+}
 delete globalThis.document;
 delete globalThis.fetch;
 const LEVELJS = read("web/level.js");
@@ -333,6 +350,9 @@ ok("Music: app.js takes the level from web/level.js, keeps a switch already pres
   && /onLevel\(\(n\) => \{[\s\S]*?if \(n\.view && n\.view !== "create"\) return;\s*if \(n\.boot && musicModeTouched\) return;[\s\S]*?setSimple\(!!n\.simple, true\);/.test(APP)
   && /\$\("modeAdv"\)\?\.addEventListener\("click", \(\) => setSimple\(false\)\);/.test(APP)
   && /<div class="seg modebar"[^>]*id="modeSeg">[\s\S]*?<button type="button" id="modeAdv"[^>]*>Advanced<\/button>\s*<\/div>/.test(HTML));
+ok("RunPod GPU mode: Music, Pictures and Video take the lock before any news, a Home card's included",
+  /onLevel\(\(n\) => \{[\s\S]*?if \(lock\(n\.advancedOnly\)\) return;\s*if \(n\.view && n\.view !== P\.view\) return;/.test(ASSIST)
+  && /onLevel\(\(n\) => \{[\s\S]*?if \(musicLock\(n\.advancedOnly\)\) return;\s*if \(n\.view && n\.view !== "create"\) return;/.test(APP));
 ok("Pictures and Video: assist.js opens on the level, not on a hard-coded Advanced",
   /import \{ onLevel \} from "\.\/level\.js";/.test(ASSIST)
   && /onLevel\(\(n\) => \{[\s\S]*?adv\.title = tip;[\s\S]*?if \(n\.view && n\.view !== P\.view\) return;\s*if \(n\.boot && touched\) return;\s*setMode\(!!n\.simple\);/.test(ASSIST)
@@ -389,6 +409,11 @@ ok(`the Simple rule's keep-list was read (${keeps.length} kept, ${kept.length} e
 const shown = ["images", "video"].flatMap((v) => ADVANCED_ADDS[v].flatMap((r) => r.ids))
   .filter((id) => kept.some((s) => s.includes(`id="${id}"`)));
 ok("no Pictures or Video tooltip promises a control Simple already shows", shown.length === 0, shown.join(", "));
+/* RunPod is Advanced only (the owner, 2026-09-26): 40f5859 kept its box, with
+ * Remote CFG, negative, size and guidance, on Simple's screens. */
+const runpodKept = [...keeps.filter((k) => /runpod/i.test(k.name)).map((k) => k.name),
+  ...kept.flatMap((sp) => [...sp.matchAll(/\bid="([^"]*runpod[^"]*)"/gi)].map((m) => m[1]))];
+ok("Simple keeps no RunPod control on screen", runpodKept.length === 0, runpodKept.join(", "));
 
 /* ── 5. the first-run lines, judged by the real fit.js ─────────────────────── */
 console.log("\nTHE FIRST-RUN LINES");

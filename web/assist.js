@@ -320,7 +320,25 @@ function mount(kind) {
     if (simple) { loadModels(); setTimeout(() => text.focus(), 0); }
   };
   let touched = false;
-  bar.addEventListener("click", (e) => { const b = e.target.closest("button[data-m]"); if (b) { touched = true; setMode(b.dataset.m === "simple"); } });
+  /* ADVANCED ONLY while the server says so (server/welcome/level.js
+   * advancedOnly: the launcher's RunPod GPU mode, whose Pod model and
+   * connection are in the Advanced form). The Simple button is off and says
+   * why, and no news, a Home card's included, opens Simple. */
+  let locked = false;
+  const simpleBtn = bar.querySelector('[data-m="simple"]');
+  const simpleTip = simpleBtn.title;
+  const lock = (only) => {
+    locked = !!only?.screens?.includes(P.view);
+    simpleBtn.disabled = locked;
+    simpleBtn.title = locked ? only.why : simpleTip;
+    if (locked) setMode(false);
+    return locked;
+  };
+  bar.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-m]");
+    if (!b || (locked && b.dataset.m === "simple")) return;
+    touched = true; setMode(b.dataset.m === "simple");
+  });
   /* Advanced until the saved level arrives (web/level.js): a new install then
    * opens Simple, one in use stays Advanced, and a Home card opens this panel
    * Simple either way. A switch the person already pressed is kept. */
@@ -329,6 +347,7 @@ function mount(kind) {
     const tip = n.advancedAdds?.[P.view];
     const adv = bar.querySelector('[data-m="advanced"]');
     if (adv && tip) adv.title = tip;
+    if (lock(n.advancedOnly)) return;
     if (n.view && n.view !== P.view) return;
     if (n.boot && touched) return;
     setMode(!!n.simple);

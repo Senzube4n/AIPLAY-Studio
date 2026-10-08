@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
@@ -136,4 +138,79 @@ test("RunPod GPU mode renders music on the Pod too", () => {
   assert.equal(disabled({ runtime: "python", ready: true, remoteOnly: false }), false, "a ready separate Python kit does not require ComfyUI");
   assert.equal(disabled({ runtime: "audiocpp" }), true, "local native music still requires its runtime");
   assert.equal(disabled({ noPath: true }), true, "no launch mode enables an absent render path");
+});
+
+/* RUNPOD IS ADVANCED ONLY (the owner's decision, 2026-09-26). It ships in the
+ * public build, but nothing about it shows in Simple: no launch mode, no star,
+ * no RunPod box and no Remote numbers. Advanced keeps the whole mode. A
+ * friend's card stays the first advice for a weak card. */
+test("the launcher offers RunPod GPU only when Studio opens on Advanced", async () => {
+  const { modesForLevel, modeAllowed, launcherLevel, ADVANCED_MODES, advancedOnlyLine, cardAdvice } = await import("../../launcher/checks.mjs");
+  assert.deepEqual([...ADVANCED_MODES], ["runpod"]);
+  const modes = { full: { available: true }, music: { available: true }, cloud: { available: true }, runpod: { available: true } };
+  assert.deepEqual(Object.keys(modesForLevel(modes, "simple")), ["full", "music", "cloud"], "Simple: no RunPod card");
+  assert.deepEqual(Object.keys(modesForLevel(modes, "advanced")), ["full", "music", "cloud", "runpod"], "Advanced keeps it");
+  assert.equal(modeAllowed("runpod", "simple"), false);
+  assert.equal(modeAllowed("cloud", "simple"), true);
+  assert.match(advancedOnlyLine("RunPod GPU"), /^RunPod GPU is in Advanced only\. Turn on "Show every setting" in Studio's Settings/);
+  /* The level is Studio's own answer from the same file (server/welcome/startlevel.js). */
+  assert.equal(launcherLevel(null), "simple", "no settings.json: a new install opens Simple");
+  assert.equal(launcherLevel(JSON.stringify({ rig: "C:/rig", python: "C:/py.exe", gpu: { vendor: "nvidia" } })), "simple", "what the launcher writes is not use");
+  assert.equal(launcherLevel(JSON.stringify({ api: { enabled: false } })), "advanced", "an install in use keeps Advanced");
+  assert.equal(launcherLevel(JSON.stringify({ prefs: { ui: { level: "advanced", levelBy: "you" } } })), "advanced");
+  assert.equal(launcherLevel(JSON.stringify({ api: {}, prefs: { ui: { level: "simple", levelBy: "you" } } })), "simple", "a saved choice wins");
+  assert.equal(launcherLevel('{"rig": "x",}'), "advanced", "a file that cannot be parsed keeps Advanced, as in Studio");
+  assert.equal(launcherLevel("\uFEFF{}"), "advanced", "...a byte-order mark included");
+  const cfg = read("server", "config.js");
+  assert.match(cfg, /import \{ LEVELS, IN_USE_KEYS, startLevel \} from "\.\/welcome\/startlevel\.js";/, "one rule for Studio and the launcher");
+  assert.doesNotMatch(cfg, /export function startLevel\(/, "no second copy in config.js");
+  /* A friend's card first, Comfy API second, and no Pod in the advice. */
+  const adv = cardAdvice({ gpu: { name: "GTX 1650", totalMb: 4096, vendor: "nvidia" }, torchOnCard: true });
+  assert.deepEqual(Object.keys(adv), ["why", "friend", "cloud"]);
+  assert.doesNotMatch(JSON.stringify(adv), /runpod|\bpod\b/i);
+  const html = read("launcher", "index.html");
+  const at = html.indexOf('id="friendCard"');
+  const friend = html.slice(at, html.indexOf("</article>", at));
+  assert.ok(friend.indexOf("Ask a friend") > 0 && friend.indexOf("Ask a friend") < friend.indexOf("Or use Comfy API"), "the friend comes first");
+  assert.doesNotMatch(friend, /runpod/i);
+});
+
+test("the launcher's server and page: hidden, not started and not saved as a favourite on Simple", () => {
+  const mjs = read("launcher", "launcher.mjs");
+  assert.match(mjs, /if \(url\.pathname === "\/api\/check"\) return send\(res, 200, await checkForPage\(await getCheck\(/, "the page gets the modes of this level");
+  assert.match(mjs, /return \{ \.\.\.c, level, modes: modesForLevel\(c\.modes, level\) \};/);
+  assert.match(mjs, /if \(!modeAllowed\(mode, await studioLevel\(\)\)\) throw new Error\(advancedOnlyLine\(MODE_NAME\[mode\] \|\| mode\)\);/, "a launch is refused");
+  assert.match(mjs, /if \(!modeAllowed\(b\.autoLaunch, await studioLevel\(\)\)\) return send\(res, 400, \{ error: advancedOnlyLine\(MODE_NAME\[b\.autoLaunch\]\) \}\);/, "a star is refused");
+  assert.match(mjs, /autoLaunch: fav && modeAllowed\(fav, level\) \? fav : null,/, "a saved RunPod star is not started on Simple");
+  assert.match(mjs, /const mode = launcherPrefs\(\(await readJson\(SETTINGS\)\) \|\| \{\}, await studioLevel\(\)\)\.autoLaunch;/);
+  /* The check itself is cached; the level is read at every ask. */
+  const studioLevel = mjs.slice(mjs.indexOf("async function studioLevel() {"), mjs.indexOf("async function checkForPage("));
+  assert.match(studioLevel, /catch \(err\) \{ if \(err\?\.code !== "ENOENT"\) return "advanced"; \}\s*return launcherLevel\(text\);/);
+  const html = read("launcher", "index.html");
+  assert.match(html, /<article class="card mode" id="mode-runpod" data-mode="runpod" data-level="advanced" tabindex="0" role="listitem" hidden>/, "hidden until the check offers it");
+  assert.match(html, /if \(card\.dataset\.level === "advanced"\) card\.hidden = !\(check\?\.modes\?\.\[m\] \|\| mine\);/, "shown at Advanced, or while it runs");
+  assert.match(html, /@media \(min-width: 1081px\) \{ \.modes:has\(> \.mode\[hidden\]\) \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \} \}/);
+});
+
+test("Studio's Simple screens show no RunPod box, and RunPod GPU mode offers no Simple", () => {
+  const css = read("web", "styles.css");
+  const keepRule = /\.assist-on > ((?::not\([^)]+\))+) \{ display: none !important; \}/.exec(css)?.[1] || "";
+  assert.ok(keepRule.length > 100, "the Simple rule was read");
+  assert.doesNotMatch(keepRule, /runpod/i, "no RunPod box, so no Remote CFG, negative, size or guidance, in Simple");
+  /* The server names the screens that open Advanced in RunPod GPU mode, and only there. */
+  const probe = (remote) => JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e",
+    "const {levelState}=await import('./server/welcome/level.js');console.log(JSON.stringify(levelState().advancedOnly||null))"],
+  { cwd: ROOT, env: { ...process.env, AIPLAY_APPDATA: path.join(tmpdir(), `aiplay-remote-level-${process.pid}`),
+    AIPLAY_MUSIC_ONLY: "0", AIPLAY_CLOUD_ONLY: "0", AIPLAY_REMOTE_ONLY: remote ? "1" : "0" } }).toString());
+  const on = probe(true);
+  assert.deepEqual(on?.screens, ["create", "images", "video"]);
+  assert.match(on?.why || "", /^RunPod GPU is an Advanced launch mode: while it runs, Music, Pictures and Video open on Advanced/);
+  assert.equal(probe(false), null, "full Studio, Music only and Comfy API: the level as saved");
+  const assist = read("web", "assist.js"), app = read("web", "app.js");
+  assert.match(assist, /if \(lock\(n\.advancedOnly\)\) return;\s*if \(n\.view && n\.view !== P\.view\) return;/, "Pictures and Video: no news opens Simple");
+  assert.match(assist, /if \(!b \|\| \(locked && b\.dataset\.m === "simple"\)\) return;/, "...nor the Simple button");
+  assert.match(assist, /simpleBtn\.disabled = locked;\s*simpleBtn\.title = locked \? only\.why : simpleTip;/, "which says why");
+  assert.match(app, /if \(musicLock\(n\.advancedOnly\)\) return;\s*if \(n\.view && n\.view !== "create"\) return;/, "Music the same");
+  assert.match(app, /if \(b\) \{ b\.disabled = locked; b\.title = locked \? only\.why : musicSimpleTip; \}/);
+  assert.match(read("web", "level.js"), /\[st\.line, st\.advancedOnly\?\.why\]\.filter\(Boolean\)\.join\(" "\)/, "Settings' line says why");
 });

@@ -6,6 +6,8 @@ This is a source-level preview, not a signed Windows installer. RunPod is availa
 
 ## Start on Windows
 
+RunPod GPU is in Advanced only. The launcher shows its card when Studio opens on Advanced; on an install that opens on Simple, turn on **Show every setting** in Studio's Settings first, then open the launcher again. While Studio runs in this mode, Music, Pictures and Video open on Advanced and offer no Simple, because the Pod's model and connection are in the Advanced form.
+
 In the launcher, press **Launch RunPod GPU**. It starts the full local interface without a local ComfyUI; the same mode from a terminal is:
 
 ```powershell

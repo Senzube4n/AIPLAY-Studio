@@ -207,10 +207,16 @@ export class ComfySupervisor extends EventEmitter {
      * is handed to ComfyUI as one more extra_model_paths YAML, so the engine
      * loads from the folder Studio checks and downloads into. */
     /* The Studio's own nodes (server/comfy_nodes/*.py) ride into the engine's
-     * custom_nodes folder, copied only when their bytes changed. */
+     * custom_nodes folder, copied only when their bytes changed. The T8 block
+     * cache (third-party) goes in only while its switch is on (video_settings
+     * block_cache, the owner's decision of 2026-09-26), and Studio's copy of
+     * it comes out again at a start with the switch off (comfy_nodes.js). */
     try {
-      const d = deployStudioNodes(path.join(config.comfyDir, "custom_nodes"));
+      const cacheOn = config.video?.engines?.h3?.blockCache === true;
+      const d = deployStudioNodes(path.join(config.comfyDir, "custom_nodes"), undefined,
+        { want: { "comfyui-minimax-h3-blockcache-T8": cacheOn } });
       if (d.copied.length) console.log(`[comfy] studio nodes deployed: ${d.copied.join(", ")}`);
+      if (d.removed.length) console.log(`[comfy] block cache is off: removed Studio's copy (${d.removed.join(", ")})`);
       for (const warning of d.warnings) console.warn(`[comfy] ${warning}`);
     } catch (err) {
       console.error(`[comfy] could not deploy the studio nodes: ${err.message}`);

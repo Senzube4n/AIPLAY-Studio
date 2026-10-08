@@ -4,6 +4,11 @@
  * never intercepted. In that mode every Images and Video render goes to the Pod
  * (there is no local engine to choose), so the "Render on" chooser stays hidden.
  *
+ * ADVANCED ONLY (the owner's decision of 2026-09-26). Simple never shows these
+ * blocks or their Remote numbers (web/styles.css keeps them out of Simple),
+ * and in this mode the screens open on Advanced and offer no Simple
+ * (server/welcome/level.js advancedOnly, read by web/assist.js and web/app.js).
+ *
  * The local forms remain authoritative for prompts and common render settings.
  * This module only changes where the final button sends them. The worker token
  * goes directly to the local backend secret store and is never returned here. */

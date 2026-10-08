@@ -1690,8 +1690,20 @@ function applySimple(on) {
  * on purpose: onLevel may call back at once, and setSimple's lets must exist. */
 let musicModeTouched = false;
 $("modeSeg")?.addEventListener("click", () => { musicModeTouched = true; });
+/* ADVANCED ONLY while the server says so (server/welcome/level.js
+ * advancedOnly: the launcher's RunPod GPU mode). Simple is off and says why,
+ * and no news, a Home card's included, opens it. */
+const musicSimpleTip = $("modeSimple")?.title || "";
+function musicLock(only) {
+  const locked = !!only?.screens?.includes("create");
+  const b = $("modeSimple");
+  if (b) { b.disabled = locked; b.title = locked ? only.why : musicSimpleTip; }
+  if (locked && state.simple) setSimple(false, true);
+  return locked;
+}
 onLevel((n) => {
   if ($("modeAdv") && n.advancedAdds?.create) $("modeAdv").title = n.advancedAdds.create;
+  if (musicLock(n.advancedOnly)) return;
   if (n.view && n.view !== "create") return;
   if (n.boot && musicModeTouched) return;
   if (!!n.simple !== !!state.simple) setSimple(!!n.simple, true);

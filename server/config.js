@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { autoVramFlags, vendorOf } from "./comfyargs.js";
 /* The card tiers' sizes join H3's size list (below the engines): pure data. */
 import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION, H3_BLOCK_CACHE } from "./h3tier.js";
+import { LEVELS, IN_USE_KEYS, startLevel } from "./welcome/startlevel.js";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -1778,7 +1779,9 @@ export const config = {
     /* OPT-IN, EXPERIMENTAL: T8mars's MiniMax H3 Block Cache custom node
      * (h3tier.js H3_BLOCK_CACHE) on the plain path, where no sparse attention
      * runs. video_settings block_cache; art.js videoBlockCache() asks the
-     * engine for the node first. */
+     * engine for the node first. The node reaches ComfyUI's custom_nodes only
+     * at an engine start with this on, and Studio's copy leaves at a start
+     * with it off (comfy_nodes.js, the owner's decision of 2026-09-26). */
     blockCache: false,
     blockCacheRecipe: H3_BLOCK_CACHE,
 
@@ -2445,36 +2448,12 @@ config.music.engines["yue2-gguf"] = {
 };
 /* THE LEVEL EVERY MAKE SCREEN OPENS ON (UI_PLAN E1, the owner's decision of
  * 2026-09-24): a NEW install opens Music, Pictures and Video on Simple; an
- * install that was already in use, the owner's included, keeps Advanced.
- *
- * "Already in use" is not "settings.json exists": the launcher and the engine
- * installer write that file (rig, python, gpu) before Studio's first start, so
- * on a fresh install it is always there. What only a Studio that has RUN
- * writes is IN_USE_KEYS below: prefs, the welcome flag, the API mode, the
- * Agent page's keys, a saved workflow, a chosen writing model, a model
- * override, the DAW's latency. (modelsDir, modelsAlso, outputDir and rig are
- * not in it: the launcher writes those too.) Songs already made are the other
- * sign, and level.js reads the library for them before saving Simple.
- * `levelBy` says who chose, so Settings can say "Studio chose Simple for a new
- * install" rather than pretending the person did.
- *
- * A FILE THAT IS THERE AND CANNOT BE READ is not a new install: it is an
- * install whose file has a trailing comma or a byte-order mark. It keeps
- * Advanced, and nothing is written over it (`unreadable`), so fixing the comma
- * brings every setting back as it was.
- * server/welcome/level.js saves the answer on the first start and on every
- * change; server/welcome/level_test.js walks every kind of install. */
-export const LEVELS = ["simple", "advanced"];
-export const IN_USE_KEYS = ["prefs", "welcome", "api", "llm", "customWorkflows",
-  "chatModel", "chatModelMusic", "enhanceModel", "modelOverrides", "dawLatency"];
-export function startLevel(settings, { unreadable = null } = {}) {
-  if (unreadable) return { level: "advanced", levelBy: "studio", saved: false, unreadable: String(unreadable) };
-  const s = settings || {};
-  const want = s.prefs?.ui?.level;
-  if (LEVELS.includes(want)) return { level: want, levelBy: s.prefs.ui.levelBy === "studio" ? "studio" : "you", saved: true };
-  const used = IN_USE_KEYS.some((k) => s[k] !== undefined && s[k] !== null);
-  return { level: used ? "advanced" : "simple", levelBy: "studio", saved: false };
-}
+ * install that was already in use, the owner's included, keeps Advanced. The
+ * rule is server/welcome/startlevel.js, import-free, because the launcher
+ * reads the same answer before Studio starts (the launch modes that are
+ * Advanced only, launcher/checks.mjs). Re-exported here, where the level's
+ * other readers and server/welcome/level_test.js have always found it. */
+export { LEVELS, IN_USE_KEYS, startLevel };
 config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
   ["ui", "level", (v) => LEVELS.includes(v)],

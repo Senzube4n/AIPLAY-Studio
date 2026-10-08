@@ -158,7 +158,8 @@ console.log("\n§4  the defaults, the knobs, the doors, the tools, the rows, the
   eq("...on the H3 engine's bridge field", adapter?.path, ["video", "engines", "h3", "bridge"]);
   eq("the strength knob is 0–1", [alpha?.kind, alpha?.min, alpha?.max, alpha?.path], ["number", 0, 1, ["video", "engines", "h3", "bridgeAlpha"]]);
   ok("...and both carry the authors' own figures and the reference-path warning", /6 in 10 renders better/.test(adapter?.effect || "") && /REFERENCE path worse/.test(adapter?.effect || ""));
-  ok("the engine deploys the studio nodes before it starts", /deployStudioNodes\(path\.join\(config\.comfyDir, "custom_nodes"\)\)/.test(comfy));
+  /* The call also passes the block cache's switch (blockcache_test). */
+  ok("the engine deploys the studio nodes before it starts", /deployStudioNodes\(path\.join\(config\.comfyDir, "custom_nodes"\)(?:\)|, undefined,)/.test(comfy));
   ok("create and extend preserve safe relative bridge names and bridgeAlpha", (index.match(/bridge: typeof b\.bridge === "string" && b\.bridge \? requireModelName\(b\.bridge\) : undefined,/g) || []).length === 2);
   ok("make_clip and extend_clip declare bridge and bridge_alpha and forward them",
     (mcp.match(/bridge_alpha: \{ type: "number", minimum: 0, maximum: 1/g) || []).length === 2

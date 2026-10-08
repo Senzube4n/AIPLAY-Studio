@@ -756,8 +756,12 @@ export const KNOBS = [
     kind: "bool", onValue: true, offValue: false,
     path: ["video", "engines", "h3", "blockCache"],
     /* h3tier.js H3_BLOCK_CACHE: the node, its recipe and what was measured. */
+    /* comfy_nodes.js: copied only at an engine start with this on (the owner's
+     * decision of 2026-09-26), and Studio's copy removed at a start with it off. */
     effect: "Skips most of H3's transformer blocks on steps where the picture barely changes (the MiniMax H3 "
-      + "Block Cache (T8) custom node, which must be installed in ComfyUI). Plain clips only, and never with sparse "
+      + "Block Cache (T8) custom node, which Studio copies into ComfyUI when the engine starts with this on, and takes "
+      + "out again when it starts with this off; switched on while the engine runs, it applies after Studio restarts). "
+      + "Plain clips only, and never with sparse "
       + "attention on. Its author measured 1.09x to 1.20x at 20 steps on NVIDIA; untested on the 3 to 8 step "
       + "settings and on AMD: check the take.",
     cite: DOCS.config,

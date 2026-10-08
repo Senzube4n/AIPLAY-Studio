@@ -64,6 +64,9 @@ import * as prov from "./provenance.js";
  * `const engine = job.engine || …` two lines above won. Caught by
  * art_cache_test.js on the first run, which is exactly what that test is for. */
 import { engine as engineDoor } from "./engine/client.js";
+/* Engine starts that deployed Studio's nodes, counted: the T8 block cache
+ * comes and goes only at a start (videoBlockCache asks again after each). */
+import { deployEpoch } from "./comfy_nodes.js";
 import { runRefMod } from "./refmod-run.js";
 /* The minors rule, asked at the queue's door as well as the engine's: a
  * refusal here costs nothing and says so at once, before a job waits behind
@@ -1065,15 +1068,26 @@ export class ArtRunner extends EventEmitter {
       continuation: !!job.continueFrom?.file, control: !!(job.controlVideo && job.controlPatch) });
     if (!h3BlockCacheFor(eng, { blockCache: true, refs, continuation: !!job.continueFrom?.file,
       control: !!(job.controlVideo && job.controlPatch), sparse: sparseCfg })) return false;
+    /* Asked again after every engine start, not only when the port moved: a
+     * start with the switch off takes Studio's copy out (comfy_nodes.js), and
+     * a pinned port (AIPLAY_COMFY_PORT) restarts on the same number, where no
+     * "rebound" comes. A remembered yes would then name a node the engine no
+     * longer has, and ComfyUI refuses the whole clip. */
+    if (this.#cacheEpoch !== deployEpoch()) { this.#cacheOffered = undefined; this.#cacheEpoch = deployEpoch(); }
     if (this.#cacheOffered === undefined) {
       try { this.#cacheOffered = !!(await engineDoor.objectInfo(eng.blockCacheRecipe.node))?.[eng.blockCacheRecipe.node]; }
       catch { this.#cacheOffered = false; }
     }
+    /* Studio copies the node into custom_nodes only at an engine start with
+     * the switch on (comfy_nodes.js), and ComfyUI reads custom_nodes only as
+     * it starts: switched on while the engine ran, it arrives at the next start. */
     if (!this.#cacheOffered) job.blockCacheNote = "This clip ran without the block cache: it needs the MiniMax H3 Block Cache (T8) "
-      + "custom node in ComfyUI, which this engine does not have.";
+      + "custom node in ComfyUI, which this engine does not have. Studio copies the node in when the engine starts with "
+      + "Block cache on, so if you switched it on while the engine was running, restart Studio to use it.";
     return this.#cacheOffered;
   }
   #cacheOffered;
+  #cacheEpoch;
 
   /** Idempotent, lazy, and never fatal — progress is a nicety, not the work. */
   #connect() {

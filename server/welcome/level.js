@@ -87,15 +87,36 @@ export function levelLine(level, by, unreadable = null) {
     : "Studio kept Advanced because this copy was already in use.";
 }
 
+/* RUNPOD GPU IS ADVANCED ONLY (the owner's decision of 2026-09-26: it ships in
+ * the public build, and nothing about it shows in Simple). The launcher offers
+ * its launch mode only at Advanced (launcher/checks.mjs modesForLevel), and
+ * Simple never shows its box or its Remote numbers (web/styles.css). A Studio
+ * that runs in that mode anyway (scripts/start-remote.mjs by hand, or the
+ * level changed while it ran) sends every render to the Pod, and the Pod's
+ * model and connection live in the Advanced form, so while it runs no screen
+ * opens on Simple: `advancedOnly` names them and says why, the page's Simple
+ * buttons read it (web/assist.js, web/app.js), and studio_welcome carries it.
+ * The saved level is not touched. Null in every other mode. */
+export function advancedOnly() {
+  if (!config.remoteOnly) return null;
+  return {
+    screens: Object.keys(ADVANCED_ADDS),
+    why: "RunPod GPU is an Advanced launch mode: while it runs, Music, Pictures and Video open on Advanced, "
+      + "where the Pod's model and connection are. Your saved level is kept for the next start.",
+  };
+}
+
 /** What the door, the page and studio_welcome all return. */
 export function levelState() {
   const level = config.ui?.level ?? "advanced";
   const by = config.ui?.levelBy ?? "studio";
   const unreadable = config.ui?.unreadable || null;
+  const only = advancedOnly();
   return {
     level, levelBy: by, levels: LEVELS,
     line: levelLine(level, by, unreadable),
     ...(unreadable ? { unreadable } : {}),
+    ...(only ? { advancedOnly: only } : {}),
     /* The screens that open on the level; web/level.js keeps no list of its own. */
     screens: Object.keys(ADVANCED_ADDS),
     advancedAdds: Object.fromEntries(Object.keys(ADVANCED_ADDS).map((v) => [v, advancedTip(v)])),
