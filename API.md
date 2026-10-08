@@ -413,7 +413,10 @@ then new, section tags included) and optionally
 once the YuE2 real-audio tokenizer is on this machine (Models screen: the
 Mothersuperior head over m-a-p's MERT-v2-FullSong, CC BY-NC 4.0) and YuE2 3B is
 the music model: the track is read into YuE2's own semantic codes first — once,
-kept under `output/yue2/tok_<sha12>/` by the file's bytes; on the CPU while the
+kept under `output/yue2/tok_r2_<sha12>/` by the decoded audio and the reader's
+version (folders named `tok_<sha12>` hold readings from before 2026-09-25, when
+MERT's rotary table was left uninitialised under transformers 5, and are no
+longer used: such a track is read again); on the CPU while the
 card has a render in flight (about 30 s of song in 16 s), on the card otherwise —
 and the driver replays them with no score (`--extend-codes`), the join keeping
 the original up to the seam. `caption` is **required** (a recording carries no

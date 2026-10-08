@@ -1288,6 +1288,25 @@ adapter from the same author (a prosody LoRA in the decoder, "intentionally
 subtle" by its card, with ComfyUI nodes whose source is not published) is not
 catalogued; our own hum-to-score path is its first stage already.
 
+**25 September: every reading on this rig before this date was broken.** The
+engine's python has run transformers 5 since 16 August, before the tokenizer
+shipped. Under transformers 5, MERT is built on the meta device, and
+every buffer the weights file does not hold is then swapped for empty memory.
+MERT2's rotary table (`embed_positions.inv_freq`) is such a buffer, and MERT2's
+own initialiser never refills it, so the tokenizer read with whatever that
+memory held. Nothing warned. The same 20-second file read four times gave 1,
+269, 269 and 277 distinct codes (the first all zeros, from NaN logits), and
+unrepaired readings agreed with a correct one on only 7 to 42 % of frames.
+`yue_tokenize.py` now rebuilds the table after loading, exactly as the model's own constructor
+does, and refuses to read if it cannot. The cache folder now carries the
+reader's version (`tok_r2_<sha12>`), so a recording read before the fix is read
+again rather than served from its old `tok_<sha12>` folder, and *Sounds like
+this* ignores the old folders. The numbers above that came from read codes
+were measured with the broken reader: 0.43–0.53 distinct codes per frame, one
+code held for up to 8 frames (and with them the eight-second cover prime), and
+the sounds-like scores. They are to be measured again, not trusted. So is any
+adapter trained from a recording before this date.
+
 ---
 
 ## Images

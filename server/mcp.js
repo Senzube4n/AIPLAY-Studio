@@ -1208,8 +1208,8 @@ export const TOOLS = [
       + "(Models screen: Mothersuperior's head over m-a-p's MERT-v2-FullSong, CC BY-NC 4.0) turns any "
       + "library track into the semantic codes YuE2 continues from — 25 a second; by its author 16 % "
       + "exact on YuE2's own songs and round trips near 95 % by ear, so the codes are the song as YuE2 "
-      + "would have written it, not a copy. The codes are kept by the decoded audio's fingerprint under "
-      + "output/yue2/tok_<id>/, where extend_song looks, so an Extend that follows starts at once. "
+      + "would have written it, not a copy. The codes are kept by the decoded audio's fingerprint and the "
+      + "reader's version under output/yue2/tok_<id>/, where extend_song looks, so an Extend that follows starts at once. "
       + "Runs on the card, or on the CPU while the card has a render in flight (about 30 s of song in 16 s); "
       + "`device` cpu forces the CPU. Answers frames, seconds, device, cached and the timings. Refuses "
       + "with reason tokenizer-missing (and the files) when the tokenizer is not on disk.",

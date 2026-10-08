@@ -166,7 +166,7 @@ class AiplayYuE2Continue:
                 "lyrics": ("STRING", {"multiline": True}),
                 "codes_dir": ("STRING", {"default": "", "tooltip":
                     "The folder the Studio's real-audio tokenizer wrote for this recording "
-                    "(output/yue2/tok_<id>), or a semantic.npy directly."}),
+                    "(output/yue2/tok_r<reader>_<id>), or a semantic.npy directly."}),
                 "prime_seconds": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 120.0, "step": 0.5, "tooltip":
                     "How many seconds of the recording's own performance the model hears first. "
                     "0 replays all of it. Longer is not automatically better: read codes are flatter than "

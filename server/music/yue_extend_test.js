@@ -153,9 +153,9 @@ console.log("\n§  a recording, through the real-audio tokenizer (2026-09-20)");
     && /### `POST \/api\/tokenize`/.test(src("../../API.md")));
   ok("the page says a recording is being read before the job exists",
     /Reading the recording into YuE2's codes/.test(app));
-  ok("tokenize.js reads the catalogue row for what must be on disk, keys the codes by the file's bytes, and runs the script",
+  ok("tokenize.js reads the catalogue row for what must be on disk, keys the codes by the decoded audio and the reader's version, and runs the script",
     /export const TOKENIZER_ID = "musicYue2Tokenizer";/.test(tok)
-    && /tok_\$\{sha\.slice\(0, 12\)\}/.test(tok)
+    && /const dir = path\.join\(config\.outputDir, "yue2", codesFolderName\(sha\)\);/.test(tok)
     && /"--audio", source, "--out", codesFile, "--mert", st\.mert, "--head", st\.head,/.test(tok));
   ok("the script is the published recipe: MERT-v2-FullSong layer 20 at 25 Hz, instance-normalised, the 8-layer head, half-stride windows",
     /MERT_LAYER = 20/.test(script) && /FRAMES_PER_SECOND = 25/.test(script) && /norm_first=True, activation="gelu"/.test(script)

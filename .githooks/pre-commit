@@ -226,6 +226,14 @@ node server/modelpick_test.js || exit 1
 # run folder — one silent list is how the audio reference was dead on arrival.
 # The driver is byte-compiled when the YuE2 python is here. No GPU.
 node server/music/yue_extend_test.js || exit 1
+# THE TOKENIZER'S CACHE KEY CARRIES THE READER (2026-09-25). Under transformers 5
+# MERT's rotary table was never initialised, so every real-audio reading before
+# the fix was garbage and the cache, keyed on the audio alone, would have kept
+# serving it. tok_r<reader>_<sha12>: an old tok_<sha12> folder is never hit by
+# codesDirFor, tokenizeTrack or sounds_like; a reading that names another reader
+# is refused and its codes are not kept; the python and JS numbers agree.
+# Temp output folder and a fake python; no weights, no card.
+node server/music/tokenize_key_test.js || exit 1
 # HUM A MELODY: the pitch tracker turns a synthetic six-note hum into the
 # planner's own two-voice layout and the app's score reader accepts it; the
 # open-score branch, the route, the door, the tool, the page and the doc each
@@ -790,6 +798,18 @@ if [ -x "$PY" ]; then "$PY" server/daw/instruments_test.py || exit 1; fi
 # survives every metadata mode ("none" included) and the Tier-2 toggle strips
 # only the record — the behavioural half of the Tier-1 pin above.
 if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
+# MERT'S ROTARY TABLE, REBUILT AFTER LOADING (server/music/yue_tokenize.py): on a
+# stand-in module, through mert_features with transformers faked (no audio may
+# reach an unchecked model), and on MERT2's own RotaryEmbedding built on the meta
+# device and put through transformers' own meta-to-device step (emulated, with a
+# note, if a venv upgrade moved that private step: a clean tree must not fail),
+# then compared bit for bit with a freshly constructed one. That last part reads
+# only the modeling code from the rig's models folder and skips loudly without
+# it. No weights, no card. The real-weights check (the same file read twice in
+# two processes must give identical codes that agree with a reference reading:
+# on 2026-10-08 the unrepaired reader was identical twice and 93 % wrong) is
+# scripts/yue_tokenize_determinism.py, run by hand.
+if [ -x "$PY" ]; then "$PY" server/music/yue_tokenize_test.py || exit 1; fi
 # THE WELCOME WINDOW's parity gate and its content gate. The first is the usual
 # two-directional census plus a third direction this surface has to hold — every
 # action reachable by an AGENT as well, because "MCP controllable so an agent can

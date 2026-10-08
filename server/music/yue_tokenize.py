@@ -26,6 +26,17 @@ The feature path follows the tokenizer's own prep script step for step (30 s
 chunks, hidden state 20, linear interpolation to 25 frames per second, then
 instance normalisation); the head is the script's `Tok` class, read off the
 safetensors' own metadata line rather than trusted from memory.
+
+MERT's rotary table is recomputed after loading (restore_rotary_inv_freq).
+transformers 5 builds the model on the meta device and then swaps every
+NON-persistent buffer for torch.empty_like, and MERT2's `embed_positions.inv_freq`
+is one: the weights file never held it and MERT2's own _init_weights does not
+refill it, so it was whatever that memory held. Until 2026-09-25 the same 20 s
+file read four times gave 1, 269, 269 and 277 distinct codes (the first all
+zeros from NaN logits), and unrepaired readings agreed with a correct one on
+only 7 to 42 % of frames. MERT_READER names this reading; tokenize.js folds it
+into the cache folder's name, so codes read before the fix
+(output/yue2/tok_<sha12>) are never served again.
 """
 import argparse
 import json
@@ -45,6 +56,10 @@ MERT_LAYER = 20
 MERT_SR = 24000
 CHUNK_SECONDS = 30
 FRAMES_PER_SECOND = 25
+# Which reading this is. 1: before the rotary table was restored (garbage under
+# transformers 5). 2: restored. tokenize.js declares the same number and keys its
+# cache on it; bump both whenever the same audio would read to different codes.
+MERT_READER = 2
 
 
 def _load_audio(path):
@@ -66,12 +81,81 @@ def _device():
     return torch.device("cpu")
 
 
+def restore_rotary_inv_freq(model):
+    """Recompute every rotary `inv_freq` buffer the way MERT2's RotaryEmbedding.__init__ does.
+
+    modeling_mert2.py (the catalogued revision, d8ba1c7) builds it as
+        head_dim = hidden_size // num_attention_heads     (1024 // 16 = 64)
+        base     = rotary_embedding_base                  (10000)
+        inv_freq = 1.0 / (base ** (arange(0, head_dim, 2, dtype=float32) / head_dim))
+    on the CPU, registers it with persistent=False, and pins it to float32 in its
+    own _apply. transformers 5 then replaces it with empty memory (see the module
+    docstring). The table is rebuilt from the module's own head_dim and base,
+    checked against the config, and put back on the device and in the dtype the
+    loaded model gave the buffer; the cos/sin cache built from it is dropped.
+
+    Fails loudly, never silently: no rotary buffer at all, a buffer without the
+    head_dim/base this recipe reads, a disagreement with the config, a buffer that
+    was never materialised, or a non-finite result each raise RuntimeError, and
+    the tokenizer then answers with an error line instead of codes. So does any
+    OTHER non-persistent buffer: transformers 5 empties every one of them, and
+    this reader rebuilds only the rotary table (MERT2 at d8ba1c7 has no other;
+    a new modeling revision or a torchaudio that stopped persisting its window
+    would add one, and it would be garbage too).
+    Returns the names of the buffers restored.
+    """
+    import torch
+    others = sorted("%s.%s" % (n, b) if n else b
+                    for n, m in model.named_modules()
+                    for b in getattr(m, "_non_persistent_buffers_set", ())
+                    if b != "inv_freq" and m._buffers.get(b) is not None)
+    if others:
+        raise RuntimeError("MERT has non-persistent buffers this reader does not rebuild (%s): transformers 5 leaves "
+                           "every such buffer uninitialised, so it will not read with them" % ", ".join(others[:5]))
+    restored = []
+    cfg = getattr(model, "config", None)
+    for name, module in model.named_modules():
+        if "inv_freq" not in module._buffers:
+            continue
+        where = "%s (%s)" % (name or "<model>", type(module).__name__)
+        head_dim, base = getattr(module, "head_dim", None), getattr(module, "base", None)
+        if not isinstance(head_dim, int) or head_dim <= 0 or head_dim % 2 or not isinstance(base, (int, float)):
+            raise RuntimeError("%s has an inv_freq buffer but not the integer head_dim and numeric base that "
+                               "MERT2's RotaryEmbedding keeps; this reader will not guess how to rebuild it" % where)
+        if cfg is not None and hasattr(cfg, "rotary_embedding_base"):
+            want = (cfg.hidden_size // cfg.num_attention_heads, cfg.rotary_embedding_base)
+            if (head_dim, base) != want:
+                raise RuntimeError("%s has head_dim %s and base %s, but the config says %s and %s"
+                                   % (where, head_dim, base, want[0], want[1]))
+        old = module._buffers["inv_freq"]
+        if old is None or old.is_meta or not old.is_floating_point():
+            raise RuntimeError("%s.inv_freq was never materialised as a float tensor (%s)"
+                               % (where, "None" if old is None else "%s on %s" % (old.dtype, old.device)))
+        inv = 1.0 / (base ** (torch.arange(0, head_dim, 2, dtype=torch.float32, device="cpu") / head_dim))
+        inv = inv.to(device=old.device, dtype=old.dtype)
+        if inv.shape != old.shape or not bool(torch.isfinite(inv).all()):
+            raise RuntimeError("%s.inv_freq rebuilt as %s with non-finite values or the wrong shape (the buffer is %s)"
+                               % (where, list(inv.shape), list(old.shape)))
+        module.inv_freq = inv   # a registered buffer: stays non-persistent
+        for attr, value in (("_cos", None), ("_sin", None), ("_sequence_length", 0), ("_cache_device", None)):
+            if hasattr(module, attr):
+                setattr(module, attr, value)
+        if not torch.equal(module._buffers["inv_freq"], inv):
+            raise RuntimeError("%s.inv_freq did not keep the rebuilt table" % where)
+        restored.append(name)
+    if not restored:
+        raise RuntimeError("MERT loaded without a rotary inv_freq buffer: this reader was written for "
+                           "modeling_mert2.RotaryEmbedding (embed_positions) and will not read with an unchecked model")
+    return restored
+
+
 def mert_features(mono24, mert_dir, device):
     """MERT-v2-FullSong hidden state 20 for the whole track, at 25 Hz: (T, 1024) float32."""
     import torch
     from transformers import AutoFeatureExtractor, AutoModel
     proc = AutoFeatureExtractor.from_pretrained(mert_dir, trust_remote_code=True)
     model = AutoModel.from_pretrained(mert_dir, trust_remote_code=True).to(device).eval()
+    restore_rotary_inv_freq(model)   # transformers 5 leaves it uninitialised; see the module docstring
     ch = MERT_SR * CHUNK_SECONDS
     chunks = [mono24[s:s + ch] for s in range(0, len(mono24), ch)]
     chunks = [c for c in chunks if len(c) >= MERT_SR]           # under a second at the end: dropped, as the reference does
@@ -189,7 +273,7 @@ def main():
     np.save(args.out, codes, allow_pickle=False)
     print(json.dumps({
         "ok": True, "out": args.out, "frames": int(codes.shape[0]), "seconds": round(seconds, 3),
-        "framesPerSecond": FRAMES_PER_SECOND, "device": device.type,
+        "framesPerSecond": FRAMES_PER_SECOND, "device": device.type, "reader": MERT_READER,
         "distinctCodes": int(len(np.unique(codes))),
         "timing": {"load": round(t1 - t0, 2), "mert": round(t2 - t1, 2), "head": round(t3 - t2, 2), "total": round(t3 - t0, 2)},
     }), flush=True)
