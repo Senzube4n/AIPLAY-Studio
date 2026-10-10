@@ -82,7 +82,7 @@ static class Program
             using (var p = Process.Start(psi)) p.WaitForExit();
             if (!DepsPresent(root))
             {
-                Fail("Studio's npm packages are still missing (ws, three, gltf-validator, @pixiv/three-vrm).\n\nOpen a terminal in\n" + root + "\nand run: npm install --omit=dev");
+                Fail("Studio's npm packages are still missing (ws, three, gltf-validator, @pixiv/three-vrm, ag-psd).\n\nOpen a terminal in\n" + root + "\nand run: npm install --omit=dev");
                 return 1;
             }
         }
@@ -157,7 +157,7 @@ static class Program
 
     static bool DepsPresent(string root)
     {
-        foreach (var pkg in new[] { "ws", "three", "gltf-validator", "@pixiv/three-vrm" })
+        foreach (var pkg in new[] { "ws", "three", "gltf-validator", "@pixiv/three-vrm", "ag-psd" })
             if (!Directory.Exists(Path.Combine(root, "node_modules", pkg))) return false;
         return true;
     }

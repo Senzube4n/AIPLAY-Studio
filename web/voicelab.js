@@ -182,7 +182,7 @@ function fitCanvas(cv) {
  * them when it opens and be cleared when they do — daw.js's showDock() knows
  * about three panes and cannot be asked about a fourth without editing a
  * 241 KB file. Two listeners each way is the whole of the coordination. */
-const DOCK = [["tabChain", "paneChain"], ["tabAnalysis", "paneAnalysis"], ["tabEar", "paneEar"]];
+const DOCK = [["tabChain", "paneChain"], ["tabAnalysis", "paneAnalysis"], ["tabEar", "paneEar"], ["tabPassage", "panePassage"]];
 
 /* The budget the owner named, and the one the clock is coloured against.
  * SPEC §0.3 measured 4-12 ms of DSP per note, so everything above this line

@@ -93,7 +93,7 @@ test("a server that goes silent is given up on, and Download resumes from the by
 test("the file is written at the disk's pace, and the checksum can be cancelled too", () => {
   const src = readFileSync(new URL("./models.js", import.meta.url), "utf8");
   assert.match(src, /if \(!out\.write\(chunk\)\) await once\(out, "drain"\);/, "backpressure: no unbounded buffering in memory");
-  assert.doesNotMatch(src, /\n\s+out\.write\(chunk\);\n/, "no bare write left");
+  assert.doesNotMatch(src, /\n\s+out\.write\(chunk\);\r?\n/, "no bare write left");
   assert.match(src, /await sha256Of\(part, \(\) => this\.cancelled\.has\(id\)\)/);
   assert.match(src, /this\.#aborts\.get\(id\)\?\.abort\(\);/);
 });

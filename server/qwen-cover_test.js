@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test, after } from "node:test";
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -187,10 +188,10 @@ test("API response, real queue, sampler and saved image provenance keep the same
   const routeStart = source.indexOf('if (p === "/api/image" && req.method === "POST")');
   const routeEnd = source.indexOf('if (p === "/api/', routeStart + 20);
   const eventStart = source.indexOf('art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpoint, runId })');
-  const eventEnd = source.indexOf('/* A stage that failed', eventStart);
+  const eventEnd = source.indexOf('/* A queued friend image is an errand', eventStart);
   assert.ok(routeStart > 0 && routeEnd > routeStart && eventStart > 0 && eventEnd > eventStart);
   const deps = {
-    p: "/api/image", req: { method: "POST" }, res: {}, config, path,
+    p: "/api/image", req: { method: "POST" }, res: {}, config, path, randomUUID,
     json: (_, status, body) => ({ status, body }),
     qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
     qwenImageStatus: async () => ({ ready: true }),
@@ -267,9 +268,9 @@ test("a Fast draft renders the LoRA graph and its picture and ledger line say so
   const routeStart = source.indexOf('if (p === "/api/image" && req.method === "POST")');
   const routeEnd = source.indexOf('if (p === "/api/', routeStart + 20);
   const eventStart = source.indexOf('art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpoint, runId })');
-  const eventEnd = source.indexOf('/* A stage that failed', eventStart);
+  const eventEnd = source.indexOf('/* A queued friend image is an errand', eventStart);
   const deps = {
-    p: "/api/image", req: { method: "POST" }, res: {}, config, path,
+    p: "/api/image", req: { method: "POST" }, res: {}, config, path, randomUUID,
     json: (_, status, body) => ({ status, body }),
     qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE: "qwen-image-2.1",
     qwenImageStatus: async () => ({ ready: true }),

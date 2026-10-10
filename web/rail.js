@@ -1,8 +1,9 @@
 /**
  * THE RAIL'S FOLD: "More tools" (UI_PLAN B1).
  *
- * The rail puts what a newcomer comes for on top (Home, Music, Pictures,
- * Video, Music video) and folds every other screen into one <details>,
+ * Home and community sessions stay pinned above the scrollable tools. The
+ * creation group holds Music, Pictures, Video and Production; further tools
+ * fold into one <details>,
  * #navMore. Before this, only 9 of 21 entries showed at 1440x900 and Models
  * was not one of them. This file does three small things for the fold and
  * nothing else; setView() in web/app.js still owns every entry, through

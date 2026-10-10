@@ -65,8 +65,61 @@ console.log("\n§1  the simple way on the Video screen");
    * shows, dimmed when its file is missing (server/taomate_test.js). */
   ok("...and Fast hides where it would equal Standard, only without the builds",
     /\$\("vidQFast"\)\.hidden = !tb && qs\.fast === qs\.standard;/.test(app));
-  ok("the slider opens on Standard, once, from the status",
-    /if \(!state\.vidStepsOpened && eng\.stepDefaults\) \{\n\s+state\.vidStepsOpened = true;\n\s+\$\("vidSteps"\)\.value = String\(vidQualitySteps\(eng\)\.standard\);/.test(app));
+  ok("the slider opens on the engine's own default, once, from the status",
+    /if \(!state\.vidStepsOpened && eng\.stepDefaults\) \{\n\s+state\.vidStepsOpened = true;\n\s+\$\("vidSteps"\)\.value = String\(vidDefaultSteps\(eng\)\.standard\);/.test(app)
+    && /function vidDefaultSteps\(eng, keeping = false\) \{\n\s+const \{ chips, \.\.\.defaults \} = eng \|\| \{\};\n\s+return vidQualitySteps\(defaults, keeping\);\n\}/.test(app));
+  /* THE SLIDER FOLLOWS A DEFAULT THAT MOVES UNDER IT (review of the port,
+   * 2026-10-08). Studio started before H3's row landed opens the slider on
+   * the bare 20; the row's 8-step file then moves Standard to 8, and the
+   * slider stayed on 20 (Best lit, Make clip sending 20). vidPaint's lines
+   * from the opening to the follow are lifted and run against a sequence of
+   * statuses, with only the names they read. */
+  {
+    const open = app.indexOf("  if (!state.vidStepsOpened && eng.stepDefaults) {");
+    const close = app.indexOf("    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;\n  }\n", open);
+    const lines = open > 0 && close > open ? app.slice(open, close) + "    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;\n  }\n" : "";
+    const ddSrc = /\nfunction vidDefaultSteps\(eng, keeping = false\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
+    const paintOnce = (() => {
+      try { return new Function("state", "eng", "cur", "$", qsSrc + ddSrc + lines); } catch (e) { return () => { throw e; }; }
+    })();
+    const slider = { value: "8" }, character = { value: "" };
+    const $ = (id) => (id === "vidSteps" ? slider : id === "vidCharacter" ? character : null);
+    const state = { refImages: [], refAudios: [] };
+    const chips = { plain: { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" }, best: { steps: 20, needsModel: null } },
+      keep: { fast: { steps: 20, needsModel: null }, standard: { steps: 20, needsModel: null }, best: { steps: 20, needsModel: null } } };
+    const before = { stepDefaults: { fast: 20, standard: 20, best: 20 }, referenceSteps: 20, chips };
+    const landed = { stepDefaults: { fast: 8, standard: 8, best: 20 }, referenceSteps: 8, chips: { ...chips, plain: { ...chips.plain, standard: { steps: 8, needsModel: null } } } };
+    const seen = [];
+    try {
+      paintOnce(state, before, "h3", $); seen.push(slider.value);           // opens on the empty disk's 20
+      paintOnce(state, before, "h3", $); seen.push(slider.value);           // a status poll: nothing moves
+      paintOnce(state, landed, "h3", $); seen.push(slider.value);           // the H3 row lands: 8
+      slider.value = "12";
+      paintOnce(state, { ...landed, stepDefaults: { fast: 4, standard: 4, best: 20 } }, "h3", $); seen.push(slider.value); // the person's 12 stays
+    } catch (e) { seen.push(String(e)); }
+    ok("the slider follows Standard when a speed-up lands while Studio runs, and a count the person chose stays",
+      JSON.stringify(seen) === JSON.stringify(["20", "20", "8", "12"]), JSON.stringify(seen));
+  }
+
+  /* THE CHIPS ARE THE SERVER'S: the page drew its own Fast 3 and Standard
+   * 8-or-4 over the server's numbers, and make_clip sent stepDefaults, so on
+   * some disks the chip and the tool named different counts. Now /api/status
+   * sends them per engine (video-plain.js qualityChips) and vidQualitySteps
+   * reads them first. */
+  ok("the status sends the chips and every count's missing speed-up",
+    /chips: k === "h3" \? qualityChips\(e\) : null,\s*speedupNeeds: k === "h3" \? speedupTable\(e\) : null,/.test(index));
+  const withChips = { stepDefaults: { fast: 4, standard: 20, best: 20 }, referenceSteps: 4, keepFast: { steps: 4 },
+    chips: { plain: { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" }, best: { steps: 20, needsModel: null } },
+      keep: { fast: { steps: 4, needsModel: null }, standard: { steps: 4, needsModel: null }, best: { steps: 20, needsModel: null } } } };
+  ok("the chips read the server's numbers, not the defaults, where the status sends them",
+    JSON.stringify(vidQualitySteps(withChips)) === JSON.stringify({ fast: 3, standard: 8, best: 20 })
+    && JSON.stringify(vidQualitySteps(withChips, true)) === JSON.stringify({ fast: 4, standard: 4, best: 20 }),
+    JSON.stringify(vidQualitySteps(withChips)));
+  /* AMD, Intel and the CPU get no chips (video-plain.js qualityChips, Bucky's
+   * rule): there, and only there, the page keeps main's own numbers. */
+  ok("...and no chip number is typed in the page, but for main's where no chips come (AMD, Intel, the CPU)",
+    (app.match(/qs\.fast = 3;/g) || []).length === 1
+    && /if \(chipOf\) \{\s*getFor = \{ fast: chipOf\.fast\?\.needsModel \|\| null, standard: chipOf\.standard\?\.needsModel \|\| null, best: chipOf\.best\?\.needsModel \|\| null \};\s*\} else \{\s*if \(tb\) \{\s*qs\.fast = 3;\s*qs\.standard = tb\.eight \? 8 : tb\.four \? 4 : 8;/.test(app));
   /* Before the first status lands the page shows index.html's typed numbers,
    * so they must be vidQualitySteps' own fallbacks: the slider, its readout
    * and the Standard chip on one number no chip is missing, Fast hidden
@@ -95,27 +148,33 @@ console.log("\n§1  the simple way on the Video screen");
     tao: "taomate_h3_3step_comfy.safetensors",
   };
   const url = (rel) => JSON.stringify(new URL(rel, import.meta.url).href);
-  const probe = `import { config, loraStepsOf } from ${url("./config.js")}; import { h3TurboLoraFor } from ${url("./workflow.js")};`
+  const probe = `import { config, loraStepsOf } from ${url("./config.js")}; import { h3TurboLoraFor, referenceSteps } from ${url("./workflow.js")};`
+    + `import { speedupNeeded } from ${url("./video-plain.js")};`
     + "const h3 = config.video.engines.h3, eng = { ...config.video, ...h3 };"
     + "const slots = ['turboLora', 'turboLora4', 'turboLora3', 'refTurboLora', 'refTurboLora4'];"
-    + "const at = (refs) => loraStepsOf(h3TurboLoraFor(eng, { refs }).lora);"
+    + "const at = (refs, steps) => loraStepsOf(h3TurboLoraFor(eng, { refs, steps }).lora);"
+    + "const refSteps = referenceSteps(h3);"
     + "console.log(JSON.stringify({ steps: h3.steps, stepDefaults: h3.stepDefaults, turboBuilds: h3.turboBuilds,"
     + " loraSteps: Object.fromEntries(slots.map((k) => [k, loraStepsOf(h3[k])])), loaded: { fl2v: at(false), refs: at(true) },"
+    + " refSteps, loadedRef: at(true, refSteps), refBuilds: h3.refBuilds ?? null,"
+    + " keep8: speedupNeeded(eng, { steps: 8, refs: true }) ?? null, keep4: speedupNeeded(eng, { steps: 4, refs: true }) ?? null,"
     + " turboMaxSteps: h3.turboMaxSteps, turbo3MaxSteps: h3.turbo3MaxSteps, turbo4MaxSteps: h3.turbo4MaxSteps }));";
   /* `extra`: the files go in a SECOND models folder named in settings
    * `modelsAlso` ("Add as extra", or the folder "Use this folder" left
    * behind), and the main folder holds no LoRA at all. The engine loads from
-   * both, so pick() and the step defaults must both look in both. */
-  const disk = (files, { extra = false } = {}) => {
+   * both, so pick() and the step defaults must both look in both.
+   * `settings`: more of that settings.json (a saved card). */
+  const disk = (files, { extra = false, nested = false, settings = null } = {}) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "h3-disk-"));
     try {
-      const shelf = path.join(dir, extra ? "extra" : "models", "loras");
+      const shelf = path.join(dir, extra ? "extra" : "models", "loras", ...(nested ? ["minimax"] : []));
       fs.mkdirSync(path.join(dir, "models", "loras"), { recursive: true });
       fs.mkdirSync(shelf, { recursive: true });
       for (const f of files) fs.writeFileSync(path.join(shelf, f), "x");
-      if (extra) {
+      if (extra || settings) {
         fs.mkdirSync(path.join(dir, "settings"), { recursive: true });
-        fs.writeFileSync(path.join(dir, "settings", "settings.json"), JSON.stringify({ modelsAlso: [path.join(dir, "extra")] }));
+        fs.writeFileSync(path.join(dir, "settings", "settings.json"),
+          JSON.stringify({ ...(extra ? { modelsAlso: [path.join(dir, "extra")] } : {}), ...(settings || {}) }));
       }
       const env = { ...process.env, AIPLAY_APPDATA: path.join(dir, "settings"), AIPLAY_MODELS_DIR: path.join(dir, "models"),
         AIPLAY_RIG: path.join(dir, "rig"), AIPLAY_OUTPUT: path.join(dir, "output") };
@@ -130,6 +189,18 @@ console.log("\n§1  the simple way on the Video screen");
   const shop = disk([L.fl2v4, L.ref4]);                                 // the Models screen's "video" + "videoRefs"
   const shopTao = disk([L.fl2v4, L.ref4, L.tao]);                        // ...plus its TaoMate row
   const halfEight = disk([L.fl2v8, L.fl2v4, L.ref4]);                    // an 8-step file on ONE path only
+  const AMD = { gpu: { vendor: "amd", totalMb: 16304 }, torchBackend: "rocm" };
+  const halfEightAmd = disk([L.fl2v8, L.fl2v4, L.ref4], { settings: AMD });
+  /* main's three disks again, on AMD (Bucky's rule): rig, shop and shopTao
+   * save no card, so above they are read by NVIDIA's rule. */
+  const rigAmd = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { settings: AMD });
+  const shopAmd = disk([L.fl2v4, L.ref4], { settings: AMD });
+  const shopTaoAmd = disk([L.fl2v4, L.ref4, L.tao], { settings: AMD });
+  /* The reference path by the file it loads, AT ITS OWN COUNT (review of the
+   * port, 2026-10-08): refTurboLora falls back to the ref2v 4-step and then to
+   * the fl2v 4-step, and refBuilds asked only whether that file was there. */
+  const fourOnly = disk([L.fl2v4]);                                     // the 4-step speed-up row alone
+  const h3Refs = disk([L.fl2v8, L.ref4]);                               // the H3 row (8-step) + "Video references"
   ok("a disk with both 8-step builds defaults to 8: Fast 3 with TaoMate, Best 20",
     rig.steps === 8 && same(rig.stepDefaults, { fast: 3, standard: 8, best: 20 })
     && same(rig.turboBuilds, { three: true, four: true, eight: true }), JSON.stringify(rig));
@@ -138,8 +209,17 @@ console.log("\n§1  the simple way on the Video screen");
     && same(shop.turboBuilds, { three: false, four: true, eight: false }), JSON.stringify(shop));
   ok("...with TaoMate installed, Fast is 3 and Standard stays 4",
     shopTao.steps === 4 && same(shopTao.stepDefaults, { fast: 3, standard: 4, best: 20 }), JSON.stringify(shopTao));
-  ok("8 needs BOTH paths: the fl2v 8-step alone, with only the ref2v 4-step, stays 4",
-    halfEight.steps === 4 && halfEight.stepDefaults?.standard === 4 && halfEight.turboBuilds?.eight === false, JSON.stringify(halfEight));
+  /* EACH PATH ITS OWN COUNT. Keep my character runs the reference file's own
+   * count (workflow.js referenceSteps), so on NVIDIA and a card nobody could
+   * read Standard follows the plain path's file: with the fl2v 8-step on disk
+   * it is 8, and the reference row's 4-step file no longer drags it to 4 (or,
+   * with no fl2v 4-step, to the bare 20). AMD, Intel and the CPU keep main's
+   * rule: 8 there needs both paths. */
+  ok("the fl2v 8-step with only the ref2v 4-step: Standard 8, Keep my character 4, each on its own file",
+    halfEight.steps === 8 && halfEight.stepDefaults?.standard === 8 && halfEight.turboBuilds?.eight === true
+    && halfEight.refSteps === 4 && halfEight.loadedRef === 4, JSON.stringify(halfEight));
+  ok("...and the same disk on AMD keeps main's rule: 8 needs both paths, so it stays 4",
+    halfEightAmd.steps === 4 && halfEightAmd.stepDefaults?.standard === 4 && halfEightAmd.refSteps === 4, JSON.stringify(halfEightAmd));
   /* THE SECOND MODELS FOLDER. pick() and the step defaults ask one onDisk(),
    * and it searches every folder the engine loads from. Asked two ways, a
    * LoRA only in the extra folder made pick() choose the 8-step file while
@@ -152,16 +232,41 @@ console.log("\n§1  the simple way on the Video screen");
     extraRig.loraSteps?.turboLora === 8 && extraRig.stepDefaults?.standard === 8 && extraRig.turboBuilds?.eight === true
     && extraRig.steps === 8, JSON.stringify(extraRig));
   ok("config.js: pick() and the step defaults share ONE onDisk(), and it reads the extra folders",
-    /const pick = \(sub, \.\.\.names\) => names\.find\(\(n\) => onDisk\(sub, n\)\)/.test(src("./config.js"))
+    /const found = localFile\(sub, name\);/.test(src("./config.js"))
     && (src("./config.js").match(/function onDisk\(/g) || []).length === 1
-    && /function onDisk\(sub, name\) \{\n\s+const bases = \[MODELS_DIR, \.\.\.MODELS_ALSO\];/.test(src("./config.js")));
-  /* The point of all of it: on every disk the default loads a file distilled
-   * for exactly that many steps, on both paths, which is what workflow.js
-   * h3TurboLoraFor picks when a render names no step count. */
-  for (const [name, d] of [["the hand-fetched disk", rig], ["the Models screen's disk", shop], ["Models screen + TaoMate", shopTao], ["the one-path 8-step disk", halfEight]]) {
-    ok(`${name}: the default step count loads a matched file on both paths`,
-      !d.error && d.loaded?.fl2v === d.steps && d.loaded?.refs === d.steps && d.steps <= d.turboMaxSteps, JSON.stringify(d));
+    /* Every folder the engine loads from (localmodels.js engineBasesSync), since setF. */
+    && /const shelfBases = \(\) => engineBasesSync\(live \|\| \{ modelsDir: MODELS_DIR, modelsAlso: MODELS_ALSO,/.test(src("./config.js")));
+  const nestedRig = disk([L.fl2v8, L.fl2v4, L.ref8, L.ref4, L.tao], { extra: true, nested: true });
+  ok("nested H3 LoRAs in an extra models folder select the same matched step defaults",
+    !nestedRig.error && same(nestedRig, rig), JSON.stringify(nestedRig));
+  /* The point of all of it: on every disk each path's default loads a file
+   * distilled for exactly that many steps, which is what workflow.js
+   * h3TurboLoraFor picks: Standard on the plain path, and Keep my
+   * character's own count (referenceSteps) on the reference path. */
+  for (const [name, d] of [["the hand-fetched disk", rig], ["the Models screen's disk", shop], ["Models screen + TaoMate", shopTao],
+    ["the one-path 8-step disk", halfEight], ["the one-path 8-step disk on AMD", halfEightAmd]]) {
+    ok(`${name}: each path's default step count loads a file made for it`,
+      !d.error && d.loaded?.fl2v === d.steps && d.loadedRef === d.refSteps && d.steps <= d.turboMaxSteps, JSON.stringify(d));
   }
+  /* MAIN'S INVARIANT, ON AMD, AS 7b241ea ASSERTED IT FOR EVERY DISK: the one
+   * default step count loads a matched file on BOTH paths. Bucky's rule keeps
+   * it there; NVIDIA's per-path rule replaced it with the line above. */
+  for (const [name, d] of [["the hand-fetched disk on AMD", rigAmd], ["the Models screen's disk on AMD", shopAmd],
+    ["Models screen + TaoMate on AMD", shopTaoAmd], ["the one-path 8-step disk on AMD", halfEightAmd]]) {
+    ok(`${name}: the default step count loads a matched file on both paths (main's rule)`,
+      !d.error && d.loaded?.fl2v === d.steps && d.loaded?.refs === d.steps && d.steps <= d.turboMaxSteps && d.refBuilds === null, JSON.stringify(d));
+  }
+  ok("...and on AMD those disks keep main's numbers",
+    same(rigAmd.stepDefaults, { fast: 3, standard: 8, best: 20 }) && same(shopAmd.stepDefaults, { fast: 4, standard: 4, best: 20 })
+    && same(shopTaoAmd.stepDefaults, { fast: 3, standard: 4, best: 20 }), JSON.stringify([rigAmd.stepDefaults, shopAmd.stepDefaults, shopTaoAmd.stepDefaults]));
+  ok("the 4-step speed-up alone: the reference path's 8-step band is NOT counted, so Keep my character at 8 is refused, offering the 8-step file",
+    same(fourOnly.refBuilds, { four: true, eight: false }) && fourOnly.keep8?.row === "videoH3Turbo8" && fourOnly.keep4 === null,
+    JSON.stringify(fourOnly));
+  ok("H3 + Video references: the ref2v 4-step is not an 8-step build, Keep runs its own 4, and 8 is refused without offering a row that changes nothing",
+    same(h3Refs.refBuilds, { four: true, eight: false }) && h3Refs.refSteps === 4 && h3Refs.loadedRef === 4 && h3Refs.keep4 === null
+    && h3Refs.keep8?.row === null && /needs the 8-step reference build, which is not on this PC/.test(h3Refs.keep8?.error || "")
+    && h3Refs.steps === 8, JSON.stringify(h3Refs));
+  ok("...where both reference builds are on disk, both bands count", same(rig.refBuilds, { four: true, eight: true }) && rig.keep8 === null, JSON.stringify(rig.refBuilds));
   ok("...and the screen's chips read those numbers as they are",
     same(vidQualitySteps({ stepDefaults: shop.stepDefaults }), shop.stepDefaults)
     && same(vidQualitySteps({ stepDefaults: rig.stepDefaults }), rig.stepDefaults));
@@ -221,19 +326,28 @@ console.log("\n§1  the simple way on the Video screen");
   ok("make_clip's quality text names no current step count and says where to read it",
     !/currently \d+ steps?/i.test(qDesc) && /studio_status/.test(qDesc) && /h3_quality_steps/.test(qDesc), qDesc);
   const posts = [];
-  let defaults = null;
+  const songs = [], loraQueries = [];
+  let defaults = null, chipsNow = null;
   const stub = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
     res.setHeader("Content-Type", "application/json");
     if (req.method === "GET" && req.url === "/api/status") {
       return res.end(JSON.stringify({ art: {}, config: { video: { enabled: true, engine: "h3",
-        engines: { h3: { stepDefaults: defaults, turboBuilds: { three: defaults?.fast === 3 } } } } } }));
+        engines: { h3: { stepDefaults: defaults, turboBuilds: { three: defaults?.fast === 3 }, ...(chipsNow ? { chips: chipsNow } : {}) } } } } }));
     }
     if (req.method === "GET" && req.url === "/api/clips") return res.end(JSON.stringify({ clips: [] }));
     if (req.method === "POST" && req.url === "/api/video") {
       posts.push(JSON.parse(Buffer.concat(chunks).toString() || "{}"));
       return res.end(JSON.stringify({ ok: true, job: { id: `j${posts.length}` } }));
+    }
+    if (req.method === "POST" && req.url === "/api/generate") {
+      songs.push(JSON.parse(Buffer.concat(chunks).toString() || "{}"));
+      return res.end(JSON.stringify({ ok: true, engine: "yue2-comfy", job: { id: `s${songs.length}` } }));
+    }
+    if (req.method === "GET" && req.url.startsWith("/api/loras")) {
+      loraQueries.push(new URL(req.url, "http://127.0.0.1").searchParams.get("for"));
+      return res.end(JSON.stringify({ loras: [] }));
     }
     return res.end("{}");
   });
@@ -261,14 +375,61 @@ console.log("\n§1  the simple way on the Video screen");
       const status = await call("studio_status", {});
       const shown = (() => { try { return JSON.parse(status.result?.content?.[0]?.text || "{}").video?.h3_quality_steps; } catch { return null; } })();
       ok(`${name}: studio_status shows the quality steps`, same(shown, d.stepDefaults), JSON.stringify(status).slice(0, 300));
-      for (const quality of ["fast", "best", undefined]) {
+      /* A status with no chips: an AMD or Intel card or the CPU
+       * (video-plain.js qualityChips is null there, Bucky's rule) or an older
+       * Studio. make_clip sends main's numbers: fast and best from
+       * stepDefaults, and standard, which main did not name, leaves the
+       * engine's default as no quality does. */
+      for (const quality of ["fast", "best", undefined, "standard"]) {
         const r = await call("make_clip", { prompt: "a lamp", ...(quality ? { quality } : {}) });
         if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
       }
       const sent = posts.map((p) => p.failed ?? (p.steps === undefined ? "unset" : p.steps));
-      ok(`${name}: make_clip sends fast ${d.stepDefaults?.fast}, best ${d.stepDefaults?.best}, and no quality leaves the engine's default`,
-        same(sent, [d.stepDefaults?.fast, d.stepDefaults?.best, "unset"]), JSON.stringify(sent));
+      ok(`${name}: make_clip sends fast ${d.stepDefaults?.fast}, best ${d.stepDefaults?.best}, and no quality or standard leaves the engine's default`,
+        same(sent, [d.stepDefaults?.fast, d.stepDefaults?.best, "unset", "unset"]), JSON.stringify(sent));
     }
+    /* A Studio that sends the chips: make_clip sends the chip's number, the
+     * page's, even where the engine's default differs (a disk with no
+     * speed-up: Standard's chip is the 8-step file's 8, dimmed; the default
+     * runs 20). With a persona the kept character's chips. */
+    defaults = { fast: 20, standard: 20, best: 20 };
+    chipsNow = { plain: { fast: { steps: 3, needsModel: "videoH3Turbo3Small" }, standard: { steps: 8, needsModel: "videoH3Turbo8" }, best: { steps: 20, needsModel: null } },
+      keep: { fast: { steps: 4, needsModel: null }, standard: { steps: 4, needsModel: null }, best: { steps: 20, needsModel: null } } };
+    posts.length = 0;
+    const shownChips = await call("studio_status", {});
+    ok("studio_status shows the chips make_clip sends",
+      (() => { try { return same(JSON.parse(shownChips.result?.content?.[0]?.text || "{}").video?.h3_quality_chips, chipsNow); } catch { return false; } })());
+    for (const quality of ["fast", "standard", "best", undefined]) {
+      const r = await call("make_clip", { prompt: "a lamp", ...(quality ? { quality } : {}) });
+      if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
+    }
+    for (const quality of ["fast", "standard"]) {
+      const r = await call("make_clip", { prompt: "Mira walks", persona: "Mira", quality });
+      if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
+    }
+    /* A RefMod alone keeps too (the page's `keeping`, the server's refsOn). */
+    for (const quality of ["fast", "standard"]) {
+      const r = await call("make_clip", { prompt: "a lamp", ref_mods: [{ name: "my_cache" }], quality });
+      if (r.error || r.result?.isError) posts.push({ failed: JSON.stringify(r).slice(0, 300) });
+    }
+    const sentChips = posts.map((p) => p.failed ?? (p.steps === undefined ? "unset" : p.steps));
+    ok("with chips: make_clip sends the chips' 3, 8 and 20, no quality leaves the default, and a persona or a RefMod the kept character's 4 and 4",
+      same(sentChips, [3, 8, 20, "unset", 4, 4, 4, 4]), JSON.stringify(sentChips));
+    ok("...the RefMod rides to the door", posts.slice(-2).every((p) => Array.isArray(p.refMods) && p.refMods[0]?.name === "my_cache"),
+      JSON.stringify(posts.slice(-2)));
+    ok("make_clip's quality names all three chips", same(clip?.inputSchema?.properties?.quality?.enum, ["fast", "standard", "best"]));
+    chipsNow = null;
+    const nestedSong = await call("make_song", { caption: "Warm folk", lyrics: "Words", engine: "yue2-comfy",
+      checkpoint: "yue2/base.safetensors", lora: "voices/audio.safetensors", lora_clip: "voices/planner.safetensors" });
+    ok("the native MCP transport preserves nested checkpoint and both adapter names",
+      !nestedSong.error && !nestedSong.result?.isError && songs[0]?.checkpoint === path.join("yue2", "base.safetensors")
+      && songs[0]?.lora === path.join("voices", "audio.safetensors") && songs[0]?.loraClip === path.join("voices", "planner.safetensors"), JSON.stringify(nestedSong).slice(0, 200));
+    const nestedLoras = await call("list_loras", { for: "yue2/base.safetensors" });
+    ok("native MCP LoRA compatibility queries preserve the selected model's subfolder",
+      !nestedLoras.error && !nestedLoras.result?.isError && loraQueries[0] === path.join("yue2", "base.safetensors"));
+    const unsafeSong = await call("make_song", { caption: "Warm folk", checkpoint: "../base.safetensors" });
+    ok("native MCP refuses a parent model path before an HTTP render request",
+      (unsafeSong.error || unsafeSong.result?.isError) && songs.length === 1);
   } finally {
     proc.kill();
     await new Promise((resolve) => stub.close(resolve));

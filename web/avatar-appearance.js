@@ -3,7 +3,7 @@ import * as THREE from 'three';
 /** The page and MCP share the persisted, source-hashed appearance service. */
 export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()=>true,onLook=()=>{}}) {
   const $=id=>document.getElementById(id),host=$('appearance-panel');
-  let live=true,dirty=false,busy=false,polling=false,look=null,lastActive='',settings={},timer,version=0;
+  let live=true,dirty=false,busy=false,polling=false,look=null,lastActive='',settings={},timer,version=0,motionVersion=0,motionBusy=false;
   const current=()=>live&&isCurrent();
   const inventory=await api({action:'appearance_inventory',id:row.id});
   if(!current())return {dispose(){live=false;}};
@@ -33,7 +33,39 @@ export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()
     controls.push(()=>{input.value=String(settings.expressions?.[e.name]||0);});
   }
   $('appearance-expression-group').hidden=!inventory.expressions.length;
-  $('appearance-springs').title=inventory.spring.supported?`${inventory.spring.chains} embedded spring chains`:'This file has no spring chains.';
+  $('appearance-springs').title=inventory.spring.supported?`${inventory.spring.chains} embedded VRM spring chains. Check links to see which meshes they affect.`:'This file has no spring chains.';
+  const motionState=$('appearance-motion-state'),motionDetails=$('appearance-motion-details'),motionList=$('appearance-motion-list');
+  motionState.className='chip';motionState.textContent='Unchecked';motionDetails.hidden=true;motionList.replaceChildren();$('appearance-motion-check').disabled=false;
+  const motionLine=(value,title)=>{const line=document.createElement('p');line.textContent=value;if(title)line.title=title;motionList.append(line);};
+  function showMotion(report){
+    motionList.replaceChildren();motionDetails.hidden=false;
+    if(report.status==='no_springs'){
+      motionState.className='chip warn';motionState.textContent='No springs';motionLine('Add VRM 1.0 spring chains to the source rig.');
+    }else if(report.status==='unverified'){
+      motionState.className='chip warn';motionState.textContent='Check unavailable';motionLine(report.reason||'Could not inspect spring links.');
+    }else{
+      motionState.className=report.linkedChains===report.declaredChains?'chip ok':'chip warn';
+      motionState.textContent=`${report.linkedChains}/${report.declaredChains} chains linked`;
+      if(!report.linkedChains)motionLine('Give hair vertices spring-joint weights or parent rigid parts under spring joints.');
+      for(const chain of report.chains)motionLine(`${chain.name}: ${chain.weightedVertices} weighted vertices, ${chain.rigidMeshes} rigid meshes`,
+        chain.joints.map(joint=>joint.name).join(' → '));
+      for(const mesh of report.meshes.slice(0,16))motionLine(`${mesh.name}: ${mesh.kind==='rigid'?'rigid child':`${mesh.weightedVertices}/${mesh.vertices} spring-weighted vertices`}`);
+      if(report.meshes.length>16)motionLine(`${report.meshes.length-16} more meshes in MCP audit.`);
+    }
+    motionState.title='A spring link proves connectivity only. Review movement and collisions in the preview.';
+  }
+  $('appearance-motion-check').onclick=async()=>{
+    if(!current()||motionBusy)return;
+    const token=++motionVersion;motionBusy=true;$('appearance-motion-check').disabled=true;
+    motionState.className='chip busy';motionState.textContent='Checking…';
+    try{
+      const report=await api({action:'motion_audit',id:row.id});
+      if(!current()||token!==motionVersion)return;
+      if(report.avatarId!==row.id||report.sha256!==inventory.sha256)throw Error('Avatar changed. Reopen it.');
+      showMotion(report);
+    }catch(e){if(current()&&token===motionVersion){motionState.className='chip err';motionState.textContent='Check failed';motionDetails.hidden=false;motionList.replaceChildren();motionLine(e.message);}}
+    finally{if(current()&&token===motionVersion){motionBusy=false;$('appearance-motion-check').disabled=false;}}
+  };
   const updateDisabled=()=>{
     for(const input of inputs)input.disabled=busy;
     for(const id of ['appearance-name','appearance-persona','appearance-looks','appearance-new','appearance-save'])$(id).disabled=busy;
@@ -84,5 +116,5 @@ export async function mountAvatarAppearance({row,runtime,api,status,isCurrent=()
   await refresh();
   if(!current())return {dispose(){live=false;}};
   host.hidden=false;timer=setInterval(poll,2000);
-  return {snapshot:()=>({look:look?structuredClone(look):null,dirty,busy}),dispose(){const ownsPanel=current();live=false;clearInterval(timer);if(ownsPanel)host.hidden=true;}};
+  return {snapshot:()=>({look:look?structuredClone(look):null,dirty,busy}),dispose(){const ownsPanel=current();live=false;motionVersion++;clearInterval(timer);if(ownsPanel)host.hidden=true;}};
 }

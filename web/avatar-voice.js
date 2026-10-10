@@ -1,7 +1,7 @@
 import {createAvatarLipSync} from './avatar-lipsync.js';
 
 /** One expiring browser preview. Human controls and MCP share desired state. */
-export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
+export async function mountAvatarVoice({row, runtime, isCurrent = () => true, onMotion = null, onJointPose = null, onPreviewMotion = null, onCamera = null, onSessionReset = null}) {
   const $ = id => document.getElementById(id);
   const overlayEnable = $('voice-enable-overlay');
   const post = async body => {
@@ -12,10 +12,40 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
     return value;
   };
   let session_id = crypto.randomUUID(), generation = 0;
-  let live = true, active = !document.hidden, polling = false, applied = 0, consumed = 0, loaded = 0, sought = 0, timer;
+  let live = true, active = !document.hidden, polling = false, applied = 0, consumed = 0, consumedAudio = 0, loaded = 0, sought = 0, timer;
   let override = '', error = '', pendingStart = false, startToken = 0, uploadToken = 0;
   let commandTail = Promise.resolve(), recovering = null, commandSerial = 0, settledCommand = 0;
+  let cue = null, cueError = '', cueSeenRevision = 0, completedCueRevision = 0, motionSeenRevision = 0, jointPoseSeenRevision = 0, previewMotionSeenRevision = 0, cameraSeenRevision = 0;
   const valid = () => live && isCurrent();
+  const paintCue = () => {
+    if (!valid()) return;
+    const chip = $('voice-cue-state');
+    chip.hidden = !cue && !cueError;
+    chip.textContent = cue ? `${cue.expression} active` : cueError;
+    chip.className = `chip${cueError && !cue ? ' warn' : ''}`;
+    $('voice-cue-clear').disabled = !cue;
+  };
+  const syncCue = next => {
+    if (!next) {
+      if (cue) {
+        runtime.clearExpressionCue?.();
+        completedCueRevision = Math.max(completedCueRevision, cue.revision);
+      }
+      cue = null; paintCue(); return true;
+    }
+    if (next.revision <= completedCueRevision || cue?.revision === next.revision) return true;
+    // The server retains a pending cue until this browser acknowledges it.
+    // Give it its full duration here, even when the next poll came later.
+    const duration = Number.isSafeInteger(next.durationMs) ? next.durationMs : next.expiresAt - Date.now();
+    if (!Number.isFinite(duration) || duration <= 0) {
+      completedCueRevision = Math.max(completedCueRevision, next.revision);
+      return true;
+    }
+    if (!runtime.setExpressionCue?.(next.expression)) return false;
+    cue = {...next, expiresAt:Date.now() + Math.min(duration, 10000)};
+    paintCue();
+    return true;
+  };
   const paint = s => {
     if (!valid()) return;
     $('voice-state').textContent = override || ({empty:'Choose audio', ready:'Ready', playing:'Playing', paused:'Paused', ended:'Finished', error:'Audio error'}[s.phase] || s.phase);
@@ -73,8 +103,61 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
     paint(lip.state());
   }
   function apply(session) {
-    if (!valid() || session.revision <= consumed) return;
+    if (!valid() || session.revision < consumed) return;
+    let cueApplied = true;
+    if (session.revision >= cueSeenRevision) {
+      // An inactive preview draws no frames. Keep an unseen cue pending on the
+      // server until this view can actually show it.
+      cueApplied = !active && session.desired?.cue?.revision > completedCueRevision
+        ? false : syncCue(session.desired?.cue);
+      if (cueApplied) cueSeenRevision = session.revision;
+    }
+    const motionRevision = Number.isSafeInteger(session.desired?.motion_revision) ? session.desired.motion_revision : 0;
+    let motionApplied = motionRevision <= motionSeenRevision;
+    if (!motionApplied && typeof onMotion === 'function') {
+      try { motionApplied = onMotion(session.desired.motion, motionRevision) === true; }
+      catch { motionApplied = false; }
+      if (motionApplied) motionSeenRevision = motionRevision;
+    }
+    const jointPoseRevision = Number.isSafeInteger(session.desired?.joint_pose_revision) ? session.desired.joint_pose_revision : 0;
+    let jointPoseApplied = jointPoseRevision <= jointPoseSeenRevision;
+    if (!jointPoseApplied && typeof onJointPose === 'function') {
+      try { jointPoseApplied = onJointPose(session.desired.joint_pose, jointPoseRevision) === true; }
+      catch { jointPoseApplied = false; }
+      if (jointPoseApplied) jointPoseSeenRevision = jointPoseRevision;
+    }
+    const previewMotionRevision = Number.isSafeInteger(session.desired?.preview_motion_revision) ? session.desired.preview_motion_revision : 0;
+    let previewMotionApplied = previewMotionRevision <= previewMotionSeenRevision;
+    if (!previewMotionApplied && motionApplied && jointPoseApplied && typeof onPreviewMotion === 'function') {
+      try { previewMotionApplied = onPreviewMotion(session.desired.preview_motion, previewMotionRevision) === true; }
+      catch { previewMotionApplied = false; }
+      if (previewMotionApplied) previewMotionSeenRevision = previewMotionRevision;
+    }
+    const cameraRevision = Number.isSafeInteger(session.desired?.camera_revision) ? session.desired.camera_revision : 0;
+    let cameraApplied = cameraRevision <= cameraSeenRevision;
+    if (!cameraApplied && typeof onCamera === 'function') {
+      try { cameraApplied = onCamera(session.desired.camera_view, cameraRevision) === true; }
+      catch { cameraApplied = false; }
+      if (cameraApplied) cameraSeenRevision = cameraRevision;
+    }
+    const acknowledged = Math.min(cueApplied ? session.revision : session.desired.cue.revision - 1,
+      motionApplied ? session.revision : motionRevision - 1,
+      jointPoseApplied ? session.revision : jointPoseRevision - 1,
+      previewMotionApplied ? session.revision : previewMotionRevision - 1,
+      cameraApplied ? session.revision : cameraRevision - 1);
+    if (session.revision <= consumed) {
+      applied = Math.max(applied, acknowledged);
+      return;
+    }
     const d = session.desired;
+    // An expression cue has its own session revision. It must never replay an
+    // ended song, clear a blocked-audio warning, or re-seek the audio.
+    const audioRevision = Number.isSafeInteger(d.audio_revision) ? d.audio_revision : session.revision;
+    if (audioRevision <= consumedAudio) {
+      consumed = session.revision;
+      applied = Math.max(applied, acknowledged);
+      return;
+    }
     override = ''; error = '';
     if (d.load_revision > loaded && d.url) {
       cancelStart(); lip.loadUrl(d.url, {name:d.name, bytes:d.bytes}); loaded = d.load_revision;
@@ -90,21 +173,24 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
       }
       lip.seek(d.time); sought = d.seek_revision;
     }
-    consumed = session.revision;
-    if (d.playing && active) start(session.revision);
+    consumed = session.revision; consumedAudio = audioRevision;
+    if (d.playing && active) start(acknowledged);
     else {
-      cancelStart(); lip.pause(); applied = Math.max(applied, session.revision);
+      cancelStart(); lip.pause(); applied = Math.max(applied, acknowledged);
       if (d.playing) override = 'View hidden';
       paint(lip.state());
     }
   }
   const registration = () => ({action:'register',session_id,id:row.id,sha256:row.inspection.sha256,
-    capabilities:{audio:true,lip_sync:lip.state().lipSyncSupported}});
+    capabilities:{audio:true,lip_sync:lip.state().lipSyncSupported,...(typeof onMotion === 'function' ? {motion:true} : {}),...(typeof onJointPose === 'function' ? {joint_pose:true} : {}),...(typeof onPreviewMotion === 'function' && row.inspection.profile === 'vrm' ? {preview_motion:true} : {}),...(typeof onCamera === 'function' ? {camera:true} : {})}});
   async function recover() {
     if (recovering) return recovering;
     const epoch = ++generation;
     cancelStart(); uploadToken++; lip.dispose(); lip = newLip();
-    session_id = crypto.randomUUID(); applied = consumed = loaded = sought = 0;
+    syncCue(null);
+    cueSeenRevision = completedCueRevision = 0;
+    session_id = crypto.randomUUID(); applied = consumed = consumedAudio = loaded = sought = motionSeenRevision = jointPoseSeenRevision = previewMotionSeenRevision = cameraSeenRevision = 0;
+    if (typeof onSessionReset === 'function') onSessionReset();
     commandTail = Promise.resolve(); commandSerial = settledCommand = 0;
     override = ''; error = 'Preview expired. Choose audio again.';
     $('voice-file').value = ''; $('voice-session').textContent = session_id; paint(lip.state());
@@ -117,7 +203,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
   async function networkFailure(cause, epoch) {
     if (!valid() || epoch !== generation) return;
     cancelStart(); lip.pause();
-    if (cause.status === 410) {
+    if (cause.status === 410 || (cause.status === 404 && cause.message === 'Preview session not found.')) {
       try { await recover(); } catch (failure) { if (valid()) showFailure(failure); }
     } else showFailure(cause);
   }
@@ -151,6 +237,36 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
   }
   try { await post(registration()); } catch(cause) { await lip.dispose(); throw cause; }
   if (!valid()) { await lip.dispose(); return {dispose(){}}; }
+  // The same controls survive avatar switches; a generic GLB must not inherit
+  // the prior VRM's selector or click target while the new inventory loads.
+  $('voice-cue-row').hidden = true;
+  $('voice-cue-expression').textContent = '';
+  $('voice-cue-expression').disabled = true;
+  $('voice-cue-duration').value = '3000';
+  $('voice-cue').disabled = true;
+  $('voice-cue-clear').disabled = true;
+  $('voice-cue-state').hidden = true;
+  $('voice-cue-state').title = '';
+  if (row.inspection.profile === 'vrm') {
+    $('voice-cue-row').hidden = false;
+    try {
+      const inventory = await post({action:'cue_inventory',id:row.id,sha256:row.inspection.sha256});
+      if (!valid()) { await lip.dispose(); return {dispose(){}}; }
+      const select = $('voice-cue-expression');
+      select.textContent = '';
+      for (const expression of inventory.expressions) {
+        const option = document.createElement('option');
+        option.value = expression.name; option.textContent = expression.name;
+        select.append(option);
+      }
+      select.disabled = inventory.expressions.length === 0;
+      $('voice-cue').disabled = select.disabled;
+      cueError = select.disabled ? 'No expressions' : '';
+    } catch (cause) {
+      if (valid()) { cueError = 'Cue unavailable'; $('voice-cue-state').title = cause.message; }
+    }
+  }
+  if (!valid()) { await lip.dispose(); return {dispose(){}}; }
   $('voice-panel').hidden = false;
   $('voice-session').textContent = session_id;
   $('voice-file').onchange = async event => {
@@ -180,13 +296,28 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
     return command('stop');
   };
   $('voice-time').onchange = () => command('seek',{seconds:Number($('voice-time').value)});
+  $('voice-cue').onclick = () => {
+    const expression = $('voice-cue-expression').value;
+    const duration = Number($('voice-cue-duration').value);
+    if (valid() && expression && [500,1000,3000,5000,10000].includes(duration))
+      return command('cue',{expression,duration_ms:duration});
+  };
+  $('voice-cue-clear').onclick = () => {
+    if (!valid()) return;
+    syncCue(null);
+    return command('clear_cue');
+  };
   // Overlay controls are otherwise hidden, but browser activation must happen
   // in this actual source window; a click in the Studio parent cannot grant it.
   const enableOverlay = () => $('voice-play').onclick();
   if (overlayEnable) overlayEnable.onclick = enableOverlay;
-  timer = setInterval(poll, 1000); paint(lip.state());
+  timer = setInterval(poll, 1000); paint(lip.state()); paintCue();
   return {
-    update(dt) { if (!valid()) return; lip.update(dt); $('voice-level').value = lip.state().level; },
+    motionCommand(op, fields = {}) { if (typeof onMotion === 'function' && valid()) return command(op, fields); },
+    jointPoseCommand(op, fields = {}) { if (typeof onJointPose === 'function' && valid()) return command(op, fields); },
+    previewMotionCommand(op) { if (typeof onPreviewMotion === 'function' && valid()) return command(op); },
+    cameraCommand(view) { if (typeof onCamera === 'function' && valid()) return command('camera_view', {view}); },
+    update(dt) { if (!valid()) return; if (cue?.expiresAt <= Date.now()) syncCue(null); lip.update(dt); $('voice-level').value = lip.state().level; },
     captureBaseline() { if (valid()) lip.captureBaseline(); },
     setActive(value) {
       if (!valid()) return;
@@ -200,7 +331,7 @@ export async function mountAvatarVoice({row, runtime, isCurrent = () => true}) {
       paint(lip.state());
     },
     dispose() {
-      live = false; generation++; uploadToken++; cancelStart(); clearInterval(timer); lip.dispose();
+      live = false; generation++; uploadToken++; cancelStart(); clearInterval(timer); syncCue(null); lip.dispose();
       if (overlayEnable?.onclick === enableOverlay) { overlayEnable.hidden = true; overlayEnable.onclick = null; }
     },
   };

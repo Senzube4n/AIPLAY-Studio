@@ -26,6 +26,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dawTools } from "./mcp-daw.js";
 import { MIXER_ACTIONS } from "./daw/mixer.js";
+import { PLUGIN_ACTIONS } from "./daw/plugins.js";
 import { PATCHES, normParams } from "./daw/store.js";
 
 let pass = 0;
@@ -104,6 +105,7 @@ const serverActions = [...new Set([
   ...routeCases(rd("daw/routes.js")),
   ...routeCases(rd("daw/ear.js")),
   ...MIXER_ACTIONS,
+  ...PLUGIN_ACTIONS,
   ...(voicelab?.VOICELAB_ACTIONS || []),
   ...(refprofile?.REFPROFILE_ACTIONS || []),
 ])].sort();
@@ -283,6 +285,24 @@ const src = String(dawTools);
 ok("every mutation goes out stamped by: \"agent\"", src.includes(`by: "agent"`));
 ok("the time model is stated once and quoted",
   tools.filter((t) => t.description.includes("960 ticks per beat")).length >= 3);
+
+// External plugin management and insert identity reach the same DAW door.
+{
+  const calls = [];
+  const tools = dawTools(async (method, url, body) => { calls.push({ method, url, body }); return { ok: true }; }, x => x);
+  const plugins = tools.find(t => t.name === 'daw_plugins');
+  await plugins.run({ op: 'list' });
+  await plugins.run({ op: 'scan', folders: ['C:/Audio/Plugins'] });
+  await plugins.run({ op: 'inspect', plugin: 'plug_123', path: 'C:/Audio/Test.vst3' });
+  await plugins.run({ op: 'install', path: 'C:/Audio/Test.zip' });
+  await plugins.run({ op: 'setup' });
+  await tools.find(t => t.name === 'daw_insert').run({ op: 'add', slug: 'fx-test', target: 'master', type: 'vst3', plugin: 'plug_123', params: { output: 0.5 } });
+  ok('plugin list uses its read-only endpoint', calls[0].method === 'GET' && calls[0].url === '/api/daw/plugins');
+  ok('plugin discovery forwards extra folders', calls[1].body.action === 'plugin_scan' && calls[1].body.folders[0] === 'C:/Audio/Plugins');
+  ok('plugin inspection forwards identity and exact local path', calls[2].body.action === 'plugin_inspect' && calls[2].body.plugin === 'plug_123' && calls[2].body.path === 'C:/Audio/Test.vst3');
+  ok('installation and host setup use typed actions', calls[3].body.action === 'plugin_install' && calls[3].body.path === 'C:/Audio/Test.zip' && calls[4].body.action === 'plugin_setup');
+  ok('native insert retains plugin identity, params and agent attribution', calls[5].body.plugin === 'plug_123' && calls[5].body.type === 'vst3' && calls[5].body.params.output === 0.5 && calls.slice(1).every(c => c.body.by === 'agent'));
+}
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {

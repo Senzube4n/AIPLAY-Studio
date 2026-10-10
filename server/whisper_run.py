@@ -1,6 +1,6 @@
 """Whisper as a general tool: transcribe any audio or video file, and time lyrics.
 
-Usage: whisper.py <input> [--lyrics <lyrics.txt>] [--out <out-stem>]
+Usage: whisper_run.py <input> [--lyrics <lyrics.txt>] [--out <out-stem>]
                   [--language <code>] [--words] [--vocals <vocals.flac>]
 
 Prints one JSON object on stdout, on success AND on every failure Python can
@@ -30,7 +30,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lrc  # noqa: E402  (beside this file; stdlib-only at import)
 
-USAGE = "whisper.py <input> [--lyrics <file>] [--out <stem>] [--language <code>] [--words] [--vocals <file>]"
+USAGE = "whisper_run.py <input> [--lyrics <file>] [--out <stem>] [--language <code>] [--words] [--vocals <file>]"
 
 
 def parse_args(argv: list[str]) -> dict:

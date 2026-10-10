@@ -11,7 +11,7 @@
  * hook. Touches no disk beyond what importing config.js does.
  */
 import {
-  blankProject, blankTrack, blankClip, migrate,
+  blankProject, blankTrack, blankClip, newId, uniqueId, migrate,
   buildTimeline, posToSeconds, durationSeconds, projectSeconds, normPos,
   regionsOf, noteEvents, regionHashes, dirtyBetween,
   normalizeMeterMap, normalizeTempoMap,
@@ -29,6 +29,16 @@ function ok(label, cond, detail = "") {
   else { failures.push(label); console.log(`  FAIL  ${label}${detail ? `\n          ${detail}` : ""}`); }
 }
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
+
+console.log("\n  -- IDs do not alias another track or clip --");
+{
+  const taken = new Set(["trk_repeat", "trk_repeat2"]);
+  const candidates = ["trk_repeat2", "trk_unique"];
+  const id = uniqueId("trk_repeat", taken, () => candidates.shift());
+  ok("a colliding track ID retries until it is unused", id === "trk_unique" && candidates.length === 0);
+  ok("new DAW IDs have at least 48 random bits even when old callers ask for four",
+    /^trk_[0-9a-f]{12,}$/.test(newId("trk", 4)) && /^nt_[0-9a-f]{12,}$/.test(newId("nt", 6)));
+}
 
 /* A project built by hand, no disk: 16 bars, 120 bpm, 4/4. */
 function makeDoc() {

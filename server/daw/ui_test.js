@@ -36,6 +36,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIXER_CATALOG, MIXER_ACTIONS } from "./mixer.js";
+import { PLUGIN_ACTIONS } from "./plugins.js";
 import { stemResultDetails } from "../../web/daw-audio-results.js";
 /* THE THIRD DISPATCHER. routes.js mounts server/daw/voicelab.js the way it
  * mounts mixer.js — one call before the switch — and that module OPTIONALLY
@@ -88,7 +89,8 @@ const CODE = stripComments(JS);
  * here: it posts to /api/daw/ear, a different dispatcher, and ear_test.js
  * owns that door. */
 const VOICEJS = readFileSync(path.join(WEB, "voicelab.js"), "utf8");
-const PAGES = `${CODE}\n${stripComments(VOICEJS)}`;
+const PLUGINJS = readFileSync(path.join(WEB, "daw-plugins.js"), "utf8");
+const PAGES = `${CODE}\n${stripComments(VOICEJS)}\n${stripComments(PLUGINJS)}`;
 
 /** The object literal an `action: "<name>"` sits inside — i.e. the body a page
  *  really posts, read from the call rather than grepped for by field name. */
@@ -153,6 +155,7 @@ console.log("\n  -- every gesture posts an action the server actually has --");
 {
   const routeActions = new Set([...ROUTES.matchAll(/^\s*case "([a-z_]+)": \{/gm)].map((m) => m[1]));
   for (const a of MIXER_ACTIONS) routeActions.add(a);
+  for (const a of PLUGIN_ACTIONS) routeActions.add(a);
   for (const a of voicelab?.VOICELAB_ACTIONS || []) routeActions.add(a);
   for (const a of refprofile?.REFPROFILE_ACTIONS || []) routeActions.add(a);
   ok(`routes.js + its three mounts dispatch ${routeActions.size} actions`, routeActions.size > 30);
@@ -911,7 +914,7 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
   const connect = bodyOf(app, "function connect()");
   ok("the Studio's real live listener is available to exercise", !!connect);
   if (connect) {
-    let socket, current, queue, polls = 0;
+    let socket, current, queue, polls = 0, outcomes = 0;
     const calls = [], engine = { ready: true };
     const deps = {
       WebSocket: class { constructor(url) { this.url = url; socket = this; } },
@@ -921,12 +924,14 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
       renderList: (snap) => { calls.push("list"); snap.queue.map((job) => job.id); },
       applyBatch: () => calls.push("batch"), paintImgProgress: () => calls.push("art"),
       imgSeeFinished: () => calls.push("finished"), poll: () => { polls++; },
+      noticeMusicOutcome: () => { outcomes++; },
     };
     try {
       new Function(...Object.keys(deps), `${connect}\nconnect();`)(...Object.values(deps));
       const busy = { type: "state", current: { id: "running" }, queue: [{ id: "next" }], history: [] };
       socket.onmessage({ data: JSON.stringify(busy) });
       ok("job-state frames still update every Studio live surface", calls.length === 6 && current.id === "running" && queue[0].id === "next");
+      ok("a valid music state frame reaches the outcome observer once", outcomes === 1);
       const before = calls.length;
       for (const frame of [frameFor("song", { updatedAt: 2 }), { type: "engine", ready: false }, null,
         { type: "state", current: null }, { type: "state", queue: [] }, { type: "state", current: null, queue: {} }]) {
@@ -935,12 +940,15 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
       socket.onmessage({ data: "not JSON" });
       ok("DAW, unrelated and incomplete frames preserve the current job, queued jobs and all live surfaces",
         calls.length === before && current.id === "running" && queue[0].id === "next" && polls === 0);
+      ok("DAW, unrelated, incomplete and invalid JSON frames never reach the music outcome observer", outcomes === 1);
       const idle = { type: "state", current: null, queue: [], history: [] };
       socket.onmessage({ data: JSON.stringify(idle) });
       ok("the next real idle snapshot still refreshes the completed library exactly once", current === null && queue.length === 0 && polls === 1);
+      ok("the real idle music state also reaches the outcome observer once", outcomes === 2);
       socket.onmessage({ data: JSON.stringify(frameFor("song", { updatedAt: 3 })) });
       socket.onmessage({ data: JSON.stringify(idle) });
       ok("unrelated frames do not create a false completion or another library refresh", polls === 1);
+      ok("only the additional valid idle state reaches the music outcome observer", outcomes === 3);
     } catch (err) {
       ok("mixed live frames run without a renderList queue crash", false, err.message);
     }
@@ -1083,6 +1091,8 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
     bodyOf(CODE, "function VelHumanize("), bodyOf(CODE, "function velJitter("),
     bodyOf(CODE, "function velChanges("), bodyOf(CODE, "async function commitVel("),
     bodyOf(CODE, "function captureSession("), bodyOf(CODE, "function sessionCurrent("),
+    bodyOf(CODE, "function noteEditBusy("), bodyOf(CODE, "function beginEdit("),
+    bodyOf(CODE, "function finishEdit("),
   ];
   ok("all pieces of the lane and its session guards are declared and liftable",
     src.every(Boolean), src.map((x, i) => (x ? "" : i)).filter((x) => x !== "").join(", "));
@@ -1101,7 +1111,7 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
   let V = null;
   try {
     const build = new Function("S", "selNotes", "posToQ", "velTop", "VEL_H", "KEYS_W",
-      "tint", "C", "api", "pushUndo", "refreshDoc", "renderAndSwap", "status", "draw",
+      "tint", "C", "api", "pushUndo", "refreshDoc", "renderAndSwap", "status", "draw", "drawHistory",
       `${src.join("\n")}\nreturn { DEFAULT_VEL, clampVel, velLaneY, velOf, velScope, VelLine, VelDraw,`
       + ` VelNode, VelNumber, VelHumanize, velJitter, velChanges, commitVel };`);
     V = build(env.S, () => env.notes.map((n) => ({ n, c: { id: "c1" } })),
@@ -1109,7 +1119,7 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
       () => 100, env.VEL_H, env.KEYS_W,
       () => {}, {},
       async (body) => { posted.push(body); return { undo: { action: "edit_notes", notes: [] }, dirty: [] }; },
-      () => {}, async () => {}, () => {}, (m) => { lab = m; }, () => {});
+      () => {}, async () => {}, () => {}, (m) => { lab = m; }, () => {}, () => {});
   } catch (err) {
     ok("the lane's strategies evaluate on their own (they reach nothing but S / selNotes / the geometry)",
       false, err.message);
@@ -1161,9 +1171,11 @@ console.log("\n  -- the velocity lane: computed on read, one post per gesture --
      * and what must be true of it is that nothing leaves the page. */
     const esc = /window\.addEventListener\("keydown", \(e\) => \{[\s\S]*?\n\}\);/.exec(
       CODE.slice(CODE.indexOf("function commitVel") > 0 ? 0 : 0));
-    const escBody = CODE.match(/if \(e\.key !== "Escape" \|\| !S\.velStrategy\) return;[\s\S]{0,400}?\n\}\);/)?.[0] || "";
+    const escBody = CODE.match(/if \(e\.key !== "Escape"[^\n]*\n[\s\S]{0,400}?\n\}\);/)?.[0] || "";
+    const cancel = bodyOf(CODE, "function cancelNoteGesture(") || "";
     ok("Escape cancels a live gesture, and the cancel path posts nothing at all",
-      escBody.length > 0 && /S\.velStrategy = null/.test(escBody) && !/api\(/.test(escBody),
+      /cancelNoteGesture\(\)/.test(escBody) && /S\.velStrategy = null/.test(cancel)
+      && !/api\(/.test(escBody + cancel),
       "a cancelled gesture must never reach the server — that is the whole point of "
       + "computing on read");
 
@@ -1440,6 +1452,19 @@ console.log("\n  -- project startup and the explicit selection toolbar --");
       ok("the actual boot function runs with an isolated project-list response", false, err.message);
     }
   }
+}
+
+// Native stepped controls must accept a normal knob gesture, not just typed values.
+{
+  const source = bodyOf(JS, 'function pluginParamValue(');
+  const snap = new Function(`${source}; return pluginParamValue;`)();
+  const insert = { type: 'vst3', plugin: { parameters: {
+    wet: { type: 'number', min: 0, max: 1, step: .001 },
+    level: { type: 'number', min: -120, max: 18, step: .1 },
+  } } };
+  ok('ordinary VST3 knob drags snap to the native 0.001 parameter grid', near(snap(insert, 'wet', .494444444), .494));
+  ok('native dB controls snap across a negative range and respect its ceiling', near(snap(insert, 'level', -6.125), -6.1) && snap(insert, 'level', 25) === 18);
+  ok('native snapping leaves choice values and built-in automation intact', snap(insert, 'choice', 'Mono') === 'Mono' && snap({ type: 'eq' }, 'wet', .494444444) === .494444444);
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

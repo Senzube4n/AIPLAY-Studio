@@ -88,7 +88,7 @@ ok("the worked example is 12-20 steps",
 ok("the guide never recommends H3 (licence: no EU/UK/KR grant)",
   !/prefer h3|use h3|switch to h3|recommend.*h3/i.test(full.guide));
 
-for (const topic of ["stages", "series", "engines", "example", "pitfalls"]) {
+for (const topic of ["stages", "series", "engines", "example", "pitfalls", "vectors"]) {
   const r = await guide.run({ topic });
   ok(`topic "${topic}" answers alone`, r.topic === topic && r.guide.length > 400);
 }

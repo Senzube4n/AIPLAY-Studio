@@ -117,6 +117,7 @@ export function labState(engineKey, refs = {}) {
      * before anything is spent, which is the whole lesson of the evening
      * hybrid spent silently meaning "everything on the expensive engine". */
     configs: COMPARE_CONFIGS.map((c) => expandConfig(c, {
+      width: refs.width, height: refs.height,
       refImages: refs.refImages, refAudios: refs.refAudios,
     })),
     groups: listGroups(12),
@@ -386,6 +387,8 @@ export function createVideoLabRoutes(deps) {
       switch (action) {
         case "state": {
           json(res, 200, labState(b.engine, {
+            width: Number.isFinite(b.width) ? b.width : undefined,
+            height: Number.isFinite(b.height) ? b.height : undefined,
             refImages: Array.isArray(b.refImages) ? b.refImages : [],
             refAudios: Array.isArray(b.refAudios) ? b.refAudios : [],
           }));

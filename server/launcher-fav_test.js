@@ -15,7 +15,11 @@ const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8").rep
 test("the launcher saves one favourite mode and starts it when it opens", () => {
   const mjs = read("../launcher/launcher.mjs");
   assert.match(mjs, /const LAUNCH_MODES = \["full", "music", "cloud", "runpod"\];/);
-  assert.match(mjs, /autoLaunch: LAUNCH_MODES\.includes\(saved\.launcherAutoLaunch\) \? saved\.launcherAutoLaunch : null,/);
+  assert.match(mjs, /const fav = LAUNCH_MODES\.includes\(saved\.launcherAutoLaunch\) \? saved\.launcherAutoLaunch : null;/);
+  /* RunPod GPU is Advanced only (the owner, 2026-09-26): a RunPod star saved in
+   * Advanced is neither started nor shown while Studio opens on Simple
+   * (server/engine/remote_ui_test.js has the rest). */
+  assert.match(mjs, /autoLaunch: fav && modeAllowed\(fav, level\) \? fav : null,/);
   assert.match(mjs, /if \(b\.autoLaunch === null\) await saveSettings\(\{\}, \["launcherAutoLaunch"\]\);/, "unstar removes it");
   assert.match(mjs, /if \(!LAUNCH_MODES\.includes\(b\.autoLaunch\)\) return send\(res, 400, \{ error: "Unknown mode\." \}\);/);
   assert.match(mjs, /if \(!c\?\.modes\?\.\[mode\]\?\.available\) \{/, "a mode this PC cannot run is not started");

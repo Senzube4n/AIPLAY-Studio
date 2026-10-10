@@ -120,13 +120,20 @@ export function videoLabTools(api) {
          * nothing reported which engine a clip chose until after it had run.
          * This is that report, moved to before the render. */
         if (a.dry_run) {
-          const s = await lab({ action: "state" });
+          const refImages = Array.isArray(a.ref_images) ? a.ref_images : [];
+          const refAudios = Array.isArray(a.ref_audios) ? a.ref_audios : [];
+          const s = await lab({
+            action: "state",
+            refImages, refAudios,
+            width: Number.isFinite(a.width) ? a.width : undefined,
+            height: Number.isFinite(a.height) ? a.height : undefined,
+          });
           const hy = await lab({
             action: "resolve_hybrid",
-            refImages: Array.isArray(a.ref_images) ? a.ref_images : [],
+            refImages,
             // Counted by resolveHybrid exactly like the images — omitting them
             // here made the dry run confidently predict the wrong engine.
-            refAudios: Array.isArray(a.ref_audios) ? a.ref_audios : [],
+            refAudios,
           });
           const want = Array.isArray(a.configs) && a.configs.length ? a.configs : s.configs.map((c) => c.id);
           return {
@@ -454,7 +461,8 @@ export function videoLabTools(api) {
         if (a.id !== undefined) {
           if (a.value === undefined) throw new Error(`Pass a value for "${a.id}". Call video_settings with no arguments to see its kind and range.`);
           const r = await lab({ action: "set_knob", id: a.id, value: a.value, engine: a.engine });
-          return { id: r.id, value: r.value, commit: r.state.commit?.note };
+          return { id: r.id, value: r.value, commit: r.state.commit?.note,
+            ...(r.buildStatus ? { buildStatus: r.buildStatus } : {}) };
         }
         const s = await lab({ action: "state", engine: a.engine });
         return {
@@ -467,6 +475,7 @@ export function videoLabTools(api) {
             unset_at: k.unsetAt,
             effect: k.effect,
             measured_in: k.cite,
+            ...(k.buildStatus ? { buildStatus: k.buildStatus } : {}),
           })),
         };
       },

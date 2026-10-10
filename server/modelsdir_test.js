@@ -89,9 +89,70 @@ test("a second models folder can be added on purpose, beside the main one", () =
   assert.match(page, /data-mf="also" disabled>Add as extra</);
   assert.match(page, /action: "addAlso", dir: root\.getElementById\("mfPath"\)\.value/);
   const conf = readFileSync(new URL("./config.js", import.meta.url), "utf8");
-  assert.match(conf, /const bases = \[MODELS_DIR, \.\.\.MODELS_ALSO\];/, "the engine's file choices look in the extra folders too");
+  /* Every folder the engine loads from, the extra ones among them
+   * (localmodels.js engineBasesSync), since setF on 7b241ea. */
+  assert.match(conf, /const shelfBases = \(\) => engineBasesSync\(live \|\| \{ modelsDir: MODELS_DIR, modelsAlso: MODELS_ALSO,/, "the engine's file choices look in the extra folders too");
   const wf = readFileSync(new URL("./workflow.js", import.meta.url), "utf8");
-  assert.match(wf, /if \(onDisk\(sub, file\)\) continue;/, "so does the video ready check");
+  assert.match(wf, /const bases = engineBasesSync\(config\);[\s\S]{0,200}if \(onDisk\(sub, file, snapshot, bases\)\) continue;/, "so does the video ready check");
+});
+
+test("catalogue and downloader reuse complete nested weights without moving or downloading", async () => {
+  const dir = path.join(config.modelsDir, "diffusion_models", "minimax");
+  await mkdir(dir, { recursive: true });
+  const full = path.join(dir, "nested-test.safetensors");
+  await writeFile(full, Buffer.alloc(1234, 1));
+  const tokenizerDir = path.join(config.modelsDir, "audio_encoders", "tokenizer");
+  await mkdir(tokenizerDir, { recursive: true });
+  const sidecars = [["config.json", "{}"], ["configuration_mert2.py", "# tokenizer configuration\n"]];
+  for (const [name, contents] of sidecars) await writeFile(path.join(tokenizerDir, name), contents);
+  const id = "nested-catalog-test";
+  CATALOG.push({ id, label: "Nested model", files: [{ url: "http://127.0.0.1:9/must-not-download", dest: path.join(config.modelsDir, "diffusion_models", "nested-test.safetensors"), bytes: 1234 },
+    ...sidecars.map(([name, contents]) => ({ url: "http://127.0.0.1:9/must-not-download", dest: path.join(tokenizerDir, name), bytes: Buffer.byteLength(contents) }))] });
+  try {
+    const manager = new ModelManager();
+    const row = (await manager.status()).find((entry) => entry.id === id);
+    assert.equal(row.ready, true);
+    assert.equal(row.files[0].resolvedName, path.join("minimax", "nested-test.safetensors"));
+    assert.equal(row.files.slice(1).every(file => file.present), true, "JSON/Python tokenizer companions retain their exact package presence checks");
+    assert.equal(row.files[0].resolvedPath, full);
+    assert.deepEqual(await manager.download(id), { ok: true }, "unreachable URL proves the file was reused");
+    assert.equal((await readFile(full)).length, 1234);
+    await writeFile(full, Buffer.alloc(3));
+    assert.equal((await manager.status()).find((entry) => entry.id === id).ready, false, "nested stock still needs its exact size");
+  } finally { CATALOG.splice(CATALOG.findIndex((entry) => entry.id === id), 1); }
+});
+
+test("nested YuE2 and video files reach the engine ledger as their actual loader paths", async () => {
+  const { createEngineClient } = await import("./engine/client.js");
+  const { createStore } = await import("./engine/store.js");
+  const { videoReady } = await import("./workflow.js");
+  const files = [["checkpoints", "yue2", "yue2_subfolder_test.safetensors"],
+    ["unet", "minimax", "h3_subfolder_test.safetensors"],
+    ["conditioning_bridges", "minimax", "bridge_subfolder_test.safetensors"]];
+  for (const [folder, sub, file] of files) {
+    await mkdir(path.join(config.modelsDir, folder, sub), { recursive: true });
+    await writeFile(path.join(config.modelsDir, folder, sub, file), "weights");
+  }
+  const graph = { 1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: files[0][2] } },
+    2: { class_type: "UNETLoader", inputs: { unet_name: files[1][2] } },
+    3: { class_type: "CLIPTextEncode", inputs: { text: files[0][2] } },
+    4: { class_type: "AiplayH3ConditioningBridge", inputs: { adapter: files[2][2] } } };
+  const engine = createEngineClient({ store: createStore({ modelsDir: config.modelsDir, modelsAlso: [],
+    graphDir: path.join(root, "graphs"), hashCacheFile: path.join(root, "hash-cache.json") }) });
+  const result = await engine.dispatch({ graph, via: "test.nested-models", dryRun: true });
+  assert.equal(result.record.engineFiles.find((entry) => entry.input === "ckpt_name").file, path.join("yue2", files[0][2]));
+  const dit = result.record.engineFiles.find((entry) => entry.input === "unet_name");
+  assert.equal(dit.file, path.join("minimax", files[1][2]));
+  assert.equal(dit.resolvedPath, path.join(config.modelsDir, ...files[1]));
+  const bridge = result.record.engineFiles.find((entry) => entry.input === "adapter");
+  assert.equal(bridge.file, path.join("minimax", files[2][2]));
+  assert.equal(bridge.resolvedPath, path.join(config.modelsDir, ...files[2]));
+  assert.equal(graph[1].inputs.ckpt_name, files[0][2], "the caller's graph stays unchanged");
+  const h3 = config.video.engines.h3, before = { ...h3 };
+  try {
+    Object.assign(h3, { dit: files[1][2], textEncoder: null, videoVae: null, audioVae: null });
+    assert.equal(videoReady("h3").ready, true, "readiness follows subfolders and unet alias too");
+  } finally { Object.assign(h3, before); }
 });
 
 test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
@@ -117,18 +178,54 @@ test("an AMD card never downloads an NVIDIA-only fp4 build", async () => {
     config.torchBackend = "cuda"; config.gpu = { vendor: "nvidia", totalMb: 16376 };
     assert.equal(cardIsAmd(), false);
     assert.ok(names("video").includes("qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), "NVIDIA keeps the measured int4");
-    /* A 16 GB NVIDIA card on a PC with 32 GB or more keeps the official set
-     * the H3 lab measured; the RAM is the machine's own, so it is passed in. */
+    /* An NVIDIA card keeps the official set the H3 lab measured. Asserted on
+     * every machine: these two lines used to sit behind `if
+     * (!isLightH3(config))`, which read the test machine's own RAM and skipped
+     * them without a word under 32 GB. The rule does not read RAM on NVIDIA,
+     * and the card is the one set above. */
     const { isLightH3 } = await import("./config.js");
-    if (!isLightH3(config)) {
-      /* This test machine has 32 GB or more: the catalogue itself follows. */
-      assert.ok(names("video").includes("minimax_h3_fl2va_pruned_int8_convrot.safetensors"), "the official int8 DiT");
-      assert.ok(names("video").includes("minimax_h3_video_vae_fp16.safetensors"), "and the fp16 VAE the lab measured");
+    assert.equal(isLightH3(config), false, "the card set above is not light");
+    assert.ok(names("video").includes("minimax_h3_fl2va_pruned_int8_convrot.safetensors"), "the official int8 DiT");
+    assert.ok(names("video").includes("minimax_h3_video_vae_fp16.safetensors"), "and the fp16 VAE the lab measured");
+    assert.ok(names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "and H3's 8-step speed-up");
+    /* The light rule is off on NVIDIA and on a PC whose settings name no card
+     * (the owner's decision, 2026-09-25): the w4a8 DiT was never rendered on
+     * NVIDIA, whatever the card's size or the PC's RAM. */
+    const GiB = 2 ** 30;
+    for (const ram of [8 * GiB, 16 * GiB, 64 * GiB]) {
+      assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 16376 }, torchBackend: "cuda" }, ram), false);
+      assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 12282 }, torchBackend: "cuda" }, ram), false, "a 12 GB NVIDIA card keeps the standard files");
+      assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 8188 } }, ram), false, "so does an 8 GB one");
+      assert.equal(isLightH3({ torchBackend: "cuda" }, ram), false, "and one only its torch names");
+      assert.equal(isLightH3({}, ram), false, "and a card nobody could read");
     }
-    assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 16376 }, torchBackend: "cuda" }, 64 * 2 ** 30), false);
-    assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 12282 }, torchBackend: "cuda" }, 64 * 2 ** 30), true, "under 16 GB of VRAM: light");
-    assert.equal(isLightH3({ gpu: { vendor: "nvidia", totalMb: 16376 }, torchBackend: "cuda" }, 16 * 2 ** 30), true, "under 32 GB of RAM: light");
-    assert.equal(isLightH3({ gpu: { vendor: "intel", totalMb: 16000 } }, 64 * 2 ** 30), true, "Intel: light");
+    /* Everywhere else it is main's rule exactly (config.js offNvidia):
+     * AMD and Intel always, and a CPU-only install or a Mac (gpu.vendor
+     * "cpu", or a "cpu" torch) under 30 GiB of RAM, as main has it. */
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", name: "CPU only", totalMb: 0 }, torchBackend: "cpu" }, 16 * GiB), true, "a CPU install with 16 GB of RAM: light, as main");
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", name: "CPU only", totalMb: 0 }, torchBackend: "cpu" }, 64 * GiB), false, "with 64 GB: not light, as main");
+    assert.equal(isLightH3({ torchBackend: "cpu" }, 16 * GiB), true, "a PC only its cpu torch names, as main");
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", totalMb: 0 }, torchBackend: "rocm" }, 64 * GiB), true, "a CPU install later pointed at ROCm: AMD's rule");
+    assert.equal(isLightH3({ gpu: { vendor: "cpu", totalMb: 0 }, torchBackend: "xpu" }, 64 * GiB), true, "and at XPU: Intel's");
+    assert.equal(isLightH3({ gpu: { vendor: "intel", totalMb: 16000 } }), true, "Intel: light");
+    assert.equal(isLightH3({ torchBackend: "xpu" }), true, "Intel by its torch");
+    assert.equal(isLightH3({ gpu: { vendor: "amd", totalMb: 16304 } }), true, "AMD: light");
+    assert.equal(isLightH3({ torchBackend: "rocm" }), true, "AMD by its torch");
+    config.torchBackend = "cuda"; config.gpu = { vendor: "nvidia", totalMb: 12282 };
+    assert.ok(names("video").includes("minimax_h3_fl2va_pruned_int8_convrot.safetensors"), "a 12 GB NVIDIA card fetches the official int8 DiT");
+    assert.ok(names("video").includes("minimax_h3_video_vae_fp16.safetensors"), "and the fp16 VAE the lab measured");
+    assert.ok(!names("video").includes("minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"), "never the w4a8");
+    /* A CPU-only install or a Mac keeps main's H3 row: no 8-step file in
+     * it (models.js cardIsOffNvidia), whatever the RAM decides about the light
+     * builds. */
+    const { cardIsOffNvidia } = await import("./models.js");
+    config.torchBackend = "cpu"; config.gpu = { vendor: "cpu", name: "CPU only", totalMb: 0 };
+    assert.equal(cardIsOffNvidia(), true);
+    assert.ok(!names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "a CPU install's H3 row is main's");
+    config.torchBackend = null; config.gpu = null;
+    assert.equal(cardIsOffNvidia(), false, "a PC whose settings name no card is not");
+    assert.ok(names("video").includes("minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), "and gets NVIDIA's row");
+    config.torchBackend = "cuda"; config.gpu = { vendor: "nvidia", totalMb: 16376 };
     assert.ok(names("imageIdeogram").includes("qwen3vl_8b_nvfp4.safetensors"));
     assert.equal(fp4Blocked({ dest: "x/qwen3vl_8b_nvfp4.safetensors" }), false);
   } finally {
@@ -182,6 +279,10 @@ test("an AMD card holding the older int8 H3 encoder: the Models screen and the g
     process.exit(0);`;
   const env = { ...process.env, AIPLAY_APPDATA: appdata };
   delete env.AIPLAY_MODELS_DIR;
+  /* The settings name this box's own rig: the engine also loads from the
+   * rig's ComfyUI/models (localmodels.js engineBases), so a real rig named by
+   * the gate's AIPLAY_RIG must not stand in for it. */
+  delete env.AIPLAY_RIG;
   const out = execFileSync(process.execPath, ["--input-type=module", "-e", child], { env, encoding: "utf8", timeout: 60_000 });
   const r = JSON.parse(out.trim().split(/\r?\n/).pop());
   assert.equal(r.amd, true, "the child really is on an AMD card");

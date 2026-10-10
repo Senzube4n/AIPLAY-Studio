@@ -71,7 +71,9 @@ function paint(st, error = "") {
   const box = $("levelAll");
   if (box) box.checked = st.level === "advanced";
   const note = $("levelNote");
-  if (note) note.textContent = error ? `Not saved: ${error}` : (st.line || "");
+  /* In the launcher's RunPod GPU mode the screens open Advanced whatever is
+   * saved (server/welcome/level.js advancedOnly); the line says so. */
+  if (note) note.textContent = error ? `Not saved: ${error}` : [st.line, st.advancedOnly?.why].filter(Boolean).join(" ");
 }
 
 /** Save a level the person chose. Every screen follows it. */

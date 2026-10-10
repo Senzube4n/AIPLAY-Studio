@@ -1,6 +1,6 @@
 /**
  * WHISPER AS A TOOL: server/whisper.js (the /api/whisper door), the art
- * queue's "whisper" kind, server/whisper.py and the two MCP tools.
+ * queue's "whisper" kind, server/whisper_run.py and the two MCP tools.
  *
  * Nothing here runs whisper, needs a GPU, a model download or ComfyUI:
  *
@@ -11,11 +11,11 @@
  *   §4 the door: same-origin only, a transcription queued as kind "whisper"
  *      with its LRC stem in the lyrics folder, the model saved, status, a job
  *   §5 the REAL ArtRunner with a fake python (a Node script): the job waits
- *      for music, runs without the engine, runs whisper.py in the lyrics
+ *      for music, runs without the engine, runs whisper_run.py in the lyrics
  *      python with the chosen model, and keeps its answer on the job
  *   §6 MCP: whisper_transcribe and whisper_status post what the door knows,
  *      and the in-app chat's decisions are on record
- *   §7 whisper.py itself, with a FAKE stable_whisper (skipped when no python
+ *   §7 whisper_run.py itself, with a FAKE stable_whisper (skipped when no python
  *      runs here): the JSON, the alignment, the LRC files, the argument errors
  *
  * The app-data and output folders are a temp folder, set before config.js is
@@ -23,7 +23,7 @@
  *
  *   node server/whisper_test.js
  */
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, symlinkSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, symlinkSync, existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -160,7 +160,14 @@ console.log("\n§3  THE MODEL");
     JSON.stringify(whisperArgs({ input: "a.wav" })) === '["a.wav"]'
     && JSON.stringify(whisperArgs({ input: "a.wav", lyricsFile: "l.txt", outStem: "o", language: "en", words: true, vocals: "v.flac" }))
       === '["a.wav","--lyrics","l.txt","--out","o","--language","en","--words","--vocals","v.flac"]');
-  ok("the script sits beside lrc.py", path.basename(WHISPER_SCRIPT) === "whisper.py" && existsSync(WHISPER_SCRIPT));
+  ok("the script sits beside lrc.py", path.basename(WHISPER_SCRIPT) === "whisper_run.py" && existsSync(WHISPER_SCRIPT));
+  /* Found 2026-09-27: named whisper.py, the script shadowed the openai-whisper
+   * PACKAGE (Python puts the script's folder first on sys.path), and
+   * stable_whisper's `import whisper.tokenizer` failed on every real run:
+   * "No module named 'whisper.tokenizer'; 'whisper' is not a package". */
+  const shadows = ["whisper", "stable_whisper", "faster_whisper", "torch", "numpy"];
+  const beside = readdirSync(path.dirname(WHISPER_SCRIPT)).filter((f) => f.endsWith(".py")).map((f) => f.slice(0, -3));
+  ok("no Python file beside it is named after a package it imports", !beside.some((n) => shadows.includes(n)), beside.filter((n) => shadows.includes(n)).join());
 }
 
 /* ═══ §4 the door ════════════════════════════════════════════════════════ */
@@ -301,7 +308,7 @@ console.log(JSON.stringify({ ok: true, script, args, lyrics, model: process.env.
   const e = events[0] || {};
   ok("then it runs with the engine NOT ready, and says \"whisper\" with its id", done && !e.failed && e.id === job.id && e.language === "en" && e.lrc === "song one.whisper.lrc", JSON.stringify(events));
   const s = spawned[0] || {};
-  ok("...in the whisper python, running whisper.py with the flags", s.py === PY_FILE && s.argv?.[0] === WHISPER_SCRIPT
+  ok("...in the whisper python, running whisper_run.py with the flags", s.py === PY_FILE && s.argv?.[0] === WHISPER_SCRIPT
     && s.argv.includes("--words") && s.argv[s.argv.indexOf("--language") + 1] === "en" && s.argv[s.argv.indexOf("--out") + 1] === path.join(LRC_DIR, "song one.whisper"), JSON.stringify(s.argv));
   ok("...with the chosen model in AIPLAY_WHISPER_MODEL", s.env?.AIPLAY_WHISPER_MODEL === "small");
   const row = runner.done.find((j) => j.id === job.id);
@@ -318,7 +325,7 @@ console.log(JSON.stringify({ ok: true, script, args, lyrics, model: process.env.
   console.error = quiet;
   delete process.env.FAKE_FAIL;
   const f = events[1] || {};
-  ok("a failure is announced with whisper.py's own sentence and kept on its row",
+  ok("a failure is announced with whisper_run.py's own sentence and kept on its row",
     f.failed && f.kind === "whisper" && /the file could not be read/.test(f.error) && runner.done.find((j) => j.id === j2.id)?.error, JSON.stringify(f));
   config.lyrics.model = "large-v3";
 }
@@ -349,8 +356,8 @@ console.log("\n§6  MCP AND THE IN-APP CHAT");
       && ![row.label, row.why, row.note].some((x) => /—/.test(x || "")), JSON.stringify({ label: row?.label, why: row?.why }));
 }
 
-/* ═══ §7 whisper.py, with a fake whisper ═════════════════════════════════ */
-console.log("\n§7  whisper.py");
+/* ═══ §7 whisper_run.py, with a fake whisper ═════════════════════════════════ */
+console.log("\n§7  whisper_run.py");
 function findPython() {
   for (const c of [process.env.AIPLAY_TEST_PYTHON, "python", "python3"].filter(Boolean)) {
     const r = spawnSync(c, ["-c", "import sys;print(sys.executable) if sys.version_info >= (3, 8) else sys.exit(1)"], { encoding: "utf8", windowsHide: true });
@@ -360,7 +367,7 @@ function findPython() {
 }
 const PY = findPython();
 if (!PY) {
-  console.log("  skip  no python runs here; whisper.py's own half was not exercised");
+  console.log("  skip  no python runs here; whisper_run.py's own half was not exercised");
 } else {
   console.log(`        python: ${PY}`);
   const FAKEPY = path.join(tmp, "fakepy");

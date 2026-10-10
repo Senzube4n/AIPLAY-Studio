@@ -18,7 +18,7 @@ was measured on a real machine, and the scripts that measured them ship in
 - [The engine door and the ledger](#the-engine-door-and-the-ledger)
 - [Blocking a camera, and steering a render with it](#blocking-a-camera-and-steering-a-render-with-it)
 - [A picture becomes a 3D model](#a-picture-becomes-a-3d-model)
-- [The music-video workflow](#the-music-video-workflow)
+- [Production: videos and episodes](#production-videos-and-episodes)
 - [The audiobook workflow](#the-audiobook-workflow)
 - [Audio reference — starting from a real song](#audio-reference--starting-from-a-real-song)
 - [Music input — continuing from a recording (experimental, opt-in)](#music-input--continuing-from-a-recording-experimental-opt-in)
@@ -655,8 +655,12 @@ belong to the full suite and may require ComfyUI, Python or additional models.
   See *A picture becomes a 3D model* below.
 - **A small editor** — stacked tracks, drag clips to overlap them into a
   crossfade, a karaoke overlay driven by the timed lyrics, and a visualiser.
-- **Overnight runs** — songs, images or video: a list of ideas, N takes each,
-  and a full library by morning. The panel sums the whole queue and tells you
+- **Batch & schedule** — open it from Music for different song ideas, with exact
+  lyrics, styles and accepted engine settings. Choose N takes each and start now
+  or at a later time while Studio runs and the computer stays awake. Images and
+  video use the same planner. A future schedule restores after a restart; a
+  missed start pauses for review. [Batch guide](music-workbench.md#batch--schedule).
+  The panel sums the whole queue and tells you
   what time it will finish, so a night can be planned against the hours you
   actually have. Repeats are caught and re-rolled, so a forgotten fixed seed
   makes different pictures instead of one picture two hundred times.
@@ -1048,7 +1052,17 @@ Four `avatar_*` MCP tools, three `mv_mesh_*` tools.
 
 ---
 
-## The music-video workflow
+<a id="the-music-video-workflow"></a>
+
+## Production: videos and episodes
+
+**Production** is the screen previously called Music video. It holds video and
+audiobook projects: briefs, reusable cast and location references, scenes,
+storyboards, saved takes and a bridge to the Studio timeline. For a series,
+use one project per episode, commit the same bible and import the same chosen
+character sheets into each. The MCP guide's `series` topic describes the
+episode and narration paths; tool names, project
+kinds and the `?view=workflow` deep link stay unchanged.
 
 A song in, a cut video out, in eleven stages you can stop at any point:
 
@@ -1274,20 +1288,41 @@ adapter from the same author (a prosody LoRA in the decoder, "intentionally
 subtle" by its card, with ComfyUI nodes whose source is not published) is not
 catalogued; our own hum-to-score path is its first stage already.
 
+**25 September: every reading on this rig before this date was broken.** The
+engine's python has run transformers 5 since 16 August, before the tokenizer
+shipped. Under transformers 5, MERT is built on the meta device, and
+every buffer the weights file does not hold is then swapped for empty memory.
+MERT2's rotary table (`embed_positions.inv_freq`) is such a buffer, and MERT2's
+own initialiser never refills it, so the tokenizer read with whatever that
+memory held. Nothing warned. The same 20-second file read four times gave 1,
+269, 269 and 277 distinct codes (the first all zeros, from NaN logits), and
+unrepaired readings agreed with a correct one on only 7 to 42 % of frames.
+`yue_tokenize.py` now rebuilds the table after loading, exactly as the model's own constructor
+does, and refuses to read if it cannot. The cache folder now carries the
+reader's version (`tok_r2_<sha12>`), so a recording read before the fix is read
+again rather than served from its old `tok_<sha12>` folder, and *Sounds like
+this* ignores the old folders. The numbers above that came from read codes
+were measured with the broken reader: 0.43–0.53 distinct codes per frame, one
+code held for up to 8 frames (and with them the eight-second cover prime), and
+the sounds-like scores. They are to be measured again, not trusted. So is any
+adapter trained from a recording before this date.
+
 ---
 
 ## Images
 
 The Images screen is the cover-art pipeline given its own room: a prompt on the
 left, a masonry gallery on the right — hover a tile for its prompt, seed and
-render time. Six engines:
+render time. Engines include:
 
-- **FLUX.2 klein** *(default)* — fast, Apache-2.0, and the only engine that
-  takes **reference images**: the prompt refers to them as "image 1",
-  "image 2" — "the character from image 1 in the scene from image 2" — which is
-  how a character stays consistent across pictures. References are reachable
-  through the API and the MCP tools; the screen itself has no attach control
-  yet.
+- **Qwen Image 2.1** *(default when installed)* — text generation and editing
+  with ordered reference images, including masked edits in the image editor.
+  Its research licence limits commercial use; Models and `qwen_image_status`
+  show the required files and runtime support.
+- **FLUX.2 klein** — fast, Apache-2.0, and also takes **reference images**:
+  the prompt refers to them as "image 1", "image 2" — "the character from image
+  1 in the scene from image 2" — which helps a character stay consistent.
+  References can be attached in Pictures or passed through the API and MCP.
 - **Z-Image Turbo** (Tongyi-MAI, Apache-2.0) — eight steps to a finished
   picture, strong on photographic realism, faces and bilingual
   English/Chinese prompts, and the cleanest commercial answer in the app:
@@ -1492,7 +1527,7 @@ slow app with no explanation is worse than a failure.
 
 **Ask a friend first.** Without a strong graphics card, the first answer is a
 friend who has one: on **Collab** you add each other once, press **Ask friend**
-beside a scene (Music video → Video clips) and send them the sealed file it makes;
+beside a scene (Production → Video clips) and send them the sealed file it makes;
 they send the finished clip back as a file for you to look at before you keep
 it. It is free, nothing connects to anybody, both of you run Full Studio, and it
 lends video scenes, not songs. Lending is built but not yet tried between two
@@ -2099,8 +2134,9 @@ int8 repack, through ComfyUI's own Krea 2 support: pick *Krea 2 Turbo* on the
 Images screen (or `make_image` with `engine: "krea2"`). Measured at 1024²: 52 s
 for the first picture, 26 s warm — ten times FLUX.2 klein, for the frontier
 look. Krea 2 Community Licence: outputs are yours; commercial use under USD 1M
-company-wide revenue. No references (FLUX.2's trick) and no negative prompt
-(distilled at cfg 1). FLUX.2 stays the default for speed and references.
+company-wide revenue. No references (unlike Qwen and FLUX.2) and no negative prompt
+(distilled at cfg 1). FLUX.2 remains a faster, commercially licensed option
+for references; installed Qwen Image 2.1 is the picture default.
 
 **"fast" means 3 steps now.** `make_clip`'s fast preset renders on the TaoMate
 build where it is installed (measured as coherent and as sharp as the 8-step

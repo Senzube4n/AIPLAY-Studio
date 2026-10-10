@@ -9,7 +9,7 @@
  *
  *   - the SAME python (config.lyrics.python) and the same model
  *     (config.lyrics.model), so one Set up timed lyrics serves both;
- *   - the SAME runner (server/lrc.js runLrc over server/whisper.py, which
+ *   - the SAME runner (server/lrc.js runLrc over server/whisper_run.py, which
  *     imports lrc.py's device logic), so the failures read the same;
  *   - the SAME queue (art.js, kind "whisper", a program of its own like
  *     "lrc"): it waits for music, never runs beside a picture, clip or
@@ -30,7 +30,7 @@ import { WHISPER_MODELS } from "./config.js";
 import { whisperPythonMissing, pythonVerdict, installLines } from "./lrc.js";
 import { actorFrom } from "./provenance.js";
 
-/** What whisper.py (ffmpeg underneath) is handed. Pictures are not. */
+/** What whisper_run.py (ffmpeg underneath) is handed. Pictures are not. */
 export const WHISPER_AUDIO = /\.(flac|mp3|opus|wav|ogg|m4a|aac)$/i;
 export const WHISPER_MEDIA = /\.(flac|mp3|opus|wav|ogg|m4a|aac|mp4|webm|mov|mkv|m4v)$/i;
 /** Whisper's language codes are two letters, three for a few ("haw", "yue"). */
@@ -82,7 +82,7 @@ async function isFile(f) {
 }
 
 /**
- * The spec → the file whisper.py reads, a stem for its LRC files, the vocal
+ * The spec → the file whisper_run.py reads, a stem for its LRC files, the vocal
  * stem when one is used, and a title. → { input, name, lrcBase, vocals, title }
  * or { error, status }. `dirs` = { outputDir, clipDir, stemsModel, useVocalStem }.
  */

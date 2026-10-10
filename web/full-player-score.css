@@ -1,0 +1,20 @@
+#fullPlayer .fp-reading { min-width:0; width:100%; }
+#fullPlayer .fp-reading-tabs { display:flex; gap:8px; margin-bottom:12px; }
+#fullPlayer .fp-reading-tabs [aria-selected="true"] { border-color:var(--primary); color:var(--primary); }
+#fullPlayer.fp-with-score .fpinner { width:min(1320px,100%); grid-template-columns:minmax(0,260px) minmax(0,1fr); gap:30px; }
+#fullPlayer.fp-with-score .fpleft { max-height:calc(100dvh - var(--playerh,0px) - 64px); overflow:auto; scrollbar-width:thin; }
+#fullPlayer.fp-with-score .fpart { flex:none; }
+#fullPlayer.fp-with-score .fpscroll { mask-image:none; -webkit-mask-image:none; overflow:visible; max-height:none; }
+#fullPlayer .fp-score-controls { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:8px; font-size:13px; }
+#fullPlayer .fp-score-timing { margin-bottom:12px; font-size:12px; }
+#fullPlayer .fp-score-timing input { width:90px; }
+#fullPlayer #fpScoreScroll { height:calc(100dvh - var(--playerh,0px) - 210px); min-height:160px; overflow:auto; border-radius:10px; background:var(--ink); }
+#fullPlayer #fpScorePaper { padding:14px; color:var(--on); }
+#fullPlayer #fpScorePaper svg { max-width:100%; width:100%; height:auto; }
+#fullPlayer #fpScorePaper .playing-note { fill:color-mix(in srgb,var(--primary) 40%,var(--on))!important; stroke:color-mix(in srgb,var(--primary) 40%,var(--on))!important; }
+@media(max-width:900px) {
+  #fullPlayer.fp-with-score { padding:48px 16px 16px; }
+  #fullPlayer.fp-with-score .fpinner { grid-template-columns:minmax(0,1fr); gap:14px; }
+  #fullPlayer.fp-with-score .fpleft { display:none; }
+  #fullPlayer.fp-with-score #fpScoreScroll { height:calc(100dvh - var(--playerh,0px) - 225px); }
+}

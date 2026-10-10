@@ -174,7 +174,23 @@ def run(job):
     return out
 
 
+def _utf8_stream(stream):
+    """The same stream, speaking UTF-8. One that cannot be reconfigured (None
+    under pythonw, a sys.stdin something else replaced) is returned as it is."""
+    try:
+        stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    return stream
+
+
 def main():
+    # The pipes are UTF-8 whatever the interpreter was started with. stills.js
+    # writes UTF-8, but on Windows a python whose stdin is a pipe decodes it with
+    # the ANSI code page (cp1252), so a clip library under C:/Users/José/ was
+    # looked for under "JosÃ©" and every arm came back "could not be opened".
+    _utf8_stream(sys.stdin)
+    _utf8_stream(sys.stdout)
     try:
         job = json.load(sys.stdin)
     except Exception as e:                                   # noqa: BLE001

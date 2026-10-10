@@ -15,11 +15,11 @@ const loaded = (revision = 1, extra = {}) => ({revision, desired: {audio_id:AUDI
 // DOM and transport boundary. Requests and media actions remain observable;
 // tests never replace the controller with a mock that would hide its races.
 function browser(t, options = {}) {
-  const elements = new Map(), requests = [], media = [], contexts = [], intervals = new Map();
+  const elements = new Map(), requests = [], media = [], contexts = [], intervals = new Map(), cues = [], motions = [], poses = [], previews = [], cameras = [], resets = [];
   let nextTimer = 0, controller, current = true;
   let session = {revision:0, desired:{audio_id:null, url:null, name:null, bytes:0, playing:false, time:0, load_revision:0, seek_revision:0}};
-  const node = id => { if (!elements.has(id)) elements.set(id, {hidden:false, disabled:false, value:'0', textContent:'', className:''}); return elements.get(id); };
-  const document = {hidden:false, getElementById:node,
+  const node = id => { if (!elements.has(id)) elements.set(id, {hidden:id==='voice-cue-row', disabled:false, value:id==='voice-cue-expression'?'':'0', textContent:'', className:'',children:[],append(option){this.children.push(option);if(this.children.length===1)this.value=option.value;}}); return elements.get(id); };
+  const document = {hidden:false, getElementById:node, createElement:tag => ({tag,value:'',textContent:''}),
     body:{classList:{contains:name => name === 'avatar-overlay' && options.overlay === true}}};
   class FakeAudio extends EventTarget {
     constructor() { super(); this.currentTime = 0; this.duration = NaN; this.paused = true; this.ended = false; this.error = null; this.playCalls = 0; media.push(this); }
@@ -50,7 +50,7 @@ function browser(t, options = {}) {
       const body = JSON.parse(init.body); requests.push(body);
       const value = options.response ? await options.response(body) : undefined;
       return {ok:!value?.httpError, status:value?.httpError || 200,
-        async json() { return structuredClone(value ?? (body.action === 'upload' ? {audio_id:AUDIO_ID} : session)); }};
+        async json() { return structuredClone(value ?? (body.action === 'upload' ? {audio_id:AUDIO_ID} : body.action === 'cue_inventory' ? {expressions:[{name:'happy',isBinary:false}]} : session)); }};
     },
   };
   const previous = new Map(Object.keys(globals).map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -66,15 +66,96 @@ function browser(t, options = {}) {
   const expressionManager = {getExpression:name => values.has(name) ? {} : null,
     getValue:name => values.get(name), setValue:(name, value) => values.set(name, value)};
   return {
-    node, requests, media, contexts, intervals, document, values,
-    async mount() { controller = await mountAvatarVoice({row:{id:ID, inspection:{sha256:'a'.repeat(64)}},
-      runtime:{vrm:{expressionManager}}, isCurrent:() => current}); return controller; },
+    node, requests, media, contexts, intervals, document, values, cues, motions, poses, previews, cameras, resets,
+    async mount() { controller = await mountAvatarVoice({row:{id:ID, inspection:{sha256:'a'.repeat(64),profile:options.vrm?'vrm':'world'}},
+      runtime:{vrm:{expressionManager},setExpressionCue(name){cues.push(['set',name]);return true;},clearExpressionCue(){cues.push(['clear']);}}, isCurrent:() => current,
+      ...(options.motion?{onMotion:(desired,revision)=>{motions.push([structuredClone(desired),revision]);return options.motionFailure!==true;}}: {}),
+      ...(options.pose?{onJointPose:(desired,revision)=>{poses.push([structuredClone(desired),revision]);return options.poseFailure!==true;}}:{}),
+      ...(options.preview?{onPreviewMotion:(desired,revision)=>{previews.push([desired,revision]);return options.previewFailure!==true;}}:{}),
+      ...(options.camera?{onCamera:(view,revision)=>{cameras.push([view,revision]);return options.cameraFailure!==true;}}:{}),
+      ...((options.motion||options.pose||options.preview||options.camera)?{onSessionReset:()=>resets.push('reset')}: {})}); return controller; },
     session(value) { session = structuredClone(value); },
     stale() { current = false; },
     metadata(duration = 8) { media[0].duration = duration; media[0].dispatchEvent(new Event('loadedmetadata')); },
     tick() { return [...intervals.values()][0]?.(); },
   };
 }
+
+test('VRM cue inventory drives UI and MCP cue expires without altering the saved look',async t=>{
+  const f=browser(t,{vrm:true}),voice=await f.mount();
+  assert.deepEqual(f.requests.map(request=>request.action),['register','cue_inventory']);
+  assert.equal(f.node('voice-cue-row').hidden,false);
+  assert.equal(f.node('voice-cue-expression').value,'happy');
+  assert.equal(f.node('voice-cue').disabled,false);
+  await f.node('voice-cue').onclick();
+  const request=f.requests.at(-1);
+  assert.equal(request.op,'cue');assert.equal(request.expression,'happy');assert.equal(request.duration_ms,3000);
+  f.node('voice-cue-duration').value='500';
+  await f.node('voice-cue').onclick();
+  assert.equal(f.requests.at(-1).duration_ms,500,'short chat reactions use the selected cue duration');
+  const requestCount=f.requests.length;
+  f.node('voice-cue-duration').value='25000';
+  f.node('voice-cue').onclick();
+  assert.equal(f.requests.length,requestCount,'unsupported duration cannot leave the browser');
+  const expiresAt=Date.now()+5000;
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,
+    cue:{expression:'happy',expiresAt,revision:1}}});
+  await f.tick();
+  assert.deepEqual(f.cues.at(-1),['set','happy']);
+  assert.equal(f.node('voice-cue-clear').disabled,false);
+  f.session({revision:0,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,load_revision:0,seek_revision:0,cue:null}});
+  await f.tick();
+  assert.deepEqual(f.cues.at(-1),['set','happy'],'a stale heartbeat cannot clear the newer cue');
+  const originalNow=Date.now;Date.now=()=>expiresAt+1;
+  try{voice.update(0);}finally{Date.now=originalNow;}
+  assert.deepEqual(f.cues.at(-1),['clear']);
+  assert.equal(f.node('voice-cue-clear').disabled,true);
+});
+
+test('a pending short cue displays for its full lifetime and does not replay on later polls',async t=>{
+  const f=browser(t,{vrm:true}),voice=await f.mount();
+  const originalNow=Date.now;let clock=100000;Date.now=()=>clock;
+  try{
+    f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+      load_revision:0,seek_revision:0,audio_revision:0,cue:{expression:'happy',durationMs:250,expiresAt:null,revision:1}}});
+    clock+=1000;await f.tick();
+    assert.deepEqual(f.cues,[['set','happy']]);
+    assert.equal(f.node('voice-cue-state').hidden,false);
+    await f.tick();assert.equal(f.requests.at(-1).applied_revision,1);
+    clock+=249;voice.update(0);
+    assert.deepEqual(f.cues,[['set','happy']]);
+    clock+=2;voice.update(0);
+    assert.deepEqual(f.cues.at(-1),['clear']);
+    await f.tick();
+    assert.equal(f.cues.filter(item=>item[0]==='set').length,1,'the pending response must not retrigger a finished cue');
+  }finally{Date.now=originalNow;}
+});
+
+test('a hidden preview leaves a cue pending until it can render again',async t=>{
+  const f=browser(t,{vrm:true}),voice=await f.mount();voice.setActive(false);
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:{expression:'happy',durationMs:250,expiresAt:null,revision:1}}});
+  await f.tick();
+  assert.equal(f.cues.length,0);
+  await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  voice.setActive(true);await f.tick();
+  assert.deepEqual(f.cues.at(-1),['set','happy']);
+  await f.tick();assert.equal(f.requests.at(-1).applied_revision,1);
+});
+
+test('a cue after audio ends does not start the song again',async t=>{
+  const f=browser(t,{vrm:true});await f.mount();
+  f.session(loaded(2,{playing:true,audio_revision:2}));await f.tick();await flush();
+  const before=f.media[0].playCalls;
+  f.media[0].ended=true;f.media[0].paused=true;f.media[0].dispatchEvent(new Event('ended'));
+  f.session(loaded(3,{playing:true,audio_revision:2,cue:{expression:'happy',durationMs:250,expiresAt:null,revision:3}}));
+  await f.tick();await flush();
+  assert.deepEqual(f.cues.at(-1),['set','happy']);
+  assert.equal(f.media[0].playCalls,before);
+  f.session(loaded(4,{playing:true,audio_revision:2,cue:null}));
+  await f.tick();await flush();
+  assert.equal(f.media[0].playCalls,before);
+});
 
 test('registers the selected content identity and does not play or request audio permission at mount', async t => {
   const f = browser(t); await f.mount();
@@ -84,6 +165,94 @@ test('registers the selected content identity and does not play or request audio
   assert.deepEqual(f.requests[0].capabilities, {audio:true, lip_sync:true});
   assert.equal(f.media[0].playCalls, 0); assert.equal(f.contexts.length, 0);
   assert.equal(f.node('voice-panel').hidden, false); assert.equal(f.node('voice-play').disabled, true);
+});
+
+test('motion commands reach the same preview, acknowledge application and leave audio untouched',async t=>{
+  const f=browser(t,{motion:true}),voice=await f.mount();
+  assert.deepEqual(f.requests[0].capabilities,{audio:true,lip_sync:true,motion:true});
+  const motion={clip_index:0,playing:false,time:0,speed:1,time_revision:1};
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,motion,motion_revision:1}});
+  await f.tick();assert.deepEqual(f.motions,[[motion,1]]);
+  await f.tick();assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.media[0].playCalls,0);
+  const next={...motion,playing:true,speed:1.5};
+  f.session({revision:2,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,motion:next,motion_revision:2}});
+  await f.tick();assert.deepEqual(f.motions.at(-1),[next,2]);
+  await f.tick();assert.equal(f.requests.at(-1).applied_revision,2);
+  await voice.motionCommand('motion_pause');
+  assert.equal(f.requests.at(-1).op,'motion_pause');
+});
+
+test('joint bends reach the browser, retry failed application, and acknowledge only after display',async t=>{
+  const options={pose:true,poseFailure:true},f=browser(t,options),voice=await f.mount();
+  assert.deepEqual(f.requests[0].capabilities,{audio:true,lip_sync:true,joint_pose:true});
+  const joint_pose={node_index:2,axis:'z',degrees:25};
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,joint_pose,joint_pose_revision:1}});
+  await f.tick();await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.poseFailure=false;await f.tick();await f.tick();
+  assert.deepEqual(f.poses.at(-1),[joint_pose,1]);assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.media[0].playCalls,0);
+  await voice.jointPoseCommand('joint_reset');assert.equal(f.requests.at(-1).op,'joint_reset');
+});
+
+test('failed motion application is retried and never acknowledged early',async t=>{
+  const options={motion:true,motionFailure:true},f=browser(t,options);await f.mount();
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,
+    motion:{clip_index:0,playing:true,time:0,speed:1,time_revision:1},motion_revision:1}});
+  await f.tick();await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.motionFailure=false;await f.tick();await f.tick();
+  assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.motions.length,3);
+});
+
+test('camera commands steer this preview and acknowledge only after the view changes',async t=>{
+  const options={camera:true,cameraFailure:true},f=browser(t,options),voice=await f.mount();
+  assert.equal(f.requests[0].capabilities.camera,true);
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,camera_view:'side',camera_revision:1}});
+  await f.tick();await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.cameraFailure=false;await f.tick();await f.tick();
+  assert.deepEqual(f.cameras.at(-1),['side',1]);assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.media[0].playCalls,0);
+  await voice.cameraCommand('back');assert.equal(f.requests.at(-1).op,'camera_view');assert.equal(f.requests.at(-1).view,'back');
+});
+
+test('VRM movement preview uses the shared session and acknowledges only after application',async t=>{
+  const options={vrm:true,preview:true,previewFailure:true},f=browser(t,options),voice=await f.mount();
+  assert.equal(f.requests[0].capabilities.preview_motion,true);
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,preview_motion:true,preview_motion_revision:1}});
+  await f.tick();await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.previewFailure=false;await f.tick();await f.tick();
+  assert.deepEqual(f.previews.at(-1),[true,1]);assert.equal(f.requests.at(-1).applied_revision,1);
+  assert.equal(f.media[0].playCalls,0);
+  await voice.previewMotionCommand('preview_motion_stop');assert.equal(f.requests.at(-1).op,'preview_motion_stop');
+});
+
+test('VRM sway waits for a clip to clear before applying and acknowledging',async t=>{
+  const options={vrm:true,motion:true,motionFailure:true,preview:true},f=browser(t,options);await f.mount();
+  f.session({revision:1,desired:{audio_id:null,url:null,name:null,bytes:0,playing:false,time:0,
+    load_revision:0,seek_revision:0,audio_revision:0,cue:null,
+    motion:{clip_index:null,playing:false,time:0,speed:1,time_revision:1},motion_revision:1,
+    preview_motion:true,preview_motion_revision:1}});
+  await f.tick();assert.equal(f.previews.length,0);
+  await f.tick();assert.equal(f.requests.at(-1).applied_revision,0);
+  options.motionFailure=false;await f.tick();assert.deepEqual(f.previews,[[true,1]]);
+  await f.tick();assert.equal(f.requests.at(-1).applied_revision,1);
+});
+
+test('an expired motion preview resets its local controller before a new session',async t=>{
+  let expire=false;
+  const f=browser(t,{motion:true,response:body=>body.action==='heartbeat'&&expire
+    ? {httpError:410,error:'Preview session expired'}:undefined});
+  await f.mount();const original=f.requests[0].session_id;
+  expire=true;await f.tick();
+  assert.deepEqual(f.resets,['reset']);
+  assert.notEqual(f.requests.filter(row=>row.action==='register').at(-1).session_id,original);
 });
 
 test('MCP load and play reach real media and acknowledge only the consumed revision', async t => {
@@ -242,6 +411,19 @@ test('HTTP 410 re-registers an empty preview with a new identity and zero acknow
   await f.tick(); const heartbeat = f.requests.at(-1);
   assert.equal(heartbeat.session_id, registration.session_id); assert.equal(heartbeat.applied_revision, 0);
   assert.equal(heartbeat.status.phase, 'empty'); assert.equal(heartbeat.status.time, 0);
+});
+
+test('a session removed during cleanup re-registers after its 404 heartbeat',async t=>{
+  let missing=false;
+  const f=browser(t,{response:body=>body.action==='heartbeat'&&missing
+    ? {httpError:404,error:'Preview session not found.'}:undefined});
+  await f.mount();const before=f.requests[0].session_id;
+  missing=true;await f.tick();
+  const after=f.requests.filter(row=>row.action==='register').at(-1).session_id;
+  assert.notEqual(after,before);
+  missing=false;await f.tick();
+  assert.equal(f.requests.at(-1).session_id,after);
+  assert.equal(f.requests.at(-1).applied_revision,0);
 });
 
 test('a late heartbeat cannot overwrite a newer Stop command or decrease its acknowledgment', async t => {

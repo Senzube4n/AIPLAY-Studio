@@ -4,6 +4,11 @@
  * never intercepted. In that mode every Images and Video render goes to the Pod
  * (there is no local engine to choose), so the "Render on" chooser stays hidden.
  *
+ * ADVANCED ONLY (the owner's decision of 2026-09-26). Simple never shows these
+ * blocks or their Remote numbers (web/styles.css keeps them out of Simple),
+ * and in this mode the screens open on Advanced and offer no Simple
+ * (server/welcome/level.js advancedOnly, read by web/assist.js and web/app.js).
+ *
  * The local forms remain authoritative for prompts and common render settings.
  * This module only changes where the final button sends them. The worker token
  * goes directly to the local backend secret store and is never returned here. */
@@ -71,7 +76,8 @@ function renderSetup(data) {
     button.textContent = bundle.state === "ready" ? "Verified" : bundle.state === "downloading" ? "Downloading…" : bundle.state === "paused" ? "Resume" : bundle.state === "failed" ? "Repair" : "Install";
     button.disabled = ["ready", "downloading"].includes(bundle.state);
     const detail = document.createElement("p"); detail.className = "hint";
-    detail.textContent = `${bundle.description} · ${bytes(bundle.totalBytes)} · ${bundle.state}`;
+    detail.textContent = `${bytes(bundle.totalBytes)} · ${bundle.state}`;
+    detail.title = bundle.description;
     const terms = document.createElement("label");
     const accept = document.createElement("input"); accept.type = "checkbox"; accept.dataset.modelTerms = bundle.id; accept.disabled = bundle.state === "ready";
     const link = document.createElement("a"); link.href = bundle.licenseUrl; link.target = "_blank"; link.rel = "noreferrer"; link.textContent = "model repository and terms";
@@ -87,7 +93,7 @@ function renderSetup(data) {
   const finished = setupWasActive && !data.active;
   setupWasActive = !!data.active;
   $("runpodCancelModel").hidden = !data.active;
-  $("runpodModelState").textContent = data.active ? "A verified download is running on the Pod. You may close this window; progress remains on the worker." : "";
+  $("runpodModelState").textContent = data.active ? "Downloading on Pod" : "";
   clearTimeout(setupTimer);
   if (data.active) setupTimer = setTimeout(() => refreshSetup(), 1500);
   else if (finished) api("/models").then((info) => { objectInfo = info; fillModels(); }).catch(() => {});
@@ -279,7 +285,7 @@ async function submit(kind) {
   try {
     await ensureWorker();
     const [width, height] = dimensions(kind);
-    let template, options, label;
+    let template, options, label, isPrivate = false;
     if (kind === "img") {
       noRemoteImageInputs();
       const prompt = $("imgPrompt").value.trim();
@@ -292,7 +298,10 @@ async function submit(kind) {
         steps: Number($("imgSteps").value) || 20, seed: raw ? Number(raw) : randomSeed(),
         count: Number($("imgCount").value) || 1, negative: $("imgRunPodNegative").value.trim(),
         cfg: Number($("imgRunPodCfg").value) || 6 });
-      label = `AIPLAY image · ${prompt.slice(0, 100)}`;
+      /* "Don't record the prompt": no words in the label, and the server
+       * records the job the way the local door records a private render. */
+      isPrivate = !!$("imgPrivate")?.checked;
+      label = isPrivate ? "AIPLAY image · prompt not recorded" : `AIPLAY image · ${prompt.slice(0, 100)}`;
     } else {
       noRemoteVideoInputs();
       const prompt = $("vidPrompt").value.trim();
@@ -306,7 +315,7 @@ async function submit(kind) {
     }
     note(kind, "Building and validating the remote workflow…");
     const built = await api("/workflow", { template, options });
-    const job = await api("/jobs", { graph: built.graph, bindings: [], label });
+    const job = await api("/jobs", { graph: built.graph, bindings: [], label, ...(isPrivate ? { private: true } : {}) });
     active.set(kind, job.id);
     note(kind, `RunPod job ${job.id.slice(0, 8)} queued. You can keep using AIPLAY.`);
     watch(kind, job.id);
@@ -420,6 +429,17 @@ async function init() {
       $("runpodTemplateState").textContent = error.message; $("runpodTemplateState").classList.add("warnline");
     } finally { button.disabled = false; button.textContent = "Create private templates"; }
   });
+  /* The install command is the Studio's own, pinned to its commit
+   * (server/engine/runpod-bootstrap.js), so it is asked for, not typed in the
+   * page. Where the Studio cannot name its commit there is no command. */
+  api("/bootstrap").then((b) => {
+    $("runpodBootstrapCommand").value = b.command || "";
+    $("runpodCopyBootstrap").disabled = !b.command;
+    $("runpodBootstrapState").textContent = b.command
+      ? `Installs the worker from ${b.repo} at this Studio's commit ${b.commit.slice(0, 7)}, checked before it runs. A commit that is not on GitHub yet cannot be fetched by the Pod.`
+        + (b.note ? ` ${b.note}` : "")
+      : [b.problem, b.note].filter(Boolean).join(" ");
+  }).catch((error) => { $("runpodCopyBootstrap").disabled = true; $("runpodBootstrapState").textContent = error.message; });
   $("runpodCopyBootstrap").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("runpodBootstrapCommand").value); $("runpodBootstrapState").textContent = "Bootstrap command copied."; }
     catch { $("runpodBootstrapCommand").select(); $("runpodBootstrapState").textContent = "Press Ctrl+C to copy the selected command."; }
@@ -442,7 +462,8 @@ async function init() {
     const action = button.dataset.podPower;
     if (action === "start" && !window.confirm("Start this Pod now? Paid GPU billing begins as soon as RunPod allocates the GPU.")) return;
     button.disabled = true;
-    try { await accountApi(`/pods/${encodeURIComponent(button.dataset.podId)}/${action}`, {}); renderAccount(await accountApi("/overview")); }
+    try { await accountApi(`/pods/${encodeURIComponent(button.dataset.podId)}/${action}`,
+      action === "start" ? { confirm: "START PAID POD" } : {}); renderAccount(await accountApi("/overview")); }
     catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
     finally { button.disabled = false; }
   });

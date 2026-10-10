@@ -94,9 +94,12 @@ console.log("\n§2  the graph");
 console.log("\n§2b the pictures: a schedule on the peaks, and the graph with our IP-Adapter");
 {
   const s = ipScheduleFromPeaks({ peaks: [0, 22, 45], frames: 50, pictures: 2, transition: 5 });
-  eq("picture 0 holds, then cross-fades to picture 1 over the five frames ending ON the hit at 22, then holds picture 1",
-    [s.per_frame[0], s.per_frame[16], s.per_frame[17], s.per_frame[21], s.per_frame[22], s.per_frame[45]],
-    [[[0, 1]], [[0, 1]], [[0, 0.8333], [1, 0.1667]], [[0, 0.1667], [1, 0.8333]], [[1, 1]], [[0, 1]]]);
+  eq("the five-frame reference blend straddles the drum hit, as Yvann's transition node does",
+    [s.per_frame[19], s.per_frame[20], s.per_frame[21], s.per_frame[22], s.per_frame[23], s.per_frame[24], s.per_frame[25]],
+    [[[0, 1]], [[0, 1], [1, 0]], [[0, 0.75], [1, 0.25]], [[0, 0.5], [1, 0.5]], [[0, 0.25], [1, 0.75]], [[0, 0], [1, 1]], [[1, 1]]]);
+  eq("later nearby hits overwrite earlier blend windows like the reference node",
+    ipScheduleFromPeaks({ peaks: [0, 5, 7], frames: 12, pictures: 3, transition: 5 }).per_frame[5],
+    [[1, 1], [2, 0]]);
   eq("the pictures loop: with three pictures the third segment is picture 2, the fourth picture 0 again",
     ipScheduleFromPeaks({ peaks: [10, 20, 30], frames: 40, pictures: 3, transition: 0 }).per_frame.map((e) => e[0][0]).filter((_, f) => f % 10 === 5), [0, 1, 2, 0]);
   eq("min and max scale the weights", ipScheduleFromPeaks({ peaks: [], frames: 2, pictures: 1, min: 0.2, max: 0.8 }).per_frame[0], [[0, 0.8]]);

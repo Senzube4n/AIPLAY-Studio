@@ -7,6 +7,12 @@ export const previewHash = (value) => createHash("sha256").update(typeof value =
 function refuse(reason, message) { const error = new Error(message); error.reason = reason; return error; }
 
 export function previewManifest(packet) {
+  if (packet.kind === "job-order" && packet.jobType === "image") {
+    return (packet.job?.references || []).map((row) => ({
+      file: `Reference ${row.ordinal} (${row.mime})`, ordinal: row.ordinal, bytes: row.bytes,
+      sha256: row.sha256, included: true,
+    }));
+  }
   const included = packet.kind === "order";
   const rows = included ? packet.files || []
     : packet.kind === "project" ? packet.assets || []
@@ -36,9 +42,12 @@ export function createPreviewStore({ now = Date.now, ttlMs = 15 * 60_000, maxByt
       bytes += size;
       const packet = JSON.parse(serialized);
       if (Array.isArray(packet.files)) packet.files = packet.files.map(({ b64, ...row }) => row);
+      if (packet.kind === "job-order" && packet.jobType === "image" && Array.isArray(packet.job?.references)) {
+        packet.job.references = packet.job.references.map(({ b64, ...row }) => row);
+      }
       return { ok: true, previewId, expires, kind: payload.kind, to, describes, packet, manifest,
         payloadBytes: size, includedBytes: manifest.filter((row) => row.included).reduce((sum, row) => sum + (Number(row.bytes) || 0), 0),
-        note: note || (payload.kind === "order" ? "These picture bytes and the resolved render settings will be sealed exactly as previewed. The friend must accept before rendering."
+        note: note || (payload.kind === "order" || payload.kind === "job-order" ? "These picture bytes and the resolved render settings will be sealed exactly as previewed. The friend must accept before rendering."
           : payload.kind === "resources" ? "Only this hardware/capability snapshot leaves. It is not live availability."
           : "Pictures are listed by size and hash only. Their bytes are not included in this packet.") };
     },

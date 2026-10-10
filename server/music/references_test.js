@@ -13,6 +13,7 @@ async function fixture(t, overrides = {}) {
   await mkdir(path.join(config.outputDir, "clips"), { recursive: true });
   await writeFile(path.join(config.outputDir, "track.wav"), "original audio bytes");
   await writeFile(path.join(config.outputDir, "clips", "clip.mp4"), "original video bytes");
+  await writeFile(path.join(config.outputDir, "clips", "import_voice.wav"), "imported audio bytes");
   let calls = 0;
   const engine = { objectInfo: async () => { calls++; throw new Error("offline"); }, run: async () => { calls++; throw new Error("unexpected GPU call"); } };
   const prepareMedia = async ({ directory, body }) => {
@@ -58,6 +59,19 @@ test("paths, URLs, bad windows and unsupported fields are refused before prepara
   for (const file of ["../track.wav", "C:\\track.wav", "https://host/track.wav", "track.txt"]) await assert.rejects(service.request({ action: "prepare", kind: "audio", file }), /bare filename/);
   await assert.rejects(service.request({ action: "prepare", kind: "audio", file: "track.wav", seconds: -1 }), /seconds/);
   await assert.rejects(service.request({ action: "prepare", kind: "audio", file: "track.wav", url: "https://example.com" }), /Unsupported/);
+});
+
+test("imported clip audio can be prepared without mislabelling it as library audio", async t => {
+  const { service } = await fixture(t);
+  await assert.rejects(service.request({ action: "prepare", kind: "audio", file: "import_voice.wav" }), /not found/);
+  await assert.rejects(service.request({ action: "prepare", kind: "video", location: "library", file: "clip.mp4" }), /Choose library audio/);
+  for (const file of ["../import_voice.wav", "C:\\music\\import_voice.wav", "https://host/import_voice.wav"])
+    await assert.rejects(service.request({ action: "prepare", kind: "audio", location: "clips", file }), /bare filename/);
+  const started = await service.request({ action: "prepare", kind: "audio", location: "clips", file: "import_voice.wav", seconds: 2 });
+  const row = await service.settled(started.reference.id);
+  assert.equal(row.state, "ready");
+  assert.deepEqual([row.source.kind, row.source.location, row.source.file], ["audio", "clips", "import_voice.wav"]);
+  assert.equal(row.source.sha256, createHash("sha256").update("imported audio bytes").digest("hex"));
 });
 
 test("stale and simultaneous brief writes cannot overwrite a newer draft", async t => {

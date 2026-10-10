@@ -21,7 +21,8 @@ Backend restrictions and validation limits are documented below.
   or attaching a cue sends no files and starts no generation. Supplied-score
   rendering currently supports Python YuE2 and native GGUF, not the current
   Comfy graph.
-- **Reference music:** choose local library audio or a clip; prepare a region
+- **Reference music:** choose local library audio or a clip, or import audio/video
+  into the clip bin first; prepare a region
   up to 120 seconds and six timestamped frames on CPU. Optional local Qwen3-VL
   analysis suggests music from the frames; optional SheetSage2 transcription
   produces editable ABC. Measured beats, model suggestions and the editable

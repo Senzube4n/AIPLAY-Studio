@@ -81,6 +81,36 @@ test('reloaded composed geometry matches live wardrobe at rest and when original
   for(let i=0;i<3;i++)for(let k=0;k<16;k++)assert.equal(a.at(i,k),b.at(i,k));runtime.dispose();
 });
 
+test('prepared hair reports only actual weights to original spring joints and reuses those joints after export',async()=>{
+  const base=model({vrm:true}),hair=model(),inspection=await inspectWardrobePart(hair,base,hash(base));
+  assert.deepEqual(inspection.motion,{mode:'base_springs',baseSpringChains:1,springLinkedJoints:1,springLinkedVertices:2,minimumWeight:.05});
+  const rigidHair=rewrite(hair,(j)=>{j.meshes[0].name='Rigid hair';});
+  const rigid=readGlb(rigidHair),rigidBin=Buffer.from(rigid.binData);
+  for(let vertexIndex=0;vertexIndex<8;vertexIndex++)rigidBin.writeUInt8(0,288+vertexIndex*4);
+  const noSpringWeight=await inspectWardrobePart(packGlb(rigid.json,rigidBin),base,hash(base));
+  assert.equal(noSpringWeight.motion.mode,'none');assert.equal(noSpringWeight.motion.springLinkedVertices,0);
+  const result=await compose(base,hair),out=readGlb(result.bytes);
+  assert.deepEqual(result.manifest.parts[0].motion,inspection.motion);
+  assert.deepEqual(out.json.extensions.VRMC_springBone,readGlb(base).json.extensions.VRMC_springBone);
+  const loaded=await parse(result.bytes),meshesOut=meshes(loaded),original=vertex(meshesOut[1],2);
+  const springBone=meshesOut[0].skeleton.bones[2];springBone.rotation.z=.5;loaded.scene.updateMatrixWorld(true);
+  assert.ok(vertex(meshesOut[1],2).distanceTo(original)>.01);
+  assert.equal(meshesOut[1].skeleton.bones[2],springBone);
+});
+
+test('composed hair on a child bone follows its parent VRM spring joint',async()=>{
+  const base=rewrite(model({vrm:true}),j=>{j.extensions.VRMC_springBone.springs[0].joints[0].node=2;});
+  const original=readGlb(model()),bin=Buffer.from(original.binData);
+  for(let index=0;index<8;index++)bin.writeUInt8(2,288+index*4);
+  const hair=packGlb(original.json,bin),inspection=await inspectWardrobePart(hair,base,hash(base));
+  assert.deepEqual(inspection.motion,{mode:'base_springs',baseSpringChains:1,springLinkedJoints:1,springLinkedVertices:8,minimumWeight:.05});
+  const composed=await compose(base,hair),loaded=await parse(composed.bytes),drawn=meshes(loaded).at(-1),before=vertex(drawn,1);
+  const springParent=meshes(loaded)[0].skeleton.bones[1],child=drawn.skeleton.bones[2];
+  assert.equal(child.parent,springParent);
+  springParent.rotation.z=.5;loaded.scene.updateMatrixWorld(true);
+  assert.ok(vertex(drawn,1).distanceTo(before)>.05);
+});
+
 test('hash pins, duplicate IDs, unsupported extensions and incompatible joint poses are refused',async()=>{
   const base=model({vrm:true}),part=model();await assert.rejects(composeAvatarVrm({baseBytes:base,baseSha256:'0'.repeat(64),parts:[entry(part)]}),/changed since inspection/);
   await assert.rejects(composeAvatarVrm({baseBytes:base,baseSha256:hash(base),parts:[{...entry(part),sha256:'f'.repeat(64)}]}),/changed since inspection/);

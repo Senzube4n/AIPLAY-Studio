@@ -1,4 +1,11 @@
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
+import { reactiveSourceWindow } from './reactive-source-window.js';
+import { mountH3RefMods } from './h3-refmods.js';
+import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
+import { createVectorizer } from './vectorize-controls.js';
+import { mountFullPlayerScore } from './full-player-score.js';
+import { musicBatchIdea } from './music-batch-spec.js';
+var iedVectorizer = null;
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -74,6 +81,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 // in the temporal dead zone throws at module load and kills the whole file.
 // Module-level DOM singletons belong at the top.
 const audio = $("audio");
+const fullPlayerScore = mountFullPlayerScore({audio});
 
 // Disk, in the units people actually think in. Base 1000 to match what Explorer
 // reports for the same folder, so the two never appear to disagree.
@@ -663,15 +671,39 @@ globalThis.aiplayOfferModel = offerModel;
  * Returns false when the reply is not about a missing model.
  */
 function offerModel(r) {
+  /* THE ROW IS INSTALLED, BUT THE RENDERER COULD NOT OPEN A FILE (setF,
+   * 2026-09-26). The video gate says so with `recheck`, naming each file and
+   * the path it looked at. The window opens on that row with "Look again",
+   * which asks the gate again, and the gate looks at the disk before it
+   * answers. Opened as "this needs a download" it showed a row reading
+   * Installed with nothing to press: where a tester's Fix ended. */
+  if (r?.recheck?.capabilityId) {
+    const files = Array.isArray(r.recheck.files) ? r.recheck.files : [];
+    openModelPicker({
+      kind: "auto", focus: r.recheck.capabilityId, recheck: true,
+      title: `Studio cannot open ${files.length === 1 ? "a file" : "files"} ${r.recheck.label || "the video engine"} needs`,
+      lead: files.map((f) => `${f.standIn || f.name}: ${f.reason === "missing" ? "not found" : f.reason} at ${f.path}.`).join(" ")
+        + ` Nothing needs downloading. ${files.length === 1 ? "Put it" : "Put them"} back there, then press Look again.`,
+      onRecheck: (found) => { if (found && typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst"); },
+    });
+    return true;
+  }
   const id = typeof r?.needsModel === "string" ? r.needsModel : r?.needsModel?.id || r?.capability || null;
   if (!id) return false;
   const title = String(r.error || "").split(/(?<=\.)\s/)[0] || "This needs a model";
   if (id === "chatQwen3") { needModel("chat", { title }); return true; }
   if (Object.values(MUSIC_CAP).includes(id)) { needModel("music", { title, focus: id }); return true; }
+  /* A VIDEO GATE REFUSAL (it names configuredEngine) whose download has
+   * finished since (setF): the row turns Installed, and the Video screen's
+   * "Couldn't start" with its Fix stayed, which opened this window on a row
+   * with nothing to press. The installed row gets Look again, as above. */
+  const fromVideoGate = !!r && Object.prototype.hasOwnProperty.call(r, "configuredEngine");
   openModelPicker({
     kind: "auto", focus: id, title,
     lead: r.gated ? "Studio cannot download this one itself. Here is how to get it, and what else does the job."
       : "Download it here, or pick one that fits this machine.",
+    ...(fromVideoGate ? { recheck: true,
+      onRecheck: (found) => { if (found && typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst"); } } : {}),
   });
   return true;
 }
@@ -770,6 +802,10 @@ function paintModelMusicPanel() {
       if (c && !c.available && !c.api && c.engine !== "yue2-gguf") {
         $("modelMusicPick").dataset.sig = "";
         paintMusicModelSelect($("modelMusicPick"));
+        if (c.engine === "yue2" && c.runtimeReadiness?.ready === false) {
+          $("modelMusicNote").textContent = c.readinessNote || c.note || "The separate Python kit needs setup.";
+          return;
+        }
         presetPoint(MUSIC_CAP[c.engine]);
         return;
       }
@@ -904,6 +940,10 @@ async function chooseMusicModel(value) {
   if (!c.available && c.engine !== "yue2-gguf") {
     /* Put every picker back on what is really selected, then offer the model. */
     document.querySelectorAll("#musicEngine, #modelMusicPick").forEach((s) => { s.dataset.sig = ""; paintMusicModelSelect(s); s.value = musicModelValue(); });
+    if (c.engine === "yue2" && c.runtimeReadiness?.ready === false) {
+      await appAlert(c.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup.", { title: c.note || "Python kit needs setup" });
+      return;
+    }
     needModel("music", c.api
       ? { title: `${c.label} needs your own key`, lead: `Paste your own key in ${c.keyPlace || "Settings"} (every song asks before it is billed), or pick a model that runs on this machine.`, focus: null }
       : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
@@ -1054,11 +1094,14 @@ function musicEnginePaint() {
    * this is the sentence, not the enforcement. */
   const noPath = eng.renderPath === false;
   const nativeReady = eng.runtime === "audiocpp" && nativeMusicReady(eng);
+  const pythonNotReady = eng.runtime === "python" && eng.ready === false;
   const warn = $("musicEngineWarn");
   if (warn) {
-    warn.hidden = !noPath && !(eng.runtime === "audiocpp" && !nativeReady);
+    warn.hidden = !noPath && !pythonNotReady && !(eng.runtime === "audiocpp" && !nativeReady);
     warn.textContent = eng.runtime === "audiocpp" && !nativeReady
       ? `${ggufPrecisionLabel()} is not ready. Review its optional runtime and weights below; selecting it does not download anything.`
+      : pythonNotReady
+      ? eng.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup."
       : noPath
       ? `${eng.label} cannot render from the Create button yet — it works through its own `
         + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
@@ -1074,8 +1117,11 @@ function musicEnginePaint() {
      * STARTING… — caught in review before it shipped. The painter may add a
      * reason to disable; it may not remove one it does not own. */
     /* RunPod GPU mode (state.remoteOnly): the queue renders on the Pod. */
-    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady : !state.engineReady && !state.remoteOnly);
-    create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
+    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady
+      : eng.runtime === "python" && typeof eng.ready === "boolean" ? !eng.ready
+      : !state.engineReady && !state.remoteOnly);
+    create.title = pythonNotReady ? warn?.textContent || "The separate Python kit needs setup."
+      : noPath ? `${eng.label} has no render path from this button yet.` : "";
   }
 
   /* Controls only one engine can honour. These ids were READ OUT OF THE LIVE
@@ -1151,6 +1197,7 @@ function musicEnginePaint() {
   if (typeof paintHumRows === "function") paintHumRows(false);
   if (typeof paintPlanDial === "function") paintPlanDial();
   // The receipt's rights word for this engine (web/receipt.js reads it off the picker).
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
   if (typeof paintMusicRights === "function") paintMusicRights();
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
@@ -1643,8 +1690,20 @@ function applySimple(on) {
  * on purpose: onLevel may call back at once, and setSimple's lets must exist. */
 let musicModeTouched = false;
 $("modeSeg")?.addEventListener("click", () => { musicModeTouched = true; });
+/* ADVANCED ONLY while the server says so (server/welcome/level.js
+ * advancedOnly: the launcher's RunPod GPU mode). Simple is off and says why,
+ * and no news, a Home card's included, opens it. */
+const musicSimpleTip = $("modeSimple")?.title || "";
+function musicLock(only) {
+  const locked = !!only?.screens?.includes("create");
+  const b = $("modeSimple");
+  if (b) { b.disabled = locked; b.title = locked ? only.why : musicSimpleTip; }
+  if (locked && state.simple) setSimple(false, true);
+  return locked;
+}
 onLevel((n) => {
   if ($("modeAdv") && n.advancedAdds?.create) $("modeAdv").title = n.advancedAdds.create;
+  if (musicLock(n.advancedOnly)) return;
   if (n.view && n.view !== "create") return;
   if (n.boot && musicModeTouched) return;
   if (!!n.simple !== !!state.simple) setSimple(!!n.simple, true);
@@ -2190,6 +2249,7 @@ function attachHelp() {
 async function openFullPlayer() {
   const file = state.playingFile;
   const t = (state.library || []).find((x) => x.file === file);
+  fullPlayerScore.setTrack(t);
   // Nothing playing yet — leave the panel open but empty rather than silently
   // ignoring the click, which reads as a broken button.
   if (!t) {
@@ -2228,6 +2288,7 @@ function setFullPlayer(open) {
   $("pExpand").title = open ? "Close the full player" : "Open the full player";
   $("pExpand").setAttribute("aria-expanded", String(open));
   if (open) openFullPlayer();
+  fullPlayerScore.setOpen(open);
 }
 $("pExpand").onclick = () => setFullPlayer($("fullPlayer").hidden);
 $("fpClose").onclick = () => setFullPlayer(false);
@@ -3033,6 +3094,20 @@ $("melodyUseYue")?.addEventListener("click", async () => {
 
 /* ── the YuE2 LoRA picker (Melody & score, ComfyUI engine only) ──────────── */
 let musicLoraShelfKey = null;
+let musicStyleAdapterShelf = [];
+const yueStyleAdapters = mountYue2StyleAdapters({
+  getState: () => state, getAdapters: () => [...(state.models?.capabilities || []), ...musicStyleAdapterShelf],
+  onSelect: async (patch) => {
+    const result = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "style-adapter", value: patch.lora }) })).json();
+    if (result.error) throw new Error(result.error);
+    state.musicYue2Lora = patch.lora; state.musicYue2LoraClip = patch.loraClip;
+    if (patch.loraStrength !== undefined) state.musicYue2LoraStrength = patch.loraStrength;
+    if (patch.loraClipStrength !== undefined) state.musicYue2LoraClipStrength = patch.loraClipStrength;
+  },
+  onChange: () => { if (typeof paintPlanDial === "function") paintPlanDial(); },
+  onError: (error) => { if ($("yLoraShelf")) $("yLoraShelf").textContent = error.message; },
+});
 async function musicLoadLoras(force = false) {
   const sel = $("yLora");
   if (!sel) return;
@@ -3044,6 +3119,9 @@ async function musicLoadLoras(force = false) {
     const d = await (await fetch(`/api/loras${ck ? `?for=${encodeURIComponent(ck)}` : ""}`)).json();
     rows = (d.loras || []).filter((l) => l.isLora);
   } catch { rows = []; }
+  musicStyleAdapterShelf = rows.filter(row => row.styleAdapter).map(row => ({
+    styleAdapter: row.styleAdapter, installed: true, discovered: true,
+  }));
   const fit = (l) => l.fits?.fit || "unknown";
   const chosen = state.musicYue2Lora || "";
   sel.innerHTML = '<option value="">none</option>' + rows.map((l) => {
@@ -3085,6 +3163,7 @@ async function musicLoadLoras(force = false) {
       if ($("yLoraClipStrengthValue")) $("yLoraClipStrengthValue").textContent = Number(state.musicYue2LoraClipStrength).toFixed(2);
     }
   }
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
 }
 async function musicSavePlannerLora() {
   const value = $("yLoraClip")?.value || "";
@@ -3403,11 +3482,20 @@ async function generate(preview, mixSeed) {
    * new audio and no message. A re-roll (mixSeed set) keeps the seed on purpose. */
   if (!state.seedLocked && mixSeed == null) $("seed").value = Math.floor(Math.random() * 4294967296);
   musicOutcomeMsg = null;   // a new Create replaces the last song's warning
+  musicOutcomeJob = null;
+  if ($("musicOutcomeDetails")) $("musicOutcomeDetails").hidden = true;
   let spec;
   try { spec = currentSpec(preview, mixSeed); }
   catch (error) { alert(error.message); return; }
   if (spec.engine === "yue2-gguf" && !nativeMusicReady(state.musicEngines?.[spec.engine])) {
     alert(`${ggufPrecisionLabel()} is not ready. Review its optional setup before generating.`);
+    return;
+  }
+  const chosenEngine = state.musicEngines?.[spec.engine || state.musicEngine];
+  if (chosenEngine?.runtime === "python" && chosenEngine.ready === false) {
+    if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("ctaNote", {
+      error: chosenEngine.readinessNote || "The separate Python kit needs setup.",
+    });
     return;
   }
   if (!spec.caption.trim()) { $("caption").focus(); return; }
@@ -3459,7 +3547,9 @@ async function generate(preview, mixSeed) {
   } finally {
     setTimeout(() => {
       const eng = (state.musicEngines || {})[state.musicEngine];
-      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng) : !state.engineReady && !state.remoteOnly;
+      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng)
+        : eng?.runtime === "python" && typeof eng.ready === "boolean" ? !eng.ready
+        : !state.engineReady && !state.remoteOnly;
     }, 400);
   }
 }
@@ -3478,20 +3568,31 @@ for (const b of document.querySelectorAll("[data-n]")) {
 }
 
 // Send the current prompt to the overnight list instead of rendering it now.
+function ovMusicIdea() {
+  const spec = currentSpec(false);
+  const idea = musicBatchIdea(spec, spec.engine || state.musicEngine || "minimax-music3");
+  if (idea.engine === "yue2-comfy" && state.musicYue2Checkpoint) idea.checkpoint = state.musicYue2Checkpoint;
+  // The exact text is part of YuE2 conditioning, including trailing spaces.
+  if (idea.abc !== undefined && $("yAbcUse")?.checked) idea.abc = $("yAbc").value;
+  return idea;
+}
 $("btnToOvernight").onclick = () => {
   const caption = captionValue().trim();
   if (!caption) { $("caption").focus(); return; }
-  const instrumental = state.mode === "instrumental";
-  ov.ideas.push({
-    title: $("title").value.trim() || "Untitled",
-    caption,
-    lyrics: instrumental ? $("scaffold").value : $("lyrics").value.trim(),
-    instrumental,
-    maxDuration: +$("maxDur").value,
-  });
+  let idea;
+  try { idea = ovMusicIdea(); }
+  catch (err) { $("ctaNote").textContent = err.message; return; }
+  if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  if (ov.ideas.length >= 40) { $("ctaNote").textContent = "The batch has 40 ideas. Remove one before adding another."; return; }
+  ov.ideas.push(idea);
   ovRender();
   $("ctaNote").textContent =
-    `Added to the overnight list — ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} queued. Set takes and start it in Overnight.`;
+    `Added to batch. ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} ready.`;
+  setView("overnight");
+};
+$("btnMusicBatch").onclick = () => {
+  if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  setView("overnight");
 };
 
 $("btnCreate").onclick = () => (xt.file ? runExtend() : generate(false));
@@ -3645,12 +3746,19 @@ function musicWarningHtml(track, compact = false) {
   const warnings = Array.isArray(track?.warnings)
     ? track.warnings.filter((w) => w && typeof w.message === "string" && w.message.trim()).slice(0, 5)
     : [];
+  /* Score capture or PDF engraving can fail after the audio has succeeded.
+   * Keep this scoped to the score, alongside existing per-take warnings. */
+  if (typeof track?.scoreWarning === "string" && track.scoreWarning.trim())
+    warnings.push({ code: "score_unavailable", message: track.scoreWarning });
   if (!warnings.length) return "";
   if (compact) {
-    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending" : "Check take";
+    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending"
+      : warnings.some((w) => w.code === "score_unavailable") ? "Check score" : "Check take";
     return `<button type="button" class="badge generation-warning" data-info="${encodeURIComponent(track.file)}" title="${esc(warnings.map((w) => w.message).join("\n"))}">${label}</button>`;
   }
-  return warnings.map((w) => `<p>${esc(w.message)}</p>`).join("");
+  return warnings.map((w) => w.code === "score_unavailable"
+    ? `<p title="${esc(w.message)}">${track.scoreSlug ? "Sheet music needs attention." : "Sheet music unavailable."}</p>`
+    : `<p>${esc(w.message)}</p>`).join("");
 }
 
 /**
@@ -3708,10 +3816,28 @@ function renderQueue(s) {
     rest += n * (a.stats?.[kind]?.avg ?? KIND_FALLBACK[kind] ?? 180);
   }
   const run = s.run;
+  const scheduledBatch = run?.state === "scheduled" && Number.isFinite(run.startAt);
+  if (scheduledBatch) {
+    const at = new Date(run.startAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    waiting.push(`batch scheduled ${at}`);
+    if (!now && waiting.length === 1) {
+      renderQueue.emptyAt = 0;
+      box.hidden = false;
+      box.classList.add("resting");
+      $("wbState").textContent = "scheduled";
+      $("wbEta").textContent = at;
+      $("wbNow").textContent = run.name || "Batch";
+      $("wbRest").hidden = false;
+      $("wbRest").textContent = `${run.total || 0} planned`;
+      wbLine("batch scheduled", clock(run.startAt), false);
+      if ($("wbStrip")) $("wbStrip").title = `Batch scheduled ${at}. Open for the queue and controls.`;
+      return;
+    }
+  }
   if (run && (run.state === "running" || run.state === "paused")) {
     const left = Math.max(0, (run.total || 0) - (run.done || 0));
     const kind = run.kind === "image" ? "picture" : run.kind === "video" ? "clip" : "song";
-    waiting.push(`overnight: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
+    waiting.push(`batch: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
     rest += Number(run.secondsLeft) || 0;
   }
 
@@ -4295,7 +4421,7 @@ function rowHtml(j) {
                Both halves are still required: the sheet route resolves a
                version id, so a row that knows its score but not a version
                gets no menu items rather than broken ones. */
-            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet — open it from the ⋯ menu">♪</span>' : ""}
+            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet. Open Score in the full player.">♪</span>' : ""}
           ${/* What is being made FOR THIS TRACK right now.
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
@@ -4452,7 +4578,7 @@ function openRowMenu(file, anchor) {
   m.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
 }
 
-/* ── community — advertising, not the draw ────────────── */
+/* ── community sessions ──────────────────────────────── */
 /* Hidden entirely when the feed is empty. "0 sessions live" advertises exactly
  * the wrong thing for a community that is still small. */
 
@@ -4483,6 +4609,11 @@ async function loadCommunity() {
   const soon = (feed?.parties || []).length;
   state.commLive = live;
   $("commPip").hidden = !live;
+  if ($("commRailStatus")) $("commRailStatus").textContent = live
+    ? `${live} live${soon ? ` · ${soon} soon` : ""}`
+    : soon ? `${soon} starting soon` : "Sessions & challenges";
+  const communityLink = document.querySelector('.nav [data-view="community"]');
+  if (communityLink) communityLink.title = `Community sessions${live ? `: ${live} live` : soon ? `: ${soon} starting soon` : ""}`;
 
   // The condensed banner, shown on the working views only. Leads with the
   // challenge if there is one, because that is the item that gives someone a
@@ -5994,7 +6125,7 @@ const tr = (body) => fetch("/api/train", {
 /* Survives a reload, because training outlives the page that started it. */
 const trRemember = (v) => { try { v ? localStorage.setItem("train.run", JSON.stringify(v)) : localStorage.removeItem("train.run"); } catch { /* a private window is not a reason to fail */ } };
 const trRecall = () => { try { return JSON.parse(localStorage.getItem("train.run") || "null"); } catch { return null; } };
-let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
+let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trCompareRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
 
 function trRegionIssue({ start, seconds, duration, maxStart = 3600 }) {
   if (!Number.isFinite(duration) || duration <= 0) return "Reading the source duration before training. If it cannot be read, choose another recording.";
@@ -6074,10 +6205,22 @@ $("trListen")?.addEventListener("click", async () => {
   $("trSourceAudio").currentTime = region.start; trAuditionEnd = region.start + region.seconds;
   try { await $("trSourceAudio").play(); } catch (e) { $("trSourceNote").textContent = `Could not play this recording: ${e.message || e}`; }
 });
+async function trCompareTakes() {
+  const before = $("trBefore").value, after = $("trAfter").value, request = ++trCompareRequest;
+  const note = $("trCompareStatus");
+  note.classList.toggle("warn", false);
+  if (!before || !after) { note.textContent = "Choose both takes to check their recorded settings."; return; }
+  note.textContent = "Checking the saved generation settings…";
+  const result = await tr({ action: "compare", before, after });
+  if (request !== trCompareRequest || $("trBefore").value !== before || $("trAfter").value !== after) return;
+  note.textContent = result.error || result.message || "Comparison unavailable.";
+  note.classList.toggle("warn", result.status !== "matched" || !!result.evidence?.provenanceWarning || !!result.error);
+}
 for (const side of ["Before", "After"]) {
   $(`tr${side}`)?.addEventListener("change", () => {
     const player = $(`tr${side}Audio`), file = $(`tr${side}`).value;
     player.pause(); player.src = file ? `/api/audio/${encodeURIComponent(file)}` : ""; player.hidden = !file;
+    trCompareTakes();
   });
   $(`tr${side}Audio`)?.addEventListener("play", () => { $("trSourceAudio").pause(); $(`tr${side === "Before" ? "After" : "Before"}Audio`).pause(); });
 }
@@ -6131,6 +6274,7 @@ async function paintTraining() {
         choice.innerHTML = '<option value="">Choose an existing render…</option>' + rows.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
         if (rows.some((t) => t.file === keep)) choice.value = keep;
       }
+      trCompareTakes();
     }
   } catch (e) { $("trNote").textContent = `Library could not refresh: ${e.message || e}. Previous choices are still shown.`; }
 
@@ -6170,9 +6314,10 @@ $("trStart")?.addEventListener("click", async () => {
   if (!trStatus?.ready || issue || !$("trName").value.trim()) { if (note) note.textContent = issue || "Check the hardware status and give the adapter a name first."; return; }
   trStarting = true; trPaintRegion();
   if (note) note.textContent = "Cutting the song and reading it into codes…";
+  const sourceFile = $("trFile")?.value;
   const r = await tr({
     action: "start",
-    file: $("trFile")?.value,
+    file: sourceFile,
     name: $("trName")?.value,
     startSeconds: Number($("trStartSeconds")?.value),
     seconds: Number($("trSeconds")?.value) || undefined,
@@ -6183,7 +6328,7 @@ $("trStart")?.addEventListener("click", async () => {
   trStarting = false;
   if (r.error) { if (note) note.textContent = r.error; trPaintRegion(); return; }
   if (note) note.textContent = r.note || "Started.";
-  const run = { runId: r.runId, name: r.name, settings: r.settings, file: $("trFile").value };
+  const run = { runId: r.runId, name: r.name, settings: r.settings, file: sourceFile };
   trRemember(run);
   showTrainLive(run); trPaintRegion();
   trCheckRun();
@@ -6235,7 +6380,7 @@ $("trCheck")?.addEventListener("click", trCheckRun);
  */
 const cb = (body) => fetch("/api/collab", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}` }));
+}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}`, transportFailure: true }));
 
 /* ⚠ ONE VISIBLE LANDING PLACE FOR EVERY MESSAGE, OUTSIDE ALL THREE PANES.
  * Five handlers used to write into #cbFreeNote, which was safe only while the
@@ -6267,7 +6412,7 @@ function cbConfirm({ title, body, yes }) {
  * asks the Workflow view to open that project (web/mv.js listens) and goes
  * there. */
 /* ⚠ A SCREEN IS NAMED BY THE RAIL'S OWN LABEL, NEVER BY A WORD TYPED HERE.
- * The agreed UI plan relabels rail entries (Workflow is to read "Music video"),
+ * The rail names the multipurpose workflow screen "Production",
  * and every sentence in this section that says where to go reads the label
  * off the rail itself, so a relabel reaches them all. `fallback` is only for a
  * page with no rail (a test's fake DOM). The server's sentences use one
@@ -6279,7 +6424,7 @@ function cbScreen(view, fallback) {
     return text || fallback;
   } catch { return fallback; }
 }
-/* The static hints carry <b data-screen="workflow">Workflow</b>: filled from
+/* The static hints carry <b data-screen="workflow">Production</b>: filled from
  * the rail on every Collab paint, so the markup and the rail cannot disagree. */
 function cbFillScreens() {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
@@ -6320,14 +6465,18 @@ $("cbGoFriends")?.addEventListener("click", () => setCbTab("Friends"));
  * still holds it. Any row click, tab change or repaint clears the stamp. */
 function disarmCollab() {
   const card = $("cbFileCard");
-  if (card) delete card.dataset.armed;
+  if (card) { delete card.dataset.armed; delete card.dataset.imageArmed; delete card.dataset.imageArmedDigest; delete card.dataset.videoArmed; delete card.dataset.videoArmedDigest; }
+  if (cbOpenedImage) delete cbOpenedImage.reviewDigest;
+  if (cbOpenedVideoJob) delete cbOpenedVideoJob.reviewDigest;
   if ($("cbAcceptYes")) $("cbAcceptYes").hidden = true;
+  if ($("cbImageAccept")) $("cbImageAccept").hidden = true;
+  if ($("cbVideoAccept")) $("cbVideoAccept").hidden = true;
   if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
 }
 
-let collabVideoDraft = null, cbOpenedVideo = null;
+let collabVideoDraft = null, collabImageDraft = null, collabImageRefPreviews = [], cbOpenedVideo = null, cbOpenedVideoJob = null, cbOpenedImage = null;
 let collabPainted = false;
-async function paintCollab(force = false, scene = null, videoRecipe = null) {
+async function paintCollab(force = false, scene = null, videoRecipe = null, imageJob = null, imageRefPreviews = []) {
   const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
@@ -6366,7 +6515,13 @@ async function paintCollab(force = false, scene = null, videoRecipe = null) {
   await loadCollabPlan(true);
   paintCbKind();
   if (scene) selectCollabScene(scene);
-  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-recipe"; paintCbKind(); $("cbTo")?.focus?.(); }
+  if (videoRecipe) { collabVideoDraft = videoRecipe; collabTabChosen = true; setCbTab("Send"); $("cbKind").value = "video-job"; paintCbKind(); $("cbTo")?.focus?.(); }
+  if (imageJob) {
+    collabImageDraft = imageJob;
+    collabImageRefPreviews = imageRefPreviews;
+    collabTabChosen = true;
+    setCbTab("Send"); $("cbKind").value = "image-job"; paintCbKind(); $("cbTo")?.focus?.();
+  }
 }
 
 function selectCollabScene({slug, segmentId}) {
@@ -6427,15 +6582,45 @@ function cbListError(label, r) {
 function cbCanReceive(p, kind) {
   return p.verified && (kind === "resources" || p.role === "collaborator" || (kind !== "project" && p.role === "lender"));
 }
+function paintCbRecipientStatus() {
+  const kind = $("cbKind")?.value || "shot";
+  const peer = cbPeers.find((p) => p.fp === $("cbTo")?.value && cbCanReceive(p, kind));
+  const host = $("cbRecipientStatus");
+  if ($("cbPreview")) $("cbPreview").disabled = !peer || (kind === "image-job" && !collabImageDraft) || (kind === "video-job" && !collabVideoDraft);
+  if (!host) return;
+  if (!peer) {
+    host.innerHTML = '<span class="chip warn">Choose a friend</span>';
+    return;
+  }
+  const card = peer.resources;
+  const parts = [];
+  if (!card) parts.push('<span class="chip warn" title="Ask this friend to send a hardware card before relying on their model list.">No hardware card</span>');
+  else {
+    const age = peer.resourcesSaid || "age unknown";
+    const ageLabel = age.length > 25 ? "age unknown" : age;
+    parts.push(`<span class="chip" title="Last card: ${esc(age)}. This is not a live reading.">Card ${esc(ageLabel)}</span>`);
+    const vram = Number(card.gpu?.vramMb);
+    if (Number.isFinite(vram) && vram > 0) parts.push(`<span class="chip">${(vram / 1024).toFixed(1)} GB VRAM</span>`);
+    else parts.push('<span class="chip warn">VRAM unknown</span>');
+    const ready = Array.isArray(card.ready) ? card.ready : [];
+    const engine = kind === "video-recipe" || kind === "video-job" ? collabVideoDraft?.engine : kind === "order" ? $("cbEngineMode")?.value : "";
+    const capability = kind === "image-job" ? "qwen-image-2.1" : engine === "ltx" ? "videoLtx" : engine === "h3" ? "video" : "";
+    const capabilityLabel = kind === "image-job" ? "Qwen Image 2.1" : String(engine || "").toUpperCase();
+    if (capability) parts.push(`<span class="chip ${ready.includes(capability) ? "ok" : "warn"}" title="Downloaded catalogue models on this friend's last card only; current readiness is unknown.">${capabilityLabel} ${ready.includes(capability) ? "listed" : "not listed"}</span>`);
+    else parts.push(`<span class="chip" title="Downloaded catalogue models on their last card.">${ready.length} models listed</span>`);
+  }
+  parts.push('<span class="chip warn" title="Collab has no remote presence or queue connection. Ask your friend before counting on their card.">Idle unknown</span>');
+  host.innerHTML = parts.join("");
+}
 function paintCbRecipients() {
   const kind = $("cbKind")?.value || "shot", to = $("cbTo");
   const peers = cbPeers.filter((p) => cbCanReceive(p, kind)), selected = to?.value;
   if (to) {
-    to.innerHTML = peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="">No verified friend with permission for this package</option>';
+    to.innerHTML = '<option value="">Choose a friend</option>' + (peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="" disabled>No verified friend with permission</option>');
     if (peers.some((p) => p.fp === selected)) to.value = selected;
   }
   if ($("cbNobody")) $("cbNobody").hidden = !!peers.length;
-  if ($("cbPreview")) $("cbPreview").disabled = !peers.length;
+  paintCbRecipientStatus();
 }
 
 async function paintPeers() {
@@ -6568,13 +6753,13 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
-  cbOpenedResources = null; cbOpenedVideo = null;
+  cbOpenedResources = null; cbOpenedVideo = null; cbOpenedVideoJob = null; cbOpenedImage = null;
   if ($("cbUseVideo")) $("cbUseVideo").hidden = true;
   if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
   if ($("cbFile")) $("cbFile").value = r.file || file || "";
-  for (const face of ["cbOrderFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
+  for (const face of ["cbOrderFace", "cbImageFace", "cbVideoFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
   if (card) card.hidden = false;
   if (r.error) {
     /* A refusal is a row state with one remedy, not a dead end. */
@@ -6592,9 +6777,39 @@ async function openCollabFile(file) {
   if (r.kind === "order") {
     if ($("cbOrderFace")) $("cbOrderFace").hidden = false;
     if ($("cbOrderWho")) $("cbOrderWho").innerHTML = `${who} is asking this computer to render one scene`;
+  } else if (r.kind === "job-order" && r.imageJob?.job) {
+    cbOpenedImage = { file: r.file || file, id: r.imageJob.id, signerFp: r.from?.fp,
+      orderKey: JSON.stringify(r.imageJob), referenceCount: r.imageJob.job.references.length };
+    $("cbImageFace").hidden = false;
+    $("cbImageWho").textContent = `${r.from?.nickname || r.from?.fp?.slice(0, 8) || "A friend"} asks for an image`;
+    paintIncomingImageJob(r.imageJob.job, r.packet?.job?.references || []);
+    await paintImageCardStatus();
+    paintIncomingImageReferenceState();
+  } else if (r.kind === "job-order" && r.videoJob?.job) {
+    cbOpenedVideoJob = { file: r.file || file, id: r.videoJob.id, signerFp: r.from?.fp,
+      orderKey: JSON.stringify(r.videoJob), reviewDigest: null };
+    $("cbVideoFace").hidden = false;
+    $("cbVideoWho").textContent = `${r.from?.nickname || r.from?.fp?.slice(0, 8) || "A friend"} asks for an H3 video`;
+    const j = r.videoJob.job;
+    $("cbVideoSettings").textContent = `${j.width} × ${j.height} · ${j.seconds}s · ${j.steps} steps · guidance ${j.guidance} · seed ${j.seed} · ${j.attention === "ck" ? "CK" : "PyTorch"} attention · generated audio ${j.keepAudio ? "kept" : "off"} · local H3 weights`;
+    $("cbVideoPrompt").textContent = j.prompt;
+    $("cbVideoNote").textContent = "Review this exact prompt and your local H3 model. Accepting does not render.";
+    await paintVideoCardStatus();
+  } else if (r.kind === "job-return" && r.packet?.jobType === "image") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished image has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned image";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the signed image against your request before keeping it.";
+  } else if (r.kind === "job-return" && r.packet?.jobType === "video") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").textContent = `A finished video has come back from ${r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend"}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check returned video";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Verify the signed MP4 against your exact request, then watch it in quarantine.";
   } else if (r.kind === "return") {
     if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
     if ($("cbReturnWho")) $("cbReturnWho").innerHTML = `A finished scene has come back from ${who}`;
+    if ($("cbReceiveBtn")) $("cbReceiveBtn").textContent = "Check it against what I asked for";
+    if ($("cbReturnHint")) $("cbReturnHint").textContent = "Check the returned file against your order before keeping it.";
   } else {
     if ($("cbReadFace")) $("cbReadFace").hidden = false;
     if ($("cbReadWho")) $("cbReadWho").innerHTML = `${who} sent you something to look at`;
@@ -6625,6 +6840,99 @@ Custom LoRAs and conditioning bridge off. Review before rendering.`;
       if ($("cbSaveResources")) $("cbSaveResources").hidden = false;
     }
   }
+}
+function paintIncomingImageJob(job, references) {
+  $("cbImageSettings").textContent = `${job.width} × ${job.height} · ${job.steps} steps · CFG ${job.cfg} · seed ${job.seed} · ${job.references.length} references · receiver's local Qwen base model`;
+  $("cbImagePrompt").textContent = job.prompt;
+  $("cbImageRefs").innerHTML = references.map((ref, i) => {
+    const meta = job.references[i];
+    if (!meta || meta.sha256 !== ref.sha256 || !["image/png", "image/jpeg", "image/webp"].includes(ref.mime) || typeof ref.b64 !== "string")
+      return `<figure><figcaption class="warn">Reference ${i + 1} could not be shown. Do not accept until it opens correctly.</figcaption></figure>`;
+    return `<figure><img loading="eager" decoding="async" data-cb-image-reference="${i + 1}" src="data:${ref.mime};base64,${ref.b64}" alt="Reference ${i + 1}" style="max-width:180px;max-height:150px;object-fit:contain"><figcaption>Reference ${i + 1} · ${Number(meta.bytes).toLocaleString()} bytes<br><code>${esc(meta.sha256)}</code></figcaption></figure>`;
+  }).join("") || '<span class="hint">No reference pictures.</span>';
+}
+function imageReferencesShown(opened) {
+  if (!opened || cbOpenedImage !== opened) return false;
+  const images = [...($('cbImageRefs')?.querySelectorAll('img[data-cb-image-reference]') || [])];
+  return images.length === opened.referenceCount && images.every((image) => image.complete
+    && image.naturalWidth > 0 && image.naturalHeight > 0 && image.dataset.cbRefFailed !== "1");
+}
+function paintIncomingImageReferenceState() {
+  const opened = cbOpenedImage, refs = $('cbImageRefs');
+  if (!opened || !refs || $('cbImageFace')?.hidden) return;
+  const images = [...refs.querySelectorAll('img[data-cb-image-reference]')];
+  const ready = imageReferencesShown(opened);
+  const review = $('cbImageReview'), accept = $('cbImageAccept'), note = $('cbImageNote');
+  if (review && !review.hidden) review.disabled = !ready || !!opened.reviewBusy;
+  if (accept && !accept.hidden) accept.disabled = !ready || !!opened.acceptBusy;
+  if ((!review?.hidden || !accept?.hidden) && !ready) {
+    const failed = images.length !== opened.referenceCount
+      || images.some((image) => image.dataset.cbRefFailed === "1" || (image.complete && !image.naturalWidth));
+    note.textContent = failed
+      ? "A reference could not be shown; reopen the file before accepting."
+      : "Waiting for reference pictures to load.";
+    opened.refLoadNotice = true;
+  } else if (ready && opened.refLoadNotice) {
+    note.textContent = "Inspect the prompt and every reference before accepting.";
+    opened.refLoadNotice = false;
+  }
+}
+for (const event of ['load', 'error']) $('cbImageRefs')?.addEventListener(event, (ev) => {
+  if (ev.target?.dataset?.cbImageReference === undefined) return;
+  if (event === 'error') ev.target.dataset.cbRefFailed = "1";
+  paintIncomingImageReferenceState();
+}, true);
+async function imageResultReady(imageId) {
+  if (typeof imageId !== "string" || !/^[a-zA-Z0-9_-]+$/.test(imageId)) return false;
+  try {
+    const r = await (await fetch("/api/images")).json();
+    return Array.isArray(r.images) && r.images.some((image) => image.name === `${imageId}.png`);
+  } catch { return false; }
+}
+async function paintImageCardStatus() {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "orders", side: "in" });
+  if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.error) { $("cbImageNote").textContent = `Could not check this job: ${r.error}`; return; }
+  const row = (r.orders || []).find((order) => order.id === opened.id && order.jobType === "image");
+  opened.imageState = row?.state || null;
+  $("cbImageReview").hidden = !!row;
+  $("cbImageRender").hidden = !["landed", "failed"].includes(row?.state);
+  $("cbImageRender").textContent = row?.state === "failed" ? "Retry image render" : "Render image";
+  $("cbImageCheck").hidden = !["queued", "rendering", "failed"].includes(row?.state);
+  $("cbImageSendBack").hidden = true;
+  $("cbImageSendBack").disabled = true;
+  if (row?.state === "queued" && await imageResultReady(row.imageId)) {
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageSendBack").hidden = false;
+    $("cbImageSendBack").disabled = false;
+    $("cbImageNote").textContent = "Result ready; review it, then send back the sealed file.";
+  } else if (row?.state === "landed") $("cbImageNote").textContent = "Accepted; press Render image when ready.";
+  else if (row?.state === "queued") $("cbImageNote").textContent = "Rendering or waiting in the local queue.";
+  else if (row?.state === "rendering") $("cbImageNote").textContent = "Queue receipt uncertain; check the local queue before recovery.";
+  else if (row?.state === "failed") $("cbImageNote").textContent = "Render failed; check the queue, then retry if needed.";
+  else if (row?.state === "rendered") $("cbImageNote").textContent = "Return file ready in accepted jobs below.";
+  else if (row) $("cbImageNote").textContent = `Job ${row.state}; check the accepted-job list.`;
+  else $("cbImageNote").textContent = "Inspect the prompt and every reference before accepting.";
+  paintIncomingImageReferenceState();
+}
+async function paintVideoCardStatus() {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "orders", side: "in" });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.error) { $("cbVideoNote").textContent = r.error; return; }
+  const row = (r.orders || []).find((order) => order.id === opened.id && order.jobType === "video");
+  $("cbVideoReview").hidden = !!row;
+  $("cbVideoRender").hidden = row?.state !== "landed";
+  $("cbVideoSendBack").hidden = !(row?.state === "queued" && row?.renderStatus === "complete");
+  if (row?.state === "landed") $("cbVideoNote").textContent = "Accepted. Press Render video when this machine is ready.";
+  else if (row?.state === "queued") $("cbVideoNote").textContent = row.renderStatus === "complete" ? "Finished here. Prepare the signed return." : "Waiting or rendering on this machine.";
+  else if (row?.state === "rendering") $("cbVideoNote").textContent = "Queue receipt uncertain; no duplicate render is allowed.";
+  else if (row?.state === "failed") $("cbVideoNote").textContent = "Render failed. Review the queue; this order cannot rerun without a new signed request.";
+  else if (row?.state === "rendered") $("cbVideoNote").textContent = "The signed return is ready under accepted jobs.";
+  else if (row) $("cbVideoNote").textContent = `Job ${row.state}.`;
 }
 $("cbSaveResources")?.addEventListener("click", async () => {
   const card = cbOpenedResources;
@@ -6714,10 +7022,19 @@ $("cbPeers")?.addEventListener("change", async (ev) => {
 function paintCbKind() {
   const kind = $("cbKind")?.value || "shot";
   const show = (id, on) => { const el = $(id); if (el) el.hidden = !on; };
+  show("cbProjectRow", kind === "shot" || kind === "project" || kind === "order");
   show("cbSegmentRow", kind === "shot" || kind === "order");
   show("cbNoteRow", kind === "resources");
   show("cbMine", kind === "resources");
   show("cbNumbers", kind === "order");
+  show("cbImageJobNote", kind === "image-job");
+  show("cbVideoJobNote", kind === "video-job");
+  if (kind === "image-job") $("cbImageJobNote").textContent = collabImageDraft
+    ? `Qwen Image 2.1 · one image · ${collabImageDraft.refs.length} reference${collabImageDraft.refs.length === 1 ? "" : "s"}; preview and prepare one file per friend.`
+    : "Choose a Qwen image in Pictures, then press Ask friend.";
+  if (kind === "video-job") $("cbVideoJobNote").textContent = collabVideoDraft
+    ? "H3 text-to-video · one sealed job per friend; your friend reviews, accepts and renders separately."
+    : "Choose a text-only H3 clip in Video, then press Ask friend.";
   paintCbRecipients();
   invalidateCbPreview();
 }
@@ -6725,7 +7042,7 @@ $("cbKind")?.addEventListener("change", paintCbKind);
 
 /* The scenes of the chosen project, so "which scene" stops being a box wanting
  * a string like s1_24 that only the sender's own board knows. */
-let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null;
+let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null, cbVerifiedPreviewUrls = [];
 function cbSceneTitle(shot) {
   const id = shot.segmentId || shot.id, title = shot.title || shot.name || shot.label;
   if (title && title !== id) return title;
@@ -6825,6 +7142,7 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   $("cbPlanDelivery").textContent = counts
     ? `Order records checked ${new Date(cbPlanDelivery.observedAt).toLocaleTimeString()} · ${counts.prepared} prepared · ${counts.returned} returns recorded · ${counts.adopted} adopted · ${counts.refused + counts.expired + counts.unknown} need attention${cbPlanDelivery.unmatchedOrders.length ? ` · ${cbPlanDelivery.unmatchedOrders.length} refer to removed scenes` : ""}. File handoff: receipt and live progress are unknown. Refresh to read new returns.`
     : "Order progress unavailable in this server version. Update and restart Studio.";
+  paintCbHandoffs();
   $("cbPlanBoard").innerHTML = Object.entries(CB_STAGES).map(([stage, title]) => {
     const shots = cbPlan.shots.filter((s) => s.stage === stage);
     return `<section class="cbcolumn"><b>${title} · ${shots.length}</b>${shots.map((s) => `<button type="button" class="cbshot${s.segmentId === cbPlanScene ? " on" : ""}" data-scene="${esc(s.segmentId)}"><b>${esc(cbSceneTitle(s))}</b><small>${esc(s.segmentId)} · ${s.seconds ? `${s.seconds.toFixed(1)}s` : "duration unknown"}</small><small>${esc(cbOwnerName(s.owner))}${s.pinned ? " · pinned" : ""}${s.dependsOn ? ` · after ${esc(s.dependsOn)}` : ""}</small><small>${esc(cbSceneOrderSummary(s.segmentId))}</small>${s.reviewNote ? `<small>${esc(s.reviewNote.slice(0, 100))}</small>` : ""}</button>`).join("") || '<p class="hint">No scenes</p>'}</section>`;
@@ -6832,6 +7150,35 @@ function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
   if (!cbPlan.shots.some((s) => s.segmentId === cbPlanScene)) cbPlanScene = cbPlan.shots[0]?.segmentId || "";
   if (!preserveShot) paintCbShotEditor();
 }
+function paintCbHandoffs() {
+  const host = $("cbHandoffList"); if (!host) return;
+  const rows = cbPlanDelivery?.handoffs;
+  if ($("cbHandoffWrap")) $("cbHandoffWrap").hidden = !Array.isArray(rows) || !rows.length;
+  if (!Array.isArray(rows)) { host.innerHTML = ""; return; }
+  if ($("cbHandoffCount")) $("cbHandoffCount").textContent = `· ${rows.filter((row) => row.status === "not-prepared").length} without files · ${rows.length} assigned`;
+  const labels = { "not-prepared": "No file prepared", prepared: "File prepared", expired: "Expired · ask friend", returned: "Return to review", adopted: "Take adopted", refused: "Return refused", cancelled: "Cancelled locally", unknown: "Order state unknown" };
+  host.innerHTML = rows.map((row) => {
+    const card = row.card?.state === "current" ? "Recent self-reported card" : row.card?.state === "stale" ? "Self-reported card over 24h old" : row.card?.state === "future" ? "Card timestamp invalid" : "No hardware card";
+    const fit = row.card?.fit === "listed" ? ` · ${esc(row.card.capability)} listed` : row.card?.fit === "not-listed" ? ` · ${esc(row.card.capability)} not listed` : row.card?.fit === "vram-below-minimum" ? " · VRAM below selected minimum" : "";
+    const canReview = row.status === "not-prepared" && row.peer?.eligible;
+    return `<div class="cbpeer cbassignment" data-segment="${esc(row.segmentId)}"><b>${esc(row.title || row.segmentId)}</b><span>${esc(row.peer?.nickname || row.owner?.slice(0, 8) || "Former friend")} · ${esc(labels[row.status] || "Check order")}</span><small title="${esc(row.nextStep || "Check the order record.")}">${esc(card)}${fit} · idle unknown</small>${canReview ? '<button type="button" class="btn sm cbhandoffreview">Preview request</button>' : ""}</div>`;
+  }).join("");
+}
+$("cbHandoffList")?.addEventListener("click", async (event) => {
+  const button = event.target.closest(".cbhandoffreview"); if (!button) return;
+  const segmentId = button.closest("[data-segment]")?.dataset.segment;
+  const row = cbPlanDelivery?.handoffs?.find((item) => item.segmentId === segmentId);
+  if (!row || row.status !== "not-prepared" || !row.peer?.eligible || row.owner !== cbPlan?.shots?.find((shot) => shot.segmentId === segmentId)?.owner) return;
+  let fresh;
+  try { fresh = await cbPlanRead(); }
+  catch (error) { cbSay(`Order status could not refresh: ${error.message}. Nothing was prepared.`); return; }
+  const still = fresh.delivery?.handoffs?.find((item) => item.segmentId === segmentId);
+  if (fresh.plan?.revision !== cbPlan?.revision || still?.status !== "not-prepared" || still.owner !== row.owner || !still.peer?.eligible) {
+    cbSay("The scene handoff changed. Reload the episode plan before preparing a request."); return;
+  }
+  cbPlanDelivery = fresh.delivery; paintCbHandoffs();
+  cbPlanScene = segmentId; paintCbShotEditor(); cbPreviewPlannedScene("order");
+});
 function cbSceneOrders(segmentId) {
   return cbPlanDelivery?.scenes?.find((scene) => scene.segmentId === segmentId)?.orders || [];
 }
@@ -6880,6 +7227,7 @@ function cbPreviewPlannedScene(kind) {
   setCbTab("Send"); $("cbKind").value = kind; paintCbKind(); $("cbSegment").value = shot.segmentId;
   // Never silently retain another friend's selection when the planned owner cannot receive this kind.
   $("cbTo").value = cbPeers.some((p) => p.fp === shot.owner && cbCanReceive(p, kind)) ? shot.owner : "";
+  paintCbRecipientStatus();
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 }
 $("cbShotPreview")?.addEventListener("click", () => cbPreviewPlannedScene("shot"));
@@ -6889,6 +7237,8 @@ $("cbShotReturns")?.addEventListener("click", () => { setCbTab("In"); return pai
 function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
   if (kind === "video-recipe") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
+  if (kind === "video-job") return {kind,to:$("cbTo")?.value,video:collabVideoDraft};
+  if (kind === "image-job") return {kind,to:$("cbTo")?.value,image:collabImageDraft};
   return {
     slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
@@ -6904,36 +7254,120 @@ function cbPackRequest() {
 function invalidateCbPreview() {
   cbPreviewRequest++;
   cbPreparedPreview = null;
+  for (const url of cbVerifiedPreviewUrls) URL.revokeObjectURL(url);
+  cbVerifiedPreviewUrls = [];
   if ($("cbPack")) $("cbPack").disabled = true;
   if ($("cbOutgoingPreview")) $("cbOutgoingPreview").hidden = true;
   if ($("cbPackNote")) $("cbPackNote").textContent = "Preview the current contents before preparing a file.";
 }
-for (const id of ["cbTo", "cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
+async function cbReferencePreviewBytes(preview, reference) {
+  if (typeof preview?.url !== "string" || !/^[a-f0-9]{64}$/.test(reference?.sha256 || "")
+      || !Number.isSafeInteger(reference.bytes) || reference.bytes < 1 || reference.bytes > 8 * 1024 * 1024) return null;
+  let address;
+  try { address = new URL(preview.url, location.href); } catch { return null; }
+  if (address.origin !== location.origin || !(address.protocol === "blob:" ||
+      (preview.url.startsWith("/") && address.pathname.startsWith("/api/")))) return null;
+  try {
+    const response = await fetch(preview.url, { cache: "no-store" });
+    if (!response.ok) return null;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength !== reference.bytes) return null;
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("") === reference.sha256 ? bytes : null;
+  } catch { return null; }
+}
+function cbReferenceCanDisplay(url) {
+  return new Promise((resolve) => {
+    let image;
+    try { image = new Image(); } catch { resolve(false); return; }
+    image.onload = () => resolve(image.naturalWidth > 0 && image.naturalHeight > 0);
+    image.onerror = () => resolve(false);
+    image.src = url;
+  });
+}
+$("cbTo")?.addEventListener("change", () => { paintCbRecipientStatus(); invalidateCbPreview(); });
+for (const id of ["cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
   $(id)?.addEventListener("input", invalidateCbPreview);
-  $(id)?.addEventListener("change", invalidateCbPreview);
+  $(id)?.addEventListener("change", () => { if (id === "cbEngineMode") paintCbRecipientStatus(); invalidateCbPreview(); });
 }
 $("cbPreview")?.addEventListener("click", async () => {
   invalidateCbPreview();
   const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
-  if (!["resources", "video-recipe"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  if (body.kind === "image-job" && !body.image) { cbSay("Start in Pictures and press Ask friend to choose a Qwen image job."); return; }
+  if (body.kind === "video-job" && !body.video) { cbSay("Start in Video and press Ask friend to choose an H3 clip."); return; }
+  if (!["resources", "video-recipe", "video-job", "image-job"].includes(body.kind) && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
   $("cbPreview").disabled = true;
   $("cbPackNote").textContent = "Reading the exact outgoing contents…";
   const r = await cb({ action: "preview", ...body });
   paintCbRecipients();
   if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
-  if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
-  cbPreparedPreview = { id: r.previewId, key };
+  if (!r || r.error || !r.previewId) { $("cbPackNote").textContent = r?.transportFailure
+    ? "Could not load the outgoing preview. Check the Studio connection and try Preview again."
+    : r?.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
   const packet = r.packet || {}, shot = packet.video || packet.shot || packet, order = packet.order || {};
+  const imageJob = packet.job || {};
+  if (body.kind === "image-job" && (typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
+      || !Array.isArray(imageJob.references) || imageJob.references.length !== body.image.refs.length
+      || imageJob.references.some((ref) => !ref.sha256 || !Number.isSafeInteger(ref.bytes)))) {
+    $("cbPackNote").textContent = "The frozen image preview did not include the exact job and reference hashes. Update Studio and preview again.";
+    return;
+  }
+  if (body.kind === "video-job" && (packet.kind !== "job-order" || packet.jobType !== "video"
+      || !/^o_[0-9a-f]{12}$/.test(String(packet.id || ""))
+      || imageJob.engine !== "h3" || imageJob.modelPolicy !== "receiver-local-base"
+      || typeof imageJob.prompt !== "string" || !imageJob.prompt.trim()
+      || !["seed", "width", "height", "seconds", "steps", "guidance"].every((key) => Number.isFinite(imageJob[key]))
+      || imageJob.steps !== 20 || imageJob.guidance !== 1 || typeof imageJob.keepAudio !== "boolean"
+      || !["ck", "pytorch"].includes(imageJob.attention) || imageJob.blockCache !== false
+      || !Array.isArray(imageJob.references)
+      || imageJob.references.length || !Array.isArray(imageJob.loras) || imageJob.loras.length)) {
+    $("cbPackNote").textContent = "The frozen video preview did not include the exact signed H3 job. Update Studio and preview again.";
+    return;
+  }
+  let verifiedRefUrls = [];
+  if (body.kind === "image-job" && imageJob.references.length) {
+    $("cbPackNote").textContent = "Checking each picture against the frozen reference hashes…";
+    const verifiedBytes = await Promise.all(imageJob.references.map(async (ref, i) => {
+      const preview = body.image.refs[i] === collabImageRefPreviews[i]?.name ? collabImageRefPreviews[i] : null;
+      return cbReferencePreviewBytes(preview, ref);
+    }));
+    if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+    if (verifiedBytes.some((bytes) => !bytes)) {
+      $("cbPackNote").textContent = "A reference thumbnail differs from the frozen job. Remove and upload that picture again in Pictures, then preview.";
+      return;
+    }
+    // Render the bytes that were hashed, not another request to a path that
+    // could change between verification and the image element loading.
+    verifiedRefUrls = verifiedBytes.map((bytes, i) => URL.createObjectURL(new Blob([bytes], {
+      type: imageJob.references[i].mime || "application/octet-stream",
+    })));
+    cbVerifiedPreviewUrls = verifiedRefUrls;
+    const visible = await Promise.all(verifiedRefUrls.map(cbReferenceCanDisplay));
+    if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+    if (visible.some((shown) => !shown)) {
+      for (const url of cbVerifiedPreviewUrls) URL.revokeObjectURL(url);
+      cbVerifiedPreviewUrls = [];
+      $("cbPackNote").textContent = "A frozen reference could not be displayed. Repair or replace that picture in Pictures before preparing.";
+      return;
+    }
+  }
+  cbPreparedPreview = { id: r.previewId, key };
   const manifest = r.manifest || [];
   $("cbOutgoingPreview").hidden = false;
-  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${r.describes || body.kind}`;
-  $("cbPreviewPrompt").textContent = shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
-  $("cbPreviewSettings").textContent = body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
+  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${body.kind === "image-job" ? "Qwen Image 2.1 image job" : body.kind === "video-job" ? "MiniMax H3 video job" : r.describes || body.kind}`;
+  $("cbPreviewPrompt").textContent = body.kind === "image-job" || body.kind === "video-job" ? imageJob.prompt || "" : shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
+  $("cbPreviewSettings").textContent = body.kind === "video-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.seconds}s · ${imageJob.steps} steps · guidance ${imageJob.guidance} · seed ${imageJob.seed} · ${imageJob.attention === "ck" ? "CK" : "PyTorch"} attention · audio ${imageJob.keepAudio ? "keep" : "off"} · friend's local H3 weights · idle unknown` : body.kind === "image-job" ? `${imageJob.width} × ${imageJob.height} · ${imageJob.steps} steps · CFG ${imageJob.cfg} · seed ${imageJob.seed} · ${imageJob.references.length} included references · friend's local Qwen base model · idle unknown` : body.kind === "video-recipe" ? `${r.describes} · guidance ${shot.guidance} · audio ${shot.keepAudio ? "keep" : "off"}. ${r.note || ""}` : body.kind === "shot" || body.kind === "order"
     ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
     : r.note || "Review the full contents below.";
-  $("cbPreviewManifest").innerHTML = manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
+  $("cbPreviewManifest").innerHTML = body.kind === "image-job"
+    ? imageJob.references.map((f, i) => `<div class="cbmanifestrow"><b>Reference ${i + 1}</b><span>${Number(f.bytes).toLocaleString()} bytes · included</span><code>${esc(f.sha256)}</code></div>`).join("") || '<p class="hint">No reference pictures.</p>'
+    : manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
   const pictures = manifest.filter((f) => typeof f.file === "string" && !/[\\/]/.test(f.file) && /\.(png|jpe?g|webp)$/i.test(f.file));
-  $("cbPreviewPictures").innerHTML = body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
+  $("cbPreviewPictures").innerHTML = body.kind === "image-job" && imageJob.references.length
+    ? imageJob.references.map((f, i) => {
+      return `<figure><img loading="lazy" decoding="async" src="${esc(verifiedRefUrls[i])}" alt="Reference ${i + 1}"><figcaption><b>Included reference ${i + 1}</b><br>${esc(body.image.refs[i])} · exact bytes checked by hash below</figcaption></figure>`;
+    }).join("")
+    : body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
   $("cbPreviewPacket").textContent = JSON.stringify(packet, (k, v) => k === "b64" ? "[picture bytes listed above]" : v, 2);
   $("cbPack").disabled = false;
   $("cbPackNote").textContent = "Preview ready. Preparing a file does not deliver it or start a remote render.";
@@ -6941,14 +7375,28 @@ $("cbPreview")?.addEventListener("click", async () => {
 $("cbPack")?.addEventListener("click", async () => {
   const preview = cbPreparedPreview, note = $("cbPackNote");
   if (!preview || preview.key !== JSON.stringify(cbPackRequest())) { invalidateCbPreview(); return; }
+  const packedRequest = JSON.parse(preview.key);
   $("cbPack").disabled = true;
   if (note) note.textContent = "Preparing the reviewed file…";
   if ($("cbHandoff")) $("cbHandoff").hidden = true;
   const r = await cb({ action: "pack", previewId: preview.id });
   cbPreparedPreview = null;
+  if (!r || r.transportFailure) {
+    if (note) note.textContent = "Could not confirm whether the file was prepared. Check Outbox after Studio reconnects before previewing again.";
+    await paintOutbox();
+    return;
+  }
   if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
-  if (note) note.textContent = `Prepared · ${r.describes} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
-  showHandoff(r.file, r.describes);
+  const packedDescription = packedRequest.kind === "image-job"
+    ? `One Qwen Image 2.1 job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}`
+    : packedRequest.kind === "video-job" ? `One MiniMax H3 video job for ${r.to?.nickname || r.to?.fp?.slice(0, 8) || "this friend"}` : r.describes;
+  if (note) note.textContent = `Prepared · ${packedDescription} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
+  showHandoff(r.file, packedDescription);
+  const assigned = cbAssignedReview?.rows[cbAssignedReview.at];
+  if (assigned && cbAssignedReview.key === cbAssignedDraftKey() && packedRequest.kind === "order"
+      && packedRequest.slug === cbPlan?.slug && packedRequest.to === assigned.fp && packedRequest.segmentId === assigned.segmentId) {
+    cbAssignedReview.at++; cbAssignedReview.waiting = true; paintCbAssignedStatus();
+  }
   await paintOutbox();
 });
 
@@ -7028,14 +7476,70 @@ function cbDraftMarkup(draft) {
     + draft.excluded.map((p) => `<p class="hint">Excluded: ${esc(p.nickname || p.fp)} — ${esc(p.reason)}</p>`).join("")
     + draft.unassigned.map((s) => `<p class="hint">Unassigned: ${esc(s.segmentId)} — ${esc(s.reason)}</p>`).join("");
 }
+let cbAssignedReview = null;
+const cbAssignedDraftKey = (plan = cbPlan) => plan?.draft ? JSON.stringify([plan.slug, plan.draft.at, plan.draft.stale, plan.draft.assignments]) : "";
+function paintCbAssignedStatus() {
+  const status = $("cbAssignedStatus"), next = $("cbAssignedNext");
+  if (status) {
+    status.hidden = !cbAssignedReview;
+    if (cbAssignedReview) status.textContent = cbAssignedReview.at >= cbAssignedReview.rows.length
+      ? `${cbAssignedReview.rows.length} prepared` : `${cbAssignedReview.at + 1}/${cbAssignedReview.rows.length} to review`;
+  }
+  if (next) next.hidden = !cbAssignedReview?.waiting || cbAssignedReview.at >= cbAssignedReview.rows.length;
+}
+function cbAssignedPick() {
+  const review = cbAssignedReview;
+  if (!review || review.key !== cbAssignedDraftKey() || cbPlan?.slug !== cbLoadedSlug || !cbSceneReady) {
+    cbAssignedReview = null; paintCbAssignedStatus(); cbSay("Reload the saved allocation before reviewing scenes."); return;
+  }
+  if (review.at >= review.rows.length) { review.waiting = false; paintCbAssignedStatus(); return; }
+  const item = review.rows[review.at];
+  const peer = cbPeers.find((p) => p.fp === item?.fp && cbCanReceive(p, "order"));
+  const scene = cbProjectDoc?.segments?.find((s) => s.id === item?.segmentId && s.mode === "generate");
+  if (!peer || !scene) { cbSay("A planned friend or scene changed. Save a fresh allocation."); return; }
+  review.waiting = false;
+  setCbTab("Send"); $("cbKind").value = "order"; paintCbKind();
+  $("cbTo").value = item.fp; $("cbSegment").value = item.segmentId;
+  for (const id of ["cbSeed", "cbSteps", "cbEngineMode"]) $(id).value = "";
+  paintCbRecipientStatus(); invalidateCbPreview(); paintCbAssignedStatus();
+  if ($("cbHandoff")) $("cbHandoff").hidden = true;
+  $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
+}
 function paintCbSavedDraft() {
   const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
   $("cbDraftSaved").hidden = !draft;
   $("cbDraftApply").disabled = !draft || !!draft.stale || !!draft.appliedAt;
-  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied to this Studio's episode plan." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved separately from the controls above. Apply to set planned owners locally."} No files prepared or delivered; no remote work accepted.</p>${cbDraftMarkup(draft)}`;
+  $("cbAssignedStart").hidden = !draft;
+  $("cbAssignedStart").disabled = !draft || !!draft.stale || !draft.appliedAt || !draft.assignments?.some((row) => row.segmentIds?.length);
+  if (cbAssignedReview && cbAssignedReview.key !== cbAssignedDraftKey()) { cbAssignedReview = null; paintCbAssignedStatus(); }
+  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied locally. Review each unprepared request." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved locally. Apply owners before preparing files."}</p>${cbDraftMarkup(draft)}`;
 }
+$("cbAssignedStart")?.addEventListener("click", async () => {
+  const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
+  if (!draft?.appliedAt || draft.stale || !cbSceneReady || cbLoadedSlug !== cbPlan.slug) { cbSay("Apply the current allocation before reviewing assigned scenes."); return; }
+  const key = cbAssignedDraftKey(), revision = cbPlan.revision;
+  let response;
+  try { response = await cbPlanRead(); }
+  catch (error) { cbSay(`Order status could not refresh: ${error.message}. Nothing was prepared.`); return; }
+  if (key !== cbAssignedDraftKey() || revision !== cbPlan?.revision || response.plan.revision !== revision || cbLoadedSlug !== cbPlan?.slug) { cbSay("The allocation changed. Reload the plan before reviewing scenes."); return; }
+  if (!Array.isArray(response.delivery?.handoffs)) { cbSay("Order status is unavailable. Nothing was prepared."); return; }
+  cbPlanDelivery = response.delivery || null; paintCbHandoffs();
+  const assigned = new Set(draft.assignments.flatMap((row) => row.segmentIds.map((segmentId) => `${row.fp}\n${segmentId}`)));
+  const handoffs = Array.isArray(response.delivery?.handoffs) ? response.delivery.handoffs : [];
+  const rows = handoffs.filter((row) => row.status === "not-prepared" && row.peer?.eligible && assigned.has(`${row.owner}\n${row.segmentId}`))
+    .map((row) => ({ fp: row.owner, segmentId: row.segmentId }));
+  if (!rows.length) { cbAssignedReview = null; paintCbAssignedStatus(); cbSay("No new request is ready to prepare. Review prepared, expired and returned orders in the episode plan."); return; }
+  cbAssignedReview = { key, rows, at: 0, waiting: false }; cbSay(""); cbAssignedPick();
+});
+$("cbAssignedNext")?.addEventListener("click", () => { if (cbAssignedReview?.waiting) cbAssignedPick(); });
 $("cbDraftPreview")?.addEventListener("click", async () => {
-  const r = await mutateCollabPlan("preview_allocation", cbAllocationFields()); if (!r) return;
+  const fields = cbAllocationFields(), key = JSON.stringify(fields);
+  const r = await mutateCollabPlan("preview_allocation", fields); if (!r) return;
+  if (key !== JSON.stringify(cbAllocationFields())) {
+    paintCbAllocation();
+    $("cbDraftSummary").textContent = "Selection changed while the preview loaded. Preview again for the current friends and scenes.";
+    return;
+  }
   $("cbDraftResult").innerHTML = cbDraftMarkup(r.plan.draft);
   $("cbDraftSummary").textContent = `Unsaved preview · pinned owners respected · ${r.plan.draft.unassigned.length} unassigned · no remote availability data.`;
 });
@@ -7046,6 +7550,7 @@ for (const id of ["cbDraftResult", "cbDraftSaved"]) $(id)?.addEventListener("cli
   const button = ev.target.closest(".cbdraftpick"); if (!button) return;
   $("cbKind").value = "order"; paintCbKind();
   $("cbTo").value = button.dataset.to; $("cbSegment").value = button.dataset.segment;
+  paintCbRecipientStatus();
   invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 });
 
@@ -7060,6 +7565,28 @@ function showHandoff(file, what) {
   box.hidden = false;
   box.dataset.file = file || "";
   if ($("cbHandoffWhat")) $("cbHandoffWhat").textContent = `${what || "Your sealed file"} — ${file || ""}`;
+}
+function collabFileControls(file) {
+  return typeof file === "string" && file
+    ? `<span class="cbres" title="${esc(file)}">Prepared file: <code>${esc(file.split(/[\\/]/).pop())}</code></span><div class="chips"><button class="btn sm ghost cbfile-reveal" type="button">Show file</button><button class="btn sm ghost cbfile-copy" type="button">Copy location</button></div>`
+    : '<span class="cbres warn">This older record has no saved file path. Check the Collab out folder.</span>';
+}
+async function collabFileAction(event) {
+  const button = event.target?.closest?.("button");
+  if (!button?.classList?.contains || (!button.classList.contains("cbfile-reveal") && !button.classList.contains("cbfile-copy"))) return false;
+  const file = button.closest(".cbpeer")?.dataset.file || "";
+  if (!file) { cbSay("The prepared file path is unavailable. Check the Collab out folder."); return true; }
+  if (button.classList.contains("cbfile-copy")) {
+    try { await navigator.clipboard.writeText(file); cbSay("Prepared file location copied."); }
+    catch { cbSay(`Could not copy the path. Prepared file: ${file}`); }
+  } else {
+    const rel = file.replace(/^.*[\\/]collab[\\/]/, "collab/").replace(/\\/g, "/");
+    const r = await fetch("/api/reveal", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: rel }),
+    }).then((x) => x.json()).catch(() => ({ error: "could not open the file" }));
+    if (r.error) cbSay(r.error);
+  }
+  return true;
 }
 $("cbReveal")?.addEventListener("click", async () => {
   const file = $("cbHandoff")?.dataset.file || "";
@@ -7093,14 +7620,28 @@ async function paintOutbox() {
     returned: "came back — waiting for you under “What arrived”",
     adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
   };
-  host.innerHTML = rows.map((o) => `
-    <div class="cbpeer">
+  host.innerHTML = rows.map((o) => o.jobType === "video" ? `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>H3 video · seed ${esc(String(o.videoJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
+      ${collabFileControls(o.file)}
+    </div>` : o.jobType === "image" ? `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")} · delivery is manual</span>
+      ${collabFileControls(o.file)}
+    </div>` : `
+    <div class="cbpeer" data-file="${esc(o.file || "")}">
       <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
       <span class="meta">${esc(plain[o.state] || o.state || "Prepared")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}</span>
+      ${collabFileControls(o.file)}
     </div>`).join("");
 }
+$("cbOutbox")?.addEventListener("click", collabFileAction);
 
 $("cbFree")?.addEventListener("click", async () => {
   const n = $("cbFreeNote");
@@ -7118,20 +7659,51 @@ async function paintErrands() {
   if (cbListError("Accepted jobs", r)) return;
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
-  host.innerHTML = rows.map((o) => `
+  let readyImages = new Set();
+  if (rows.some((o) => o.jobType === "image" && o.state === "queued" && o.imageId)) {
+    try {
+      const images = await (await fetch("/api/images")).json();
+      readyImages = new Set((images.images || []).map((image) => image.name));
+    } catch { /* Unknown is not ready. The next refresh can check again. */ }
+  }
+  host.innerHTML = rows.map((o) => o.jobType === "video" ? `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>H3 video · seed ${esc(String(o.videoJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(String(o.videoJob?.job?.width ?? "?"))} × ${esc(String(o.videoJob?.job?.height ?? "?"))} · ${esc(String(o.videoJob?.job?.seconds ?? "?"))}s</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "accepted")}</span>
+      ${o.state === "landed" ? '<button class="btn sm cbvidrender" type="button">Render video</button>' : ""}
+      ${o.state === "queued" && o.renderStatus === "complete" ? '<button class="btn sm cbvidsend" type="button">Prepare return</button>' : ""}
+      ${o.state === "rendered" ? '<button class="btn sm ghost cbvidlocate" type="button">Show prepared return</button>' : ""}
+      ${["queued", "rendering"].includes(o.state) && o.renderStatus !== "complete" ? '<button class="btn sm ghost cbvidcheck" type="button">Refresh status</button>' : ""}
+      ${o.state === "failed" ? '<span class="cbres warn">Render failed; request a new signed job to retry.</span>' : ""}
+    </div>` : o.jobType === "image" ? `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>Qwen image · seed ${esc(String(o.imageJob?.job?.seed ?? "?"))}</code>
+      <span class="meta">${esc(String(o.imageJob?.job?.width ?? "?"))} × ${esc(String(o.imageJob?.job?.height ?? "?"))} · ${esc(String(o.imageJob?.job?.references?.length ?? 0))} references</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "accepted")}</span>
+      ${o.state === "landed" ? '<button class="btn sm cbimgrender" type="button">Render image</button>' : ""}
+      ${o.state === "failed" ? '<button class="btn sm cbimgrender" data-retry="true" type="button">Retry image render</button>' : ""}
+      ${o.state === "rendering" ? '<span class="cbres warn">Queue receipt uncertain. This job is locked against duplicate renders; check the local queue before recovering it.</span>' : ""}
+      ${o.state === "failed" ? '<span class="cbres warn">Local render failed. Check the Images queue and model status before explicitly retrying; no return was sent.</span>' : ""}
+      ${o.state === "rendered" ? '<button class="btn sm ghost cbimglocate" type="button">Show prepared return</button>' : ""}
+      ${o.state === "queued" && readyImages.has(`${o.imageId}.png`) ? '<button class="btn sm cbimgsend" type="button">Send image back</button>' : ""}
+      ${["queued", "rendering", "failed"].includes(o.state) && !readyImages.has(`${o.imageId}.png`) ? '<button class="btn sm ghost cbimgcheck" type="button">Refresh status</button>' : ""}
+    </div>` : `
     <div class="cbpeer" data-id="${esc(o.id)}" data-slug="${esc(o.slug || "")}">
       <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
       <span class="meta">seed ${esc(String(o.order?.seed ?? "?"))} · ${esc(String(o.order?.steps ?? "?"))} steps · ${esc(o.order?.engineMode || "?")}</span>
       <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "landed")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}${o.planId ? ` · plan ${esc(o.planId)}` : ""}</span>
-      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Workflow"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Workflow"))}</button>` : ""}
+      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Production"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Production"))}</button>` : ""}
       ${o.state === "rendered" ? "" : '<button class="btn sm cbsend" type="button">Send the take back</button>'}
     </div>`).join("");
 }
 
 async function paintTakes() {
-  const host = $("cbTakes"), wrap = $("cbTakesWrap");
+  const host = $("cbTakes"), wrap = $("cbTakesWrap"), imageHost = $("cbImages"), imageWrap = $("cbImagesWrap"), videoHost = $("cbVideos"), videoWrap = $("cbVideosWrap");
   if (!host) return;
   const r = await cb({ action: "quarantine" });
   if (cbListError("Returned takes", r)) return;
@@ -7160,7 +7732,75 @@ async function paintTakes() {
       ${t.adopted ? "" : '<button class="btn sm ghost cbdrop" type="button">Throw it away</button>'}
     </div>`;
   }).join("");
+  if (imageHost) {
+    const images = Array.isArray(r.images) ? r.images : [];
+    if (imageWrap) imageWrap.hidden = !images.length;
+    imageHost.innerHTML = images.map((image) => {
+      const goodRow = image.v === 1 && typeof image.from === "string" && typeof image.file === "string";
+      const preview = `/api/collab-image/${encodeURIComponent(image.from || "")}/${encodeURIComponent(image.file || "")}`;
+      const ready = goodRow && image.ok === true && !image.adopted;
+      return `<div class="cbpeer" data-from="${esc(image.from || "")}" data-file="${esc(image.file || "")}">
+        <b>${esc(image.orderId || "Returned image")}</b>
+        <code>${esc(String(image.from || "").slice(0, 8))}</code>
+        <span class="${image.ok ? "ok" : "warn"}">${image.adopted ? "kept" : image.ok ? "checked" : esc(image.reason || "refused")}</span>
+        <span class="cbres">${esc(image.why || "")}</span>
+        ${goodRow ? `<details><summary>Job and model</summary><pre class="cbopened">${esc(image.prompt || "")}</pre><span class="cbres">${esc(image.record?.modelVersion || image.record?.model || "Model unknown")} · seed ${esc(String(image.record?.seed ?? "?"))} · rights ${esc(image.record?.outputRights?.class || "unknown")}</span></details>` : ""}
+        ${ready ? `<button class="btn sm ghost cbimagepreview" type="button">Preview image</button><img class="cbreturnedimage" alt="Returned image for ${esc(image.orderId || "this job")}" data-src="${esc(preview)}" hidden>` : ""}
+        ${ready ? '<button class="btn sm cbimageadopt" type="button" disabled title="Preview this checked image first">Keep image</button>' : ""}
+        ${goodRow && !image.adopted ? '<button class="btn sm ghost cbimagedrop" type="button">Throw it away</button>' : ""}
+      </div>`;
+    }).join("");
+  }
+  if (videoHost) {
+    const videos = Array.isArray(r.videos) ? r.videos : [];
+    if (videoWrap) videoWrap.hidden = !videos.length;
+    videoHost.innerHTML = videos.map((video) => {
+      const good = video.v === 1 && typeof video.from === "string" && typeof video.file === "string";
+      const playable = good && video.ok && !video.adopted;
+      const preview = `/api/collab-video/${encodeURIComponent(video.from || "")}/${encodeURIComponent(video.file || "")}`;
+      return `<div class="cbpeer" data-from="${esc(video.from || "")}" data-file="${esc(video.file || "")}">
+        <b>${esc(video.orderId || "Returned video")}</b>
+        <code>${esc(String(video.from || "").slice(0, 8))}</code>
+        <span class="${video.ok ? "ok" : "warn"}">${video.adopted ? "kept" : video.ok ? "checked" : esc(video.reason || "refused")}</span>
+        <span class="cbres">${esc(video.why || "")}</span>
+        ${good ? `<details><summary>Prompt and model</summary><pre class="cbopened">${esc(video.prompt || "")}</pre><span class="cbres">${esc(video.record?.modelVersion || video.record?.model || "Model unknown")} · rights ${esc(video.record?.outputRights?.class || "unknown")}</span></details>` : ""}
+        ${playable ? `<video class="cbtakevid" controls playsinline preload="none" src="${esc(preview)}"></video><button class="btn sm cbvideoadopt" type="button" disabled title="Play this checked video first">Keep video</button>` : ""}
+        ${good && !video.adopted ? '<button class="btn sm ghost cbvideodrop" type="button">Throw it away</button>' : ""}
+      </div>`;
+    }).join("");
+  }
 }
+$("cbVideos")?.addEventListener("playing", async (ev) => {
+  const row = ev.target?.closest?.(".cbpeer");
+  if (!row || row.dataset.reviewPending || row.dataset.reviewReceipt) return;
+  row.dataset.reviewPending = "1";
+  try {
+    const r = await cb({ action: "video_review_return", from: row.dataset.from, file: row.dataset.file });
+    if (r.error || !/^[0-9a-f]{48}$/.test(String(r.reviewReceipt || ""))) { cbSay(r.error || "Could not review this video."); return; }
+    row.dataset.played = "1";
+    row.dataset.reviewReceipt = r.reviewReceipt;
+    const button = row.querySelector(".cbvideoadopt");
+    if (button) button.disabled = false;
+  } catch (error) { cbSay(error.message || "Could not review this video.");
+  } finally { delete row.dataset.reviewPending; }
+}, true);
+$("cbVideos")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest?.(".cbpeer");
+  if (!row) return;
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  if (ev.target.classList.contains("cbvideoadopt")) {
+    if (row.dataset.played !== "1" || !row.dataset.reviewReceipt) { cbSay("Play this video before keeping it."); return; }
+    const r = await cb({ action: "video_adopt", ...body, reviewReceipt: row.dataset.reviewReceipt });
+    cbSay(r.error || `Kept in Clips as ${r.name}.`);
+    if (!r.error) await paintTakes();
+  } else if (ev.target.classList.contains("cbvideodrop")) {
+    const go = await cbConfirm({ title: "Throw away this returned video?", body: "This removes it from quarantine. It has not been added to Clips.", yes: "Throw it away" });
+    if (!go) return;
+    const r = await cb({ action: "video_drop", ...body });
+    cbSay(r.error || "Returned video removed.");
+    if (!r.error) await paintTakes();
+  }
+});
 /* Media events do not bubble, so the list listens in the capture phase: a row
  * whose take has started playing is a row somebody has watched.
  * ⚠ "playing", NOT "play". "play" fires the moment the button is pressed,
@@ -7240,7 +7880,7 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
   if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
     const go = await cbConfirm({
       title: "Accept anyway?",
-      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Workflow")}.`,
+      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Production")}.`,
       yes: "Accept anyway",
     });
     if (!go) {
@@ -7250,9 +7890,154 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
     if (card?.dataset.armed !== file) { cbSay("That is not the file whose prompt you just read. Press “Show me exactly what they want” again for this one."); disarmCollab(); return; }
     r = await cb({ action: "accept", file, seen: true, anyway: true });
   }
-  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Workflow")}” under “What you agreed to render for friends”.`);
+  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Production")}” under “What you agreed to render for friends”.`);
   if (!r.error) disarmCollab();
   await refreshCollab();
+});
+
+$("cbImageReview")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  if (!imageReferencesShown(opened)) { paintIncomingImageReferenceState(); return; }
+  opened.reviewBusy = true;
+  paintIncomingImageReferenceState();
+  try {
+    const r = await cb({ action: "image_accept", file: opened.file });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    if (r.reason !== "not-seen" || !r.imageJob?.job) { $("cbImageNote").textContent = r.error || r.note || "Could not review this image job."; return; }
+    if (r.from?.fp !== opened.signerFp || r.imageJob.id !== opened.id
+        || JSON.stringify(r.imageJob) !== opened.orderKey) {
+      await openCollabFile(opened.file);
+      $("cbImageNote").textContent = "This file or its signer changed since it was opened. Review the new sender, prompt and references before accepting.";
+      return;
+    }
+    if (!imageReferencesShown(opened)) { paintIncomingImageReferenceState(); return; }
+    if (!/^[0-9a-f]{64}$/.test(String(r.reviewDigest || ""))) {
+      $("cbImageNote").textContent = "The server did not bind this review to the sealed file. Update Studio and review it again before accepting.";
+      return;
+    }
+    opened.reviewDigest = r.reviewDigest;
+    if (card) { card.dataset.imageArmed = opened.file; card.dataset.imageArmedDigest = r.reviewDigest; }
+    $("cbImageAccept").hidden = false;
+    $("cbImageAccept").title = r.minutes || "Accept stages references; Render is separate.";
+    $("cbImageNote").textContent = r.overBudget ? "This exceeds your friend's daily minutes. Accept will ask you to review the override." : "Reviewed. Accept stages references; Render is separate.";
+  } finally { opened.reviewBusy = false; paintIncomingImageReferenceState(); }
+});
+$("cbImageAccept")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.imageArmed !== opened.file
+      || !/^[0-9a-f]{64}$/.test(String(opened.reviewDigest || ""))
+      || card.dataset.imageArmedDigest !== opened.reviewDigest || !imageReferencesShown(opened)) {
+    cbSay("Review this exact image job again before accepting it.");
+    disarmCollab(); return;
+  }
+  opened.acceptBusy = true;
+  paintIncomingImageReferenceState();
+  try {
+    let r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+    if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+      const go = await cbConfirm({ title: "Accept anyway?", body: r.overrides.map((item) => item.why).join(" "), yes: "Accept anyway" });
+      if (!go) { $("cbImageNote").textContent = "Not accepted. Your friend's minutes remain unchanged."; return; }
+      if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value || card?.dataset.imageArmedDigest !== opened.reviewDigest) return;
+      r = await cb({ action: "image_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest, anyway: true });
+    }
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Accepted locally. Rendering is a separate press.";
+    if (!r.error) { disarmCollab(); await paintImageCardStatus(); await paintErrands(); }
+  } finally { opened.acceptBusy = false; paintIncomingImageReferenceState(); }
+});
+async function requestFriendImageRender(id, retry, stillCurrent) {
+  const request = { action: "image_render", id, ...(retry ? { retry: true } : {}) };
+  let r = await cb(request);
+  if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Render anyway?", body: r.overrides.map((item) => item.why).join(" "), yes: "Render anyway" });
+    if (!go) return { error: "Not queued. Check your card and daily minutes before trying again." };
+    if (!stillCurrent()) return { error: "This is no longer the image job you reviewed." };
+    r = await cb({ ...request, anyway: true });
+  }
+  return r;
+}
+$("cbImageRender")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const button = $("cbImageRender"); button.disabled = true;
+  try {
+    const r = await requestFriendImageRender(opened.id, opened.imageState === "failed",
+      () => cbOpenedImage === opened && opened.file === $("cbFile")?.value);
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Queued here. Check the result before sending it back.";
+    if (!r.error) { await paintImageCardStatus(); await paintErrands(); }
+  } finally { button.disabled = false; }
+});
+$("cbImageCheck")?.addEventListener("click", async () => { await paintImageCardStatus(); await paintErrands(); });
+$("cbImageSendBack")?.addEventListener("click", async () => {
+  const opened = cbOpenedImage;
+  if (!opened || opened.file !== $("cbFile")?.value || $("cbImageSendBack").disabled) return;
+  const button = $("cbImageSendBack"); button.disabled = true;
+  try {
+    const r = await cb({ action: "image_send_back", id: opened.id });
+    if (cbOpenedImage !== opened || opened.file !== $("cbFile")?.value) return;
+    $("cbImageNote").textContent = r.error || r.note || "Finished image sealed for manual handoff.";
+    if (!r.error && r.file) {
+      setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend");
+      await paintErrands();
+    }
+  } finally { button.disabled = false; }
+});
+
+$("cbVideoReview")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_accept", file: opened.file });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  if (r.reason !== "not-seen" || !r.videoJob?.job) { $("cbVideoNote").textContent = r.error || r.note || "Could not review this job."; return; }
+  if (r.from?.fp !== opened.signerFp || r.videoJob.id !== opened.id || JSON.stringify(r.videoJob) !== opened.orderKey || !/^[0-9a-f]{64}$/.test(String(r.reviewDigest || ""))) {
+    await openCollabFile(opened.file);
+    $("cbVideoNote").textContent = "The signed file or signer changed. Review this job again.";
+    return;
+  }
+  opened.reviewDigest = r.reviewDigest;
+  if (card) { card.dataset.videoArmed = opened.file; card.dataset.videoArmedDigest = r.reviewDigest; }
+  $("cbVideoAccept").hidden = false;
+  $("cbVideoNote").textContent = `${r.minutes || "Daily allowance could not be read."} ${r.readiness?.ready ? "H3 appears ready here." : "H3 is missing files here; install them before rendering."} Model and engine readiness are checked again at Render; Accept only reserves this job.`;
+});
+$("cbVideoAccept")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob, card = $("cbFileCard");
+  if (!opened || opened.file !== $("cbFile")?.value || card?.dataset.videoArmed !== opened.file || card?.dataset.videoArmedDigest !== opened.reviewDigest) {
+    cbSay("Review this exact signed video job before accepting it."); disarmCollab(); return;
+  }
+  let r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest });
+  if (r.overridable && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Accept this video job anyway?",
+      body: `${r.overrides.map((item) => item.why).join(" ")} Accept reserves this job; it does not queue a render.`, yes: "Accept anyway" });
+    if (!go || cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+    r = await cb({ action: "video_accept", file: opened.file, seen: true, expectedDigest: opened.reviewDigest, anyway: true });
+  }
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Accepted locally; no render queued.";
+  if (!r.error) { disarmCollab(); await paintVideoCardStatus(); await paintErrands(); }
+});
+$("cbVideoRender")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  let r = await cb({ action: "video_render", id: opened.id });
+  if (r.overridable && Array.isArray(r.overrides) && r.overrides.length) {
+    const go = await cbConfirm({ title: "Render behind the current work?",
+      body: r.overrides.map((item) => item.why).join(" "), yes: "Render anyway" });
+    if (!go || cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+    r = await cb({ action: "video_render", id: opened.id, anyway: true });
+  }
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Queued on this machine.";
+  await paintVideoCardStatus(); await paintErrands();
+});
+$("cbVideoSendBack")?.addEventListener("click", async () => {
+  const opened = cbOpenedVideoJob;
+  if (!opened || opened.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "video_send_back", id: opened.id });
+  if (cbOpenedVideoJob !== opened || opened.file !== $("cbFile")?.value) return;
+  $("cbVideoNote").textContent = r.error || r.note || "Signed MP4 return prepared.";
+  if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished H3 video sealed for your friend"); await paintErrands(); }
 });
 
 $("cbReceiveBtn")?.addEventListener("click", async () => {
@@ -7261,8 +8046,80 @@ $("cbReceiveBtn")?.addEventListener("click", async () => {
   await refreshCollab();
 });
 
+$("cbImages")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row) return;
+  if (ev.target.classList.contains("cbimagepreview")) {
+    const image = row.querySelector(".cbreturnedimage");
+    if (!image) return;
+    image.hidden = false;
+    image.src = image.dataset.src;
+    ev.target.textContent = "Previewing…";
+    return;
+  }
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  if (ev.target.classList.contains("cbimageadopt")) {
+    if (row.dataset.viewed !== "1") { cbSay("Preview the returned image before keeping it."); return; }
+    const r = await cb({ action: "image_adopt", ...body });
+    cbSay(r.error || `Kept in Pictures as ${r.name}.`);
+    if (!r.error) await paintTakes();
+  } else if (ev.target.classList.contains("cbimagedrop")) {
+    const go = await cbConfirm({ title: "Throw away this returned image?", body: "This removes it from quarantine. It has not been added to Pictures.", yes: "Throw it away" });
+    if (!go) return;
+    const r = await cb({ action: "image_drop", ...body });
+    cbSay(r.error || "Returned image removed.");
+    if (!r.error) await paintTakes();
+  }
+});
+$("cbImages")?.addEventListener("load", (ev) => {
+  const row = ev.target.closest?.(".cbpeer");
+  if (row && ev.target.classList?.contains("cbreturnedimage")) {
+    row.dataset.viewed = "1";
+    const button = row.querySelector(".cbimagepreview");
+    if (button) button.textContent = "Image shown";
+    const keep = row.querySelector(".cbimageadopt");
+    if (keep) { keep.disabled = false; keep.title = "Keep the reviewed image in Pictures"; }
+  }
+}, true);
+$("cbImages")?.addEventListener("error", (ev) => {
+  if (ev.target.classList?.contains("cbreturnedimage")) cbSay("This browser could not show the returned image. It has not been kept.");
+}, true);
+
 $("cbErrands")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
+  if (row && await collabFileAction(ev)) return;
+  if (row && ev.target.classList.contains("cbvidcheck")) { await paintErrands(); await paintVideoCardStatus(); return; }
+  if (row && ev.target.classList.contains("cbvidrender")) {
+    const r = await cb({ action: "video_render", id: row.dataset.id });
+    cbSay(r.error || r.note || "H3 video queued locally.");
+    await paintErrands(); await paintVideoCardStatus(); return;
+  }
+  if (row && (ev.target.classList.contains("cbvidsend") || ev.target.classList.contains("cbvidlocate"))) {
+    const r = await cb({ action: "video_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Signed H3 video return prepared.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished H3 video sealed for your friend"); await paintErrands(); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgcheck")) { await paintErrands(); return; }
+  if (row && ev.target.classList.contains("cbimglocate")) {
+    const r = await cb({ action: "image_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Prepared image return found.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend"); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgrender")) {
+    const id = row.dataset.id, retry = ev.target.dataset.retry === "true";
+    const r = await requestFriendImageRender(id, retry, () => row.dataset.id === id);
+    cbSay(r.error || r.note || "Image queued on this computer. Check its result before sending it back.");
+    if (!r.error) { await paintErrands(); await paintImageCardStatus(); }
+    return;
+  }
+  if (row && ev.target.classList.contains("cbimgsend")) {
+    const r = await cb({ action: "image_send_back", id: row.dataset.id });
+    cbSay(r.error || r.note || "Finished image sealed for manual handoff.");
+    if (!r.error && r.file) { setCbTab("Send"); showHandoff(r.file, "Finished Qwen image sealed for your friend"); await paintErrands(); }
+    return;
+  }
   if (row && ev.target.classList.contains("cbopenplan")) { cbOpenProject(row.dataset.slug); return; }
   if (!row || !ev.target.classList.contains("cbsend")) return;
   const r = await cb({ action: "send_back", id: row.dataset.id });
@@ -7684,8 +8541,9 @@ async function loadModels() {
    * before Music-only narrows the list below. */
   rightsCatalogCache = Object.fromEntries(d.capabilities.map((c) => [c.id, c]));
   // Music-only lists the two YuE2 builds it can run: native GGUF, and the ComfyUI checkpoint.
-  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy");
+  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy" || c.styleAdapter);
   state.models = d;
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
   /* WHETHER YOU MAY SELL WHAT IT MAKES, on the card itself: the same chip a
    * song and a picture carry, opening the licence's own words. A tester read
    * a card's note pointing at "the rights chip" and found none on it. */
@@ -7959,46 +8817,59 @@ function vidWH() {
   return ($("vidSize").value || "1280x704").split("x").map(Number);
 }
 
-/* THE QUALITY CHIPS' STEP COUNTS, as the server resolved them from the disk
- * (config.js, the step-defaults block after `config`; /api/status sends them
- * as stepDefaults). Standard is 8 only where both 8-step turbo files are on
- * disk, else 4, and Fast is 3 only where the TaoMate build is, else the 4-step
- * build. A literal 8 here opened a Models-screen install, which has the 4-step
- * files alone, on a 4-step LoRA run at 8 steps. The fallbacks serve an engine
- * that sends none (LTX, which hides the chips): 4 is matched on every disk
- * that has any H3 turbo file.
+/* THE QUALITY CHIPS' STEP COUNTS ARE THE SERVER'S, as it sends them per
+ * engine (`chips`, server/video-plain.js qualityChips): the same numbers
+ * make_clip's `quality` sends, so the chips and the tool cannot disagree.
+ * The page used to keep its own (Fast 3, Standard 8 or 4) beside the
+ * server's, and on some disks they named different counts. Plain: Fast is
+ * TaoMate's 3, Standard the 8-step file's 8 (the 4-step file's 4 where only
+ * it is on disk), Best the bare 20. KEEPING A CHARACTER (a saved character,
+ * reference pictures or a RefMod on H3): Standard is the reference build's
+ * own count (the REWIND A/B kept its character on that build at that count,
+ * 2026-09-24), Fast the count the reference path really runs for Fast (the
+ * TaoMate 3-step build takes no pictures); where that is Standard's count,
+ * Fast hides as two chips doing one thing. Each chip's `needsModel` is the
+ * Models row its file needs first (vidPaint dims it and a press offers it).
  *
- * KEEPING A CHARACTER (a saved character or reference pictures on H3),
- * Standard is the reference build's own count instead, the server's
- * `referenceSteps` (8 where the 8-step reference file is on disk): the REWIND
- * A/B kept its character on that build at that count (2026-09-24). Fast is
- * the count the reference path really runs for Fast, the server's
- * `keepFast.steps` (the TaoMate 3-step build takes no pictures, so the
- * reference build loads at its own count); where that is Standard's count,
- * Fast hides as two chips doing one thing. */
+ * A status without chips (LTX, which hides the chips; AMD, Intel and the CPU,
+ * where the page keeps main's chips, Bucky's rule) falls back to the
+ * engine's own defaults: stepDefaults, `referenceSteps` and
+ * `keepFast.steps`, as config.js resolved them from the disk. That is also
+ * vidDefaultSteps below, and it is self-contained on purpose: the tests lift
+ * this function out of the page and run it alone. */
 function vidQualitySteps(eng, keeping = false) {
+  const c = eng?.chips?.[keeping ? "keep" : "plain"];
+  const n = (chip) => Number(chip?.steps) || 0;
+  if (n(c?.fast) && n(c?.standard) && n(c?.best)) return { fast: n(c.fast), standard: n(c.standard), best: n(c.best) };
   const d = eng?.stepDefaults || {};
   const standard = (keeping && Number(eng?.referenceSteps)) || Number(d.standard) || 4;
   const fast = (keeping ? Number(eng?.keepFast?.steps) : Number(d.fast)) || standard;
   return { fast, standard, best: Number(d.best) || 20 };
 }
 
+/* THE ENGINE'S OWN DEFAULT COUNTS: what a render that names no count runs,
+ * and where the slider opens. Standard there is 8 or 4 where that speed-up
+ * is on disk, else the bare model's 20, while the Standard CHIP on such a
+ * disk is the 8-step file's 8, dimmed with its download offered. */
+function vidDefaultSteps(eng, keeping = false) {
+  const { chips, ...defaults } = eng || {};
+  return vidQualitySteps(defaults, keeping);
+}
+
 /* H3'S SPEED-UPS ARE OPTIONAL ADD-ONS (models.js, addonFor "video"): 3 steps
  * is TaoMate, 4 steps the 4-step file, 6 to 12 the 8-step file, and 13 and up
  * the bare model, which needs none. The server refuses a step count whose
- * file is missing and offers its download (video-plain.js speedupNeeded);
- * this is the same rule, so the page can offer it first. Null when nothing
- * is missing, else { build, row }. */
+ * file is missing and offers its download (video-plain.js speedupNeeded),
+ * and sends that rule's answer for every count, per path (`speedupNeeds`,
+ * speedupTable): the page looks it up, so it says a missing speed-up while
+ * the slider sits on it and offers it before a render, with no copy of the
+ * rule of its own (it kept one, which judged both paths by one reading). Null
+ * when nothing is missing, else { build, row }. */
 const VID_SPEEDUP_ROWS = { 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" };
+const VID_ROW_BUILD = Object.fromEntries(Object.entries(VID_SPEEDUP_ROWS).map(([b, row]) => [row, Number(b)]));
 function vidSpeedupNeed(eng, steps, hasRefs) {
-  const tb = eng?.turboBuilds;
-  const n = Number(steps);
-  if (!tb || eng.fixedSteps || !Number.isFinite(n) || n > (eng.turboMaxSteps ?? 12)) return null;
-  const build = hasRefs ? (tb.four || tb.eight ? null : 8)
-    : n <= (eng.turbo3MaxSteps ?? 3) ? (tb.three ? null : 3)
-    : n <= (eng.turbo4MaxSteps ?? 5) ? (tb.four ? null : 4)
-    : (tb.eight ? null : 8);
-  return build ? { build, row: VID_SPEEDUP_ROWS[build] } : null;
+  const row = eng?.speedupNeeds?.[hasRefs ? "refs" : "plain"]?.[Number(steps)] || null;
+  return row ? { build: VID_ROW_BUILD[row] ?? null, row } : null;
 }
 /** The words for a missing speed-up, and the model window on its row. */
 const vidSpeedupWords = (b) => b === 3 ? "TaoMate (182 MB)" : "the " + b + "-step speed-up (1.96 GB)";
@@ -8008,6 +8879,7 @@ function vidOfferSpeedup(build) {
 }
 
 function vidPaint() {
+  if (typeof h3RefModPanel !== "undefined") h3RefModPanel?.paint();
   const on = !!state.video?.enabled;
   /* RunPod GPU mode (web/runpod-integrated.js): the clip renders on the Pod. */
   const remote = $("vidRenderWhere")?.value === "runpod";
@@ -8021,20 +8893,40 @@ function vidPaint() {
    * what shows before that status lands. */
   if (!state.vidStepsOpened && eng.stepDefaults) {
     state.vidStepsOpened = true;
-    $("vidSteps").value = String(vidQualitySteps(eng).standard);
+    $("vidSteps").value = String(vidDefaultSteps(eng).standard);
   }
 
   /* KEEP MY CHARACTER: a saved character or reference pictures on H3. The
    * slider follows Standard across the switch only when it sits on the old
    * Standard; a count the person chose stays theirs, and the server's
    * "steps-measured" note says what the character was measured at. Every name
-   * here is optional-chained: vidPaint's lines are lifted and run alone. */
-  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0);
+   * here is optional-chained: vidPaint's lines are lifted and run alone.
+   * A reference song alone counts where the server sends the chips (`chips`:
+   * NVIDIA and a card nobody could read): it puts the render on the reference
+   * path and its count too (video-plain.js videoPlan), and make_clip sends the
+   * kept character's chips for ref_song, so the page draws the same ones. On
+   * AMD, Intel and the CPU the page reads it as main did. */
+  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0 || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length) || (!!eng?.chips && (state.refAudios || []).length > 0));
   if (eng.stepDefaults && state.vidKeeping !== undefined && state.vidKeeping !== keeping) {
-    const was = vidQualitySteps(eng, state.vidKeeping).standard, now = vidQualitySteps(eng, keeping).standard;
+    const was = vidDefaultSteps(eng, state.vidKeeping).standard, now = vidDefaultSteps(eng, keeping).standard;
     if (+$("vidSteps").value === was && was !== now) $("vidSteps").value = String(now);
   }
   state.vidKeeping = keeping;
+  /* THE DEFAULT MOVED UNDER THE SLIDER. A speed-up that lands while Studio
+   * runs moves the engine's own default (config.js refreshVideoPicks: the H3
+   * row's 8-step file takes Standard from the bare 20 to 8), and the Standard
+   * chip follows at once, but the slider opened once and stayed on 20: Best
+   * read as pressed, and Make clip sent 20, the bare model at about 2.4x the
+   * time, until the person pressed Standard or reloaded (review of the port,
+   * 2026-10-08, the tester's own path). So while the slider still sits on the
+   * default it last showed, for this engine and this Keep state, it follows the
+   * new one; a count the person chose stays theirs. */
+  if (eng.stepDefaults) {
+    const std = vidDefaultSteps(eng, keeping).standard;
+    if (state.vidStdShown != null && state.vidStdFor === cur && state.vidStdKeep === keeping
+        && std !== state.vidStdShown && +$("vidSteps").value === state.vidStdShown) $("vidSteps").value = String(std);
+    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;
+  }
 
   // Painted once; after that the select is left alone so it cannot fight a change.
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
@@ -8120,22 +9012,34 @@ function vidPaint() {
     qRow.hidden = noSteps;
     const qs = vidQualitySteps(eng, keeping);
     const stNow = +$("vidSteps").value;
-    /* Optional speed-ups: Fast is TaoMate's 3 steps and Standard the 8-step
-     * file (the 4-step one where only it is on disk). A chip whose file is
-     * missing stays in place, dimmed, and a press offers the download
-     * (data-get) instead of choosing it. Best needs nothing. While a character
-     * is kept the reference path's own numbers stand (vidQualitySteps). */
+    /* Optional speed-ups: a chip whose file is missing stays in place,
+     * dimmed, and a press offers the download (data-get, its Models row)
+     * instead of choosing it. Which chip needs which file is the server's too
+     * (the chip's needsModel), the plain chips' and a kept character's alike,
+     * so a kept chip whose file is missing is dimmed as well (it was lit, and
+     * the server refused it). Best needs nothing.
+     * AMD, INTEL AND THE CPU: the server sends no chips there (video-plain.js
+     * qualityChips, Bucky's rule), and the page draws main's, exactly: Fast
+     * is TaoMate's 3 and Standard the 8-step file's 8 (the 4-step one's 4
+     * where only it is on disk), dimmed by its both-paths reading
+     * (turboBuilds); while a character is kept, the server's own numbers. */
     const tb = keeping ? null : eng.turboBuilds;
-    if (tb) {
-      qs.fast = 3;
-      qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+    const chipOf = eng.chips?.[keeping ? "keep" : "plain"];
+    let getFor;
+    if (chipOf) {
+      getFor = { fast: chipOf.fast?.needsModel || null, standard: chipOf.standard?.needsModel || null, best: chipOf.best?.needsModel || null };
+    } else {
+      if (tb) {
+        qs.fast = 3;
+        qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+      }
+      getFor = { fast: tb && !tb.three ? VID_SPEEDUP_ROWS[3] : null, standard: tb && !tb.eight && !tb.four ? VID_SPEEDUP_ROWS[8] : null, best: null };
     }
-    const getFor = { fast: tb && !tb.three ? 3 : null, standard: tb && !tb.eight && !tb.four ? 8 : null, best: null };
     for (const b of qRow.querySelectorAll("[data-vq]")) {
       const want = qs[b.dataset.vq];
       const get = getFor[b.dataset.vq];
       b.classList.toggle("off", !!get);
-      if (get) b.dataset.get = String(get); else delete b.dataset.get;
+      if (get) b.dataset.get = get; else delete b.dataset.get;
       b.setAttribute("aria-pressed", !get && stNow === want ? "true" : "false");
       const small = b.querySelector("small");
       if (small) small.textContent = want + " steps";
@@ -8146,11 +9050,11 @@ function vidPaint() {
      * While a character is kept it is the server's keepFast note instead: the
      * TaoMate claim is about the text path, which a kept character never takes.
      * A speed-up that is not on disk says so, and a press offers it. */
-    const getTitle = (g) => "Needs " + vidSpeedupWords(g) + ", an optional add-on. Click to get it.";
-    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(3) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
+    const getTitle = (row) => "Needs " + vidSpeedupWords(VID_ROW_BUILD[row]) + ", an optional add-on. Click to get it.";
+    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(getFor.fast) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
     qRow.querySelector('[data-vq="standard"]').title = keeping
       ? (qs.standard === 8 ? "The 8-step reference build, at its own count" : "The " + qs.standard + "-step reference build, at its own count")
-      : getFor.standard ? getTitle(8) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
+      : getFor.standard ? getTitle(getFor.standard) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
     /* Where Fast would be the same number as Standard it is two chips doing
      * one thing, lit together. With the speed-ups known (turboBuilds) Fast is
      * always TaoMate's 3, dimmed when it is missing, so it always shows. */
@@ -8196,12 +9100,14 @@ function vidPaint() {
    * attached, in which case the server's refusal shows in #vidKeepNote. */
   { const kf = $("vidKeepField");
     if (kf) kf.hidden = cur !== "h3" && !($("vidCharacter")?.value || (state.refImages || []).length); }
-  /* Ask friend explains itself before anyone clicks: a recipe is H3 or LTX. */
+  /* This button sends a signed H3 render order, not a text-only recipe. */
   if ($("vidAskFriend")) {
-    const recipeOk = recipeEngineOk(cur);
-    $("vidAskFriend").disabled = !recipeOk;
-    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
-    $("vidAskFriend").title = recipeOk ? `Prepare a text-only recipe for a friend using their default models. To send reference pictures, use ${wfName} → Video clips → Ask friend, which carries them.` : recipeEngineRefusal();
+    const h3Job = cur === "h3";
+    $("vidAskFriend").disabled = !h3Job;
+    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Production") : "Production";
+    $("vidAskFriend").title = h3Job
+      ? `Send a signed 20-step H3 text-to-video job for a friend to review and render. For scenes with pictures, use ${wfName} → Video clips → Ask friend.`
+      : "Friend render jobs currently use MiniMax H3. Select H3 to ask a friend.";
   }
   /* The song under the clip works on BOTH engines — LTX freezes the audio
    * latent, H3 freezes it AND anchors it so the model can read the vocal: on
@@ -8316,7 +9222,8 @@ function vidPaint() {
    * loraSteps) names no build and warns about none. */
   /* A kept character counts: a saved character's pictures ride on the
    * reference path too, so its files are the ones that load. */
-  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0
+    || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length);
   /* LTX and a fixed-schedule engine (FastH3, eng.fixedSteps) load no turbo
    * build, so they name no path and warn about none. */
   const fixedPath = cur === "ltx" || !!eng.fixedSteps;
@@ -8380,7 +9287,7 @@ if ($("vidAttn")) {
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     /* A dimmed chip is an optional speed-up that is not on disk: offer it. */
-    if (b.dataset.get) { vidOfferSpeedup(Number(b.dataset.get)); return; }
+    if (b.dataset.get) { vidOfferSpeedup(VID_ROW_BUILD[b.dataset.get]); return; }
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
     // The same numbers the chips are lit and labelled by: the server's.
     const steps = vidQualitySteps(eng, !!state.vidKeeping)[b.dataset.vq];
@@ -9196,7 +10103,15 @@ async function enableVideo() {
   return !!state.video.enabled;
 }
 
+const h3RefModPanel = mountH3RefMods($("vidH3Extras"), {
+  getEngine: () => $("vidEngine").value || state.video?.engine || "h3",
+  getImages: () => state.refImages || [], onChange: () => vidPaint(),
+});
+globalThis.aiplayH3Extras = () => h3RefModPanel.spec();
+
 function videoFriendRecipe() {
+  if (typeof globalThis.aiplayH3Extras === "function" && Object.keys(globalThis.aiplayH3Extras()).length)
+    throw new Error("Clear reference caches and tweaks before sending this text-only recipe.");
   const recipeEngine = state.video?.engine || "ltx";
   if (!recipeEngineOk(recipeEngine)) throw new Error(recipeEngineRefusal());
   const [width,height]=vidWH();
@@ -9205,10 +10120,28 @@ function videoFriendRecipe() {
    * a person holding reference pictures was told to remove them and nothing
    * else — while Workflow's Ask friend packs a scene with its pictures. */
   if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || $("vidCharacter")?.value || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
-    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow"} → Video clips → Ask friend, which carries them.`);
+    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Production") : "Production"} → Video clips → Ask friend, which carries them.`);
   if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
+}
+function videoFriendJob() {
+  const video = videoFriendRecipe();
+  if (!video.prompt.trim()) throw new Error("Describe the clip before asking a friend to render it.");
+  if (video.engine !== "h3") throw new Error("Friend render jobs currently support MiniMax H3 text-to-video. Select H3 first.");
+  if (video.steps !== 20) throw new Error("Set H3 to 20 steps for this base-only friend job. Faster steps load a different turbo LoRA.");
+  if (video.guidance !== 1) throw new Error("Set guidance to 1 before asking a friend; the H3 graph does not use the Video guidance slider.");
+  if (video.negative.trim()) throw new Error("Clear the negative prompt before sending an H3 friend job; H3's built-in graph does not use it.");
+  if (($("vidSparse")?.value || state.video?.engines?.h3?.sparse || "off") !== "off") throw new Error("Turn H3 sparse attention off before sending this friend job.");
+  if (state.video?.engines?.h3?.bridge && state.video.engines.h3.bridge !== "off") throw new Error("Turn the H3 conditioning bridge off before sending this friend job.");
+  if (state.video?.engines?.h3?.blockCache === true) throw new Error("Turn H3 block cache off before sending this base-only friend job.");
+  if (Math.abs((+$('vidPin').value / 100) - 0.7) > 0.00001) throw new Error("Set frame guide strength to 70% before sending this text-only job.");
+  const backend = state.video?.engines?.h3?.attention
+    ? ($("vidAttn")?.value || state.video.engines.h3.attention) : "pytorch";
+  const attention = backend === "kitchen" ? "ck" : backend;
+  if (!["ck", "pytorch"].includes(attention)) throw new Error("Choose CK or PyTorch H3 attention before sending this friend job.");
+  return { ...video, prompt: video.prompt.trim(), negative: "", sparse: "off", attention, blockCache: false, bridge: "off", bridgeAlpha: 0, guideStrength: 0.7,
+    refImages: [], refAudios: [], midUploads: [], loras: [], loop: false };
 }
 /* A recipe carries MiniMax H3 or LTX settings (server/collab/video-recipe.js,
  * whose enum is the wire format a friend's Studio reads). Any other engine is
@@ -9223,7 +10156,7 @@ function recipeEngineRefusal() {
 }
 $("vidRecipeClear")?.addEventListener("click",()=>{state.videoRecipeLoaded=false;$("vidRecipeClear").hidden=true;$("clipNote").textContent="Recipe mode cleared.";});
 $("vidAskFriend")?.addEventListener("click",()=>{
-  try {const videoRecipe=videoFriendRecipe();setView("collab",{videoRecipe});}
+  try {const videoRecipe=videoFriendJob();setView("collab",{videoRecipe});}
   catch(e){$("clipNote").textContent=e.message;}
 });
 $("cbUseVideo")?.addEventListener("click",async()=>{
@@ -9265,7 +10198,8 @@ $("vidCreate").onclick = async () => {
   {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine] || {};
     /* A kept character rides the reference path like pictures do. */
-    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0
+      || !!h3RefModPanel.spec().refMods?.length;
     const need = eng.fixedSteps ? null : vidSpeedupNeed(eng, +$("vidSteps").value, hasRefs);
     if (need) { vidOfferSpeedup(need.build); return; }
   }
@@ -9286,6 +10220,7 @@ $("vidCreate").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "create",
+        ...h3RefModPanel.spec(),
         prompt: $("vidPrompt").value,
         title: $("vidFrom").selectedOptions[0]?.dataset.title || "",
         fromCover: $("vidFrom").value || undefined,
@@ -9809,7 +10744,10 @@ $("cextGo").onclick = async () => {
         seconds: Number($("cextSecs").value) || 3,
       }),
     })).json();
-    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; return; }
+    /* A missing speed-up names its row (needsModel): the model window opens
+     * on it, as every other refusal does, instead of words with nothing to
+     * press (this sheet has no step control). */
+    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; offerModel(r); return; }
     $("cext").hidden = true;
     loadClips();
   } finally {
@@ -10720,8 +11658,11 @@ function iedStageSize() {
   const W = ied.crop ? ied.crop.w : nw, H = ied.crop ? ied.crop.h : nh;
   return (ied.rotate % 180) ? { w: H, h: W, W, H } : { w: W, h: H, W, H };
 }
-function iedSrcToStage(sx, sy) {
+function iedSrcToStage(sx, sy, pixel = false) {
   const { w, h, W, H } = iedStageSize();
+  // Rectangles use pixel edges; a wand samples pixel centres. Applying the
+  // edge transform to index zero produced width/height after a flip.
+  if (pixel) { sx += .5; sy += .5; }
   let x = sx - (ied.crop ? ied.crop.x : 0), y = sy - (ied.crop ? ied.crop.y : 0);
   let fx = x, fy = y;
   if (ied.rotate === 90) { fx = H - y; fy = x; }
@@ -10729,7 +11670,9 @@ function iedSrcToStage(sx, sy) {
   else if (ied.rotate === 270) { fx = y; fy = W - x; }
   if (ied.flipH) fx = w - fx;
   if (ied.flipV) fy = h - fy;
-  return { x: Math.round(fx), y: Math.round(fy) };
+  return pixel ? { x: Math.max(0, Math.min(w - 1, Math.floor(fx))),
+    y: Math.max(0, Math.min(h - 1, Math.floor(fy))) }
+    : { x: Math.round(fx), y: Math.round(fy) };
 }
 function iedStagePoint(e) {
   const p = iedImgPoint(e);
@@ -10833,6 +11776,8 @@ const IED_HINT = {
   type: "click the picture to place the words",
   zoom: "click to zoom in, alt-click out",
   hand: "drag to pan",
+  wand: "click a colour to select it · adjust tolerance to refine",
+  colorRange: "click a colour to select it across the image",
   /* Keyed by capability as well as by tool, so twelve brush tools do not need
    * twelve near-identical lines. iedStatus() falls back to the family's. */
   selection: "drag a region — every adjustment and all 88 effects then apply only there",
@@ -11165,7 +12110,7 @@ addEventListener("keydown", (e) => {
     if (ied.selDraft || ied.shapeDraft || ied.pathDraft) {
       ied.selDraft = null; ied.shapeDraft = null; ied.pathDraft = null; iedOverlayPaint(); return;
     }
-    $("imgEd").hidden = true; return;
+    iedCloseEditor(); return;
   }
   // Enter finishes the pen the way a double-click does — the options bar says
   // both, so both must be true.
@@ -11338,10 +12283,11 @@ function iedChkVerdict(ok) {
 }
 
 function openImageEditor(name) {
-  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocViewSeq;
+  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocOpenSeq; ++iedDocViewSeq;
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
   ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
+  if (iedVectorizer) iedVectorizer.open(name, m);
   $("iedImg").src = `/api/image/${encodeURIComponent(name)}?v=${Date.now()}`;
   const d = m.at ? new Date(m.at) : null;
   $("iedMeta").innerHTML = [
@@ -11456,10 +12402,12 @@ function openImageEditor(name) {
    * trash it. Every pixel surface goes away, and so do the tools that would
    * drive one; the whole point of a tool strip is that what is lit is what
    * works. */
-  for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
+  for (const id of ["iedSliders", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
     "iedApply"]) {
     $(id).hidden = isFinal;
   }
+  // A traced SVG can still replace fills using its captured raster source.
+  $("iedVec").hidden = isFinal && !iedVectorizer?.hasSource();
   /* ⚠ THE DOCKS HAVE TWO REASONS TO BE HIDDEN, SO NEITHER WRITES THE FLAG.
    * This line used to read `$(id).hidden = isFinal` across twelve docks — the
    * right rule (an .svg has no pixels, so every pixel surface goes away) writing
@@ -11682,7 +12630,11 @@ $("iedReset").onclick = () => { ied.rotate = 0; ied.flipH = false; ied.flipV = f
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   iedReframe(); iedPush("reset adjustments"); };
-$("iedClose").onclick = () => { $("imgEd").hidden = true; };
+function iedCloseEditor() {
+  $("imgEd").hidden = true;
+  iedSelectionPreviewSchedule();
+}
+$("iedClose").onclick = iedCloseEditor;
 /* No click-outside-to-close any more: the console fills the screen and the
  * canvas is something you drag on. A stray pointer-up must not throw the edit
  * away. Escape and ✕ close it. */
@@ -11743,23 +12695,21 @@ $("iedApply").onclick = async () => {
   } finally { iedApplyBusy = false; iedApplyEnable(); }
 };
 
-$("iedVecGo").onclick = async () => {
-  const btn = $("iedVecGo"); btn.disabled = true; btn.textContent = "Tracing…";
-  try {
-    const r = await (await fetch("/api/images/vectorize", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: ied.name, colors: +$("iedVecColors").value }) })).json();
-    if (r.error) { failSay(r); return; }
+iedVectorizer = createVectorizer({
+  get: $, currentName: () => ied.name,
+  request: async (body) => (await fetch("/api/images/vectorize", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(),
+  onResult: async (r, show, active) => {
     await loadImages();
-    openImageEditor(r.name);
-  } finally { btn.disabled = false; btn.textContent = "Trace to SVG"; }
-};
+    if (show && ied.name === active) openImageEditor(r.name);
+  },
+});
 
 $("iedReuse2").onclick = () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta;
   if (!m?.prompt) return;
   $("imgPrompt").value = m.prompt; if (m.seed != null) $("imgSeed").value = m.seed;
-  $("imgEd").hidden = true; $("imgPrompt").focus();
+  iedCloseEditor(); $("imgPrompt").focus();
 };
 $("iedBlur").onclick = async () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta || {};
@@ -12210,6 +13160,7 @@ let iedDocRows = null;          // the shelf listing; null until it has been rea
 let iedDoc = null;              // the OPEN document's tree, refreshed by every edit
 let iedDocLines = [];           // the flat outline the shelf answers with
 let iedDocPick = [];            // picked layer ids, in the order they were clicked
+let iedDocOpenSeq = 0;          // newer canvas choices invalidate older shelf reads
 let iedDocCat = null, iedDocCatErr = null;
 /* ⚠ A FAILED READ IS NOT AN EMPTY SHELF. Both leave the row list empty, and
  * rendering them the same way tells somebody their documents are gone when the
@@ -12294,11 +13245,14 @@ function iedDocFind(id, layers) {
 async function iedDocEdit(ops, what) {
   if (!iedDoc) { iedToast(iedDocNeed()); return null; }
   if (iedDocBusy) return null;
+  const sourceDoc = iedDoc, id = sourceDoc.id;
   iedDocBusy = true; iedDocPaint();
   try {
     const r = await (await fetch("/api/images/document-edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: iedDoc.id, ops, doc: true }) })).json();
+      body: JSON.stringify({ id, ops, doc: true }) })).json();
+    // The shelf edit still commits, but a later canvas choice owns the view.
+    if (iedDoc !== sourceDoc) return r;
     if (r.error) {
       /* A refusal anywhere in the list leaves the shelf exactly as it was, so
        * the local tree is still right and must not be thrown away. */
@@ -12352,7 +13306,9 @@ function iedDocMaybeList() {
 }
 
 async function iedDocOpenId(id) {
+  const seq = ++iedDocOpenSeq;
   const r = await iedDocPost({ action: "open", id });
+  if (seq !== iedDocOpenSeq) return;
   if (r.error) { iedDocSay(`That document did not open: ${r.error}`); iedToast(r.error); return; }
   if (iedDoc?.id !== r.doc?.id && ied.name) openImageEditor(ied.name);
   iedDoc = r.doc || null;
@@ -12368,7 +13324,7 @@ async function iedDocOpenId(id) {
 /* A document is the canvas, not just an outline beside an unrelated image.
  * Sequence replies so a slow older render cannot erase the latest layer edit. */
 let iedDocViewSeq = 0, iedDocViewReady = false, iedDocPaintTargets = {};
-const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedDl",
+const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedVecFillGo", "iedVecCleanGo", "iedDl",
   "iedBlur", "iedTrash2", "iedReveal2", "iedReuse2", "iedCompose", "iedDocSave",
   "iedSelWhat", "iedSelBake", "iedLutGo"]);
 const IED_DOC_FILE_COMMANDS = new Set(["file.download", "file.reveal", "file.reuse", "file.blur", "file.trash",
@@ -12400,6 +13356,7 @@ async function iedDocViewRefresh() {
   if (!iedDoc) return;
   iedDocViewReady = false; iedDocPaintTargets = {}; iedAIPaint(); iedApplyEnable();
   const id = iedDoc.id, seq = ++iedDocViewSeq;
+  iedOverlayPaint();
   try {
     const r = await (await fetch("/api/images/document-preview", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
@@ -12417,7 +13374,7 @@ async function iedDocViewRefresh() {
   } catch (error) { if (seq === iedDocViewSeq) iedDocSay(`Canvas preview failed: ${error.message}`); }
 }
 
-const iedAI = { refs: [], job: null, busy: false, poll: 0, original: null };
+const iedAI = { refs: [], job: null, busy: false, poll: 0, pollFailures: 0, original: null };
 function iedAIPaint() {
   iedDocumentFileToolsPaint();
   const mode = $("iedAIMode").value;
@@ -12442,8 +13399,10 @@ function iedAIPaint() {
   $("iedAITransparent").disabled = mode === "inpaint";
   if (mode === "inpaint") $("iedAITransparent").checked = false;
   const ready = iedAI.job?.status === "ready", active = iedAI.job?.status === "generating";
-  $("iedAIGenerate").disabled = iedAI.busy || active || ready || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
-  $("iedAIGenerate").textContent = active ? "Qwen is generating…" : "Generate edit preview";
+  $("iedAIGenerate").disabled = iedAI.busy || active || ready || iedAI.pollFailures > 0
+    || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
+  $("iedAIGenerate").textContent = iedAI.pollFailures ? "Checking edit…"
+    : active ? "Qwen is generating…" : "Generate edit preview";
   $("iedAIReview").hidden = !ready;
   $("iedAIUndo").hidden = iedAI.job?.status !== "accepted";
   for (const id of ["iedAIAccept", "iedAIDiscard", "iedAIUndo"]) $(id).disabled = iedAI.busy;
@@ -12477,6 +13436,8 @@ async function iedAIPoll() {
     const r = await iedAIRequest({ action: "status", id });
     if (iedAI.job?.id !== id) return;
     iedAI.job = r;
+    iedAI.pollFailures = 0;
+    $("iedAIStatus").title = "";
     if (r.status === "generating") {
       $("iedAIStatus").textContent = `Queued or generating · seed ${r.seed}. The original is unchanged.`;
       iedAI.poll = setTimeout(iedAIPoll, 2000);
@@ -12485,7 +13446,25 @@ async function iedAIPoll() {
       await loadImages();
     } else if (r.status === "error") $("iedAIStatus").textContent = r.error || "The generation failed.";
     iedAIPaint();
-  } catch (error) { $("iedAIStatus").textContent = error.message; iedAI.job = null; iedAIPaint(); }
+  } catch (error) {
+    if (iedAI.job?.id !== id) return;
+    // A status request can fail while the detached GPU job keeps running.
+    // Keep its id and refuse another render until we know the actual result.
+    // A server restart is definitive: it has no record to recover.
+    if (/editor job is unavailable or belongs to a previous app session/i.test(error.message)) {
+      iedAI.job = null;
+      iedAI.pollFailures = 0;
+      $("iedAIStatus").textContent = "Edit session ended. Generate again.";
+      $("iedAIStatus").title = "";
+    } else {
+      const delay = Math.min(10_000, 1000 * 2 ** Math.min(iedAI.pollFailures + 1, 4));
+      iedAI.pollFailures++;
+      $("iedAIStatus").textContent = "Connection lost. Checking edit again…";
+      $("iedAIStatus").title = error.message;
+      iedAI.poll = setTimeout(iedAIPoll, delay);
+    }
+    iedAIPaint();
+  }
 }
 function iedAIHasPending() {
   const o = iedOps();
@@ -12504,7 +13483,7 @@ $("iedAIRefAdd").onclick = () => {
   iedAIPaint();
 };
 $("iedAIGenerate").onclick = async () => {
-  if (iedAI.busy || ["generating", "ready"].includes(iedAI.job?.status)) return;
+  if (iedAI.busy || iedAI.pollFailures || ["generating", "ready"].includes(iedAI.job?.status)) return;
   iedAI.busy = true; iedAIPaint();
   try {
     if (iedDoc && !iedDocViewReady) throw new Error("Wait for the document canvas preview to finish before editing.");
@@ -12519,6 +13498,7 @@ $("iedAIGenerate").onclick = async () => {
       ...($("iedAISeed").value.trim() ? { seed: +$("iedAISeed").value } : {}) };
     $("iedAIStatus").textContent = "Freezing the source and checking Qwen…";
     iedAI.job = await iedAIRequest(body);
+    iedAI.pollFailures = 0;
     clearTimeout(iedAI.poll); iedAI.poll = setTimeout(iedAIPoll, 1000);
     $("iedAIStatus").textContent = `Queued · seed ${iedAI.job.seed}. You can keep the original until the preview is ready.`;
   } catch (error) { $("iedAIStatus").textContent = error.message; }
@@ -12991,6 +13971,7 @@ function iedDocPaint() {
   gate("iedDocUngroup", !!hit && hit.layer.type === "group",
     iedDoc ? "Pick a group row — ungroup is the one op that needs one." : iedDocNeed());
   gate("iedDocRender", !!iedDoc, iedDocNeed());
+  gate("iedDocPsd", !!iedDoc, iedDocNeed());
   gate("iedDocClose", !!iedDoc, iedDocNeed());
 
   for (const b of shelf.querySelectorAll("[data-docopen]")) {
@@ -13009,7 +13990,7 @@ function iedDocPaint() {
          * and not one id, and it takes its refs in the order they were picked. */
         const at = iedDocPick.indexOf(id);
         if (at >= 0) iedDocPick.splice(at, 1); else iedDocPick.push(id);
-        iedDocPaint();
+        iedDocPaint(); iedOverlayPaint();
       };
     }
     for (const b of out.querySelectorAll("[data-doceye]")) {
@@ -13041,7 +14022,7 @@ $("iedDocClip").onclick = () => iedDocClipToggle();
 $("iedDocUngroup").onclick = () => iedDocUngroup();
 $("iedDocClose").onclick = () => {
   iedDoc = null; iedDocLines = []; iedDocPick = [];
-  ++iedDocViewSeq;
+  ++iedDocOpenSeq; ++iedDocViewSeq;
   iedPreviewClear();
   if (ied.name) $("iedImg").src = `/api/image/${encodeURIComponent(ied.name)}`;
   $("iedDocName").textContent = ied.name || "Image";
@@ -13050,6 +14031,26 @@ $("iedDocClose").onclick = () => {
   iedDocPaint();
 };
 $("iedDockDocs").addEventListener("toggle", iedDocMaybeList);
+
+$("iedDocPsd").onclick = async () => {
+  if (!iedDoc || iedDocBusy) return;
+  const id = iedDoc.id;
+  iedDocBusy = true; iedDocPaint();
+  try {
+    const response = await fetch("/api/images/standrig-psd", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    const result = await response.json();
+    if (!response.ok || result.error) { iedDocSay(result.error || "PSD export failed."); return; }
+    if (!/^\/api\/images\/standrig-psd\/standrig_[0-9a-f]{32}\.psd$/.test(result.downloadUrl)) {
+      iedDocSay("PSD export returned an invalid download link."); return;
+    }
+    const link = document.createElement("a");
+    link.href = result.downloadUrl; link.download = result.name;
+    document.body.append(link); link.click(); link.remove();
+    iedDocSay(`PSD ready · ${result.layers?.length || 0} parts.`, result.warnings);
+  } catch (error) { iedDocSay(`PSD export failed: ${error.message || error}`); }
+  finally { iedDocBusy = false; iedDocPaint(); }
+};
 
 $("iedDocRender").onclick = async () => {
   if (!iedDoc) { iedToast(iedDocNeed()); return; }
@@ -13404,8 +14405,10 @@ function iedShapePts(s) {
 }
 
 function iedOverlayPaint() {
+  iedSelectionPreviewSchedule();
   const x = iedOverlaySize();
   if (!x || !$("iedImg").naturalWidth) return;
+  iedSelectionPreviewDraw(x);
   for (const s of ied.sel) {
     if (s.kind === "wand" || s.kind === "colorRange") { iedSeedMark(x, s); continue; }
     if (s.kind === "channel") continue;   // the mask IS the plane — no outline exists
@@ -13450,8 +14453,7 @@ function iedOverlayPaint() {
   }
 }
 
-/* A wand seed has no client-side mask — the server decides which pixels the
- * tolerance reaches. Marking the seed is the honest amount of preview. */
+/* While the server resolves the mask, retain the sampled point. */
 function iedSeedMark(x, s) {
   const p = s.kind === "wand" ? [s.x, s.y] : (s.at || null);
   if (!p) return;
@@ -13521,6 +14523,87 @@ function iedSelAdd(shape) {
   iedPush(`select ${shape.kind}`);
 }
 
+/* The selection engine supplies these pixels, including combined shapes,
+ * feather, expansion and inversion. Cache by recipe, not by zoom or pan. */
+var iedSelPreviewState;
+function iedSelectionPreviewSource() {
+  if (!iedDoc) return ied.name ? { name: ied.name, frame: iedSelFrame() } : null;
+  if (!iedDocViewReady) return null;
+  const target = iedPaintTarget();
+  const layer = target && iedDocFind(target.ref)?.layer;
+  return layer?.src ? { name: layer.src, frame: {}, sourceLayer: layer.name || target.ref }
+    : { documentId: iedDoc.id, frame: {} };
+}
+function iedSelectionPreviewRecipe() {
+  if ($("imgEd").hidden || !$("iedImg").naturalWidth
+      || !ied.sel.some(s => ["wand", "colorRange", "channel"].includes(s.kind))) return null;
+  // The viewport maps crop, rotation and flips. Other geometry is committed
+  // first rather than drawing an exact mask in the wrong coordinate frame.
+  if (ied.canvas || (ied.geom && Object.keys(ied.geom).length)) return null;
+  const source = iedSelectionPreviewSource();
+  if (!source) return null;
+  return { ...source, selection: iedSelectionOp() };
+}
+function iedSelectionPreviewSays(text, title = "") {
+  const el = $("iedSelPreviewStatus");
+  if (el) { el.textContent = text; el.title = title; }
+}
+function iedSelectionPreviewSchedule() {
+  const s = iedSelPreviewState ??= { key: null, seq: 0, timer: 0, controller: null, mask: null };
+  const recipe = iedSelectionPreviewRecipe();
+  const key = recipe ? JSON.stringify([recipe, iedDoc ? iedDocViewSeq : $("iedImg").src]) : null;
+  if (key === s.key) return;
+  s.key = key; ++s.seq; clearTimeout(s.timer); s.controller?.abort(); s.mask = null;
+  const framing = !key && !$("imgEd").hidden && ied.sel.some(s => ["wand", "colorRange", "channel"].includes(s.kind))
+    && (ied.canvas || (ied.geom && Object.keys(ied.geom).length));
+  iedSelectionPreviewSays(key ? "Selecting…" : framing ? "Apply framing first" : "");
+  if (!key) return;
+  const seq = s.seq;
+  s.timer = setTimeout(() => iedSelectionPreviewRender(recipe, seq), 140);
+}
+async function iedSelectionPreviewRender(recipe, seq) {
+  const s = iedSelPreviewState;
+  const controller = new AbortController(); s.controller = controller;
+  try {
+    const { sourceLayer, ...body } = recipe;
+    const response = await fetch("/api/images/preview-selection", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
+    const result = await response.json();
+    if (seq !== s.seq) return;
+    if (!response.ok || result.error || !result.mask) throw new Error(result.error || "Selection preview unavailable.");
+    const im = new Image();
+    im.onload = () => {
+      if (seq !== s.seq) return;
+      const cv = document.createElement("canvas");
+      cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+      const ctx = cv.getContext("2d"); ctx.drawImage(im, 0, 0);
+      ctx.globalCompositeOperation = "source-in";
+      ctx.fillStyle = iedLiveInk(); ctx.fillRect(0, 0, cv.width, cv.height);
+      s.mask = cv; s.width = result.width; s.height = result.height;
+      const coverage = Math.max(0, Math.min(1, Number(result.coverage) || 0));
+      iedSelectionPreviewSays(result.empty ? "Nothing selected" : `${(coverage * 100).toFixed(1)}% selected`,
+        sourceLayer ? `Sampled from layer: ${sourceLayer}` : "The highlighted area is the selection used by the image tools.");
+      iedOverlayPaint();
+    };
+    im.onerror = () => { if (seq === s.seq) iedSelectionPreviewSays("Preview unavailable"); };
+    im.src = result.mask;
+  } catch (error) {
+    if (seq !== s.seq || error.name === "AbortError") return;
+    iedSelectionPreviewSays("Preview unavailable", error.message);
+  } finally { if (s.controller === controller) s.controller = null; }
+}
+function iedSelectionPreviewDraw(x) {
+  const s = iedSelPreviewState;
+  if (!s?.mask) return;
+  const a = iedStageToView(0, 0), b = iedStageToView(s.width, 0), c = iedStageToView(0, s.height);
+  x.save();
+  x.transform((b.x - a.x) / s.width, (b.y - a.y) / s.width,
+    (c.x - a.x) / s.height, (c.y - a.y) / s.height, a.x, a.y);
+  x.globalAlpha = .28;
+  x.drawImage(s.mask, 0, 0, s.width, s.height);
+  x.restore();
+}
+
 /* the pixel under a stage point, for colour range — sampled from the file's own
  * pixels, which is what §3 says wand and colour range see at stage 4 */
 function iedSampleStage(sp) {
@@ -13541,7 +14624,9 @@ function iedSelDown(sp, e) {
   const mode = uiMode === "new" ? "add" : uiMode;
   const tol = +($("iedSelTol").value || 32);
   if (ied.tool === "wand") {
-    iedSelAdd({ kind: "wand", x: sp.x, y: sp.y, tolerance: tol,
+    const src = iedStageToSrc(sp.x, sp.y);
+    const seed = iedSrcToStage(src.x, src.y, true);
+    iedSelAdd({ kind: "wand", x: seed.x, y: seed.y, tolerance: tol,
       contiguous: !!$("iedSelContig").checked, mode });
     return null;
   }
@@ -13627,7 +14712,7 @@ function iedSelPaint() {
    * here rather than at each of the callers is what stops one of them being
    * forgotten and leaving Apply lit on a stale yes. */
   iedStylesGate();
-  iedStatus();
+  iedStatus(); iedPreviewSchedule();
 }
 
 for (const b of document.querySelectorAll("[data-selmode]")) {
@@ -13708,8 +14793,19 @@ $("iedSelBake").onclick = async () => {
     btn.disabled = false; btn.textContent = was;
   }
 };
-for (const id of ["iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
-  $(id).onchange = () => { iedOverlayPaint(); iedStatus(); iedPush("selection settings"); };
+function iedSelectionSettingsChange() {
+  const kind = ied.tool === "wand" ? "wand" : ied.tool === "colorRange" ? "colorRange" : null;
+  const shape = kind && ied.sel.findLast(s => s.kind === kind);
+  if (shape) {
+    const value = $("iedSelTol").value;
+    shape.tolerance = Math.max(0, Math.min(255, value === "" || !Number.isFinite(+value) ? 32 : +value));
+    if (kind === "wand") shape.contiguous = !!$("iedSelContig").checked;
+  }
+  iedSelPaint(); iedOverlayPaint(); iedStatus(); iedPreviewSchedule();
+}
+for (const id of ["iedSelTol", "iedSelContig", "iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
+  $(id).oninput = iedSelectionSettingsChange;
+  $(id).onchange = () => { iedSelectionSettingsChange(); iedPush("selection settings"); };
 }
 
 /* ── §5 strokes ────────────────────────────────────────────────────────────
@@ -15934,7 +17030,10 @@ function iedSrcToViewNav(sx, sy, s) {
 const IED_SNAPCTL = ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV",
   "iedShd", "iedHl", "iedPost", "iedDn", "iedGr", "iedRw", "iedRh",
   "iedKeyTol", "iedKeySoft", "iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC",
-  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors",
+  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors", "iedVecMode", "iedVecQuality",
+  "iedVecDetail", "iedVecTolerance", "iedVecArea", "iedVecAlpha", "iedVecSize",
+  "iedVecFillColor", "iedVecStart", "iedVecEnd", "iedVecAngle",
+  "iedVecCleanType", "iedVecCleanStrength", "iedVecCleanDeviation", "iedVecShapeColor", "iedVecCompareMode",
   "iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA",
   "iedStSize2", "iedStHard", "iedStOpacity", "iedStFlow", "iedStAmount", "iedStColor", "iedStSpacing",
   "iedShFillOn", "iedShFill", "iedShStrokeOn", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend",
@@ -16494,7 +17593,7 @@ const IED_CMDS = [
   { id: "file.blur", menu: "File", label: "Blur in the gallery", run: () => $("iedBlur").click() },
   { ...SEP, menu: "File" },
   { id: "file.trash", menu: "File", label: "Move to trash…", run: () => $("iedTrash2").click() },
-  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: () => { $("imgEd").hidden = true; } },
+  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: iedCloseEditor },
 
   { id: "edit.undo", menu: "Edit", label: "Undo", key: "Ctrl+Z",
     enabled: () => iedU.at > 0, run: () => iedStepTo(iedU.at - 1),
@@ -16639,7 +17738,7 @@ const IED_CMDS = [
   { id: "select.none", menu: "Select", label: "Deselect", key: "Ctrl+D", need: "selection",
     run: () => { ied.sel.length = 0; ied.selDraft = null; iedSelPaint(); iedOverlayPaint(); iedPush("deselect"); } },
   { id: "select.invert", menu: "Select", label: "Invert", key: "Ctrl+Shift+I", need: "selection",
-    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedStatus(); iedPush("invert selection"); } },
+    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedOverlayPaint(); iedStatus(); iedPreviewSchedule(); iedPush("invert selection"); } },
   { id: "select.fromcrop", menu: "Select", label: "From the crop rectangle", need: "selection",
     run: () => {
       if (!ied.crop) { iedToast("Drag a crop rectangle first."); return; }
@@ -16865,7 +17964,7 @@ $("iedTrash2").onclick = async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
   if (r.error) { failSay(r); return; }
-  $("imgEd").hidden = true;
+  iedCloseEditor();
   await loadImages();
 };
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
@@ -17008,7 +18107,9 @@ async function imgQwenCheck() {
    * of them reads as a fault; one that spins when the answer is actually slow
    * reads as work. The light is left alone until then, so a green Qwen stays
    * green through a re-check that changes nothing. */
-  const spin = setTimeout(() => imgQwenPaint("busy", "Checking Qwen Image 2.1…"), 350);
+  const spin = setTimeout(() => {
+    if (request === imgQwenRequest) imgQwenPaint("busy", "Checking Qwen Image 2.1…");
+  }, 350);
   imgQueueGate();
   try {
     const response = await fetch(`/api/images/qwen-status?${key}`);
@@ -18083,6 +19184,47 @@ function ckptOptions(list, selected) {
   }
 }
 
+/* A standalone friend job is deliberately narrower than Make image. Every
+ * setting it cannot reproduce on the receiver is refused here, never dropped
+ * while changing views. References are ordered server-issued names only; their
+ * bytes are frozen, hashed and included by the Collab preview on the server. */
+function imageFriendJob() {
+  if ($("imgEngine").value !== "qwen-image-2.1") throw new Error("Ask friend currently supports Qwen Image 2.1. Choose it above first.");
+  const prompt = $("imgPrompt").value.trim();
+  if (!prompt) throw new Error("Describe the image before asking a friend.");
+  if ($("imgPrivate").checked) throw new Error("Don't record the prompt is on. Sending this job reveals its words to your friend; turn that switch off first.");
+  if ($("imgPersona").value) throw new Error("This job cannot expand a saved character yet. Add up to three of its reference images directly, then ask again.");
+  if (imgRefs.length > 3) throw new Error("A friend job can carry up to three reference images. Remove the extras first.");
+  if (imgRefs.length && $("imgRefSizing").value !== "custom") throw new Error("Set canvas to ‘Use the size above’ for a friend job. Matching a reference's shape is not in this job format.");
+  if ($("imgTransparent").checked) throw new Error("Transparent backgrounds are not in this friend job format. Turn Transparent off first.");
+  if (imgDraftOn()) throw new Error("Fast draft is not in this friend job format. Turn it off to send a full Qwen render.");
+  if (Number($("imgCount").value) !== 1) throw new Error("A friend job makes one image. Set ‘how many’ to 1; prepare another file for each additional image.");
+  if (Number($("imgSteps").value) !== 25) throw new Error("A friend job uses Qwen's 25-step full render. Set steps to 25 first.");
+  if (Number($("imgCfg").value) !== 1 || $("imgNeg").value.trim()) throw new Error("A friend job uses CFG 1 with no negative prompt. Set CFG to 1 and clear Avoid first.");
+  const [width, height] = $("imgSize").value === "custom"
+    ? [Number($("imgW").value), Number($("imgH").value)]
+    : $("imgSize").value.split("x").map(Number);
+  if (![width, height].every((n) => Number.isInteger(n) && n >= 256 && n <= 4096)) throw new Error("Choose a valid canvas size before asking a friend.");
+  if (![[1024, 1024], [1344, 768], [768, 1344]].some(([w, h]) => w === width && h === height))
+    throw new Error("A friend job supports 1024 × 1024, 1344 × 768 or 768 × 1344. Choose Custom for the wide or tall size.");
+  const refs = imgRefs.map((r) => r.name);
+  if (refs.some((name) => typeof name !== "string" || !name || name === "." || name === ".." || /[\\/]/.test(name))) throw new Error("A reference is missing its Studio-issued name. Add it again before asking a friend.");
+  const seedText = $("imgSeed").value.trim();
+  const seed = seedText === "" ? undefined : Number(seedText);
+  if (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 4294967295)) throw new Error("Seed must be a whole number from 0 through 4294967295.");
+  return { prompt, negative: "", width, height, steps: 25, cfg: 1, ...(seed === undefined ? {} : { seed }), refs };
+}
+$("imgAskFriend")?.addEventListener("click", () => {
+  try {
+    const imageJob = imageFriendJob();
+    const imageRefPreviews = imgRefs.map(({ name, url }) => ({ name, url }));
+    setView("collab", { imageJob, imageRefPreviews });
+  } catch (e) {
+    $("imgNote").textContent = e.message || String(e);
+    $("imgNote").classList.add("stick");
+  }
+});
+
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
   if (!prompt) { $("imgPrompt").focus(); return; }
@@ -18884,12 +20026,24 @@ function reactReview() {
     const known = !!request.seconds || remaining !== null;
     const frames = known ? (request.paint ? Math.ceil(seconds * request.paint.fps) : Math.round(seconds * 12)) : null;
     const refs = request.pictures.filter((name) => !/\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const firstClip = request.pictures.find((name) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const sourceVideo = $("reactSourceVideo");
+    const sourceClipDuration = sourceVideo?.dataset.file === firstClip && Number.isFinite(sourceVideo.duration) ? sourceVideo.duration : null;
+    const sourceWindow = request.motion && known ? reactiveSourceWindow({ duration: sourceClipDuration,
+      start: request.motion.sourceStart, speed: request.motion.sourceSpeed, seconds }) : { known: false };
+    const sourceWindowNote = !request.motion ? "" : !sourceWindow.known
+      ? "Source loop point is unknown until the selected clip and song durations load."
+      : sourceWindow.startBeyondEnd
+        ? `Source starts at ${sourceWindow.start.toFixed(1)}s, at or beyond the clip's ${sourceWindow.duration.toFixed(1)}s end; check the offset before rendering.`
+        : sourceWindow.repeats
+          ? `Source clip ends about ${sourceWindow.firstRepeatAt.toFixed(1)}s into the output and then repeats from the beginning. The source player previews only the first pass.`
+          : `Source window ${sourceWindow.start.toFixed(1)}–${sourceWindow.sourceEnd.toFixed(1)}s fits in the ${sourceWindow.duration.toFixed(1)}s clip.`;
     const drums = request.hits === "drums" || request.motion?.profile === "yvann";
     const work = request.paint ? `${frames === null ? "Duration-dependent" : frames} diffusion frames at ${request.paint.fps} fps, then a compositor export.`
       : request.motion ? `${frames === null ? "Duration-dependent" : frames} motion frames at 12 fps · ${$("reactMotionSteps").value} sampling steps · ${$("reactMotionHires").checked ? "detail pass enabled (extra diffusion work)" : "one diffusion pass"}${$("reactMotionSmooth").checked ? " · interpolation to 24 fps" : ""}, then a compositor export.`
         : "Song analysis and compositor export; no video diffusion model is used for this look.";
     const time = known ? `${seconds.toFixed(1)}s from song ${start.toFixed(1)}s${request.seconds && seconds < request.seconds ? " (limited by remaining song)" : ""}` : `Remaining song from ${start.toFixed(1)}s, capped at ${limit}s; duration is not loaded yet`;
-    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p><p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
+    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p>${sourceWindowNote ? `<p>${esc(sourceWindowNote)}</p>` : ""}<p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
     $("reactRequestJson").textContent = JSON.stringify(request, null, 2);
     $("reactSongRegion").textContent = sourceDuration === null ? "Song duration loads from the audio file. Blank length uses the remainder, capped at 600s (120s for Motion)." : `Song length ${sourceDuration.toFixed(1)}s · selected start ${start.toFixed(1)}s · ${remaining.toFixed(1)}s remaining. Song and source clip timing are independent.`;
     return request;
@@ -18903,6 +20057,7 @@ $("reactReviewRefresh")?.addEventListener("click", reactReview);
 $("reactForm")?.addEventListener("input", reactReview);
 $("reactForm")?.addEventListener("change", reactReview);
 $("reactSongPlayer")?.addEventListener("loadedmetadata", reactReview);
+$("reactSourceVideo")?.addEventListener("loadedmetadata", reactReview);
 $("reactSongPlayer")?.addEventListener("timeupdate", () => {
   const player = $("reactSongPlayer"), seconds = Number($("reactSecs").value), start = Number($("reactStart").value || 0);
   if (player.dataset.region === "yes" && seconds > 0 && player.currentTime >= start + seconds) { player.pause(); player.dataset.region = ""; }
@@ -18918,6 +20073,14 @@ $("reactSourcePlay")?.addEventListener("click", async () => {
   catch (error) { $("reactNote").textContent = `Could not play the source: ${error.message}`; }
 });
 $("reactShortTest")?.addEventListener("click", () => { $("reactSecs").value = "4"; reactReview(); $("reactNote").textContent = "Length set to 4 seconds. Review the settings, then Render to run the test."; });
+$("reactAskSourceFriend")?.addEventListener("click", () => {
+  /* Collab's signed H3 job is text-only. A Reactive render also needs the local
+   * song, ordered media and compositor settings, so this shortcut opens the
+   * existing source-clip workflow without pretending to send that whole job. */
+  setView("video");
+  $("vidFriendSourceNote").hidden = false;
+  $("vidPrompt")?.focus();
+});
 
 /* Watch one render row on the comp until it is done or failed. */
 async function reactWatch(slug, jobId) {
@@ -19327,7 +20490,7 @@ function setView(name, options) {
   $("imgPanel").hidden = name !== "images";
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
-  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe);
+  if (name === "collab") paintCollab(false, collabScene, options?.videoRecipe, options?.imageJob, options?.imageRefPreviews);
   if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
@@ -19409,7 +20572,7 @@ function setView(name, options) {
   if (name === "thanks") loadThanks();
   // Same catalogue, filled the first time the About page is opened.
   if (name === "about") { loadAboutRights(); loadAboutReport(); loadVersion(); }
-  if (name === "video") { vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
+  if (name === "video") { $("vidFriendSourceNote").hidden = true; vidPaint(); loadClips(); if (typeof vidLoadCharacters === "function") vidLoadCharacters(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is
    * how two views start disagreeing about what exists. */
@@ -19608,6 +20771,7 @@ document.addEventListener("click", (e) => {
 });
 
 /* ── overnight ────────────────────────────────────────── */
+import { renderMusicBatchIdea, updateMusicBatchField, musicBatchSubmission, syncMusicBatchPlannerFields } from './music-batch-editor.js';
 /* Deliberately three controls. Anything more is a decision to make at bedtime,
    which is exactly when nobody wants to make one. */
 /* Ideas survive a reload.
@@ -19633,6 +20797,7 @@ function ovSetKind(k) {
    * picture, so it is hidden rather than shown doing nothing. */
   $("ovStagesField").hidden = media;
   $("ovAdd").hidden = media;
+  $("ovMusicPresets").hidden = media;
   $("ovAddImage").hidden = !media;
   $("ovAddImage").textContent = ov.kind === "image"
     ? "+ Add what's on the Pictures screen" : "+ Add what's on the Video screen";
@@ -19640,7 +20805,7 @@ function ovSetKind(k) {
 }
 const OV_KEYS = { music: "aiplayIdeas", image: "aiplayIdeasImage", video: "aiplayIdeasVideo" };
 function ovLoadIdeas() {
-  try { ov.ideas = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]") || []; }
+  try { const saved = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]"); ov.ideas = Array.isArray(saved) ? saved.filter(idea => idea && typeof idea === "object" && !Array.isArray(idea)).slice(0, 40) : []; }
   catch { ov.ideas = []; }
 }
 ovLoadIdeas();
@@ -19653,7 +20818,7 @@ function ovRender() {
   const box = $("ovIdeas");
   if (!ov.ideas.length) {
     box.innerHTML = `<div class="ovempty">${ov.kind === "music"
-      ? "No ideas yet. Write one in Create, then add it here."
+      ? "Choose 2, 4 or 8 songs, or add your current song."
       : `No prompts yet. Set one up on the ${ov.kind === "image" ? "Pictures" : "Video"} screen, then add it here. A prompt with {a|b|c} in it makes a different picture each take.`}</div>`;
   } else {
     box.innerHTML = ov.ideas.map((it, i) => {
@@ -19674,21 +20839,32 @@ function ovRender() {
           <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
         </div>`;
       }
-      return `<div class="ovidea">
-        <div><div class="t">${esc(it.title)}${it.instrumental ? ' <span class="badge">instrumental</span>' : ""}</div>
-          <div class="s">${esc(it.caption)}</div></div>
-        <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
-      </div>`;
+      return renderMusicBatchIdea(it, i);
     }).join("");
   }
+  ovUpdatePlan();
+}
+
+function ovUpdatePlan() {
   const takes = +$("ovTakes").value;
   const cap = +$("ovCap").value;
   const total = Math.min(ov.ideas.length * takes, cap);
-  $("ovStart").disabled = !ov.ideas.length;
   $("ovCount").textContent = ov.ideas.length
     ? `${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""}` : "";
 
+  const noun = ov.kind === "music" ? "song" : ov.kind === "image" ? "picture" : "clip";
+  $("ovTotalCount").textContent = `${total} ${noun}${total === 1 ? "" : "s"} planned${ov.ideas.length ? ` · ${ov.ideas.length} idea${ov.ideas.length === 1 ? "" : "s"} × ${takes} take${takes === 1 ? "" : "s"}` : ""}`;
   ovPaintPlan(total);
+}
+
+function ovCannotStart() {
+  if (!ov.ideas.length || (ov.kind === "music" && ov.ideas.some(idea => !idea.caption?.trim()))) return true;
+  try { ovScheduledStart(); } catch { return true; }
+  return false;
+}
+
+function ovPlanStartTime() {
+  try { return Date.parse(ovScheduledStart()) || Date.now(); } catch { return Date.now(); }
 }
 
 /**
@@ -19789,6 +20965,7 @@ function ovPaintPlan(total) {
   }
 
   if (!total) {
+    $("ovStart").disabled = true;
     $("ovEst").textContent = "Add an idea to see what it would cost.";
     $("ovBudget").innerHTML = "";
     return;
@@ -19813,14 +20990,14 @@ function ovPaintPlan(total) {
     $("ovBudget").innerHTML = `
       <div><span>${ov.kind === "image" ? "pictures" : "clips"}</span><b>${total} · ${dur(secs)}</b></div>
       <div><span>disk</span><b>${size(bytes)}${tight ? " — not enough free" : ""}</b></div>
-      <div><span>total</span><b>${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}</b></div>`;
+      <div><span>total</span><b>${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}</b></div>`;
     $("ovEst").textContent =
-      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`
+      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}`
       /* Fast draft ideas are costed from measurements; only a full Qwen render
        * still carries the unmeasured allowance. */
       + (ov.kind === "image" && ov.ideas.some((it) => (it.effectiveEngine || it.engine || "qwen-image-2.1") === "qwen-image-2.1" && it.draft !== true)
         ? " · Qwen time is an unmeasured planning estimate." : "");
-    $("ovStart").disabled = !ov.ideas.length || tight;
+    $("ovStart").disabled = ovCannotStart() || tight;
     return;
   }
 
@@ -19846,9 +21023,9 @@ function ovPaintPlan(total) {
       free === Infinity ? "unknown" : size(free)}${tight ? " — not enough" : ""}</b></div>`;
 
   $("ovEst").textContent =
-    `${total} song${total > 1 ? "s" : ""} · done by ${clock(Date.now() + secs * 1000)}`;
+    `${total} song${total > 1 ? "s" : ""} · done by ${clock(ovPlanStartTime() + secs * 1000)}`;
   // Refuse a plan that cannot fit rather than filling the disk at 3am.
-  $("ovStart").disabled = !ov.ideas.length || tight;
+  $("ovStart").disabled = ovCannotStart() || tight;
 }
 for (const id of ["ovStCover", "ovStLrc", "ovStStems", "ovStVideo"]) {
   $(id).onchange = () => ovPaintPlan();
@@ -19902,21 +21079,56 @@ function dur(s) {
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 $("ovAdd").onclick = () => {
-  const caption = $("caption").value.trim();
-  if (!caption) { $("ovEst").textContent = "Write a style in Create first — that is the one required field."; return; }
-  ov.ideas.push({
-    title: $("title").value.trim() || "Untitled",
-    caption,
-    lyrics: state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value.trim(),
-    instrumental: state.mode === "instrumental",
-    maxDuration: +$("maxDur").value,
-  });
+  if (!captionValue().trim()) { $("ovEst").textContent = "Write a style in Music first."; return; }
+  if (ov.ideas.length >= 40) { $("ovEst").textContent = "The batch has 40 ideas. Remove one before adding another."; return; }
+  try { ov.ideas.push(ovMusicIdea()); }
+  catch (err) { $("ovEst").textContent = err.message; return; }
   ovRender();
 };
+function ovBlankSong() {
+  let idea;
+  try { idea = ovMusicIdea(); }
+  catch { idea = { engine: state.musicEngine || "minimax-music3" }; }
+  for (const key of ["abc", "scoreSlug", "scoreVersion", "coverOf", "aceCover", "audioRef", "audioRefDenoise"]) delete idea[key];
+  return { ...idea, title: "", caption: "", lyrics: "", instrumental: false };
+}
+function ovFillSongCount(count) {
+  if (ov.kind !== "music") return;
+  while (ov.ideas.length < Math.min(40, count)) ov.ideas.push(ovBlankSong());
+  ovRender();
+}
+$("ovNewSong").onclick = () => { if (ov.ideas.length >= 40) { $("ovEst").textContent = "The batch has 40 ideas."; return; } ovFillSongCount(ov.ideas.length + 1); };
+for (const button of document.querySelectorAll("[data-ov-count]")) button.onclick = () => ovFillSongCount(Number(button.dataset.ovCount));
 $("ovClear").onclick = () => { ov.ideas = []; ovRender(); };
 $("ovIdeas").addEventListener("click", (e) => {
   const rm = e.target.closest("[data-rm]");
   if (rm) { ov.ideas.splice(+rm.dataset.rm, 1); ovRender(); }
+});
+$("ovIdeas").addEventListener("input", async event => {
+  const input = event.target.closest("[data-ov-field]"), card = input?.closest("[data-ov-idea]");
+  if (!input || !card || ov.kind !== "music") return;
+  const index = Number(card.dataset.ovIdea), idea = ov.ideas[index];
+  if (!idea) return;
+  try {
+    if (input.dataset.ovField === "engine" && input.value !== idea.engine
+      && Object.keys(idea).some(key => !["engine", "title", "caption", "lyrics", "instrumental"].includes(key))) {
+      input.disabled = true;
+      const confirmed = await appConfirm("Changing engine clears this song's saved score, references and engine settings. Keep its title, style and lyrics and change engine?",
+        { title: "Change song engine?", ok: "Change engine" });
+      input.disabled = false;
+      if (!confirmed || ov.ideas[index] !== idea) { input.value = idea.engine; return; }
+    }
+    ov.ideas[index] = updateMusicBatchField(idea, input.dataset.ovField, input.type === "checkbox" ? input.checked : input.value);
+    ovSaveIdeas();
+    if (input.dataset.ovField === "engine") ovRender();
+    else {
+      if (["cot", "abc"].includes(input.dataset.ovField)) syncMusicBatchPlannerFields(card, ov.ideas[index]);
+      const chip = card.querySelector(".chip");
+      chip.textContent = ov.ideas[index].caption?.trim() ? "Ready to review" : "Style needed";
+      chip.className = `chip ${ov.ideas[index].caption?.trim() ? "ok" : "warn"}`;
+      ovUpdatePlan();
+    }
+  } catch (error) { if (input.dataset.ovField === "engine") input.value = idea.engine; $("ovEst").textContent = error.message; }
 });
 $("ovTakes").oninput = () => { $("ovTakesV").textContent = $("ovTakes").value; ovRender(); };
 $("ovCap").oninput = () => { $("ovCapV").textContent = $("ovCap").value; ovRender(); };
@@ -19937,9 +21149,9 @@ const ovPost = (body) =>
         if (await confirmPaidRun(s)) return ovPost({ ...body, confirmSpend: true });
         return;
       }
-      if (s?.error) { alert(s.error); return; } applyBatch(s);
+      if (s?.error) { $("ovEst").textContent = s.error; return; } applyBatch(s);
     })
-    .catch(() => {});
+    .catch(error => { $("ovEst").textContent = error.message || "The batch could not be updated."; });
 
 /* Snapshot references and model choices as well as the prompt. The backend
  * persists this whitelist and forwards it to the ordinary image route. */
@@ -20004,19 +21216,56 @@ $("ovAddImage").onclick = async () => {
 };
 
 for (const b of document.querySelectorAll("#ovKind [data-kind]")) {
-  b.onclick = () => { ovSetKind(b.dataset.kind); ovLoadIdeas(); ovRender(); };
+  b.onclick = () => { ovSaveIdeas(); ov.kind = b.dataset.kind; ovLoadIdeas(); ovSetKind(ov.kind); };
 }
 ovSetKind(ov.kind);
 
-$("ovStart").onclick = () => ovPost({
-  action: "start", kind: ov.kind, items: ov.ideas,
+function ovScheduledStart() {
+  if ($("ovWhen").value !== "later") return undefined;
+  const value = $("ovStartAt").value;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  const date = new Date(value);
+  if (!parts || !Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) throw new Error("Choose a future local start time.");
+  // Browser dates normalize a nonexistent daylight-saving time. Refuse that shift.
+  const local = [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes()];
+  if (local.some((part, index) => part !== Number(parts[index + 1]))) throw new Error("That local time does not exist. Choose another start time.");
+  return date.toISOString();
+}
+function ovSchedulePaint() {
+  const later = $("ovWhen").value === "later";
+  $("ovScheduleRow").hidden = $("ovScheduleLabel").hidden = !later;
+  $("ovStart").textContent = later ? "Schedule batch" : "Start batch";
+  $("ovTimezone").textContent = `${Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time"}. Studio must stay open for a scheduled start.`;
+  ovUpdatePlan();
+}
+$("ovWhen").onchange = ovSchedulePaint;
+$("ovStartAt").oninput = ovUpdatePlan;
+ovSchedulePaint();
+$("ovStart").onclick = () => {
+  let startAt, items;
+  try {
+    if (!ov.ideas.length) throw new Error("Add a song idea first.");
+    if (ov.kind === "music" && ov.ideas.some(idea => !idea.caption?.trim())) throw new Error("Add a style to every song.");
+    for (const input of $("ovIdeas").querySelectorAll("input,select,textarea")) {
+      if (input.checkValidity && !input.checkValidity()) {
+        let fold = input.closest("details");
+        while (fold) { fold.open = true; fold = fold.parentElement?.closest("details"); }
+        input.reportValidity(); return;
+      }
+    }
+    startAt = ovScheduledStart();
+    items = ov.kind === "music" ? ov.ideas.map(musicBatchSubmission) : ov.ideas;
+  } catch (error) { $("ovEst").textContent = error.message; return; }
+  return ovPost({
+  action: "start", kind: ov.kind, items,
+  ...(startAt ? { startAt } : {}),
   takes: +$("ovTakes").value, cap: +$("ovCap").value,
   /* A name, so the history is readable. Nothing ever sent one, so the server
    * fell back to the literal string "Overnight run" and every archived row was
    * identical. Built from the first idea and the date, which is how you would
    * describe the run to yourself the next morning. */
   name: [ov.ideas[0]?.title || ov.ideas[0]?.caption?.slice(0, 28)
-           || ov.ideas[0]?.prompt?.slice(0, 28) || "Overnight",
+           || ov.ideas[0]?.prompt?.slice(0, 28) || "Batch",
          ov.ideas.length > 1 ? `+${ov.ideas.length - 1}` : "",
          new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })]
     .filter(Boolean).join(" · "),
@@ -20034,31 +21283,36 @@ $("ovStart").onclick = () => ovPost({
     // otherwise, so a run can never sit waiting on an input that never comes.
     enhance: $("ovStVideo").checked && $("ovStEnhance").checked,
   },
-});
+  });
+};
 $("ovPause").onclick = () => ovPost({ action: state.batchState === "paused" ? "resume" : "pause" });
+$("ovStartNow").onclick = () => ovPost({ action: "resume" });
 $("ovStop").onclick = () => ovPost({ action: "stop" });
 
 function applyBatch(s) {
   const r = s?.run;
   state.batchState = r?.state || null;
-  const live = r && (r.state === "running" || r.state === "paused");
+  const live = r && ["running", "paused", "scheduled"].includes(r.state);
   $("ovPip").hidden = !live;
   $("ovLive").hidden = !r;
   // The planning controls live in the LEFT column now; while a run is live they
   // are replaced by the run itself rather than sitting there inviting a second
   // start.
   $("ovPanel").classList.toggle("running", Boolean(live));
+  $("ovPause").hidden = $("ovStop").hidden = !live;
+  $("ovStartNow").hidden = r?.state !== "scheduled";
   ovPaintRuns(s);
   if (!r) return;
 
   $("ovProgress").textContent = `${r.done} of ${r.total}`;
   $("ovNow").textContent = r.state === "running"
     ? `now making ${r.currentItem || "—"}`
-    : r.state === "done" ? "finished" : r.state;
+    : r.state === "scheduled" ? `Scheduled for ${new Date(r.startAt).toLocaleString()}` : r.state === "done" ? "finished" : r.state;
   $("ovBar").style.width = `${(r.total ? r.done / r.total : 0) * 100}%`;
   $("ovDoneBy").textContent = r.etaAt ? clock(r.etaAt) : "—";
   $("ovLeft").textContent = r.secondsLeft ? `about ${dur(r.secondsLeft)} left` : "";
   $("ovPause").textContent = r.state === "paused" ? "Resume" : "Pause";
+  $("ovPause").title = r.state === "paused" ? "Resume starts the batch now" : "Pause this batch";
   $("ovNote").textContent = r.note
     || [r.failed ? `${r.failed} failed` : null, r.keepingAwake ? "keeping your PC awake" : null]
        .filter(Boolean).join(" · ");
@@ -20550,25 +21804,41 @@ let musicOutcomeArmed = false;
  * same line on every status poll, and without this it erased the warning
  * within the same applyStatus call that put it there. */
 let musicOutcomeMsg = null;
+let musicOutcomeJob = null;
 /* An estimate is a hover drop-up again: the .stick a warning put on the note
  * comes off with the first estimate after the next Create (generate() clears
  * musicOutcomeMsg; it is lifted into slice-and-eval tests with no ctaNote). */
 function setCta(text) {
   if (!musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = text; $("ctaNote").classList.remove("stick"); }
+  else if (musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = musicOutcomeMsg; $("ctaNote").classList.add("stick"); }
 }
+function musicJobDetails(job) {
+  if (!job) return;
+  appAlert(`${job.error || job.note || "No audio file was found."}\n\nJob: ${job.id || "unknown"}\nEngine: ${job.engine || "music"}`,
+    { title: `${job.title || "Untitled"}: ${job.state === "failed" ? "generation failed" : "generation details"}` });
+}
+$("musicOutcomeDetails")?.addEventListener("click", () => musicJobDetails(musicOutcomeJob));
 function noticeMusicOutcome(s) {
-  const h = s.history?.[0];
-  const key = h ? `${h.id}:${h.state}` : null;
-  if (!musicOutcomeArmed) { musicOutcomeArmed = true; if (key) musicOutcomeSeen.add(key); return; }
-  if (!key || musicOutcomeSeen.has(key)) return;
-  musicOutcomeSeen.add(key);
+  // Library actions can write the same note; a live outcome owns it until Create.
+  if (musicOutcomeMsg) setCta();
+  const rows = Array.isArray(s.history) ? s.history : [];
+  /* A finished take can overtake a failed one between polls. Observe every new
+   * terminal row, and let a reload recover the latest failure in this session. */
+  const fresh = musicOutcomeArmed ? rows.filter(h => !musicOutcomeSeen.has(`${h.id}:${h.state}`)) : rows.slice(0, 1);
+  musicOutcomeArmed = true;
+  for (const h of rows) musicOutcomeSeen.add(`${h.id}:${h.state}`);
+  const h = fresh.find(h => h.state === "failed" || h.state === "done" && (h.note || !h.file));
+  if (!h) return;
   const title = h.title || "Untitled";
-  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${h.error || "no reason was given"}`
+  const reason = String(h.error || "no reason was given").split(/\r?\n/)[0];
+  const shortReason = reason.length > 180 ? `${reason.slice(0, 177)}…` : reason;
+  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${shortReason}`
     : h.state === "done" && h.note ? `⚠ ${h.note}`
     : h.state === "done" && !h.file ? `⚠ “${title}” finished, but no audio file was found in the output folder.`
     : null;
   // .stick: the warning stays under Create, not only under the pointer (styles.css).
   if (msg) { musicOutcomeMsg = msg; if ($("ctaNote")) { $("ctaNote").textContent = msg; $("ctaNote").classList.add("stick"); } }
+  if (msg) { musicOutcomeJob = h; if ($("musicOutcomeDetails")) $("musicOutcomeDetails").hidden = false; }
 }
 
 /* WHETHER COMFYUI IS HOLDING THE MUSIC MODEL — and two optional buttons.
@@ -21120,9 +22390,11 @@ function connect() {
   ws.onmessage = (e) => {
     let snap;
     try { snap = JSON.parse(e.data); } catch { return; }
+    if (snap?.type === "refmod-ready") { window.dispatchEvent(new CustomEvent("aiplay-refmod-ready", { detail: snap })); return; }
     // /live also carries DAW document revisions. Only job-state snapshots
     // may repaint these queues or change the remembered busy-to-idle transition.
     if (snap?.type !== "state" || !Array.isArray(snap.queue) || !("current" in snap)) return;
+    noticeMusicOutcome(snap);
     renderNow(snap.current, (snap.queue || []).length);
     renderQueue(snap);
     renderList(snap);
@@ -21189,7 +22461,7 @@ const JOB_VIEW = {
 const JOB_LABEL = {
   video: "clip", cover: "image", image: "image", stems: "stems",
   lrc: "lyrics", sfx: "sfx", enhance: "enhance", restyle: "restyle",
-  upscale: "upscale", vfx: "vfx",
+  upscale: "upscale", vfx: "vfx", music: "song",
 };
 
 function jobDur(ms) {
@@ -21280,7 +22552,14 @@ function paintJobs(s) {
   const list = $("jobList");
   if (!list) return;
   paintJobQueue(s);
-  const jobs = (s && s.art && s.art.recent) || [];
+  /* Music failures have no library asset. Keep them beside the other completed
+   * jobs, with their own reason, rather than making them vanish with the queue. */
+  const music = (s?.history || []).map(j => ({ ...j, kind: "music", musicJob: true,
+    cancelled: j.state === "cancelled", at: j.createdAt,
+    // The queue's durationSeconds is render time; audio length is audioSeconds.
+    ms: Number.isFinite(j.elapsedSeconds) ? j.elapsedSeconds * 1000
+      : Number.isFinite(j.durationSeconds) ? j.durationSeconds * 1000 : null }));
+  const jobs = [...((s && s.art && s.art.recent) || []), ...music].sort((a, b) => (b.at || 0) - (a.at || 0));
 
   /* ⚠ SAY SO WHEN THERE IS NOTHING, and say WHY. An empty list on a night that
    * clearly rendered things reads as a broken page; the real reason is that
@@ -21321,22 +22600,25 @@ function paintJobs(s) {
   const shown = jobs.filter((j) => jobFilter === "all" || j.kind === jobFilter);
   list.innerHTML = shown.map((j) => {
     const view = JOB_VIEW[j.kind] || "create";
-    const out = jobOutput(j);
+    const out = j.musicJob ? j.file || String(j.error || "").split(/\r?\n/)[0] : jobOutput(j);
     const when = j.at ? new Date(j.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
     return `<div class="jobrow${j.error && !j.cancelled ? " bad" : ""}">
       <span class="jobkind">${esc(JOB_LABEL[j.kind] || j.kind)}</span>
       <span class="jobtitle">${esc(j.title || j.file || "—")}</span>
-      <span class="jobout">${esc(out)}</span>
+      <span class="jobout"${j.musicJob && j.error ? ` title="${esc(j.error)}"` : ""}>${esc(out)}</span>
       <span class="jobms">${jobDur(j.ms)}</span>
       <span class="jobat">${esc(when)}</span>
       ${j.cancelled ? `<span class="jobstopped" title="${esc(j.error || "Stopped before it finished.")}">stopped</span>`
-        : j.error ? `<span class="joberr" title="${esc(j.error)}">failed</span>`
+        : j.error ? (j.musicJob ? `<button type="button" class="edtool" data-music-job="${esc(j.id)}">Failure details</button>`
+          : `<span class="joberr" title="${esc(j.error)}">failed</span>`)
                 : `<a href="#" class="jobgo" data-go="${view}">open ${esc(view)} &rsaquo;</a>`}
     </div>`;
   }).join("");
 }
 
 document.addEventListener("click", (e) => {
+  const detail = e.target.closest("[data-music-job]");
+  if (detail) { musicJobDetails(state.lastStatus?.history?.find(j => j.id === detail.dataset.musicJob)); return; }
   const chip = e.target.closest("[data-jobfilter]");
   if (!chip) return;
   jobFilter = chip.dataset.jobfilter;
@@ -21398,7 +22680,7 @@ $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly && !entryView}));
+const initialStudioPoll = poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly && !entryView}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();
@@ -21512,7 +22794,7 @@ mountMusicPlan();
   dropAnywhere($("imgPanel"), () => picDrops.img);
   dropAnywhere($("vidPanel"), () => picDrops.from);
 }
-mountMusicWorkflows({ onLoadRequest: async (prepared) => {
+async function loadReviewedMusicRequest(prepared) {
   const request = prepared?.request || prepared;
   if (!request || !["yue2", "yue2-gguf", "yue2-comfy"].includes(request.engine)) throw new Error("Choose a supported YuE2 engine first.");
   const precision = request.quantization || (request.engine === "yue2-gguf" ? "q4_0" : "none");
@@ -21556,7 +22838,8 @@ mountMusicWorkflows({ onLoadRequest: async (prepared) => {
   for (const button of document.querySelectorAll(".howmany [data-n]")) button.classList.toggle("on", button.dataset.n === "1");
   countChars(); musicEnginePaint(); setView("create");
   $("caption").focus();
-} });
+}
+mountMusicWorkflows({ onLoadRequest: loadReviewedMusicRequest });
 /* LAST, and asynchronous. One request answers both "what can this studio do"
  * and "has this person been shown around", so a fresh install opens the window
  * on the same round trip that fills it — and an older server with no
@@ -21591,3 +22874,14 @@ document.addEventListener("click", async (e) => {
 
 // Deep links open after the workflow and remaining view controllers initialize.
 if (entryView) setView(entryView);
+const linkedDawPassage = new URLSearchParams(location.search).get('dawPassage');
+if (linkedDawPassage) {
+  initialStudioPoll.then(async () => {
+    if (!/^passage-[a-f0-9]{24}$/.test(linkedDawPassage)) throw new Error('This DAW passage link is invalid.');
+    const response = await fetch('/api/music-daw-passages', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'request', id: linkedDawPassage }) });
+    const prepared = await response.json();
+    if (!response.ok || prepared.error) throw new Error(prepared.error || 'The saved DAW draft could not be loaded.');
+    await loadReviewedMusicRequest(prepared);
+  }).catch(error => appAlert(error.message, 'DAW draft was kept'));
+}

@@ -63,9 +63,10 @@
  * First, this module is allowed to import node builtins and ../config.js and
  * nothing else — it must not drag the MV routes, the store, the art queue or
  * the library into the code path that answers a stranger's network request.
- * (Two pure helpers are the exception: ../mv/sizes.js, one list, because a
+ * (Pure helpers are the exception: ../mv/sizes.js, one list, because a
  * copy of a list is the drift this paragraph warns about, reading only
- * ../h3tier.js, pure too; and ../safety/lineage.js, the minors fingerprint a
+ * ../h3tier.js, pure too; ../mv/references.js for pure pack selection; and
+ * ../safety/lineage.js, the minors fingerprint a
  * lender's check reads, which reads only ../safety/minors.js.)
  * Second, a packet is a WIRE FORMAT: a packet written last month has to still
  * mean what it said, and it says a finished string rather than a recipe for
@@ -103,6 +104,7 @@ import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { projectRowFingerprint } from "../safety/lineage.js";
 import { renderSizeOf } from "../mv/sizes.js";
+import { selectedReferenceImages, referenceLabel, namedReferences } from "../mv/references.js";
 
 /* ─────────────────────────────────────────────────────── refusals */
 
@@ -287,6 +289,8 @@ function composePrompt({ doc, seg, board, refNames, attached, boardRefIndex = -1
   const legend = !refNames.length ? ""
     : attached
       ? refNames.map((n, i) => `<Picture ${i + 1}> is ${n}.`).join(" ") + " "
+        + (refNames.some((n) => /\(\w+ reference\)/.test(n))
+            ? "Views sharing a name show ONE subject. Use identity for face and hair, body for proportions, side for profile, outfit for clothing, style for the visual treatment, and detail for the pictured detail. " : "")
         + (boardRefIndex >= 0
             ? `Use <Picture ${boardRefIndex + 1}> for the composition, framing, staging and lighting `
               + `of this shot. It is a STILL reference, not the first frame — the shot must move `
@@ -364,21 +368,30 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
    * the same order the renderer stages them in, because `<Picture 3>` in the
    * prompt has to be the third file in `refs` by construction rather than by
    * coincidence. */
-  const wanted = [
-    ...(board.characterRefs || []).map((name) => ({ name, declaredAs: "characterRefs" })),
-    ...(board.backgroundRefs || []).map((name) => ({ name, declaredAs: "backgroundRefs" })),
-    ...(board.propRefs || []).map((name) => ({ name, declaredAs: "propRefs" })),
-  ].sort((a, b) => (board.refProminence?.[b.name] ?? 0) - (board.refProminence?.[a.name] ?? 0));
+  const wanted = namedReferences(board)
+    .sort((a, b) => (board.refProminence?.[b.name] ?? 0) - (board.refProminence?.[a.name] ?? 0));
 
   const resolved = [];
-  let castRefs = 0;
+  const cast = new Set(), wireNames = new Set();
   for (const w of wanted) {
     if (resolved.length >= REF_CAP) break;
     const src = rowFor(doc, w.name);
-    if (!src?.imageFile) continue;   // named on the board, no sheet rendered yet
-    resolved.push({ name: src.name, file: src.imageFile });
-    if (declaredKind(doc, w.name) === "character") castRefs++;
+    const selected = selectedReferenceImages(src, board.refRoles?.[w.name]);
+    for (const role of board.refRoles?.[w.name] || []) {
+      if (!selected.some((r) => r.role === role)) throw refuse("no-refs", `"${w.name}" has no ${role} reference image. Restore that view or change this scene's selected roles before lending it.`);
+    }
+    for (const image of selected) {
+      if (resolved.length >= REF_CAP) break;
+      // Distinct wire names keep v1 readers staging every view correctly.
+      const base = referenceLabel(src.name, image.role);
+      let label = base, suffix = 2;
+      while (wireNames.has(label)) label = `${base} [${suffix++}]`;
+      wireNames.add(label);
+      resolved.push({ name: src.name, label, file: image.file, role: image.role });
+      if (declaredKind(doc, w.name) === "character") cast.add(src.name);
+    }
   }
+  const castRefs = cast.size;
 
   /* HOW THE ENGINE IS CHOSEN, carried so the lender can audit the choice
    * rather than take it on faith. `engineMode` is the PROJECT's engine mode —
@@ -395,8 +408,8 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
    * know whether pictures were ever going to travel. */
   const engineMode = String(doc.brief?.videoEngine || "hybrid").toLowerCase();
   const hasRefs = castRefs > 0 && doc.brief?.castRefs !== false;
-  const useRefs = hasRefs && engineMode !== "ltx";
-  const engine = engineMode === "h3" ? "h3" : engineMode === "ltx" ? "ltx" : (useRefs ? "h3" : "ltx");
+  const engine = engineMode === "h3" ? "h3" : engineMode === "ltx" ? "ltx" : (hasRefs ? "h3" : "ltx");
+  const useRefs = engine === "h3" && doc.brief?.castRefs !== false && resolved.length > 0;
 
   /* ⚠ NAMING A CHARACTER WHOSE SHEET DOES NOT EXIST IS THE FAILURE THIS
    * REFUSES, and nothing wider than that. A board that names a person and has
@@ -475,7 +488,7 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
        * minor and whether as sexual (server/safety/lineage.js). The words that
        * would say so stay here; the lender's check reads these instead, so a
        * sexual scene over a picture of a child is refused on BOTH machines. */
-      refs.push({ name: r.name, sha256, bytes, file: r.file, safety: projectRowFingerprint(rowFor(doc, r.name), r.file) });
+      refs.push({ name: r.label, assetName: r.name, referenceRole: r.role, sha256, bytes, file: r.file, safety: projectRowFingerprint(rowFor(doc, r.name), r.file) });
     }
     if (boardRefIndex >= 0) {
       const { sha256, bytes } = await hashAsset(assetsDir, board.imageFile, "no-refs", (file, code) =>
@@ -544,7 +557,7 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
    * WetHighStreet…") still has to be written — dropping it entirely is what
    * made every scene invent a different performer, and clipPrompt builds its
    * refNames from the resolved list for the same reason, attached or not. */
-  const refNames = resolved.map((r) => r.name);
+  const refNames = resolved.map((r) => r.label);
   if (boardRefIndex >= 0) refNames.push("the storyboard frame for this shot");
   const computedPrompt = composePrompt({
     doc, seg, board, refNames, attached: useRefs, boardRefIndex,
@@ -692,7 +705,8 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
  * Walk a parsed document and collect every string it holds.
  *
  * Asset file names live in a dozen different keys — `imageFile` on four kinds
- * of row, `file` on every take, the entries of `shotFrames`, and more will be
+ * of row, `file` on every take and referenceImages entry, the entries of
+ * `shotFrames`, and more will be
  * added by whoever writes the next feature. Enumerating those keys means the
  * manifest goes stale the first time somebody adds a thirteenth, and a manifest
  * that silently omits a picture is exactly the class of failure this repository

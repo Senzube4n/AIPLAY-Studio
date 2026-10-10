@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import * as L from "./lending.js";
+import * as book from "./orderbook.js";
 import * as O from "./order.js";
 import { quarantineTake } from "./quarantine.js";
 import { shotPacket } from "./packet.js";
@@ -35,6 +36,20 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
 const SHA = createHash("sha256").update(PNG).digest("hex");
 const FP = "ab".repeat(16);
 const src = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
+
+test("lending discovers nested speed-up LoRAs without guessing duplicates", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "aiplay-lending-nested-"));
+  try {
+    const cfg = { modelsDir: dir, modelsAlso: [] };
+    await mkdir(path.join(dir, "loras", "minimax"), { recursive: true });
+    await writeFile(path.join(dir, "loras", "minimax", "turbo.safetensors"), "weights");
+    assert.equal(L.loraOnDisk("turbo.safetensors", cfg), true);
+    await mkdir(path.join(dir, "loras", "other"));
+    await writeFile(path.join(dir, "loras", "other", "turbo.safetensors"), "weights");
+    assert.equal(L.loraOnDisk("turbo.safetensors", cfg), false);
+    assert.equal(L.loraOnDisk("minimax/turbo.safetensors", cfg), true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
 
 /** An order the way the door builds one: a shot packet and its pictures. */
 function order({ seconds = 5, engineMode = "hybrid", refs = true, steps = 8, songUnder = null, id = null } = {}) {
@@ -318,6 +333,64 @@ test("9: the errand's own engine decides the path — a cast scene rides the ref
   assert.deepEqual([ltx.engine, ltx.problem], ["ltx", null]);
 });
 
+test("9: the accept card says what the runner refuses, with the row it names (NVIDIA); AMD and Intel read as before", async () => {
+  /* A lent errand renders through ArtRunner.#clip, which refuses a count whose
+   * speed-up is not on disk (art.js clipSpeedupNeeded, on NVIDIA and a card
+   * nobody could read). The card counted "a file below its own count" as fine
+   * and named a different file: a 4-step order was accepted quietly on a PC
+   * with only the 8-step file and then refused, and a 3-step one was sent for
+   * the 4-step file while the runner asked for TaoMate. */
+  const { clipSpeedupNeeded } = await import("../art.js");
+  const { CATALOG } = await import("../models.js");
+  const label = (id) => CATALOG.find((r) => r.id === id).label;
+  /* config.js's slots and readings on these disks (pick() falls back, and
+   * returns its last name where none is on disk). */
+  const nv = (h3) => ({ modelsDir: "/nowhere", modelsAlso: [], video: { engine: "h3", engines: { h3: { ...H3_FOUR, ...h3 } } } });
+  const H3_ROW_ONLY = nv({ turboLora: LORAS.fl2v8, turboLora4: LORAS.fl2v8, turboLora3: LORAS.fl2v4, refTurboLora: LORAS.fl2v8, refTurboLora4: LORAS.fl2v4,
+    turboBuilds: { three: false, four: false, eight: true }, plainBuilds: { three: false, four: false, eight: true }, refBuilds: { four: false, eight: true },
+    stepDefaults: { fast: 8, standard: 8, best: 20 }, steps: 8 });
+  const EIGHT_FOUR = nv({ turboLora: LORAS.fl2v8, turboLora4: LORAS.fl2v4, turboLora3: LORAS.fl2v4, refTurboLora: LORAS.fl2v8, refTurboLora4: LORAS.fl2v4,
+    turboBuilds: { three: false, four: true, eight: true }, plainBuilds: { three: false, four: true, eight: true }, refBuilds: { four: true, eight: true },
+    stepDefaults: { fast: 4, standard: 8, best: 20 }, steps: 8 });
+  const DISKS = new Map([[H3_ROW_ONLY, [LORAS.fl2v8]], [EIGHT_FOUR, [LORAS.fl2v8, LORAS.fl2v4]]]);
+  const on = (cfg) => (n) => DISKS.get(cfg).includes(n);
+  const four = L.speedUpCheck({ engine: "h3", steps: 4, refs: false }, { cfg: H3_ROW_ONLY, onDisk: on(H3_ROW_ONLY) });
+  assert.deepEqual([four.problem, four.needsModel, four.loads], ["missing", "videoH3Turbo4", LORAS.fl2v8], "4 on the H3 row alone: said before accepting");
+  assert.match(four.why, new RegExp(`at 4 steps without reference pictures, which needs H3's 4-step speed-up \\(1\\.96 GB\\), and it is not on this PC, so the render would be refused\\. Download it from the Models screen \\(“${label("videoH3Turbo4").replace(/[()]/g, "\\$&")}”\\)`));
+  const three = L.speedUpCheck({ engine: "h3", steps: 3, refs: false }, { cfg: H3_ROW_ONLY, onDisk: on(H3_ROW_ONLY) });
+  assert.deepEqual([three.problem, three.needsModel], ["missing", "videoH3Turbo3Small"], "3 names TaoMate, the file the runner asks for");
+  assert.match(three.why, /which needs the TaoMate 3-step speed-up \(182 MB\)/);
+  const threeWithFour = L.speedUpCheck({ engine: "h3", steps: 3, refs: false }, { cfg: EIGHT_FOUR, onDisk: on(EIGHT_FOUR) });
+  assert.deepEqual([threeWithFour.problem, threeWithFour.needsModel], ["missing", "videoH3Turbo3Small"], "and so with the 4-step file on disk");
+  assert.equal(L.speedUpCheck({ engine: "h3", steps: 8, refs: false }, { cfg: H3_ROW_ONLY, onDisk: on(H3_ROW_ONLY) }).problem, null, "8 renders, quiet");
+  /* One rule on both sides of the accept: the card is "missing" exactly where
+   * the runner refuses, and names the same row, at every count and path. */
+  for (const cfg of [H3_ROW_ONLY, EIGHT_FOUR]) {
+    for (const refs of [false, true]) {
+      for (let steps = 2; steps <= 20; steps++) {
+        const card = L.speedUpCheck({ engine: "h3", steps, refs }, { cfg, onDisk: on(cfg) });
+        const runner = clipSpeedupNeeded({ engine: "h3", steps, ...(refs ? { refImages: ["cast.png"] } : {}) }, cfg);
+        if (runner) assert.deepEqual([card.problem, card.needsModel], ["missing", runner.row], `${steps}${refs ? " with pictures" : ""}`);
+        else assert.equal(card.needsModel, undefined, `${steps}${refs ? " with pictures" : ""}: the runner renders it`);
+      }
+    }
+  }
+  /* AMD and Intel: config.js makes no per-path reading, and the card is
+   * main's (a file below its count says nothing). The runner refuses only a
+   * file that is not on disk (video-plain.js speedupNeededAtClip), so it is
+   * asked about THIS disk, by name: without `onDisk` it read the real models
+   * folders of the PC running the lane, and passed only where that PC holds
+   * the optional 8-step file (a fresh clone, CI or Bucky's AMD PC without it
+   * failed the gate). */
+  const amd = nv({ ...H3_ROW_ONLY.video.engines.h3, plainBuilds: null, refBuilds: null, turboBuilds: { three: false, four: false, eight: false } });
+  const amdFour = L.speedUpCheck({ engine: "h3", steps: 4, refs: false }, { cfg: amd, onDisk: on(H3_ROW_ONLY) });
+  assert.deepEqual([amdFour.problem, amdFour.needsModel], [null, undefined]);
+  assert.equal(clipSpeedupNeeded({ engine: "h3", steps: 4 }, amd, { onDisk: on(H3_ROW_ONLY) }), null,
+    "the 8-step file it loads at 4 is on this disk: main renders it");
+  assert.equal(clipSpeedupNeeded({ engine: "h3", steps: 4 }, amd, { onDisk: () => false })?.row, "videoH3Turbo4",
+    "and with no file at all it is refused, naming the row (a bug fix on every card)");
+});
+
 test("9: the borrower's note comes from two numbers on the return, and nothing else", () => {
   const made = O.makeReturn({ orderId: "o_" + "2".repeat(12), segmentId: "s1_0", result: { bytes: Buffer.from("x") },
     record: { model: "h3", outputRights: { class: "x" }, steps: 8, seed: 7, turboSteps: 4 }, now: 1 });
@@ -426,6 +499,91 @@ test("8: the order being accepted is never counted twice", async () => {
   const rows = [{ id: o.id, from: { fp: FP }, slug: "self", state: "landed", landedAt: DAY - 1000 }];
   const used = await L.lentToday({ rows, readProject: async () => errandFor(o), fp: FP, now: DAY, except: o.id });
   assert.equal(used.pending, 0);
+});
+
+test("8: standalone H3 jobs reserve allowance at accept and completed jobs use render time, not queue wait", async () => {
+  const job = { id: "o_" + "f".repeat(12), job: { engine: "h3", width: 1280, height: 704, seconds: 5, steps: 20 } };
+  const estimate = L.estimateVideoJobMinutes(job);
+  assert.ok(estimate > 0);
+  const peer = { fp: FP, nickname: "Friend", lendMinutesPerDay: 0 };
+  const readProject = async () => { throw new Error("Standalone video has no movie project"); };
+  const zero = await L.budgetCheckVideoJob({ peer, orderDoc: job, rows: [], readProject, now: DAY });
+  assert.deepEqual([zero.over, zero.reason, zero.thisOne], [true, "budget-zero", estimate]);
+  const unpriced = await L.budgetCheckVideoJob({ peer: { ...peer, lendMinutesPerDay: 60 }, orderDoc: job,
+    rows: [], readProject, now: DAY, cfg: { video: { fps: 24, costFixedSeconds: 15, costRate: null, costExponent: 1.2, engines: { h3: {} } } } });
+  assert.deepEqual([unpriced.over, unpriced.reason, unpriced.thisOne], [true, "budget-unpriced", null],
+    "missing cost configuration must not silently reserve zero minutes");
+
+  const pending = { id: "o_" + "a".repeat(12), jobType: "video", from: { fp: FP },
+    state: "landed", landedAt: DAY - 1000, renderEstimatedMinutes: estimate };
+  const queued = { ...pending, id: "o_" + "b".repeat(12), state: "queued" };
+  const other = { ...pending, id: "o_" + "c".repeat(12), from: { fp: "cd".repeat(16) } };
+  const failed = { ...pending, id: "o_" + "d".repeat(12), state: "failed" };
+  const previousDay = { ...pending, id: "o_" + "e".repeat(12), landedAt: DAY - 26 * 3600_000 };
+  const rows = [pending, queued, other, failed, previousDay];
+  const used = await L.lentToday({ rows, readProject, fp: FP, now: DAY });
+  assert.deepEqual([used.pending, used.pendingVideo, used.pendingMinutes, used.rendered], [2, 2, estimate * 2, 0]);
+  const spent = await L.budgetCheckVideoJob({ peer: { ...peer, lendMinutesPerDay: estimate * 2 }, orderDoc: job,
+    rows, readProject, now: DAY });
+  assert.deepEqual([spent.over, spent.reason, spent.total], [true, "budget-spent", Math.round(estimate * 3 * 10) / 10]);
+  const self = await L.budgetCheckVideoJob({ peer: { ...peer, lendMinutesPerDay: estimate * 2 }, orderDoc: { ...job, id: pending.id },
+    rows, readProject, now: DAY });
+  assert.equal(self.over, false, "a retry of the same order cannot reserve its own estimate twice");
+
+  const completed = { ...pending, state: "queued", renderStatus: "complete", renderCompletedAt: DAY - 100,
+    renderRequestedAt: DAY - 60 * 60_000, renderRunMs: 90_000 };
+  const measured = await L.lentToday({ rows: [completed], readProject, fp: FP, now: DAY });
+  assert.deepEqual([measured.measuredMinutes, measured.rendered, measured.pending, measured.withWait], [1.5, 1, 0, 0],
+    "a completion replaces the reservation with GPU run time even while the orderbook state is queued");
+  const untimed = await L.lentToday({ rows: [{ ...completed, renderRunMs: undefined }], readProject, fp: FP, now: DAY });
+  assert.deepEqual([untimed.measuredMinutes, untimed.untimed, untimed.untimedMinutes], [0, 1, estimate],
+    "keep the reserved estimate, never request-to-finish time, when an older completion has no render clock");
+});
+
+test("8: failed H3 runs count measured time, while a queued cancellation spends no render time", async () => {
+  const job = { id: "o_" + "f".repeat(12), job: { engine: "h3", width: 1280, height: 704, seconds: 5, steps: 20 } };
+  const peer = { fp: FP, nickname: "Friend", lendMinutesPerDay: 1 };
+  const readProject = async () => { throw new Error("Standalone video has no movie project"); };
+  const base = { jobType: "video", from: { fp: FP }, state: "failed",
+    landedAt: DAY - 60 * 60_000, renderEstimatedMinutes: 8 };
+  const failed = { ...base, id: "o_" + "a".repeat(12), renderStatus: "failed",
+    renderFailedAt: DAY - 100, renderRequestedAt: DAY - 50 * 60_000, renderRunMs: 90_000 };
+  const stopped = { ...base, id: "o_" + "b".repeat(12), renderStatus: "stopped",
+    renderFailedAt: DAY - 90, renderRunMs: null };
+  const wrongOutput = { ...base, id: "o_" + "c".repeat(12), renderStatus: "wrong-output",
+    renderFailedAt: DAY - 80, renderRunMs: 30_000 };
+  const yesterday = { ...failed, id: "o_" + "d".repeat(12), renderFailedAt: L.startOfDay(DAY) - 100 };
+  const used = await L.lentToday({ rows: [failed, stopped, wrongOutput, yesterday],
+    readProject, fp: FP, now: DAY });
+  assert.deepEqual([used.measuredMinutes, used.failedVideoRuns, used.pending], [2, 2, 0]);
+  assert.match(L.usedSentence(used), /2 min timed on this card today \(2 failed or stopped video attempts included\)/);
+  const next = await L.budgetCheckVideoJob({ peer, orderDoc: job, rows: [failed, stopped, wrongOutput, yesterday],
+    readProject, now: DAY });
+  assert.deepEqual([next.over, next.reason, next.total], [true, "budget-spent",
+    Math.round((2 + next.thisOne) * 10) / 10]);
+});
+
+test("8: simultaneous H3 landings cannot both spend the same remaining allowance", async () => {
+  const outDir = await mkdtemp(path.join(tmpdir(), "aiplay-video-allowance-"));
+  try {
+    const job = { engine: "h3", width: 1280, height: 704, seconds: 5, steps: 20 };
+    const estimate = L.estimateVideoJobMinutes(job);
+    assert.ok(estimate > 0);
+    const peer = { fp: FP, nickname: "Friend", lendMinutesPerDay: estimate * 1.5 };
+    const readProject = async () => { throw new Error("No movie project"); };
+    const results = await Promise.all(["a", "b"].map((letter) => {
+      const orderDoc = { id: "o_" + letter.repeat(12), job };
+      return book.landOrderRowChecked({ outDir, row: { id: orderDoc.id, from: { fp: FP }, jobType: "video",
+        state: "landed", landedAt: DAY - 1000 },
+      check: async (rows) => {
+        const minutes = await L.budgetCheckVideoJob({ peer, orderDoc, rows, readProject, now: DAY });
+        return minutes.over ? { refusal: { reason: minutes.reason } } : { patch: { renderEstimatedMinutes: minutes.thisOne } };
+      } });
+    }));
+    assert.deepEqual(results.map((result) => !!result.row).sort(), [false, true]);
+    assert.equal(results.find((result) => !result.row).decision.refusal.reason, "budget-spent");
+    assert.equal((await book.listOrders({ outDir, side: "in" })).length, 1);
+  } finally { await rm(outDir, { recursive: true, force: true }); }
 });
 
 test("8: the estimate is the plan's own, so the number on the card is the number the Plan card shows", async () => {

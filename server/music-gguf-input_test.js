@@ -18,6 +18,8 @@ try {
 // Dynamic imports are intentional: even config's read-only discovery is scoped
 // to the empty test rig rather than the owner's configured installation.
 const { prepareGgufJob } = await import("./music-gguf-input.js");
+const { labelYueLyrics } = await import("./music/yue-lyrics.js");
+const { validateYue2StyleAdapter } = await import("./music/yue2-style-adapters.js");
 const { config } = await import("./config.js");
 // The route marks the required badge over its overlaid rows; the slice below runs the real rule.
 const { markRequired, modulesOf } = await import("./models.js");
@@ -49,11 +51,11 @@ await test("defaults select native GGUF Q4 without Python duration/rung or API f
   assert.equal(atBoundary(valid({ engine: "yue2-gguf", quantization: "q4_0" })).engine, "yue2-gguf");
 });
 
-await test("trimmed text and ordinary multilingual Unicode reach the job unchanged", () => {
+await test("exact lyric whitespace and ordinary multilingual Unicode reach the job unchanged", () => {
   const caption = "Café nocturne — 柔らかなピアノ 🌙";
   const lyrics = "Étoiles, guidez-moi\nこんにちは、月よ 🌙\nغنّي بهدوء";
   const job = atBoundary({ caption: `  ${caption}  `, lyrics: `\n ${lyrics} \n`, title: "  Nuit — 夜  " });
-  assert.equal(job.caption, caption); assert.equal(job.lyrics, lyrics); assert.equal(job.title, "Nuit — 夜");
+  assert.equal(job.caption, caption); assert.equal(job.lyrics, `\n ${lyrics} \n`); assert.equal(job.title, "Nuit — 夜");
   assert.equal(atBoundary(valid({ title: "x".repeat(200) })).title.length, 120);
   assert.equal(atBoundary(valid({ title: "  " })).title, "Sing softly");
 });
@@ -174,7 +176,10 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   } };
   const route = runInNewContext(`(async(payload)=>{const req={},res={};const readBody=async()=>payload;
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
+    batchMusicBridge: {metadata: () => ({}), beforeQueue() {}, record() {}},
     config: app, ggufSetup: setup, prov: { actorFrom: () => "agent:test" },
+    /* Unlabelled YuE2 lyrics get [Verse]/[Chorus] before any build (music/yue-lyrics.js). */
+    labelYueLyrics, validateYue2StyleAdapter, console: { log() {}, warn() {} },
     prepareGgufJob: (body, actor) => { events.push("validate"); return prepareGgufJob(body, actor); },
     jobs: { enqueue: (spec) => { events.push("enqueue"); return { id: "owned-native", title: spec.title, quantization: spec.quantization }; }, snapshot: () => ({ current: { id: "someone-else" } }) },
     json: (res, status, body) => ({ status, body }),
@@ -197,6 +202,18 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
   setup.only = null;
+  for (const file of ["trbdr_broadside.safetensors", "grvl_thunder.safetensors"]) {
+    app.music.yue2Lora = file; app.music.yue2LoraClip = file;
+    response = await route(valid({ engine: "yue2-gguf" }));
+    assert.equal(response.status, 200, "retained Comfy style preferences do not block native generation");
+    assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
+    for (const engine of ["yue2", "yue2-gguf"]) for (const named of [{ lora: file }, { loraClip: file }]) {
+      response = await route(valid({ engine, ...named }));
+      assert.equal(response.status, 400); assert.equal(response.body.reason, "yue2-style-engine");
+      assert.deepEqual(events, [], "an explicitly requested unsupported adapter stops before native preflight and enqueue");
+    }
+  }
+  delete app.music.yue2Lora; delete app.music.yue2LoraClip;
   response = await route(valid({ engine: "yue2-gguf", narSteps: 0 }));
   assert.equal(response.status, 400); assert.deepEqual(events.splice(0), ["validate"]);
   setup.ready = false; response = await route(valid({ engine: "yue2-gguf" }));
@@ -267,7 +284,7 @@ await test("Models response preserves catalogue variant rows and exposes separat
 await test("Python YuE2 refuses native Q4/Q8 before its kit, hardware checks or queue", async () => {
   const src = text("./index.js"), routeStart = src.indexOf('if (p === "/api/generate" && req.method === "POST")');
   const start = src.indexOf('if (musicEngine === "yue2") {', routeStart);
-  const end = src.indexOf("\n      const job = jobs.enqueue({", start);
+  const end = src.indexOf("\n      batchMusicBridge.beforeQueue(req);", start);
   assert.ok(routeStart >= 0 && start > routeStart && end > start);
   const events = [];
   const route = runInNewContext(`(async(body)=>{const musicEngine="yue2",res={};
@@ -313,6 +330,9 @@ await test("actual browser currentSpec + generate send only helper-compatible na
     yTemp: "0.8", yTopP: "", yPlanTemp: "" };
   const elements = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
   elements.btnCreate = { disabled: false }; elements.btnPreview = { disabled: false };
+  // This shared outcome control belongs to every music engine, not to a legacy
+  // sampler. A fresh Create clears the previous failure's Details action.
+  elements.musicOutcomeDetails = { hidden: false };
   elements.yAbcUse = { checked: false }; elements.yAbc = { value: "" }; elements.scoreUse = { checked: false };
   // seedLocked is LOCKED here so the request carries seed 17 and can be asserted.
   // The app's own default is unlocked, which re-rolls the seed on every Create.
@@ -339,6 +359,7 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   }, { timeout: 1000 });
   await browser.generate(false, undefined);
   assert.equal(requests.length, 2); assert.deepEqual(alerts, []);
+  assert.equal(elements.musicOutcomeDetails.hidden, true, "a fresh native Create clears the shared failure Details action");
   for (const { body, prepared } of requests) {
     assert.equal(body.engine, "yue2-gguf"); assert.equal(body.quantization, "q4_0");
     assert.equal(prepared.cfgScale, 2.5); assert.equal(prepared.narSteps, 16);

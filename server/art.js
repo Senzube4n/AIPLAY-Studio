@@ -26,19 +26,26 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import { stripPngText } from "./pngtext.js";
 import zlib from "node:zlib";
 import path from "node:path";
-import { config } from "./config.js";
-import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { config, savedCardVendor } from "./config.js";
+import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET, QWEN_IMAGE_FILES } from "./qwen-image.js";
 import { qwenImageStatus } from "./qwen-status.js";
 import { resolvePick } from "./modelpick.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph, h3SparseFor, h3BlockCacheFor } from "./workflow.js";
 /* An engine failure as a sentence, the raw text behind Details (the Video screen's). */
-import { plainVideoFailure } from "./video-plain.js";
+import { plainVideoFailure, speedupNeededAtClip } from "./video-plain.js";
+import { loraOnDisk } from "./workflow.js";
 import { chosenAttention, vendorOf } from "./comfyargs.js";
+import { gpuStatus } from "./gpu.js";
+/* The music tools' lock (YuE2 training and the other community tools): they
+ * hold the card in their own process, and the engine door refuses every run
+ * while they do. */
+import { externalMusicWork } from "./music/exclusive.js";
 import { createVideoSpeed } from "./video-speed.js";
 import { joinClips } from "./clipjoin.js";
 import { runLrc, LRC_SCRIPT, WHISPER_SCRIPT, whisperArgs, stderrTail } from "./lrc.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 import { killProcessTree } from "./proctree.js";
+import { FAST_COVER_ENGINE } from "./fastcover.js";
 import { demucsMeter, stemsPipLine, STEMS_SETTING_WORDS, STEMS_SETUP_BUTTON, stemsPythonEpoch, demucsEnv } from "./music/stems.js";
 /* The ledger, imported HERE and not only at the API seam in index.js: a clip
  * served from the engine's cache is a fact only the renderer can know, and it
@@ -57,6 +64,10 @@ import * as prov from "./provenance.js";
  * `const engine = job.engine || …` two lines above won. Caught by
  * art_cache_test.js on the first run, which is exactly what that test is for. */
 import { engine as engineDoor } from "./engine/client.js";
+/* Engine starts that deployed Studio's nodes, counted: the T8 block cache
+ * comes and goes only at a start (videoBlockCache asks again after each). */
+import { deployEpoch } from "./comfy_nodes.js";
+import { runRefMod } from "./refmod-run.js";
 /* The minors rule, asked at the queue's door as well as the engine's: a
  * refusal here costs nothing and says so at once, before a job waits behind
  * music for the GPU. server/safety/minors.js is the rule. */
@@ -204,21 +215,157 @@ export function attentionOptions(info) {
  * The old 4x limit gave up at 1497 s, two minutes before the clip landed, and
  * the finished file was never filed.
  */
-export function clipBudgetMs(expectedSeconds, vendor, factor = null) {
+export function clipBudgetMs(expectedSeconds, vendor, factor = null, engine = null) {
   const slow = vendor === "nvidia" ? 1 : 3;
   const base = Math.max(900_000, (expectedSeconds * 4 * slow + 300) * 1000);
   /* Once this PC has rendered clips, its own measured factor (video-speed.js)
    * counts too: whichever allows more. */
-  return Number(factor) > 0 ? Math.max(base, Math.round((expectedSeconds * factor * 4 + 300) * 1000)) : base;
+  const measured = Number(factor) > 0 ? Math.max(base, Math.round((expectedSeconds * factor * 4 + 300) * 1000)) : base;
+  /* A 16 GB NVIDIA card can spill H3's vision encoder and DiT into shared GPU
+   * memory, especially with several reference images. The fitted cost curve
+   * does not see that slowdown: a valid 124-frame render was abandoned after
+   * 25 minutes and completed in ComfyUI later. Keep the job alive to collect
+   * its output. Other engines retain their measured deadlines. */
+  return engine === "h3" ? Math.max(measured, 7_200_000) : measured;
+}
+
+/**
+ * THE CARD THIS PC RENDERS ON, for the clip rules measured per vendor (the
+ * fresh engine and the clip deadline below): what setup saved first
+ * (config.js savedCardVendor: comfyargs.js vendorOf, the card it read, else
+ * the torch it installed, a "rocm" torch AMD's and a "cuda" one NVIDIA's; an
+ * "xpu" torch is Intel's and a "cpu" one the CPU's), and only where the
+ * settings name no card, what gpu.js reads now (nvidia-smi answers only on
+ * NVIDIA; the operating system's counters name AMD and Intel). null: a card
+ * nobody could tell.
+ *
+ * Settings alone were not enough: an NVIDIA PC whose settings.json has no
+ * `gpu` and only a "cuda" torch, or nothing at all (a clone started without
+ * setup, a Linux PC without nvidia-smi on its PATH), read as null, and the
+ * fresh-engine rule restarted ComfyUI before every H3 and FastH3 clip there,
+ * with three times the deadline. The live reading was available and unused.
+ *
+ * THE SETTINGS FIRST, so an AMD or Intel card reads exactly as main reads it
+ * (Bucky's rule: his tests set those paths). The live reading does not know
+ * which card ComfyUI renders on: an AMD rig on ROCm with a second NVIDIA card
+ * answers nvidia-smi, and live-first would give it NVIDIA's 1x deadline,
+ * which kills the RX 9060 XT's measured 1617 s clip as hung.
+ */
+export function cardVendor(live = gpuStatus(), saved = config) {
+  return savedCardVendor(saved) || live?.vendor || null;
 }
 
 /** Whether an H3-family clip starts on a clean card (config.js
- *  video.freeBeforeClip, measured there): "auto" on any card but NVIDIA. */
+ *  video.freeBeforeClip, measured there): "auto" on every card this PC can
+ *  name that is not NVIDIA, as main has it (AMD and Intel, where it was
+ *  measured, and the CPU). Not on NVIDIA (never seen there) and not on a card
+ *  nobody could read: a restart costs a warm engine, so it is not spent on a
+ *  guess. That guess was the one change: main restarted a null vendor, and an
+ *  NVIDIA PC whose settings named no card was restarted before every clip. */
 export function clipNeedsCleanCard(engine, { mode = "auto", vendor = null } = {}) {
   if (engine !== "h3" && engine !== "fasth3") return false;
   if (mode === "always") return true;
   if (mode === "never") return false;
-  return vendor !== "nvidia";
+  return vendor != null && vendor !== "nvidia";
+}
+
+/**
+ * WHAT ELSE IS ON THIS CARD that waitForQuietEngine's first two readings (a
+ * song rendering, ComfyUI's own /queue) do not show: a few words naming it, or
+ * null. comfy.restart() stops ComfyUI, and the queues that share this card
+ * disagree in both directions, so the wait reads these too:
+ *   door   the engine door's runs in flight (engineDoor.status().running): a
+ *          chat reply, an agent's direct engine run, a song. It holds runs
+ *          ComfyUI's queue does not show: one staged but not yet POSTed
+ *          (uploads, the safety check, the model scan), and one ComfyUI
+ *          finished that the door has not yet read from /history. A restart
+ *          leaves both "vanished". This clip is not submitted yet, so none of
+ *          them is ours.
+ *   held   work made of several door runs, between two of them
+ *          (engineDoor.status().held, engine/client.js hold()): a Reactive
+ *          Paint look (one run per frame), the Motion look, a chat turn. Its
+ *          door and queue are empty for 150 to 500 ms between two runs, and a
+ *          restart there stopped the engine under the next one, which the door
+ *          then refused, and the whole paint render was lost.
+ *   tools  a music tool holding the card (YuE2 training and the other
+ *          community tools, music/exclusive.js): its own process, which a
+ *          restart does not stop, but the door refuses this clip while it runs.
+ *   art    another job of the art queue on the engine. The runner renders
+ *          one job at a time, so the jobs waiting BEHIND this clip are not on
+ *          the engine: they start after it, on the fresh one. Counting them
+ *          would switch the restart off in every batch of clips, the case it
+ *          was measured for.
+ *   plans  an overnight run or a music-video plan in the middle of a step
+ *          that is not a picture or clip waiting in the art queue (index.js
+ *          sets art.planBusy).
+ */
+export function otherWorkOnEngine({ doorRuns = 0, held = [], tools = null, artOther = false, plans = null } = {}) {
+  const runs = Number(doorRuns) || 0;
+  if (runs > 0) return `the engine door has ${runs} other run(s) in flight`;
+  const holds = Array.isArray(held) ? held.filter(Boolean) : [];
+  if (holds.length) return `${holds[0]} is between two of its runs on the engine`;
+  if (tools) return `a music tool (${tools}) is running`;
+  if (artOther) return "another job of the art queue is on the engine";
+  if (plans) return `${plans} is in the middle of a step`;
+  return null;
+}
+
+/**
+ * THE MISSING-SPEED-UP REFUSAL, FOR EVERY DOOR (video-plain.js
+ * speedupNeededAtClip, the rule POST /api/video checks before it queues): what
+ * an H3 clip job needs that is not on disk, as {build, row, error}, or null.
+ * Asked in #clip, the one place every clip passes through, because two doors
+ * never asked: the music-video runner (mv/generate.js, the brief's count) and
+ * Extend (index.js, the earlier clip's count). They loaded a LoRA that was not
+ * on disk, which ComfyUI rejected minutes later (refused here on every card),
+ * or, on NVIDIA and a card nobody could read, the 8-step file at 4 steps, "a
+ * different model used wrongly" (config.js turboLora4), which videoPlan
+ * refuses there. Read from the job exactly as the graph reads it (workflow.js
+ * videoGraphH3: the engine's settings under the job's own model parts, its
+ * step count, the reference path when a picture, a named audio or a RefMod
+ * rides). H3 only: FastH3 has a fixed schedule and LTX loads no speed-up.
+ */
+export function clipSpeedupNeeded(job = {}, cfg = config, { onDisk = loraOnDisk } = {}) {
+  const engine = job.engine || cfg.video.engine;
+  if (engine !== "h3") return null;
+  const eng = { ...cfg.video, ...cfg.video.engines.h3, ...(job.models || {}) };
+  const refs = (Array.isArray(job.refImages) && job.refImages.some(Boolean))
+    || (Array.isArray(job.refAudios) && job.refAudios.some((a) => a && a.name))
+    || (Array.isArray(job.refMods) && job.refMods.length > 0);
+  return speedupNeededAtClip(eng, { steps: job.steps ?? eng.steps, refs }, { onDisk });
+}
+
+/**
+ * THE STEP COUNT A CONTINUATION RUNS (Extend: POST /api/video "extend",
+ * extend_clip): the count the request names, else the clip's own, else the
+ * engine's default, as {steps, note}. A continuation runs on the PLAIN path
+ * (it carries no reference pictures), so a count the clip ran on the
+ * reference path can need a file the plain path does not have: Keep my
+ * character's default 4 on H3 + "Video references" is the ref2v 4-step, and
+ * the plain path's 4 is the fl2v 4-step file, not on such a disk. Every
+ * character clip on that set-up was refused, and the Clips page's Extend
+ * offers no step count to change (review of the port, 2026-10-08). So a count
+ * the request did NOT name, which the plain path refuses where the engine's
+ * own default renders, gives way to that default, and `note` says so. A
+ * count the request named stays, and is refused with its row (the route). On
+ * every card: on AMD, Intel and the CPU the plain path refuses only a file
+ * that is not on disk (speedupNeededAtClip), so a clip whose count still
+ * renders there keeps it, as main does.
+ */
+export function extendSteps(b = {}, prior = null, cfg = config, { onDisk = loraOnDisk } = {}) {
+  const clamp = (n) => Math.min(Math.max(n, 2), 40);
+  const own = clamp(Number(cfg.video?.engines?.h3?.steps) || 20);
+  const named = Number(b?.steps) || null;
+  if (named) return { steps: clamp(named), note: null };
+  const inherited = Number(prior?.steps) || null;
+  if (!inherited) return { steps: own, note: null };
+  const steps = clamp(inherited);
+  const refused = (n) => clipSpeedupNeeded({ engine: "h3", steps: n }, cfg, { onDisk });
+  if (steps === own || !refused(steps) || refused(own)) return { steps, note: null };
+  const kept = (prior.refImages?.length || prior.refAudios?.length || prior.refMods?.length)
+    ? `The clip ran ${steps} steps with reference pictures; a continuation runs without them, where ${steps} steps would need a speed-up that is not on this PC`
+    : `The clip ran ${steps} steps, which would need a speed-up that is not on this PC now`;
+  return { steps: own, note: `${kept}, so it runs this engine's own ${own}.` };
 }
 
 /**
@@ -227,16 +374,48 @@ export function clipNeedsCleanCard(engine, { mode = "auto", vendor = null } = {}
  * /queue answer). True once quiet, false when `timeoutMs` passes first. A
  * queue that cannot be read counts as quiet: the engine is not answering, so
  * there is nothing in it to lose.
+ *
+ * `otherWork` (optional) names the rest of what is on the card, or null
+ * (otherWorkOnEngine: the engine door's own runs and holds, a music tool,
+ * another art job, a plan mid-step); it is asked only once the first two are
+ * quiet, so a long song costs no status reads. A reading that throws counts as
+ * busy: it is not the engine, and it cannot say the card is free.
+ * `cancelled` (optional) ends the wait at once with false: the person pressed
+ * Stop on the clip that waits (ArtRunner.stopCurrent, stopMine), and nothing
+ * is restarted for it. `onBusy` hears the reason each time it changes, for
+ * the log line.
+ *
+ * ⚠ THE FIRST TWO ARE READ AGAIN AFTER `otherWork`, and only that reading
+ * says "free". otherWork is slow (engineDoor.status() reads the settings,
+ * stats every stored graph, 814 ms on this rig's 3186, and asks ComfyUI
+ * again), and the music queue starts a song whatever the art queue is doing:
+ * a song started, or a prompt posted to ComfyUI, during that read was
+ * restarted under (review of the port, 2026-10-08). The song is read last,
+ * after the queue's await, so nothing asynchronous sits between it and the
+ * restart that follows.
  */
-export async function waitForQuietEngine({ musicBusy, engineQueue, timeoutMs = 20 * 60_000, pollMs = 2000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {
+export async function waitForQuietEngine({ musicBusy, engineQueue, otherWork = null, cancelled = null, onBusy = null, timeoutMs = 20 * 60_000, pollMs = 2000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {
   const until = now() + timeoutMs;
-  for (;;) {
+  let said = null;
+  const quick = async () => {
     let q = null;
     try { q = await engineQueue?.(); } catch { q = null; }
     const inQueue = q ? (q.queue_running || []).length + (q.queue_pending || []).length : 0;
-    if (!musicBusy?.() && inQueue === 0) return true;
+    return musicBusy?.() ? "a song is rendering" : inQueue > 0 ? `ComfyUI has ${inQueue} job(s) running or waiting` : null;
+  };
+  for (;;) {
+    if (cancelled?.()) return false;
+    let why = await quick();
+    if (!why && otherWork) {
+      try { why = (await otherWork()) || null; } catch { why = "work that could not be read"; }
+      if (!why) why = await quick();
+    }
+    if (!why && cancelled?.()) return false;
+    if (!why) return true;
+    if (why !== said) { said = why; try { onBusy?.(why); } catch { /* a log line is not a reason to stop */ } }
     if (now() >= until) return false;
     await sleep(pollMs);
+    if (cancelled?.()) return false;
   }
 }
 
@@ -615,6 +794,11 @@ export function refusalCard(buf) {
  */
 export const SUBPROCESS_KINDS = new Set(["stems", "lrc", "whisper"]);
 
+/* A job that runs a program of its own: those kinds, and a song cover drawn
+ * by fast covers (server/fastcover.js), which stays kind "cover" everywhere a
+ * cover is looked for but runs Supra2-IMG on the processor, not on the engine. */
+export const ownProgram = (job) => SUBPROCESS_KINDS.has(job?.kind) || job?.fast === true;
+
 /** What a job the person stopped reads, in the Jobs list and to its waiters.
  *  Non-null on purpose: art-wait.js and index.js standing() read a job with an
  *  error as not-a-success, and a stopped job is not one. */
@@ -659,6 +843,10 @@ export class ArtRunner extends EventEmitter {
     this.enabled = config.art.enabled;
     this.paused = false;
     this.#timer = null;
+    /* (job) => words naming a plan mid-step, or null: the plans the
+     * fresh-engine restart waits for (otherWorkOnEngine). index.js sets it;
+     * this file knows nothing about the plan runners. */
+    this.planBusy = null;
 
     /* Post-processing gets its OWN websocket and client id.
      *
@@ -686,6 +874,24 @@ export class ArtRunner extends EventEmitter {
       this.#sparseOffered = undefined;
       this.#cacheOffered = undefined;
       this.#lastQwen = null;
+    });
+  }
+
+  /** otherWorkOnEngine, read now: the engine door's own runs and holds, a
+   *  music tool, another art job, a plan mid-step (waitForQuietEngine asks it
+   *  before a restart). A status that cannot be read throws, and the wait
+   *  counts that as busy: the holds are read there, so a failed read must not
+   *  say "free". */
+  async #otherWork(job) {
+    const live = await engineDoor.status();
+    let plans = null;
+    try { plans = typeof this.planBusy === "function" ? this.planBusy(job) : null; } catch { plans = "a plan that could not be read"; }
+    return otherWorkOnEngine({
+      doorRuns: Array.isArray(live?.running) ? live.running.length : 0,
+      held: Array.isArray(live?.held) ? live.held : [],
+      tools: externalMusicWork.owner?.label || null,
+      artOther: !!(this.current && this.current !== job),
+      plans,
     });
   }
 
@@ -742,7 +948,12 @@ export class ArtRunner extends EventEmitter {
    *     misbehaved — asked for it, and a per-graph node would overrule them
    *     without a word. Only "no choice" or "Comfy Kitchen" lets CK through.
    *     The AMD/Intel fix's own PyTorch value is not a choice (comfyargs.js
-   *     chosenAttention): the launcher shows it and a Save stores it.
+   *     chosenAttention): the launcher shows it and a Save stores it. The
+   *     vendor here is the one the LAUNCH judged the fix with (comfy.js reads
+   *     the same saved settings, where a "cuda" torch now reads as NVIDIA),
+   *     not the live card: the question is whether the fix laid PyTorch on
+   *     this engine. On NVIDIA both readings give the same answer, since the
+   *     fix is off there either way.
    *  2. config.video.engines.h3.attention says "ck" (see the measurement there).
    *  3. The RUNNING engine offers the option. ModelAttentionBackend lists
    *     "comfy kitchen attention" only when comfy_kitchen int8 is available, and
@@ -787,6 +998,11 @@ export class ArtRunner extends EventEmitter {
   async videoAttention(job) {
     const name = job.engine || config.video.engine;
     if (name === "ltx") return null;
+    /* A signed standalone peer job names its backend. The receiver preflights
+     * CK support before queueing, so an unavailable backend is never silently
+     * substituted after the lender consents to the exact job. */
+    if (name === "h3" && job.attention === "pytorch") return "pytorch";
+    if (name === "h3" && (job.attention === "ck" || job.attention === "kitchen")) return (await this.#kitchenOffered()) ? "ck" : "pytorch";
     const eng = config.video.engines[name];
     if (eng?.sparseAttention) {
       const want = job.attention ?? eng.attention;
@@ -840,6 +1056,7 @@ export class ArtRunner extends EventEmitter {
    * custom node. Where it would and cannot, the job says so (blockCacheNote).
    */
   async videoBlockCache(job) {
+    if (job.blockCache === false) return false;
     const name = job.engine || config.video.engine;
     const eng = { ...config.video, ...(config.video.engines[name] || {}), ...(job.models || {}) };
     if (eng.blockCache !== true) return false;
@@ -851,15 +1068,26 @@ export class ArtRunner extends EventEmitter {
       continuation: !!job.continueFrom?.file, control: !!(job.controlVideo && job.controlPatch) });
     if (!h3BlockCacheFor(eng, { blockCache: true, refs, continuation: !!job.continueFrom?.file,
       control: !!(job.controlVideo && job.controlPatch), sparse: sparseCfg })) return false;
+    /* Asked again after every engine start, not only when the port moved: a
+     * start with the switch off takes Studio's copy out (comfy_nodes.js), and
+     * a pinned port (AIPLAY_COMFY_PORT) restarts on the same number, where no
+     * "rebound" comes. A remembered yes would then name a node the engine no
+     * longer has, and ComfyUI refuses the whole clip. */
+    if (this.#cacheEpoch !== deployEpoch()) { this.#cacheOffered = undefined; this.#cacheEpoch = deployEpoch(); }
     if (this.#cacheOffered === undefined) {
       try { this.#cacheOffered = !!(await engineDoor.objectInfo(eng.blockCacheRecipe.node))?.[eng.blockCacheRecipe.node]; }
       catch { this.#cacheOffered = false; }
     }
+    /* Studio copies the node into custom_nodes only at an engine start with
+     * the switch on (comfy_nodes.js), and ComfyUI reads custom_nodes only as
+     * it starts: switched on while the engine ran, it arrives at the next start. */
     if (!this.#cacheOffered) job.blockCacheNote = "This clip ran without the block cache: it needs the MiniMax H3 Block Cache (T8) "
-      + "custom node in ComfyUI, which this engine does not have.";
+      + "custom node in ComfyUI, which this engine does not have. Studio copies the node in when the engine starts with "
+      + "Block cache on, so if you switched it on while the engine was running, restart Studio to use it.";
     return this.#cacheOffered;
   }
   #cacheOffered;
+  #cacheEpoch;
 
   /** Idempotent, lazy, and never fatal — progress is a nicety, not the work. */
   #connect() {
@@ -925,8 +1153,18 @@ export class ArtRunner extends EventEmitter {
    * below is the explicit version. */
   drop(file) {
     const before = this.queue.length;
+    const refmods = this.queue.filter((j) => j.file === file && j.kind === "refmod");
     this.queue = this.queue.filter((j) => j.file !== file);
     const removed = before - this.queue.length;
+    /* A cache's filename is reserved until a terminal event. Dropping its
+     * waiting job must release that reservation just like queued Stop does. */
+    for (const j of refmods) {
+      j.cancelled = true;
+      j.error = STOPPED_ERROR;
+      try { this.emit("failed", { file: j.file, kind: j.kind, owner: j.owner || null,
+        error: STOPPED_ERROR, runId: null, cancelled: true }); }
+      catch { /* a listener's fault must not prevent the remaining drops */ }
+    }
     if (removed) this.emit("update");
     return { removed, running: this.current?.file === file };
   }
@@ -949,9 +1187,29 @@ export class ArtRunner extends EventEmitter {
     const none = { stopped: null, kind: null, queued: this.queue.length, killed: false, stopping: false };
     if (!job) return none;
     try {
-      if (SUBPROCESS_KINDS.has(job.kind)) {
+      if (ownProgram(job)) {
         const r = await this.#stopChild(job);
         return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: r.killed, stopping: r.stopping };
+      }
+      /* A CLIP WAITING FOR A QUIET ENGINE (#clip, waitForQuietEngine) is not
+       * on the engine: whatever runs there is somebody else's work, the very
+       * work it waits for. So it is only marked, its wait ends and it throws
+       * the Stop sentence, and the engine is not touched. An untargeted
+       * interrupt here killed that other work, and the clip, never marked,
+       * then found the engine quiet and rendered anyway. */
+      if (job.waitingForQuiet) {
+        job.cancelled = true; job.stopping = true; this.emit("update");
+        return { stopped: job.title || null, kind: job.kind || null, queued: this.queue.length, killed: false, stopping: true };
+      }
+      // A RefMod timeout has left the door's live ledger, but its writer can
+      // still be running. Stop that exact prompt, never an unrelated render.
+      if (job.kind === "refmod" && job.refModPromptId) {
+        const stop = await engineDoor.cancelRun({ runId: job.runId, promptId: job.refModPromptId }).catch(() => ({ stopped: false }));
+        if (stop.stopped === true && this.current === job) {
+          job.cancelled = true; job.stopping = true; this.emit("update");
+        }
+        return { stopped: job.title || null, kind: job.kind, queued: this.queue.length,
+          killed: false, stopping: this.current === job && !!job.stopping };
       }
       /* AN ENGINE RENDER: cancelled BY RUN ID, and only a run of this queue's
        * own (its `via` starts with "art."; the queue renders one job at a time,
@@ -1019,19 +1277,28 @@ export class ArtRunner extends EventEmitter {
       const job = this.current;
       out.wasRunning = job?.title || null;
       out.kind = job?.kind || null;
-      if (job && SUBPROCESS_KINDS.has(job.kind)) {
+      if (job && ownProgram(job)) {
         const r = await this.#stopChild(job);
         out.killed = r.killed;
         out.stopping = r.stopping;
+      }
+      /* A clip still waiting for a quiet engine has no run to cancel: it is
+       * marked, and its wait ends with the Stop sentence (stopCurrent). */
+      if (job?.waitingForQuiet) {
+        job.cancelled = true; job.stopping = true; out.stopping = true;
+        this.emit("update");
       }
       /* The door's own record of who is running what. An orphaned render (its
        * waiter gave up) is still ours, so this is asked whatever is current. */
       const live = await engineDoor.status().catch(() => ({ running: [] }));
       const mine = (live?.running || []).filter((r) => String(r.via || "").startsWith("art."));
-      const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId }).catch(() => ({ stopped: false }))));
+      const targets = mine.map((r) => ({ runId: r.runId }));
+      if (job?.kind === "refmod" && job.refModPromptId && !mine.some((r) => r.runId === job.runId))
+        targets.push({ runId: job.runId, promptId: job.refModPromptId });
+      const stops = await Promise.all(targets.map((target) => engineDoor.cancelRun(target).catch(() => ({ stopped: false }))));
       out.engineCancelled = stops.filter((s) => s?.stopped === true).length;
       out.interrupted = out.engineCancelled > 0;
-      if (out.interrupted && job && !SUBPROCESS_KINDS.has(job.kind) && this.current === job) {
+      if (out.interrupted && job && !ownProgram(job) && this.current === job) {
         job.cancelled = true; job.stopping = true; out.stopping = true;
         this.emit("update");
       }
@@ -1124,7 +1391,15 @@ export class ArtRunner extends EventEmitter {
      * a separation kept the card busy. Its tree is killed too; what this
      * method returns is unchanged. */
     const cur = this.current;
-    if (cur && SUBPROCESS_KINDS.has(cur.kind)) await this.#stopChild(cur).catch(() => {});
+    if (cur && ownProgram(cur)) await this.#stopChild(cur).catch(() => {});
+    /* A CLIP WAITING FOR A QUIET ENGINE is marked too, as stopCurrent and
+     * stopMine mark it. It is not on the engine, so the interrupt below never
+     * reached it: it interrupted the work the clip waited for, cleared
+     * ComfyUI's queue, and the clip, never marked, then read the card as
+     * quiet, restarted the engine and rendered a whole H3 clip, on battery
+     * when Battery Safe pressed this (review of the port, 2026-10-08). On
+     * every card (the wait runs where the fresh engine does). */
+    if (cur?.waitingForQuiet) { cur.cancelled = true; cur.stopping = true; this.emit("update"); }
     /* Two halves and both are needed: clearing OUR queue (above) stops what has
      * not been submitted, interrupting stops what is rendering, and clearing
      * ComfyUI's own queue catches what it accepted but has not started. */
@@ -1155,7 +1430,7 @@ export class ArtRunner extends EventEmitter {
         /* Only a job that needs the engine waits for it: stems and timed
          * lyrics run their own program and start without it. */
         deferred: this.queue.length > 0 && !this.current && !this.paused && !this.comfy.ready
-          && this.queue.some((j) => !SUBPROCESS_KINDS.has(j.kind))
+          && this.queue.some((j) => !ownProgram(j))
           ? { reason: "engine", message: "Waiting for the image engine to start; model readiness has not been verified." }
           : null,
         // `kind` is reported so the UI can name the stage that is actually
@@ -1220,6 +1495,9 @@ export class ArtRunner extends EventEmitter {
            * both in fullError for a waiter (art-wait.js reads it first). */
           ...(i < 20 && j.error && j.errorDetail ? { detail: String(j.errorDetail).slice(0, 4000), errorReason: j.errorReason || null,
             fullError: `${String(j.error)} Details: ${String(j.errorDetail)}`.slice(0, 4000) } : {}),
+          /* A clip refused for a speed-up not on disk (#clip): the row to
+           * download, which the page's model window opens (needsModel). */
+          ...(j.error && j.needsModel ? { needsModel: j.needsModel, errorReason: j.errorReason || null } : {}),
         })),
         stats: this.stats || {},
         nextTitles: this.queue.slice(0, 3).map((j) => ({ kind: j.kind, title: j.title })),
@@ -1299,7 +1577,15 @@ export class ArtRunner extends EventEmitter {
      * Video screen ("ignores this setting the same way a manual cover render
      * ignores the cover dropdown") — that sentence was true of every screen
      * except this one. */
-    if (kind === "cover" && !asked && !this.enabled) {
+    /* FAST COVERS (server/fastcover.js, Settings > Experimental): a song's
+     * cover drawn by Supra2-IMG on the processor, when it is switched on and
+     * set up. Never a picture from the Images screen (image:…), never one
+     * that names its engine. The automatic-cover switch above is about the
+     * covers ENGINE on the card: reported 2026-09-27, with it off and fast
+     * covers on, no song got a cover until Regenerate was pressed. */
+    const fast = kind === "cover" && !String(file).startsWith("image:") && !video?.engine && !assignedTo("cover")
+      && this.fastCovers?.use?.() === true;
+    if (kind === "cover" && !asked && !this.enabled && !fast) {
       return this.#refuse("automatic cover art is switched off in Settings");
     }
     if (!force && this.queue.some((j) => j.file === file && j.kind === kind)) {
@@ -1343,6 +1629,12 @@ export class ArtRunner extends EventEmitter {
       // audioRef in jobs.js and the video stage in batch.js — the caller already
       // validated this object, and adding a knob should not need three edits.
       ...(video || {}),
+      ...(kind === "video" ? {
+        h3ModelBuild: video?.collabVideoBase ? "auto" : video?.h3ModelBuild ?? config.video.h3ModelBuild,
+        // The route fills the saved build too, so only its explicit request flag
+        // can distinguish a per-render choice from the custom workflow's defaults.
+        h3ModelBuildExplicit: !video?.collabVideoBase && (video?.h3ModelBuildExplicit ?? (video?.h3ModelBuild !== undefined)),
+      } : {}),
       /* A transcription's own spec (server/whisper.js validated and resolved
        * it): kept whole on its own key rather than spread, so none of its
        * fields can land on a name a render reads. */
@@ -1358,6 +1650,7 @@ export class ArtRunner extends EventEmitter {
      * Several callers ignore request()'s return and wait on events (MV's
      * awaitArt, sfxcue), so a refusal is also announced as `failed` for this
      * file and remembered for a late listener (refusalFor). */
+    if (fast) job.fast = true;
     const words = this.#renderedWords(job);
     if (words !== null) {
       const verdict = checkPrompt([words], { context: job.safetyContext, flags: job.safetyFlags });
@@ -1408,7 +1701,7 @@ export class ArtRunner extends EventEmitter {
   #nextRunnable() {
     if (this.jobs?.current || (this.jobs?.queue?.length || 0) > 0) return -1;
     if (this.comfy?.ready) return this.queue.length ? 0 : -1;
-    return this.queue.findIndex((j) => SUBPROCESS_KINDS.has(j.kind));
+    return this.queue.findIndex((j) => ownProgram(j));
   }
 
   #schedule() {
@@ -1456,20 +1749,21 @@ export class ArtRunner extends EventEmitter {
        * render ends up streaming from system RAM. The music runner's own
        * switch (jobs.js) only ever compared music models with each other.
        * `artResident` tells it the way back needs an unload too. */
-      if (this.jobs.loaded) {
+      /* A fast cover runs on the processor: the music model stays where it is. */
+      if (this.jobs.loaded && !job.fast) {
         console.log(`  [art] unloading ${this.jobs.loaded.key} before the ${job.kind || "image"} job`);
         await this.jobs.unloadModels().catch(() => {});
         this.#lastQwen = null;             // a music model had the card: Qwen is not warm
       }
       /* A program of its own puts nothing into the engine and reports no
        * progress over its socket: neither the resident flag nor the socket. */
-      const ownProgram = SUBPROCESS_KINDS.has(job.kind);
-      if (!ownProgram) this.jobs.artResident = true;
+      const own = ownProgram(job);
+      if (!own) this.jobs.artResident = true;
       /* A clip, a separation or anything but a picture uses the card: Qwen is
        * not known to be warm after it. A picture sets this itself below. */
       if (job.kind !== "cover") this.#lastQwen = null;
       job.startedAt = this.startedAt;
-      if (!ownProgram) this.#connect();
+      if (!own) this.#connect();
       this.emit("update");
       try {
         if (job.kind === "stems") {
@@ -1477,6 +1771,17 @@ export class ArtRunner extends EventEmitter {
           job.stems = stems;
           this.done.unshift(job);
           this.emit("stems", { file: job.file, stems });
+        } else if (job.kind === "refmod") {
+          const done = await runRefMod(engineDoor, { graph: job.refModGraph, actor: job.actor, via: "art.refmod",
+            private: job.private === true, adopt: false, label: job.title, clientId: this.clientId,
+            timeoutMs: 15 * 60 * 1000, pollMs: 1000 }, { onAwaiting: (result) => {
+              job.runId = result.runId; job.refModPromptId = result.promptId;
+            } });
+          job.runId = done.runId;
+          if (done.status !== "completed") throw new Error(done.error || "RefMod creation did not complete.");
+          job.refModResult = { name: job.refModName, runId: done.runId, status: done.status };
+          this.done.unshift(job);
+          this.emit("refmod-ready", { file: job.file, name: job.refModName, ...job.refModResult });
         } else if (job.kind === "video") {
           let clip = await this.#clip(job);
           if (clip && job.continueFrom && job.extendedFrom) clip = await joinContinuation(job, clip);
@@ -1527,6 +1832,10 @@ export class ArtRunner extends EventEmitter {
               // liked clip can be re-rolled with the same references.
               refImages: job.refImages?.length ? job.refImages : null,
               refAudios: job.refAudios?.length ? job.refAudios : null,
+              refMods: job.refMods?.length ? job.refMods : null,
+              refModOptions: job.refMods?.length ? job.refModOptions : null,
+              h3Tweaks: job.h3Tweaks || null,
+              h3Checkpoint: job.h3Checkpoint || null,
               audioTrack: job.audioTrack || null,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
@@ -1548,6 +1857,7 @@ export class ArtRunner extends EventEmitter {
               /* The sparse attention the graph carried, and why not where
                * sol-attn was asked for and the engine could not take it. */
               sparse: job.sparseRan ?? null, sparseNote: job.sparseNote || null,
+              attention: job.attentionRan ?? null,
               /* Whether H3's block cache ran, and why not where it was asked for. */
               blockCache: !!job.blockCacheRan, blockCacheNote: job.blockCacheNote || null,
               at: Date.now(),
@@ -1615,7 +1925,7 @@ export class ArtRunner extends EventEmitter {
           this.done.unshift(job);
           this.emit("sfx", { file: job.file, sfxFile: out, seed: job.seed, runId: job.runId ?? null });
         } else {
-          const { covers, thumbs } = await this.#render(job);
+          const { covers, thumbs } = job.fast ? await this.#fastCover(job) : await this.#render(job);
           job.covers = covers;
           /* What the next Qwen render follows: this one, if Qwen painted it;
            * after any other engine, Qwen is not known to be warm. */
@@ -1670,7 +1980,7 @@ export class ArtRunner extends EventEmitter {
           console.log(`  [${job.kind}] ${job.title}: stopped (you pressed Stop)`);
           this.emit("failed", {
             file: job.file, kind: job.kind, owner: job.owner || null,
-            error: job.error, runId: job.runId ?? null, cancelled: true,
+            error: job.error, runId: job.runId ?? null, cancelled: true, durationMs: job.durationMs,
           });
           continue;
         }
@@ -1709,9 +2019,13 @@ export class ArtRunner extends EventEmitter {
         this.emit("failed", {
           file: job.file, kind: job.kind, owner: job.owner || null,
           error: String(err.message || err),
+          durationMs: job.durationMs,
           /* Present when the engine door refused the graph under the minors
            * rule, so a waiter can answer 422 rather than "render failed". */
           ...(err?.safety ? { code: err.code } : {}),
+          /* Present when a clip was refused for a speed-up not on disk: the
+           * Models row that brings it (#clip, clipSpeedupNeeded). */
+          ...(job.needsModel ? { needsModel: job.needsModel } : {}),
           /* Present when the engine was actually reached: the door recorded the
            * failure too, with the status, the error and the elapsed time. A
            * render that died used to leave no trace of any kind. */
@@ -1740,6 +2054,24 @@ export class ArtRunner extends EventEmitter {
     if (this.queue.length) this.#schedule();      // yielded early; resume later
   }
 
+  /* A song cover from fast covers (server/fastcover.js): Supra2-IMG in its
+   * own Python on the processor, written straight to the names #render gives
+   * a cover (<track stem>.png and _t.png in covers/). The program is kept on
+   * the job, so Stop kills it like a separation. */
+  async #fastCover(job) {
+    const stem = job.file.replace(/\.(flac|mp3|opus|wav)$/i, "");
+    await mkdir(COVER_DIR, { recursive: true });
+    const names = { cover: `${stem}.png`, thumb: `${stem}_t.png` };
+    const done = await this.fastCovers.render(job, {
+      out: path.join(COVER_DIR, names.cover), thumb: path.join(COVER_DIR, names.thumb),
+      run: (start) => this.#runChild(job, start),
+    });
+    job._paintedBy = FAST_COVER_ENGINE;
+    job._imageOptions = { steps: done.steps, cfg: done.cfg, native: done.native, drawSeconds: done.drawSeconds };
+    this.progress = 1;
+    return { covers: [names.cover], thumbs: [names.thumb] };
+  }
+
   async #render(job) {
     /* Two callers, same engine.
      *
@@ -1763,7 +2095,7 @@ export class ArtRunner extends EventEmitter {
      * an entire batch's art to one bad JSON file would be a poor trade. The
      * reason is logged where it will be read. */
     let graph = null;
-    const customCover = assignedTo("cover");
+    const customCover = job.collabImageBase ? null : assignedTo("cover");
     if (customCover) {
       try {
         graph = await buildCustom(customCover, {
@@ -1813,13 +2145,31 @@ export class ArtRunner extends EventEmitter {
      * reads this, so "my own model" must not be filed as the stock one. */
     job._paintedWith = engine === "checkpoint" ? (ckpt || null) : (ownDit || null);
     if (!graph && engine === "qwen-image-2.1") {
+      if (job.collabImageBase) {
+        if (!Array.isArray(job.collabRefHashes) || job.collabRefHashes.length !== (job.refImages || []).length) {
+          throw new Error("A peer image job has no complete staged reference fingerprint.");
+        }
+        for (let i = 0; i < job.collabRefHashes.length; i++) {
+          const name = String(job.refImages[i] || "");
+          if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(name)) throw new Error("A peer image reference name changed before rendering.");
+          const current = await readFile(path.join(config.inputDir, name));
+          if (createHash("sha256").update(current).digest("hex") !== job.collabRefHashes[i]) {
+            throw new Error(`Peer image reference ${i + 1} changed while waiting in the render queue.`);
+          }
+        }
+      }
       const qwenOptions = {
         prompt, negative: job.negative, seed: job.seed, width: job.width, height: job.height,
         steps: job.steps, cfg: job.cfg, count: job.count, prefix: PREFIX,
         sampler: job.sampler, scheduler: job.scheduler,
         refImages: job.refImages, refSizing: job.refSizing, refResolution: job.refResolution,
         transparent: job.transparent, thumbSize: config.art.thumbSize,
-        dit: ownDit, encoder: ownEncoder, vae: ownVae,
+        /* The peer contract records stock Qwen base files. Do not let a
+         * machine-local override make readiness check different files from
+         * the graph whose result will be returned to the sender. */
+        dit: job.collabImageBase ? QWEN_IMAGE_FILES.dit : ownDit,
+        encoder: job.collabImageBase ? QWEN_IMAGE_FILES.encoder : ownEncoder,
+        vae: job.collabImageBase ? QWEN_IMAGE_FILES.vae : ownVae,
         /* Fast draft: the turbo LoRA and its 5-step schedule (qwen-image.js
          * QWEN_DRAFT). Readiness below then also requires the LoRA on disk. */
         ...(job.draft === true ? { draft: true } : {}),
@@ -1839,6 +2189,8 @@ export class ArtRunner extends EventEmitter {
       job._qwenKey = qwenRenderKey({ prompt, negative: job.negative, refImages: job.refImages,
         refResolution: graph[4].inputs.resolution, encoder: graph[2].inputs.clip_name });
       job._imageOptions = { steps: sampled.steps, cfg: sampled.cfg,
+        sampler: sampled.sampler, scheduler: sampled.scheduler,
+        count: graph[7]?.inputs?.batch_size || graph[7]?.inputs?.amount || 1,
         /* PROVENANCE: a draft says so on the picture's row, with the LoRA and
          * its strength, so "what made this" never reads as the full render.
          * Absent on a final, whose row is unchanged. */
@@ -2043,8 +2395,17 @@ export class ArtRunner extends EventEmitter {
            * app's own XMP disclosure is deliberately kept: this is privacy about
            * the words somebody typed, never about hiding what made a picture. */
           if (job.private) {
-            await stripPngText(landed).catch((err) =>
-              console.warn(`[art] private render: could not strip metadata from ${name} (${err.message})`));
+            if (job.collabImageBase) {
+              const stripped = await stripPngText(landed);
+              if (stripped.skipped) throw new Error("A private peer image was not a PNG whose metadata could be stripped.");
+            } else {
+              await stripPngText(landed).catch((err) =>
+                console.warn(`[art] private render: could not strip metadata from ${name} (${err.message})`));
+            }
+          }
+          if (job.collabImageBase && suffix === "") {
+            job._imageOptions = { ...(job._imageOptions || {}),
+              outputSha256: createHash("sha256").update(await readFile(landed)).digest("hex") };
           }
           names.push(name);
         }
@@ -2192,7 +2553,13 @@ export class ArtRunner extends EventEmitter {
      * prompt. This is what the event reads. */
     job.usedPrompt = prompt;
     let graph = null;
-    const customVideo = assignedTo("video");
+    /* The receiver accepted a signed built-in graph. A custom workflow chosen
+     * while this job waits behind music cannot replace its model contract. */
+    const customVideo = job.collabVideoBase ? null : assignedTo("video");
+    if (customVideo && job.h3ModelBuildExplicit)
+      throw new Error("An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.");
+    if (customVideo && (job.refMods?.length || job.h3Tweaks))
+      throw new Error("Reference caches and Fizgig tweaks require the built-in H3 workflow. Unassign the custom Video workflow first.");
     if (customVideo) {
       try {
         graph = await buildCustom(customVideo, {
@@ -2207,6 +2574,20 @@ export class ArtRunner extends EventEmitter {
         console.warn(`[art] custom video workflow "${customVideo}" did not load (${err.message}) — using the built-in graph`);
       }
     }
+    /* A speed-up the built-in graph would load and the disk does not have:
+     * refused here, before any restart or submission, whichever door queued
+     * the clip (clipSpeedupNeeded). The job carries the row to download
+     * (`needsModel`), and its failure event and status row say so. A custom
+     * workflow loads its own files and is not judged. */
+    const missing = graph ? null : clipSpeedupNeeded(job);
+    if (missing) {
+      job.preflightFailed = true;
+      job.errorReason = missing.build === 3 ? "taomate-missing" : "speedup-missing";
+      job.needsModel = missing.row;
+      throw new Error(missing.error);
+    }
+    const attention = graph ? null : await this.videoAttention(job);
+    job.attentionRan = attention;
     if (!graph) graph = videoGraph({
       // Which engine. Carried on the job so a clip queued while LTX was selected
       // still renders with LTX even if the setting changed while it waited.
@@ -2221,6 +2602,7 @@ export class ArtRunner extends EventEmitter {
       /* Model files the person named instead of the engine’s own
        * (server/modelpick.js). Undefined leaves every part as it was. */
       models: job.models,
+      h3ModelBuild: job.h3ModelBuild,
       // The person's own LoRAs from the Video screen, on both engines.
       loras: job.loras,
       // Waypoints. Without this line the route stages the pictures, the job
@@ -2229,6 +2611,9 @@ export class ArtRunner extends EventEmitter {
       // References (<Picture n> / <Audio n> in the prompt) — H3's ref2va path.
       refImages: job.refImages,
       refAudios: job.refAudios,
+      refMods: job.refMods,
+      refModOptions: job.refModOptions,
+      h3Tweaks: job.h3Tweaks,
       /* Video-to-video: the whole clip drives the render frame by frame. Named
        * here for the reason the warning above gives — an option this call does
        * not list is dropped without a word, and a control video that silently
@@ -2250,7 +2635,7 @@ export class ArtRunner extends EventEmitter {
        * ONE `attention:` key in this object: a second one is not an error in
        * JavaScript, the later simply wins (fasth3_test.js guards it). FastH3's
        * per-render pick is read inside videoAttention(). */
-      attention: await this.videoAttention(job),
+      attention,
       /* H3's sol-attn on the Fast setting (workflow.js h3SparseFor), after the
        * engine was asked whether it has the node (videoSparse). Named here for
        * the reason the warning above gives. */
@@ -2266,6 +2651,10 @@ export class ArtRunner extends EventEmitter {
      * decides what the clip looks like is in here, which is why this is a safe
      * key for the render index above — and why it is the same thing ComfyUI's
      * own cache is keyed on. */
+    if (graph.h3CheckpointChoice) {
+      const { requestedBuild, ranBuild, file, reference, fallback } = graph.h3CheckpointChoice;
+      job.h3Checkpoint = { requestedBuild, ranBuild, file, reference, fallback };
+    }
     const key = graphHash(graph);
     /* Which sparse attention the graph really carries (node 81), for the
      * clip's metadata: sol-attn on H3's Fast setting, vsa on FastH3. */
@@ -2295,7 +2684,19 @@ export class ArtRunner extends EventEmitter {
     const stepScale = engine === "ltx" ? 1 : (job.steps ?? v.steps) / 8;
     const expected = v.costFixedSeconds
       + v.costRate * Math.pow((px * frames) / 1e6, v.costExponent) * stepScale;
-    const budgetMs = clipBudgetMs(expected, vendorOf(config.gpu, config.torchBackend), videoSpeed.factor(engine));
+    /* The card this PC renders on (cardVendor: the settings first, the live
+     * reading where they name no card). */
+    const vendor = cardVendor();
+    const budgetMs = clipBudgetMs(expected, vendor, videoSpeed.factor(engine), engine);
+
+    /* A MUSIC TOOL ON THE CARD (YuE2 training and the other community tools)
+     * runs in its own process and the engine door refuses every run while it
+     * does ("Music tools are busy"). Said now, before a restart that would
+     * only be wasted, on every card. */
+    if (externalMusicWork.owner) {
+      job.preflightFailed = true;
+      throw new Error(`Music tools are busy: ${externalMusicWork.owner.label}. The clip was not started; queue it again when that tool has finished.`);
+    }
 
     /* A FRESH ENGINE FIRST (config.js video.freeBeforeClip, measured there):
      * a second H3 render in the same engine process spilled into shared
@@ -2303,19 +2704,35 @@ export class ArtRunner extends EventEmitter {
      * did not bring it back; a new process did. So an engine that has already
      * rendered anything is restarted, same flags, before the clip (about 45
      * s against about 9 minutes lost on an 8-step clip). Nothing is loaded
-     * afterwards: the music model is gone, Qwen is not warm. */
-    if (clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor: vendorOf(config.gpu, config.torchBackend) })
+     * afterwards: the music model is gone, Qwen is not warm. "auto" on AMD,
+     * Intel and the CPU, as main has it; on NVIDIA and a card nobody could
+     * read only when the person set "always". */
+    if (clipNeedsCleanCard(engine, { mode: config.video.freeBeforeClip, vendor })
         && engineDoor.ranSinceStart() > 0 && typeof this.comfy?.restart === "function") {
       /* ...but never under someone else's work. A restart kills whatever the
        * engine is running, so a song rendering at that moment, or a graph an
-       * agent sent through the engine door, died with it. Wait until neither
-       * the music queue nor the engine's own queue has anything running (at
-       * most restartWaitMs), and render on the old process if it never frees:
-       * slower, but nothing is lost. */
-      const free = await waitForQuietEngine({
-        musicBusy: () => !!this.jobs?.current,
-        engineQueue: () => engineDoor.queue(),
-      });
+       * agent sent through the engine door, died with it. Wait until the music
+       * queue, the engine's own queue and the rest of the card
+       * (otherWorkOnEngine: the door's own runs and holds, a music tool,
+       * another art job, a plan mid-step) have nothing running (at most
+       * waitForQuietEngine's 20 minutes), and render on the old process if it
+       * never frees: slower, but nothing is lost. While it waits the clip is
+       * not on the engine, so its Stop ends the wait and touches nothing else
+       * (stopCurrent, stopMine: waitingForQuiet). On every card. */
+      job.waitingForQuiet = true;
+      let free = false;
+      try {
+        free = await waitForQuietEngine({
+          musicBusy: () => !!this.jobs?.current,
+          engineQueue: () => engineDoor.queue(),
+          otherWork: () => this.#otherWork(job),
+          cancelled: () => !!job.cancelled,
+          onBusy: (why) => console.log(`  [art] waiting to restart the engine before the ${engine} clip: ${why}`),
+        });
+      } finally {
+        job.waitingForQuiet = false;
+      }
+      if (job.cancelled) throw new Error(STOPPED_ERROR);
       if (free) {
         console.log(`  [art] restarting the engine before the ${engine} clip (it has rendered ${engineDoor.ranSinceStart()} since it started)`);
         await this.comfy.restart().catch((e) => console.error(`  [art] engine restart failed: ${e.message}`));
@@ -2436,7 +2853,10 @@ export class ArtRunner extends EventEmitter {
         if (!bumpSavePrefix(graph, Date.now().toString(36).slice(-6))) throw err;
         continue;
       }
-      await noteRender(key, name, { engine, seed: job.seed ?? null });
+      /* Not for a private clip: the graph's hash beside the clip's name is a
+       * lookup key for a guessed prompt, the reason a private run's record
+       * keeps no graphHash (engine/record.js). It costs that clip a cache hit. */
+      if (job.private !== true) await noteRender(key, name, { engine, seed: job.seed ?? null });
       return name;
     }
   }
@@ -2799,7 +3219,7 @@ export class ArtRunner extends EventEmitter {
   }
 
   /**
-   * A transcription somebody asked for (kind "whisper"): server/whisper.py over
+   * A transcription somebody asked for (kind "whisper"): server/whisper_run.py over
    * any file, in the same python, with the same model and the same failure
    * sentences as timed lyrics (server/lrc.js runLrc). `job.whisper` was
    * validated and resolved by server/whisper.js: absolute input and vocal

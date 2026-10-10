@@ -141,6 +141,23 @@ test("non-native queues still use their existing estimates", () => {
   assert.doesNotMatch(h.$("wbEta").textContent, /unknown/);
 });
 
+test("a future batch stays visible without claiming that the GPU is rendering", () => {
+  const h = harness();
+  const startAt = Date.now() + 3600000;
+  const run = { state: "scheduled", startAt, total: 8, name: "Eight song ideas" };
+  h.renderQueue({ queue: [], run });
+  assert.equal(h.$("workBox").hidden, false);
+  assert.equal(h.$("wbState").textContent, "scheduled");
+  assert.equal(h.$("wbNow").textContent, "Eight song ideas");
+  assert.equal(h.$("wbRest").textContent, "8 planned");
+  assert.equal(h.$("workBox").classList.contains("busy"), false);
+  assert.match(h.$("wbLine").textContent, /batch scheduled/);
+  assert.doesNotMatch(h.$("wbEta").textContent, /by CLOCK/);
+  h.renderQueue({ current: native({ etaSeconds: null }), queue: [], run });
+  assert.equal(h.$("wbState").textContent, "working");
+  assert.match(h.$("wbRest").textContent, /batch scheduled/);
+});
+
 test("one box, and it says what is being made, what waits, and the day's tally", () => {
   const h = harness();
   const midday = new Date(); midday.setHours(12, 0, 0, 0);
@@ -187,6 +204,35 @@ test("older rows do not gain warnings and switching songs clears a prior warning
   assert.equal(h.$("spWarnings").innerHTML, "");
   assert.doesNotMatch(h.rowHtml({ file: "b.wav", title: "Old" }), /Check ending|generation-warning/);
   assert.equal(h.musicWarningHtml({ warnings: [null, {}, { message: "" }] }), "");
+});
+
+test("score capture warnings are visible on playable songs without turning audio success into a failure", () => {
+  const h = harness();
+  const track = { file: "Comfy take.flac", title: "Take", lyrics: "words", engine: "yue2-comfy",
+    scoreWarning: 'The audio finished, but ComfyUI returned no readable score. <check> "capture"' };
+  h.state.library = [track, { file: "Other.flac", lyrics: "words" }];
+  assert.match(h.rowHtml(track), />Check score<\/button>/);
+  assert.doesNotMatch(h.rowHtml(track), /<check>/);
+  h.openSong(track.file);
+  assert.equal(h.$("spWarnings").hidden, false);
+  assert.match(h.$("spWarnings").innerHTML, />Sheet music unavailable\.<\/p>/);
+  assert.match(h.$("spWarnings").innerHTML, /title="The audio finished/);
+  assert.match(h.$("spWarnings").innerHTML, /&lt;check&gt; &quot;capture&quot;/);
+  assert.equal(h.$("songPanel").hidden, false, "the successful audio still has its normal song details");
+  h.openSong("Other.flac");
+  assert.equal(h.$("spWarnings").hidden, true);
+});
+
+test("PDF engraving and remote score warnings retain their own reason, and do not mislabel an available editable score", () => {
+  const h = harness();
+  const engrave = h.musicWarningHtml({ scoreSlug: "editable", scoreWarning: "PDF engraving failed. Retry the export." });
+  assert.match(engrave, />Sheet music needs attention\.<\/p>/);
+  assert.match(engrave, /title="PDF engraving failed/);
+  assert.doesNotMatch(engrave, /Sheet music unavailable/);
+  const remote = h.musicWarningHtml({ scoreWarning: "Remote rendering returned audio without the score capture artifact." });
+  assert.match(remote, />Sheet music unavailable\.<\/p>/);
+  assert.match(remote, /Remote rendering returned audio/);
+  assert.equal(h.musicWarningHtml({ scoreWarning: "   " }), "");
 });
 
 test("progress accessibility and warning targets exist in the shipped page", () => {

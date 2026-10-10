@@ -63,6 +63,7 @@ const MIME = {
   ".flac": "audio/flac",
   ".wav": "audio/wav",
   ".mp3": "audio/mpeg",
+  ".opus": "audio/ogg",
   ".pdf": "application/pdf",
   ".html": "text/html; charset=utf-8",
   ".npy": "application/octet-stream",
@@ -119,6 +120,8 @@ async function versionView(doc, version, { withScore = true } = {}) {
     noteAt: version.noteAt ?? null,
     noteTruncated: !!version.noteTruncated,
     identity: version.identity,
+    producer: version.producer ?? (version.drafted ? null : "yue2-infer"),
+    source: version.source ?? null,
     status: version.status,
     audioSeconds: version.audioSeconds,
     sampleRate: version.sampleRate,
@@ -192,6 +195,7 @@ export async function readScoreVersionSnapshot({ slug, version }) {
   if (Buffer.byteLength(abc) > 65536) throw new Error("This score exceeds 64 KiB.");
   return { slug, version, title: doc.title, abc, sha256: createHash("sha256").update(abc).digest("hex"),
     ...await scoreRequestView(slug, row), identity: row.identity, verified: row.verified,
+    producer: row.producer ?? (row.drafted ? null : "yue2-infer"), source: row.source ?? null,
     audioSeconds: row.audioSeconds, drafted: !!row.drafted, by: row.by || null };
 }
 

@@ -56,6 +56,7 @@ export function createAvatarRuntime(gltf) {
 
   const nodes = new Map(), materials = new Map(), layers = new Map(), defaults = new Map();
   const expressionDefaults = new Map((expressions?.expressions || []).map(e => [e.expressionName, e.weight]));
+  let lookExpressions = {}, activeCue = null;
   const colorBinds = [];
   for (const expression of expressions?.expressions || []) {
     for (const bind of expression.binds) {
@@ -186,8 +187,26 @@ export function createAvatarRuntime(gltf) {
       entry.current = replacement;
     }
     for (const [name, weight] of Object.entries(next.values)) expressions.setValue(name, weight);
+    lookExpressions = {...next.values};
+    if (activeCue) expressions.setValue(activeCue, 1);
     expressions?.update();
     setSpringEnabled(next.spring);
+  }
+
+  function setExpressionCue(name) {
+    if (disposed || typeof name !== 'string' || !expressionDefaults.has(name) || /^(aa|ih|ou|ee|oh|jawopen)$/i.test(name)) return false;
+    if (activeCue && activeCue !== name) expressions.setValue(activeCue, lookExpressions[activeCue] ?? expressionDefaults.get(activeCue));
+    activeCue = name;
+    expressions.setValue(name, 1);
+    expressions.update();
+    return true;
+  }
+
+  function clearExpressionCue() {
+    if (!activeCue) return;
+    expressions.setValue(activeCue, lookExpressions[activeCue] ?? expressionDefaults.get(activeCue));
+    activeCue = null;
+    expressions.update();
   }
 
   function setPreviewMotion(enabled) {
@@ -248,6 +267,7 @@ export function createAvatarRuntime(gltf) {
   function reset() {
     if (disposed) return;
     setPreviewMotion(false);
+    clearExpressionCue();
     apply({});
     scene.updateMatrixWorld(true);
     springs?.reset();
@@ -261,5 +281,5 @@ export function createAvatarRuntime(gltf) {
     disposed = true;
   }
 
-  return { vrm, apply, update, reset, setPreviewMotion, get previewMotion() { return preview; }, dispose };
+  return { vrm, apply, update, reset, setPreviewMotion, setExpressionCue, clearExpressionCue, get previewMotion() { return preview; }, dispose };
 }

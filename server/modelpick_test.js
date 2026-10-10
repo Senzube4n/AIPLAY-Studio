@@ -14,7 +14,7 @@ import os from "node:os";
 import { readFileSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { classify, listPickable, listVideoPickable, listParts, resolvePick, DIT_ENGINE, VIDEO_DIT_ENGINE, isDitFolder } from "./modelpick.js";
+import { classify, listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, DIT_ENGINE, VIDEO_DIT_ENGINE, isDitFolder } from "./modelpick.js";
 import { zImageGraph, krea2Graph, coverGraph, animaGraph, ZIMAGE_DITS, KREA2_FILES } from "./workflow.js";
 
 let pass = 0;
@@ -75,6 +75,23 @@ const movedCfg = { modelsDir: path.join(base, "new-downloads"), modelsAlso: [bas
 ok("a model in a remembered folder still appears in the image picker", (await listPickable(movedCfg)).some((r) => r.name === "some_dit.ckpt"));
 ok("a remembered transformer is also offered to the video picker", (await listVideoPickable(movedCfg)).some((r) => r.name === "some_dit.ckpt"));
 ok("a remembered model can still be resolved when a render is requested", (await resolvePick("some_dit.ckpt", movedCfg))?.folder === "diffusion_models");
+const nested = path.join("anime", "studio", "nested_sd15.ckpt");
+await mkdir(path.join(base, "checkpoints", path.dirname(nested)), { recursive: true });
+await writeFile(path.join(base, "checkpoints", nested), "x");
+ok("nested checkpoints remain selectable by their complete shelf-relative name",
+  (await resolvePick(nested.replace(/\\/g, "/"), cfg))?.name === nested);
+ok("one moved checkpoint is also resolved from its old flat name",
+  (await resolvePick("nested_sd15.ckpt", cfg))?.name === nested);
+await mkdir(path.join(base, "checkpoints", "another"), { recursive: true });
+await writeFile(path.join(base, "checkpoints", "another", "nested_sd15.ckpt"), "x");
+try { await resolvePick("nested_sd15.ckpt", cfg); ok("duplicate nested basenames require a subfolder", false); }
+catch (err) { ok("duplicate nested basenames require a subfolder", /subfolder/.test(err.message)); }
+ok("an exact nested selection still wins when another folder has the same basename",
+  (await resolvePick(nested, cfg))?.name === nested);
+for (const unsafe of ["../nested_sd15.ckpt", "C:\\models\\nested_sd15.ckpt", "/models/nested_sd15.ckpt"]) {
+  try { await resolvePick(unsafe, cfg); ok(`model picker refuses ${unsafe}`, false); }
+  catch (err) { ok(`model picker refuses ${unsafe}`, err.status === 400); }
+}
 await rm(base, { recursive: true, force: true });
 
 /* ══ 3. the graphs take the user's own file ══════════════════════════════ */
@@ -140,6 +157,17 @@ ok("both encoder shelves are offered (ComfyUI reads text_encoders and clip as on
   JSON.stringify(parts.encoders.map((e) => e.name)));
 ok("VAEs come from models/vae, and a transformer is not offered as one",
   parts.vaes.length === 1 && parts.vaes[0].name === "ae.safetensors", JSON.stringify(parts.vaes));
+for (const d of ["first", "second"]) {
+  await mkdir(path.join(base2, "text_encoders", d), { recursive: true });
+  await writeFile(path.join(base2, "text_encoders", d, "anchor.safetensors"), "x");
+}
+await writeFile(path.join(base2, "clip", "qwen_3_4b.safetensors"), "x");
+const judged = await listVideoParts({ modelsDir: base2, comfyDir: base2, comfy: { extraArgs: [] },
+  video: { engines: { h3: { textEncoder: "anchor.safetensors", videoVae: "ae.safetensors" } } } });
+ok("an ambiguous encoder anchor leaves the other parts listed with an unknown fit",
+  judged.encoders.length === 4 && judged.encoders.every((r) => r.fit.h3 === "unknown") && judged.vaes.length === 1);
+ok("identical names in aliased shelves remain listed without pretending their header is unambiguous",
+  judged.encoders.find((r) => r.name === "qwen_3_4b.safetensors")?.fit.h3 === "unknown");
 await rm(base2, { recursive: true, force: true });
 
 ok("a named encoder and VAE replace the family's own in every DiT graph",

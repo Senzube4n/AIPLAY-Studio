@@ -5,8 +5,9 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
   root.classList.add("music-references");
   root.innerHTML = `<p class="mr-intro">Turn a local recording or video into a musical direction. Keep the measured evidence, review any model suggestions, then load a draft into Create.</p>
     <div class="mr-grid"><section class="mr-card"><h3>1 · Choose a reference</h3>
-    <div class="mr-row"><label>Library<select data-mr="kind"><option value="audio">Music</option><option value="video">Video clips</option></select></label><button type="button" data-mr="refresh">Refresh library</button></div>
+    <div class="mr-row"><label>Source<select data-mr="kind"><option value="audio">Music library</option><option value="clip-audio">Clip audio</option><option value="video">Video clips</option></select></label><button type="button" data-mr="refresh">Refresh library</button></div>
     <label>Local file<select data-mr="file"><option value="">Loading library…</option></select></label>
+    <div class="mr-row"><label>Import file<input data-mr="uploadFile" type="file" accept=".wav,.flac,.mp3,.m4a,.ogg,.opus,.mp4,.webm,.mov,.mkv,.m4v"></label><button type="button" data-mr="upload">Import</button></div>
     <video data-mr="player" controls preload="metadata"></video>
     <div class="mr-row"><label>Start (seconds)<input data-mr="start" type="number" min="0" max="86400" step="0.25" value="0"></label><label>Length (seconds)<input data-mr="seconds" type="number" min="0.25" max="120" step="0.25" value="30"></label></div>
     <button type="button" data-mr="prepare">Prepare evidence · CPU</button>
@@ -27,7 +28,7 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
     <pre data-mr="request"></pre><p class="mr-caveat">A new take can follow this direction; singer identity, exact hit timing and the original performance are not guaranteed. Loading a draft does not generate music.</p>
     </section></div><p data-mr="status" role="status" aria-live="polite">Choose a local file to begin.</p>`;
   const $ = name => root.querySelector(`[data-mr="${name}"]`);
-  let row = null, timer = null, disposed = false, dirty = false, scoreDirty = false, capability = null, busy = false, libraryTicket = 0;
+  let row = null, timer = null, disposed = false, dirty = false, scoreDirty = false, capability = null, busy = false, libraryTicket = 0, selectionTicket = 0, selectionPending = false;
   const status = s => { $("status").textContent = s; };
   async function json(url, body) {
     const response = await request(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
@@ -37,12 +38,13 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
   }
   const post = body => json("/api/music-references", body);
   function buttons() {
-    const pending = busy || ["preparing", "analyzing", "transcribing"].includes(row?.state);
+    const pending = busy || selectionPending || ["preparing", "analyzing", "transcribing"].includes(row?.state);
     for (const name of ["save", "draft", "saveScore"]) $(name).disabled = !row?.evidence || pending;
     $("visual").disabled = !row?.evidence?.timestamps?.length || pending || !capability?.available;
     $("transcribe").disabled = !row?.evidence?.hasAudio || pending;
     $("load").disabled = !row?.prepared || dirty || scoreDirty || pending;
     $("prepare").disabled = busy || !$("file").value;
+    $("upload").disabled = busy || !$("uploadFile").files?.length;
   }
   function paint(next) {
     const changed = row?.id !== next.id, finished = row && row.id === next.id && row.state !== "ready" && next.state === "ready"; row = next;
@@ -71,8 +73,11 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
   }
   async function poll() {
     if (disposed || !row) return;
-    try { paint((await post({ action: "get", referenceId: row.id, preview: true })).reference); }
-    catch (error) { status(error.message); }
+    const referenceId = row.id;
+    try {
+      const next = (await post({ action: "get", referenceId, preview: true })).reference;
+      if (!disposed && row?.id === referenceId) paint(next);
+    } catch (error) { if (!disposed && row?.id === referenceId) status(error.message); }
   }
   async function act(action, extra = {}) {
     busy = true; buttons();
@@ -82,18 +87,24 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
     } catch (error) { status(error.message); throw error; }
     finally { busy = false; buttons(); }
   }
-  async function libraries() {
+  function player() {
+    const file = $("file").value;
+    $("player").src = file ? `${$("kind").value === "audio" ? "/api/audio/" : "/api/clip/"}${encodeURIComponent(file)}` : "";
+  }
+  async function libraries(pick = null) {
     const ticket = ++libraryTicket, kind = $("kind").value;
     try {
-      const data = await json(kind === "video" ? "/api/clips" : "/api/status");
+      const data = await json(kind === "audio" ? "/api/status" : "/api/clips");
       if (disposed || ticket !== libraryTicket) return;
-      const rows = kind === "video" ? (data.clips || []).filter(v => /\.(mp4|webm|mov|mkv|m4v|avi)$/i.test(v.name)) : data.library || [];
+      const rows = kind === "audio" ? data.library || [] : (data.clips || []).filter(v =>
+        (kind === "video" ? /\.(mp4|webm|mov|mkv|m4v|avi)$/i : /\.(wav|flac|mp3|m4a|ogg|opus)$/i).test(v.name));
       const old = $("file").value; $("file").replaceChildren();
       const placeholder = root.ownerDocument.createElement("option"); placeholder.value = ""; placeholder.textContent = rows.length ? "Choose a local file…" : "No supported files in this library"; $("file").append(placeholder);
       for (const entry of rows) {
         const option = root.ownerDocument.createElement("option"); option.value = entry.file || entry.name; option.textContent = entry.title || option.value; $("file").append(option);
       }
-      $("file").value = old; buttons();
+      $("file").value = rows.some(entry => (entry.file || entry.name) === (pick || old)) ? pick || old : "";
+      player(); buttons();
     } catch (error) { status(`Library unavailable: ${error.message}`); }
   }
   async function saved() {
@@ -107,13 +118,45 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
     } catch (error) { status(error.message); }
   }
   const listen = (name, fn) => $(name).addEventListener("click", () => Promise.resolve().then(fn).catch(error => status(error.message)));
-  $("kind").addEventListener("change", libraries); listen("refresh", libraries);
-  $("file").addEventListener("change", () => {
-    const file = $("file").value; $("player").src = file ? `${$("kind").value === "video" ? "/api/clip/" : "/api/audio/"}${encodeURIComponent(file)}` : ""; buttons();
+  $("kind").addEventListener("change", () => libraries()); listen("refresh", () => libraries());
+  $("file").addEventListener("change", () => { player(); buttons(); });
+  $("uploadFile").addEventListener("change", buttons);
+  listen("upload", async () => {
+    const file = $("uploadFile").files?.[0];
+    const category = /\.(wav|flac|mp3|m4a|ogg|opus)$/i.test(file?.name || "") ? "clip-audio"
+      : /\.(mp4|webm|mov|mkv|m4v)$/i.test(file?.name || "") ? "video" : null;
+    if (!category) throw new Error("Choose an audio or video file.");
+    if (!file.size || file.size > 256 * 1024 ** 2) throw new Error("Import a nonempty file up to 256 MiB.");
+    busy = true; buttons();
+    try {
+      const response = await request("/api/studio/import", { method: "POST", headers: { "X-Name": encodeURIComponent(file.name) }, body: file });
+      const result = await response.json();
+      if (!response.ok || result.error) throw new Error(result.error || `Import failed (${response.status}).`);
+      if (!result.name || result.kind !== (category === "video" ? "video" : "audio")) throw new Error("The imported file was not recognized as audio or video.");
+      $("kind").value = category;
+      await libraries(result.name);
+      $("uploadFile").value = "";
+      status("Imported. Select a region to prepare.");
+    } finally { busy = false; buttons(); }
   });
-  $("saved").addEventListener("change", async () => { if (!$("saved").value) return; try { paint((await post({ action: "get", referenceId: $("saved").value, preview: true })).reference); } catch (e) { status(e.message); } });
+  $("saved").addEventListener("change", async () => {
+    const referenceId = $("saved").value, ticket = ++selectionTicket;
+    selectionPending = true; buttons();
+    if (!referenceId) { selectionPending = false; buttons(); return; }
+    try {
+      const next = (await post({ action: "get", referenceId, preview: true })).reference;
+      if (!disposed && ticket === selectionTicket && $("saved").value === referenceId) { selectionPending = false; paint(next); }
+    } catch (error) {
+      if (!disposed && ticket === selectionTicket) {
+        $("saved").value = row?.id || "";
+        selectionPending = false; buttons(); status(error.message);
+      }
+    }
+  });
   for (const name of ["style", "lyrics", "notes", "engine", "seed", "useScore", "labels", "instrumental"]) $(name).addEventListener("input", () => { dirty = true; $("request").textContent = "Draft changed — review a new request before loading."; buttons(); });
-  listen("prepare", async () => { await act("prepare", { kind: $("kind").value, file: $("file").value, startSeconds: Number($("start").value), seconds: Number($("seconds").value), maxFrames: 6 }); await saved(); });
+  listen("prepare", async () => { await act("prepare", { kind: $("kind").value === "video" ? "video" : "audio",
+    location: $("kind").value === "audio" ? "library" : "clips", file: $("file").value,
+    startSeconds: Number($("start").value), seconds: Number($("seconds").value), maxFrames: 6 }); await saved(); });
   listen("visual", () => act("analyze_visual")); listen("transcribe", () => act("transcribe", { mode: "melody" }));
   $("score").addEventListener("input", () => { scoreDirty = true; buttons(); });
   listen("saveScore", async () => { await act("update_score", { abc: $("score").value, mode: row?.score?.mode || "melody" }); scoreDirty = false; buttons(); status("Score saved and checked. Review any notation findings before using it."); });
@@ -126,7 +169,7 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
       instrumental: $("instrumental").checked, allowSectionLabels: $("labels").checked });
     status("Request prepared. Check it above, then load it into Create. No music has been generated.");
   });
-  listen("load", async () => { if (row?.prepared && !dirty && !scoreDirty) { await onLoadRequest(structuredClone(row.prepared.request)); status("Reviewed request loaded into Create. Check the composer and press Generate when ready."); } });
+  listen("load", async () => { if (row?.prepared && !dirty && !scoreDirty && !selectionPending) { await onLoadRequest(structuredClone(row.prepared.request)); status("Reviewed request loaded into Create. Check the composer and press Generate when ready."); } });
   Promise.allSettled([libraries(), saved(), post({ action: "capabilities" }).then(data => {
     capability = data.visual; $("capability").textContent = capability.available ? `Local visual model available: ${capability.models[0]}. This optional action uses the engine queue.` : capability.reason; buttons();
   }).catch(error => { $("capability").textContent = error.message; })]);

@@ -123,7 +123,7 @@ export async function composeAvatarVrm({baseBytes,baseSha256,parts=[]}={}){
     }
     for(const key of ['extensionsUsed','extensionsRequired'])if(j[key]?.length)doc[key]=[...new Set([...(doc[key]||[]),...j[key]])];
     buffers.push(Buffer.from(parsed.binData));binaryLength+=parsed.binData.length;
-    manifest.parts.push({id:part.id,sha256:part.sha256,...Object.fromEntries(['name','source','license'].filter(key=>part[key]!==undefined).map(key=>[key,part[key]])),nodeIndices,skinIndices,binaryOffset:binaryLength-parsed.binData.length,binaryLength:parsed.binData.length});
+    manifest.parts.push({id:part.id,sha256:part.sha256,...Object.fromEntries(['name','source','license'].filter(key=>part[key]!==undefined).map(key=>[key,part[key]])),nodeIndices,skinIndices,motion:inspection.motion,binaryOffset:binaryLength-parsed.binData.length,binaryLength:parsed.binData.length});
   }
   const binary=Buffer.concat(buffers);doc.buffers[0].byteLength=binaryLength;manifest.counts=budget(doc,binary);inspectVrmDocument(doc);
   const skin=assertSkinned(doc,binary);requireThat(skin.ok,`Composed VRM has unusable weights: ${skin.why.join('; ')}`);

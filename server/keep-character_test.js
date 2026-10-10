@@ -110,12 +110,25 @@ const L = {
   tao: "taomate_h3_3step_comfy.safetensors",
 };
 const VAE8 = "minimax_h3_video_vae_int8_convrot.safetensors";
+/* EVERY READING OF THE DISK IS NAMED, the per-path ones too (config.js
+ * plainBuilds and refBuilds, made on NVIDIA and a PC whose settings name no
+ * card): spread over the live engine, these disks inherited THIS PC's, so the
+ * reference renders were judged by whatever the PC running the lane holds,
+ * and a fresh NVIDIA install with the H3 row's file alone refused them (2 of
+ * 15 tests failed; 5 with no settings and an empty disk). Each reading here is
+ * the one config.js makes from the named files: a slot counts for its band
+ * only with a file made for that count. */
 const DISK8 = eng({ turboLora: L.fl8, turboLora4: L.fl4, turboLora3: L.tao, refTurboLora: L.ref8, refTurboLora4: L.ref4,
+  refTurboSteps: 8, stepDefaults: { fast: 3, standard: 8, best: 20 }, steps: 8, videoVae: VAE8,
   turboBuilds: { three: true, four: true, eight: true },
-  refTurboSteps: 8, stepDefaults: { fast: 3, standard: 8, best: 20 }, steps: 8, videoVae: VAE8 });
+  plainBuilds: { three: true, four: true, eight: true }, refBuilds: { four: true, eight: true } });
 const DISK4 = eng({ turboLora: L.fl4, turboLora4: L.fl4, turboLora3: L.tao, refTurboLora: L.ref4, refTurboLora4: L.ref4,
+  refTurboSteps: 4, stepDefaults: { fast: 3, standard: 4, best: 20 }, steps: 4, videoVae: VAE8,
   turboBuilds: { three: true, four: true, eight: false },
-  refTurboSteps: 4, stepDefaults: { fast: 3, standard: 4, best: 20 }, steps: 4, videoVae: VAE8 });
+  plainBuilds: { three: true, four: true, eight: false }, refBuilds: { four: true, eight: false } });
+/* The same disks read by main's rule (AMD, Intel and the CPU: no per-path
+ * readings, Bucky's tests), which must plan the same. */
+const mainsRule = (d) => ({ ...d, plainBuilds: null, refBuilds: null });
 const MIRA = { name: "Mira", fragment: "a tall woman with cropped silver hair", refImages: ["m1.png", "m2.png", "m3.png", "m4.png"] };
 const plan = (b, o = {}) => videoPlan({ prompt: "Mira runs through the rain", ...b }, { engineKey: "h3", eng: DISK8, ...o });
 
@@ -139,6 +152,17 @@ test("3: with references and no count named, the reference build's own count run
   const live = videoPlan({ prompt: "a", refImages: ["a.png"] }, { engineKey: "h3", eng: H3 });
   if (live.refusal) assert.equal(live.refusal.reason, "speedup-missing");
   else assert.equal(live.steps, referenceSteps(H3));
+});
+
+test("3: the named disks plan the same on NVIDIA's per-path rule and on main's (AMD, Intel, the CPU)", () => {
+  for (const [name, d, steps] of [["DISK8", DISK8, 8], ["DISK4", DISK4, 4]]) {
+    for (const [rule, e] of [["per path", d], ["main's", mainsRule(d)]]) {
+      const p = videoPlan({ prompt: "<Picture 1> is Mira. Mira runs", refImages: ["a.png"] }, { engineKey: "h3", eng: e });
+      assert.equal(p.refusal ?? null, null, `${name}, ${rule}: renders`);
+      assert.equal(p.steps, steps, `${name}, ${rule}: the reference build's own count`);
+      assert.equal(p.character.receipt, `1 reference picture + ${steps} steps${steps === 8 ? "" : " (measured with 8, not on this PC)"}`, `${name}, ${rule}`);
+    }
+  }
 });
 
 test("3: on a disk with only the 4-step reference file, keeping a character is said to run an unmeasured setup", () => {
@@ -414,12 +438,23 @@ test("5: Keep my character sits under the description, shows in Simple, and hold
   assert.match(read("./index.js"), /\.\.\.\(eng === "h3" \? \{ clipPictures: CLIP_PERSONA_PICTURES \} : \{\}\),/);
   /* vidPaint's lines are lifted and run alone, so every new name is guarded. */
   const line = /\n  const keeping = [^\n]+;/.exec(app)?.[0] || "";
-  const keeping = (dollar, state, cur) => new Function("$", "state", "cur", `${line}\nreturn keeping;`)(dollar, state, cur);
+  const keeping = (dollar, state, cur, eng = {}) => new Function("$", "state", "cur", "eng", `${line}\nreturn keeping;`)(dollar, state, cur, eng);
   assert.equal(keeping(() => null, { refImages: [] }, "h3"), false, "no select, no pictures: text only");
   assert.equal(keeping(() => null, {}, "h3"), false, "no state yet");
   assert.equal(keeping(() => null, { refImages: [{}] }, "h3"), true, "a picture keeps");
   assert.equal(keeping(() => ({ value: "Mira" }), { refImages: [] }, "h3"), true, "a saved character keeps");
   assert.equal(keeping(() => ({ value: "Mira" }), { refImages: [{}] }, "ltx"), false, "LTX keeps no one");
+  /* A reference song alone puts the render on the reference path and its
+   * count (videoPlan), and make_clip sends the kept character's chips for
+   * ref_song: where the server sends chips (NVIDIA, a card nobody could
+   * read) the page draws the same ones. AMD and Intel (no chips) read it as
+   * 40f5859 did. */
+  const chips = { plain: {}, keep: {} };
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [{ name: "v.flac" }] }, "h3", { chips }), true, "a reference song keeps where chips come");
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [{ name: "v.flac" }] }, "h3", {}), false, "not on AMD and Intel, as on main");
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [{ name: "v.flac" }] }, "h3", undefined), false, "nor before a status");
+  assert.equal(keeping(() => null, { refImages: [], refAudios: [] }, "h3", { chips }), false, "no song, no picture: text only");
+  assert.equal(keeping(() => null, { refAudios: [{ name: "v.flac" }] }, "ltx", { chips }), false);
   /* The Standard chip is the reference build's own count while keeping. */
   const qsSrc = /\nfunction vidQualitySteps\(eng, keeping = false\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
   const vidQualitySteps = new Function(`${qsSrc}return vidQualitySteps;`)();
@@ -434,7 +469,7 @@ test("5: Keep my character sits under the description, shows in Simple, and hold
   assert.match(app, /\$\("vidQFast"\)\.title = keeping \? \(eng\.keepFast\?\.note \|\| build\(qs\.fast\)\) : /);
   assert.match(app, /\$\("vidQualityNote"\)\.textContent = keeping \? \(\(qs\.fast !== qs\.standard && eng\.keepFast\?\.note\) \|\| ""\) : \(eng\.fastNote \|\| ""\);/);
   /* The estimate: a kept character loads the reference files, and still says references cost time. */
-  assert.match(app, /const hasRefs = keeping \|\| \(\(state\.refImages \|\| \[\]\)\.length \+ \(state\.refAudios \|\| \[\]\)\.length\) > 0;/);
+  assert.match(app, /const hasRefs = keeping \|\| \(\(state\.refImages \|\| \[\]\)\.length \+ \(state\.refAudios \|\| \[\]\)\.length\) > 0\n\s+\|\| \(typeof h3RefModPanel !== "undefined" && !!h3RefModPanel\?\.spec\(\)\.refMods\?\.length\);/);
   assert.match(app, /\+ \(cur === "h3" && \(keeping \|\| \(state\.refAudios \|\| \[\]\)\.length\)\n\s+\? " · references ride along, expect it slower" : ""\)/);
   /* The strip: a character's picture uploaded on Pictures has no library route; its place shows the name. */
   const stripSrc = /\nfunction paintKeepStrip\(\) \{[\s\S]*?\n\}\n/.exec(app)?.[0] || "";
@@ -470,9 +505,10 @@ test("6: make_clip takes persona, refuses it where references are refused, and s
   const { TOOLS } = await import("./mcp.js");
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
   const t = TOOLS.find((x) => x.name === "make_clip");
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const mock = ({ engine, sentence, door = {} }) => {
     const posts = [];
     const api = async (method, p, body) => {

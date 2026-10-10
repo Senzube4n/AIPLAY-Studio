@@ -6,7 +6,26 @@
  * its own, only the tokens styles.css defines. server/welcome/level_test.js
  * checks both, and that the phone rule is here. */
 
-/* ── the rail: Make on top, everything else in one fold (B1) ─────────────── */
+/* Home and community stay visible while the tool list scrolls. */
+.navfeatured { flex: 0 0 auto; gap: 4px; }
+.navfeatured:not(:has(a:not([hidden]))) { display: none; }
+.navfeatured a[data-view="community"] { border: 1px solid var(--edge); background: var(--panel); }
+.navfeatured a[data-view="community"]:hover { border-color: var(--primary); }
+.navfeatured a[data-view="community"] i { color: var(--primary); }
+.navsessioncopy { display: flex; flex-direction: column; min-width: 0; gap: 3px; }
+.navsessioncopy .lbl { font-weight: 600; }
+.navsessioncopy small { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.shell.railmini .navsessioncopy { display: none; }
+@media (min-width: 768px) {
+  .rail { gap: 8px; }
+  .navmain .navmake { margin-top: 0; }
+  .navbottom a { padding-top: 6px; padding-bottom: 6px; }
+}
+@media (min-width: 768px) and (max-width: 1000px) {
+  .shell:not(.solo) .navsessioncopy { display: none; }
+}
+
+/* ── the rail: further tools in one fold ──────────────────────────────── */
 /* The fold's head reads as one more entry, not as a group heading: it is the
  * way to fifteen screens, so it has to look like something to press. */
 .navmore > summary.navmorehead {
@@ -97,7 +116,7 @@
     border-right: 0; border-top: 1px solid var(--edge);
   }
   .rail > .railgrip, .rail > .poweredby, .rail > .brand { display: none; }
-  .rail .nav, .rail .navmain, .rail .navbottom {
+  .rail .nav, .rail .navfeatured, .rail .navmain, .rail .navbottom {
     flex: 0 0 auto; flex-direction: row; align-items: center;
     min-height: 0; overflow: visible; gap: 0;
   }
@@ -106,6 +125,7 @@
   .rail .navmore { white-space: nowrap; }
   .rail .navmore > summary.navmorehead, .rail .navmore > a { display: inline-flex; vertical-align: middle; }
   .rail .nav a, .rail .navmore > summary.navmorehead { position: relative; justify-content: center; padding: 10px; gap: 0; }
+  .rail .navsessioncopy { display: none; }
   /* :not(.railmini) as well, to outrank the rule that shows labels on
    * full-width views (styles.css ".shell.solo:not(.railmini) .nav a .lbl"). */
   .shell .rail .nav a .lbl, .shell.solo:not(.railmini) .rail .nav a .lbl,

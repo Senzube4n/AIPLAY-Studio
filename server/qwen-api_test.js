@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings } from "./qwen-image.js";
 import { QWEN_IMAGE_ENGINE } from "./qwen-status.js";
@@ -14,14 +15,14 @@ const start = source.indexOf('if (p === "/api/image" && req.method === "POST")')
 const end = source.indexOf('if (p === "/api/', start + 20);
 assert.ok(start > 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_DRAFT,qwenImageSettings,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor,safetyRefusal,lineage }=deps; ${source.slice(start, end)}`);
+const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_DRAFT,qwenImageSettings,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImagePrivate,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor,safetyRefusal,lineage,randomUUID }=deps; ${source.slice(start, end)}`);
 
 const flattenReferences = async (references) => references.map((row) => row.name);
 
 async function request(body, { ready = true, persona = null, stageError = null, readiness = null } = {}) {
   const queued = [], preflights = [], staged = [], stagedWith = [];
   const deps = {
-    p: "/api/image", req: { method: "POST" }, res: {}, readBody: async () => ({ action: "create", ...body }),
+    p: "/api/image", req: { method: "POST", headers:{} }, res: {}, readBody: async () => ({ action: "create", ...body }),
     json: (_, status, result) => ({ status, body: result }), path,
     config: { image: { engine: QWEN_IMAGE_ENGINE }, art: { size: 1024, steps: 4 }, inputDir: "input" },
     qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE,
@@ -30,7 +31,7 @@ async function request(body, { ready = true, persona = null, stageError = null, 
     personas: { get: async () => persona }, personaFits, applyPersona,
     stageQwenReferences: async (names, options) => { staged.push(names); stagedWith.push(options); if (stageError) throw new Error(stageError); return names.map((name) => `staged-${name}`); },
     COVER_DIR: "covers", IMAGE_DIR: "images",
-    pendingImagePrompt: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(),
+    pendingImagePrompt: new Map(), pendingImagePrivate: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(), randomUUID,
     prov: { actorFrom: () => "agent:test" }, resolveRepeat: () => ({}), imageDupGuard: { remember() {} },
     art: { request: (shot) => { queued.push(shot); return { id: "job" }; }, status: () => ({}) }, combinations: () => 1,
     imageEditor: { flattenReferences },

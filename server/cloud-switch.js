@@ -75,7 +75,7 @@ export const NO_STRONG_CARD = [
       + "paid run asks first and says what it costs, and nothing switches to a paid service behind "
       + "your back.",
     limits: "The hosted engine makes songs (MiniMax Music 3 on fal.ai). The launcher's Use Comfy API "
-      + "mode makes pictures, clips, sound and 3D on Comfy credits, but it has no Music, Music video or "
+      + `mode makes pictures, clips, sound and 3D on Comfy credits, but it has no Music, ${H3_MV_SCREEN} or `
       + "Collab screen, so a music video still needs Full Studio.",
   },
 ];
@@ -246,11 +246,11 @@ export function createCloudRoutes({ json, readBody, config, sameOriginLocalJson,
         /* Said for the mode the person is in: the Comfy API page shows it in
          * both (web/router.js), and the Settings card in Full Studio. */
         note: modes.cloudOnly
-          ? "Music videos need Full Studio: this mode has no Music, Music video or Collab screen. Without a "
+          ? `Music videos need Full Studio: this mode has no Music, ${H3_MV_SCREEN} or Collab screen. Without a `
             + "strong card, start Full Studio from the launcher and ask a friend on Collab to render the "
             + "scenes (free)."
           : "Comfy API clips are made in the launcher's Use Comfy API mode, outside a music video. Music "
-            + "videos are made in Full Studio's Music video screen; without a strong card, ask a friend on "
+            + `videos are made in Full Studio's ${H3_MV_SCREEN} screen; without a strong card, ask a friend on `
             + "Collab to render the scenes (free).",
         confirmEveryRun: true,
       },

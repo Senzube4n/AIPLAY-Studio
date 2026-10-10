@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
+import { reactiveSourceWindow } from "../web/reactive-source-window.js";
 
 const app = readFileSync(new URL("../web/app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
@@ -24,7 +25,7 @@ function fixture() {
     }
     return nodes.get(id);
   };
-  const context = vm.createContext({ $: node, esc: String, document: { querySelectorAll: () => [] },
+  const context = vm.createContext({ $: node, esc: String, reactiveSourceWindow, document: { querySelectorAll: () => [] },
     state: { library: [], images: [] }, fetch: async (url, options) => { calls.push({ url, body: options?.body ? JSON.parse(options.body) : null }); return { json: async () => ({ error: "fixture stops before rendering" }) }; },
   });
   vm.runInContext(code, context);
@@ -75,4 +76,28 @@ test("the short test changes only duration and region listening stops at its sel
   await f.fire("reactListen"); assert.equal(f.node("reactSongPlayer").currentTime, 12);
   f.node("reactSongPlayer").currentTime = 16; await f.fire("reactSongPlayer", "timeupdate");
   assert.equal(f.node("reactSongPlayer").paused, true);
+});
+
+test("Motion review reveals the first source repeat without changing the render request", async () => {
+  const f = fixture(); f.run('reactPicked = ["dance.mp4", "look.png"]; reactStyle = "motion"');
+  f.node("reactSecs").value = "20";
+  f.node("reactMotionSourceStart").value = "70";
+  f.node("reactMotionSourceSpeed").value = "1.25";
+  f.node("reactSourceVideo").duration = 81.72;
+  await f.fire("reactSourceVideo", "loadedmetadata");
+  assert.match(f.node("reactReview").innerHTML, /ends about 9\.4s into the output and then repeats/);
+  const preview = JSON.parse(f.node("reactRequestJson").textContent);
+  assert.equal(preview.motion.sourceStart, 70);
+  assert.equal(preview.motion.sourceSpeed, 1.25);
+  assert.equal(f.calls.length, 0);
+  await f.fire("reactGo");
+  assert.deepEqual(f.calls, [{ url: "/api/reactive/run", body: preview }]);
+});
+
+test("a source window ending exactly on the last frame is not marked as repeating", () => {
+  const atEnd = reactiveSourceWindow({ duration: 81.72, start: 70, speed: 1.25, seconds: 9.376 });
+  assert.equal(atEnd.known, true);
+  assert.equal(atEnd.repeats, false);
+  assert.equal(reactiveSourceWindow({ duration: 81.72, start: 70, speed: 1.25, seconds: 9.4 }).repeats, true);
+  assert.deepEqual(reactiveSourceWindow({ duration: null, start: 70, speed: 1.25, seconds: 20 }), { known: false });
 });

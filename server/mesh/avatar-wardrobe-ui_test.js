@@ -32,7 +32,7 @@ test('cancelling a pending preview keeps the current outfit even when no replace
 });
 
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
-function node(){return {children:[],textContent:'',hidden:false,disabled:false,value:'',files:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=[...items];}};}
+function node(){return {children:[],attributes:{},textContent:'',hidden:false,disabled:false,value:'',files:[],append(...items){this.children.push(...items);},replaceChildren(...items){this.children=[...items];},setAttribute(name,value){this.attributes[name]=value;},getAttribute(name){return this.attributes[name];}};}
 function uiFixture({load=async()=>({scene:{traverse(){}}}),respond}={}){
  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,node());return elements.get(id);};
  const documentRef={hidden:false,getElementById:get,createElement:()=>node()};
@@ -51,8 +51,8 @@ function uiFixture({load=async()=>({scene:{traverse(){}}}),respond}={}){
 test('failed saved outfit preview is labelled unavailable and Reset retries the same revision',async()=>{
  let failed=true;
  const f=uiFixture({load:async()=>{if(failed)throw Error('Network failed');return {scene:{traverse(){}}};},respond:body=>body.action==='selection'?{id:'base',sha256:'hash',look_id:null,revision:2,part_ids:['coat-a'],parts:[]}:undefined});
- await f.ui.setLook(null);assert.equal(f.get('wardrobe-state').textContent,'Preview unavailable');assert.equal(f.get('wardrobe-reset').disabled,false);assert.equal(f.get('wardrobe-save').disabled,true);
- failed=false;await f.get('wardrobe-reset').onclick();assert.equal(f.get('wardrobe-state').textContent,'1 equipped');assert.equal(f.get('wardrobe-note').hidden,true);assert.equal(f.get('wardrobe-reset').disabled,true);f.ui.dispose();
+ await f.ui.setLook(null);assert.equal(f.get('wardrobe-state').textContent,'Preview unavailable');assert.equal(f.get('wardrobe-reset').disabled,false);assert.equal(f.get('wardrobe-save').disabled,true);assert.equal(f.ui.snapshot().previewValid,false);
+ failed=false;await f.get('wardrobe-reset').onclick();assert.equal(f.get('wardrobe-state').textContent,'1 equipped');assert.equal(f.get('wardrobe-note').hidden,true);assert.equal(f.get('wardrobe-reset').disabled,true);assert.equal(f.ui.snapshot().previewValid,true);f.ui.dispose();
 });
 
 test('selecting a replacement in the same slot previews one part and cannot delete the equipped draft',async()=>{
@@ -72,4 +72,34 @@ test('late named-look selection cannot overwrite a new base outfit context',asyn
 test('MCP selection polling does not replace an unsaved local draft',async()=>{
  const f=uiFixture();await f.ui.setLook(null);f.checkbox(0).checked=true;f.checkbox(0).onchange();await flush();
  const before=f.calls.length;await f.poll();assert.equal(f.calls.length,before);assert.equal(f.get('wardrobe-state').textContent,'Unsaved outfit');f.ui.dispose();
+});
+
+test('category browser previews prepared parts and removing one category preserves others',async()=>{
+ const f=uiFixture();f.parts.push({...part('hair-a'),name:'Long hair',slot:'hair',source:'artist',license:'CC0'});
+ await f.ui.setLook(null);
+ const categories=()=>f.get('wardrobe-categories').children;
+ assert.deepEqual(categories().map(button=>button.textContent),['All','Outfit','Hair']);
+ f.checkbox(0).checked=true;f.checkbox(0).onchange();await flush();
+ categories().find(button=>button.textContent==='Hair').onclick();
+ assert.equal(f.get('wardrobe-list').children.length,1);
+ assert.equal(categories().find(button=>button.textContent==='Hair').getAttribute('aria-pressed'),'true');
+ f.checkbox(0).checked=true;f.checkbox(0).onchange();await flush();
+ assert.deepEqual(f.replaced.at(-1),['coat-a','hair-a']);
+ f.get('wardrobe-clear').onclick();await flush();
+ assert.deepEqual(f.replaced.at(-1),['coat-a']);
+ await f.get('wardrobe-save').onclick();
+ assert.deepEqual(f.calls.find(call=>call.action==='select').part_ids,['coat-a']);f.ui.dispose();
+});
+
+test('hair parts disclose inherited spring coverage without implying new physics',async()=>{
+ const f=uiFixture();f.parts.push(
+  {...part('hair-spring'),name:'Spring hair',slot:'hair',source:'artist',license:'CC0',inspection:{motion:{mode:'base_springs',baseSpringChains:1,springLinkedJoints:2,springLinkedVertices:100,minimumWeight:.05}}},
+  {...part('hair-static'),name:'Static hair',slot:'hair',source:'artist',license:'CC0',inspection:{motion:{mode:'none',baseSpringChains:1,springLinkedJoints:0,springLinkedVertices:0,minimumWeight:.05}}},
+  {...part('hair-old'),name:'Old hair',slot:'hair',source:'artist',license:'CC0'});
+ await f.ui.setLook(null);
+ const items=f.get('wardrobe-list').children;
+ assert.equal(items[2].children[2].textContent,'Spring-linked');assert.match(items[2].children[2].title,/joints moved by existing base springs/);
+ assert.equal(items[3].children[2].textContent,'No spring link');assert.match(items[3].children[2].title,/at least 5% weight/);
+ assert.equal(items[4].children[2].textContent,'Motion unverified');
+ f.ui.dispose();
 });

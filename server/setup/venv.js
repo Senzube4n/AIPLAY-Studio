@@ -259,7 +259,40 @@ export function stemsRecipe({ vendor = null, torch = "auto", freeBytes = null, d
   };
 }
 
-export const RECIPES = { lyrics: lyricsRecipe, stems: stemsRecipe };
+/**
+ * Fast covers (server/fastcover.js): Supra2-IMG on the processor. Always the
+ * CPU build, whatever the card: the point of the feature is that a cover
+ * never needs the card, and the CPU build is the small one. torchaudio is
+ * left out (no audio here). The weights are the Models row "fastCover",
+ * fetched beside this by fastcover.js, not by the first run.
+ */
+export function coversRecipe() {
+  const t = pipWords(TORCH_PIP);
+  const cap = CATALOG.find((c) => c.id === "fastCover") || {};
+  return {
+    id: "covers", capability: "fastCover", label: "fast covers", button: "Set up fast covers",
+    title: "Fast covers need their own Python", readyWords: "Fast covers work here",
+    python: "3.12",
+    torchIndex: "cpu", torchAuto: true, torchChosenBy: "fast covers always run on the processor",
+    sm: null, smDecided: false,
+    torch: { packages: t.packages.filter((p) => p !== "torchaudio"), indexUrl: torchIndexUrl(t.indexUrl, "cpu") },
+    packages: ["transformers", "diffusers", "safetensors", "pillow"],
+    modules: modulesOf(cap),
+    modelBytes: 0,
+    /* 2026-09-27, one Windows PC: a venv with these packages and the CPU
+     * build measured 0.77 GB; the Python itself adds a little. */
+    sizes: { downloadGb: 0.3, diskGb: 0.9, basis: "the download is an estimate; 0.77 GB on disk was measured for the venv" },
+    words: {
+      becomes: "the fast covers python",
+      cpu: "that is where fast covers run",
+      setUp: "Fast covers are set up", runsIn: "They run in",
+      usesNow: "fast covers use it now",
+      firstRun: "Fast covers use the Models row fetched beside it",
+    },
+  };
+}
+
+export const RECIPES = { lyrics: lyricsRecipe, stems: stemsRecipe, covers: coversRecipe };
 export const RECIPE_IDS = Object.keys(RECIPES);
 
 const gbText = (n) => `about ${n < 10 ? Math.round(n * 10) / 10 : Math.round(n)} GB`;

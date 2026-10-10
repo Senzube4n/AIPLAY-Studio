@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import path from "node:path";
 import { qwenImageGraph, qwenImageRequiredNodes, QWEN_IMAGE_FILES, QWEN_IMAGE_NODES } from "./qwen-image.js";
 
 // Node contracts transcribed from the upstream source revisions cited by the
@@ -55,6 +56,16 @@ test("native recipe uses the correct 2.1 companions and typed graph contract", (
   assert.deepEqual(graph[8].inputs.latent_image, ["7", 0]);
   assert.equal(graph[7].class_type, "EmptyLatentImage");
   assert.ok(!("vae" in graph[4].inputs), "generation does not VAE-encode a missing reference");
+});
+
+test("Qwen model selections keep relative subfolders and refuse escaping paths", () => {
+  const graph = qwenImageGraph({ prompt: "a lighthouse", dit: "qwen/model.safetensors", encoder: "qwen/encoder.safetensors", vae: "qwen/vae.safetensors" });
+  assert.equal(graph[1].inputs.unet_name, path.join("qwen", "model.safetensors"));
+  assert.equal(graph[2].inputs.clip_name, path.join("qwen", "encoder.safetensors"));
+  assert.equal(graph[3].inputs.vae_name, path.join("qwen", "vae.safetensors"));
+  for (const dit of ["../model.safetensors", "/model.safetensors", "C:\\model.safetensors", "qwen/../model.safetensors"]) {
+    assert.throws(() => qwenImageGraph({ prompt: "x", dit }), err => err.status === 400);
+  }
 });
 
 test("ten ordered references independently reach vision and VAE conditioning", () => {

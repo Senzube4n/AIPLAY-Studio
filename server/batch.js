@@ -28,13 +28,13 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
-import { deriveTitle } from "./workflow.js";
 import { assertSafe } from "./safety/refusal.js";
 import { enumerate } from "./wildcards.js";
+import { cleanMusicItem } from "./batch-music.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = path.join(config.paths.appData, "batch.json");
@@ -44,6 +44,23 @@ const MAX_TAKES = 20;
 const MAX_CAP = 200;
 
 const clamp = (n, lo, hi) => Math.min(Math.max(Number(n) || lo, lo), hi);
+
+/** A scheduled start has an explicit timezone and must survive JSON unchanged.
+ * Reject normalised dates (for example February 30), vague local times and past
+ * choices instead of unexpectedly starting an unattended run immediately. */
+export function batchStartAt(value, now = Date.now()) {
+  if (value === undefined) return null;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) {
+    throw new Error("Choose a future startAt in ISO UTC, such as 2026-10-02T20:00:00Z.");
+  }
+  const at = Date.parse(value);
+  const canonical = value.replace(/(?:\.(\d{1,3}))?Z$/, (_whole, fraction) => `.${(fraction || "").padEnd(3, "0")}Z`);
+  if (!Number.isFinite(at) || new Date(at).toISOString() !== canonical) {
+    throw new Error("Choose a valid startAt date and time in ISO UTC.");
+  }
+  if (at <= now) throw new Error("The scheduled start is in the past. Choose a future time or Start now.");
+  return at;
+}
 
 /** Preserve image choices through persistence. Render-time validation remains
  * at /api/image, shared by manual images and every overnight take. */
@@ -159,10 +176,41 @@ export function plannedSongs({ items, takes, cap } = {}) {
   };
 }
 
+/** Paid consent covers only MiniMax takes reached by the bounded round-robin
+ * plan. Local engines in the same night cannot inflate its hosted estimate. */
+export function plannedPaidSongs({ items, takes, cap, defaultEngine = "minimax-music3" } = {}) {
+  const ideas = (items || []).filter(it => it && String(it.caption || "").trim()).slice(0, MAX_ITEMS);
+  const t = clamp(takes ?? 3, 1, MAX_TAKES);
+  const c = clamp(cap ?? ideas.length * t, 1, MAX_CAP);
+  let planned = 0, songs = 0, longestSeconds = 0;
+  for (let take = 0; take < t && planned < c; take++) {
+    for (const item of ideas) {
+      if (planned >= c) break;
+      planned++;
+      if ((item.engine ?? defaultEngine) !== "minimax-music3") continue;
+      songs++;
+      longestSeconds = Math.max(longestSeconds, clamp(item.maxDuration ?? 240, 30, 300));
+    }
+  }
+  return { songs, longestSeconds };
+}
+
 export class BatchRunner extends EventEmitter {
-  constructor(jobs, { postBusy, renderMedia } = {}) {
+  constructor(jobs, { postBusy, renderMedia, enqueueMusic, stateFile = STATE_FILE, keepAwake,
+    now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
     super();
     this.jobs = jobs;
+    this.enqueueMusic = enqueueMusic || ((spec) => this.jobs.enqueue(spec));
+    this.directMusicEnqueue = !enqueueMusic;
+    this.stateFile = stateFile;
+    this.keepAwake = keepAwake || null;
+    this.now = now;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
+    this.scheduleTimer = null;
+    this.scheduleGeneration = 0;
+    this.persisted = Promise.resolve();
+    this.persistenceError = null;
     /* Render one picture or one clip, injected for the same reason postBusy is:
      * this file goes on knowing nothing about the art runner. Resolves when the
      * media has actually landed, so an image run advances on completion exactly
@@ -186,6 +234,9 @@ export class BatchRunner extends EventEmitter {
     /* A picture or clip in flight. Separate from pendingJobId because the two
      * are advanced by different mechanisms and a run is only ever one kind. */
     this.pendingMedia = false;
+    // The ordinary song door can await model checks or cover preparation before
+    // it has a job ID. Reserve the slot during that wait as well as the render.
+    this.pendingMusic = null;
 
     // The runner advances off the job runner's own events rather than polling, so
     // a song that fails still moves the batch along instead of wedging it.
@@ -195,27 +246,97 @@ export class BatchRunner extends EventEmitter {
   // ---- persistence --------------------------------------------------------
 
   async load() {
+    this.#cancelSchedule();
     try {
-      const raw = JSON.parse(await readFile(STATE_FILE, "utf-8"));
+      const raw = JSON.parse(await readFile(this.stateFile, "utf-8"));
       this.runs = Array.isArray(raw?.runs) ? raw.runs : [];
       if (!raw?.run) { if (this.runs.length) this.emit("update"); return; }
+      // Before engine snapshots existed every music batch enqueued MiniMax
+      // jobs directly. A changed global picker must not reinterpret that plan.
+      let migrated = false;
+      if (raw.run.kind === undefined) { raw.run.kind = "music"; migrated = true; }
+      if ((raw.run.kind || "music") === "music") {
+        for (const item of raw.run.items || []) if (item && item.engine === undefined) {
+          item.engine = "minimax-music3";
+          migrated = true;
+        }
+      }
       // A run that was mid-flight when the process died resumes as paused. It is
       // never auto-restarted: the machine may have rebooted for a reason, and
       // silently firing up a four-hour GPU job on boot is not a friendly default.
       if (raw.run.state === "running") {
         raw.run.state = "paused";
         raw.run.note = "Picked up where it stopped. Press resume to carry on.";
+        migrated = true;
+      }
+      // Future appointments were explicitly authorised. An appointment missed
+      // while Studio was closed needs another press rather than a surprise run.
+      if (raw.run.state === "scheduled" && (!Number.isFinite(raw.run.startAt) || raw.run.startAt <= this.now())) {
+        raw.run.state = "paused";
+        raw.run.note = "The scheduled start was missed while Studio was closed. Press Resume to start now.";
+        migrated = true;
       }
       this.run = raw.run;
+      if (migrated) await this.#save();
+      if (this.run.state === "scheduled") this.#armSchedule();
       this.emit("update");
     } catch { /* no previous run */ }
   }
 
-  async #save() {
-    try {
-      await mkdir(config.paths.appData, { recursive: true });
-      await writeFile(STATE_FILE, JSON.stringify({ run: this.run, runs: this.runs }, null, 2));
-    } catch { /* a lost plan must never take the app down */ }
+  #save() {
+    // Capture each transition now, then commit it in order. Concurrent writes
+    // used to truncate one another; an interrupted write must not lose a plan.
+    const snapshot = JSON.stringify({ run: this.run, runs: this.runs }, null, 2);
+    this.persisted = this.persisted.then(async () => {
+      try {
+        await mkdir(path.dirname(this.stateFile), { recursive: true });
+        await writeFile(`${this.stateFile}.tmp`, snapshot);
+        await rename(`${this.stateFile}.tmp`, this.stateFile);
+        this.persistenceError = null;
+      } catch (err) { this.persistenceError = err; }
+    });
+    return this.persisted;
+  }
+
+  /** The scheduled-start API waits for the plan to reach disk before saying yes. */
+  async persist() {
+    await this.persisted;
+    if (this.persistenceError) throw new Error(`The batch could not be saved: ${this.persistenceError.message}`);
+  }
+
+  #cancelSchedule() {
+    this.scheduleGeneration++;
+    if (this.scheduleTimer !== null) this.clearTimer(this.scheduleTimer);
+    this.scheduleTimer = null;
+  }
+
+  #armSchedule() {
+    this.#cancelSchedule();
+    const r = this.run;
+    if (!r || r.state !== "scheduled") return;
+    const generation = this.scheduleGeneration;
+    // Node timers overflow beyond roughly 24 days. Recheck long appointments
+    // and changes to the system clock instead of firing an overflowing timer.
+    const delay = Math.min(2 ** 31 - 1, Math.max(0, r.startAt - this.now()));
+    this.scheduleTimer = this.setTimer(() => {
+      if (generation !== this.scheduleGeneration || this.run !== r || r.state !== "scheduled") return;
+      this.scheduleTimer = null;
+      if (this.now() < r.startAt) return this.#armSchedule();
+      this.#begin(r);
+    }, delay);
+    this.scheduleTimer?.unref?.();
+  }
+
+  #begin(r = this.run) {
+    if (!r || this.run !== r) return;
+    this.#cancelSchedule();
+    r.state = "running";
+    r.note = null;
+    r.startedAt ??= this.now();
+    this.#keepAwake(true);
+    this.#save();
+    if (!this.pendingJobId && !this.pendingMedia && !this.pendingMusic) this.#next();
+    this.emit("update");
   }
 
   // ---- shaping ------------------------------------------------------------
@@ -232,16 +353,17 @@ export class BatchRunner extends EventEmitter {
     return out;
   }
 
-  start({ items, takes, cap, name, stages, kind: k, actor, paidConfirmed = false }) {
+  start({ items, takes, cap, name, stages, kind: k, actor, paidConfirmed = false, startAt }) {
     /* Refuse rather than overwrite.
      *
      * `this.run` was assigned unconditionally, so pressing Start during a live
      * run discarded the whole in-flight object — plan, cursor, counters, file
      * list — and enqueued a second song alongside the one still rendering. With
      * no history kept, the discarded run left no trace at all. */
-    if (this.run && (this.run.state === "running" || this.run.state === "paused")) {
+    if (this.run && ["running", "paused", "scheduled"].includes(this.run.state)) {
       throw new Error("A run is already going. Stop it first, or wait for it to finish.");
     }
+    const scheduledAt = batchStartAt(startAt, this.now());
     /* WHAT THIS RUN MAKES. Music is the original and stays the default, so an
      * older client that sends no kind keeps working exactly as before.
      *
@@ -254,31 +376,13 @@ export class BatchRunner extends EventEmitter {
       throw new Error(`This build cannot run ${kind} batches — no media renderer was wired in.`);
     }
 
-    const cleanMedia = (items || [])
+    const clean = kind !== "music" ? (items || [])
       .filter((it) => it && String(it.prompt || it.caption || "").trim())
       .slice(0, MAX_ITEMS)
-      .map((it) => cleanMediaItem(it, kind));
-
-    const clean = kind !== "music" ? cleanMedia : (items || [])
+      .map((it) => cleanMediaItem(it, kind)) : (items || [])
       .filter((it) => it && String(it.caption || "").trim())
       .slice(0, MAX_ITEMS)
-      .map((it) => ({
-        // An overnight idea very often has a style and no title — that is the
-        // whole point of the panel — so this is where derived titles matter most.
-        title: String(it.title || "").trim()
-          || deriveTitle({ lyrics: it.lyrics, caption: it.caption }),
-        caption: String(it.caption).trim(),
-        lyrics: String(it.lyrics || "").trim(),
-        instrumental: !!it.instrumental,
-        maxDuration: clamp(it.maxDuration ?? 240, 30, 300),
-        /* An idea may carry an audio reference. Sanitised to the same shape the
-         * generate route accepts — this list is a whitelist, so anything not
-         * named here is silently dropped, which is how the `video` stage went
-         * missing for so long. */
-        audioRef: /^[\w.-]+\.latent$/.test(String(it.audioRef || "")) ? String(it.audioRef) : undefined,
-        audioRefDenoise: Number.isFinite(it.audioRefDenoise)
-          ? clamp(Number(it.audioRefDenoise), 0.05, 1) : undefined,
-      }));
+      .map((it) => cleanMusicItem(it, { defaultEngine: config.music.engine }));
     if (!clean.length) {
       throw new Error(kind === "music"
         ? "Add at least one idea with a style."
@@ -290,7 +394,7 @@ export class BatchRunner extends EventEmitter {
 
     this.run = {
       id: randomUUID().slice(0, 8),
-      name: String(name || "").trim() || (kind === "music" ? "Overnight run" : `Overnight ${kind} run`),
+      name: String(name || "").trim() || (kind === "music" ? "Batch run" : `Batch ${kind} run`),
       kind,
       /* WHO started this night. Carried on the run and stamped on everything it
        * makes: a run an agent scheduled must not launder into "system" at the
@@ -341,14 +445,26 @@ export class BatchRunner extends EventEmitter {
       done: 0,
       failed: 0,
       files: [],
-      state: "running",
+      state: scheduledAt === null ? "running" : "scheduled",
       note: null,
-      startedAt: Date.now(),
+      createdAt: this.now(),
+      startAt: scheduledAt,
+      startedAt: scheduledAt === null ? this.now() : null,
       finishedAt: null,
     };
-    this.#keepAwake(true);
-    this.#save();
-    this.#next();
+    const r = this.run;
+    const saved = this.#save();
+    if (scheduledAt !== null) {
+      // A timer may be armed only after its frozen plan is safely on disk.
+      saved.then(() => {
+        if (this.run !== r || r.state !== "scheduled") return;
+        if (this.persistenceError) this.pause("The schedule could not be saved. Check the folder and available space before starting.");
+        else this.#armSchedule();
+      });
+    } else {
+      this.#keepAwake(true);
+      this.#next();
+    }
     this.emit("update");
     return this.status();
   }
@@ -357,9 +473,12 @@ export class BatchRunner extends EventEmitter {
    *  render to honour a pause would throw away minutes of GPU time for no reason;
    *  Stop is there for people who want it to end now. */
   pause(note) {
-    if (!this.run || this.run.state !== "running") return this.status();
+    if (!this.run || !["running", "scheduled"].includes(this.run.state)) return this.status();
+    const wasScheduled = this.run.state === "scheduled";
+    this.#cancelSchedule();
     this.run.state = "paused";
-    this.run.note = note ?? (this.pendingJobId ? "Finishing the current song, then pausing." : null);
+    this.run.note = note ?? (wasScheduled ? "Scheduled start paused. Press Resume to start now."
+      : this.pendingJobId || this.pendingMusic ? "Finishing the current song, then pausing." : null);
     this.#keepAwake(false);
     this.#save();
     this.emit("update");
@@ -367,16 +486,11 @@ export class BatchRunner extends EventEmitter {
   }
 
   resume() {
-    if (!this.run || this.run.state !== "paused") return this.status();
-    this.run.state = "running";
-    this.run.note = null;
-    this.#keepAwake(true);
-    this.#save();
+    if (!this.run || !["paused", "scheduled"].includes(this.run.state)) return this.status();
     // If a song was still finishing when we paused, it is already in flight and
     // will drive the next one itself. Enqueuing here would run two at once —
     // and the same is true of a picture or a clip mid-render.
-    if (!this.pendingJobId && !this.pendingMedia) this.#next();
-    this.emit("update");
+    this.#begin();
     return this.status();
   }
 
@@ -401,15 +515,18 @@ export class BatchRunner extends EventEmitter {
       takes: r.takes, stages: r.stages,
       ideas: r.items.map((i) => i.title || i.prompt?.slice(0, 60)).filter(Boolean).slice(0, 12),
       files: r.files.slice(0, 200),
-      startedAt: r.startedAt, finishedAt: r.finishedAt || Date.now(),
+      songs: (r.songs || []).map(song => ({ ...song, stages: { ...song.stages } })),
+      createdAt: r.createdAt ?? r.startedAt, startAt: r.startAt ?? null,
+      startedAt: r.startedAt, finishedAt: r.finishedAt || this.now(),
     });
     this.runs = this.runs.slice(0, 25);
   }
 
   stop() {
+    this.#cancelSchedule();
     if (!this.run) return this.status();
     this.run.state = "stopped";
-    this.run.finishedAt = Date.now();
+    this.run.finishedAt = this.now();
     this.#archive();
     // Drop our claim on the job BEFORE cancelling, so the resulting "cancelled"
     // transition is not mistaken for the user cancelling a song mid-run (which
@@ -423,7 +540,9 @@ export class BatchRunner extends EventEmitter {
     // left the in-flight song rendering, because pause had already moved the state
     // off "running". Whether a job is actually in flight is the only thing that
     // matters, and the identity check below is what answers that.
-    if (inFlight && this.jobs.current?.id === inFlight) {
+    if (inFlight && this.jobs.cancelById) {
+      Promise.resolve(this.jobs.cancelById(inFlight)).catch(() => {});
+    } else if (inFlight && this.jobs.current?.id === inFlight) {
       Promise.resolve(this.jobs.cancel()).catch(() => {});
     }
     this.#keepAwake(false);
@@ -446,7 +565,8 @@ export class BatchRunner extends EventEmitter {
   }
 
   clear() {
-    if (this.run && this.run.state === "running") this.stop();
+    this.#cancelSchedule();
+    if (this.run && ["running", "paused", "scheduled"].includes(this.run.state)) this.stop();
     // Archive whatever is being cleared, so "clear" tidies the panel rather than
     // erasing the record of a night's work.
     this.#archive();
@@ -460,10 +580,10 @@ export class BatchRunner extends EventEmitter {
 
   #next() {
     const r = this.run;
-    if (!r || r.state !== "running") return;
+    if (!r || r.state !== "running" || this.pendingJobId || this.pendingMedia || this.pendingMusic) return;
     if (r.cursor >= r.plan.length) {
       r.state = "done";
-      r.finishedAt = Date.now();
+      r.finishedAt = this.now();
       this.#archive();
       this.pendingJobId = null;
       this.pendingMedia = false;
@@ -519,18 +639,14 @@ export class BatchRunner extends EventEmitter {
       return;
     }
 
-    const job = this.jobs.enqueue({
+    const request = {
+      ...item,
       title: r.takes > 1 ? `${item.title} · take ${step.take + 1}` : item.title,
-      caption: item.caption,
-      lyrics: item.lyrics,
       // A fresh performance every take. Reusing the seed and varying only the mix
       // would return near-identical songs, which is the opposite of the point.
       seed: Math.floor(Math.random() * 4294967296),
-      maxDuration: item.maxDuration,
-      instrumental: item.instrumental,
-      audioRef: item.audioRef,
-      audioRefDenoise: item.audioRefDenoise,
       batchId: r.id,
+      actor: r.actor,
       paidConfirmed: r.paidConfirmed === true,
       /* The stage chain travels WITH the job.
        *
@@ -541,10 +657,48 @@ export class BatchRunner extends EventEmitter {
        * silently missing one song's stems, lyrics and clip. Carrying the chain
        * on the job removes the ordering dependency rather than reordering it. */
       stages: { ...r.stages },
+    };
+    const submission = { run: r };
+    this.pendingMusic = submission;
+    Promise.resolve().then(() => {
+      if (this.run !== r || r.state === "stopped") return null;
+      return this.enqueueMusic(request);
+    }).then((job) => {
+      if (!job) return;
+      if (!job.id) throw new Error("Studio did not acknowledge an overnight song.");
+      if (this.run !== r || r.state === "stopped") {
+        // Stop can happen while a cover is being prepared, before any job ID
+        // exists. Cancel the returned ID, even when it is still queued.
+        if (this.jobs.cancelById) return this.jobs.cancelById(job.id);
+        if (this.jobs.current?.id === job.id) return this.jobs.cancel();
+        return;
+      }
+      this.pendingMusic = null;
+      this.pendingJobId = job.id;
+      this.#save();
+      this.emit("update");
+      // An injected or very fast runner can finish before the door returns.
+      // Its event arrived before pendingJobId existed, so reconcile once now.
+      if (this.jobs.snapshot) this.#onJobUpdate(this.jobs.snapshot());
+    }).catch((err) => {
+      if (this.run !== r || r.state === "stopped") return;
+      if (err?.definitelyNotQueued !== true && !this.directMusicEnqueue) {
+        // A missing acknowledgement does not prove that the GPU job was never
+        // queued. Keep this take in place and ask the person to inspect it.
+        r.note = `Song submission could not be confirmed. Check the queue before resuming. ${String(err?.message || err).slice(0, 160)}`;
+        if (r.state === "running") this.pause(r.note);
+        else { this.#save(); this.emit("update"); }
+        return;
+      }
+      r.failed++;
+      r.cursor++;
+      r.note = `${item.title}: ${String(err?.message || err).slice(0, 160)}`;
+      this.#save();
+      this.emit("update");
+    }).finally(() => {
+      if (this.pendingMusic === submission) this.pendingMusic = null;
+      if (this.run?.state === "running" && !this.pendingJobId) this.#next();
     });
-    this.pendingJobId = job.id;
-    this.#save();
-    this.emit("update");
   }
 
   #onJobUpdate(snap) {
@@ -570,7 +724,7 @@ export class BatchRunner extends EventEmitter {
         (r.songs ||= []).push({
           file: finished.file,
           title: finished.title || finished.file,
-          at: Date.now(),
+          at: this.now(),
           costUsd: finished.costUsd ?? null,
           stages: expectedStages(finished.stages || r.stages, finished),
         });
@@ -636,7 +790,10 @@ export class BatchRunner extends EventEmitter {
   /** Stages that are owed but have not landed, across every run we remember. */
   outstanding() {
     let waiting = 0, failed = 0;
+    const seen = new Set();
     for (const run of [this.run, ...(this.runs || [])]) {
+      if (!run || seen.has(run.id)) continue;
+      seen.add(run.id);
       for (const song of run?.songs || []) {
         for (const st of Object.values(song.stages || {})) {
           if (st === "waiting" || st === "running") waiting++;
@@ -650,6 +807,7 @@ export class BatchRunner extends EventEmitter {
   // ---- keep the machine awake --------------------------------------------
 
   #keepAwake(on) {
+    if (this.keepAwake) { this.keepAwake(on); this.awake = on ? true : null; return; }
     if (on) {
       if (this.awake) return;
       try {
@@ -685,14 +843,14 @@ export class BatchRunner extends EventEmitter {
     // ratio for the first song only.
     let perSong = null;
     if (r.done > 0 && r.startedAt) {
-      perSong = (Date.now() - r.startedAt) / 1000 / r.done;
+      perSong = (this.now() - r.startedAt) / 1000 / r.done;
     } else {
       /* The cold guess is a SONG's. A picture is seconds and a clip is minutes,
        * so a media run that has not finished a step yet gets a number of the
        * right order instead of a song's three minutes. */
       perSong = r.kind === "image" ? 20 : r.kind === "video" ? 240 : 150 * config.speed.realtimeRatio;
     }
-    const secondsLeft = r.state === "running" || r.state === "paused"
+    const secondsLeft = ["running", "paused", "scheduled"].includes(r.state)
       ? Math.round(left * perSong)
       : 0;
 
@@ -709,7 +867,7 @@ export class BatchRunner extends EventEmitter {
          * name is the same fabrication at the READ end (D1.0). */
         kind: r.kind || "music", actor: r.actor || "system",
         items: r.items.map((i) => ({
-          title: i.title, caption: i.caption, instrumental: i.instrumental,
+          title: i.title, caption: i.caption, instrumental: i.instrumental, engine: i.engine,
           /* Media items have a prompt where a song has a caption; the template
            * is shown UNEXPANDED, because that is what was asked for and each
            * take expands it differently. */
@@ -726,7 +884,8 @@ export class BatchRunner extends EventEmitter {
           : null,
         secondsLeft,
         // The one number that actually matters at bedtime.
-        etaAt: secondsLeft ? Date.now() + secondsLeft * 1000 : null,
+        etaAt: secondsLeft ? (r.state === "scheduled" ? r.startAt : this.now()) + secondsLeft * 1000 : null,
+        createdAt: r.createdAt ?? r.startedAt, startAt: r.startAt ?? null,
         startedAt: r.startedAt, finishedAt: r.finishedAt,
         files: r.files.slice(-200),
         /* One row per produced song, carrying the chain it was promised. The

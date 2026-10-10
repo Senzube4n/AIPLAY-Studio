@@ -42,6 +42,7 @@
 import { resizeNoteDurations } from "./daw-editing.js";
 import { EXPORT_PRESETS, exportSettings, exportFacts, exportDownloadUrl } from "./daw-export.js";
 import { audioResultDetails, stemResultDetails } from "./daw-audio-results.js";
+import { initDawPlugins } from "./daw-plugins.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (msg) => { $("status").textContent = msg; };
@@ -158,6 +159,9 @@ const S = {
   // undo/redo: inverse operations through the SAME actions, both ways
   undo: [],
   redo: [],
+  historyBusy: false,
+  editBusy: null,
+  noteClipDrag: null,
   keymap: "ctrl",
   ws: null,
   // the analysis pane's own state (see THE ANALYSIS DISPLAYS below)
@@ -173,6 +177,24 @@ window.__daw = S;
 function captureSession() { return { epoch: S.projectEpoch, slug: S.slug }; }
 function sessionCurrent(session) {
   return !!session && session.slug === S.slug && session.epoch === S.projectEpoch;
+}
+
+/** A pending edit and a live roll gesture both reserve the history. The
+ * session token prevents an old request from releasing a new project's edit. */
+function noteEditBusy() {
+  return !!(S.historyBusy || S.editBusy || S.drag || S.velStrategy || S.noteClipDrag);
+}
+function beginEdit() {
+  if (noteEditBusy()) return null;
+  const edit = captureSession();
+  S.editBusy = edit;
+  drawHistory();
+  return edit;
+}
+function finishEdit(edit) {
+  if (S.editBusy !== edit || !sessionCurrent(edit)) return;
+  S.editBusy = null;
+  drawHistory();
 }
 
 /* ────────────────────────────────────────────────────────── api */
@@ -1293,8 +1315,10 @@ function drawWaveLane(g, row, W) {
 
 let arrDrag = null;
 arrCv.addEventListener("contextmenu", (e) => e.preventDefault());
+arrCv.addEventListener("pointercancel", (e) => { if (S.noteClipDrag) cancelNoteGesture(e); });
+arrCv.addEventListener("lostpointercapture", (e) => { if (S.noteClipDrag) cancelNoteGesture(e); });
 arrCv.addEventListener("pointerdown", (e) => {
-  if (!S.proj) return;
+  if (!S.proj || S.noteClipDrag) return;
   const box = arrCv.getBoundingClientRect();
   const px = e.clientX - box.left, py = e.clientY - box.top;
   /* THE RULER: click to place the playhead, DRAG to set the loop range.
@@ -1337,10 +1361,14 @@ arrCv.addEventListener("pointerdown", (e) => {
     const rr = rowOf(c.toBar);
     const x1 = ((rr?.qStart ?? 0) + (rr?.qLen ?? 0)) * S.arrPxq;
     if (px < x0 - 3 || px > x1 + 3) continue;
+    if (noteEditBusy()) return;
     const edge = px > x1 - 7 ? "right" : px < x0 + 7 ? "left" : null;
     arrDrag = { midiClip: c, track: t.id, mode: edge ? `clip-${edge}` : "clip-move",
-                px0: px, orig: { fromBar: c.fromBar, toBar: c.toBar } };
+                px0: px, orig: { fromBar: c.fromBar, toBar: c.toBar },
+                pointerId: e.pointerId, session: captureSession() };
+    S.noteClipDrag = arrDrag;
     capturePointer(arrCv, e.pointerId);
+    drawHistory();
     return;
   }
 });
@@ -1358,6 +1386,7 @@ arrCv.addEventListener("pointermove", (e) => {
     return;
   }
   if (arrDrag.mode?.startsWith("clip-")) {
+    if (S.noteClipDrag !== arrDrag || S.historyBusy || S.editBusy || arrDrag.pointerId !== e.pointerId) return;
     /* Snapped to BARS, because that is the unit set_clip speaks. */
     const c = arrDrag.midiClip;
     const o = arrDrag.orig;
@@ -1392,8 +1421,17 @@ arrCv.addEventListener("pointermove", (e) => {
   drawArr();
 });
 arrCv.addEventListener("pointerup", async (e) => {
-  const d = arrDrag; arrDrag = null;
+  const d = arrDrag;
   if (!d) return;
+  if (d.midiClip) {
+    if (d.pointerId !== e.pointerId) return;
+    if (S.noteClipDrag !== d || !sessionCurrent(d.session) || S.historyBusy || S.editBusy) {
+      cancelNoteGesture(e);
+      return;
+    }
+    S.noteClipDrag = null;
+  }
+  arrDrag = null;
   releasePointer(arrCv, e.pointerId);
   if (d.mode === "ruler") {
     if (d.moved) {
@@ -1407,7 +1445,7 @@ arrCv.addEventListener("pointerup", async (e) => {
   if (d.mode?.startsWith("clip-")) {
     const c = d.midiClip;
     const o = d.orig;
-    if (!d.moved || (c.fromBar === o.fromBar && c.toBar === o.toBar)) { drawArr(); return; }
+    if (!d.moved || (c.fromBar === o.fromBar && c.toBar === o.toBar)) { drawArr(); drawHistory(); return; }
     /* The three shapes, exactly as set_clip documents them:
      *   body   → from_bar only (length kept, notes ride along)
      *   right  → to_bar only   (never moves notes)
@@ -1422,8 +1460,9 @@ arrCv.addEventListener("pointerup", async (e) => {
       ? `clip → bars ${c.fromBar}-${c.toBar}`
       : `clip ${d.mode === "clip-right" ? "right" : "left"} edge → bars ${c.fromBar}-${c.toBar}`;
     const r = await act(
-      { action: "set_clip", slug: S.slug, track: d.track, clip: c.id, ...body },
-      { action: "set_clip", slug: S.slug, track: d.track, clip: c.id, ...back }, label);
+      { action: "set_clip", slug: d.session.slug, track: d.track, clip: c.id, ...body },
+      { action: "set_clip", slug: d.session.slug, track: d.track, clip: c.id, ...back }, label,
+      () => { Object.assign(c, o); drawArr(); });
     /* Shrinking SILENCES notes rather than deleting them, and the reply
      * counts them — a number the window would be dishonest to swallow. */
     if (r) {
@@ -2079,12 +2118,15 @@ function velChanges(strat) {
  * server-side before the write and posted straight back.
  */
 async function commitVel(strat, label) {
+  if (S.historyBusy || S.editBusy || S.drag || S.noteClipDrag || (S.velStrategy && S.velStrategy !== strat)) return;
   const session = captureSession();
   const notes = velChanges(strat);
   S.velStrategy = null;
   if (!notes.length) { draw(); status("velocity: nothing changed"); return; }
   const t0 = performance.now();
   const body = { action: "edit_notes", slug: S.slug, track: S.trackId, notes };
+  const edit = beginEdit();
+  if (!edit) return;
   try {
     const r = await api(body);
     if (!sessionCurrent(session)) return;
@@ -2097,25 +2139,46 @@ async function commitVel(strat, label) {
     if (!sessionCurrent(session)) return;
     draw();
     status(`velocity: ${err.message}`);
+  } finally { finishEdit(edit); }
+}
+
+function cancelNoteGesture(e) {
+  const d = S.drag;
+  const clip = S.noteClipDrag, owner = d || clip;
+  if (!d && !S.velStrategy && !clip) return;
+  if (e?.pointerId !== undefined && owner?.pointerId !== undefined && e.pointerId !== owner.pointerId) return;
+  S.drag = null;
+  S.velStrategy = null;
+  if (d?.notes) d.notes.forEach((n, i) => Object.assign(n, d.orig[i]));
+  if (d?.pointerId !== undefined) releasePointer(canvas, d.pointerId);
+  if (clip) {
+    S.noteClipDrag = null;
+    if (arrDrag === clip) arrDrag = null;
+    Object.assign(clip.midiClip, clip.orig);
+    releasePointer(arrCv, clip.pointerId);
+    drawArr();
   }
+  draw();
+  drawHistory();
 }
 
 /* Escape cancels a live gesture. It is a listener of its own rather than a
  * keymap entry because it must fire while the pointer is captured, and a
  * cancelled gesture must never reach the server at all. */
 window.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape" || !S.velStrategy) return;
-  S.velStrategy = null;
-  S.drag = null;
+  if (e.key !== "Escape" || (!S.drag && !S.velStrategy && !S.noteClipDrag)) return;
+  const velocity = !!S.velStrategy;
+  cancelNoteGesture();
   e.preventDefault();
-  draw();
-  status("velocity gesture cancelled — nothing was sent");
+  if (velocity) status("velocity gesture cancelled — nothing was sent");
 });
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+canvas.addEventListener("pointercancel", cancelNoteGesture);
+canvas.addEventListener("lostpointercapture", cancelNoteGesture);
 
 canvas.addEventListener("pointerdown", async (e) => {
-  if (!S.proj || !S.trackId) return;
+  if (!S.proj || !S.trackId || noteEditBusy()) return;
   const box = canvas.getBoundingClientRect();
   const px = e.clientX - box.left, py = e.clientY - box.top;
   // (the bar ruler is #rollRuler now, a canvas of its own — see above)
@@ -2140,8 +2203,9 @@ canvas.addEventListener("pointerdown", async (e) => {
     }
     strat.move(q, v);
     S.velStrategy = strat;
-    S.drag = { mode: "vel", strat };
+    S.drag = { mode: "vel", strat, pointerId: e.pointerId };
     capturePointer(canvas, e.pointerId);
+    drawHistory();
     draw();
     return;
   }
@@ -2181,17 +2245,19 @@ canvas.addEventListener("pointerdown", async (e) => {
     S.drag = {
       mode: hit.edge ? "resize" : "move",
       note: hit.note, notes: moving, startPx: px, startPy: py,
-      orig: moving.map((n) => ({ ...n })), moved: false,
+      orig: moving.map((n) => ({ ...n })), moved: false, pointerId: e.pointerId,
     };
     capturePointer(canvas, e.pointerId);
+    drawHistory();
     draw();
     return;
   }
 
   if (S.mode === "select") {                              // rubber band
     if (!e.shiftKey) S.sel.clear();
-    S.drag = { mode: "band", x0: px, y0: py, x1: px, y1: py };
+    S.drag = { mode: "band", x0: px, y0: py, x1: px, y1: py, pointerId: e.pointerId };
     capturePointer(canvas, e.pointerId);
+    drawHistory();
     draw();
     return;
   }
@@ -2205,25 +2271,22 @@ canvas.addEventListener("pointerdown", async (e) => {
    * write so the ear and the eye agree, and it does not wait on add_note. */
   auditionNote(pitch, 100, dur);
   S.aud.lastPitch = pitch;
+  const slug = S.slug, track = S.trackId;
   const r = await act(
-    { action: "add_note", slug: S.slug, track: S.trackId, bar: pos.bar, beat: pos.beat,
+    { action: "add_note", slug, track, bar: pos.bar, beat: pos.beat,
       tick: pos.tick, pitch, vel: 100, dur_ticks: dur },
-    null, `add note ${pitch}`);
-  if (r?.note?.id) {
+    (reply) => reply.undo || { action: "delete_note", slug, track, note: reply.note?.id },
+    `add note ${pitch}`);
+  if (r?.note?.id && S.trackId === track) {
     S.sel.clear(); S.sel.add(r.note.id);
-    pushUndo({ body: { action: "delete_note", slug: S.slug, track: S.trackId, note: r.note.id },
-               forward: { action: "add_note", slug: S.slug, track: S.trackId, bar: pos.bar,
-                          beat: pos.beat, tick: pos.tick, pitch, vel: 100, dur_ticks: dur },
-               inverseFrom: (rr) => ({ body: { action: "delete_note", slug: S.slug,
-                                               track: S.trackId, note: rr?.note?.id } }),
-               label: `add note ${pitch}` });
     draw();
   }
 });
 
 canvas.addEventListener("pointermove", (e) => {
   const d = S.drag;
-  if (!d) return;
+  if (!d || S.historyBusy || S.editBusy) return;
+  if (d.pointerId !== undefined && d.pointerId !== e.pointerId) return;
   const box = canvas.getBoundingClientRect();
   const px = e.clientX - box.left, py = e.clientY - box.top;
   d.moved = true;
@@ -2259,15 +2322,22 @@ canvas.addEventListener("pointermove", (e) => {
 canvas.addEventListener("pointerup", async (e) => {
   const session = captureSession();
   const d = S.drag;
+  if (d?.pointerId !== undefined && d.pointerId !== e.pointerId) return;
   S.drag = null;
   S.aud.lastPitch = null;              // the next gesture starts fresh
   if (!d) return;
   releasePointer(canvas, e.pointerId);
-  if (d.mode === "band") { draw(); return; }
+  if (S.historyBusy || S.editBusy) { S.velStrategy = null; draw(); drawHistory(); return; }
+  if (d.mode === "band") { draw(); drawHistory(); return; }
   /* The velocity branch sits ABOVE the moved gate on purpose: a click in the
    * lane with no movement is still a velocity being set, and always was. */
-  if (d.mode === "vel") { await commitVel(d.strat, d.strat.label()); return; }
-  if (!d.moved) { draw(); return; }
+  if (d.mode === "vel") {
+    S.velStrategy = null;
+    await commitVel(d.strat, d.strat.label());
+    drawHistory();
+    return;
+  }
+  if (!d.moved) { draw(); drawHistory(); return; }
   const t0 = performance.now();
   /* ONE POST, NOT N. This commit used to be an awaited move_note PER NOTE
    * inside a loop: dragging a 24-note chord was 24 serialised round trips,
@@ -2285,12 +2355,14 @@ canvas.addEventListener("pointerup", async (e) => {
     return n.bar !== o.bar || n.beat !== o.beat || n.tick !== o.tick
       || n.pitch !== o.pitch || n.durTicks !== o.durTicks;
   });
-  if (!moved.length) { draw(); return; }
+  if (!moved.length) { draw(); drawHistory(); return; }
   const body = {
     action: "edit_notes", slug: S.slug, track: S.trackId,
     notes: moved.map((n) => ({ note: n.id, bar: n.bar, beat: n.beat, tick: n.tick,
                                pitch: n.pitch, dur_ticks: n.durTicks })),
   };
+  const edit = beginEdit();
+  if (!edit) return;
   try {
     const last = await api(body);
     if (!sessionCurrent(session)) return;
@@ -2310,7 +2382,7 @@ canvas.addEventListener("pointerup", async (e) => {
     d.notes.forEach((n, i) => Object.assign(n, d.orig[i]));
     draw();
     status(err.message);
-  }
+  } finally { finishEdit(edit); }
 });
 
 function bandSelect(d) {
@@ -2507,6 +2579,7 @@ const targetNotes = () => {
 };
 
 async function quantizeSelection() {
+  if (noteEditBusy()) return;
   const session = captureSession();
   const g = S.grid;
   if (!g) { status("grid is off — pick a grid to quantize to"); return; }
@@ -2527,6 +2600,8 @@ async function quantizeSelection() {
   }
   if (!moves.length) { status("every note is already on the grid"); return; }
   const body = { action: "edit_notes", slug: S.slug, track: S.trackId, notes: moves };
+  const edit = beginEdit();
+  if (!edit) return;
   try {
     const last = await api(body);
     if (!sessionCurrent(session)) return;
@@ -2536,9 +2611,11 @@ async function quantizeSelection() {
     renderAndSwap(t0, performance.now(), last?.dirty, session);
     status(`quantized ${moves.length} note(s) to ${$("gridSel").selectedOptions[0].textContent} at ${Math.round(amt * 100)}%`);
   } catch (err) { if (sessionCurrent(session)) status(err.message); }
+  finally { finishEdit(edit); }
 }
 
 async function duplicateSelection() {
+  if (noteEditBusy()) return;
   const session = captureSession(), track = S.trackId;
   const rows = targetNotes();
   if (!rows.length) { status("nothing to duplicate"); return; }
@@ -2553,6 +2630,15 @@ async function duplicateSelection() {
   const t0 = performance.now();
   const made = [];
   let last = null;
+  let remembered = false;
+  const remember = () => {
+    if (remembered || !made.length) return;
+    pushUndo({ label: `duplicate ${made.length}`,
+      bodies: [...made].reverse().map((id) => ({ action: "delete_note", slug: session.slug, track, note: id })) });
+    remembered = true;
+  };
+  const edit = beginEdit();
+  if (!edit) return;
   try {
     for (const { n } of rows) {
       if (!sessionCurrent(session)) return;
@@ -2562,43 +2648,63 @@ async function duplicateSelection() {
       if (!sessionCurrent(session)) return;
       if (last.note?.id) made.push(last.note.id);
     }
-    pushUndo({ label: `duplicate ${made.length}`,
-      bodies: made.map((id) => ({ action: "delete_note", slug: session.slug, track, note: id })) });
+    remember();
     if (S.trackId === track) S.sel = new Set(made);
     await refreshDoc(session);
     if (!sessionCurrent(session)) return;
     renderAndSwap(t0, performance.now(), last?.dirty, session);
     status(`duplicated ${made.length} note(s) ${span.toFixed(2)} quarters later`);
-  } catch (err) { if (sessionCurrent(session)) status(err.message); }
+  } catch (err) {
+    if (sessionCurrent(session)) {
+      remember();
+      await refreshDoc(session).catch(() => {});
+      if (sessionCurrent(session)) { renderAndSwap(t0, performance.now(), last?.dirty, session); status(err.message); }
+    }
+  } finally { finishEdit(edit); }
 }
 
 async function deleteSelection() {
+  if (noteEditBusy()) return;
   const session = captureSession(), track = S.trackId;
   const rows = targetNotes().filter(({ n }) => S.sel.has(n.id));
   if (!rows.length) { status("nothing selected"); return; }
   const t0 = performance.now();
   const back = [];
   let last = null;
+  let remembered = false;
+  const remember = () => {
+    if (remembered || !back.length) return;
+    pushUndo({ label: `delete ${back.length}`, bodies: back });
+    remembered = true;
+  };
+  const edit = beginEdit();
+  if (!edit) return;
   try {
     for (const { n, c } of rows) {
       if (!sessionCurrent(session)) return;
-      back.push({ action: "add_note", slug: session.slug, track, clip: c.id,
-                  bar: n.bar, beat: n.beat, tick: n.tick, pitch: n.pitch, vel: n.vel,
-                  dur_ticks: n.durTicks });
       last = await api({ action: "delete_note", slug: session.slug, track, note: n.id });
       if (!sessionCurrent(session)) return;
+      // Restore deletions in reverse order so each saved array index is valid.
+      back.unshift(last.undo || { action: "add_note", slug: session.slug, track, clip: c.id,
+        bar: n.bar, beat: n.beat, tick: n.tick, pitch: n.pitch, vel: n.vel, dur_ticks: n.durTicks });
     }
-    /* No forwards: undoing a delete re-adds the notes with NEW ids, so a
-     * replayed delete would name notes that no longer exist. */
-    pushUndo({ label: `delete ${back.length}`, bodies: back });
+    // The server's inverse restores the original identity and creator.
+    remember();
     if (S.trackId === track) S.sel.clear();
     await refreshDoc(session);
     if (!sessionCurrent(session)) return;
     renderAndSwap(t0, performance.now(), last?.dirty, session);
-  } catch (err) { if (sessionCurrent(session)) status(err.message); }
+  } catch (err) {
+    if (sessionCurrent(session)) {
+      remember();
+      await refreshDoc(session).catch(() => {});
+      if (sessionCurrent(session)) { renderAndSwap(t0, performance.now(), last?.dirty, session); status(err.message); }
+    }
+  } finally { finishEdit(edit); }
 }
 
 async function splitSelection() {
+  if (noteEditBusy()) return;
   const session = captureSession(), track = S.trackId;
   const at = barFloatNow();
   const rows = targetNotes();
@@ -2609,7 +2715,7 @@ async function splitSelection() {
    * head, add the tail — and only the second can mint an id, so only the
    * second has to be one call per note. Every trim goes in one edit_notes. */
   const heads = [], tails = [];
-  for (const { n } of rows) {
+  for (const { n, c } of rows) {
     const q = posToQ(n.bar, n.beat, n.tick);
     const qEnd = q + durTicksToQ(n.bar, n.beat, n.tick, n.durTicks);
     const qCut = qOfBarFloat(at);
@@ -2618,14 +2724,24 @@ async function splitSelection() {
     const head = Math.max(1, Math.round((qCut - q) / (4 / row.den) * TPB));
     heads.push({ note: n.id, dur_ticks: head });
     back.push({ note: n.id, dur_ticks: n.durTicks });
-    tails.push({ ...qToPosFine(qCut), pitch: n.pitch, vel: n.vel,
+    tails.push({ clip: c?.id, ...qToPosFine(qCut), pitch: n.pitch, vel: n.vel,
                  dur_ticks: Math.max(1, n.durTicks - head) });
   }
   const cut = heads.length;
+  let headUndo = null, remembered = false;
+  const remember = () => {
+    if (remembered || !headUndo) return;
+    pushUndo({ label: `split ${cut}`,
+      bodies: [...[...made].reverse().map((id) => ({ action: "delete_note", slug: session.slug, track, note: id })), headUndo] });
+    remembered = true;
+  };
+  const edit = beginEdit();
+  if (!edit) return;
   try {
     if (cut) {
-      await api({ action: "edit_notes", slug: session.slug, track, notes: heads });
+      const trimmed = await api({ action: "edit_notes", slug: session.slug, track, notes: heads });
       if (!sessionCurrent(session)) return;
+      headUndo = trimmed.undo || { action: "edit_notes", slug: session.slug, track, notes: back };
       for (const t of tails) {
         if (!sessionCurrent(session)) return;
         last = await api({ action: "add_note", slug: session.slug, track, ...t });
@@ -2636,15 +2752,19 @@ async function splitSelection() {
     if (cut) {
       /* The inverse is: delete the tails, then give every head its length
        * back — the second half in ONE post, matching the forward. */
-      pushUndo({ label: `split ${cut}`,
-        bodies: [...made.map((id) => ({ action: "delete_note", slug: session.slug, track, note: id })),
-                 { action: "edit_notes", slug: session.slug, track, notes: back }] });
+      remember();
       await refreshDoc(session);
       if (!sessionCurrent(session)) return;
       renderAndSwap(t0, performance.now(), last?.dirty, session);
     }
     status(cut ? `split ${cut} note(s) at bar ${at.toFixed(2)}` : "the playhead is not inside any selected note");
-  } catch (err) { if (sessionCurrent(session)) status(err.message); }
+  } catch (err) {
+    if (sessionCurrent(session)) {
+      remember();
+      await refreshDoc(session).catch(() => {});
+      if (sessionCurrent(session)) { renderAndSwap(t0, performance.now(), last?.dirty, session); status(err.message); }
+    }
+  } finally { finishEdit(edit); }
 }
 
 /* ═════════════════════════════════════════════ AUTOMATION LANES ═════════
@@ -2960,6 +3080,23 @@ function showPane(p) {
  * parameter name; adding a device to rack.py grows this panel for free. */
 
 const RACK = { devices: null, agree: null };
+const pluginUI = initDawPlugins({ api, get, context: chainHost,
+  addInsert: async (id) => { await addRackDevice('vst3', id); showDock('chain'); },
+  changed: () => { paintRackPicker(); drawDevices(); },
+});
+
+function paintRackPicker() {
+  const sel = $('devAdd');
+  sel.replaceChildren(new Option('＋ insert…', ''));
+  const builtins = document.createElement('optgroup'); builtins.label = 'Studio effects';
+  for (const [id, d] of Object.entries(RACK.devices || {})) {
+    if (id !== 'vst3') builtins.append(new Option(d.label || id, id));
+  }
+  sel.append(builtins);
+  const external = document.createElement('optgroup'); external.label = 'VST3 plugins';
+  for (const plugin of pluginUI.ready()) external.append(new Option(plugin.label || plugin.name, `vst3:${plugin.id}`));
+  if (external.childElementCount) sel.append(external);
+}
 
 async function loadRack() {
   try {
@@ -2971,9 +3108,8 @@ async function loadRack() {
     RACK.devices = null;
     status(`rack catalog unavailable: ${err.message}`);
   }
-  const sel = $("devAdd");
-  sel.innerHTML = `<option value="">＋ insert…</option>`
-    + Object.entries(RACK.devices || {}).map(([id, d]) => `<option value="${id}">${d.label || id}</option>`).join("");
+  paintRackPicker();
+  pluginUI.refresh().catch(err => { $('pluginMessage').textContent = err.message; });
   /* A CATALOG DISAGREEMENT HAS ONE CAUSE IN PRACTICE.
    * mixer.js (the store's device table) and rack.py (the engine's) are
    * read from the same tree, so they only differ when the running server
@@ -3016,6 +3152,7 @@ function drawDevices() {
   box.innerHTML = "";
   const h = chainHost();
   $("devTarget").textContent = h ? h.name : "—";
+  pluginUI.contextChanged();
   if (!h) return;
   const inserts = h.host.inserts || [];
   if (!inserts.length) {
@@ -3028,7 +3165,7 @@ function drawDevices() {
     return;
   }
   inserts.forEach((ins, idx) => {
-    const spec = RACK.devices?.[ins.type];
+    const spec = ins.type === 'vst3' ? { label: ins.plugin?.label || 'VST3 plugin', params: ins.plugin?.parameters || {} } : RACK.devices?.[ins.type];
     if (idx) {
       /* THE CHAIN, READ LEFT TO RIGHT. The order of a chain is the whole
        * of what it does, so it gets an arrow rather than a gap. */
@@ -3044,8 +3181,9 @@ function drawDevices() {
       + (S.devInsert === ins.id ? " d-cur" : "");
     const head = document.createElement("div");
     head.className = "d-devhead";
-    head.innerHTML = `<span class="d-ix" title="position in the chain">${idx + 1}</span>`
-      + `<span class="d-nm">${spec?.label || ins.type}</span>`;
+    const position = document.createElement('span'); position.className = 'd-ix'; position.textContent = idx + 1;
+    const deviceName = document.createElement('span'); deviceName.className = 'd-nm'; deviceName.textContent = spec?.label || ins.type;
+    head.append(position, deviceName);
     const mkBtn = (txt, title, fn) => {
       const b = document.createElement("button");
       b.className = "d-btn d-sm"; b.textContent = txt; b.title = title;
@@ -3066,7 +3204,8 @@ function drawDevices() {
       mkBtn("✕", "remove (insert_remove)", () =>
         act({ action: "insert_remove", slug: S.slug, target: h.target, insert: ins.id },
           { action: "insert_add", slug: S.slug, target: h.target, type: ins.type,
-            index: idx, params: plainParams(ins.params) },
+            plugin: ins.plugin?.id, plugin_snapshot: ins.type === 'vst3' && !ins.enabled ? ins.plugin : undefined,
+            enabled: ins.enabled, index: idx, params: plainParams(ins.params) },
           `remove ${ins.type}`)),
     );
     if (ins.enabled) head.querySelector(".d-btn").classList.add("d-on");
@@ -3091,7 +3230,10 @@ function drawDevices() {
     const note = document.createElement("div");
     note.className = "d-curvenote";
     body.appendChild(note);
-    wantCurve(h, ins, curve, note);
+    if (ins.type === 'vst3') {
+      curve.remove(); note.textContent = 'Native VST3 effect';
+      note.title = 'Changes re-render the affected audio. Extend the project to leave room for reverb and delay tails.';
+    } else wantCurve(h, ins, curve, note);
 
     for (const [pname, pspec] of Object.entries(spec?.params || {})) {
       body.appendChild(paramControl(h, ins, pname, pspec));
@@ -3211,14 +3353,16 @@ function paramControl(h, ins, pname, pspec) {
   if (keyed) wrap.classList.add("d-keyed");
   const lab = document.createElement("div");
   lab.className = "d-plab";
-  lab.textContent = pname.replace(/_/g, " ");
+  lab.textContent = pspec.label || pname.replace(/_/g, " ");
   lab.title = `${pspec.desc || pname}${pspec.unit ? ` (${pspec.unit})` : ""}`
     + (pspec.animatable ? " — automatable" : "");
 
   if (pspec.type === "bool") {
-    const t = document.createElement("div");
+    const t = document.createElement(ins.type === 'vst3' ? 'button' : 'div');
     t.className = "d-toggle" + (raw ? " d-on" : "");
     t.innerHTML = "<i></i>";
+    t.setAttribute('aria-label', pname.replace(/_/g, ' '));
+    t.setAttribute('aria-pressed', String(!!raw));
     t.addEventListener("click", () => setParam(h, ins, pname, !raw, !!raw));
     wrap.append(t, lab);
     return wrap;
@@ -3229,11 +3373,12 @@ function paramControl(h, ins, pname, pspec) {
     s.className = "d-sel";
     const values = pspec.type === "enum" ? pspec.values
       : ["", ...(S.proj?.tracks || []).map((t) => t.id)];
-    s.innerHTML = values.map((v) => {
+    for (const v of values) {
       const label = pspec.type === "track"
         ? (v ? (S.proj.tracks.find((t) => t.id === v)?.name ?? v) : "— none —") : v;
-      return `<option value="${v}"${v === raw ? " selected" : ""}>${label}</option>`;
-    }).join("");
+      s.append(new Option(label, v, false, v === raw));
+    }
+    s.setAttribute('aria-label', pname.replace(/_/g, ' '));
     s.addEventListener("change", () => setParam(h, ins, pname, s.value, raw));
     wrap.append(s, lab);
     return wrap;
@@ -3265,14 +3410,14 @@ function paramControl(h, ins, pname, pspec) {
     drag.cur = Math.max(pspec.min, Math.min(pspec.max, drag.cur - (e.clientY - drag.y) * step));
     drag.y = e.clientY;
     paint(drag.cur);
-    if (S.autoWrite && S.playing) drag.ride.push({ t: barFloatNow(), v: drag.cur });
+    if (pspec.animatable && S.autoWrite && S.playing) drag.ride.push({ t: barFloatNow(), v: drag.cur });
   });
   k.addEventListener("pointerup", async (e) => {
     const d = drag; drag = null;
     S.dragging = false;
     if (!d) return;
     releasePointer(k, e.pointerId);
-    if (S.autoWrite && d.ride.length > 1) {
+    if (pspec.animatable && S.autoWrite && d.ride.length > 1) {
       const key = `${h.target === "master" ? "mst:master" : (h.host.id ? (S.proj.returns || []).some((r) => r.id === h.host.id) ? `ret:${h.host.id}` : `trk:${h.host.id}` : "mst:master")}:ins:${ins.id}:${pname}`;
       const ref = laneRef(key);
       if (ref) { await writeRide(ref, d.ride); return; }
@@ -3281,29 +3426,48 @@ function paramControl(h, ins, pname, pspec) {
   });
   k.addEventListener("dblclick", () => setParam(h, ins, pname, pspec.default, v));
   wrap.append(k, val, lab);
+  if (ins.type === 'vst3') {
+    const input = document.createElement('input'); input.type = 'number'; input.className = 'd-num d-pedit';
+    input.min = pspec.min; input.max = pspec.max; input.step = pspec.step || 'any'; input.value = v;
+    input.setAttribute('aria-label', pname.replace(/_/g, ' '));
+    input.onchange = () => { const n = Number(input.value); if (input.value !== '' && Number.isFinite(n)) setParam(h, ins, pname, n, v); };
+    wrap.append(input);
+  }
   return wrap;
 }
 
 const setParam = (h, ins, pname, value, before) => act(
-  { action: "insert_set", slug: S.slug, target: h.target, insert: ins.id, params: { [pname]: value } },
+  { action: "insert_set", slug: S.slug, target: h.target, insert: ins.id, params: { [pname]: pluginParamValue(ins, pname, value) } },
   { action: "insert_set", slug: S.slug, target: h.target, insert: ins.id, params: { [pname]: before } },
   `${ins.type}.${pname} → ${typeof value === "number" ? fmt(value) : value}`);
 
+function pluginParamValue(ins, name, value) {
+  const spec = ins.type === 'vst3' && ins.plugin?.parameters?.[name];
+  if (spec?.type !== 'number' || typeof value !== 'number') return value;
+  const snapped = spec.step > 0 ? spec.min + Math.round((value - spec.min) / spec.step) * spec.step : value;
+  return Math.max(spec.min, Math.min(spec.max, snapped));
+}
+
 $("devAdd").addEventListener("change", async () => {
-  const type = $("devAdd").value;
+  const value = $("devAdd").value;
   $("devAdd").value = "";
+  if (value.startsWith('vst3:')) return addRackDevice('vst3', value.slice(5));
+  return addRackDevice(value);
+});
+
+async function addRackDevice(type, plugin) {
   const h = chainHost();
   if (!type || !h) return;
-  const r = await act({ action: "insert_add", slug: S.slug, target: h.target, type }, null, `add ${type}`);
+  const r = await act({ action: "insert_add", slug: S.slug, target: h.target, type, plugin }, null, `add ${type}`);
   if (r?.insertId) {
     pushUndo({ body: { action: "insert_remove", slug: S.slug, target: h.target, insert: r.insertId },
-               forward: { action: "insert_add", slug: S.slug, target: h.target, type },
+               forward: { action: "insert_add", slug: S.slug, target: h.target, type, plugin },
                inverseFrom: (rr) => ({ body: { action: "insert_remove", slug: S.slug,
                                                target: h.target, insert: rr?.insertId } }),
                label: `add ${type}` });
     S.devInsert = r.insertId;
   }
-});
+}
 
 /* ═══════════════════════════════════════════════════ THE MIXER ══════════
  * Channel strips with a real dB-law fader, pan, sends, solo/mute/arm.
@@ -3984,6 +4148,8 @@ const deferredNote = (name) =>
 
 /* ── the dock's three tabs ───────────────────────────────────────────── */
 
+let passageDock = null;
+let passageDockSized = false;
 function showDock(tab) {
   S.ana.tab = tab;
   /* Opening a tab UNFOLDS the dock, so the project has to hear about it —
@@ -3995,8 +4161,10 @@ function showDock(tab) {
   $("dockBtn").classList.add("d-on");
   if (wasFolded && viewOf()?.dock?.folded) saveView({ dock: { folded: false } });
   for (const [id, pane, t] of [["tabChain", "paneChain", "chain"],
+                               ["tabPlugins", "panePlugins", "plugins"],
                                ["tabAnalysis", "paneAnalysis", "analysis"],
-                               ["tabEar", "paneEar", "ear"]]) {
+                               ["tabEar", "paneEar", "ear"],
+                               ["tabPassage", "panePassage", "passage"]]) {
     $(id).classList.toggle("d-on", tab === t);
     $(pane).classList.toggle("d-on", tab === t);
   }
@@ -4008,9 +4176,25 @@ function showDock(tab) {
     $("centre").style.setProperty("--d-dock-h", `${Math.min(420, Math.round(innerHeight * 0.42))}px`);
   }
   if (tab === "analysis") { sizeAnalysis(); drawAnalysis(); }
+  if (tab === 'plugins') pluginUI.refresh().catch(err => { $('pluginMessage').textContent = err.message; });
+  if (tab === 'plugins' && $('dock').getBoundingClientRect().height < 260) {
+    $('centre').style.setProperty('--d-dock-h', `${Math.min(340, Math.max(220, Math.round(innerHeight * .42)))}px`);
+  }
   if (tab === "ear") document.querySelector(".ear-fab")?.setAttribute("data-open", "1");
+  passageDock?.setVisible(tab === 'passage');
+  if (tab === 'passage') {
+    passageDock?.contextChanged();
+    if (!passageDockSized) {
+      passageDockSized = true;
+      // Keep the piano roll visible while the taller passage form scrolls.
+      const available = $('centre').clientHeight;
+      $('centre').style.setProperty('--d-dock-h', `${Math.min(460, Math.max(140, available - 260), Math.max(240, Math.round(available * .48)))}px`);
+    }
+  }
 }
+$("tabPassage").addEventListener('click', () => { showDock('passage'); passageDock?.refresh(); });
 $("tabChain").addEventListener("click", () => showDock("chain"));
+$("tabPlugins").addEventListener('click', () => showDock('plugins'));
 $("tabAnalysis").addEventListener("click", () => showDock("analysis"));
 $("tabEar").addEventListener("click", () => {
   showDock("ear");
@@ -4386,20 +4570,33 @@ function drawGoniometer() {
  * the server says is dirty. Undo replays the inverse — so undo is not a
  * second code path either. */
 
-async function act(body, inverse, label) {
+async function act(body, inverse, label, onRejected) {
   const session = captureSession();
   if (body.slug && body.slug !== session.slug) return null;
+  const edit = beginEdit();
+  if (!edit) return null;
   const t0 = performance.now();
+  let acknowledged = false;
   try {
     const r = await api(body);
+    acknowledged = true;
     if (!sessionCurrent(session)) return null;
-    if (inverse) pushUndo({ body: inverse, forward: body, label: label || body.action });
+    const back = typeof inverse === "function" ? inverse(r) : inverse;
+    if (back) pushUndo({ body: r.undo || back, forward: body, label: label || body.action });
     await refreshDoc(session);
     if (!sessionCurrent(session)) return null;
     renderAndSwap(t0, performance.now(), r.dirty, session);
     if (label) status(label);
     return r;
-  } catch (err) { if (sessionCurrent(session)) status(`${body.action}: ${err.message}`); return null; }
+  } catch (err) {
+    if (sessionCurrent(session)) {
+      // A failed refresh must keep the acknowledged edit and its history.
+      if (!acknowledged) onRejected?.();
+      status(`${body.action}: ${err.message}`);
+    }
+    return null;
+  }
+  finally { finishEdit(edit); }
 }
 
 /**
@@ -4407,13 +4604,10 @@ async function act(body, inverse, label) {
  * posted through the same route — but it had no affordance and no list, so
  * the only way to know what Ctrl+Z would do was to press it.
  *
- * An entry carries the inverse (`body` / `bodies`) and, when the forward
- * gesture can be replayed exactly, the forward too (`forward` / `forwards`),
- * which is what makes REDO possible without a second code path: redo posts
- * the same action the gesture posted. Gestures whose replay would mint new
- * ids (duplicate, split) carry no forward, and undoing one CLEARS the redo
- * stack rather than letting redo replay an older entry out of order — an
- * out-of-order redo is worse than no redo.
+ * Both directions use the server's inverse bodies when available. A note
+ * deletion returns a persistent restore receipt, so duplicate, split and
+ * delete replay the same IDs, creators and clip positions. This also keeps
+ * older history entries that name those IDs valid after a redo.
  */
 function pushUndo(entry) {
   S.undo.push(entry);
@@ -4423,62 +4617,97 @@ function pushUndo(entry) {
 
 async function undoOnce() {
   const session = captureSession();
+  if (noteEditBusy()) return;
   const u = S.undo.pop();
   if (!u) { status("nothing to undo"); return; }
+  S.historyBusy = true;
+  drawHistory();
   const t0 = performance.now();
+  let committed = false;
   try {
-    let last = null;
-    for (const b of u.bodies || [u.body]) {
-      if (!sessionCurrent(session) || (b?.slug && b.slug !== session.slug)) return;
-      last = await api(b);
-      if (!sessionCurrent(session)) return;
-    }
-    if (u.forward || u.forwards) S.redo.push(u);
-    else if (S.redo.length) {
-      S.redo = [];
-      status(`undid: ${u.label} — redo cleared (this gesture mints new ids, so it cannot be replayed exactly)`);
-    }
+    const replay = await replayHistory(u.bodies || [u.body], session);
+    if (!replay || !sessionCurrent(session)) return;
+    const again = replay.inverse ? { ...u, forwards: replay.inverse } : u;
+    if (again.forward || again.forwards) S.redo.push(again);
+    else S.redo = [];
+    committed = true;
     await refreshDoc(session);
     if (!sessionCurrent(session)) return;
-    renderAndSwap(t0, performance.now(), last?.dirty, session);
-    drawHistory();
+    renderAndSwap(t0, performance.now(), replay.last?.dirty, session);
     status(`undid: ${u.label}`);
-  } catch (err) { if (sessionCurrent(session)) { S.undo.push(u); drawHistory(); status(`undo failed: ${err.message}`); } }
+  } catch (err) {
+    if (sessionCurrent(session)) {
+      if (err.historyIncomplete) { S.undo = []; S.redo = []; }
+      else if (!committed) S.undo.push(u);
+      await refreshDoc(session).catch(() => {});
+      if (sessionCurrent(session)) status(err.historyIncomplete ? "Undo incomplete. Reload project." : `undo failed: ${err.message}`);
+    }
+  } finally { if (sessionCurrent(session)) { S.historyBusy = false; drawHistory(); } }
 }
 
 async function redoOnce() {
   const session = captureSession();
+  if (noteEditBusy()) return;
   const u = S.redo.pop();
   if (!u) { status("nothing to redo"); return; }
+  S.historyBusy = true;
+  drawHistory();
   const t0 = performance.now();
+  let committed = false;
   try {
-    let last = null;
-    for (const b of u.forwards || [u.forward]) {
-      if (!sessionCurrent(session) || (b?.slug && b.slug !== session.slug)) return;
-      last = await api(b);
-      if (!sessionCurrent(session)) return;
-    }
-    /* An action that created something hands back the new id, so the entry
-     * that goes back on the undo stack undoes THIS object, not the one the
-     * gesture made the first time. */
-    const again = u.inverseFrom ? { ...u, ...u.inverseFrom(last) } : u;
+    const replay = await replayHistory(u.forwards || [u.forward], session);
+    if (!replay || !sessionCurrent(session)) return;
+    const again = replay.inverse ? { ...u, bodies: replay.inverse }
+      : u.inverseFrom ? { ...u, ...u.inverseFrom(replay.last) } : u;
     S.undo.push(again);
+    committed = true;
     await refreshDoc(session);
     if (!sessionCurrent(session)) return;
-    renderAndSwap(t0, performance.now(), last?.dirty, session);
-    drawHistory();
+    renderAndSwap(t0, performance.now(), replay.last?.dirty, session);
     status(`redid: ${u.label}`);
-  } catch (err) { if (sessionCurrent(session)) { S.redo.push(u); drawHistory(); status(`redo failed: ${err.message}`); } }
+  } catch (err) {
+    if (sessionCurrent(session)) {
+      if (err.historyIncomplete) { S.undo = []; S.redo = []; }
+      else if (!committed) S.redo.push(u);
+      await refreshDoc(session).catch(() => {});
+      if (sessionCurrent(session)) status(err.historyIncomplete ? "Redo incomplete. Reload project." : `redo failed: ${err.message}`);
+    }
+  } finally { if (sessionCurrent(session)) { S.historyBusy = false; drawHistory(); } }
+}
+
+/** Replay one gesture in order. Roll back acknowledged steps if a later one
+ * fails, so retry starts from the same state rather than half of a gesture. */
+async function replayHistory(bodies, session) {
+  const replies = [];
+  try {
+    for (const body of bodies) {
+      if (!sessionCurrent(session)) return null;
+      if (!body || (body.slug && body.slug !== session.slug)) throw new Error("History belongs to another project.");
+      const reply = await api(body);
+      if (!sessionCurrent(session)) return null;
+      replies.push(reply);
+    }
+    return { last: replies[replies.length - 1],
+      inverse: replies.every((r) => r.undo) ? replies.map((r) => r.undo).reverse() : null };
+  } catch (error) {
+    for (const reply of [...replies].reverse()) {
+      if (!sessionCurrent(session)) return null;
+      if (!reply.undo) { error.historyIncomplete = true; break; }
+      try { await api(reply.undo); } catch { error.historyIncomplete = true; break; }
+    }
+    throw error;
+  }
 }
 
 /** The stack, named, newest first — undo above the line, redo below it. */
 function drawHistory() {
+  paintSelInfo();
   const box = $("histBox");
   if (!box) return;
   box.innerHTML = "";
   $("histCnt").textContent = `${S.undo.length} undo · ${S.redo.length} redo`;
-  $("undoBtn").disabled = !S.undo.length;
-  $("redoBtn").disabled = !S.redo.length;
+  $("undoBtn").disabled = noteEditBusy() || !S.undo.length;
+  $("redoBtn").disabled = noteEditBusy() || !S.redo.length;
   $("undoN").textContent = S.undo.length ? String(S.undo.length) : "";
   $("redoN").textContent = S.redo.length ? String(S.redo.length) : "";
   $("undoBtn").title = S.undo.length
@@ -5697,7 +5926,9 @@ function setTrackParams(t, patch, label) {
 /* ═══════════════════════════════════════════ tracks, meter, tempo ═══════ */
 
 function selectTrack(id) {
+  if (S.historyBusy || S.editBusy) return;
   const changed = S.trackId !== id;
+  if (changed) cancelNoteGesture();
   S.trackId = id;
   S.sel.clear();
   S.devTarget = { kind: "track", id };
@@ -5713,8 +5944,8 @@ function paintSelInfo() {
   const t = selTrack();
   const count = selNotes().filter(({ n }) => S.sel.has(n.id)).length;
   $("noteSelection").textContent = t ? (count ? `${count} selected · ${t.name}` : `${t.name} · Select notes to edit`) : "Select a track to edit notes";
-  for (const id of ["notesDuplicate", "notesDelete", "notesClear", "quantBtn", "velApply", "velHuman"]) $(id).disabled = !count;
-  $("notesAll").disabled = !t || !selNotes().length;
+  for (const id of ["notesDuplicate", "notesDelete", "notesClear", "quantBtn", "velApply", "velHuman"]) $(id).disabled = noteEditBusy() || !count;
+  $("notesAll").disabled = noteEditBusy() || !t || !selNotes().length;
   const el = $("selInfo");
   if (el) {
     el.textContent = t
@@ -5737,6 +5968,7 @@ async function refreshDoc(session = captureSession()) {
   try { r = await get(`/api/daw/project/${encodeURIComponent(session.slug)}`); }
   catch (err) { if (!sessionCurrent(session) || read !== S.docRead) return false; throw err; }
   if (!sessionCurrent(session) || read !== S.docRead) return false;
+  cancelNoteGesture();
   S.proj = r.project;
   S.timeline = r.timeline;
   S.totalSeconds = r.totalSeconds;
@@ -5758,6 +5990,7 @@ async function refreshDoc(session = captureSession()) {
   paintClock();
   paintSelInfo();
   if (S.rollFit) fitRoll();
+  passageDock?.contextChanged();
   return true;
 }
 /** Set the loop without restarting the transport (used while re-reading). */
@@ -7092,8 +7325,10 @@ function onMidi(e) {
 
 $("midiDev").addEventListener("focus", initMidi);
 $("midiRecBtn").addEventListener("click", async () => {
+  if (noteEditBusy()) return;
   if (!MIDI.on) {
     if (!(await initMidi())) return;
+    if (noteEditBusy()) return;
     MIDI.on = true;
     MIDI.notes = [];
     MIDI.open.clear();
@@ -7106,20 +7341,27 @@ $("midiRecBtn").addEventListener("click", async () => {
   $("midiRecBtn").classList.remove("d-rec");
   if (!MIDI.notes.length) { status("MIDI rec off — nothing captured"); return; }
   const t0 = performance.now();
+  const session = captureSession(), track = S.trackId;
+  const edit = beginEdit();
+  if (!edit) return;
   try {
-    const r = await api({ action: "record_notes", slug: S.slug, track: S.trackId,
+    const r = await api({ action: "record_notes", slug: session.slug, track,
                           notes: MIDI.notes,
                           quantize_ticks: $("midiQuant").checked ? (S.grid || 240) : 0 });
-    await refreshDoc();
-    renderAndSwap(t0, performance.now(), r.dirty);
+    if (!sessionCurrent(session)) return;
+    await refreshDoc(session);
+    if (!sessionCurrent(session)) return;
+    renderAndSwap(t0, performance.now(), r.dirty, session);
     status(`dropped ${r.added.length} performed note(s)${$("midiQuant").checked ? " (quantized)" : " (unquantized)"}`);
     MIDI.notes = [];
-  } catch (err) { status(`The played notes were not added: ${err.message}`); }
+  } catch (err) { if (sessionCurrent(session)) status(`The played notes were not added: ${err.message}`); }
+  finally { finishEdit(edit); }
 });
 
 /* ───────────────────────────────────────────────────────── projects */
 
 async function loadProject(slug) {
+  cancelNoteGesture();
   ++S.projectEpoch;
   stop();
   ++S.aud.seq;
@@ -7141,6 +7383,8 @@ async function loadProject(slug) {
   S.lanes = [];
   S.undo = [];
   S.redo = [];
+  S.historyBusy = false;
+  S.editBusy = null;
   S.peaks.clear();
   S.at = 0;
   S.clickBuf = null;
@@ -7349,10 +7593,17 @@ import { mountInfo } from "./info.js";
 mountInfo("daw", "#dawInfoHost");
 
 import { mountEar } from "./dawear.js";
+import { mountDawPassages } from './daw-passages.js';
 import { appConfirm, appPrompt } from "./dialog.js";
 mountEar({
   getSlug: () => S.slug,
   onEdited: () => { refreshDoc().then(() => renderAndSwap()).catch(() => {}); },
+});
+passageDock = mountDawPassages($('panePassage'), {
+  getContext: () => ({ slug: S.slug, project: S.proj, trackId: S.trackId,
+    fromBar: Math.max(1, Math.floor(S.loopA ?? 1)),
+    toBar: Math.min(S.proj?.lengthBars || 1, Math.ceil(S.loopB ?? ((S.proj?.lengthBars || 1) + 1)) - 1) }),
+  onOpen: () => showDock('passage'), onRefresh: () => refreshDoc(),
 });
 
 /* THE EAR GETS A HOME. mountEar appends a floating pill bottom-right and a

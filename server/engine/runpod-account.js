@@ -4,10 +4,10 @@ const POD_FIELDS = `id name desiredStatus costPerHr imageName gpuCount volumeInG
   machine { gpuDisplayName gpuTypeId secureCloud }`;
 
 const TEMPLATE_IMAGE = "runpod/comfyui:1.4.7-cuda13.0";
-const TEMPLATE_PORTS = Object.freeze(["8080/http", "8188/http", "8888/http", "8787/http"]);
+const TEMPLATE_PORTS = Object.freeze(["8787/http"]);
 const TRAINING_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04";
 const TRAINING_PORTS = Object.freeze(["8888/http", "7860/http", "6006/http"]);
-const CUSTOM_MUSIC_PORTS = Object.freeze(["8188/http", "8888/http", "8787/http", "6006/http"]);
+const CUSTOM_MUSIC_PORTS = Object.freeze(["8888/http", "8787/http", "6006/http"]);
 export const AIPLAY_POD_TEMPLATES = Object.freeze([
   Object.freeze({ id: "images", name: "AIPLAY Images", volumeInGb: 60,
     readme: "AIPLAY image rendering with ComfyUI and worker port 8787. Use a 16 GB or larger NVIDIA GPU. Install the AIPLAY worker and your licensed image checkpoints after the first launch." }),
@@ -166,14 +166,14 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
       if (current.pods.some(pod => pod.name === name)) throw new Error(`A RunPod named "${name}" already exists. Refresh the list before retrying.`);
       const variables = { input: { cloudType, gpuCount: 1, volumeInGb, containerDiskInGb,
         minVcpuCount: 2, minMemoryInGb: 15, gpuTypeId, name, imageName,
-        dockerArgs: "", ports: "8080/http,8188/http,8888/http,8787/http", volumeMountPath: "/workspace" } };
+        dockerArgs: "", ports: "8787/http", volumeMountPath: "/workspace" } };
       const data = await graphql(`mutation AiplayCreatePod($input: PodFindAndDeployOnDemandInput) {
         podFindAndDeployOnDemand(input: $input) { ${POD_FIELDS} }
       }`, variables);
       const pod = data.podFindAndDeployOnDemand;
       if (!pod?.id) throw new Error("RunPod did not return the created Pod. Refresh the account before retrying.");
       return { pod: normalizeAccount({ myself: { pods: [pod] } }).pods[0],
-        next: "Open JupyterLab once the Pod is ready, then install the AIPLAY worker and models." };
+        next: "Open a Pod terminal or SSH session once it is ready, then install the AIPLAY worker and models." };
     } finally { creating = false; }
   }
   async function templates() {
@@ -219,6 +219,10 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
   return {
     status: async () => ({ configured: !!(await key()) }), connect, disconnect, overview, create,
     templates, createTemplates,
-    start: id => setRunning(id, true), stop: id => setRunning(id, false),
+    start: (id, confirm) => {
+      if (confirm !== "START PAID POD") throw new Error("Review the hourly price and confirm paid Pod startup.");
+      return setRunning(id, true);
+    },
+    stop: id => setRunning(id, false),
   };
 }

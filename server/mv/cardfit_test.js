@@ -276,19 +276,65 @@ console.log("\n  -- 3. a new video starts at its card's size, and the cut follow
 console.log("\n  -- 4. default steps are the matched count for the files on disk --");
 {
   const h3 = config.video.engines.h3;
-  const saved = { stepDefaults: h3.stepDefaults, refTurboSteps: h3.refTurboSteps, turboBuilds: h3.turboBuilds };
+  const saved = { stepDefaults: h3.stepDefaults, refTurboSteps: h3.refTurboSteps, turboBuilds: h3.turboBuilds,
+    plainBuilds: h3.plainBuilds, refBuilds: h3.refBuilds, refTurboLora: h3.refTurboLora, refTurboLora4: h3.refTurboLora4 };
+  /* The reference slots are named too, and refBuilds is config.js's reading of
+   * them: a band counts only with a file made for its count (the 8-step band
+   * with a 4-step file does not, review of the port, 2026-10-08). */
+  const REF = { 8: "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", 4: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors" };
   const disk = (standard, ref, builds = { three: false, four: standard === 4, eight: standard === 8 }) => {
     h3.stepDefaults = { fast: standard, standard, best: 20 }; h3.refTurboSteps = ref; h3.turboBuilds = builds;
+    h3.refTurboLora = REF[ref] ?? REF[4]; h3.refTurboLora4 = REF[4];
+    h3.plainBuilds = { ...builds }; h3.refBuilds = { four: ref === 4 || ref === 8, eight: ref === 8 };
   };
   try {
-    /* A PC with no speed-up file at all: config.js falls back to 4 (the
-     * Models screen's files), and the label says none is here yet instead of
-     * calling 4 "matched to the files on this PC". */
-    disk(4, null, { three: false, four: false, eight: false });
+    /* A PC with no speed-up file at all: every speed-up is optional since
+     * 2026-09-25, so the default is the full model's 20, and the label says
+     * so and that none is here yet, never "the count of the speed-up files"
+     * or "matched to the files on this PC". */
+    disk(20, null, { three: false, four: false, eight: false });
     const none = clipsteps.stepChoices();
-    ok("with no speed-up file on the PC, \"default\" says none is here yet, not that it is matched",
-      none.speedUpOnDisk === false && /None is on this PC yet/.test(none.options[0].label)
-      && !/matched to the speed-up files on this PC/.test(none.options[0].label), none.options[0].label);
+    ok("with no speed-up file on the PC, \"default\" is the full model and says none is here yet, not that it is matched",
+      none.speedUpOnDisk === false && /^default: 20, the full model: no speed-up file is on this PC yet/.test(none.options[0].label)
+      && !/matched to the speed-up files on this PC|the count of the speed-up files/.test(none.options[0].label), none.options[0].label);
+    ok("...and \"4\" says its file is not here",
+      /^4: fast build \([^)]*\); needs the 4-step speed-up file, which is not on this PC/.test(none.options[1].label), none.options[1].label);
+    /* TaoMate alone: a file is here, but it is Fast's, and the default is
+     * still the full model. */
+    disk(20, null, { three: true, four: false, eight: false });
+    const tao = clipsteps.stepChoices();
+    ok("with TaoMate alone, \"default\" is still the full model, not \"matched\"",
+      tao.speedUpOnDisk === true && /^default: 20, the full model: no speed-up file on this PC is made for a scene's default/.test(tao.options[0].label),
+      tao.options[0].label);
+    disk(20, 4, { three: false, four: false, eight: false });
+    const mixed = clipsteps.stepChoices();
+    ok("the reference row's file alone: 4 with cast pictures, the full model without, and neither called matched",
+      mixed.options[0].label === "default: 4 with cast pictures, 20 (the full model) without", mixed.options[0].label);
+    ok("...and \"4\" no longer says its file is missing", !/not on this PC/.test(mixed.options[1].label), mixed.options[1].label);
+    /* AMD, Intel and the CPU: config.js makes no per-path reading there
+     * (plainBuilds and refBuilds null), and the labels are main's words,
+     * exactly (Bucky's rule). This pins the branch that keeps them: a disk
+     * with no speed-up file is never called "matched", and "4" says nothing
+     * about its file. */
+    const buckyDisk = (standard, ref, builds) => { disk(standard, ref, builds); h3.plainBuilds = null; h3.refBuilds = null; };
+    const FOUR_40 = /^4: fast build \(about [\d.]+ min per 5 s scene at 1344x768, measured on a 16 GB card\)$/;
+    buckyDisk(20, null, { three: false, four: false, eight: false });
+    const amdNone = clipsteps.stepChoices();
+    ok("AMD, no speed-up file: main's \"None is on this PC yet\", never \"matched\"",
+      amdNone.speedUpOnDisk === false
+      && amdNone.options[0].label === "default: 20, the count of the speed-up files the Models screen fetches. None is on this PC yet: "
+        + "get them there first, or choose 20, which needs none", amdNone.options[0].label);
+    ok("...and AMD's \"4\" is main's label, with nothing added", FOUR_40.test(amdNone.options[1].label), amdNone.options[1].label);
+    buckyDisk(4, 4, { three: false, four: true, eight: false });
+    const amd44 = clipsteps.stepChoices();
+    ok("AMD, both 4-step files: main's \"matched\" label, and its \"4\"",
+      amd44.options[0].label === "default: 4, matched to the speed-up files on this PC" && FOUR_40.test(amd44.options[1].label),
+      JSON.stringify(amd44.options.slice(0, 2)));
+    buckyDisk(20, 4, { three: false, four: false, eight: false });
+    const amdMixed = clipsteps.stepChoices();
+    ok("AMD, the reference row's file alone: main's two counts, and its \"4\"",
+      amdMixed.options[0].label === "default: 4 with cast pictures, 20 without, matched to the files on this PC"
+      && FOUR_40.test(amdMixed.options[1].label), JSON.stringify(amdMixed.options.slice(0, 2)));
     disk(4, 4);
     const c4 = clipsteps.stepChoices();
     ok("the step times are plancost's measured rows, with the card they were measured on",
@@ -308,6 +354,24 @@ console.log("\n  -- 4. default steps are the matched count for the files on disk
     ok("with both 8-step files, 8 is the matched reference build and says so",
       /matched reference build, the one to use with cast references/.test(c88.options.find((o) => o.value === "8").label)
       && c88.defaultWithRefs === 8 && c88.defaultWithoutRefs === 8);
+    /* "8" by the file the reference path loads (NVIDIA): a fresh install's H3
+     * row brings the fl2v 8-step file, which refTurboLora falls back to, and
+     * no reference build. */
+    disk(8, 8); h3.refTurboLora = "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors";
+    const row8 = clipsteps.stepChoices().options.find((o) => o.value === "8").label;
+    ok("the H3 row alone: \"8\" does not call the fl2v 8-step file the matched reference build",
+      !/matched reference build/.test(row8) && /^8: the 8-step speed-up, with cast pictures too \(about [\d.]+ min per 5 s scene[^)]*\); the 8-step reference build, measured for keeping a character, is not on this PC$/.test(row8), row8);
+    disk(8, 4);
+    const refs4 = clipsteps.stepChoices().options.find((o) => o.value === "8").label;
+    ok("H3 + Video references: \"8\" says a scene with cast pictures runs 4",
+      refs4 === "8: without cast pictures; a scene with cast pictures runs 4, its reference build's own count (the 8-step reference build is not on this PC)", refs4);
+    buckyDisk(8, 8, { three: false, four: false, eight: true }); h3.refTurboLora = "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors";
+    ok("...and AMD keeps main's words for \"8\"",
+      /^8: matched reference build, the one to use with cast references/.test(clipsteps.stepChoices().options.find((o) => o.value === "8").label));
+    buckyDisk(8, 4, { three: false, four: false, eight: true });
+    ok("...main's words with the 4-step reference file too",
+      clipsteps.stepChoices().options.find((o) => o.value === "8").label === "8: the 8-step reference file is not on this PC, so 8 runs its 4-step file past its design point");
+    disk(8, 8);
     ok("a brief that names a count wins", clipsteps.clipStepsFor({ videoSteps: 20 }, { refs: true }) === 20);
     /* ...except below the reference file's own count with cast pictures: the
      * brief's 3 ran Hex Appeal v1 on the 4-step file at three steps, "burned"
@@ -317,6 +381,22 @@ console.log("\n  -- 4. default steps are the matched count for the files on disk
       && /^With cast pictures this scene runs 4 steps, not the brief's 3/.test(clipsteps.clipStepsNote({ videoSteps: 3 }, { refs: true }) || ""));
     ok("...the text path keeps the brief's 3, unsaid",
       clipsteps.clipStepsFor({ videoSteps: 3 }, { refs: false }) === 3 && clipsteps.clipStepsNote({ videoSteps: 3 }, { refs: false }) === null);
+    /* ...nor ABOVE it in the 8-step band where the reference build here is a
+     * 4-step file (H3's row with "Video references", NVIDIA): 8 is refused
+     * there with cast pictures, so a brief's 8 failed every such scene. */
+    disk(8, 4);
+    ok("H3 + Video references: a brief's 8 with cast pictures runs the 4-step reference build's own 4, and the shot says so",
+      clipsteps.clipStepsFor({ videoSteps: 8 }, { refs: true }) === 4
+      && /^With cast pictures this scene runs 4 steps, not the brief's 8: the reference build that loads is a 4-step file/.test(clipsteps.clipStepsNote({ videoSteps: 8 }, { refs: true }) || ""),
+      String(clipsteps.clipStepsNote({ videoSteps: 8 }, { refs: true })));
+    ok("...without cast pictures the brief's 8 stands, and 20 stands with them",
+      clipsteps.clipStepsFor({ videoSteps: 8 }, { refs: false }) === 8 && clipsteps.clipStepsFor({ videoSteps: 20 }, { refs: true }) === 20);
+    disk(8, 8);
+    ok("...and with the 8-step reference build here, 8 is 8", clipsteps.clipStepsFor({ videoSteps: 8 }, { refs: true }) === 8
+      && clipsteps.clipStepsNote({ videoSteps: 8 }, { refs: true }) === null);
+    buckyDisk(8, 4, { three: false, four: false, eight: false });
+    ok("AMD keeps main's rule: the brief's 8 stands with cast pictures",
+      clipsteps.clipStepsFor({ videoSteps: 8 }, { refs: true }) === 8 && clipsteps.clipStepsNote({ videoSteps: 8 }, { refs: true }) === null);
 
     /* The plan prices "default" as what runs, not as the bare 20-step model. */
     disk(4, 4);
@@ -345,6 +425,7 @@ console.log("\n  -- 4. default steps are the matched count for the files on disk
     ok("...and a count the brief names travels as it is", lent20?.steps === 20);
   } finally {
     h3.stepDefaults = saved.stepDefaults; h3.refTurboSteps = saved.refTurboSteps; h3.turboBuilds = saved.turboBuilds;
+    h3.plainBuilds = saved.plainBuilds; h3.refBuilds = saved.refBuilds; h3.refTurboLora = saved.refTurboLora; h3.refTurboLora4 = saved.refTurboLora4;
   }
   const gen = code(read("server/mv/generate.js"));
   ok("generate.js sends the matched count, and no literal 8, for a brief on default",
@@ -400,7 +481,8 @@ console.log("\n  -- 5. hybrid sends a scene with no cast to LTX only when LTX is
   } finally {
     shot.setLtxReady(null);
   }
-  ok("index.js hands the routes LTX's own readiness", /ltxReady: \(\) => videoReady\("ltx"\)\.ready,/.test(read("server/index.js")));
+  /* videoReadyFresh since setF: LTX's files are looked for once more first. */
+  ok("index.js hands the routes LTX's own readiness", /ltxReady: \(\) => videoReadyFresh\("ltx"\)\.ready,/.test(read("server/index.js")));
   ok("the shot inspector words the new warning as what it is",
     /w\.kind === "ltx-not-here"[\s\S]{0,120}Renders on H3: LTX is not on this PC/.test(read("web/mv.js")));
 }
@@ -431,7 +513,8 @@ const door = {
 };
 
 let reading = { gpu: { totalMb: 8188, vendor: "nvidia" }, ram: { totalMb: 32768 } };
-/* The plan's tool: a clip that waits until the test says how it ended. */
+/* The plan's tool: a clip that waits until the test says how it ended. Each
+ * call is a new settleClip, so a wait can tell the next call from the last. */
 let settleClip = null;
 const planTools = {
   mv_generate_clip: { run: () => new Promise((resolve, reject) => { settleClip = { resolve, reject }; }) },
@@ -462,6 +545,24 @@ const writeDoc = (slug, doc) => {
   writeFileSync(path.join(OUT, "mv", slug, "project.json"), JSON.stringify({ ...doc, slug }, null, 2));
 };
 const readDoc = (slug) => JSON.parse(readFileSync(path.join(OUT, "mv", slug, "project.json"), "utf8"));
+/* A read that waits its turn behind every write in flight: store.js's own
+ * queue, with a mutator that writes nothing (routes.js readSerialised). A raw
+ * read polled beside a writer makes its rename fail with EPERM on Windows. */
+const docNow = (slug) => store.updateProject(slug, () => false);
+/* WAIT FOR THE THING, NOT FOR A NUMBER OF MILLISECONDS. A fixed sleep loses
+ * its race when the pre-commit gate runs heavy lanes beside this one: a 60 ms
+ * settle read a plan still `running` on 2026-09-25, in a suite that passed
+ * 6/6 alone. `pred` is polled until it holds or `timeout` passes; either way
+ * the caller then asserts on the real state, so a wait that runs out still
+ * fails with it. */
+async function until(pred, { timeout = 5000, step = 10 } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    if (await pred()) return true;
+    if (Date.now() - t0 >= timeout) return false;
+    await new Promise((r) => setTimeout(r, step));
+  }
+}
 
 console.log("\n  -- 3b. the routes: create, read, brief, cut --");
 {
@@ -559,7 +660,13 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
     writeDoc(slug, doc);
     return p;
   };
-  const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+  /* The plan's tool was called again: the item it names is in flight, and
+   * settleClip is its own, not the last item's. */
+  const nextCall = (last) => until(() => settleClip && settleClip !== last);
+  /* The walk is over. The runner drops its in-flight entry in a finally and
+   * queues its last write (a plan's `done`) in the same tick, so a docNow read
+   * after this sees it. */
+  const walked = (slug) => until(() => !planrun.isRunning(slug));
   const reset = () => { art.current = null; art.queue = []; door.running = []; door.cancelled = []; };
 
   /* A. The clip is on the engine and the next one is waiting: both reached. */
@@ -567,9 +674,10 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
   const p = planOn("stopme", ["mv_generate_clip"], [
     { tool: "mv_generate_clip", args: { slug: "stopme", segment: "s1_0" } },
     { tool: "mv_generate_clip", args: { slug: "stopme", segment: "s1_1" } }]);
+  let last = settleClip;
   const start = await post({ action: "plan_run", slug: "stopme", planId: p.id, op: "start" });
   ok("the plan starts", start.code === 200, JSON.stringify(start.body).slice(0, 200));
-  await settle(30);
+  await nextCall(last);
   art.current = { file: "clip:mv_stopme_s1_0_abc", title: "Stop Me · scene 1" };
   art.queue = [{ file: "clip:mv_stopme_s1_1_def" }, { file: "clip:mv_other_s1_1_x" }];
   door.running = [{ runId: "run-art", via: "art.clip" }, { runId: "run-chat", via: "chat.turn" }];
@@ -582,8 +690,8 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
     art.queue.length === 1 && art.queue[0].file === "clip:mv_other_s1_1_x" && /Its clip waiting in the queue is taken off it/.test(stop.body?.note || ""),
     JSON.stringify(art.queue));
   settleClip?.reject(new Error("the engine did not finish (interrupted)"));
-  await settle();
-  const after = readDoc("stopme").plans[0];
+  await walked("stopme");
+  const after = (await docNow("stopme")).plans[0];
   ok("the plan stays STOPPED, not paused, when its cancelled clip fails", after.state === "cancelled", after.state);
   ok("...the running item says it was stopped while it ran", /stopped while it ran/.test(after.items[0].error || ""), after.items[0].error);
   ok("...the next one was never started", after.items[1].status === "skipped");
@@ -593,8 +701,9 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
   /* B. The clip was taken by the app's queue but never reached the engine. */
   reset();
   const pb = planOn("stopmiss", ["mv_generate_clip"], [{ tool: "mv_generate_clip", args: { slug: "stopmiss", segment: "s1_0" } }]);
+  last = settleClip;
   await post({ action: "plan_run", slug: "stopmiss", planId: pb.id, op: "start" });
-  await settle(30);
+  await nextCall(last);
   art.current = { file: "clip:mv_stopmiss_s1_0_abc", title: "Stop Miss · scene 1" };
   const miss = await post({ action: "plan_run", slug: "stopmiss", planId: pb.id, op: "stop" });
   ok("a clip that could not be reached on the engine is never called cancelled",
@@ -602,50 +711,60 @@ console.log("\n  -- 6. the plan card's Stop cancels its clip and says what it re
     && door.cancelled.length === 0, miss.body?.note);
   ok("...and the plan's saved note says the same", /could not be reached in time/.test(readDoc("stopmiss").plans[0].note || ""));
   settleClip?.reject(new Error("done elsewhere"));
-  await settle();
+  /* Over before the next plan starts: there is one GPU, so a walk still going
+   * here makes C's start refuse. */
+  await walked("stopmiss");
 
   /* C. The plan is drawing a picture: nothing here can cancel that. */
   reset();
   const pc = planOn("stoppic", ["mv_generate_asset", "mv_generate_clip"], [
     { tool: "mv_generate_asset", args: { slug: "stoppic", target: "character", id: "c1" } },
     { tool: "mv_generate_clip", args: { slug: "stoppic", segment: "s1_0" } }]);
+  last = settleClip;
   await post({ action: "plan_run", slug: "stoppic", planId: pc.id, op: "start" });
-  await settle(30);
+  await nextCall(last);
   const pic = await post({ action: "plan_run", slug: "stoppic", planId: pc.id, op: "stop" });
   ok("a picture item in flight is said to finish, and nothing after it runs",
     /The item it was running \(mv_generate_asset\) is not a clip, so it finishes; nothing after it runs/.test(pic.body?.note || ""), pic.body?.note);
   settleClip?.resolve({ ok: true });
-  await settle();
-  ok("...and the clip after it was skipped", readDoc("stoppic").plans[0].items[1].status === "skipped");
+  await walked("stoppic");
+  ok("...and the clip after it was skipped", (await docNow("stoppic")).plans[0].items[1].status === "skipped");
 
   /* D. The rail's Stop: it PAUSES the plan and keeps every approval. */
   reset();
   const pd = planOn("pauseme", ["mv_generate_clip"], [
     { tool: "mv_generate_clip", args: { slug: "pauseme", segment: "s1_0" } },
     { tool: "mv_generate_clip", args: { slug: "pauseme", segment: "s1_1" } }]);
+  last = settleClip;
   await post({ action: "plan_run", slug: "pauseme", planId: pd.id, op: "start" });
-  await settle(30);
+  await nextCall(last);
   const paused = await mv.pauseRunningPlans();
   ok("the rail's Stop reaches a running plan", paused.length === 1 && paused[0].slug === "pauseme" && paused[0].paused === true,
     JSON.stringify(paused));
   settleClip?.reject(new Error("interrupted"));
-  await settle();
-  const dp = readDoc("pauseme").plans[0];
+  await walked("pauseme");
+  const dp = (await docNow("pauseme")).plans[0];
   ok("...and PAUSES it, not cancels it", dp.state === "paused", dp.state);
   ok("...the item whose render it cancelled is approved again, so Run renders it",
     dp.items[0].status === "approved" && !dp.items[0].error && dp.items[1].status === "approved",
     JSON.stringify(dp.items.map((i) => [i.status, i.error])));
   ok("...and the note names the item whose render was cancelled, and says to press Run",
     /Paused by the Stop button, which cancelled the render of \S+ \(mv_generate_clip\)\. It is approved again[\s\S]*press Run to carry on/.test(dp.note || ""), dp.note);
+  last = settleClip;
   const resumed = await post({ action: "plan_run", slug: "pauseme", planId: pd.id, op: "resume" });
-  await settle(30);
+  await nextCall(last);
   ok("Run carries on from the stopped item", resumed.code === 200 && readDoc("pauseme").plans[0].items[0].status === "running",
     JSON.stringify(resumed.body).slice(0, 200));
+  last = settleClip;
+  last?.resolve({ ok: true });
+  /* The second clip answered only once it is in flight: answered before its
+   * call, the resolve landed on the first clip's settled promise and the
+   * second waited forever, a plan left `running`. */
+  await nextCall(last);
   settleClip?.resolve({ ok: true });
-  await settle();
-  settleClip?.resolve({ ok: true });
-  await settle();
-  ok("...to the end", readDoc("pauseme").plans[0].state === "done", readDoc("pauseme").plans[0].state);
+  await walked("pauseme");
+  const end = (await docNow("pauseme")).plans[0];
+  ok("...to the end", end.state === "done", end.state);
 
   const index = read("server/index.js");
   ok("/api/cancel pauses a plan only when asked (?plans=1), and BEFORE it cancels the art",
@@ -685,14 +804,16 @@ console.log("\n  -- 7. a clip past the wait is filed when it lands; a dropped or
   ok("...and the project says so in its Activity",
     readDoc("late").runs.some((r) => r.tool === "clip_late" && /still waiting in the queue/.test(r.outcome)));
   /* Now it lands. */
+  const linesBefore = (await docNow("late")).runs.length;
   art.queue = art.queue.filter((j) => j.file !== job.file);
   art.done.unshift(job);
   art.emit("clip", { file: job.file, clip: "late_scene.mp4", seconds: 9000 });
-  await new Promise((r) => setTimeout(r, 80));
-  const d = readDoc("late");
+  /* Filed in one write with its Activity line, so a new line is the write. */
+  await until(async () => (await docNow("late")).runs.length > linesBefore);
+  const d = await docNow("late");
   const row = d.clips.find((c) => c.segmentId === "s1_0");
   ok("when it lands it is filed onto the scene, a take like any other",
-    row?.clipFile === "late_scene.mp4" && row.status === "done" && row.takes.length === 1, JSON.stringify(row).slice(0, 200));
+    row?.clipFile === "late_scene.mp4" && row.status === "done" && row.takes.length === 1, JSON.stringify(row ?? null).slice(0, 200));
   ok("...and the Activity line says it landed after the wait",
     d.runs.some((r) => r.tool === "generate_clip" && /landed after the 2-hour wait/.test(r.outcome)));
 
@@ -700,18 +821,22 @@ console.log("\n  -- 7. a clip past the wait is filed when it lands; a dropped or
   art.queue = []; art.current = null; art.done = []; art.requests = [];
   let heard2 = null;
   const late2 = generateClip(deps, "late", { segmentId: "s1_0", seed: 8 }).catch((e) => { heard2 = e; });
-  await new Promise((r) => setTimeout(r, 10));
+  /* Wait for its request: under load a 10 ms sleep found none. The next poll
+   * lands before the 40 ms wait (which starts at the request) runs out, so
+   * art.current is set in time. */
+  await until(() => art.requests.length > 0);
   const job2 = art.requests[art.requests.length - 1];
   art.queue = art.queue.filter((j) => j.file !== job2.file);
   art.current = job2;
   await late2;
   ok("a clip on the engine past the wait is said to be still rendering",
     /Scene 1 is still rendering after 2 hours/.test(heard2?.message || ""), heard2?.message);
+  const linesBefore2 = (await docNow("late")).runs.length;
   art.done.unshift(job2);
   art.current = null;
   art.emit("failed", { file: job2.file, error: "out of memory" });
-  await new Promise((r) => setTimeout(r, 80));
-  const lost = readDoc("late").runs.find((r) => r.tool === "clip_late_lost");
+  await until(async () => (await docNow("late")).runs.length > linesBefore2);
+  const lost = (await docNow("late")).runs.find((r) => r.tool === "clip_late_lost");
   ok("...and when it then fails, the Activity line is its own: lost, not still waiting",
     lost && /was not filed \(out of memory\)/.test(lost.outcome), JSON.stringify(lost));
 

@@ -147,9 +147,10 @@ test("§2 the settings: tier sizes in H3's list, sol-attn on Fast, FastH3 Advanc
    * have it, and fastNote must be checked against both disk states. */
   const h3Fast = { ...h3, stepDefaults: { ...h3.stepDefaults, fast: 3 } };
   /* The Fast chip's note follows the saved sparse attention: never "as sharp" while sol-attn runs. */
-  assert.match(plain.fastNote(h3Fast), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
-  assert.doesNotMatch(plain.fastNote(h3Fast), /as sharp/);
-  assert.equal(plain.fastNote({ ...h3Fast, sparse: "off" }), "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time.");
+  const fastInstalled = { ...h3, stepDefaults: { fast: 3, standard: 8, best: 20 } };
+  assert.match(plain.fastNote(fastInstalled), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
+  assert.doesNotMatch(plain.fastNote(fastInstalled), /as sharp/);
+  assert.equal(plain.fastNote({ ...fastInstalled, sparse: "off" }), "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time.");
   assert.match(plain.fastNote({ ...h3, stepDefaults: { fast: 4, standard: 8, best: 20 } }), /^Install the Fast setting for H3/);
   assert.equal(plain.fastNote(fast), null, "FastH3 has no quality chips");
   assert.equal(plain.fastNote(config.video.engines.ltx), null);
@@ -335,6 +336,8 @@ test("§5 the plan: steps and sparse attention", () => {
     steps: 8,
     stepDefaults: { fast: 3, standard: 8, best: 20 },
     turboBuilds: { three: true, four: true, eight: true },
+    plainBuilds: { three: true, four: true, eight: true },
+    refBuilds: { four: true, eight: true },
     turboLora3: "taomate_h3_3step_comfy.safetensors",
     turboLora4: "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
     refTurboLora4: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
@@ -368,8 +371,12 @@ test("§5 the plan: steps and sparse attention", () => {
   assert.equal(small.warnings.length, 0);
   assert.equal(small.notes.find((n) => n.id === "sparse-untried")?.text,
     "Sparse attention runs on this clip; it was measured at 1344x768 only, so its speed and look at 960x544 are not yet tried.");
-  assert.deepEqual(plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 }, { engineKey: "h3", eng, h3: status(16, 32) }).notes
-    .filter((n) => n.id !== "runs"), [], "at the measured size: nothing to add but the runs line");
+  const atSparseLabSize = plain.videoPlan({ prompt: "a lamp", width: 1344, height: 768, seconds: 8, steps: 3 },
+    { engineKey: "h3", eng, h3: status(16, 32) });
+  assert.equal(atSparseLabSize.notes.some((n) => n.id === "sparse-untried"), false,
+    "the sparse-attention caveat does not appear at its measured size");
+  assert.equal(atSparseLabSize.notes.some((n) => n.id === "time-extrapolated"), true,
+    "the independent render-time curve is still extrapolated at eight seconds");
   assert.equal(plain.videoPlan({ prompt: "a lamp", steps: 3, sparse: "sol-attn" }, { engineKey: "h3", eng, h3: null, control: true }).sparse,
     "off", "video-to-video stays dense");
   const fast = plain.videoPlan({ prompt: "a lamp", steps: 3 }, { engineKey: "h3", eng, h3: null });
@@ -398,7 +405,10 @@ test("§5 the plan: steps and sparse attention", () => {
 
 test("§5 the door renders the plan and says it; make_clip carries sparse and check_only", async () => {
   const index = read("./index.js");
-  assert.match(index, /if \(b\.action === "check"\) \{[\s\S]{0,400}const plan = videoPlan\(b, \{ engineKey: gate\.engine, eng: videoEngine\(gate\.engine\),/);
+  const videoDoor = index.indexOf('if (p === "/api/video"');
+  const checkDoor = index.slice(index.indexOf('if (b.action === "check") {', videoDoor), index.indexOf('if (b.action === "create") {', videoDoor));
+  assert.match(checkDoor, /await h3RefModService\.checkRender\(b, \{ engine: gate\.engine \}\)/);
+  assert.match(checkDoor, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3 \}, \{ engineKey: gate\.engine, eng: videoEngine\(gate\.engine\),/);
   assert.match(index, /prompt: plan\.prompt,/);
   assert.match(index, /seconds: plan\.seconds,/);
   assert.match(index, /width: plan\.width,\n\s+height: plan\.height,/);
@@ -421,8 +431,9 @@ test("§5 the door renders the plan and says it; make_clip carries sparse and ch
   assert.match(t.inputSchema.properties.attention.description, /Default: kitchen/);
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const posts = [];
   const api = async (method, p, body) => {
     if (method === "POST") posts.push(body);

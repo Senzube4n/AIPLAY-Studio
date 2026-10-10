@@ -4,7 +4,7 @@
 in the document that is kept up to date** — everything below was written as a
 design and still reads as one.
 
-**Updated, 2026-09-24** — the identity, the friend list, the courier, the two
+**Updated, 2026-09-27** — the identity, the friend list, the courier, the two
 units and the lending loop, with a screen, two doors and twenty-four tools:
 
 | | |
@@ -74,9 +74,9 @@ Each is now fixed where the renderer's own function answers it:
   the matching file named from the engine's own table and the Models screen's
   catalogue (which offers no 8-step file). The borrower's returned take is
   noted by the same rule, with where to order the matching count.
-- The plan an accept proposes is the **Plan card in Music video**, on the new
+- The plan an accept proposes is the **Plan card in Production**, on the new
   "Order … from <name>" project — there is no "Plan screen" — and Collab's
-  **Open its plan in Music video** goes there. The screen's name is read off the
+  **Open its plan in Production** goes there. The screen's name is read off the
   rail on the page, and from one constant pinned to the rail on the server
   (`lending.js` `WORKFLOW_SCREEN`). The lender's role reads "lending
   friend: we render single scenes for each other" (stored value unchanged).
@@ -91,6 +91,18 @@ The manual lending routes can prepare, accept, render and return a scene. A real
 two-PC render round-trip still needs acceptance testing; CPU route tests do not
 prove that a friend's installed engine completes the job.
 
+**Named reference packs travel through the scene-order path.** The selected
+views keep the sender's Picture order and frozen prompt; the receiver groups
+them by their original asset name and restores the scene's chosen roles. Image
+refs add `assetName` and `referenceRole` beside the version 1 fields, with unique
+view labels and canonical attachment order for older receivers. Disk names use
+the image digest and an optional role from a fixed local enum. Each reference
+Picture slot needs a separate source filename; an order that reuses one is
+refused before staging. Copy a shared image to separate files before lending the
+scene. Equal bytes under distinct filenames remain supported. Whole-project manifests also find pack-only
+files through the existing recursive document walk; this does not add a
+whole-project importer or picture bytes to those metadata bundles.
+
 **Episode planning and order history are built.** Local plans support scene
 owners, stages, dependencies, review notes and allocation across peers. The
 planner reads outgoing order records by project and scene, displays every
@@ -103,6 +115,9 @@ of a render already accepted. Return states are historical order records; a
 take may since have been adopted or discarded. Resource cards remain snapshots,
 and remote availability and live progress remain unknown. A failed order-book
 read is an error, never an empty history. Refresh the plan to read newer records.
+Outgoing scene orders retain their sealed `.aiplay` file location in the order
+book. If Prepare loses its response, check **Outbox** before trying again;
+**Show file** and **Copy location** recover the package for manual delivery.
 
 It answers one question the owner asked on 2026-09-20 — *could three friends make
 an episode together, and could one of them borrow the others' idle cards?* — and

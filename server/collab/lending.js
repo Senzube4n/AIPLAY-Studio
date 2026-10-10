@@ -27,6 +27,9 @@
  *                     `trapBand`, the rule the Plan card and the borrower's
  *                     notes use too, and names files from the engine's own
  *                     table of them and the Models screen's own catalogue.
+ *                     A count the runner refuses outright (a speed-up not
+ *                     on disk, video-plain.js speedupNeededAtClip) is said
+ *                     first, with the row the refusal names.
  *   minutes a day     the friend row stored a number nothing read. Accept now
  *                     checks it against what this card has spent (timed here)
  *                     and promised (estimated by the plan's own estimator).
@@ -37,15 +40,17 @@
  * touched: `steps` stays what the owner asked for.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 
 import { config, loraStepsOf } from "../config.js";
+import { scanBasesSync, findShelfModel } from "../localmodels.js";
+import { imageCostSeconds } from "../art.js";
 import { CATALOG } from "../models.js";
 import { alignFrames, h3TurboLoraFor, videoEngine } from "../workflow.js";
 import { findBoard, resolveShot } from "../mv/shot.js";
 import { estimateOne } from "../mv/plan.js";
 import { trapBand } from "../mv/plancost.js";
+import { speedupNeededAtClip } from "../video-plain.js";
 import { ERRAND_SEGMENT, errandDoc, errandName } from "./errand.js";
 import { orderPlanItem } from "./order.js";
 import { H3_MV_SCREEN } from "../h3tier.js";
@@ -151,9 +156,8 @@ export function withFrameGrid(orderRow) {
 export function loraOnDisk(name, cfg = config) {
   if (!name) return false;
   const bases = [cfg.modelsDir, ...(Array.isArray(cfg.modelsAlso) ? cfg.modelsAlso : [])].filter(Boolean);
-  return bases.some((b) => {
-    try { return fs.statSync(path.join(b, "loras", String(name))).size > 0; } catch { return false; }
-  });
+  try { return !!findShelfModel(scanBasesSync(bases), "loras", name); }
+  catch { return false; }
 }
 
 /**
@@ -221,6 +225,27 @@ export function speedUpCheck({ engine, steps, refs = false } = {}, { cfg = confi
   const needs = builds.files.filter((name) => loraStepsOf(name) === n);
   const out = { ...quiet, loads: choice.lora, madeFor, present, builds: builds.steps, needs };
   const pathWords = refs ? "with reference pictures" : "without reference pictures";
+  /* THE RUNNER'S OWN REFUSAL FIRST. A lent errand renders through
+   * ArtRunner.#clip, which refuses a count whose speed-up is not on disk
+   * (video-plain.js speedupNeededAtClip, read from the engine's settings as
+   * the runner reads them). Where it would refuse, the card says so before
+   * anybody accepts, and names the row the refusal names. It used to stay
+   * quiet about a 4-step order on a PC with only the 8-step file (a file run
+   * below its count says nothing here), so the minutes were promised and the
+   * render refused; and for a 3-step order it offered the 4-step file while
+   * the runner asked for TaoMate. Null on AMD, Intel and the CPU, where this
+   * card reads as main has it (Bucky's rule); a file that is not on disk there
+   * is still said just below, as the runner refuses it on every card. */
+  const refused = speedupNeededAtClip(v, { steps: n, refs: !!refs });
+  if (refused) {
+    const row = CATALOG.find((r) => r.id === refused.row);
+    const what = refused.build === 3 ? "the TaoMate 3-step speed-up (182 MB)" : `H3's ${refused.build}-step speed-up (1.96 GB)`;
+    return { ...out, problem: "missing", needsModel: refused.row,
+      why: `This scene renders on H3 at ${n} steps ${pathWords}, which needs ${what}, and it is not on this PC, so the render would be refused. `
+        + (row
+          ? `Download it from the Models screen (“${row.label}”) before you approve the plan.`
+          : "The Models screen does not offer it, so leave this order unaccepted and tell your friend.") };
+  }
   if (!present) {
     const row = catalogue(choice.lora);
     return { ...out, problem: "missing",
@@ -275,6 +300,36 @@ export function estimateErrand(doc) {
 }
 
 const round1 = (x) => Math.round(x * 10) / 10;
+const reserve1 = (x) => Math.ceil(Number(x) * 10) / 10;
+
+/** Reserve a standalone H3 job using the same frame grid and cost curve that
+ * ArtRunner uses to size its render deadline. This is an estimate, not a live
+ * speed reading; round up so several accepted jobs cannot lose small fractions
+ * of a minute from the daily allowance. */
+export function estimateVideoJobMinutes(job, cfg = config) {
+  const j = job?.job || job;
+  if (!j || j.engine !== "h3" || ![j.width, j.height, j.seconds, j.steps].every((v) => Number.isFinite(Number(v)) && Number(v) > 0)) return null;
+  const v = { ...cfg.video, ...cfg.video?.engines?.h3 };
+  if (![v.fps, v.costRate, v.costExponent].every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)
+      || typeof v.costFixedSeconds !== "number" || !Number.isFinite(v.costFixedSeconds) || v.costFixedSeconds < 0) return null;
+  const fps = Number(v.fps);
+  const frames = alignFrames(Number(j.seconds), fps, "h3");
+  const seconds = Number(v.costFixedSeconds)
+    + Number(v.costRate) * Math.pow((Number(j.width) * Number(j.height) * frames) / 1e6, Number(v.costExponent)) * Number(j.steps) / 8;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds / 6) / 10 : null;
+}
+
+/** The image renderer's own quiet-card estimate, with the signed references
+ * represented only by their count. No peer-supplied paths or model filenames
+ * enter the estimate. */
+export function estimateImageJob(imageOrder) {
+  const job = imageOrder?.job;
+  if (!job || job.engine !== "qwen-image-2.1" || !Array.isArray(job.references)) return null;
+  const seconds = imageCostSeconds({ engine: job.engine, steps: job.steps, count: job.count,
+    width: job.width, height: job.height, cfg: job.cfg,
+    refImages: job.references.map((ref) => ref.sha256), refResolution: 1024, draft: false });
+  return Number.isFinite(seconds) && seconds > 0 ? { minutes: seconds / 60, basis: "estimate" } : null;
+}
 
 /**
  * What this card has already given one friend today.
@@ -289,13 +344,97 @@ const round1 = (x) => Math.round(x * 10) / 10;
  * because an accepted scene will spend this card whether or not it has
  * started. An older unrendered errand is not counted until it renders —
  * otherwise one plan nobody approved would shrink every later day for good.
+ * A failed or stopped H3 attempt with a runner clock counts its measured time;
+ * a job stopped while still queued has no clock and spent no render time.
  */
 export async function lentToday({ rows = [], readProject, fp, now = Date.now(), except = null } = {}) {
   const since = startOfDay(now);
   const who = String(fp || "").toLowerCase();
-  const out = { measuredMinutes: 0, rendered: 0, withWait: 0, pendingMinutes: 0, pending: 0, unpriced: 0 };
+  const out = { measuredMinutes: 0, rendered: 0, failedVideoRuns: 0, withWait: 0,
+    pendingMinutes: 0, pending: 0, pendingVideo: 0, pendingImages: 0,
+    pendingImageMinutes: 0, unpriced: 0, untimed: 0, untimedMinutes: 0 };
   for (const row of rows) {
-    if (!row || String(row.from?.fp || "").toLowerCase() !== who || (except && row.id === except)) continue;
+    if (!row || String(row.from?.fp || "").toLowerCase() !== who) continue;
+    if (row.jobType === "video") {
+      /* A finished standalone job remains `queued` until its MP4 is sealed.
+       * Its completion record, not its orderbook state, is the render receipt. */
+      if (row.renderStatus === "complete") {
+        if (Number(row.renderCompletedAt) >= since) {
+          out.rendered++;
+          if (row.renderRunMs !== null && row.renderRunMs !== undefined && Number.isFinite(Number(row.renderRunMs)) && Number(row.renderRunMs) >= 0)
+            out.measuredMinutes += Number(row.renderRunMs) / 60000;
+          else {
+            /* Older completion rows lack a run clock. Keep their reservation
+             * as an estimate, never request-to-finish time (which includes a
+             * potentially long wait behind someone else's queue). */
+            out.untimed++;
+            const estimate = Number(row.renderEstimatedMinutes);
+            if (Number.isFinite(estimate) && estimate > 0) out.untimedMinutes += estimate;
+          }
+        }
+        continue;
+      }
+      if (row.state === "failed" && ["failed", "stopped", "wrong-output"].includes(row.renderStatus)) {
+        if (Number(row.renderFailedAt) >= since
+            && typeof row.renderRunMs === "number" && Number.isFinite(row.renderRunMs) && row.renderRunMs >= 0) {
+          out.measuredMinutes += row.renderRunMs / 60000;
+          out.failedVideoRuns++;
+        }
+        continue;
+      }
+      if (except === row.id || !["landed", "rendering", "queued", "returning"].includes(row.state) || !(Number(row.landedAt) >= since)) continue;
+      out.pending++;
+      out.pendingVideo++;
+      const estimate = Number(row.renderEstimatedMinutes);
+      if (Number.isFinite(estimate) && estimate > 0) out.pendingMinutes += estimate;
+      else out.unpriced++;
+      continue;
+    }
+    if (row.jobType === "image") {
+      /* A failed attempt still spent the card. The render's own terminal event
+       * records each attempt, including retries, so today's measured time is
+       * counted even when this same order is the one being reconsidered. */
+      const runs = Array.isArray(row.imageRuns) && row.imageRuns.length ? row.imageRuns
+        : ["complete", "failed", "stopped"].includes(row.renderStatus)
+          ? [{ at: row.renderCompletedAt || row.renderFailedAt, durationMs: row.renderDurationMs }]
+          : [];
+      for (const run of runs) {
+        if (!(Number(run?.at) >= since)) continue;
+        out.rendered++;
+        if (typeof run.durationMs === "number" && Number.isFinite(run.durationMs) && run.durationMs >= 0)
+          out.measuredMinutes += run.durationMs / 60000;
+        else {
+          /* Older image rows have no render clock. The accepted estimate is
+           * more honest than request-to-finish time, which includes queue wait. */
+          out.untimed++;
+          const reserved = Number(row.renderEstimatedMinutes);
+          const estimate = Number.isFinite(reserved) && reserved > 0 ? reserved : reserve1(estimateImageJob(row.imageJob)?.minutes);
+          if (estimate) out.untimedMinutes += estimate;
+          else out.unpriced++;
+        }
+      }
+      if (except === row.id || Number(row.landedAt) < since
+          || !["claimed", "landed", "rendering", "queued"].includes(row.state)
+          || row.renderStatus === "complete") continue;
+      const reserved = Number(row.renderEstimatedMinutes);
+      const estimate = Number.isFinite(reserved) && reserved > 0
+        ? { minutes: reserved } : estimateImageJob(row.imageJob);
+      out.pending++; out.pendingImages++;
+      if (estimate) { const minutes = reserve1(estimate.minutes); out.pendingMinutes += minutes; out.pendingImageMinutes += minutes; }
+      else out.unpriced++;
+      continue;
+    }
+    if (except && row.id === except) continue;
+    /* A movie-scene accept reserves minutes before its errand project is
+     * built. During that short claim, another image or H3 accept must see the
+     * reservation, even though the scene has no project slug yet. */
+    if (row.state === "claimed" && !row.jobType && Number(row.landedAt) >= since) {
+      out.pending++;
+      const reserved = Number(row.renderEstimatedMinutes);
+      if (Number.isFinite(reserved) && reserved > 0) out.pendingMinutes += reserved;
+      else out.unpriced++;
+      continue;
+    }
     if (!["landed", "rendered"].includes(row.state) || !row.slug) continue;
     const doc = await readProject(row.slug).catch(() => null);
     /* A project deleted by hand has nothing left to spend and nothing to count. */
@@ -318,21 +457,33 @@ export async function lentToday({ rows = [], readProject, fp, now = Date.now(), 
   }
   out.measuredMinutes = round1(out.measuredMinutes);
   out.pendingMinutes = round1(out.pendingMinutes);
+  out.pendingImageMinutes = round1(out.pendingImageMinutes);
+  out.untimedMinutes = round1(out.untimedMinutes);
   return out;
 }
 
 /** What `lentToday` found, as the sentence both the accept card and the
  *  Friends row show. Composed here, so the page only displays it. */
 export function usedSentence(used) {
-  const parts = [
-    used.rendered
-      ? `${used.measuredMinutes} min timed on this card today${used.withWait ? ` (${used.withWait === 1 ? "one render was" : `${used.withWait} renders were`} timed from request to finish, so that includes waiting in the queue)` : ""}`
-      : "nothing rendered for them yet today",
-    used.pending
-      ? `${used.pending} scene${used.pending === 1 ? "" : "s"} accepted today still to render (${used.unpriced ? "at least" : "about"} ${used.pendingMinutes} min${used.unpriced ? `; ${used.unpriced} with no estimate` : ""})`
-      : "",
-  ];
-  return parts.filter(Boolean).join(", ");
+  const parts = [];
+  let rendered = used.rendered || used.failedVideoRuns
+    ? used.measuredMinutes + " min timed on this card today" : "nothing rendered for them yet today";
+  if (used.failedVideoRuns) rendered += " (" + used.failedVideoRuns + " failed or stopped video "
+    + (used.failedVideoRuns === 1 ? "attempt" : "attempts") + " included)";
+  if (used.withWait) rendered += " (" + (used.withWait === 1 ? "one render was" : used.withWait + " renders were")
+    + " timed from request to finish, so that includes waiting in the queue)";
+  if (used.untimed) rendered += "; " + used.untimed + " render attempt" + (used.untimed === 1 ? " has" : "s have")
+    + " no recorded render time (" + used.untimedMinutes + " min reserved estimate)";
+  parts.push(rendered);
+  const sceneCount = Math.max(0, used.pending - (used.pendingVideo || 0) - (used.pendingImages || 0));
+  const kinds = [];
+  if (sceneCount) kinds.push(sceneCount + " scene" + (sceneCount === 1 ? "" : "s"));
+  if (used.pendingVideo) kinds.push(used.pendingVideo + " video job" + (used.pendingVideo === 1 ? "" : "s"));
+  if (used.pendingImages) kinds.push(used.pendingImages + " image job" + (used.pendingImages === 1 ? "" : "s"));
+  if (kinds.length) parts.push(kinds.join(" + ") + " accepted today still to render ("
+    + (used.unpriced ? "at least" : "about") + " " + used.pendingMinutes + " min"
+    + (used.unpriced ? "; " + used.unpriced + " with no estimate" : "") + ")");
+  return parts.join(", ");
 }
 
 /**
@@ -343,17 +494,18 @@ export function usedSentence(used) {
  * ⚠ A SCENE WITH NO ESTIMATE IS NOT A SCENE THAT COSTS NOTHING. Its minutes are
  * left out of the total, and the total then says "at least", never "about".
  */
-export async function budgetCheck({ peer, orderDoc, rows = [], readProject, now = Date.now() } = {}) {
+export async function budgetCheck({ peer, orderDoc, imageOrder, rows = [], readProject, now = Date.now() } = {}) {
   const allowance = Number(peer?.lendMinutesPerDay) || 0;
   const name = peer?.nickname || String(peer?.fp || "").slice(0, 8) || "this friend";
-  const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: orderDoc?.id });
-  const est = estimateErrand(resolveErrand(orderDoc).doc);
-  const thisOne = est ? round1(Number(est.minutes)) : null;
-  const total = round1(used.measuredMinutes + used.pendingMinutes + (thisOne ?? 0));
-  const unknown = thisOne === null || used.unpriced > 0;
+  const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: imageOrder?.id || orderDoc?.id });
+  const est = imageOrder ? estimateImageJob(imageOrder) : estimateErrand(resolveErrand(orderDoc).doc);
+  const thing = imageOrder ? "image job" : "scene";
+  const thisOne = est ? (imageOrder ? reserve1(est.minutes) : round1(Number(est.minutes))) : null;
+  const total = round1(used.measuredMinutes + used.untimedMinutes + used.pendingMinutes + (thisOne ?? 0));
+  const unknown = thisOne === null || used.unpriced > 0 || used.untimed > 0;
   const cost = thisOne === null
-    ? "this scene has no estimate"
-    : `this scene is about ${thisOne} min more (${est.basis === "measured" ? "timed on earlier renders here" : "an estimate, not timed on this card"})`;
+    ? `this ${thing} has no estimate`
+    : `this ${thing} is about ${thisOne} min more (${est.basis === "measured" ? "timed on earlier renders here" : "an estimate, not timed on this card"})`;
   const tally = `${unknown ? "at least" : "about"} ${total} min in all`;
   const base = { allowance, used, thisOne, total, unknown };
   if (allowance <= 0) {
@@ -361,8 +513,31 @@ export async function budgetCheck({ peer, orderDoc, rows = [], readProject, now 
       why: `You give ${name} 0 minutes of your card a day (Collab → Friends, “Minutes of my card per day”), so accepting is a decision to make on purpose. ${cost[0].toUpperCase()}${cost.slice(1)}.` };
   }
   const why = `${name} may use ${allowance} minutes of your card a day: ${usedSentence(used)}, and ${cost} — ${tally}.`;
+  if (thisOne === null || used.unpriced > 0) return { ...base, over: true, reason: "budget-unpriced", why };
   if (total > allowance) return { ...base, over: true, reason: "budget-spent", why };
   return { ...base, over: false, reason: null, why };
+}
+
+/** The same peer allowance for a standalone signed Video job. This estimate is
+ * stored on the landed row, so the next accepted job counts this reservation
+ * even before a GPU run exists. Once complete, lentToday switches to runMs. */
+export async function budgetCheckVideoJob({ peer, orderDoc, rows = [], readProject, now = Date.now(), cfg = config } = {}) {
+  const allowance = Number(peer?.lendMinutesPerDay) || 0;
+  const name = peer?.nickname || String(peer?.fp || "").slice(0, 8) || "this friend";
+  const used = await lentToday({ rows, readProject, fp: peer?.fp, now, except: orderDoc?.id });
+  const thisOne = estimateVideoJobMinutes(orderDoc, cfg);
+  const total = round1(used.measuredMinutes + used.untimedMinutes + used.pendingMinutes + (thisOne ?? 0));
+  const unknown = thisOne === null || used.unpriced > 0 || used.untimed > 0;
+  const cost = thisOne === null ? "this video job has no estimate" : `this video job reserves about ${thisOne} min until its render time is measured`;
+  const base = { allowance, used, thisOne, total, unknown };
+  if (allowance <= 0) return { ...base, over: true, reason: "budget-zero",
+    why: `You give ${name} 0 minutes of your card a day (Collab → Friends, “Minutes of my card per day”), so accepting is a decision to make on purpose. ${cost[0].toUpperCase()}${cost.slice(1)}.` };
+  if (thisOne === null) return { ...base, over: true, reason: "budget-unpriced",
+    why: `This machine cannot estimate the GPU time for this H3 video job, so it cannot reserve an honest amount of ${name}'s ${allowance}-minute daily allowance. Accept only after reviewing the job and choosing an explicit override.` };
+  if (used.unpriced > 0) return { ...base, over: true, reason: "budget-unpriced",
+    why: `${name} already has ${used.unpriced} accepted ${used.unpriced === 1 ? "job" : "jobs"} with no time estimate today. ${usedSentence(used)}. Review the total and choose an explicit override before reserving this video job.` };
+  const why = `${name} may use ${allowance} minutes of your card a day: ${usedSentence(used)}, and ${cost} — ${unknown ? "at least" : "about"} ${total} min in all.`;
+  return { ...base, over: total > allowance, reason: total > allowance ? "budget-spent" : null, why };
 }
 
 /* ───────────────────────────────────────── the borrower's half: filing a take */

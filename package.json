@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@pixiv/three-vrm": "3.5.5",
+    "ag-psd": "31.0.2",
     "gltf-validator": "2.0.0-dev.3.10",
     "three": "0.185.1",
     "ws": "^8.18.0"
@@ -36,8 +37,8 @@
       "repo": "nemesisone-dev/AIPLAY-Studio",
       "upstream": {
         "repo": "Senzube4n/AIPLAY-Studio",
-        "commit": "393bcdf2dbb40296a746f1533189f3da29978340",
-        "date": "2026-09-22T03:33:13+02:00"
+        "commit": "3ad03df71866812a3171c5191500fd1afce45afc",
+        "date": "2026-10-08T17:41:21+02:00"
       }
     }
   }

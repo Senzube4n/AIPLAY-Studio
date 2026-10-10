@@ -1,5 +1,8 @@
+import {createBatchMusicBridge} from './batch-music-context.js';
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
+import { createStandRigRoutes } from './standrig/routes.js';
+import { createStandRigPsdRoutes } from './standrig/psd-export-routes.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
  * AIPLAY Studio — local server.
@@ -12,6 +15,8 @@ import http from "node:http";
 import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile, realpath } from "node:fs/promises";
 import { ImgWorker } from "./imgworker.js";
 import { createImageEditor } from "./image-editor.js";
+import { vectorizeImage, vectorReviewImage } from "./vectorize.js";
+import { importVectorSource, MAX_VECTOR_SOURCE_BYTES } from "./vector-import.js";
 import { requestImageAndWait } from "./image-job.js";
 import { createReadStream, statSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -19,10 +24,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshH3Speedups } from "./config.js";
+import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshVideoPicks } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
+import { createCommunityRoutes } from "./music/community-tools.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
+import { createDawPassages, createDawPassageRoutes } from "./music/daw-passages.js";
+import { createTakeComparisonRoutes } from "./music/take-comparison.js";
+import { createSharedCueRoutes } from "./music/shared-cues.js";
+import { readProject as readDawPassageProject } from "./daw/store.js";
+import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
  * self-explaining quality selector, and the turbo toggles. Additive — it owns
@@ -33,7 +44,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, yue2ComfySamplingReceipt, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -43,20 +54,24 @@ import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
  * of an image/video MODEL throughout this file, and a bare import would be
  * shadowed inside the very handlers that need the door. */
 import { engine as engineDoor } from "./engine/client.js";
-import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings } from "./qwen-image.js";
+import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, QWEN_IMAGE_FILES, qwenImageSettings } from "./qwen-image.js";
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
+import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
+import { stageRefModImage } from "./refmod-stage.js";
+import { validateYue2StyleAdapter, yue2StyleAdapterFor, yue2StyleAdapterFromProbe } from "./music/yue2-style-adapters.js";
 /* RunPod rendering (the launcher's "RunPod GPU" mode): the worker client, the
  * account (Pods and billing) and their routes, contributed by nemesisone-dev. */
 import { createRemoteRoutes } from "./engine/remote-routes.js";
 import { createCustomModelRoutes } from "./music/custom-model-routes.js";
+import { awaitRemoteMusicJob } from "./engine/remote-music.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { isNativeLibraryWav } from "./library-wav.js";
-import { BatchRunner, plannedSongs } from "./batch.js";
+import { BatchRunner, plannedPaidSongs } from "./batch.js";
 import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
-import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed } from "./art.js";
+import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed, clipSpeedupNeeded, extendSteps } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
 import { whisperPythonMissing, pythonVerdict } from "./lrc.js";
 import { createWhisperRoutes } from "./whisper.js";
@@ -71,7 +86,8 @@ import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost, LENDER_ROLE_LABEL } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp } from "./models.js";
+import { stageLibrarySong, STAGED_SONG } from "./songstage.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp, isVideoRow } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -97,8 +113,8 @@ async function videoModelPatch(b, engine) {
   const [shelf, parts] = await Promise.all([listVideoPickable(config), listVideoParts(config)]);
   const patch = {};
   if (named.dit && named.dit !== "auto") {
-    const row = shelf.find((r) => r.name === path.basename(named.dit));
-    if (!row) return { error: `No such video model: ${path.basename(named.dit)}. It must be in models/diffusion_models.` };
+    const row = findShelfModel(shelf, "diffusion_models", named.dit);
+    if (!row) return { error: `No such video model: ${requireModelName(named.dit)}. It must be in models/diffusion_models.` };
     if (!row.ok) return { error: `${row.name} cannot drive a video render. ${row.why || ""}`.trim() };
     if (row.engine !== engine) {
       return { error: `${row.name} is a ${row.family} model, which renders on the ${row.engine.toUpperCase()} engine — switch the engine above, or pick a ${engine.toUpperCase()} model.` };
@@ -111,9 +127,9 @@ async function videoModelPatch(b, engine) {
   for (const [key, list, folder, verdict] of [["textEncoder", parts.encoders, "text_encoders", "fit"],
                                               ["videoVae", parts.vaes, "vae", "fitVideo"],
                                               ["audioVae", parts.vaes, "vae", "fitAudio"]]) {
-    const want = named[key] && named[key] !== "auto" ? path.basename(named[key]) : "";
+    const want = named[key] && named[key] !== "auto" ? requireModelName(named[key]) : "";
     if (!want) continue;
-    const row = list.find((x) => x.name === want);
+    const row = findShelfModel(list, folder, want);
     if (!row) return { error: `No such file in models/${folder}: ${want}.` };
     /* ⚠ THE DOOR, NOT ONLY THE DROPDOWN. The screen stopped offering parts that
      * belong to another engine, but this route takes them by name from anything
@@ -129,7 +145,7 @@ async function videoModelPatch(b, engine) {
       return { error: `${want} is not a ${key === "textEncoder" ? "text encoder" : key === "videoVae" ? "video VAE" : "audio VAE"} `
         + `the ${engine.toUpperCase()} engine can load — it is built differently from the one it came with.` };
     }
-    patch[key] = want;
+    patch[key] = row.name;
   }
   return { models: patch };
 }
@@ -168,6 +184,8 @@ async function checkedVideoLoras(value, engine) {
  * when the files are there. The answer and its one sentence are the cover row
  * of machineDefaults() (server/fit.js defaultFor "cover"). */
 async function coverCanRun() {
+  /* Fast covers draw on the processor (server/fastcover.js): no picture model needed. */
+  if (fastCovers.use()) return true;
   const cover = (await machineDefaults().catch(() => null))?.find((d) => d.key === "art.engine");
   if (!cover || cover.canRun) return true;
   if (!coverSkipSaid) console.log(`  [cover] skipped: ${cover.why} Songs are unaffected.`);
@@ -202,7 +220,7 @@ let h3VaeCheck = { at: 0, value: false };
 function h3VaeMeasured() {
   if (Date.now() - h3VaeCheck.at < 30_000) return h3VaeCheck.value;
   const name = config.video.engines.h3?.videoVae;
-  const value = name === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
+  const value = modelLeaf(name) === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
     try { return statSync(path.join(base, "vae", name)).size === H3_VAE_MEASURED.bytes; } catch { return false; }
   });
   h3VaeCheck = { at: Date.now(), value };
@@ -294,12 +312,12 @@ function missingSupport(cap, ownDit, own = {}) {
     + `already have in the rows under the model file.`;
 }
 import {
-  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
+  scanBases, engineBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath, requireModelName, modelLeaf, findShelfModel,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
 import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
 /* The Video screen's sentences and the one plan behind a render (UI_PLAN C3/E4, the H3 lab's #5-#7). */
-import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast } from "./video-plain.js";
+import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast, qualityChips, speedupTable } from "./video-plain.js";
 import { createPersonaStore, applyPersona, personaFits, bindPersonaForClip, stagePersonaForClip, CLIP_PERSONA_PICTURES } from "./personas.js";
 import { referenceSteps } from "./workflow.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
@@ -333,6 +351,8 @@ import { createMusicInputRoutes } from "./music-input.js";
 /* One-click setups: a private Python per feature (timed lyrics), built with the
  * kept uv, and Studio's own packages again in an engine Studio installed. */
 import { createSetupRunner } from "./setup/venv.js";
+import { createFastCovers, FAST_COVER_ENGINE, FAST_COVER_SETUP } from "./fastcover.js";
+import { labelYueLyrics } from "./music/yue-lyrics.js";
 import { createEnginePackagesRunner } from "./setup/engine-packages.js";
 /* Read through the namespace, not by name: engineModuleRefusal (lane D) is
  * called only when the module carries it, so this file loads either way. */
@@ -346,14 +366,14 @@ import { cudaCapability } from "./mesh/runner.js";
  * job minutes later: bracketed section labels, and a kit that is not there.
  * YUE_MODEL is the name the door writes as data.model on its own ledger rows
  * — "yue2", the key models.js's rights map is keyed by. */
-import { refuseLyrics, yueStatus, YUE_MODEL } from "./music/yue.js";
+import { refuseLyrics, yueStatus, yueReadinessNote, YUE_MODEL } from "./music/yue.js";
 import { yueGgufStatus } from "./music/yue-gguf.js";
 import { prepareGgufJob } from "./music-gguf-input.js";
 import { yue2ComfyFields } from "./music/yue2-comfy-input.js";
 import { GgufSetup } from "./music/gguf-setup.js";
 /* Where a YuE2 render lands its score: the run folder is adopted by its
  * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
-import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
+import { createScore, adoptVersion, adoptComfyVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { tokenizerStatus, tokenizeTrack, codesDirFor } from "./music/tokenize.js";
@@ -370,11 +390,25 @@ import { createListeningLabRuntime, saveTrainingReceipt, readTrainingReceipt, co
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
 import { createPreviewStore, assertPreviewFresh } from "./collab/preview.js";
 const collabPreviews = createPreviewStore();
+/* A return claim still active in this process must not be mistaken for an
+ * orphaned claim after a restart. The orderbook records the intended sealed
+ * filename/hash before publication so a new process can reconcile it. */
+const collabImageReturnClaims = new Set();
 import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
 import { creditRollup, creditLines } from "./collab/credit.js";
 import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn, shotFlags } from "./collab/order.js";
+import { makeImageJob, readImageJob, readStoredImageJob, compactImageJob, describeImageJob, IMAGE_JOB_REF_CAP, IMAGE_JOB_REF_BYTES_CAP } from "./collab/image-job.js";
+import { makeVideoJob, readVideoJob, readStoredVideoJob, compactVideoJob, describeVideoJob } from "./collab/video-job.js";
+import { receiverBaseH3Models } from "./collab/video-render-profile.js";
+import { measureImageJobReferences } from "./collab/image-reference.js";
+import { makeImageReturn, readImageReturn } from "./collab/image-return.js";
+import { landImageReturn, listImageQuarantine, imageQuarantinePicture, adoptImageReturn, dropImageReturn } from "./collab/image-quarantine.js";
+import { makeVideoReturn, readVideoReturn, VIDEO_RETURN_BYTES_CAP } from "./collab/video-return.js";
+import { landVideoReturn, listVideoQuarantine, videoQuarantineClip, reviewVideoReturn, adoptVideoReturn, dropVideoReturn } from "./collab/video-quarantine.js";
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
+import { imageIdFromArtFile, recentImageOutcome, recordImageOutcome } from "./collab/image-lifecycle.js";
+import { recordVideoFailure, videoIdFromArtFile } from "./collab/video-lifecycle.js";
 import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrderFiles } from "./collab/errand.js";
 import { describePacket as describeAnyPacket } from "./collab/packet.js";
 import { speaks, stamp as collabStamp, describeStamp } from "./collab/compat.js";
@@ -432,6 +466,7 @@ const library = new Library();
  * reads, so a night an agent scheduled is stamped agent:* on every picture,
  * rather than becoming "user" because the request came from localhost.
  */
+const batchMusicBridge = createBatchMusicBridge({submit:submitStudioJson});
 async function renderMediaForBatch(kind, item, take, actor) {
   const base = `http://127.0.0.1:${config.uiPort}`;
   const headers = { "Content-Type": "application/json" };
@@ -536,16 +571,47 @@ async function renderMediaForBatch(kind, item, take, actor) {
 
 
 const batch = new BatchRunner(jobs, {
+  enqueueMusic: spec => batchMusicBridge.enqueue(spec),
   renderMedia: renderMediaForBatch,
   postBusy: () => art.queue.length > 0 || !!art.current,
 });
 // Draws covers only while the music queue is empty — see art.js for why that is
 // a hard requirement rather than politeness.
 const art = new ArtRunner(comfy, jobs);
+/* THE PLAN RUNNERS, the third queue the fresh-engine restart waits for
+ * (art.js otherWorkOnEngine): an overnight run in the middle of a step that is
+ * not a picture or clip it is waiting on (a music step, or between two), or a
+ * music-video plan whose step is not a job in the art queue (its jobs are
+ * named `…:mv_<slug>_…`, mv/generate.js). A plan waiting on the art queue is
+ * waiting on this clip or on one behind it, which the restart does not touch.
+ * On every card: it is part of the wait before Bucky's restart. */
+art.planBusy = () => {
+  const r = batch.run;
+  if (r && r.state === "running" && !batch.pendingMedia) return "an overnight run";
+  const artFiles = [art.current, ...art.queue].map((j) => String(j?.file || ""));
+  const mid = plansRunningNow().find((slug) => !artFiles.some((f) => f.includes(`:mv_${slug}_`)));
+  return mid ? `the music-video plan for ${mid}` : null;
+};
+const h3RefModService = createH3RefModService({
+  config, objectInfo: (name) => engineDoor.objectInfo(name),
+  workflowAssigned: () => assignedTo("video"),
+  stageImage: (name) => stageRefModImage(name, { inputDir: config.inputDir, imageDir: IMAGE_DIR, coverDir: COVER_DIR }),
+  async submit(spec) {
+    const name = spec.graph[2].inputs.name;
+    const job = art.request({ file: `refmod:${name}`, title: spec.label, kind: "refmod", force: true, asked: true,
+      actor: spec.actor, video: { refModGraph: spec.graph, refModName: name } });
+    if (!job) throw new Error(art.lastRefusal || "RefMod creation was not queued.");
+    return { id: job.id, file: job.file, state: "queued" };
+  },
+});
+const h3RefModRoutes = createH3RefModRoutes({ json, readBody, sameOriginLocalJson, service: h3RefModService,
+  actorFrom: prov.actorFrom });
+art.on("refmod-ready", ({ name }) => h3RefModService.complete(name));
+art.on("failed", ({ file, kind }) => { if (kind === "refmod") h3RefModService.complete(String(file).slice(7)); });
 
 // A finished cover is metadata like any other, so it goes through the same
 // sidecar the rest of the library uses.
-art.on("cover", async ({ file, covers, thumbs, runId }) => {
+art.on("cover", async ({ file, covers, thumbs, runId, engine }) => {
   /* ⚠ A standalone image is not a cover.
    *
    * It rides the same engine and therefore the same event, but it belongs to no
@@ -565,7 +631,8 @@ art.on("cover", async ({ file, covers, thumbs, runId }) => {
        * answers with the graph, the prompt, the seed, the model FILES, the
        * elapsed time and the SHA-256 of the picture. Purely additive: every
        * existing reader of this event is unaffected. */
-      data: { model: config.art.engine || "flux2", for: file, runId: runId ?? null },
+      /* A fast cover names its own model (server/fastcover.js), not the engine setting. */
+      data: { model: engine === FAST_COVER_ENGINE ? engine : config.art.engine || "flux2", for: file, runId: runId ?? null },
     });
   }
   batch.noteStage(file, "cover", covers?.length ? "done" : "failed");
@@ -725,6 +792,24 @@ art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpo
   saveImageStore();
   push(jobs.snapshot());
 });
+/* A queued friend image is an errand until the ArtRunner says exactly how that
+ * image attempt ended. An unanswered queue HTTP request is not an outcome. */
+function noteCollabImageOutcome(file, outcome) {
+  if (!imageIdFromArtFile(file)) return;
+  void recordImageOutcome({ book, outDir: path.join(config.outputDir, "collab"), file, outcome })
+    .catch((error) => console.error(`[collab image] Could not record terminal render state: ${error.message}`));
+}
+art.on("cover", ({ file, covers, durationMs }) => {
+  const imageId = imageIdFromArtFile(file);
+  if (imageId && covers?.includes(`${imageId}.png`))
+    noteCollabImageOutcome(file, { type: "complete", cover: `${imageId}.png`, durationMs });
+});
+art.on("failed", ({ file, kind, cancelled, durationMs, runId }) => {
+  if (kind === "cover") noteCollabImageOutcome(file, { type: "failed", cancelled: cancelled === true, durationMs });
+  if (kind === "video") void recordVideoFailure({
+    book, outDir: path.join(config.outputDir, "collab"), file, kind, cancelled, durationMs, runId,
+  }).catch((error) => console.error(`[collab video] Could not record render failure: ${error.message}`));
+});
 /* A stage that failed is a stage that FINISHED, as far as the display goes.
  *
  * The runner's success events each tick their own row off; nothing ticked a row
@@ -765,6 +850,30 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
   if (clip && (seconds || meta)) saveClipStore();
+  const friendJob = /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
+  if (friendJob && clip) void (async () => {
+    const dir = path.join(config.outputDir, "collab");
+    const row = await book.findOrder({ outDir: dir, id: friendJob[1], side: "in" });
+    if (!row || row.jobType !== "video" || !["queued", "rendering"].includes(row.state)
+        || row.renderStatus === "complete") return;
+    if (clip !== `collab_${friendJob[1]}.mp4`) {
+      await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: "failed",
+        expected: { renderStatus: row.renderStatus },
+        patch: { renderStatus: "wrong-output", renderFailedAt: Date.now(),
+          renderRunMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null,
+          renderRunId: runId ?? null,
+          note: "The engine served a cached library clip rather than this order's own output; no return can be sealed." } });
+      return;
+    }
+    const bytes = await readFile(path.join(CLIP_DIR, clip));
+    await book.transitionOrderState({ outDir: dir, id: friendJob[1], from: row.state, to: row.state,
+      expected: { renderStatus: row.renderStatus }, patch: {
+      renderStatus: "complete", renderCompletedAt: Date.now(), renderClip: clip,
+      renderSha256: createHash("sha256").update(bytes).digest("hex"), renderRunId: runId ?? null,
+      /* `seconds` is ArtRunner's render clock, not request-to-finish queue time. */
+      renderRunMs: typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null,
+    } });
+  })().catch((error) => console.error(`[collab video] Could not record completed clip: ${error.message}`));
   // Generated-media registration: a rendered clip is ai-generated video.
   if (clip) {
     provNote("library", {
@@ -987,6 +1096,13 @@ async function clipCharacters() {
 const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_prompts.json"));
 
 const ckptProbeCache = new Map();
+async function probeShelfLora(file) {
+  const info = await stat(file.full).catch(() => ({}));
+  const key = `lora:${file.full}:${info.size ?? 0}:${info.mtimeMs ?? 0}`;
+  let probe = ckptProbeCache.get(key);
+  if (!probe) { probe = await probeModel(file.full); ckptProbeCache.set(key, probe); }
+  return probe;
+}
 
 /* ⚠ A LineageMap, NOT A PLAIN Map (server/safety/lineage.js). Every row
  * written here gets its wordless minors fingerprint, `safety: {minor,
@@ -1010,11 +1126,32 @@ const pendingImageWild = new Map();
  * that writes the sidecar has no other way to know. */
 const pendingImagePrivate = new Map();
 const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
-async function saveImageStore() {
-  try {
-    await mkdir(path.dirname(IMAGE_STORE), { recursive: true });
-    await writeFile(IMAGE_STORE, JSON.stringify(Object.fromEntries(imageMeta)));
-  } catch { /* provenance is a nicety; losing it must not fail a render */ }
+let imageStoreWriteTail = Promise.resolve();
+function saveImageStore({ strict = false, mutate = null } = {}) {
+  /* Serialize snapshots so an older background save cannot land after a
+   * checked peer adoption and erase its rights/model record. The rename also
+   * leaves either the old complete JSON or the new one after a process crash. */
+  const job = imageStoreWriteTail.then(async () => {
+    /* A strict caller installs its metadata while it owns this write queue.
+     * On failure it rolls back before a later background save can snapshot
+     * an image whose quarantine row is still unadopted. */
+    const undo = typeof mutate === "function" ? mutate() : null;
+    const tmp = `${IMAGE_STORE}.tmp-${process.pid}-${randomUUID()}`;
+    try {
+      await mkdir(path.dirname(IMAGE_STORE), { recursive: true });
+      await writeFile(tmp, JSON.stringify(Object.fromEntries(imageMeta)), { flag: "wx" });
+      await rename(tmp, IMAGE_STORE);
+    } catch (error) {
+      await unlink(tmp).catch(() => {});
+      if (typeof undo === "function") undo();
+      throw error;
+    }
+  });
+  imageStoreWriteTail = job.catch(() => {});
+  /* Ordinary generated art may still finish if the optional index is
+   * unavailable. A peer image's signed rights record is required, so its
+   * adoption asks for strict failure propagation below. */
+  return strict ? job : imageStoreWriteTail;
 }
 try {
   const raw = JSON.parse(await readFile(IMAGE_STORE, "utf8"));
@@ -1190,10 +1327,41 @@ async function modelsDisk() {
 }
 const ggufSetup = new GgufSetup();
 models.on("update", () => push(jobs.snapshot()));
-/* An H3 speed-up that lands (3, 4 or 8 steps) is used at once, not after a restart. */
+/* EVERY VIDEO FILE IS LOOKED FOR AT START, AND AGAIN WHENEVER A VIDEO ROW
+ * LANDS OR GOES (setF, from a tester's report). config.js picks the file names
+ * each video graph loads (H3's DiT, encoder and VAEs, the reference DiT,
+ * FastH3's, LTX's VAE, the speed-ups) when it loads, and only the speed-ups
+ * were picked again. A Studio started before its H3 download finished kept
+ * the names chosen on an empty disk, so the Models screen said "installed"
+ * and the Video screen refused with "Get MiniMax H3 (0.0 GB)" until a restart.
+ * Now:
+ *   - "ready": a download finished. Any video row (models.js isVideoRow: H3,
+ *     its references row, LTX, FastH3 and the rows on them, the speed-ups
+ *     among them) picks every file again;
+ *   - "changed": a status() found a row's files came or went without a
+ *     download (a copy by hand, a stand-in, a file deleted);
+ *   - and the doors that refuse for missing video files look once more first
+ *     (videoReadyFresh, the video gate).
+ * refreshVideoPicks() is the one function, on every card. /api/status reads
+ * the picks on every poll, so the page has the new state at its next one. */
+refreshVideoPicks();
 models.on("ready", (id) => {
-  if (CATALOG.find((c) => c.id === id)?.addonFor === "video") refreshH3Speedups();
+  if (isVideoRow(id)) refreshVideoPicks();
 });
+models.on("changed", (ids) => {
+  if (ids.some((id) => isVideoRow(id))) refreshVideoPicks();
+});
+/* The first look, which "changed" compares the next ones with. */
+models.status().catch(() => {});
+
+/** videoReady(), looked for again once before a door refuses (setF): a file
+ *  that landed or was copied in while Studio ran is found here too. */
+function videoReadyFresh(engine) {
+  const r = videoReady(engine);
+  if (r.ready) return r;
+  refreshVideoPicks();
+  return videoReady(engine);
+}
 
 /**
  * MAY A CLIP BE RENDERED — and if so, on WHICH engine.
@@ -1213,21 +1381,80 @@ models.on("ready", (id) => {
  * The refusal it does produce carries a capability id that the Models screen
  * has an actual button for, plus the licence acknowledgement that button will
  * demand — a suggestion that bounces at the downloader is not a fix either.
+ *
+ * IT NEVER CONTRADICTS THE MODELS SCREEN (setF, from a tester's report). The
+ * Models screen listed H3 as installed while this refused with "Get MiniMax
+ * H3 (0.0 GB)": config.js still held the file names it picked before the
+ * download finished, and "0.0" is a string, so it was printed.
+ *   1. Before refusing it has config.js look at the disk again
+ *      (refreshVideoPicks) and asks once more. That alone renders the
+ *      tester's case, and a file copied in by hand. Before rendering on
+ *      ANOTHER engine than the chosen one too: an H3 copied in by hand under
+ *      a build name config.js had not picked yet, beside FastH3, read "H3
+ *      missing, FastH3 here", so the clip went to FastH3 until the next look.
+ *   2. If an engine's Models row still reads complete while the renderer
+ *      cannot find its files, the refusal names each file, why it did not
+ *      count and the path it was looked for at, and offers no download:
+ *      `recheck` instead of `needsModel`, so the page's Fix looks again
+ *      rather than opening a window whose row says "Installed".
+ *   3. A download it does offer is never "0.0 GB": what is left is said in MB
+ *      under 0.05 GB (downloadSize), and not at all when nothing is. It is
+ *      the chosen engine's own row where Studio can fetch it (FastH3), not
+ *      always H3's.
  */
+function downloadSize(bytes) {
+  const n = Math.max(0, Number(bytes) || 0);
+  return n >= 5e7 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
+}
 async function videoWeightsGate() {
-  const resolution = resolveVideoEngine();
+  let resolution = resolveVideoEngine();
+  if (resolution.ready && !resolution.substituted) return { engine: resolution.key, resolution };
+  refreshVideoPicks();
+  resolution = resolveVideoEngine();
   if (resolution.ready) return { engine: resolution.key, resolution };
 
   const cat = await models.status();
-  const want = resolution.get;
+  /* status() may have found files that came since (models "changed" picks
+   * again), so ask once more before reading the rows against it. */
+  resolution = resolveVideoEngine();
+  if (resolution.ready) return { engine: resolution.key, resolution };
+  const rowOf = (k) => cat.find((c) => c.id === MODEL_TO_CAPABILITY[k]) || null;
+  const stuck = [resolution.configured, resolution.get?.engine, ...Object.keys(resolution.present || {})]
+    .find((k) => k && rowOf(k)?.ready && !resolution.present?.[k]);
+  if (stuck) {
+    const label = config.video.engines[stuck]?.label || stuck;
+    const files = videoReady(stuck).files || [];
+    const words = { missing: "was not found at", empty: "is empty (0 bytes) at" };
+    const said = files.map((f) => `${f.standIn ? `${f.standIn} (standing in for ${f.name})` : f.name} `
+      + `${words[f.reason] || `could not be read ${String(f.reason).replace(/^unreadable /, "")} at`} ${f.path}`);
+    return {
+      error: {
+        error: `The Models screen lists ${label} as installed, but Studio cannot open `
+          + `${files.length === 1 ? "one of its files" : `${files.length} of its files`}: ${said.join("; ")}. `
+          + `Studio looked at the disk again just now. Put ${files.length === 1 ? "the file" : "them"} back there, then press Fix to look again; nothing needs downloading.`,
+        reason: "weights-unreadable",
+        needsModel: null,
+        recheck: { engine: stuck, label, capabilityId: MODEL_TO_CAPABILITY[stuck] || null, files },
+        alsoGated: resolution.alsoGated || [],
+        configuredEngine: resolution.configured,
+      },
+    };
+  }
+  /* The chosen engine's own row where Studio can fetch it (a FastH3 choice
+   * gets FastH3's row), else the engine resolveVideoEngine names. */
+  const ownRow = rowOf(resolution.configured);
+  const want = ownRow && !ownRow.gated && !ownRow.ready
+    ? { engine: resolution.configured, capabilityId: ownRow.id, label: config.video.engines[resolution.configured]?.label || ownRow.label,
+      region: ownRow.region || null }
+    : resolution.get;
   const cap = want ? cat.find((c) => c.id === want.capabilityId) : null;
-  const missingGb = cap ? ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1) : null;
+  const left = cap ? Math.max(0, cap.totalBytes - cap.haveBytes) : 0;
 
   return {
     error: {
       error: want
         ? `No video weights on this machine yet. Get ${want.label}`
-          + (missingGb ? ` (${missingGb} GB)` : "")
+          + (left > 0 ? ` (${downloadSize(left)})` : "")
           + " from the Models screen — it is the video engine Studio can download for you."
           + (want.region ? ` Its licence grants no rights inside ${want.region.excluded.join(", ")}; the download asks you to confirm first.` : "")
         : `${resolution.label} is not downloaded yet. Open the Models screen.`,
@@ -1382,7 +1609,7 @@ jobs.on("update", async (snap) => {
    * otherwise a score is created under the song's title. Failure here loses
    * the sheet, never the song — the audio is already filed by the runner. */
   let score = null;
-  if (job.engine === "yue2" && job.yue?.dir) {
+  if ((job.engine === "yue2" && job.yue?.dir) || (isYueComfy && job.yueComfyScore?.abc)) {
     try {
       let slug = job.scoreSlug || null;
       /* The parent is kept only when it still exists in the score it was
@@ -1394,7 +1621,16 @@ jobs.on("update", async (snap) => {
       if (!slug) slug = (await createScore(h.title || job.title || "Untitled")).slug;
       const parent = loaded && job.scoreVersion && findVersion(loaded, job.scoreVersion) ? job.scoreVersion : null;
       const by = prov.normalizeActor(job.actor);
-      const adopted = await adoptVersion(slug, {
+      const adopted = isYueComfy ? await adoptComfyVersion(slug, {
+        abc: job.yueComfyScore.abc, file: h.file, promptId: job.promptId,
+        audioSeconds: job.audioSeconds ?? null, checkpoint: job.yue2Checkpoint || null,
+        request: { style: job.caption || "", lyrics: job.lyrics || "", cot: job.cot || "full", seed: job.seed,
+          sampling: yue2ComfySamplingReceipt(job).audio, planSampling: job.planSampling || null,
+          narSteps: job.narSteps || 32,
+          lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
+          loraClip: job.loraClip || null, loraClipStrength: job.loraClip ? (job.loraClipStrength ?? 1) : null },
+        by, parent, note: "Rendered through ComfyUI; notation timing is approximate",
+      }) : await adoptVersion(slug, {
         dir: job.yue.dir, by, parent,
         note: `rendered from Create — ${job.rung?.label || "Standard"} configuration`
           + (job.quantization === "fp8" ? ", 8-bit AR" : "")
@@ -1402,7 +1638,11 @@ jobs.on("update", async (snap) => {
       });
       score = { slug, version: adopted.id };
     } catch (err) {
-      console.error(`  [score] ${h.file}: the run was not adopted — ${err.message}`);
+      const why = String(err?.message || err).slice(0, 300);
+      job.scoreWarning = `Sheet music could not be saved. ${why}`;
+      console.error(`  [score] ${h.file}: the run was not adopted — ${why}`);
+      library.remember(h.file, { scoreWarning: job.scoreWarning });
+      await library.save().catch(saveErr => console.error(`  [score] ${h.file}: warning not saved — ${saveErr.message}`));
     }
   }
   /* The sheet is engraved AFTER the song is filed (see the end of this
@@ -1520,10 +1760,10 @@ jobs.on("update", async (snap) => {
           : isYueComfy
           ? { runtime: "comfy", checkpoint: job.yue2Checkpoint || null, cot: job.cot || "full",
               scoreSupplied: !!job.abc, sampling: job.sampling || null, planSampling: job.planSampling || null,
-              /* The saved score version it was sung from, as written (this
-               * build makes no score of its own to adopt, unlike the Python
-               * kit's `score` below, which is the version its run wrote). */
+              /* Preserve the supplied-score lineage beside the exact score
+               * captured from this completed prompt. */
               scoreFrom: job.scoreSlug ? (job.scoreVersion ? `${job.scoreSlug}/${job.scoreVersion}` : job.scoreSlug) : null,
+              score: score ? `${score.slug}/${score.version}` : null,
               narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null,
               lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null }
           : isYue
@@ -1548,8 +1788,11 @@ jobs.on("update", async (snap) => {
     });
   }
 
+  const comparisonSampling = isYueComfy
+    ? yue2ComfySamplingReceipt({ sampling: job.sampling, planSampling: job.planSampling, cot: job.cot, abc: job.abc })
+    : null;
   library.remember(h.file, {
-    title: h.title, seed: h.seed, mixSeed: h.mixSeed,
+    title: h.title, seed: h.seed, mixSeed: isYueComfy ? (h.mixSeed ?? h.seed) : h.mixSeed,
     /* The Library's model column and its "YuE2 3B" badge read `model`; the
      * MiniMax value is a precision (int8/fp16/fp32) because that engine has
      * one weight file per precision. YuE2's 32 is the NAR's ODE step count,
@@ -1585,10 +1828,19 @@ jobs.on("update", async (snap) => {
     } : {}),
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
+      scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
+      scoreWarning: job.scoreWarning || null,
+      durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
       /* Sung from a score you supplied (hummed, pasted, transcribed), not
-       * from the model's own plan. The version it came from is in the ledger
-       * (params.scoreFrom); the ♪ badge's scoreSlug stays the Python kit's. */
+       * from the model's own plan. Its source version stays in the ledger
+       * (params.scoreFrom), while the ♪ badge links this prompt's capture. */
       scoreSupplied: !!job.abc,
+      /* This explicit comparison receipt lets Training distinguish a matched
+       * baseline/adapter pair from older rows whose sampler inputs were never
+       * saved. Only the supplied score's hash is kept, not its full text. */
+      comparisonVersion: 1, maxDuration: job.maxDuration ?? null,
+      scoreHash: job.abc ? prov.sha256hex(job.abc) : null,
+      sampling: comparisonSampling.audio, planSampling: comparisonSampling.planner,
       lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
       /* The planner's LoRA beside the audio one — including the one the
        * Instrumental switch picks by itself, which is why this matters more
@@ -1682,7 +1934,11 @@ jobs.on("update", async (snap) => {
         origin: `http://127.0.0.1:${config.uiPort}` });
       await setSheet(score.slug, score.version, sheet);
     } catch (err) {
-      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${err.message}`);
+      const why = String(err?.message || err).slice(0, 300);
+      job.scoreWarning = `Sheet music could not be engraved. ${why}`;
+      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${why}`);
+      library.remember(h.file, { scoreWarning: job.scoreWarning });
+      await library.save().catch(saveErr => console.error(`  [score] ${h.file}: warning not saved — ${saveErr.message}`));
     }
   }
 
@@ -1740,7 +1996,9 @@ jobs.on("update", async (snap) => {
      * — and a stage that cannot run is FAILED rather than left waiting, because
      * a row stuck at "waiting" is indistinguishable from one still queued. */
     if (want("video", config.video.when)) {
-      const vr = videoReady();
+      /* Looked for again once before the stage fails, as the video gate does
+       * (setF): a file copied in while Studio ran is found here too. */
+      const vr = videoReadyFresh();
       if (vr.ready) {
         art.request({ file: h.file, title: h.title, caption: job.caption, seed: h.seed, kind: "video" });
       } else {
@@ -1750,6 +2008,12 @@ jobs.on("update", async (snap) => {
         batch.noteStage(h.file, "enhance", "failed");
       }
     }
+  }
+  /* Music-only mode has no picture engine, so it never drew covers. Fast
+   * covers need none (server/fastcover.js): with them set up, its songs get
+   * a cover too. Only the cover: the other stages stay full Studio's. */
+  if (!h.preview && config.musicOnly && fastCovers.use() && (job.stages ? job.stages.cover : true)) {
+    art.request({ file: h.file, title: h.title, caption: job.caption, lyrics: job.lyrics, seed: h.seed });
   }
 });
 
@@ -1768,14 +2032,10 @@ jobs.on("update", async (snap) => {
 /* ── Models screen: what is already on disk ────────────────────────────────
  * Every folder the engine loads weights from: the chosen models folder, the
  * base_path of every extra_model_paths YAML the engine is launched with, and
- * the install's own models folder. */
+ * the install's own models folder. One answer with the video picks, the
+ * Models screen and the engine door (localmodels.js engineBases). */
 async function modelBases() {
-  return uniqueDirs([
-    config.modelsDir,
-    ...(config.modelsAlso || []),
-    ...(await extraBases(config.comfy.extraArgs)),
-    path.join(config.comfyDir, "models"),
-  ]);
+  return engineBases(config);
 }
 
 /** Merge keys into settings.json without touching the rest of it. */
@@ -1804,7 +2064,7 @@ async function localModelsPayload(cat) {
     }
     rows.push({
       folder: f.folder, shelf: f.shelf, name: f.name, base: f.base, bytes: f.bytes,
-      family, variant, known: known.has(f.name), standsInFor: standsIn[f.name] || null,
+      family, variant, known: known.has(modelLeaf(f.name)), standsInFor: standsIn[f.name] || null,
     });
   }
   return { modelsDir: config.modelsDir, also: config.modelsAlso || [], bases, files: rows };
@@ -1831,7 +2091,7 @@ let comfyWanted = !config.musicOnly && !config.cloudOnly && !config.remoteOnly;
 async function findYue2Checkpoints() {
   const seen = new Set();
   return (await scanBases(await modelBases()))
-    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name))
     .map((f) => f.name)
     .filter((n) => (seen.has(n) ? false : seen.add(n)));
 }
@@ -1846,17 +2106,21 @@ const minimaxAmdRisk = () => onAmd() && !hasAmdMusicFix(studioLaunchArgs());
  * encoder layer. The encoders and the VAE are ComfyUI's split-file names. */
 const ACE_DIT = /^acestep[_-]?v?1\.?5.*\.(safetensors|sft)$/i;
 const ACE_LMS = ["qwen_4b_ace15.safetensors", "qwen_1.7b_ace15.safetensors"];
-const aceBuildName = (n) => String(n || "").replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
+const aceBuildName = (n) => modelLeaf(n).replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
 async function aceShelf() {
   const shelf = await scanBases(await modelBases());
-  const on = (folders, name) => shelf.some((f) => folders.includes(f.folder) && f.name === name);
+  const on = (folders, name) => {
+    try { return findShelfModel(shelf, folders[0], name); }
+    catch (err) { if (err.status === 400) return null; throw err; }
+  };
   const seen = new Set();
-  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(f.name))
+  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(modelLeaf(f.name)))
     .map((f) => f.name).filter((n) => (seen.has(n) ? false : seen.add(n)));
-  const vae = on(["vae"], "ace_1.5_vae.safetensors");
-  const enc = on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
-  const lms = ACE_LMS.filter((n) => on(["text_encoders", "clip"], n));
-  const lm = lms.includes(config.music.aceLm) ? config.music.aceLm : lms[0] || null;
+  const vae = !!on(["vae"], "ace_1.5_vae.safetensors");
+  const enc = !!on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
+  const lms = ACE_LMS.map((n) => on(["text_encoders", "clip"], n)?.name).filter(Boolean);
+  const selectedLm = config.music.aceLm && on(["text_encoders", "clip"], config.music.aceLm)?.name;
+  const lm = lms.includes(selectedLm) ? selectedLm : lms[0] || null;
   const missing = [!vae && "the ACE 1.5 VAE", !enc && "the 0.6B text encoder", !lm && "a planner (qwen_4b_ace15 or qwen_1.7b_ace15)"].filter(Boolean);
   return { dits, vae, enc, lms, lm, ready: vae && enc && !!lm, missing: missing.length ? `missing ${missing.join(", ")}` : null };
 }
@@ -1868,16 +2132,12 @@ async function musicModelChoices(cat) {
   const out = [];
   const minimax = byId.engine;
   if (config.music.engines["minimax-music3"] && minimax && !config.musicOnly) {
-    const dit = minimax.files.find((f) => f.name === config.models.dit);
+    const dit = minimax.files.find((f) => f.name === modelLeaf(config.models.dit));
     const restReady = minimax.files.filter((f) => f !== dit).every((f) => f.present);
-    const bases = await modelBases();
+    const musicShelf = await scanBases(await modelBases());
     const onDisk = async (name) => {
-      for (const base of bases) {
-        for (const folder of ["diffusion_models", "unet"]) {
-          if ((await stat(path.join(base, folder, name)).catch(() => null))?.size > 0) return true;
-        }
-      }
-      return false;
+      try { return !!findShelfModel(musicShelf, "diffusion_models", name); }
+      catch (err) { if (err.status === 400) return false; throw err; }
     };
     const builds = [
       { precision: "int8", present: !!dit?.present, note: dit?.override ? `using ${bareName(dit.override)}` : null },
@@ -1933,7 +2193,7 @@ async function musicModelChoices(cat) {
   if (config.music.engines["yue2-comfy"] && (!config.musicOnly || comfyWanted)) {
     const seen = new Set();
     const ckpts = (await scanBases(await modelBases()))
-      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name))
       .filter((f) => (seen.has(f.name) ? false : seen.add(f.name)));
     for (const f of ckpts) {
       const build = bareName(f.name).replace(/^yue2?[_-]?3b[_-]?/i, "") || bareName(f.name);
@@ -1965,9 +2225,11 @@ async function musicModelChoices(cat) {
     }
   }
   if (config.music.engines.yue2 && byId.musicYue2 && !config.musicOnly) {
+    const kit = await yueStatus();
     out.push({
       value: "yue2", engine: "yue2", precision: null, label: "YuE2 3B (Python kit)",
-      available: !!byId.musicYue2.ready, note: byId.musicYue2.ready ? null : "not installed",
+      available: kit.installed, note: kit.installed ? null : kit.runtime?.issue || "Python kit setup needed",
+      readinessNote: yueReadinessNote(kit), runtimeReadiness: kit.runtime,
     });
   }
   /* RUNPOD GPU MODE: the ComfyUI engines render on the Pod, so this PC's disk
@@ -2124,7 +2386,7 @@ const mvRoutes = createMvRoutes({
   cardReading: () => ({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
   /* Whether LTX's weights are on disk: "hybrid" sends a scene with no cast
    * there only when they are (server/mv/shot.js). */
-  ltxReady: () => videoReady("ltx").ready,
+  ltxReady: () => videoReadyFresh("ltx").ready,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
    *
    * `provenance` is the same module every other surface writes through, so a
@@ -2749,16 +3011,19 @@ const vfxRoutes = createVfxRoutes({
  * so an unknown /api/daw path still falls through to the app's own 404.
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
+const sharedCueRoutes = createSharedCueRoutes({ json, readBody, renderAccent: dawRoutes.renderCueAccent });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
+const communityRoutes = createCommunityRoutes({ json, readBody, library, jobs, engine: engineDoor, provenance: prov,
+  daw:(body,actor)=>submitStudioJson('/api/daw',body,actor) });
 // Workflow modules submit through the ordinary validated API. Keeping a
 // receipt for the exact id matters when another song is already rendering.
 function jobReceipt(job) { return exactJobReceipt(job, jobs.snapshot()); }
-function submitStudioJson(apiPath, body, actor = "system") {
+function submitStudioJson(apiPath, body, actor = "system", internalHeaders = {}) {
   return new Promise((resolve, reject) => {
     const payload = Buffer.from(JSON.stringify(body));
     const call = http.request({ hostname: "127.0.0.1", port: config.uiPort, path: apiPath, method: "POST",
       headers: { "content-type": "application/json", "content-length": payload.length,
-        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }) }, timeout: 900_000 }, answer => {
+        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }), ...internalHeaders }, timeout: 900_000 }, answer => {
       const chunks = []; answer.on("data", chunk => chunks.push(chunk));
       answer.on("error", reject);
       answer.on("end", () => {
@@ -2805,17 +3070,23 @@ const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance
  * With AIPLAY_WHISPER_PYTHON set the environment names the interpreter and
  * wins over the field, so a build would change nothing: it is refused up
  * front, in the same words Settings uses. */
-const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: oneRunner(createSetupRunner({
+const setupRunner = oneRunner(createSetupRunner({
   appData: config.dataDir,
   vendor: () => gpuStatus()?.vendor || vendorOf(config.gpu, config.torchBackend),
   probe: (py, mods) => probeOne(py, mods),
-  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : id === "stems" ? config.systemPython : null),
+  currentPython: (id) => (id === "lyrics" ? config.lyrics.python : id === "stems" ? config.systemPython
+    : id === FAST_COVER_SETUP ? config.art.fastCoverPython : null),
   blockedBy: (id) => (id === "lyrics" && process.env.AIPLAY_WHISPER_PYTHON
     ? `AIPLAY_WHISPER_PYTHON is set, so timed lyrics run in ${config.lyrics.python} whatever Studio builds. `
       + "Install faster-whisper and stable-ts there, or remove the variable and start Studio again to use the button."
     : stemsBlockedBy(id)),
   save: async (id, py) => {
     if (id === "stems") return saveStemsBuild(py);
+    if (id === FAST_COVER_SETUP) {
+      config.art.fastCoverPython = py;
+      await savePrefs();
+      return null;
+    }
     if (id !== "lyrics") return null;
     config.lyrics.whisperPython = py;
     config.lyrics.python = whisperPython();
@@ -2830,10 +3101,36 @@ const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, run
   rig: () => config.rig,
   python: () => config.python,
   probe: (py, mods) => probeOne(py, mods),
-})) });
+}));
+const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: setupRunner });
+/* Fast covers (server/fastcover.js): song covers on the processor. The art
+ * queue asks use() for every song cover it queues. */
+const fastCovers = createFastCovers({ config, catalog: CATALOG, models, setup: setupRunner, save: () => savePrefs() });
+art.fastCovers = fastCovers;
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
 const listeningRuntime = createListeningLabRuntime({ config, library,
   shelf: async () => scanBases(await modelBases()), probe: probeModel, engine: engineDoor });
+// Only library members verified by the calling workflow reach this door.
+async function serveReviewedMusic(req, res, name) {
+  if (typeof name !== 'string' || path.basename(name) !== name || /[:\\/]|\.\./.test(name)) throw new Error('Choose a library recording.');
+  const full = path.join(config.outputDir, name), info = await stat(full);
+  return sendFile(req, res, full, { size: info.size, headers: {
+    'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
+  } });
+}
+const dawPassages = createDawPassages({ dir: path.join(config.paths.appData, 'music-daw-passages'),
+  readProject: readDawPassageProject, inspectSource: inspectAuditionSource,
+  inspectAudio: listeningRuntime.inspectSource, listSources: async () => (await auditions.list()).sources, auditions });
+const dawPassageRoutes = createDawPassageRoutes({ store: dawPassages, json, readBody,
+  actorFrom: prov.actorFrom, serveAudio: serveReviewedMusic });
+const takeComparisonRoutes = createTakeComparisonRoutes({ json, readBody, actorFrom: prov.actorFrom,
+  appData: config.paths.appData, listSongs: () => library.list(), inspectSource: listeningRuntime.inspectSource,
+  sourceReceipt: async file => ({ metadata: structuredClone(library.meta.get(file) || {}),
+    provenance: await prov.read('library', { asset: file, limit: 100 }) }),
+  measureSource: (file, actor) => submitStudioJson('/api/daw', { action: 'analyze', file: path.join(config.outputDir, file), goniometer: false }, actor),
+  setFavourite: async (file, value) => { library.setFlag(file, 'starred', value); await library.save(); },
+  recordEvent: event => prov.append('library', event), serveAudio: serveReviewedMusic });
 async function readWorkflowJob(id) {
   const job = [jobs.current, ...jobs.queue, ...jobs.history].find(row => row?.id === id);
   if (!job) return null;
@@ -2949,6 +3246,14 @@ const imageEditor = createImageEditor({
   },
 });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
+const standRigRoutes = createStandRigRoutes({ json, readBody, sameOriginLocalJson });
+const standRigPsdRoutes = createStandRigPsdRoutes({
+  json, readBody, sameOriginLocalJson, imageDir: IMAGE_DIR, python: config.python,
+  onExport: ({ name, documentId, layers }, req) => provNote("library", {
+    actor: prov.actorFrom(req), type: "export", asset: `images/_standrig/${name}`,
+    data: { op: "document.standrig-psd", documentId, layers },
+  }),
+});
 const weightTransferRoutes = createWeightTransferRoutes({json, directory:path.join(config.outputDir,'avatar-weight-transfer'), provenance:prov});
 const avatarFitAssets = createAvatarService({directory:path.join(config.outputDir,'avatars')});
 const avatarFittingRoutes = createAvatarFittingRoutes({json,directory:path.join(config.outputDir,'avatar-fitting'),inspectAsset:avatarFitAssets.file,provenance:prov});
@@ -3102,6 +3407,13 @@ const engineRoutes = createEngineRoutes({
     if (meta) clipMeta.set(name, { ...(clipMeta.get(name) || {}), ...meta });
     saveClipStore();
   },
+  /* A picture adopted with a fingerprint (a RunPod render): its row, so the
+   * minors rule reads what it was made as when it is edited or referenced. */
+  rememberImage: (name, meta) => {
+    if (!name) return;
+    imageMeta.set(name, { ...(imageMeta.get(name) || {}), ...(meta || {}) });
+    saveImageStore();
+  },
 });
 /* The one line that closes the last seam in the door: until this runs, a
  * dispatch with `adopt` on records `adoptedAs: null` because nothing in the
@@ -3115,7 +3427,7 @@ engineDoor.setAdopter(engineRoutes.adopt);
  * are adopted into the same library as a local render; audio goes to the
  * music library under a runpod- name. */
 const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret,
-  append: prov.append, actorFrom: prov.actorFrom,
+  append: prov.append, actorFrom: prov.actorFrom, sameOriginLocalJson,
   adopt: async (details) => {
     if (/\.(wav|flac|mp3|ogg|opus)$/i.test(details.output.file)) {
       /* "aiplay_" first: the library lists only its own prefixes (library.js
@@ -3136,21 +3448,13 @@ const customModelRoutes = createCustomModelRoutes({ config, remoteClient: remote
  * queue's usual "done" path, title, tags and all. */
 if (remoteRoutes) jobs.setRemote(async ({ graph, label, actor, isCancelled, onState }) => {
   const c = await remoteRoutes.start();
-  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor });
-  const FINAL = new Set(["completed", "cancelled", "failed", "uncertain"]);
-  let cancelSent = false;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 2500));
-    const row = c.status().jobs.find((j) => j.id === sent.id);
-    if (!row) continue;
-    if (isCancelled() && !cancelSent && !FINAL.has(row.state)) { cancelSent = true; await c.cancel(sent.id).catch(() => {}); }
-    onState(row.state);
-    if (!FINAL.has(row.state)) continue;
-    if (row.state !== "completed") throw new Error(row.error || `The RunPod job ended ${row.state}.`);
-    const audio = (row.outputs || []).find((o) => /\.(wav|flac|mp3|ogg|opus)$/i.test(o.localFile || o.file || ""));
-    if (!audio?.localFile) throw new Error("The Pod finished but returned no audio file.");
-    return { file: audio.localFile, runId: row.runId || null };
+  if (isCancelled()) {
+    const error = new Error("Stopped before the Pod job was submitted.");
+    error.remoteState = "cancelled";
+    throw error;
   }
+  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor });
+  return await awaitRemoteMusicJob({ client: c, sent, isCancelled, onState });
 });
 
 /* THE ENGINE'S OWN BACKSTOP ASKS HERE. server/comfy_nodes/aiplay_safety_gate.py
@@ -3175,7 +3479,20 @@ function imgWorker() {
   return _imgWorker;
 }
 
+/* ⚠ THIS PC'S STUDIO ANSWERS ONLY ITS OWN ADDRESS, ON EVERY ROUTE (review of
+ * the port, 2026-10-08). Studio listens on 127.0.0.1 alone, but a page on a
+ * DNS name that a rebinding attack points at 127.0.0.1 reaches it with that
+ * name as the Host and, for a GET, no Origin. /api/runpod refused it already
+ * (remote-routes.js), and the doors that choose what runs refuse it through
+ * sameOriginLocalJson; a GET elsewhere did not, so such a page could read
+ * /api/provenance (every non-private render's full prompt), /api/images and
+ * the pictures and clips themselves. The Host is what such a page cannot fake,
+ * so every request is asked first, and so is the live socket (wss below). */
+const foreignHost = (req) => !localUiHost(req, config.uiPort);
 const server = http.createServer(async (req, res) => {
+  if (foreignHost(req)) {
+    return json(res, 403, { error: "Studio answers only on this PC's own address (127.0.0.1, localhost or [::1] on its port)." });
+  }
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
 
@@ -3200,11 +3517,20 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/engine" || p.startsWith("/api/engine/")) {
       if (await engineRoutes(req, res, url)) return;
     }
+    if (p === "/api/h3-refmods") {
+      if (await h3RefModRoutes(req, res, url)) return;
+    }
     if (p === "/api/safety/check") {
       if (await safetyRoutes(req, res, url)) return;
     }
 
     // ---- API ------------------------------------------------------------
+    if (p === '/api/standrig') {
+      return standRigRoutes(req, res);
+    }
+    if (p === '/api/images/standrig-psd' || p.startsWith('/api/images/standrig-psd/')) {
+      return standRigPsdRoutes(req, res, url);
+    }
     if (p === '/api/avatars' || p.startsWith('/api/avatars/')) {
       if (await avatarRoutes(req, res, url)) return;
     }
@@ -3265,7 +3591,15 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/score" || p.startsWith("/api/score/")) {
       if (await scoreRoutes(req, res, url)) return;
     }
+    if (p.startsWith('/api/music-tools') && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Music tools are available to Studio and local clients.'});
+    if (await communityRoutes(req, res, url)) return;
     if (await auditionRoutes(req, res, url)) return;
+    if (p === '/api/music-daw-passages' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'DAW passage changes are only accepted from Studio\'s own page or a local client.'});
+    if (await dawPassageRoutes(req, res, url)) return;
+    if (p === '/api/music-take-comparison' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Take comparison changes are only accepted from Studio\'s own page or a local client.'});
+    if (await takeComparisonRoutes(req, res, url)) return;
+    if (p === '/api/music-cues' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Shared cue changes are only accepted from Studio\'s own page or a local client.'});
+    if (await sharedCueRoutes(req, res, url)) return;
     if (await musicWorkflowRoutes(req, res, url)) return;
     if (await musicArtifactRoutes(req, res, url)) return;
     if (await listeningLabRoutes(req, res, url)) return;
@@ -3404,6 +3738,9 @@ const server = http.createServer(async (req, res) => {
           tokenizer: await tokenizerStatus(),
           musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
+            ...(k === "yue2" ? await yueStatus().then(s => ({
+              ready: s.installed, readinessNote: yueReadinessNote(s),
+            })) : {}),
             ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => {
               const ready = Object.values(s.variants || {}).some(v => v.ready) || s.ready;
               return {ready, variants:s.variants, readinessNote:ready?null:s.message, experimental:true};
@@ -3517,6 +3854,21 @@ const server = http.createServer(async (req, res) => {
                * (video-plain.js keepFast), H3 only. */
               keepFast: k === "h3" ? keepFast(e) : null,
               turboBuilds: e.turboBuilds ?? null,
+              /* Each path's own files (config.js resolveH3Steps): what a
+               * render is checked by. Null on AMD, Intel and the CPU
+               * (config.js offNvidia), where turboBuilds, main's both-paths
+               * reading, is the check (Bucky's rule). */
+              plainBuilds: e.plainBuilds ?? null,
+              refBuilds: e.refBuilds ?? null,
+              /* The quality chips as the page draws them and make_clip's
+               * `quality` sends them, {plain, keep} of {fast, standard,
+               * best} each {steps, needsModel}, and every count's missing
+               * speed-up by path (video-plain.js qualityChips, speedupTable):
+               * the page keeps no number or rule of its own. No chips on AMD,
+               * Intel and the CPU: the page draws main's there, and make_clip
+               * sends stepDefaults. */
+              chips: k === "h3" ? qualityChips(e) : null,
+              speedupNeeds: k === "h3" ? speedupTable(e) : null,
               /* This PC's measured speed against the cost curve (video-speed.js):
                * the page multiplies its estimate by it. Null before a clip. */
               speedFactor: videoSpeed.factor(k), speedSamples: videoSpeed.samples(k),
@@ -3530,7 +3882,7 @@ const server = http.createServer(async (req, res) => {
                * LoRA picker leaves them out, because stacking one again would
                * apply it twice. */
               ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
-                .filter(Boolean).map((n) => path.basename(String(n))),
+                .filter(Boolean).map((n) => requireModelName(n)),
               /* The base a LoRA must have been made for (config.js), which the
                * Video screen's picker judges against and /api/video checks: null
                * means this engine takes none, and the picker hides. */
@@ -3604,22 +3956,27 @@ const server = http.createServer(async (req, res) => {
          * not be able to claim to be a human. Every picture the run makes is
          * then stamped with it. */
         if (b.action === "start") {
-          /* A music night with the hosted engine on bills every song: asked
+          /* The hosted MiniMax steps of a music night are priced and asked
            * once, with the night's estimate, and carried on each job as
            * paidConfirmed (server/cloud-switch.js). Never assumed. */
-          const paidNight = (b.kind || "music") === "music" && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: null });
-          const night = paidNight ? plannedSongs(b) : null;
+          const night = (b.kind || "music") === "music" && config.api.enabled
+            ? plannedPaidSongs({ ...b, defaultEngine: config.music?.engine || "minimax-music3" }) : { songs: 0 };
+          const paidNight = night.songs > 0 && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: "minimax-music3" });
           /* No idea with a style: nothing to pay for, and start() says so. */
           if (paidNight && b.confirmSpend !== true && night.songs) {
             const refusal = paidRefusal(await hostedQuote(night.longestSeconds), { songs: night.songs });
             return json(res, refusal.status, refusal.body);
           }
-          return json(res, 200, batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true }));
+          const started = batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true });
+          // Confirm a future appointment only after its engine, actor and paid
+          // answer are saved. The timer is not armed if that write fails.
+          if (b.startAt !== undefined) { await batch.persist(); return json(res, 200, batch.status()); }
+          return json(res, 200, started);
         }
-        if (b.action === "pause") return json(res, 200, batch.pause());
-        if (b.action === "resume") return json(res, 200, batch.resume());
-        if (b.action === "stop") return json(res, 200, batch.stop());
-        if (b.action === "clear") return json(res, 200, batch.clear());
+        if (b.action === "pause") { batch.pause(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "resume") { batch.resume(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "stop") { batch.stop(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "clear") { batch.clear(); await batch.persist(); return json(res, 200, batch.status()); }
         return json(res, 400, { error: "Unknown action." });
       } catch (err) {
         /* An overnight plan refused under the minors rule (batch.js) says so. */
@@ -3847,20 +4204,22 @@ const server = http.createServer(async (req, res) => {
           if (b.use === null || b.use === undefined || b.use === "") {
             delete next[catName];
           } else {
-            const useName = path.basename(String(b.use));
+            const useName = requireModelName(b.use);
             const folder = path.relative(config.modelsDir, path.dirname(entry.dest)).split(path.sep)[0];
             if (!folder || folder.startsWith("..")) {
               return json(res, 400, { error: `${catName} does not live in the models folder, so it cannot be swapped here.` });
             }
-            const found = (await scanBases(await modelBases()))
-              .find((f) => f.name === useName && f.shelf === shelfOf(folder));
+            const found = findShelfModel(await scanBases(await modelBases()), folder, useName, { fallback: false });
             if (!found) {
               return json(res, 400, { error: `${useName} is not in a configured ${shelfOf(folder)} model folder.` });
             }
-            next[catName] = useName;
+            next[catName] = found.name;
           }
           config.modelOverrides = next;
           musicChoicesCache.at = 0;
+          /* A stand-in counts for the name it stands in for (config.js
+           * localFile), so the video picks follow it at once. */
+          refreshVideoPicks();
           await mergeSettings({ modelOverrides: next });
           return json(res, 200, { ok: true, overrides: next });
         }
@@ -4043,6 +4402,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, powerSnapshot());
     }
 
+    /* Fast covers (server/fastcover.js): GET its state; POST { enabled } is
+     * the Settings switch and the first-run answer alike. On sets up the
+     * Python and fetches the Models row by itself, so only Studio's own page
+     * or a local client may post it. */
+    if (p === "/api/fastcovers") {
+      if (req.method === "GET") return json(res, 200, await fastCovers.status());
+      if (req.method !== "POST") return json(res, 405, { error: "GET or POST" });
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Fast covers are switched from Studio's own page or a local client." });
+      const b = await readBody(req);
+      if (typeof b.enabled !== "boolean") return json(res, 400, { error: "enabled must be true or false." });
+      return json(res, 200, await fastCovers.setEnabled(b.enabled));
+    }
+
     if (p === "/api/provenance/settings" && req.method === "POST") {
       const b = await readBody(req);
       if (typeof b.showBadges === "boolean") config.provenance.showBadges = b.showBadges;
@@ -4164,23 +4536,36 @@ const server = http.createServer(async (req, res) => {
            * and the style pictures were made from (server/safety/lineage.js).
            * Paint's frames reach the engine one by one through /api/engine,
            * which sees the words but not this history, so it is judged here. */
-          paint: (po) => {
+          /* ⚠ A HOLD ON THE ENGINE DOOR, from the first frame to the last
+           * (engine/client.js hold()). The frames are hundreds of door runs
+           * with a few hundred ms between them, and the fresh-engine restart
+           * before an H3 clip (art.js) waits for runs in flight: without the
+           * hold it restarted in a gap, the next frame was refused and the
+           * whole render was lost. */
+          paint: async (po) => {
             const lin = lineage([po.clip, ...(Array.isArray(po.styles) ? po.styles : [])]);
             const d = paintDials(po.dials || {});
             assertSafe({ door: "reactive.paint", via: "reactive.paint", actor: who, texts: [d.styleA, d.styleB],
               context: lin.texts, flags: lin.flags });
-            return paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
-              actor: who,
-              onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
-            });
+            const release = engineDoor.hold("a Reactive Paint look");
+            try {
+              return await paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
+                actor: who,
+                onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
+              });
+            } finally { release(); }
           },
           /* The Motion look: AnimateDiff through the engine door, adopted
            * into the clips library like any other render. The door judges
-           * its graph with the source clip's and the pictures' history. */
-          motion: (mo) => {
+           * its graph with the source clip's and the pictures' history. Two
+           * door runs, held together like Paint's frames. */
+          motion: async (mo) => {
             const lin = lineage([mo.clip, ...(Array.isArray(mo.pictures) ? mo.pictures : [])]);
-            return motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
-              { engine: engineDoor, actor: who });
+            const release = engineDoor.hold("a Reactive Motion look");
+            try {
+              return await motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
+                { engine: engineDoor, actor: who });
+            } finally { release(); }
           },
         });
         return json(res, 200, out);
@@ -4356,11 +4741,27 @@ const server = http.createServer(async (req, res) => {
        * fal.ai or MiniMax key: only Studio's page and local clients queue one. */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Songs are only queued from Studio's own page or a local client." });
       const body = await readBody(req);
+      const batchMusicMetadata = batchMusicBridge.metadata(req);
       if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
       if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
       // No engine named: the default follows the disk when nobody chose (machineDefaults).
       if (body.engine === undefined && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const requestedEngine=body.engine || config.music.engine;
+      try {
+        if (requestedEngine !== "yue2-comfy")
+        validateYue2StyleAdapter({ engine: requestedEngine, lora: body.lora, loraClip: body.loraClip,
+          cot: body.cot || "full", explicit: true });
+      } catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
+      /* YuE2 sings labelled lyrics (server/music/yue-lyrics.js): lyrics with no
+       * [Verse] / [Chorus] at all are given them, for every YuE2 build. The
+       * song keeps the labelled text, so what rendered is what is stored. */
+      if (/^yue2(-|$)/.test(requestedEngine) && !body.instrumental) {
+        const labelled = labelYueLyrics(body.lyrics);
+        if (labelled.changed) {
+          body.lyrics = labelled.lyrics;
+          console.log(`  [yue2] the lyrics had no section labels; [Verse]/[Chorus] were added before rendering`);
+        }
+      }
       if (config.musicOnly && requestedEngine !== "yue2-gguf" && !(requestedEngine === "yue2-comfy" && comfyWanted)) return json(res, 400, {error:"Music-only mode runs YuE2 (native GGUF, or through ComfyUI when a YuE2 checkpoint is found). Start full Studio for other engines."});
       if (requestedEngine === "yue2-gguf") {
         try {
@@ -4373,7 +4774,9 @@ const server = http.createServer(async (req, res) => {
           if (!named && kit.quantization) nativeJob.quantization=kit.quantization;
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
           if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
-          const job=jobs.enqueue({ ...nativeJob, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
+          batchMusicBridge.beforeQueue(req);
+          const job=jobs.enqueue({ ...nativeJob, ...batchMusicMetadata, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
+          batchMusicBridge.record(req,job);
           return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf",quantization:job.quantization}});
         } catch(err) {return json(res, 400, {error:err.message,reason:err.refusal||"request",engine:"yue2-gguf"});}
       }
@@ -4644,7 +5047,9 @@ const server = http.createServer(async (req, res) => {
           coverFit = fit((want || 180) + coverSeconds, { capability });
         }
         const cfgRaw = body.cfgScale === "" || body.cfgScale == null ? null : Number(body.cfgScale);
+        batchMusicBridge.beforeQueue(req);
         const job = jobs.enqueue({
+          ...batchMusicMetadata,
           engine: "yue2",
           actor: prov.actorFrom(req),
           ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}),
@@ -4657,7 +5062,7 @@ const server = http.createServer(async (req, res) => {
           caption: body.instrumental
             ? `${body.caption.trim().replace(/[.,;\s]+$/, "")}. Instrumental, no vocals, no singing, no voice.`
             : body.caption.trim(),
-          lyrics: body.instrumental ? "" : (body.lyrics || "").trim(),
+          lyrics: body.instrumental ? "" : (body.lyrics || ""),
           /* protocol.py:95 — an integer in [0, 2^63). The random one stays in
            * MiniMax's 32-bit range so the seed field on the page reads the same. */
           seed: Number.isFinite(body.seed) ? Math.max(0, Math.floor(body.seed)) : Math.floor(Math.random() * 4294967296),
@@ -4707,6 +5112,7 @@ const server = http.createServer(async (req, res) => {
             fitCeiling: coverFit.ceiling,
           } : {}),
         });
+        batchMusicBridge.record(req,job);
         return json(res, 200, {
           job: jobReceipt(job), engine: "yue2",
           rung: coverCodes ? { id: coverFit.rung.id, label: coverFit.rung.label } : rung,
@@ -4735,7 +5141,8 @@ const server = http.createServer(async (req, res) => {
         }
         const shelf = await scanBases(await modelBases());
         const askedLora = body.lora === undefined ? config.music.aceLora : body.lora;
-        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
+        if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, { error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another, or choose none.`, engine: musicEngine, reason: "lora-missing" });
         }
@@ -4746,19 +5153,14 @@ const server = http.createServer(async (req, res) => {
         if (c && typeof c === "object") {
           if (c.upload) {
             const nm = path.basename(String(c.upload));
-            if (!/^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
+            if (!STAGED_SONG.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
             if (!(await stat(path.join(config.inputDir, nm)).catch(() => null))) return json(res, 400, { error: "The uploaded cover source is gone. Add it again.", reason: "cover-missing" });
             cover = nm;
           } else if (c.song) {
-            const base = path.basename(String(c.song));
-            const src = path.join(config.outputDir, base);
-            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a|opus)$/i.test(base) || !(await stat(src).catch(() => null))) {
-              return json(res, 400, { error: "That Library song is not in the output folder any more.", reason: "cover-missing" });
-            }
-            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, nm), await readFile(src));
-            cover = nm;
+            /* songstage.js: any name the Library lists (it refused brackets,
+             * commas and accents with "not in the output folder any more"). */
+            try { cover = await stageLibrarySong(c.song, { outputDir: config.outputDir, inputDir: config.inputDir }); }
+            catch (err) { return json(res, 400, { error: err.message, reason: "cover-missing", song: err.song || null }); }
           }
         }
         const seedNow = Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296);
@@ -4806,17 +5208,19 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return json(res, e.status || 400, { error: e.message, engine: "yue2-comfy", reason: e.reason });
         }
-        if (body.checkpoint !== undefined && (typeof body.checkpoint !== "string" || !body.checkpoint.trim() || /[/\\]|\.\./.test(body.checkpoint))) {
-          return json(res, 400, { error: "Choose an installed YuE2 checkpoint filename.", reason: "checkpoint" });
+        if (body.checkpoint !== undefined) {
+          try { body.checkpoint = requireModelName(body.checkpoint); }
+          catch (err) { return json(res, 400, { error: err.message, reason: "checkpoint" }); }
         }
-        const ckpt = body.checkpoint ?? config.music.yue2Checkpoint ?? (config.remoteOnly ? "yue2_3b_int8_convrot.safetensors" : undefined);
+        let ckpt = body.checkpoint ?? config.music.yue2Checkpoint ?? (config.remoteOnly ? "yue2_3b_int8_convrot.safetensors" : undefined);
         const shelf = await scanBases(await modelBases());
-        const found = ckpt && shelf.find((f) => f.folder === "checkpoints" && f.name === ckpt);
+        const found = ckpt && findShelfModel(shelf, "checkpoints", ckpt);
+        if (found) ckpt = found.name;
         if (!found && !config.remoteOnly) {
           /* NONE AT ALL: a fresh install whose music default is YuE2 through
            * ComfyUI (server/music-default.js). The page opens the download for
            * that row (needsModel), not a list to pick from. */
-          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name));
+          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name));
           if (!ckpt && !anyYue) {
             /* The size from the catalogue row the Models screen fetches, never typed here. */
             const get = CATALOG.find((c) => c.id === MODEL_TO_CAPABILITY["yue2-comfy"])?.files?.[0]?.bytes;
@@ -4842,7 +5246,8 @@ const server = http.createServer(async (req, res) => {
          * skips keys it cannot match without an error, and a render that
          * silently ignored the LoRA is the failure the picker exists to end. */
         const askedLora = body.lora === undefined ? config.music.yue2Lora : body.lora;
-        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
+        if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, {
             error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
@@ -4860,9 +5265,9 @@ const server = http.createServer(async (req, res) => {
          * a sectioned instrumental and the sheet becomes "[instrumental]",
          * the bare form its card asks for. Without the file, an instrumental
          * stays what it was: a phrasing of the style and empty words. */
-        const onShelf = (n) => /\.safetensors$/i.test(n) && shelf.some((f) => f.folder === "loras" && f.name === n);
+        const onShelf = (n) => /\.safetensors$/i.test(n) && !!findShelfModel(shelf, "loras", n);
         const askedClip = body.loraClip === undefined ? config.music.yue2LoraClip : body.loraClip;
-        let clipName = typeof askedClip === "string" && askedClip.trim() ? path.basename(askedClip.trim()) : null;
+        let clipName = typeof askedClip === "string" && askedClip.trim() ? requireModelName(askedClip) : null;
         /* Not beside a supplied score: the planner does not run then (node 4
          * is left out), so the reason for the pick is gone, and the same
          * language model would sing the score through an adapter nobody has
@@ -4870,6 +5275,7 @@ const server = http.createServer(async (req, res) => {
         if (!clipName && body.loraClip === undefined && body.instrumental && !yueComfy.abc && onShelf(INSTRUMENTAL_PLANNER_LORA)) {
           clipName = INSTRUMENTAL_PLANNER_LORA;
         }
+        if (clipName) clipName = findShelfModel(shelf, "loras", clipName)?.name || clipName;
         if (clipName && !onShelf(clipName)) {
           return json(res, 400, {
             error: `The planner LoRA ${bareName(clipName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
@@ -4880,9 +5286,15 @@ const server = http.createServer(async (req, res) => {
         yueLoraClipStrength = Number.isFinite(Number(body.loraClipStrength))
           ? Math.min(Math.max(Number(body.loraClipStrength), -4), 4)
           : (Number.isFinite(config.music.yue2LoraClipStrength) ? config.music.yue2LoraClipStrength : 1);
-        if (body.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
+        if (body.instrumental && modelLeaf(yueLoraClip) === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
       }
+      if (musicEngine === "yue2-comfy") {
+        try { validateYue2StyleAdapter({ engine: musicEngine, lora: yueLora, loraClip: yueLoraClip, cot: body.cot || "full" }); }
+        catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
+      }
+      batchMusicBridge.beforeQueue(req);
       const job = jobs.enqueue({
+        ...batchMusicMetadata,
         ...(aceJob || {}),
         ...(musicEngine === "yue2-comfy" ? {
           engine: "yue2-comfy",
@@ -4911,7 +5323,7 @@ const server = http.createServer(async (req, res) => {
         title: body.title?.trim()
           || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
         caption: body.caption.trim(),
-        lyrics: yueSheet ?? (body.lyrics || "").trim(),
+        lyrics: yueSheet ?? (["yue2", "yue2-comfy"].includes(musicEngine) ? (body.lyrics || "") : (body.lyrics || "").trim()),
         // The performance. Holding this steady is what lets the AR stage be reused.
         seed: Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296),
         // The mix. A re-roll keeps `seed` and changes only this, so ComfyUI reuses
@@ -4941,6 +5353,7 @@ const server = http.createServer(async (req, res) => {
           ? Math.min(Math.max(Number(body.audioRefDenoise), 0.05), 1)
           : config.audioRef.denoise,
       });
+      batchMusicBridge.record(req,job);
       return json(res, 200, { job: jobReceipt(job), engine: musicEngine });
     }
 
@@ -5016,6 +5429,33 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const action = String(b.action || "status");
 
+      /* Listening review is read-only and must work while another render owns
+       * the card. Resolve both names against the current library, so a stale
+       * sidecar cannot masquerade as a playable comparison take. */
+      if (action === "compare") {
+        const before = String(b.before || ""), after = String(b.after || "");
+        if (!before || !after || [before, after].some((file) => file.includes("..") || /[/\\]/.test(file))) {
+          return json(res, 400, { error: "Choose two library takes to compare.", reason: "file" });
+        }
+        const rows = await library.list();
+        if (!rows.some((row) => row.file === before) || !rows.some((row) => row.file === after)) {
+          return json(res, 404, { error: "One of those takes is no longer in the library.", reason: "file" });
+        }
+        const baseline = { file: before, ...(library.meta.get(before) || {}) };
+        const adapterTake = { file: after, ...(library.meta.get(after) || {}) };
+        const recorded = train.compareTrainingTakes(baseline, adapterTake);
+        /* Old library rows have no complete sampler receipt. A saved lab may
+         * still have the exact finished run graphs and final audio hashes.
+         * Fail closed to the older "unverified" result if any link is absent. */
+        const archived = recorded.status === "unverified"
+          ? await compareArchivedTrainingPair({ appData: config.paths.appData, outputDir: config.outputDir,
+            before, after, baseline, adapterTake, prior: recorded,
+            runRecord: (runId, options) => engineDoor.runRecord(runId, options),
+            readProvenance: () => prov.read("library"), verifyProvenance: () => prov.verify("library") }).catch(() => null)
+          : null;
+        return json(res, 200, { ok: true, before, after, ...(archived || recorded) });
+      }
+
       /* Free VRAM, and an honest null where it cannot be read. `usedMb` comes
        * from nvidia-smi, which does not exist on an AMD machine — and refusing
        * to train on a card we simply cannot measure would be the wrong answer
@@ -5027,7 +5467,7 @@ const server = http.createServer(async (req, res) => {
       const busy = await engineDoor.status()
         .then((st) => (st.running || []).length > 0 || Number(st.queue?.running || 0) > 0)
         .catch(() => false);
-      const ckpts = await readdir(path.join(config.rig, "ComfyUI", "models", "checkpoints")).catch(() => []);
+      const ckpts = await findYue2Checkpoints();
 
       if (action === "status") {
         const st = await train.trainStatus({
@@ -5088,6 +5528,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 409, { error: "The training recording changed while extracting its region. No training was started." });
         }
 
+        try { await train.verifyTrainSliceAudio(slice, set); }
+        catch (e) { return json(res, e.status || 422, { error: e.message, reason: e.reason || "slice-duration" }); }
+
         /* Reading the audio into codes is itself a minute or two of work, and it
          * is CACHED by the decoded bytes — so re-training the same song with
          * different settings does not pay for it twice. */
@@ -5138,7 +5581,7 @@ const server = http.createServer(async (req, res) => {
         const runId = String(b.runId || "").trim();
         const name = String(b.name || "");
         if (!runId || !name) return json(res, 400, { error: "Pass the runId and the name that start gave you.", reason: "bad-arguments" });
-        const rec = await engineDoor.runRecord(runId).catch(() => null);
+        const rec = await engineDoor.runRecord(runId, { graph: true }).catch(() => null);
         if (!rec) return json(res, 404, { error: `No run "${runId}" in this ledger.`, reason: "no-run" });
         /* ⚠ A NULL `result` MEANS STILL RUNNING, AND MUST NEVER READ AS DONE.
          * The record is `{runId, request, result, graph}` — there is no `state`
@@ -5157,21 +5600,19 @@ const server = http.createServer(async (req, res) => {
             runningSec: live?.runningSec ?? live?.elapsedSec ?? null,
           });
         }
-        if (done.status === "error" || done.ok === false) {
+        if (done.status !== "completed") {
           return json(res, 200, {
             ok: true, done: true, failed: true, state: "error",
-            error: done.error || "the engine reported an error",
+            error: done.error || `the engine reported ${done.status || "an incomplete result"}`,
           });
         }
         try {
           const receipt = await readTrainingReceipt(config.paths.appData, runId).catch(error => { if (error.code === "ENOENT") return null; throw error; });
-          if (receipt && receipt.name !== name) return json(res, 409, { error: "This training run belongs to a different adapter name." });
-          const kept = await train.adoptLora(name, receipt ? { outputPrefix: receipt.outputPrefix, exact: true } : {});
+          const adoption = train.verifyTrainAdoption({ runId, name, receipt, record: rec });
+          const kept = await train.adoptLora(name, adoption);
           let trainingReceipt = null, receiptWarning = null;
-          if (receipt) {
-            try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
-            catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
-          }
+          try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
+          catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
           return json(res, 200, {
             ok: true, done: true, kept, trainingReceipt, receiptWarning,
             note: `"${kept.name}" is in your LoRA folder now — pick it on the Music screen under the YuE2 engine.`,
@@ -5181,7 +5622,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list.`, reason: "action" });
+      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list, compare.`, reason: "action" });
     }
 
     if (p === "/api/tokenize" && req.method === "POST") {
@@ -5317,10 +5758,12 @@ const server = http.createServer(async (req, res) => {
       if (!n) return json(res, 400, { error: "No file received." });
       const asked = path.basename(String(url.searchParams.get("name") || "bundle"));
       const stem = (asked.replace(/\.[^.]*$/, "").replace(/[^A-Za-z0-9._-]/g, "_") || "bundle").slice(0, 60);
-      const name = `${stem}.aiplay`;
       await mkdir(dir, { recursive: true });
+      /* Preserve every received copy. Reusing the sender's basename could
+       * replace a bundle between the review and consent presses. */
+      const name = `${stem}-${randomUUID().replaceAll("-", "")}.aiplay`;
       const file = path.join(dir, name);
-      await writeFile(file, Buffer.concat(chunks));
+      await writeFile(file, Buffer.concat(chunks), { flag: "wx" });
       return json(res, 200, { ok: true, file, name, bytes: n });
     }
 
@@ -5349,6 +5792,45 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { ...base, "Content-Length": take.size });
       return createReadStream(take.file).pipe(res);
+    }
+
+    if (p.startsWith("/api/collab-image/") && req.method === "GET") {
+      const site = String(req.headers["sec-fetch-site"] || "");
+      if (site !== "same-origin") return json(res, 403, { error: "Returned images are shown only on this Studio's Collab screen.", reason: "not-same-origin" });
+      const parts = p.slice("/api/collab-image/".length).split("/");
+      if (parts.length !== 2) return json(res, 400, { error: "Choose one returned image.", reason: "file" });
+      let fromFp, name;
+      try { [fromFp, name] = parts.map(decodeURIComponent); }
+      catch { return json(res, 400, { error: "The image address is invalid.", reason: "file" }); }
+      let picture;
+      try { picture = await imageQuarantinePicture({ outDir: path.join(config.outputDir, "collab"), fromFp, file: name }); }
+      catch (error) { return json(res, error.status || 400, { error: error.message, reason: error.reason }); }
+      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": picture.size,
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" });
+      return res.end(picture.bytes);
+    }
+
+    if (p.startsWith("/api/collab-video/") && req.method === "GET") {
+      if (String(req.headers["sec-fetch-site"] || "") !== "same-origin") return json(res, 403, { error: "Returned videos play only on this Studio's Collab screen.", reason: "not-same-origin" });
+      const parts = p.slice("/api/collab-video/".length).split("/");
+      if (parts.length !== 2) return json(res, 400, { error: "Choose one returned video.", reason: "file" });
+      let fromFp, name;
+      try { [fromFp, name] = parts.map(decodeURIComponent); }
+      catch { return json(res, 400, { error: "The video address is invalid.", reason: "file" }); }
+      let clip;
+      try { clip = await videoQuarantineClip({ outDir: path.join(config.outputDir, "collab"), fromFp, file: name }); }
+      catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason }); }
+      const size = clip.bytes.length;
+      const base = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+      const range = byteRange(req.headers.range, size);
+      if (range?.unsatisfiable) { res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` }); return res.end(); }
+      if (range) {
+        const { start, end } = range;
+        res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
+        return res.end(clip.bytes.subarray(start, end + 1));
+      }
+      res.writeHead(200, { ...base, "Content-Length": size });
+      return res.end(clip.bytes);
     }
 
     if (p === "/api/collab" && req.method === "POST") {
@@ -5380,7 +5862,9 @@ const server = http.createServer(async (req, res) => {
           reason: "not-same-origin",
         });
       }
-      const b = await readBody(req);
+      let b;
+      try { b = await readBody(req, MAX_BUNDLE_BYTES); }
+      catch (err) { return json(res, err.tooBig ? 413 : 400, { error: err.tooBig ? "That Collab request is too large." : "Could not read that Collab request as JSON.", reason: err.tooBig ? "too-big" : "bad-json" }); }
       const appData = config.paths.appData;
       const outDir = path.join(config.outputDir, "collab");
       /* ⚠ ONE READER FOR EVERY SEALED FILE, AND IT REFUSES BY SIZE BEFORE IT
@@ -5459,13 +5943,561 @@ const server = http.createServer(async (req, res) => {
         /* ── WHAT I SENT, WHAT LANDED HERE, WHAT IS WAITING ──────────────── */
         if (action === "orders") {
           const side = b.side === "in" ? "in" : "out";
-          return json(res, 200, { ok: true, side, orders: await book.listOrders({ outDir, side }) });
+          const orders = await book.listOrders({ outDir, side });
+          return json(res, 200, { ok: true, side, orders: orders.map((row) => row.imageJob?.job?.references
+            ? { ...row, imageJob: { ...row.imageJob, job: { ...row.imageJob.job,
+              references: row.imageJob.job.references.map(({ b64, ...reference }) => reference),
+            } } }
+            : row) });
         }
         if (action === "inbox") {
           return json(res, 200, { ok: true, ...(await scanInbox({ outDir })) });
         }
         if (action === "quarantine") {
-          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }) });
+          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }), images: await listImageQuarantine({ outDir }), videos: await listVideoQuarantine({ outDir }) });
+        }
+
+        /* Standalone Video gets a real signed render order. Accepting merely
+         * records consent; only video_render may spend the receiver's GPU. */
+        if (action === "video_accept") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Choose the signed video job first.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const reviewDigest = createHash("sha256").update(read.blob).digest("hex");
+          if (b.seen === true && b.expectedDigest !== reviewDigest) return json(res, 409, { error: "The signed file changed after review. Open it again before accepting.", reason: "review-changed" });
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({ blob: read.blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((peer) => peer.fp === envelope.from) || null;
+              if (!sender) { const e = new Error("The video job signer is not on your roster."); e.reason = "unknown-sender"; throw e; }
+              return sender.sign;
+            } });
+          if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify the sender and give them a render role first.", reason: "role" });
+          let packet;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); }
+          catch { return json(res, 400, { error: "The video job is not readable JSON.", reason: "bad-packet" }); }
+          const order = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
+          if (order.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer.", reason: "return-address" });
+          const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
+          const readiness = videoReadyFresh("h3");
+          const reviewMinutes = b.seen !== true ? await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() }) : null;
+          if (b.seen !== true) return json(res, 409, { error: "Review the complete job and this machine's H3 readiness, then accept explicitly. Accepting does not render.", reason: "not-seen",
+            from: { fp: sender.fp, nickname: sender.nickname }, videoJob: order, reviewDigest,
+            describes: describeVideoJob(order), readiness, outputRights: model?.outputRights ?? null,
+            minutes: reviewMinutes.why, overBudget: reviewMinutes.over,
+            readinessNote: "Model and engine readiness are checked again when Render is pressed; accepting only reserves this friend's daily allowance." });
+          if (await book.findOrder({ outDir, id: order.id, side: "in" })) return json(res, 409, {
+            error: `Video job ${order.id} was already accepted on this machine. It cannot reserve or render twice.`, reason: "already-landed" });
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          /* A signed job may be accepted before its model/engine is installed;
+           * that is consent, not a promise of GPU availability. Every unreadable
+           * LOCAL queue and a paused queue still block acceptance. Render makes
+           * the full engine/readiness check when it can actually spend GPU time. */
+          if (busy.busy && ["art-paused", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          const busyOverride = busy.busy && busy.reason !== "engine-unreachable" ? { reason: busy.reason, why: busy.why } : null;
+          /* Price and land within one orderbook writer turn. Two concurrent
+           * accepts must see each other's reservations before either can spend
+           * the same remaining daily minutes. */
+          const landed = await book.landOrderRowChecked({ outDir, row: { id: order.id, at: order.at, expires: order.expires,
+            from: { fp: sender.fp, nickname: sender.nickname, role: sender.role }, jobType: "video",
+            videoJob: compactVideoJob(order), returnTo: order.returnTo, reviewDigest,
+            state: "landed", consentAt: Date.now(), landedAt: Date.now() },
+          check: async (rows) => {
+            const minutes = await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []), ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: `${overrides.map((item) => item.why).join(" ")} Review these checks and explicitly choose Accept anyway to reserve this job.`,
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
+          } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          return json(res, 200, { ok: true, order: order.id, state: landed.row.state,
+            note: `Accepted locally; about ${landed.decision.minutes.thisOne ?? "unknown"} min reserved. Model and engine readiness are checked at Render. No video has been queued.` });
+        }
+
+        if (action === "video_render") {
+          const id = String(b.id || "");
+          const row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "video") return json(res, 404, { error: "No accepted video job has that id.", reason: "no-such-order" });
+          if (row.state !== "landed") return json(res, 409, { error: `Video job ${id} is ${row.state}; it cannot be queued again.`, reason: "already-rendering" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const sender = peers.find((peer) => peer.fp === row.from?.fp);
+          if (!sender?.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "The sender no longer has a verified render role.", reason: "role" });
+          const order = readStoredVideoJob(row.videoJob, { now: Date.now(), myFp: me.fp });
+          if (order.returnTo.fp !== sender.fp || !config.video.enabled) return json(res, 409, { error: "The accepted order changed or Video is disabled on this machine.", reason: "video-disabled" });
+          if (assignedTo("video")) return json(res, 409, { error: "A custom Video workflow is active; this job needs the built-in H3 graph. Unassign it and review again.", reason: "workflow-incompatible" });
+          const readiness = videoReadyFresh("h3");
+          if (!readiness.ready) return json(res, 409, { error: "MiniMax H3 is not ready on this machine.", reason: "model-not-ready", readiness });
+          const renderReadings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const renderBusy = machineBusy(renderReadings);
+          if (renderBusy.busy) {
+            const overridable = !["art-paused", "workload-unreachable", "engine-unreachable"].includes(renderBusy.reason);
+            if (!overridable || b.anyway !== true) return json(res, 409, {
+              error: renderBusy.why, reason: renderBusy.reason, busy: true, overridable,
+              ...(overridable ? { overrides: [{ reason: renderBusy.reason, why: renderBusy.why }] } : {}),
+            });
+          }
+          const j = order.job;
+          if (Number(videoEngine("h3")?.fps) !== 24) return json(res, 409, {
+            error: "This machine's H3 graph is not set to 24 fps. It would change the signed video contract; nothing was queued.",
+            reason: "settings-incompatible" });
+          if ((await art.videoAttention({ engine: "h3", attention: j.attention })) !== j.attention) return json(res, 409, {
+            error: "This machine cannot run the signed H3 attention backend. Nothing was queued.",
+            reason: "attention-incompatible" });
+          const eng = videoEngine("h3");
+          const renderModels = receiverBaseH3Models(eng, config.video);
+          const plan = videoPlan({ prompt: j.prompt, seed: j.seed, width: j.width, height: j.height,
+            seconds: j.seconds, steps: j.steps, guidance: j.guidance, sparse: "off", keepAudio: j.keepAudio },
+            { engineKey: "h3", eng: { ...config.video, ...eng, ...renderModels },
+              h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
+              framed: false, control: false });
+          if (plan.refusal || plan.prompt !== j.prompt || plan.width !== j.width || plan.height !== j.height || plan.seconds !== j.seconds || plan.steps !== j.steps || plan.sparse !== "off") return json(res, 409, {
+            error: plan.refusal?.error || "This machine would change a signed Video setting. Nothing was queued.",
+            reason: plan.refusal?.reason || "settings-incompatible", plan });
+          const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
+          await book.transitionOrderState({ outDir, id, from: "landed", to: "rendering", patch: {
+            renderRequestedAt: Date.now(), renderStatus: "requested", renderModel: String(renderModels.dit || "minimax-h3"),
+            renderModels,
+            renderRights: model?.outputRights ?? { class: "unknown", why: "No local model rights record was found." },
+          } });
+          let queued;
+          try {
+            queued = art.request({ actor: "script:collab-video", file: `clip:collab_${id}`,
+              title: `Friend video ${id}`, kind: "video", force: true, seed: j.seed,
+              video: { engine: "h3", prompt: j.prompt, seconds: j.seconds, width: j.width, height: j.height,
+                steps: j.steps, guidance: j.guidance, keepAudio: j.keepAudio, negative: "", sparse: "off",
+                attention: j.attention, blockCache: false, bridge: "off", bridgeAlpha: 0, loras: [], refImages: [], refAudios: [],
+                models: renderModels, collabVideoBase: true,
+                firstFrame: null, lastFrame: null, midFrames: [], audioTrack: null,
+              } });
+          } catch (e) { return json(res, 409, { error: `The video queue's outcome is uncertain: ${e.message}. Do not press Render again.`, reason: "render-uncertain" }); }
+          if (!queued) {
+            await book.transitionOrderState({ outDir, id, from: "rendering", to: "landed", patch: { renderStatus: "refused" } });
+            return json(res, 422, art.lastRefusalBody || { error: "The local Video queue refused this prompt.", reason: "render-refused" });
+          }
+          await book.transitionOrderState({ outDir, id, from: "rendering", to: "queued", patch: { queuedAt: Date.now(), artJobId: queued.id } });
+          return json(res, 200, { ok: true, order: id, state: "queued", job: queued.id,
+            note: "Queued locally after explicit receiver consent. No result has been sent." });
+        }
+
+        if (action === "video_send_back") {
+          const id = String(b.id || "");
+          let row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "video") return json(res, 404, { error: "No accepted video job has that id.", reason: "no-such-order" });
+          const returnNameOK = (name) => new RegExp(`^video-return-${id}-[0-9a-f]{8}\\.aiplay$`).test(String(name || ""));
+          if (row.state === "returning") {
+            if (!returnNameOK(row.videoReturnFile)) return json(res, 409, {
+              error: "The prepared return name changed; nothing was re-sealed.", reason: "return-changed" });
+            const file = path.join(outDir, "out", row.videoReturnFile);
+            const prior = await readFile(file).catch((e) => { if (e.code === "ENOENT") return null; throw e; });
+            if (prior && createHash("sha256").update(prior).digest("hex") !== row.videoReturnSha256)
+              return json(res, 409, { error: "The prepared return changed; nothing was re-sealed.", reason: "return-changed" });
+            if (prior) {
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+                patch: { renderedAt: Date.now() } });
+              return json(res, 200, { ok: true, replay: true, order: id, state: "rendered",
+                file, name: row.videoReturnFile, bytes: prior.length });
+            }
+            /* The atomic book claim happened, but no output file was published.
+             * Re-sealing the same checked clip is safe: no render is repeated
+             * and the receiver de-duplicates by order and content hash. */
+            row = await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+              patch: { videoReturnFile: null, videoReturnSha256: null } });
+          }
+          if (row.state === "rendered" && row.videoReturnFile) {
+            if (!returnNameOK(row.videoReturnFile)) return json(res, 409, {
+              error: "The prepared return name changed; nothing was re-sealed.", reason: "return-changed" });
+            const file = path.join(outDir, "out", row.videoReturnFile);
+            const bytes = await readFile(file).catch(() => null);
+            if (bytes && createHash("sha256").update(bytes).digest("hex") === row.videoReturnSha256) return json(res, 200, { ok: true, replay: true, order: id, file, name: row.videoReturnFile, bytes: bytes.length });
+            return json(res, 409, { error: "The prepared return changed or disappeared. Its state needs review; nothing was sealed again.", reason: "return-changed" });
+          }
+          if (row.state !== "queued" || row.renderStatus !== "complete" || !row.renderClip) return json(res, 409, { error: "This job has no completed, recorded clip to return.", reason: "not-rendered" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const peer = peers.find((item) => item.fp === row.from?.fp);
+          if (!peer?.verified || !["lender", "collaborator"].includes(peer.role)) return json(res, 403, { error: "The borrower is no longer a verified rendering friend.", reason: "role" });
+          const order = readStoredVideoJob(row.videoJob);
+          if (order.returnTo.fp !== peer.fp || row.renderClip !== `collab_${id}.mp4`) return json(res, 409, { error: "The recorded clip or return address changed.", reason: "render-record-mismatch" });
+          const bytes = await readFile(path.join(CLIP_DIR, row.renderClip)).catch(() => null);
+          if (!bytes || bytes.length > VIDEO_RETURN_BYTES_CAP || createHash("sha256").update(bytes).digest("hex") !== row.renderSha256) return json(res, 409, { error: "The rendered MP4 changed, is missing or exceeds 64 MiB.", reason: "render-output-changed" });
+          const meta = clipMeta.get(row.renderClip);
+          const j = order.job;
+          if (!meta || meta.engine !== "h3" || meta.prompt !== j.prompt || meta.seed !== j.seed || meta.width !== j.width || meta.height !== j.height || meta.clipSeconds !== j.seconds || meta.steps !== j.steps || meta.guidance !== j.guidance || meta.firstFrame || meta.refImages || meta.refAudios || meta.audioTrack || meta.loras || meta.bridge !== "off" || meta.bridgeAlpha !== 0 || meta.sparse === "sol-attn" || meta.blockCache !== false || meta.attention !== j.attention) return json(res, 409, { error: "The renderer's clip record differs from the signed job. No return was sealed.", reason: "render-record-mismatch" });
+          const { type: _videoType, ...recordSettings } = j;
+          const record = { ...recordSettings, model: "minimax-h3", modelVersion: row.renderModel || "minimax-h3", modelSha256: null,
+            outputRights: row.renderRights || { class: "unknown", why: "No local rights record was found." } };
+          const payload = await makeVideoReturn({ orderDoc: order, fromFp: me.fp, resultBytes: bytes, record, now: Date.now() });
+          const { signPrivate } = await collabPrivateKeys({ appData });
+          const blob = sealTo({ payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
+            toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+            toFp: peer.fp, fromFp: me.fp, signPrivate });
+          const name = `video-return-${id}-${randomUUID().replaceAll("-", "").slice(0, 8)}.aiplay`;
+          const dest = path.join(outDir, "out", name);
+          const digest = createHash("sha256").update(blob).digest("hex");
+          await book.transitionOrderState({ outDir, id, from: "queued", to: "returning", patch: { videoReturnFile: name, videoReturnSha256: digest, returnRequestedAt: Date.now() } });
+          await mkdir(path.dirname(dest), { recursive: true });
+          try { await writeFile(dest, blob, { flag: "wx" });
+            await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered", patch: { renderedAt: Date.now() } }); }
+          catch (e) { return json(res, 409, { error: `Return publication was interrupted: ${e.message}. Review the order before retrying.`, reason: "return-uncertain" }); }
+          return json(res, 200, { ok: true, order: id, state: "rendered", file: dest, name, bytes: blob.length,
+            to: { fp: peer.fp, nickname: peer.nickname }, note: "Prepared the signed MP4 return. Hand this sealed file to the friend; their Studio will quarantine it." });
+        }
+
+        /* A standalone image job has its own consent and queue. It never enters
+         * the movie plan or the older scene-order wire format. */
+        if (action === "image_accept") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Choose the received image job file first.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const reviewDigest = createHash("sha256").update(read.blob).digest("hex");
+          if (b.seen === true && (typeof b.expectedDigest !== "string" || b.expectedDigest !== reviewDigest)) {
+            return json(res, 409, { error: "This signed image job changed since review, or no review digest was supplied. Open and review the current file again before accepting it.", reason: "review-changed" });
+          }
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({ blob: read.blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((row) => row.fp === envelope.from) || null;
+              if (!sender) { const error = new Error("The image job signer is not on your roster."); error.reason = "unknown-sender"; throw error; }
+              return sender.sign;
+            },
+          });
+          if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify the sender and grant a render role before accepting their image job.", reason: "role" });
+          let packet;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); }
+          catch { return json(res, 400, { error: "The image job is not a readable packet.", reason: "bad-packet" }); }
+          const imageOrder = readImageJob(packet, { now: Date.now(), myFp: me.fp });
+          if (imageOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer. Nothing was accepted.", reason: "return-address" });
+          /* A signed hash proves which compressed bytes arrived, not whether
+           * they are bounded, decodable pictures. The browser must never get
+           * data URLs for a peer reference before this independent preflight. */
+          await measureImageJobReferences(imageOrder.job.references);
+          const pictures = imageOrder.job.references.map((reference) => ({
+            ordinal: reference.ordinal, mime: reference.mime, bytes: reference.bytes, sha256: reference.sha256,
+            dataUrl: `data:${reference.mime};base64,${reference.b64}`,
+          }));
+          if (b.seen !== true) {
+            const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+              rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+            return json(res, 409, {
+            error: "Review the full prompt and reference pictures, then accept this job explicitly. Acceptance only stages its references; it does not render.",
+            reason: "not-seen", from: { fp: sender.fp, nickname: sender.nickname },
+            imageJob: { ...imageOrder, job: { ...imageOrder.job, references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
+            pictures, reviewDigest, describes: describeImageJob(imageOrder), minutes: minutes.why, overBudget: minutes.over,
+            });
+          }
+          /* The signed bytes and hashes alone do not make an image safe to
+           * decode. Measure every included source under bounded pixels and a
+           * full decoder before an order row or Comfy input file is created. */
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy && ["art-paused", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          /* Consent stages pictures. Engine startup may happen later, but a
+           * known running job is an explicit override. Actual GPU use gets a
+           * fresh full workload reading at image_render. */
+          const busyOverride = busy.busy && busy.reason !== "engine-unreachable" ? { reason: busy.reason, why: busy.why } : null;
+          const landed = await book.landOrderRowChecked({ outDir, row: {
+            id: imageOrder.id, at: imageOrder.at, expires: imageOrder.expires,
+            from: { fp: sender.fp, nickname: sender.nickname, role: sender.role },
+            jobType: "image", imageJob: compactImageJob(imageOrder), returnTo: imageOrder.returnTo,
+            state: "claimed", consentAt: Date.now(), landedAt: Date.now(), reviewDigest,
+          }, check: async (rows) => {
+            const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []), ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: `${overrides.map((item) => item.why).join(" ")} Review these checks and explicitly choose Accept anyway to reserve this image job.`,
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
+          } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          try {
+            const stagedRefs = [];
+            await mkdir(config.inputDir, { recursive: true });
+            for (const reference of imageOrder.job.references) {
+              const bytes = Buffer.from(reference.b64, "base64");
+              const ext = reference.mime === "image/jpeg" ? "jpg" : reference.mime === "image/webp" ? "webp" : "png";
+              const name = `aiplay_frame_${createHash("sha1").update(bytes).digest("hex").slice(0, 12)}.${ext}`;
+              const target = path.join(config.inputDir, name);
+              const old = await readFile(target).catch(() => null);
+              if (old && !old.equals(bytes)) { const error = new Error("A staged reference filename already contains different bytes. Nothing was accepted."); error.reason = "reference-collision"; throw error; }
+              if (!old) await writeFile(target, bytes);
+              stagedRefs.push(name);
+            }
+            const row = await book.fillOrderRow({ outDir, id: imageOrder.id, patch: { state: "landed", stagedRefs, landedAt: Date.now() } });
+            return json(res, 200, { ok: true, order: imageOrder.id, state: row.state, stagedRefs,
+              imageJob: { ...imageOrder, job: { ...imageOrder.job, references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
+              note: `Accepted and staged locally; about ${landed.decision.minutes.thisOne ?? "unknown"} min reserved. Nothing is queued. Press Render separately after checking this machine's Qwen readiness.` });
+          } catch (error) {
+            await book.releaseOrder({ outDir, id: imageOrder.id }).catch(() => {});
+            throw error;
+          }
+        }
+
+        if (action === "image_render") {
+          const id = String(b.id || "");
+          const row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "image") return json(res, 404, { error: "No accepted image job has that id.", reason: "no-such-order" });
+          const retrying = row.state === "failed";
+          if (retrying && b.retry !== true) return json(res, 409, { error: "The previous image render failed or was stopped. Review that result, then explicitly retry this accepted job.", reason: "retry-review-required" });
+          if ((!retrying && row.state !== "landed") || (!retrying && row.imageId)) return json(res, 409, { error: `This image job is ${row.state || "already in progress"}. It cannot be queued twice.`, reason: "already-rendering" });
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const sender = peers.find((peer) => peer.fp === row.from?.fp);
+          if (!sender?.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "The sender is no longer a verified rendering friend. No image was queued.", reason: "role" });
+          const imageOrder = readStoredImageJob(row.imageJob, { now: Date.now(), myFp: me.fp });
+          if (imageOrder.returnTo.fp !== sender.fp || !Array.isArray(row.stagedRefs)
+              || row.stagedRefs.length !== imageOrder.job.references.length) return json(res, 400, { error: "The accepted job or its staged pictures no longer match the signer.", reason: "order-changed" });
+          for (let i = 0; i < row.stagedRefs.length; i++) {
+            const name = String(row.stagedRefs[i] || "");
+            if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(name)) return json(res, 400, { error: "A staged image reference has an invalid filename.", reason: "bad-reference" });
+            const bytes = await readFile(path.join(config.inputDir, name)).catch(() => null);
+            if (!bytes || createHash("sha256").update(bytes).digest("hex") !== imageOrder.job.references[i].sha256) return json(res, 400, { error: `Reference ${i + 1} changed or disappeared after acceptance. No image was queued.`, reason: "reference-changed" });
+          }
+          const ready = await qwenImageStatus({ options: {
+            prompt: imageOrder.job.prompt, seed: imageOrder.job.seed,
+            width: imageOrder.job.width, height: imageOrder.job.height,
+            steps: imageOrder.job.steps, cfg: imageOrder.job.cfg,
+            sampler: imageOrder.job.sampler, scheduler: imageOrder.job.scheduler,
+            refImages: row.stagedRefs, refSizing: "custom", count: 1, draft: false, transparent: false,
+            dit: QWEN_IMAGE_FILES.dit, encoder: QWEN_IMAGE_FILES.encoder, vae: QWEN_IMAGE_FILES.vae,
+          } });
+          if (!ready.ready) return json(res, 409, { error: "Qwen Image 2.1 base is not ready on this machine. Install the missing files or nodes, then render this accepted job.", reason: "model-not-ready", readiness: ready });
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy && ["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason)) return json(res, 409, {
+            error: busy.why, reason: busy.reason, busy: true, overridable: false });
+          const minutes = await collabLending.budgetCheck({ peer: sender, imageOrder,
+            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
+          const overrides = [...(busy.busy ? [{ reason: busy.reason, why: busy.why }] : []),
+            ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+          if (overrides.length && b.anyway !== true) return json(res, 409, {
+            error: `${overrides.map((item) => item.why).join(" ")} Check this machine and explicitly choose Render anyway to spend the card.`,
+            reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
+          });
+          await book.transitionOrderState({ outDir, id, from: retrying ? "failed" : "landed", to: "rendering",
+            patch: { renderRequestedAt: Date.now(), renderStatus: "requested",
+              ...(retrying ? { lastFailedImageId: row.imageId || row.lastFailedImageId || null,
+                imageId: null, renderFailedAt: null, renderCompletedAt: null, renderDurationMs: null,
+                retryCount: (Number(row.retryCount) || 0) + 1 } : {}) } });
+          let response, queued;
+          try {
+            response = await fetch(`http://127.0.0.1:${config.uiPort}/api/image`, {
+              method: "POST", headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:collab-image" },
+              body: JSON.stringify({ action: "create", engine: "qwen-image-2.1", prompt: imageOrder.job.prompt,
+                seed: imageOrder.job.seed, width: imageOrder.job.width, height: imageOrder.job.height,
+                steps: imageOrder.job.steps, cfg: imageOrder.job.cfg,
+                sampler: imageOrder.job.sampler, scheduler: imageOrder.job.scheduler,
+                count: 1, refSizing: "custom", refImages: row.stagedRefs,
+                draft: false, transparent: false, negative: "", private: true,
+                dit: QWEN_IMAGE_FILES.dit, encoder: QWEN_IMAGE_FILES.encoder, vae: QWEN_IMAGE_FILES.vae,
+                dedupe: false,
+              }),
+            });
+          } catch (error) {
+            return json(res, 409, { error: "The image queue did not answer. Its outcome is uncertain, so this job will not be queued a second time automatically.", reason: "render-uncertain", detail: error.message });
+          }
+          try { queued = await response.json(); }
+          catch { return json(res, 409, { error: "The image queue answered without a readable receipt. Its outcome is uncertain; do not queue it again automatically.", reason: "render-uncertain" }); }
+          if (!response.ok) {
+            await book.transitionOrderState({ outDir, id, from: "rendering", to: retrying ? "failed" : "landed",
+              patch: { renderRequestedAt: null, renderStatus: retrying ? "failed" : null } });
+            return json(res, response.status, { error: queued?.error || "The local image queue refused this job.", reason: "render-refused", readiness: queued });
+          }
+          if (!queued?.ok || !/^i[a-z0-9]+$/.test(String(queued.id || "")) || queued.seed !== imageOrder.job.seed) {
+            return json(res, 409, { error: "The image queue receipt did not match this job. Its outcome is uncertain; do not queue it again automatically.", reason: "render-uncertain" });
+          }
+          await book.transitionOrderState({ outDir, id, from: "rendering", to: "queued",
+            patch: { imageId: queued.id, queuedAt: Date.now(), renderStatus: "queued" } });
+          /* An exceptionally fast job can emit its terminal event before this
+           * receipt is committed. Reconcile the runner's own recent record;
+           * absence is unknown, never a failure inferred from an empty queue. */
+          const recent = recentImageOutcome(art.status(), queued.id);
+          if (recent) await recordImageOutcome({ book, outDir, file: `image:${queued.id}`,
+            outcome: { ...recent, ...(recent.type === "complete" ? { cover: `${queued.id}.png` } : {}) } });
+          const latest = await book.findOrder({ outDir, id, side: "in" });
+          return json(res, 200, { ok: true, order: id, state: latest?.state || "queued", imageId: queued.id,
+            renderStatus: latest?.renderStatus || "queued",
+            note: "The local Qwen render was queued after your explicit request. Nothing has been sent back yet." });
+        }
+
+        if (action === "image_send_back") {
+          const id = String(b.id || "");
+          let row = await book.findOrder({ outDir, id, side: "in" });
+          if (!row || row.jobType !== "image") return json(res, 404, { error: "No accepted image job has that id.", reason: "no-such-order" });
+          if (row.state === "returning") {
+            if (collabImageReturnClaims.has(id)) return json(res, 409, { error: "This image return is being prepared now. Check again shortly.", reason: "return-in-progress" });
+            const intended = String(row.imageReturnFile || "");
+            if (!/^image-return-o_[0-9a-f]{12}-[0-9a-f]{8}\.aiplay$/.test(intended)
+                || !/^[0-9a-f]{64}$/.test(String(row.imageReturnSha256 || ""))) {
+              return json(res, 409, { error: "The interrupted return has no complete sealed-file record. It needs manual review before it can be retried.", reason: "return-record-changed" });
+            }
+            const intendedFile = path.join(outDir, "out", intended);
+            const existing = (await readSealed(intendedFile)).blob || null;
+            if (!existing && await stat(intendedFile).catch(() => null)) {
+              return json(res, 409, { error: "The interrupted return file exists but could not be read within the sealed-file limit. It cannot be replaced automatically.", reason: "return-file-changed" });
+            }
+            if (existing) {
+              if (createHash("sha256").update(existing).digest("hex") !== row.imageReturnSha256) {
+                return json(res, 409, { error: "The interrupted return file differs from its saved hash. It cannot be handed off or replaced automatically.", reason: "return-file-changed" });
+              }
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+                patch: { renderedAt: Date.now() } });
+            } else {
+              /* No finished file was published. A lone temp file can only
+               * contain this attempt's incomplete bytes; remove that exact
+               * path and allow a new explicit Send back press to seal again. */
+              await unlink(`${intendedFile}.tmp`).catch((error) => { if (error.code !== "ENOENT") throw error; });
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+                patch: { imageReturnFile: null, imageReturnSha256: null, returnRequestedAt: null } });
+            }
+            row = await book.findOrder({ outDir, id, side: "in" });
+          }
+          if (row.state === "rendered") {
+            const name = String(row.imageReturnFile || "");
+            if (!/^image-return-o_[0-9a-f]{12}-[0-9a-f]{8}\.aiplay$/.test(name)
+                || !/^[0-9a-f]{64}$/.test(String(row.imageReturnSha256 || ""))) {
+              return json(res, 409, { error: "The recorded image return is incomplete; it cannot be handed off as verified.", reason: "return-record-changed" });
+            }
+            const file = path.join(outDir, "out", name);
+            const existing = (await readSealed(file)).blob || null;
+            if (!existing || createHash("sha256").update(existing).digest("hex") !== row.imageReturnSha256) {
+              return json(res, 409, { error: "The prepared image return changed or disappeared. It cannot be handed off as verified.", reason: "return-file-changed" });
+            }
+            return json(res, 200, { ok: true, order: id, state: "rendered", file, name, bytes: existing.length,
+              to: row.from, note: "This verified sealed result was already prepared. Hand this file to your friend." });
+          }
+          if (!/^i[a-z0-9]+$/.test(String(row.imageId || "")) || row.state !== "queued") return json(res, 409, { error: "This image job has not completed a local render.", reason: "not-rendered" });
+          const imageOrder = readStoredImageJob(row.imageJob);
+          const me = await collabIdentity({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          const peer = peers.find((item) => item.fp === imageOrder.returnTo.fp);
+          if (!peer?.verified || !["lender", "collaborator"].includes(peer.role) || peer.fp !== row.from?.fp) return json(res, 403, { error: "The sender is no longer a verified rendering friend. No image was prepared for them.", reason: "role" });
+          const name = `${row.imageId}.png`;
+          const imageBytes = await readFile(path.join(IMAGE_DIR, name)).catch(() => null);
+          if (!imageBytes) return json(res, 409, { error: "The image is still rendering or failed. Check its status before preparing a return.", reason: "not-rendered" });
+          const meta = imageMeta.get(name);
+          if (meta?.engine !== "qwen-image-2.1" || meta?.draft === true) return json(res, 409, { error: "The finished file is not recorded as a Qwen Image 2.1 base render. It was not sent.", reason: "model-mismatch" });
+          if (!/^[0-9a-f]{64}$/.test(String(meta.outputSha256 || ""))
+              || createHash("sha256").update(imageBytes).digest("hex") !== meta.outputSha256) {
+            return json(res, 409, { error: "The finished image file changed after this render was recorded. No return was sealed.", reason: "render-output-changed" });
+          }
+          const settings = imageOrder.job;
+          const actual = meta.refImages;
+          const sameSettings = meta.seed === settings.seed && meta.steps === settings.steps
+            && meta.cfg === settings.cfg && meta.sampler === settings.sampler
+            && meta.scheduler === settings.scheduler && meta.count === settings.count
+            && meta.requestedWidth === settings.width && meta.requestedHeight === settings.height
+            && meta.refSizing === settings.refSizing && meta.transparent === settings.transparent
+            && meta.dit === QWEN_IMAGE_FILES.dit && meta.encoder === QWEN_IMAGE_FILES.encoder
+            && meta.vae === QWEN_IMAGE_FILES.vae && Array.isArray(actual)
+            && actual.length === settings.references.length && Array.isArray(row.stagedRefs)
+            && row.stagedRefs.length === settings.references.length;
+          if (!sameSettings) return json(res, 409, { error: "The completed image's recorded model, settings or reference count differ from the signed job. No return was sealed.", reason: "render-record-mismatch" });
+          for (let i = 0; i < settings.references.length; i++) {
+            const source = String(row.stagedRefs[i] || "");
+            if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(source)) return json(res, 409, { error: "A staged reference name changed since acceptance.", reason: "render-record-mismatch" });
+            const bytes = await readFile(path.join(config.inputDir, source)).catch(() => null);
+            if (!bytes || createHash("sha256").update(bytes).digest("hex") !== settings.references[i].sha256) return json(res, 409, { error: "A signed reference changed before the return could be sealed.", reason: "render-record-mismatch" });
+            const flat = `aiplay_frame_${createHash("sha1").update(`${path.join(config.inputDir, source)}\0over white`).digest("hex").slice(0, 12)}.png`;
+            if (actual[i] !== source && actual[i] !== flat) return json(res, 409, { error: "The completed image used a different reference order. No return was sealed.", reason: "render-record-mismatch" });
+          }
+          const model = (await models.status()).find((item) => item.id === "qwen-image-2.1");
+          const record = {
+            engine: settings.engine, model: "qwen-image-2.1",
+            modelVersion: meta.dit,
+            modelSha256: null, modelPolicy: settings.modelPolicy,
+            seed: settings.seed, width: settings.width, height: settings.height,
+            steps: settings.steps, cfg: settings.cfg, sampler: settings.sampler,
+            scheduler: settings.scheduler, count: settings.count,
+            refSizing: settings.refSizing, draft: settings.draft,
+            transparent: settings.transparent, negative: settings.negative,
+            referenceSha256s: settings.references.map((reference) => reference.sha256),
+            outputRights: model?.outputRights ?? { class: "unknown", why: "The rendering Studio has no local rights record for this model." },
+          };
+          /* Build the exact sealed bytes before claiming the row. The CAS then
+           * persists their intended name and hash, allowing the next process
+           * to reconcile a crash before or after the atomic publish. */
+          const payload = await makeImageReturn({ orderDoc: imageOrder, fromFp: me.fp,
+            resultBytes: imageBytes, record, now: Date.now() });
+          const { signPrivate } = await collabPrivateKeys({ appData });
+          const blob = sealTo({ payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
+            toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+            toFp: peer.fp, fromFp: me.fp, signPrivate });
+          const outName = `image-return-${id}-${randomUUID().replaceAll("-", "").slice(0, 8)}.aiplay`;
+          const outFile = path.join(outDir, "out", outName);
+          const tempFile = `${outFile}.tmp`;
+          const outSha256 = createHash("sha256").update(blob).digest("hex");
+          if (collabImageReturnClaims.has(id)) return json(res, 409, { error: "This image return is being prepared now. Check again shortly.", reason: "return-in-progress" });
+          collabImageReturnClaims.add(id);
+          let claimed = false;
+          let published = false;
+          let prepared;
+          try {
+            await book.transitionOrderState({ outDir, id, from: "queued", to: "returning",
+              patch: { returnRequestedAt: Date.now(), imageReturnFile: outName,
+                imageReturnSha256: outSha256 } });
+            claimed = true;
+            await mkdir(path.join(outDir, "out"), { recursive: true });
+            await writeFile(tempFile, blob, { flag: "wx" });
+            if (await stat(outFile).catch(() => null)) throw new Error("An image return already exists at the selected handoff name.");
+            await rename(tempFile, outFile);
+            published = true;
+            await book.transitionOrderState({ outDir, id, from: "returning", to: "rendered",
+              patch: { renderedAt: Date.now() } });
+            prepared = { ok: true, order: id, state: "rendered", file: outFile,
+              name: outName, bytes: blob.length, to: { fp: peer.fp, nickname: peer.nickname },
+              note: "Prepared the verified image return. Hand the sealed file to the friend; their Studio will quarantine it for review." };
+          } catch (error) {
+            await unlink(tempFile).catch(() => {});
+            if (claimed) {
+              if (published) await unlink(outFile).catch(() => {});
+              await book.transitionOrderState({ outDir, id, from: "returning", to: "queued",
+                patch: { returnRequestedAt: null, imageReturnFile: null, imageReturnSha256: null } }).catch(() => {});
+            }
+            throw error;
+          } finally {
+            collabImageReturnClaims.delete(id);
+          }
+          return json(res, 200, prepared);
         }
 
         /* ── ACCEPT AN ORDER: it becomes a PROPOSED plan and nothing more ───
@@ -5599,36 +6631,32 @@ const server = http.createServer(async (req, res) => {
            * override. Every overridable reason is listed in ONE refusal, so the
            * confirmation a person reads names everything `anyway` will walk
            * past — a yes to "busy" never silently spends minutes too. */
-          const overrides = [];
-          if (busy.busy) {
-            const overridable = !["art-paused", "engine-unreachable"].includes(busy.reason);
-            if (!overridable) return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable });
-            overrides.push({ reason: busy.reason, why: busy.why });
+          if (busy.busy && ["art-paused", "engine-unreachable", "workload-unreachable"].includes(busy.reason)) {
+            return json(res, 409, { error: busy.why, reason: busy.reason, busy: true, overridable: false });
           }
-          /* ⚠ THE MINUTES ARE READ HERE, NOT ONLY REMEMBERED. The friend row has
-           * always held `lendMinutesPerDay` and nothing read it, while two screens
-           * promised the card would not be lent without that number. Accept
-           * checks it against what this card has spent for them today (timed)
-           * and promised (the plan's own estimate) — see lending.js. */
-          const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
-            rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() });
-          if (minutes.over) overrides.push({ reason: minutes.reason, why: minutes.why });
-          if (overrides.length && b.anyway !== true) {
-            return json(res, 409, {
-              error: `${overrides.map((o) => o.why).join(" ")} It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)${busy.busy ? ", and your friend's scene waits its turn behind what is running" : ""}.`,
-              reason: overrides[0].reason, busy: !!busy.busy, overridable: true, overrides,
-            });
-          }
-
+          const busyOverride = busy.busy ? { reason: busy.reason, why: busy.why } : null;
           const from = { fp: sender.fp, nickname: sender.nickname };
-          /* ⚠ THE ID IS CLAIMED BEFORE ANYTHING IS BUILT. The guard used to be
-           * the LAST step, so a bundle sent twice made two projects, two copies
-           * of every picture and two plans before it was ever consulted — and
-           * the second plan renders into a project nothing can find. */
-          await book.landOrderRow({ outDir, row: {
+          /* Claim and price the scene in one orderbook writer turn. Until its
+           * errand project exists, the claim carries its estimated minutes, so
+           * concurrent image, H3 and scene accepts see the same reservation. */
+          const landed = await book.landOrderRowChecked({ outDir, row: {
             id: orderDoc.id, at: orderDoc.at, from, slug: null, order: orderDoc.order,
             state: "claimed", returnTo: orderDoc.returnTo, landedAt: Date.now(),
+          }, check: async (rows) => {
+            const minutes = await collabLending.budgetCheck({ peer: sender, orderDoc,
+              rows, readProject: readMvProject, now: Date.now() });
+            const overrides = [...(busyOverride ? [busyOverride] : []),
+              ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
+            if (overrides.length && b.anyway !== true) return { refusal: {
+              error: overrides.map((item) => item.why).join(" ")
+                + " It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)"
+                + (busyOverride ? ", and your friend's scene waits its turn behind what is running" : "") + ".",
+              reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
+            } };
+            return { minutes, patch: { renderEstimatedMinutes: minutes.thisOne } };
           } });
+          if (landed.decision.refusal) return json(res, 409, landed.decision.refusal);
+          const minutes = landed.decision.minutes;
           let slug = null;
           let built = null;
           try {
@@ -5799,6 +6827,36 @@ const server = http.createServer(async (req, res) => {
           try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
             return json(res, 400, { error: "That bundle opened but what is inside it is not a packet.", reason: "bad-packet" });
           }
+          if (packet?.kind === "job-return" && packet?.jobType === "video") {
+            const videoReturn = readVideoReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: videoReturn.orderId, side: "out" });
+            if (!sent || sent.jobType !== "video" || sent.to?.fp !== sender.fp || videoReturn.to !== me.fp) return json(res, 400, { error: "This video answers no job sent to this verified friend.", reason: "return-unknown-order" });
+            const landed = await landVideoReturn({ outDir, payload: videoReturn,
+              orderDoc: sent.videoJob, orderToFp: sent.to.fp, fromFp: sender.fp, toFp: me.fp, now: Date.now() });
+            await book.reconcileVideoReturn({ outDir, id: sent.id,
+              entry: { ok: landed.ok, reason: landed.reason, file: landed.file, kind: "video" },
+              state: landed.adopted ? "adopted" : landed.ok ? "returned" : "refused", note: landed.why });
+            return json(res, landed.ok ? 200 : 400, { ok: landed.ok, video: landed, reason: landed.reason,
+              note: landed.ok ? "The MP4 passed the signed-order and independent decode checks. Review it in quarantine before keeping it."
+                : `${landed.why} The MP4 remains in video quarantine for review or deletion.` });
+          }
+          if (packet?.kind === "job-return" && packet?.jobType === "image") {
+            const imageReturn = readImageReturn(packet).doc;
+            const imageOrderRow = await book.findOrder({ outDir, id: imageReturn.orderId, side: "out" });
+            if (!imageOrderRow || imageOrderRow.jobType !== "image") return json(res, 400, { error: "This image answers no image job this Studio sent. Nothing was written.", reason: "return-unknown-order" });
+            if (imageOrderRow.to?.fp !== sender.fp) return json(res, 400, { error: "This image came from a different friend than the one asked to render it. Nothing was written.", reason: "return-not-my-order" });
+            const landedImage = await landImageReturn({ outDir, payload: imageReturn,
+              orderDoc: imageOrderRow.imageJob, orderToFp: imageOrderRow.to.fp,
+              fromFp: sender.fp, toFp: me.fp, now: Date.now() });
+            await book.reconcileImageReturn({ outDir, id: imageOrderRow.id,
+              entry: { ok: landedImage.ok, reason: landedImage.reason, file: landedImage.file, kind: "image" },
+              state: landedImage.adopted ? "adopted" : landedImage.ok ? "returned" : "refused",
+              note: landedImage.why });
+            return json(res, landedImage.ok ? 200 : 400, { ok: landedImage.ok, image: landedImage,
+              reason: landedImage.reason,
+              note: landedImage.ok ? "The PNG passed the signed-order and independent decode checks. It is in quarantine until you review and keep it."
+                : `${landedImage.why} The PNG remains in image quarantine for review or deletion.` });
+          }
           /* ⚠ AND IT MUST ANSWER AN ORDER THIS MACHINE ACTUALLY SENT — to THEM.
            * A return naming somebody else's order used to be able to flip that
            * order's state, and a return naming no order at all was still
@@ -5823,6 +6881,74 @@ const server = http.createServer(async (req, res) => {
               : `${landed.why} It waits under “Finished scenes waiting for you”: watch it there if this browser can play it, and keep it anyway if it is what you wanted.`)
               + (landedNotes.length ? ` ${landedNotes.join(" ")}` : ""),
           });
+        }
+
+        if (action === "image_review_return") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const picture = await imageQuarantinePicture({ outDir, fromFp, file });
+          return json(res, 200, { ok: true, from: fromFp, file, sha256: picture.row.sha256,
+            mime: "image/png", b64: picture.bytes.toString("base64") });
+        }
+
+        if (action === "video_review_return") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const clip = await reviewVideoReturn({ outDir, fromFp, file });
+          return json(res, 200, { ok: true, from: fromFp, file, sha256: clip.row.sha256,
+            bytes: clip.bytes.length, measured: clip.row.measured, prompt: clip.row.prompt,
+            record: clip.row.record, path: path.join(outDir, "video-quarantine", fromFp, file),
+            reviewReceipt: clip.receipt,
+            note: "Checked local MP4 for review; its receipt is bound to these exact bytes. No adoption occurred." });
+        }
+
+        if (action === "image_adopt") {
+          const fromFp = String(b.from || ""), file = String(b.file || "");
+          const kept = await adoptImageReturn({ outDir, imageDir: IMAGE_DIR, fromFp, file, now: Date.now(),
+            allowAlreadyAdopted: true,
+            persistMetadata: async ({ name, metadata }) => {
+              await saveImageStore({ strict: true, mutate: () => {
+                const previous = imageMeta.get(name);
+                imageMeta.set(name, metadata);
+                return () => {
+                  if (previous) imageMeta.set(name, previous);
+                  else imageMeta.delete(name);
+                };
+              } });
+            },
+          });
+          if (!kept.replay) provNote("library", { actor: prov.actorFrom(req), type: "import", asset: `images/${kept.name}`,
+            data: { source: "peer-image", peer: fromFp, orderId: kept.row.orderId,
+              model: kept.metadata.model, modelVersion: kept.metadata.modelVersion,
+              modelSha256: kept.metadata.modelSha256, outputRights: kept.metadata.outputRights,
+              seed: kept.metadata.seed },
+          });
+          await book.reconcileImageReturn({ outDir, id: kept.row.orderId,
+            entry: { ok: true, reason: kept.row.reason, file: kept.name, kind: "image" }, state: "adopted" });
+          return json(res, 200, { ok: true, name: kept.name, metadata: kept.metadata, replay: kept.replay,
+            note: "Added the reviewed PNG to this Studio's Images library with the lender's model and rights record." });
+        }
+        if (action === "image_drop") {
+          const dropped = await dropImageReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") });
+          return json(res, 200, { ok: true, ...dropped });
+        }
+
+        if (action === "video_adopt") {
+          const kept = await adoptVideoReturn({ outDir, clipDir: CLIP_DIR,
+            fromFp: String(b.from || ""), file: String(b.file || ""), reviewReceipt: String(b.reviewReceipt || ""), now: Date.now(),
+            persistMetadata: async ({ name, metadata }) => { clipMeta.set(name, metadata); saveClipStore(); },
+          });
+          if (!kept.replay) provNote("library", { actor: prov.actorFrom(req), type: "import",
+            asset: `clips/${kept.name}`, data: { source: "peer-video", peer: kept.row.from,
+              orderId: kept.row.orderId, model: kept.metadata.model, modelVersion: kept.metadata.modelVersion,
+              modelSha256: kept.metadata.modelSha256, outputRights: kept.metadata.outputRights,
+              seed: kept.metadata.seed } });
+          await book.reconcileVideoReturn({ outDir, id: kept.row.orderId,
+            entry: { ok: true, reason: null, file: kept.name, kind: "video" }, state: "adopted" });
+          return json(res, 200, { ok: true, name: kept.name, metadata: kept.metadata,
+            replay: kept.replay, note: "Added the reviewed MP4 to the Clips library with its peer provenance." });
+        }
+        if (action === "video_drop") {
+          const dropped = await dropVideoReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") });
+          return json(res, 200, { ok: true, ...dropped });
         }
 
         /* ── ADOPT ──────────────────────────────────────────────────────────
@@ -5996,8 +7122,8 @@ const server = http.createServer(async (req, res) => {
             b.kind = frozen.payload.kind; b.to = frozen.peer.fp;
           }
           const kind = String(b.kind || "");
-          if (!["shot", "project", "resources", "order", "video-recipe"].includes(kind)) {
-            return json(res, 400, { error: "kind must be shot, project, resources, order or video-recipe.", reason: "kind" });
+          if (!["shot", "project", "resources", "order", "video-recipe", "image-job", "video-job", "job-order"].includes(kind)) {
+            return json(res, 400, { error: "Unknown Collab package kind.", reason: "kind" });
           }
           const { peers } = await collabRoster.roster({ appData });
           const peer = peers.find((x) => x.fp === String(b.to || ""));
@@ -6070,17 +7196,99 @@ const server = http.createServer(async (req, res) => {
             if (packet.kind === "order") await book.rememberOrder({ outDir, row: {
               id: packet.id, at: packet.at, expires: packet.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
-              slug: frozen.slug, order: packet.order,
+              slug: frozen.slug, order: packet.order, file: wrote.file,
               /* The renderer's own frame count for this order (H3's 17k+5 grid,
                * LTX's 8k+1), and whether lip-sync stays home — see lending.js. */
               expect: collabLending.expectForOrder(packet), songUnder: packet.shot.songUnder ?? null,
             } });
+            if (packet.kind === "job-order" && packet.jobType === "image") await book.rememberOrder({ outDir, row: {
+              id: packet.id, at: packet.at, expires: packet.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              jobType: "image", imageJob: compactImageJob(packet), file: wrote.file,
+            } });
+            if (packet.kind === "job-order" && packet.jobType === "video") await book.rememberOrder({ outDir, row: {
+              id: packet.id, at: packet.at, expires: packet.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              jobType: "video", videoJob: compactVideoJob(packet), file: wrote.file,
+            } });
             return json(res, 200, { ok: true, ...wrote, kind, previewId: b.previewId,
-              ...(kind === "order" ? { order: packet.id } : {}),
+              ...(kind === "order" || kind === "job-order" ? { order: packet.id } : {}),
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role }, describes: frozen.describes,
               note: "Packed exactly the reviewed snapshot. Send this file using your usual file-sharing method." });
           }
 
+          if (kind === "image-job") {
+            if (action !== "preview") return json(res, 400, { error: "Preview the exact image request before preparing it.", reason: "preview-required" });
+            const image = b.image;
+            if (!image || typeof image !== "object" || Array.isArray(image)) return json(res, 400, { error: "Choose the image prompt and canvas first.", reason: "image" });
+            if (hasWildcards(String(image.prompt || ""))) return json(res, 400, { error: "Resolve this dynamic prompt into the exact text you want your friend to render before previewing it.", reason: "prompt-not-frozen" });
+            const allowed = ["prompt", "width", "height", "seed", "refs", "negative", "steps", "cfg", "sampler", "scheduler", "count", "refSizing", "draft", "transparent", "private", "persona"];
+            if (Object.keys(image).some((key) => !allowed.includes(key))) return json(res, 400, { error: "This image job contains settings the receiving Studio cannot reproduce.", reason: "settings-incompatible" });
+            for (const [key, wanted] of Object.entries({ negative: "", steps: 25, cfg: 1, sampler: "euler", scheduler: "simple", count: 1, refSizing: "custom", draft: false, transparent: false, private: false, persona: "" })) {
+              if (image[key] !== undefined && image[key] !== wanted) return json(res, 400, { error: `${key} must be ${JSON.stringify(wanted)} for a friend's Qwen base image job.`, reason: "settings-incompatible" });
+            }
+            const names = image.refs === undefined ? [] : image.refs;
+            if (!Array.isArray(names) || names.length > IMAGE_JOB_REF_CAP) return json(res, 400, { error: `Choose up to ${IMAGE_JOB_REF_CAP} reference pictures.`, reason: "references-count" });
+            const references = [];
+            const safetyContext = [];
+            for (const picked of names) {
+              const name = String(picked || "");
+              if (!name || name !== path.basename(name) || !/^[a-zA-Z0-9_.-]{1,120}\.(png|jpe?g|webp)$/i.test(name)) return json(res, 400, { error: "An image reference must be a filename from this Studio's image shelf or upload door.", reason: "bad-reference" });
+              let source = null;
+              for (const dir of [config.inputDir, IMAGE_DIR, COVER_DIR]) {
+                const candidate = path.join(dir, name);
+                const st = await stat(candidate).catch(() => null);
+                if (st?.isFile()) { source = candidate; break; }
+              }
+              if (!source) return json(res, 404, { error: `${name} is no longer available on this Studio. Pick the reference again.`, reason: "reference-missing" });
+              const st = await stat(source);
+              if (st.size < 1 || st.size > IMAGE_JOB_REF_BYTES_CAP) return json(res, 400, { error: `${name} exceeds the 8 MiB per-reference limit.`, reason: "reference-too-large" });
+              const data = await readFile(source);
+              const mime = data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? "image/png"
+                : data[0] === 255 && data[1] === 216 && data[2] === 255 ? "image/jpeg"
+                  : data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
+              if (!mime) return json(res, 400, { error: `${name} is not a PNG, JPEG or WebP picture.`, reason: "reference-type" });
+              const ancestry = lineage([name]);
+              safetyContext.push(...ancestry.texts);
+              references.push({ data, mime, safety: {
+                minor: ancestry.flags.some((flag) => flag?.minor === true),
+                sexual: ancestry.flags.some((flag) => flag?.sexual === true),
+              } });
+            }
+            const meI = await collabIdentity({ appData });
+            const orderI = makeImageJob({
+              prompt: typeof image.prompt === "string" ? expand(image.prompt.trim()).prompt : image.prompt,
+              seed: image.seed === undefined ? Math.floor(Math.random() * 4294967296) : image.seed,
+              width: image.width, height: image.height, references,
+              returnTo: { fp: meI.fp, nickname: String(b.nickname || "").slice(0, 40) },
+              safetyContext, now: Date.now(),
+            });
+            return previewFor(orderI, `image-${orderI.id}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+              describes: describeImageJob(orderI),
+              note: "One Qwen base image with these exact settings and included references. The friend must review and explicitly accept; preparing does not transmit or render.",
+            });
+          }
+          if (kind === "video-job") {
+            if (action !== "preview") return json(res, 400, { error: "Preview the exact video request before preparing it.", reason: "preview-required" });
+            const video = b.video;
+            if (!video || typeof video !== "object" || Array.isArray(video)) return json(res, 400, { error: "Choose the video prompt and settings first.", reason: "video" });
+            const allowed = ["engine", "prompt", "width", "height", "seconds", "steps", "guidance", "negative", "keepAudio", "seed", "sparse", "attention", "blockCache", "bridge", "bridgeAlpha", "guideStrength", "refImages", "refAudios", "audioTrack", "fromCover", "toCover", "fromUpload", "toUpload", "midUploads", "persona", "loop", "loras", "models", "sourceVideo"];
+            if (Object.keys(video).some((key) => !allowed.includes(key))) return json(res, 400, { error: "This video request has settings the friend job cannot reproduce.", reason: "settings-incompatible" });
+            for (const key of ["refImages", "refAudios", "midUploads", "loras"]) if (video[key] !== undefined && (!Array.isArray(video[key]) || video[key].length)) return json(res, 400, { error: `${key} cannot travel in this text-to-video job.`, reason: "references-unsupported" });
+            for (const key of ["audioTrack", "fromCover", "toCover", "fromUpload", "toUpload", "persona", "sourceVideo", "models"]) if (video[key]) return json(res, 400, { error: `${key} cannot travel in this text-to-video job.`, reason: "references-unsupported" });
+            if (video.loop || video.engine !== "h3" || video.steps !== 20 || video.guidance !== 1 || video.negative !== "" || video.sparse !== "off" || !["ck", "pytorch"].includes(video.attention) || video.blockCache !== false || video.bridge !== "off" || video.bridgeAlpha !== 0 || video.guideStrength !== 0.7) return json(res, 400, { error: "This base-only friend job needs H3 at 20 steps, default guidance 1, CK or PyTorch attention, and no negative prompt, sparse attention, block cache, bridge or guide. Clear unsupported settings before preview.", reason: "settings-incompatible" });
+            /* A saved bridge can affect the normal Video button even when its
+             * render request omits a bridge field. Refuse it at this boundary. */
+            if (config.video.engines.h3?.bridge && config.video.engines.h3.bridge !== "off") return json(res, 409, { error: "The saved H3 conditioning bridge is enabled. Turn it off before asking a friend for the same text-to-video clip.", reason: "settings-incompatible" });
+            if (config.video.engines.h3?.blockCache === true) return json(res, 409, { error: "The saved H3 block cache is enabled. Turn it off before asking for a base-only friend clip.", reason: "settings-incompatible" });
+            const meV = await collabIdentity({ appData });
+            const orderV = makeVideoJob({ prompt: video.prompt, seed: video.seed === undefined ? Math.floor(Math.random() * 4294967296) : video.seed,
+              width: video.width, height: video.height, seconds: video.seconds, steps: video.steps,
+              guidance: video.guidance, keepAudio: video.keepAudio, attention: video.attention,
+              returnTo: { fp: meV.fp, nickname: String(b.nickname || "").slice(0, 40) }, now: Date.now() });
+            return previewFor(orderV, `video-${orderV.id}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+              describes: describeVideoJob(orderV), note: "Exact H3 text-to-video settings are frozen for this friend. They must review, accept and separately render. No file is sent automatically." });
+          }
           if (kind === "video-recipe") {
             if (action !== "preview") return json(res,400,{error:"Preview this recipe before preparing it.",reason:"preview-required"});
             const recipe=makeVideoRecipe(b.video);
@@ -6141,7 +7349,7 @@ const server = http.createServer(async (req, res) => {
               /* THE MINORS RULE, with the words behind each <Picture n>: the
                * named rows' own descriptions, which stay on this machine. What
                * each picture was made as also travels, wordless, on its row. */
-              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.name)),
+              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.assetName || r.name)),
               order: {
                 segmentId: shotO.segmentId,
                 /* The defaults are the SCENE's own, so an order with nothing
@@ -6162,7 +7370,7 @@ const server = http.createServer(async (req, res) => {
             await book.rememberOrder({ outDir, row: {
               id: orderDoc.id, at: orderDoc.at, expires: orderDoc.expires,
               to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
-              slug: slugO, order: orderDoc.order,
+              slug: slugO, order: orderDoc.order, file: wroteO.file,
               expect: collabLending.expectForOrder(orderDoc), songUnder: shotO.songUnder ?? null,
             } });
             return json(res, 200, {
@@ -6193,7 +7401,7 @@ const server = http.createServer(async (req, res) => {
            * same check an order gets, before anything is sealed or shown. */
           if (kind === "shot") {
             assertSafe({ door: "collab.shot", via: "collab", texts: [String(packet.prompt || "")],
-              context: mvRowWords(doc, (packet.refs || []).map((r) => r.name)), flags: shotFlags(packet) });
+              context: mvRowWords(doc, (packet.refs || []).map((r) => r.assetName || r.name)), flags: shotFlags(packet) });
           }
           if (action === "preview") return previewFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`, {
             slug, document: doc, describes: describePacket(packet),
@@ -6276,6 +7484,33 @@ const server = http.createServer(async (req, res) => {
             if (!sender.verified || !["lender","collaborator"].includes(sender.role)) return json(res,403,{error:"Verify this sender and assign a role before using a video recipe.",reason:"role"});
             videoRecipe = readVideoRecipe(packet);
           }
+          let imageOrder = null;
+          if (packet?.kind === "job-order" && packet?.jobType === "image") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before using their image job.", reason: "role" });
+            imageOrder = readImageJob(packet, { now: Date.now(), myFp: me.fp });
+            if (imageOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The image job asks this machine to return the result to somebody other than its signer.", reason: "return-address" });
+            await measureImageJobReferences(imageOrder.job.references);
+          }
+          let videoOrder = null;
+          if (packet?.kind === "job-order" && packet?.jobType === "video") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before reviewing their video job.", reason: "role" });
+            videoOrder = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
+            if (videoOrder.returnTo.fp !== sender.fp) return json(res, 400, { error: "The video job return address differs from its signer.", reason: "return-address" });
+          }
+          let imageReturnPreview = null;
+          if (packet?.kind === "job-return" && packet?.jobType === "image") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before receiving an image return.", reason: "role" });
+            imageReturnPreview = readImageReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: imageReturnPreview.orderId, side: "out" });
+            if (!sent || sent.jobType !== "image" || sent.to?.fp !== sender.fp || imageReturnPreview.to !== me.fp) return json(res, 400, { error: "This image return does not answer a job sent to this verified friend.", reason: "return-unknown-order" });
+          }
+          let videoReturnPreview = null;
+          if (packet?.kind === "job-return" && packet?.jobType === "video") {
+            if (!sender.verified || !["lender", "collaborator"].includes(sender.role)) return json(res, 403, { error: "Verify this sender and give them a render role before reviewing their video return.", reason: "role" });
+            videoReturnPreview = readVideoReturn(packet).doc;
+            const sent = await book.findOrder({ outDir, id: videoReturnPreview.orderId, side: "out" });
+            if (!sent || sent.jobType !== "video" || sent.to?.fp !== sender.fp || videoReturnPreview.to !== me.fp) return json(res, 400, { error: "This video return does not answer a job sent to this verified friend.", reason: "return-unknown-order" });
+          }
           /* Their build, recorded on their row: a caption, never a gate. */
           if (packet?.by) await collabRoster.setBuild({ appData, fp: sender.fp, by: packet.by }).catch(() => {});
           return json(res, 200, {
@@ -6285,17 +7520,32 @@ const server = http.createServer(async (req, res) => {
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
             ...(videoRecipe ? {videoRecipe, makeClipArgs:videoRecipeMcpArgs(packet)} : {}),
+            ...(imageOrder ? { imageJob: { ...imageOrder, job: { ...imageOrder.job,
+              references: imageOrder.job.references.map(({ b64, ...reference }) => reference) } },
+              prompt: imageOrder.job.prompt } : {}),
+            ...(videoOrder ? { videoJob: videoOrder, prompt: videoOrder.job.prompt,
+              reviewDigest: createHash("sha256").update(blob).digest("hex") } : {}),
+            ...(imageReturnPreview ? { imageReturn: { ...imageReturnPreview,
+              result: { ...imageReturnPreview.result, b64: "[picture bytes]" } } } : {}),
+            ...(videoReturnPreview ? { videoReturn: { ...videoReturnPreview,
+              result: { ...videoReturnPreview.result, b64: "[video bytes]" } } } : {}),
             /* The prompt as its own field: a screen must be able to show it
              * whole and unstyled rather than trimmed into a sentence. */
             ...(packet?.kind === "order" ? { prompt: String(packet.shot?.prompt || "") } : {}),
             /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
              * packet" and the four words a person is being asked to agree to
              * were only ever visible after they had already agreed. */
-            describes: videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
+            describes: videoReturnPreview ? `A returned ${videoReturnPreview.record.width}×${videoReturnPreview.record.height} MP4 for video job ${videoReturnPreview.orderId}. Receive it into quarantine before keeping it.`
+              : imageReturnPreview ? `A returned ${imageReturnPreview.record.width}×${imageReturnPreview.record.height} PNG for image job ${imageReturnPreview.orderId}, made with ${imageReturnPreview.record.model}. Receive it into quarantine before keeping it.`
+              : videoOrder ? describeVideoJob(videoOrder) : imageOrder ? describeImageJob(imageOrder) : videoRecipe ? describeVideoRecipe(packet) : packet?.kind === "resources" ? describeResources(packet, Date.now())
               : packet?.kind === "order" ? describeOrder(packet, Date.now())
                 : packet?.kind === "return" ? `A finished take for scene ${packet.segmentId} of order ${packet.orderId}, rendered on ${packet.record?.model || "their machine"}. Press Receive to check it against what you ordered.`
                   : describeAnyPacket(packet),
-            packet,
+            /* A returned PNG can be 64 MiB. Opening is only a review step;
+             * the verified bytes remain in the sealed file until Receive.
+             * Sending their base64 back in JSON freezes the Collab screen. */
+            packet: imageReturnPreview || videoReturnPreview ? { ...packet,
+              result: { ...packet.result, b64: videoReturnPreview ? "[video bytes]" : "[picture bytes]" } } : packet,
             /* Said every time rather than once in a manual: opening is not
              * accepting, and nothing has been rendered. */
             note: "Read and verified. Nothing has been rendered: turning this into work is a separate press on the Collab screen.",
@@ -6805,6 +8055,12 @@ const server = http.createServer(async (req, res) => {
         const file = String(b.file || "");
         if (!file) return json(res, 400, { error: "give a file" });
         const r = art.drop(file);
+        /* drop() removes a waiting job without an ArtRunner terminal event.
+         * Release this friend's reservation as a stopped, zero-time attempt. */
+        if (r.removed && videoIdFromArtFile(file)) await recordVideoFailure({
+          book, outDir: path.join(config.outputDir, "collab"), file,
+          kind: "video", cancelled: true, durationMs: null,
+        });
         return json(res, 200, { ok: true, ...r, ...art.status() });
       }
       if (b.action === "stop_current") {
@@ -6819,7 +8075,8 @@ const server = http.createServer(async (req, res) => {
       try {
         /* A cover that could only fail is not queued: with no picture model on
          * this PC (or the chosen one missing) say the one sentence instead. */
-        if (b.action === "backfill" || b.action === "regenerate") {
+        /* Fast covers draw without a picture model (server/fastcover.js). */
+        if ((b.action === "backfill" || b.action === "regenerate") && !fastCovers.use()) {
           const cover = (await machineDefaults().catch(() => null))?.find((d) => d.key === "art.engine");
           if (cover && cover.canRun === false) {
             return json(res, 409, { error: cover.why, needsModel: MODEL_TO_CAPABILITY[cover.value] || null, ...art.status() });
@@ -7055,16 +8312,31 @@ const server = http.createServer(async (req, res) => {
         const src = path.join(CLIP_DIR, name);
         const st = await stat(src).catch(() => null);
         if (!st?.isFile()) return json(res, 404, { error: `No clip called ${name}.` });
-        const vr = videoReady("h3");
+        /* Looked for again once before refusing, as the video gate does. */
+        const vr = videoReadyFresh("h3");
         if (!vr.ready) return json(res, 400, { error: `Continuing a clip needs MiniMax H3, which is not installed: ${vr.missing.join(", ")}` });
         try { b.loras = await checkedVideoLoras(b.loras, "h3"); }
         catch (err) { return json(res, 400, { error: err.message }); }
+        const prior = clipMeta.get(name);
+        /* The request's count, else the clip's own, unless the clip ran it on
+         * the reference path and the plain path the continuation runs on
+         * cannot: then the engine's own, said in `stepsNote` (art.js
+         * extendSteps). */
+        const { steps, note: stepsNote } = extendSteps(b, prior);
+        /* A speed-up this count loads that is not on disk is refused here, in
+         * the sentence the Video screen says, with the row that brings it,
+         * before anything is staged (art.js clipSpeedupNeeded, which the runner
+         * asks again). It used to queue, and the job failed in ComfyUI. */
+        const missingSpeedup = clipSpeedupNeeded({ engine: "h3", steps });
+        if (missingSpeedup) {
+          return json(res, 400, { error: missingSpeedup.error, reason: missingSpeedup.build === 3 ? "taomate-missing" : "speedup-missing",
+            needsModel: missingSpeedup.row });
+        }
         const probe = await probeClip(src);
         if (probe.error) return json(res, 400, { error: `The clip could not be measured — ${probe.error}`, reason: "probe" });
         const overlap = overlapFor(probe.frames, Number(b.overlapFrames) || 22);
         if (!overlap) return json(res, 400, { error: `${name} has ${probe.frames} frames; a continuation needs at least 5.`, reason: "too-short" });
         const ext = extensionFrames(Math.min(Math.max(Number(b.seconds) || 3, 1), 20), probe.fps || videoEngine("h3").fps);
-        const prior = clipMeta.get(name);
         const prompt = String(b.prompt || prior?.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe what happens next — this clip carries no prompt of its own." });
         /* ⚠ THE MINORS RULE: the continuation's words, with the clip it
@@ -7092,7 +8364,7 @@ const server = http.createServer(async (req, res) => {
             seconds: (overlap + ext) / (probe.fps || 24),
             width: probe.width || videoEngine("h3").width,
             height: probe.height || videoEngine("h3").height,
-            steps: Math.min(Math.max(Number(b.steps) || prior?.steps || videoEngine("h3").steps || 20, 2), 40),
+            steps,
             keepAudio: b.keepAudio === false ? false : probe.hasAudio,
             continueFrom: {
               file: staged, frames: probe.frames, fps: probe.fps || 24, hasAudio: !!probe.hasAudio,
@@ -7100,7 +8372,7 @@ const server = http.createServer(async (req, res) => {
             },
             extendedFrom: name,
             safetyContext: extendLineage.texts, safetyFlags: extendLineage.flags,
-            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridge: typeof b.bridge === "string" && b.bridge ? requireModelName(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
@@ -7109,7 +8381,7 @@ const server = http.createServer(async (req, res) => {
         });
         if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 200, {
-          ok: true, id, job: job && { id: job.id },
+          ok: true, id, job: job && { id: job.id }, steps, ...(stepsNote ? { stepsNote } : {}),
           overlapFrames: overlap, extensionFrames: ext, windowFrames: overlap + ext,
           extensionSeconds: Number((ext / (probe.fps || 24)).toFixed(2)),
           ...art.status(),
@@ -7123,11 +8395,27 @@ const server = http.createServer(async (req, res) => {
        * check_only read it, so both say what a render does before it is asked
        * for. Reference names are counted, not staged. */
       if (b.action === "check") {
+        if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
+          return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
+        if (b.h3ModelBuild !== undefined && assignedTo("video"))
+          return json(res, 200, { ok: false, refusal: { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" }, warnings: [] });
         const gate = await videoWeightsGate();
         if (gate.error) return json(res, 200, { ok: false, refusal: gate.error, warnings: [] });
+        /* The soundtrack is looked for (not copied), so check_only, the
+         * Advanced line and create agree about a song that cannot be staged. */
+        if (b.audioTrack?.name && !STAGED_SONG.test(String(b.audioTrack.name))) {
+          try { await stageLibrarySong(b.audioTrack.name, { outputDir: config.outputDir, inputDir: config.inputDir, check: true }); }
+          catch (err) {
+            return json(res, 200, { ok: false, engine: gate.engine, refusal: { error: `${err.message} The clip would not be queued: without it there is no song under the clip and no lip-sync.`,
+              reason: "song-missing", song: err.song || String(b.audioTrack.name) }, warnings: [] });
+          }
+        }
+        let optionalH3;
+        try { optionalH3 = await h3RefModService.checkRender(b, { engine: gate.engine }); }
+        catch (error) { return json(res, 200, { ok: false, refusal: { error: error.message, reason: error.reason }, warnings: [] }); }
         /* Frames and a control video are named, not staged: the plan only
          * needs to know they ride. */
-        const plan = videoPlan(b, { engineKey: gate.engine, eng: videoEngine(gate.engine),
+        const plan = videoPlan({ ...b, ...optionalH3 }, { engineKey: gate.engine, eng: videoEngine(gate.engine),
           persona: await clipPersona(b.persona), characters: await clipCharacters(),
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
           framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
@@ -7136,6 +8424,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.action === "create") {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
+        if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
+          return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
+        if (b.h3ModelBuild !== undefined && assignedTo("video"))
+          return json(res, 400, { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" });
         /* `eng` is the engine that will really render — the setting when its
          * weights are here, whatever IS here when they are not. Everything
          * below reads it instead of config.video.engine, because a substituted
@@ -7264,6 +8556,10 @@ const server = http.createServer(async (req, res) => {
           control.end = num(b.controlEnd ?? b.control_end, 1, 0, 1);
         }
         let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack, personaStaged = null, personaLost = 0;
+        /* A song that could not be staged (songstage.js): the soundtrack is
+         * refused below, a reference audio is said as a warning. */
+        let songRefusal = null;
+        const refAudioLost = [];
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -7297,45 +8593,48 @@ const server = http.createServer(async (req, res) => {
            * the library. A library file is copied into ComfyUI's input dir the
            * same way a cover is — content of the graph, not a path, so the
            * render route still cannot be talked into reading anywhere else. */
+          /* An upload /api/refaudio named, or a Library song by its file name
+           * (songstage.js: any name the Library lists, brackets, commas,
+           * accents and .opus included; never a path). */
           const stagedAud = (v) => {
             if (!v) return undefined;
-            const nm = path.basename(String(v));
-            return /^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm) ? nm : undefined;
+            const nm = String(v);
+            return STAGED_SONG.test(nm) ? nm : undefined;
           };
-          const stageSong = async (name) => {
-            const base = path.basename(String(name));
-            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a)$/i.test(base)) return undefined;
-            const src = path.join(config.outputDir, base);
-            await stat(src);
-            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, nm), await readFile(src));
-            return nm;
-          };
+          const stageSong = (name) => stageLibrarySong(name, { outputDir: config.outputDir, inputDir: config.inputDir });
           const wantedAuds = Array.isArray(b.refAudios) ? b.refAudios.slice(0, 3) : [];
-          refAudios = (await Promise.all(wantedAuds.map(async (a) => {
+          const audsStaged = await Promise.all(wantedAuds.map(async (a) => {
             if (!a) return undefined;
             const start = Math.min(Math.max(Number(a.start) || 0, 0), 7200);
             try {
               const name = stagedAud(a.name) || await stageSong(a.name);
               return name ? { name, start } : undefined;
-            } catch { return undefined; }
-          }))).filter(Boolean);
+            } catch (err) { return { lost: err.song || String(a.name || "") }; }
+          }));
+          refAudios = audsStaged.filter((a) => a && !a.lost);
+          refAudioLost.push(...audsStaged.filter((a) => a?.lost).map((a) => a.lost));
           /* SONG UNDER THE CLIP, both engines — one audio the clip is generated
            * ON: its latent is frozen during sampling and the output's sound IS
            * this segment; on H3 it is also anchored at frame 0, so the model
            * hears the vocal (frozen + anchored = lip-sync). Staged exactly like
-           * a reference audio. */
+           * a reference audio. NEVER DROPPED UNSAID: a render is minutes and the
+           * song is the lip-sync, so one that cannot be staged refuses the clip
+           * with its name (it used to render without it, the plan still saying
+           * "+ song (lip-sync)"). */
           if (b.audioTrack && b.audioTrack.name) {
             const start = Math.min(Math.max(Number(b.audioTrack.start) || 0, 0), 7200);
             try {
               const name = stagedAud(b.audioTrack.name) || await stageSong(b.audioTrack.name);
               if (name) audioTrack = { name, start };
-            } catch { /* a missing soundtrack drops silently like a bad ref */ }
+            } catch (err) {
+              songRefusal = { error: `${err.message} The clip was not queued: without it there is no song under the clip and no lip-sync.`,
+                reason: "song-missing", song: err.song || String(b.audioTrack.name) };
+            }
           }
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
+        if (songRefusal) return json(res, 400, songRefusal);
         /* THE PLAN (server/video-plain.js videoPlan), on the references that
          * really staged. References are an H3 capability: FastH3 was distilled
          * without them, and every LTX node that takes an image pins it to a
@@ -7346,7 +8645,12 @@ const server = http.createServer(async (req, res) => {
          * plain words; a Fast render with references runs the reference
          * build's own step count; a render naming no size gets this card's
          * size. Each change is a warning in the reply. */
-        const plan = videoPlan({ ...b, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
+        let optionalH3;
+        try { optionalH3 = await h3RefModService.checkRender(b, { engine: eng }); }
+        catch (error) { return json(res, error.status || 400, { error: error.message, reason: error.reason }); }
+        /* The plan reads what really staged: the soundtrack too, so a receipt
+         * never says "+ song (lip-sync)" for a song the render does not carry. */
+        const plan = videoPlan({ ...b, ...optionalH3, refImages, refAudios, audioTrack }, { engineKey: eng, eng: videoEngine(eng),
           persona: personaStaged,
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }), framed: !!(firstFrame || lastFrame),
           control: !!control.video });
@@ -7358,6 +8662,11 @@ const server = http.createServer(async (req, res) => {
         refImages = plan.refImages || refImages;
         if (persona && personaLost > 0) {
           plan.warnings.push({ id: "persona-missing", text: personaMissing(persona.name, personaLost) });
+        }
+        /* A reference audio that could not be staged rides without it, and the
+         * reply says which (it was dropped unsaid). */
+        if (refAudioLost.length) {
+          plan.warnings.push({ id: "ref-audio-missing", text: `${refAudioLost.length === 1 ? "A reference audio was" : `${refAudioLost.length} reference audios were`} left out: ${refAudioLost.map((n) => `"${n}"`).join(", ")} ${refAudioLost.length === 1 ? "is" : "are"} not a song in the Library's folder.` });
         }
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
          * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
@@ -7387,6 +8696,8 @@ const server = http.createServer(async (req, res) => {
             // The RESOLVED one: what actually renders, not what the setting
             // says, so the provenance record names the model that made the file.
             engine: eng,
+            h3ModelBuild: b.h3ModelBuild ?? config.video.h3ModelBuild,
+            h3ModelBuildExplicit: b.h3ModelBuild !== undefined,
             /* Undefined unless something was named — see videoModelPatch. */
             models: picked.models || undefined,
             // The plan's: unanswered reference tags taken out (and said).
@@ -7399,6 +8710,9 @@ const server = http.createServer(async (req, res) => {
             // H3 only — refused above for LTX rather than silently dropped.
             refImages,
             refAudios,
+            refMods: optionalH3.refMods,
+            refModOptions: optionalH3.refModOptions,
+            h3Tweaks: optionalH3.h3Tweaks,
             /* Video-to-video. Resolved and refused above: by here either both
              * the clip and the patch are real, or neither is set. */
             controlVideo: control.video,
@@ -7454,7 +8768,7 @@ const server = http.createServer(async (req, res) => {
             loop: !!b.loop,
             /* The conditioning bridge, per render: an adapter file name (or "off")
              * and a strength 0–1. Absent = the Video panel's setting. */
-            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridge: typeof b.bridge === "string" && b.bridge ? requireModelName(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
@@ -7483,15 +8797,16 @@ const server = http.createServer(async (req, res) => {
          * config.js resolved, stand-ins included). The Models row alone said
          * "not downloaded" for an H3 missing one optional speed-up, and for an
          * LTX holding the template's VAE, and left FastH3 the only choice. */
-        if (cap && !cap.ready && !videoReady(e).ready) {
-          const gb = ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1);
+        if (cap && !cap.ready && !videoReadyFresh(e).ready) {
+          /* Never "0.0 GB" (setF): under 0.05 GB the size is said in MB. */
+          const gb = downloadSize(cap.totalBytes - cap.haveBytes);
           return json(res, 400, {
             /* A gated engine gets the hand-fetch, not "open the Models screen"
              * — there is no button there for it, which is the whole reason this
              * app pointed a fresh install at a dead end for as long as it did. */
             error: cap.gated
-              ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
-              : `${config.video.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
+              ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb}, access-gated repository). ${cap.gated.how}`
+              : `${config.video.engines[e].label} is not downloaded yet (${gb} missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
             capability: capId,
             gated: cap.gated || null,
@@ -7620,10 +8935,11 @@ const server = http.createServer(async (req, res) => {
         if (b.choose === true || b.engine !== config.art.engine || prefChosen("art", "engine")) config.art.engine = b.engine;
       }
       if (b.checkpoint !== undefined) {
-        const nm = b.checkpoint === null ? null : path.basename(String(b.checkpoint));
+        let nm = b.checkpoint === null ? null : requireModelName(b.checkpoint);
         if (nm) {
-          try { await stat(path.join(config.modelsDir, "checkpoints", nm)); }
-          catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
+          const found = findShelfModel(await scanBases(await modelBases()), "checkpoints", nm);
+          if (!found) return json(res, 400, { error: `No such checkpoint: ${nm}` });
+          nm = found.name;
         }
         config.art.checkpoint = nm;
       }
@@ -7725,11 +9041,15 @@ const server = http.createServer(async (req, res) => {
          * the language model, the audio model and the VAE into ComfyUI. The
          * save node becomes PreviewAudio, which writes to ComfyUI's TEMP
          * folder — a warm-up must never become a song or a library row. */
+        /* Fused style adapters require a full score plan. Load their base here;
+         * their saved pair remains available for the next full song. Ordinary
+         * adapters retain the existing warm-up behaviour. */
+        const fusedStyle = yue2StyleAdapterFor(config.music.yue2Lora) || yue2StyleAdapterFor(config.music.yue2LoraClip);
         const graph = buildYue2ComfyGraph({
           caption: "warm-up", lyrics: "", cot: "off", maxDuration: 1, steps: 1,
           checkpoint: config.music.yue2Checkpoint, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
-          lora: config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
-          loraClip: config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
+          lora: fusedStyle ? null : config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
+          loraClip: fusedStyle ? null : config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
         });
         for (const n of Object.values(graph)) {
           if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
@@ -7747,7 +9067,7 @@ const server = http.createServer(async (req, res) => {
        * checked against the shelves now, not saved for a later render to trip on. */
       if (b.action === "aceLm") {
         const ace = await aceShelf();
-        const name = b.value ? path.basename(String(b.value)) : null;
+        const name = b.value ? requireModelName(b.value) : null;
         if (name && !ace.lms.includes(name)) return json(res, 400, { error: `${name} is not in a text_encoders folder.` });
         config.music.aceLm = name;
         musicChoicesCache.at = 0;
@@ -7756,9 +9076,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.action === "aceLora") {
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -7768,15 +9089,38 @@ const server = http.createServer(async (req, res) => {
         savePrefs();
         return json(res, 200, { ok: true, music: { aceLora: config.music.aceLora, aceLoraStrength: config.music.aceLoraStrength } });
       }
+      if (b.action === "style-adapter") {
+        if (b.value === "") {
+          config.music.yue2Lora = null; config.music.yue2LoraClip = null;
+          savePrefs();
+          return json(res, 200, { ok: true, music: { yue2Lora: null, yue2LoraClip: null } });
+        }
+        if (config.music.engine !== "yue2-comfy") return json(res, 400, { error: "Choose YuE2 ComfyUI before selecting this adapter." });
+        const shelf = await scanBases(await modelBases());
+        const installed = findShelfModel(shelf, "loras", requireModelName(b.value));
+        if (!installed)
+          return json(res, 400, { error: "This adapter is not installed. Add it to a loras folder, then refresh LoRAs." });
+        const adapter = yue2StyleAdapterFromProbe(installed.name, await probeShelfLora(installed));
+        if (!adapter) return json(res, 400, { error: "Choose a fused YuE2 adapter with planner and audio weights." });
+        config.music.yue2Lora = installed.name;
+        config.music.yue2LoraClip = installed.name;
+        config.music.yue2LoraStrength = adapter.recipe?.audioStrength ?? 1;
+        config.music.yue2LoraClipStrength = adapter.recipe?.plannerStrength ?? 1;
+        savePrefs();
+        return json(res, 200, { ok: true, music: { yue2Lora: installed.name, yue2LoraClip: installed.name,
+          yue2LoraStrength: config.music.yue2LoraStrength, yue2LoraClipStrength: config.music.yue2LoraClipStrength },
+          ...(adapter.recipe?.cot ? { cot: adapter.recipe.cot } : {}), styleAdapter: adapter });
+      }
       if (b.action === "lora") {
         /* The Music tab's LoRA choice for YuE2 through ComfyUI, remembered.
          * null / "" clears it. The file must be on a loras shelf now; a name
          * that is not there is refused rather than saved for a later render to
          * trip over. */
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -7789,9 +9133,10 @@ const server = http.createServer(async (req, res) => {
       if (b.action === "planner-lora") {
         /* The planner's LoRA, remembered the same way as the audio one. */
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -8372,12 +9717,13 @@ const server = http.createServer(async (req, res) => {
         /* The encoder and the VAE, named from the shelves rather than typed. */
         const parts = await listParts(config);
         for (const [key, list, what] of [["encoder", parts.encoders, "text encoder"], ["vae", parts.vaes, "VAE"]]) {
-          const want = path.basename(String(b[key] || "").trim());
+          const want = b[key] && b[key] !== "auto" ? requireModelName(b[key]) : "";
           if (!want || want === "auto") { b[key] = null; continue; }
-          if (!list.some((x) => x.name === want)) {
+          const found = findShelfModel(list, key === "vae" ? "vae" : "text_encoders", want);
+          if (!found) {
             return json(res, 400, { error: `No such ${what}: ${want}. It must be in models/${key === "vae" ? "vae" : "text_encoders"}.` });
           }
-          b[key] = want;
+          b[key] = found.name;
         }
         /* THE PACK THAT READS A .gguf. ComfyUI's own loaders are safetensors
          * loaders; a quantised transformer or encoder goes through
@@ -8453,7 +9799,7 @@ const server = http.createServer(async (req, res) => {
          * models/checkpoints is invisible to it however the engine is picked.
          * Checked here so the answer is a sentence rather than a ComfyUI stack
          * trace three minutes into a queue. */
-        const dn = path.basename(String(b.dit || config.art.animaDit || ""));
+        const dn = b.dit || config.art.animaDit ? requireModelName(b.dit || config.art.animaDit) : "";
         if (!dn) {
           return json(res, 400, { error: "Pick an Anima model file first (models/diffusion_models)." });
         }
@@ -8466,7 +9812,7 @@ const server = http.createServer(async (req, res) => {
             error: `No such Anima model in models/diffusion_models: ${dn}. If it is still in models/checkpoints, move it — a bare transformer is loaded from diffusion_models.`,
           });
         }
-        b.dit = dn;
+        b.dit = found.name;
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Anima has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
         }
@@ -8654,7 +10000,18 @@ const server = http.createServer(async (req, res) => {
       const finalPrompt = shaped.prompt;
       refImages = shaped.refImages;
 
-      const id = `i${Date.now().toString(36)}`;
+      /* A peer job may wait behind music before Comfy reads its references.
+       * Pin the staged bytes and recheck them in art.js at execution. */
+      const collabImageBase = engine === QWEN_IMAGE_ENGINE && req.headers?.["x-aiplay-actor"] === "script:collab-image";
+      const collabRefHashes = collabImageBase ? await Promise.all(refImages.map(async (name) => {
+        if (!/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(name)) throw new Error("A peer image reference has an invalid staged name.");
+        return createHash("sha256").update(await readFile(path.join(config.inputDir, name))).digest("hex");
+      })) : null;
+
+      /* Two friend jobs can be queued in one millisecond. An image id also
+       * names its output file and private prompt metadata, so sharing that id
+       * could return one friend's image to another. */
+      const id = `i${randomUUID().replaceAll("-", "")}`;
       const file = `image:${id}`;
       pendingImagePrompt.set(file, finalPrompt);
       if (b.private === true) pendingImagePrivate.set(file, true);
@@ -8698,6 +10055,9 @@ const server = http.createServer(async (req, res) => {
            * provenance (draft: true and the LoRA). Absent unless asked for, so
            * every other render's job is unchanged. */
           ...(engine === QWEN_IMAGE_ENGINE && b.draft === true ? { draft: true } : {}),
+          /* An explicitly accepted peer job is pinned to the built-in Qwen base
+           * graph. A custom cover assignment must not silently replace it. */
+          ...(collabImageBase ? { collabImageBase: true, collabRefHashes } : {}),
           // One text encode serves up to four pictures — see coverGraph.
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
           width: Math.min(Math.max(Number(b.width) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),
@@ -8728,12 +10088,11 @@ const server = http.createServer(async (req, res) => {
           /* LoRAs, stacked. Checkpoint engine only: FLUX.2 klein, Z-Image and
            * Ideogram load as bare DiTs here and LoraLoader takes a
            * CheckpointLoader’s model+clip pair, which they do not produce.
-           * Names are basenamed — a lora_name is a filename inside
-           * models/loras, never a path. */
+           * Names are relative to models/loras, including its subfolders. */
           loras: engine === "checkpoint" && Array.isArray(b.loras)
             ? b.loras.slice(0, 8)
                 .map((l) => ({
-                  name: path.basename(String(l?.name || "")),
+                  name: l?.name ? requireModelName(l.name) : "",
                   strength: Number.isFinite(l?.strength) ? Math.min(Math.max(Number(l.strength), -4), 4) : 1,
                   clipStrength: Number.isFinite(l?.clipStrength)
                     ? Math.min(Math.max(Number(l.clipStrength), -4), 4) : undefined,
@@ -8926,14 +10285,12 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/api/dits" && req.method === "GET") {
       const want = String(url.searchParams.get("family") || "").toLowerCase();
-      const dir = path.join(config.modelsDir, "diffusion_models");
-      let files = [];
-      try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
-      catch { /* no folder yet */ }
+      const seen = new Set();
+      const files = (await scanBases(await modelBases())).filter((f) => isDitFolder(f.folder)
+        && /\.safetensors$/i.test(f.name) && !seen.has(f.name) && seen.add(f.name));
       const rows = [];
-      for (const name of files) {
-        const full = path.join(dir, name);
-        const key = `dit:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
+      for (const { name, full, at } of files) {
+        const key = `dit:${full}:${at}`;
         let probe = ckptProbeCache.get(key);
         if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
         if (want && String(probe.family).toLowerCase() !== want) continue;
@@ -8953,33 +10310,34 @@ const server = http.createServer(async (req, res) => {
       /* Every base the engine loads from (the Models screen's folder, a ComfyUI
        * Desktop install's extra paths), not only config.modelsDir: the music
        * checkpoint list reads the same shelves, and a LoRA beside a checkpoint
-       * ComfyUI can see must be listable here. First base wins a duplicate
-       * name, which is also the order ComfyUI resolves it in. */
+       * ComfyUI can see must be listable here. Relative subfolders remain part
+       * of the selection, and duplicate copies are refused at the render door. */
       const shelf = await scanBases(await modelBases());
       const seen = new Set();
       const files = shelf.filter((f) => f.folder === "loras" && /\.safetensors$/i.test(f.name)
         && !seen.has(f.name) && seen.add(f.name));
 
-      const forName = path.basename(String(url.searchParams.get("for") || ""));
+      const forName = url.searchParams.get("for") ? requireModelName(url.searchParams.get("for")) : "";
       let against = null;
       if (forName) {
         /* A bare DiT (Krea 2, the MiniMax models) lives in diffusion_models or
          * unet, not checkpoints; a LoRA is judged against whichever holds it. */
-        const ck = shelf.find((f) => ["checkpoints", "diffusion_models", "unet"].includes(f.folder) && f.name === forName);
+        const ck = findShelfModel(shelf, ["checkpoints", "diffusion_models", "unet"], forName);
         /* An ACE-Step 1.5 DiT probes as MiniMax Music 3 (the two share a lyric
          * encoder layer), so it is named by its file, as the music list does. */
-        if (ck && ACE_DIT.test(ck.name)) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
+        if (ck && ACE_DIT.test(modelLeaf(ck.name))) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
         else if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
       }
 
       const rows = await Promise.all(files.map(async ({ name, full }) => {
-        const key = `lora:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
-        let probe = ckptProbeCache.get(key);
-        if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
+        const probe = await probeShelfLora({ name, full });
         const base = probe.family === "lora" ? probe.variant : null;
+        const styleAdapter = yue2StyleAdapterFromProbe(name, probe);
         return {
           name, bytes: probe.bytes, at: probe.at,
           base, confidence: probe.confidence ?? null,
+          ...(probe.loraParts ? { loraParts: probe.loraParts } : {}),
+          ...(styleAdapter ? { styleAdapter } : {}),
           /* A file in models/loras that is not a LoRA is worth saying out loud
            * rather than listing as one — the three MiniMax turbo files here are
            * genuinely LoRAs, but a checkpoint dropped in the wrong folder is a
@@ -9533,6 +10891,48 @@ const server = http.createServer(async (req, res) => {
         return imageFailure(res, err, 400, String(err.message || err));
       } finally {
         unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* The exact selection edge, sampled at the same stage as an edit. A seed
+     * marker cannot show a wand's connected region. Keep this in memory: a
+     * selection click must not add a matte, thumbnail or ledger entry. */
+    if (p === "/api/images/preview-selection" && req.method === "POST") {
+      try {
+        const b = await readBody(req, 8 * 1024 * 1024);
+        const name = String(b.name || "");
+        const documentId = String(b.documentId || "").trim();
+        if (!!name === !!documentId) return json(res, 400, { error: "Pass one image name or documentId." });
+        for (const key of ["selection", "frame"]) {
+          if (b[key] != null && (typeof b[key] !== "object" || Array.isArray(b[key]))) {
+            return json(res, 400, { error: `${key} must be an object.` });
+          }
+        }
+        const frame = {};
+        for (const k of ["canvas", "crop", "geometry", "rotate", "flipH", "flipV"]) {
+          if ((b.frame || {})[k] !== undefined && (b.frame || {})[k] !== null) frame[k] = b.frame[k];
+        }
+        const job = { selection: b.selection || {}, frame, preview: true };
+        if (documentId) {
+          job.doc = (await imgdocRun("store", { action: "open", id: documentId })).doc;
+          if (!job.doc) return json(res, 404, { error: "no such document" });
+          job.dir = IMAGE_DIR;
+        } else {
+          if (name !== path.basename(name) || /[\\/]/.test(name) || !/\.(png|jpg|jpeg|webp)$/i.test(name)) {
+            return json(res, 400, { error: "Use an image library filename, not a path." });
+          }
+          job.src = path.join(IMAGE_DIR, name);
+          try { await stat(job.src); } catch { return json(res, 404, { error: "no such image" }); }
+        }
+        const result = await imgWorker().run("describe", job);
+        result.says = result.empty ? "This selection covers no pixels."
+          : result.everything ? "This selection covers the whole picture."
+            : `${((Number(result.coverage) || 0) * 100).toFixed(1)}% of the picture is selected.`;
+        res.setHeader("Cache-Control", "no-store");
+        return json(res, 200, result);
+      } catch (err) {
+        if (err.tooBig) return json(res, 413, { error: err.message });
+        return imageFailure(res, await imageRefusal(err), 400, String(err.message || err));
       }
     }
 
@@ -10525,14 +11925,14 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
       if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      try { await stat(path.join(config.modelsDir, "background_removal", "birefnet.safetensors")); }
-      catch { return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." }); }
+      const cutoutModel = findShelfModel(await scanBases(await modelBases()), "background_removal", "birefnet.safetensors");
+      if (!cutoutModel) return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." });
       let staged;
       try {
         staged = await stageImageForEngine(name);
         const graph = {
           1: { class_type: "LoadImage", inputs: { image: staged } },
-          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: "birefnet.safetensors" } },
+          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: cutoutModel.name } },
           3: { class_type: "RemoveBackground", inputs: { bg_removal_model: ["2", 0], image: ["1", 0] } },
           4: { class_type: "InvertMask", inputs: { mask: ["3", 0] } },
           5: { class_type: "JoinImageWithAlpha", inputs: { image: ["1", 0], alpha: ["4", 0] } },
@@ -11073,40 +12473,51 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, swatches });
     }
 
-    /* Vector conversion — posterize + contour-trace, made for logos and flat
-     * art. Photographs come out as posterized art, which is what an SVG is. */
+    /* Raster tracing owns its bounded worker and strict shared controls.
+     * Each run is a new asset with measured settings kept beside it. */
     if (p === "/api/images/vectorize" && req.method === "POST") {
-      const b = await readBody(req);
-      const name = path.basename(String(b.name || ""));
-      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      const src = path.join(IMAGE_DIR, name);
-      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
-      const outName = `${name.replace(/\.[^.]+$/, "")}_v.svg`;
-      const jobPath = path.join(IMAGE_DIR, `.vec_${Date.now().toString(36)}.json`);
-      await writeFile(jobPath, JSON.stringify({
-        in: src, out: path.join(IMAGE_DIR, outName),
-        colors: Math.max(2, Math.min(16, Number(b.colors) || 6)),
-        detail: Math.max(0.2, Math.min(4, Number(b.detail) || 1)),
-      }));
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Vectorization requires a local JSON request." });
+      const b = await readBody(req, 2 * 1024 * 1024);
       try {
-        const out = await new Promise((resolve, reject) => {
-          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "vectorize", jobPath], { windowsHide: true });
-          let so = "", se = "";
-          proc.stdout.on("data", (d) => { so += d; });
-          proc.stderr.on("data", (d) => { se += d; });
-          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
-        });
-        const r = JSON.parse(out.trim().split("\n").pop());
-        if (!r.ok) throw new Error(r.error || "vectorize failed");
-        const parent = imageMeta.get(name) || {};
-        imageMeta.set(outName, { ...parent, vectorFrom: name, at: Date.now(), durationMs: null });
-        saveImageStore();
-        return json(res, 200, { ok: true, name: outName, paths: r.paths, bytes: r.bytes });
+        const r = await vectorizeImage({ imageDir: IMAGE_DIR, python: config.python,
+          register: async ({ name, source, result }) => {
+            const { settings, palette, stats, warnings, sourceWidth, sourceHeight, width, height, paths, bytes, traceFingerprint, shapes, shapesTruncated, cleanup, replay } = result;
+            await saveImageStore({ strict: true, mutate: () => {
+              const parent = imageMeta.get(source) || {};
+              imageMeta.set(name, { ...parent, vectorFrom: source, at: Date.now(), durationMs: null,
+                vectorization: { settings, palette, stats, warnings, sourceWidth, sourceHeight, width, height, paths, bytes, traceFingerprint, shapes, shapesTruncated, cleanup, replay } });
+              return () => imageMeta.delete(name);
+            } });
+          },
+        }, b);
+        return json(res, 200, r);
       } catch (err) {
-        return json(res, 400, { error: `vectorize failed: ${err.message}` });
-      } finally {
-        unlink(jobPath).catch(() => {});
+        return json(res, err.status || 500, { error: err.message });
       }
+    }
+
+    if (p === "/api/images/vector-review" && req.method === "POST") {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Vector review requires a local JSON request." });
+      const b = await readBody(req, 32768);
+      try {
+        const r = await vectorReviewImage({ imageDir: IMAGE_DIR, python: config.python }, b);
+        return json(res, 200, { ...r, replay: imageMeta.get(r.name)?.vectorization?.replay || null });
+      }
+      catch (err) { return json(res, err.status || 500, { error: err.message }); }
+    }
+
+    if (p === "/api/images/vector-import" && req.method === "POST") {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Image import requires a local JSON request." });
+      const b = await readBody(req, Math.ceil(MAX_VECTOR_SOURCE_BYTES / 3) * 4 + 4096);
+      try {
+        const r = await importVectorSource({ imageDir: IMAGE_DIR, register: async (receipt) => {
+          await saveImageStore({ strict: true, mutate: () => {
+            imageMeta.set(receipt.name, { at: Date.now(), engine: "import", imported: receipt.source });
+            return () => imageMeta.delete(receipt.name);
+          } });
+        } }, b);
+        return json(res, 200, r);
+      } catch (err) { return json(res, err.status || 500, { error: err.message }); }
     }
 
     if (p === "/api/images" && req.method === "POST") {
@@ -11520,7 +12931,7 @@ const server = http.createServer(async (req, res) => {
           context: restyleLineage.texts, flags: restyleLineage.flags });
         if (refused) return json(res, 422, refused);
       }
-      const vr = videoReady("ltx");
+      const vr = videoReadyFresh("ltx");
       if (!vr.ready) return json(res, 400, { error: `LTX is not installed: ${vr.missing.join(", ")}` });
 
       const every = Math.min(Math.max(Number(b.guideEvery) || 16, 4), 48);
@@ -12238,12 +13649,16 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     if (err.code === "ENOENT") return json(res, 404, { error: "not found" });
     console.error(err);
-    return json(res, 500, { error: String(err.message || err) });
+    return json(res, err.status || 500, { error: String(err.message || err) });
   }
 });
 
 // Push job state to the UI so progress is live rather than polled.
-const wss = new WebSocketServer({ server, path: "/live" });
+const wss = new WebSocketServer({ server, path: "/live",
+  /* The same Host rule as every request (foreignHost above), and an Origin, when
+   * a page sends one, that is that same address: the socket carries every job's
+   * state, titles included. */
+  verifyClient: ({ req }) => !foreignHost(req) && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`) });
 function push(snap) {
   /* ⚠ AND THE ART LANE'S OWN STATE. The socket fires on every art progress
    * tick (art.on("update") below) and carried nothing about art, so anything
@@ -12255,6 +13670,10 @@ function push(snap) {
 }
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status(), ...art.status() }));
+});
+art.on("refmod-ready", (result) => {
+  const message = JSON.stringify({ type: "refmod-ready", ...result });
+  for (const client of wss.clients) if (client.readyState === 1) client.send(message);
 });
 
 /* DAWUI: the DAW's live document sync rides this SAME socket — one connection
@@ -12302,7 +13721,7 @@ async function gpuWorkRunning() {
  *  cancelled work is discarded cleanly rather than cut off mid-write. */
 async function stopForBattery(why) {
   const what = [];
-  if (batch.run && ["running", "paused"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
+  if (batch.run && ["running", "paused", "scheduled"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
   if (jobs.current || jobs.queue.length) {
     what.push(jobs.current?.title ? `"${jobs.current.title}"` : "a song");
     for (const j of [...jobs.queue]) await jobs.cancelById(j.id).catch(() => {});
@@ -12338,6 +13757,11 @@ async function powerTick() {
 server.listen(config.uiPort, "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
   persistStartLevel().catch((err) => console.warn(`  [settings] the starting level was not saved: ${err.message}`));
+  /* Fast covers switched on and answered, but not all there (a setup or a
+   * download a restart cut short): carry on by itself. */
+  if (config.art.fastCovers && config.art.fastCoversAsked) {
+    fastCovers.ensure().catch((err) => console.warn(`  [fast covers] could not resume the setup: ${err.message}`));
+  }
 
   /* Open the browser HERE, not in the launcher.
    *

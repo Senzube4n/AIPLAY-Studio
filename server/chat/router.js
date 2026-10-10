@@ -66,6 +66,28 @@ import { TOOLS as MCP_TOOLS } from "../mcp.js";
  * "destroys" — removes work that exists
  */
 export const ROUTABLE = {
+  /* Reviewed DAW score passages. Only alternatives submit real song jobs. */
+  music_daw_passages: null,
+  music_daw_preview: null,
+  music_daw_draft: "writes",
+  music_daw_draft_get: null,
+  music_daw_request: null,
+  music_daw_takes: "gpu",
+  music_daw_audition: null,
+  /* Existing songs are measured on the processor, never regenerated. */
+  music_takes_list: null,
+  music_takes_create: "writes",
+  music_takes_get: null,
+  music_takes_verify: null,
+  music_takes_choose: "writes",
+  /* Shared musical accents and editable flash keys use bounded CPU work. */
+  music_cue_status: null,
+  music_cue_save: "writes",
+  music_cue_read: null,
+  music_cue_preview: null,
+  music_cue_audition: "writes",
+  music_cue_apply: "writes",
+  music_cue_undo: "writes",
   /* the map, and what this machine is */
   pipeline_guide: null,
   studio_capabilities: null,
@@ -74,10 +96,16 @@ export const ROUTABLE = {
   models_for_this_machine: null,
   /* Reads what a one-click setup would build and how its job is going. */
   setup_status: null,
+  fastcovers_status: null,
+  h3_refmod_status: null,
+  h3_refmod_inspect: null,
+  /* VAE extraction and optional reconstruction use the shared graphics-card queue. */
+  h3_refmod_create: "gpu",
   /* No strong card? Friend first, then the person's own key: a read. Its twin
    * set_cloud is withheld below, because it decides whether songs bill. */
   cloud_status: null,
   studio_status: null,
+  community_feed: null,
   engine_status: null,
   engine_activity: null,
   engine_nodes: null,
@@ -112,6 +140,8 @@ export const ROUTABLE = {
   collab_free: null,
   collab_orders: null,
   collab_video_preview: null,
+  collab_video_job_preview: null, // frozen H3 request; packing is a separate write
+  collab_image_preview: null,
   collab_preview: null, // local snapshot; packing is a separate explicit write
   collab_add_peer: "writes",
   /* collab_set_role, collab_verify and collab_set_lend_minutes: WITHHELD below. */
@@ -121,6 +151,16 @@ export const ROUTABLE = {
   collab_open: null,
   collab_inbox: null,
   collab_quarantine: null,
+  collab_image_accept: "writes", // stages a reviewed peer job's references locally
+  collab_image_render: "gpu", // explicitly spends this machine's card
+  collab_image_send_back: "writes", // prepares a signed file for manual handoff
+  collab_image_receive: "writes", // validates and files a returned PNG in quarantine
+  collab_image_review_return: null, // reads the checked PNG as native image content
+  collab_image_adopt: "writes", // adds a peer PNG to Pictures
+  collab_image_drop: "destroys", // removes a quarantined PNG
+  collab_video_accept: "writes", // reviewed signed H3 order; no GPU work yet
+  collab_video_render: "gpu", // explicitly runs the accepted order on this card
+  collab_video_send_back: "writes", // seals a local return for manual handoff
   collab_accept: "writes",
   collab_send_back: "writes",
   collab_receive: "writes",
@@ -138,6 +178,7 @@ export const ROUTABLE = {
   reactive_status: null,
   training_status: null,
   list_trained_loras: null,
+  compare_yue2_lora_takes: null, // compares existing files and provenance; no render or training
   audio_waveform: null,
   model_inventory: null,
   models_folder: "writes",
@@ -194,6 +235,27 @@ export const ROUTABLE = {
   music_artifact_cancel: null,
   music_listening_lab: null,
   music_listening_lab_start: "gpu",
+
+  /* Native tools share the workbench's validated routes and owned worker.
+   * Starting a worker returns a receipt, rather than holding this turn until
+   * it completes. CPU preparation and copying still ask before saving work. */
+  music_workbench_status: null,
+  music_workbench_run: null,
+  music_workbench_stop: "writes",
+  music_dataset_create: "writes",
+  music_dataset_edit: "writes",
+  music_dataset_prepare: "writes",
+  music_native_train: "gpu",
+  music_native_continue: "gpu",
+  music_native_plan: "gpu",
+  music_native_replay: "gpu",
+  music_native_keep: "writes",
+  music_audio_transcribe: "gpu",
+  music_midi_to_daw: "writes",
+  music_adapter_export: "writes",
+  music_adapter_install: "writes",
+  music_process_preview: "writes",
+  music_process_keep: "writes",
 
   /* finishing a take that already exists — see server/mcp-audio.js
    *
@@ -307,6 +369,7 @@ export const ROUTABLE = {
    * picture in the library, which is exactly what `writes` is for. */
   image_paint_layer: "writes",
   image_document: "writes",
+  image_standrig_psd_export: "writes",
   /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
    * mostly harmless — list, open, save, rename, reorder — but image_documents
    * takes action:"delete", and imgdoc.py says in its own words that there is no
@@ -324,6 +387,8 @@ export const ROUTABLE = {
   image_cutout: "gpu",
   image_upscale: "gpu",
   image_vectorize: "writes",
+  image_vector_import: "writes",
+  image_vector_review: null,
   image_export: "writes",
 
   image_set_blur: null,
@@ -436,6 +501,7 @@ export const ROUTABLE = {
   daw_add_clip: null,
   daw_set_clip: null,
   daw_add_note: null,
+  daw_restore_note: null,
   daw_move_note: null,
   daw_set_meter: null,
   daw_set_tempo: null,
@@ -535,10 +601,19 @@ export const ROUTABLE = {
   score_render: "gpu",
 
   /* avatars */
+  standrig_status: null,
+  standrig_parameters: "writes", // transient values sent to the local performer
+  standrig_control: "writes", // transient play, pause, reset or demo command
   avatar_list: null,
+  avatar_source_preflight: null,
+  avatar_motion_audit: null,
   avatar_playback_sessions: null,
+  avatar_cue_inventory: null,
   avatar_audio_upload: "writes",
   avatar_playback_command: null,
+  pngtuber_sessions: null,
+  pngtuber_talk: null, // transient frame cue in one live browser preview
+  pngtuber_clear_talk: null,
   avatar_weight_transfer_status: null,
   avatar_weight_transfer_inspect: null,
   avatar_weight_transfer_submit: "writes", // bounded local CPU work creating a new attachment
@@ -575,6 +650,7 @@ export const ROUTABLE = {
  * to yet", which is the difference between a boundary and an oversight.
  */
 export const WITHHELD = {
+  daw_plugins: "Combines native plugin execution with runtime installation and file copying. Choose plugins explicitly in DAW > Plugins or through external MCP; the built-in chat's generic per-tool confirmation does not review native executable plugins.",
   studio_api_request: "Raw API methods can mix reads, deletion, trust grants and generation; the local chat's per-tool gate cannot classify them. Use the typed tools here or explicitly invoke this fallback through external MCP.",
   enhance_style: "this chat IS a language model writing the words; asking a second model to rewrite them is a round trip for nothing, and a local one would take the card",
   enhance_lyrics: "the chat writes lyrics itself; a second model rewriting them is a round trip for nothing, and a local one would take the card",
@@ -583,6 +659,7 @@ export const WITHHELD = {
   timed_lyrics_python: "names a program Studio will execute; a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
   stems_python: "names a program Studio will execute (stem separation and the audio-reference encoder); a sentence typed into a chat box must not choose what runs on this machine (Settings > Songs, or MCP)",
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
+  music_native_install: "Downloads optional runtimes and model weights measured in gigabytes, including MuScriptor's CC BY-NC licence. Installation and licence review belong to Music Lab > Native tools or an explicitly requested external MCP installation; a generic chat confirmation does not replace that review.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",
   cancel_download: "the twin of download_model, which is withheld for the same reason: what the Models page's buttons do stays with the person at that page",
@@ -610,12 +687,17 @@ export const WITHHELD = {
   music_input_capabilities: "harmless, but only meaningful beside the three above",
   set_video_engine: "changes a persistent app setting the person set on the Video page",
   set_image_engine: "changes a persistent app setting the person set on the Pictures page",
+  set_fastcovers: "sets up Python and downloads a model; use the explicit Fast covers setting or external MCP",
   set_music_engine: "changes a persistent app setting the person set on the Music page, and can switch paid API mode on",
+  set_yue2_style_adapter: "changes persistent planner and audio LoRA choices set on the Music page; available through external MCP",
   download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   setup_feature: "downloads gigabytes and changes which program Studio runs for a feature (timed lyrics, Studio's own engine packages) — the Set up button (Models, Settings) and the launcher's Try again are the doors, the same reason download_model is withheld",
   collab_set_lend_minutes: "raises or lowers how many minutes a day this card renders for a friend; with collab_accept routable, a chat could raise the allowance and then accept, walking past the minutes a person set exactly as the withheld \"anyway\" would. The Friends row on the Collab screen is where a person sets it (MCP clients keep the tool)",
   collab_set_role: "makes a friend a lending friend or a collaborator, a trust decision about who may send this card work or hold the whole project; a person makes it on the Collab screen's Friends row (MCP clients keep the tool)",
   collab_verify: "records that the twelve words were read aloud and matched, the one trust grant in Collab; a chat cannot hear the words, so a person presses it on the Collab screen (MCP clients keep the tool)",
+  collab_video_review_return: "returns a receipt for an MP4 the reviewer must watch; this text chat cannot inspect playback. Use the Collab page or an external MCP client with video access",
+  collab_video_adopt: "requires the exact reviewed MP4 receipt, and this text chat cannot watch that video. Use the Collab page or an external MCP client after inspecting the file",
+  collab_video_drop: "removes a returned MP4 that this text chat cannot watch or judge. Use the Collab page or an external MCP client after inspecting the file",
   set_cloud: "switches a PAID service on, or raises its monthly cap: it decides whether songs bill the person's own key, and that is the person's decision on the Settings page (No strong graphics card?)",
   studio_welcome: "hides or re-shows the first-run lines and SAVES the Simple/Advanced level, a setting for a person (Settings > Screens), not a sentence in a chat box",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
@@ -646,11 +728,23 @@ export const CHAT_WITHHELD_ARGS = {
   collab_accept: {
     anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
   },
+  collab_video_accept: {
+    anyway: "walks past a busy card or this friend's minutes a day; a person answers \"Accept anyway\" on the Collab screen",
+  },
+  collab_video_render: {
+    anyway: "queues behind work already on the card; a person answers \"Render anyway\" on the Collab screen",
+  },
   collab_adopt: {
     anyway: "keeps a take that failed its checks; a person watches it and answers \"Keep anyway\" on the Collab screen",
   },
   whisper_status: {
     model: "saves which whisper model every later transcription and timed lyrics use (the first use downloads it); a setting for a person, not a sentence in a chat box",
+  },
+  music_dataset_create: {
+    folder: "scans an arbitrary local folder and its metadata sidecars; a person supplies that folder in Music Lab > Native tools or external MCP. This chat can choose library recordings with files",
+  },
+  music_process_preview: {
+    plugins: "loads executable VST3 plugins from local program paths; a person chooses those plugins in Music Lab > Native tools or external MCP. This chat can use the built-in denoise, EQ and reference loudness controls",
   },
 };
 
@@ -658,6 +752,9 @@ export const CHAT_WITHHELD_ARGS = {
 for (const t of MCP_TOOLS) {
   if (t.name.startsWith("ab_") && !(t.name in WITHHELD)) {
     WITHHELD[t.name] = "the audiobook surface is a whole workflow of its own and has had no pass for chat";
+  }
+  if (t.name.startsWith("runpod_")) {
+    WITHHELD[t.name] = "RunPod GPU mode includes paid Pod controls, remote file transfer and arbitrary graphs; the in-app chat has no route-specific review for this surface. Use its panel or external MCP.";
   }
 }
 
@@ -677,7 +774,28 @@ export const COST_TEXT = {
 /** A tool whose gate's sentence would be false for it gets its own. The gate
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
+  music_daw_draft: "no graphics card time; saves the reviewed score, exact text and source fingerprints without changing DAW notes",
+  music_daw_takes: "graphics card time; queues two or three YuE2 Python passage alternatives through ordinary song auditions, preserving the original recording",
+  music_takes_create: "processor time; measures 2, 4 or 8 existing recordings and saves their exact stored receipts and playback gains without generating songs",
+  music_takes_choose: "no graphics card time; saves this take choice and explicitly sets the selected recording's library favourite flag",
+  music_cue_save: "no graphics card time; saves a draft cue and its chosen musical and visual targets",
+  music_cue_audition: "processor time; saves a dry builtin accent preview and returns a composition still with simulated flash keys; no model generation",
+  music_cue_apply: "no graphics card time; adds an editable accent track, flash layer and labeled marker to the reviewed projects",
+  music_cue_undo: "no graphics card time; removes only unchanged objects owned by this cue and preserves other project content",
   stop_generation: "no graphics card time and no new file — it ends the render you have running and drops the queue behind it",
+  music_workbench_stop: "no graphics card time and no new file — it stops the currently active native workbench worker, including training; Studio generation jobs and completed artifacts are retained",
+  music_dataset_create: "no graphics card time — it saves a training dataset from the selected library recordings and retains their originals",
+  music_dataset_edit: "no graphics card time — it saves this dataset song's metadata and invalidates the dataset's derived preparation caches; original recordings are retained",
+  music_dataset_prepare: "processor time — it saves prepared audio copies and metadata for the reviewed dataset; this step does not train on the graphics card",
+  music_native_train: "graphics card time — training can take hours and saves adapter checkpoints; it holds the card while it runs. Poll the saved run before exporting or using its adapter",
+  music_native_continue: "graphics card time — resumed training can take hours and saves new checkpoints; it holds the card while it runs. The requested steps are the new total, not extra steps",
+  music_audio_transcribe: "graphics card or processor time, depending on the selected device — it saves predicted MIDI and note events for review, without changing the recording",
+  music_midi_to_daw: "no graphics card time — it saves an editable DAW project from predicted notes, using provisional tempo and pluck sounds; it does not reconstruct the original timbres",
+  music_adapter_export: "processor time — it saves a combined ComfyUI adapter from a complete native checkpoint and retains the checkpoint",
+  music_adapter_install: "no graphics card time or model download — it copies this saved exported adapter into the local ComfyUI LoRA shelf; selecting it for generation remains a separate choice",
+  music_process_preview: "processor time — it saves a separate audio preview with denoise, high-frequency EQ and optional loudness-only reference matching; the original recording is retained",
+  standrig_parameters: "no graphics card time and no new file; it changes the local performer's current expression until replaced",
+  standrig_control: "no graphics card time and no new file; it changes the local performer's playback state",
   /* The router gates the whole tool, so a plain read asks too: the card says
    * that reading changes nothing. */
   video_settings: "no graphics card time and no new file — reading your video settings changes nothing; a setting it changes is SAVED, and every later render uses it",
@@ -687,8 +805,39 @@ export const COST_TEXT_BY_TOOL = {
  *  would be false for it (server/chat/loop.js gateLabel). video_settings is
  *  "writes" for its confirm, but it saves a setting, not a file. */
 export const GATE_WORDS_BY_TOOL = {
+  music_daw_draft: "SAVES A SCORE DRAFT",
+  music_takes_create: "SAVES A COMPARISON",
+  music_takes_choose: "SAVES A TAKE CHOICE",
+  music_cue_save: "SAVES A CUE",
+  music_cue_audition: "PREVIEWS A CUE",
+  music_cue_apply: "ADDS CUE OBJECTS",
+  music_cue_undo: "REMOVES CUE OBJECTS",
   video_settings: "SAVES A SETTING",
+  standrig_parameters: "CHANGES PERFORMER",
+  standrig_control: "CHANGES PERFORMER",
+  music_workbench_stop: "STOPS NATIVE WORK",
+  music_dataset_create: "SAVES A DATASET",
+  music_dataset_edit: "CHANGES DATASET METADATA",
+  music_dataset_prepare: "PREPARES DATASET AUDIO",
+  music_midi_to_daw: "SAVES A DAW PROJECT",
+  music_adapter_export: "EXPORTS AN ADAPTER",
+  music_adapter_install: "COPIES AN ADAPTER",
 };
+
+// Describe the narrower chat capability, not the withheld path-bearing options
+// still available to the person in the workbench and external MCP clients.
+const CHAT_DESCRIPTION_BY_TOOL = {
+  music_dataset_create: "Create a local native-training dataset from 1–200 library recording filenames supplied as a JSON files array. Retains originals. Review style, exact lyrics and instrumental status before preparation. Folder imports require Music Lab > Native tools or external MCP.",
+  music_process_preview: "Make a separate audio preview from a library recording with built-in denoise, high-frequency EQ smoothing and optional reference loudness matching. Compare before keeping. Reference matching is loudness-only. Executable VST3 plugins require Music Lab > Native tools or external MCP.",
+};
+
+// These starts unload the local chat model and acquire the native workbench
+// lease before returning. Do not sample a follow-up reply onto that worker.
+const WORKBENCH_STARTS = new Set([
+  "music_dataset_prepare", "music_native_train", "music_native_continue",
+  "music_native_plan", "music_native_replay", "music_audio_transcribe",
+  "music_adapter_export", "music_process_preview",
+]);
 
 /* ─────────────────────────────────────────────── the flat-argument rule
  *
@@ -708,8 +857,11 @@ const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 // this boundary and decode before invoking the unchanged MCP tool. Nothing is
 // silently dropped. External MCP clients still use the original typed schema.
 const JSON_ARGUMENT_TOOLS = new Set([
+  "music_daw_preview", "music_daw_draft", "music_daw_takes", "music_takes_create",
   "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
+  "standrig_parameters", "h3_refmod_create",
   "music_kit", "music_audition_create", "music_reference_update_brief", "music_listening_lab",
+  "music_dataset_create", "music_native_train",
   /* The score tools take `source` as an object and the note editor takes an
    * array of notes; without these three the chat could not reach them at all
    * ("turn my hum into a score" went to score_* tools). hum_to_score and
@@ -767,7 +919,7 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     };
   }
 
-  let description = String(tool.description);
+  let description = String(CHAT_DESCRIPTION_BY_TOOL[tool.name] || tool.description);
   if (description.length > budget) {
     const cut = description.slice(0, budget);
     const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("\n"));
@@ -782,6 +934,8 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     gate: gate || null,
     cost: gate ? (COST_TEXT_BY_TOOL[tool.name] || COST_TEXT[gate]) : undefined,
     gateWords: gate ? GATE_WORDS_BY_TOOL[tool.name] || null : null,
+    endsTurn: WORKBENCH_STARTS.has(tool.name) || tool.name === "music_daw_takes",
+    cancelScope: WORKBENCH_STARTS.has(tool.name) && gate === "gpu" ? "music-workbench" : undefined,
     routed: true,
     run: (a) => {
       const decoded = { ...a };
@@ -801,7 +955,18 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
           throw new Error(`${name} must decode to ${type}.`);
         decoded[name] = value;
       }
-      return tool.run(decoded);
+      const result = tool.run(decoded);
+      if (tool.name === "music_daw_takes") return Promise.resolve(result).then(receipt => ({
+        ...receipt,
+        say: "Passage audition session saved. Follow this draft in the DAW AI passage dock or its exact saved audition session. Cancel these takes through the audition shelf.",
+      }));
+      if (!WORKBENCH_STARTS.has(tool.name)) return result;
+      return Promise.resolve(result).then((receipt) => ({
+        ...receipt,
+        say: receipt?.run?.id
+          ? `Native workbench run ${receipt.run.id} started. Follow its progress in Music Lab > Native tools, or read it with music_workbench_run.`
+          : `${tool.name} ran. Follow its progress in Music Lab > Native tools.`,
+      }));
     },
   };
 }

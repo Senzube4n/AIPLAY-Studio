@@ -874,6 +874,46 @@ ok("probe's targets carry the dual-mono and tuning thresholds",
 ok("probe reports the bands it uses", len(p["bands"]) == len(ear.BANDS))
 ok("probe carries the judge's availability verdict", "judge" in p)
 
+# ══════════════════════════════════════════════════════════════════════════
+# A path over a REAL pipe. Every call above is in-process, and a StringIO
+# stdin is already text, so neither could see this: ear.js writes UTF-8, a
+# Windows python decodes a piped stdin as cp1252, and a bounce under
+# C:/Users/José/ was looked for under "JosÃ©" and not found. So: a child
+# process, the job written as the raw UTF-8 JSON.stringify produces
+# (ensure_ascii=False; \u escapes would sail through any code page), and
+# PYTHONIOENCODING=cp1252 so the child starts the way Windows starts it on
+# every OS this runs on.
+print("\n  -- serve reads its pipe as UTF-8, whatever the code page --")
+import json  # noqa: E402
+import subprocess  # noqa: E402
+import wave  # noqa: E402
+
+with tempfile.TemporaryDirectory() as _td:
+    _home = os.path.join(_td, "Jos\u00e9 caf\u00e9")                     # José café
+    os.mkdir(_home)
+    _wav = os.path.join(_home, "bounce \u00b7 2025\u20132026 \u2588.wav")    # · – █
+    _y = sine(SR, 440.0, amp=0.3)
+    with wave.open(_wav, "wb") as _w:
+        _w.setnchannels(2)
+        _w.setsampwidth(2)
+        _w.setframerate(SR)
+        _w.writeframes((np.vstack([_y, _y]).T * 32767.0).astype("<i2").tobytes())
+    _env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
+    _env["PYTHONIOENCODING"] = "cp1252"
+    _req = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in (
+        {"id": 1, "cmd": "file", "job": {"path": _wav}}, {"cmd": "shutdown"}))
+    _child = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "ear.py"),
+         "serve"], input=_req.encode("utf-8"), capture_output=True, env=_env, timeout=120)
+    _r = next((x for x in (json.loads(ln) for ln in _child.stdout.decode("utf-8").splitlines()
+                           if ln.strip()) if x.get("id") == 1), {})
+    # the labels stay ASCII: this file's own stdout is a cp1252 pipe under the gate
+    ok("a bounce in a non-ASCII folder, sent over a real pipe, is found and read",
+       _r.get("ok") is True, ascii(_r.get("error") or _child.stderr[-400:]))
+    ok("...its reply names the path it was sent, not a cp1252 reading of it",
+       _r.get("path") == _wav, ascii(_r.get("path")))
+    ok("...and it measured the whole file", _r.get("n_samples") == SR, str(_r.get("n_samples")))
+
 print(f"\n  {PASS} passed, {len(FAILS)} failed\n")
 if FAILS:
     print("  failed:\n   " + "\n   ".join(FAILS) + "\n")

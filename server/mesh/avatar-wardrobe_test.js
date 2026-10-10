@@ -50,6 +50,45 @@ test('multiple base skins bind against their shared original raw joint nodes',as
   const report=await inspectWardrobePart(model(),base,hash(base));assert.deepEqual(report.bindings[0].baseJointNodes,[1,2,3]);
 });
 
+test('hair import and list expose actual inherited spring coverage, never invented part physics',async t=>{
+  const f=await fixture(t),base=model(j=>{j.extensionsUsed=['VRMC_springBone'];j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node:3}]}]}};});
+  f.replace(base);
+  const hair=await f.import({name:'Prepared hair',slot:'hair'});
+  assert.deepEqual(hair.inspection.motion,{mode:'base_springs',baseSpringChains:1,springLinkedJoints:1,springLinkedVertices:2,minimumWeight:.05});
+  assert.deepEqual((await f.service.list({id:ID})).parts[0].inspection.motion,hair.inspection.motion);
+  const unsupported=model(j=>{j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node:3}]}]}};});
+  f.replace(unsupported);
+  const unadvertised=await inspectWardrobePart(model(),unsupported,hash(unsupported));
+  assert.equal(unadvertised.motion.mode,'none');
+});
+
+test('hair weighted to a spring descendant is linked, but an ancestor weight is not',async()=>{
+  const springAt=node=>model(j=>{j.extensionsUsed=['VRMC_springBone'];j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node}]}]}};});
+  const weightedTo=index=>model((j,bin)=>{for(let vertex=0;vertex<8;vertex++)bin.writeUInt8(index,288+vertex*4);});
+  const child=weightedTo(2),parent=weightedTo(1),base=springAt(2);
+  const linked=await inspectWardrobePart(child,base,hash(base));
+  assert.deepEqual(linked.motion,{mode:'base_springs',baseSpringChains:1,springLinkedJoints:1,springLinkedVertices:8,minimumWeight:.05});
+  const reverse=springAt(3),unlinked=await inspectWardrobePart(parent,reverse,hash(reverse));
+  assert.equal(unlinked.motion.mode,'none');
+  assert.equal(unlinked.motion.springLinkedVertices,0);
+});
+
+test('older saved hair reports refresh on read without rewriting imported files',async t=>{
+  const f=await fixture(t),base=model(j=>{j.extensionsUsed=['VRMC_springBone'];j.extensions={VRMC_springBone:{specVersion:'1.0',springs:[{joints:[{node:2}]}]}};});
+  f.replace(base);
+  const child=model((j,bin)=>{for(let vertex=0;vertex<8;vertex++)bin.writeUInt8(2,288+vertex*4);});
+  const imported=await f.import({name:'Older hair',slot:'hair',bytes:child});
+  const file=path.join(f.directory,ID,`${imported.id}.json`),old=JSON.parse(await readFile(file,'utf8'));
+  delete old.motionReviewVersion;old.inspection.motion={...old.inspection.motion,mode:'none',springLinkedJoints:0,springLinkedVertices:0};
+  await writeFile(file,JSON.stringify(old,null,2));const original=await readFile(file);
+  const listed=(await f.service.list({id:ID})).parts[0];
+  assert.equal(listed.inspection.motion.mode,'base_springs');assert.equal(listed.inspection.motion.springLinkedVertices,8);
+  assert.equal((await f.service.file({id:ID,part_id:imported.id})).row.inspection.motion.mode,'base_springs');
+  assert.deepEqual(await readFile(file),original);
+  await f.service.select({id:ID,sha256:hash(base),expected_revision:0,part_ids:[imported.id]});
+  assert.equal((await f.service.selection({id:ID})).parts[0].inspection.motion.mode,'base_springs');
+});
+
 test('stale concurrent selections, duplicate slots and caller mutation do not overwrite saved state',async t=>{
   const f=await fixture(t),a=await f.import(),b=await f.import({name:'Other coat'}),input={id:ID,sha256:f.sha256,expected_revision:0,part_ids:[a.id]};
   const save=f.service.select(input);input.part_ids.push(b.id);await save;
@@ -74,6 +113,7 @@ test('MCP payloads use the real route and provenance writer with optional fields
   const inventory=await run('avatar_wardrobe_inventory',{id:ID});assert.equal(inventory.sha256,f.sha256);
   const imported=await run('avatar_wardrobe_import',{id:ID,sha256:f.sha256,name:'Coat',slot:'outfit',source:'Local',license:'CC0',data_base64:model().toString('base64')});
   assert.equal((await run('avatar_wardrobe_list',{id:ID})).parts[0].id,imported.id);
+  assert.deepEqual(imported.inspection.motion,{mode:'none',baseSpringChains:0,springLinkedJoints:0,springLinkedVertices:0,minimumWeight:.05});
   await run('avatar_wardrobe_select',{id:ID,sha256:f.sha256,expected_revision:0,part_ids:[imported.id]});
   const selected=await run('avatar_wardrobe_selection',{id:ID});assert.deepEqual(selected.part_ids,[imported.id]);assert.equal(selected.look_id,null);
   await run('avatar_wardrobe_select',{id:ID,sha256:f.sha256,expected_revision:1,part_ids:[]});assert.deepEqual(await run('avatar_wardrobe_delete',{id:ID,sha256:f.sha256,part_id:imported.id}),{deleted:imported.id});

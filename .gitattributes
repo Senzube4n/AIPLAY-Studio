@@ -25,3 +25,39 @@ server/score/fixtures/** text=auto eol=lf
 # fills in $Format:...$ placeholders in files marked export-subst. So the zip
 # carries its own commit and date; server/version.js reads them. See VERSIONING.md.
 server/version.archive.json export-subst
+
+# SOURCE IS CHECKED OUT AS IT WAS COMMITTED: LF, ON EVERY MACHINE.
+#
+# Many gate lanes read the source and match its line structure. Every blob is
+# stored LF, and the sessions that write and gate the code write LF, so a pin
+# like `;\n\s+await` is only ever proven against LF. With autocrlf a fresh
+# Windows clone got CRLF instead: on 2026-09-24 a clean checkout of origin/main
+# failed at server/apimode-picker_test.js, and the negative pin in
+# server/download_test.js could no longer fire at all. Those pins now accept
+# `\r?\n`, which covers a checkout made before this rule; these lines stop the
+# next LF-only pin from failing a fresh clone. They change no blob, only what a
+# checkout writes.
+#
+# `text=auto`, not `text`: seven source files hold a NUL byte (web/daw.js,
+# scripts/smoke_api.mjs and others), so git reads them as binary and has never
+# converted them, and three of them hold CR bytes as committed. A forced `text`
+# would rewrite those bytes the next time anyone touched them. `text=auto`
+# leaves them exactly as they are, as autocrlf always has.
+*.js   text=auto eol=lf
+*.mjs  text=auto eol=lf
+*.cjs  text=auto eol=lf
+*.py   text=auto eol=lf
+*.html text=auto eol=lf
+*.css  text=auto eol=lf
+*.json text=auto eol=lf
+*.md   text=auto eol=lf
+*.sh   text=auto eol=lf
+.githooks/* text=auto eol=lf
+
+# WHAT cmd.exe AND POWERSHELL RUN IS CRLF, ALSO ON EVERY MACHINE, which is why
+# the rule above names extensions and is never `* eol=lf`. These are stored LF
+# as well and were CRLF only where autocrlf happened to be on: a clone with it
+# off, or a GitHub "Download ZIP", handed cmd.exe a launcher with LF lines.
+*.cmd  text=auto eol=crlf
+*.bat  text=auto eol=crlf
+*.ps1  text=auto eol=crlf

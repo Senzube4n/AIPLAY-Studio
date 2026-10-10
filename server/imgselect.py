@@ -1394,12 +1394,8 @@ def blend(original, result, mask):
     return out.reshape(result.shape)
 
 
-def describe(selection, rgba):
-    """What the selection panel puts under the marching ants. An empty
-    selection is the most confusing state an editor has, and this is the only
-    thing in the system that can name it."""
-    warn = []
-    m = resolve(selection, rgba, warn)
+def mask_stats(m, warnings=None):
+    """Describe an already resolved mask without sampling the image twice."""
     total = float(m.sum())
     n = int(m.size)
     return {"width": int(m.shape[1]), "height": int(m.shape[0]),
@@ -1408,7 +1404,15 @@ def describe(selection, rgba):
             "partial": int(np.count_nonzero((m > 0.0) & (m < 1.0))),
             "empty": total <= 0.0,
             "everything": bool(float(m.min()) >= 1.0),
-            "warnings": warn}
+            "warnings": list(warnings or [])}
+
+
+def describe(selection, rgba):
+    """What the selection panel puts under the marching ants. An empty
+    selection is the most confusing state an editor has, and this is the only
+    thing in the system that can name it."""
+    warn = []
+    return mask_stats(resolve(selection, rgba, warn), warn)
 
 
 def catalog():

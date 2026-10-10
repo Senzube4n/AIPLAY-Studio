@@ -31,7 +31,7 @@ function make(names,overrides={}){
     undo:[],redo:[],aud:{seq:0},ana:{curves:new Map()},at:0};
   const nodes=new Map();
   const $=(id)=>{if(!nodes.has(id))nodes.set(id,{textContent:'',value:'100',selectedOptions:[{textContent:'1/8'}],classList:{add(){},remove(){},contains(){return false;}}});return nodes.get(id);};
-  const ctx={S,console,Map,Set,Float32Array,Promise,performance:{now:()=>10},encodeURIComponent,TPB:960,audioImportRequest:0,
+  const ctx={S,console,Map,Set,Float32Array,Promise,performance:{now:()=>10},encodeURIComponent,TPB:960,audioImportRequest:0,passageDock:null,
     WAVE_BUCKETS:200,WAVE_REGION_CAP:16,AHEAD_REGIONS:4,DEFER_OK:new Set(),$,
     localStorage:{setItem:(key,value)=>calls.storage.push([key,value])},canvas:{},releasePointer(){},
     status:m=>calls.status.push(m),pushUndo:e=>calls.undo.push(e),
@@ -59,10 +59,10 @@ function make(names,overrides={}){
      * wants. The list stays explicit rather than auto-stubbing every unknown identifier:
      * auto-stubbing would also swallow a genuinely missing dependency, which is the one
      * thing this suite exists to catch. */
-    'applyViewFromDoc'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
+    'applyViewFromDoc','cancelNoteGesture'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
   const context=vm.createContext(ctx);
   vm.runInContext('var renderChain=Promise.resolve();var liveChain=Promise.resolve();var peakJobs=new Set();\n'
-    +['captureSession','sessionCurrent',...names].map(extract).join('\n'),context);
+    +['captureSession','sessionCurrent','noteEditBusy','beginEdit','finishEdit','replayHistory',...names].map(extract).join('\n'),context);
   const jump=(slug='B')=>{S.projectEpoch++;S.slug=slug;};
   return {ctx:context,S,calls,jump};
 }
@@ -74,6 +74,13 @@ await test('old document cannot replace another project',async()=>{
 });
 await test('same-slug reload invalidates the old session',async()=>{
   const d=deferred(),h=make(['refreshDoc'],{get:()=>d.promise});const p=h.ctx.refreshDoc();h.jump('A');d.resolve(documentReply('old'));assert.equal(await p,false);
+});
+await test('only a current project read notifies the passage dock',async()=>{
+  const a=deferred(),b=deferred();let reads=0,notifications=0;
+  const h=make(['refreshDoc'],{get:()=>++reads===1?a.promise:b.promise,passageDock:{contextChanged:()=>notifications++}});
+  const old=h.ctx.refreshDoc();h.jump();const current=h.ctx.refreshDoc();
+  a.resolve(documentReply('old'));assert.equal(await old,false);assert.equal(notifications,0);
+  b.resolve(documentReply('new'));assert.equal(await current,true);assert.equal(notifications,1);
 });
 await test('out-of-order reads within one session keep the newest request',async()=>{
   const a=deferred(),b=deferred();let n=0;const h=make(['refreshDoc'],{get:()=>++n===1?a.promise:b.promise});const pa=h.ctx.refreshDoc(),pb=h.ctx.refreshDoc();b.resolve(documentReply('new'));assert.equal(await pb,true);a.resolve(documentReply('old'));assert.equal(await pa,false);assert.equal(h.S.proj.name,'new');
@@ -152,6 +159,29 @@ await test('same-named take in a new session has an independent peak job',async(
 });
 await test('loadProject itself bumps epoch for same-slug reload and discards the first continuation',async()=>{
   const a=deferred(),b=deferred();let n=0;const h=make(['loadProject'],{refreshDoc:()=>++n===1?a.promise:b.promise,api:async()=>({credits:[]})});const pa=h.ctx.loadProject('A'),pb=h.ctx.loadProject('A');assert.equal(h.S.projectEpoch,3);assert.equal(h.S.aud.seq,2);a.resolve(true);assert.equal(await pa,false);assert.equal(h.calls.storage.length,0);b.resolve(true);assert.equal(await pb,true);assert.equal(h.calls.status.length,1);assert.deepEqual(h.calls.storage,[['daw.lastProject','A']]);
+});
+
+await test('an old edit finally cannot unlock a pending edit after a real project reload',async()=>{
+  const oldReply = deferred(), newReply = deferred();
+  const h = make(['act','loadProject'], {
+    api: body => body.action === 'credits' ? Promise.resolve({credits:[]})
+      : body.slug === 'A' ? oldReply.promise : newReply.promise,
+  });
+  const oldEdit = h.ctx.act({action:'edit_notes',slug:'A'}, {action:'old inverse'}, 'old note edit');
+  assert.ok(h.S.editBusy);
+  await h.ctx.loadProject('B');
+  assert.equal(h.S.editBusy, null);
+  const newEdit = h.ctx.act({action:'edit_notes',slug:'B'}, {action:'new inverse'}, 'new note edit');
+  const newOwner = h.S.editBusy;
+  oldReply.resolve({dirty:[]});
+  assert.equal(await oldEdit, null);
+  assert.equal(h.S.editBusy, newOwner);
+  assert.equal(h.calls.undo.length, 0);
+  newReply.resolve({dirty:[]});
+  await newEdit;
+  assert.equal(h.S.editBusy, null);
+  assert.equal(h.calls.undo.length, 1);
+  assert.equal(h.calls.undo[0].label, 'new note edit');
 });
 
 console.log(`${count} session-race checks passed against extracted DAW source; no live project touched.`);

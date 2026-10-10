@@ -43,13 +43,13 @@ export const besideModule = (url, name) => path.join(path.dirname(fileURLToPath(
 
 export const LRC_SCRIPT = besideModule(import.meta.url, "lrc.py");
 
-/** Whisper as a general tool (server/whisper.py): transcribe any file, and
+/** Whisper as a general tool (server/whisper_run.py): transcribe any file, and
  *  time known lyrics. It imports lrc.py's device logic and prints the same
  *  JSON and the same device marker, so runLrc() below runs it unchanged:
  *  `runLrc({ script: WHISPER_SCRIPT, args: whisperArgs(spec), … })`. */
-export const WHISPER_SCRIPT = besideModule(import.meta.url, "whisper.py");
+export const WHISPER_SCRIPT = besideModule(import.meta.url, "whisper_run.py");
 
-/** whisper.py's argv (after the script) from an already validated spec:
+/** whisper_run.py's argv (after the script) from an already validated spec:
  *  { input, lyricsFile?, outStem?, language?, words?, vocals? }. The lyrics go
  *  in a FILE for the reason #timeLyrics gives: newlines and quotes on argv. */
 export function whisperArgs({ input, lyricsFile = null, outStem = null, language = null, words = false, vocals = null }) {

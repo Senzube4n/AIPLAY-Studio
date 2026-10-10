@@ -15,6 +15,7 @@
 import { mountBoard, mvBoardModel, abBoardModel } from "./mvboard.js";
 import { appConfirm, appPrompt } from "./dialog.js";
 import { runWords } from "./runwords.js";
+import { mountPicDrop } from "./picdrop.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -188,9 +189,9 @@ async function readBack(body, { kind, id }) {
   return d;
 }
 
-const postUpdateAsset = ({ kind, id, name, description, prompt, role, cascade }) =>
+const postUpdateAsset = ({ kind, id, name, description, prompt, role, referenceImages, cascade }) =>
   api({ action: "update_asset", slug: wf.slug, kind, id,
-        name, description, prompt, role, cascade });
+        name, description, prompt, role, referenceImages, cascade });
 
 const postAddAsset = ({ kind, name, description, prompt, role }) =>
   api({ action: "add_asset", slug: wf.slug, kind,
@@ -204,10 +205,10 @@ const postAddAsset = ({ kind, name, description, prompt, role }) =>
  * Read back on the NAME, because this row is created rather than found: a build
  * that still reads `target` would file the picture under characters and answer
  * ok, which is the silent wrong row. */
-const postImportAsset = ({ kind, path, name, description, role }) =>
+const postImportAsset = ({ kind, path, name, description, role, id, referenceRole }) =>
   readBack({ action: "import_asset", slug: wf.slug, kind,
-             path, name, description, role },
-           { kind, id: name || null });
+             path, name, description, role, id, referenceRole },
+           { kind, id: id || name || null });
 
 /* `refs` is the single-panel switch. It is forwarded by the route and read by
  * generateAsset, where it decides whether the cast sheets are attached to the
@@ -284,7 +285,7 @@ async function loadList() {
       `<option value="${esc(p.slug)}">${esc(p.title)} · ${esc(stageLabel(kind, p.stage))}`
       + `${p.updatedAt ? ` · ${esc(ago(p.updatedAt))} ago` : ""}</option>`).join("")}</optgroup>` : "";
   };
-  sel.innerHTML = (group("mv", "🎬 Music videos") + group("audiobook", "📖 Audiobooks"))
+  sel.innerHTML = (group("mv", "🎬 Video projects") + group("audiobook", "📖 Audiobooks"))
     || '<option value="">No projects yet</option>';
   if (wf.slug) sel.value = wf.slug;
   $("wfDelete").hidden = !wf.list.length;
@@ -356,7 +357,10 @@ function paintRail() {
   }).join("");
 }
 
+let packDrops = [];
 function paint() {
+  for (const drop of packDrops) drop.destroy();
+  packDrops = [];
   /* The poll holds a handle to a card that is about to be replaced. Clearing it
    * here and re-establishing it in wire() means the interval can never outlive
    * the node it repaints. */
@@ -407,7 +411,7 @@ function renderHome() {
         </button>`).join("") || `<p class="hint">${hint}</p>`}</div></section>`;
   };
   return `<div class="homewrap">
-    ${section("mv", "🎬 Music videos", "None yet — press New video…")}
+    ${section("mv", "🎬 Video projects", "None yet. Press New video…")}
     ${section("audiobook", "📖 Audiobooks", "None yet — press New audiobook…")}
   </div>`;
 }
@@ -451,7 +455,7 @@ function renderHero() {
   }
   return `<header class="wfhero">
     <div class="wfheroid"><h2>${esc(d.title)}</h2>
-      <span class="kindchip">${isAb ? "📖 Audiobook" : "🎬 Music video"}</span></div>
+      <span class="kindchip">${isAb ? "📖 Audiobook" : "🎬 Video project"}</span></div>
     <div class="wfstats2">${stats.map(([v, l]) =>
       `<div class="wfstat"><b>${esc(String(v))}</b><span>${esc(l)}</span></div>`).join("")}</div>
   </header>`;
@@ -1491,6 +1495,27 @@ function renderBible() {
  * set_board reject a reference that is not a declared character or background,
  * and a rejection after the fact is a worse way to learn the rule than not
  * being able to break it. */
+const MV_REF_ROLES = ["identity", "body", "side", "outfit", "style", "detail"];
+function referencePack(row) {
+  const images = [...(row.referenceImages || [])];
+  if (row.imageFile && !images.some((x) => x.role === "identity" || x.file === row.imageFile)) images.unshift({ file: row.imageFile, role: "identity" });
+  return images;
+}
+function rolePicks(row, prefix, selection) {
+  const pack = referencePack(row);
+  if (pack.length < 2) return "";
+  const selected = selection || [pack.find((x) => x.role === "identity")?.role || pack[0]?.role];
+  return `<div class="framepick" title="Choose the views this scene uses. Images share this asset's name and prominence.">${pack.map((x) =>
+    `<label class="tog"><input type="checkbox" data-${prefix}role="${esc(x.role)}" data-${prefix}role-name="${esc(row.name)}"${selected.includes(x.role) ? " checked" : ""}>${esc(x.role)}</label>`).join("")}</div>`;
+}
+function selectedRoles(prefix, names) {
+  const roles = Object.create(null);
+  for (const el of document.querySelectorAll(`[data-${prefix}role]`)) {
+    const name = el.getAttribute(`data-${prefix}role-name`);
+    if (el.checked && names.includes(name)) (roles[name] = roles[name] || []).push(el.getAttribute(`data-${prefix}role`));
+  }
+  return roles;
+}
 const SHOT_TYPES = ["wide", "medium", "close", "extreme close", "over-the-shoulder", "insert", "establishing"];
 
 function boardShotRow(sh, i) {
@@ -1598,7 +1623,7 @@ async function openBoardEditor(segmentId) {
     return `<label class="refpick"><input type="checkbox" data-ref="${kind}|${esc(x.name)}"${on ? " checked" : ""}>
       <span>${esc(x.name)}</span>
       <input class="line sm num" type="number" min="0" max="1" step="0.05" style="width:56px"
-        data-prom="${esc(x.name)}" value="${board.refProminence?.[x.name] ?? 0.5}"></label>`;
+        data-prom="${esc(x.name)}" value="${board.refProminence?.[x.name] ?? 0.5}"></label>${rolePicks(x, "b", board.refRoles?.[x.name])}`;
   };
 
   const paintEditor = () => {
@@ -2053,7 +2078,8 @@ async function openBoardEditor(segmentId) {
         await busy(() => api({
           action: "set_board", slug: wf.slug, segmentId,
           board: { boardPrompt: $("bePrompt").value.trim(), grade: $("beGrade").value.trim(),
-                   shots, characterRefs, backgroundRefs, propRefs, refProminence },
+                   shots, characterRefs, backgroundRefs, propRefs, refProminence,
+                   refRoles: selectedRoles("b", [...characterRefs, ...backgroundRefs, ...propRefs]) },
         }));
       } catch (err) { alert(err.message); await loadProject(); }
     };
@@ -2322,7 +2348,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
       ? sh.refs.map((x, i) => `<div class="shotref">
           <span class="shotpic">&lt;Picture ${i + 1}&gt;</span>
           <img src="${assetSrc(x.file)}" alt="">
-          <span class="shotrefn">${esc(x.name)}</span>
+          <span class="shotrefn">${esc(x.name)}${x.role && x.role !== "identity" ? ` · ${esc(x.role)}` : ""}</span>
           <span class="dim">${esc(x.kind || "?")} · ${esc(x.file)}</span></div>`).join("")
       : `<p class="hint dim">No reference pictures — this shot is text only, so the model
            invents its people and places fresh on every render.</p>`;
@@ -2392,7 +2418,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         <input type="checkbox" data-sref="${esc(x.name)}"${on ? " checked" : ""}>
         <span>${esc(x.name)}${x.file ? "" : " ⚠"}</span>
         <input class="line sm num" type="number" min="0" max="1" step="0.05" style="width:56px"
-          data-sprom="${esc(x.name)}" value="${prom ?? 0.5}"></label>`;
+          data-sprom="${esc(x.name)}" value="${prom ?? 0.5}"></label>${rolePicks({ ...x, imageFile: x.file }, "s", sh.refRoles?.[x.name])}`;
     };
 
     const takeStrip = sh.takes.length ? `<div class="shottakes">${sh.takes.map((t) => `
@@ -2533,12 +2559,12 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
      * gate's parameter census reads the literal, so a body assembled behind a
      * spread would report this panel as sending nothing but a slug. A knob it
      * cannot see is a knob it will not defend. */
-    const save = async ({ prompt, refs, prominence }) => {
+    const save = async ({ prompt, refs, prominence, refRoles }) => {
       const el = $("wfBody");
       el.classList.add("wfbusy");
       try {
         const r2 = await api({ action: "set_shot", slug: wf.slug, segmentId,
-                               prompt, refs, prominence });
+                               prompt, refs, prominence, refRoles });
         replace(r2.shot); paint();
       } catch (err) { alert(explain(err)); }
       finally { el.classList.remove("wfbusy"); }
@@ -2554,7 +2580,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         const pv = document.querySelector(`[data-sprom="${CSS.escape(cb.dataset.sref)}"]`);
         prominence[cb.dataset.sref] = Number(pv?.value ?? 0.5);
       }
-      return save({ refs, prominence });
+      return save({ refs, prominence, refRoles: selectedRoles("s", refs) });
     };
 
     $("shRender").onclick = async () => {
@@ -2643,7 +2669,7 @@ function assetUsage(kind, row) {
    * board looks right, the render receives nothing for it, and nothing anywhere
    * says so. It is the loudest thing on the card because it is the most
    * expensive thing to discover after the GPU has been spent. */
-  if (!row.imageFile) {
+  if (!referencePack(row).length) {
     return `<p class="usage bad"><b>Used in ${esc(list)} — with no sheet.</b>
       Those renders get nothing for it and re-invent it from the words each time.
       Render it before the clips.</p>`;
@@ -2683,7 +2709,7 @@ function renderAssets(kind) {
         ? `<span class="dim">imported takes have no seed</span>` : ""}
     </div>`;
     return `<div class="wcard">
-      <div class="wthumb">${r.imageFile ? `<img src="${assetSrc(r.imageFile)}" alt="">`
+      <div class="wthumb">${referencePack(r).length ? `<img src="${assetSrc(r.imageFile || referencePack(r)[0].file)}" alt="">`
         : `<span class="bkind">${target[0].toUpperCase()}</span>`}</div>
       <div class="wrow">
         ${/* ⚠ THE NAME IS AN INPUT, NOT A LABEL, and that is the whole rename
@@ -2739,11 +2765,20 @@ function renderAssets(kind) {
       <div data-meshhost="${esc(kind)}|${esc(r.id)}"></div>
       ${seedRow}
       ${strip}
+      <details class="more"><summary title="Up to six single images under this name. Choose each image's role, then choose the roles per scene.">Reference pack</summary>
+        <div class="refpicks">${[...new Set([...takes.map((t) => t.file), ...referencePack(r).map((x) => x.file)])].map((file) => {
+          const role = (r.referenceImages || []).find((x) => x.file === file)?.role || "";
+          return `<label class="refpick"><img src="${assetSrc(file)}" alt="" width="36" height="36"><select class="sel2 sm" data-packrole="${esc(kind)}|${esc(r.id)}" data-packfile="${esc(file)}" title="Role in this asset's reference pack. An unassigned adopted image supplies identity."><option value="">${file === r.imageFile ? "identity (default)" : "unused"}</option>${MV_REF_ROLES.map((v) => `<option value="${v}"${role === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>`;
+        }).join("")}</div>
+        <button class="edtool sm" data-packsave="${esc(kind)}|${esc(r.id)}">Save pack</button>
+        <div class="framepick"><label>new image <select class="sel2 sm" data-packnewrole="${esc(kind)}|${esc(r.id)}" title="Role of the next picture you add.">${MV_REF_ROLES.map((v) => `<option>${v}</option>`).join("")}</select></label></div>
+        <div data-packdrop="${esc(kind)}|${esc(r.id)}"></div>
+      </details>
     </div>`;
   }).join("");
   const HEAD = { characters: "Characters", backgrounds: "Backgrounds", props: "Props" };
   const HINT = {
-    characters: "The people the video reuses. A ticked character with a picture keeps its identity in H3 clips, because the clip engine takes it as a named reference. Kept best (Hex Appeal; REWIND A/B, 2026-09-24): 1–3 tight crops of one view each on a near-black card, one row per view (Name, Name body, Name side); Import brings in your own crop. The description is editable in place and saves when you click away.",
+    characters: "Keep single views in a named reference pack, then choose the views each scene uses.",
     backgrounds: "The places the video returns to. Descriptions save when you click away.",
     /* PROPS ARE CAST, and until now this page never said so — props could be
      * declared in the bible and ticked on a board, and there was no card, no
@@ -2896,40 +2931,24 @@ function declareForm(kind) {
 function meshForm(kind, id, cat) {
   const bad = cat && !cat.installed;
   return `<div class="declare" data-meshform="${esc(kind)}|${esc(id)}">
-    <h4>Build a mesh from this sheet</h4>
+    <h4>Image → 3D mesh</h4>
     ${bad ? `<p class="hint warnhint">The 3D runtime is not ready on this machine:<br>
       ${(cat.why || []).map((w) => esc(w)).join("<br>")}</p>` : ""}
-    <p class="hint dim">One panel in, a <b>GLB</b> out — the object itself rather than a picture
-      of it. It does <b>not</b> replace the sheet: the clip engines take pictures, so the sheet
-      stays the thing that reaches a render. What a mesh buys is that the object is the
-      <i>same object</i> every time, which a description cannot promise.</p>
-
-    <label class="dfield"><span>panel to build from</span>
+    <p class="hint dim">One image → a local, geometry-only GLB. Keep the original sheet for video generation.</p>
+    <label class="dfield"><span>Source image</span>
       <input class="line" data-mimage spellcheck="false" autocomplete="off"
-        placeholder="leave empty to use this row's selected take"></label>
-    <p class="hint dim">A full path on THIS machine, and only when the selected take is not the
-      clearest single panel of the object. A contact strip is <b>refused</b> before anything is
-      spent — handed a grid, an image-to-3D model builds a mesh of the grid.</p>
-
-    <label class="dfield"><span><input type="checkbox" data-mrig> rig it as well</span></label>
+        placeholder="Use the selected take, or paste a local image path"
+        title="A single image on this computer. Transparent PNGs preserve limb gaps; contact sheets are refused."></label>
+    <details class="more"><summary>Preparing the image</summary><p class="hint dim">Use one front-facing subject with space between arms and legs. A transparent PNG works best. A contact sheet is refused; its panels would become one mesh.</p></details>
+    <label class="dfield" title="Add a body skeleton and skin weights in the same pass. Use only for an articulated subject, not a static prop."><span><input type="checkbox" data-mrig> Add body rig</span></label>
     ${cat && cat.installed && cat.canRig === false ? `<p class="hint warnhint">⚠ The rig cannot run on this machine, so ticking this refuses the whole pass <b>before</b> the mesh is built — leave it clear to get the mesh. The checkpoints are present; it is the runtime that is missing:<br>${(cat.rigRuntime?.missing || []).map((m) => esc(m.module + " — " + m.error)).join("<br>")}</p>` : ""}
-    <p class="hint dim">Adds a skeleton and skinning weights in the same pass — glTF joints and
-      inverse bind matrices, which is what makes a mesh posable. Refused on a blocky object: a
-      rigger asked to rig a crate does not fail, it invents a skeleton for a crate and reports
-      success. You can also rig later, from the ⬗ Rig button.</p>
-
     <div class="framepick">
-      <label class="dfield"><span>seed</span>
+      <label class="dfield" title="Record a seed to reproduce this geometry."><span>Seed</span>
         <input class="line sm num" type="number" step="1" data-mseed placeholder="42"></label>
-      <label class="dfield"><span>steps</span>
+      <label class="dfield" title="More steps spend more time refining the surface; they do not add texture or hair physics."><span>Steps</span>
         <input class="line sm num" type="number" step="1" data-msteps placeholder="50"></label>
     </div>
-    <p class="hint dim">Seed is recorded on the run so the mesh can be rebuilt. Steps trade time
-      against surface detail and nothing else.</p>
-
-    <p class="hint">⚠ <b>It shares the one graphics card with the engine.</b> If there is not
-      enough free memory this refuses <i>before</i> starting and says to unload the engine
-      first — it will never evict a render that is already going.</p>
+    <p class="hint">Uses the local GPU. Low free memory blocks the job before it starts.</p>
 
     <div class="framepick">
       <button class="edtool" type="button" data-msave>Build the mesh</button>
@@ -4227,6 +4246,36 @@ function planItemFor(spec) {
 /* ─────────────────────────────────────────────────────── wiring */
 
 function wire(view) {
+  for (const btn of document.querySelectorAll("[data-packsave]")) btn.onclick = () => {
+    const [kind, id] = btn.dataset.packsave.split("|");
+    const referenceImages = [...document.querySelectorAll(`[data-packrole="${CSS.escape(btn.dataset.packsave)}"]`)]
+      .filter((el) => el.value).map((el) => ({ file: el.dataset.packfile, role: el.value }));
+    return busy(() => postUpdateAsset({ kind, id, referenceImages }));
+  };
+  for (const host of document.querySelectorAll("[data-packdrop]")) {
+    const key = host.dataset.packdrop;
+    const [kind, id] = key.split("|");
+    let candidates = [];
+    const add = (path) => busy(() => postImportAsset({ kind, id, path,
+      referenceRole: document.querySelector(`[data-packnewrole="${CSS.escape(key)}"]`)?.value || "identity" }));
+    packDrops.push(mountPicDrop(host, {
+      zone: "Drop a reference picture", multiple: false,
+      candidates: () => candidates,
+      beforeMenu: async () => {
+        const r = await (await fetch("/api/images")).json();
+        candidates = (r.images || []).filter((x) => /\.(png|jpe?g|webp)$/i.test(x.name))
+          .map((x) => ({ name: x.name, url: `/api/image/${encodeURIComponent(x.name)}`, label: x.name, group: "Pictures" }));
+      },
+      onPick: (x) => add(`image:${x.name}`),
+      onFiles: async (files) => {
+        try {
+          const r = await (await fetch("/api/frame", { method: "POST", body: files[0] })).json();
+          if (r.error) throw new Error(r.error);
+          await add(`frame:${r.name}`);
+        } catch (err) { alert(explain(err)); }
+      },
+    }));
+  }
   const on = (id, ev, fn) => { const el = $(id); if (el) el[ev] = fn; };
   /** A number box that has been typed in, or `undefined` — see the Segment
    *  wiring below for why the difference matters. */

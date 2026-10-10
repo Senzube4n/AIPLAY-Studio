@@ -188,6 +188,7 @@ async function check() {
   const stepRow = $("vidSteps")?.closest(".pv");
   const body = {
     action: "check",
+    ...(typeof globalThis.aiplayH3Extras === "function" ? globalThis.aiplayH3Extras() : {}),
     prompt: $("vidPrompt")?.value || "",
     width: width || undefined, height: height || undefined,
     seconds: Number($("vidSecs")?.value) || undefined,

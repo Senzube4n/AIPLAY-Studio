@@ -23,6 +23,7 @@ import { readFile, writeFile, rename, mkdir, readdir, stat, rm } from "node:fs/p
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
+import { assetReferenceImages } from "./references.js";
 
 export const MV_DIR = () => path.join(config.outputDir, "mv");
 export const projectDir = (slug) => path.join(MV_DIR(), slug);
@@ -390,7 +391,7 @@ export async function listProjects() {
  * separate, quieter line for a row that has a mesh and no sheet. Complete is
  * about the declaration; reference-readiness is about the render.
  */
-export const assetComplete = (r) => !!(r?.imageFile || r?.meshFile);
+export const assetComplete = (r) => !!(assetReferenceImages(r).length || r?.meshFile);
 
 /* ─────────────────────────────────────────────────── stage, derived */
 
@@ -514,6 +515,15 @@ function nameSites(doc, name) {
         for (const k of Object.keys(prom)) {
           if (nameKey(k) !== key) continue;
           const v = prom[k]; delete prom[k]; prom[to] = v;
+        }
+      });
+    }
+    const roles = board.refRoles;
+    if (roles && Object.keys(roles).some((k) => nameKey(k) === key)) {
+      bind(`scene ${sc} refRoles`, sc, (to) => {
+        for (const k of Object.keys(roles)) {
+          if (nameKey(k) !== key) continue;
+          const v = roles[k]; delete roles[k]; roles[to] = v;
         }
       });
     }

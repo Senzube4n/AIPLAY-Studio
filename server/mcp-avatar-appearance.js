@@ -17,6 +17,8 @@ export function avatarAppearanceTools(api) {
   return [
     tool('avatar_appearance_inventory', 'Read hash-pinned mesh nodes, material colors, morph names, VRM expressions and embedded spring-chain availability. This is an inventory, not a rig-quality certification.', schema({id}),
       a => post({action: 'appearance_inventory', id: a.id})),
+    tool('avatar_motion_audit', 'Inspect whether embedded VRM 1.0 spring chains reach weighted mesh vertices or rigid child meshes in an imported local avatar. Reports exact source hash, chains and mesh links; does not create physics or certify visual motion.', schema({id}),
+      a => post({action: 'motion_audit', id: a.id})),
     tool('avatar_appearance_list', 'List saved local looks for an imported avatar. Looks only override existing components; no generated attachments or skeleton changes.', schema({id}),
       a => post({action: 'appearance_list', id: a.id})),
     tool('avatar_appearance_get', 'Read one saved look after checking the original avatar hash.', schema({id, look_id: lookId}),

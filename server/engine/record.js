@@ -189,8 +189,14 @@ export function modelKeyFromFiles(files) {
   const refs = files.map((f) => String(f.file || "").split("\\").join("/").toLowerCase())
     .filter(Boolean);
   const hits = new Set();
-  for (const [key, capId] of Object.entries(MODEL_TO_CAPABILITY)) {
-    const cap = CATALOG.find((c) => c.id === capId);
+  const capabilities = Object.entries(MODEL_TO_CAPABILITY)
+    .map(([key, capId]) => [key, CATALOG.find((c) => c.id === capId)]);
+  // Optional checkpoint downloads can declare their existing canonical model.
+  // Exact catalogue files still earn the match; companions and unknown model
+  // names cannot acquire a licence through this marker.
+  capabilities.push(...CATALOG.filter((cap) => Object.hasOwn(MODEL_TO_CAPABILITY, cap.model))
+    .map((cap) => [cap.model, cap]));
+  for (const [key, cap] of capabilities) {
     for (const f of cap?.files || []) {
       const dest = String(f.dest || "").split("\\").join("/").toLowerCase();
       /* ⚠ THE SECOND WAY TO EARN THE RIGHT TO CLAIM A RENDER, and it is a
@@ -317,7 +323,7 @@ export function buildRecord(graph, ctx = {}) {
       if (k === "filename_prefix" && typeof v === "string") outputPrefixes.push(v);
       if ((k === "fps" || k === "frame_rate") && typeof v === "number") rates.push(v);
 
-      if (typeof v === "string" && MODEL_INPUT_RE.test(k)) {
+      if (typeof v === "string" && (MODEL_INPUT_RE.test(k) || (cls === "AiplayH3ConditioningBridge" && k === "adapter"))) {
         const entry = { node: id, class: cls, input: k, file: v, bytes: null, mtimeMs: null, sha256: null };
         if (k === "lora_name") {
           loras.push({
@@ -440,7 +446,14 @@ export function buildRecord(graph, ctx = {}) {
   const seconds = frames !== null && fps ? Math.round((frames / fps) * 1000) / 1000 : null;
 
   const model = modelKeyFromFiles(engineFiles);
-  const graphHash = sha256(sortedJSON(graph ?? {}));
+  /* ⚠ NOT FOR A PRIVATE RUN. The graph holds the prompt, and a graph built by
+   * the app is deterministic (the Images screen's checkpointGraph, the clip
+   * graphs): rebuilding it from a guessed prompt with the seed, steps, size
+   * and model this record keeps, and hashing it, confirmed the guess (review
+   * of the port, 2026-10-08). That is promptHash's leak (below) by another
+   * name, so it goes with it. A private graph is never filed, so nothing is
+   * looked up by it either (engine/client.js). */
+  const graphHash = ctx.private === true ? null : sha256(sortedJSON(graph ?? {}));
 
   return {
     runId: ctx.runId ?? null,
@@ -477,7 +490,7 @@ export function buildRecord(graph, ctx = {}) {
     ...(ctx.private === true ? {
       prompt: null, promptTruncated: false, promptHash: null,
       negative: null, negativeHash: null, texts: [],
-      redacted: ["prompt", "negative", "texts", "promptHash", "negativeHash", "label"],
+      redacted: ["prompt", "negative", "texts", "promptHash", "negativeHash", "label", "graphHash"],
     } : {
       prompt: cap(positive),
       promptTruncated: typeof positive === "string" && positive.length > PROMPT_CAP,

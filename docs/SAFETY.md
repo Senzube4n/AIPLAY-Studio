@@ -91,6 +91,7 @@ Each still counts where it cannot mean anything else ("explicit content",
 |---|---|
 | The engine door (`server/engine/client.js`, every local render) | Every picture, clip, cover, restyle, MV render, reactive render, chat tool and raw `/api/engine` graph, checked on the final graph before anything is recorded or sent |
 | Studio's own ComfyUI node (`server/comfy_nodes/aiplay_safety_gate.py`) | Graphs posted straight to ComfyUI: a revealed or pinned port, and ComfyUI's own page. It asks the Studio. If the Studio does not answer, it refuses everything. The Studio does not reveal the engine's port unless this node reports it is armed |
+| RunPod (`server/engine/remote-client.js` submit, and the worker `worker/runpod-worker.js`) | Every render in the launcher's RunPod GPU mode: the Images and Video buttons, the Advanced panel's imported graphs, a script's `POST /api/runpod/jobs`, MCP `runpod_submit_job` and the music queue, checked before the worker is asked anything or the job is recorded. A worker installed by the command the Studio shows refuses the same graphs itself: that command pins the Pod to the Studio's own commit and checks the script before it runs (`server/engine/runpod-bootstrap.js`). A picture or clip adopted from the Pod carries a wordless fingerprint of its own words, so an edit of it is judged with what it was made as; unlike a local render's, it does not add the lineage of a library picture the Advanced panel or MCP bound as a reference |
 | The Comfy Router queue (`server/router/jobs.js`) | Every cloud model except a sound model that asks for no picture, checked when a run is added and again just before it is sent. A provider's own safety settings are not read as the prompt |
 | The routes, early | `/api/image`, the image editor, `/api/video` (create, extend, run), `/api/restyle`, `/api/art`, `/api/reactive/run` (and the Paint look before a frame is painted), overnight plans at start (each wildcard expansion), MV control renders, the art queue, friends' orders and shots (sending, opening and accepting), video recipes (packing and opening), and the prompt enhancer's style and description fields (what it is asked and what it writes) |
 
@@ -112,4 +113,13 @@ A text check reads words, not pixels. These gaps remain:
   (a captioner feeding its own encoder, say) is not seen, unless it is one of
   the string and caption nodes the graph check knows.
 - **A ComfyUI you start by hand**, without the Studio, is not governed by it.
+- **A RunPod Pod's own ComfyUI** has no safety node. Only the worker checks
+  there, and only a worker installed by the Studio's pinned command has the
+  check: one installed by an earlier bootstrap (which followed a branch) may
+  not. The Pod's ComfyUI listens on loopback only, so a graph can reach it
+  directly only from inside the Pod, and such a graph is not checked there.
+- **A reference uploaded to the Pod** (the Advanced panel, or MCP
+  `runpod_upload_asset`) is bound by its content hash. The check reads the
+  graph's words, not the history of that file, as with a raw `/api/engine`
+  graph on this PC.
 - **Other languages and new slang** are not covered beyond the list above.

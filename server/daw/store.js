@@ -196,8 +196,20 @@ export function slugify(title) {
   return base || "untitled";
 }
 
-export const newId = (prefix, n = 4) =>
-  `${prefix}_${randomUUID().replace(/-/g, "").slice(0, n)}`;
+/* Four hex digits collided between two tracks in one arranged song. Keep the
+ * old call shape, but give every new DAW object at least 48 random bits. Old
+ * project IDs remain readable; only IDs minted from now on grow longer. */
+export const newId = (prefix, n = 12) =>
+  `${prefix}_${randomUUID().replace(/-/g, "").slice(0, Math.max(12, n))}`;
+
+/* A collision must still never enter a document, even if a random source (or
+ * a test) returns the same candidate twice. Call inside the project's writer. */
+export function uniqueId(candidate, used, mint) {
+  const taken = new Set(used);
+  let id = candidate;
+  while (taken.has(id)) id = mint();
+  return id;
+}
 
 export const clamp = (v, lo, hi) => Math.min(Math.max(Number(v), lo), hi);
 export const clampInt = (v, lo, hi) => Math.round(clamp(v, lo, hi));

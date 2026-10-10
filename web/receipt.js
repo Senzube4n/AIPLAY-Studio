@@ -269,7 +269,10 @@ const screenOfNote = (noteId) => Object.keys(RECEIPTS).find((s) => RECEIPTS[s].n
 function startFailed(noteId, reply) {
   const screen = screenOfNote(noteId);
   if (!screen) return;
-  const fixable = !!(reply?.needsModel || reply?.capability);
+  /* `recheck`: the Models row is installed but the renderer could not open a
+   * file (server/index.js videoWeightsGate). Fix then looks again, rather than
+   * opening a window whose row says "Installed" and has nothing to press. */
+  const fixable = !!(reply?.needsModel || reply?.capability || reply?.recheck);
   fails[screen] = { error: String(reply?.error || "the server gave no reason"), fixable, reply };
   paint(screen);
 }

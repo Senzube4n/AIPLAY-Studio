@@ -37,6 +37,7 @@ import { h3SigmaShiftFor, shiftSigmas, videoEngine, videoSizeFor } from "../work
  * retyping them cost. server/welcome/catalogue.js already reads from here, and
  * this file disagreeing with that one is the failure both are guarding. */
 import { CATALOG, MODEL_TO_CAPABILITY } from "../models.js";
+import { probeH3W6a8, resolveH3Checkpoint } from "../h3-w6a8.js";
 
 /* Where the measurements live, so a citation is one constant rather than a
  * string typed out nine times and mistyped on the tenth. */
@@ -48,6 +49,7 @@ export const DOCS = {
   shot: "server/mv/shot.js",
   graph: "server/workflow.js",
   stills: "scripts/clipstills.py",
+  optionalModels: "docs/OPTIONAL_H3_YUE2_MODELS.md",
 };
 
 /**
@@ -414,6 +416,12 @@ export function sizesFor(engineKey) {
 const TURBO_STEPS_SHIPPED = config.video.engines.h3?.turboMaxSteps;
 
 export const KNOBS = [
+  {
+    id: "h3_model_build", label: "H3 build (experimental)", applies: "h3",
+    kind: "enum", options: ["auto", "w6a8"], path: ["video", "h3ModelBuild"],
+    effect: "Optional NVIDIA W6A8, 15.98 GB per transformer; speed and quality unmeasured, with the existing build used when unavailable.",
+    cite: DOCS.optionalModels,
+  },
   /* ── the 4-step LoRA, which is not a checkbox and has to be honest about it ── */
   {
     id: "turbo_lora",
@@ -712,8 +720,12 @@ export const KNOBS = [
     path: ["video", "freeBeforeClip"],
     effect: "Restarts the engine before an H3 or FastH3 clip when it has already rendered something. Measured on an "
       + "RX 9060 XT: a second clip in the same engine spilled into shared memory and took about 152 s a step "
-      + "instead of 82 s; unloading the models did not help, a restart did (78 s). Auto does it on any card that is "
-      + "not NVIDIA. The restart costs about 45 s.",
+      + "instead of 82 s; unloading the models did not help, a restart did (78 s). Auto does it on AMD and Intel "
+      + "cards, where it was measured, and on a PC without a graphics card, and not on NVIDIA or a card Studio "
+      + "could not read. On every card it "
+      + "never restarts while something else is running on the engine (a Reactive look or a chat turn between two "
+      + "of its runs included), a song is rendering, or a plan is mid-step: "
+      + "it waits up to 20 minutes, then renders without the restart. The restart costs about 45 s.",
     cite: DOCS.config,
   },
   {
@@ -744,8 +756,12 @@ export const KNOBS = [
     kind: "bool", onValue: true, offValue: false,
     path: ["video", "engines", "h3", "blockCache"],
     /* h3tier.js H3_BLOCK_CACHE: the node, its recipe and what was measured. */
+    /* comfy_nodes.js: copied only at an engine start with this on (the owner's
+     * decision of 2026-09-26), and Studio's copy removed at a start with it off. */
     effect: "Skips most of H3's transformer blocks on steps where the picture barely changes (the MiniMax H3 "
-      + "Block Cache (T8) custom node, which must be installed in ComfyUI). Plain clips only, and never with sparse "
+      + "Block Cache (T8) custom node, which Studio copies into ComfyUI when the engine starts with this on, and takes "
+      + "out again when it starts with this off; switched on while the engine runs, it applies after Studio restarts). "
+      + "Plain clips only, and never with sparse "
       + "attention on. Its author measured 1.09x to 1.20x at 20 steps on NVIDIA; untested on the 3 to 8 step "
       + "settings and on AMD: check the take.",
     cite: DOCS.config,
@@ -887,7 +903,19 @@ export function knobRows(engineKey) {
        * that has one is a row that touches a field the render does not read,
        * and both hands should be able to see that rather than infer it. */
       remembers: k.remembers ? k.remembers.join(".") : null,
+      ...(k.id === "h3_model_build" ? { buildStatus: h3ModelBuildStatus() } : {}),
     }));
+}
+
+/** Compatibility and both path fallbacks beside the requested, persisted value.
+ * This reports the configured engine source; it is not a GPU benchmark. */
+export function h3ModelBuildStatus() {
+  const runtime = probeH3W6a8(config), h3 = config.video.engines.h3;
+  const modelBuild = config.video.h3ModelBuild ?? "auto";
+  return { requestedBuild: modelBuild, compatibility: runtime,
+    fl2va: resolveH3Checkpoint({ modelBuild, current: h3.dit, runtime }),
+    ref2va: resolveH3Checkpoint({ modelBuild, current: h3.ditRef ?? h3.dit, reference: true, runtime }),
+  };
 }
 
 /**
@@ -960,7 +988,7 @@ export function setKnob(id, value) {
    * — parking that would mean "on" restores nothing — and which value that is
    * belongs to the switch, so it is read off the switch rather than typed here. */
   if (knob.remembers && v !== offValueOf(knob.remembers)) write(knob.remembers, v);
-  return { id, value: knobValue(knob) };
+  return { id, value: knobValue(knob), ...(id === "h3_model_build" ? { buildStatus: h3ModelBuildStatus() } : {}) };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

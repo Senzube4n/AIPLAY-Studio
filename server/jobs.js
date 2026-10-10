@@ -16,6 +16,7 @@ import { readdir, stat, copyFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
+import { externalMusicWork } from "./music/exclusive.js";
 import { buildGraph, buildYue2ComfyGraph, buildAceStep15Graph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
 /* The second kind of work: a subprocess with a receipt, not a graph. The door
  * (renderSong) owns the refusals, the progress line and the ledger row; this
@@ -31,6 +32,7 @@ import { freeVramMb } from "./mesh/runner.js";
  * written before the POST and the completion event is written by the door's own
  * watcher whether or not this socket ever sees the finish. */
 import { engine } from "./engine/client.js";
+import { capturedYue2Score } from "./music/yue2-comfy-score.js";
 
 const ORDER = ["loading", "composing", "arranging", "mixing", "saving"];
 
@@ -245,6 +247,11 @@ export class JobRunner extends EventEmitter {
 
   async #pump() {
     if (this.current || this.queue.length === 0) return;
+    if (typeof externalMusicWork !== "undefined" && externalMusicWork.owner) {
+      clearTimeout(this.#waitTimer);
+      this.#waitTimer = setTimeout(() => this.#pump(), 1000);
+      return;
+    }
     // The engine can drop out mid-run — it restarts, or a driver hiccup kills it.
     // Returning here without arranging a retry stalls the queue permanently, which
     // nobody notices while clicking Create by hand but silently ends an overnight
@@ -356,6 +363,8 @@ export class JobRunner extends EventEmitter {
         sampling: job.sampling,
         planSampling: job.planSampling,
         prefix: "aiplay",
+        scoreCaptureKey: job.id,
+        captureScore: !this.remote,
       }) : buildGraph({
         tiledVae: this.remote ? false : await this.#hasTiledAudioDecode(),
         caption: job.caption,
@@ -963,21 +972,26 @@ export class JobRunner extends EventEmitter {
         },
       });
       if (this.current !== job) return;
-      if (job.cancelRequested) { this.#markCancelled(job); return; }
+      /* The Pod can finish while Stop is being requested. Its output was
+       * already downloaded and adopted, so report the completed render. */
       job.state = "done";
       job.overall = 1;
       job.finishedAt = Date.now();
       job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
       job.file = r.file;
       job.runId = r.runId || job.runId || null;
-      job.note = null;
+      if (job.engine === "yue2-comfy" && (job.cot || "full") !== "off")
+        job.scoreWarning = "The remote worker returns audio without score capture. Generate locally to save its sheet music.";
+      job.note = job.cancelRequested ? "The Pod completed before Stop took effect; the output was kept." : null;
       job.remote = true;
       this.history.unshift(job);
       this.current = null;
       this.emit("update", this.snapshot());
     } catch (err) {
       if (this.current !== job) return;
-      if (job.cancelRequested) { this.#markCancelled(job); return; }
+      /* A failed or uncertain paid render is not a confirmed cancellation.
+       * Keep its real state and message so the user can check the Pod. */
+      if (err.remoteState === "cancelled") { this.#markCancelled(job); return; }
       job.state = "failed";
       job.error = String(err.message || err);
       job.finishedAt = Date.now();
@@ -1000,6 +1014,13 @@ export class JobRunner extends EventEmitter {
      * previous song, and this job reports that song as its own. */
     const reported = await this.#historyOutput(job);
     job.file = reported?.name ?? await this.#newestOutput(job.preview ? "preview" : "aiplay");
+    if (job.engine === "yue2-comfy" && (job.cot || "full") !== "off") {
+      /* A literal score was already reviewed at the request door. Generated
+       * notation must come from this prompt's capture, never the latest file. */
+      job.yueComfyScore = reported?.score ?? (reported && job.abc ? { abc: job.abc, audioSeconds: null } : null);
+      if (job.yueComfyScore?.audioSeconds) job.audioSeconds = job.yueComfyScore.audioSeconds;
+      if (!job.yueComfyScore) job.scoreWarning = "The audio finished, but ComfyUI returned no readable score.";
+    }
     /* NOTHING NEW WAS RENDERED. ComfyUI answers an identical graph from its
      * cache: every node skipped, the old file listed as the output. That file
      * predates this job, which is the one test that cannot be fooled by timing.
@@ -1112,11 +1133,13 @@ export class JobRunner extends EventEmitter {
     if (!job.promptId) return null;
     try {
       const entry = (await engine.history(job.promptId))?.[job.promptId];
+      const score = job.engine === "yue2-comfy" ? capturedYue2Score(entry, job.id) : null;
       for (const out of Object.values(entry?.outputs || {})) {
         for (const f of Object.values(out || {}).flat()) {
           if (!f?.filename || (f.type && f.type !== "output")) continue;
+          if (!/\.(?:flac|mp3|opus|wav)$/i.test(f.filename)) continue;
           const st = await stat(path.join(config.outputDir, f.subfolder || "", f.filename)).catch(() => null);
-          if (st) return { name: f.subfolder ? path.join(f.subfolder, f.filename) : f.filename, mtimeMs: st.mtimeMs };
+          if (st) return { name: f.subfolder ? path.join(f.subfolder, f.filename) : f.filename, mtimeMs: st.mtimeMs, score };
         }
       }
     } catch { /* engine unreachable: the newest-file fallback decides */ }
@@ -1208,6 +1231,14 @@ export class JobRunner extends EventEmitter {
       job.state = "cancelling";
       this.emit("update", this.snapshot());
       if (job.proc && this.yue?.killTree) await this.yue.killTree(job.proc).catch(() => {});
+      return { found: true, id, state: "cancelling", pending: true };
+    }
+    /* The RunPod song has a remote job ID, not a local ComfyUI prompt ID.
+     * Its watcher requests a scoped Stop and keeps this queue slot occupied
+     * until the Pod actually reports a terminal state. */
+    if (this.remote && job.stage === "remote") {
+      job.state = "cancelling";
+      this.emit("update", this.snapshot());
       return { found: true, id, state: "cancelling", pending: true };
     }
     if (job.submitting && !job.promptId) {

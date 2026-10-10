@@ -1730,6 +1730,7 @@ export function scoreTools(api) {
            * these descriptions came out of one of these. */
           rendered: row.status ? {
             status: row.status, audio_seconds: row.audioSeconds ?? null,
+            producer: row.producer ?? null, source: row.source ?? null,
             sample_rate: row.sampleRate ?? null, truncated: row.truncated ?? null,
             timing: row.timing ?? null, identity: row.identity ?? null,
             artifacts: row.artifacts ?? null, verified: row.verified ?? null,
@@ -2018,8 +2019,10 @@ export function scoreTools(api) {
       name: "score_render",
       description:
         "SPEND THE GPU: render one version to audio on YuE2. Returns a job id IMMEDIATELY — poll it with "
-        + "wait_for_song, or poll score_get with the score's SLUG: the finished render arrives as a NEW "
-        + "version of this score whose parent is the one you rendered, carrying the vendor's own receipt. "
+        + "wait_for_song. A saved ComfyUI score retains its checkpoint, LoRAs and sampler; other saved scores use Python YuE2. "
+        + "The measured timings below describe Python YuE2, not ComfyUI. Remote Comfy workers return audio without a new score capture. "
+        + "You can also poll score_get with the score's SLUG: a completed local render arrives as a NEW "
+        + "version of this score whose parent is the one you rendered, carrying a Python run receipt or a Studio ComfyUI score/audio receipt. "
         + "It does not fill anything in on the version you passed.\n\n"
         + "WHAT IT COSTS, MEASURED on this rig for one " + MEASURED.audio_seconds + " s song: "
         + MEASURED.e2e_seconds + " s end to end (" + MEASURED.realtime_factor + "x realtime), holding the card "
@@ -2056,7 +2059,7 @@ export function scoreTools(api) {
           score: { type: "string", description: "The score's slug." },
           version: { type: "string", description: "The version to render. Defaults to the score's current one. Its check must pass; a failing one is refused before the card is touched." },
           seed: { type: "integer", minimum: 0, maximum: 4294967295, description: "Held and recorded. Rolled if omitted. Two renders you intend to compare must share a seed, or the difference you read off them is partly the seed." },
-          cfg_scale: { type: "number", description: "The vendor's classifier-free guidance scale. MEASURED default on this rig: 1.0, which runs cfg_branches 1 — raising it multiplies the branches and so the time. Leave it alone unless you are measuring it." },
+          cfg_scale: { type: "number", description: "Python YuE2 only; a saved ComfyUI score refuses this control. The vendor's classifier-free guidance scale. MEASURED default on this rig: 1.0, which runs cfg_branches 1 — raising it multiplies the branches and so the time. Leave it alone unless you are measuring it." },
           title: { type: "string", description: "What the finished track is called in the library. Defaults to the version id." },
         },
         additionalProperties: false,
@@ -2107,14 +2110,16 @@ export function scoreTools(api) {
          * stood here promised and posted to the wrong place. It is the same
          * door the Create page and make_song use.
          *
-         * `engine: "yue2"` is named rather than left to the Music page's
-         * choice: a score conditions YuE2 and nothing else, and MiniMax would
-         * accept the call, ignore the `abc` and hand back a song that is not
-         * this score. A render that silently drops the thing you are steering
-         * with is worse than a refusal, and the door's own refusal (a missing
-         * kit, an unreachable engine) arrives as a sentence we relay whole. */
+         * Resolve the saved YuE2 route explicitly: a ComfyUI score must keep
+         * its checkpoint and audio settings rather than switch to Python or
+         * pick the unrelated model/LoRAs currently selected in Music. Older
+         * score-only drafts keep the established Python default. Unknown
+         * source engines and controls that route cannot take are refused. */
+        const { scoreRenderSource } = await import("./score/render-source.js");
+        const sourceRender = scoreRenderSource(v, a);
+        const comfyRender = sourceRender.engine === "yue2-comfy";
         const r = await api("POST", "/api/generate", {
-          engine: "yue2",
+          ...sourceRender,
           /* The style prompt IS the caption on this door; the refusal above
            * guarantees it is not empty. */
           caption: v.style,
@@ -2153,7 +2158,11 @@ export function scoreTools(api) {
           engine: r.engine ?? mine?.engine ?? null,
           ...(r.rung ? { configuration: r.rung.label, ceiling: r.ceiling ?? null } : {}),
           score: a.score, version: v.id, seed: mine?.seed ?? null,
-          cost: {
+          cost: comfyRender ? {
+            abc_planning: "ZERO. A supplied score replaces the planner pass.",
+            measured_reference: null, estimate_seconds: null,
+            estimate_basis: "No measured ComfyUI estimate for this saved checkpoint. Follow wait_for_song for progress.",
+          } : {
             abc_planning: `ZERO. MEASURED: abc {seconds: ${MEASURED.abc_seconds}, output_tokens: `
               + `${MEASURED.abc_output_tokens}, external_prefix_tokens: ${MEASURED.abc_external_prefix_tokens}}. `
               + "A supplied score replaces the planning pass rather than adding to it.",
@@ -2172,7 +2181,8 @@ export function scoreTools(api) {
            * request is visible rather than inferred. */
           asked_seconds: Number.isFinite(check.facts.nominal_seconds) && check.facts.nominal_seconds > 0
             ? Math.round(check.facts.nominal_seconds) : null,
-          note: `Started. Poll the job with wait_for_song, or score_get with score "${a.score}" — the render `
+          note: comfyRender ? `Started on the saved ComfyUI checkpoint. Poll the job with wait_for_song. A completed local render arrives as a NEW version whose parent is ${v.id}, with a Studio score/audio receipt.`
+            : `Started. Poll the job with wait_for_song, or score_get with score "${a.score}" — the render `
             + "takes minutes, and the finished render arrives as a NEW version whose parent is "
             + `${v.id}, carrying the vendor's own receipt in \`rendered.timing\`.`,
           adherence_warning: NOT_ENFORCED,

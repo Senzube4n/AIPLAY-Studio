@@ -143,10 +143,11 @@ test("make_clip carries FastH3's attention pick, and its refusals name the engin
   const { TOOLS } = await import("./mcp.js");
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
   const t = TOOLS.find((x) => x.name === "make_clip");
   assert.deepEqual(t.inputSchema.properties.attention.enum, ["pytorch", "kitchen"]);
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const calls = [];
   /* The reference sentence is the server's (video-plain.js), sent per engine on
    * the status: the one the Video screen's reference slots show. */
@@ -213,11 +214,11 @@ test("the route, the job and the Video screen carry the attention choice; refere
   assert.match(index, /steps: videoEngine\(eng\)\.fixedSteps \|\|/);
   /* References on FastH3 or LTX: refused by the plan (server/video-plain.js),
    * in the one sentence the page and make_clip show. */
-  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, refImages, refAudios \}/);
+  assert.match(index, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3, refImages, refAudios, audioTrack \}/);
   assert.match(index, /if \(plan\.refusal\) return json\(res, 400, \{ error: plan\.refusal\.error, reason: plan\.refusal\.reason,\s*\.\.\.\(plan\.refusal\.needsModel \? \{ needsModel: plan\.refusal\.needsModel \} : \{\}\) \}\);/);
   const art = read("./art.js");
-  assert.match(art, /attention: await this\.videoAttention\(job\),/);
-  const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 600);
+  assert.match(art, /const attention = graph \? null : await this\.videoAttention\(job\);/);
+  const va = art.slice(art.indexOf("async videoAttention(job)"), art.indexOf("async videoAttention(job)") + 1200);
   assert.match(va, /const want = job\.attention \?\? eng\.attention;/, "the person's pick, else the engine's default");
   assert.match(va, /if \(want !== "kitchen" && want !== "ck"\) return "pytorch";/, "a PyTorch pick is written out, not left to the launcher");
   assert.match(va, /return \(await this\.#kitchenOffered\(\)\) \? "ck" : "pytorch";/,
@@ -227,7 +228,7 @@ test("the route, the job and the Video screen carry the attention choice; refere
    * the later one wins in silence, and the picker is dead. Exactly one. */
   const call = art.slice(art.indexOf("if (!graph) graph = videoGraph({"), art.indexOf("const key = graphHash(graph);"));
   assert.ok(call.length > 100, "the videoGraph call was found");
-  assert.equal((call.match(/^\s+attention:/gm) || []).length, 1, "exactly one attention key reaches the graph");
+  assert.equal((call.match(/^\s+attention(?:,|:)/gm) || []).length, 1, "exactly one attention key reaches the graph");
   const html = read("../web/index.html"), app = read("../web/app.js");
   assert.match(html, /<select id="vidAttn" class="sel2"[\s\S]*?<option value="pytorch">PyTorch<\/option>\s*<option value="kitchen">Kitchen INT8<\/option>/);
   assert.match(app, /el\.hidden = !eng\.attention;/, "the picker shows only for an engine with the choice");

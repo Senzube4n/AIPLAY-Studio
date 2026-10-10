@@ -39,11 +39,12 @@ import { createReadStream } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { createRegionCache, regionWavReady } from "./cache.js";
 import { previewAudioKey } from "./preview-key.js";
+import { createPluginManager } from "./plugins.js";
 import {
   LIMITS, INSTRUMENTS, TAILS, TICKS_PER_BEAT, REGION_BARS,
   PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
   listProjects, readProject, createProject, updateProject, deleteProject,
-  blankTrack, blankClip, newId, noteLedger,
+  blankTrack, blankClip, newId, uniqueId, noteLedger,
   findTrack, findClip, clipCovering, findNote,
   /* the clip-bounds surface (agent/dawparity) */
   shiftClipNotes, notesOutsideClip,
@@ -334,10 +335,29 @@ export function aheadRun(rows, seconds, alsoCachedIdx = null) {
   return out;
 }
 
+/** Narrow non-HTTP seam for the shared-cue audition. The job is built from a
+ * reviewed cue, never accepted as an arbitrary renderer request. */
+export function validateCueAccentJob(job) {
+  previewAudioKey(job);
+  const note = job?.notes?.[0];
+  if (job.sr !== 48000 || job.start_sample !== 0 || job.n_samples > 480000
+    || job.notes.length !== 1 || !["impact", "tr909"].includes(note.inst)
+    || note.start_sample !== 0 || note.midi !== 36 || note.gain_db < -24 || note.gain_db > 0
+    || Object.keys(note.params || {}).length || job.mixer != null
+    || path.resolve(job.instruments_dir || "") !== path.resolve(instrumentsDir())
+    || job.n_samples !== note.dur_samples + Math.round(TAILS[note.inst] * 48000)) {
+    throw new Error("Cue preview requires one supported builtin accent, its bounded timing and its saved seed.");
+  }
+  return job;
+}
+
 export function createDawRoutes(deps) {
   const { json, readBody, config } = deps;
-  const spawnPython = deps.spawnPython
+  const plugins = deps.plugins ?? createPluginManager({ config });
+  const spawnPythonBase = deps.spawnPython
     ?? ((args, opts = {}) => spawn(config.python, args, { windowsHide: true, ...opts }));
+  const spawnPython = (args, opts = {}) => spawnPythonBase(args, { ...opts,
+    env: { ...process.env, ...(opts.env || {}), ...plugins.env() } });
 
   /** The engine's python could not import a module: the refusal as an Error
    *  (status 409, reason "missing-module"), else null. */
@@ -968,6 +988,9 @@ export function createDawRoutes(deps) {
    */
   const regionCache = createRegionCache();
   async function ensureRegions(slug, doc, fromBar, toBar, opts = {}) {
+    // Validate before a cache hit: a missing/replaced binary cannot masquerade
+    // as an available effect merely because an earlier region is on disk.
+    await plugins.validateProject(doc);
     const { missing: missingPacks, dead } = await silencedByMissingPacks(doc);
     const events = dead.size
       ? noteEvents(doc).filter((e) => !dead.has(e.trackId))
@@ -1087,6 +1110,7 @@ export function createDawRoutes(deps) {
    * only be told that from rows it can see.
    */
   async function regionPlan(slug, doc) {
+    await plugins.validateProject(doc);
     const { dead } = await silencedByMissingPacks(doc);
     const events = dead.size ? noteEvents(doc).filter((e) => !dead.has(e.trackId)) : noteEvents(doc);
     const regions = regionsOf(doc);
@@ -1277,6 +1301,36 @@ export function createDawRoutes(deps) {
     const p = url.pathname;
 
     /* ---- reads ---- */
+    if (p === "/api/daw/plugins" && req.method === "GET") {
+      try { json(res, 200, await plugins.list({ refresh: url.searchParams.get("refresh") === "1" })); }
+      catch (error) { failWith(res, error, 400); }
+      return true;
+    }
+    if (p === "/api/daw/plugins/upload" && req.method === "POST") {
+      const name = url.searchParams.get("name");
+      let temporary;
+      try {
+        if (!name || name !== path.basename(name) || !/\.zip$/i.test(name) || name.length > 240 || /[\\/:\x00-\x1f]/.test(name))
+          throw new Error("Choose a plugin ZIP file.");
+        if (Number(req.headers?.["content-length"]) > 256 * 1024 * 1024) throw new Error("Plugin ZIP exceeds 256 MiB.");
+        await mkdir(plugins.stagingDir, { recursive: true });
+        temporary = path.join(plugins.stagingDir, "upload-" + randomUUID() + ".zip");
+        const { open } = await import("node:fs/promises");
+        const file = await open(temporary, "wx", 0o600);
+        let bytes = 0;
+        try {
+          for await (const block of req) {
+            bytes += block.length;
+            if (bytes > 256 * 1024 * 1024) throw new Error("Plugin ZIP exceeds 256 MiB.");
+            await file.writeFile(block);
+          }
+        } finally { await file.close(); }
+        if (!bytes) throw new Error("The plugin ZIP is empty.");
+        json(res, 200, await plugins.install({ path: temporary }));
+      } catch (error) { failWith(res, error, 400); }
+      finally { if (temporary) await unlink(temporary).catch(() => {}); }
+      return true;
+    }
 
     /* The patch registry — what exists, what is installed, and every
      * licence in full BEFORE anything is downloaded. This is the endpoint
@@ -1617,7 +1671,7 @@ export function createDawRoutes(deps) {
 
     /* ---- writes ---- */
 
-    if (p !== "/api/daw" || req.method !== "POST") return false;
+    if (!["/api/daw", "/api/daw/plugins"].includes(p) || req.method !== "POST") return false;
 
     let b;
     try {
@@ -1637,11 +1691,16 @@ export function createDawRoutes(deps) {
   async function dispatch(req, res, b) {
     const action = String(b.action || "");
     try {
+      const pluginActions = { plugin_scan: () => plugins.list({ refresh: true, folders: b.folders }),
+        plugin_inspect: () => plugins.inspect({ path: b.path, plugin: b.plugin }),
+        plugin_install: () => plugins.install({ path: b.path }), plugin_setup: () => plugins.setup() };
+      const pluginAction = Object.hasOwn(pluginActions, action) ? pluginActions[action] : null;
+      if (pluginAction) return json(res, 200, await pluginAction()), true;
       /* ── CHAIN STAGE: the mixer's actions (insert_*, mixer_set, send_*,
        * return_*, meters) live in mixer.js and share this catch, this
        * `mutate` and this ledger — one document, one reducer path. */
       const mixerReply = await handleMixerAction(action, b, {
-        mutate, readProject, runEngineFast, safe, noteEvents, buildTimeline,
+        mutate, readProject, runEngineFast, safe, noteEvents, buildTimeline, plugins,
         /* [DAWREC] so the meters/analyze/check_delivery job carries the same
          * file-backed clips the region render carries — one graph, measured. */
         audioJobClips,
@@ -1787,10 +1846,15 @@ export function createDawRoutes(deps) {
           const m = await mutate(slug, b, "add_track", (d) => {
             if (d.tracks.length >= LIMITS.tracks) throw new Error(`This project already has ${LIMITS.tracks} tracks.`);
             const track = blankTrack(b.name, { patch: inst, params: b.params });
+            track.id = uniqueId(track.id, d.tracks.map((t) => t.id), () => newId("trk"));
             /* A track without a clip cannot hold a note, and "add_clip first"
              * is a speed bump both hands would hit every time — so a track
              * arrives with one clip spanning the project unless told not to. */
-            if (b.with_clip !== false) track.clips.push(blankClip(1, d.lengthBars));
+            if (b.with_clip !== false) {
+              const clip = blankClip(1, d.lengthBars);
+              clip.id = uniqueId(clip.id, d.tracks.flatMap((t) => t.clips.map((c) => c.id)), () => newId("clp"));
+              track.clips.push(clip);
+            }
             d.tracks.push(track);
             return { trackId: track.id, clipId: track.clips[0]?.id ?? null,
                      track: { id: track.id, name: track.name, instrument: track.instrument },
@@ -1887,6 +1951,7 @@ export function createDawRoutes(deps) {
             const from = clampInt(inRange(b.from_bar, 1, d.lengthBars, "from_bar"), 1, d.lengthBars);
             const bars = clampInt(inRange(b.bars ?? 4, 1, d.lengthBars, "bars"), 1, d.lengthBars);
             const clip = blankClip(from, Math.min(from + bars - 1, d.lengthBars), { name: b.name });
+            clip.id = uniqueId(clip.id, d.tracks.flatMap((t) => t.clips.map((c) => c.id)), () => newId("clp"));
             t.clips.push(clip);
             return { clipId: clip.id, fromBar: clip.fromBar, toBar: clip.toBar };
           });
@@ -1996,6 +2061,7 @@ export function createDawRoutes(deps) {
             };
             c.notes.push(note);
             return { note, trackId: t.id, clipId: c.id,
+                     undo: { action: "delete_note", slug, track: t.id, clip: c.id, note: note.id },
                      ledger: { detail: `pitch ${note.pitch} at ${note.bar}.${note.beat}.${note.tick}` } };
           });
           return mutReply(res, m), true;
@@ -2029,8 +2095,36 @@ export function createDawRoutes(deps) {
               : t.clips.find((x) => x.notes.some((n) => n.id === String(b.note)));
             if (!c) throw new Error(`No clip on ${t.id} holds note ${b.note}.`);
             const n = findNote(c, b.note);
+            // Keep restoration data on the server, including creator and array order.
+            // Repeated history cycles reuse the same snapshot; receipts never expire.
+            const snapshot = { track: t.id, clip: c.id, index: c.notes.indexOf(n), note: { ...n } };
+            const receipt = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
+            d.noteHistory ||= {};
+            d.noteHistory[receipt] = snapshot;
             c.notes = c.notes.filter((x) => x.id !== n.id);
-            return { removed: n.id };
+            return { removed: n.id, undo: { action: "restore_note", slug, receipt } };
+          });
+          return mutReply(res, m), true;
+        }
+
+        case "restore_note": {
+          const slug = safe(b.slug);
+          const m = await mutate(slug, b, "restore_note", (d) => {
+            const receipt = String(b.receipt || "");
+            const snapshot = /^[a-f0-9]{64}$/.test(receipt) && d.noteHistory?.[receipt];
+            if (!snapshot) throw new Error("No saved note for this undo receipt in this project.");
+            const t = findTrack(d, snapshot.track), c = findClip(t, snapshot.clip);
+            const note = { ...snapshot.note };
+            if (d.tracks.some((track) => track.clips.some((clip) => clip.notes.some((n) => n.id === note.id))))
+              throw new Error(`Note ${note.id} already exists. Undo the later edit first.`);
+            if (c.notes.length >= LIMITS.notesPerClip) throw new Error(`Clip ${c.id} already holds ${LIMITS.notesPerClip} notes.`);
+            if (!Number.isInteger(snapshot.index) || snapshot.index < 0 || snapshot.index > c.notes.length)
+              throw new Error("The note's clip order changed. Undo the later edit first.");
+            c.notes.splice(snapshot.index, 0, note);
+            // The restored note keeps its original creator; this edit's actor is
+            // still stamped by mutate(), never taken from a caller's snapshot.
+            return { note, trackId: t.id, clipId: c.id,
+                     undo: { action: "delete_note", slug, track: t.id, clip: c.id, note: note.id } };
           });
           return mutReply(res, m), true;
         }
@@ -2922,7 +3016,7 @@ export function createDawRoutes(deps) {
           return json(res, 400, {
             error: `Unknown action "${action}". Actions: create, delete, set_length, `
               + "set_meter, remove_meter, set_tempo, remove_tempo, add_track, set_track, "
-              + "remove_track, add_clip, set_clip, remove_clip, add_note, move_note, delete_note, "
+              + "remove_track, add_clip, set_clip, remove_clip, add_note, move_note, delete_note, restore_note, "
               + "edit_notes, render, render_ahead, render_plan, "
               + "bounce, install_patch, uninstall_pack, credits, probe, arrange_bigroom, "
               + "record_arm, record_start, record_chunk_b64, record_stop, "
@@ -2981,5 +3075,14 @@ export function createDawRoutes(deps) {
     return out;
   }
 
+  handle.renderCueAccent = async (job, out) => {
+    validateCueAccentJob(job);
+    const target = path.resolve(String(out || ""));
+    if (path.dirname(target) !== path.resolve(DAW_DIR(), "_previews")
+      || !/^pv_(impact|tr909)_v2_[a-f0-9]{24}\.wav\.[a-f0-9-]{36}\.tmp$/.test(path.basename(target))) {
+      throw new Error("Cue preview output must be an owned temporary audition file.");
+    }
+    return runOneNote("render", { ...job, out: target }, 60_000);
+  };
   return handle;
 }

@@ -1,9 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createImageEditor, editorOptions } from "./image-editor.js";
+
+async function waitForStatus(editor, id, expected) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const job = await editor.request({ action: "status", id });
+    if (job.status === expected) return job;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  throw new Error(`Editor job did not reach ${expected}.`);
+}
+
+async function exists(file) {
+  try { await stat(file); return true; }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+}
 
 test("editor options enforce target + ordered references and precise selection semantics", () => {
   const base = { source: "target.png", prompt: "Change the jacket" };
@@ -53,8 +67,7 @@ test("generation freezes source and mask as first two references, then review/ac
     assert.match(asked.prompt, /<image 2> is white/);
     await assert.rejects(editor.request({ action: "accept", id: made.id }), /ready/);
     resolveGPU({ name: "generated.png", seed: 7, runId: "run" });
-    await new Promise(resolve => setImmediate(resolve));
-    const ready = await editor.request({ action: "status", id: made.id });
+    const ready = await waitForStatus(editor, made.id, "ready");
     assert.equal(ready.status, "ready");
     assert.equal(ready.candidate.width, 641);
     assert.equal(registered[0][1].generatedFrom, "generated.png");
@@ -99,8 +112,7 @@ test("references reach Qwen flattened unless transparency is asked for; composit
     assert.notEqual(sent[0].out, sent[1].out);
     const asked = calls.find(c => c.mode === "generate").options.refImages;
     assert.deepEqual(asked.slice(2), [path.basename(sent[0].out), "aiplay_frame_0123456789ab.png"]);
-    await new Promise(resolve => setImmediate(resolve));
-    const ready = await editor.request({ action: "status", id: made.id });
+    const ready = await waitForStatus(editor, made.id, "ready");
     assert.equal(ready.status, "ready");
     assert.deepEqual(ready.warnings, [warning]);
     assert.equal(ready.candidate.warnings, undefined);
@@ -135,7 +147,7 @@ test("failed readiness never starts generation; discarded results never mutate d
     assert.equal(generated, 0);
     const available = createImageEditor(dependencies);
     const made = await available.request({ source: "a.png", prompt: "edit" });
-    await new Promise(resolve => setImmediate(resolve));
+    await waitForStatus(available, made.id, "ready");
     assert.equal((await available.request({ action: "discard", id: made.id })).status, "discarded");
     assert.equal(modified, 0);
   } finally { await rm(temp, { recursive: true, force: true }); }
@@ -165,7 +177,7 @@ test("two accepted jobs for one document serialize and the second sees the stale
     });
     const first = await editor.request({ documentId: "same", prompt: "red" });
     const second = await editor.request({ documentId: "same", prompt: "blue" });
-    await new Promise(resolve => setImmediate(resolve));
+    await Promise.all([waitForStatus(editor, first.id, "ready"), waitForStatus(editor, second.id, "ready")]);
     const results = await Promise.allSettled([
       editor.request({ action: "accept", id: first.id }, "agent:reviewer"),
       editor.request({ action: "accept", id: second.id }, "user"),
@@ -175,5 +187,122 @@ test("two accepted jobs for one document serialize and the second sees the stale
     assert.equal(peak, 1);
     assert.equal(events.length, 1); assert.equal(events[0].actor, "agent:reviewer");
     assert.equal((await editor.request({ action: "status", id: second.id })).status, "ready");
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test("Qwen keeps the frozen source for review, then clears only editor-owned files on accept and discard", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "aiplay-editor-"));
+  try {
+    const imageDir = path.join(temp, "images"), inputDir = path.join(temp, "input"), coverDir = path.join(temp, "covers");
+    await Promise.all([mkdir(imageDir), mkdir(inputDir), mkdir(coverDir)]);
+    const source = path.join(imageDir, "source.png"), reference = path.join(coverDir, "reference.png");
+    await Promise.all([writeFile(source, "source"), writeFile(reference, "reference")]);
+    let resolveGeneration;
+    const pendingGeneration = new Promise(resolve => { resolveGeneration = resolve; });
+    const prepared = [];
+    const editor = createImageEditor({ imageDir, inputDir, coverDir,
+      generate: async () => pendingGeneration,
+      runPython: async (mode, payload) => {
+        if (mode === "prepare") {
+          prepared.push(payload);
+          await Promise.all([payload.out, payload.maskOut, payload.maskImageOut, ...payload.references.map(r => r.out)]
+            .map(file => writeFile(file, "temporary")));
+          return { width: 16, height: 16, references: payload.references.map(r => path.basename(r.out)) };
+        }
+        if (mode === "finish") {
+          await writeFile(payload.out, "candidate");
+          return { width: 16, height: 16 };
+        }
+        if (mode === "accept") {
+          assert.equal(await exists(payload.sourcePath), true, "accept needs the frozen original");
+          return { doc: { id: "saved" }, before: {}, revision: "accepted" };
+        }
+      },
+    });
+    const body = { source: "source.png", prompt: "New colors", mode: "inpaint", refImages: ["reference.png"],
+      selection: { shapes: [{ kind: "rect", x: 0, y: 0, w: 8, h: 8 }] } };
+    const first = await editor.request(body);
+    assert.equal(first.status, "generating");
+    const firstFiles = prepared[0];
+    for (const file of [firstFiles.out, firstFiles.maskOut, firstFiles.maskImageOut, firstFiles.references[0].out])
+      assert.equal(await exists(file), true, `pending job retains ${path.basename(file)}`);
+    resolveGeneration({ name: "generated.png" });
+    const ready = await waitForStatus(editor, first.id, "ready");
+    assert.equal(await exists(firstFiles.out), true, "review retains the frozen source");
+    for (const file of [firstFiles.maskOut, firstFiles.maskImageOut, firstFiles.references[0].out])
+      assert.equal(await exists(file), false, `finished job clears ${path.basename(file)}`);
+    assert.equal(await exists(path.join(imageDir, ready.candidate.name)), true);
+    await editor.request({ action: "accept", id: first.id });
+    assert.equal(await exists(firstFiles.out), false);
+    assert.equal(await exists(source), true);
+    assert.equal(await exists(reference), true);
+    assert.equal(await exists(path.join(imageDir, ready.candidate.name)), true);
+
+    const second = await editor.request(body);
+    const secondReady = await waitForStatus(editor, second.id, "ready");
+    assert.equal(await exists(prepared[1].out), true);
+    await editor.request({ action: "discard", id: second.id });
+    assert.equal(await exists(prepared[1].out), false);
+    assert.equal(await exists(path.join(imageDir, secondReady.candidate.name)), true);
+    assert.equal(await exists(source), true);
+    assert.equal(await exists(reference), true);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test("failed generation clears owned inputs; expiry retries a failed cleanup without affecting the library", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "aiplay-editor-"));
+  try {
+    const imageDir = path.join(temp, "images"), inputDir = path.join(temp, "input");
+    await Promise.all([mkdir(imageDir), mkdir(inputDir)]);
+    const source = path.join(imageDir, "source.png");
+    await writeFile(source, "source");
+    let currentTime = 1000, generationFails = true, failRemoval = false;
+    const prepared = [];
+    const editor = createImageEditor({ imageDir, inputDir, now: () => currentTime,
+      removeTemp: async file => {
+        if (failRemoval && file === prepared[1]?.out) { failRemoval = false; throw new Error("file busy"); }
+        return unlink(file);
+      },
+      generate: async () => {
+        if (generationFails) throw new Error("GPU failed");
+        return { name: "generated.png" };
+      },
+      runPython: async (mode, payload) => {
+        if (mode === "prepare") {
+          prepared.push(payload);
+          await writeFile(payload.out, "temporary");
+          return { width: 8, height: 8 };
+        }
+        if (mode === "finish") { await writeFile(payload.out, "candidate"); return { width: 8, height: 8 }; }
+      },
+    });
+    const failed = await editor.request({ source: "source.png", prompt: "First" });
+    assert.match((await waitForStatus(editor, failed.id, "error")).error, /GPU failed/);
+    assert.equal(await exists(prepared[0].out), false);
+    assert.equal(await exists(source), true);
+
+    generationFails = false;
+    const reviewed = await editor.request({ source: "source.png", prompt: "Second" });
+    const ready = await waitForStatus(editor, reviewed.id, "ready");
+    const candidate = path.join(imageDir, ready.candidate.name);
+    failRemoval = true;
+    const discarded = await editor.request({ action: "discard", id: reviewed.id });
+    assert.equal(discarded.status, "discarded");
+    assert.match(discarded.warnings.join(" "), /file busy/);
+    assert.equal(await exists(prepared[1].out), true);
+    currentTime += 86400001;
+    const next = await editor.request({ source: "source.png", prompt: "Third" });
+    assert.equal(await exists(prepared[1].out), false);
+    assert.equal(await exists(candidate), true);
+    assert.equal(await exists(source), true);
+    await assert.rejects(editor.request({ action: "status", id: reviewed.id }), /unavailable/);
+    const nextReady = await waitForStatus(editor, next.id, "ready");
+    assert.equal(await exists(prepared[2].out), true, "ready review retains its source until expiry");
+    currentTime += 86400001;
+    const fourth = await editor.request({ source: "source.png", prompt: "Fourth" });
+    assert.equal(await exists(prepared[2].out), false);
+    assert.equal(await exists(path.join(imageDir, nextReady.candidate.name)), true);
+    await assert.rejects(editor.request({ action: "status", id: next.id }), /unavailable/);
+    await waitForStatus(editor, fourth.id, "ready");
   } finally { await rm(temp, { recursive: true, force: true }); }
 });

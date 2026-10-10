@@ -1,4 +1,40 @@
 import {VIDEO_RECIPE_SCHEMA,normalizeVideoRecipe} from "./collab/video-recipe.js";
+import { createHash } from "node:crypto";
+import { IMAGE_RETURN_BYTES_CAP } from "./collab/image-return.js";
+import { IMAGE_JOB_REF_BYTES_CAP } from "./collab/image-job.js";
+
+function checkedReviewPictures(review) {
+  const expected = review?.imageJob?.job?.references;
+  const pictures = review?.pictures;
+  if (!/^[0-9a-f]{64}$/.test(String(review?.reviewDigest || ""))
+      || !Array.isArray(expected) || !Array.isArray(pictures)
+      || expected.length !== pictures.length || expected.length > 3) {
+    throw new Error("The signed image job review is incomplete. Open the file again before accepting it.");
+  }
+  const images = pictures.map((picture, index) => {
+    const reference = expected[index];
+    const mime = String(picture?.mime || "");
+    const prefix = `data:${mime};base64,`;
+    const encoded = typeof picture?.dataUrl === "string" && picture.dataUrl.startsWith(prefix)
+      ? picture.dataUrl.slice(prefix.length) : null;
+    if (picture?.ordinal !== index + 1 || reference?.ordinal !== index + 1
+        || !["image/png", "image/jpeg", "image/webp"].includes(mime)
+        || reference.mime !== mime || picture.bytes !== reference.bytes
+        || picture.sha256 !== reference.sha256 || !/^[0-9a-f]{64}$/.test(String(picture.sha256 || ""))
+        || !Number.isInteger(picture.bytes) || picture.bytes < 1 || picture.bytes > IMAGE_JOB_REF_BYTES_CAP
+        || !encoded || encoded.length > Math.ceil(IMAGE_JOB_REF_BYTES_CAP / 3) * 4) {
+      throw new Error(`Reference ${index + 1} disagrees with the signed image job review.`);
+    }
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.length !== picture.bytes || bytes.toString("base64") !== encoded
+        || createHash("sha256").update(bytes).digest("hex") !== picture.sha256) {
+      throw new Error(`Reference ${index + 1} has invalid image bytes in the review.`);
+    }
+    return { data: encoded, mimeType: mime };
+  });
+  const { pictures: _withDataUrls, ...details } = review;
+  return { ...details, pictures: pictures.map(({ dataUrl: _dataUrl, ...picture }) => picture), _images: images };
+}
 /**
  * Collab MCP uses the same local API as the page. Tools expose reads and explicit
  * user intents, including peer verification statements, roles and acceptance.
@@ -15,6 +51,50 @@ export function collabTools(api, safeName) {
       description:"Preview a text-only standalone video recipe for a verified friend. Uses receiver default models, with custom LoRAs and conditioning bridge off. No references, audio inputs, model overrides or remote rendering. Review the frozen preview then use collab_pack. Receiver opens with collab_open and reviews makeClipArgs before separately calling make_clip. No automated return tracking.",
       inputSchema:{type:"object",required:["to","video"],additionalProperties:false,properties:{to:{type:"string"},video:VIDEO_RECIPE_SCHEMA}},
       async run(a){const video=normalizeVideoRecipe(a.video);const r=await api("POST","/api/collab",{action:"preview",kind:"video-recipe",to:String(a.to||""),video});if(r?.error)throw new Error(r.error);return r;}
+    },
+    {
+      name: "collab_video_job_preview",
+      description: "Preview one signed standalone MiniMax H3 base-only 20-step text-to-video render job for a verified friend. The returned clip can be kept locally and selected as a Reactive source; this job does not carry Reactive's song, media sequence or compositor settings. Freezes exact prompt, seed, size, seconds, CK/PyTorch attention and generated-audio choice. Guidance must stay at 1 because H3 ignores that Video slider. Faster H3 steps load turbo LoRAs and are refused here, as are references, negative prompts, custom models/LoRAs, sparse attention, block cache and bridges. The friend's installed base weights may differ; readiness and idle state are not live here. Review the frozen preview, then collab_pack. Packing writes a local file and sends or renders nothing.",
+      inputSchema: { type: "object", required: ["to", "prompt", "width", "height", "seconds", "steps", "guidance", "keepAudio"], additionalProperties: false, properties: {
+        to: { type: "string", description: "Verified friend's fingerprint from collab_roster." },
+        prompt: { type: "string", minLength: 1, maxLength: 8000 },
+        width: { type: "integer", minimum: 256, maximum: 3840, multipleOf: 32 },
+        height: { type: "integer", minimum: 256, maximum: 3840, multipleOf: 32 },
+        seconds: { type: "number", minimum: 1, maximum: 20 },
+        steps: { type: "integer", const: 20 },
+        guidance: { type: "number", const: 1 },
+        keepAudio: { type: "boolean" },
+        attention: { type: "string", enum: ["ck", "pytorch"], description: "Chosen H3 backend. Defaults to PyTorch; CK requires support on the receiver." },
+        seed: { type: "integer", minimum: 0, maximum: 4294967295, description: "Omit to roll once in the frozen preview." },
+      } },
+      async run(a) {
+        const video = { engine: "h3", prompt: a.prompt, width: a.width, height: a.height,
+          seconds: a.seconds, steps: a.steps, guidance: a.guidance, keepAudio: a.keepAudio,
+          ...(a.seed === undefined ? {} : { seed: a.seed }), negative: "", sparse: "off", attention: a.attention || "pytorch",
+          blockCache: false, bridge: "off", bridgeAlpha: 0, guideStrength: 0.7, refImages: [], refAudios: [], midUploads: [], loras: [], loop: false };
+        const r = await api("POST", "/api/collab", { action: "preview", kind: "video-job", to: String(a.to || ""), video });
+        if (r?.error) throw new Error(r.error);
+        return r;
+      },
+    },
+    {
+      name: "collab_image_preview",
+      description: "Preview one standalone Qwen Image 2.1 job for one verified lender or collaborator. Uses the receiver's default Qwen model, 25 steps, CFG 1, Euler/simple and one image. Up to three ordered reference images may be included by their Studio-issued names, never by a local path or URL. The preview freezes the resolved seed, prompt, settings and reference hashes for this recipient; review them, then call collab_pack with its previewId. Packing writes one sealed file for manual handoff and does not send it, start a render or report the friend's live idle state. Repeat preview and pack for each recipient.",
+      inputSchema: { type: "object", required: ["to", "prompt", "width", "height"], additionalProperties: false, properties: {
+        to: { type: "string", description: "Verified friend's fingerprint from collab_roster." },
+        prompt: { type: "string", minLength: 1, maxLength: 8000 },
+        width: { type: "integer", enum: [1024, 1344, 768], description: "Together with height, choose exactly 1024×1024, 1344×768 or 768×1344." },
+        height: { type: "integer", enum: [1024, 768, 1344], description: "Together with width, choose exactly 1024×1024, 1344×768 or 768×1344." },
+        seed: { type: "integer", minimum: 0, maximum: 4294967295, description: "Optional; omitted seeds are rolled once by the server and shown in the frozen preview." },
+        refs: { type: "array", maxItems: 3, items: { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.-]+\\.(png|jpe?g|webp)$" }, description: "Ordered Studio-issued image names from the sender's library or /api/frame upload; never paths, URLs or base64." },
+      } },
+      async run(a) {
+        const image = { prompt: a.prompt, negative: "", width: a.width, height: a.height,
+          steps: 25, cfg: 1, ...(a.seed === undefined ? {} : { seed: a.seed }), refs: a.refs || [] };
+        const r = await api("POST", "/api/collab", { action: "preview", kind: "image-job", to: String(a.to || ""), image });
+        if (r?.error) throw new Error(r.error);
+        return r;
+      },
     },
     {
       name: "collab_me",
@@ -212,7 +292,8 @@ export function collabTools(api, safeName) {
         "THE ORDER BOOK: what this Studio has sent to friends to render, and what friends have asked it to "
         + "render. `side: \"out\"` is what you asked for, `\"in\"` is what was asked of you. Every row carries the "
         + "four words that were agreed (the scene, the seed, the steps and the engine mode), who it is with, and "
-        + "where it got to. A row for a take that came back and was REFUSED is kept with its reason, because the "
+        + "where it got to. Outgoing rows include `file` when the sealed package was prepared; use it to find "
+        + "the package after a lost prepare response before trying again. A row for a take that came back and was REFUSED is kept with its reason, because the "
         + "reason is the only thing that tells your friend what to fix.",
       inputSchema: {
         type: "object",
@@ -318,7 +399,7 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_quarantine",
-      description: "List returned takes awaiting a local adoption decision, with the server's validation results. Nothing is added to a film by listing.",
+      description: "List returned video takes and standalone images awaiting a local adoption decision, with the server's validation results. Listing does not add anything to a library or film.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       async run() { return await api("POST", "/api/collab", { action: "quarantine" }); },
     },
@@ -336,7 +417,7 @@ function collabControlTools(api, safeName) {
     },
     {
       name: "collab_receive",
-      description: "Validate a returned signed bundle against the outgoing order and put the measured take in quarantine. Refuses unknown/unverified senders or a return for another peer's order. Receiving does not adopt or select the take in the project.",
+      description: "Validate a returned signed video or image bundle against the outgoing order and put the measured result in quarantine. Refuses unknown/unverified senders or a return for another peer's order. Receiving does not adopt the result.",
       inputSchema: { type: "object", required: ["file"], properties: { file: { type: "string" } }, additionalProperties: false },
       async run(a) { return await api("POST", "/api/collab", { action: "receive", file: String(a.file || "") }); },
     },
@@ -353,8 +434,160 @@ function collabControlTools(api, safeName) {
       async run(a) { return await api("POST", "/api/collab", { action: "drop", from: String(a.from || ""), file: String(a.file || "") }); },
     },
     {
+      name: "collab_image_accept",
+      description: "Accept one signed Qwen image job after reviewing its exact prompt, fixed settings, ordered reference pictures and daily-minute estimate. First call with seen:false to receive the review card and reviewDigest. A later seen:true must pass that digest, binding consent to the exact sealed file. A budget or busy refusal lists overrides; only after explicit user approval may you repeat the same digest-bound call with anyway:true. Acceptance stages references locally but does not render; collab_image_render is a separate step.",
+      inputSchema: { type: "object", required: ["file", "seen"], properties: {
+        file: { type: "string", description: "Signed image job file from collab_inbox." },
+        seen: { type: "boolean", description: "The user reviewed this exact job and its reference images." },
+        review_digest: { type: "string", pattern: "^[0-9a-f]{64}$", description: "reviewDigest returned by this tool with seen:false for the exact file reviewed. Required when seen:true." },
+        anyway: { type: "boolean", description: "Explicit user override of the listed daily-minute or busy reasons for this exact reviewed job." },
+      }, additionalProperties: false },
+      async run(a) {
+        if (a.seen === true && !/^[0-9a-f]{64}$/.test(String(a.review_digest || ""))) throw new Error("Pass review_digest from the exact image job review before accepting it.");
+        if (a.anyway === true && a.seen !== true) throw new Error("Review the exact image job before using anyway.");
+        let response;
+        try {
+          response = await api("POST", "/api/collab", { action: "image_accept", file: String(a.file || ""), seen: a.seen === true,
+            ...(a.seen === true ? { expectedDigest: a.review_digest } : {}), ...(a.anyway === true ? { anyway: true } : {}) });
+        } catch (error) {
+          /* The first review intentionally gets HTTP 409. The MCP API wrapper
+           * raises non-2xx responses, but this one carries the consent digest
+           * and the actual pictures the recipient must see. Only this exact
+           * refusal is converted to a review card. All other errors stay errors. */
+          if (a.seen !== false || error?.cause?.status !== 409 || error.cause.refusal?.reason !== "not-seen") throw error;
+          response = error.cause.refusal;
+        }
+        return a.seen === false && response?.reason === "not-seen" ? checkedReviewPictures(response) : response;
+      },
+    },
+    {
+      name: "collab_video_accept",
+      description: "Review and then explicitly accept one signed H3 video job. First call with seen:false to get the exact prompt, model rights/readiness and reviewDigest. Only after review, call seen:true with that digest. Accepting records consent; it does not queue a render. The sender's signature, verified role and expiry are enforced again.",
+      inputSchema: { type: "object", required: ["file", "seen"], additionalProperties: false, properties: {
+        file: { type: "string" }, seen: { type: "boolean" }, review_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        anyway: { type: "boolean", description: "Explicitly override only the listed daily-minute or observed-busy checks after reviewing the server refusal. Never overrides the signed job, role, expiry, or render readiness." },
+      } },
+      async run(a) {
+        if (a.anyway === true && a.seen !== true) throw new Error("Review the signed video job and its allowance before using anyway:true.");
+        if (a.seen === true && !/^[0-9a-f]{64}$/.test(String(a.review_digest || ""))) throw new Error("Pass review_digest from this exact signed video job before accepting.");
+        try { return await api("POST", "/api/collab", { action: "video_accept", file: String(a.file || ""), seen: a.seen === true,
+          ...(a.seen === true ? { expectedDigest: a.review_digest, anyway: a.anyway === true } : {}) }); }
+        catch (error) {
+          if (a.seen !== false || error?.cause?.status !== 409 || error.cause.refusal?.reason !== "not-seen") throw error;
+          return error.cause.refusal;
+        }
+      },
+    },
+    {
+      name: "collab_video_render",
+      description: "Explicitly queue one accepted standalone H3 video job on this machine. Rechecks local H3 readiness, plan settings and peer permission; no engine substitution, no automatic retry and no render on open/accept.",
+      inputSchema: { type: "object", required: ["id"], additionalProperties: false, properties: {
+        id: { type: "string", pattern: "^o_[0-9a-f]{12}$" },
+        anyway: { type: "boolean", description: "Explicitly override an observed busy queue after reviewing the server refusal. Never overrides missing models, paused queues, or an unreadable engine." },
+      } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_render", id: String(a.id || ""), anyway: a.anyway === true }); },
+    },
+    {
+      name: "collab_video_send_back",
+      description: "Seal the finished, checked H3 MP4 and its model/rights record to the original sender. Writes a local .aiplay return file for manual handoff; sends no message.",
+      inputSchema: { type: "object", required: ["id"], additionalProperties: false, properties: { id: { type: "string", pattern: "^o_[0-9a-f]{12}$" } } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_send_back", id: String(a.id || "") }); },
+    },
+    {
+      name: "collab_video_review_return",
+      description: "Inspect the checked local MP4 path, hash, measured dimensions/frames, full prompt and model rights. Returns a receipt bound to these bytes for a later explicit adopt; it does not add the clip to the library.",
+      inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: {
+        from: { type: "string", pattern: "^[0-9a-f]{32}$" },
+        file: { type: "string", pattern: "^peer_[0-9a-f]{32}_o_[0-9a-f]{12}_[0-9a-f]{64}\\.mp4$" },
+      } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_review_return", from: String(a.from || ""), file: String(a.file || "") }); },
+    },
+    {
+      name: "collab_video_adopt",
+      description: "Add one checked, reviewed peer MP4 to the Clips library with signed model rights/provenance. Refused returns cannot be overridden. Replays are idempotent.",
+      inputSchema: { type: "object", required: ["from", "file", "review_receipt"], additionalProperties: false, properties: {
+        from: { type: "string", pattern: "^[0-9a-f]{32}$" }, file: { type: "string" },
+        review_receipt: { type: "string", pattern: "^[0-9a-f]{48}$", description: "Exact reviewReceipt returned by collab_video_review_return for this MP4." },
+      } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_adopt", from: String(a.from || ""), file: String(a.file || ""), reviewReceipt: String(a.review_receipt || "") }); },
+    },
+    {
+      name: "collab_video_drop",
+      description: "Discard one unadopted returned MP4 from video quarantine at the user's request.",
+      inputSchema: { type: "object", required: ["from", "file"], additionalProperties: false, properties: { from: { type: "string" }, file: { type: "string" } } },
+      async run(a) { return await api("POST", "/api/collab", { action: "video_drop", from: String(a.from || ""), file: String(a.file || "") }); },
+    },
+    {
+      name: "collab_image_render",
+      description: "Queue one previously accepted standalone image job on this machine's local Qwen Image 2.1 base renderer. Rechecks the signed order, reference hashes, peer role, model readiness, daily-minute allowance and current GPU workload. A refusal lists overridable reasons; only after explicit user approval may you call again with anyway:true. A confirmed failed or stopped render may be retried only with retry:true; uncertain queue outcomes remain locked.",
+      inputSchema: { type: "object", required: ["id"], properties: {
+        id: { type: "string", description: "Incoming image order id from collab_orders side in." },
+        retry: { type: "boolean", description: "Explicitly retry only a confirmed failed/stopped render. Never retries a still queued or uncertain order." },
+        anyway: { type: "boolean", description: "Explicit user override of listed daily-minute or busy reasons after a refusal." },
+      }, additionalProperties: false },
+      async run(a) { return await api("POST", "/api/collab", { action: "image_render", id: String(a.id || ""), ...(a.retry === true ? { retry: true } : {}), ...(a.anyway === true ? { anyway: true } : {}) }); },
+    },
+    {
+      name: "collab_image_send_back",
+      description: "After a local Qwen image job finishes, seal its checked PNG and model/rights record to the verified original sender. Writes a local .aiplay return file for manual handoff; sends no message or network request to the friend.",
+      inputSchema: { type: "object", required: ["id"], properties: {
+        id: { type: "string", description: "Incoming image order id from collab_orders side in." },
+      }, additionalProperties: false },
+      async run(a) { return await api("POST", "/api/collab", { action: "image_send_back", id: String(a.id || "") }); },
+    },
+    {
+      name: "collab_image_receive",
+      description: "Open a signed image return and validate it against the exact outgoing image order and recipient. Fully decodes its PNG and leaves it in quarantine for review. No image is added to the library. This uses the same receiver as collab_receive.",
+      inputSchema: { type: "object", required: ["file"], properties: {
+        file: { type: "string", description: "Signed image return file received from the friend." },
+      }, additionalProperties: false },
+      async run(a) { return await api("POST", "/api/collab", { action: "receive", file: String(a.file || "") }); },
+    },
+    {
+      name: "collab_image_review_return",
+      description: "Look at one checked PNG in image quarantine before deciding whether to keep it. Returns the verified picture as native MCP image content plus its sender and SHA-256 in text; the pixel base64 never appears in the text response. This is read-only and does not adopt or delete the image. Use collab_image_adopt only after reviewing it.",
+      inputSchema: { type: "object", required: ["from", "file"], properties: {
+        from: { type: "string", pattern: "^[0-9a-f]{32}$", description: "Verified sender fingerprint from collab_quarantine." },
+        file: { type: "string", pattern: "^peer_[0-9a-f]{32}_o_[0-9a-f]{12}_[0-9a-f]{64}\\.png$", description: "Returned image filename from collab_quarantine." },
+      }, additionalProperties: false },
+      async run(a) {
+        const from = String(a.from || ""), file = String(a.file || "");
+        const r = await api("POST", "/api/collab", { action: "image_review_return", from, file });
+        if (r?.error) throw new Error(r.error);
+        if (r?.ok !== true || r.from !== from || r.file !== file || r.mime !== "image/png"
+            || !/^[0-9a-f]{64}$/.test(String(r.sha256 || ""))
+            || typeof r.b64 !== "string" || r.b64.length > Math.ceil(IMAGE_RETURN_BYTES_CAP / 3) * 4) {
+          throw new Error("The checked image review response is incomplete or does not match the requested quarantined file.");
+        }
+        const bytes = Buffer.from(r.b64, "base64");
+        if (!bytes.length || bytes.length > IMAGE_RETURN_BYTES_CAP || bytes.toString("base64") !== r.b64
+            || createHash("sha256").update(bytes).digest("hex") !== r.sha256
+            || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+          throw new Error("The checked image review bytes disagree with their PNG and SHA-256 record.");
+        }
+        const { b64, ...details } = r;
+        return { ...details, _images: [{ data: b64, mimeType: "image/png" }] };
+      },
+    },
+    {
+      name: "collab_image_adopt",
+      description: "Add one reviewed, valid, quarantined peer PNG to this Studio's Images library with its signed model and rights record. Pass the sender fingerprint and image filename exactly as returned by collab_quarantine. Failed image checks cannot be overridden.",
+      inputSchema: { type: "object", required: ["from", "file"], properties: {
+        from: { type: "string" }, file: { type: "string" },
+      }, additionalProperties: false },
+      async run(a) { return await api("POST", "/api/collab", { action: "image_adopt", from: String(a.from || ""), file: String(a.file || "") }); },
+    },
+    {
+      name: "collab_image_drop",
+      description: "Discard one quarantined returned image at the user's request. This does not delete an image already added to the library.",
+      inputSchema: { type: "object", required: ["from", "file"], properties: {
+        from: { type: "string" }, file: { type: "string" },
+      }, additionalProperties: false },
+      async run(a) { return await api("POST", "/api/collab", { action: "image_drop", from: String(a.from || ""), file: String(a.file || "") }); },
+    },
+    {
       name: "collab_plan",
-      description: "Read or update the local episode collaboration plan. get returns the current revision, notes, shot stages/owners/reviews/pins/dependencies, peer resource snapshots and delivery: read-only per-scene outgoing order history, counts and orders for removed scenes. Prepared files do not prove delivery; expiry does not stop a remote render; recorded returns may already have been kept or discarded. Remote availability stays unknown. Every write needs that expectedRevision; stale writes fail. preview_allocation computes without saving; allocate saves draft equal, capability-aware or measured-time assignments, preserving pinned owners; apply_draft records planned owners locally. Planning never dispatches or renders. Use collab_preview and collab_pack for reviewed bundles.",
+      description: "Read or update the local episode collaboration plan. get returns the current revision, notes, shot stages/owners/reviews/pins/dependencies, peer resource snapshots and delivery: read-only outgoing order history plus handoffs for currently assigned friends. Each handoff names the latest same-recipient order state, card age and self-reported fit; only not-prepared means no recorded order. Prepared files do not prove delivery; expiry does not stop a remote render; recorded returns may already have been kept or discarded. Remote availability stays unknown. Every write needs that expectedRevision; stale writes fail. preview_allocation computes without saving; allocate saves draft equal, capability-aware or measured-time assignments, preserving pinned owners; apply_draft records planned owners locally. Planning never dispatches or renders. Use collab_preview and collab_pack for reviewed bundles.",
       inputSchema: { type: "object", required: ["action", "slug"], properties: {
         action: { type: "string", enum: ["get", "update_episode", "update_shot", "preview_allocation", "allocate", "apply_draft", "set_music_cue"] }, slug: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 },
         slot: { type: "string", enum: ["opening", "tension", "closing"] },

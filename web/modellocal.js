@@ -5,7 +5,7 @@
  *     native folder picker and a preview of what a folder holds before it is
  *     adopted.
  *   - Stand-ins: on a card with a missing file, pick a file already in the
- *     same model folder to use instead (an fp16 DiT where the catalogue names
+ *     configured model folders to use instead (an fp16 DiT where the catalogue names
  *     int8, say). The server renames it in every graph at the engine door.
  *   - On disk, not in the catalogue: every weight file in the folders the
  *     engine loads from, labelled by its own safetensors header.
@@ -19,6 +19,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`);
 /* File names are shown without the extension; values keep it. */
 const bare = (n) => String(n ?? "").replace(/\.(safetensors|sft|gguf|ckpt|pt|pth|bin)$/i, "");
+const leaf = (n) => String(n ?? "").split(/[\\/]/).pop();
 const same = (a, b) => String(a || "").replace(/[\\/]+$/, "").toLowerCase() === String(b || "").replace(/[\\/]+$/, "").toLowerCase();
 
 async function post(body) {
@@ -88,7 +89,7 @@ export function paintLocal(d, root = document) {
 
   /* ── stand-ins, on each card that has a missing or swapped file ────── */
   const byShelf = {};
-  for (const f of inFolder) (byShelf[f.shelf] ||= []).push(f);
+  for (const f of loc.files) (byShelf[f.shelf] ||= []).push(f);
   for (const c of d.capabilities || []) {
     const card = list.querySelector(`[data-cap="${CSS.escape(c.id)}"]`);
     if (!card) continue;
@@ -102,16 +103,17 @@ export function paintLocal(d, root = document) {
           <button class="btn sm ghost" type="button" data-mo-undo="${esc(f.name)}">Undo</button></div>`;
       }
       if (f.present || !f.shelf) return "";
-      /* Never a file the catalogue already uses for something else — the DAV
-       * decoder shares a prefix with the DAV encoder and is not one. */
+      /* `known` matches a catalogue leaf name, including nested copies of the
+       * file this row needs. Keep those aliases; exclude catalogue files for
+       * another slot (the DAV decoder is not a DAV encoder). */
       const cands = (byShelf[f.shelf] || [])
-        .filter((x) => x.name !== f.name && !x.known)
-        .sort((a, b) => affinity(b.name, f.name) - affinity(a.name, f.name) || a.name.localeCompare(b.name));
+        .filter((x) => x.name !== f.name && (!x.known || leaf(x.name) === leaf(f.name)))
+        .sort((a, b) => affinity(leaf(b.name), leaf(f.name)) - affinity(leaf(a.name), leaf(f.name)) || a.name.localeCompare(b.name));
       if (!cands.length) return "";
       offered++;
       /* A long shared name prefix ("minimax_music3_dit_…") is a probable other
        * build of the same model — worth opening the panel for. */
-      if (affinity(cands[0].name, f.name) >= 12) likely = true;
+      if (affinity(leaf(cands[0].name), leaf(f.name)) >= 12) likely = true;
       return `<div class="mlrow">
         <span>Missing <code>${esc(bare(f.name))}</code> — use a file you already have:</span>
         <select data-mo-sel="${esc(f.name)}" aria-label="Stand-in for ${esc(f.name)}">

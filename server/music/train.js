@@ -42,6 +42,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "../config.js";
 import { ffmpegPath, ffprobePath } from "../clipjoin.js";
+import { sha256, sortedJSON } from "../engine/record.js";
 
 /* Measured on this rig, not guessed: a rank-8 run on a 24 s slice took free VRAM
  * from 13841 MB to 4912 MB, so about 8.9 GB. The ceiling below leaves room for
@@ -124,6 +125,26 @@ export async function probeTrainAudio(file, { runner = promisify(execFile), ffpr
   const duration = streamDuration > 0 ? streamDuration : Number(info.format?.duration);
   if (!Number.isFinite(duration) || duration <= 0) throw refuse("region", "The recording's audio duration could not be measured.");
   return duration;
+}
+
+/** ffprobe's source duration can outlive the audio FFmpeg actually decodes.
+ * Refuse a truncated extracted WAV before the costly YuE2 tokenizer reads it.
+ * One 25 Hz semantic frame covers ordinary sample/timestamp rounding. */
+export async function verifyTrainSliceAudio(slice, settings, probeOptions) {
+  const expected = Number(settings?.seconds);
+  if (!Number.isFinite(expected) || expected < SECONDS_MIN || expected > SECONDS_MAX) {
+    throw refuse("slice-duration", `Choose a ${SECONDS_MIN}–${SECONDS_MAX}s training region before extracting audio.`, 422);
+  }
+  let actual;
+  try { actual = await probeTrainAudio(slice, probeOptions); }
+  catch (error) {
+    throw refuse("slice-duration", `The extracted training audio for the ${expected.toFixed(2)}s region could not be measured: ${error.message}`, 422);
+  }
+  if (actual < SECONDS_MIN || actual > SECONDS_MAX || Math.abs(actual - expected) > 1 / 25 + 1e-6) {
+    throw refuse("slice-duration",
+      `The extracted training audio is ${actual.toFixed(2)}s; the selected region is ${expected.toFixed(2)}s. The source may end early or decode incompletely. Choose an earlier or shorter region.`, 422);
+  }
+  return actual;
 }
 
 export function trainSliceArgs(source, target, settings) {
@@ -221,6 +242,47 @@ export function trainGraph({ ckpt, sliceName, codesDir, seconds, steps, rank, le
   };
 }
 
+/** A completed run may adopt only its own graph's uniquely named output.
+ * The receipt is written after dispatch; if that write failed, an old file with
+ * the same friendly name is not evidence of what this run produced. */
+export function verifyTrainAdoption({ runId, name, receipt, record }) {
+  if (!receipt) throw refuse("missing-receipt",
+    "This run has no training receipt, so Studio cannot identify its adapter. No file was copied. Restore the receipt for this run or start a new training run.", 409);
+  if (receipt.runId !== runId || receipt.name !== name || record?.runId !== runId
+      || !/^mine_[A-Za-z0-9_-]+$/.test(receipt.outputPrefix)
+      || !receipt.outputPrefix.startsWith(`${name}_`)) {
+    throw refuse("run-mismatch", "The training run, adapter name and receipt do not match. No file was copied.", 409);
+  }
+  if (record.result?.status !== "completed") {
+    throw refuse("run-incomplete", "This training run did not complete successfully. No adapter was adopted.", 409);
+  }
+  const graph = record.graph, hash = graph && sha256(sortedJSON(graph));
+  if (!receipt.graphHash || hash !== receipt.graphHash
+      || record.request?.graphHash !== hash || record.result?.graphHash !== hash) {
+    throw refuse("graph-mismatch", "The saved training graph does not match this run's receipt. No adapter was adopted.", 409);
+  }
+  const n = id => graph[String(id)];
+  const link = (value, node, output) => Array.isArray(value) && value.length === 2
+    && String(value[0]) === String(node) && value[1] === output;
+  if (n(1)?.class_type !== "CheckpointLoaderSimple" || n(1).inputs?.ckpt_name !== receipt.checkpoint
+      || n(2)?.class_type !== "LoadAudio"
+      || n(2).inputs?.audio !== `train_${receipt.outputPrefix}_at${receipt.source.startSeconds}s_${receipt.source.seconds}s.wav`
+      || n(3)?.class_type !== "VAEEncodeAudio" || !link(n(3).inputs?.audio, 2, 0)
+      || !link(n(3).inputs?.vae, 1, 2)
+      || n(4)?.class_type !== "AiplayYuE2Continue" || n(4).inputs?.encode_only !== true
+      || !link(n(4).inputs?.clip, 1, 1) || !link(n(4).inputs?.source_audio, 2, 0)
+      || n(5)?.class_type !== "TrainLoraNode" || !link(n(5).inputs?.model, 1, 0)
+      || !link(n(5).inputs?.latents, 3, 0)
+      || !link(n(5).inputs?.positive, 4, 0)
+      || n(5).inputs?.steps !== receipt.settings.steps || n(5).inputs?.rank !== receipt.settings.rank
+      || n(5).inputs?.learning_rate !== receipt.settings.learningRate
+      || n(7)?.class_type !== "SaveLoRA" || n(7).inputs?.prefix !== receipt.outputPrefix
+      || !link(n(7).inputs?.lora, 5, 0) || !link(n(7).inputs?.steps, 5, 2)) {
+    throw refuse("graph-mismatch", "This run is not the expected source-audio YuE2 training graph. No adapter was adopted.", 409);
+  }
+  return { outputPrefix: receipt.outputPrefix, exact: true };
+}
+
 /**
  * ⚠ SaveLoRA WRITES TO THE OUTPUT FOLDER, WHERE NOTHING CAN SELECT IT. Every
  * LoRA picker in this app reads models/loras, so an adapter left where the
@@ -261,4 +323,60 @@ export async function listTrained({ dest = lorasDir() } = {}) {
   }
   rows.sort((a, b) => b.at - a.at);
   return rows;
+}
+
+/** Review two finished YuE2 ComfyUI takes before claiming a LoRA changed them.
+ * Older library rows lack the complete sampler/score receipt. An archived
+ * listening lab can establish graph equality separately (train-archive.js). */
+export function compareTrainingTakes(baseline, adapterTake) {
+  const checks = [];
+  const add = (field, status) => checks.push({ field, status });
+  if (!baseline || !adapterTake) return { status: "unverified", checks, message: "Choose both library takes to compare." };
+  add("YuE2 ComfyUI engine", baseline.engine === "yue2-comfy" && adapterTake.engine === "yue2-comfy" ? "match" : "mismatch");
+  add("baseline without audio LoRA", baseline.lora ? "mismatch" : "match");
+  add("comparison with audio LoRA", adapterTake.lora ? "match" : "mismatch");
+  add("nonzero adapter strength", adapterTake.lora && Number.isFinite(adapterTake.loraStrength) && adapterTake.loraStrength !== 0 ? "match" : "mismatch");
+  add("different takes", baseline.file !== adapterTake.file ? "match" : "mismatch");
+
+  /* Version 1 records every input below, including explicit null sampler and
+   * score choices. A missing old field is unknown, never an inferred default. */
+  const complete = baseline.comparisonVersion === 1 && adapterTake.comparisonVersion === 1;
+  const fields = [
+    ["checkpoint", "checkpoint"], ["caption", "style prompt"], ["lyrics", "lyrics"],
+    ["seed", "performance seed"], ["mixSeed", "mix seed"], ["cot", "thinking mode"],
+    ["steps", "NAR steps"], ["maxDuration", "duration limit"],
+    ["scoreHash", "supplied score"], ["sampling", "audio sampling"],
+    ["planSampling", "planner sampling"], ["instrumental", "instrumental mode"],
+    ["loraClip", "planner LoRA"], ["loraClipStrength", "planner LoRA strength"],
+  ];
+  const evidenced = (key, row) => {
+    const value = row[key];
+    if (key === "cot") return ["full", "melody", "off"].includes(value);
+    if (["checkpoint", "caption", "lyrics"].includes(key)) return typeof value === "string" && (key === "lyrics" || value.length > 0);
+    if (["seed", "mixSeed", "steps", "maxDuration"].includes(key)) return Number.isFinite(value) && (key === "steps" || key === "maxDuration" ? value > 0 : true);
+    if (key === "instrumental") return typeof value === "boolean";
+    if (key === "scoreHash") return value === null || (typeof value === "string" && /^[a-f0-9]{64}$/i.test(value));
+    if (key === "sampling") return value && typeof value === "object" && ["temperature", "top_p", "top_k", "repetition_penalty"].every(k => Number.isFinite(value[k]));
+    if (key === "planSampling") {
+      if (row.cot === "off" || row.scoreHash !== null) return value === null;
+      return value && typeof value === "object" && ["temperature", "top_p", "top_k", "repetition_penalty", "penalty_window"].every(k => Number.isFinite(value[k]));
+    }
+    if (key === "loraClip") return value === null || (typeof value === "string" && !!value);
+    if (key === "loraClipStrength") return row.loraClip ? Number.isFinite(value) : value === null;
+    return false;
+  };
+  for (const [key, label] of fields) {
+    const known = complete && Object.hasOwn(baseline, key) && Object.hasOwn(adapterTake, key)
+      && evidenced(key, baseline) && evidenced(key, adapterTake);
+    add(label, known ? (sortedJSON(baseline[key]) === sortedJSON(adapterTake[key]) ? "match" : "mismatch") : "unknown");
+  }
+  const mismatch = checks.filter((c) => c.status === "mismatch").map((c) => c.field);
+  const unknown = checks.filter((c) => c.status === "unknown").map((c) => c.field);
+  const status = mismatch.length ? "mismatch" : unknown.length ? "unverified" : "matched";
+  const message = mismatch.length
+    ? `Not a controlled pair: ${mismatch.join(", ")} differ. You can still listen to both; do not attribute every difference to the adapter.`
+    : unknown.length
+      ? "These takes lack complete comparison metadata. Listen to both, but their generation settings cannot be verified."
+      : `Recorded generation settings matched; the comparison uses ${adapterTake.lora} at strength ${adapterTake.loraStrength ?? 1}. Listen to judge the sound; matching settings do not prove improvement.`;
+  return { status, checks, adapter: adapterTake.lora || null, strength: adapterTake.lora ? (adapterTake.loraStrength ?? 1) : null, message };
 }

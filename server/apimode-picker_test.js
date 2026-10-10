@@ -70,7 +70,7 @@ test("the Music picker offers hosted Music 3, and choosing it sets API mode", ()
   /* Choosing the hosted row switches API mode on through the switch's one
    * writer, which saves it (applyApiConfig → saveApiSettings). */
   assert.match(index, /await applyApiConfig\(\{ enabled: want, \.\.\.\(want \? \{ provider: choice\.api \} : \{\}\) \}\);/);
-  assert.match(index, /async function applyApiConfig\(b\) \{[\s\S]{0,600}Object\.assign\(config\.api, patch\);\n\s+await saveApiSettings\(\);/);
+  assert.match(index, /async function applyApiConfig\(b\) \{[\s\S]{0,600}Object\.assign\(config\.api, patch\);\r?\n\s+await saveApiSettings\(\);/);
   assert.match(app, /if \(e === "minimax-music3" && state\.apiMode\?\.enabled\) return `\$\{e\}:api:/,
     "the picker shows the hosted row as current while API mode is on");
   assert.match(app, /state\.apiMode \? "MiniMax · API"|state\.apiMode\?\.enabled \? "MiniMax · API"/);
