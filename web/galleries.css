@@ -31,7 +31,9 @@
 /* ── pictures ─────────────────────────────────────────────────────────── */
 .masonry { gap: 8px; }
 .imtile {
-  flex: var(--ar) 1 calc(var(--ar) * 210px); min-width: 150px;
+  /* 190, not 210: two 16:9 tiles at 210 need 754px, one more than the gallery
+     has at 1440 wide, so every picture sat alone on a row with a gap beside it. */
+  flex: var(--ar) 1 calc(var(--ar) * 190px); min-width: 150px;
   border-radius: 12px; border: 1px solid var(--hair);
   box-shadow: 0 2px 12px hsla(0,0%,0%,.3);
   transition: transform .15s, box-shadow .15s, border-color .15s;

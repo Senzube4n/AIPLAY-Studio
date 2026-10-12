@@ -34,7 +34,7 @@ export function exportFacts(result) {
     ['Audio', `${String(result.format || 'flac').toUpperCase()} · ${result.bit_depth ?? 24}-bit · ${result.channels === 2 ? 'stereo' : result.channels === 1 ? 'mono' : result.stereo === true ? 'stereo' : result.stereo === false ? 'mono' : 'channels not reported'} · ${result.sr ? `${result.sr} Hz` : 'sample rate unavailable'}`],
     ['Duration', measured(result.seconds, 's')],
     ['Dither', result.dithered === true ? 'Applied' : result.dithered === false ? 'Not applied' : 'Not reported'],
-    ['Metadata', result.tagged === true || result.tagged?.ok === true ? 'Written' : 'Not written — see export details'],
+    ['Metadata', result.tagged === true || result.tagged?.ok === true ? 'Written' : 'Not written: see export details'],
     ['Origin', result.origin || result.tagged?.class || 'Not reported'],
   ];
   if (L) {

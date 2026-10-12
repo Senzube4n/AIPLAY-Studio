@@ -66,7 +66,7 @@ import { appConfirm, appPrompt } from "./dialog.js";
 const $ = (id) => document.getElementById(id);
 const previewAudio = createVfxAudio({
   beforePlay: () => document.querySelectorAll("audio, video").forEach((media) => media.pause()),
-  onError: (error) => { if (V.playing) stop(); note(`Audio preview stopped — ${error?.message || error}`); },
+  onError: (error) => { if (V.playing) stop(); note(`Audio preview stopped: ${error?.message || error}`); },
 });
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -101,11 +101,11 @@ const LAYER_KINDS = [
   ["audio", "♪", "Audio", "An existing song from the music library. No upload or generation."],
   ["solid", "■", "Solid", "A flat rectangle the size of the comp."],
   ["text", "T", "Text", "Type, laid out by the engine."],
-  ["shape", "◇", "Shape", "Vector geometry — paths, operations and paint, run in order."],
+  ["shape", "◇", "Shape", "Vector geometry: paths, operations and paint, run in order."],
   ["adjustment", "◐", "Adjustment", "Its effects apply to everything beneath it."],
   ["null", "⊹", "Null", "Renders nothing; exists to be a parent."],
   ["camera", "⌖", "Camera", "A viewpoint. Only 3D layers respond to it; the topmost camera wins."],
-  ["light", "☀", "Light", "AE's four light kinds — ambient, point, spot, parallel. Paints nothing itself; lights every 3D layer."],
+  ["light", "☀", "Light", "AE's four light kinds: ambient, point, spot, parallel. Paints nothing itself; lights every 3D layer."],
   ["comp", "⧉", "Comp", "Another composition, nested as a layer."],
 ];
 const GLYPH = Object.fromEntries(LAYER_KINDS.map(([k, g]) => [k, g]));
@@ -130,7 +130,7 @@ const PHASE_TAG = { "Path": "path", "Path Operation": "op", "Paint": "paint", "G
 
 /** The expression vocabulary the sandbox accepts (§1), as chips to paste. */
 const EXPR_VOCAB = [
-  ["value", "what the property is worth underneath — the constant or the keyframes"],
+  ["value", "what the property is worth underneath: the constant or the keyframes"],
   ["time", "seconds on the comp timeline"],
   ["wiggle(2, 30)", "jitter twice a second by 30"],
   ["random()", "0..1, fresh every frame"],
@@ -173,11 +173,11 @@ const EXPR_VOCAB = [
  * the expression editor that prints it.
  */
 const EXPR_STATE =
-  "Expressions run, and a camera's lens is now one of the things they can drive — put one on "
+  "Expressions run, and a camera's lens is now one of the things they can drive: put one on "
   + "zoom, focus distance or the point of interest to aim the lens at a moving null. What an "
   + "expression cannot do is READ another layer's lens: thisComp.layer(\"cam\").zoom is not "
-  + "exposed and falls back to the value underneath instead of erroring. Transform — position, "
-  + "rotation, scale, opacity — reads normally off any layer, a camera included.";
+  + "exposed and falls back to the value underneath instead of erroring. Transform: position, "
+  + "rotation, scale, opacity: reads normally off any layer, a camera included.";
 
 /** The seven tracks audiokeys.py cuts a sound into, §1. */
 const AUDIO_TRACKS = [
@@ -462,7 +462,7 @@ async function setLayerField(l, patch, coalesce = null) {
   const missed = Object.keys(patch).filter((k) =>
     JSON.stringify(after?.[k] ?? null) !== JSON.stringify(patch[k] ?? null));
   if (missed.length) {
-    note(`The engine draws ${missed.join(" and ")}, but /api/vfx does not write ${missed.length === 1 ? "it" : "them"} yet — `
+    note(`The engine draws ${missed.join(" and ")}, but /api/vfx does not write ${missed.length === 1 ? "it" : "them"} yet: `
       + `set_layer answered ok and handed back a document in which nothing changed.`);
   }
   return missed;
@@ -670,8 +670,8 @@ async function histTo(i) {
      * held that comp — but it is exactly the kind of thing a person discovers
      * three days later in the picker, so it is said at the moment it happens. */
     const orphan = back && V.hist.stack[i + 1]?.label === "precompose";
-    note(`${back ? "Undone" : "Redone"} — the comp is at "${step.label}".`
-      + (orphan ? " The comp that precompose made is still in the picker — this history never held it, so undo cannot take it back." : ""));
+    note(`${back ? "Undone" : "Redone"}: the comp is at "${step.label}".`
+      + (orphan ? " The comp that precompose made is still in the picker: this history never held it, so undo cannot take it back." : ""));
   } catch (e) {
     if (slug !== V.slug) return;
     /* A refused restore leaves the document where it was, which is safe but
@@ -686,7 +686,7 @@ async function histTo(i) {
   paintHist();
 }
 
-const undo = () => (canUndo() ? histTo(V.hist.at - 1) : note("Nothing to undo — this is where the comp opened."));
+const undo = () => (canUndo() ? histTo(V.hist.at - 1) : note("Nothing to undo: this is where the comp opened."));
 const redo = () => (canRedo() ? histTo(V.hist.at + 1) : note("Nothing to redo."));
 
 /** The two buttons, re-stated rather than repainted: the bar around them is
@@ -698,8 +698,8 @@ function paintHist() {
   u.disabled = !canUndo();
   r.disabled = !canRedo();
   u.title = canUndo()
-    ? `Undo "${h.stack[h.at].label}" (Ctrl+Z) — ${h.at} step${h.at === 1 ? "" : "s"} back to where this comp opened`
-    : "Nothing to undo — this is where the comp opened";
+    ? `Undo "${h.stack[h.at].label}" (Ctrl+Z): ${h.at} step${h.at === 1 ? "" : "s"} back to where this comp opened`
+    : "Nothing to undo: this is where the comp opened";
   r.title = canRedo() ? `Redo "${h.stack[h.at + 1].label}" (Ctrl+Shift+Z)` : "Nothing to redo";
 }
 
@@ -1051,9 +1051,9 @@ export function initVfx() {
             <svg class="vfxmp" id="vfxMotionPath" hidden></svg>
             <svg class="vfxgz" id="vfxGizmo" hidden></svg>
             <canvas class="vfxruler top" id="vfxRulerTop" hidden
-              title="Comp pixels. Drag into the picture to drop a horizontal guide — double-click for an exact position."></canvas>
+              title="Comp pixels. Drag into the picture to drop a horizontal guide: double-click for an exact position."></canvas>
             <canvas class="vfxruler left" id="vfxRulerLeft" hidden
-              title="Comp pixels. Drag into the picture to drop a vertical guide — double-click for an exact position."></canvas>
+              title="Comp pixels. Drag into the picture to drop a vertical guide: double-click for an exact position."></canvas>
             <span class="vfxrulercorner" id="vfxRulerCorner" hidden></span>
             <span class="vfxqual" id="vfxQual" hidden></span>
             <span class="vfxinfo" id="vfxInfo" hidden></span>
@@ -1069,14 +1069,14 @@ export function initVfx() {
       </section>
     </div>
     <div class="vfxsplit" id="vfxSplit" role="separator" aria-orientation="horizontal"
-         title="Drag to give the timeline more or less of the window — double-click to reset"><i></i></div>
+         title="Drag to give the timeline more or less of the window: double-click to reset"><i></i></div>
     <div class="vfxtimearea" id="vfxTime">
       <div class="vfxtl" id="vfxTl"></div>
       <div class="vfxgraph" id="vfxGraph" hidden></div>
     </div>
     <div class="vfxblank" id="vfxDown" hidden>
       <h3>The VFX engine is not responding.</h3>
-      <p class="hint">Nothing was lost — comps live on disk under <code>vfx/&lt;slug&gt;/comp.json</code>
+      <p class="hint">Nothing was lost: comps live on disk under <code>vfx/&lt;slug&gt;/comp.json</code>
         and this tab only reads and writes them through <code>/api/vfx</code>. Either the server
         has not mounted those routes yet, or it is restarting.</p>
       <button class="btn sm" type="button" id="vfxRetry">Try again</button>
@@ -1276,7 +1276,7 @@ function paintEmpty() {
     : "No compositions yet.";
   $("vfxPropsBody").innerHTML = `<p class="hint">${V.comps.length
     ? "Pick another comp above."
-    : "Press <b>new</b> in the bar above. A comp is a size, a frame rate and a length — layers go in afterwards."}</p>`;
+    : "Press <b>new</b> in the bar above. A comp is a size, a frame rate and a length; layers go in afterwards."}</p>`;
   $("vfxPropsTitle").textContent = "Properties";
 }
 
@@ -1309,7 +1309,7 @@ function paintBar() {
            ["inherit", "inherit", c.linearLight === undefined || c.linearLight === null]]
             .map(([v, txt, sel]) => `<option value="${v}"${sel ? " selected" : ""}>${txt}</option>`)
             .join("")}</select></label>
-      <label class="vfxfield vfxbg" title="The comp's background. Alpha 0 — the default — renders TRANSPARENT; picking a colour while α is 0 also raises α so the pick is visible.">bg
+      <label class="vfxfield vfxbg" title="The comp's background. Alpha 0 (the default) renders TRANSPARENT; picking a colour while α is 0 also raises α so the pick is visible.">bg
         <input type="color" id="vfxBg" value="#${[0, 1, 2].map((i) => clamp(Math.round(num(c.bg?.[i], 0)), 0, 255).toString(16).padStart(2, "0")).join("")}">
         <input type="number" id="vfxBgA" min="0" max="255" step="5" value="${num(c.bg?.[3], 0)}" title="Background alpha, 0-255. 0 keeps the comp transparent."></label>
     </span>` : "";
@@ -1326,7 +1326,7 @@ function paintBar() {
       <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths"><input type="checkbox" id="vfxDraft">draft</label>
       </span>
       <button class="btn sm" type="button" id="vfxRender"${V.job ? " disabled" : ""}>${V.job ? "Rendering…" : "Render"}</button>
-      <button class="edtool sm" type="button" id="vfxQueue" title="The render queue — every render and prewarm job the server remembers, across all comps, with progress and output paths">≡ queue</button>
+      <button class="edtool sm" type="button" id="vfxQueue" title="The render queue: every render and prewarm job the server remembers, across all comps, with progress and output paths">≡ queue</button>
     </span>` : "";
 
   const bar = V.job ? `<div class="vfxjob">
@@ -1347,10 +1347,10 @@ function paintBar() {
     <h2 class="vfxtitle">VFX</h2>
     <select class="sel2" id="vfxPick">${opts}</select>
     <button class="edtool sm" type="button" id="vfxRen"${c ? "" : " disabled"}
-      title="Rename the composition. The slug — its folder and URL — stays.">✎</button>
+      title="Rename the composition. The slug (its folder and URL) stays.">✎</button>
     <button class="edtool sm" type="button" id="vfxNew">new</button>
     <button class="edtool sm" type="button" id="vfxTpl"
-      title="Start from a finished, animated composition — the same shelf vfx_templates serves over MCP">template</button>
+      title="Start from a finished, animated composition: the same shelf vfx_templates serves over MCP">template</button>
     <button class="edtool sm" type="button" id="vfxDup"${c ? "" : " disabled"}>duplicate</button>
     <button class="edtool sm warn" type="button" id="vfxDel"${c ? "" : " disabled"}>delete</button>
     <span class="vfxworkspace">
@@ -1478,7 +1478,7 @@ async function queuePanel() {
       const snd = j.audio
         ? `♪ ${num(j.audio.seconds, 0)}s · peak ${j.audio.peakDb ?? "−∞"}dB${
             j.audio.clippedSamples > 0
-              ? ` <b style="color:#e35555;font-weight:700" title="The summed mix pushed past the rail on ${num(j.audio.clippedSamples, 0)} samples and was hard-clipped — pull audioLevels down and re-render.">CLIPPED ${num(j.audio.clippedSamples, 0)}</b>` : ""}`
+              ? ` <b style="color:#e35555;font-weight:700" title="The summed mix pushed past the rail on ${num(j.audio.clippedSamples, 0)} samples and was hard-clipped: pull audioLevels down and re-render.">CLIPPED ${num(j.audio.clippedSamples, 0)}</b>` : ""}`
         : "";
       return `<tr class="vfxq ${esc(j.status)}">
         <td>${esc(j.slug)}</td>
@@ -1499,7 +1499,7 @@ async function queuePanel() {
             const r = action === "render_cancel"
               ? await api({ action: "render_cancel", jobId: button.dataset[field] })
               : await api({ action: "render_retry", jobId: button.dataset[field] });
-            note(action === "render_cancel" ? "Cancellation requested. Final status remains in the render queue." : `Retry queued using the current composition — ${r.jobId}.`);
+            note(action === "render_cancel" ? "Cancellation requested. Final status remains in the render queue." : `Retry queued using the current composition: ${r.jobId}.`);
           } catch (error) { note(error.message || String(error)); }
           await paintRows();
         };
@@ -1589,7 +1589,7 @@ async function deleteComp() {
 async function startRender() {
   if (!V.comp || V.job) return;
   const slug = V.slug;
-  V.job = { label: "queued — music keeps priority", pct: 0 };
+  V.job = { label: "queued: music keeps priority", pct: 0 };
   paintBar();
   try {
     const d = await api({
@@ -1609,7 +1609,7 @@ async function startRender() {
      * "finished" cleared the bar and toasted a render that had not started.
      * The job id is what the poll needs; keep it and let pollRender decide. */
     if (!d.jobId) throw new Error("The server did not return a render job ID. Check the render queue before trying again.");
-    V.job = { label: "queued — music keeps priority", pct: 0, id: d.jobId, slug, polls: 0, watchedAt: Date.now() };
+    V.job = { label: "queued: music keeps priority", pct: 0, id: d.jobId, slug, polls: 0, watchedAt: Date.now() };
     paintBar();
   } catch (e) {
     V.job = null; paintBar(); note(e.message || "The render was refused.");
@@ -1629,7 +1629,7 @@ async function pollRender() {
    * the job is the server's now, and it will land in the library when it lands. */
   if (++V.job.polls > 600 || Date.now() - V.job.watchedAt > 15 * 60 * 1000) {
     V.job = null; clearInterval(V.jobTimer); paintBar();
-    return note("Still rendering after 15 minutes — it will appear in the clips library when it finishes.");
+    return note("Still rendering after 15 minutes: it will appear in the clips library when it finishes.");
   }
   watching.polling = true;
   try {
@@ -1643,7 +1643,7 @@ async function pollRender() {
 
     if (job && ["failed", "cancelled", "stale", "interrupted"].includes(job.status)) {
       V.job = null; clearInterval(V.jobTimer); paintBar();
-      note(`Render ${job.status}${job.error ? ` — ${String(job.error).slice(0, 240)}` : ". Check the render queue before retrying."}`);
+      note(`Render ${job.status}${job.error ? `: ${String(job.error).slice(0, 240)}` : ". Check the render queue before retrying."}`);
       return;
     }
     if (job?.error) {
@@ -1656,16 +1656,16 @@ async function pollRender() {
       const snd = job.audio
         ? ` · ♪ ${num(job.audio.seconds, 0)}s, peak ${job.audio.peakDb ?? "−∞"}dB${
             job.audio.clippedSamples > 0
-              ? ` — CLIPPED ${num(job.audio.clippedSamples, 0)} samples, pull audioLevels down` : ""}`
+              ? `: CLIPPED ${num(job.audio.clippedSamples, 0)} samples, pull audioLevels down` : ""}`
         : "";
-      note(job.clip ? `Rendered ${job.frames ?? "?"} frames — ${job.clip}${snd}` : `Render finished.${snd}`);
+      note(job.clip ? `Rendered ${job.frames ?? "?"} frames: ${job.clip}${snd}` : `Render finished.${snd}`);
       loadLibraries();
       return;
     }
     watching.pct = clamp(num(job?.progress, 0), 0, 1);
-    watching.label = !job ? "Job unavailable — check queue; completion is not confirmed"
-      : job.status === "queued" ? "queued — music keeps priority"
-      : `rendering — ${Math.round(watching.pct * 100)}%`;
+    watching.label = !job ? "Job unavailable: check queue; completion is not confirmed"
+      : job.status === "queued" ? "queued: music keeps priority"
+      : `rendering: ${Math.round(watching.pct * 100)}%`;
     paintBar();
   } catch { /* one missed poll is not a failure */ }
   finally { watching.polling = false; }
@@ -1705,7 +1705,7 @@ function section(title, inner, extra = "") {
 /** Timing and source: not animatable, so plain fields, but they belong here. */
 function sourceSection(l) {
   const src = l.src ? `<div class="vfxrow static"><span class="vfxlab">Source</span>
-      <span class="vfxvals"><code class="vfxsrc" title="Library name — the route resolves it to a path">${esc(l.src)}</code></span></div>` : "";
+      <span class="vfxvals"><code class="vfxsrc" title="Library name: the route resolves it to a path">${esc(l.src)}</code></span></div>` : "";
   const vid = l.type === "video" ? `
     <div class="vfxrow static"><span class="vfxlab">In point</span><span class="vfxvals">
       <input type="number" data-lset="inPoint" value="${num(l.inPoint, 0)}" step="0.1" title="Source time at the layer's start"></span></div>
@@ -1744,9 +1744,9 @@ function sourceSection(l) {
     ${vid}${txt}${col}
     <div class="vfxrow static"><span class="vfxlab">Motion blur</span><span class="vfxvals">
       <label class="edtool tog sm"><input type="checkbox" data-lset="motionBlur"${l.motionBlur ? " checked" : ""}>
-        ${V.comp?.motionBlur?.enabled ? "on for this layer" : "on — but the comp switch is off"}</label></span></div>`,
+        ${V.comp?.motionBlur?.enabled ? "on for this layer" : "on, but the comp switch is off"}</label></span></div>`,
     `<button class="edtool sm" type="button" id="vfxDupLayer"
-       title="Duplicate this layer — every keyframe, effect and mask, with fresh ids all the way down (Ctrl+D)">⧉ duplicate</button>`);
+       title="Duplicate this layer: every keyframe, effect and mask, with fresh ids all the way down (Ctrl+D)">⧉ duplicate</button>`);
 }
 
 /**
@@ -1779,8 +1779,8 @@ function alignSection(l) {
         ${btn("top", "⤒", `Align top edges to ${vs}`)}
         ${btn("centerV", "⇳", "Centre vertically")}
         ${btn("bottom", "⤓", `Align bottom edges to ${vs}`)}
-        ${btn("distributeH", "⋯", "Space the selected layers' centres evenly, left to right — needs three or more; first and last stay", nSel < 3)}
-        ${btn("distributeV", "⋮", "Space the centres evenly, top to bottom — needs three or more", nSel < 3)}
+        ${btn("distributeH", "⋯", "Space the selected layers' centres evenly, left to right: needs three or more; first and last stay", nSel < 3)}
+        ${btn("distributeV", "⋮", "Space the centres evenly, top to bottom: needs three or more", nSel < 3)}
       </span></div>`);
 }
 
@@ -1815,7 +1815,7 @@ function lightSection(l) {
   const keyed = (v) => !!v && typeof v === "object" && !Array.isArray(v) && Array.isArray(v.keys);
   const dial = (key, label, title, step = 1) => `<div class="vfxrow static"><span class="vfxlab">${esc(label)}</span><span class="vfxvals">${
     keyed(L[key])
-      ? `<input type="number" disabled placeholder="keyframed" title="Keyframed — edit it on the timeline's Light group (path light.${key})">`
+      ? `<input type="number" disabled placeholder="keyframed" title="Keyframed: edit it on the timeline's Light group (path light.${key})">`
       : `<input type="number" data-lightset="${key}" value="${num(L[key], DEF[key])}" step="${step}" title="${esc(title)}">`
   }</span></div>`;
   const sel = (key, options, title) => `<div class="vfxrow static"><span class="vfxlab">${esc(key)}</span><span class="vfxvals">
@@ -1823,13 +1823,13 @@ function lightSection(l) {
         `<option value="${o}"${(L[key] || options[0]) === o ? " selected" : ""}>${o}</option>`).join("")}</select></span></div>`;
   const rows = [
     sel("kind", ["ambient", "point", "spot", "parallel"],
-        "AE's four light kinds. Changing it keeps every other setting — keyframes included."),
+        "AE's four light kinds. Changing it keeps every other setting: keyframes included."),
   ];
   const c = Array.isArray(L.color) ? L.color : [255, 255, 255];
   rows.push(`<div class="vfxrow static"><span class="vfxlab">Colour</span><span class="vfxvals"><span class="vfxrgba" data-lightrgb="1">${
     ["r", "g", "b"].map((ch, i) => `<input type="number" min="0" max="255" step="1" data-ch="${i}" value="${num(c[i], 255)}" title="${ch}">`).join("")
   }<i class="vfxswatch" style="background:rgb(${num(c[0], 255)},${num(c[1], 255)},${num(c[2], 255)})"></i></span></span></div>`);
-  rows.push(dial("intensity", "Intensity", "Percent; 100 is full. Negative SUBTRACTS light — AE's hand-placed shadow.", 5));
+  rows.push(dial("intensity", "Intensity", "Percent; 100 is full. Negative SUBTRACTS light: AE's hand-placed shadow.", 5));
   if (has.includes("falloff")) {
     rows.push(sel("falloff", ["none", "smooth", "inverseSquare"],
       "none holds intensity forever; smooth ramps to nothing across falloffDistance; inverseSquare is the physical law, exact at radius."));
@@ -1845,18 +1845,18 @@ function lightSection(l) {
       : [Math.round((V.comp?.width || 1920) / 2), Math.round((V.comp?.height || 1080) / 2), 0];
     rows.push(`<div class="vfxrow static"><span class="vfxlab">Aim at</span><span class="vfxvals">${
       keyed(L.pointOfInterest)
-        ? `<input type="number" disabled placeholder="keyframed" title="Keyframed — edit light.pointOfInterest on the timeline">`
+        ? `<input type="number" disabled placeholder="keyframed" title="Keyframed: edit light.pointOfInterest on the timeline">`
         : ["x", "y", "z"].map((ch, i) =>
-            `<input type="number" data-lightpoi="${i}" value="${num(poi[i], 0)}" step="10" title="pointOfInterest ${ch}, comp px — where the ${kind === "parallel" ? "light travels toward" : "cone is aimed"}">`).join("")
+            `<input type="number" data-lightpoi="${i}" value="${num(poi[i], 0)}" step="10" title="pointOfInterest ${ch}, comp px: where the ${kind === "parallel" ? "light travels toward" : "cone is aimed"}">`).join("")
     }</span></div>`);
   }
   if (has.includes("shadow")) {
     rows.push(`<div class="vfxrow static"><span class="vfxlab">Shadows</span><span class="vfxvals">
-      <label class="edtool tog sm" title="Projects casting 3D layers' alpha onto the 3D layers behind them — each caster's material needs castsShadows on too. Costs one warp per caster per light."><input type="checkbox" data-lighttog="castsShadows"${L.castsShadows ? " checked" : ""}>cast</label></span></div>`);
+      <label class="edtool tog sm" title="Projects casting 3D layers' alpha onto the 3D layers behind them: each caster's material needs castsShadows on too. Costs one warp per caster per light."><input type="checkbox" data-lighttog="castsShadows"${L.castsShadows ? " checked" : ""}>cast</label></span></div>`);
     rows.push(dial("shadowDarkness", "Darkness", "How much light the umbra loses; 0 is no shadow at all.", 5));
-    rows.push(dial("shadowDiffusion", "Diffusion", "Blur on the shadow in comp px — a look control, uniform rather than a true penumbra.", 1));
+    rows.push(dial("shadowDiffusion", "Diffusion", "Blur on the shadow in comp px: a look control, uniform rather than a true penumbra.", 1));
   }
-  rows.push(`<p class="hint">Lights only touch layers with 3D on. The light's position (x, y, z) and every dial here keyframe on the timeline — this panel is the switches.</p>`);
+  rows.push(`<p class="hint">Lights only touch layers with 3D on. The light's position (x, y, z) and every dial here keyframe on the timeline: this panel is the switches.</p>`);
   return section("Light", rows.join(""));
 }
 
@@ -1874,7 +1874,7 @@ function materialSection(l) {
       <input type="checkbox" data-mattog="${k}"${val(k, d) ? " checked" : ""}>${label}</label>`;
   return section("Material", `
     <div class="vfxrow static"><span class="vfxlab">Surface</span><span class="vfxvals">
-      ${flag("acceptsLights", "lit", true, "Off returns the layer's own pixels untouched — a title card can sit in a lit scene at its authored brightness.")}
+      ${flag("acceptsLights", "lit", true, "Off returns the layer's own pixels untouched: a title card can sit in a lit scene at its authored brightness.")}
       ${flag("castsShadows", "casts", false, "Projects this layer's alpha onto the 3D layers that accept shadows. The light's own cast switch must be on too.")}
       ${flag("acceptsShadows", "receives", true, "Shadows may be drawn onto this layer.")}
     </span></div>
@@ -1927,7 +1927,7 @@ function shapeSection(l) {
   const bad = firstOutOfOrder(items);
   return section("Shape", `${pipelineStrip(items, bad)}
     ${items.map((it, i) => shapeItemHtml(l, it, i, items.length, bad)).join("")}
-    <p class="hint">This is the pipeline — what the items are and what order they run in. Every
+    <p class="hint">This is the pipeline: what the items are and what order they run in. Every
       parameter the engine animates is a row under <b>Shape</b> in the timeline, with a stopwatch,
       its value at the playhead and its keyframes: <code>set_prop</code> walks the item tree, so
       <code>shapes.2.end</code> and <code>shapes.1.items.0.size</code> both take keys.</p>`, add);
@@ -1955,7 +1955,7 @@ function pipelineStrip(items, bad) {
   return `<div class="vfxpipe out">${chips}</div>
     <p class="hint vfxwarnline"><b>${esc(before?.label || "")}</b> runs before <b>${esc(after?.label || "")}</b>,
       so it draws the path set as it stands and <b>${esc(after?.label || "")}</b> then has nothing left to
-      change. It renders — it just silently does nothing.
+      change. It renders: it just silently does nothing.
       <button class="edtool sm" type="button" id="vfxShapeSort">put in order</button></p>`;
 }
 
@@ -1977,8 +1977,8 @@ function shapeItemHtml(l, it, i, count, bad) {
         <input type="checkbox" data-sien="${i}"${it.enabled !== false ? " checked" : ""}></label>
       <b>${esc(spec?.label || type || "unknown")}</b>
       <span class="vfxfxgrp">${esc(it.name || "")}</span>
-      <button class="sttog" data-siup="${i}"${i === 0 ? " disabled" : ""} title="Earlier — it runs sooner">▲</button>
-      <button class="sttog" data-sidn="${i}"${i === count - 1 ? " disabled" : ""} title="Later — it runs after">▼</button>
+      <button class="sttog" data-siup="${i}"${i === 0 ? " disabled" : ""} title="Earlier: it runs sooner">▲</button>
+      <button class="sttog" data-sidn="${i}"${i === count - 1 ? " disabled" : ""} title="Later: it runs after">▼</button>
       <button class="sttog warn" data-sidel="${i}" title="Remove this item">✕</button>
     </header>
     ${open ? `<div class="vfxfxbody">${spec?.why ? `<p class="hint">${esc(spec.why)}</p>` : ""}${rows}</div>` : ""}
@@ -2041,7 +2041,7 @@ function shapeControl(i, name, ps, value, type) {
        * small control. JSON round-trips exactly what the python wrote, which is
        * the one thing that cannot be wrong. */
       return `<input type="text" class="vfxjson" ${at} data-json="1" value="${esc(JSON.stringify(value ?? null))}"
-        title="${esc(String(ps.type))} — edited as JSON">`;
+        title="${esc(String(ps.type))}: edited as JSON">`;
   }
 }
 
@@ -2068,12 +2068,12 @@ function layerSection(l) {
   const three = !!l.threeD;
   const ls = layers();
   const toggle = isCam
-    ? `<span class="vfxfxgrp">3D — a camera always is</span>`
+    ? `<span class="vfxfxgrp">3D: a camera always is</span>`
     : `<label class="edtool tog sm" title="Give this layer a Z, so a camera moves it">
          <input type="checkbox" id="vfxThreeD"${three ? " checked" : ""}>3D</label>`;
   return section("Compositing", `
     <div class="vfxrow static"><span class="vfxgutter"></span>
-      <span class="vfxlab" title="How this layer combines with everything under it${blendModesFromServer ? "" : ` — showing the ${BLEND_MODES.length} modes written into this page, because the catalog could not be read. The engine may render more than these.`}">Blend${blendModesFromServer ? "" : " *"}</span>
+      <span class="vfxlab" title="How this layer combines with everything under it${blendModesFromServer ? "" : `: showing the ${BLEND_MODES.length} modes written into this page, because the catalog could not be read. The engine may render more than these.`}">Blend${blendModesFromServer ? "" : " *"}</span>
       <span class="vfxvals"><select class="sel2 sm" data-blend="${esc(l.id)}">
         ${BLEND_MODES.map((b) => `<option value="${b}"${(l.blend || "normal") === b ? " selected" : ""}>${b}</option>`).join("")}
       </select></span></div>
@@ -2103,7 +2103,7 @@ function cameraNote() {
   if (!cams.length) return "No camera in this comp, so 3D layers are seen from straight on.";
   return cams.length === 1
     ? `Seen through "${cams[0].name || cams[0].id}".`
-    : `Seen through "${cams[0].name || cams[0].id}" — the topmost of ${cams.length} cameras is the one used.`;
+    : `Seen through "${cams[0].name || cams[0].id}": the topmost of ${cams.length} cameras is the one used.`;
 }
 
 /**
@@ -2151,7 +2151,7 @@ function cameraSection(l) {
     <span class="vfxgutter"></span><span class="vfxlab" title="${esc(tip)}">${esc(label)}${extra}</span>
     <span class="vfxvals">${keyed(c[k])
       ? `<input type="number" disabled placeholder="${hasExpr(c[k]) ? "expression" : "keyframed"}"
-           title="Animated — edit it on the timeline's Camera group (path camera.${k})">`
+           title="Animated: edit it on the timeline's Camera group (path camera.${k})">`
       : `<input type="number" data-cam="${k}" value="${num(evalProp(c[k], V.t), DEF[k] ?? 0)}" step="${step}">`
     }</span></div>`;
 
@@ -2159,50 +2159,50 @@ function cameraSection(l) {
   const aim = Array.isArray(evalProp(poi, V.t)) ? evalProp(poi, V.t) : null;
   const aimRow = poi === undefined
     ? `<div class="vfxrow static"><span class="vfxgutter"></span>
-        <span class="vfxlab" title="With no point of interest the lens does not turn at all — the camera is free and aimed by its X/Y/Z rotation instead.">Aim at</span>
-        <span class="vfxvals"><span class="vfxfxgrp">free — aimed by rotation</span>
+        <span class="vfxlab" title="With no point of interest the lens does not turn at all: the camera is free and aimed by its X/Y/Z rotation instead.">Aim at</span>
+        <span class="vfxvals"><span class="vfxfxgrp">free: aimed by rotation</span>
           <button class="edtool sm" type="button" id="vfxCamAimOn"
             title="Give it a point of interest at the centre of the comp; it then keyframes on the timeline, or takes an expression that parks it on a null.">aim it</button>
         </span></div>`
     : `<div class="vfxrow static"><span class="vfxgutter"></span>
         <span class="vfxlab" title="The spot in comp pixels the lens looks at. An expression here is how a camera follows a null that moves beside the subject.">Aim at</span>
         <span class="vfxvals">${keyed(poi)
-          ? `<span class="vfxfxgrp">${hasExpr(poi) ? "expression" : "keyframed"} — on the timeline</span>`
+          ? `<span class="vfxfxgrp">${hasExpr(poi) ? "expression" : "keyframed"}: on the timeline</span>`
           : ["x", "y", "z"].map((ch, k) =>
               `<input type="number" data-campoi="${k}" value="${num(aim?.[k], 0)}" step="10" title="pointOfInterest ${ch}, comp px">`).join("")}
           <button class="edtool sm warn" type="button" id="vfxCamAimOff"
-            title="Back to a free camera — the lens stops turning and its X/Y/Z rotation aims it instead.">free</button>
+            title="Back to a free camera: the lens stops turning and its X/Y/Z rotation aims it instead.">free</button>
         </span></div>`;
 
   return section("Camera", `
     <div class="vfxrow static"><span class="vfxgutter"></span>
-      <span class="vfxlab" title="One lens, two spellings: pixels from the film plane, or millimetres on 36mm film. The engine reads millimetres only when there is no pixel value, so a camera keeps exactly one of them — switching converts and retires the other.">Lens</span>
+      <span class="vfxlab" title="One lens, two spellings: pixels from the film plane, or millimetres on 36mm film. The engine reads millimetres only when there is no pixel value, so a camera keeps exactly one of them: switching converts and retires the other.">Lens</span>
       <span class="vfxvals">
         <select class="sel2 sm" id="vfxCamLens" title="Which spelling this camera's lens is written in.">
           <option value="zoom"${mm ? "" : " selected"}>pixels</option>
           <option value="focalLength"${mm ? " selected" : ""}>millimetres</option>
         </select>
       </span></div>
-    ${mm ? row("focalLength", "Focal length", "Millimetres on 36mm film — 50 is a normal lens, 24 wide, 85 long.", "<i>mm</i>")
-         : row("zoom", "Zoom", "Distance from the film plane in pixels — larger is a longer lens.", "<i>px</i>", 10)}
+    ${mm ? row("focalLength", "Focal length", "Millimetres on 36mm film: 50 is a normal lens, 24 wide, 85 long.", "<i>mm</i>")
+         : row("zoom", "Zoom", "Distance from the film plane in pixels: larger is a longer lens.", "<i>px</i>", 10)}
     ${aimRow}
     <div class="vfxrow static"><span class="vfxgutter"></span>
       <span class="vfxlab" title="Off, everything is sharp whatever its Z. It keyframes: a hold key on it cuts focus mid-shot.">Depth of field</span>
       <span class="vfxvals">${keyed(c.depthOfField)
-        ? `<span class="vfxfxgrp">${hasExpr(c.depthOfField) ? "expression" : "keyframed"} — on the timeline</span>`
+        ? `<span class="vfxfxgrp">${hasExpr(c.depthOfField) ? "expression" : "keyframed"}: on the timeline</span>`
         : `<label class="edtool tog sm"><input type="checkbox" data-cam="depthOfField"${c.depthOfField ? " checked" : ""}>${c.depthOfField ? "on" : "off"}</label>`
       }</span></div>
     ${row("aperture", "Aperture", "Bigger blurs harder either side of the focus distance.", "", 5)}
     ${row("focusDistance", "Focus at", "The distance that comes out sharp. Keyframe it and you have a rack focus.", "<i>px</i>", 10)}
     ${row("blurLevel", "Blur level", "How strongly depth of field blurs, in percent. 0 is no blur at any depth.", "<i>%</i>", 5)}
     <p class="hint">${above
-      ? "There is another camera above this one in the stack, and the topmost camera is the one a comp uses — so this one is not looking at anything. Move it up to use it."
+      ? "There is another camera above this one in the stack, and the topmost camera is the one a comp uses: so this one is not looking at anything. Move it up to use it."
       : "The topmost camera in the stack is the one the comp uses, and this is it. Only layers with 3D on respond to it."}</p>
     <p class="hint">Every field here is also a row under <b>Camera</b> in the timeline, with a
       stopwatch: that is where a rack focus, an animated lens or a moving aim gets keyframed. The
       position and rotation are under <b>Transform</b>, as on any layer.</p>`,
     `<button class="edtool sm" type="button" id="vfxCamMoves"
-       title="Build a camera move — the camera and the aim null it looks at, already wired to a subject">moves…</button>`);
+       title="Build a camera move: the camera and the aim null it looks at, already wired to a subject">moves…</button>`);
 }
 
 /**
@@ -2226,7 +2226,7 @@ async function cameraMoveSheet(l) {
       ${first}${rows.map((x) => `<option value="${esc(x.id)}"${x.id === l.id ? " selected" : ""}>${esc(x.name || x.id)}</option>`).join("")}
     </select>`;
   overlay(`<h3>Camera moves</h3>
-    <p class="hint">Each move builds the whole rig — the camera AND the null it aims at, already
+    <p class="hint">Each move builds the whole rig: the camera AND the null it aims at, already
       wired to the subject. Everything it makes is ordinary layers, keyframes and expressions, so
       you can re-time or re-aim it afterwards like anything else. Aiming at a null rather than at
       the subject is the point: it is what lets the subject ride off-centre instead of being pinned
@@ -2304,7 +2304,7 @@ function nestedSection(l) {
       <span class="vfxlab" title="Rasterise the child at the size it is displayed at, rather than at its own size">Collapse</span>
       <span class="vfxvals"><label class="edtool tog sm"><input type="checkbox" id="vfxCollapse"${l.collapse ? " checked" : ""}>${l.collapse ? "continuous" : "at its own size"}</label></span></div>
     ${l.collapse && heavy ? `<p class="hint vfxwarnline">This layer has an effect, a mask or a matte on it,
-      and each of those forces a raster at comp size — so collapse is ignored here, exactly as it is
+      and each of those forces a raster at comp size, so collapse is ignored here, exactly as it is
       in After Effects.</p>` : ""}
     ${child ? `<p class="hint">Nesting <b>${esc(child.name || child.slug)}</b> —
       ${child.width}×${child.height}, ${child.duration}s, ${child.layers ?? 0} layers.
@@ -2389,7 +2389,7 @@ function effectsSection(l) {
      * this line is the entire body. */
     const animN = Object.values(params).filter((ps) => ps.animatable).length;
     const moved = animN
-      ? `<p class="hint">${animN} animatable parameter${animN === 1 ? "" : "s"} — ${animN === 1 ? "it is a row" : "they are rows"}
+      ? `<p class="hint">${animN} animatable parameter${animN === 1 ? "" : "s"}: ${animN === 1 ? "it is a row" : "they are rows"}
          under <b>Effects › ${esc(spec?.label || e.type)}</b> in the timeline, with ${animN === 1 ? "its" : "their"}
          stopwatch and keyframes.</p>`
       : "";
@@ -2458,7 +2458,7 @@ function fxControl(fxId, name, ps, value, type) {
        * of. JSON in a box is ugly and it is also the only thing that cannot be
        * wrong — the value round-trips exactly as the python wrote it. */
       return `<input type="text" class="vfxjson" ${at} data-json="1" value="${esc(JSON.stringify(value ?? null))}"
-        title="Unknown parameter type &quot;${esc(String(ps.type))}&quot; — edited as JSON">`;
+        title="Unknown parameter type &quot;${esc(String(ps.type))}&quot;: edited as JSON">`;
   }
 }
 
@@ -2493,7 +2493,7 @@ function matteSection(l) {
         <select class="sel2 sm" id="vfxMatte">${MATTES.map(([v, lab]) =>
           `<option value="${v}"${(l.trackMatte?.type || "") === v ? " selected" : ""}>${esc(lab)}</option>`).join("")}
         </select></span></div>
-      <p class="hint">Taken from <b>${esc(donor.name || donor.id)}</b> — the layer directly above,
+      <p class="hint">Taken from <b>${esc(donor.name || donor.id)}</b>: the layer directly above,
         which is how After Effects decides it. Reorder the stack and the donor changes.</p>`
     : `<p class="hint">This layer is at the top of the stack, so there is nothing above it to
         cut it out with. Move it down and a matte becomes available.</p>`;
@@ -2557,38 +2557,38 @@ function paintTransport() {
     <label class="edtool sl sm" title="What a preview renders at while playing or scrubbing. Releasing the playhead settles back to full quality.">preview
       <select class="sel2 sm" id="vfxPvScale">${PREVIEW_SCALES.map(([v, lab, why]) =>
         `<option value="${v}"${String(p.scale) === v ? " selected" : ""} title="${esc(why)}">${lab}</option>`).join("")}</select></label>
-    <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths while previewing — the single biggest saving, and the one that changes the picture most">
+    <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths while previewing: the single biggest saving, and the one that changes the picture most">
       <input type="checkbox" id="vfxPvDraft"${p.draft ? " checked" : ""}>draft</label>
     <span class="vfxrate" title="${seen ? "Measured displayed frames per second, including scheduling waits. Timeline speed stays constant even when frames are skipped." : "Play to measure displayed frames per second."}">${
       seen ? `${seen.toFixed(1)} fps` : "— fps"}</span>
     <span class="vfxtransport-extra">
-    <label class="edtool sl sm" title="Look at the scene from a workspace view instead of the comp's camera. Only 3D layers change — 2D layers hold their place in every view, as in AE. The render always uses the active camera.">3D view
+    <label class="edtool sl sm" title="Look at the scene from a workspace view instead of the comp's camera. Only 3D layers change: 2D layers hold their place in every view, as in AE. The render always uses the active camera.">3D view
       <select class="sel2 sm" id="vfxView">${VIEWS.map(([v, lab]) =>
         `<option value="${v}"${(V.view?.name || "") === v ? " selected" : ""}>${lab}</option>`).join("")}</select></label>
     ${V.view?.name === "orbit" ? `
-      <label class="edtool sl sm" title="Orbit yaw — degrees around the vertical axis">y<input type="number" class="vfxorbit" id="vfxYaw" value="${num(V.view.yaw, 30)}" step="5"></label>
-      <label class="edtool sl sm" title="Orbit pitch — negative looks from above">p<input type="number" class="vfxorbit" id="vfxPitch" value="${num(V.view.pitch, -25)}" step="5"></label>` : ""}
+      <label class="edtool sl sm" title="Orbit yaw: degrees around the vertical axis">y<input type="number" class="vfxorbit" id="vfxYaw" value="${num(V.view.yaw, 30)}" step="5"></label>
+      <label class="edtool sl sm" title="Orbit pitch: negative looks from above">p<input type="number" class="vfxorbit" id="vfxPitch" value="${num(V.view.pitch, -25)}" step="5"></label>` : ""}
     <button class="edtool sm${V.gizmo ? " on" : ""}" type="button" id="vfxGizTog"
-      title="The transform gizmo and wireframes — the selected layer's axes and outline, camera frustums, light cones. Drag the axes or the anchor to move the layer; the geometry comes from the engine's own projection.">⌖ gizmo</button>
+      title="The transform gizmo and wireframes: the selected layer's axes and outline, camera frustums, light cones. Drag the axes or the anchor to move the layer; the geometry comes from the engine's own projection.">⌖ gizmo</button>
     <button class="edtool sm${V.info ? " on" : ""}" type="button" id="vfxInfoTog"
-      title="Info — the RGBA under the cursor, read off the server-rendered frame">ⓘ info</button>
+      title="Info: the RGBA under the cursor, read off the server-rendered frame">ⓘ info</button>
     <button class="edtool sm${V.graph ? " on" : ""}" type="button" id="vfxGraphTog"
-      title="The graph editor — keyframe values and the curve between them, with handles you can shape">◠ graph</button>
+      title="The graph editor: keyframe values and the curve between them, with handles you can shape">◠ graph</button>
     <button class="edtool sm${V.motionPath ? " on" : ""}" type="button" id="vfxPathTog"
       title="Draw the selected layer's position track over the picture, with its spatial handles">⌒ path</button>
     <button class="edtool sm${V.ws.rulers ? " on" : ""}" type="button" id="vfxRulTog"
-      title="Rulers along the viewer's top and left edges, in comp pixels. Drag one into the picture to drop a guide; double-click for an exact position. Rulers measure the COMP RASTER — the rendered image — which is view-independent, so they stay correct in orbit views too.">⊾ rulers</button>
+      title="Rulers along the viewer's top and left edges, in comp pixels. Drag one into the picture to drop a guide; double-click for an exact position. Rulers measure the COMP RASTER (the rendered image), which is view-independent, so they stay correct in orbit views too.">⊾ rulers</button>
     <button class="edtool sm${V.ws.guides ? " on" : ""}" type="button" id="vfxGuideTog"
-      title="Show or hide the guides. The guides themselves live in the comp document — they survive reload and travel with the comp — and this switch is only whether YOU see them.">▤ guides</button>
+      title="Show or hide the guides. The guides themselves live in the comp document (they survive reload and travel with the comp) and this switch is only whether YOU see them.">▤ guides</button>
     ${V.ws.guides ? `<button class="edtool sm${V.ws.lock ? " on" : ""}" type="button" id="vfxGuideLock"
       title="Lock the guides so a drag cannot move or delete them. New guides can still be pulled from the rulers, as in AE. Locked guides also stop catching the pointer, so nothing under one becomes unclickable.">⚿ ${V.ws.lock ? "locked" : "lock"}</button>` : ""}
     <button class="edtool sm${V.ws.grid ? " on" : ""}" type="button" id="vfxGridTog"
-      title="A comp-space grid over the picture. Spacing and subdivisions appear beside this button while it is on. View furniture only — never rendered, never saved in the comp.">⊞ grid</button>
+      title="A comp-space grid over the picture. Spacing and subdivisions appear beside this button while it is on. View furniture only: never rendered, never saved in the comp.">⊞ grid</button>
     ${V.ws.grid ? `
       <label class="edtool sl sm" title="Grid spacing, comp pixels">px<input type="number" class="vfxgridin" id="vfxGridSize" value="${num(V.ws.gridSize, 100)}" min="4" max="4096" step="10"></label>
       <label class="edtool sl sm" title="Subdivisions per grid square">÷<input type="number" class="vfxgridin" id="vfxGridDivs" value="${num(V.ws.gridDivs, 4)}" min="1" max="12" step="1"></label>` : ""}
     <button class="edtool sm${V.ws.safe ? " on" : ""}" type="button" id="vfxSafeTog"
-      title="Title/action safe — the broadcast 90% action-safe and 80% title-safe rectangles plus the centre cross, drawn from the comp's own dimensions.">▣ safe</button>
+      title="Title/action safe: the broadcast 90% action-safe and 80% title-safe rectangles plus the centre cross, drawn from the comp's own dimensions.">▣ safe</button>
     <button class="edtool sm${V.ws.snap ? " on" : ""}" type="button" id="vfxSnapTog"
       title="Snap a layer drag to guides, the grid, the comp centre and the comp edges, within about 6 screen pixels. Hold Ctrl while dragging to pass through without snapping.">⌁ snap</button>
     <button class="edtool sm" type="button" id="vfxIn" title="Set the work area start to the playhead">in ${fmtT(V.inT)}</button>
@@ -2687,7 +2687,7 @@ async function play() {
     const prepared = await previewAudio.play({ slug: V.slug, revision: V.comp.updatedAt, time: V.t, from: V.inT, to: V.outT ?? dur() });
     if (token === V.playToken) V.playHasAudio = prepared.hasAudio;
   } catch (error) {
-    if (token === V.playToken) { stop(); note(`Audio preview could not start — ${error.message || error}`); }
+    if (token === V.playToken) { stop(); note(`Audio preview could not start: ${error.message || error}`); }
     return;
   }
   if (!V.playing || token !== V.playToken) return;
@@ -3000,7 +3000,7 @@ function valueBoxes(l, p) {
   if (p.kind === "array") {
     return `<input type="text" class="vfxtvarr" data-tvarr="${esc(p.path)}" spellcheck="false"
       value="${esc(Array.isArray(val) ? val.join(", ") : String(val ?? ""))}"
-      title="A list of numbers, comma separated — set_prop refuses an empty one.">`;
+      title="A list of numbers, comma separated: set_prop refuses an empty one.">`;
   }
   const lo = p.range ? p.range[0] : null, hi = p.range ? p.range[1] : null;
   return Array.from({ length: n }, (_, i) => {
@@ -3066,14 +3066,14 @@ function layerHeadHtml(l, solo) {
       title="${open ? "Hide this layer's properties" : "Show every property this layer can animate"}">${open ? "▾" : "▸"}</button>
     <button class="vfxlblsw${(l.label || "none") === "none" ? " empty" : ""}" data-labelpick="${esc(l.id)}"
       style="--lbl:${LABEL_HEX[l.label] || "transparent"}"
-      title="Label colour${l.label && l.label !== "none" ? `: ${esc(l.label)}` : ""} — organisation only, never rendered"></button>
+      title="Label colour${l.label && l.label !== "none" ? `: ${esc(l.label)}` : ""}: organisation only, never rendered"></button>
     <button class="sttog${l.enabled ? " on" : ""}" data-tog="enabled" data-lid="${esc(l.id)}" title="Visible">👁</button>
-    <button class="sttog solo${l.solo ? " on solo" : ""}" data-tog="solo" data-lid="${esc(l.id)}" title="Solo — hides every layer that is not soloed">S</button>
-    <button class="sttog${l.locked ? " on" : ""}" data-tog="locked" data-lid="${esc(l.id)}" title="Locked — no edits, no selection changes">🔒</button>
+    <button class="sttog solo${l.solo ? " on solo" : ""}" data-tog="solo" data-lid="${esc(l.id)}" title="Solo: hides every layer that is not soloed">S</button>
+    <button class="sttog${l.locked ? " on" : ""}" data-tog="locked" data-lid="${esc(l.id)}" title="Locked: no edits, no selection changes">🔒</button>
     <button class="sttog shy${l.shy ? " on" : ""}" data-tog="shy" data-lid="${esc(l.id)}"
-      title="Shy — hidden from the timeline while the comp's hide-shy switch (top corner) is on. Still renders.">🙈</button>
+      title="Shy: hidden from the timeline while the comp's hide-shy switch (top corner) is on. Still renders.">🙈</button>
     ${["audio", "video", "comp"].includes(l.type) ? `<button class="sttog${l.audio !== false ? " on" : ""}" data-tog="audio" data-lid="${esc(l.id)}"
-      title="${l.audio !== false ? "Audio on — this layer's sound reaches a movie render. Click to mute." : "Muted — the picture still renders; the mix skips this layer."}">🔊</button>` : ""}
+      title="${l.audio !== false ? "Audio on (this layer's sound reaches a movie render. Click to mute." : "Muted) the picture still renders; the mix skips this layer."}">🔊</button>` : ""}
     <span class="vfxglyph" title="${esc(l.type)}">${GLYPH[l.type] || "?"}</span>
     <span class="vfxlname" data-rename="${esc(l.id)}" title="Double-click to rename">${esc(l.name || l.id)}</span>
     ${l.parent ? `<i class="vfxptag" title="Parented to &quot;${esc(layerOf(l.parent)?.name || l.parent)}&quot;">⇱</i>` : ""}
@@ -3127,18 +3127,18 @@ function propHeadHtml(r) {
        style="height:${ROW_H.prop}px;padding-left:${8 + r.depth * 11}px" data-prop="${esc(id)}" title="${esc(p.path)}">
     <button class="vfxwatch${anim ? " on" : ""}" data-watch="${esc(id)}"
       title="${anim
-        ? "Animated — changing a value writes a keyframe at the playhead. Click to freeze it at what it is worth here."
+        ? "Animated: changing a value writes a keyframe at the playhead. Click to freeze it at what it is worth here."
         : "Constant. Click to animate: a keyframe is written at the playhead and every later change adds another."}">⏱</button>
     <button class="vfxfxbtn${ex ? " on" : ""}" data-exprbtn="${esc(id)}"
-      title="${ex ? `ƒ ${esc(ex)} — click to edit or remove it` : "Add an expression — it runs every frame, on top of whatever this property already is"}">ƒx</button>
+      title="${ex ? `ƒ ${esc(ex)} (click to edit or remove it` : "Add an expression) it runs every frame, on top of whatever this property already is"}">ƒx</button>
     <span class="vfxlabel">${esc(r.label)}</span>
     <span class="vfxtvals">${valueBoxes(l, p)}</span>
     <button class="vfxkeyat${at ? " on" : ""}${anim ? "" : " off"}" data-keyat="${esc(id)}"
-      title="${!anim ? "Not animated yet — the stopwatch to the left starts it"
-        : at ? "There is a keyframe here — click to remove it" : "No keyframe at the playhead — click to add one"}">◆</button>
+      title="${!anim ? "Not animated yet: the stopwatch to the left starts it"
+        : at ? "There is a keyframe here (click to remove it" : "No keyframe at the playhead) click to add one"}">◆</button>
     <button class="vfxgopen${anim ? "" : " off"}" data-gopen="${esc(id)}"
       title="${anim ? "Shape this property's curve in the graph editor, without leaving the row it is on"
-        : "Nothing to shape yet — a curve needs keyframes"}">◠</button>
+        : "Nothing to shape yet: a curve needs keyframes"}">◠</button>
   </div>`;
 }
 
@@ -3163,14 +3163,14 @@ function paintTimeline() {
           <span>${ls.length ? `${ls.length}L` : ""}</span>
           <button class="edtool sm${V.comp?.hideShy ? " on" : ""}" type="button" id="vfxHideShy"
             title="${V.comp?.hideShy
-              ? `Showing everything again — ${ls.filter((x) => x.shy).length} layer(s) are marked shy`
+              ? `Showing everything again: ${ls.filter((x) => x.shy).length} layer(s) are marked shy`
               : "Hide the shy layers from the timeline (they still render). Mark a layer shy with its 🙈 switch."}">🙈${
               V.comp?.hideShy && ls.some((x) => x.shy) ? ` ${ls.filter((x) => x.shy).length}` : ""}</button>
-          <label class="vfxzoom" title="Timeline zoom — how many pixels a second is worth">
+          <label class="vfxzoom" title="Timeline zoom: how many pixels a second is worth">
             <input type="range" id="vfxZoom" min="20" max="400" step="10" value="${V.pps}"></label>
         </div>
         ${rows.map((r) => headHtml(r, solo)).join("")}
-        ${ls.length ? "" : `<div class="vfxtlempty"><p class="hint">No layers. Press <b>＋ layer</b> — an image
+        ${ls.length ? "" : `<div class="vfxtlempty"><p class="hint">No layers. Press <b>＋ layer</b>: an image
           or a video comes from the library, a solid or a text layer is made here, an adjustment layer
           applies its effects to everything beneath it, and a null exists only to be a parent.</p></div>`}
       </div>
@@ -3260,13 +3260,13 @@ function propLaneHtml(l, path) {
   const graphed = V.graph?.layerId === l.id && V.graph?.path === path;
   return `<div class="vfxlane prop${expr ? " expr" : ""}${graphed ? " graphed" : ""}"
        style="height:${ROW_H.prop}px" data-lane="${esc(l.id)}" data-proplane="${esc(l.id)}|${esc(path)}"
-       ${expr ? `title="Driven by ${esc(expr)} — an expression has no keyframes to draw"` : ""}>
+       ${expr ? `title="Driven by ${esc(expr)}: an expression has no keyframes to draw"` : ""}>
     ${ks.map((k, i) => `<i class="vfxkey${Math.abs(k.t - V.t) < 1e-4 ? " at" : ""}${k.ease === "hold" ? " hold" : ""}${
         V.ksel.has(keyId(l.id, path, k.t)) ? " sel" : ""}${k.roving ? " roving" : ""}${(k.to || k.ti) ? " spatial" : ""}"
         data-key="${esc(l.id)}" data-kpath="${esc(path)}" data-ki="${i}"
         style="left:${num(k.t) * V.pps}px"
         title="${fmtT(num(k.t))} · ${esc(typeof k.ease === "object" ? "bezier" : (k.ease || "linear"))}${
-          k.roving ? " · roving" : ""}${(k.to || k.ti) ? " · spatial handle" : ""} — drag to retime, click to select, double-click to delete, right-click for easing"></i>`).join("")}
+          k.roving ? " · roving" : ""}${(k.to || k.ti) ? " · spatial handle" : ""}: drag to retime, click to select, double-click to delete, right-click for easing"></i>`).join("")}
   </div>`;
 }
 
@@ -3554,7 +3554,7 @@ async function toggleGraph() {
   await propRowsFor(l.id);
   const rows = graphablePaths(l);
   if (!rows.length) {
-    return note(`"${l.name || l.id}" has no keyframed property yet — twirl it open in the timeline `
+    return note(`"${l.name || l.id}" has no keyframed property yet: twirl it open in the timeline `
       + `and press a stopwatch; the ◠ on that row opens the graph on it.`);
   }
   openGraph(l.id, rows[0].path);
@@ -3625,7 +3625,7 @@ function paintGraph() {
   const axes = arity > 1 && !speed
     ? `<span class="vfxgaxes">${["x", "y", "z"].slice(0, arity).map((a, i) =>
         `<button type="button" class="vfxgchip sm${i === ci ? " on" : ""}" data-gcomp="${i}"
-          title="Which component the keys and handles are drawn for. The easing is ONE curve shared by every component — shaping it here shapes all of them.">${a}</button>`).join("")}</span>`
+          title="Which component the keys and handles are drawn for. The easing is ONE curve shared by every component: shaping it here shapes all of them.">${a}</button>`).join("")}</span>`
     : "";
 
   box.innerHTML = `
@@ -3633,7 +3633,7 @@ function paintGraph() {
       <div class="vfxgraphside">
         <div class="vfxgtabs">
           <button type="button" class="vfxgchip${speed ? "" : " on"}" data-gmode="value"
-            title="Value against time — the curve the renderer produces">value</button>
+            title="Value against time: the curve the renderer produces">value</button>
           <button type="button" class="vfxgchip${speed ? " on" : ""}" data-gmode="speed"
             title="How fast the value is changing. Read-only: speed is a consequence of the curve, and the document stores the curve.">speed</button>
           <button type="button" class="vfxgclose" id="vfxGraphX" title="Close the graph editor">✕</button>
@@ -3730,7 +3730,7 @@ function graphHandles(s, _n, ks, l, g) {
   if (many && !near) return "";
   const flat = Math.abs(s.dv) < 1e-9;
   const tip = flat
-    ? "This segment ends where it began, so the handle only means timing — there is no value for its height to describe."
+    ? "This segment ends where it began, so the handle only means timing: there is no value for its height to describe."
     : "Drag to shape the curve. Time is pinned inside the segment (the server refuses a bezier that runs backwards); height is free, and past the ends it overshoots.";
   const h = (p, kind, cls) => `
     <line class="vfxghline" x1="${(kind === "out" ? s.t0 : s.t1) * V.pps}" y1="${yOf(kind === "out" ? s.v0 : s.v0 + s.dv)}"
@@ -3745,9 +3745,9 @@ function graphKey(k, i, ci, l, g) {
   const x = num(k.t) * V.pps, y = yOf(compAt(k.v, ci));
   const rove = k.roving ? " roving" : "";
   const tip = `${fmtT(num(k.t))} · ${fmtV(compAt(k.v, ci))}`
-    + `${k.roving ? " · roving — the engine chooses this time to keep the speed even" : ""}`
+    + `${k.roving ? " · roving: the engine chooses this time to keep the speed even" : ""}`
     + `${(k.to || k.ti) ? " · has a spatial handle" : ""}`
-    + ` — drag to retime and revalue, click to select, double-click to remove`;
+    + `: drag to retime and revalue, click to select, double-click to remove`;
   return `<rect class="vfxgkey${on ? " on" : ""}${rove}" data-gk="${i}" x="${x - 4.5}" y="${y - 4.5}"
       width="9" height="9" transform="rotate(45 ${x} ${y})"><title>${esc(tip)}</title></rect>`;
 }
@@ -3774,7 +3774,7 @@ function graphInspector(l, g, ks, arity, ci) {
   if (!sel.length) {
     return `<div class="vfxgraphfoot"><p class="hint">Click a keyframe to shape it. Drag one to retime and revalue it;
       drag a round handle to bend the segment leaving it. ${g.mode === "speed"
-        ? "The speed graph is drawn, not authored — it is what the value curve implies."
+        ? "The speed graph is drawn, not authored: it is what the value curve implies."
         : "Shift while dragging keeps the time and moves only the value."}</p></div>`;
   }
   if (sel.length > 1) {
@@ -3782,7 +3782,7 @@ function graphInspector(l, g, ks, arity, ci) {
       <span class="vfxglab">${sel.length} keyframes</span>
       ${easeButtons("")}
       <button class="edtool sm" type="button" data-gsmooth="1"
-        title="Give each one a spatial tangent computed from its neighbours — the smooth default AE calls auto-bezier. Visible on the motion path over the picture.">smooth</button>
+        title="Give each one a spatial tangent computed from its neighbours: the smooth default AE calls auto-bezier. Visible on the motion path over the picture.">smooth</button>
       <button class="edtool sm" type="button" data-grove="1"
         title="Let the engine choose these keys' times so the speed between the anchors is even. Interior keys only.">rove</button>
       <button class="edtool sm warn" type="button" data-gdel="1">remove</button>
@@ -3801,19 +3801,19 @@ function graphInspector(l, g, ks, arity, ci) {
     <label class="vfxfield">t<input type="number" class="vfxgnum" id="vfxGkT" value="${num(k.t).toFixed(3)}" step="${(1 / fps()).toFixed(4)}"></label>
     <label class="vfxfield">v${vals}</label>
     ${last
-      ? `<span class="hint vfxgnote">The last key has nothing after it, so it has no easing — easing describes the segment LEAVING a key.</span>`
+      ? `<span class="hint vfxgnote">The last key has nothing after it, so it has no easing: easing describes the segment LEAVING a key.</span>`
       : `${easeButtons(typeof ease === "string" ? ease : isBez ? "bezier" : "linear")}
-         ${bez ? `<label class="vfxfield" title="x1 y1 x2 y2 — the CSS control points. x is pinned to 0..1 by the server; y is free, and outside 0..1 the segment overshoots.">bez${
+         ${bez ? `<label class="vfxfield" title="x1 y1 x2 y2: the CSS control points. x is pinned to 0..1 by the server; y is free, and outside 0..1 the segment overshoots.">bez${
            bez.map((n, c) => `<input type="number" class="vfxgnum" data-gbez="${c}" value="${Math.round(n * 1000) / 1000}" step="0.05"
              ${c % 2 === 0 ? `min="0" max="1"` : ""}>`).join("")}</label>`
-           : `<span class="hint vfxgnote">A hold has no curve to shape — it steps.</span>`}`}
+           : `<span class="hint vfxgnote">A hold has no curve to shape: it steps.</span>`}`}
     <label class="edtool tog sm" title="${interior
       ? "The engine picks this key's time so the distance covered per second is even between the anchors either side. Its VALUE is untouched."
-      : "The first and last keyframes are the anchors a roving key moves between, so they cannot rove — the server refuses it."}">
+      : "The first and last keyframes are the anchors a roving key moves between, so they cannot rove: the server refuses it."}">
       <input type="checkbox" id="vfxGkRove"${k.roving ? " checked" : ""}${interior ? "" : " disabled"}>rove</label>
     ${arity > 1 ? `<button class="edtool sm" type="button" data-gsmooth="1"
       title="Compute this key's spatial tangents from its neighbours. Drag them on the motion path over the picture.">smooth</button>` : ""}
-    ${(k.to || k.ti) ? `<span class="vfxgtan" title="Spatial tangents — offsets from this key's own value. The picture is where they are shaped.">
+    ${(k.to || k.ti) ? `<span class="vfxgtan" title="Spatial tangents: offsets from this key's own value. The picture is where they are shaped.">
       to ${k.to ? k.to.map((n) => fmtV(n)).join(",") : "—"} · ti ${k.ti ? k.ti.map((n) => fmtV(n)).join(",") : "—"}</span>` : ""}
     <button class="edtool sm warn" type="button" data-gdel="1">remove</button>
   </div>`;
@@ -3822,7 +3822,7 @@ function graphInspector(l, g, ks, arity, ci) {
 function easeButtons(cur) {
   return `<span class="vfxgeases">${EASES.map((e) =>
     `<button type="button" class="vfxgchip sm${e === cur ? " on" : ""}" data-gease="${e}"
-      title="${e === "hold" ? "Step: this key holds its value until the next one." : `Apply ${e} to the segment leaving the selected key${cur === "bezier" ? " — this replaces the shaped curve" : ""}.`}">${e}</button>`).join("")
+      title="${e === "hold" ? "Step: this key holds its value until the next one." : `Apply ${e} to the segment leaving the selected key${cur === "bezier" ? ": this replaces the shaped curve" : ""}.`}">${e}</button>`).join("")
     }${cur === "bezier" ? `<i class="vfxgchip on sm" title="This segment carries its own four control points.">bezier</i>` : ""}</span>`;
 }
 
@@ -3946,7 +3946,7 @@ function wireGraphDrags(l, g, ks, arity, ci) {
       if (!e.shiftKey) { V.ksel.clear(); paintGraph(); }
       return;
     }
-    if (g.mode === "speed") return note("The speed graph is drawn from the value curve — shape the value curve and the speed follows.");
+    if (g.mode === "speed") return note("The speed graph is drawn from the value curve: shape the value curve and the speed follows.");
     if (kel) {
       const i = +kel.dataset.gk;
       const id = keyId(l.id, g.path, ks[i].t);
@@ -4125,7 +4125,7 @@ function autoTangents(ks) {
 
 function smoothKeys(l, path, ks, sel) {
   if (keyArity(ks) < 2) {
-    return note("A spatial tangent is a direction in the picture, so it only means something on a property with at least two components — a position or a scale, not an opacity.");
+    return note("A spatial tangent is a direction in the picture, so it only means something on a property with at least two components: a position or a scale, not an opacity.");
   }
   const tan = autoTangents(ks);
   const want = new Set(sel.length ? sel : ks.map((_, i) => i));
@@ -4216,11 +4216,11 @@ function paintMotionPath() {
       const h = [p[0] + num(off[0]), p[1] + num(off[1])];
       out.push(`<line class="vfxmpline" x1="${p[0]}" y1="${p[1]}" x2="${h[0]}" y2="${h[1]}"></line>
         <circle class="vfxmph${has ? "" : " ghost"}" data-mp="h:${i}:${which}" cx="${h[0]}" cy="${h[1]}" r="${5 * k}">
-          <title>${which === "to" ? "Leaving" : "Arriving at"} keyframe ${i + 1} — drag to bend the path${has ? "" : " (this key has no tangent yet; dragging makes one)"}. Hold Alt to move this handle alone.</title></circle>`);
+          <title>${which === "to" ? "Leaving" : "Arriving at"} keyframe ${i + 1}: drag to bend the path${has ? "" : " (this key has no tangent yet; dragging makes one)"}. Hold Alt to move this handle alone.</title></circle>`);
     }
     return out.join("") + `<circle class="vfxmpkey${V.ksel.has(keyId(l.id, MP_PROP, key.t)) ? " on" : ""}"
       data-mp="k:${i}" cx="${p[0]}" cy="${p[1]}" r="${4.5 * k}">
-      <title>Keyframe ${i + 1} at ${fmtT(num(key.t))} — drag to move it in space.</title></circle>`;
+      <title>Keyframe ${i + 1} at ${fmtT(num(key.t))}: drag to move it in space.</title></circle>`;
   }).join("");
 
   svg.innerHTML = `<path class="vfxmppath" d="${d}"></path>${dots.join("")}${handles}`;
@@ -4417,7 +4417,7 @@ function paintGizmo() {
     const parts = [];
     if (s.outline) {
       parts.push(`<polygon class="vfxgzoutline" data-gz="body"
-        points="${s.outline.map((p) => `${p[0]},${p[1]}`).join(" ")}"><title>${esc(s.name)} — drag to move in the view plane</title></polygon>`);
+        points="${s.outline.map((p) => `${p[0]},${p[1]}`).join(" ")}"><title>${esc(s.name)}: drag to move in the view plane</title></polygon>`);
     }
     for (const a of s.axes || []) {
       if (a.degenerate) continue;
@@ -4425,7 +4425,7 @@ function paintGizmo() {
           x1="${a.from[0]}" y1="${a.from[1]}" x2="${a.to[0]}" y2="${a.to[1]}"></line>
         <circle class="vfxgzhandle" data-gz="axis:${a.axis}" fill="${AXIS_COLOR[a.axis]}"
           cx="${a.to[0]}" cy="${a.to[1]}" r="${5 * k}">
-          <title>Move along ${a.axis.toUpperCase()} — the layer's own axis, unprojected by the server</title></circle>`);
+          <title>Move along ${a.axis.toUpperCase()}: the layer's own axis, unprojected by the server</title></circle>`);
     }
     if (s.anchor) {
       /* The rotation ring is offered on 2D layers only: there the screen angle
@@ -4435,10 +4435,10 @@ function paintGizmo() {
        * rows or over MCP. */
       if (!s.threeD) {
         parts.push(`<circle class="vfxgzring" data-gz="rot" cx="${s.anchor[0]}" cy="${s.anchor[1]}" r="${34 * k}">
-          <title>Rotate — drag around the anchor</title></circle>`);
+          <title>Rotate: drag around the anchor</title></circle>`);
       }
       parts.push(`<circle class="vfxgzanchor" data-gz="body" cx="${s.anchor[0]}" cy="${s.anchor[1]}" r="${4.5 * k}">
-        <title>${esc(s.name)} — drag to move${s.threeD && d.hasCamera ? " in the view plane" : ""}</title></circle>`);
+        <title>${esc(s.name)}: drag to move${s.threeD && d.hasCamera ? " in the view plane" : ""}</title></circle>`);
     }
     sel = `<g id="vfxGzSel">${parts.join("")}</g>`;
   }
@@ -4749,7 +4749,7 @@ function guideMarkup(g, i, W, H, k) {
    * not a target. The group carries the cursor and the hit test. */
   return `<g data-guide="${i}" class="${g.axis === "x" ? "gx" : "gy"}">
     ${line("vfxguide")}${line("vfxguidehit", 9 * k)}
-    <title>Guide ${g.axis} = ${p} — drag to move, drop on the ruler to delete${V.ws.lock ? " (locked)" : ""}</title></g>`;
+    <title>Guide ${g.axis} = ${p}: drag to move, drop on the ruler to delete${V.ws.lock ? " (locked)" : ""}</title></g>`;
 }
 
 /* ── ruler and guide gestures ── */
@@ -4792,7 +4792,7 @@ async function exactGuideDialog(axis) {
   if (!V.comp) return;
   const max = axis === "x" ? V.comp.width : V.comp.height;
   const raw = (await appPrompt(
-    `New ${axis === "x" ? "vertical" : "horizontal"} guide — ${axis} in comp pixels (0-${max})`,
+    `New ${axis === "x" ? "vertical" : "horizontal"} guide: ${axis} in comp pixels (0-${max})`,
     String(Math.round(max / 2))));
   if (raw == null || !raw.trim()) return;
   const pos = Number(raw);
@@ -5214,7 +5214,7 @@ function wireSpatial(l, q) {
     }, {
       context: (msg) => (/No transform property/.test(msg)
         ? `${msg} The engine composes Rx·Ry·Rz out of exactly those three, and the store drops any `
-          + `transform key not on that list on every read — so a 3D turn cannot be stored yet.`
+          + `transform key not on that list on every read: so a 3D turn cannot be stored yet.`
         : msg),
     });
   }
@@ -5264,7 +5264,7 @@ function wireSpatial(l, q) {
     action: "set_layer", slug: V.slug, layerId: l.id, src: nested.value || null,
   }, {
     context: (msg) => (/no source file/i.test(msg)
-      ? `${msg} A comp layer's source IS the child comp's slug — that is how the engine finds it — `
+      ? `${msg} A comp layer's source IS the child comp's slug (that is how the engine finds it) `
         + `but set_layer only lets an image or a video carry one.`
       : msg),
   });
@@ -5350,7 +5350,7 @@ function treeKeyAt(handle) {
   if (!r) return;
   const { l, path } = r;
   const prop = propAt(l, path);
-  if (!isAnim(prop)) return note("This property is a constant — press the stopwatch to animate it.");
+  if (!isAnim(prop)) return note("This property is a constant: press the stopwatch to animate it.");
   const here = keysOf(prop).find((k) => Math.abs(k.t - V.t) < 1e-4);
   if (here) return void mutate({ action: "remove_key", slug: V.slug, layerId: l.id, path, t: here.t });
   return void mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v: evalProp(prop, V.t), ease: "linear" });
@@ -5399,7 +5399,7 @@ function treeSetArray(inp) {
  *  engine renders it, and set_prop's arity table is fixed at two. */
 const xformCtx = (v) => (msg) => (Array.isArray(v) && v.length === 3 && /takes 2 number/.test(msg)
   ? `${msg} A 3D layer's anchor, position and scale each take a third component and the engine `
-    + `renders one, but set_prop's arity table is fixed at two — so a z already in the document `
+    + `renders one, but set_prop's arity table is fixed at two: so a z already in the document `
     + `reads and animates here, and a new one cannot be typed in yet.`
   : msg);
 
@@ -5484,7 +5484,7 @@ function wireDelegates() {
       const [lid, ...rest] = gop.dataset.gopen.split("|");
       const path = rest.join("|");
       if (!isAnim(propAt(layerOf(lid), path))) {
-        return note("A curve needs keyframes — press the stopwatch on this row first.");
+        return note("A curve needs keyframes: press the stopwatch on this row first.");
       }
       V.sel = lid;
       V.ksel.clear();
@@ -5800,7 +5800,7 @@ function precomposeMenu(e, lid) {
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;
   const locked = ids.map((id) => layerOf(id)).filter((l) => l?.locked);
-  menu.innerHTML = `<b>${ids.length} layer${ids.length === 1 ? "" : "s"} — Ctrl-click rows to select more</b>
+  menu.innerHTML = `<b>${ids.length} layer${ids.length === 1 ? "" : "s"}: Ctrl-click rows to select more</b>
     <button type="button" data-pcp="1"${locked.length ? ` disabled title="${esc(locked.map((l) => l.name).join(", "))} ${locked.length === 1 ? "is" : "are"} locked."` : ""}>Pre-compose…</button>`;
   document.body.appendChild(menu);
   /* Unlike the sibling menus, the press that lands INSIDE this one must not
@@ -5854,7 +5854,7 @@ function easingMenu(e, key) {
   const shaped = typeof cur === "object";
   menu.innerHTML = `<b>Easing out of ${fmtT(num(ks[i]?.t))}</b>${EASES.map((x) =>
     `<button type="button" data-ease="${x}"${x === cur ? ' class="on"' : ""}>${x}</button>`).join("")}
-    ${shaped ? `<button type="button" class="on" disabled title="Four control points of its own — shape it in the graph editor.">bezier</button>` : ""}
+    ${shaped ? `<button type="button" class="on" disabled title="Four control points of its own: shape it in the graph editor.">bezier</button>` : ""}
     <button type="button" data-shape="1" title="A named ease is one of five shapes; the graph editor is all of them.">shape it…</button>`;
   document.body.appendChild(menu);
   const close = () => { menu.remove(); document.removeEventListener("pointerdown", close, true); };
@@ -5956,7 +5956,7 @@ async function templateSheet() {
   catch (e) { return note(e.message || "The template shelf did not answer."); }
   if (!rows.length) return note("No templates are registered.");
   overlay(`<h3>New from template</h3>
-    <p class="hint">A template builds a finished, animated comp — keyframes, effects and all — with
+    <p class="hint">A template builds a finished, animated comp (keyframes, effects and all) with
       working defaults for every parameter. Fine-tuning (sizes, colours, sources) happens on the comp
       it makes, or over MCP where vfx_templates takes every parameter up front.</p>
     <div class="vfxfxlist">${rows.map((t) => `
@@ -5984,7 +5984,7 @@ function addLayerMenu() {
   overlay(`<h3>Add a layer</h3>
     <div class="vfxkinds">${LAYER_KINDS.map(([k, g, label, why]) => `
       <button class="vfxkind" type="button" data-kind="${k}" title="${esc(why)}"><b>${g}</b><span>${label}</span></button>`).join("")}</div>
-    <p class="hint">Image, video and audio pick a file from their library — a comp stores the
+    <p class="hint">Image, video and audio pick a file from their library: a comp stores the
       library NAME, never a path, so the same document renders on another machine.
       A shape layer starts as one rounded rectangle you then edit; a camera only moves
       layers with 3D turned on; a comp layer nests another composition.</p>`, (close) => {
@@ -6019,7 +6019,7 @@ function shapePicker(l) {
   const phases = [
     ["Path", "makes geometry and adds it to the path set"],
     ["Path Operation", "rewrites every path made so far"],
-    ["Paint", "draws what the path set holds at that moment — and later paint covers earlier paint"],
+    ["Paint", "draws what the path set holds at that moment, and later paint covers earlier paint"],
     ["Group", "a stack of its own, with its own transform"],
   ];
   overlay(`<h3>Add a shape item</h3>
@@ -6084,7 +6084,7 @@ function wireAxis(pathId, axisId) {
   const sync = () => {
     const n = +(path.selectedOptions[0]?.dataset.arity || 1);
     axis.disabled = n < 2;
-    axis.title = n < 2 ? "This property is a single number — there is no axis to choose." : "";
+    axis.title = n < 2 ? "This property is a single number: there is no axis to choose." : "";
     if (axis.disabled) axis.value = "";
   };
   path.addEventListener("change", sync);
@@ -6115,7 +6115,7 @@ async function audioPanel(l) {
   ];
   overlay(`<h3>Drive a property from sound</h3>
     <p class="hint">The file is analysed into seven 0..1 tracks. <b>min</b> and <b>max</b> map that
-      onto what the property actually wants — a scale between 100 and 140, a rotation between -8 and 8.</p>
+      onto what the property actually wants: a scale between 100 and 140, a rotation between -8 and 8.</p>
     <div class="vfxform">
       <label class="vfxfield wide">audio
         <select class="sel2 sm" id="vfxAkSrc">${sources.map((s) =>
@@ -6164,7 +6164,7 @@ function audioResult(l, d) {
   return `<div class="vfxresult">
     <p><b>${d.bpm ? `${d.bpm} BPM` : "no tempo found"}</b> · ${d.beats ?? 0} beats · ${d.bars ?? 0} bars
       · ${d.seconds ?? 0}s analysed at ${d.fps ?? 0} keys/s</p>
-    ${quiet.length ? `<p class="vfxwarnline">Nothing in ${quiet.join(", ")} — driving a property from
+    ${quiet.length ? `<p class="vfxwarnline">Nothing in ${quiet.join(", ")}: driving a property from
       ${quiet.length === 1 ? "that band" : "one of those"} would hold still. The bands bleed at the
       crossovers, so a reading near a neighbour's is not proof of content.</p>` : ""}
     <div class="vfxform">
@@ -6172,7 +6172,7 @@ function audioResult(l, d) {
       ${pathPicker(l, "vfxAkPath")}
       ${fieldNum("vfxAkMin", "at 0", 0, 1, "What the property is worth when the track reads zero")}
       ${fieldNum("vfxAkMax", "at 1", 100, 1, "And when it reads one")}
-      <label class="vfxfield" title="Vector properties only — drive one component and leave the others alone">axis
+      <label class="vfxfield" title="Vector properties only: drive one component and leave the others alone">axis
         <select class="sel2 sm" id="vfxAkAxis"><option value="">both</option><option value="0">x</option><option value="1">y</option></select></label>
     </div>
     <div class="vfxform"><button class="btn sm" type="button" id="vfxAkApply">write the keyframes</button>
@@ -6217,7 +6217,7 @@ function trackPanel(l) {
   const own = l.type === "video" ? l.src : null;
   const w = num(l.srcWidth, V.comp?.width || 1920), h = num(l.srcHeight, V.comp?.height || 1080);
   overlay(`<h3>Drive a property from motion</h3>
-    <p class="hint">Pick a patch with contrast and a corner in it — the tracker follows that patch
+    <p class="hint">Pick a patch with contrast and a corner in it: the tracker follows that patch
       through the clip. <b>follow</b> writes where it went, so a layer rides along with it;
       <b>stabilize</b> writes the inverse, so the shot holds still. Coordinates are the CLIP's own pixels.</p>
     <div class="vfxform">
@@ -6231,7 +6231,7 @@ function trackPanel(l) {
       ${fieldNum("vfxTkY", "y", Math.round(h / 2 - 40))}
       ${fieldNum("vfxTkW", "w", 80)}
       ${fieldNum("vfxTkH", "h", 80)}
-      ${fieldNum("vfxTkSearch", "search", 40, 5, "How many pixels each way to look per frame — raise it for fast motion")}
+      ${fieldNum("vfxTkSearch", "search", 40, 5, "How many pixels each way to look per frame: raise it for fast motion")}
       ${fieldNum("vfxTkConf", "min conf", 0.55, 0.05, "Below this a frame counts as bad. It is a SETTING, not a measurement.")}
     </div>
     <div class="vfxform">
@@ -6244,7 +6244,7 @@ function trackPanel(l) {
     $("vfxTkGo").onclick = async () => {
       const clip = $("vfxTkClip").value;
       if (!clip) return;
-      $("vfxTkNote").textContent = "tracking — this reads every frame…";
+      $("vfxTkNote").textContent = "tracking: this reads every frame…";
       $("vfxTkOut").innerHTML = "";
       try {
         const d = await api({
@@ -6277,9 +6277,9 @@ function trackResult(l, d) {
         the keys end where the certainty ended.</p>
        <p class="hint">Try a larger <b>search</b> if the motion is fast, a patch that stays in shot,
         or track the part before the loss and the part after it separately.</p>`
-    : `<p><b>Tracked all ${d.frames} frames</b> — ${secs.toFixed(2)}s at ${d.fps} fps, no loss.</p>`;
+    : `<p><b>Tracked all ${d.frames} frames</b>: ${secs.toFixed(2)}s at ${d.fps} fps, no loss.</p>`;
   const conf = c.min != null ? `<p class="hint">Confidence ${c.min.toFixed(3)} at its worst,
-      ${c.mean.toFixed(3)} on average, against a threshold of ${c.threshold} — and the threshold is the
+      ${c.mean.toFixed(3)} on average, against a threshold of ${c.threshold}, and the threshold is the
       setting this run used, not something that was measured.
       ${d.dips ? `${d.dips} dip${d.dips === 1 ? "" : "s"} below it.` : ""}
       Confidence cannot see the one failure that matters most: repetitive texture, where the patch
@@ -6287,8 +6287,8 @@ function trackResult(l, d) {
   return `<div class="vfxresult">${head}${conf}
     <div class="vfxform">
       <label class="vfxfield">mode<select class="sel2 sm" id="vfxTkMode">
-        <option value="follow">follow — ride with it</option>
-        <option value="stabilize">stabilize — cancel it</option></select></label>
+        <option value="follow">follow (ride with it</option>
+        <option value="stabilize">stabilize) cancel it</option></select></label>
       ${pathPicker(l, "vfxTkPath")}
       <button class="btn sm" type="button" id="vfxTkApply">write ${d.frames} keyframes</button>
     </div>
@@ -6310,7 +6310,7 @@ function wireTrackApply(l, clip) {
     V.open.add(l.id);
     $("vfxOverlay").hidden = true; $("vfxOverlay").innerHTML = "";
     note(`${d.applied?.keys ?? 0} keyframes on ${d.applied?.path} (${d.mode})`
-      + `${d.lostAt != null ? ` — they stop at ${d.lostAt.toFixed(2)}s, where the track was lost.` : "."}`);
+      + `${d.lostAt != null ? `: they stop at ${d.lostAt.toFixed(2)}s, where the track was lost.` : "."}`);
     paint();
   };
 }
@@ -6345,7 +6345,7 @@ function sourcePicker(kind) {
     : V.clips.filter((c) => /\.(mp4|webm|mov)$/i.test(c.name))
         .map((c) => ({ name: c.name, label: c.title || c.name, thumb: null }));
   overlay(`<h3>${isAudio ? "Pick music" : isImg ? "Pick an image" : "Pick a clip"}</h3>
-    ${isAudio ? `<p class="hint">Existing music only — no upload or generation. Starts at 0 and is trimmed to the composition. Edit the layer's timing and levels afterwards.</p>` : ""}
+    ${isAudio ? `<p class="hint">Existing music only: no upload or generation. Starts at 0 and is trimmed to the composition. Edit the layer's timing and levels afterwards.</p>` : ""}
     <input class="stsearch" id="vfxSrcQ" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
     <div class="vfxpickgrid" id="vfxSrcGrid"></div>
     ${rows.length ? "" : `<p class="hint">The ${isAudio ? "music" : isImg ? "images" : "clips"} library has no available files.
@@ -6380,7 +6380,7 @@ function compPicker() {
       <button class="vfxpick" type="button" data-nest="${esc(c.slug)}">
         <span class="vfxpickglyph">⧉</span>
         <span>${esc(c.name || c.slug)}</span></button>`).join("")}</div>
-    <p class="hint">This comp is not on the list — a composition cannot contain itself.</p>`, (close) => {
+    <p class="hint">This comp is not on the list: a composition cannot contain itself.</p>`, (close) => {
     for (const b of $("vfxOverlay").querySelectorAll("[data-nest]")) {
       b.onclick = () => {
         close();
@@ -6424,7 +6424,7 @@ function effectPicker(l) {
   if (!names.length) {
     return overlay(`<h3>Effects</h3><p class="hint">The catalog is empty or did not load.
       <code>/api/vfx/catalog</code> serves it and the effects panel builds itself from it,
-      so nothing here is hard-coded — once the route answers, every effect appears.</p>`);
+      so nothing here is hard-coded: once the route answers, every effect appears.</p>`);
   }
   const groups = new Map();
   for (const n of names) {
@@ -6472,7 +6472,7 @@ function effectPicker(l) {
  */
 function fxPresetSheet(l) {
   overlay(`<h3>Effect &amp; animation presets</h3>
-    <p class="hint">A preset is a layer's effect stack — parameters, keyframes, expressions — and,
+    <p class="hint">A preset is a layer's effect stack (parameters, keyframes, expressions) and,
       if you tick the box, its keyframed transform move. Keyframe times are saved relative to the
       layer's start, so a preset lands sensibly on any layer in any comp. Applying appends the
       effects with fresh ids; transform keys paste over the range they cover and leave the rest.</p>
@@ -6480,19 +6480,19 @@ function fxPresetSheet(l) {
       <span class="vfxlab">Save</span>
       <span class="vfxvals">
         <input type="text" id="vfxFxpName" placeholder="Preset name…" spellcheck="false" autocomplete="off">
-        <label class="edtool tog sm" title="Also capture every keyframed transform property — the saved move">
+        <label class="edtool tog sm" title="Also capture every keyframed transform property: the saved move">
           <input type="checkbox" id="vfxFxpXf">+ move</label>
         <button class="edtool sm" type="button" id="vfxFxpSave">Save from ${esc(l.name || l.id)}</button>
       </span>
     </div>
     ${(l.effects || []).length > 1 ? `<div class="vfxrow static">
-      <span class="vfxlab" title="Untick an effect to leave it out of the saved preset — the same narrowing MCP's include takes.">Include</span>
+      <span class="vfxlab" title="Untick an effect to leave it out of the saved preset: the same narrowing MCP's include takes.">Include</span>
       <span class="vfxvals vfxfxpinc">${l.effects.map((f) => `
         <label class="edtool tog sm" title="${esc(f.id)}"><input type="checkbox" data-fxpinc="${esc(f.id)}" checked>${esc(f.type)}</label>`).join("")}
       </span>
     </div>` : ""}
     <div class="vfxrow static">
-      <span class="vfxlab" title="Where an applied preset's time zero lands, in comp seconds. Blank = the target layer's own start — the default that makes a preset land sensibly anywhere.">Apply at</span>
+      <span class="vfxlab" title="Where an applied preset's time zero lands, in comp seconds. Blank = the target layer's own start: the default that makes a preset land sensibly anywhere.">Apply at</span>
       <span class="vfxvals">
         <input type="number" id="vfxFxpAt" step="0.1" placeholder="layer start" title="Seconds on the comp timeline. Blank applies at the layer's start.">
       </span>
@@ -6556,14 +6556,14 @@ function fxPresetSheet(l) {
       const ticked = [...$("vfxOverlay").querySelectorAll("[data-fxpinc]")]
         .filter((c) => c.checked).map((c) => c.dataset.fxpinc);
       const boxes = $("vfxOverlay").querySelectorAll("[data-fxpinc]").length;
-      if (boxes && !ticked.length) { note("Untick fewer boxes — a preset of no effects saves nothing."); return; }
+      if (boxes && !ticked.length) { note("Untick fewer boxes: a preset of no effects saves nothing."); return; }
       try {
         const r = await api({
           action: "save_fx_preset", slug: V.slug, layerId: l.id, name: nm,
           includeTransform: $("vfxFxpXf").checked,
           include: boxes && ticked.length < boxes ? ticked : undefined,
         });
-        note(`Saved "${r.preset}" — ${r.effects.length} effect(s)${r.transform.length ? ` + ${r.transform.join("/")}` : ""}.`);
+        note(`Saved "${r.preset}": ${r.effects.length} effect(s)${r.transform.length ? ` + ${r.transform.join("/")}` : ""}.`);
         $("vfxFxpName").value = "";
         draw();
       } catch (e) { note(e.message); }

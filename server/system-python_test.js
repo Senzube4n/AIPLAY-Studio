@@ -14,7 +14,7 @@
  *
  *   node server/system-python_test.js
  */
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import fs, { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -33,8 +33,16 @@ const { config, systemPython, systemPythonSource, defaultSystemPython, PREF_PATH
 console.log("\n§1  THE ORDER, AND WHICH ONE WON");
 {
   const def = defaultSystemPython();
-  ok("the default is python.org's per-user 3.10 (the literal Studio always had)",
-    def === path.join(os.homedir(), "AppData", "Local", "Programs", "Python", "Python310", "python.exe"), def);
+  /* 3.10 first, then the first newer python.org install that exists, then the
+   * 3.10 literal Studio always had. */
+  const base = path.join(os.homedir(), "AppData", "Local", "Programs", "Python");
+  const firstThere = ["Python310", "Python311", "Python312", "Python313"]
+    .map((v) => path.join(base, v, "python.exe")).find((p) => fs.existsSync(p));
+  ok("the default is python.org's per-user 3.10, else the first newer one installed",
+    def === (firstThere || path.join(base, "Python310", "python.exe")), def);
+  const fakeHome = path.join(os.tmpdir(), `aiplay-nohome-${process.pid}`);
+  ok("...and the 3.10 literal on a PC with none of them",
+    defaultSystemPython(fakeHome) === path.join(fakeHome, "AppData", "Local", "Programs", "Python", "Python310", "python.exe"));
   const mine = path.join(os.tmpdir(), "my-venv", "Scripts", "python.exe");
   ok("nothing chosen, no variable: the default, source \"default\"", systemPython(null) === def && systemPythonSource(null) === "default");
   ok("a saved choice beats the default, source \"saved\"", systemPython(mine) === mine && systemPythonSource(mine) === "saved");

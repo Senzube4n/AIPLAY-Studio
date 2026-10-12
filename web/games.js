@@ -225,7 +225,7 @@ export function initGames() {
     }
     // effectively unreachable with 6 spawn tiers on 48 cells, but the rule
     // needs an answer: reshuffle rather than end an "infinite" game
-    note("No moves left — board reshuffled.");
+    note("No moves left: board reshuffled.");
     const tiers = grid.flat().map((x) => x.t).sort(() => Math.random() - 0.5);
     grid = Array.from({ length: ROWS }, (_, r) =>
       Array.from({ length: COLS }, (_, c) => newTile(tiers[r * COLS + c])));

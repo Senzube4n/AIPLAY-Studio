@@ -114,7 +114,7 @@ function paintFacts(detail) {
     !i.ok && !i.standing && (i.severity === "blocking" || i.severity === "warn"));
   f.textContent = bits.join(" · ");
   if (bad.length) {
-    f.textContent += ` — ⚠ ${bad.map((i) => {
+    f.textContent += `: ⚠ ${bad.map((i) => {
       const m = i.measured;
       const said = m && typeof m === "object" ? JSON.stringify(m) : (m ?? i.what);
       return `${i.id}: ${said}`;
@@ -174,7 +174,7 @@ async function loadVersion() {
   paintSheetLinks(v);
   if (state.version) {
     const many = rows.length > 1 ? ` of ${rows.length}` : "";
-    say(`version ${state.version}${many}${v?.drafted ? " — a draft, no audio yet" : ""}`);
+    say(`version ${state.version}${many}${v?.drafted ? ": a draft, no audio yet" : ""}`);
   } else {
     say("This score has no versions yet. Render with YuE2 and adopt the run folder.");
   }
@@ -198,7 +198,9 @@ async function refresh() {
           const n = Number.isFinite(s.versions) ? s.versions : 0;
           const secs = Number.isFinite(s.currentAudioSeconds)
             ? ` · ${Math.round(s.currentAudioSeconds)}s` : "";
-          return `<option value="${s.slug}">${s.title || s.slug}`
+          /* Escaped: titles come from files and other programs. */
+          const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+          return `<option value="${esc(s.slug)}">${esc(s.title || s.slug)}`
             + ` (${n} version${n === 1 ? "" : "s"}${secs})</option>`;
         }).join("")
         : '<option value="">no scores yet</option>';
@@ -218,13 +220,13 @@ function paintCapability() {
   const n = el("scorePanelNote");
   if (!n) return;
   const c = state.capability;
-  const bits = ["An edit costs nothing — a supplied score is honoured verbatim for zero generated tokens. "
+  const bits = ["An edit costs nothing: a supplied score is honoured verbatim for zero generated tokens. "
     + "The notated length is what the score ASKS FOR: the model is not bound to it."];
   if (c && c.pdf === false) {
     /* Said rather than hidden. A missing Edge is not a broken feature and the
      * HTML sheet still engraves; a greyed button with no explanation is worse
      * than a sentence. */
-    bits.push("PDF is unavailable on this machine (no Edge found) — the HTML sheet still engraves.");
+    bits.push("PDF is unavailable on this machine (no Edge found): the HTML sheet still engraves.");
   }
   n.textContent = bits.join(" ");
 }
@@ -246,7 +248,7 @@ export function mountScorePanel() {
     try {
       say("building the DAW project…");
       const j = await score({ action: "to_daw", slug: state.slug, version: state.version });
-      say(`DAW project "${j.daw}" · ${j.notes} notes on ${j.tracks.length} tracks at ${j.bpm} bpm ${j.meter}${j.refused?.length ? ` · ${j.refused.length} refused` : ""} — open the DAW page and pick it`);
+      say(`DAW project "${j.daw}" · ${j.notes} notes on ${j.tracks.length} tracks at ${j.bpm} bpm ${j.meter}${j.refused?.length ? ` · ${j.refused.length} refused` : ""}: open the DAW page and pick it`);
     } catch (e) { say(e.message, "warn"); }
     finally { btn.disabled = false; }
   });
@@ -258,7 +260,7 @@ export function mountScorePanel() {
       /* The server refuses identical notation by hash and names the version
        * that holds it. Saying so here saves a round trip and is the same
        * sentence the server would send. */
-      say("Nothing changed — an edit that changes nothing is not a new version.", "warn");
+      say("Nothing changed: an edit that changes nothing is not a new version.", "warn");
       return;
     }
     try {
@@ -288,7 +290,7 @@ export function mountScorePanel() {
         format: "pdf",
       });
       const s = j.sheet || {};
-      say(`engraved${s.pdfBytes ? ` — PDF ${(s.pdfBytes / 1024).toFixed(0)} KB` : ""}`
+      say(`engraved${s.pdfBytes ? `: PDF ${(s.pdfBytes / 1024).toFixed(0)} KB` : ""}`
         + `${s.subtitle ? " · " + s.subtitle : ""}`
         /* The engraver checks its own output: abcjs draws with currentColor, so
          * a themed page can engrave white on white and produce a blank sheet

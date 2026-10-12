@@ -128,7 +128,7 @@ test("the Pod bootstrap installs this Studio's own commit, never a branch that m
   assert.match(read("web", "runpod-integrated.js"), /api\("\/bootstrap"\)\.then\(\(b\) => \{\s*\$\("runpodBootstrapCommand"\)\.value = b\.command \|\| "";/, "it asks the Studio");
   assert.match(sh, /check-comfy-loopback\.js/);
   assert.match(sh, /different Git origin/);
-  assert.match(read("worker", "runpod-worker.js"), /await checkComfyLoopback\(\);/, "worker autostart also verifies the listener");
+  assert.match(read("worker", "runpod-worker.js"), /await waitForComfyLoopback\(\);/, "worker autostart also verifies the listener, waiting for it to come up");
   assert.doesNotMatch(html, /nemesisone-dev\/AIPLAY-Studio\/feature/);
 });
 

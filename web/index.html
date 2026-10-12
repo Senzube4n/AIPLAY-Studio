@@ -505,7 +505,7 @@
           placeholder="Genre, BPM, key, mood arc, where you'd hear it, production feel"></textarea>
         <label class="flabel gl" for="capVocal">Vocal details</label>
         <textarea id="capVocal" rows="2" spellcheck="false"
-          placeholder="Gender, timbre, delivery, harmonies, effects — or say instrumental"></textarea>
+          placeholder="Gender, timbre, delivery, harmonies, effects, or say instrumental"></textarea>
         <label class="flabel gl" for="capArr">Arrangement</label>
         <textarea id="capArr" rows="2" spellcheck="false"
           placeholder="Lead and supporting instruments, how they enter, groove, textures"></textarea>
@@ -677,16 +677,16 @@
         <label for="yTemp" data-engine="yue2" hidden>Performance</label>
         <span class="pv" data-engine="yue2" hidden><input id="yTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 1.0" title="The performance sampler's temperature. Lower = steadier, higher = wilder. Vendor default 1.0."> <input id="yTopP" class="sv" type="number" min="0.01" max="1" step="0.01" placeholder="Top-p 0.95" title="Nucleus sampling for the performance. Vendor default 0.95."></span>
         <label for="yPlanTemp" data-engine="yue2" hidden>Planner</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 0.7" title="The score planner's temperature — the composer's creativity. Vendor default 0.7."> <span class="meta" id="yPlanTempNote" hidden></span></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 0.7" title="The score planner's temperature (the composer's creativity). Vendor default 0.7."> <span class="meta" id="yPlanTempNote" hidden></span></span>
         <label for="ySteps" data-engine="yue2" hidden>Steps</label>
         <span class="pv" data-engine="yue2" hidden><select id="ySteps" class="sel2">
           <option value="32">32 (default)</option>
           <option value="16">16 (2× faster)</option>
         </select></span>
       </div>
-      <p class="hint" id="modelNote" data-engine="minimax">Measured against a converged reference these two are <b>identical</b> — 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
+      <p class="hint" id="modelNote" data-engine="minimax">Measured against a converged reference these two are <b>identical</b>: 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
       <p class="hint" id="tierHint" data-engine="minimax"></p>
-      <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
+      <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot: more is slower with little gain, fewer drifts from the intended sound.</p>
 
     </details>
 
@@ -787,7 +787,7 @@
       </div>
       <p class="hint" id="humHint">Hum: seconds. Whole song: a minute or more, and longer the first time its voice is separated.</p>
       <p class="hint" id="humNote" role="status" aria-live="polite"></p>
-      <p class="hint tipsrc" id="covPrimeNote" data-humsong data-python-yue hidden>How many seconds of the original performance YuE2 hears before it starts — it hears the Studio's reading of them, not the recording, and none of the original audio is in the result. Longer is not better: past a few seconds it re-performs the original's own arrangement instead of yours. 0 uses the score alone. Starting from one layer — its drums for the groove, its voice for the phrasing — sends that layer instead of the mix.</p>
+      <p class="hint tipsrc" id="covPrimeNote" data-humsong data-python-yue hidden>How many seconds of the original performance YuE2 hears before it starts: it hears the Studio's reading of them, not the recording, and none of the original audio is in the result. Longer is not better: past a few seconds it re-performs the original's own arrangement instead of yours. 0 uses the score alone. Starting from one layer (its drums for the groove, its voice for the phrasing) sends that layer instead of the mix.</p>
       <label class="edtool tog" id="yAbcOpenLabel" data-python-yue hidden><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
       <b class="subhead" id="subScore">Your own score</b>
       <!-- Three plain lines, because the box below used to say only "Paste a
@@ -828,7 +828,7 @@
         <label for="yLoraClip">Planner LoRA</label><span class="pv"><select id="yLoraClip" class="sel2"><option value="">none</option></select></span>
         <label for="yLoraClipStrength">Strength</label><span class="pv"><input id="yLoraClipStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraClipStrengthValue">1.00</b></span>
       </div>
-      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Audio LoRA patches the audio model; Planner LoRA patches the composer (the half that writes the score and the tokens) — the instrumental planner LoRA from the Models screen goes there, and an Instrumental take picks it by itself. <span id="yLoraShelf"></span></p>
+      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Audio LoRA patches the audio model; Planner LoRA patches the composer (the half that writes the score and the tokens): the instrumental planner LoRA from the Models screen goes there, and an Instrumental take picks it by itself. <span id="yLoraShelf"></span></p>
     </details>
 
     <!-- Title last, as on Suno. Metadata only. -->
@@ -887,7 +887,7 @@
          86.25 s came back 165.2 s — which is why the note below says so rather
          than letting a reader assume the notation is a contract. -->
     <details class="field" id="scorePanel" hidden>
-      <summary>Score — read it, edit it, engrave it</summary>
+      <summary>Score: read it, edit it, engrave it</summary>
       <p class="hint" id="scorePanelNote"></p>
       <div class="frow">
         <label class="flabel" for="scorePick">Score</label>
@@ -1151,7 +1151,7 @@
         placeholder="slow drifting neon cityscape at night, gentle camera push"></textarea>
       <p class="hint" id="vidFriendSourceNote" hidden>Source clip only · return to Reactive after keeping it in Collab.</p>
       <p class="hint">Describe a picture that moves, not a song. One subject, one
-        camera move — H3 holds a simple shot far better than a busy one.</p>
+        camera move: H3 holds a simple shot far better than a busy one.</p>
     </div>
 
     <!-- KEEP MY CHARACTER (the REWIND A/B, 2026-09-24): pictures of the person, the reference build's
@@ -1243,7 +1243,7 @@
       </select></span>
     </div>
     <p class="hint">H3 always renders sound whether or not you want it, so keeping
-      it is free. Clips made under a song discard it — that song is the audio.</p>
+      it is free. Clips made under a song discard it: that song is the audio.</p>
     <!-- "This size needs about X GB free; you have Y" and what the render will
          change, from POST /api/video check (server/video-plain.js). Advanced
          only: Simple hides it with the rest of the form. web/vidfit.js. -->
@@ -1613,7 +1613,7 @@
 
         <label for="imgNeg" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden>avoid</label>
         <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden><input id="imgNeg" class="sel2"
-          placeholder="negative prompt — what the picture must not contain"></span>
+          placeholder="negative prompt: what the picture must not contain"></span>
 
         <!-- ─── The SD-family dials ───
              Checkpoint-only, and that is arithmetic rather than taste:
@@ -2207,7 +2207,7 @@
             <b class="subhead" id="cbOrderWho">Scene render request</b>
             <div class="chips">
               <button class="btn sm primary" type="button" id="cbAcceptBtn">Show me exactly what they want</button>
-              <button class="btn sm primary" type="button" id="cbAcceptYes" hidden>Yes &mdash; take the job</button>
+              <button class="btn sm primary" type="button" id="cbAcceptYes" hidden>Yes, take the job</button>
             </div>
             <pre id="cbOrderPrompt" class="cbopened" hidden></pre>
             <p class="hint warnhint cbactionnote">Review the prompt and references; accepting creates a plan that is <b>proposed</b> without rendering.</p>
@@ -2647,14 +2647,14 @@
                 <option value="2048x2048">2048&#215;2048</option>
                 <option value="2480x3508">A4 &#183; 300dpi</option>
               </select>
-              <input type="number" id="imgNewW" class="sel2 sm" min="1" max="16384" value="1920" style="width:70px" title="width in pixels">
-              <input type="number" id="imgNewH" class="sel2 sm" min="1" max="16384" value="1080" style="width:70px" title="height in pixels">
+              <input type="number" id="imgNewW" class="line sm num" min="1" max="16384" value="1920" title="width in pixels" aria-label="width in pixels">
+              <input type="number" id="imgNewH" class="line sm num" min="1" max="16384" value="1080" title="height in pixels" aria-label="height in pixels">
               <select id="imgNewBg" class="sel2 sm" title="Transparent is the useful default: it is the page you want when you are about to paste a cutout onto it. Black at alpha 0 is not the same picture as opaque black.">
                 <option value="0,0,0,0">transparent</option>
                 <option value="255,255,255,255">white</option>
                 <option value="0,0,0,255">black</option>
               </select>
-              <span class="hint">&#183; Ctrl+V pastes a picture</span>
+              <span class="hint nowrap">Ctrl+V pastes a picture</span>
             </span>
           </div>
           <!-- Several images at once, like the Music library's bar: tick them on the
@@ -2675,9 +2675,9 @@
                    second is the rail's own Video glyph, so it points at where
                    it sends things. -->
               <button class="bbtn" type="button" data-pick="refs"
-                title="Use as reference images for the next render &mdash; up to 10">&#9707;</button>
+                title="Use as reference images for the next render (up to 10)">&#9707;</button>
               <button class="bbtn" type="button" data-pick="vidrefs"
-                title="Send to the Video page as H3 reference images and go there &mdash; up to 9">&#9655;</button>
+                title="Send to the Video page as H3 reference images and go there (up to 9)">&#9655;</button>
               <button class="bbtn warn" type="button" data-pick="trash" title="Move to trash (reversible, kept in output/trash)">🗑</button>
               <button class="bbtn" type="button" data-pick="clear" title="Clear the selection">✕</button>
             </div>
@@ -2727,6 +2727,7 @@
           <option value="loop">Loops</option>
           <option value="ltx">LTX 2.5</option>
           <option value="h3">MiniMax H3</option>
+          <option value="fasth3">FastH3</option>
         </select>
         <select id="clipGroup" class="sel2 sm">
           <option value="">No grouping</option>
@@ -2832,7 +2833,7 @@
             <label class="stzoom">zoom
               <input type="range" id="stZoom" min="20" max="200" step="10" value="60">
           <label class="stopt sm" for="stLaneH" title="How tall the tracks are">rows</label>
-          <input id="stLaneH" class="strange" type="range" min="46" max="180" value="92" title="Track height — taller rows show more of the waveform and the filmstrip">
+          <input id="stLaneH" class="strange" type="range" min="46" max="180" value="92" title="Track height: taller rows show more of the waveform and the filmstrip">
             </label>
           </div>
 
@@ -2929,12 +2930,12 @@
             <span class="pv">
               <select id="stFxBeat" class="sel2 sm">
                 <option value="none">Nothing</option>
-                <option value="punch" selected>Punch — zoom in on the kick</option>
-                <option value="pull">Pull — zoom out on the kick</option>
+                <option value="punch" selected>Punch (zoom in on the kick)</option>
+                <option value="pull">Pull (zoom out on the kick)</option>
                 <option value="shake">Shake</option>
-                <option value="tilt">Tilt — rocks with the beat</option>
+                <option value="tilt">Tilt (rocks with the beat)</option>
                 <option value="flash">Flash</option>
-                <option value="strobe">Strobe — brightness slam</option>
+                <option value="strobe">Strobe (brightness slam)</option>
                 <option value="rgb">RGB split</option>
                 <option value="blur">Blur pulse</option>
                 <option value="hue">Colour shift</option>
@@ -2956,8 +2957,8 @@
               <select id="stBeatBand" class="sel2 sm">
                 <option value="bass" selected>Kick and bass</option>
                 <option value="low">Low end</option>
-                <option value="mid">Mids — snare, vocal</option>
-                <option value="high">Highs — hats</option>
+                <option value="mid">Mids (snare, vocal)</option>
+                <option value="high">Highs (hats)</option>
                 <option value="full">Everything</option>
               </select>
               <b class="stbeatled" id="stBeatLed">•</b>
@@ -2973,8 +2974,8 @@
             <label class="stopt" for="stBeatDrive">driven by</label>
             <span class="pv">
               <select id="stBeatDrive" class="sel2 sm" title="A pulse hits on each beat. An envelope follows loudness continuously.">
-                <option value="pulse" selected>Beats &mdash; punchy</option>
-                <option value="envelope">Loudness &mdash; breathing</option>
+                <option value="pulse" selected>Beats (punchy)</option>
+                <option value="envelope">Loudness (breathing)</option>
                 <option value="both">Both</option>
               </select>
             </span>
@@ -2993,7 +2994,7 @@
               <label class="stchk" title="Drive effects from the measured grid instead of listening live"><input type="checkbox" id="stBeatSync" checked> measured</label>
             </span>
             <label class="stopt">tempo</label>
-            <span class="pv"><b class="sp meta" id="stBeatInfo">no analysis — drop a song on the timeline</b></span>
+            <span class="pv"><b class="sp meta" id="stBeatInfo">no analysis: drop a song on the timeline</b></span>
 
             <label class="stopt" for="stFxLook">look</label>
             <span class="pv">
@@ -3004,8 +3005,8 @@
                 <option value="vivid">Vivid</option>
                 <option value="faded">Faded</option>
                 <option value="mono">Mono</option>
-                <option value="noir">Noir — hard black and white</option>
-                <option value="dream">Dream — soft and bright</option>
+                <option value="noir">Noir (hard black and white)</option>
+                <option value="dream">Dream (soft and bright)</option>
                 <option value="vhs">VHS</option>
                 <option value="bleach">Bleach bypass</option>
                 <option value="infra">Infrared</option>
@@ -3041,7 +3042,7 @@
           <button class="edtool" type="button" id="stBeatCut" title="Put every clip on this track on a bar line">Cut to beat</button>
           <input id="stBeatBars" class="stnum" type="number" min="1" max="16" value="1" title="Bars per clip">
           <button class="edtool" type="button" id="stDup" title="Duplicate the selected clip (Ctrl+D)">Duplicate</button>
-          <button class="edtool" type="button" id="stDel" title="Delete the selection (Del) — hold Ctrl to close the gap">Delete</button>
+          <button class="edtool" type="button" id="stDel" title="Delete the selection (Del): hold Ctrl to close the gap">Delete</button>
           <span class="stsep"></span>
           <button class="edtool" type="button" id="stUndo" title="Undo (Ctrl+Z)">↶</button>
           <button class="edtool" type="button" id="stRedo" title="Redo (Ctrl+Shift+Z)">↷</button>
@@ -3054,7 +3055,7 @@
           <!-- The audio half of Export. No browser needed for this one: the
                server mixes the tracks down offline, faster than real time. -->
           <select id="stBounceFmt" class="sel2 sm" title="FLAC is lossless; MP3 is smaller"><option value="flac">FLAC</option><option value="mp3">MP3</option></select>
-          <button class="btn sm" type="button" id="stBounce" title="Mix the audio tracks down to one file in your music library — levels, mutes, solos and fades as you hear them">Bounce audio →</button>
+          <button class="btn sm" type="button" id="stBounce" title="Mix the audio tracks down to one file in your music library: levels, mutes, solos and fades as you hear them">Bounce audio →</button>
           <span class="stprojname" id="stProjName" title="The project you are editing">Untitled</span>
           <button class="btn sm" type="button" id="stSave" title="Save this project">Save</button>
           <button class="btn sm" type="button" id="stOpen" title="Open a saved project">Open…</button>
@@ -3097,9 +3098,9 @@
                  changes the file you end up with, not the timeline. -->
             <label for="stFinish">finish with</label>
             <span class="pv"><select id="stFinish" class="sel2 sm">
-              <option value="">Nothing — keep the WebM</option>
-              <option value="smooth">Smoother — double the frame rate</option>
-              <option value="bigger">Bigger — double the size</option>
+              <option value="">Nothing (keep the WebM)</option>
+              <option value="smooth">Smoother (double the frame rate)</option>
+              <option value="bigger">Bigger (double the size)</option>
               <option value="both">Smoother and bigger</option>
             </select></span>
           </div>
@@ -3188,7 +3189,7 @@
         <div class="ag-cardhead">
           <div>
             <h2 id="agMcpTitle">MCP server</h2>
-            <p class="ag-sub">For assistants that run outside the Studio &mdash; Claude Desktop, Claude Code, Cursor.
+            <p class="ag-sub">For assistants that run outside the Studio: Claude Desktop, Claude Code, Cursor.
               Studio must be running; add this to the assistant&rsquo;s MCP configuration.</p>
           </div>
           <button class="ag-btn ghost" type="button" id="mcpCopy">Copy</button>
@@ -3211,10 +3212,10 @@
           <div class="ag-dropbody">
             <ol class="ag-steps">
               <li><code>make_song</code> with a structured caption, then <code>wait_for_song</code>
-                &mdash; four to five minutes for a three-minute track.</li>
+: four to five minutes for a three-minute track.</li>
               <li><code>make_image</code> a few times for the look you want, then <code>make_clip</code>
                 with each one as <code>first_frame</code>, so the clips match the art.</li>
-              <li><code>get_beats</code> to see the tempo. Check it against what you would tap &mdash; on
+              <li><code>get_beats</code> to see the tempo. Check it against what you would tap: on
                 half-time material detection usually picks the fast one.</li>
               <li><code>restyle_clip</code> for the audio-reactive look: it keeps the motion and drives the
                 restyle from the song&rsquo;s bass.</li>
@@ -3235,7 +3236,7 @@
               <dd>One LTX run is 121 frames. Longer videos are several runs chained, each seeded from the
                 last frame of the one before.</dd>
               <dt>Render two things at once</dt>
-              <dd>Covers, images, clips and restyles share one queue and music preempts it &mdash; one
+              <dd>Covers, images, clips and restyles share one queue and music preempts it: one
                 graphics card. A cloud model can still talk while a render runs.</dd>
             </dl>
           </div>
@@ -3361,7 +3362,7 @@
               <select id="reactMotionHitsOn" class="sel2"><option value="beats" selected>every beat</option><option value="bars">bars only</option></select></div>
             <div class="rlab"><span>Least gap between hits <i>frames · 5 is the reference's; 11 = every other beat at 128 bpm</i></span>
               <input id="reactMotionHitGap" class="line" type="number" min="1" max="120" step="1" value="5"></div>
-            <div class="rlab"><span>Your own motion module <i>files in the engine's animatediff_models folder — nothing shipped; blank = the v3 module</i></span>
+            <div class="rlab"><span>Your own motion module <i>files in the engine's animatediff_models folder: nothing shipped; blank = the v3 module</i></span>
               <select id="reactMotionModel" class="sel2"><option value="" selected>v3 (shipped)</option></select></div>
             <div class="rlab"><span>Your own motion LoRA <i>animatediff_motion_lora folder; strength beside it</i></span>
               <span class="pv"><select id="reactMotionLora" class="sel2"><option value="" selected>none</option></select>
@@ -3399,7 +3400,7 @@
         <label class="rlab">Find the hits in
           <select id="reactHits" class="sel2">
             <option value="mix">the whole mix</option>
-            <option value="drums">the drums alone (separated first — cleaner cuts)</option>
+            <option value="drums">the drums alone (separated first, cleaner cuts)</option>
           </select></label>
         <label class="rlab">Shape
           <select id="reactOrient" class="sel2">
@@ -3706,7 +3707,7 @@
     <div id="thanks" class="thanks" hidden>
       <h1>Thanks</h1>
       <p class="lead">The people who built this, and then the work it is built
-        on &mdash; where the thanks comes with a licence attached.</p>
+        on: where the thanks comes with a licence attached.</p>
 
       <!-- THE PEOPLE. Typed out in web/credits.js, one table, because nothing in
            a running copy knows who wrote it and a ZIP has no git history to ask.
@@ -3732,7 +3733,7 @@
       <h2>Why &ldquo;MiniMax-Music3&rdquo; is on the screen</h2>
       <p>The music engine&rsquo;s Community Licence asks for its name to be
         displayed by anything built on it. That is a condition of use rather than a
-        courtesy, so it stays on the main window instead of moving here &mdash; a
+        courtesy, so it stays on the main window instead of moving here: a
         credits page is exactly the &ldquo;About box&rdquo; the requirement exists
         to avoid. The line above the mark, top left, is that attribution; press it
         and it says so. It is also on the Models screen against every capability
@@ -3743,13 +3744,13 @@
       <dl class="thankslist">
         <dt><a href="https://github.com/comfyanonymous/ComfyUI" target="_blank" rel="noopener">ComfyUI</a> <span class="lic">GPL-3.0</span></dt>
         <dd>Does all the real work. A <b>separate program</b> that Studio starts and
-          then talks to over its HTTP API &mdash; not linked, not bundled, not
+          then talks to over its HTTP API: not linked, not bundled, not
           modified. Studio&rsquo;s own licence is unaffected by that boundary, and
           the boundary is deliberate.</dd>
 
         <dt><a href="https://github.com/yvann-ba/ComfyUI_Yvann-Nodes" target="_blank" rel="noopener">ComfyUI_Yvann-Nodes</a> <span class="lic">GPL-3.0</span></dt>
         <dd>Audio-reactive scheduling for ComfyUI, by Yvann Barbot and Lilia.
-          <b>Not bundled and not linked</b> &mdash; the same boundary that applies to
+          <b>Not bundled and not linked</b>: the same boundary that applies to
           ComfyUI itself. Studio&rsquo;s own audio layer was written from scratch,
           because a GPL pack cannot ship inside an Apache-2.0 app. But the design
           came from reading theirs: placing image guides on the beat rather than on
@@ -3766,7 +3767,7 @@
       <h2>And this</h2>
       <p>AIPLAY Studio itself is <b>Apache-2.0</b>. Take it, fork it, sell it. If
         you redistribute it, Section&nbsp;4(d) asks that the attributions above
-        travel with it &mdash; they are in the <code>NOTICE</code> file at the root
+        travel with it (they are in the) <code>NOTICE</code> file at the root
         of the repository, which is the authoritative copy of this page.</p>
       <p class="hint">Built by <a href="https://aiplay.live" target="_blank" rel="noopener">AIPLAY</a>.
         If it is useful to you, that is the whole point.</p>
@@ -3803,13 +3804,13 @@
         <div class="iedopt" data-optfor="crop" hidden>
           <span class="iedoptlab">Crop</span>
           <span class="hint" id="iedCropLbl">drag on the image</span>
-          <button class="edtool sm" id="iedCrop" title="Arm a fresh rectangle — the old one is dropped when you start dragging">◻ new rect</button>
+          <button class="edtool sm" id="iedCrop" title="Arm a fresh rectangle: the old one is dropped when you start dragging">◻ new rect</button>
           <button class="edtool sm" id="iedCropClear" hidden>clear</button>
           <span class="hint">Apply commits it &rarr;</span>
         </div>
         <div class="iedopt" data-optfor="eye" id="iedKey" hidden>
           <span class="iedoptlab">Chroma key</span>
-          <button class="edtool sm" id="iedPick" title="Then click the color on the image — the screen color to remove">⌖ sample</button>
+          <button class="edtool sm" id="iedPick" title="Then click the color on the image: the screen color to remove">⌖ sample</button>
           <span class="keychip" id="iedKeyChip" hidden></span>
           <label class="hint">tolerance <input type="range" id="iedKeyTol" min="2" max="80" value="25" style="width:78px"></label>
           <label class="hint">soften <input type="range" id="iedKeySoft" min="1" max="60" value="10" style="width:64px"></label>
@@ -4010,7 +4011,7 @@
             <div class="ieddockbody">
               <canvas id="iedNav" width="264" height="150"></canvas>
               <p class="hint">The box is what the viewport shows. Drag it to pan,
-                wheel to zoom — the same view the canvas has, drawn small.</p>
+                wheel to zoom: the same view the canvas has, drawn small.</p>
             </div>
           </details>
 
@@ -4023,24 +4024,24 @@
                 <button data-curvech="r">R</button>
                 <button data-curvech="g">G</button>
                 <button data-curvech="b">B</button></span>
-                <span><button class="edtool sm" id="iedAutoLv" title="Per-channel percentile stretch — the one-click contrast fix">auto levels</button>
+                <span><button class="edtool sm" id="iedAutoLv" title="Per-channel percentile stretch (the one-click contrast fix)">auto levels</button>
                 <button class="edtool sm" id="iedCurveReset">reset</button></span></div>
               <p class="hint">Click the curve to add a point, drag to shape, double-click a
-                point to remove it. Monotone cubic — no ringing. Histogram behind.</p>
+                point to remove it. Monotone cubic (no ringing). Histogram behind.</p>
               <div class="iedsliders" id="iedSliders">
                 <label>brightness <input type="range" id="iedB" min="20" max="200" value="100"><b>100</b></label>
                 <label>contrast <input type="range" id="iedC" min="20" max="200" value="100"><b>100</b></label>
                 <label>saturation <input type="range" id="iedS" min="0" max="200" value="100"><b>100</b></label>
-                <label title="exact on Apply — the preview approximates">gamma <input type="range" id="iedG" min="30" max="250" value="100"><b>1.00</b></label>
+                <label title="exact on Apply (the preview approximates)">gamma <input type="range" id="iedG" min="30" max="250" value="100"><b>1.00</b></label>
                 <label>temperature <input type="range" id="iedT" min="-100" max="100" value="0"><b>0</b></label>
-                <label title="applied on Apply — no live preview">sharpen <input type="range" id="iedSh" min="0" max="100" value="0"><b>0</b></label>
+                <label title="applied on Apply (no live preview)">sharpen <input type="range" id="iedSh" min="0" max="100" value="0"><b>0</b></label>
                 <label>blur <input type="range" id="iedBl" min="0" max="20" value="0"><b>0</b></label>
                 <label>vignette <input type="range" id="iedV" min="0" max="100" value="0"><b>0</b></label>
-                <label title="lift or crush the darks — exact on Apply">shadows <input type="range" id="iedShd" min="-100" max="100" value="0"><b>0</b></label>
-                <label title="recover or push the lights — exact on Apply">highlights <input type="range" id="iedHl" min="-100" max="100" value="0"><b>0</b></label>
+                <label title="lift or crush the darks (exact on Apply)">shadows <input type="range" id="iedShd" min="-100" max="100" value="0"><b>0</b></label>
+                <label title="recover or push the lights (exact on Apply)">highlights <input type="range" id="iedHl" min="-100" max="100" value="0"><b>0</b></label>
               </div>
               <div class="wrow">
-                <button class="edtool sm" id="iedAuto" title="Read the histogram and set the sliders — then argue with it">&#10022; auto</button>
+                <button class="edtool sm" id="iedAuto" title="Read the histogram and set the sliders, then argue with it">&#10022; auto</button>
                 <button class="edtool sm" id="iedReset">reset</button></div>
               <div class="iedgrp">
                 <div class="wrow"><b class="iedgrph">Color · HSL bands</b>
@@ -4057,7 +4058,7 @@
                 <p class="hint" id="iedHslActive"></p>
               </div>
               <p class="hint">The preview approximates; Apply renders the exact edit
-                server-side as a new file — the original is never touched.</p>
+                server-side as a new file: the original is never touched.</p>
             </div>
           </details>
 
@@ -4072,8 +4073,8 @@
                   <option value="0">off</option><option value="3">3</option>
                   <option value="4">4</option><option value="6">6</option></select></label></div>
               <div class="iedsliders">
-                <label title="non-local-means — exact on Apply">denoise <input type="range" id="iedDn" min="0" max="100" value="0"><b>0</b></label>
-                <label title="seeded film grain — exact on Apply">grain <input type="range" id="iedGr" min="0" max="100" value="0"><b>0</b></label>
+                <label title="non-local-means (exact on Apply)">denoise <input type="range" id="iedDn" min="0" max="100" value="0"><b>0</b></label>
+                <label title="seeded film grain (exact on Apply)">grain <input type="range" id="iedGr" min="0" max="100" value="0"><b>0</b></label>
               </div>
             </div>
           </details>
@@ -4092,7 +4093,7 @@
               <div id="iedFxList"></div>
               <div id="iedFxParams"></div>
               <p class="hint" id="iedFxNote">Applied in the order listed, after the
-                adjustments and before the strokes &mdash; &sect;2. No live preview:
+                adjustments and before the strokes (&sect;2). No live preview:
                 these render server-side on Apply.</p>
             </div>
           </details>
@@ -4145,14 +4146,14 @@
                   <label class="hint"><input type="radio" name="iedStyleShape" id="iedStyleShapeAlpha"> the picture&rsquo;s own alpha</label>
                 </span></div>
                 <div class="wrow"><span>
-                  <button class="edtool sm" id="iedStyleCheck" title="Ask the server whether this picture has a shape to style, without painting anything: POST /api/images/describe-styles. It answers with the shape&rsquo;s source, how much of the frame it covers, and — when there is none — the sentence saying why every style would be a no-op or repaint the whole frame.">does this have a shape?</button>
-                  <label class="hint" title="One sun for the three styles that read an angle. There is no global light in the renderer and their defaults disagree — dropShadow 45, innerShadow 45, bevelEmboss 120 — and the bevel&rsquo;s angle runs the opposite way round the compass, so they agree only at 0 and 180. This one number is negated for the bevel on the way through.">
+                  <button class="edtool sm" id="iedStyleCheck" title="Ask the server whether this picture has a shape to style, without painting anything: POST /api/images/describe-styles. It answers with the shape&rsquo;s source, how much of the frame it covers, and (when there is none) the sentence saying why every style would be a no-op or repaint the whole frame.">does this have a shape?</button>
+                  <label class="hint" title="One sun for the three styles that read an angle. There is no global light in the renderer and their defaults disagree (dropShadow 45, innerShadow 45, bevelEmboss 120) and the bevel&rsquo;s angle runs the opposite way round the compass, so they agree only at 0 and 180. This one number is negated for the bevel on the way through.">
                     <input type="checkbox" id="iedStyleLightOn"> one light at
                     <input type="number" id="iedStyleLight" class="sel2 sm" value="120" min="-360" max="360" style="width:62px">&deg;</label>
                 </span></div>
                 <p class="hint" id="iedStyleSays"></p>
               </div>
-              <p class="hint" id="iedStyleNote">Painted after the selection blend &mdash;
+              <p class="hint" id="iedStyleNote">Painted after the selection blend:
                 a shadow, a glow and an outside stroke land OUTSIDE the shape, and
                 running them earlier would let the selection clip them away with both
                 halves behaving correctly. stroke, outerGlow and dropShadow paint
@@ -4188,7 +4189,7 @@
               <p class="hint" id="iedSelSays"></p>
               <p class="hint">Shapes combine in the order listed. Wand and colour
                 range sample the picture as it is after geometry and before any
-                adjustment &mdash; &sect;3.</p>
+                adjustment (&sect;3).</p>
             </div>
           </details>
 
@@ -4278,7 +4279,7 @@
               <p class="hint">Layers paint bottom-up; a cutout&rsquo;s transparency is respected.
                 Position is a percentage of the base, so it survives a resize.
                 Alt-click the border under a row to clip it to the layer below
-                (the base image counts) &mdash; a clipping mask, marked &#8628;
+                (the base image counts): a clipping mask, marked &#8628;
                 and indented, keeps the lower layer&rsquo;s alpha as its matte.</p>
             </div>
           </details>
@@ -4303,7 +4304,7 @@
               <p class="hint iedcapwarn" id="iedDocCap" hidden></p>
               <div class="wrow"><span>
                 <button class="edtool sm" id="iedDocRefresh" title="Read the shelf again. It is one JSON file on the server and anything else holding the route can write to it, so the listing here is a snapshot, not a subscription.">read the shelf</button>
-                <button class="edtool sm" id="iedDocSave" title="Write the base picture and the Layers dock&rsquo;s stack out as a layer document. What is QUEUED on this console is a pipeline op, not a layer, so it is left out &mdash; the line below names every piece.">save this composite</button>
+                <button class="edtool sm" id="iedDocSave" title="Write the base picture and the Layers dock&rsquo;s stack out as a layer document. What is QUEUED on this console is a pipeline op, not a layer, so it is left out: the line below names every piece.">save this composite</button>
               </span></div>
               <div id="iedDocShelf"></div>
               <div class="iedgrp" id="iedDocPanel" hidden>
@@ -4311,19 +4312,19 @@
                 <div id="iedDocOutline"></div>
                 <p class="hint" id="iedDocPaintSays">Select an image layer to paint into its pixels.</p>
                 <div class="wrow"><span>
-                  <button class="edtool sm" id="iedDocNew" title="add_layer &mdash; the kinds come out of the server&rsquo;s own catalog, so one it grows appears here without anyone editing this page">new layer&hellip;</button>
-                  <button class="edtool sm" id="iedDocDup" title="duplicate_layer &mdash; a copy directly above the original, with fresh ids all the way down">duplicate</button>
+                  <button class="edtool sm" id="iedDocNew" title="add_layer: the kinds come out of the server&rsquo;s own catalog, so one it grows appears here without anyone editing this page">new layer&hellip;</button>
+                  <button class="edtool sm" id="iedDocDup" title="duplicate_layer: a copy directly above the original, with fresh ids all the way down">duplicate</button>
                   <button class="edtool sm" id="iedDocGroup" title="group_layers over every row you picked, in the order you picked them. They have to share a container already.">group</button>
                 </span></div>
                 <div class="wrow"><span>
-                  <button class="edtool sm" id="iedDocMask" title="update_layer with a reveal-all mask: one canvas-sized rectangle that hides nothing and is there to be edited. A mask with neither a source nor a shape is not a mask &mdash; it renders exactly as if it were absent.">add a layer mask</button>
-                  <button class="edtool sm" id="iedDocAdj" title="add_layer of an adjustment layer &mdash; an effect stack applied to everything beneath it, re-editable instead of baked">adjustment layer&hellip;</button>
+                  <button class="edtool sm" id="iedDocMask" title="update_layer with a reveal-all mask: one canvas-sized rectangle that hides nothing and is there to be edited. A mask with neither a source nor a shape is not a mask: it renders exactly as if it were absent.">add a layer mask</button>
+                  <button class="edtool sm" id="iedDocAdj" title="add_layer of an adjustment layer: an effect stack applied to everything beneath it, re-editable instead of baked">adjustment layer&hellip;</button>
                 </span></div>
                 <div class="wrow"><span>
                   <button class="edtool sm" id="iedDocUp" title="reorder_layer one place UP THE STACK, inside this layer&rsquo;s own container. The rows read bottom-up, so it moves one row DOWN the list.">&uarr; raise</button>
                   <button class="edtool sm" id="iedDocDown" title="reorder_layer one place DOWN THE STACK, inside this layer&rsquo;s own container. The rows read bottom-up, so it moves one row UP the list.">&darr; lower</button>
-                  <button class="edtool sm" id="iedDocClip" title="set_clipped &mdash; this layer keeps the alpha of the one below it as its matte">clip</button>
-                  <button class="edtool sm" id="iedDocUngroup" title="ungroup_layer &mdash; the children come back out where the group was">ungroup</button>
+                  <button class="edtool sm" id="iedDocClip" title="set_clipped: this layer keeps the alpha of the one below it as its matte">clip</button>
+                  <button class="edtool sm" id="iedDocUngroup" title="ungroup_layer: the children come back out where the group was">ungroup</button>
                 </span></div>
                 <div class="wrow"><span>
                   <button class="edtool sm" id="iedDocRender">Render &amp; open composite</button>
@@ -4332,7 +4333,7 @@
                 </span></div>
               </div>
               <p class="hint" id="iedDocSays"></p>
-              <p class="hint">Rows read <b>bottom-up</b> &mdash; layer 0 is the bottom.
+              <p class="hint">Rows read <b>bottom-up</b>: layer 0 is the bottom.
                 That is the order the document stores and the order the edit route
                 answers in, and borrowing the Layers dock&rsquo;s top-down order here
                 would be a second ordering for the same tree. Every button sends one
@@ -4349,7 +4350,7 @@
             <summary>Channels</summary>
             <div class="ieddockbody">
               <div id="iedChanList"></div>
-              <p class="hint">Click a row to see that plane as grayscale &mdash; a view,
+              <p class="hint">Click a row to see that plane as grayscale: a view,
                 nothing queued. <b>load</b> makes the plane the ACTIVE SELECTION
                 (Photoshop&rsquo;s ctrl-click on a channel); <b>curve</b> points the
                 Adjustments curve at that channel, which is how an edit lands on
@@ -4366,12 +4367,12 @@
               <p class="hint iedcapwarn" id="iedPathCap" hidden></p>
               <div id="iedPathList"></div>
               <div class="wrow"><span>
-                <button class="edtool sm" id="iedPathFromSel" title="Turn the current selection's shapes into a saved path — Photoshop's make-work-path">from selection</button>
+                <button class="edtool sm" id="iedPathFromSel" title="Turn the current selection's shapes into a saved path (Photoshop's make-work-path)">from selection</button>
                 <button class="edtool sm" id="iedPathSvg" title="Paste an SVG path d attribute">from SVG d&hellip;</button>
               </span></div>
               <div class="wrow"><span>
-                <button class="edtool sm" id="iedPathToSel" title="The path as the active selection — the same coverage its fill would lay down">&rarr; selection</button>
-                <button class="edtool sm" id="iedPathStroke" title="Queue a brush stroke along the path — the server stamps §5's brush along it">stroke (brush)</button>
+                <button class="edtool sm" id="iedPathToSel" title="The path as the active selection: the same coverage its fill would lay down">&rarr; selection</button>
+                <button class="edtool sm" id="iedPathStroke" title="Queue a brush stroke along the path: the server stamps §5's brush along it">stroke (brush)</button>
                 <button class="edtool sm" id="iedPathFill" title="Queue a fill of the path, in the shape fill colour">fill</button>
               </span></div>
               <!-- WHY IT FILLED SOLID. Both ways to get a multi-contour
@@ -4398,13 +4399,13 @@
                      around it exports perfectly and fills SOLID in every renderer
                      on earth, so that export is a success carrying a warning —
                      never an error. -->
-                <button class="edtool sm" id="iedPathSvgOut" title="Write the current path out as an .svg in the library — one &lt;path&gt; element with one subpath per contour, which is the only shape of file whose holes stay holes. The reply is checked on the way out: a figure that will draw wrong comes back as a warning beside a successful export, naming the contour and what to do to it.">export .svg</button>
+                <button class="edtool sm" id="iedPathSvgOut" title="Write the current path out as an .svg in the library: one &lt;path&gt; element with one subpath per contour, which is the only shape of file whose holes stay holes. The reply is checked on the way out: a figure that will draw wrong comes back as a warning beside a successful export, naming the contour and what to do to it.">export .svg</button>
               </span></div>
               <p class="hint" id="iedPathSays"></p>
               <p class="hint" id="iedPathSvgSays"></p>
               <div id="iedPathQueue"></div>
               <p class="hint">The pen (P) clicks anchors; double-click or Enter saves.
-                A path is geometry &mdash; nothing touches a pixel until a queued
+                A path is geometry: nothing touches a pixel until a queued
                 fill or stroke renders on Apply.</p>
             </div>
           </details>
@@ -4427,7 +4428,7 @@
                    is not the size that drew. Neither is visible in the
                    picture until it is too late to change the design. -->
               <div class="wrow"><span>
-                <button class="edtool sm" id="iedCharMeasure" title="Lay this type out on the server and answer with the numbers &mdash; ink box, line count, baseline step, the size it actually landed on, and whether the font you asked for was the font it used. No render, no picture.">measure</button>
+                <button class="edtool sm" id="iedCharMeasure" title="Lay this type out on the server and answer with the numbers: ink box, line count, baseline step, the size it actually landed on, and whether the font you asked for was the font it used. No render, no picture.">measure</button>
                 <!-- Type as OUTLINES, through the same door the pen uses. The
                      contours come out of the font file, so the .svg has no parent
                      picture and the server files no `vectorFrom` lineage for it —
@@ -4435,7 +4436,7 @@
                      credit list. Counters are the whole risk here and the reply
                      reports on them: an &lsquo;o&rsquo; is two contours wound against each
                      other, and figureOk is what says they were. -->
-                <button class="edtool sm" id="iedCharSvgOut" title="Write this type out as an .svg of OUTLINES — no font is embedded and none is needed to open it. The reply says how many glyphs and contours it made, which characters the font had no glyph for, and whether the counters will actually read as holes.">export .svg</button>
+                <button class="edtool sm" id="iedCharSvgOut" title="Write this type out as an .svg of OUTLINES: no font is embedded and none is needed to open it. The reply says how many glyphs and contours it made, which characters the font had no glyph for, and whether the counters will actually read as holes.">export .svg</button>
               </span></div>
               <p class="hint" id="iedCharSays"></p>
               <p class="hint" id="iedCharSvgSays"></p>
@@ -4473,10 +4474,10 @@
               <p class="hint iedcapwarn" id="iedLutCap" hidden></p>
               <div class="wrow">
                 <select id="iedLutPick" class="sel2 sm"><option value="">no LUT loaded&hellip;</option></select>
-                <button class="edtool sm" id="iedLutRefresh" title="Read the shelf again — GET /api/images/luts. It is a folder on the server, so this listing is a snapshot and not a subscription.">re-read</button>
+                <button class="edtool sm" id="iedLutRefresh" title="Read the shelf again (GET /api/images/luts). It is a folder on the server, so this listing is a snapshot and not a subscription.">re-read</button>
               </div>
               <div class="wrow"><span>
-                <label class="edtool sm" id="iedLutUpload" title="Add a .cube to the shelf. The server caps the size, checks the extension and PARSES the file before it answers, so a file that turns out not to be a LUT is refused and not kept — and the reason is printed below.">add a .cube&hellip;
+                <label class="edtool sm" id="iedLutUpload" title="Add a .cube to the shelf. The server caps the size, checks the extension and PARSES the file before it answers, so a file that turns out not to be a LUT is refused and not kept, and the reason is printed below.">add a .cube&hellip;
                   <input type="file" id="iedLutFile" accept=".cube,.3dl" hidden></label>
                 <button class="edtool sm" id="iedLutInfo" title="What this LUT is, without applying it: title, kind, grid size, domain, the landmarks black / 18% grey / mid / white, and the one thing it cannot know.">what is it?</button>
               </span></div>
@@ -4512,7 +4513,7 @@
               <div class="iedgrp">
                 <div class="wrow"><b class="iedgrph">Model tools</b><span class="hint">local engine</span></div>
                 <div class="wrow"><span>
-                  <button class="edtool sm" id="iedCut" title="BiRefNet (MIT) — subject stays, background becomes transparency">✦ remove background</button>
+                  <button class="edtool sm" id="iedCut" title="BiRefNet (MIT): subject stays, background becomes transparency">✦ remove background</button>
                   <button class="edtool sm" id="iedUp" title="RealESRGAN ×2 (BSD-3)">⤢ upscale ×2</button></span></div>
               </div>
               <div class="iedgrp" id="iedVec">
@@ -4609,11 +4610,11 @@
                    control on this console, snapshot and restore, Ctrl+Z. -->
               <div class="iedsteps" id="iedSteps"></div>
               <p class="hint">Steps since this file opened. Nothing here has
-                touched a pixel yet &mdash; Apply is what commits.</p>
+                touched a pixel yet (Apply is what commits).</p>
               <div class="iedgrp">
                 <b class="iedgrph">Committed lineage</b>
                 <div class="lineage" id="iedLineage"></div>
-                <p class="hint">Every ancestor of this file. Click one to open it — that
+                <p class="hint">Every ancestor of this file. Click one to open it: that
                   is the undo.</p>
               </div>
             </div>
@@ -4634,7 +4635,7 @@
                 <textarea id="iedChkExpect" rows="4" spellcheck="false"
                   placeholder="six strings&#10;five fingers per hand&#10;no text in the frame"></textarea>
                 <p class="hint">One per line, in your own words. Write it before you
-                  look &mdash; a checklist made afterwards tends to describe whatever
+                  look: a checklist made afterwards tends to describe whatever
                   arrived.</p>
                 <button class="btn" id="iedChkSave">Save checklist</button>
                 <button class="btn" id="iedChkSuggest" hidden>Use the suggested checks</button>
@@ -4648,7 +4649,7 @@
                   <button class="btn good" id="iedChkPass">Looks right</button>
                   <button class="btn bad" id="iedChkFail">Something is wrong</button>
                 </div>
-                <p class="hint">Ticking anything above makes it a fail &mdash; a pass
+                <p class="hint">Ticking anything above makes it a fail: a pass
                   that carries a known defect is how the defect gets shipped.</p>
               </div>
             </div>
@@ -4657,7 +4658,7 @@
           <details class="ieddock" id="iedDockPresets" data-dock="presets">
             <summary>Presets</summary>
             <div class="ieddockbody">
-              <div class="wrow"><select id="iedPreset" class="sel2 sm"><option value="">&mdash; none &mdash;</option></select></div>
+              <div class="wrow"><select id="iedPreset" class="sel2 sm"><option value="">none</option></select></div>
               <div class="wrow"><span>
                 <button class="edtool sm" id="iedPresetApply">apply</button>
                 <button class="edtool sm" id="iedPresetSave">save current&hellip;</button>
@@ -4682,7 +4683,7 @@
               </span></div>
               <p class="hint">Click a swatch to make it the brush and shape
                 colour; click it again to select it for removal. Saved with the
-                presets, server-side &mdash; MCP&rsquo;s image_swatches is the same shelf.</p>
+                presets, server-side: MCP&rsquo;s image_swatches is the same shelf.</p>
             </div>
           </details>
 
@@ -4691,7 +4692,7 @@
           <a class="edtool sm" id="iedDl" download>↓ download</a>
           <button class="edtool sm" id="iedReuse2">reuse prompt</button>
           <button class="edtool sm" id="iedReveal2">file</button>
-          <button class="edtool sm" id="iedBlur" title="Blurred tiles reveal with one click — for screens other people can see">blur in gallery</button>
+          <button class="edtool sm" id="iedBlur" title="Blurred tiles reveal with one click: for screens other people can see">blur in gallery</button>
           <button class="edtool sm warn" id="iedTrash2">✕ trash</button>
         </div>
       </aside>
@@ -4737,7 +4738,7 @@
         <canvas id="g2248"></canvas>
         <div class="gamehud">
           <h3>2248</h3>
-          <p class="hint">Drag through equal numbers — diagonals count. After the
+          <p class="hint">Drag through equal numbers (diagonals count). After the
             first pair, each tile may also double the one before it. The chain
             lands as a power of two on the last tile you touched. Make a tile
             8 steps above the board's smallest and you level up: the lowest
@@ -4755,7 +4756,7 @@
     <div id="models" hidden>
       <div class="stagehead"><h2>Models</h2><span class="hint" id="modelsTotal"></span></div>
       <p class="hint">Only the music engine is required. Everything else is optional
-        and downloads when you ask for it — never on its own.</p>
+        and downloads when you ask for it (never on its own).</p>
       <div id="modelList" class="modellist"></div>
       <p class="hint" id="modelsNote"></p>
     </div>
@@ -4804,7 +4805,7 @@
                "yes" into this same conversation; the gate that actually stops
                the spend is in server/chat/loop.js. -->
           <div class="chat-confirm" id="chatConfirm" hidden role="group" aria-label="Confirm before spending GPU time">
-            <div class="chat-confirm-head"><span>spends GPU time &mdash; your call</span></div>
+            <div class="chat-confirm-head"><span>spends GPU time (your call)</span></div>
             <div class="chat-confirm-body" id="chatConfirmText"></div>
             <div class="chat-confirm-btns">
               <button type="button" id="chatYes" class="btn chat-yes">Yes, run it</button>
@@ -4823,8 +4824,8 @@
           </form>
 
           <div class="chat-foot">
-            <p class="hint" id="chatFoot">Everything runs on your own graphics card. Anything that spends
-              time on it is proposed first and waits for you to say yes.</p>
+            <p class="hint" id="chatFoot">Everything runs on your own graphics card. Work starts when you
+              ask, with a warning and Cancel; deleting asks first.</p>
             <span class="chat-keys">Enter sends &middot; Shift+Enter is a new line</span>
           </div>
         </div>
@@ -5440,7 +5441,7 @@
       <div class="commempty" id="commEmpty" hidden>
         <p>Nothing live at the moment.</p>
         <p class="hint">Rooms open through the day, and the daily and weekly
-          challenges are the easiest way in — they give you a brief instead of a
+          challenges are the easiest way in: they give you a brief instead of a
           blank page.</p>
       </div>
       <p class="hint" id="commNote"></p>
@@ -5635,7 +5636,7 @@
     <textarea id="edLyrics" rows="8" spellcheck="false"></textarea>
 
     <p class="hint">Editing style or lyrics here updates what this track SAYS about
-      itself — it does not re-render the audio. To hear a change, reuse the prompt
+      itself: it does not re-render the audio. To hear a change, reuse the prompt
       and generate again.</p>
 
     <div class="cta">
@@ -5679,7 +5680,7 @@
   <p class="hint warnline" id="enhWarn" hidden></p>
 
   <div class="enhfoot">
-    <span class="hint">The original is kept — this saves a new clip beside it.</span>
+    <span class="hint">The original is kept: this saves a new clip beside it.</span>
     <button class="btn" type="button" id="enhGo">Enhance</button>
   </div>
 </div></div>
@@ -5698,7 +5699,7 @@
   <p class="hint">The model reads the clip's last second as context, so motion, light and sound carry across the seam. The length snaps up to the model's 17-frame grid. MiniMax H3 only.</p>
   <p class="hint warnline" id="cextWarn" hidden></p>
   <div class="enhfoot">
-    <span class="hint">The original is kept — this saves a new clip beside it.</span>
+    <span class="hint">The original is kept: this saves a new clip beside it.</span>
     <button class="btn" type="button" id="cextGo">Continue</button>
   </div>
 </div></div>

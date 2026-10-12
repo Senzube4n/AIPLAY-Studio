@@ -797,7 +797,7 @@ console.log("\n  -- three keymap profiles over one action table --");
     `checked ${spotted.join(", ") || "none"} of ${profiles.join(", ")}`);
 
   ok("the active binding is written into tooltips (a profile you can see)",
-    /const TIP_BINDINGS = \[/.test(JS) && /el\.title = `\$\{base\} — \$\{binding\(act\)/.test(JS));
+    /const TIP_BINDINGS = \[/.test(JS) && /el\.title = `\$\{base\}: \$\{binding\(act\)/.test(JS));
   ok("typing in a field never fires a gesture",
     /\/\^\(INPUT\|SELECT\|TEXTAREA\)\$\/\.test\(t\.tagName\)/.test(CODE));
 }

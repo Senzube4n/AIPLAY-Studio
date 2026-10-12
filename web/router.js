@@ -52,7 +52,7 @@ function paintOffMode() {
     $("router").querySelector(".page-head")?.after(note);
   }
   note.textContent = "This page runs in the launcher's Use Comfy API mode. Full Studio never spends Comfy credits. "
-    + "Your Comfy API key can also be saved or forgotten in Settings → No strong graphics card?.";
+    + "Your Comfy API key can also be saved or forgotten in Settings → No strong graphics card?";
 }
 
 /* ── the key ─────────────────────────────────────────────────────────── */

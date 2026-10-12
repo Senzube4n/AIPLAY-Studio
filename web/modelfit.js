@@ -245,9 +245,9 @@ export function paintFit(d, root = document) {
          really spawns, so it can be copied rather than adapted. */
       (rec.packages || []).some((k) => !k.packageReady)
         ? `<div class="fitnote">
-            <b>Two of these are Python packages, not files — Studio cannot fetch them.</b>
+            <b>Two of these are Python packages, not files: Studio cannot fetch them.</b>
             ${rec.packages.filter((k) => !k.packageReady).map((k) => `
-              <p>${esc(k.label)} — ${esc(k.why)}</p>
+              <p>${esc(k.label)}: ${esc(k.why)}</p>
               ${k.install ? `<pre class="fitcmd">${esc(k.install)}</pre>` : ""}`).join("")}
           </div>`
         : ""}`;

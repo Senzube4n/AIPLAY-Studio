@@ -108,6 +108,15 @@ export class ComfySupervisor extends EventEmitter {
     /** The port this start() reserved. Kept only so the error messages below
      *  can name it; nothing builds a URL from it — see engine/client.js. */
     this.port = null;
+    /** Why the engine is not running, for the screen: { message, at, gaveUp }.
+     *  Null while it starts or runs. Without it a failed start read "STARTING…"
+     *  forever. */
+    this.failure = null;
+  }
+
+  /** Remember a failed start or an exhausted restart for /api/status. */
+  noteFailure(message, gaveUp = false) {
+    this.failure = { message: String(message || "the engine stopped"), at: Date.now(), gaveUp };
   }
 
   /** Change the graphics-memory tier. Flags are read at process start, so this
@@ -315,10 +324,11 @@ export class ComfySupervisor extends EventEmitter {
       if (this.#restarts <= 6) {
         console.error(`[comfy] restarting in ${Math.round(wait / 1000)}s (attempt ${this.#restarts})`);
         setTimeout(() => {
-          this.start().catch((e) => console.error(`[comfy] restart failed: ${e.message}`));
+          this.start().catch((e) => { this.noteFailure(e.message); console.error(`[comfy] restart failed: ${e.message}`); });
         }, wait);
       } else {
         console.error("[comfy] giving up after six restarts — see comfy.log");
+        this.noteFailure("ComfyUI stopped and did not come back after six restarts. See comfy.log.", true);
         this.emit("gaveup");
       }
     });
@@ -328,6 +338,7 @@ export class ComfySupervisor extends EventEmitter {
      * later gets its full six attempts rather than inheriting a stale count. */
     this.#restarts = 0;
     this.stopping = false;
+    this.failure = null;
   }
 
   /**

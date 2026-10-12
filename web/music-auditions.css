@@ -5,6 +5,22 @@
 .music-auditions label { display: grid; gap: .4rem; font-size: .88rem; margin-bottom: .9rem; }
 .music-auditions input, .music-auditions select, .music-auditions textarea { box-sizing: border-box; width: 100%; }
 .music-auditions textarea { resize: vertical; }
+/* The page kit's look (input.line, .btn2): these fields and buttons rendered as
+   the browser's own light boxes and grey buttons on the dark page. */
+.music-auditions input[type=number], .music-auditions input[type=text], .music-auditions textarea {
+  font: inherit; font-size: 13px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 8px; padding: 8px 11px;
+}
+.music-auditions input:focus, .music-auditions textarea:focus { outline: none; border-color: var(--primary); }
+.music-auditions button {
+  font: inherit; font-size: 12px; font-weight: 600; line-height: 1;
+  padding: 8px 14px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  color: var(--dim); background: hsla(0,0%,100%,.05); border: 1px solid var(--edge);
+  transition: color .12s, border-color .12s;
+}
+.music-auditions button:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.music-auditions button:disabled { opacity: .45; cursor: not-allowed; }
+.music-auditions button.primary { color: var(--on); background: var(--primary); border-color: transparent; }
 .ma-range { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
 .ma-support, .ma-choice-note, .ma-session-title, .music-auditions small { font-size: .8rem; line-height: 1.5; color: var(--faint); }
 .ma-support { min-height: 2.4em; }

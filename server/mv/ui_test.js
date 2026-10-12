@@ -516,7 +516,7 @@ ok("...and every card says WHICH SCENES USE IT",
   "\"declared and unused\" and \"used everywhere with no sheet\" looked identical on this page, "
   + "and the second is the failure DIRECTING.md is mostly about");
 ok("...loudest for the silent case: referenced, and carrying no sheet",
-  /Used in \$\{esc\(list\)\} — with no sheet/.test(UI) && /\.usage\.bad/.test(CSS));
+  /Used in \$\{esc\(list\)\}: with no sheet/.test(UI) && /\.usage\.bad/.test(CSS));
 ok("a prop with no sheet HOLDS the cast stage, exactly as a character with none does",
   STORE.includes("if ((doc.props || []).length && need(doc.props)) return \"characters\";"),
   "the gate checked characters and backgrounds and walked straight past props");
@@ -1264,7 +1264,7 @@ ok("the quality line is on the object being approved, by its own id",
 ok("...and DIRECTING §4's traps are painted under it, each with its cite",
   /QUALITY_TRAPS/.test(UI) && /x\.cite \|\| ""/.test(UI) && /x\.level === "error"/.test(UI));
 ok("...including the LTX sentence, readable in the PAGE and not only on the server",
-  UI.includes("references are dropped entirely on LTX — every character sheet you built is not used."),
+  UI.includes("references are dropped entirely on LTX: every character sheet you built is not used."),
   "the trap that costs the most and looks like nothing: every sheet built, and none carried");
 
 ok("the spend meter is painted whether or not the gate is on",

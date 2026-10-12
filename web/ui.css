@@ -26,6 +26,12 @@
   background: linear-gradient(hsla(220,20%,5%,.97) 75%, hsla(220,20%,5%,0));
 }
 .pnav:empty { display: none; }
+/* The scroller has top padding, so the bar sticks a little below its edge and
+   the page used to scroll through that strip above the pills. Cover it. */
+.pnav.stuck::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 24px;
+  background: hsla(220,20%,5%,.97); pointer-events: none;
+}
 .pnav a {
   font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap;
   padding: 6px 13px; border-radius: 999px;

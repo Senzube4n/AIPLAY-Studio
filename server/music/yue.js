@@ -76,7 +76,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { stat, mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { stat, mkdir, readFile, writeFile, readdir, rm } from "node:fs/promises";
 import { config } from "../config.js";
 import * as provenance from "../provenance.js";
 import { TOOL, normalizeActor } from "../provenance.js";
@@ -1552,6 +1552,9 @@ export async function renderSong({
   } catch (e) {
     error = e.message;
   }
+  /* The request holds the full lyrics and prompt: it was left in %TEMP% after
+   * every song. The driver has read it by now. */
+  await rm(reqFile, { force: true }).catch(() => {});
   reader.end();
   const elapsedSec = (Date.now() - t0) / 1000;
 

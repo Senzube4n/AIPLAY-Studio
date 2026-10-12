@@ -9,7 +9,7 @@ import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL, MAX_ASSET, TERMINAL, MEDIA_EXT, jobId, relativeFile, containedFile,
   hashFile, digest, readJSON, jsonStore, readBody, sendJSON, validateGraph } from "../server/engine/remote-common.js";
-import { checkComfyLoopback } from "./check-comfy-loopback.js";
+import { waitForComfyLoopback } from "./check-comfy-loopback.js";
 import { createModelManager } from "./model-manager.js";
 /* The Studio's minors check, dependency-free, so the Pod refuses too: a
  * Studio of another version, or anything else holding the token, still
@@ -273,7 +273,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await checkComfyLoopback();
+  await waitForComfyLoopback();
   const root = process.env.AIPLAY_COMFY_DIR || "/workspace/ComfyUI";
   const worker = await createWorker({ token: process.env.AIPLAY_WORKER_TOKEN,
     comfyURL: process.env.AIPLAY_WORKER_COMFY_URL || "http://127.0.0.1:8188",

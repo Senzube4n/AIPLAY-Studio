@@ -75,6 +75,16 @@ import { paintSetupButtons, offerSetup } from "./setup-feature.js";
 // load, which killed the whole file before the first poll could run. A helper
 // with no dependencies belongs at the top.
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/* Labels the server writes as "Kind — Name" (model rows, providers, rights
+ * chips) read "Kind: Name" on screen: no em dashes in what people see
+ * (docs/UI_GUIDE.md). Only for those labels, never for a user's own titles. */
+const uiDash = (s) => String(s ?? "").replace(/\s+—\s+/g, ": ");
+/* The same for a sentence the server wrote: a pair of dashes around an aside
+ * becomes brackets, a single one a colon, sentence by sentence. */
+const uiProse = (s) => String(s ?? "").split(/(?<=[.!?])\s+/).map((t) => {
+  const n = t.split(/\s+—\s+/).length - 1;
+  return n === 2 ? t.replace(/\s+—\s+/, " (").replace(/\s+—\s+/, ") ") : t.replace(/\s+—\s+/g, ": ");
+}).join(" ");
 
 // Also hoisted for the same reason: the extend panel and the visualiser both
 // attach listeners to it well above where the player section begins, and `const`
@@ -162,7 +172,7 @@ function dragScroll(el) {
 }
 dragScroll($("chips"));
 if ($("chipRandom")) {
-  $("chipRandom").title = `Random styles — ${GENRES.length.toLocaleString()} genres, plus vocals, moods, instruments, tempo and production`;
+  $("chipRandom").title = `Random styles: ${GENRES.length.toLocaleString()} genres, plus vocals, moods, instruments, tempo and production`;
   $("chipRandom").onclick = () => { paintChips(null, true); $("chips").scrollLeft = 0; };
 }
 function paintChips(_engine, reroll = false) {
@@ -722,7 +732,7 @@ function paintMusicModelSelect(sel) {
        * the window that installs it (needModel), rather than a greyed-out row
        * that says nothing about how to get it. */
       const off = false;
-      const tail = c.available ? (c.note ? ` — ${c.note}` : "") : ` — ${c.note || "not installed"}`;
+      const tail = c.available ? (c.note ? ` (${c.note}` : "") : `) ${c.note || "not installed"}`;
       return `<option value="${esc(c.value)}"${off ? " disabled" : ""}>${esc(c.label + tail)}</option>`;
     }).join("");
     sel.dataset.sig = sig;
@@ -873,7 +883,7 @@ function presetRows() {
     const models = Array.isArray(ch.models) ? ch.models : [];
     out.chat = models.length
       ? { options: models.map((x) => ({ value: x.file, label: x.label })), current: ch.current || models[0].file, cap: "chatQwen3", ok: true }
-      : { options: [{ value: "", label: ch.offline ? "waiting for the engine" : "none installed", off: true }], current: "", cap: "chatQwen3", ok: !!ch.offline };
+      : { options: [{ value: "", label: ch.offline ? (globalThis.aiplayEngineDown ? "engine not running" : "waiting for the engine") : "none installed", off: true }], current: "", cap: "chatQwen3", ok: !!ch.offline };
   }
   /* Lyrics and speech: the Whisper model size, and whether Whisper can run. */
   const w = presetInfo.whisper;
@@ -1081,7 +1091,7 @@ function musicEnginePaint() {
   if (eng.amdWarning) bits.push(eng.amdWarning);
   if (eng.note) bits.push(eng.note);
   if (eng.score) bits.push("writes an editable score before the audio, so you can change the tune and re-render");
-  if (eng.emergentLength) bits.push("length follows lyrics and score — no guaranteed audio duration");
+  if (eng.emergentLength) bits.push("length follows lyrics and score: no guaranteed audio duration");
   if (!eng.audioReference) bits.push("no audio reference");
   if (!eng.warmCache) bits.push("re-rolls cost the same as the first take");
   if (eng.realtimeRatio) bits.push(`about ${eng.realtimeRatio}× the song's length to render, measured on this card`);
@@ -1103,7 +1113,7 @@ function musicEnginePaint() {
       : pythonNotReady
       ? eng.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup."
       : noPath
-      ? `${eng.label} cannot render from the Create button yet — it works through its own `
+      ? `${eng.label} cannot render from the Create button yet: it works through its own `
         + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
         + `pressing Create is refused rather than silently rendering the other engine, `
         + `because the two do not share a licence.`
@@ -1218,7 +1228,7 @@ function musicEnginePaint() {
   const cap = $("caption");
   if (cap) {
     cap.placeholder = yueParams || aceParams
-      ? "Style: genre, mood, tempo, instruments, who sings — e.g. warm indie folk, 96 BPM, female lead vocal, fingerpicked guitar"
+      ? "Style: genre, mood, tempo, instruments, who sings. For example: warm indie folk, 96 BPM, female lead vocal, fingerpicked guitar"
       : "Indie folk, brushed drums, close-mic vocal, 92 BPM";
   }
   /* The page is the engine's. Examples come from what THIS engine rendered:
@@ -2006,7 +2016,7 @@ document.addEventListener("aiplay:simple-generate", async () => {
     document.dispatchEvent(new CustomEvent("aiplay:simple-progress", { detail: { text: "Transcribing the song's melody on the graphics card (about a minute)…" } }));
     if (!(await humSendSource({ library_file: file }))) {
       const why = $("humNote")?.textContent?.trim() || "no reason came back";
-      state.lastTranscribe = `FAILED for ${file} — ${why}`;
+      state.lastTranscribe = `FAILED for ${file}: ${why}`;
       return simpleGenerated(false, `the melody could not be transcribed: ${why}`);
     }
     state.remixTranscribed = file;
@@ -2064,7 +2074,7 @@ $("maxDur").oninput = (event) => {
   const tight = need > 0 && v < need * 1.4;
   $("maxDurV").style.color = tight ? "var(--warn)" : "";
   $("maxDurV").title = tight
-    ? `Tight — your material needs about ${fmt(Math.round(need * 1.4))} of headroom or the ending may be clipped.`
+    ? `Tight: your material needs about ${fmt(Math.round(need * 1.4))} of headroom or the ending may be clipped.`
     : "";
   /* The ladder's answer depends on this value, so repaint here as well as
    * on an engine switch. Gated so MiniMax does not fire a request per
@@ -2114,7 +2124,7 @@ const HELP = {
     "exact same song every time, so lock it when you have something you like and " +
     "want to change one small thing. Roll it for a completely different take."],
   maxDur: ["Length ceiling",
-    "The longest the song is allowed to run — not a target. The model usually " +
+    "The longest the song is allowed to run: not a target. The model usually " +
     "stops earlier on its own, and how long your lyrics are matters far more than " +
     "this setting. Raise it if endings feel cut off."],
   qSteps: ["Quality",
@@ -2134,19 +2144,19 @@ const HELP = {
     "about four times faster to try than composition guidance."],
   qTier: ["Graphics memory",
     "How much of the model is kept on your graphics card at once. Auto is right " +
-    "for almost everyone. Pick a smaller setting only if you run out of memory — " +
+    "for almost everyone. Pick a smaller setting only if you run out of memory: " +
     "it streams more from ordinary RAM instead, which works but is slower."],
   qModel: ["Precision",
     "How finely the model's numbers are stored. int8 and fp16 were measured as " +
     "producing identical audio quality, so int8 is the default purely because it " +
-    "takes half the disk space — changing between those two does not make your " +
+    "takes half the disk space: changing between those two does not make your " +
     "music sound better. " +
     "fp32 is the full-precision original and has NOT been compared against the " +
     "other two. It is four times the size and much heavier on graphics memory, " +
     "so treat it as an experiment rather than a better setting."],
   qVis: ["Visualiser",
     "Makes the thin dividing lines in the app pulse along with whatever is " +
-    "playing. Purely decorative — turn it off if you would rather have the " +
+    "playing. Purely decorative: turn it off if you would rather have the " +
     "graphics card doing nothing else while it works."],
   sections: ["Structure",
     "How many sections the piece is built from. Instrumentals need this: with " +
@@ -2161,12 +2171,12 @@ const HELP = {
 const STATIC_HELP = {
   tags: ["Section tags",
     "Click one to drop it into the lyrics at your cursor. They tell the model " +
-    "where the song changes — a chorus should lift, an outro should wind down — " +
+    "where the song changes (a chorus should lift, an outro should wind down) " +
     "and they are the main way you control structure. " +
     "Write them on their own line, and keep them BARE: [Chorus], not " +
     "[Chorus - big drums]. Anything extra inside the brackets gets SUNG, because " +
     "the model treats an unrecognised tag as words to perform. Describe how a " +
-    "section should sound in the Style box instead — that is prose it reads as " +
+    "section should sound in the Style box instead: that is prose it reads as " +
     "description. " +
     "Instrumentals need tags too: with nothing to fill, the model stops after " +
     "about thirty seconds."],
@@ -2320,7 +2330,7 @@ async function rerollMix(file) {
    * the song, so "same take, new mix" is not a thing it can do. Say so here,
    * the one choke point both the row menu and the song panel reach. */
   if (/yue2/i.test(String(t.model || ""))) {
-    $("ctaNote").textContent = "YuE2 has no mix seed — every render is the full model writing and singing "
+    $("ctaNote").textContent = "YuE2 has no mix seed: every render is the full model writing and singing "
       + "the song. Use Reuse prompt and press Create for a new take.";
     return;
   }
@@ -2359,7 +2369,7 @@ async function rerollMix(file) {
     rr = await post({ confirmSpend: true });
   }
   if (rr.error) { $("ctaNote").textContent = rr.error; return; }
-  $("ctaNote").textContent = `Re-rolling “${t.title}” — same take, new render (~4× faster).`;
+  $("ctaNote").textContent = `Re-rolling “${t.title}”: same take, new render (~4× faster).`;
   poll();
 }
 
@@ -2422,7 +2432,7 @@ async function reusePrompt(file) {
   $("qCfg").oninput();
   $("qArCfg").oninput();
   countChars();
-  $("ctaNote").textContent = `Loaded from “${t.title || file}” — edit anything, then press Create.`;
+  $("ctaNote").textContent = `Loaded from “${t.title || file}”: edit anything, then press Create.`;
   $("caption").scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
@@ -2466,7 +2476,7 @@ async function startExtend(file, mode = "extend") {
   xt.dur = t.durationSeconds || 0;
   /* A recording rather than a take: say so, and say what it takes. */
   if (!t.codes && !t.yueDir) {
-    $("xtNote").textContent = "A recording: it is read into YuE2's own codes first (on the CPU while the card is busy), then YuE2 3B continues it — give it a style, and words or none.";
+    $("xtNote").textContent = "A recording: it is read into YuE2's own codes first (on the CPU while the card is busy), then YuE2 3B continues it: give it a style, and words or none.";
   }
   xt.at = Math.max(1, xt.dur * (mode === "replace" ? 0.4 : 0.8));
   xt.to = mode === "replace" ? Math.min(Math.max(xt.at + 0.5, xt.dur * 0.6), Math.max(xt.at + 0.5, xt.dur)) : 0;
@@ -2502,7 +2512,7 @@ async function startExtend(file, mode = "extend") {
     paintXt();
   } catch {
     // Never a dead end — the numeric field still works without a picture.
-    $("xtLoad").textContent = "Couldn’t draw the waveform — type a time below instead.";
+    $("xtLoad").textContent = "Couldn’t draw the waveform: type a time below instead.";
   }
 }
 
@@ -2828,7 +2838,7 @@ async function humSendSource(source) {
     const took = Math.round((Date.now() - run.started) / 1000);
     humSay(r.notes != null
       ? `${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · read in ${took} s · the score is in the box below and ticked for Create`
-      : `transcribed (${r.mode}) · ${r.bars ?? "?"} bars · key ${r.key ?? "?"} · ${r.bpm ?? "?"} bpm · ${took} s · the score is in the box below and ticked for Create — for a cover, write the new voice into the style line and press Create`);
+      : `transcribed (${r.mode}) · ${r.bars ?? "?"} bars · key ${r.key ?? "?"} · ${r.bpm ?? "?"} bpm · ${took} s · the score is in the box below and ticked for Create: for a cover, write the new voice into the style line and press Create`);
     return true;
   // A stopped run's Stop button has already said so; anything else is said here.
   } catch (e) { if (humRun === run) humBusy(null); if (!run.stopped) humSay(String(e.message || e)); return false; }
@@ -2949,7 +2959,7 @@ function paintCoverPrime() {
     const note = $("covPrimeNote");
     if (note && note.dataset.plain === undefined) note.dataset.plain = note.textContent;
     if (note && !state.tokenizerReady) {
-      note.textContent = "Starting from the original needs the YuE2 real-audio tokenizer — download it on the Models screen. "
+      note.textContent = "Starting from the original needs the YuE2 real-audio tokenizer: download it on the Models screen. "
         + "Without it a cover is the transcribed score performed in your style, which is the recipe that existed before.";
     }
     /* YuE2 through ComfyUI cannot prime (yueSpec does not send it there, and
@@ -3138,10 +3148,10 @@ async function musicLoadLoras(force = false) {
   const shelf = $("yLoraShelf");
   if (shelf) {
     shelf.textContent = chosen && sel.value !== chosen
-      ? `· ${chosen} is not in a loras folder any more — pick another, or none.`
+      ? `· ${chosen} is not in a loras folder any more: pick another, or none.`
       : rows.length
         ? `· ${rows.length} in models/loras.`
-        : "· nothing in models/loras yet — a YuE2 LoRA goes there.";
+        : "· nothing in models/loras yet: a YuE2 LoRA goes there.";
   }
   const st = $("yLoraStrength");
   if (st && Number.isFinite(state.musicYue2LoraStrength)) {
@@ -3461,7 +3471,7 @@ $("arefFile").onchange = async () => {
     // A reference the autoencoder reconstructs badly will produce a bad song
     // for a reason nobody could guess from the result. Say it now instead.
     if (j.weak) {
-      alert(`This reference only reconstructs at ${j.siSdrDb} dB, which is low — `
+      alert(`This reference only reconstructs at ${j.siSdrDb} dB, which is low: `
         + `the model may not have much to hold on to. It will still run.`);
     }
     paintAref();
@@ -3618,7 +3628,7 @@ async function runExtend() {
       const t0 = Date.now();
       const tick = () => {
         const s = Math.round((Date.now() - t0) / 1000);
-        $("xtNote").textContent = `Reading the recording into YuE2's codes — ${s}s of about ${est}s. `
+        $("xtNote").textContent = `Reading the recording into YuE2's codes: ${s}s of about ${est}s. `
           + "It is read once and kept, so the next continuation of this track starts at once.";
       };
       tick();
@@ -3849,7 +3859,10 @@ function renderQueue(s) {
    * handover, and a genuinely finished queue still tidies itself away. */
   if (!busy) {
     if (!renderQueue.emptyAt) renderQueue.emptyAt = Date.now();
-    if (Date.now() - renderQueue.emptyAt > 2000) {
+    /* The grace is for a handover between two jobs. A page that has seen
+     * nothing running yet settles at once, instead of saying "queued" for two
+     * seconds on every load. */
+    if (!renderQueue.seenBusy || Date.now() - renderQueue.emptyAt > 2000) {
       /* Settled: no Stop, no ETA, no queue — just the day's tally, and
        * nothing at all on a machine that has not made anything today. */
       const today = doneToday();
@@ -3862,7 +3875,7 @@ function renderQueue(s) {
       wbLine("idle", today ? `${today} today` : "", false);
       return;
     }
-  } else renderQueue.emptyAt = 0;
+  } else { renderQueue.emptyAt = 0; renderQueue.seenBusy = true; }
   box.hidden = false;
   box.classList.remove("resting");
 
@@ -3975,12 +3988,16 @@ function renderNow(cur, queued = 0) {
   const elapsed = typeof cur.elapsedSeconds === "number" && Number.isFinite(cur.elapsedSeconds) && cur.elapsedSeconds >= 0
     ? `${dur(cur.elapsedSeconds)} elapsed · ` : "";
   $("nowTitle").textContent = (cur.preview ? "Preview · " : "") + (cur.title || "Untitled");
+  /* YuE2 (ComfyUI) and ACE-Step start with no estimate (etaSeconds null until
+   * about 8%), which used to read "~null s left". */
+  const left = (s) => !Number.isFinite(s) ? "estimating time left"
+    : s > 60 ? `~${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, "0")} s left` : `~${Math.round(s)} s left`;
   $("nowEta").textContent = gguf && cur.state === "running" && !ggufEtaKnown(cur)
     ? pos + elapsed + "ETA after the first native render"
     : gguf && cur.state === "running"
-    ? pos + elapsed + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
+    ? pos + elapsed + left(cur.etaSeconds)
     : cur.state === "running"
-    ? pos + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
+    ? pos + elapsed + left(cur.etaSeconds)
     : pos + cur.state;
 
   /* Each engine draws its own stages: the row says which engine made it. A
@@ -4480,11 +4497,11 @@ function rowMenuHtml(t) {
       ? [["data-merge", f, "Merge continuations", String(fam.length),
           "Combine them into one song, keeping the shared opening once"]]
       : []),
-    ["data-reroll", f, "Re-roll mix", "", "Same performance, new render — about 60% of a full one"],
+    ["data-reroll", f, "Re-roll mix", "", "Same performance, new render: about 60% of a full one"],
     ["data-reuse", f, "Reuse prompt", "", "Load this track's words and settings into the form"],
     ["data-rate", "1", t.rating === 1 ? "Remove like" : "Like", t.rating === 1 ? "✓" : "", "Rate this take", f],
     ["data-stems", f, "Separate stems", t.stems?.length ? `✓ ${t.stems.length}` : "",
-      t.stems?.length ? "Already separated — runs again if you pick this" : "Drums, bass, vocals and other, once the engine is idle"],
+      t.stems?.length ? "Already separated: runs again if you pick this" : "Drums, bass, vocals and other, once the engine is idle"],
     ["data-lrc", f, "Time the lyrics", t.lrc ? `✓ ${pct}` : "",
       t.lrc ? `${pct} of words timed by measurement, the rest interpolated`
             : "Write .lrc files (per line and per word) for visualisers"],
@@ -4503,10 +4520,10 @@ function rowMenuHtml(t) {
      * the server answers with a message that names the Models screen. */
     ["data-clip", f, "Make a video clip",
       t.clip ? "✓" : (state.video?.enabled ? "" : "off"),
-      t.clip ? "Already has a clip — runs again if you pick this"
+      t.clip ? "Already has a clip: runs again if you pick this"
         : state.video?.enabled
           ? `${state.video.seconds || 2}s of video, once the engine is idle`
-          : "Video is switched off in Settings — this will offer to turn it on"],
+          : "Video is switched off in Settings: this will offer to turn it on"],
     /* Convert to another container. Encoded by ComfyUI, which already writes
      * these formats -- not by shelling out to ffmpeg, which this app
      * deliberately never does.
@@ -4523,7 +4540,7 @@ function rowMenuHtml(t) {
       .map((x) => ["data-export", x, `Save as ${x.toUpperCase()}`, "",
         x === "flac"
           ? "Lossless, and larger than the original"
-          : `Smaller, and lossy — ${/\.flac$/i.test(t.file) ? "the original is lossless" : "converting again loses a little more"}`,
+          : `Smaller, and lossy: ${/\.flac$/i.test(t.file) ? "the original is lossless" : "converting again loses a little more"}`,
         f])),
     /* Extend and Replace section, where Suno keeps them too — only on takes
      * that kept their performance (a MiniMax trajectory or a YuE2 run). */
@@ -4534,7 +4551,7 @@ function rowMenuHtml(t) {
     ["data-edit", f, "Edit audio", "", "Trim, cut, fade, reverse, speed"],
     ["data-addpl", f, "Add to playlist", "", "Add to a playlist"],
     ["data-reveal", f, "Show in Explorer", "", "The file already exists on disk"],
-    ["data-trash", f, "Move to trash", "", "Reversible — it moves to output/trash"],
+    ["data-trash", f, "Move to trash", "", "Reversible: it moves to output/trash"],
   ];
   /* The lead sheet, when the track has one: the engraved page and the PDF
    * beside it, as plain links — the menu's click handler dispatches on
@@ -4543,7 +4560,7 @@ function rowMenuHtml(t) {
    * where the ♪ badge on the row points. */
   const sheet = (t.scoreSlug && t.scoreVersion)
     ? `<a class="rmitem" href="/api/score/sheet/${esc(t.scoreSlug)}/${esc(t.scoreVersion)}.html" target="_blank" rel="noopener"
-         title="The lead sheet the model wrote before the audio — the plan, not a transcription"><span>Open the lead sheet</span><em>♪</em></a>`
+         title="The lead sheet the model wrote before the audio: the plan, not a transcription"><span>Open the lead sheet</span><em>♪</em></a>`
       + `<a class="rmitem" href="/api/score/sheet/${esc(t.scoreSlug)}/${esc(t.scoreVersion)}.pdf" target="_blank" rel="noopener"
          title="The same sheet as a PDF, if this machine could print it"><span>Sheet as PDF</span></a>`
     : "";
@@ -4593,6 +4610,23 @@ function elapsed(label) {
   if (mins < 24 * 60) return `${Math.floor(mins / 60)}h ${mins % 60}m in`;
   const d = Math.floor(mins / (24 * 60));
   return d < 7 ? `${d}d in` : "running a while";
+}
+
+/* A feed picture that will not load (a dead or blocked host) used to leave an
+ * empty grey box. It becomes the same placeholder as a card with no picture. */
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  const art = img.closest(":is(#community, #radio, #blog) .cardart");
+  if (art) { art.classList.add("none"); art.replaceChildren(); return; }
+  if (img.closest(".blogcard")) { const ph = document.createElement("span"); ph.className = "blognoimg"; img.replaceWith(ph); }
+}, true);
+
+/* Feed links open only as web pages: anything else (javascript:, file:, a
+ * Windows protocol link) in a broken or spoofed feed is ignored. */
+function openWeb(u) {
+  const url = String(u || "").trim();
+  if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener");
 }
 
 async function loadCommunity() {
@@ -4695,18 +4729,31 @@ async function loadCommunity() {
   const tracks = feed?.tracks || [];
   $("commTracksHead").hidden = !tracks.length;
   $("commTracks").innerHTML = tracks.map((t) => `
-    <a class="tk" href="#" data-url="${esc(t.url)}" title="${esc(t.title)} — ${esc(t.artist)}">
+    <a class="tk" href="#" data-url="${esc(t.url)}" title="${esc(t.title)}: ${esc(t.artist)}">
       <span class="tkart"><img src="${esc(t.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>
       <span class="tkt">${esc(t.title)}</span>
       <span class="tka">${esc(t.artist)}</span>
     </a>`).join("");
 
-  const posts = feed?.posts || [];
+  /* Excerpts arrive as the post's markdown: links read "[**name**](https://…)".
+   * Shown as plain words, and a post repeated word for word shows once. */
+  const plainMd = (s) => String(s || "")
+    .replace(/\[([^\]]*)\]\((?:[^)(]|\([^)]*\))*\)/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(^|\s)[*_]([^*_\s][^*_]*?)[*_](?=\s|[.,!?]|$)/g, "$1$2")
+    .replace(/\*\*|__/g, "");                    // an excerpt cut mid-markup leaves a lone "**"
+  const seenPost = new Set();
+  const posts = (feed?.posts || []).filter((p) => {
+    const k = plainMd(p.excerpt).trim().toLowerCase() + "|" + (p.image || "");
+    if (seenPost.has(k)) return false;
+    seenPost.add(k);
+    return true;
+  });
   $("commPostsHead").hidden = !posts.length;
   $("commPosts").innerHTML = posts.map((p) => `
     <div class="card">
       ${p.image ? `<div class="cardart"><img src="${esc(p.image)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : ""}
-      <p class="by">${esc(p.excerpt)}</p>
+      <p class="by">${esc(plainMd(p.excerpt))}</p>
       <div class="foot"><span>${p.at ? esc(when(new Date(p.at).getTime())) : ""}</span>
         <button class="join" data-url="${esc(p.url)}">Read ↗</button></div>
     </div>`).join("");
@@ -4717,7 +4764,7 @@ async function loadCommunity() {
   const main = discords.find((d) => d.primary);
   $("commDiscordTop").hidden = !main;
   if (main) {
-    $("commDiscordTop").onclick = () => window.open(main.url, "_blank", "noopener");
+    $("commDiscordTop").onclick = () => openWeb(main.url);
     $("commDiscordTop").title = main.blurb || main.name;
   }
   $("commDiscordHead").hidden = !discords.length;
@@ -4736,7 +4783,7 @@ async function loadCommunity() {
       const b = e.target.closest("[data-url]");
       if (!b) return;
       e.preventDefault();
-      window.open(b.dataset.url, "_blank", "noopener");
+      openWeb(b.dataset.url);
     };
   }
 
@@ -4792,7 +4839,7 @@ async function loadCommunity() {
 
   // Everything opens in the real browser, where the user is already signed in.
   $("commGrid").querySelectorAll(".join").forEach((b) => {
-    b.onclick = () => window.open(b.dataset.url, "_blank", "noopener");
+    b.onclick = () => openWeb(b.dataset.url);
   });
   // Name the host we will actually open, rather than always claiming aiplay.live
   // while pointing at dev.
@@ -5037,10 +5084,19 @@ async function onRowClick(e) {
   const ap = e.target.closest("[data-addpl]");
   if (ap) {
     const file = decodeURIComponent(ap.dataset.addpl);
-    const names = state.playlists.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
-    const pick = (await appPrompt(`Add to which playlist?\n\n${names}`, "1"));
-    const pl = state.playlists[Number(pick) - 1];
-    if (pl) fetch("/api/playlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "toggle", id: pl.id, file }) }).then(poll);
+    /* "add", not "toggle": a song already in the playlist used to be taken
+     * out by a menu item that says Add. One playlist needs no question. */
+    let pl = state.playlists.length === 1 ? state.playlists[0] : null;
+    if (!pl) {
+      const names = state.playlists.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
+      const pick = await appPrompt(`Add to which playlist?\n\n${names}`, "1");
+      if (pick == null) return;
+      pl = state.playlists[Number(pick) - 1];
+      if (!pl) { alert(`There is no playlist ${String(pick).trim() || "with that number"}.`); return; }
+    }
+    if (pl.files?.includes(file)) { alert(`Already in ${pl.name}.`); return; }
+    fetch("/api/playlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", id: pl.id, files: [file] }) })
+      .then(poll).catch(() => alert("Could not reach Studio."));
     return;
   }
 
@@ -5093,7 +5149,7 @@ async function onRowClick(e) {
         const src = (state.library || []).find((x) => x.file === file);
         const rights = src?.rights?.short || src?.rights?.label || "";
         const says = rights ? ` Rights: ${rights}.` : "";
-        $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} — opening the folder.${says}`;
+        $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"}: opening the folder.${says}`;
         fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file: rel }) })
           .then((r) => r.json())
@@ -5319,8 +5375,28 @@ function trackAction(body) {
 }
 
 /* ── library toolbar ──────────────────────────────────── */
-for (const id of ["libSearch", "libFilter", "libSort"]) {
+/* Typing in the search box repaints from the library already in memory: it used
+ * to fetch the whole /api/status (library included) on every keystroke. The
+ * filter and sort still ask the server, which owns the trash and archive views. */
+$("libSearch").addEventListener("input", () => reList());
+for (const id of ["libFilter", "libSort"]) {
   $(id).addEventListener("input", () => poll());
+}
+/* The library's and clip bin's view choices, and the player volume, survive a
+ * reload like the list/grid choice already did. */
+{
+  const KEEP = ["libFilter", "libSort", "libGroup", "clipFilter", "clipSort", "clipGroup"];
+  let kept = {};
+  try { kept = JSON.parse(localStorage.getItem("aiplayLibView") || "{}") || {}; } catch { /* storage off */ }
+  for (const id of KEEP) {
+    const el = $(id);
+    if (!el) continue;
+    if (kept[id] != null && [...el.options].some((o) => o.value === kept[id])) el.value = kept[id];
+    el.addEventListener("change", () => {
+      kept[id] = el.value;
+      try { localStorage.setItem("aiplayLibView", JSON.stringify(kept)); } catch { /* storage off */ }
+    });
+  }
 }
 $("viewList").onclick = () => setGrid(false);
 $("viewGrid").onclick = () => setGrid(true);
@@ -5500,7 +5576,7 @@ const RIGHTS_WORDS = {
   "unrestricted": { chip: "Yours to sell", tone: "ok",
     line: "Nothing in this model's licence touches what you make with it." },
   "yours-with-conditions": { chip: "Yours to sell", tone: "warn",
-    line: "The licence says in writing that what you generate is yours to use commercially — and it attaches conditions." },
+    line: "The licence says in writing that what you generate is yours to use commercially, and it attaches conditions." },
   "not-for-sale": { chip: "Not for sale (model licence)", tone: "bad",
     line: "This model's licence bans commercial use of the material it generates, not only of the weights." },
   "unknown": { chip: "Rights unverified", tone: "unknown",
@@ -5512,11 +5588,11 @@ const RIGHTS_WORDS = {
  *  individuals (YuE2 authors' statement, 15 Sep 2026) · companies need a
  *  commercial licence") is used as written, when its class is the one shown. */
 function rightsChipLabel(cls, conditions, chip = null) {
-  if (chip) return chip;
+  if (chip) return uiDash(chip);
   const w = RIGHTS_WORDS[cls] || RIGHTS_WORDS.unknown;
   const n = (conditions || []).length;
   if (cls === "yours-with-conditions" && n) {
-    return `${w.chip} — ${n} condition${n > 1 ? "s" : ""}`;
+    return `${w.chip}: ${n} condition${n > 1 ? "s" : ""}`;
   }
   return w.chip;
 }
@@ -5603,7 +5679,7 @@ function rightsChipHtml(stamp, cap, { label = null, addOns = [], catalog = null 
       ${conds.length ? `<ul class="rconds">${conds.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
       ${or?.quote ? `<blockquote class="rquote">${esc(or.quote)}</blockquote>
          <p class="rclause">${esc(or.clause || "")}</p>` : ""}
-      ${or?.publisher ? `<p class="rpub"><b>What the authors said</b> — ${esc(or.publisher.by)},
+      ${or?.publisher ? `<p class="rpub"><b>What the authors said</b>: ${esc(or.publisher.by)},
          <a href="${esc(or.publisher.where)}" target="_blank" rel="noopener">discussion</a>, ${esc(or.publisher.on)}${pubQuote
            ? `: <q>${esc(or.publisher.said)}</q>` : "."} ${esc(or.publisher.caveat)}${or.publisher.support
            ? ` <a href="${esc(or.publisher.support)}" target="_blank" rel="noopener">Support the authors.</a>` : ""}</p>` : ""}
@@ -5615,7 +5691,7 @@ function rightsChipHtml(stamp, cap, { label = null, addOns = [], catalog = null 
          “${esc(RIGHTS_WORDS[cls]?.chip || cls)}” when it was made; the ledger keeps that, and the label above is today's.</p>`
         : drifted ? `<p class="rdrift">⚠ This file was made when the licence answer here was
          “${esc(RIGHTS_WORDS[cls]?.chip || cls)}”. The catalogue now reads
-         “${esc(RIGHTS_WORDS[or.class]?.chip || or.class)}” — the ledger keeps what was true at the time.</p>` : ""}
+         “${esc(RIGHTS_WORDS[or.class]?.chip || or.class)}”: the ledger keeps what was true at the time.</p>` : ""}
       ${stamp.url || or?.url
         ? `<p><a href="${esc(stamp.url || or.url)}" target="_blank" rel="noopener">read the licence at the source</a></p>`
         : ""}
@@ -5704,7 +5780,7 @@ function paintProvenance(t) {
         // tags, but nobody recorded who did what, so nothing is claimed.
         $("spProvSum").textContent = "no record";
         $("spProvNote").textContent =
-          "Made before the provenance ledger existed — the file still carries its "
+          "Made before the provenance ledger existed: the file still carries its "
           + "generation tags, but per-part origin was not recorded.";
         $("spProvNote").hidden = false;
         return;
@@ -5716,7 +5792,7 @@ function paintProvenance(t) {
       const userTyped = authored.some((e) => e.actor === "user");
       const agentTyped = authored.find((e) => String(e.actor).startsWith("agent:"));
       if (t.instrumental) {
-        rows.push(["Lyrics", `${pill("pv-none", "none")} instrumental — scaffold text is never labeled human`]);
+        rows.push(["Lyrics", `${pill("pv-none", "none")} instrumental: scaffold text is never labeled human`]);
       } else if (userTyped) {
         const chars = authored.find((e) => e.actor === "user")?.data?.chars;
         rows.push(["Lyrics", `${pill("pv-h", "HUMAN")} typed${chars ? `, ${chars} chars` : ""}`]);
@@ -5736,7 +5812,7 @@ function paintProvenance(t) {
       }
       const edits = s.editsBy || {};
       if (edits.user) rows.push(["Edits", `${pill("pv-he", "AI + HUMAN EDIT")} ${edits.user} by you${edits.agent ? `, ${edits.agent} by an agent` : ""}`]);
-      else if (edits.agent || edits.system) rows.push(["Edits", `${pill("pv-ai", "AGENT/SYSTEM")} ${(edits.agent || 0) + (edits.system || 0)} — not human edits`]);
+      else if (edits.agent || edits.system) rows.push(["Edits", `${pill("pv-ai", "AGENT/SYSTEM")} ${(edits.agent || 0) + (edits.system || 0)}: not human edits`]);
       $("spProv").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
       const cls = s.class || "unrecorded";
       $("spProvSum").textContent = cls.replace(/-/g, " ");
@@ -5865,7 +5941,7 @@ $("edRegen").onclick = async () => {
    * one; refused under the minors rule (422): its one sentence. Never a
    * "Queued" for a cover that will not come. */
   if (r?.error) { $("edArt").title = r.error; if (r.needsModel) offerModel(r); else await appAlert(r.error, "No cover was queued"); return; }
-  $("edArt").title = "Queued — drawn as soon as nothing is generating";
+  $("edArt").title = "Queued: drawn as soon as nothing is generating";
 };
 $("edUpload").onclick = () => $("edArtFile").click();
 $("edArtFile").onchange = async () => {
@@ -5941,7 +6017,7 @@ function renderMerge(t) {
   const naive = fam.reduce((s, x) => s + (x.durationSeconds || 0), 0);
   $("spMergeNote").textContent =
     `${fam.length} continuations of the same take. They each contain the shared opening, `
-    + `so merging keeps it once instead of ${fam.length} times — roughly ${fmt(naive)} of audio `
+    + `so merging keeps it once instead of ${fam.length} times: roughly ${fmt(naive)} of audio `
     + `becomes one song. The originals are kept.`;
 }
 $("spMergeList").addEventListener("click", (e) => {
@@ -6012,6 +6088,8 @@ function trPaintRegion() {
   $("trStart").disabled = trStarting || !!trRecall()?.runId || !trStatus?.ready || !!issue || !$("trName").value.trim();
   const svg = $("trWave"), n = trSource.peaks.length / 2;
   if (!svg) return;
+  /* No peaks (unreadable, or still reading): no empty box where the waveform goes. */
+  svg.style.display = n ? "" : "none";
   const height = 76, scale = Math.max(0.001, ...trSource.peaks.map(Math.abs));
   const lines = Array.from({ length: Math.min(600, n) }, (_, i) => {
     const j = Math.floor(i / Math.min(600, n) * n) * 2, x = i / Math.min(600, n) * 600;
@@ -6041,7 +6119,7 @@ async function trLoadSource() {
     trPaintRegion();
   } catch (e) {
     if (request !== trSourceRequest) return;
-    $("trSourceNote").textContent = `Waveform unavailable: ${e.message || e}. Audio metadata can still supply the duration.`;
+    $("trSourceNote").textContent = `Waveform unavailable: ${String(e.message || e).replace(/\.\s*$/, "")}. The length can still be read from the file.`;
     trPaintRegion();
   }
 }
@@ -6517,7 +6595,7 @@ async function paintPeers() {
       <span class="cbres">Availability: <b>Unknown</b> · ${p.resources?.gpu?.vramMb ? `${(p.resources.gpu.vramMb / 1024).toFixed(1)} GB VRAM` : "VRAM unknown"} · ${p.resources?.ramMb ? `${(p.resources.ramMb / 1024).toFixed(1)} GB RAM` : "RAM unknown"}</span>
       ${p.resources ? `<details class="cbres"><summary>Offered capabilities (${p.resources.ready?.length || 0})</summary><p>${esc((p.resources.ready || []).join(" · ") || "None listed")}</p>${p.resources.note ? `<p>${esc(p.resources.note)}</p>` : ""}</details>` : ""}
       ${p.build ? `<span class="cbres cbbuild${cbBuildOdd(p.build) ? " warn" : ""}">${esc(cbBuildLine(p.build))}</span>` : ""}
-      ${p.verified ? "" : `<span class="cbres"><b>Their twelve words:</b> <code>${esc((p.words || []).join(" "))}</code> — have them read these to you.</span>
+      ${p.verified ? "" : `<span class="cbres"><b>Their twelve words:</b> <code>${esc((p.words || []).join(" "))}</code>: have them read these to you.</span>
       <button class="btn sm cbverify" type="button">I read the words and they matched</button>`}
       <button class="btn sm ghost cbremove" type="button">Remove</button>
     </div>`).join("");
@@ -6626,7 +6704,7 @@ async function openCollabFile(file) {
     if ($("cbReadFace")) $("cbReadFace").hidden = false;
     if ($("cbReadWho")) $("cbReadWho").textContent = "This one cannot be opened";
     if ($("cbOpened")) { $("cbOpened").hidden = false; $("cbOpened").textContent = r.error; }
-    if (r.reason === "unknown-sender") cbSay("Add their key card on the Friends tab first — a signature can only be checked against a key you already hold.");
+    if (r.reason === "unknown-sender") cbSay("Add their key card on the Friends tab first: a signature can only be checked against a key you already hold.");
     return;
   }
   const who = esc(r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend");
@@ -6808,7 +6886,7 @@ $("cbSaveResources")?.addEventListener("click", async () => {
 function cbBuildLine(b) {
   const bits = [b.app, b.commit, Number(b.protocol) ? `collab ${b.protocol}` : ""].filter(Boolean).join(" · ");
   if (!cbBuildOdd(b)) return bits;
-  return `${bits} — ${Number(b.protocol) > (state.collabProtocol || 1)
+  return `${bits}: ${Number(b.protocol) > (state.collabProtocol || 1)
     ? "newer than this Studio; update to open what they send"
     : "older than this Studio; they may not open what you send"}`;
 }
@@ -7312,7 +7390,7 @@ function paintCbAllocation() {
   }
   const r = cbAllocateDraft(cbPeers.filter((p) => chosen.has(p.fp)), scenes, { policy, capability: $("cbDraftCapability").value, minVramMb: Number($("cbDraftVram").value || 0) * 1024 });
   host.innerHTML = r.assignments.map(({ peer, scenes: ids }) => `<div class="cbpeer cbassignment"><b>${esc(peer.nickname || peer.fp.slice(0, 8))}</b><span>${ids.length} clips · availability unknown</span><div class="cbassignshots">${ids.map((id) => `<button class="btn sm cbdraftpick" type="button" data-to="${esc(peer.fp)}" data-segment="${esc(id)}">${esc(id)}</button>`).join("") || '<span class="meta">No clips assigned</span>'}</div></div>`).join("")
-    + r.excluded.map(({ peer, reason }) => `<p class="hint">Excluded: ${esc(peer.nickname || peer.fp.slice(0, 8))} — ${esc(reason)}</p>`).join("")
+    + r.excluded.map(({ peer, reason }) => `<p class="hint">Excluded: ${esc(peer.nickname || peer.fp.slice(0, 8))}: ${esc(reason)}</p>`).join("")
     + (r.unassigned.length ? `<p class="hint">Unassigned: ${esc(r.unassigned.join(", "))}</p>` : "")
     + (!scenes.length ? '<p class="hint">Select scenes to draft an allocation.</p>' : "");
   $("cbDraftSummary").textContent = `${scenes.length} selected clips · ${r.assignments.length} eligible friends · ${r.unassigned.length} unassigned. Quick count preview; use Preview with pinned owners for the production plan's constraints.`;
@@ -7333,8 +7411,8 @@ function restoreCbDraft(draft) {
 function cbDraftMarkup(draft) {
   const title = (id) => cbSceneTitle(cbPlan?.shots.find((s) => s.segmentId === id) || { segmentId: id });
   return draft.assignments.map((row) => `<div class="cbpeer cbassignment"><b>${esc(row.nickname || cbOwnerName(row.fp))}</b><span>${row.segmentIds.length} clips${row.estimatedMinutes !== null ? ` · ~${row.estimatedMinutes.toFixed(1)} min (your estimate)` : ""} · availability unknown</span><div class="cbassignshots">${row.segmentIds.map((id) => `<button class="btn sm cbdraftpick" type="button" data-to="${esc(row.fp)}" data-segment="${esc(id)}">${esc(title(id))} · ${esc(id)}</button>`).join("") || '<span class="meta">No clips assigned</span>'}</div></div>`).join("")
-    + draft.excluded.map((p) => `<p class="hint">Excluded: ${esc(p.nickname || p.fp)} — ${esc(p.reason)}</p>`).join("")
-    + draft.unassigned.map((s) => `<p class="hint">Unassigned: ${esc(s.segmentId)} — ${esc(s.reason)}</p>`).join("");
+    + draft.excluded.map((p) => `<p class="hint">Excluded: ${esc(p.nickname || p.fp)}: ${esc(p.reason)}</p>`).join("")
+    + draft.unassigned.map((s) => `<p class="hint">Unassigned: ${esc(s.segmentId)}: ${esc(s.reason)}</p>`).join("");
 }
 let cbAssignedReview = null;
 const cbAssignedDraftKey = (plan = cbPlan) => plan?.draft ? JSON.stringify([plan.slug, plan.draft.at, plan.draft.stale, plan.draft.assignments]) : "";
@@ -7424,7 +7502,7 @@ function showHandoff(file, what) {
   if (!box) return;
   box.hidden = false;
   box.dataset.file = file || "";
-  if ($("cbHandoffWhat")) $("cbHandoffWhat").textContent = `${what || "Your sealed file"} — ${file || ""}`;
+  if ($("cbHandoffWhat")) $("cbHandoffWhat").textContent = `${what || "Your sealed file"}: ${file || ""}`;
 }
 function collabFileControls(file) {
   return typeof file === "string" && file
@@ -7476,8 +7554,8 @@ async function paintOutbox() {
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
   const plain = {
-    sent: "Prepared — delivery and acceptance unknown", claimed: "they have taken it on",
-    returned: "came back — waiting for you under “What arrived”",
+    sent: "Prepared: delivery and acceptance unknown", claimed: "they have taken it on",
+    returned: "came back: waiting for you under “What arrived”",
     adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
   };
   host.innerHTML = rows.map((o) => o.jobType === "video" ? `
@@ -7507,7 +7585,7 @@ $("cbFree")?.addEventListener("click", async () => {
   const n = $("cbFreeNote");
   if (n) n.textContent = "Asking…";
   const r = await cb({ action: "free" });
-  if (n) n.textContent = r.error || `${r.busy ? "BUSY" : "free"} — ${r.why}`;
+  if (n) n.textContent = r.error || `${r.busy ? "BUSY" : "free"}: ${r.why}`;
 });
 
 /* What friends have asked of this machine, and what came back from them. Both
@@ -7704,7 +7782,7 @@ $("cbAcceptBtn")?.addEventListener("click", async () => {
           ? `...using ${pics.length} picture${pics.length === 1 ? "" : "s"}, which the model sees as much as it sees the words:\n`
             + pics.map((p) => (p.dataUrl
               ? `<img src="${esc(p.dataUrl)}" alt="" style="max-height:140px;margin:6px 6px 0 0;border:1px solid var(--edge);border-radius:4px"> `
-              : `<span class="warn">one picture this Studio could not read as a picture (${esc(String(p.bytes))} bytes) — that alone is a reason to refuse</span> `)).join("")
+              : `<span class="warn">one picture this Studio could not read as a picture (${esc(String(p.bytes))} bytes): that alone is a reason to refuse</span> `)).join("")
           : "It carries no pictures.")
         /* What a yes would cost THIS PC: a speed-up file it lacks for the
          * order's step count, and the friend's minutes a day. The server's
@@ -7744,7 +7822,7 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
       yes: "Accept anyway",
     });
     if (!go) {
-      cbSay(`Not accepted. ${r.overrides.map((o) => o.why).join(" ")} Press “Yes — take the job” again if you change your mind; you will be asked again.`);
+      cbSay(`Not accepted. ${r.overrides.map((o) => o.why).join(" ")} Press “Yes, take the job” again if you change your mind; you will be asked again.`);
       return;
     }
     if (card?.dataset.armed !== file) { cbSay("That is not the file whose prompt you just read. Press “Show me exactly what they want” again for this one."); disarmCollab(); return; }
@@ -8002,7 +8080,7 @@ $("cbTakes")?.addEventListener("click", async (ev) => {
      * collab_adopt `anyway` has always had, behind two things a person does:
      * play the take, then say yes to a question that names what failed. */
     const unseen = row.dataset.unplayable === "1" || row.dataset.reason === "probe-failed";
-    if (row.dataset.played !== "1" && !unseen) { cbSay("Play it first — it failed a check, and “Keep anyway” is for a take you have watched and still want."); return; }
+    if (row.dataset.played !== "1" && !unseen) { cbSay("Play it first: it failed a check, and “Keep anyway” is for a take you have watched and still want."); return; }
     const why = row.querySelector?.(".cbres")?.textContent || "It did not pass this machine's checks.";
     const go = await cbConfirm(unseen
       ? {
@@ -8094,9 +8172,9 @@ async function tokenizeCurrent() {
   const t0 = Date.now();
   btn.disabled = true;
   const timer = setInterval(() => {
-    if (note) note.textContent = `Reading ${t.title || t.file} into YuE2's codes — ${Math.round((Date.now() - t0) / 1000)}s of about ${est}s…`;
+    if (note) note.textContent = `Reading ${t.title || t.file} into YuE2's codes: ${Math.round((Date.now() - t0) / 1000)}s of about ${est}s…`;
   }, 1000);
-  if (note) note.textContent = `Reading ${t.title || t.file} into YuE2's codes — about ${est}s…`;
+  if (note) note.textContent = `Reading ${t.title || t.file} into YuE2's codes: about ${est}s…`;
   try {
     const r = await (await fetch("/api/tokenize", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -8133,7 +8211,25 @@ $("spStyleMore").onclick = () => {
   $("spStyleMore").textContent = open ? "Show less" : "Show more";
 };
 
+/* Ctrl+Enter (Cmd+Enter) presses the screen's main button: Create, Make image,
+ * Render clip. Only when that button is enabled and no dialog is open, so it
+ * can never start what a click could not. */
+addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.repeat) return;
+  if (document.querySelector("dialog[open]")) return;
+  if ($("imgEd") && !$("imgEd").hidden) return;  // the image editor's own Ctrl+Enter is Apply
+  const id = { create: "btnCreate", images: "imgGo", video: "vidCreate" }[state.view];
+  const btn = id && $(id);
+  if (!btn || btn.disabled || btn.offsetParent === null) return;
+  e.preventDefault();
+  btn.click();
+});
 $("spClose").onclick = () => { $("songPanel").hidden = true; };
+/* Escape closed the editor panel but not this one. Not while a dialog is open
+ * over it, so Escape there closes the dialog first. */
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("songPanel").hidden && !document.querySelector("dialog[open]")) $("songPanel").hidden = true;
+});
 $("spPlay").onclick = () => {
   const t = (state.library || []).find((x) => x.file === state.songFile);
   if (t) play(encodeURIComponent(t.file), t.title, t.seed);
@@ -8389,7 +8485,8 @@ const requiredBadge = (c) => (c.required ? "required" : c.requiredGroup === "mus
  * and naming the one that IS installed sent people to reinstall it. */
 const pkgWords = (c) => {
   const m = c.packageMissing?.length ? c.packageMissing : [c.needsPackage];
-  return `the ${m.map(esc).join(" and ")} python package${m.length > 1 ? "s" : ""}`;
+  const names = m.map((n) => esc(n === "PIL" ? "Pillow" : n));
+  return `the ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} python package${m.length > 1 ? "s" : ""}`;
 };
 
 async function loadModels() {
@@ -8410,8 +8507,13 @@ async function loadModels() {
   const rightsOf = (c) => (c.outputRights?.class
     ? rightsChipHtml({ class: c.outputRights.class, capability: c.id, url: c.outputRights.url }, c) : "");
 
-  const missing = d.capabilities.filter((c) => !c.ready && !c.managedByPackage).length;
-  $("modelPip").hidden = missing === 0;
+  /* The dot is for what this install NEEDS. It lit for any optional model not
+   * downloaded, which on a normal install is most of them, so it never went
+   * out and said nothing. It names what is missing on hover. */
+  const needed = d.capabilities.filter((c) => !c.ready && !c.managedByPackage && c.required);
+  $("modelPip").hidden = needed.length === 0;
+  const modelsLink = $("modelPip").closest("a");
+  if (modelsLink) modelsLink.title = needed.length ? `Models: needed and not installed: ${needed.map((c) => uiDash(c.label)).join(", ")}` : "Models";
 
   // Free space next to the download buttons: "12.45 GB to download" is only half
   // the question, and running out mid-download leaves a .part and a puzzle.
@@ -8435,9 +8537,9 @@ async function loadModels() {
              <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button>`;
       // Required when it is the selected, ready music engine; "one music engine" before one is.
       return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
-      <div class="mhead"><b>${esc(c.label)}</b><span class="badge">${requiredBadge(c) || "optional"}</span><span class="mlic">${esc(c.licence)}</span>${rightsOf(c)}</div>
-      <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
-      <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
+      <div class="mhead"><b>${esc(uiDash(c.label))}</b><span class="badge">${requiredBadge(c) || "optional"}</span><span class="mlic">${esc(uiDash(c.licence))}</span>${rightsOf(c)}</div>
+      <p class="mwhy">${esc(uiProse(c.why || "Native music generation without Python or ComfyUI."))}</p>
+      <details class="more mdetails"><summary>Details</summary><p class="hint noclamp">${esc(uiProse(c.note || "Runtime and weights install together after explicit licence acceptance."))}</p></details>
       <div class="mfoot">${foot}</div>
       ${c.downloading ? `<div class="gpubar"><i style="width:${pct}%"></i></div>
         <p class="hint">${esc(pr?.file || "Preparing verified downloads")} · ${gb(pr?.received || 0)} of ${gb(pr?.total || 0)} (${pct}%)</p>` : ""}
@@ -8467,7 +8569,7 @@ async function loadModels() {
         ? ""
         // Refuse up front rather than failing 80% through a 12 GB download.
         : tooBig
-          ? `<span class="mwarn">Not enough free disk — needs ${gb(need)}</span>`
+          ? `<span class="mwarn">Not enough free disk: needs ${gb(need)}</span>`
           // A region-locked capability starts DISABLED. The checkbox below
           // enables it; the server refuses regardless, so this is the honest
           // affordance rather than the enforcement.
@@ -8480,19 +8582,24 @@ async function loadModels() {
       <div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
         <div class="mhead">
           <b>${c.home
-        ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
-        : esc(c.label)}</b>
+        ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(uiDash(c.label))}</a>`
+        : esc(uiDash(c.label))}</b>
           ${requiredBadge(c) ? `<span class="badge">${requiredBadge(c)}</span>` : ""}
-          <span class="mlic">${esc(c.licence)}</span>
+          <span class="mlic">${esc(uiDash(c.licence))}</span>
           ${rightsOf(c)}
         </div>
-        <p class="mwhy">${esc(c.why)}</p>
+        <p class="mwhy">${esc(uiProse(c.why))}</p>
         ${c.requires ? `<div class="mreq">
           <span title="Graphics memory">VRAM ${c.requires.vramMinGb}+ GB<b> · ${c.requires.vramRecGb} recommended</b></span>
           <span title="System memory">RAM ${c.requires.ramMinGb}+ GB<b> · ${c.requires.ramRecGb} recommended</b></span>
           <span>Disk ${gb(c.totalBytes)}</span>
-        </div>${c.requires.note ? `<p class="hint">${esc(c.requires.note)}</p>` : ""}` : ""}
-        ${c.note ? `<p class="hint">${esc(c.note)}</p>` : ""}
+        </div>` : ""}
+        ${/* The measurements and the reasoning behind a row, behind "Details"
+             (docs/UI_GUIDE.md: no rationale on screen). The card keeps its one
+             line of why, its numbers and its buttons. */
+          c.requires?.note || c.note ? `<details class="more mdetails"><summary>Details</summary>
+          ${c.requires?.note ? `<p class="hint noclamp">${esc(uiProse(c.requires.note))}</p>` : ""}
+          ${c.note ? `<p class="hint noclamp">${esc(uiProse(c.note))}</p>` : ""}</details>` : ""}
         ${/* Gated repo: the publisher requires an accepted licence and a token.
              Say how, rather than showing a button that fails with a 401 that
              looks like a network problem. */
@@ -8525,13 +8632,13 @@ async function loadModels() {
         <div class="mfoot">${state_}${btn}</div>
         ${pr ? `<div class="gpubar"><i style="width:${pct}%"></i></div>
                 <p class="hint">${esc(pr.file || "")} · ${gb(pr.received)} of ${gb(pr.total)} (${pct}%)${
-                  pr.state === "failed" ? ` — ${esc(pr.error || "failed")}` : ""}</p>` : ""}
+                  pr.state === "failed" ? `: ${esc(pr.error || "failed")}` : ""}</p>` : ""}
       </div>`;
   });
   $("modelList").innerHTML = groupModelCards(d, htmls);
 
   $("modelsNote").textContent = d.python?.packages && !d.python.packages.torch
-    ? (state.musicOnly ? "Native music mode needs no Python. Start full Studio for optional image, video and stem tools." : `No python found at ${d.python.path} — the stem and lyric features need it.`)
+    ? (state.musicOnly ? "Native music mode needs no Python. Start full Studio for optional image, video and stem tools." : `No python found at ${d.python.path}: the stem and lyric features need it.`)
     : "";
 
   /* THE RECOMMENDATION, from the same payload and the same reading of the card.
@@ -8846,7 +8953,7 @@ function vidPaint() {
     ? "Short clips with " + (eng.label || "the video engine") + "."
     : "Video is switched off. Press Render and Studio asks to switch it on.";
   $("vidEngineNote").textContent = cur === "ltx"
-    ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
+    ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through): references are an H3 feature."
     : eng.fixedSteps
     ? "H3 distilled to " + eng.fixedSteps + " fixed steps, with sound; references need MiniMax H3."
     : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references: pictures that keep a person the same from clip to clip.";
@@ -8981,7 +9088,7 @@ function vidPaint() {
 
   $("vidLoopNote").hidden = !hasFrame || !$("vidLoop").checked;
   $("vidLoopNote").textContent = cur === "ltx"
-    ? "Uses the same picture at both ends. This drops the two-pass upscale — the vendor's first-and-last graph is single pass — so it is slower per pixel but the clip cuts to its own beginning."
+    ? "Uses the same picture at both ends. This drops the two-pass upscale (the vendor's first-and-last graph is single pass) so it is slower per pixel but the clip cuts to its own beginning."
     : "Uses the same picture at both ends, so the clip cuts back to its own beginning.";
 
   /* `frame hold` is the strength the first and last frames are pinned at, and it
@@ -8996,7 +9103,7 @@ function vidPaint() {
   $("vidNeg").disabled = cur !== "ltx";
   $("vidAdvNote").textContent = cur === "ltx"
     ? "Guidance moves BOTH the video and audio scales together on purpose: when they differ, LTX takes a path that doubles the work on every step."
-    : "H3 has no negative prompt and no dual guidance — its distilled path runs at a fixed guidance.";
+    : "H3 has no negative prompt and no dual guidance: its distilled path runs at a fixed guidance.";
   const bits = [];
   if ($("vidSeed").value.trim()) bits.push("seed " + $("vidSeed").value.trim());
   if (+$("vidGuide").value !== 1) bits.push("guidance " + $("vidGuide").value);
@@ -9461,7 +9568,7 @@ function checkShape(shapes) {
     + `squashed or cropped to fit. `
     + (bestOff < off * 0.75
         ? `<button type="button" class="linkbtn" id="vidFitBtn">Use ${esc(best.label.split("·")[0].trim())} instead</button>`
-        : `Neither engine is trained on square, so there is no size that matches a cover exactly — expect some cropping.`);
+        : `Neither engine is trained on square, so there is no size that matches a cover exactly: expect some cropping.`);
   const btn = $("vidFitBtn");
   if (btn) btn.onclick = () => { $("vidSize").value = best.value; vidPaint(); };
 }
@@ -9803,7 +9910,7 @@ function paintRefTagNote() {
   }
   $("vidRefTagNote").hidden = !bad.length;
   $("vidRefTagNote").textContent = bad.length
-    ? `The description names ${bad.join(", ")} but no such reference is attached — add it, or fix the number.`
+    ? `The description names ${bad.join(", ")} but no such reference is attached: add it, or fix the number.`
     : "";
 }
 
@@ -10138,7 +10245,7 @@ $("vidCreate").onclick = async () => {
     /* What the server changed from the request, and the RAM line, in its words. */
     /* "Not offered" was the question the person just answered: not said twice. */
     const said = Array.isArray(r.warnings) ? r.warnings.filter((w) => w?.id !== "not-offered").map((w) => w?.text).filter(Boolean) : [];
-    $("clipNote").textContent = "Queued. It renders once the engine is idle — music always goes first."
+    $("clipNote").textContent = "Queued. It renders once the engine is idle: music always goes first."
       + (said.length ? " " + said.join(" ") : "");
   } finally {
     vidPaint();
@@ -10200,7 +10307,10 @@ function paintClips() {
     if (filter === "standalone" && c.track) return false;
     if (filter === "loop" && !c.meta?.loop) return false;
     if (filter === "ltx" && c.meta?.engine !== "ltx") return false;
-    if (filter === "h3" && c.meta?.engine !== "h3") return false;
+    /* FastH3 clips are H3 clips too (engine "fasth3"): "MiniMax H3" lists both,
+     * "FastH3" only the 8-step ones. */
+    if (filter === "h3" && !["h3", "fasth3"].includes(c.meta?.engine)) return false;
+    if (filter === "fasth3" && c.meta?.engine !== "fasth3") return false;
     if (!q) return true;
     // Search the prompt too — for a standalone clip the prompt IS its name.
     return [c.title, c.name, c.meta?.prompt].filter(Boolean)
@@ -10294,6 +10404,13 @@ function clipDate(ms) {
   return `${d.toLocaleDateString(undefined, opts)} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+/* A standalone clip's card was titled by its run id ("vmuf7n1gh"). Its prompt's
+ * first words say what it is; the id and the size move to the tooltip. */
+function clipPromptTitle(prompt) {
+  const words = String(prompt || "").replace(/<[^>]{1,40}>/g, " ").replace(/\s+/g, " ").trim().split(" ");
+  if (!words[0]) return "";
+  return words.length > 7 ? `${words.slice(0, 7).join(" ")}…` : words.join(" ");
+}
 function clipCard(c) {
   {
     const m = c.meta || {};
@@ -10328,16 +10445,16 @@ function clipCard(c) {
       <div class="clipacts">
         <button data-cview="${esc(c.name)}" title="View large (also: click the clip)">&#10530; view</button>
         ${m.prompt ? `<button data-creuse="${esc(c.name)}" title="Load this clip's settings into the form">reuse</button>` : ""}
-        <button data-cboost="${esc(c.name)}" title="Smoother and bigger in one click — steps down if this machine cannot hold it">✦ boost</button>
+        <button data-cboost="${esc(c.name)}" title="Smoother and bigger in one click: steps down if this machine cannot hold it">✦ boost</button>
         <button data-cenh="${esc(c.name)}" title="Choose: smoother motion, slow motion, or a larger size">enhance</button>
         ${/\.(mp4|webm)$/i.test(c.name) ? `<button data-cext="${esc(c.name)}" title="Continue this clip: H3 picks up from its last second and renders what happens next">extend</button>` : ""}
         <button data-creveal="${esc(c.name)}" title="Show the file in Explorer">file</button>
-        <button class="warn" data-ctrash="${esc(c.name)}" title="Move to trash — reversible">✕</button>
+        <button class="warn" data-ctrash="${esc(c.name)}" title="Move to trash: reversible">✕</button>
       </div>
       <div class="clipmeta">
-        <div class="cmrow"><b title="${esc(m.prompt || "")}">${esc(c.title || stem)}</b>
+        <div class="cmrow"><b title="${esc(m.prompt || stem)}">${esc(c.title || clipPromptTitle(m.prompt) || stem)}</b>
           <span class="cbadges">${badges.map((b) => `<span class="cbadge">${esc(b)}</span>`).join("")}</span></div>
-        <span class="cmsub">${c.at ? `${clipDate(c.at)} · ` : ""}${c.seconds ? `took ${fmt(c.seconds)} · ` : ""}${Math.round(c.bytes / 1024)} KB</span>
+        <span class="cmsub" title="${esc(`${stem} · ${Math.round(c.bytes / 1024)} KB`)}">${c.at ? clipDate(c.at) : ""}${c.at && c.seconds ? " · " : ""}${c.seconds ? `took ${fmt(c.seconds)}` : ""}${!c.at && !c.seconds ? `${Math.round(c.bytes / 1024)} KB` : ""}</span>
       </div>
     </div>`;
   }
@@ -10532,7 +10649,7 @@ function paintEnhance() {
   const tooBig = gb > limit;
   warn.hidden = !(tooBig || m.upscale);
   warn.textContent = tooBig
-    ? `Too large — that needs about ${gb.toFixed(0)} GB of memory, and this machine `
+    ? `Too large: that needs about ${gb.toFixed(0)} GB of memory, and this machine `
       + `can safely give about ${limit.toFixed(0)} GB. Try a shorter clip.`
     : m.upscale
       ? "Upscaling works one frame at a time, so very fine texture can shimmer slightly."
@@ -10919,7 +11036,7 @@ mountPickBar({
        * should know which two did not come. */
       const left = fresh.slice(room);
       if (left.length) {
-        alert(`Added ${Math.min(room, fresh.length)}. ${left.length} did not fit — `
+        alert(`Added ${Math.min(room, fresh.length)}. ${left.length} did not fit: `
           + `images take ${IMG_REF_MAX} references at most:\n\n${left.join("\n")}`);
       }
       return true;
@@ -10964,11 +11081,11 @@ mountPickBar({
         /* The pictures are attached to a page that hides them. Saying "moved"
          * and stopping would leave somebody composing a shot around references
          * that are never sent. */
-        said.push("The engine could not be switched, and Video only uses reference images on H3 — "
+        said.push("The engine could not be switched, and Video only uses reference images on H3: "
           + `set the engine to H3 or these ${took} will not reach the render.`);
       }
       if (left.length) {
-        said.push(`${left.length} did not fit — H3 takes ${REF_IMG_MAX} at most, where an image takes ${IMG_REF_MAX}:\n${left.join("\n")}`);
+        said.push(`${left.length} did not fit: H3 takes ${REF_IMG_MAX} at most, where an image takes ${IMG_REF_MAX}:\n${left.join("\n")}`);
       }
       alert(said.join("\n\n"));
       return true;
@@ -11034,7 +11151,7 @@ function imgCard(im) {
       <span>${when}${dur}${m.seed != null ? ` · seed ${m.seed}` : ""}${kind}</span>
       ${im.model ? `<span class="immodel">${im.modelUrl
         ? `<a data-modellink href="${esc(im.modelUrl)}" target="_blank" rel="noreferrer noopener"
-             title="Read about this model — opens ${esc(im.modelUrl)}">${esc(im.model)}</a>`
+             title="Read about this model: opens ${esc(im.modelUrl)}">${esc(im.model)}</a>`
         : `<span title="Your own file from models/checkpoints. The app lists that shelf, it does not curate it, so there is no page to link to.">${esc(im.model)}</span>`
       }</span>` : ""}
     </figcaption>
@@ -11075,7 +11192,7 @@ function imgPaint() {
   if (grid) {
     grid.innerHTML = rows.length
       ? `<div class="masonry">${rows.map(imgCard).join("")}</div>`
-      : `<p class="clipempty">${q ? "Nothing matches that." : "No images yet — describe one on the left."}</p>`;
+      : `<p class="clipempty">${q ? "Nothing matches that." : "No images yet: describe one on the left."}</p>`;
     imgFitAspect(grid);
   }
   const c = $("imgCountLbl");
@@ -11160,7 +11277,7 @@ $("imgCollage").onclick = async () => {
     .filter((im) => /\.(png|jpe?g|webp)$/i.test(im.name))
     .filter((im) => !q || `${im.meta?.prompt || ""} ${im.name}`.toLowerCase().includes(q))
     .slice(0, 36);
-  if (rows.length < 2) { alert("Two or more images have to be showing — search to narrow, or clear the search."); return; }
+  if (rows.length < 2) { alert("Two or more images have to be showing: search to narrow, or clear the search."); return; }
   const btn = $("imgCollage"); btn.disabled = true; btn.textContent = "tiling\u2026";
   try {
     const r = await (await fetch("/api/images/sheet", { method: "POST",
@@ -11631,7 +11748,7 @@ function iedPaintCrop() {
 
 const IED_HINT = {
   move: "wheel zooms · space-drag pans · Ctrl+0 fit, Ctrl+1 100%",
-  crop: "drag a rectangle — Apply keeps only that",
+  crop: "drag a rectangle: Apply keeps only that",
   eye: "click the screen colour to key it out",
   type: "click the picture to place the words",
   zoom: "click to zoom in, alt-click out",
@@ -11640,10 +11757,10 @@ const IED_HINT = {
   colorRange: "click a colour to select it across the image",
   /* Keyed by capability as well as by tool, so twelve brush tools do not need
    * twelve near-identical lines. iedStatus() falls back to the family's. */
-  selection: "drag a region — every adjustment and all 88 effects then apply only there",
-  strokes: "drag to paint — the path goes to the server, which decides the pixels",
+  selection: "drag a region: every adjustment and all 88 effects then apply only there",
+  strokes: "drag to paint: the path goes to the server, which decides the pixels",
   shapes: "drag to draw · double-click closes a polygon",
-  pen: "click each anchor · double-click or Enter saves the path — the Paths dock does the rest",
+  pen: "click each anchor · double-click or Enter saves the path: the Paths dock does the rest",
 };
 function iedStatus() {
   const { nw, nh } = iedRotSize();
@@ -11723,7 +11840,7 @@ const IED_CAPS = {
    * so it says "unspecced" rather than borrowing a section number it has no
    * claim to. */
   layerdoc:  { spec: null, label: "Layer document", probe: "/api/images/document",
-    needs: "a layer document — masks, groups, adjustment layers. No route, and no section of IMAGE_SPEC defines one", live: false },
+    needs: "a layer document: masks, groups, adjustment layers. No route, and no section of IMAGE_SPEC defines one", live: false },
   /* THREE CAPABILITIES /api/images/capabilities DOES NOT LIST, and that gap is
    * the reason they carry `fromTools` instead of a plain probe. That route's
    * table names ten modules and stops; styles, svg and lut are not in it, so
@@ -11747,14 +11864,14 @@ const IED_CAPS = {
      * implied, because an unstated assumption is how a dead control ships. */
     needs: "server/imgstyles.py + server/vfx/engine.py (it needs cv2), and ops.styles in /api/images/edit", live: false },
   svg:       { spec: null, label: "SVG export", probe: "/api/images/tools", fromTools: "svg",
-    needs: "server/imgsvg.py + POST /api/images/svg — read from the tool catalog because that route is POST-only and has no GET to probe", live: false },
+    needs: "server/imgsvg.py + POST /api/images/svg: read from the tool catalog because that route is POST-only and has no GET to probe", live: false },
   lut:       { spec: null, label: "LUT", probe: "/api/images/luts", fromTools: "lut",
     needs: "server/imglut.py + /api/images/luts, /api/images/lut-info and /api/images/lut", live: false },
 };
 const iedCapLive = (k) => !k || !!IED_CAPS[k]?.live;
 const iedCapSpec = (k) => IED_CAPS[k]?.spec || "unspecced";
 const iedCapWhy = (k) => (k && IED_CAPS[k])
-  ? `Not built yet — needs ${IED_CAPS[k].needs}${IED_CAPS[k].spec ? ` (IMAGE_SPEC ${IED_CAPS[k].spec})` : ""}.` : "";
+  ? `Not built yet: needs ${IED_CAPS[k].needs}${IED_CAPS[k].spec ? ` (IMAGE_SPEC ${IED_CAPS[k].spec})` : ""}.` : "";
 
 /* ── the tool rail ─────────────────────────────────────────────────────────
  * Twenty-nine tools. A flat rail of twenty-nine icons is a wall, so tools that
@@ -11847,7 +11964,7 @@ function iedRailBuild() {
     return (f.sep ? '<div class="iedtoolgap"></div>' : "")
       + `<button class="iedtool${multi ? " multi" : ""}" data-iedslot="${f.slot}"`
       + ` data-iedtool="${f.cur}" data-key="${f.key.toUpperCase()}"`
-      + ` title="${esc(names)} — ${f.key.toUpperCase()}${multi ? ", Shift+" + f.key.toUpperCase() + " cycles" : ""}">`
+      + ` title="${esc(names)}: ${f.key.toUpperCase()}${multi ? ", Shift+" + f.key.toUpperCase() + " cycles" : ""}">`
       + `<svg viewBox="0 0 16 16" aria-hidden="true">${IED_ICON[f.icon]}</svg></button>`;
   }).join("");
   for (const b of rail.querySelectorAll("[data-iedslot]")) {
@@ -11868,8 +11985,8 @@ function iedRailEnable() {
     b.disabled = off;
     const names = f.tools.map(([, lab]) => lab).join(" · ");
     b.title = off
-      ? `${names} — ${svg && !viewOnly ? "an SVG has no pixels to edit." : iedCapWhy(f.cap)}`
-      : `${names} — ${f.key.toUpperCase()}${f.tools.length > 1 ? ", Shift+" + f.key.toUpperCase() + " cycles" : ""}`;
+      ? `${names}: ${svg && !viewOnly ? "an SVG has no pixels to edit." : iedCapWhy(f.cap)}`
+      : `${names}: ${f.key.toUpperCase()}${f.tools.length > 1 ? ", Shift+" + f.key.toUpperCase() + " cycles" : ""}`;
   }
 }
 
@@ -12001,7 +12118,7 @@ addEventListener("keydown", (e) => {
     const f = IED_FAM.find((x) => x.slot === slot);
     // A rail button that is dark cannot be clicked, so the key is the only
     // place left to say WHY. Silence here would read as a broken shortcut.
-    if (!iedCapLive(f.cap)) { iedToast(`${f.tools[0][1]} — ${iedCapWhy(f.cap)}`); return; }
+    if (!iedCapLive(f.cap)) { iedToast(`${f.tools[0][1]}: ${iedCapWhy(f.cap)}`); return; }
     if (e.shiftKey) iedCycleFam(f); else iedSetTool(f.cur);
   }
 });
@@ -12080,9 +12197,9 @@ function iedChkPaint(d) {
   const v = d.verdict;
   chip.textContent =
     state === "unchecked" ? "Nobody has looked at this yet."
-    : state === "pass" ? `Checked by ${v.by} — looked right.`
-    : state === "fail" ? `Checked by ${v.by} — ${v.failed.length} problem${v.failed.length === 1 ? "" : "s"}.`
-    : "Checked, but the picture or the checklist has changed since — look again.";
+    : state === "pass" ? `Checked by ${v.by}: looked right.`
+    : state === "fail" ? `Checked by ${v.by}: ${v.failed.length} problem${v.failed.length === 1 ? "" : "s"}.`
+    : "Checked, but the picture or the checklist has changed since: look again.";
 
   /* An empty checklist gets the suggestions, greyed as a placeholder rather
    * than filled in — typed-looking text nobody typed is how a checklist ends up
@@ -12105,7 +12222,7 @@ function iedChkPaint(d) {
     ? (d.expect || []).map((e, i) =>
         `<label><input type="checkbox" data-chk="${i}"${failed.has(e) ? " checked" : ""}>
            <span>${esc(e)}</span></label>`).join("")
-    : `<div class="none">No checklist yet — say what it was meant to contain above.</div>`;
+    : `<div class="none">No checklist yet: say what it was meant to contain above.</div>`;
 }
 
 function iedChkLoad(name) {
@@ -12238,7 +12355,7 @@ function openImageEditor(name) {
     $("iedLineage").innerHTML = chain.length
       ? `<span class="hint">made from:</span> ` + chain.map((c) =>
           `<button class="lchip${c.exists ? "" : " gone"}" ${c.exists ? `data-lineage="${esc(c.name)}"` : "disabled"}
-             title="${esc(c.via || "source")}${c.exists ? "" : " — file is gone"}">${esc(c.via || "source")}</button>`).join("")
+             title="${esc(c.via || "source")}${c.exists ? "" : ": file is gone"}">${esc(c.via || "source")}</button>`).join("")
       : "";
     for (const b of document.querySelectorAll("[data-lineage]")) {
       b.onclick = () => openImageEditor(b.dataset.lineage);
@@ -12376,7 +12493,7 @@ function iedHslLoad() {
   $("iedHslH").value = b.h || 0; $("iedHslS").value = b.s || 0; $("iedHslL").value = b.l || 0;
   for (const id of ["iedHslH", "iedHslS", "iedHslL"]) $(id).nextElementSibling.textContent = $(id).value;
   const active = Object.entries(ied.hsl).filter(([, a]) => a.h || a.s || a.l).map(([k]) => k);
-  $("iedHslActive").textContent = active.length ? `edited: ${active.join(", ")} — exact on Apply` : "";
+  $("iedHslActive").textContent = active.length ? `edited: ${active.join(", ")}: exact on Apply` : "";
 }
 $("iedHslBand").onchange = iedHslLoad;
 for (const [id, key] of [["iedHslH", "h"], ["iedHslS", "s"], ["iedHslL", "l"]]) {
@@ -12474,7 +12591,7 @@ $("iedAuto").onclick = async () => {
     if (o.curves?.master) ied.curves.master = o.curves.master.slice(1, -1);
     iedDrawCurve(); iedPreview();
     $("iedLineage").insertAdjacentHTML("afterbegin",
-      `<p class="hint autonote">${(r.notes || []).map(esc).join("<br>") || "nothing to fix — it already reads well"}</p>`);
+      `<p class="hint autonote">${(r.notes || []).map(esc).join("<br>") || "nothing to fix: it already reads well"}</p>`);
   } finally { btn.disabled = false; btn.innerHTML = "\u2726 auto"; }
 };
 /* Rotating changes the frame's aspect, so a view that was fitted re-fits and a
@@ -12611,7 +12728,7 @@ function iedPickAt(e) {
   const chip = $("iedKeyChip");
   chip.hidden = false;
   chip.style.background = `rgb(${px[0]},${px[1]},${px[2]})`;
-  chip.title = `rgb(${px[0]},${px[1]},${px[2]}) — keyed to transparency on Apply`;
+  chip.title = `rgb(${px[0]},${px[1]},${px[2]}): keyed to transparency on Apply`;
   iedKeyPreview();
 }
 
@@ -13037,8 +13154,8 @@ const iedDocWhen = (t) => (t ? when(t * 1000) : "");
 const iedDocRef = () => iedDocPick[iedDocPick.length - 1] || null;
 
 const iedDocNeed = (what) => (what
-  ? `Pick ${what} in the Documents dock — this op has to name the layer it acts on.`
-  : "Open a document in the Documents dock first — these five act on a shelved layer "
+  ? `Pick ${what} in the Documents dock: this op has to name the layer it acts on.`
+  : "Open a document in the Documents dock first: these five act on a shelved layer "
     + "document (groups, masks, adjustment layers), not on the flat stack in the Layers dock.");
 
 /* ⚠ THE WARNINGS ARE THE POINT, NOT DECORATION. The shelf is a plain JSON file
@@ -13116,7 +13233,7 @@ async function iedDocEdit(ops, what) {
     if (r.error) {
       /* A refusal anywhere in the list leaves the shelf exactly as it was, so
        * the local tree is still right and must not be thrown away. */
-      iedDocSay(`${what} was refused — nothing was saved: ${r.error}`);
+      iedDocSay(`${what} was refused and nothing was saved: ${r.error}`);
       iedToast(r.error);
       return null;
     }
@@ -13127,7 +13244,7 @@ async function iedDocEdit(ops, what) {
     // names a layer the document no longer has.
     const live = new Set(iedDocLines.map((x) => x.id));
     iedDocPick = iedDocPick.filter((id) => live.has(id));
-    iedDocSay(`${what} — ${(r.applied || []).join(", ")} · ${r.layers} layer${r.layers === 1 ? "" : "s"}.`,
+    iedDocSay(`${what}: ${(r.applied || []).join(", ")} · ${r.layers} layer${r.layers === 1 ? "" : "s"}.`,
       r.warnings);
     await iedDocViewRefresh();
     return r;
@@ -13174,7 +13291,7 @@ async function iedDocOpenId(id) {
   iedDoc = r.doc || null;
   iedDocLines = iedDocFlat(iedDoc?.layers, 0);
   iedDocPick = [];
-  iedDocSay(`${iedDoc?.name || id} is open — ${iedDocLines.length} layer${iedDocLines.length === 1 ? "" : "s"}, `
+  iedDocSay(`${iedDoc?.name || id} is open: ${iedDocLines.length} layer${iedDocLines.length === 1 ? "" : "s"}, `
     + `${iedDoc?.width}×${iedDoc?.height}.`, r.warnings);
   $("iedDockDocs").open = true;
   iedDocPaint();
@@ -13389,7 +13506,7 @@ async function iedDocDelete(id) {
   /* ⚠ PERMANENT. imgdoc.py says it in its own comment: there is no trash behind
    * this shelf, and inventing one here would be a second place documents live
    * that nothing else knows about. */
-  if (!(await appConfirm(`Delete “${row?.name || id}” from the shelf? This is permanent — `
+  if (!(await appConfirm(`Delete “${row?.name || id}” from the shelf? This is permanent: `
     + `there is no trash behind this shelf and nothing else holds a copy.`))) return;
   const r = await iedDocPost({ action: "delete", id });
   if (r.error) { iedDocSay(`It was not deleted: ${r.error}`); iedToast(r.error); return; }
@@ -13425,7 +13542,7 @@ function iedDocLeftOut() {
   if (ied.rotate || ied.flipH || ied.flipV || ied.geom || ied.canvas) out.push("the geometry");
   if (ied.key) out.push("the chroma key");
   if (ied.text2?.content || ied.text?.content) {
-    out.push("the type (a document text layer is a different rasteriser — its tracking "
+    out.push("the type (a document text layer is a different rasteriser: its tracking "
       + "and lineHeight are different units, so the numbers would not mean the same thing)");
   }
   /* The sliders are one object with a dozen numbers; naming each would bury the
@@ -13442,7 +13559,7 @@ function iedDocLeftOut() {
 async function iedDocSaveComposite() {
   if (!iedRequireFlatImage()) return;
   if (!iedHasPixels()) {
-    iedToast("A document is written out of a picture with pixels — open a png, jpg or webp first.");
+    iedToast("A document is written out of a picture with pixels: open a png, jpg or webp first.");
     return;
   }
   const W = $("iedImg").naturalWidth, H = $("iedImg").naturalHeight;
@@ -13512,11 +13629,11 @@ async function iedDocSaveComposite() {
    * slot, so saying this first meant the sentence naming what could NOT come
    * across was on screen for one frame and then replaced by "it is open" —
    * which is the whole message, silently dropped. */
-  iedDocSay(`Saved “${r.name}” — ${r.layers} layer${r.layers === 1 ? "" : "s"}, `
+  iedDocSay(`Saved “${r.name}”: ${r.layers} layer${r.layers === 1 ? "" : "s"}, `
     + `${r.width}×${r.height}, and opened it.`
     + (left.length
       ? `  LEFT OUT, because a document has no place for it: ${left.join("; ")}. `
-        + `Apply those first if the document should carry them — the base layer names the `
+        + `Apply those first if the document should carry them: the base layer names the `
         + `library picture as it is on disk, not as this console is previewing it.`
       : "  Nothing was queued on this console, so nothing had to be left behind."),
     r.warnings);
@@ -13549,7 +13666,7 @@ async function iedDocNewDlg() {
   const kinds = (iedDocCat.names || []).map((k) => {
     const e = (iedDocCat.layers || {})[k] || {};
     return `<option value="${esc(k)}" title="${esc((e.why || "").slice(0, 240))}">${esc(e.label || k)}${
-      e.group ? ` — ${esc(e.group)}` : ""}</option>`;
+      e.group ? `: ${esc(e.group)}` : ""}</option>`;
   }).join("");
   const imgs = (state.images || []).slice(0, 80).filter((im) => !im.name.endsWith(".svg"))
     .map((im) => `<option value="${esc(im.name)}">${esc(im.name)}</option>`).join("");
@@ -13624,7 +13741,7 @@ async function iedDocAdjDlg() {
       + `</optgroup>`).join("");
   iedDlgOpen("New adjustment layer",
     `<p class="hint">An adjustment layer applies its effects to everything beneath it in
-      its own group, over the region its alpha covers — the shared effect registry, made
+      its own group, over the region its alpha covers: the shared effect registry, made
       re-editable instead of baked into the pixels.</p>
      <div class="wrow">
        <label class="hint">effect <select class="sel2 sm" id="iedDocAdjFx">${opts}</select></label>
@@ -13633,12 +13750,12 @@ async function iedDocAdjDlg() {
      <p class="hint">${into ? `It goes inside “${esc(into.name)}”.` : "It goes at the top of the document."}
        An effect marked <i>still: no-op</i> needs a timeline and a document has no time
        axis, so it would sit there doing nothing. A layer with no effects at all is not
-       offered — that is a layer that looks added and changes no pixel.</p>`,
+       offered: that is a layer that looks added and changes no pixel.</p>`,
     `<button class="btn primary sm" id="iedDocAdjOk">add the layer</button>`);
   $("iedDocAdjOk").onclick = async () => {
     const v = $("iedDocAdjFx").value;
     const nm = $("iedDocAdjName").value.trim();
-    if (!v) { iedToast("Choose an effect — an adjustment layer with an empty stack renders nothing."); return; }
+    if (!v) { iedToast("Choose an effect: an adjustment layer with an empty stack renders nothing."); return; }
     const effects = v === "__stack__"
       ? stack.map((e) => ({ type: e.type, params: { ...e.params }, enabled: true }))
       // No params: the server fills each one from effects.py's own catalog
@@ -13661,7 +13778,7 @@ async function iedDocDuplicate() {
 async function iedDocGroupPicked() {
   if (!iedDoc) { iedToast(iedDocNeed()); return; }
   if (iedDocPick.length < 2) {
-    iedToast("Pick two or more rows — wrapping one layer in a group is what a group already is.");
+    iedToast("Pick two or more rows: wrapping one layer in a group is what a group already is.");
     return;
   }
   /* group_layers only groups layers that ALREADY SHARE A CONTAINER and refuses
@@ -13669,7 +13786,7 @@ async function iedDocGroupPicked() {
    * sentence about the rows that are actually on screen. */
   const boxes = new Set(iedDocPick.map((id) => iedDocFind(id)?.siblings || null));
   if (boxes.size !== 1 || boxes.has(null)) {
-    iedToast("Those rows are not in the same container — a group is made out of layers "
+    iedToast("Those rows are not in the same container: a group is made out of layers "
       + "that already sit side by side, not out of rows picked across the tree.");
     return;
   }
@@ -13734,7 +13851,7 @@ async function iedDocUngroup() {
   const hit = pick && iedDocFind(pick);
   if (!hit) { iedToast(iedDocNeed("a row")); return; }
   if (hit.layer.type !== "group") {
-    iedToast(`“${hit.layer.name}” is a ${hit.layer.type}, not a group — there is nothing to unwrap.`);
+    iedToast(`“${hit.layer.name}” is a ${hit.layer.type}, not a group: there is nothing to unwrap.`);
     return;
   }
   await iedDocEdit([{ op: "ungroup_layer", ref: pick }], `ungroup ${hit.layer.name}`);
@@ -13745,7 +13862,7 @@ async function iedDocRemove(id) {
   if (!hit) return;
   // The shelf has no undo; this is written the moment it is sent.
   if (!(await appConfirm(`Remove “${hit.layer.name}” from this document? The shelf has no `
-    + `undo — it is written the moment you say yes.`))) return;
+    + `undo: it is written the moment you say yes.`))) return;
   await iedDocEdit([{ op: "remove_layer", ref: id }], `remove ${hit.layer.name}`);
 }
 
@@ -13758,16 +13875,16 @@ function iedDocPaint() {
     ? `<p class="hint">The shelf has not been read yet.</p>`
     : (iedDocErr
       ? `<p class="hint iedcapwarn">The shelf could not be read, so this list is empty
-          because nothing answered — not because there is nothing on it:
+          because nothing answered: not because there is nothing on it:
           ${esc(iedDocErr)}</p>`
       : iedDocRows.length
       ? iedDocRows.map((d) => `<div class="iedfxrow${iedDoc && iedDoc.id === d.id ? " on" : ""}">
           <span class="iedfxname" title="${esc(`${d.name || d.id} · ${d.slug || ""} · saved ${stamp((d.updatedAt || 0) * 1000)}`)}">${esc(d.name || d.id)}</span>
           <span class="iedfxbadge">${d.width}×${d.height} · ${d.layers}L · ${esc(iedDocWhen(d.updatedAt))}</span>
           <button class="edtool sm" data-docopen="${esc(d.id)}" title="open it here">open</button>
-          <button class="edtool sm warn" data-docdel="${esc(d.id)}" title="Delete it from the shelf. Permanent — there is no trash behind this shelf.">✕</button>
+          <button class="edtool sm warn" data-docdel="${esc(d.id)}" title="Delete it from the shelf. Permanent: there is no trash behind this shelf.">✕</button>
         </div>`).join("")
-      : `<p class="hint">The shelf is empty — nothing has been saved as a document yet.</p>`));
+      : `<p class="hint">The shelf is empty: nothing has been saved as a document yet.</p>`));
 
   const out = $("iedDocOutline");
   if (out) {
@@ -13779,8 +13896,8 @@ function iedDocPaint() {
             <span>${r.clipped ? `<b class="clipmark">↴</b>` : ""}${esc(String(r.name || r.id).slice(0, 22))}
               <i class="dim">${esc(r.type)}</i>${r.enabled ? "" : ` <i class="dim">hidden</i>`}</span>
             <span>
-              <button class="edtool sm" data-doceye="${esc(r.id)}" title="the eyeball — update_layer enabled. A hidden layer costs nothing to render.">${r.enabled ? "◉" : "○"}</button>
-              <button class="edtool sm warn" data-docrm="${esc(r.id)}" title="remove_layer — the shelf has no undo">✕</button>
+              <button class="edtool sm" data-doceye="${esc(r.id)}" title="the eyeball: update_layer enabled. A hidden layer costs nothing to render.">${r.enabled ? "◉" : "○"}</button>
+              <button class="edtool sm warn" data-docrm="${esc(r.id)}" title="remove_layer: the shelf has no undo">✕</button>
             </span></div>`).join("")
         : `<p class="hint">This document has no layers yet.</p>`)
       : "";
@@ -13812,16 +13929,16 @@ function iedDocPaint() {
     el.disabled = !live || !ok || iedDocBusy;
     if (el.dataset.ownTitle === undefined) el.dataset.ownTitle = el.title || "";
     el.title = !live ? iedCapWhy("layerdoc")
-      : (iedDocBusy ? "The shelf is mid-edit — one op at a time, so a refusal cannot land on a tree that already moved."
+      : (iedDocBusy ? "The shelf is mid-edit: one op at a time, so a refusal cannot land on a tree that already moved."
         : (ok ? el.dataset.ownTitle : why));
   };
   gate("iedDocRefresh", true, "");
   gate("iedDocSave", iedHasPixels(),
-    "A document is written out of a picture with pixels — open a png, jpg or webp first.");
+    "A document is written out of a picture with pixels: open a png, jpg or webp first.");
   gate("iedDocNew", !!iedDoc, iedDocNeed());
   gate("iedDocDup", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
   gate("iedDocGroup", iedDocPick.length >= 2,
-    iedDoc ? "Pick two or more rows — wrapping one layer in a group is what a group already is."
+    iedDoc ? "Pick two or more rows: wrapping one layer in a group is what a group already is."
       : iedDocNeed());
   gate("iedDocMask", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
   gate("iedDocAdj", !!iedDoc, iedDocNeed());
@@ -13829,7 +13946,7 @@ function iedDocPaint() {
   gate("iedDocDown", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
   gate("iedDocClip", !!hit, iedDoc ? iedDocNeed("a row") : iedDocNeed());
   gate("iedDocUngroup", !!hit && hit.layer.type === "group",
-    iedDoc ? "Pick a group row — ungroup is the one op that needs one." : iedDocNeed());
+    iedDoc ? "Pick a group row: ungroup is the one op that needs one." : iedDocNeed());
   gate("iedDocRender", !!iedDoc, iedDocNeed());
   gate("iedDocPsd", !!iedDoc, iedDocNeed());
   gate("iedDocClose", !!iedDoc, iedDocNeed());
@@ -13887,7 +14004,7 @@ $("iedDocClose").onclick = () => {
   if (ied.name) $("iedImg").src = `/api/image/${encodeURIComponent(ied.name)}`;
   $("iedDocName").textContent = ied.name || "Image";
   iedAIPaint(); iedApplyEnable();
-  iedDocSay("Closed here — it is still on the shelf.");
+  iedDocSay("Closed here: it is still on the shelf.");
   iedDocPaint();
 };
 $("iedDockDocs").addEventListener("toggle", iedDocMaybeList);
@@ -13929,7 +14046,7 @@ $("iedDocRender").onclick = async () => {
      * was never told about is invisible until something asks again. */
     await loadImages();
     openImageEditor(r.name);
-    iedDocSay(`Rendered ${r.name} — ${r.width}×${r.height}, ${r.painted} layer${r.painted === 1 ? "" : "s"} painted.`,
+    iedDocSay(`Rendered ${r.name}: ${r.width}×${r.height}, ${r.painted} layer${r.painted === 1 ? "" : "s"} painted.`,
       [...(r.warnings || []),
         /* A layer the renderer SKIPPED is the thing a person most needs told
          * about, and it has never been an error on this route. */
@@ -14043,7 +14160,7 @@ $("iedPresetApply").onclick = () => {
     ["paths", ops.paths?.length], ["text", ops.text?._v2],
     ["styles", ops.styles?.styles]]
     .filter(([k, v]) => v && !iedCapLive(k)).map(([k]) => IED_CAPS[k].label);
-  if (dark.length) iedToast(`This preset also carries ${dark.join(" and ")} — loaded, but this server has no stage for it yet, so Apply will leave it out.`);
+  if (dark.length) iedToast(`This preset also carries ${dark.join(" and ")}: loaded, but this server has no stage for it yet, so Apply will leave it out.`);
 };
 
 /* ══ the console's second half ═════════════════════════════════════════════
@@ -14547,7 +14664,7 @@ function iedSelDescribe(s) {
   if (s.kind === "ellipse") return `ellipse r${Math.round(s.rx)}×${Math.round(s.ry)} @ ${Math.round(s.cx)},${Math.round(s.cy)}`;
   if (s.kind === "polygon") return `polygon · ${s.points.length} points`;
   if (s.kind === "wand") return `wand @ ${s.x},${s.y} · tol ${s.tolerance}${s.contiguous ? " · contiguous" : ""}`;
-  if (s.kind === "channel") return `channel ${s.channel} — the plane as the mask`;
+  if (s.kind === "channel") return `channel ${s.channel}: the plane as the mask`;
   if (s.kind === "path") {
     const n = (s.paths || []).length;
     return `pen path · ${n} subpath${n === 1 ? "" : "s"}`;
@@ -14563,7 +14680,7 @@ function iedSelPaint() {
         <span class="iedfxname" title="${esc(iedSelDescribe(s))}">${esc(iedSelDescribe(s))}</span>
         <span class="iedfxbadge">${esc(s.mode)}</span>
         <button class="edtool sm" data-seldel="${i}" title="drop this shape">✕</button></div>`).join("")
-    : `<p class="hint">Nothing selected — every op works on the whole frame.</p>`;
+    : `<p class="hint">Nothing selected: every op works on the whole frame.</p>`;
   for (const b of list.querySelectorAll("[data-seldel]")) {
     b.onclick = () => { ied.sel.splice(+b.dataset.seldel, 1); iedSelPaint(); iedOverlayPaint(); iedStatus(); iedPush("drop selection shape"); };
   }
@@ -14709,7 +14826,7 @@ function iedStrokeOpts() {
   }
   $("iedStrokeLab").textContent = IED_LABEL[ied.tool] || "Brush";
   $("iedStSrcLbl").textContent = ied.cloneSrc
-    ? `source ${ied.cloneSrc[0]},${ied.cloneSrc[1]} — alt-click to move it`
+    ? `source ${ied.cloneSrc[0]},${ied.cloneSrc[1]}: alt-click to move it`
     : "alt-click sets the source";
   for (const [id, vid] of Object.entries(IED_STROKEV)) {
     $(vid).textContent = IED_STROKERAW.has(id) ? $(id).value
@@ -14758,7 +14875,7 @@ function iedStrokeDown(sp, e) {
     return null;
   }
   if ((ied.tool === "clone" || ied.tool === "heal") && !ied.cloneSrc) {
-    iedToast("Alt-click the picture first to set where the clone samples from — §5 fixes the offset at stroke start.");
+    iedToast("Alt-click the picture first to set where the clone samples from: §5 fixes the offset at stroke start.");
     return null;
   }
   const p = iedPressure(e);
@@ -14978,7 +15095,7 @@ function iedShapeOpts() {
 function iedShapeGuard() {
   const ok = $("iedShFillOn").checked || $("iedShStrokeOn").checked;
   $("iedShHint").classList.toggle("iedcapwarn", !ok);
-  if (!ok) $("iedShHint").textContent = "pick a fill or a line — a shape with neither is an error, not a no-op";
+  if (!ok) $("iedShHint").textContent = "pick a fill or a line: a shape with neither is an error, not a no-op";
   return ok;
 }
 for (const id of ["iedShFillOn", "iedShStrokeOn", "iedShFill", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend"]) {
@@ -15001,7 +15118,7 @@ function iedShapeDown(sp) {
     iedToast("The Background is locked \u2014 click \ud83d\udd12 locked in the Layers panel to unlock it.");
     return null;
   }
-  if (!iedShapeGuard()) { iedToast("A shape needs a fill or a line — §6 makes 'neither' an error."); return null; }
+  if (!iedShapeGuard()) { iedToast("A shape needs a fill or a line: §6 makes 'neither' an error."); return null; }
   const kind = IED_SHAPEKIND[ied.tool];
   if (kind === "polygon") {
     if (!ied.shapeDraft?.pending) ied.shapeDraft = { kind, pending: true, points: [] };
@@ -15137,8 +15254,8 @@ function iedChanPaint() {
     <div class="iedchanrow${ied.chanView === ch ? " on" : ""}" data-chanrow="${ch}">
       <canvas data-chanthumb="${ch}" width="34" height="24"></canvas>
       <span class="iedfxname">${label}</span>
-      <button class="edtool sm" data-chansel="${ch}" title="Load this plane as the ACTIVE SELECTION — Photoshop's ctrl-click on a channel. The mask is the plane itself, soft edges and all.">load</button>
-      ${ch === "a" ? "" : `<button class="edtool sm" data-chancurve="${ch}" title="Point the Adjustments curve at this channel — the pipeline's way to edit one channel only.">curve</button>`}
+      <button class="edtool sm" data-chansel="${ch}" title="Load this plane as the ACTIVE SELECTION: Photoshop's ctrl-click on a channel. The mask is the plane itself, soft edges and all.">load</button>
+      ${ch === "a" ? "" : `<button class="edtool sm" data-chancurve="${ch}" title="Point the Adjustments curve at this channel (the pipeline's way to edit one channel only).">curve</button>`}
     </div>`).join("");
   // Thumbnails from one small sample of the picture, split five ways.
   const img = $("iedImg");
@@ -15262,7 +15379,7 @@ function iedPathQueuePaint() {
 
 const iedPathCur = () => {
   const p = ied.paths[ied.pathSel] || ied.paths[ied.paths.length - 1];
-  if (!p) iedToast("No path yet — draw one with the pen (P), or make one from the selection.");
+  if (!p) iedToast("No path yet: draw one with the pen (P), or make one from the selection.");
   return p;
 };
 
@@ -15274,7 +15391,7 @@ $("iedPathFromSel").onclick = () => {
     if (pts.length >= 3) subs.push({ points: pts.map((p) => [p[0], p[1]]), closed: true });
   }
   if (!subs.length) {
-    iedToast("From selection needs a rect, ellipse or polygon shape — wand, colour range and channel have no outline to trace.");
+    iedToast("From selection needs a rect, ellipse or polygon shape: wand, colour range and channel have no outline to trace.");
     return;
   }
   ied.paths.push({ name: `path ${++iedPathN}`, subs });
@@ -15284,7 +15401,7 @@ $("iedPathFromSel").onclick = () => {
 
 $("iedPathSvg").onclick = () => {
   iedDlgOpen("Path from SVG",
-    `<p class="hint">Paste a <code>d</code> attribute — M L H V C S Q T A Z and
+    `<p class="hint">Paste a <code>d</code> attribute: M L H V C S Q T A Z and
       their relative forms, exactly what <code>imgpath</code> reads. The server
       flattens it; the overlay lists it without pretending to draw it.</p>
      <textarea id="iedPathD" class="sel2" style="width:100%;height:90px" placeholder="M 20 20 C 60 10 80 50 40 80 Z"></textarea>`,
@@ -15316,7 +15433,7 @@ $("iedPathStroke").onclick = () => {
   const tool = iedIsStroke(ied.tool) && ied.tool !== "bucket" && ied.tool !== "gradient"
     ? ied.tool : "brush";
   if ((tool === "clone" || tool === "heal") && !ied.cloneSrc) {
-    iedToast("Alt-click the picture first to set where the clone samples from — §5 fixes the offset at stroke start.");
+    iedToast("Alt-click the picture first to set where the clone samples from: §5 fixes the offset at stroke start.");
     return;
   }
   const s = iedStrokeSpec(tool, []);
@@ -15380,7 +15497,7 @@ $("iedPathCheck").onclick = async () => {
       + ` · ${n(r.open)} not closed · fill rule ${r.rule})`;
     /* A figure that will draw wrong is worth the status bar too — the eye is
      * on the canvas at this point, not on a hint line inside a dock. */
-    if (n(r.solid) || n(r.open)) iedToast(`${p.name} — ${r.says}`);
+    if (n(r.solid) || n(r.open)) iedToast(`${p.name}: ${r.says}`);
   } catch (e) {
     say.textContent = `The figure could not be checked: ${e.message}`;
   } finally {
@@ -15768,8 +15885,8 @@ function iedBlendFill(id, modes, sayId, source) {
     if (say) {
       say.hidden = false;
       say.textContent = sel.dataset.blendfrom
-        ? `blend: the server's list could not be read again — ${why}. These ${n} are the ones it gave last, so they still work; a mode added since would not be among them.`
-        : `blend: showing the ${n} written into this page, not the server's list — ${why}.`
+        ? `blend: the server's list could not be read again: ${why}. These ${n} are the ones it gave last, so they still work; a mode added since would not be among them.`
+        : `blend: showing the ${n} written into this page, not the server's list: ${why}.`
           + " Every mode the engine has grown since is missing from the menu, so it cannot be picked here.";
     }
     return n;
@@ -15934,7 +16051,7 @@ function iedCharPaint() {
     if (d.type === "color") {
       return `<div class="iedparam"><span>${esc(k)}</span>
         <input type="color" data-charp="${path}" value="${iedHex(v || d.default || [255, 255, 255])}">
-        <span class="iedparamwhy">${why} — 0-255 RGB</span></div>`;
+        <span class="iedparamwhy">${why}: 0-255 RGB</span></div>`;
     }
     if (d.type === "number") {
       const min = d.min ?? 0, max = d.max ?? 100;
@@ -15977,7 +16094,7 @@ function iedCharPaint() {
     // points / stops: honest note rather than a dead control (the fx rule).
     return `<div class="iedparam"><span>${esc(k)}</span>
       <span class="hint">${Array.isArray(v) ? v.length : 0} entries, at the catalog default</span><b></b>
-      <span class="iedparamwhy">${why} — set via MCP's image_adjust text op</span></div>`;
+      <span class="iedparamwhy">${why}: set via MCP's image_adjust text op</span></div>`;
   };
 
   const groups = [];
@@ -16052,7 +16169,7 @@ $("iedCharMeasure").onclick = async () => {
    * that never renders. */
   const op = iedTextOp();
   if (!op.text) {
-    say.textContent = "There is no type yet — the text tool’s box is empty, so there is "
+    say.textContent = "There is no type yet: the text tool’s box is empty, so there is "
       + "nothing to lay out. Posting an empty spec would measure a blank.";
     return;
   }
@@ -16071,24 +16188,24 @@ $("iedCharMeasure").onclick = async () => {
      * in `inkBoxWhy` when it is, and reading .w off null is how this line would
      * have thrown on exactly the specs worth measuring. */
     if (r.inkBox) bits.push(`ink ${num(r.inkBox.w)}×${num(r.inkBox.h)} at ${num(r.inkBox.x)},${num(r.inkBox.y)}`);
-    else bits.push(`no ink box${r.inkBoxWhy ? ` — ${r.inkBoxWhy}` : ""}`);
+    else bits.push(`no ink box${r.inkBoxWhy ? `: ${r.inkBoxWhy}` : ""}`);
     bits.push(`block ${num(r.blockW)}×${num(r.blockH)}`);
     bits.push(`${r.lineCount} line${r.lineCount === 1 ? "" : "s"}`);
     bits.push(`baseline step ${num(r.lineStep)}`);
     // The size that DREW, and where it came from when it is not the one asked for.
     bits.push(r.shrunk
-      ? `size ${num(r.size)} — SHRUNK to fit from ${num(r.sizeAsked)} (floor ${num(r.minSize)})`
+      ? `size ${num(r.size)}: SHRUNK to fit from ${num(r.sizeAsked)} (floor ${num(r.minSize)})`
       : `size ${num(r.size)}`);
     // The substitution, said plainly. A silently substituted face is a layout
     // measured against a font that is not the one in the picture.
     bits.push(r.font?.fallback
-      ? `FONT SUBSTITUTED — "${r.font.asked}" is not on this machine, so another face drew and every number above is that face’s`
+      ? `FONT SUBSTITUTED: "${r.font.asked}" is not on this machine, so another face drew and every number above is that face’s`
       : `font ${r.font?.asked || "?"}`);
     const warn = (r.warnings || []).filter(Boolean);
     say.textContent = bits.join(" · ") + (warn.length ? `  ⚠ ${warn.join(" · ")}` : "");
     if (r.font?.fallback || r.shrunk) {
       iedToast(r.font?.fallback
-        ? `"${r.font.asked}" was substituted — the type in the picture is a different face.`
+        ? `"${r.font.asked}" was substituted: the type in the picture is a different face.`
         : `The type was shrunk to fit: ${num(r.sizeAsked)} → ${num(r.size)}.`);
     }
   } catch (e) {
@@ -16120,8 +16237,8 @@ function iedSwPaint() {
   grid.innerHTML = iedSwatches.length ? iedSwatches.map((s, i) =>
     `<button class="iedsw${i === iedSwSel ? " on" : ""}" data-sw="${i}"
        style="background:rgb(${s.color.join(",")})"
-       title="${esc(s.name || `rgb(${s.color.join(",")})`)} — click to use"></button>`).join("")
-    : `<p class="hint">Empty shelf — save the brush colour with + add current.</p>`;
+       title="${esc(s.name || `rgb(${s.color.join(",")})`)}: click to use"></button>`).join("")
+    : `<p class="hint">Empty shelf: save the brush colour with + add current.</p>`;
   $("iedSwDel").hidden = iedSwSel < 0 || iedSwSel >= iedSwatches.length;
   for (const b of grid.querySelectorAll("[data-sw]")) {
     b.onclick = () => {
@@ -16246,7 +16363,7 @@ function iedFxPaint() {
     const e = iedFxCat?.[f.type] || { label: f.type };
     return `<div class="iedfxrow${i === ied.fxSel ? " on" : ""}${f.on ? "" : " off"}" data-fxrow="${i}">
       <span class="iedfxname" title="${esc(e.why || "")}">${i + 1}. ${esc(e.label || f.type)}</span>
-      ${e.needsTimeline ? `<span class="iedfxbadge" title="A still has no previous frames — §4 says this returns the image untouched rather than pretending the name is wrong.">no-op on a still</span>` : ""}
+      ${e.needsTimeline ? `<span class="iedfxbadge" title="A still has no previous frames: §4 says this returns the image untouched rather than pretending the name is wrong.">no-op on a still</span>` : ""}
       <button class="edtool sm" data-fxon="${i}" title="${f.on ? "skip this one" : "include it again"}">${f.on ? "●" : "○"}</button>
       <button class="edtool sm" data-fxup="${i}" title="earlier in the chain">▲</button>
       <button class="edtool sm" data-fxdn="${i}" title="later in the chain">▼</button>
@@ -16276,8 +16393,8 @@ function iedFxPaint() {
   iedFxParams();
   const timeline = ied.fx.filter((f) => f.on && iedFxCat?.[f.type]?.needsTimeline);
   $("iedFxNote").textContent = timeline.length
-    ? `${timeline.length} of these read a timeline. A still has none, so they come back untouched — §4.`
-    : "Applied in the order listed, after the adjustments and before the strokes — §2. No live preview: these render server-side on Apply.";
+    ? `${timeline.length} of these read a timeline. A still has none, so they come back untouched: §4.`
+    : "Applied in the order listed, after the adjustments and before the strokes (§2). No live preview: these render server-side on Apply.";
   $("iedFxNote").classList.toggle("iedcapwarn", timeline.length > 0);
 }
 
@@ -16753,7 +16870,7 @@ function iedFxParams() {
     if (d.type === "color") {
       return `<div class="iedparam"><span>${esc(k)}</span>
         <input type="color" id="${id}" data-fxp="${esc(k)}" value="${iedHex(v || d.default)}">
-        <span class="iedparamwhy">${esc(d.desc || "")} — 0-255 RGB</span></div>`;
+        <span class="iedparamwhy">${esc(d.desc || "")}: 0-255 RGB</span></div>`;
     }
     if (d.type === "points") {
       /* A curve editor for every points parameter is a second console. The
@@ -16761,7 +16878,7 @@ function iedFxParams() {
        * control that cannot change anything. */
       return `<div class="iedparam"><span>${esc(k)}</span>
         <span class="hint">${(v || []).length} points, at the catalog default</span><b></b>
-        <span class="iedparamwhy">${esc(d.desc || "")} — not editable here; the Adjustments curve is the console's curve editor</span></div>`;
+        <span class="iedparamwhy">${esc(d.desc || "")}: not editable here; the Adjustments curve is the console's curve editor</span></div>`;
     }
     const min = d.min ?? 0, max = d.max ?? 100;
     return `<div class="iedparam"><span>${esc(k)}</span>
@@ -17044,7 +17161,7 @@ function iedExportDlg() {
           ${["png", "jpeg", "webp", "avif", "tiff", "ico", "pdf"].map((f) => `<option value="${f}"${f === "png" ? " selected" : ""}>${f}</option>`).join("")}
         </select></label>
       <label>quality <input id="iedXQ" type="number" min="1" max="100" step="1" value="90"
-        title="Lossy formats only — png and tiff ignore it, and the reply says so rather than dropping it quietly"></label>
+        title="Lossy formats only: png and tiff ignore it, and the reply says so rather than dropping it quietly"></label>
       <label>max KB <input id="iedXKB" type="number" min="1" step="10" placeholder="&mdash;"
         title="Searches quality to land under this many kilobytes and reports the quality it reached; blank is one encode at the quality box's value"></label>
     </div>
@@ -17274,7 +17391,7 @@ function iedCanvasDlg() {
   const { w, h } = iedStageSize();
   const c = ied.canvas || {};
   iedDlgOpen("Canvas size",
-    `<p class="hint">Changes the FRAME, not the content — §2 stage 1, before the crop.
+    `<p class="hint">Changes the FRAME, not the content: §2 stage 1, before the crop.
       The anchor is where this picture sits inside the new frame.</p>
      <div class="wrow">
        <label class="hint">width <input type="number" id="iedCvW" class="sel2 sm" value="${c.width ?? w}" min="1" max="16384" style="width:86px"></label>
@@ -17306,7 +17423,7 @@ function iedCanvasDlg() {
 function iedRotateDlg() {
   const g = ied.geom || {};
   iedDlgOpen("Rotate",
-    `<p class="hint">Any angle, with a clean antialiased edge — §7. The 90° button in
+    `<p class="hint">Any angle, with a clean antialiased edge: §7. The 90° button in
       Properties writes the old <code>ops.rotate</code>; this writes
       <code>ops.geometry.rotate</code>, and only one of the two is sent.</p>
      <div class="iedparam"><span>angle</span>
@@ -17327,7 +17444,7 @@ function iedSmartResizeDlg() {
   const { w, h } = iedStageSize();
   const s = ied.geom?.smartResize || {};
   iedDlgOpen("Content-aware resize",
-    `<p class="hint">Seam carving — §7. It removes the least interesting columns and
+    `<p class="hint">Seam carving: §7. It removes the least interesting columns and
       rows rather than squashing everything equally, so it is for changing an
       aspect ratio, not for scaling. Plain scaling is Image → Image size.</p>
      <div class="wrow">
@@ -17352,7 +17469,7 @@ function iedPerspectiveDlg() {
   const q = ied.geom?.perspective || [[0, 0], [w, 0], [w, h], [0, h]];
   const names = ["top left", "top right", "bottom right", "bottom left"];
   iedDlgOpen("Perspective / free transform",
-    `<p class="hint">The DESTINATION quad — where each corner of this picture ends up,
+    `<p class="hint">The DESTINATION quad: where each corner of this picture ends up,
       in pixels. §7.</p>` + q.map((p, i) =>
       `<div class="wrow"><span class="hint">${names[i]}</span><span>
         <input type="number" class="sel2 sm" data-pq="${i}.0" value="${p[0]}" style="width:88px">
@@ -17378,7 +17495,7 @@ function iedPerspectiveDlg() {
 function iedResizeDlg() {
   const { w, h } = iedStageSize();
   iedDlgOpen("Image size",
-    `<p class="hint">Plain resampling, applied LAST so nothing is resized twice — §2 stage 10.</p>
+    `<p class="hint">Plain resampling, applied LAST so nothing is resized twice: §2 stage 10.</p>
      <div class="wrow">
        <label class="hint">width <input type="number" id="iedRzW" class="sel2 sm" value="${$("iedRw").value || w}" min="16" max="8192" style="width:92px"></label>
        <label class="hint">height <input type="number" id="iedRzH" class="sel2 sm" value="${$("iedRh").value || h}" min="16" max="8192" style="width:92px"></label>
@@ -17409,7 +17526,7 @@ function iedCapsDlg() {
   iedDlgOpen("What the server can do",
     `<p class="hint">Probed at open, once. Everything defaults to OFF, because
       <code>/api/images/edit</code> accepts an ops key it has no stage for and
-      returns ok — so a control that assumed would look like it worked.</p>
+      returns ok: so a control that assumed would look like it worked.</p>
      <table><tr><th>capability</th><th>spec</th><th>state</th><th>probe</th></tr>${rows}</table>
      <p class="hint">The probe follows this server's one convention: the effect catalog is
        at <code>/api/images/effects</code>, so a module's catalog is at
@@ -17457,7 +17574,7 @@ const IED_CMDS = [
 
   { id: "edit.undo", menu: "Edit", label: "Undo", key: "Ctrl+Z",
     enabled: () => iedU.at > 0, run: () => iedStepTo(iedU.at - 1),
-    why: () => "Nothing to undo — this is where the file opened." },
+    why: () => "Nothing to undo: this is where the file opened." },
   { id: "edit.redo", menu: "Edit", label: "Redo", key: "Ctrl+Shift+Z",
     enabled: () => iedU.at < iedU.stack.length - 1, run: () => iedStepTo(iedU.at + 1),
     why: () => "Nothing to redo." },
@@ -17491,7 +17608,7 @@ const IED_CMDS = [
   { id: "image.trim", menu: "Image", label: "Trim the transparent edges", need: "geometry",
     run: () => {
       ied.canvas = { ...(ied.canvas || {}), trim: "transparent" };
-      iedStatus(); iedPush("trim"); iedToast("Trim queued — it runs at stage 1, before the crop.");
+      iedStatus(); iedPush("trim"); iedToast("Trim queued: it runs at stage 1, before the crop.");
     } },
   { id: "image.perspective", menu: "Image", label: "Perspective / free transform…", need: "geometry", run: iedPerspectiveDlg },
   { id: "image.smart", menu: "Image", label: "Content-aware resize…", need: "geometry", run: iedSmartResizeDlg },
@@ -17527,7 +17644,7 @@ const IED_CMDS = [
         iedPush(l.clipped ? "clip to the layer below" : "release clipping mask");
       }
     },
-    why: () => "Select a layer row first — or Alt-click the border between two rows." },
+    why: () => "Select a layer row first, or Alt-click the border between two rows." },
   { ...SEP, menu: "Layer" },
   /* ⚠ THESE FIVE USED TO BE `run: () => {}`. They went live the moment the
    * layerdoc probe came back and they did NOTHING when clicked — the exact
@@ -17545,7 +17662,7 @@ const IED_CMDS = [
   { id: "layer.group", menu: "Layer", label: "Group the layers", need: "layerdoc",
     enabled: () => !!iedDoc && iedDocPick.length >= 2,
     why: () => (iedDoc
-      ? "Pick two or more rows in the Documents dock — wrapping one layer in a group is what a group already is."
+      ? "Pick two or more rows in the Documents dock: wrapping one layer in a group is what a group already is."
       : iedDocNeed()),
     run: () => { iedFocus("iedDockDocs", "iedDocGroup"); iedDocGroupPicked(); } },
   { id: "layer.mask", menu: "Layer", label: "Add a layer mask", need: "layerdoc",
@@ -17698,7 +17815,7 @@ const iedCmdEnabled = (c) =>
  * a module that does not exist, then a local condition like an empty stack. */
 function iedCmdWhy(c) {
   if (iedDoc && IED_DOC_FILE_COMMANDS.has(c.id)) return IED_DOC_FILE_REASON;
-  if (c.pixels && !iedHasPixels()) return "View-only here — download or trash it. (Pixel editing takes png, jpg or webp.)";
+  if (c.pixels && !iedHasPixels()) return "View-only here: download or trash it. (Pixel editing takes png, jpg or webp.)";
   if (!iedCapLive(c.need)) return iedCapWhy(c.need);
   return c.why ? c.why() : "";
 }
@@ -17980,14 +18097,19 @@ async function imgQwenCheck() {
     imgDraftPaint();                             // every answer carries Fast draft's own
     /* Ready is a green chip and nothing else. Otherwise the chip names the
      * problem and the note says what to do about it. */
+    /* An engine that is simply not running is not one that needs an update:
+     * only missing nodes mean that. */
+    const engineDown = !status.runtimeReady && !status.missingNodes?.length && state.engineReady === false;
     const parts = [];
-    if (status.error && !status.missingFiles?.length && !status.missingNodes?.length) parts.push(status.error);
+    if (status.error && !status.missingFiles?.length && !status.missingNodes?.length && !engineDown) parts.push(status.error);
     if (!status.filesReady) parts.push(`Missing model files: ${(status.missingFiles || []).join(", ") || "could not be confirmed"}.`);
     if (status.missingNodes?.length) parts.push(`ComfyUI needs an update (${status.missingNodes.join(", ")}). Update, restart, then check again.`);
+    else if (engineDown) parts.push("The engine is not running. Start or restart it, then check again.");
     else if (!status.runtimeReady) parts.push("ComfyUI could not be confirmed. Start or restart it, then check again.");
     const chip = status.ready ? "Qwen Image 2.1 ready"
       : !status.filesReady && !status.runtimeReady ? "Qwen Image 2.1 not ready"
-      : !status.filesReady ? "Model files missing" : "ComfyUI update needed";
+      : !status.filesReady ? "Model files missing"
+      : engineDown ? "Engine not running" : status.missingNodes?.length ? "ComfyUI update needed" : "ComfyUI not confirmed";
     imgQwenPaint(status.ready ? "ok" : "warn", chip, status.ready ? "" : parts.join(" "), !status.filesReady);
     return status.ready === true && key === imgQwenQuery().toString();
   } catch {
@@ -18050,7 +18172,9 @@ function imgQwenPlacePop() {
   if (r.width) {
     const w = Math.min(300, window.innerWidth - 24);
     const right = r.right + 14 + w < window.innerWidth - 8;
-    const left = `${Math.round(right ? r.right + 14 : Math.max(8, r.left))}px`;
+    /* Below the field it must still fit the window: on a phone it started at
+     * the field's left edge and ran off the right side. */
+    const left = `${Math.round(right ? r.right + 14 : Math.max(8, Math.min(r.left, window.innerWidth - w - 8)))}px`;
     const top = `${Math.round(right ? Math.max(8, r.top - 8) : r.bottom + 8)}px`;
     if (pop.style.left !== left) pop.style.left = left;
     if (pop.style.top !== top) pop.style.top = top;
@@ -18247,7 +18371,7 @@ function imgRefsPaint() {
   imgRefHoverHide();
   prev.innerHTML = imgRefs.map((m, i) => `<figure class="midthumb">
       <span class="refnum">${i + 1}</span>
-      <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)} — click to say &quot;image ${i + 1}&quot;">
+      <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)}: click to say &quot;image ${i + 1}&quot;">
       <figcaption><button class="refmove" type="button" data-refup="${i}" ${i === 0 ? "disabled" : ""} title="Earlier">&#9664;</button>
         <button class="reftag" type="button" data-refsay="${i + 1}" title="Insert into the description">image ${i + 1}</button>
         <button class="refmove" type="button" data-refdown="${i}" ${i === n - 1 ? "disabled" : ""} title="Later">&#9654;</button></figcaption>
@@ -18274,7 +18398,7 @@ function imgRefsPaint() {
    * free and the form should not pretend otherwise. */
   $("imgRefCostNote").hidden = !n || eng !== "flux2";
   $("imgRefCostNote").textContent = n && eng === "flux2"
-    ? `${n} reference${n === 1 ? "" : "s"} — each one is VAE-encoded into the conditioning, so it costs render time: `
+    ? `${n} reference${n === 1 ? "" : "s"}: each one is VAE-encoded into the conditioning, so it costs render time: `
       + `measured about 12 s for one, 8 s for two warm, and roughly 4 s per reference past the second.`
     : "";
 
@@ -18298,11 +18422,11 @@ function imgRefsPaint() {
     : eng === "krea2"
       ? "Krea 2 has no reference input here."
     : eng === "zimage" || eng === "zimage-base"
-      ? "No released Z-Image checkpoint takes references. ComfyUI has the node — up to 3 images — but the weights it needs (Z-Image-Edit, Z-Image-Omni-Base) are still unreleased."
+      ? "No released Z-Image checkpoint takes references. ComfyUI has the node (up to 3 images) but the weights it needs (Z-Image-Edit, Z-Image-Omni-Base) are still unreleased."
       : "This model has no reference input here.";
   $("imgRefEngineNote").hidden = !fluxOnly;
   $("imgRefEngineNote").textContent = fluxOnly
-    ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} cannot be used — choose Qwen Image 2.1 or FLUX.2, or Clear.`
+    ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} cannot be used: choose Qwen Image 2.1 or FLUX.2, or Clear.`
          : `${why} Choose Qwen Image 2.1 or FLUX.2 to use references.`)
     : "";
   /* OUT OF THE WAY WHEN IT CANNOT BE USED — asked for, and right: a picker for
@@ -18331,7 +18455,7 @@ function imgRefTagNote() {
   }
   $("imgRefTagNote").hidden = !bad.length;
   $("imgRefTagNote").textContent = bad.length
-    ? `The description says ${[...new Set(bad)].join(", ")} but ${n ? `only ${n} reference${n === 1 ? " is" : "s are"}` : "no reference is"} attached — add it, or fix the number.`
+    ? `The description says ${[...new Set(bad)].join(", ")} but ${n ? `only ${n} reference${n === 1 ? " is" : "s are"}` : "no reference is"} attached: add it, or fix the number.`
     : "";
 }
 
@@ -18534,30 +18658,30 @@ const IMG_ENGINES = {
    * uses it (shown locked); otherwise it is the default and can be changed. */
   flux2: {
     steps: 4, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
-    note: "FLUX.2 klein 4B, Apache-2.0 — 4 steps, no CFG (distilled), takes reference images — about 3 s a picture once loaded.",
+    note: "FLUX.2 klein 4B, Apache-2.0: 4 steps, no CFG (distilled), takes reference images. About 3 s a picture once loaded.",
   },
   zimage: {
     steps: 8, negative: false, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
-    note: "Z-Image Turbo, Apache-2.0 — 8 steps, cfg 1.0, res_multistep/simple — photographic realism, faces, English and Chinese prompts — no negative prompt and no references: distilled at cfg 1.0, so the negative branch is never evaluated, and no released checkpoint takes refs.",
+    note: "Z-Image Turbo, Apache-2.0. 8 steps, cfg 1.0, res_multistep/simple. Photographic realism, faces, English and Chinese prompts. No negative prompt and no references: distilled at cfg 1.0, so the negative branch is never evaluated, and no released checkpoint takes refs.",
   },
   "zimage-base": {
     steps: 25, cfg: 4, negative: true, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
-    note: "Z-Image base, Apache-2.0 — 25 steps, cfg 4.0, res_multistep/simple — the undistilled sibling: real CFG, a negative prompt that works, and genuinely different pictures per seed. Roughly four times Turbo's wall clock. Its README suggests up to 50 steps and cfg 3-5.",
+    note: "Z-Image base, Apache-2.0 (25 steps, cfg 4.0, res_multistep/simple) the undistilled sibling: real CFG, a negative prompt that works, and genuinely different pictures per seed. Roughly four times Turbo's wall clock. Its README suggests up to 50 steps and cfg 3-5.",
   },
   krea2: {
     steps: 8, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
-    note: "Krea 2 Turbo (12B, int8) — 8 steps, cfg 1.0, euler/simple — the frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references. Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024² — ten times FLUX.2 klein, for the frontier picture.",
+    note: "Krea 2 Turbo (12B, int8). 8 steps, cfg 1.0, euler/simple. The frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references. Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024²: ten times FLUX.2 klein, for the frontier picture.",
   },
   ideogram4: {
     steps: null, negative: false, maxSteps: 30,
-    note: "Ideogram 4 (open 9B) — typography, posters, graphic layouts — steps come from the preset (Default 20 / Quality 48) — ⚠ NON-COMMERCIAL licence, and its text is gated: nobody here has read what it says about your pictures.",
+    note: "Ideogram 4 (open 9B) for typography, posters and graphic layouts. Steps come from the preset (Default 20 / Quality 48). ⚠ NON-COMMERCIAL licence, and its text is gated: nobody here has read what it says about your pictures.",
   },
   anima: {
     sampling: { sampler: "er_sde", scheduler: "simple", fixed: false },
   },
   checkpoint: {
     steps: 28, cfg: 6, negative: true, maxSteps: 60,
-    note: "Whatever .safetensors you dropped into ComfyUI/models/checkpoints or models/diffusion_models. A checkpoint is SD-class: real cfg and a real negative prompt. A bare transformer (Z-Image, Anima, FLUX.2, Krea 2) renders on its own family's recipe, and you can name the text encoder and VAE it should load with. The app lists, it does not curate — the licence and the content policy are its author's.",
+    note: "Whatever .safetensors you dropped into ComfyUI/models/checkpoints or models/diffusion_models. A checkpoint is SD-class: real cfg and a real negative prompt. A bare transformer (Z-Image, Anima, FLUX.2, Krea 2) renders on its own family's recipe, and you can name the text encoder and VAE it should load with. The app lists, it does not curate: the licence and the content policy are its author's.",
   },
 };
 
@@ -18815,7 +18939,7 @@ $("imgTpl").onchange = async () => {
 
 $("imgTplSave").onclick = async () => {
   const template = $("imgPrompt").value.trim();
-  if (!template) { alert("Write a prompt first — that is what gets saved."); return; }
+  if (!template) { alert("Write a prompt first: that is what gets saved."); return; }
   const name = (await appPrompt("Name this template:", ""));
   if (!name) return;
   const tag = (await appPrompt("What does it vary? (characters, outfits, sceneries, styles…)", "")) || "";
@@ -18851,7 +18975,7 @@ async function imgLoadPersonas() {
   const bad = fits && fits.fit !== "yes";
   $("imgPersona").disabled = !!bad;
   $("imgPersonaNote").hidden = !(bad && rows.length);
-  if (bad && rows.length) $("imgPersonaNote").textContent = `Characters need reference images — ${fits.why}.`;
+  if (bad && rows.length) $("imgPersonaNote").textContent = `Characters need reference images: ${fits.why}.`;
   $("imgPersonaDel").hidden = !$("imgPersona").value;
   /* The same shelf feeds Video's Keep my character. */
   if (typeof vidLoadCharacters === "function") vidLoadCharacters();
@@ -18861,12 +18985,12 @@ $("imgPersona").onchange = () => { $("imgPersonaDel").hidden = !$("imgPersona").
 
 $("imgPersonaSave").onclick = async () => {
   if (!imgRefs.length) {
-    alert("Add the reference pictures that show this character first — that is what makes them reusable.");
+    alert("Add the reference pictures that show this character first: that is what makes them reusable.");
     return;
   }
   const name = (await appPrompt("Name this character (this is how the prompt will refer to them):", ""));
   if (!name) return;
-  const fragment = (await appPrompt("Describe them in a few words — what a picture cannot show:", "")) || "";
+  const fragment = (await appPrompt("Describe them in a few words: what a picture cannot show:", "")) || "";
   try {
     const r = await (await fetch("/api/personas", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -18893,7 +19017,7 @@ $("imgLoraPick").onchange = () => {
   const name = $("imgLoraPick").value;
   $("imgLoraPick").value = "";
   if (!name || imgLoraStack.some((l) => l.name === name)) return;
-  if (imgLoraStack.length >= 8) { alert("Eight LoRAs is the cap — the route refuses more."); return; }
+  if (imgLoraStack.length >= 8) { alert("Eight LoRAs is the cap: the route refuses more."); return; }
   imgLoraStack.push({ name, strength: 1 });
   imgPaintLoras();
 };
@@ -19037,7 +19161,7 @@ function ckptOptions(list, selected) {
      * like "dim 3840, layers 30", which belongs in the tooltip. */
     const what = c.family === "unet" ? (c.variant || "UNet") : (c.family || c.variant || "");
     const bits = [what, c.dtype || "", c.bytes ? gb(c.bytes) : "", c.at ? `added ${when(c.at)}` : ""].filter(Boolean).join("  ·  ");
-    const label = c.loadable === false ? `${c.name}  —  ${what || "not loadable"} (cannot be loaded from this folder)` : `${c.name}${bits ? "  ·  " + bits : ""}`;
+    const label = c.loadable === false ? `${c.name} :  ${what || "not loadable"} (cannot be loaded from this folder)` : `${c.name}${bits ? "  ·  " + bits : ""}`;
     return `<option value="${esc(c.name)}"${c.name === selected ? " selected" : ""}`
       + `${c.loadable === false ? " disabled" : ""} title="${esc(c.why || bits)}">${esc(label)}</option>`;
     }).join("");
@@ -19316,7 +19440,7 @@ function paintImgProgress(s) {
 
   if (!ready) {
     what = "Waiting for the engine";
-    why = "ComfyUI has not answered yet. It starts with Studio and a cold start takes a minute or two — the Engine screen says where it is.";
+    why = "ComfyUI has not answered yet. It starts with Studio and a cold start takes a minute or two: the Engine screen says where it is.";
   } else if (art.paused) {
     what = "Paused";
     why = "The render queue is paused. Nothing will start until it is resumed.";
@@ -19328,7 +19452,7 @@ function paintImgProgress(s) {
       why = left ? `${el}s so far, about ${left}s left.` : `${el}s so far.`;
     } else {
       what = "Loading the model";
-      why = `Reading the weights into the card — several gigabytes the first time, and nothing reports progress until sampling starts. ${el}s so far.`;
+      why = `Reading the weights into the card: several gigabytes the first time, and nothing reports progress until sampling starts. ${el}s so far.`;
     }
   } else if (ours) {
     /* Our own position, not the queue's size: three jobs waiting with ours
@@ -19463,7 +19587,7 @@ async function loadThanks() {
   // not for what it returns.
   try { caps = (await (await fetch("/api/models")).json()).capabilities; } catch { /* offline */ }
   if (!caps?.length) {
-    box.textContent = "Could not read the model catalogue — see the NOTICE file in the repository.";
+    box.textContent = "Could not read the model catalogue: see the NOTICE file in the repository.";
     return;
   }
   box.dataset.loaded = "1";
@@ -19473,8 +19597,8 @@ async function loadThanks() {
     return `
     <div class="thanksrow">
       <b>${c.home
-        ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
-        : esc(c.label)}</b>
+        ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(uiDash(c.label))}</a>`
+        : esc(uiDash(c.label))}</b>
       <span class="lic">${esc(name)}</span>
       ${c.outputRights?.publisher?.support
         ? `<a class="support" href="${esc(c.outputRights.publisher.support)}" target="_blank" rel="noopener">support the authors</a>` : ""}
@@ -19754,11 +19878,14 @@ function reactLoadPart(id, label, loader) {
 }
 
 async function loadReactive() {
+  /* Opened straight from a link or a reload, this ran before the first poll
+   * had brought the library, and said "Render a song first" over 87 songs. */
+  if (!(state.library || []).length) await poll();
   const songs = (state.library || []).filter((t) => /\.(flac|mp3|opus|wav)$/i.test(t.file));
   const cur = $("reactSong").value;
   $("reactSong").innerHTML = songs.length
     ? songs.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("")
-    : '<option value="">Render a song first — its beat is what drives this</option>';
+    : '<option value="">Render a song first (its beat drives the video)</option>';
   if (cur) $("reactSong").value = cur;
   /* Controls and each library settle independently. A large clip scan must
    * not hold the style buttons or profile settings behind its response. */
@@ -20024,9 +20151,9 @@ $("reactGo")?.addEventListener("click", async () => {
       body: JSON.stringify(request),
     })).json();
     if (r.error) { note.textContent = r.error; return; }
-    note.textContent = `${r.cuts} cuts over ${Math.round(r.seconds)} s at ${r.bpm ? Math.round(r.bpm) + " bpm" : "the song's tempo"} — rendering "${r.name}"…`;
+    note.textContent = `${r.cuts} cuts over ${Math.round(r.seconds)} s at ${r.bpm ? Math.round(r.bpm) + " bpm" : "the song's tempo"}: rendering "${r.name}"…`;
     const row = await reactWatch(r.slug, r.jobId);
-    note.textContent = `Done — ${row.clip}. The comp "${r.name}" is on the VFX screen if you want to keep editing.`;
+    note.textContent = `Done: ${row.clip}. The comp "${r.name}" is on the VFX screen if you want to keep editing.`;
     out.innerHTML = `<video controls playsinline src="/api/clip/${encodeURIComponent(row.clip)}"></video>`;
     out.hidden = false;
     if (typeof loadClips === "function") loadClips();
@@ -20087,16 +20214,16 @@ async function loadWorkflows() {
 
   $("wfList").innerHTML = d.workflows.map((w) => {
     if (!w.ok) {
-      return `<p class="hint warnhint"><b>${esc(w.id)}</b> — ${esc(w.problem || "unusable")}</p>`;
+      return `<p class="hint warnhint"><b>${esc(w.id)}</b>: ${esc(w.problem || "unusable")}</p>`;
     }
     const warn = (w.warnings || []).length
       ? `<span class="wfwarn">${w.warnings.map((x) => esc(x)).join(" ")}</span>` : "";
-    return `<p class="hint"><b>${esc(w.id)}</b> — ${w.nodes} nodes, uses `
+    return `<p class="hint"><b>${esc(w.id)}</b>: ${w.nodes} nodes, uses `
       + `${w.tokens.length ? w.tokens.map((t) => `<code>${esc(t)}</code>`).join(" ") : "no placeholders"}. ${warn}</p>`;
   }).join("");
 
   $("wfTokens").innerHTML = Object.entries(d.tokens)
-    .map(([t, why]) => `<p class="hint"><code>${esc(t)}</code> — ${esc(why)}</p>`).join("");
+    .map(([t, why]) => `<p class="hint"><code>${esc(t)}</code>: ${esc(why)}</p>`).join("");
 }
 
 async function loadArtPrefs() {
@@ -20137,7 +20264,7 @@ $("artSave").onclick = async () => {
   const r = await (await fetch("/api/artconfig", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   })).json();
-  $("artSaved").textContent = r.error ? `✕ ${r.error}` : "✓ applied — next cover uses this";
+  $("artSaved").textContent = r.error ? `✕ ${r.error}` : "✓ applied: next cover uses this";
 };
 
 async function loadApiMode() {
@@ -20160,7 +20287,7 @@ async function loadApiMode() {
      * — the note only appears after you have already picked one, which is the
      * wrong side of the decision. */
     sel.innerHTML = Object.entries(d.providers)
-      .map(([k, p]) => `<option value="${esc(k)}">${esc(p.label)}${p.verified ? "" : " — untested, may not work"}</option>`).join("");
+      .map(([k, p]) => `<option value="${esc(k)}">${esc(uiDash(p.label))}${p.verified ? "" : ": untested, may not work"}</option>`).join("");
   }
   sel.value = d.provider;
 
@@ -20172,7 +20299,7 @@ async function loadApiMode() {
    * it work" are different claims and conflating them is how someone loses an
    * evening to a wrong endpoint. */
   $("apiProvNote").innerHTML = prov.verified
-    ? `Billed at $${prov.usdPerSecond}/second of audio — about $${(prov.usdPerSecond * 180).toFixed(2)} for a three-minute song. `
+    ? `Billed at $${prov.usdPerSecond}/second of audio: about $${(prov.usdPerSecond * 180).toFixed(2)} for a three-minute song. `
       + `<a href="${esc(prov.signup)}" target="_blank" rel="noopener">Get a key ↗</a>`
     : `⚠ This adapter is written from the provider's documentation but has not been run against a live key here. `
       + `If it fails, the local engine and the other provider are unaffected. `
@@ -20183,7 +20310,7 @@ async function loadApiMode() {
       ? `No key saved. ${prov.keyHelp}` : "No key saved.";
   } else if (!key.usable) {
     $("apiKeyState").innerHTML = `<b>A key is saved but cannot be read on this machine.</b> `
-      + `That is the encryption doing its job — it is tied to your Windows account and this PC, `
+      + `That is the encryption doing its job: it is tied to your Windows account and this PC, `
       + `so a copied or restored file will not open. Paste it again.`;
   } else {
     /* "Using the key …abcd saved on 21 Sep 2026 [by another copy of Studio]":
@@ -20200,7 +20327,7 @@ async function loadApiMode() {
   $("apiBarFill").classList.toggle("hot", pct >= 80);
   $("apiSpend").textContent = sp.capUsd != null
     ? `$${(sp.spentUsd ?? 0).toFixed(2)} of $${sp.capUsd} this month · ${sp.tracks || 0} track${sp.tracks === 1 ? "" : "s"}`
-      + (sp.overCap ? " · CAP REACHED — renders are refused until you raise it" : "")
+      + (sp.overCap ? " · CAP REACHED: renders are refused until you raise it" : "")
     : "";
 }
 
@@ -20223,7 +20350,7 @@ function applyApiConstraints() {
   const note = $("arefState");
   if (note) {
     note.textContent = on
-      ? "unavailable with the hosted engine on — it takes text only"
+      ? "unavailable with the hosted engine on: it takes text only"
       : (state.aref?.name ? "on" : "off");
   }
 }
@@ -20323,6 +20450,18 @@ function setView(name, options) {
   for (const a of document.querySelectorAll(".nav a")) {
     a.classList.toggle("on", a.dataset.view === name);
   }
+  /* The rail's middle scrolls: a page low in More tools (Music Lab, VFX)
+   * opened with its own row out of sight. Bring it into view, rail only. */
+  const revealOnLink = () => {
+    const onLink = document.querySelector(".navmain a.on");
+    const railScroll = onLink?.closest(".navmain");
+    if (!onLink || !railScroll || onLink.offsetParent === null) return;
+    const a = onLink.getBoundingClientRect(), r = railScroll.getBoundingClientRect();
+    if (a.top < r.top + 16 || a.bottom > r.bottom - 40) railScroll.scrollTop += a.bottom - (r.bottom - 40) > 0 ? a.bottom - (r.bottom - 40) : a.top - (r.top + 16);
+  };
+  revealOnLink();
+  setTimeout(revealOnLink, 400);                 // More tools unfolds a moment later on a fresh load
+  setTimeout(revealOnLink, 1200);
   // The whole library apparatus belongs to Create — the search bar, the filter
   // row and the pinned strip were all still showing above Settings and
   // Community, which made those views look like a broken library rather than
@@ -20849,7 +20988,7 @@ function ovPaintPlan(total) {
     const tight = bytes > free * 0.9;
     $("ovBudget").innerHTML = `
       <div><span>${ov.kind === "image" ? "pictures" : "clips"}</span><b>${total} · ${dur(secs)}</b></div>
-      <div><span>disk</span><b>${size(bytes)}${tight ? " — not enough free" : ""}</b></div>
+      <div><span>disk</span><b>${size(bytes)}${tight ? ": not enough free" : ""}</b></div>
       <div><span>total</span><b>${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}</b></div>`;
     $("ovEst").textContent =
       `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}`
@@ -20880,7 +21019,7 @@ function ovPaintPlan(total) {
     ${extraSecs ? `<div><span>after</span><b>${dur(extraSecs)} · ${size(extraBytes)}</b></div>` : ""}
     <div><span>total</span><b>${dur(secs)} · ${size(bytes)}</b></div>
     <div class="${tight ? "tight" : ""}"><span>free disk</span><b>${
-      free === Infinity ? "unknown" : size(free)}${tight ? " — not enough" : ""}</b></div>`;
+      free === Infinity ? "unknown" : size(free)}${tight ? ": not enough" : ""}</b></div>`;
 
   $("ovEst").textContent =
     `${total} song${total > 1 ? "s" : ""} · done by ${clock(ovPlanStartTime() + secs * 1000)}`;
@@ -21054,7 +21193,7 @@ $("ovAddImage").onclick = async () => {
   const isImg = ov.kind === "image";
   const prompt = (isImg ? $("imgPrompt") : $("vidPrompt"))?.value.trim();
   if (!prompt) {
-    alert(`Write a prompt on the ${isImg ? "Pictures" : "Video"} screen first — that is what this queues.`);
+    alert(`Write a prompt on the ${isImg ? "Pictures" : "Video"} screen first: that is what this queues.`);
     return;
   }
   const idea = isImg ? ovImageIdea(prompt) : {
@@ -21208,7 +21347,7 @@ function ovPaintChain(r, owed) {
       const cls = st === "done" ? "ok" : st === "failed" ? "bad" : "wait";
       const title = st === "done" ? `${STAGE_LABEL_OV[k] || k} finished`
         : st === "failed" ? `${STAGE_LABEL_OV[k] || k} failed`
-        : `${STAGE_LABEL_OV[k] || k} still queued — runs when the card is free`;
+        : `${STAGE_LABEL_OV[k] || k} still queued: runs when the card is free`;
       return `<span class="ovpip ${cls}" title="${esc(title)}">${esc(STAGE_LABEL_OV[k] || k)}</span>`;
     }).join("");
     return `<div class="ovsong">
@@ -21246,7 +21385,7 @@ async function openEditor(file) {
     paintSel();
   } catch (err) {
     // Never a dead end: say so, and fall back to editing the whole track.
-    $("waveLoad").textContent = "Couldn’t draw the waveform — the tools still work on the whole track.";
+    $("waveLoad").textContent = "Couldn’t draw the waveform: the tools still work on the whole track.";
     ed.dur = 0;
   }
 }
@@ -21357,7 +21496,7 @@ $("edApply").onclick = async () => {
   // Fading the edges is almost always what you want after a trim — a hard cut
   // into a sustained note clicks.
   if ($("edFadeOn").checked) ops.push({ op: "fade", in: 0.4, out: 2.5 });
-  if (!ops.length) { $("edResult").textContent = "Nothing to apply — drag a selection first."; return; }
+  if (!ops.length) { $("edResult").textContent = "Nothing to apply: drag a selection first."; return; }
 
   $("edApply").disabled = true;
   $("edApply").textContent = "Working…";
@@ -21368,7 +21507,7 @@ $("edApply").onclick = async () => {
     });
     const j = await r.json();
     if (j.error) { $("edResult").textContent = j.error; return; }
-    $("edResult").textContent = `Saved — ${fmt(j.seconds)}. Original untouched.`;
+    $("edResult").textContent = `Saved: ${fmt(j.seconds)}. Original untouched.`;
     poll();
     openEditor(j.file);
   } finally {
@@ -21448,7 +21587,14 @@ $("pVol").oninput = () => {
   audio.volume = +$("pVol").value;
   state.lastVol = audio.volume || state.lastVol;
   $("pMute").textContent = audio.volume === 0 ? "🔇" : audio.volume < 0.5 ? "🔉" : "🔊";
+  try { localStorage.setItem("aiplayVol", String(audio.volume)); } catch { /* storage off */ }
 };
+/* The volume came back at 100% every session. */
+{
+  let v = NaN;
+  try { v = parseFloat(localStorage.getItem("aiplayVol")); } catch { /* storage off */ }
+  if (Number.isFinite(v) && v >= 0 && v <= 1) { $("pVol").value = String(v); $("pVol").oninput(); }
+}
 $("pMute").onclick = () => {
   $("pVol").value = audio.volume > 0 ? 0 : (state.lastVol || 1);
   $("pVol").oninput();
@@ -21475,8 +21621,8 @@ state.autoplay = localStorage.getItem("aiplayAuto") !== "0";
 function paintAuto() {
   $("pAuto").classList.toggle("on", state.autoplay);
   $("pAuto").title = state.autoplay
-    ? "Autoplay next: on — click to stop after each track"
-    : "Autoplay next: off — click to play through the library";
+    ? "Autoplay next is on. Click to stop after each track"
+    : "Autoplay next is off. Click to play through the library";
 }
 $("pAuto").onclick = () => {
   state.autoplay = !state.autoplay;
@@ -21748,10 +21894,10 @@ function paintModelLoad(s) {
   const inComfy = (state.musicEngines?.[e]?.runtime ?? "comfy") === "comfy";
   $("modelLoadText").textContent = modelLoadBusy === "unload" ? "Unloading…"
     : !inComfy ? (holding ? "ComfyUI is holding a model this engine does not use; Unload frees the card for it." : "")
-    : loaded?.key === want ? "✓ Loaded in ComfyUI — songs start straight away."
+    : loaded?.key === want ? "✓ Loaded in ComfyUI: songs start straight away."
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
     : s.artResident ? "A picture model is on the card; the next song unloads it."
-    : "Nothing is loaded — the first song loads it.";
+    : "Nothing is loaded: the first song loads it.";
   unload.disabled = busy || !holding;
   unload.title = busy ? "Not while something is rendering"
     : holding ? "Free the graphics card"
@@ -21813,9 +21959,17 @@ function applyStatus(s) {
     ? (s.config?.musicEngine === "yue2-comfy"
         ? (s.engine.ready ? "" : "MUSIC ONLY · STARTING COMFYUI…")
         : s.config?.musicEngines?.["yue2-gguf"]?.ready ? "" : "NATIVE MUSIC · SETUP NEEDED")
-    : s.engine.ready ? "" : "STARTING…";
+    : s.engine.ready ? "" : s.engine.failure ? "ENGINE NOT RUNNING ›" : "STARTING…";
   $("engineLine").textContent = line;
   $("engineLineWrap").hidden = !line;
+  /* A failed start used to read "STARTING…" for good. Say so, give the
+   * reason on hover, and open the Engine page on a click. */
+  const engFail = !s.engine.ready && s.engine.failure;
+  globalThis.aiplayEngineDown = !!engFail;       // chat.js and the presets name it instead of "waiting"
+  $("engineLineWrap").title = engFail ? s.engine.failure.message : "";
+  $("engineLineWrap").classList.toggle("err", !!engFail);
+  $("engineLineWrap").onclick = engFail ? () => setView("engine") : null;
+  $("engineLineWrap").style.cursor = engFail ? "pointer" : "";
   /* RunPod GPU mode: no local engine to wait for; the queue renders on the Pod. */
   state.remoteOnly = !!s.config?.remoteOnly;
   $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready && !state.remoteOnly;
@@ -21841,7 +21995,7 @@ function applyStatus(s) {
     paintTier();
     $("qTier").onchange = async () => {
       const t = state.tiers.find((x) => x.id === $("qTier").value);
-      if (!(await appConfirm(`Switch to “${t.label}”?\n\n${t.note}\n\n${state.tierScope ? state.tierScope + " " : ""}This restarts the engine, which clears the cached take — your next re-roll will cost a full render.`))) {
+      if (!(await appConfirm(`Switch to “${t.label}”?\n\n${t.note}\n\n${state.tierScope ? state.tierScope + " " : ""}This restarts the engine, which clears the cached take: your next re-roll will cost a full render.`))) {
         $("qTier").value = state.tier || "auto"; return;
       }
       $("tierHint").textContent = "Restarting the engine…";
@@ -21895,6 +22049,14 @@ function applyStatus(s) {
    * every poll, not painted once — toggling the setting must change the menu
    * without a reload. */
   if (s.config?.video) state.video = s.config.video;
+  /* Settings' video engine list was only ever filled by the Video page, so a
+   * visit that went straight to Settings showed an empty select. */
+  const qVE = $("qVideoEngine");
+  if (qVE && !qVE.options.length && s.config?.video?.engines) {
+    qVE.innerHTML = Object.entries(s.config.video.engines)
+      .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.advanced?.label || e.label || k) + "</option>").join("");
+    qVE.value = s.config.video.engine || "ltx";
+  }
   /* Hoisted to the top of `state` the same way `video` is, and for the same
    * reason: nothing assigns `state.config`, so reading `state.config.music…`
    * silently yields undefined — which is exactly what it did, leaving the
@@ -22042,7 +22204,7 @@ function applyStatus(s) {
          * sits at zero looking stuck — that load is most of a cold render. */
         const left = pct > 8 ? Math.round((c.elapsed / (pct / 100)) - c.elapsed) : null;
         $("vidNowNote").textContent = pct === 0
-          ? `${fmt(c.elapsed)} elapsed · loading the video model — this is most of a cold start`
+          ? `${fmt(c.elapsed)} elapsed · loading the video model: this is most of a cold start`
           : `${fmt(c.elapsed)} elapsed`
             + (left != null ? ` · about ${fmt(left)} to go` : "")
             + " · the engine renders clips only while nothing else needs it";
@@ -22255,6 +22417,7 @@ function connect() {
     // may repaint these queues or change the remembered busy-to-idle transition.
     if (snap?.type !== "state" || !Array.isArray(snap.queue) || !("current" in snap)) return;
     noticeMusicOutcome(snap);
+    paintTabTitle(snap);
     renderNow(snap.current, (snap.queue || []).length);
     renderQueue(snap);
     renderList(snap);
@@ -22283,9 +22446,38 @@ $("plNew").onclick = async () => {
 };
 $("plSelect").onchange = () => poll();
 
+/* THE TAB SAYS WHAT IS RENDERING. A song or clip that runs for half an hour
+ * finished in a background tab with nothing to show for it; the title now
+ * reads "42% · Song title" while something renders. */
+function paintTabTitle(s) {
+  const song = s?.current, pic = s?.art?.current;
+  const pct = (v) => (Number.isFinite(v) && v > 0 ? `${Math.round(Math.min(1, v) * 100)}% · ` : "");
+  document.title = song
+    ? `${pct(song.overall)}${song.title || "Song"} · AIPLAY Studio`
+    : pic ? `${pct(pic.progress)}${pic.title || pic.kind || "Rendering"} · AIPLAY Studio`
+    : "AIPLAY Studio";
+}
+
+/* The server stopped answering: poll() used to swallow that, and the page kept
+ * showing its last state with live-looking buttons. Two misses in a row say so
+ * in the rail; the next good answer clears it. */
+function paintServerGone(gone) {
+  const wrap = $("engineLineWrap"), line = $("engineLine");
+  if (!wrap || !line) return;
+  if (gone) {
+    line.textContent = "STUDIO NOT RESPONDING";
+    wrap.hidden = false;
+    wrap.classList.add("err");
+    wrap.title = "The Studio server stopped answering. Restart Studio from the launcher; your files are safe.";
+    wrap.onclick = null;
+  }
+}
+
 async function poll() {
   try {
     const s = await (await fetch("/api/status")).json();
+    state.pollMisses = 0;
+    paintTabTitle(s);
     applyStatus(s);
     renderPlaylists(s);
     renderNow(s.current, (s.queue || []).length);
@@ -22298,7 +22490,11 @@ async function poll() {
      * waiting up to a full poll interval to show anything. */
     state.lastStatus = s;
     if (state.view === "jobs") paintJobs(s);
-  } catch { /* server restarting */ }
+  } catch {
+    /* One miss is a restart in progress; two in a row is a server that is gone. */
+    state.pollMisses = (state.pollMisses || 0) + 1;
+    if (state.pollMisses >= 2) paintServerGone(true);
+  }
 }
 
 /* ── jobs: everything this session has finished ────────────
@@ -22379,7 +22575,7 @@ function paintJobQueue(s) {
         <span class="qbar"><i style="width:${pct}%"></i></span>
         <span class="jobms" title="${esc(said)}">${esc(said)}</span>
         <button type="button" class="qkill" data-stopcurrent="1"${stopping ? " disabled" : ""}
-          title="${stopping ? "Stopping — the program is being ended" : "Interrupt this render — the queue behind it carries on"}">${stopping ? "stopping…" : "stop"}</button>
+          title="${stopping ? "Stopping (the program is being ended" : "Interrupt this render) the queue behind it carries on"}">${stopping ? "stopping…" : "stop"}</button>
       </div>` : "")
     + items.map((j) => `<div class="qjob">
         <span class="jobkind">${esc(JOB_LABEL[j.kind] || j.kind || "")}</span>
@@ -22430,7 +22626,7 @@ function paintJobs(s) {
     $("jobSummary").innerHTML = "";
     $("jobFilter").innerHTML = "";
     list.innerHTML = `<p class="hint">No finished jobs yet this session. `
-      + `This list is kept in memory, so it starts empty after the server restarts — `
+      + `This list is kept in memory, so it starts empty after the server restarts: `
       + `assets from earlier sessions are still in their own libraries.</p>`;
     return;
   }
@@ -22727,7 +22923,7 @@ document.addEventListener("click", async (e) => {
   e.preventDefault();
   const where = /avatars\.html$/.test(a.getAttribute("href")) ? "Avatars" : "the DAW";
   const go = await appConfirm(
-    `${where === "Avatars" ? "Avatars opens" : "The DAW opens"} as a separate page, so anything you have written here and not generated yet — lyrics, style, title or a message to the assistant — will be cleared.`,
+    `${where === "Avatars" ? "Avatars opens" : "The DAW opens"} as a separate page, so anything you have written here and not generated yet (lyrics, style, title or a message to the assistant) will be cleared.`,
     { title: `Open ${where}?`, ok: "Leave page", cancel: "Stay here", tone: "warn" });
   if (go) location.href = a.href;
 }, true);

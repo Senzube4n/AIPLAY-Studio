@@ -97,10 +97,12 @@ function paintStatus() {
   const s = STATUS;
   if (!s) return;
   const mode = s.mode || "ephemeral";
+  const failed = !s.ready && s.failure;
   $("engHead").textContent = s.ready
     ? `running${s.version ? ` · ComfyUI ${s.version}` : ""}`
-    : s.ours ? "starting" : "not running";
-  $("engHead").className = `chip ${s.ready ? "ok" : s.ours ? "busy" : "err"}`;
+    : failed ? "failed to start" : s.ours ? "starting" : "not running";
+  $("engHead").className = `chip ${s.ready ? "ok" : s.ours && !failed ? "busy" : "err"}`;
+  $("engHead").title = failed ? s.failure.message : "";
 
   /* The pinned strip, and ONLY in pinned mode. It is not a scolding: an
    * install that pinned the port did so because of a real collision. It says
@@ -126,8 +128,9 @@ function paintStatus() {
   $("engStatus").innerHTML = [
     fact("exposure", `<span class="eng-badge ${esc(mode)}">${esc(mode)}</span>`
       + (s.port ? ` <span class="v">${esc(String(s.port))}</span>` : ""), EXPOSURE[mode]),
-    fact("engine", s.ready ? "ready" : s.ours ? "starting" : "not running",
-      s.ours ? null : "This app's own ComfyUI is not running, so nothing will be sent to it."),
+    fact("engine", s.ready ? "ready" : failed ? "failed to start" : s.ours ? "starting" : "not running",
+      failed ? s.failure.message
+        : s.ours ? null : "This app's own ComfyUI is not running, so nothing will be sent to it."),
     fact("queue", esc(q), s.running?.length
       ? s.running.map((r) => `${r.via}: ${fmtSecs(r.elapsedSec)}`).join(", ") : null),
     fact("memory tier", esc(String(s.tier ?? "—")), null),
@@ -193,7 +196,7 @@ function paintRuns(total) {
       + `<span class="st${bad ? " bad" : ""}${r.status === "running" ? " run" : ""}">${esc(r.status || "")}</span>`
       + "</div>";
   }).join("")
-    + (total > RUNS.length ? `<p class="eng-empty">${total - RUNS.length} more — raise the row count.</p>` : "");
+    + (total > RUNS.length ? `<p class="eng-empty">${total - RUNS.length} more: raise the row count.</p>` : "");
 }
 
 /**
@@ -231,12 +234,12 @@ async function openDetail(runId) {
       + row("model", q.model)
       + row("prompt", q.prompt)
       + row("negative", q.negative)
-      + row("prompt resolved", q.promptResolved === false ? "no — the graph's wiring is not walkable, so texts[] is kept instead" : "")
+      + row("prompt resolved", q.promptResolved === false ? "no: the graph's wiring is not walkable, so texts[] is kept instead" : "")
       + row("seed", q.seed) + row("steps", q.steps) + row("cfg", q.cfg)
       + row("size", q.width && q.height ? `${q.width}×${q.height}` : "")
       + row("frames", q.frames) + row("fps", q.fps) + row("seconds", q.seconds)
       + row("project", q.project) + row("shot", q.shot)
-      + row("graph", `${q.graphHash || ""} — ${q.graphNodes ?? "?"} nodes`)
+      + row("graph", `${q.graphHash || ""}: ${q.graphNodes ?? "?"} nodes`)
       + row("model files", files(q.engineFiles))
       + row("loras", (q.loras || []).map((l) => `${l.file} @ ${l.strength_model}`).join("\n"))
       + row("references", files(q.references))
@@ -287,7 +290,7 @@ async function runGraph(dry) {
         + (r.problems?.length ? `<ul class="eng-prob">${r.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""));
       return;
     }
-    show(host, `<b>${esc(r.status)}</b> — ${esc(r.runId)}${r.elapsedSec ? `, ${fmtSecs(r.elapsedSec)}` : ""}`
+    show(host, `<b>${esc(r.status)}</b>: ${esc(r.runId)}${r.elapsedSec ? `, ${fmtSecs(r.elapsedSec)}` : ""}`
       + (r.error ? `<p class="eng-prob">${esc(r.error)}</p>` : "")
       + ((r.outputs || []).length
         ? `<pre>${esc(r.outputs.map((o) => `${o.file}${o.adoptedAs ? ` → ${o.adoptedAs}` : ""}  ${o.sha256 || ""}`).join("\n"))}</pre>`
@@ -331,7 +334,7 @@ async function adoptUnrecorded(dry) {
   try {
     const r = await post({ action: "adopt_unrecorded", files, all, dry_run: dry });
     show(host, `<b>${r.dry_run ? "Nothing was written." : `${r.adopted} adopted.`}</b>`
-      + `<pre>${esc((r.events || []).slice(0, 60).map((e) => `${e.ok ? "ok  " : "FAIL"} ${e.file}${e.error ? ` — ${e.error}` : ""}`).join("\n"))}</pre>`
+      + `<pre>${esc((r.events || []).slice(0, 60).map((e) => `${e.ok ? "ok  " : "FAIL"} ${e.file}${e.error ? `: ${e.error}` : ""}`).join("\n"))}</pre>`
       + (r.dry_run ? "" : "<p class=\"eng-prob\">Each one is an <code>edit</code> event whose origin is "
         + "<code>unrecorded</code>, which folds to the class <b>composite</b>: parts may be "
         + "AI-generated, origin partially unrecorded. It claims nothing more than that.</p>"));
@@ -360,7 +363,7 @@ function wire() {
         + "</div>"
         + (r.problems?.length
           ? `<ul class="eng-prob">${r.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
-          : "<p class=\"eng-prob\">A port is not an identity — this is read from the engine's own launch arguments.</p>"));
+          : "<p class=\"eng-prob\">A port is not an identity: this is read from the engine's own launch arguments.</p>"));
     } catch (e) { fail(host, e); }
   });
 
@@ -425,7 +428,7 @@ function wire() {
     try {
       const r = await post({ action: "graph", graphHash });
       $("engGraph").value = JSON.stringify(r.graph, null, 1);
-      show(host, `Loaded ${esc(r.graphHash)} — ${Object.keys(r.graph || {}).length} nodes. `
+      show(host, `Loaded ${esc(r.graphHash)}: ${Object.keys(r.graph || {}).length} nodes. `
         + "Dry run first if you have changed anything.");
     } catch (e) { fail(host, e); }
   });
@@ -454,12 +457,26 @@ function wire() {
    * the activity read folds the ledger, and neither is worth doing for a
    * person who never opens this tab. addEventListener so app.js's own onclick
    * — which is what actually switches the view — survives. */
+  let lastArrive = 0;
+  const arrive = () => {
+    if (Date.now() - lastArrive < 500) return; // the nav click and the observer both fire
+    lastArrive = Date.now();
+    loadStatus().catch((e) => { $("engHead").textContent = e.message; });
+    loadRuns().catch(() => {});
+  };
   const link = document.querySelector('.nav a[data-view="engine"]');
-  if (link) {
-    link.addEventListener("click", () => {
-      loadStatus().catch((e) => { $("engHead").textContent = e.message; });
-      loadRuns().catch(() => {});
-    });
+  if (link) link.addEventListener("click", arrive);
+  /* Arriving any other way (a ?view=engine reload, a link, the agent) never
+   * clicked the nav, and the page sat on "checking…" for good. Watch the page
+   * itself come into view instead. */
+  const page = $("engine");
+  if (page && typeof MutationObserver === "function") {
+    let shown = !page.hidden;
+    new MutationObserver(() => {
+      if (!page.hidden && !shown) arrive();
+      shown = !page.hidden;
+    }).observe(page, { attributes: true, attributeFilter: ["hidden"] });
+    if (shown) arrive();
   }
 }
 

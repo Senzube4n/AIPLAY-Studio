@@ -19,18 +19,18 @@ const $ = (id) => document.getElementById(id);
 /** key -> { at: CSS selector for where the "!" goes, text, from?: element id } */
 export const TIPS = {
   lyrics: { at: "#lyricsBox > summary", text: "The words the model sings. Put section tags like [Verse] and [Chorus] on their own lines. With YuE2, the song's length mostly follows the lyrics." },
-  tags: { at: null, text: "Click a tag to insert it at the cursor. Keep tags bare — [Chorus], not [Chorus - big drums]. Anything extra inside the brackets gets sung." },
+  tags: { at: null, text: "Click a tag to insert it at the cursor. Keep tags bare: [Chorus], not [Chorus - big drums]. Anything extra inside the brackets gets sung." },
   /* The picker's row itself: the Write | Structure switch took the label away,
    * and a tip anchored on a missing element vanishes without a word. Not
    * #sectionsV, whose text paintScaffold rewrites (the "!" would go with it). */
   structure: { at: "#instrField", text: "Instrumentals need sections to fill, or they stop after about 30 seconds. Edit the skeleton freely, and describe the sound in Styles." },
   simple: { at: ".create .simple-label", text: "Describe the song you want: the mood, the genre, what it is about. The assistant writes the lyrics and the style into the cards below, sets things up, and makes it when you say so. The dropdown picks which model writes; ＋ New starts over." },
-  styles: { at: "#stylesBox > summary", text: "Describe the sound: genre, mood, tempo, instruments and who sings — for example: warm indie folk, 96 BPM, female vocal." },
+  styles: { at: "#stylesBox > summary", text: "Describe the sound: genre, mood, tempo, instruments and who sings. For example: warm indie folk, 96 BPM, female vocal." },
   more: { at: "details.adv.sbox:not(#yMusicPlan) > summary", text: "Fine control over how the song is made. The defaults are good; you rarely need to change these." },
   aref: { at: "#arefField > summary", text: "Start from an existing song's sound. Experimental: it does not keep the melody, timing or words." },
   musicInput: { at: "#musicInputField > summary", text: "Continue an existing recording with newly generated music. Experimental." },
   seed: { at: ".seedrow .sk", text: "The random starting point. Locked reuses it so you can change one thing at a time; random gives a new song every time.", from: "seedNote" },
-  maxDur: { at: 'label[for="maxDur"]', text: "The longest the song may run. YuE2 mostly follows the lyrics' length — this picks the setup and warns past the model's 6:00 limit." },
+  maxDur: { at: 'label[for="maxDur"]', text: "The longest the song may run. YuE2 mostly follows the lyrics' length: this picks the setup and warns past the model's 6:00 limit." },
   qSteps: { at: 'label[for="qSteps"]', text: "Refinement passes. 15 is the measured sweet spot; more is slower for little gain." },
   qArCfg: { at: 'label[for="qArCfg"]', text: "How strictly the notes and structure follow your style text. Higher is more literal. Changing it re-renders the whole song." },
   qCfg: { at: 'label[for="qCfg"]', text: "How strictly the sound follows your style text. It reuses the current take, so it is about 4× faster to try." },
@@ -51,10 +51,10 @@ export const TIPS = {
   humEngine: { at: 'label[for="humEngine"]', text: "Hum: a quick pitch tracker for one voice. Song: SheetSage2, for a full recording." },
   humMode: { at: 'label[for="humMode"]', text: "Keep only the melody (best for covers), or the melody and its chords." },
   yAbcOpen: { at: "#yAbcOpenLabel", text: "Treat the score as an opening and let the model continue it, instead of singing only those bars." },
-  score: { at: "#subScore", text: "Steer a new take with your own ABC notation. This is not audio extension — no recording or singer is kept. Planning runs locally, with no GPU." },
+  score: { at: "#subScore", text: "Steer a new take with your own ABC notation. This is not audio extension: no recording or singer is kept. Planning runs locally, with no GPU." },
   yPlanBpm: { at: 'label[for="yPlanBpm"]', text: "Tempo used to work out how many bars fit the target length." },
   yPlanMeter: { at: 'label[for="yPlanMeter"]', text: "Time signature used for the bar estimate." },
-  yPlanLength: { at: 'label[for="yPlanLength"]', text: "How long the notation should be. Only an estimate — the real song can be quite different." },
+  yPlanLength: { at: 'label[for="yPlanLength"]', text: "How long the notation should be. Only an estimate: the real song can be quite different." },
   yAbc: { at: 'label[for="yAbc"]', text: "Paste a YuE2 two-voice ABC score, or load a .abc or .txt file (up to 64 KiB). Check it before you use it." },
   yAbcUse: { at: "#yAbcUseLabel", text: "Send this score with the next Create. Needs Thinking set to Full or Melody. GGUF can use a score but does not export one." },
   takes: { at: ".howmany .hmlab", text: "How many takes to queue. Each one is a separate performance with its own seed, rendered one after another." },
@@ -65,7 +65,7 @@ export const TIPS = {
   spLineage: { at: "#spLineageLab", text: "The takes this track was extended from, oldest first. Click one to open it." },
   spMerge: { at: "#spMergeLab", text: "Each extension is a separate alternative sharing the same opening. Merge joins them into one song, with each part heard once." },
   spProv: { at: "#spProvSec > summary", text: "Which parts of this track were made by a person and which by an AI model, from the provenance record." },
-  spSettings: { at: "#spSettingsSec > summary", text: "The exact settings this take was rendered with — seed, steps, precision and file." },
+  spSettings: { at: "#spSettingsSec > summary", text: "The exact settings this take was rendered with: seed, steps, precision and file." },
 
   /* ── The Images panel ──────────────────────────────────────────────────
    * Same bargain as the Music one: the screen was four paragraphs of prose
@@ -74,7 +74,7 @@ export const TIPS = {
    * `imgEngine` carries no text of its own — app.js writes the engine's
    * description into #imgModelNote and `from` reads it live, so a new engine
    * explains itself here without anyone editing this table. */
-  imgPrompt: { at: 'label[for="imgPrompt"]', text: "One subject, one mood, one light — a list of adjectives makes a picture that looks like a list of adjectives. Write {a|b|c} and one option is picked per render; an empty option like {, at night|} puts the detail in half the takes." },
+  imgPrompt: { at: 'label[for="imgPrompt"]', text: "One subject, one mood, one light: a list of adjectives makes a picture that looks like a list of adjectives. Write {a|b|c} and one option is picked per render; an empty option like {, at night|} puts the detail in half the takes." },
   imgEngine: { at: 'label[for="imgEngine"]', text: "", from: "imgModelNote" },
   /* The Video panel, quiet like Images: its paragraphs are these now. */
   vidEngine: { at: 'label[for="vidEngine"]', text: "Short clips from a description.", from: "vidEngineNote" },
@@ -100,13 +100,13 @@ export const TIPS = {
   imgEncoder: { at: 'label[for="imgEncoder"]', text: "The text encoder loaded beside the model. Auto is the one its family ships with." },
   imgVae: { at: 'label[for="imgVae"]', text: "The VAE that turns the sampler's latent into pixels. Auto is the one its family ships with." },
   imgCount: { at: 'label[for="imgCount"]', text: "How many pictures this press makes. They share one text encode and render one after another." },
-  imgSize: { at: 'label[for="imgSize"]', text: "Pixels. Every engine here is happiest near its training size — 1024² for most of them. custom… opens two boxes, 256 to 2048." },
+  imgSize: { at: 'label[for="imgSize"]', text: "Pixels. Every engine here is happiest near its training size: 1024² for most of them. custom… opens two boxes, 256 to 2048." },
   imgSteps: { at: 'label[for="imgSteps"]', text: "Refinement passes. Each engine's default is its vendor's number; distilled engines (FLUX.2 klein, the Turbos) are done in 4 to 8 and gain nothing from more." },
   imgSeed: { at: 'label[for="imgSeed"]', text: "The random starting point. Leave it empty for a new one each time; type one to make the same picture again." },
-  imgCfg: { at: 'label[for="imgCfg"]', text: "How strictly the picture follows the words. Only on engines that really run guidance — the distilled ones sample at cfg 1.0, where it does nothing." },
+  imgCfg: { at: 'label[for="imgCfg"]', text: "How strictly the picture follows the words. Only on engines that really run guidance: the distilled ones sample at cfg 1.0, where it does nothing." },
   imgNeg: { at: 'label[for="imgNeg"]', text: "What the picture must not contain. Only works where the engine evaluates a negative branch, which is why it is not offered on the distilled engines." },
-  imgRefs: { at: "#imgRefWrap > .flabel", text: "Show the model pictures from the library, then talk about them BY NUMBER in the description: “the character from image 1, in the room from image 2”. The number is the position in the strip — reorder with ◀ ▶. Click a thumbnail to drop its number in." },
-  imgPersona: { at: 'label[for="imgPersona"]', text: "A saved character: reference pictures plus a description, remembered under a name. Not training and not a LoRA — the same in-context path, reusable." },
+  imgRefs: { at: "#imgRefWrap > .flabel", text: "Show the model pictures from the library, then talk about them BY NUMBER in the description: “the character from image 1, in the room from image 2”. The number is the position in the strip: reorder with ◀ ▶. Click a thumbnail to drop its number in." },
+  imgPersona: { at: 'label[for="imgPersona"]', text: "A saved character: reference pictures plus a description, remembered under a name. Not training and not a LoRA: the same in-context path, reusable." },
   imgSampler: { at: 'label[for="imgSampler"]', text: "Read from your ComfyUI, not a list written here, so a sampler a node pack added is offered and one it does not have never is." },
   imgClipSkip: { at: 'label[for="imgClipSkip"]', text: "Stops short of the last CLIP layers. 2 is common for anime checkpoints; 1 means no skipping. SD-family checkpoints only." },
   imgLoras: { at: "#imgAdv label:last-of-type", text: "Trained styles stacked onto a checkpoint. Files go in models/loras.", from: "imgLoraNote" },

@@ -44,8 +44,12 @@ const changed = () => document.dispatchEvent(new CustomEvent("aiplay:llm-changed
 
 /* ── formatting ──────────────────────────────────────────────────────────── */
 
+/* Grok and Groq both came out "GR". A one-word name that collides takes its
+ * first and last letters instead (GK, GQ). */
+const MARK_CLASH = new Set(["grok", "groq"]);
 const initials = (name) => {
   const w = String(name).replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/);
+  if (w.length === 1 && MARK_CLASH.has(w[0].toLowerCase())) return (w[0][0] + w[0].at(-1)).toUpperCase();
   return (w.length > 1 ? w[0][0] + w[1][0] : w[0].slice(0, 2)).toUpperCase();
 };
 
@@ -130,7 +134,7 @@ function connectedBody(p, busy) {
   } else {
     const newest = list.length - 1;
     select = `<select class="sel2 ag-modelsel" data-act="model" ${busy ? "disabled" : ""}>${list.map((m, i) =>
-      `<option value="${esc(m.id)}" ${m.id === p.model ? "selected" : ""}>${esc(m.label)}${m.label !== m.id ? ` — ${esc(m.id)}` : ""}${
+      `<option value="${esc(m.id)}" ${m.id === p.model ? "selected" : ""}>${esc(m.label)}${m.label !== m.id ? `: ${esc(m.id)}` : ""}${
         m.created ? ` · ${esc(monthYear(m.created))}` : ""}${i === newest && m.created ? " · newest" : ""}</option>`).join("")}</select>`;
   }
   const u = p.usage;
@@ -276,7 +280,7 @@ async function renderUsing() {
     if (!sel) continue;
     let d = null;
     try { d = await (await fetch(u.route)).json(); } catch { /* offline */ }
-    const cur = fillModelMenu(sel, d, "No local chat model found — connect an API above");
+    const cur = fillModelMenu(sel, d, "No local chat model found: connect an API above");
     summary.push({ where: u.sel === "agChatModel" ? "Chat" : "Simple", cur });
   }
   const box = $("agUsing");
@@ -304,7 +308,7 @@ async function loadMcpInfo() {
   try { d = await (await fetch("/api/mcp")).json(); } catch { /* offline */ }
   const box = $("mcpTools");
   if (!d?.tools?.length) {
-    box.textContent = "Could not read the tool list — see server/mcp.js.";
+    box.textContent = "Could not read the tool list: see server/mcp.js.";
     $("mcpToolCount").textContent = "?";
     return;
   }
