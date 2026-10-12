@@ -689,7 +689,7 @@ test("after “Not now”, the page says what to press — never a button that i
   await f.fire("cbAcceptYes");
   const said = f.node("cbSay").textContent;
   assert.doesNotMatch(said, /SERVER TEXT FOR TOOLS/);
-  assert.match(said, /^Not accepted\. You give Friend 0 minutes.*Press “Yes — take the job” again/);
+  assert.match(said, /^Not accepted\. You give Friend 0 minutes.*Press “Yes, take the job” again/);
   assert.equal(f.node("cbFileCard").dataset.armed, "order.aiplay", "the card stays armed, so pressing again asks again");
 });
 

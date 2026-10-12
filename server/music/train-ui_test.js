@@ -10,7 +10,7 @@ function fixture() {
   const nodes = new Map(), remembered = new Map(), calls = [];
   const $ = (id) => {
     if (!nodes.has(id)) nodes.set(id, {
-      value: "", hidden: false, disabled: false, textContent: "", handlers: {}, dataset: {}, currentTime: 0, duration: NaN,
+      value: "", hidden: false, disabled: false, textContent: "", handlers: {}, dataset: {}, style: {}, currentTime: 0, duration: NaN,
       classList: { toggle() {} }, addEventListener(event, fn) { this.handlers[event] = fn; },
       pause() { this.paused = true; }, async play() { this.paused = false; },
       getBoundingClientRect() { return { left: 0, width: 600 }; },
@@ -46,9 +46,12 @@ test("actual source duration controls a region; unknown, short or out-of-bounds 
   assert.match(f.run("trRegionIssue({start:0,seconds:24,duration:null})"), /duration/);
   assert.match(f.run("trRegionIssue({start:0,seconds:7,duration:40})"), /8 to 180/);
   assert.match(f.run("trRegionIssue({start:20,seconds:24,duration:40})"), /past/);
+  f.run("trPaintRegion()");
+  assert.equal(f.$("trWave").style.display, "none", "no blank waveform box before peaks arrive");
   await f.run("paintTraining()");
   assert.equal(f.$("trSourceAudio").src, "/api/audio/source.wav");
   assert.match(f.$("trWave").innerHTML, /<path/);
+  assert.equal(f.$("trWave").style.display, "", "measured peaks restore the visible waveform");
   assert.equal(f.$("trStart").disabled, false);
   f.$("trStartSeconds").value = "30"; await f.fire("trStartSeconds", "input");
   assert.equal(f.$("trStart").disabled, true);
