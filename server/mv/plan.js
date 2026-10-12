@@ -272,12 +272,12 @@ export function qualityLine(doc) {
 
   const traps = [];
   if (mode === "ltx") {
+    // resolveShot uses hasRefs && mode !== "ltx": sheets do not reach LTX.
+    // Keep this sentence identical to web/mv.js's QUALITY_TRAPS fallback.
     traps.push({
       kind: "ltx-drops-references",
       level: "warn",
-      msg: "references are dropped entirely on LTX — every character sheet you built is not used. "
-        + "The code reads `useRefs = hasRefs && mode !== \"ltx\"`, so choosing it does not warn, "
-        + "it just returns a stranger with the right hair colour.",
+      msg: "references are dropped entirely on LTX: every character sheet you built is not used.",
       cite: "DIRECTING.md §4",
     });
   }
