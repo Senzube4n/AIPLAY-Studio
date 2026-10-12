@@ -69,7 +69,7 @@ import { showRouter } from "./router.js";
 import { confirmPaidRun, paintCloudCard } from "./cloudswitch.js";
 import { openModelPicker } from "./modelpick.js";
 /* [Set up timed lyrics]: the one-click setups (server/setup/). Its calls below are typeof-guarded for the lanes that lift app.js functions. */
-import { paintSetupButtons, offerSetup } from "./setup-feature.js";
+import { paintSetupButtons, offerSetup, onSetupFinished } from "./setup-feature.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -18103,14 +18103,15 @@ async function imgQwenCheck() {
     const parts = [];
     if (status.error && !status.missingFiles?.length && !status.missingNodes?.length && !engineDown) parts.push(status.error);
     if (!status.filesReady) parts.push(`Missing model files: ${(status.missingFiles || []).join(", ") || "could not be confirmed"}.`);
-    if (status.missingNodes?.length) parts.push(`ComfyUI needs an update (${status.missingNodes.join(", ")}). Update, restart, then check again.`);
+    if (status.missingNodes?.length) parts.push(status.setup ? "Choose Fix Qwen to install engine support."
+      : `ComfyUI needs support for ${status.missingNodes.join(", ")}.`);
     else if (engineDown) parts.push("The engine is not running. Start or restart it, then check again.");
     else if (!status.runtimeReady) parts.push("ComfyUI could not be confirmed. Start or restart it, then check again.");
     const chip = status.ready ? "Qwen Image 2.1 ready"
       : !status.filesReady && !status.runtimeReady ? "Qwen Image 2.1 not ready"
       : !status.filesReady ? "Model files missing"
       : engineDown ? "Engine not running" : status.missingNodes?.length ? "ComfyUI update needed" : "ComfyUI not confirmed";
-    imgQwenPaint(status.ready ? "ok" : "warn", chip, status.ready ? "" : parts.join(" "), !status.filesReady);
+    imgQwenPaint(status.ready ? "ok" : "warn", chip, status.ready ? "" : parts.join(" "), !status.filesReady, !!status.setup);
     return status.ready === true && key === imgQwenQuery().toString();
   } catch {
     if (request === imgQwenRequest) {
@@ -18134,12 +18135,12 @@ async function imgQwenCheck() {
  * dropdown works whatever the light is doing. */
 var imgQwenSettle = null;   // var: imgQwenPaint can run before this line (imgQwenShape at boot)
 var imgQwenPainted = "";    // what the light is saying now, so it is not said twice
-function imgQwenPaint(tone, chip = "", note = "", needsModels = false) {
+function imgQwenPaint(tone, chip = "", note = "", needsModels = false, needsRepair = false) {
   const dot = $("imgQwenDot"), pv = dot.parentElement, pop = $("imgQwenStatus");
   /* A repaint that says the same thing is not a repaint. Re-applying "ok"
    * restarts the pulse and sends the light back to the right for another two
    * seconds, so a re-check that changed nothing would make the dot hop. */
-  const same = `${tone}\u0000${chip}\u0000${note}`;
+  const same = `${tone}\u0000${chip}\u0000${note}\u0000${needsModels}\u0000${needsRepair}`;
   if (same === imgQwenPainted) return;
   imgQwenPainted = same;
   clearTimeout(imgQwenSettle);
@@ -18156,6 +18157,8 @@ function imgQwenPaint(tone, chip = "", note = "", needsModels = false) {
   $("imgQwenStatusNote").textContent = note;
   $("imgQwenStatusNote").hidden = !note;
   $("imgQwenModels").hidden = !needsModels;
+  $("imgQwenFix").hidden = !needsRepair;
+  $("imgQwenRepairNote").hidden = !needsRepair;
   pop.hidden = !bad;
   if (bad) imgQwenFollow();
 }
@@ -18175,7 +18178,8 @@ function imgQwenPlacePop() {
     /* Below the field it must still fit the window: on a phone it started at
      * the field's left edge and ran off the right side. */
     const left = `${Math.round(right ? r.right + 14 : Math.max(8, Math.min(r.left, window.innerWidth - w - 8)))}px`;
-    const top = `${Math.round(right ? Math.max(8, r.top - 8) : r.bottom + 8)}px`;
+    const anchorTop = right ? r.top - 8 : r.bottom + 8;
+    const top = `${Math.round(Math.min(Math.max(8, anchorTop), Math.max(8, window.innerHeight - pop.getBoundingClientRect().height - 8)))}px`;
     if (pop.style.left !== left) pop.style.left = left;
     if (pop.style.top !== top) pop.style.top = top;
     pop.style.width = `${w}px`;
@@ -18200,6 +18204,12 @@ $("imgQwenDot").onclick = (e) => {
 };
 $("imgQwenRefresh").onclick = imgQwenCheck;
 $("imgQwenModels").onclick = () => setView("models");
+onSetupFinished((job) => {
+  if (job?.id !== "qwen-engine") return;
+  imgQwenRequestedKey = "";
+  imgQwenStatusKey = "";
+  imgQwenCheck();
+});
 $("imgRefSizing").onchange = imgQwenShape;
 $("imgTransparent").onchange = imgQwenCheck;
 for (const id of ["imgEncoder", "imgVae"]) $(id).addEventListener("change", imgQwenCheck);
@@ -19224,8 +19234,10 @@ $("imgGo").onclick = async () => {
   try {
     const effective = imgEffectiveEngine();
     if (effective === "qwen-image-2.1" && !(await imgQwenCheck())) {
-      $("imgNote").textContent = "Qwen Image 2.1 is not ready. Check the model files and ComfyUI support above.";
+      $("imgNote").textContent = imgQwenStatus?.setup ? "Qwen needs engine support. Choose Fix Qwen."
+        : "Qwen Image 2.1 is not ready. Check the model files above.";
       $("imgNote").classList.add("stick");   // a refusal stays in place (styles.css .stick)
+      if (imgQwenStatus?.setup) await offerSetup(imgQwenStatus.setup, imgQwenStatus.error);
       return;
     }
     btn.textContent = "Queued…";
@@ -19295,7 +19307,8 @@ $("imgGo").onclick = async () => {
     })).json();
     if (r.error) {
       imgWatch(null);
-      if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("imgNote", r);
+      if (r.setup) await offerSetup(r.setup, r.error);
+      else if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("imgNote", r);
       else if (!offerModel(r)) await appAlert(r.error, "Nothing was queued");
       return;
     }

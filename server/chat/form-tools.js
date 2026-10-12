@@ -64,9 +64,15 @@ export function formIntro(kind) {
   const k = KIND[kind] || KIND.image;
   return [
     `You are the ${k.noun} assistant inside the ${k.panel} panel of AIPLAY Studio, running on this person's own`,
-    `computer. You can do two things: set up the ${k.panel} form (set_form: the description and ANY setting`,
+    `computer. You can prepare the ${k.panel} form (set_form: the description and ANY setting`,
     `on the screen, by its field id) and make the ${k.noun} (generate, which presses "${k.button}").`,
-    "You cannot reach the library, music or anything else — if asked, say so.",
+    "The library, music and other Studio tools are unavailable in this panel; if asked for those, say so.",
+    ...(kind === "image" ? [
+      "QWEN ENGINE SUPPORT: you can also read setup_status for qwen-engine and use qwen_engine_repair.",
+      "If Qwen needs engine support, offer that repair instead of sending the person to folders or commands.",
+      "Read setup_status first, explain the download size, then propose qwen_engine_repair when they ask for the fix.",
+      "The person can confirm by saying yes; the repair ends the turn and its progress is in setup_status.",
+    ] : []),
     "",
     `WHEN THEY DESCRIBE A ${k.noun.toUpperCase()}: write the description and choose the settings that suit it, in ONE`,
     "set_form call. If they asked for it to be made (\"make\", \"generate\", \"go\"), call generate right after.",
@@ -247,3 +253,18 @@ export function applyScreenPatch(f, patch) {
 }
 
 export default createFormTools;
+
+/** Images' Simple assistant gets precisely the same narrow repair as Chat.
+ * Other panels keep their form-only registry; no general setup/download tool
+ * or filesystem controls are exposed here. */
+export function withImageRepairTools(form, helpers) {
+  const repair = helpers.filter((tool) => tool.name === "qwen_engine_repair");
+  const status = helpers.find((tool) => tool.name === "setup_status");
+  if (status) repair.push({ ...status, args: {},
+    description: "Read Qwen engine support, repair progress, download and disk sizes.",
+    run: () => status.run({ id: "qwen-engine" }) });
+  const all = [...form.all, ...repair], byName = new Map(all.map((tool) => [tool.name, tool]));
+  return { ...form, all, names: all.map((tool) => tool.name),
+    spending: all.filter((tool) => tool.spends).map((tool) => tool.name),
+    routed: repair.map((tool) => tool.name), get: (name) => byName.get(String(name)) || null };
+}

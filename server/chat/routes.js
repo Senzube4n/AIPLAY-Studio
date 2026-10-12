@@ -57,8 +57,8 @@ import { createChatTools } from "./tools.js";
 import { runTurn, newSession, createQwenModel } from "./loop.js";
 import { createChatModels } from "./models.js";
 import { createMusicTools, MUSIC_INTRO, describeForm, applyFormPatch } from "./music-tools.js";
-import { createFormTools, formIntro, describeScreen, applyScreenPatch } from "./form-tools.js";
-import { routedRegistry, ROUTABLE } from "./router.js";
+import { createFormTools, formIntro, describeScreen, applyScreenPatch, withImageRepairTools } from "./form-tools.js";
+import { routedRegistry, ROUTABLE, index as routedIndex } from "./router.js";
 import { engine as defaultEngine } from "../engine/client.js";
 
 /** How long a chat turn's hold on the engine door outlasts its last model
@@ -88,9 +88,12 @@ export function createChatRoutes(deps = {}) {
    * /api/chat/image and /api/chat/video. */
   const scope = ["music", "image", "video"].includes(deps.scope) ? deps.scope : "studio";
   const panel = scope === "image" || scope === "video";
+  const panelTools = () => scope === "image"
+    ? withImageRepairTools(createFormTools(scope), deps.qwenRepairTools || routedIndex().map((entry) => entry.tool))
+    : createFormTools(scope);
   const base = scope === "studio" ? "/api/chat" : `/api/chat/${scope}`;
   const tools = scope === "music" ? (deps.musicTools || createMusicTools())
-    : panel ? createFormTools(scope)
+    : panel ? panelTools()
     : (deps.tools || createChatTools({ uiPort: config.uiPort }));
   const cloud = deps.cloud || null;
   const chatModels = scope !== "studio"
@@ -332,7 +335,7 @@ export function createChatRoutes(deps = {}) {
      * snapshot. Its own tool set per message: one shared set held ONE screen,
      * so two tabs sending at once could remix against each other's songs. */
     const musicTurn = scope === "music" ? (deps.musicTools ? tools : createMusicTools())
-      : panel ? createFormTools(scope) : null;
+      : panel ? panelTools() : null;
     musicTurn?.setScreen?.(form);
     /* The page's Stop aborts this request; the turn then stops at its next
      * step instead of carrying on with nobody listening. */

@@ -594,26 +594,70 @@ test("§9 the 500th picture of one name is adopted under a new name, and the 499
 /* §10 EVERY ROUTE ANSWERS ONLY THIS PC'S ADDRESS (review of the port,
  * 2026-10-08). /api/runpod refused a rebound Host (§1), and the same page could
  * still GET /api/provenance (every open Pod render's prompt), /api/images and
- * the pictures themselves, and open the live socket. The guard is the first
- * thing the request handler does, lifted out of index.js and run here. */
-test("§10 index.js refuses a request whose Host is not this PC's Studio, on every route, and so does the live socket", async () => {
+ * the pictures themselves, and open the live socket. Authenticated LAN
+ * admission now runs before the Host guard; both are lifted out of index.js
+ * and run here, so that ordering cannot bypass the Host or Origin rules. */
+test("§10 every route and the live socket require this PC's Host or authenticated LAN admission", async () => {
   const { localUiHost } = await import("../cloud-switch.js");
+  const { createLanGate, LAN_COOKIE } = await import("../lan.js");
   const index = read("server", "index.js");
   const guard = /\nconst foreignHost = \(req\) => !localUiHost\(req, config\.uiPort\);\n/.exec(index)?.[0];
   assert.ok(guard, "index.js has the guard");
   const head = /const server = http\.createServer\(async \(req, res\) => \{\n([\s\S]*?)\n  const url = new URL\(req\.url, "http:\/\/localhost"\);/.exec(index)?.[1] || "";
-  assert.match(head, /^  if \(foreignHost\(req\)\) \{\n    return json\(res, 403, /, "it is the first thing every request meets");
-  const run = new Function("config", "localUiHost", "json", "req", "res", `${guard}\n${head}\nreturn "routed";`);
+  assert.match(head, /^  if \(lanGate && lanGate\.http\(req, res\) === "handled"\) return;\n  if \(foreignHost\(req\)\) \{\n    return json\(res, 403, /,
+    "authenticated LAN admission is followed immediately by the existing Host guard");
+  const run = new Function("config", "localUiHost", "json", "lanGate", "req", "res", `${guard}\n${head}\nreturn "routed";`);
   const said = [];
   const json = (_res, code, body) => { said.push(code); return { code, body }; };
   for (const [host, refused] of [["rebind.evil.example:4173", true], ["127.0.0.1.nip.io:4173", true], ["", true], ["127.0.0.1:8080", true],
     ["127.0.0.1:4173", false], ["localhost:4173", false], ["[::1]:4173", false]]) {
     for (const route of ["/api/provenance", "/api/images", "/images/a.png", "/"]) {
-      const out = run({ uiPort: 4173 }, localUiHost, json, { method: "GET", url: route, headers: { host } }, {});
+      const out = run({ uiPort: 4173 }, localUiHost, json, null, { method: "GET", url: route, headers: { host } }, {});
       assert.equal(out === "routed", !refused, `${host || "no Host"} GET ${route}`);
       if (refused) assert.equal(out.code, 403);
     }
   }
-  assert.match(index, /new WebSocketServer\(\{ server, path: "\/live",[\s\S]{0,400}verifyClient: \(\{ req \}\) => !foreignHost\(req\) && \(!req\.headers\.origin \|\| req\.headers\.origin === `http:\/\/\$\{req\.headers\.host\}`\)/,
-    "the live socket (every job's state, titles included) asks the same");
+  const key = "k".repeat(40), lanGate = createLanGate({ key, port: 4173 });
+  const request = (host, { origin, cookie, method = "GET", route = "/api/images", remote = "192.168.1.21" } = {}) => ({
+    method, url: route, socket: { remoteAddress: remote }, headers: { host,
+      ...(origin !== undefined ? { origin } : {}), ...(cookie ? { cookie } : {}) },
+  });
+  const cookie = `${LAN_COOKIE}=${key}`;
+  for (const route of ["/api/provenance", "/api/images", "/images/a.png", "/"]) {
+    for (const [host, auth, accepted] of [["192.168.1.10:4173", cookie, true],
+      ["192.168.1.10:4173", undefined, false], ["127.0.0.1:4173", undefined, false],
+      ["rebind.evil.example:4173", cookie, false], ["192.168.1.10:8080", cookie, false]]) {
+      const res = { writeHead(code) { this.code = code; }, end() {} };
+      const out = run({ uiPort: 4173 }, localUiHost, json, lanGate, request(host, { cookie: auth, route }), res);
+      assert.equal(out === "routed", accepted, `${host} authenticated=${!!auth} GET ${route}`);
+      if (!accepted) assert.equal(res.code, 403);
+    }
+  }
+  for (const [origin, accepted] of [["http://192.168.1.10:4173", true], ["http://evil.example", false]]) {
+    const out = run({ uiPort: 4173 }, localUiHost, json, lanGate,
+      request("192.168.1.10:4173", { cookie, origin, method: "POST" }), {});
+    assert.equal(out === "routed", accepted, `a keyed LAN write still checks Origin ${origin}`);
+    if (!accepted) assert.equal(out.code, 403);
+  }
+
+  const socket = index.slice(index.indexOf('const wss = new WebSocketServer({ server, path: "/live",'));
+  const verifier = /verifyClient: \(\{ req \}\) => ([\s\S]*?) \}\);/.exec(socket)?.[1];
+  assert.ok(verifier, "the actual live socket verifier is exercised");
+  assert.match(verifier, /^\(!lanGate \|\| lanGate\.upgrade\(req\)\) && !foreignHost\(req\)/,
+    "the live socket requires LAN admission before its Host rule");
+  const verify = new Function("lanGate", "foreignHost", "req", `return (${verifier});`);
+  const foreignHost = (req) => !localUiHost(req, 4173);
+  for (const [host, auth, origin, accepted] of [
+    ["192.168.1.10:4173", cookie, "http://192.168.1.10:4173", true],
+    ["192.168.1.10:4173", undefined, "http://192.168.1.10:4173", false],
+    ["127.0.0.1:4173", undefined, "http://127.0.0.1:4173", false],
+    ["rebind.evil.example:4173", cookie, undefined, false],
+    ["192.168.1.10:4173", cookie, "http://evil.example", false],
+  ]) assert.equal(verify(lanGate, foreignHost, request(host, { cookie: auth, origin })), accepted,
+    `${host} authenticated=${!!auth} Origin=${origin || "none"} live socket`);
+  for (const gate of [null, lanGate]) {
+    assert.equal(verify(gate, foreignHost, request("localhost:4173", { remote: "127.0.0.1", origin: "http://localhost:4173" })), true);
+    assert.equal(verify(gate, foreignHost, request("rebind.evil.example:4173", { remote: "127.0.0.1" })), false);
+    assert.equal(verify(gate, foreignHost, request("localhost:4173", { remote: "127.0.0.1", origin: "http://evil.example" })), false);
+  }
 });

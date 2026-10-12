@@ -354,6 +354,8 @@ import { createSetupRunner } from "./setup/venv.js";
 import { createFastCovers, FAST_COVER_ENGINE, FAST_COVER_SETUP } from "./fastcover.js";
 import { labelYueLyrics } from "./music/yue-lyrics.js";
 import { createEnginePackagesRunner } from "./setup/engine-packages.js";
+import { createQwenEngineRunner } from "./setup/qwen-engine.js";
+import { createQwenActivation } from "./setup/qwen-activation.js";
 /* Read through the namespace, not by name: engineModuleRefusal (lane D) is
  * called only when the module carries it, so this file loads either way. */
 import * as enginePackages from "./setup/engine-packages.js";
@@ -3098,6 +3100,16 @@ const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance
  * With AIPLAY_WHISPER_PYTHON set the environment names the interpreter and
  * wins over the field, so a build would change nothing: it is refused up
  * front, in the same words Settings uses. */
+async function qwenRepairBusy() {
+  const a = art.status().art;
+  if (jobs.current || jobs.queue.length || a?.current || a?.queued) return true;
+  const e = await engineDoor.status();
+  if (!e.queue) return "Studio could not check the render queue. Try again shortly.";
+  return !!(e.running?.length || e.queue?.running || e.queue?.pending
+    || e.held?.some((h) => h !== "a chat turn"));
+}
+const qwenActivation = createQwenActivation({ config, supervisor: comfy, engine: engineDoor,
+  readiness: () => qwenImageStatus(), busy: qwenRepairBusy });
 const setupRunner = oneRunner(createSetupRunner({
   appData: config.dataDir,
   vendor: () => gpuStatus()?.vendor || vendorOf(config.gpu, config.torchBackend),
@@ -3129,6 +3141,19 @@ const setupRunner = oneRunner(createSetupRunner({
   rig: () => config.rig,
   python: () => config.python,
   probe: (py, mods) => probeOne(py, mods),
+}), createQwenEngineRunner({
+  appData: config.dataDir,
+  readiness: () => qwenImageStatus(),
+  vendor: () => config.torchBackend === "cpu" ? "cpu"
+    : vendorOf(config.gpu, config.torchBackend) || gpuStatus()?.vendor || "cpu",
+  gpuName: () => gpuStatus()?.name || config.gpu?.name || "",
+  busy: qwenRepairBusy,
+  blockedBy: () => config.remoteOnly || config.cloudOnly || config.musicOnly
+    ? "Fix Qwen is available in Full Studio with a local engine."
+    : process.env.AIPLAY_RIG || process.env.AIPLAY_PYTHON
+      ? "This engine is selected by a launch override. Remove that override to let Studio fix Qwen."
+      : null,
+  activate: (metadata) => qwenActivation.activate(metadata),
 }));
 const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: setupRunner });
 /* Fast covers (server/fastcover.js): song covers on the processor. The art
@@ -13705,10 +13730,10 @@ const wss = new WebSocketServer({ server, path: "/live",
   /* The same Host rule as every request (foreignHost above), and an Origin, when
    * a page sends one, that is that same address: the socket carries every job's
    * state, titles included. */
-  verifyClient: ({ req }) => !foreignHost(req) && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`) });
+  verifyClient: ({ req }) => (!lanGate || lanGate.upgrade(req)) && !foreignHost(req)
+    && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`) });
 /* The live socket: a keyed device is admitted before the Host rule above
  * reads the request (server/lan.js); anything else is refused by it as before. */
-if (lanGate) server.prependListener("upgrade", (req) => lanGate.upgrade(req));
 function push(snap) {
   /* ⚠ AND THE ART LANE'S OWN STATE. The socket fires on every art progress
    * tick (art.on("update") below) and carried nothing about art, so anything

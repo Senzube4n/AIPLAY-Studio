@@ -193,6 +193,12 @@ node server/comfyargs_test.js || exit 1
 node --test server/vramreserve_test.js || exit 1
 node --test server/comfyargs-defaults_test.js || exit 1
 node server/install-engine_test.js || exit 1
+node --check server/setup/qwen-engine.js || exit 1
+node --check server/setup/qwen-activation.js || exit 1
+node --check web/setup-feature.js || exit 1
+# Accessible Qwen compatibility repair: staged installer, guarded setup, typed
+# assistant confirmation, idle switch, verification and automatic rollback.
+node --test server/install-engine-qwen_test.js server/setup/qwen-engine_test.js server/setup/qwen-activation_test.js server/qwen-repair-integration_test.js server/qwen-lan_test.js || exit 1
 node server/music/yue_test.js || exit 1
 node server/music/yue_fit_test.js || exit 1
 # YuE2 THROUGH COMFYUI TAKES A LORA: the loader is spliced on the MODEL wire

@@ -126,11 +126,14 @@ export function createLanGate({ key, port }) {
     return "lan";
   }
 
-  /** The live socket: admitted with the cookie, otherwise left as it came, so
-   *  index.js's own Host rule refuses it. */
+  /** The live socket: the verifier must require this result before its Host
+   *  and Origin checks. A remote client can supply a loopback Host itself, so
+   *  leaving an unauthorised request untouched would not refuse that client. */
   function upgrade(req) {
-    if (isLoopbackAddress(req.socket?.remoteAddress)) return;
-    if (ipHost(req.headers.host) && matches(cookieValue(req, LAN_COOKIE))) admit(req);
+    if (isLoopbackAddress(req.socket?.remoteAddress)) return true;
+    if (!ipHost(req.headers.host) || !matches(cookieValue(req, LAN_COOKIE))) return false;
+    admit(req);
+    return true;
   }
 
   return { http, upgrade };

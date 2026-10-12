@@ -1649,7 +1649,9 @@
         <button class="qpopx" type="button" id="imgQwenPopClose" title="Close">&#10005;</button>
         <b id="imgQwenChip">Qwen Image 2.1 is not ready</b>
         <p id="imgQwenStatusNote"></p>
+        <p id="imgQwenRepairNote" hidden data-setup-note="qwen-engine"></p>
         <div class="qpopacts">
+          <button class="btn2 go" type="button" id="imgQwenFix" hidden data-setup-feature="qwen-engine" aria-label="Fix Qwen Image 2.1">Fix Qwen</button>
           <button class="btn2" type="button" id="imgQwenRefresh">&#8635; Check again</button>
           <button class="btn2" type="button" id="imgQwenModels" hidden>Open Models</button>
         </div>
@@ -1778,6 +1780,7 @@
 
       <!-- Written by app.js ("Queued.", "Done.", a refusal). Empty until
            then, and an empty hint does not take a line. -->
+      <p id="imgQwenWorkNote" hidden class="hint" data-setup-note="qwen-engine" data-setup-job-note role="status" aria-live="polite" aria-atomic="true"></p>
       <p class="hint" id="imgNote"></p>
       </div>
     </div>

@@ -818,9 +818,10 @@ console.log("\nMCP, AND THE IN-APP CHAT");
   ok("setup_feature posts the door's run action with the id and the optional torch build",
     /api\("POST", "\/api\/setup", \{ action: "run", id: String\(a\.id \|\| ""\)/.test(String(feature?.run)) && feature.inputSchema.required.join() === "id"
       && JSON.stringify(feature.inputSchema.properties.torch.enum) === JSON.stringify(TORCH_CHOICES));
-  ok("...its ids are the venv recipes and studio-packages, the same list setup_status takes",
-    JSON.stringify(feature.inputSchema.properties.id.enum) === JSON.stringify([...RECIPE_IDS, ENGINE_SETUP_ID])
-      && JSON.stringify(status.inputSchema.properties.id.enum) === JSON.stringify([...RECIPE_IDS, ENGINE_SETUP_ID]));
+  // Qwen compatibility recovery shares this setup door and its status list.
+  ok("...its ids include the venv recipes, studio packages and Qwen engine, the same list setup_status takes",
+    JSON.stringify(feature.inputSchema.properties.id.enum) === JSON.stringify([...RECIPE_IDS, ENGINE_SETUP_ID, "qwen-engine"])
+      && JSON.stringify(status.inputSchema.properties.id.enum) === JSON.stringify([...RECIPE_IDS, ENGINE_SETUP_ID, "qwen-engine"]));
   ok("...and its description sends the agent to setup_status for sizes instead of typing one",
     !/\d+(\.\d+)? GB/.test(feature.description) && /setup_status first/.test(feature.description));
   ok("setup_status posts the status action", /action: "status"/.test(String(status?.run)));
