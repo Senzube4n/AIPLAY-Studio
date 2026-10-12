@@ -138,7 +138,9 @@ export function welcomeTools(api) {
         + "fit), word for word. `reopen` makes Home show them again next load; `dismiss` hides them. "
         + "`level` reads whether Music, Pictures and Video open Simple or Advanced, who chose it, and "
         + "what Advanced adds on each screen; with `level` set it saves the person's choice, the "
-        + "same switch as Settings > Screens > Show every setting. Ask before changing it. The tour "
+        + "same switch as Settings > Screens > Show every setting. Ask before changing it. In the "
+        + "launcher's RunPod GPU mode (Advanced only) `advancedOnly` names the screens that open on "
+        + "Advanced while it runs, and why; the saved level is kept. The tour "
         + "itself no longer opens by itself; it is under About.",
       inputSchema: {
         type: "object",

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRunpodAccount, normalizeAccount } from "./runpod-account.js";
+import { AIPLAY_POD_TEMPLATES, createRunpodAccount, normalizeAccount } from "./runpod-account.js";
 import { assertComfyLoopback } from "../../worker/check-comfy-loopback.js";
 
 const KEY = "runpod-test-api-key-at-least-32-characters";
@@ -8,7 +8,18 @@ const KEY = "runpod-test-api-key-at-least-32-characters";
 function rig() {
   let saved, cleared = false;
   const calls = [];
-  const fetchFn = async (_url, init) => {
+  const restTemplates = [];
+  const fetchFn = async (url, init) => {
+    if (String(url).startsWith("https://rest.runpod.io/v1/")) {
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ url, method: init.method, body, auth: init.headers.Authorization });
+      if (init.method === "GET") return Response.json(restTemplates);
+      if (init.method === "POST") {
+        const template = { ...body, id: `template-${restTemplates.length + 1}` };
+        restTemplates.push(template); return Response.json(template);
+      }
+      throw new Error("unexpected REST request");
+    }
     const request = JSON.parse(init.body); calls.push({ ...request, auth: init.headers.Authorization });
     const q = request.query;
     if (q.includes("AiplayAccountCheck")) return Response.json({ data: { myself: { id: "user", clientBalance: 20, currentSpendPerHr: 0 } } });
@@ -36,7 +47,7 @@ function rig() {
   };
   const account = createRunpodAccount({ fetchFn, getApiKey: async () => saved, setApiKey: async key => { saved = key; },
     clearApiKey: async () => { saved = undefined; cleared = true; } });
-  return { account, calls, get saved() { return saved; }, get cleared() { return cleared; } };
+  return { account, calls, restTemplates, get saved() { return saved; }, get cleared() { return cleared; } };
 }
 
 test("account key is verified, stored, used as a bearer token and never returned", async () => {
@@ -88,6 +99,27 @@ test("creation refuses an existing Pod name before sending another paid mutation
   await assert.rejects(r.account.create({ confirm: "CREATE PAID POD", gpuTypeId: "cheap", name: "AIPLAY",
     volumeInGb: 100, containerDiskInGb: 20 }), /already exists/);
   assert.equal(r.calls.filter(call => call.query.includes("AiplayCreatePod")).length, 0);
+});
+
+test("private AIPLAY templates are created once with bounded workload presets", async () => {
+  const r = rig(); await r.account.connect(KEY);
+  const first = await r.account.createTemplates();
+  assert.deepEqual(first.created.map(template => template.name), AIPLAY_POD_TEMPLATES.map(template => template.name));
+  assert.equal(first.templates.length, 4);
+  assert.equal(r.restTemplates.every(template => template.isPublic === false && template.isServerless === false), true);
+  assert.equal(r.restTemplates.slice(0, 3).every(template => template.imageName === "runpod/comfyui:1.4.7-cuda13.0"), true);
+  assert.equal(r.restTemplates.slice(0, 3).every(template => template.ports.includes("8787/http")), true);
+  const trainer = r.restTemplates.at(-1);
+  assert.equal(trainer.name, "AIPLAY Music LoRA Training");
+  assert.equal(trainer.imageName, "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04");
+  assert.deepEqual(trainer.ports, ["8888/http", "7860/http", "6006/http"]);
+  assert.equal(r.restTemplates.every(template => template.volumeMountPath === "/workspace"), true);
+  assert.deepEqual(r.restTemplates.map(template => template.volumeInGb), [60, 120, 100, 120]);
+  assert.equal(r.calls.filter(call => call.url && call.method === "POST").every(call => call.auth === `Bearer ${KEY}`), true);
+
+  const second = await r.account.createTemplates();
+  assert.equal(second.created.length, 0);
+  assert.equal(r.calls.filter(call => call.url && call.method === "POST").length, 4);
 });
 
 test("start and stop use scoped Pod mutations", async () => {

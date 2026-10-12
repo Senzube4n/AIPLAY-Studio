@@ -39,6 +39,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 let passed = 0, failed = 0, skipped = 0;
@@ -298,6 +299,55 @@ both("...and so does describe_selection, in the SAME call",
  * missing from that list is dropped in silence, which is how a rotation written
  * as geometry.rotate would vanish on its way to the engine. */
 const FRAME_KEYS = /\["canvas", "crop", "geometry", "rotate", "flipH", "flipV"\]/;
+const selectionPreview = routeBlock('if (p === "/api/images/preview-selection" && req.method === "POST")');
+{
+  // Run the real route body with a worker boundary stub: prove source choice,
+  // crop/geometry transport and refusals without launching Studio or a GPU.
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const execute = new AsyncFunction("p", "req", "res", "readBody", "json", "imgdocRun",
+    "path", "IMAGE_DIR", "stat", "imgWorker", "imageFailure", "imageRefusal", selectionPreview);
+  async function ask(body) {
+    const jobs = [], headers = {};
+    const response = await execute("/api/images/preview-selection", { method: "POST" },
+      { setHeader: (key, value) => { headers[key] = value; } },
+      async (_req, cap) => { assert.equal(cap, 8 * 1024 * 1024); return body; },
+      (_res, status, data) => ({ status, data }),
+      async (mode, options) => {
+        assert.equal(mode, "store"); assert.equal(options.action, "open");
+        return { doc: { id: options.id, width: 24, height: 16 } };
+      }, path, "/fixture/images", async () => ({}),
+      () => ({ run: async (mode, job) => {
+        assert.equal(mode, "describe"); jobs.push(job);
+        return { ok: true, mask: "data:image/png;base64,mask", coverage: .5, width: 24, height: 16 };
+      } }),
+      (_res, err, status) => ({ status, data: { error: err.message } }), async err => err);
+    return { ...response, jobs, headers };
+  }
+  const shape = { shapes: [{ kind: "wand", x: 3, y: 2, tolerance: 32 }] };
+  const frame = { crop: { x: 2, y: 3, w: 12, h: 8 }, geometry: { rotate: 45 },
+    flipH: true, brightness: 20 };
+  const flat = await ask({ name: "source.png", selection: shape, frame });
+  ok("preview route returns the worker mask and disables caching",
+    flat.status === 200 && flat.data.mask.startsWith("data:image/png;base64,")
+    && flat.headers["Cache-Control"] === "no-store");
+  assert.deepEqual(flat.jobs, [{ src: path.join("/fixture/images", "source.png"), selection: shape,
+    frame: { crop: frame.crop, geometry: frame.geometry, flipH: true }, preview: true }]);
+  passed++;
+  const composed = await ask({ documentId: "current_doc", selection: shape });
+  ok("document mask samples the current composed document, with no stale flat source",
+    composed.status === 200 && composed.jobs[0].doc.id === "current_doc"
+    && composed.jobs[0].dir === "/fixture/images" && !("src" in composed.jobs[0]));
+  for (const invalid of [{ name: "../source.png" }, { name: "source.png", documentId: "doc" },
+    { name: "source.png", selection: [] }, { name: "source.png", frame: "rotate" }]) {
+    const refused = await ask(invalid);
+    ok(`selection preview refuses ${JSON.stringify(invalid)} before worker submission`,
+      refused.status === 400 && refused.jobs.length === 0);
+  }
+}
+both("describe_selection's MCP preview uses the exact preview route",
+  has(/if \(a\.preview\) return await api\("POST", "\/api\/images\/preview-selection", body\)/),
+  toolBlock("describe_selection"), swap("/api/images/preview-selection", "/api/images/edit"),
+  "preview is sent to the committing edit route");
 const describe = routeBlock('if (p === "/api/images/describe-selection" && req.method === "POST")');
 both("/api/images/describe-selection whitelists all six frame keys",
   has(FRAME_KEYS), describe, swap('"geometry", ', ""),

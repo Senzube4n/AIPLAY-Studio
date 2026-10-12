@@ -21,7 +21,8 @@ test("auto: the card decides — AMD and Intel get the fix, NVIDIA and an unread
   assert.ok(nv.includes("--use-ck-attention"), "the install's own attention flag stays when the fix does not apply");
   assert.ok(!hasAmdMusicFix(launch(undefined, undefined, { vendor: null })));
   assert.deepEqual([fixApplies("auto", "amd"), fixApplies("auto", "nvidia"), fixApplies("on", "nvidia"), fixApplies("off", "amd"), fixApplies("garbage", "amd")], [true, false, true, false, true]);
-  assert.deepEqual([vendorOf({ vendor: "nvidia" }, "rocm"), vendorOf(null, "rocm"), vendorOf(null, "cuda"), vendorOf(undefined, undefined)], ["nvidia", "amd", null, null], "a ROCm backend with no card reading is AMD");
+  assert.deepEqual([vendorOf({ vendor: "nvidia" }, "rocm"), vendorOf(null, "rocm"), vendorOf(null, "cuda"), vendorOf(undefined, undefined)], ["nvidia", "amd", "nvidia", null], "a ROCm backend with no card reading is AMD, a CUDA one NVIDIA");
+  assert.equal(fixApplies("auto", vendorOf(null, "cuda")), false, "and the AMD fix stays off there, as it did for null");
 });
 
 test("on the fix replaces the install's CK attention, once, on any card; off removes it even on AMD", () => {

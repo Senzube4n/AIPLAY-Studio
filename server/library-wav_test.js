@@ -80,7 +80,7 @@ test("native WAV survives durable Library reload and reads tags/duration with no
   const save = library.save.bind(library); let persisted;
   library.save = () => (persisted = save());
   library.remember(name, { title: "Native take", model: "YuE2 GGUF Q4", engine: "yue2-gguf", quantization: "q4_0",
-    warnings, generationLimits });
+    warnings, generationLimits, musicToolsRun: 'native_fixture_123' });
   await persisted;
   await library.save();
   const reload = new Library(); await reload.load();
@@ -88,9 +88,11 @@ test("native WAV survives durable Library reload and reads tags/duration with no
   assert.equal(rows.find((r) => r.file === name)?.engine, "yue2-gguf");
   assert.deepEqual(rows.find((r) => r.file === name)?.warnings, warnings);
   assert.deepEqual(rows.find((r) => r.file === name)?.generationLimits, generationLimits);
+  assert.equal(rows.find((r) => r.file === name)?.musicToolsRun, 'native_fixture_123', 'saved native-run links survive reload and library listing');
   const old = "aiplay_yue2_gguf_old.wav"; await writeFile(path.join(config.outputDir, old), wav());
   const oldRow = (await reload.list()).find((r) => r.file === old);
   assert.deepEqual(oldRow.warnings, []); assert.equal(oldRow.generationLimits, null);
+  assert.equal(oldRow.musicToolsRun, null);
   assert.equal((await reload.readTags(name)).model, "YuE2 GGUF Q4");
   assert.equal(await reload.durationOf(name), 100 / 48000);
 });

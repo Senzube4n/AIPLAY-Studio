@@ -14,6 +14,7 @@ status line is swallowed so the output here stays readable.
 
 PIL/numpy/scipy only, same as imagetools.py itself.
 """
+import base64
 import contextlib
 import io
 import json
@@ -1278,6 +1279,76 @@ with tempfile.TemporaryDirectory() as tmp:
        (int(pa[20, 40, 1]) > 200, int(pa[20, 40, 0]) < 60), (True, True))
 
 
+# -- the selection preview is the edit's exact mask, without image files -----
+with tempfile.TemporaryDirectory() as tmp:
+    src = os.path.join(tmp, "preview_in.png")
+    plate = np.full((16, 24, 4), 255, np.uint8)
+    plate[:, 8:16] = [0, 0, 200, 255]  # matching white islands cannot touch
+    Image.fromarray(plate, "RGBA").save(src)
+
+    def _selection_preview(selection, frame=None, **extra):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            imagetools.describe_selection({"src": src, "selection": selection,
+                                          "frame": frame or {}, "preview": True, **extra})
+        reply = json.loads(buf.getvalue().strip().splitlines()[-1])
+        with Image.open(io.BytesIO(base64.b64decode(reply["mask"].split(",", 1)[1]))) as png:
+            return reply, np.array(png.convert("RGBA"))
+
+    wand = {"kind": "wand", "x": 1, "y": 1, "tolerance": 32, "contiguous": True}
+    before = sorted(os.listdir(tmp))
+    r, preview = _selection_preview({"shapes": [wand]})
+    eq("wand preview selects the whole connected region, not just its seed",
+       int(np.count_nonzero(preview[..., 3])), 8 * 16)
+    eq("...and excludes a matching island separated by another colour",
+       int(preview[:, 16:, 3].max()), 0)
+    eq("preview coverage describes the returned mask", r["coverage"], 1 / 3)
+    eq("a preview writes no matte, edited image, thumbnail or scratch image",
+       sorted(os.listdir(tmp)), before)
+    r, global_preview = _selection_preview({"shapes": [{**wand, "contiguous": False}]})
+    eq("global wand preview includes disconnected matching islands",
+       int(np.count_nonzero(global_preview[..., 3])), 16 * 16)
+
+    # Geometry and every soft modifier must share the same stage-4 mask as a
+    # committed edit. Compare the preview's alpha to the actual baked plate.
+    frame = {"crop": {"x": 4, "y": 2, "w": 16, "h": 12}, "rotate": 90, "flipH": True}
+    selection = {"shapes": [{"kind": "channel", "channel": "r"}],
+                 "feather": 2, "expand": 1, "invert": True}
+    r, preview = _selection_preview(selection, frame)
+    matte = os.path.join(tmp, "baked.png")
+    with contextlib.redirect_stdout(io.StringIO()):
+        imagetools.apply_edit({"in": src, "out": os.path.join(tmp, "edited.png"),
+                               "maskOut": matte, "ops": {**frame, "selection": selection}})
+    with Image.open(matte) as baked:
+        eq("preview dimensions follow crop, rotate and flip exactly", preview.shape[:2], (16, 12))
+        eq("preview alpha equals the committed matte byte for byte after geometry and modifiers",
+           bool(np.array_equal(preview[..., 3], np.array(baked.convert("L")))), True)
+    eq("unselected preview pixels retain white RGB for tinting, rather than black fringe",
+       bool(np.all(preview[..., :3] == 255)), True)
+
+    threw = ""
+    try:
+        _selection_preview({"shapes": [{**wand, "x": 200}]})
+    except ValueError as exc:
+        threw = str(exc)
+    eq("an out-of-frame preview seed is refused just like an edit", "seed" in threw.lower(), True)
+    threw = ""
+    try:
+        _selection_preview({"shapes": [wand]}, {"canvas": {"width": 30000, "height": 30000}})
+    except ValueError as exc:
+        threw = str(exc)
+    eq("oversized preview canvas is refused before allocation", "16 megapixels" in threw, True)
+
+    import imgdoc                                      # noqa: E402
+    doc = imgdoc.normalize({"id": "preview_doc", "width": 24, "height": 16,
+        "layers": [{"id": "base", "type": "image", "src": "preview_in.png"},
+                   {"id": "cover", "type": "solid", "color": [0, 0, 255, 255]}]})
+    r, preview = _selection_preview({"shapes": [{"kind": "colorRange", "color": [255, 255, 255],
+                                                "tolerance": 1, "softness": 0}]}, doc=doc, dir=tmp)
+    eq("document preview samples composed layers, never the old base image", r["empty"], True)
+    eq("document selection carries the exact source revision", len(r.get("revision", "")), 64)
+
+
 # -- imgworker.py over a REAL pipe --------------------------------------------
 # imgworker.py is this engine behind a process that stays, fed one JSON line at
 # a time by imgworker.js, and nothing above goes near its stdin. StringIO could
@@ -1312,7 +1383,10 @@ with tempfile.TemporaryDirectory() as tmp:
                                           "out": served, "ops": _caption(_CAPTION)}},
         {"id": 2, "mode": "edit", "job": {"in": os.path.join(home, "in.png"),
                                           "out": os.path.join(home, "out.png"),
-                                          "ops": {"rotate": 90}}}))
+                                          "ops": {"rotate": 90}}},
+        {"id": 3, "mode": "describe", "job": {"src": os.path.join(home, "in.png"),
+            "preview": True, "frame": {"rotate": 90},
+            "selection": {"shapes": [{"kind": "wand", "x": 1, "y": 1, "tolerance": 32}]}}}))
     child = subprocess.run(
         [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "imgworker.py")],
         input=req.encode("utf-8"), capture_output=True, env=env, timeout=180)
@@ -1334,6 +1408,10 @@ with tempfile.TemporaryDirectory() as tmp:
     eq("a picture in a non-ASCII folder is found, and its edit lands beside it",
        (replies.get(2, {}).get("ok"), os.path.exists(os.path.join(home, "out.png"))),
        (True, True))
+    eq("the warm worker serves selection preview data on its real pipe",
+       replies.get(3, {}).get("mask", "").startswith("data:image/png;base64,"), True)
+    eq("...in the requested rotated frame",
+       (replies.get(3, {}).get("width"), replies.get(3, {}).get("height")), (24, 32))
 
 
 print(f"\n{PASS} passed, {FAIL} failed\n")

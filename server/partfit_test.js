@@ -155,7 +155,9 @@ test("H3 reaches for the int8 video VAE first, because it is the faster one", ()
   const block = /videoVae: LIGHT_H3\s*\?([\s\S]*?)\n\s*:([\s\S]*?\),)/.exec(cfg);
   assert.ok(block, "the H3 videoVae is one pick per kind of machine");
   for (const arm of [block[1], block[2]]) {
-    const order = /pick\("vae",[\s\S]{0,40}?"([^"]+)",[\s\S]{0,40}?"([^"]+)"/.exec(arm);
+    /* videoPick() since setF: pick() that remembers its list, so the name is
+     * picked again when a video row lands. */
+    const order = /videoPick\("h3", "videoVae", "vae",[\s\S]{0,40}?"([^"]+)",[\s\S]{0,40}?"([^"]+)"/.exec(arm);
     assert.ok(order, "each arm is a pick()");
     assert.match(order[1], /int8/, "the int8 build is named FIRST — pick() takes the first that exists");
     assert.match(order[2], /fp16/, "and the fp16 build stays as the fallback for a rig without it");

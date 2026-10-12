@@ -180,7 +180,8 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
    * H3's licence as its own. */
   const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small",
                               "videoH3Turbo4", "videoH3Turbo8",
-                              "videoH3FunControl", "bridgeBunny", "bridgeSemantic", "videoFastH3"];
+                              "videoH3FunControl", "bridgeBunny", "bridgeSemantic", "videoFastH3",
+                              "videoW6A8", "videoRefsW6A8"];
   ok("...and H3 and its derivatives are the only things that carry one",
     locked.every((id) => H3_AND_DERIVATIVES.includes(id)), locked.join(", "));
 }

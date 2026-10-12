@@ -37,6 +37,20 @@ const SHA = createHash("sha256").update(PNG).digest("hex");
 const FP = "ab".repeat(16);
 const src = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
 
+test("lending discovers nested speed-up LoRAs without guessing duplicates", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "aiplay-lending-nested-"));
+  try {
+    const cfg = { modelsDir: dir, modelsAlso: [] };
+    await mkdir(path.join(dir, "loras", "minimax"), { recursive: true });
+    await writeFile(path.join(dir, "loras", "minimax", "turbo.safetensors"), "weights");
+    assert.equal(L.loraOnDisk("turbo.safetensors", cfg), true);
+    await mkdir(path.join(dir, "loras", "other"));
+    await writeFile(path.join(dir, "loras", "other", "turbo.safetensors"), "weights");
+    assert.equal(L.loraOnDisk("turbo.safetensors", cfg), false);
+    assert.equal(L.loraOnDisk("minimax/turbo.safetensors", cfg), true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 /** An order the way the door builds one: a shot packet and its pictures. */
 function order({ seconds = 5, engineMode = "hybrid", refs = true, steps = 8, songUnder = null, id = null } = {}) {
   return O.makeOrder({
@@ -317,6 +331,64 @@ test("9: the errand's own engine decides the path — a cast scene rides the ref
   assert.deepEqual([r.engine, r.refs, r.loads], ["h3", true, LORAS.ref4]);
   const ltx = L.speedUpForOrder(order({ engineMode: "hybrid", refs: false, steps: 8 }), { cfg: FOUR_ONLY, onDisk: hasFour });
   assert.deepEqual([ltx.engine, ltx.problem], ["ltx", null]);
+});
+
+test("9: the accept card says what the runner refuses, with the row it names (NVIDIA); AMD and Intel read as before", async () => {
+  /* A lent errand renders through ArtRunner.#clip, which refuses a count whose
+   * speed-up is not on disk (art.js clipSpeedupNeeded, on NVIDIA and a card
+   * nobody could read). The card counted "a file below its own count" as fine
+   * and named a different file: a 4-step order was accepted quietly on a PC
+   * with only the 8-step file and then refused, and a 3-step one was sent for
+   * the 4-step file while the runner asked for TaoMate. */
+  const { clipSpeedupNeeded } = await import("../art.js");
+  const { CATALOG } = await import("../models.js");
+  const label = (id) => CATALOG.find((r) => r.id === id).label;
+  /* config.js's slots and readings on these disks (pick() falls back, and
+   * returns its last name where none is on disk). */
+  const nv = (h3) => ({ modelsDir: "/nowhere", modelsAlso: [], video: { engine: "h3", engines: { h3: { ...H3_FOUR, ...h3 } } } });
+  const H3_ROW_ONLY = nv({ turboLora: LORAS.fl2v8, turboLora4: LORAS.fl2v8, turboLora3: LORAS.fl2v4, refTurboLora: LORAS.fl2v8, refTurboLora4: LORAS.fl2v4,
+    turboBuilds: { three: false, four: false, eight: true }, plainBuilds: { three: false, four: false, eight: true }, refBuilds: { four: false, eight: true },
+    stepDefaults: { fast: 8, standard: 8, best: 20 }, steps: 8 });
+  const EIGHT_FOUR = nv({ turboLora: LORAS.fl2v8, turboLora4: LORAS.fl2v4, turboLora3: LORAS.fl2v4, refTurboLora: LORAS.fl2v8, refTurboLora4: LORAS.fl2v4,
+    turboBuilds: { three: false, four: true, eight: true }, plainBuilds: { three: false, four: true, eight: true }, refBuilds: { four: true, eight: true },
+    stepDefaults: { fast: 4, standard: 8, best: 20 }, steps: 8 });
+  const DISKS = new Map([[H3_ROW_ONLY, [LORAS.fl2v8]], [EIGHT_FOUR, [LORAS.fl2v8, LORAS.fl2v4]]]);
+  const on = (cfg) => (n) => DISKS.get(cfg).includes(n);
+  const four = L.speedUpCheck({ engine: "h3", steps: 4, refs: false }, { cfg: H3_ROW_ONLY, onDisk: on(H3_ROW_ONLY) });
+  assert.deepEqual([four.problem, four.needsModel, four.loads], ["missing", "videoH3Turbo4", LORAS.fl2v8], "4 on the H3 row alone: said before accepting");
+  assert.match(four.why, new RegExp(`at 4 steps without reference pictures, which needs H3's 4-step speed-up \\(1\\.96 GB\\), and it is not on this PC, so the render would be refused\\. Download it from the Models screen \\(“${label("videoH3Turbo4").replace(/[()]/g, "\\$&")}”\\)`));
+  const three = L.speedUpCheck({ engine: "h3", steps: 3, refs: false }, { cfg: H3_ROW_ONLY, onDisk: on(H3_ROW_ONLY) });
+  assert.deepEqual([three.problem, three.needsModel], ["missing", "videoH3Turbo3Small"], "3 names TaoMate, the file the runner asks for");
+  assert.match(three.why, /which needs the TaoMate 3-step speed-up \(182 MB\)/);
+  const threeWithFour = L.speedUpCheck({ engine: "h3", steps: 3, refs: false }, { cfg: EIGHT_FOUR, onDisk: on(EIGHT_FOUR) });
+  assert.deepEqual([threeWithFour.problem, threeWithFour.needsModel], ["missing", "videoH3Turbo3Small"], "and so with the 4-step file on disk");
+  assert.equal(L.speedUpCheck({ engine: "h3", steps: 8, refs: false }, { cfg: H3_ROW_ONLY, onDisk: on(H3_ROW_ONLY) }).problem, null, "8 renders, quiet");
+  /* One rule on both sides of the accept: the card is "missing" exactly where
+   * the runner refuses, and names the same row, at every count and path. */
+  for (const cfg of [H3_ROW_ONLY, EIGHT_FOUR]) {
+    for (const refs of [false, true]) {
+      for (let steps = 2; steps <= 20; steps++) {
+        const card = L.speedUpCheck({ engine: "h3", steps, refs }, { cfg, onDisk: on(cfg) });
+        const runner = clipSpeedupNeeded({ engine: "h3", steps, ...(refs ? { refImages: ["cast.png"] } : {}) }, cfg);
+        if (runner) assert.deepEqual([card.problem, card.needsModel], ["missing", runner.row], `${steps}${refs ? " with pictures" : ""}`);
+        else assert.equal(card.needsModel, undefined, `${steps}${refs ? " with pictures" : ""}: the runner renders it`);
+      }
+    }
+  }
+  /* AMD and Intel: config.js makes no per-path reading, and the card is
+   * main's (a file below its count says nothing). The runner refuses only a
+   * file that is not on disk (video-plain.js speedupNeededAtClip), so it is
+   * asked about THIS disk, by name: without `onDisk` it read the real models
+   * folders of the PC running the lane, and passed only where that PC holds
+   * the optional 8-step file (a fresh clone, CI or Bucky's AMD PC without it
+   * failed the gate). */
+  const amd = nv({ ...H3_ROW_ONLY.video.engines.h3, plainBuilds: null, refBuilds: null, turboBuilds: { three: false, four: false, eight: false } });
+  const amdFour = L.speedUpCheck({ engine: "h3", steps: 4, refs: false }, { cfg: amd, onDisk: on(H3_ROW_ONLY) });
+  assert.deepEqual([amdFour.problem, amdFour.needsModel], [null, undefined]);
+  assert.equal(clipSpeedupNeeded({ engine: "h3", steps: 4 }, amd, { onDisk: on(H3_ROW_ONLY) }), null,
+    "the 8-step file it loads at 4 is on this disk: main renders it");
+  assert.equal(clipSpeedupNeeded({ engine: "h3", steps: 4 }, amd, { onDisk: () => false })?.row, "videoH3Turbo4",
+    "and with no file at all it is refused, naming the row (a bug fix on every card)");
 });
 
 test("9: the borrower's note comes from two numbers on the return, and nothing else", () => {

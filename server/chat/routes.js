@@ -61,6 +61,11 @@ import { createFormTools, formIntro, describeScreen, applyScreenPatch } from "./
 import { routedRegistry, ROUTABLE } from "./router.js";
 import { engine as defaultEngine } from "../engine/client.js";
 
+/** How long a chat turn's hold on the engine door outlasts its last model
+ *  call (engine/client.js hold idleMs): a tool that reads the library or sets
+ *  a form is done in milliseconds; one that waits on a render lets it lapse. */
+export const CHAT_HOLD_IDLE_MS = 15_000;
+
 const HELP_ACTOR =
   "This route runs the local model on the shared graphics card and records what it does. "
   + "Send x-aiplay-actor: script:<name> or agent:<name> — a browser is recognised by its "
@@ -365,15 +370,27 @@ export function createChatRoutes(deps = {}) {
         ...(cloudTurn ? { limit: CLOUD_ROUTE_LIMIT } : {}),
       });
       if (turnTools.routed.length) emit({ type: "routed", tools: turnTools.routed });
-      const out = await runTurn({
-        tools: turnTools, engine, model, stopped: () => gone,
-        /* GPU work runs when asked, with a warning and Cancel on the page
-         * (loop.js "GO, WITH A WARNING"). settings.json chatConfirmGpu: true
-         * brings the old ask-first card back. */
-        autoSpend: deps.autoSpend ?? config.chatConfirmGpu !== true,
-        ...(scope === "music" ? { intro: MUSIC_INTRO, context: () => describeForm(form) }
-          : panel ? { intro: formIntro(scope), context: () => describeScreen(form, scope) } : {}),
-      }, session, message, emit);
+      /* ⚠ A HOLD ON THE ENGINE DOOR for a turn on the card (engine/client.js
+       * hold()): its model calls are up to six door runs with a tool between
+       * two, and the fresh-engine restart before an H3 clip (art.js) waits
+       * for runs in flight. A restart in that gap stopped the engine under the
+       * next model call, which the door refused. It lapses after
+       * CHAT_HOLD_IDLE_MS with no run in flight, so a tool that waits for a
+       * picture queued behind the clip that waits for this hold lets the clip
+       * go first. A cloud turn uses no card and holds nothing. */
+      const release = cloudTurn ? null : engine.hold?.("a chat turn", { idleMs: CHAT_HOLD_IDLE_MS });
+      let out;
+      try {
+        out = await runTurn({
+          tools: turnTools, engine, model, stopped: () => gone,
+          /* GPU work runs when asked, with a warning and Cancel on the page
+           * (loop.js "GO, WITH A WARNING"). settings.json chatConfirmGpu: true
+           * brings the old ask-first card back. */
+          autoSpend: deps.autoSpend ?? config.chatConfirmGpu !== true,
+          ...(scope === "music" ? { intro: MUSIC_INTRO, context: () => describeForm(form) }
+            : panel ? { intro: formIntro(scope), context: () => describeScreen(form, scope) } : {}),
+        }, session, message, emit);
+      } finally { if (typeof release === "function") release(); }
       await Promise.allSettled(writes);
       send({ type: "end", ok: out.ok !== false, session: session.id });
     } catch (e) {

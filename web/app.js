@@ -1,5 +1,11 @@
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
+import { mountH3RefMods } from './h3-refmods.js';
+import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
+import { createVectorizer } from './vectorize-controls.js';
+import { mountFullPlayerScore } from './full-player-score.js';
+import { musicBatchIdea } from './music-batch-spec.js';
+var iedVectorizer = null;
 /* AIPLAY Studio — UI.
  *
  * Two things here are load-bearing rather than decorative:
@@ -75,6 +81,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 // in the temporal dead zone throws at module load and kills the whole file.
 // Module-level DOM singletons belong at the top.
 const audio = $("audio");
+const fullPlayerScore = mountFullPlayerScore({audio});
 
 // Disk, in the units people actually think in. Base 1000 to match what Explorer
 // reports for the same folder, so the two never appear to disagree.
@@ -664,15 +671,39 @@ globalThis.aiplayOfferModel = offerModel;
  * Returns false when the reply is not about a missing model.
  */
 function offerModel(r) {
+  /* THE ROW IS INSTALLED, BUT THE RENDERER COULD NOT OPEN A FILE (setF,
+   * 2026-09-26). The video gate says so with `recheck`, naming each file and
+   * the path it looked at. The window opens on that row with "Look again",
+   * which asks the gate again, and the gate looks at the disk before it
+   * answers. Opened as "this needs a download" it showed a row reading
+   * Installed with nothing to press: where a tester's Fix ended. */
+  if (r?.recheck?.capabilityId) {
+    const files = Array.isArray(r.recheck.files) ? r.recheck.files : [];
+    openModelPicker({
+      kind: "auto", focus: r.recheck.capabilityId, recheck: true,
+      title: `Studio cannot open ${files.length === 1 ? "a file" : "files"} ${r.recheck.label || "the video engine"} needs`,
+      lead: files.map((f) => `${f.standIn || f.name}: ${f.reason === "missing" ? "not found" : f.reason} at ${f.path}.`).join(" ")
+        + ` Nothing needs downloading. ${files.length === 1 ? "Put it" : "Put them"} back there, then press Look again.`,
+      onRecheck: (found) => { if (found && typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst"); },
+    });
+    return true;
+  }
   const id = typeof r?.needsModel === "string" ? r.needsModel : r?.needsModel?.id || r?.capability || null;
   if (!id) return false;
   const title = String(r.error || "").split(/(?<=\.)\s/)[0] || "This needs a model";
   if (id === "chatQwen3") { needModel("chat", { title }); return true; }
   if (Object.values(MUSIC_CAP).includes(id)) { needModel("music", { title, focus: id }); return true; }
+  /* A VIDEO GATE REFUSAL (it names configuredEngine) whose download has
+   * finished since (setF): the row turns Installed, and the Video screen's
+   * "Couldn't start" with its Fix stayed, which opened this window on a row
+   * with nothing to press. The installed row gets Look again, as above. */
+  const fromVideoGate = !!r && Object.prototype.hasOwnProperty.call(r, "configuredEngine");
   openModelPicker({
     kind: "auto", focus: id, title,
     lead: r.gated ? "Studio cannot download this one itself. Here is how to get it, and what else does the job."
       : "Download it here, or pick one that fits this machine.",
+    ...(fromVideoGate ? { recheck: true,
+      onRecheck: (found) => { if (found && typeof globalThis.aiplayStartOk === "function") globalThis.aiplayStartOk("vidEst"); } } : {}),
   });
   return true;
 }
@@ -771,6 +802,10 @@ function paintModelMusicPanel() {
       if (c && !c.available && !c.api && c.engine !== "yue2-gguf") {
         $("modelMusicPick").dataset.sig = "";
         paintMusicModelSelect($("modelMusicPick"));
+        if (c.engine === "yue2" && c.runtimeReadiness?.ready === false) {
+          $("modelMusicNote").textContent = c.readinessNote || c.note || "The separate Python kit needs setup.";
+          return;
+        }
         presetPoint(MUSIC_CAP[c.engine]);
         return;
       }
@@ -905,6 +940,10 @@ async function chooseMusicModel(value) {
   if (!c.available && c.engine !== "yue2-gguf") {
     /* Put every picker back on what is really selected, then offer the model. */
     document.querySelectorAll("#musicEngine, #modelMusicPick").forEach((s) => { s.dataset.sig = ""; paintMusicModelSelect(s); s.value = musicModelValue(); });
+    if (c.engine === "yue2" && c.runtimeReadiness?.ready === false) {
+      await appAlert(c.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup.", { title: c.note || "Python kit needs setup" });
+      return;
+    }
     needModel("music", c.api
       ? { title: `${c.label} needs your own key`, lead: `Paste your own key in ${c.keyPlace || "Settings"} (every song asks before it is billed), or pick a model that runs on this machine.`, focus: null }
       : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
@@ -1055,11 +1094,14 @@ function musicEnginePaint() {
    * this is the sentence, not the enforcement. */
   const noPath = eng.renderPath === false;
   const nativeReady = eng.runtime === "audiocpp" && nativeMusicReady(eng);
+  const pythonNotReady = eng.runtime === "python" && eng.ready === false;
   const warn = $("musicEngineWarn");
   if (warn) {
-    warn.hidden = !noPath && !(eng.runtime === "audiocpp" && !nativeReady);
+    warn.hidden = !noPath && !pythonNotReady && !(eng.runtime === "audiocpp" && !nativeReady);
     warn.textContent = eng.runtime === "audiocpp" && !nativeReady
       ? `${ggufPrecisionLabel()} is not ready. Review its optional runtime and weights below; selecting it does not download anything.`
+      : pythonNotReady
+      ? eng.readinessNote || "Choose YuE2 (ComfyUI), or finish the separate Python kit setup."
       : noPath
       ? `${eng.label} cannot render from the Create button yet — it works through its own `
         + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
@@ -1075,8 +1117,11 @@ function musicEnginePaint() {
      * STARTING… — caught in review before it shipped. The painter may add a
      * reason to disable; it may not remove one it does not own. */
     /* RunPod GPU mode (state.remoteOnly): the queue renders on the Pod. */
-    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady : !state.engineReady && !state.remoteOnly);
-    create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
+    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady
+      : eng.runtime === "python" && typeof eng.ready === "boolean" ? !eng.ready
+      : !state.engineReady && !state.remoteOnly);
+    create.title = pythonNotReady ? warn?.textContent || "The separate Python kit needs setup."
+      : noPath ? `${eng.label} has no render path from this button yet.` : "";
   }
 
   /* Controls only one engine can honour. These ids were READ OUT OF THE LIVE
@@ -1152,6 +1197,7 @@ function musicEnginePaint() {
   if (typeof paintHumRows === "function") paintHumRows(false);
   if (typeof paintPlanDial === "function") paintPlanDial();
   // The receipt's rights word for this engine (web/receipt.js reads it off the picker).
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
   if (typeof paintMusicRights === "function") paintMusicRights();
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
@@ -1644,8 +1690,20 @@ function applySimple(on) {
  * on purpose: onLevel may call back at once, and setSimple's lets must exist. */
 let musicModeTouched = false;
 $("modeSeg")?.addEventListener("click", () => { musicModeTouched = true; });
+/* ADVANCED ONLY while the server says so (server/welcome/level.js
+ * advancedOnly: the launcher's RunPod GPU mode). Simple is off and says why,
+ * and no news, a Home card's included, opens it. */
+const musicSimpleTip = $("modeSimple")?.title || "";
+function musicLock(only) {
+  const locked = !!only?.screens?.includes("create");
+  const b = $("modeSimple");
+  if (b) { b.disabled = locked; b.title = locked ? only.why : musicSimpleTip; }
+  if (locked && state.simple) setSimple(false, true);
+  return locked;
+}
 onLevel((n) => {
   if ($("modeAdv") && n.advancedAdds?.create) $("modeAdv").title = n.advancedAdds.create;
+  if (musicLock(n.advancedOnly)) return;
   if (n.view && n.view !== "create") return;
   if (n.boot && musicModeTouched) return;
   if (!!n.simple !== !!state.simple) setSimple(!!n.simple, true);
@@ -2191,6 +2249,7 @@ function attachHelp() {
 async function openFullPlayer() {
   const file = state.playingFile;
   const t = (state.library || []).find((x) => x.file === file);
+  fullPlayerScore.setTrack(t);
   // Nothing playing yet — leave the panel open but empty rather than silently
   // ignoring the click, which reads as a broken button.
   if (!t) {
@@ -2229,6 +2288,7 @@ function setFullPlayer(open) {
   $("pExpand").title = open ? "Close the full player" : "Open the full player";
   $("pExpand").setAttribute("aria-expanded", String(open));
   if (open) openFullPlayer();
+  fullPlayerScore.setOpen(open);
 }
 $("pExpand").onclick = () => setFullPlayer($("fullPlayer").hidden);
 $("fpClose").onclick = () => setFullPlayer(false);
@@ -3034,6 +3094,20 @@ $("melodyUseYue")?.addEventListener("click", async () => {
 
 /* ── the YuE2 LoRA picker (Melody & score, ComfyUI engine only) ──────────── */
 let musicLoraShelfKey = null;
+let musicStyleAdapterShelf = [];
+const yueStyleAdapters = mountYue2StyleAdapters({
+  getState: () => state, getAdapters: () => [...(state.models?.capabilities || []), ...musicStyleAdapterShelf],
+  onSelect: async (patch) => {
+    const result = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "style-adapter", value: patch.lora }) })).json();
+    if (result.error) throw new Error(result.error);
+    state.musicYue2Lora = patch.lora; state.musicYue2LoraClip = patch.loraClip;
+    if (patch.loraStrength !== undefined) state.musicYue2LoraStrength = patch.loraStrength;
+    if (patch.loraClipStrength !== undefined) state.musicYue2LoraClipStrength = patch.loraClipStrength;
+  },
+  onChange: () => { if (typeof paintPlanDial === "function") paintPlanDial(); },
+  onError: (error) => { if ($("yLoraShelf")) $("yLoraShelf").textContent = error.message; },
+});
 async function musicLoadLoras(force = false) {
   const sel = $("yLora");
   if (!sel) return;
@@ -3045,6 +3119,9 @@ async function musicLoadLoras(force = false) {
     const d = await (await fetch(`/api/loras${ck ? `?for=${encodeURIComponent(ck)}` : ""}`)).json();
     rows = (d.loras || []).filter((l) => l.isLora);
   } catch { rows = []; }
+  musicStyleAdapterShelf = rows.filter(row => row.styleAdapter).map(row => ({
+    styleAdapter: row.styleAdapter, installed: true, discovered: true,
+  }));
   const fit = (l) => l.fits?.fit || "unknown";
   const chosen = state.musicYue2Lora || "";
   sel.innerHTML = '<option value="">none</option>' + rows.map((l) => {
@@ -3086,6 +3163,7 @@ async function musicLoadLoras(force = false) {
       if ($("yLoraClipStrengthValue")) $("yLoraClipStrengthValue").textContent = Number(state.musicYue2LoraClipStrength).toFixed(2);
     }
   }
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
 }
 async function musicSavePlannerLora() {
   const value = $("yLoraClip")?.value || "";
@@ -3404,11 +3482,20 @@ async function generate(preview, mixSeed) {
    * new audio and no message. A re-roll (mixSeed set) keeps the seed on purpose. */
   if (!state.seedLocked && mixSeed == null) $("seed").value = Math.floor(Math.random() * 4294967296);
   musicOutcomeMsg = null;   // a new Create replaces the last song's warning
+  musicOutcomeJob = null;
+  if ($("musicOutcomeDetails")) $("musicOutcomeDetails").hidden = true;
   let spec;
   try { spec = currentSpec(preview, mixSeed); }
   catch (error) { alert(error.message); return; }
   if (spec.engine === "yue2-gguf" && !nativeMusicReady(state.musicEngines?.[spec.engine])) {
     alert(`${ggufPrecisionLabel()} is not ready. Review its optional setup before generating.`);
+    return;
+  }
+  const chosenEngine = state.musicEngines?.[spec.engine || state.musicEngine];
+  if (chosenEngine?.runtime === "python" && chosenEngine.ready === false) {
+    if (typeof globalThis.aiplayStartFailed === "function") globalThis.aiplayStartFailed("ctaNote", {
+      error: chosenEngine.readinessNote || "The separate Python kit needs setup.",
+    });
     return;
   }
   if (!spec.caption.trim()) { $("caption").focus(); return; }
@@ -3460,7 +3547,9 @@ async function generate(preview, mixSeed) {
   } finally {
     setTimeout(() => {
       const eng = (state.musicEngines || {})[state.musicEngine];
-      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng) : !state.engineReady && !state.remoteOnly;
+      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng)
+        : eng?.runtime === "python" && typeof eng.ready === "boolean" ? !eng.ready
+        : !state.engineReady && !state.remoteOnly;
     }, 400);
   }
 }
@@ -3479,20 +3568,31 @@ for (const b of document.querySelectorAll("[data-n]")) {
 }
 
 // Send the current prompt to the overnight list instead of rendering it now.
+function ovMusicIdea() {
+  const spec = currentSpec(false);
+  const idea = musicBatchIdea(spec, spec.engine || state.musicEngine || "minimax-music3");
+  if (idea.engine === "yue2-comfy" && state.musicYue2Checkpoint) idea.checkpoint = state.musicYue2Checkpoint;
+  // The exact text is part of YuE2 conditioning, including trailing spaces.
+  if (idea.abc !== undefined && $("yAbcUse")?.checked) idea.abc = $("yAbc").value;
+  return idea;
+}
 $("btnToOvernight").onclick = () => {
   const caption = captionValue().trim();
   if (!caption) { $("caption").focus(); return; }
-  const instrumental = state.mode === "instrumental";
-  ov.ideas.push({
-    title: $("title").value.trim() || "Untitled",
-    caption,
-    lyrics: instrumental ? $("scaffold").value : $("lyrics").value.trim(),
-    instrumental,
-    maxDuration: +$("maxDur").value,
-  });
+  let idea;
+  try { idea = ovMusicIdea(); }
+  catch (err) { $("ctaNote").textContent = err.message; return; }
+  if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  if (ov.ideas.length >= 40) { $("ctaNote").textContent = "The batch has 40 ideas. Remove one before adding another."; return; }
+  ov.ideas.push(idea);
   ovRender();
   $("ctaNote").textContent =
-    `Added to the overnight list — ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} queued. Set takes and start it in Overnight.`;
+    `Added to batch. ${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""} ready.`;
+  setView("overnight");
+};
+$("btnMusicBatch").onclick = () => {
+  if (ov.kind !== "music") { ovSaveIdeas(); ov.kind = "music"; ovLoadIdeas(); ovSetKind("music"); }
+  setView("overnight");
 };
 
 $("btnCreate").onclick = () => (xt.file ? runExtend() : generate(false));
@@ -3646,12 +3746,19 @@ function musicWarningHtml(track, compact = false) {
   const warnings = Array.isArray(track?.warnings)
     ? track.warnings.filter((w) => w && typeof w.message === "string" && w.message.trim()).slice(0, 5)
     : [];
+  /* Score capture or PDF engraving can fail after the audio has succeeded.
+   * Keep this scoped to the score, alongside existing per-take warnings. */
+  if (typeof track?.scoreWarning === "string" && track.scoreWarning.trim())
+    warnings.push({ code: "score_unavailable", message: track.scoreWarning });
   if (!warnings.length) return "";
   if (compact) {
-    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending" : "Check take";
+    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending"
+      : warnings.some((w) => w.code === "score_unavailable") ? "Check score" : "Check take";
     return `<button type="button" class="badge generation-warning" data-info="${encodeURIComponent(track.file)}" title="${esc(warnings.map((w) => w.message).join("\n"))}">${label}</button>`;
   }
-  return warnings.map((w) => `<p>${esc(w.message)}</p>`).join("");
+  return warnings.map((w) => w.code === "score_unavailable"
+    ? `<p title="${esc(w.message)}">${track.scoreSlug ? "Sheet music needs attention." : "Sheet music unavailable."}</p>`
+    : `<p>${esc(w.message)}</p>`).join("");
 }
 
 /**
@@ -3709,10 +3816,28 @@ function renderQueue(s) {
     rest += n * (a.stats?.[kind]?.avg ?? KIND_FALLBACK[kind] ?? 180);
   }
   const run = s.run;
+  const scheduledBatch = run?.state === "scheduled" && Number.isFinite(run.startAt);
+  if (scheduledBatch) {
+    const at = new Date(run.startAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    waiting.push(`batch scheduled ${at}`);
+    if (!now && waiting.length === 1) {
+      renderQueue.emptyAt = 0;
+      box.hidden = false;
+      box.classList.add("resting");
+      $("wbState").textContent = "scheduled";
+      $("wbEta").textContent = at;
+      $("wbNow").textContent = run.name || "Batch";
+      $("wbRest").hidden = false;
+      $("wbRest").textContent = `${run.total || 0} planned`;
+      wbLine("batch scheduled", clock(run.startAt), false);
+      if ($("wbStrip")) $("wbStrip").title = `Batch scheduled ${at}. Open for the queue and controls.`;
+      return;
+    }
+  }
   if (run && (run.state === "running" || run.state === "paused")) {
     const left = Math.max(0, (run.total || 0) - (run.done || 0));
     const kind = run.kind === "image" ? "picture" : run.kind === "video" ? "clip" : "song";
-    waiting.push(`overnight: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
+    waiting.push(`batch: ${left} ${kind}${left === 1 ? "" : "s"}${run.state === "paused" ? ", paused" : ""}`);
     rest += Number(run.secondsLeft) || 0;
   }
 
@@ -4296,7 +4421,7 @@ function rowHtml(j) {
                Both halves are still required: the sheet route resolves a
                version id, so a row that knows its score but not a version
                gets no menu items rather than broken ones. */
-            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet — open it from the ⋯ menu">♪</span>' : ""}
+            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet. Open Score in the full player.">♪</span>' : ""}
           ${/* What is being made FOR THIS TRACK right now.
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
@@ -4453,7 +4578,7 @@ function openRowMenu(file, anchor) {
   m.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
 }
 
-/* ── community — advertising, not the draw ────────────── */
+/* ── community sessions ──────────────────────────────── */
 /* Hidden entirely when the feed is empty. "0 sessions live" advertises exactly
  * the wrong thing for a community that is still small. */
 
@@ -4484,6 +4609,11 @@ async function loadCommunity() {
   const soon = (feed?.parties || []).length;
   state.commLive = live;
   $("commPip").hidden = !live;
+  if ($("commRailStatus")) $("commRailStatus").textContent = live
+    ? `${live} live${soon ? ` · ${soon} soon` : ""}`
+    : soon ? `${soon} starting soon` : "Sessions & challenges";
+  const communityLink = document.querySelector('.nav [data-view="community"]');
+  if (communityLink) communityLink.title = `Community sessions${live ? `: ${live} live` : soon ? `: ${soon} starting soon` : ""}`;
 
   // The condensed banner, shown on the working views only. Leads with the
   // challenge if there is one, because that is the item that gives someone a
@@ -6142,7 +6272,7 @@ function cbConfirm({ title, body, yes }) {
  * asks the Workflow view to open that project (web/mv.js listens) and goes
  * there. */
 /* ⚠ A SCREEN IS NAMED BY THE RAIL'S OWN LABEL, NEVER BY A WORD TYPED HERE.
- * The agreed UI plan relabels rail entries (Workflow is to read "Music video"),
+ * The rail names the multipurpose workflow screen "Production",
  * and every sentence in this section that says where to go reads the label
  * off the rail itself, so a relabel reaches them all. `fallback` is only for a
  * page with no rail (a test's fake DOM). The server's sentences use one
@@ -6154,7 +6284,7 @@ function cbScreen(view, fallback) {
     return text || fallback;
   } catch { return fallback; }
 }
-/* The static hints carry <b data-screen="workflow">Workflow</b>: filled from
+/* The static hints carry <b data-screen="workflow">Production</b>: filled from
  * the rail on every Collab paint, so the markup and the rail cannot disagree. */
 function cbFillScreens() {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
@@ -7427,7 +7557,7 @@ async function paintErrands() {
       <span class="meta">seed ${esc(String(o.order?.seed ?? "?"))} · ${esc(String(o.order?.steps ?? "?"))} steps · ${esc(o.order?.engineMode || "?")}</span>
       <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "landed")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}${o.planId ? ` · plan ${esc(o.planId)}` : ""}</span>
-      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Workflow"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Workflow"))}</button>` : ""}
+      ${o.slug ? `<button class="btn sm ghost cbopenplan" type="button" title="${esc(cbScreen("workflow", "Production"))} → this project → the Plan card. Nothing renders until you approve it there.">Open its plan in ${esc(cbScreen("workflow", "Production"))}</button>` : ""}
       ${o.state === "rendered" ? "" : '<button class="btn sm cbsend" type="button">Send the take back</button>'}
     </div>`).join("");
 }
@@ -7610,7 +7740,7 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
   if (r.overridable === true && Array.isArray(r.overrides) && r.overrides.length) {
     const go = await cbConfirm({
       title: "Accept anyway?",
-      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Workflow")}.`,
+      body: `${r.overrides.map((o) => o.why).join(" ")} Accepting still renders nothing until you approve its plan in ${cbScreen("workflow", "Production")}.`,
       yes: "Accept anyway",
     });
     if (!go) {
@@ -7620,7 +7750,7 @@ $("cbAcceptYes")?.addEventListener("click", async () => {
     if (card?.dataset.armed !== file) { cbSay("That is not the file whose prompt you just read. Press “Show me exactly what they want” again for this one."); disarmCollab(); return; }
     r = await cb({ action: "accept", file, seen: true, anyway: true });
   }
-  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Workflow")}” under “What you agreed to render for friends”.`);
+  cbSay(r.error || r.note || `Accepted. Nothing renders until you approve its plan: “Open its plan in ${cbScreen("workflow", "Production")}” under “What you agreed to render for friends”.`);
   if (!r.error) disarmCollab();
   await refreshCollab();
 });
@@ -8271,8 +8401,9 @@ async function loadModels() {
    * before Music-only narrows the list below. */
   rightsCatalogCache = Object.fromEntries(d.capabilities.map((c) => [c.id, c]));
   // Music-only lists the two YuE2 builds it can run: native GGUF, and the ComfyUI checkpoint.
-  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy");
+  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy" || c.styleAdapter);
   state.models = d;
+  if (typeof yueStyleAdapters !== "undefined") yueStyleAdapters?.refresh();
   /* WHETHER YOU MAY SELL WHAT IT MAKES, on the card itself: the same chip a
    * song and a picture carry, opening the licence's own words. A tester read
    * a card's note pointing at "the rights chip" and found none on it. */
@@ -8546,47 +8677,59 @@ function vidWH() {
   return ($("vidSize").value || "1280x704").split("x").map(Number);
 }
 
-/* THE QUALITY CHIPS' STEP COUNTS, as the server resolved them from the disk
- * (config.js, the step-defaults block after `config`; /api/status sends them
- * as stepDefaults). Standard is 8 only where both 8-step turbo files are on
- * disk, else 4, and Fast is 3 only where the TaoMate build is, else the 4-step
- * build. A literal 8 here opened a Models-screen install, which has the 4-step
- * files alone, on a 4-step LoRA run at 8 steps. The fallbacks serve an engine
- * that sends none (LTX, which hides the chips): 4 is matched on every disk
- * that has any H3 turbo file.
+/* THE QUALITY CHIPS' STEP COUNTS ARE THE SERVER'S, as it sends them per
+ * engine (`chips`, server/video-plain.js qualityChips): the same numbers
+ * make_clip's `quality` sends, so the chips and the tool cannot disagree.
+ * The page used to keep its own (Fast 3, Standard 8 or 4) beside the
+ * server's, and on some disks they named different counts. Plain: Fast is
+ * TaoMate's 3, Standard the 8-step file's 8 (the 4-step file's 4 where only
+ * it is on disk), Best the bare 20. KEEPING A CHARACTER (a saved character,
+ * reference pictures or a RefMod on H3): Standard is the reference build's
+ * own count (the REWIND A/B kept its character on that build at that count,
+ * 2026-09-24), Fast the count the reference path really runs for Fast (the
+ * TaoMate 3-step build takes no pictures); where that is Standard's count,
+ * Fast hides as two chips doing one thing. Each chip's `needsModel` is the
+ * Models row its file needs first (vidPaint dims it and a press offers it).
  *
- * KEEPING A CHARACTER (a saved character or reference pictures on H3),
- * Standard is the reference build's own count instead, the server's
- * `referenceSteps` (8 where the 8-step reference file is on disk): the REWIND
- * A/B kept its character on that build at that count (2026-09-24). Fast is
- * the count the reference path really runs for Fast, the server's
- * `keepFast.steps` (the TaoMate 3-step build takes no pictures, so the
- * reference build loads at its own count); where that is Standard's count,
- * Fast hides as two chips doing one thing. */
+ * A status without chips (LTX, which hides the chips; AMD, Intel and the CPU,
+ * where the page keeps main's chips, Bucky's rule) falls back to the
+ * engine's own defaults: stepDefaults, `referenceSteps` and
+ * `keepFast.steps`, as config.js resolved them from the disk. That is also
+ * vidDefaultSteps below, and it is self-contained on purpose: the tests lift
+ * this function out of the page and run it alone. */
 function vidQualitySteps(eng, keeping = false) {
+  const c = eng?.chips?.[keeping ? "keep" : "plain"];
+  const n = (chip) => Number(chip?.steps) || 0;
+  if (n(c?.fast) && n(c?.standard) && n(c?.best)) return { fast: n(c.fast), standard: n(c.standard), best: n(c.best) };
   const d = eng?.stepDefaults || {};
   const standard = (keeping && Number(eng?.referenceSteps)) || Number(d.standard) || 4;
   const fast = (keeping ? Number(eng?.keepFast?.steps) : Number(d.fast)) || standard;
   return { fast, standard, best: Number(d.best) || 20 };
 }
 
+/* THE ENGINE'S OWN DEFAULT COUNTS: what a render that names no count runs,
+ * and where the slider opens. Standard there is 8 or 4 where that speed-up
+ * is on disk, else the bare model's 20, while the Standard CHIP on such a
+ * disk is the 8-step file's 8, dimmed with its download offered. */
+function vidDefaultSteps(eng, keeping = false) {
+  const { chips, ...defaults } = eng || {};
+  return vidQualitySteps(defaults, keeping);
+}
+
 /* H3'S SPEED-UPS ARE OPTIONAL ADD-ONS (models.js, addonFor "video"): 3 steps
  * is TaoMate, 4 steps the 4-step file, 6 to 12 the 8-step file, and 13 and up
  * the bare model, which needs none. The server refuses a step count whose
- * file is missing and offers its download (video-plain.js speedupNeeded);
- * this is the same rule, so the page can offer it first. Null when nothing
- * is missing, else { build, row }. */
+ * file is missing and offers its download (video-plain.js speedupNeeded),
+ * and sends that rule's answer for every count, per path (`speedupNeeds`,
+ * speedupTable): the page looks it up, so it says a missing speed-up while
+ * the slider sits on it and offers it before a render, with no copy of the
+ * rule of its own (it kept one, which judged both paths by one reading). Null
+ * when nothing is missing, else { build, row }. */
 const VID_SPEEDUP_ROWS = { 3: "videoH3Turbo3Small", 4: "videoH3Turbo4", 8: "videoH3Turbo8" };
+const VID_ROW_BUILD = Object.fromEntries(Object.entries(VID_SPEEDUP_ROWS).map(([b, row]) => [row, Number(b)]));
 function vidSpeedupNeed(eng, steps, hasRefs) {
-  const tb = eng?.turboBuilds;
-  const n = Number(steps);
-  if (!tb || eng.fixedSteps || !Number.isFinite(n) || n > (eng.turboMaxSteps ?? 12)) return null;
-  const build = hasRefs ? (n <= (eng.turbo4MaxSteps ?? 5)
-    ? (tb.four ? null : 4) : (tb.eight ? null : 8))
-    : n <= (eng.turbo3MaxSteps ?? 3) ? (tb.three ? null : 3)
-    : n <= (eng.turbo4MaxSteps ?? 5) ? (tb.four ? null : 4)
-    : (tb.eight ? null : 8);
-  return build ? { build, row: VID_SPEEDUP_ROWS[build] } : null;
+  const row = eng?.speedupNeeds?.[hasRefs ? "refs" : "plain"]?.[Number(steps)] || null;
+  return row ? { build: VID_ROW_BUILD[row] ?? null, row } : null;
 }
 /** The words for a missing speed-up, and the model window on its row. */
 const vidSpeedupWords = (b) => b === 3 ? "TaoMate (182 MB)" : "the " + b + "-step speed-up (1.96 GB)";
@@ -8596,6 +8739,7 @@ function vidOfferSpeedup(build) {
 }
 
 function vidPaint() {
+  if (typeof h3RefModPanel !== "undefined") h3RefModPanel?.paint();
   const on = !!state.video?.enabled;
   /* RunPod GPU mode (web/runpod-integrated.js): the clip renders on the Pod. */
   const remote = $("vidRenderWhere")?.value === "runpod";
@@ -8609,20 +8753,40 @@ function vidPaint() {
    * what shows before that status lands. */
   if (!state.vidStepsOpened && eng.stepDefaults) {
     state.vidStepsOpened = true;
-    $("vidSteps").value = String(vidQualitySteps(eng).standard);
+    $("vidSteps").value = String(vidDefaultSteps(eng).standard);
   }
 
   /* KEEP MY CHARACTER: a saved character or reference pictures on H3. The
    * slider follows Standard across the switch only when it sits on the old
    * Standard; a count the person chose stays theirs, and the server's
    * "steps-measured" note says what the character was measured at. Every name
-   * here is optional-chained: vidPaint's lines are lifted and run alone. */
-  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0);
+   * here is optional-chained: vidPaint's lines are lifted and run alone.
+   * A reference song alone counts where the server sends the chips (`chips`:
+   * NVIDIA and a card nobody could read): it puts the render on the reference
+   * path and its count too (video-plain.js videoPlan), and make_clip sends the
+   * kept character's chips for ref_song, so the page draws the same ones. On
+   * AMD, Intel and the CPU the page reads it as main did. */
+  const keeping = cur === "h3" && (!!$("vidCharacter")?.value || (state.refImages || []).length > 0 || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length) || (!!eng?.chips && (state.refAudios || []).length > 0));
   if (eng.stepDefaults && state.vidKeeping !== undefined && state.vidKeeping !== keeping) {
-    const was = vidQualitySteps(eng, state.vidKeeping).standard, now = vidQualitySteps(eng, keeping).standard;
+    const was = vidDefaultSteps(eng, state.vidKeeping).standard, now = vidDefaultSteps(eng, keeping).standard;
     if (+$("vidSteps").value === was && was !== now) $("vidSteps").value = String(now);
   }
   state.vidKeeping = keeping;
+  /* THE DEFAULT MOVED UNDER THE SLIDER. A speed-up that lands while Studio
+   * runs moves the engine's own default (config.js refreshVideoPicks: the H3
+   * row's 8-step file takes Standard from the bare 20 to 8), and the Standard
+   * chip follows at once, but the slider opened once and stayed on 20: Best
+   * read as pressed, and Make clip sent 20, the bare model at about 2.4x the
+   * time, until the person pressed Standard or reloaded (review of the port,
+   * 2026-10-08, the tester's own path). So while the slider still sits on the
+   * default it last showed, for this engine and this Keep state, it follows the
+   * new one; a count the person chose stays theirs. */
+  if (eng.stepDefaults) {
+    const std = vidDefaultSteps(eng, keeping).standard;
+    if (state.vidStdShown != null && state.vidStdFor === cur && state.vidStdKeep === keeping
+        && std !== state.vidStdShown && +$("vidSteps").value === state.vidStdShown) $("vidSteps").value = String(std);
+    state.vidStdShown = std; state.vidStdFor = cur; state.vidStdKeep = keeping;
+  }
 
   // Painted once; after that the select is left alone so it cannot fight a change.
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
@@ -8708,22 +8872,34 @@ function vidPaint() {
     qRow.hidden = noSteps;
     const qs = vidQualitySteps(eng, keeping);
     const stNow = +$("vidSteps").value;
-    /* Optional speed-ups: Fast is TaoMate's 3 steps and Standard the 8-step
-     * file (the 4-step one where only it is on disk). A chip whose file is
-     * missing stays in place, dimmed, and a press offers the download
-     * (data-get) instead of choosing it. Best needs nothing. While a character
-     * is kept the reference path's own numbers stand (vidQualitySteps). */
+    /* Optional speed-ups: a chip whose file is missing stays in place,
+     * dimmed, and a press offers the download (data-get, its Models row)
+     * instead of choosing it. Which chip needs which file is the server's too
+     * (the chip's needsModel), the plain chips' and a kept character's alike,
+     * so a kept chip whose file is missing is dimmed as well (it was lit, and
+     * the server refused it). Best needs nothing.
+     * AMD, INTEL AND THE CPU: the server sends no chips there (video-plain.js
+     * qualityChips, Bucky's rule), and the page draws main's, exactly: Fast
+     * is TaoMate's 3 and Standard the 8-step file's 8 (the 4-step one's 4
+     * where only it is on disk), dimmed by its both-paths reading
+     * (turboBuilds); while a character is kept, the server's own numbers. */
     const tb = keeping ? null : eng.turboBuilds;
-    if (tb) {
-      qs.fast = 3;
-      qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+    const chipOf = eng.chips?.[keeping ? "keep" : "plain"];
+    let getFor;
+    if (chipOf) {
+      getFor = { fast: chipOf.fast?.needsModel || null, standard: chipOf.standard?.needsModel || null, best: chipOf.best?.needsModel || null };
+    } else {
+      if (tb) {
+        qs.fast = 3;
+        qs.standard = tb.eight ? 8 : tb.four ? 4 : 8;
+      }
+      getFor = { fast: tb && !tb.three ? VID_SPEEDUP_ROWS[3] : null, standard: tb && !tb.eight && !tb.four ? VID_SPEEDUP_ROWS[8] : null, best: null };
     }
-    const getFor = { fast: tb && !tb.three ? 3 : null, standard: tb && !tb.eight && !tb.four ? 8 : null, best: null };
     for (const b of qRow.querySelectorAll("[data-vq]")) {
       const want = qs[b.dataset.vq];
       const get = getFor[b.dataset.vq];
       b.classList.toggle("off", !!get);
-      if (get) b.dataset.get = String(get); else delete b.dataset.get;
+      if (get) b.dataset.get = get; else delete b.dataset.get;
       b.setAttribute("aria-pressed", !get && stNow === want ? "true" : "false");
       const small = b.querySelector("small");
       if (small) small.textContent = want + " steps";
@@ -8734,11 +8910,11 @@ function vidPaint() {
      * While a character is kept it is the server's keepFast note instead: the
      * TaoMate claim is about the text path, which a kept character never takes.
      * A speed-up that is not on disk says so, and a press offers it. */
-    const getTitle = (g) => "Needs " + vidSpeedupWords(g) + ", an optional add-on. Click to get it.";
-    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(3) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
+    const getTitle = (row) => "Needs " + vidSpeedupWords(VID_ROW_BUILD[row]) + ", an optional add-on. Click to get it.";
+    $("vidQFast").title = keeping ? (eng.keepFast?.note || build(qs.fast)) : getFor.fast ? getTitle(getFor.fast) : ((qs.fast === 3 && eng.fastNote) || build(qs.fast));
     qRow.querySelector('[data-vq="standard"]').title = keeping
       ? (qs.standard === 8 ? "The 8-step reference build, at its own count" : "The " + qs.standard + "-step reference build, at its own count")
-      : getFor.standard ? getTitle(8) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
+      : getFor.standard ? getTitle(getFor.standard) : build(qs.standard) + (qs.standard === 8 ? "" : ": the 8-step file is not on this disk");
     /* Where Fast would be the same number as Standard it is two chips doing
      * one thing, lit together. With the speed-ups known (turboBuilds) Fast is
      * always TaoMate's 3, dimmed when it is missing, so it always shows. */
@@ -8788,7 +8964,7 @@ function vidPaint() {
   if ($("vidAskFriend")) {
     const h3Job = cur === "h3";
     $("vidAskFriend").disabled = !h3Job;
-    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow";
+    const wfName = typeof cbScreen === "function" ? cbScreen("workflow", "Production") : "Production";
     $("vidAskFriend").title = h3Job
       ? `Send a signed 20-step H3 text-to-video job for a friend to review and render. For scenes with pictures, use ${wfName} → Video clips → Ask friend.`
       : "Friend render jobs currently use MiniMax H3. Select H3 to ask a friend.";
@@ -8906,7 +9082,8 @@ function vidPaint() {
    * loraSteps) names no build and warns about none. */
   /* A kept character counts: a saved character's pictures ride on the
    * reference path too, so its files are the ones that load. */
-  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+  const hasRefs = keeping || ((state.refImages || []).length + (state.refAudios || []).length) > 0
+    || (typeof h3RefModPanel !== "undefined" && !!h3RefModPanel?.spec().refMods?.length);
   /* LTX and a fixed-schedule engine (FastH3, eng.fixedSteps) load no turbo
    * build, so they name no path and warn about none. */
   const fixedPath = cur === "ltx" || !!eng.fixedSteps;
@@ -8970,7 +9147,7 @@ if ($("vidAttn")) {
 for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
   b.onclick = () => {
     /* A dimmed chip is an optional speed-up that is not on disk: offer it. */
-    if (b.dataset.get) { vidOfferSpeedup(Number(b.dataset.get)); return; }
+    if (b.dataset.get) { vidOfferSpeedup(VID_ROW_BUILD[b.dataset.get]); return; }
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
     // The same numbers the chips are lit and labelled by: the server's.
     const steps = vidQualitySteps(eng, !!state.vidKeeping)[b.dataset.vq];
@@ -9786,7 +9963,15 @@ async function enableVideo() {
   return !!state.video.enabled;
 }
 
+const h3RefModPanel = mountH3RefMods($("vidH3Extras"), {
+  getEngine: () => $("vidEngine").value || state.video?.engine || "h3",
+  getImages: () => state.refImages || [], onChange: () => vidPaint(),
+});
+globalThis.aiplayH3Extras = () => h3RefModPanel.spec();
+
 function videoFriendRecipe() {
+  if (typeof globalThis.aiplayH3Extras === "function" && Object.keys(globalThis.aiplayH3Extras()).length)
+    throw new Error("Clear reference caches and tweaks before sending this text-only recipe.");
   const recipeEngine = state.video?.engine || "ltx";
   if (!recipeEngineOk(recipeEngine)) throw new Error(recipeEngineRefusal());
   const [width,height]=vidWH();
@@ -9795,7 +9980,7 @@ function videoFriendRecipe() {
    * a person holding reference pictures was told to remove them and nothing
    * else — while Workflow's Ask friend packs a scene with its pictures. */
   if ($("vidFrom").value || $("vidTo").value || state.frameUploads?.vidFrom || state.frameUploads?.vidTo || state.midFrames?.length || state.refImages?.length || state.refAudios?.length || $("vidCharacter")?.value || state.sndUpload || $("vidSndSong").value || $("vidLoop").checked)
-    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Workflow") : "Workflow"} → Video clips → Ask friend, which carries them.`);
+    throw new Error(`This Ask friend sends text only: remove frames, references, the kept character, the song under the clip and loop first. To send a scene WITH its reference pictures, use ${typeof cbScreen === "function" ? cbScreen("workflow", "Production") : "Production"} → Video clips → Ask friend, which carries them.`);
   if (Object.values(vidModelChoice()).some(Boolean) || vidLoraStack.length) throw new Error("Use default models and clear custom LoRAs for this recipe.");
   return {engine:recipeEngine,prompt:$("vidPrompt").value,width,height,seconds:+$("vidSecs").value,steps:+$("vidSteps").value,guidance:+$("vidGuide").value,negative:$("vidNeg").value,keepAudio:$("vidAudio").value === "1",
     ...($("vidSeed").value.trim()?{seed:Number($("vidSeed").value)}:{})};
@@ -9873,7 +10058,8 @@ $("vidCreate").onclick = async () => {
   {
     const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine] || {};
     /* A kept character rides the reference path like pictures do. */
-    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0;
+    const hasRefs = !!$("vidCharacter")?.value || ((state.refImages || []).length + (state.refAudios || []).length) > 0
+      || !!h3RefModPanel.spec().refMods?.length;
     const need = eng.fixedSteps ? null : vidSpeedupNeed(eng, +$("vidSteps").value, hasRefs);
     if (need) { vidOfferSpeedup(need.build); return; }
   }
@@ -9894,6 +10080,7 @@ $("vidCreate").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "create",
+        ...h3RefModPanel.spec(),
         prompt: $("vidPrompt").value,
         title: $("vidFrom").selectedOptions[0]?.dataset.title || "",
         fromCover: $("vidFrom").value || undefined,
@@ -10417,7 +10604,10 @@ $("cextGo").onclick = async () => {
         seconds: Number($("cextSecs").value) || 3,
       }),
     })).json();
-    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; return; }
+    /* A missing speed-up names its row (needsModel): the model window opens
+     * on it, as every other refusal does, instead of words with nothing to
+     * press (this sheet has no step control). */
+    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; offerModel(r); return; }
     $("cext").hidden = true;
     loadClips();
   } finally {
@@ -11328,8 +11518,11 @@ function iedStageSize() {
   const W = ied.crop ? ied.crop.w : nw, H = ied.crop ? ied.crop.h : nh;
   return (ied.rotate % 180) ? { w: H, h: W, W, H } : { w: W, h: H, W, H };
 }
-function iedSrcToStage(sx, sy) {
+function iedSrcToStage(sx, sy, pixel = false) {
   const { w, h, W, H } = iedStageSize();
+  // Rectangles use pixel edges; a wand samples pixel centres. Applying the
+  // edge transform to index zero produced width/height after a flip.
+  if (pixel) { sx += .5; sy += .5; }
   let x = sx - (ied.crop ? ied.crop.x : 0), y = sy - (ied.crop ? ied.crop.y : 0);
   let fx = x, fy = y;
   if (ied.rotate === 90) { fx = H - y; fy = x; }
@@ -11337,7 +11530,9 @@ function iedSrcToStage(sx, sy) {
   else if (ied.rotate === 270) { fx = y; fy = W - x; }
   if (ied.flipH) fx = w - fx;
   if (ied.flipV) fy = h - fy;
-  return { x: Math.round(fx), y: Math.round(fy) };
+  return pixel ? { x: Math.max(0, Math.min(w - 1, Math.floor(fx))),
+    y: Math.max(0, Math.min(h - 1, Math.floor(fy))) }
+    : { x: Math.round(fx), y: Math.round(fy) };
 }
 function iedStagePoint(e) {
   const p = iedImgPoint(e);
@@ -11441,6 +11636,8 @@ const IED_HINT = {
   type: "click the picture to place the words",
   zoom: "click to zoom in, alt-click out",
   hand: "drag to pan",
+  wand: "click a colour to select it · adjust tolerance to refine",
+  colorRange: "click a colour to select it across the image",
   /* Keyed by capability as well as by tool, so twelve brush tools do not need
    * twelve near-identical lines. iedStatus() falls back to the family's. */
   selection: "drag a region — every adjustment and all 88 effects then apply only there",
@@ -11773,7 +11970,7 @@ addEventListener("keydown", (e) => {
     if (ied.selDraft || ied.shapeDraft || ied.pathDraft) {
       ied.selDraft = null; ied.shapeDraft = null; ied.pathDraft = null; iedOverlayPaint(); return;
     }
-    $("imgEd").hidden = true; return;
+    iedCloseEditor(); return;
   }
   // Enter finishes the pen the way a double-click does — the options bar says
   // both, so both must be true.
@@ -11950,6 +12147,7 @@ function openImageEditor(name) {
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
   ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
+  if (iedVectorizer) iedVectorizer.open(name, m);
   $("iedImg").src = `/api/image/${encodeURIComponent(name)}?v=${Date.now()}`;
   const d = m.at ? new Date(m.at) : null;
   $("iedMeta").innerHTML = [
@@ -12064,10 +12262,12 @@ function openImageEditor(name) {
    * trash it. Every pixel surface goes away, and so do the tools that would
    * drive one; the whole point of a tool strip is that what is lit is what
    * works. */
-  for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
+  for (const id of ["iedSliders", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
     "iedApply"]) {
     $(id).hidden = isFinal;
   }
+  // A traced SVG can still replace fills using its captured raster source.
+  $("iedVec").hidden = isFinal && !iedVectorizer?.hasSource();
   /* ⚠ THE DOCKS HAVE TWO REASONS TO BE HIDDEN, SO NEITHER WRITES THE FLAG.
    * This line used to read `$(id).hidden = isFinal` across twelve docks — the
    * right rule (an .svg has no pixels, so every pixel surface goes away) writing
@@ -12290,7 +12490,11 @@ $("iedReset").onclick = () => { ied.rotate = 0; ied.flipH = false; ied.flipV = f
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   iedReframe(); iedPush("reset adjustments"); };
-$("iedClose").onclick = () => { $("imgEd").hidden = true; };
+function iedCloseEditor() {
+  $("imgEd").hidden = true;
+  iedSelectionPreviewSchedule();
+}
+$("iedClose").onclick = iedCloseEditor;
 /* No click-outside-to-close any more: the console fills the screen and the
  * canvas is something you drag on. A stray pointer-up must not throw the edit
  * away. Escape and ✕ close it. */
@@ -12351,23 +12555,21 @@ $("iedApply").onclick = async () => {
   } finally { iedApplyBusy = false; iedApplyEnable(); }
 };
 
-$("iedVecGo").onclick = async () => {
-  const btn = $("iedVecGo"); btn.disabled = true; btn.textContent = "Tracing…";
-  try {
-    const r = await (await fetch("/api/images/vectorize", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: ied.name, colors: +$("iedVecColors").value }) })).json();
-    if (r.error) { failSay(r); return; }
+iedVectorizer = createVectorizer({
+  get: $, currentName: () => ied.name,
+  request: async (body) => (await fetch("/api/images/vectorize", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(),
+  onResult: async (r, show, active) => {
     await loadImages();
-    openImageEditor(r.name);
-  } finally { btn.disabled = false; btn.textContent = "Trace to SVG"; }
-};
+    if (show && ied.name === active) openImageEditor(r.name);
+  },
+});
 
 $("iedReuse2").onclick = () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta;
   if (!m?.prompt) return;
   $("imgPrompt").value = m.prompt; if (m.seed != null) $("imgSeed").value = m.seed;
-  $("imgEd").hidden = true; $("imgPrompt").focus();
+  iedCloseEditor(); $("imgPrompt").focus();
 };
 $("iedBlur").onclick = async () => {
   const m = (state.images || []).find((x) => x.name === ied.name)?.meta || {};
@@ -12982,7 +13184,7 @@ async function iedDocOpenId(id) {
 /* A document is the canvas, not just an outline beside an unrelated image.
  * Sequence replies so a slow older render cannot erase the latest layer edit. */
 let iedDocViewSeq = 0, iedDocViewReady = false, iedDocPaintTargets = {};
-const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedDl",
+const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedVecFillGo", "iedVecCleanGo", "iedDl",
   "iedBlur", "iedTrash2", "iedReveal2", "iedReuse2", "iedCompose", "iedDocSave",
   "iedSelWhat", "iedSelBake", "iedLutGo"]);
 const IED_DOC_FILE_COMMANDS = new Set(["file.download", "file.reveal", "file.reuse", "file.blur", "file.trash",
@@ -13014,6 +13216,7 @@ async function iedDocViewRefresh() {
   if (!iedDoc) return;
   iedDocViewReady = false; iedDocPaintTargets = {}; iedAIPaint(); iedApplyEnable();
   const id = iedDoc.id, seq = ++iedDocViewSeq;
+  iedOverlayPaint();
   try {
     const r = await (await fetch("/api/images/document-preview", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
@@ -13647,7 +13850,7 @@ function iedDocPaint() {
          * and not one id, and it takes its refs in the order they were picked. */
         const at = iedDocPick.indexOf(id);
         if (at >= 0) iedDocPick.splice(at, 1); else iedDocPick.push(id);
-        iedDocPaint();
+        iedDocPaint(); iedOverlayPaint();
       };
     }
     for (const b of out.querySelectorAll("[data-doceye]")) {
@@ -14062,8 +14265,10 @@ function iedShapePts(s) {
 }
 
 function iedOverlayPaint() {
+  iedSelectionPreviewSchedule();
   const x = iedOverlaySize();
   if (!x || !$("iedImg").naturalWidth) return;
+  iedSelectionPreviewDraw(x);
   for (const s of ied.sel) {
     if (s.kind === "wand" || s.kind === "colorRange") { iedSeedMark(x, s); continue; }
     if (s.kind === "channel") continue;   // the mask IS the plane — no outline exists
@@ -14108,8 +14313,7 @@ function iedOverlayPaint() {
   }
 }
 
-/* A wand seed has no client-side mask — the server decides which pixels the
- * tolerance reaches. Marking the seed is the honest amount of preview. */
+/* While the server resolves the mask, retain the sampled point. */
 function iedSeedMark(x, s) {
   const p = s.kind === "wand" ? [s.x, s.y] : (s.at || null);
   if (!p) return;
@@ -14179,6 +14383,87 @@ function iedSelAdd(shape) {
   iedPush(`select ${shape.kind}`);
 }
 
+/* The selection engine supplies these pixels, including combined shapes,
+ * feather, expansion and inversion. Cache by recipe, not by zoom or pan. */
+var iedSelPreviewState;
+function iedSelectionPreviewSource() {
+  if (!iedDoc) return ied.name ? { name: ied.name, frame: iedSelFrame() } : null;
+  if (!iedDocViewReady) return null;
+  const target = iedPaintTarget();
+  const layer = target && iedDocFind(target.ref)?.layer;
+  return layer?.src ? { name: layer.src, frame: {}, sourceLayer: layer.name || target.ref }
+    : { documentId: iedDoc.id, frame: {} };
+}
+function iedSelectionPreviewRecipe() {
+  if ($("imgEd").hidden || !$("iedImg").naturalWidth
+      || !ied.sel.some(s => ["wand", "colorRange", "channel"].includes(s.kind))) return null;
+  // The viewport maps crop, rotation and flips. Other geometry is committed
+  // first rather than drawing an exact mask in the wrong coordinate frame.
+  if (ied.canvas || (ied.geom && Object.keys(ied.geom).length)) return null;
+  const source = iedSelectionPreviewSource();
+  if (!source) return null;
+  return { ...source, selection: iedSelectionOp() };
+}
+function iedSelectionPreviewSays(text, title = "") {
+  const el = $("iedSelPreviewStatus");
+  if (el) { el.textContent = text; el.title = title; }
+}
+function iedSelectionPreviewSchedule() {
+  const s = iedSelPreviewState ??= { key: null, seq: 0, timer: 0, controller: null, mask: null };
+  const recipe = iedSelectionPreviewRecipe();
+  const key = recipe ? JSON.stringify([recipe, iedDoc ? iedDocViewSeq : $("iedImg").src]) : null;
+  if (key === s.key) return;
+  s.key = key; ++s.seq; clearTimeout(s.timer); s.controller?.abort(); s.mask = null;
+  const framing = !key && !$("imgEd").hidden && ied.sel.some(s => ["wand", "colorRange", "channel"].includes(s.kind))
+    && (ied.canvas || (ied.geom && Object.keys(ied.geom).length));
+  iedSelectionPreviewSays(key ? "Selecting…" : framing ? "Apply framing first" : "");
+  if (!key) return;
+  const seq = s.seq;
+  s.timer = setTimeout(() => iedSelectionPreviewRender(recipe, seq), 140);
+}
+async function iedSelectionPreviewRender(recipe, seq) {
+  const s = iedSelPreviewState;
+  const controller = new AbortController(); s.controller = controller;
+  try {
+    const { sourceLayer, ...body } = recipe;
+    const response = await fetch("/api/images/preview-selection", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
+    const result = await response.json();
+    if (seq !== s.seq) return;
+    if (!response.ok || result.error || !result.mask) throw new Error(result.error || "Selection preview unavailable.");
+    const im = new Image();
+    im.onload = () => {
+      if (seq !== s.seq) return;
+      const cv = document.createElement("canvas");
+      cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+      const ctx = cv.getContext("2d"); ctx.drawImage(im, 0, 0);
+      ctx.globalCompositeOperation = "source-in";
+      ctx.fillStyle = iedLiveInk(); ctx.fillRect(0, 0, cv.width, cv.height);
+      s.mask = cv; s.width = result.width; s.height = result.height;
+      const coverage = Math.max(0, Math.min(1, Number(result.coverage) || 0));
+      iedSelectionPreviewSays(result.empty ? "Nothing selected" : `${(coverage * 100).toFixed(1)}% selected`,
+        sourceLayer ? `Sampled from layer: ${sourceLayer}` : "The highlighted area is the selection used by the image tools.");
+      iedOverlayPaint();
+    };
+    im.onerror = () => { if (seq === s.seq) iedSelectionPreviewSays("Preview unavailable"); };
+    im.src = result.mask;
+  } catch (error) {
+    if (seq !== s.seq || error.name === "AbortError") return;
+    iedSelectionPreviewSays("Preview unavailable", error.message);
+  } finally { if (s.controller === controller) s.controller = null; }
+}
+function iedSelectionPreviewDraw(x) {
+  const s = iedSelPreviewState;
+  if (!s?.mask) return;
+  const a = iedStageToView(0, 0), b = iedStageToView(s.width, 0), c = iedStageToView(0, s.height);
+  x.save();
+  x.transform((b.x - a.x) / s.width, (b.y - a.y) / s.width,
+    (c.x - a.x) / s.height, (c.y - a.y) / s.height, a.x, a.y);
+  x.globalAlpha = .28;
+  x.drawImage(s.mask, 0, 0, s.width, s.height);
+  x.restore();
+}
+
 /* the pixel under a stage point, for colour range — sampled from the file's own
  * pixels, which is what §3 says wand and colour range see at stage 4 */
 function iedSampleStage(sp) {
@@ -14199,7 +14484,9 @@ function iedSelDown(sp, e) {
   const mode = uiMode === "new" ? "add" : uiMode;
   const tol = +($("iedSelTol").value || 32);
   if (ied.tool === "wand") {
-    iedSelAdd({ kind: "wand", x: sp.x, y: sp.y, tolerance: tol,
+    const src = iedStageToSrc(sp.x, sp.y);
+    const seed = iedSrcToStage(src.x, src.y, true);
+    iedSelAdd({ kind: "wand", x: seed.x, y: seed.y, tolerance: tol,
       contiguous: !!$("iedSelContig").checked, mode });
     return null;
   }
@@ -14285,7 +14572,7 @@ function iedSelPaint() {
    * here rather than at each of the callers is what stops one of them being
    * forgotten and leaving Apply lit on a stale yes. */
   iedStylesGate();
-  iedStatus();
+  iedStatus(); iedPreviewSchedule();
 }
 
 for (const b of document.querySelectorAll("[data-selmode]")) {
@@ -14366,8 +14653,19 @@ $("iedSelBake").onclick = async () => {
     btn.disabled = false; btn.textContent = was;
   }
 };
-for (const id of ["iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
-  $(id).onchange = () => { iedOverlayPaint(); iedStatus(); iedPush("selection settings"); };
+function iedSelectionSettingsChange() {
+  const kind = ied.tool === "wand" ? "wand" : ied.tool === "colorRange" ? "colorRange" : null;
+  const shape = kind && ied.sel.findLast(s => s.kind === kind);
+  if (shape) {
+    const value = $("iedSelTol").value;
+    shape.tolerance = Math.max(0, Math.min(255, value === "" || !Number.isFinite(+value) ? 32 : +value));
+    if (kind === "wand") shape.contiguous = !!$("iedSelContig").checked;
+  }
+  iedSelPaint(); iedOverlayPaint(); iedStatus(); iedPreviewSchedule();
+}
+for (const id of ["iedSelTol", "iedSelContig", "iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
+  $(id).oninput = iedSelectionSettingsChange;
+  $(id).onchange = () => { iedSelectionSettingsChange(); iedPush("selection settings"); };
 }
 
 /* ── §5 strokes ────────────────────────────────────────────────────────────
@@ -16592,7 +16890,10 @@ function iedSrcToViewNav(sx, sy, s) {
 const IED_SNAPCTL = ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV",
   "iedShd", "iedHl", "iedPost", "iedDn", "iedGr", "iedRw", "iedRh",
   "iedKeyTol", "iedKeySoft", "iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC",
-  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors",
+  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors", "iedVecMode", "iedVecQuality",
+  "iedVecDetail", "iedVecTolerance", "iedVecArea", "iedVecAlpha", "iedVecSize",
+  "iedVecFillColor", "iedVecStart", "iedVecEnd", "iedVecAngle",
+  "iedVecCleanType", "iedVecCleanStrength", "iedVecCleanDeviation", "iedVecShapeColor", "iedVecCompareMode",
   "iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA",
   "iedStSize2", "iedStHard", "iedStOpacity", "iedStFlow", "iedStAmount", "iedStColor", "iedStSpacing",
   "iedShFillOn", "iedShFill", "iedShStrokeOn", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend",
@@ -17152,7 +17453,7 @@ const IED_CMDS = [
   { id: "file.blur", menu: "File", label: "Blur in the gallery", run: () => $("iedBlur").click() },
   { ...SEP, menu: "File" },
   { id: "file.trash", menu: "File", label: "Move to trash…", run: () => $("iedTrash2").click() },
-  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: () => { $("imgEd").hidden = true; } },
+  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: iedCloseEditor },
 
   { id: "edit.undo", menu: "Edit", label: "Undo", key: "Ctrl+Z",
     enabled: () => iedU.at > 0, run: () => iedStepTo(iedU.at - 1),
@@ -17297,7 +17598,7 @@ const IED_CMDS = [
   { id: "select.none", menu: "Select", label: "Deselect", key: "Ctrl+D", need: "selection",
     run: () => { ied.sel.length = 0; ied.selDraft = null; iedSelPaint(); iedOverlayPaint(); iedPush("deselect"); } },
   { id: "select.invert", menu: "Select", label: "Invert", key: "Ctrl+Shift+I", need: "selection",
-    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedStatus(); iedPush("invert selection"); } },
+    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedOverlayPaint(); iedStatus(); iedPreviewSchedule(); iedPush("invert selection"); } },
   { id: "select.fromcrop", menu: "Select", label: "From the crop rectangle", need: "selection",
     run: () => {
       if (!ied.crop) { iedToast("Drag a crop rectangle first."); return; }
@@ -17523,7 +17824,7 @@ $("iedTrash2").onclick = async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
   if (r.error) { failSay(r); return; }
-  $("imgEd").hidden = true;
+  iedCloseEditor();
   await loadImages();
 };
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
@@ -20330,6 +20631,7 @@ document.addEventListener("click", (e) => {
 });
 
 /* ── overnight ────────────────────────────────────────── */
+import { renderMusicBatchIdea, updateMusicBatchField, musicBatchSubmission, syncMusicBatchPlannerFields } from './music-batch-editor.js';
 /* Deliberately three controls. Anything more is a decision to make at bedtime,
    which is exactly when nobody wants to make one. */
 /* Ideas survive a reload.
@@ -20355,6 +20657,7 @@ function ovSetKind(k) {
    * picture, so it is hidden rather than shown doing nothing. */
   $("ovStagesField").hidden = media;
   $("ovAdd").hidden = media;
+  $("ovMusicPresets").hidden = media;
   $("ovAddImage").hidden = !media;
   $("ovAddImage").textContent = ov.kind === "image"
     ? "+ Add what's on the Pictures screen" : "+ Add what's on the Video screen";
@@ -20362,7 +20665,7 @@ function ovSetKind(k) {
 }
 const OV_KEYS = { music: "aiplayIdeas", image: "aiplayIdeasImage", video: "aiplayIdeasVideo" };
 function ovLoadIdeas() {
-  try { ov.ideas = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]") || []; }
+  try { const saved = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]"); ov.ideas = Array.isArray(saved) ? saved.filter(idea => idea && typeof idea === "object" && !Array.isArray(idea)).slice(0, 40) : []; }
   catch { ov.ideas = []; }
 }
 ovLoadIdeas();
@@ -20375,7 +20678,7 @@ function ovRender() {
   const box = $("ovIdeas");
   if (!ov.ideas.length) {
     box.innerHTML = `<div class="ovempty">${ov.kind === "music"
-      ? "No ideas yet. Write one in Create, then add it here."
+      ? "Choose 2, 4 or 8 songs, or add your current song."
       : `No prompts yet. Set one up on the ${ov.kind === "image" ? "Pictures" : "Video"} screen, then add it here. A prompt with {a|b|c} in it makes a different picture each take.`}</div>`;
   } else {
     box.innerHTML = ov.ideas.map((it, i) => {
@@ -20396,21 +20699,32 @@ function ovRender() {
           <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
         </div>`;
       }
-      return `<div class="ovidea">
-        <div><div class="t">${esc(it.title)}${it.instrumental ? ' <span class="badge">instrumental</span>' : ""}</div>
-          <div class="s">${esc(it.caption)}</div></div>
-        <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
-      </div>`;
+      return renderMusicBatchIdea(it, i);
     }).join("");
   }
+  ovUpdatePlan();
+}
+
+function ovUpdatePlan() {
   const takes = +$("ovTakes").value;
   const cap = +$("ovCap").value;
   const total = Math.min(ov.ideas.length * takes, cap);
-  $("ovStart").disabled = !ov.ideas.length;
   $("ovCount").textContent = ov.ideas.length
     ? `${ov.ideas.length} idea${ov.ideas.length > 1 ? "s" : ""}` : "";
 
+  const noun = ov.kind === "music" ? "song" : ov.kind === "image" ? "picture" : "clip";
+  $("ovTotalCount").textContent = `${total} ${noun}${total === 1 ? "" : "s"} planned${ov.ideas.length ? ` · ${ov.ideas.length} idea${ov.ideas.length === 1 ? "" : "s"} × ${takes} take${takes === 1 ? "" : "s"}` : ""}`;
   ovPaintPlan(total);
+}
+
+function ovCannotStart() {
+  if (!ov.ideas.length || (ov.kind === "music" && ov.ideas.some(idea => !idea.caption?.trim()))) return true;
+  try { ovScheduledStart(); } catch { return true; }
+  return false;
+}
+
+function ovPlanStartTime() {
+  try { return Date.parse(ovScheduledStart()) || Date.now(); } catch { return Date.now(); }
 }
 
 /**
@@ -20511,6 +20825,7 @@ function ovPaintPlan(total) {
   }
 
   if (!total) {
+    $("ovStart").disabled = true;
     $("ovEst").textContent = "Add an idea to see what it would cost.";
     $("ovBudget").innerHTML = "";
     return;
@@ -20535,14 +20850,14 @@ function ovPaintPlan(total) {
     $("ovBudget").innerHTML = `
       <div><span>${ov.kind === "image" ? "pictures" : "clips"}</span><b>${total} · ${dur(secs)}</b></div>
       <div><span>disk</span><b>${size(bytes)}${tight ? " — not enough free" : ""}</b></div>
-      <div><span>total</span><b>${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}</b></div>`;
+      <div><span>total</span><b>${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}</b></div>`;
     $("ovEst").textContent =
-      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`
+      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(ovPlanStartTime() + secs * 1000)}`
       /* Fast draft ideas are costed from measurements; only a full Qwen render
        * still carries the unmeasured allowance. */
       + (ov.kind === "image" && ov.ideas.some((it) => (it.effectiveEngine || it.engine || "qwen-image-2.1") === "qwen-image-2.1" && it.draft !== true)
         ? " · Qwen time is an unmeasured planning estimate." : "");
-    $("ovStart").disabled = !ov.ideas.length || tight;
+    $("ovStart").disabled = ovCannotStart() || tight;
     return;
   }
 
@@ -20568,9 +20883,9 @@ function ovPaintPlan(total) {
       free === Infinity ? "unknown" : size(free)}${tight ? " — not enough" : ""}</b></div>`;
 
   $("ovEst").textContent =
-    `${total} song${total > 1 ? "s" : ""} · done by ${clock(Date.now() + secs * 1000)}`;
+    `${total} song${total > 1 ? "s" : ""} · done by ${clock(ovPlanStartTime() + secs * 1000)}`;
   // Refuse a plan that cannot fit rather than filling the disk at 3am.
-  $("ovStart").disabled = !ov.ideas.length || tight;
+  $("ovStart").disabled = ovCannotStart() || tight;
 }
 for (const id of ["ovStCover", "ovStLrc", "ovStStems", "ovStVideo"]) {
   $(id).onchange = () => ovPaintPlan();
@@ -20624,21 +20939,56 @@ function dur(s) {
 const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 $("ovAdd").onclick = () => {
-  const caption = $("caption").value.trim();
-  if (!caption) { $("ovEst").textContent = "Write a style in Create first — that is the one required field."; return; }
-  ov.ideas.push({
-    title: $("title").value.trim() || "Untitled",
-    caption,
-    lyrics: state.mode === "instrumental" ? $("scaffold").value : $("lyrics").value.trim(),
-    instrumental: state.mode === "instrumental",
-    maxDuration: +$("maxDur").value,
-  });
+  if (!captionValue().trim()) { $("ovEst").textContent = "Write a style in Music first."; return; }
+  if (ov.ideas.length >= 40) { $("ovEst").textContent = "The batch has 40 ideas. Remove one before adding another."; return; }
+  try { ov.ideas.push(ovMusicIdea()); }
+  catch (err) { $("ovEst").textContent = err.message; return; }
   ovRender();
 };
+function ovBlankSong() {
+  let idea;
+  try { idea = ovMusicIdea(); }
+  catch { idea = { engine: state.musicEngine || "minimax-music3" }; }
+  for (const key of ["abc", "scoreSlug", "scoreVersion", "coverOf", "aceCover", "audioRef", "audioRefDenoise"]) delete idea[key];
+  return { ...idea, title: "", caption: "", lyrics: "", instrumental: false };
+}
+function ovFillSongCount(count) {
+  if (ov.kind !== "music") return;
+  while (ov.ideas.length < Math.min(40, count)) ov.ideas.push(ovBlankSong());
+  ovRender();
+}
+$("ovNewSong").onclick = () => { if (ov.ideas.length >= 40) { $("ovEst").textContent = "The batch has 40 ideas."; return; } ovFillSongCount(ov.ideas.length + 1); };
+for (const button of document.querySelectorAll("[data-ov-count]")) button.onclick = () => ovFillSongCount(Number(button.dataset.ovCount));
 $("ovClear").onclick = () => { ov.ideas = []; ovRender(); };
 $("ovIdeas").addEventListener("click", (e) => {
   const rm = e.target.closest("[data-rm]");
   if (rm) { ov.ideas.splice(+rm.dataset.rm, 1); ovRender(); }
+});
+$("ovIdeas").addEventListener("input", async event => {
+  const input = event.target.closest("[data-ov-field]"), card = input?.closest("[data-ov-idea]");
+  if (!input || !card || ov.kind !== "music") return;
+  const index = Number(card.dataset.ovIdea), idea = ov.ideas[index];
+  if (!idea) return;
+  try {
+    if (input.dataset.ovField === "engine" && input.value !== idea.engine
+      && Object.keys(idea).some(key => !["engine", "title", "caption", "lyrics", "instrumental"].includes(key))) {
+      input.disabled = true;
+      const confirmed = await appConfirm("Changing engine clears this song's saved score, references and engine settings. Keep its title, style and lyrics and change engine?",
+        { title: "Change song engine?", ok: "Change engine" });
+      input.disabled = false;
+      if (!confirmed || ov.ideas[index] !== idea) { input.value = idea.engine; return; }
+    }
+    ov.ideas[index] = updateMusicBatchField(idea, input.dataset.ovField, input.type === "checkbox" ? input.checked : input.value);
+    ovSaveIdeas();
+    if (input.dataset.ovField === "engine") ovRender();
+    else {
+      if (["cot", "abc"].includes(input.dataset.ovField)) syncMusicBatchPlannerFields(card, ov.ideas[index]);
+      const chip = card.querySelector(".chip");
+      chip.textContent = ov.ideas[index].caption?.trim() ? "Ready to review" : "Style needed";
+      chip.className = `chip ${ov.ideas[index].caption?.trim() ? "ok" : "warn"}`;
+      ovUpdatePlan();
+    }
+  } catch (error) { if (input.dataset.ovField === "engine") input.value = idea.engine; $("ovEst").textContent = error.message; }
 });
 $("ovTakes").oninput = () => { $("ovTakesV").textContent = $("ovTakes").value; ovRender(); };
 $("ovCap").oninput = () => { $("ovCapV").textContent = $("ovCap").value; ovRender(); };
@@ -20659,9 +21009,9 @@ const ovPost = (body) =>
         if (await confirmPaidRun(s)) return ovPost({ ...body, confirmSpend: true });
         return;
       }
-      if (s?.error) { alert(s.error); return; } applyBatch(s);
+      if (s?.error) { $("ovEst").textContent = s.error; return; } applyBatch(s);
     })
-    .catch(() => {});
+    .catch(error => { $("ovEst").textContent = error.message || "The batch could not be updated."; });
 
 /* Snapshot references and model choices as well as the prompt. The backend
  * persists this whitelist and forwards it to the ordinary image route. */
@@ -20726,19 +21076,56 @@ $("ovAddImage").onclick = async () => {
 };
 
 for (const b of document.querySelectorAll("#ovKind [data-kind]")) {
-  b.onclick = () => { ovSetKind(b.dataset.kind); ovLoadIdeas(); ovRender(); };
+  b.onclick = () => { ovSaveIdeas(); ov.kind = b.dataset.kind; ovLoadIdeas(); ovSetKind(ov.kind); };
 }
 ovSetKind(ov.kind);
 
-$("ovStart").onclick = () => ovPost({
-  action: "start", kind: ov.kind, items: ov.ideas,
+function ovScheduledStart() {
+  if ($("ovWhen").value !== "later") return undefined;
+  const value = $("ovStartAt").value;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  const date = new Date(value);
+  if (!parts || !Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) throw new Error("Choose a future local start time.");
+  // Browser dates normalize a nonexistent daylight-saving time. Refuse that shift.
+  const local = [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes()];
+  if (local.some((part, index) => part !== Number(parts[index + 1]))) throw new Error("That local time does not exist. Choose another start time.");
+  return date.toISOString();
+}
+function ovSchedulePaint() {
+  const later = $("ovWhen").value === "later";
+  $("ovScheduleRow").hidden = $("ovScheduleLabel").hidden = !later;
+  $("ovStart").textContent = later ? "Schedule batch" : "Start batch";
+  $("ovTimezone").textContent = `${Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time"}. Studio must stay open for a scheduled start.`;
+  ovUpdatePlan();
+}
+$("ovWhen").onchange = ovSchedulePaint;
+$("ovStartAt").oninput = ovUpdatePlan;
+ovSchedulePaint();
+$("ovStart").onclick = () => {
+  let startAt, items;
+  try {
+    if (!ov.ideas.length) throw new Error("Add a song idea first.");
+    if (ov.kind === "music" && ov.ideas.some(idea => !idea.caption?.trim())) throw new Error("Add a style to every song.");
+    for (const input of $("ovIdeas").querySelectorAll("input,select,textarea")) {
+      if (input.checkValidity && !input.checkValidity()) {
+        let fold = input.closest("details");
+        while (fold) { fold.open = true; fold = fold.parentElement?.closest("details"); }
+        input.reportValidity(); return;
+      }
+    }
+    startAt = ovScheduledStart();
+    items = ov.kind === "music" ? ov.ideas.map(musicBatchSubmission) : ov.ideas;
+  } catch (error) { $("ovEst").textContent = error.message; return; }
+  return ovPost({
+  action: "start", kind: ov.kind, items,
+  ...(startAt ? { startAt } : {}),
   takes: +$("ovTakes").value, cap: +$("ovCap").value,
   /* A name, so the history is readable. Nothing ever sent one, so the server
    * fell back to the literal string "Overnight run" and every archived row was
    * identical. Built from the first idea and the date, which is how you would
    * describe the run to yourself the next morning. */
   name: [ov.ideas[0]?.title || ov.ideas[0]?.caption?.slice(0, 28)
-           || ov.ideas[0]?.prompt?.slice(0, 28) || "Overnight",
+           || ov.ideas[0]?.prompt?.slice(0, 28) || "Batch",
          ov.ideas.length > 1 ? `+${ov.ideas.length - 1}` : "",
          new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })]
     .filter(Boolean).join(" · "),
@@ -20756,31 +21143,36 @@ $("ovStart").onclick = () => ovPost({
     // otherwise, so a run can never sit waiting on an input that never comes.
     enhance: $("ovStVideo").checked && $("ovStEnhance").checked,
   },
-});
+  });
+};
 $("ovPause").onclick = () => ovPost({ action: state.batchState === "paused" ? "resume" : "pause" });
+$("ovStartNow").onclick = () => ovPost({ action: "resume" });
 $("ovStop").onclick = () => ovPost({ action: "stop" });
 
 function applyBatch(s) {
   const r = s?.run;
   state.batchState = r?.state || null;
-  const live = r && (r.state === "running" || r.state === "paused");
+  const live = r && ["running", "paused", "scheduled"].includes(r.state);
   $("ovPip").hidden = !live;
   $("ovLive").hidden = !r;
   // The planning controls live in the LEFT column now; while a run is live they
   // are replaced by the run itself rather than sitting there inviting a second
   // start.
   $("ovPanel").classList.toggle("running", Boolean(live));
+  $("ovPause").hidden = $("ovStop").hidden = !live;
+  $("ovStartNow").hidden = r?.state !== "scheduled";
   ovPaintRuns(s);
   if (!r) return;
 
   $("ovProgress").textContent = `${r.done} of ${r.total}`;
   $("ovNow").textContent = r.state === "running"
     ? `now making ${r.currentItem || "—"}`
-    : r.state === "done" ? "finished" : r.state;
+    : r.state === "scheduled" ? `Scheduled for ${new Date(r.startAt).toLocaleString()}` : r.state === "done" ? "finished" : r.state;
   $("ovBar").style.width = `${(r.total ? r.done / r.total : 0) * 100}%`;
   $("ovDoneBy").textContent = r.etaAt ? clock(r.etaAt) : "—";
   $("ovLeft").textContent = r.secondsLeft ? `about ${dur(r.secondsLeft)} left` : "";
   $("ovPause").textContent = r.state === "paused" ? "Resume" : "Pause";
+  $("ovPause").title = r.state === "paused" ? "Resume starts the batch now" : "Pause this batch";
   $("ovNote").textContent = r.note
     || [r.failed ? `${r.failed} failed` : null, r.keepingAwake ? "keeping your PC awake" : null]
        .filter(Boolean).join(" · ");
@@ -21272,25 +21664,41 @@ let musicOutcomeArmed = false;
  * same line on every status poll, and without this it erased the warning
  * within the same applyStatus call that put it there. */
 let musicOutcomeMsg = null;
+let musicOutcomeJob = null;
 /* An estimate is a hover drop-up again: the .stick a warning put on the note
  * comes off with the first estimate after the next Create (generate() clears
  * musicOutcomeMsg; it is lifted into slice-and-eval tests with no ctaNote). */
 function setCta(text) {
   if (!musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = text; $("ctaNote").classList.remove("stick"); }
+  else if (musicOutcomeMsg && $("ctaNote")) { $("ctaNote").textContent = musicOutcomeMsg; $("ctaNote").classList.add("stick"); }
 }
+function musicJobDetails(job) {
+  if (!job) return;
+  appAlert(`${job.error || job.note || "No audio file was found."}\n\nJob: ${job.id || "unknown"}\nEngine: ${job.engine || "music"}`,
+    { title: `${job.title || "Untitled"}: ${job.state === "failed" ? "generation failed" : "generation details"}` });
+}
+$("musicOutcomeDetails")?.addEventListener("click", () => musicJobDetails(musicOutcomeJob));
 function noticeMusicOutcome(s) {
-  const h = s.history?.[0];
-  const key = h ? `${h.id}:${h.state}` : null;
-  if (!musicOutcomeArmed) { musicOutcomeArmed = true; if (key) musicOutcomeSeen.add(key); return; }
-  if (!key || musicOutcomeSeen.has(key)) return;
-  musicOutcomeSeen.add(key);
+  // Library actions can write the same note; a live outcome owns it until Create.
+  if (musicOutcomeMsg) setCta();
+  const rows = Array.isArray(s.history) ? s.history : [];
+  /* A finished take can overtake a failed one between polls. Observe every new
+   * terminal row, and let a reload recover the latest failure in this session. */
+  const fresh = musicOutcomeArmed ? rows.filter(h => !musicOutcomeSeen.has(`${h.id}:${h.state}`)) : rows.slice(0, 1);
+  musicOutcomeArmed = true;
+  for (const h of rows) musicOutcomeSeen.add(`${h.id}:${h.state}`);
+  const h = fresh.find(h => h.state === "failed" || h.state === "done" && (h.note || !h.file));
+  if (!h) return;
   const title = h.title || "Untitled";
-  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${h.error || "no reason was given"}`
+  const reason = String(h.error || "no reason was given").split(/\r?\n/)[0];
+  const shortReason = reason.length > 180 ? `${reason.slice(0, 177)}…` : reason;
+  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${shortReason}`
     : h.state === "done" && h.note ? `⚠ ${h.note}`
     : h.state === "done" && !h.file ? `⚠ “${title}” finished, but no audio file was found in the output folder.`
     : null;
   // .stick: the warning stays under Create, not only under the pointer (styles.css).
   if (msg) { musicOutcomeMsg = msg; if ($("ctaNote")) { $("ctaNote").textContent = msg; $("ctaNote").classList.add("stick"); } }
+  if (msg) { musicOutcomeJob = h; if ($("musicOutcomeDetails")) $("musicOutcomeDetails").hidden = false; }
 }
 
 /* WHETHER COMFYUI IS HOLDING THE MUSIC MODEL — and two optional buttons.
@@ -21842,9 +22250,11 @@ function connect() {
   ws.onmessage = (e) => {
     let snap;
     try { snap = JSON.parse(e.data); } catch { return; }
+    if (snap?.type === "refmod-ready") { window.dispatchEvent(new CustomEvent("aiplay-refmod-ready", { detail: snap })); return; }
     // /live also carries DAW document revisions. Only job-state snapshots
     // may repaint these queues or change the remembered busy-to-idle transition.
     if (snap?.type !== "state" || !Array.isArray(snap.queue) || !("current" in snap)) return;
+    noticeMusicOutcome(snap);
     renderNow(snap.current, (snap.queue || []).length);
     renderQueue(snap);
     renderList(snap);
@@ -21911,7 +22321,7 @@ const JOB_VIEW = {
 const JOB_LABEL = {
   video: "clip", cover: "image", image: "image", stems: "stems",
   lrc: "lyrics", sfx: "sfx", enhance: "enhance", restyle: "restyle",
-  upscale: "upscale", vfx: "vfx",
+  upscale: "upscale", vfx: "vfx", music: "song",
 };
 
 function jobDur(ms) {
@@ -22002,7 +22412,14 @@ function paintJobs(s) {
   const list = $("jobList");
   if (!list) return;
   paintJobQueue(s);
-  const jobs = (s && s.art && s.art.recent) || [];
+  /* Music failures have no library asset. Keep them beside the other completed
+   * jobs, with their own reason, rather than making them vanish with the queue. */
+  const music = (s?.history || []).map(j => ({ ...j, kind: "music", musicJob: true,
+    cancelled: j.state === "cancelled", at: j.createdAt,
+    // The queue's durationSeconds is render time; audio length is audioSeconds.
+    ms: Number.isFinite(j.elapsedSeconds) ? j.elapsedSeconds * 1000
+      : Number.isFinite(j.durationSeconds) ? j.durationSeconds * 1000 : null }));
+  const jobs = [...((s && s.art && s.art.recent) || []), ...music].sort((a, b) => (b.at || 0) - (a.at || 0));
 
   /* ⚠ SAY SO WHEN THERE IS NOTHING, and say WHY. An empty list on a night that
    * clearly rendered things reads as a broken page; the real reason is that
@@ -22043,22 +22460,25 @@ function paintJobs(s) {
   const shown = jobs.filter((j) => jobFilter === "all" || j.kind === jobFilter);
   list.innerHTML = shown.map((j) => {
     const view = JOB_VIEW[j.kind] || "create";
-    const out = jobOutput(j);
+    const out = j.musicJob ? j.file || String(j.error || "").split(/\r?\n/)[0] : jobOutput(j);
     const when = j.at ? new Date(j.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
     return `<div class="jobrow${j.error && !j.cancelled ? " bad" : ""}">
       <span class="jobkind">${esc(JOB_LABEL[j.kind] || j.kind)}</span>
       <span class="jobtitle">${esc(j.title || j.file || "—")}</span>
-      <span class="jobout">${esc(out)}</span>
+      <span class="jobout"${j.musicJob && j.error ? ` title="${esc(j.error)}"` : ""}>${esc(out)}</span>
       <span class="jobms">${jobDur(j.ms)}</span>
       <span class="jobat">${esc(when)}</span>
       ${j.cancelled ? `<span class="jobstopped" title="${esc(j.error || "Stopped before it finished.")}">stopped</span>`
-        : j.error ? `<span class="joberr" title="${esc(j.error)}">failed</span>`
+        : j.error ? (j.musicJob ? `<button type="button" class="edtool" data-music-job="${esc(j.id)}">Failure details</button>`
+          : `<span class="joberr" title="${esc(j.error)}">failed</span>`)
                 : `<a href="#" class="jobgo" data-go="${view}">open ${esc(view)} &rsaquo;</a>`}
     </div>`;
   }).join("");
 }
 
 document.addEventListener("click", (e) => {
+  const detail = e.target.closest("[data-music-job]");
+  if (detail) { musicJobDetails(state.lastStatus?.history?.find(j => j.id === detail.dataset.musicJob)); return; }
   const chip = e.target.closest("[data-jobfilter]");
   if (!chip) return;
   jobFilter = chip.dataset.jobfilter;
@@ -22120,7 +22540,7 @@ $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly && !entryView}));
+const initialStudioPoll = poll().then(() => initWelcome({autoOpen:!state.musicOnly && !state.cloudOnly && !entryView}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();
@@ -22234,7 +22654,7 @@ mountMusicPlan();
   dropAnywhere($("imgPanel"), () => picDrops.img);
   dropAnywhere($("vidPanel"), () => picDrops.from);
 }
-mountMusicWorkflows({ onLoadRequest: async (prepared) => {
+async function loadReviewedMusicRequest(prepared) {
   const request = prepared?.request || prepared;
   if (!request || !["yue2", "yue2-gguf", "yue2-comfy"].includes(request.engine)) throw new Error("Choose a supported YuE2 engine first.");
   const precision = request.quantization || (request.engine === "yue2-gguf" ? "q4_0" : "none");
@@ -22278,7 +22698,8 @@ mountMusicWorkflows({ onLoadRequest: async (prepared) => {
   for (const button of document.querySelectorAll(".howmany [data-n]")) button.classList.toggle("on", button.dataset.n === "1");
   countChars(); musicEnginePaint(); setView("create");
   $("caption").focus();
-} });
+}
+mountMusicWorkflows({ onLoadRequest: loadReviewedMusicRequest });
 /* LAST, and asynchronous. One request answers both "what can this studio do"
  * and "has this person been shown around", so a fresh install opens the window
  * on the same round trip that fills it — and an older server with no
@@ -22313,3 +22734,14 @@ document.addEventListener("click", async (e) => {
 
 // Deep links open after the workflow and remaining view controllers initialize.
 if (entryView) setView(entryView);
+const linkedDawPassage = new URLSearchParams(location.search).get('dawPassage');
+if (linkedDawPassage) {
+  initialStudioPoll.then(async () => {
+    if (!/^passage-[a-f0-9]{24}$/.test(linkedDawPassage)) throw new Error('This DAW passage link is invalid.');
+    const response = await fetch('/api/music-daw-passages', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'request', id: linkedDawPassage }) });
+    const prepared = await response.json();
+    if (!response.ok || prepared.error) throw new Error(prepared.error || 'The saved DAW draft could not be loaded.');
+    await loadReviewedMusicRequest(prepared);
+  }).catch(error => appAlert(error.message, 'DAW draft was kept'));
+}

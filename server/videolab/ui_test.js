@@ -37,6 +37,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 let pass = 0;
 const failures = [];
@@ -496,6 +497,35 @@ ok("a verdict loaded from disk is checked like every other stored value",
 const htmlComments = (UI.match(/<!--/g) || []).length;
 ok("no HTML comments inside the page's templates", htmlComments === 0,
   `${htmlComments} found — a backtick in one terminates the template literal it sits in`);
+
+/* Execute the real knob renderer: the request remains selected even while the
+ * chip reports fallback, and server explanations are escaped inside its tip. */
+const badgeFn = UI.match(/function modelBuildBadge\(status\) \{[\s\S]*?\n\}/)?.[0];
+const knobsFn = UI.match(/function paintKnobs\(\) \{[\s\S]*?\n\}/)?.[0];
+if (!badgeFn || !knobsFn) throw new Error("Video Lab knob renderer slice moved");
+const escape = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+for (const [label, requestedBuild, selected, expected] of [
+  ["ordinary build", "auto", [false, false], "Default build"],
+  ["both W6 paths ready", "w6a8", [true, true], "W6A8 ready"],
+  ["reference build missing", "w6a8", [true, false], "W6A8 partial"],
+  ["runtime unavailable", "w6a8", [false, false], "W6A8 fallback"],
+]) {
+  const box = { innerHTML: "", querySelectorAll: () => [] };
+  const fallback = 'Loader <missing> & "disabled"';
+  const buildStatus = { requestedBuild,
+    fl2va: { selected: selected[0], file: "plain.safetensors", fallback: requestedBuild === "w6a8" && !selected[0] ? fallback : null },
+    ref2va: { selected: selected[1], file: "reference.safetensors", fallback: requestedBuild === "w6a8" && !selected[1] ? fallback : null } };
+  const context = vm.createContext({ $: (id) => id === "vlabKnobs" ? box : null, esc: escape,
+    LAB: { knobs: [{ id: "experimental", label: "Build", kind: "enum", options: ["auto", "w6a8"], value: requestedBuild, buildStatus }] } });
+  vm.runInContext(`${badgeFn}\n${knobsFn}\npaintKnobs();`, context);
+  ok(`${label}: resolved state appears beside the control`, box.innerHTML.includes(`>${expected}</span>`));
+  ok(`${label}: saved request stays selected`, box.innerHTML.includes(`value="${requestedBuild}" selected`));
+  ok(`${label}: both path files appear in the tooltip`, box.innerHTML.includes("fl2va: plain.safetensors")
+    && box.innerHTML.includes("ref2va: reference.safetensors"));
+  if (requestedBuild === "w6a8" && selected.some((value) => !value)) {
+    ok(`${label}: fallback reason is visible and escaped`, box.innerHTML.includes(escape(fallback)) && !box.innerHTML.includes("Loader <missing>"));
+  }
+}
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) process.exit(1);

@@ -11,7 +11,7 @@
  * graph is built, not run.
  */
 import fs from "node:fs";
-import { buildSongToScoreGraph, SHEETSAGE_FILE, SHEETSAGE_CAPABILITY, MODES, CoverRefusal, songToScore } from "./cover.js";
+import { buildSongToScoreGraph, encoderPresent, SHEETSAGE_FILE, SHEETSAGE_CAPABILITY, MODES, CoverRefusal, songToScore } from "./cover.js";
 import { CATALOG } from "../models.js";
 
 let pass = 0;
@@ -22,6 +22,19 @@ function ok(label, cond, detail = "") {
 }
 const eq = (label, a, b) => ok(label, JSON.stringify(a) === JSON.stringify(b), `${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`);
 const src = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+
+{
+  const os = await import("node:os"), path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aiplay-cover-nested-"));
+  try {
+    fs.mkdirSync(path.join(dir, "audio_encoders", "yue2"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "audio_encoders", "yue2", SHEETSAGE_FILE), "weights");
+    ok("SheetSage readiness discovers its nested encoder", await encoderPresent(dir));
+    fs.mkdirSync(path.join(dir, "audio_encoders", "other"));
+    fs.writeFileSync(path.join(dir, "audio_encoders", "other", SHEETSAGE_FILE), "weights");
+    ok("SheetSage readiness refuses ambiguous nested encoders", !(await encoderPresent(dir)));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
 
 console.log("\n§1  the graph is the workflow's transcription lane");
 {

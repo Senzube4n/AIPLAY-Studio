@@ -299,6 +299,11 @@ export function mountScorePanel() {
     } catch (e) { say(e.message, "warn"); }
   });
 
+  el("scoreFollow")?.addEventListener("click", () => {
+    if (!state.slug || !state.version) return say("Choose a saved score first.", "warn");
+    window.open(`/score-player.html?slug=${encodeURIComponent(state.slug)}&version=${encodeURIComponent(state.version)}`, "_blank", "noopener");
+  });
+
   /* Opened lazily: the list is one GET but there is no reason to spend it on
    * every page load when the panel starts closed. */
   panel.addEventListener("toggle", () => {

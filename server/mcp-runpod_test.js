@@ -22,9 +22,27 @@ function rig() {
   return { calls, tools };
 }
 
+test("verified bundle setup and private presets are exposed through matching local routes", async () => {
+  const r = rig();
+  await r.tools.runpod_setup_status.run({});
+  await r.tools.runpod_install_bundle.run({ bundle: "yue2-comfy", acceptLicense: true });
+  await r.tools.runpod_cancel_install.run({});
+  await r.tools.runpod_templates.run({});
+  await r.tools.runpod_create_templates.run({});
+  assert.deepEqual(r.calls.map(([method, route]) => [method, route]), [
+    ["GET", "/api/runpod/setup"], ["POST", "/api/runpod/setup/install"], ["POST", "/api/runpod/setup/cancel"],
+    ["GET", "/api/runpod/account/templates"], ["POST", "/api/runpod/account/templates"],
+  ]);
+  const count = r.calls.length;
+  for (const bad of [{ bundle: "yue2-comfy", acceptLicense: false }, { bundle: "url", acceptLicense: true },
+    { bundle: "yue2-comfy", acceptLicense: true, url: "https://arbitrary.example" }]) await assert.rejects(r.tools.runpod_install_bundle.run(bad));
+  await assert.rejects(r.tools.runpod_create_templates.run({ deploy: true }));
+  assert.equal(r.calls.length, count, "unaccepted downloads and hidden Pod deployment must not reach an API");
+});
+
 test("RunPod tools are registered with closed top-level schemas and use the local API", async () => {
   const r = rig();
-  assert.equal(Object.keys(r.tools).length, 14);
+  assert.equal(Object.keys(r.tools).length, 19);
   assert.ok(Object.values(r.tools).every(tool => tool.inputSchema.additionalProperties === false));
   assert.match(readFileSync(new URL("./mcp.js", import.meta.url), "utf8"), /\.\.\.runpodTools\(api\)/);
   await r.tools.runpod_status.run({});
@@ -112,7 +130,12 @@ test("MCP asset upload is bounded, sends bytes only to the worker route and reje
 
 test("the RunPod HTTP start route rejects an empty POST before billing and accepts the confirmation phrase", async t => {
   let resumes = 0;
-  const route = createRemoteRoutes({ config: { uiPort: 4173 },
+  /* /api/runpod answers only this PC's Studio address on the UI port, and its
+   * JSON POSTs pass index.js sameOriginLocalJson, lifted here as it is. */
+  const config = { uiPort: 4173 };
+  const guardSrc = /function sameOriginLocalJson\(req\) \{[\s\S]*?\n\}/.exec(readFileSync(new URL("./index.js", import.meta.url), "utf8"))?.[0] || "";
+  const sameOriginLocalJson = new Function("config", `${guardSrc}\nreturn sameOriginLocalJson;`)(config);
+  const route = createRemoteRoutes({ config, sameOriginLocalJson,
     getSecret: async name => name === "RUNPOD_ACCOUNT_API_KEY" ? KEY : null,
     setSecret: async () => {}, clearSecret: async () => {}, append: async () => {}, actorFrom: () => "agent:test", adopt: async () => {},
     fetchFn: async (_url, init) => {
@@ -124,6 +147,7 @@ test("the RunPod HTTP start route rejects an empty POST before billing and accep
   const server = http.createServer((req, res) => route(req, res, new URL(req.url, "http://local")));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
+  config.uiPort = server.address().port;
   const url = `http://127.0.0.1:${server.address().port}/api/runpod/account/pods/pod_1/start`;
   const post = body => fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "x-aiplay-actor": "agent:test" }, body: JSON.stringify(body) });
   const denied = await post({});

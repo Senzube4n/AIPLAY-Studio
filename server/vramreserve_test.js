@@ -24,6 +24,25 @@ test("measured where Dynamic VRAM cannot see other programs: Windows, not NVIDIA
   assert.equal(wantsAutoReserve({ platform: "win32", vendor: "amd", mode: "off" }), false);
 });
 
+test("an NVIDIA PC whose settings name no card is read before it is given AMD's reserve", async () => {
+  /* The engine start read the card from settings.json alone (comfyargs.js
+   * vendorOf), so an NVIDIA PC that saved only a "cuda" torch, or nothing,
+   * read as null and was kept 3.3 GB short at every start. */
+  const { savedCardVendor } = await import("./config.js");
+  assert.equal(savedCardVendor({ torchBackend: "cuda" }), "nvidia", "a CUDA torch is NVIDIA's");
+  assert.equal(wantsAutoReserve({ platform: "win32", vendor: savedCardVendor({ torchBackend: "cuda" }) }), false);
+  assert.equal(savedCardVendor({}), null, "nothing saved: the live reading decides");
+  for (const [s, v] of [[{ gpu: { vendor: "amd" } }, "amd"], [{ torchBackend: "rocm" }, "amd"], [{ torchBackend: "xpu" }, "intel"],
+    [{ gpu: { vendor: "intel" } }, "intel"], [{ torchBackend: "cpu" }, "cpu"]]) {
+    assert.equal(savedCardVendor(s), v, JSON.stringify(s));
+    assert.equal(wantsAutoReserve({ platform: "win32", vendor: savedCardVendor(s) }), true, `${JSON.stringify(s)}: the reserve as before`);
+  }
+  assert.equal(wantsAutoReserve({ platform: "win32", vendor: null }), true, "a card nobody could read keeps it: it costs VRAM, never a render");
+  const comfy = readFileSync(new URL("./comfy.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(comfy, /const reserveVendor = savedCardVendor\(config\)\n\s+\|\| \(process\.platform === "win32" && config\.comfy\.autoReserve === "auto" \? \(await gpuFirstReading\(8000\)\)\?\.vendor : null\)\n\s+\|\| null;\n\s+const reserve = await desktopReserve\(\{\n\s+mode: config\.comfy\.autoReserve, vendor: reserveVendor,/,
+    "the settings first; the live reading only where they name no card, and only where a reserve can apply");
+});
+
 test("other programs are summed on the busiest adapter, the engine left out", () => {
   const rows = [row(1, 1097), row(2, 944), row(3, 424), row(4, 5, "luid_0x00000000_0x000131ad"), row(9, 12000)];
   assert.equal(othersDedicatedMb(rows, { excludePids: [9] }), 1097 + 944 + 424);

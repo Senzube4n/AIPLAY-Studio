@@ -46,6 +46,7 @@ import { assertSafe } from "../safety/refusal.js";
  * (lending.js speedUpCheck), so the three cannot disagree about a render. */
 import { trapBand } from "../mv/plancost.js";
 import { MV_SIZES, MV_ASPECTS, MV_SIZE_DEFAULT, renderSizeOf } from "../mv/sizes.js";
+import { REFERENCE_ROLES, REFERENCE_PACK_CAP } from "../mv/references.js";
 
 export const ORDER_V = 1;
 
@@ -184,6 +185,39 @@ function checkShot(shot, { context = [] } = {}) {
       throw refuse("bad-shot", `That scene's ${k} is far longer than a label should be.`);
     }
   }
+  // Pack metadata is additive. Validate its grouping/order before a frozen
+  // Picture legend can be interpreted through the ordinary named-asset resolver.
+  const groups = new Map(), closed = new Set(), referenceFiles = new Set();
+  let previous = null;
+  for (const ref of shot.refs || []) {
+    if (!ref || typeof ref !== "object") continue;
+    if (typeof ref.file === "string" && ref.file) {
+      if (referenceFiles.has(ref.file)) {
+        throw refuse("bad-shot", "Each reference Picture slot in a friend order needs a separate source filename. Copy the shared image to separate files before lending this scene; older receivers cannot restore repeated filenames.");
+      }
+      referenceFiles.add(ref.file);
+    }
+    if (ref.assetName === undefined && ref.referenceRole === undefined) {
+      if (previous !== null) closed.add(previous);
+      previous = null;
+      continue;
+    }
+    if (typeof ref.assetName !== "string" || !ref.assetName.trim() || ref.assetName.length > LABEL_CAP
+        || /[\u0000-\u001f]/.test(ref.assetName) || !REFERENCE_ROLES.includes(ref.referenceRole)) {
+      throw refuse("bad-shot", "A reference pack needs a bounded asset name and a known image role.");
+    }
+    if (previous !== ref.assetName) {
+      if (previous !== null) closed.add(previous);
+      if (closed.has(ref.assetName)) throw refuse("bad-shot", "Reference pack images must stay together in the picture order.");
+      previous = ref.assetName;
+    }
+    const roles = groups.get(ref.assetName) || [];
+    if (roles.length >= REFERENCE_PACK_CAP || roles.includes(ref.referenceRole)
+        || (roles.length && REFERENCE_ROLES.indexOf(roles.at(-1)) > REFERENCE_ROLES.indexOf(ref.referenceRole))) {
+      throw refuse("bad-shot", "Reference pack roles must be unique and follow identity, body, side, outfit, style, detail order.");
+    }
+    roles.push(ref.referenceRole); groups.set(ref.assetName, roles);
+  }
   return shot;
 }
 
@@ -293,6 +327,11 @@ export function makeOrder({ shot, files = [], order, returnTo, expiresInHours = 
       throw refuse("file-missing", `The shot asks for ${name} and no bytes for it were attached. A lender cannot render a scene whose pictures did not travel, and a scene rendered without them is a stranger.`);
     }
   }
+
+  // Baseline v1 receivers stage attachments in this order, so outgoing files
+  // must follow the frozen Picture legend even when callers attach in reverse.
+  const pictureOrder = new Map([...named.keys()].map((name, i) => [name, i]));
+  rows.sort((a, b) => pictureOrder.get(a.file) - pictureOrder.get(b.file));
 
   const at = Number(now) || 0;
   if (!at) throw refuse("bad-arguments", "Pass `now` — the moment, so an order is reproducible in a test.");

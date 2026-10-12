@@ -610,7 +610,7 @@ test("an accepted errand opens its plan in Workflow, on its own project", async 
     ? { orders: [{ id: "o_0123456789ab", slug: "order-o-01234567-from-friend", from: { nickname: "Friend" }, order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, state: "landed" }] }
     : f.defaults(url, body);
   await f.run("paintErrands()");
-  assert.match(f.node("cbErrands").innerHTML, /cbopenplan[^>]*>Open its plan in Workflow/);
+  assert.match(f.node("cbErrands").innerHTML, /cbopenplan[^>]*>Open its plan in Production/);
   const row = { dataset: { slug: "order-o-01234567-from-friend", id: "o_0123456789ab" } };
   await f.node("cbErrands").handlers.click({ target: { classList: { contains: (c) => c === "cbopenplan" }, closest: () => row } });
   assert.deepEqual(events.map((e) => [e.type, e.detail.slug]), [["aiplay:open-project", "order-o-01234567-from-friend"]]);
@@ -635,11 +635,11 @@ test("the Workflow view listens for the project Collab asks it to open", () => {
 
 test("each Ask friend names the other: standalone Video is text only, Workflow carries pictures", () => {
   const mv = readFileSync(new URL("../../web/mv.js", import.meta.url), "utf8");
-  assert.match(html, /id="vidAskFriend" title="[^"]*Workflow → Video clips → Ask friend/);
+  assert.match(html, /id="vidAskFriend" title="[^"]*Production → Video clips → Ask friend/);
   /* The page's own sentences name the screen by the rail's label (cbScreen),
    * typeof-guarded because vidPaint and videoFriendRecipe are lifted alone. */
-  assert.match(source, /use \$\{typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow"\} → Video clips → Ask friend, which carries them\.`\);/);
-  assert.match(source, /const wfName = typeof cbScreen === "function" \? cbScreen\("workflow", "Workflow"\) : "Workflow";/);
+  assert.match(source, /use \$\{typeof cbScreen === "function" \? cbScreen\("workflow", "Production"\) : "Production"\} → Video clips → Ask friend, which carries them\.`\);/);
+  assert.match(source, /const wfName = typeof cbScreen === "function" \? cbScreen\("workflow", "Production"\) : "Production";/);
   assert.match(mv, /data-friendclip="[^"]*" title="[^"]*carries the scene's reference pictures[^"]*Video → Ask friend/);
 });
 
@@ -712,7 +712,7 @@ test("every screen the Collab page names is the rail's own label, read when it p
   const f = fixture();
   const filled = [{ dataset: { screen: "workflow" }, textContent: "Workflow" }];
   f.context.document = {
-    querySelector: (q) => (q === '[data-view="workflow"] .lbl' ? { textContent: " Music video " } : null),
+    querySelector: (q) => (q === '[data-view="workflow"] .lbl' ? { textContent: " Production " } : null),
     querySelectorAll: (q) => (q === "[data-screen]" ? filled : []),
     dispatchEvent: () => true,
   };
@@ -720,10 +720,10 @@ test("every screen the Collab page names is the rail's own label, read when it p
     ? { orders: [{ id: "o_0123456789ab", slug: "order-x", from: { nickname: "Friend" }, order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, state: "landed" }] }
     : f.defaults(url, body);
   await f.run("paintErrands()");
-  assert.match(f.node("cbErrands").innerHTML, /cbopenplan[^>]*title="Music video → this project[^>]*>Open its plan in Music video</);
+  assert.match(f.node("cbErrands").innerHTML, /cbopenplan[^>]*title="Production → this project[^>]*>Open its plan in Production</);
   await f.run("refreshCollab()");
-  assert.equal(filled[0].textContent, "Music video", "the static hints follow the rail too");
-  assert.match(html, /<b data-screen="workflow">Workflow<\/b> &rarr; the &ldquo;Order/);
+  assert.equal(filled[0].textContent, "Production", "the static hints follow the rail too");
+  assert.match(html, /<b data-screen="workflow">Production<\/b> &rarr; the &ldquo;Order/);
   /* No rail (a page without one): the fallback, never an empty name. */
   const bare = fixture();
   assert.equal(bare.run('cbScreen("workflow", "Workflow")'), "Workflow");

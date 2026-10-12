@@ -84,6 +84,7 @@ import { jsonAfter } from "../mv/blender.js";
 import { freeVramMb, killMeshProcessTree, sha256File } from "../mesh/runner.js";
 import { CATALOG } from "../models.js";
 import { verifyReplayManifest, replayRuntime, replayModelIdentities } from "./yue-artifacts.js";
+import { importProbe } from "../setup/engine-packages.js";
 
 /**
  * ONE SENTENCE, CARRIED INTO EVERY RECORD THIS MODULE WRITES.
@@ -147,7 +148,7 @@ const cap = (id) => CATALOG.find((c) => c.id === id) || null;
  */
 export const YUE = {
   python: process.env.AIPLAY_YUE_PYTHON || config.yue?.python
-    || path.join(config.rig, "venv-yue", "Scripts", "python.exe"),
+    || path.join(config.rig, "venv-yue", ...(process.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"])),
   model: process.env.AIPLAY_YUE_MODEL || config.yue?.model
     || path.join(config.rig, "yue2-kit", "models", "YuE2-3B"),
   vae: process.env.AIPLAY_YUE_VAE || config.yue?.vae
@@ -211,52 +212,115 @@ export class YueRefusal extends Error {
   }
 }
 
-/**
- * Is the interpreter here, are the weights here? -> {installed, why[], …}
- *
- * Written the way `meshStatus()` is written and for the same reason: it names the
- * missing file and the setting that moves it, so a route can hide a button it
- * cannot honour instead of offering one that dies in a subprocess. Every check
- * is a `stat()`; nothing is spawned, nothing is imported, no card is touched.
- */
-export async function yueStatus() {
-  const why = [];
-  try { await stat(YUE.python); } catch {
-    why.push(`The YuE2 python is not at ${YUE.python} — set AIPLAY_YUE_PYTHON to venv-yue's `
-      + `python.exe. It must be its OWN virtual environment: yue2-infer's pins would move the `
-      + `engine's torch, and the music model's fused int8 kernels exist only on 2.13.0+cu130.`);
-  }
-  const weights = [];
-  for (const w of weightFiles()) {
-    const dest = w.dest;
-    let bytes = null;
-    try { bytes = (await stat(dest)).size; } catch { /* reported below */ }
-    weights.push({ role: w.role, dest, declaredBytes: w.bytes, bytes,
-                   factsFrom: w.factsFrom, sha256: w.sha256 });
-    if (bytes === null) {
-      why.push(`${w.label} is not at ${dest} — set ${w.setting} to the kit's model folder, or `
-        + `fetch "${cap(YUE_CAP)?.label || YUE_CAP}" from the Models screen `
-        + `(${((cap(YUE_CAP)?.files || []).reduce((a, f) => a + (f.bytes || 0), 0) / 1e9).toFixed(2)} GB).`);
-    } else if (bytes !== w.bytes) {
-      /* A partial download is the failure this catches: the file exists, the
-       * pipeline loads it, and safetensors raises somewhere that reads as a bug
-       * in this feature. `storage.py:model_identity()` would catch it too, ~20 s
-       * and one interpreter start later. */
-      why.push(`${path.basename(dest)} for ${w.role} is ${bytes} bytes and the measured checkpoint `
-        + `is ${w.bytes} — a partial or substituted download, so nothing was started.`);
+/** The loader uses its installed model implementation, not repo modeling_*.py.
+ * Only these sidecars are mandatory; generation settings and manifests have
+ * vendor defaults and must not prevent an otherwise complete kit running. */
+export const YUE_SIDECARS = Object.freeze([
+  { role: "mot", name: "config.json", folder: "model" },
+  { role: "mot", name: "qwen.tiktoken", folder: "model" },
+  { role: "vae", name: "config.json", folder: "vae" },
+]);
+const YUE_IMPORTS = ["yue2.pipeline", "yue2.nar", "yue2.modeling_yue2", "yue2.modeling_vae"];
+
+/** A real dependency import catches missing wheels/DLLs before queueing. It
+ * neither loads weights nor calls torch.cuda. Successful probes live five
+ * minutes, failures thirty seconds, and concurrent UI/MCP reads share a child.
+ * File checks remain fresh. Seams keep the regression tests off real GPUs. */
+export function createYueStatusReader({ getYue = () => YUE, getWeights = weightFiles,
+  statFile = stat, readText = readFile, probeRuntime = importProbe, now = Date.now } = {}) {
+  let cached = null, pending = null;
+  return async function readYueStatus({ refreshRuntime = false } = {}) {
+    const yue = getYue();
+    const why = [];
+    let pythonInfo = null;
+    try { pythonInfo = await statFile(yue.python); } catch { /* reported below */ }
+    if (!pythonInfo?.isFile()) {
+      why.push(`YuE2's separate Python interpreter is missing: ${yue.python}. Set AIPLAY_YUE_PYTHON `
+        + `to a virtual environment with yue2-infer installed, or choose YuE2 (ComfyUI).`);
     }
-  }
-  /* The generation config is read for the token caps the progress denominator
-   * assumes. Its absence is not fatal — TOKEN_CAPS has the measured fallback —
-   * so it is reported without joining `why`. */
-  const capsFile = path.join(YUE.model, "yue2_generation_config.json");
-  let capsPresent = true;
-  try { await stat(capsFile); } catch { capsPresent = false; }
-  return {
-    installed: !why.length,
-    python: YUE.python, model: YUE.model, vae: YUE.vae,
-    weights, capsFile, capsPresent, why,
+    const weights = [];
+    for (const w of getWeights()) {
+      const dest = w.dest;
+      let bytes = null;
+      try { const s = await statFile(dest); if (s.isFile()) bytes = s.size; } catch { /* reported below */ }
+      weights.push({ role: w.role, dest, declaredBytes: w.bytes, bytes,
+                     factsFrom: w.factsFrom, sha256: w.sha256 });
+      if (bytes === null) {
+        why.push(`${w.label} is not at ${dest} — set ${w.setting} to the kit's model folder, or `
+          + `fetch "${cap(YUE_CAP)?.label || YUE_CAP}" from the Models screen `
+          + `(${((cap(YUE_CAP)?.files || []).reduce((a, f) => a + (f.bytes || 0), 0) / 1e9).toFixed(2)} GB).`);
+      } else if (bytes !== w.bytes) {
+        /* A partial download is the failure this catches: the file exists, the
+         * pipeline loads it, and safetensors raises somewhere that reads as a bug
+         * in this feature. `storage.py:model_identity()` would catch it too, ~20 s
+         * and one interpreter start later. */
+        why.push(`${path.basename(dest)} for ${w.role} is ${bytes} bytes and the measured checkpoint `
+          + `is ${w.bytes} — a partial or substituted download, so nothing was started.`);
+      }
+    }
+    const sidecars = [];
+    for (const item of YUE_SIDECARS) {
+      const dest = path.join(yue[item.folder], item.name);
+      let present = false;
+      try {
+        const s = await statFile(dest);
+        present = s.isFile() && s.size > 0;
+        if (present && item.name === "config.json") {
+          const parsed = JSON.parse(await readText(dest, "utf8"));
+          present = !!parsed && typeof parsed === "object" && !Array.isArray(parsed);
+        }
+      } catch { present = false; }
+      sidecars.push({ role: item.role, name: item.name, dest, present });
+      if (!present) why.push(`YuE2's model files are incomplete: ${dest}. Restore the repository's `
+        + `config and tokenizer files beside the weights, or choose YuE2 (ComfyUI).`);
+    }
+    let runtime = { ready: false, checkedAt: null, modules: null, issue: "Python runtime missing" };
+    if (pythonInfo?.isFile() && weights.every(w => w.bytes === w.declaredBytes) && sidecars.every(s => s.present)) {
+      const key = `${yue.python}:${pythonInfo.size}:${pythonInfo.mtimeMs}`;
+      const ttl = cached?.value.ready ? 5 * 60_000 : 30_000;
+      if (!refreshRuntime && cached?.key === key && now() - cached.at < ttl) runtime = cached.value;
+      else {
+        if (!pending || pending.key !== key) {
+          const check = Promise.resolve().then(() => probeRuntime(yue.python, YUE_IMPORTS, { timeoutMs: 20_000 }))
+            .catch(() => null).then(modules => {
+              const ready = !!modules && YUE_IMPORTS.every(m => modules[m] === true);
+              const value = { ready, checkedAt: now(), modules,
+                issue: ready ? null : modules ? "Python dependencies missing" : "Python check failed" };
+              cached = { key, at: now(), value };
+              return value;
+            });
+          pending = { key, check };
+          check.finally(() => { if (pending?.check === check) pending = null; });
+        }
+        runtime = await pending.check;
+      }
+      if (!runtime.ready) {
+        const missing = runtime.modules ? YUE_IMPORTS.filter(m => runtime.modules[m] !== true)
+          .map(m => `${m}: ${runtime.modules[m] || "not available"}`).join("; ") : "dependency check did not finish";
+        why.push(`YuE2's Python dependencies cannot load in ${yue.python}: ${missing}. Repair that separate `
+          + `virtual environment, or choose YuE2 (ComfyUI).`);
+      }
+    } else if (pythonInfo?.isFile()) runtime.issue = "Python model files missing";
+    /* The generation config is read for the token caps the progress denominator
+     * assumes. Its absence is not fatal — TOKEN_CAPS has the measured fallback —
+     * so it is reported without joining `why`. */
+    const capsFile = path.join(yue.model, "yue2_generation_config.json");
+    let capsPresent = true;
+    try { await statFile(capsFile); } catch { capsPresent = false; }
+    return {
+      installed: !why.length,
+      python: yue.python, model: yue.model, vae: yue.vae,
+      weights, sidecars, runtime, capsFile, capsPresent, why,
+    };
   };
+}
+export const yueStatus = createYueStatusReader();
+/** Shared short choice/status copy. Detailed paths remain in status.why. */
+export function yueReadinessNote(status) {
+  if (status?.installed) return null;
+  const issue = status?.weights?.some(w => w.bytes !== w.declaredBytes)
+    ? "Python model files missing" : status?.runtime?.issue || "Python kit setup needed";
+  return `${issue}. Choose YuE2 (ComfyUI), or finish the separate Python kit setup.`;
 }
 
 /* ───────────────────────────────────────────────────────────────── the card */

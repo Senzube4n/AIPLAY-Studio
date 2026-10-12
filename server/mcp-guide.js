@@ -29,16 +29,15 @@
 
 const HEAD = `AIPLAY STUDIO — WHEN TO USE WHAT
 
-Families: mv_*/ab_* = the workflow store (projects, scenes, cast, takes,
-timeline); vfx_* = the compositor; image_* = the editor; engine_* = the raw graph and the record of
-every render; the rest = generation
-and the library. One local GPU renders everything — music has priority, art
-and video queue behind it.
+UI: Production holds video, episode and audiobook projects.
+Families: mv_*/ab_* = projects, scenes, cast, takes and timeline; vfx_* = the
+compositor; image_* = the editor; engine_* = raw graphs and render receipts;
+the rest = generation and library. One GPU renders everything, music first.
 
-The economics drive the order: PLANNING IS FREE (brief, bible, lint, crime
-board), a render costs GPU-minutes, and every render KEEPS its takes. So plan
-fully, render once, pick takes, repair the stale minimum, and polish with VFX
-instead of re-rendering. Topics: stages, series, engines, example.`;
+PLANNING IS FREE (brief, bible, lint, crime board). Renders cost GPU-minutes
+and keep takes. Plan fully, pick takes, repair the stale minimum, then polish
+with VFX. Topics: stages, series, engines, example, vectors, music-workbench, music-editing.
+Read vectors for logos; music-workbench for native YuE2 tools.`;
 
 const STAGES = `THE FIVE STAGES OF A MUSIC VIDEO
 
@@ -123,7 +122,7 @@ BIBLE FIRST, before any pixel: \`mv_bible_spec\` → author the story, style
 bible, characters, backgrounds and boards → \`mv_set_bible\`. The bible merges
 by NAME, so re-committing it never destroys rendered sheets.
 
-One project per episode, one shared cast. Projects do not share a store, so
+One video project per episode on Production, one shared cast. Projects do not share a store, so
 carry the bible document itself between episodes and commit the SAME
 characters/backgrounds into each with \`mv_set_bible\` — then carry the chosen
 FACES with \`mv_import_asset\` (import the previous episode's picked sheet
@@ -278,7 +277,141 @@ FINISHING IS A STAGE. \`mv_build_timeline\` is the last one and the easiest neve
 to reach. Repairing tools is not delivering a video: re-read the objective before
 each new thread of work, and ask what the caller would have if you stopped now.`
 
-const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS };
+const VECTORS = `VECTOR ART: TRACE, SELECT, FINISH, LOOK
+
+1 SOURCE: use an existing Pictures raster from \`list_images\`, or \`image_vector_import\`
+  with an explicitly supplied absolute local path or base64 image data. An uploaded generation
+  reference is not automatically a Pictures asset. Keep the original source.
+
+2 TRACE: \`image_vectorize\` needs the library name. Choose logo for flat colors,
+  silhouette for transparent gradient art (one neutral alpha fill), posterize for a photo.
+  Transparency must already be correct; alpha mode on an opaque image traces the canvas.
+  The returned shapes carry palette color, contour index, source-pixel bounds, hole and
+  parent. The inventory is capped at 512 shapes. Save replay: it is a directly valid request
+  with the original source/settings and traceFingerprint already set as basis.
+
+3 PLAN: identify simple geometry, text/counters, smooth spans, sharp corners, narrow gaps
+  and waveform peaks. Select exact contours; leave protected/unselected outlines unchanged.
+  A connected outline can contain both smooth and delicate parts. Do not increase smoothing
+  until their visual identity survives. High trace quality follows noise more faithfully.
+
+4 FINISH: clone the latest replay and add or revise cleanup/composition. This retains the
+  ORIGINAL raster, SAME base settings and previous edits. cleanup.operations names type, color, contours,
+  maxDeviation in source pixels (default 4), and strength for smooth (default 0.7).
+  smooth uses longer curves and pinned corners; circle selects one complete circular outline;
+  concentric selects outer/inner circular contours and shares their center; parallelogram
+  selects one four-sided divider. Selections are disjoint. Unsafe fits or topology changes
+  fail instead of being forced. A stale basis requires a new trace, never guessed indexes.
+
+  composition.fills assigns selected outlines either solid or gradient. Selected gradients
+  use angle/stops and optional source-pixel bounds [x,y,width,height]; their default span
+  is the selection bounds. Include foreground outlines AND all their child holes in fills
+  and shadows. composition.shadows duplicates selected cleaned paths with offset [dx,dy]
+  and fill color. composition.omit removes only inspected artifacts; omitting a hole fills
+  that counter, so never omit meaningful letter counters. Source shadow fragments can be
+  removed explicitly, then rebuilt from clean foregrounds. Keep previous operations and
+  composition in later requests: each run reconstructs from the original, not the last SVG.
+  Use explicit masks/layers if raster colors cannot distinguish the intended design groups.
+
+5 LOOK: \`image_vector_review\` returns native PNG pixels rendered from the actual saved SVG.
+  Review the whole artwork and enlarged source-pixel crops on white and dark backgrounds.
+  Review also returns the saved replay, or null for an SVG without a Studio trace receipt.
+  Check lettering, holes, waveform peaks, curve joins, border thickness and shadow offsets.
+  Metrics/IoU do not prove polished curves. Unsupported SVG features are refused, not guessed.
+  Keep the source and previous SVGs for comparisons. Do not claim universal perfect tracing
+  or inferred gradients. Qwen can propose local raster repair through existing image tools,
+  but compare each candidate and protect original text before tracing it.
+
+Full guide: https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/vector.md`;
+
+const MUSIC_WORKBENCH = `NATIVE MUSIC WORKBENCH
+
+UI: Music Lab > Native tools. For different song ideas, Music > Batch & schedule.
+The main full-window player’s Score view follows a linked
+YuE2 score; the workbench's saved native runs also offer Follow playback. Timing is approximate.
+
+1 READ: \`music_workbench_status\` lists installed packs, datasets and runs without work.
+  Installation is explicit through \`music_native_install\`; optional planner/trainer packs
+  require NVIDIA CUDA. Existing Studio generation and single-recording training remain separate.
+
+2 PLAN: \`music_native_plan\` saves exact style/lyrics/settings and model/runtime hashes.
+  Choose score, semantic tokens or audio. Poll \`music_workbench_run\`, inspect returned
+  artifact URLs, then \`music_native_replay\` for an edited score or saved tokens. Token reuse
+  cannot accompany changed ABC. \`music_native_keep\` saves completed audio to the library.
+  Score changes steer a new performance; identical waveform or precise duration is not guaranteed.
+
+3 TRAIN: \`music_dataset_create\` reads library audio or an owner's absolute local folder.
+  Review each entry with \`music_dataset_edit\`; \`music_dataset_prepare\` converts recordings.
+  \`music_native_train\` handles full code/latent/score preparation and joint adapter training.
+  \`music_native_continue\` uses a saved optimizer checkpoint and a higher TOTAL step count.
+  \`music_adapter_export\` creates a ComfyUI LoRA; \`music_adapter_install\` copies it to its shelf.
+  Select its returned filename in both Audio LoRA and Planner LoRA on YuE2 through ComfyUI.
+  Completion/loss is not proof of quality: audition held-out cases, using
+  \`music_listening_lab\` and \`music_listening_lab_start\` where the exported adapter is compatible.
+
+4 TRANSCRIBE: \`music_audio_transcribe\` predicts multi-instrument MIDI with MuScriptor
+  (CC BY-NC weights). \`music_midi_to_daw\` imports notes onto a provisional 4/4 timeline,
+  default 120 BPM/pluck sounds. It does not reconstruct the original tempo or timbres.
+
+5 FINISH: \`music_process_preview\` offers separate cleanup, optional offline VST3 and
+  reference loudness matching. Compare the preview, then \`music_process_keep\` preserves it.
+  For actual mastering use the DAW chain, \`daw_analyze\`, loudness-matched \`daw_reference\`,
+  \`daw_critique\` and \`daw_bounce\`; final export meters matter more than knob labels.
+  \`music_workbench_stop\` stops only the active owned native tool.
+
+6 BATCH: Music's Takes varies one idea; Batch & schedule holds different title/style/lyric
+  snapshots and accepted engine settings. \`overnight_start\` accepts items, takes per idea,
+  and optional start_at as a future ISO UTC timestamp. Omit it to start now. Songs render
+  one at a time with fresh seeds. \`overnight_status\` reads the saved plan/history;
+  \`overnight_control\` pauses, resumes immediately, stops or clears. Studio must be running
+  and the computer awake; it cannot wake them. A future appointment restores after restart,
+  while a missed appointment pauses for review. Only one live plan is allowed. Exact
+  lyrics/ABC survive; normal readiness and hosted spending confirmations still apply.
+
+Source recordings survive. GPU work is exclusive and refuses to overlap active Studio rendering.
+Generation, installation, training, replay and keeping results are distinct actions. No loop judge,
+Ozone-equivalent neural mastering or guaranteed hybrid-genre control is claimed.`;
+
+const MUSIC_EDITING = `MUSIC EDITING: reviewed notation, saved takes and shared cues.
+
+DAW > AI takes: draw/edit notes and preview the selected instrument in the piano roll.
+\`music_daw_preview\` exports inclusive bars into YuE2's two monophonic voices.
+It refuses unsupported polyphony/tempo; optional quantization changes only the ABC preview.
+Velocity, effects, sound and articulation are not score controls; read the returned warnings.
+\`music_daw_draft\` saves exact style/lyrics, score and project/recording hashes.
+\`music_daw_request\` validates freshness and returns the selected-score request for Music.
+Loading a draft does not generate. Music > Create is the explicit action.
+
+For protected alternatives, choose a saved YuE2 Python source made with full/melody planning.
+Review the recording offset: positive means DAW bar 1 starts later in the recording.
+\`music_daw_takes\` queues 2/3 distinct seeds using the COMPLETE edited score as conditioning.
+The compositor retains the rest with 80 ms seam blends, including just before the start; audition both seams.
+Edited notes steer a new performance, not guaranteed note-for-note synthesis or realtime inpainting.
+\`music_daw_draft_get\` reads exact session/job receipts; retries reuse that session.
+\`music_daw_audition\` verifies original/ready take hashes and returns region/seam/full playback.
+\`music_audition_keep\` records the choice; acknowledge short endings only after listening.
+\`music_audition_cancel\` cancels that session's owned jobs. Use \`music_auditions\` and
+\`studio_status\` to inspect an unacknowledged submission; never blindly resubmit it.
+Quantized/ComfyUI sources currently cannot use this protected ABC passage workflow.
+
+Music Lab > Takes: \`music_takes_create\` groups exactly 2/4/8 EXISTING library recordings.
+It measures integrated loudness/true peak on CPU and uses attenuation-only matched playback.
+Same-position A/B exposes changed durations. Original audio survives; no mastering is applied.
+\`music_takes_verify\` checks immutable hashes; guarded playback independently rechecks them.
+\`music_takes_get\` reads exact stored metadata/events, partial older receipts and choice history.
+\`music_takes_choose\` records an explicit choice and library favourite; meters are not taste.
+Reuse the same creation key and files after an acknowledgement loss. Creating new music remains
+Music's 2/4/8 Takes queue, with one generation at a time where the engine requires it.
+
+Music Lab > Shared cues: \`music_cue_save\` links a DAW bar/beat/tick to a VFX composition.
+Set the composition offset explicitly. \`music_cue_preview\` resolves the actual tempo/meter
+clock and returns a review token. \`music_cue_audition\` renders one deterministic dry accent
+on CPU. The UI pairs it with a simulated flash; after Apply it renders the real changed frame.
+\`music_cue_apply\` checks both documents and adds one owned impact/kick track and flash layer.
+\`music_cue_undo\` removes only those untouched owned items; changed/dependent items refuse.
+\`music_cue_read\` reports partial application/recovery receipts. No model, camera, avatar,
+lights or automatic publish run is implied. Preview first, then apply the reviewed cue.`;
+const TOPICS = { stages: STAGES, series: SERIES, engines: ENGINES, example: EXAMPLE, pitfalls: PITFALLS, vectors: VECTORS, 'music-workbench': MUSIC_WORKBENCH, 'music-editing': MUSIC_EDITING };
 
 /** Every section, for the test that proves no tool name here is a phantom. */
 export const GUIDE_SECTIONS = { head: HEAD, ...TOPICS };
@@ -292,11 +425,11 @@ export function guideTools() {
         + "at each of the five stages of a music video (song, plan, assets, polish, "
         + "assemble), the episodic-series variant, the engine and licence rules, and a "
         + "worked scene. Costs nothing and answers instantly. `topic` narrows it: "
-        + "stages | series | engines | example | pitfalls. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline.",
+        + "stages | series | engines | example | pitfalls | vectors | music-workbench | music-editing. READ `pitfalls` BEFORE A LONG RUN — it is the list of mistakes that have actually been made on this pipeline. Use topic=vectors for vector logos; topic=music-workbench for native YuE2 tools; topic=music-editing for DAW passages, take comparisons and shared cues.",
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls"],
+          topic: { type: "string", enum: ["stages", "series", "engines", "example", "pitfalls", "vectors", "music-workbench", "music-editing"],
             description: "One section instead of the whole map." },
         },
         additionalProperties: false,

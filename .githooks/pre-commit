@@ -11,8 +11,36 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+node --check web/full-player-score.js || exit 1
+node --check web/score-follow.js || exit 1
+node --check web/music-workbench.js || exit 1
+node --check web/music-workflows.js || exit 1
+node --check web/daw-passages.js || exit 1
+node --check web/music-take-comparison.js || exit 1
+node --check web/music-shared-cues.js || exit 1
+node --check server/mcp-daw-passages.js || exit 1
+node --check server/mcp-take-comparison.js || exit 1
+node --check server/mcp-shared-cues.js || exit 1
+node --check server/music/daw-score.js || exit 1
+node --check server/music/daw-passages.js || exit 1
+node --check server/music/take-comparison.js || exit 1
+node --check server/music/shared-cues.js || exit 1
+node --test server/music/daw-score_test.js server/music/daw-passages_test.js server/music/take-comparison_test.js server/mcp-take-comparison_test.js server/music/shared-cues_test.js server/mcp-shared-cues_test.js || exit 1
+node --test server/music/full-player-score_test.js server/batch-music-context_test.js || exit 1
+node --check web/music-batch-spec.js || exit 1
+node --check web/music-batch-editor.js || exit 1
+node --check server/batch-music.js || exit 1
+node --check server/batch-music-context.js || exit 1
+node --test server/overnight-music_test.js || exit 1
+node --test server/music-batch-ui_test.js || exit 1
+node --check web/vectorize-controls.js || exit 1
+node --test server/vectorize_test.js server/vectorize-ui_test.js server/vector-import_test.js || exit 1
+node --test server/music/community-tools_test.js server/music/score-follow_test.js server/music/native-adapter-export_test.js || exit 1
+node --check server/mcp-music-workbench.js || exit 1
+node --test server/mcp-music-workbench_test.js || exit 1
 # RunPod transport and its UI: mock HTTP services only; no GPU or paid cloud resources.
-node --test server/engine/remote_test.js server/engine/remote_ui_test.js server/engine/runpod-account_test.js server/mcp-runpod_test.js || exit 1
+node --test server/engine/remote_test.js server/engine/remote_ui_test.js server/engine/runpod-account_test.js server/mcp-runpod_test.js server/engine/remote_guard_test.js || exit 1
+node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
 # The launcher favourite (the star) and the system check's settings merge.
 node --test server/launcher-fav_test.js || exit 1
 node --check web/runpod-integrated.js || exit 1
@@ -123,6 +151,10 @@ node server/daw/capture_test.js || exit 1
 # mixer leaves every hash byte-identical to P0's; stateful chains reach
 # forward; returns dirty their consumers; sidechain drags its source along.
 node server/daw/mixer_test.js || exit 1
+node --check web/daw-plugins.js || exit 1
+node server/daw/plugins_test.js || exit 1
+node server/daw/plugins_routes_test.js || exit 1
+node server/daw/vst3_mixer_test.js || exit 1
 node server/daw/mixer_future_test.js || exit 1
 node server/daw/mixer_return_sidechain_test.js || exit 1
 # [DAWUI] The arrangement window's static gates: THE PARITY GATE (every
@@ -134,6 +166,7 @@ node server/daw/mixer_return_sidechain_test.js || exit 1
 node server/daw/ui_test.js || exit 1
 node scripts/test_daw_editing.mjs || exit 1
 node scripts/test_daw_sessions.mjs || exit 1
+node scripts/test_daw_history.mjs || exit 1
 node scripts/test_daw_audio_results.mjs || exit 1
 node scripts/test_daw_export.mjs || exit 1
 node scripts/test_music_input_ui.mjs || exit 1
@@ -169,6 +202,9 @@ node server/music/yue_fit_test.js || exit 1
 # job pump, MCP schema, Music tab — names it, because one silent list is how
 # the audio reference was dead on arrival. No GPU, no ComfyUI, milliseconds.
 node server/music/yue2_comfy_graph_test.js || exit 1
+# The exact generated/supplied ABC stays bound to its completed Comfy prompt,
+# then uses the same score store/player/MCP doors without claiming Python replay.
+node server/music/yue2-comfy-score_test.js || exit 1
 # A SUPPLIED SCORE ON YuE2 THROUGH COMFYUI IS SUNG OR REFUSED, NEVER DROPPED:
 # the validator row by row, the real /api/generate branch sliced and run with
 # the real jobs.js graph call behind it (every score reaches node 5 or nothing
@@ -190,6 +226,14 @@ node server/modelpick_test.js || exit 1
 # run folder — one silent list is how the audio reference was dead on arrival.
 # The driver is byte-compiled when the YuE2 python is here. No GPU.
 node server/music/yue_extend_test.js || exit 1
+# THE TOKENIZER'S CACHE KEY CARRIES THE READER (2026-09-25). Under transformers 5
+# MERT's rotary table was never initialised, so every real-audio reading before
+# the fix was garbage and the cache, keyed on the audio alone, would have kept
+# serving it. tok_r<reader>_<sha12>: an old tok_<sha12> folder is never hit by
+# codesDirFor, tokenizeTrack or sounds_like; a reading that names another reader
+# is refused and its codes are not kept; the python and JS numbers agree.
+# Temp output folder and a fake python; no weights, no card.
+node server/music/tokenize_key_test.js || exit 1
 # HUM A MELODY: the pitch tracker turns a synthetic six-note hum into the
 # planner's own two-voice layout and the app's score reader accepts it; the
 # open-score branch, the route, the door, the tool, the page and the doc each
@@ -386,6 +430,10 @@ node server/mv/blockout_test.js || exit 1
 # per-take evidence — including that a take from before this feature admits it
 # has none rather than borrowing the row's current prompt.
 node server/mv/shot_test.js || exit 1
+# Named reference packs: role selection, persisted edits, Picture order,
+# per-role drift, typed MCP parity and picture-drop teardown. Temp data, no GPU.
+node --check server/mv/references.js || exit 1
+node --test server/mv/references_test.js || exit 1
 # THE MUSIC VIDEO FOLLOWS THE CARD: one size list read from server/h3tier.js
 # (renderSize, the collab packet and order, set_brief, the MCP enum and the
 # brief all read it), only the two shapes that render, a new video starting at
@@ -594,6 +642,11 @@ node server/mcp-guide_test.js || exit 1
 # stay manual: a hook that fails on a machine without the rig gets deleted.
 PY="${AIPLAY_RIG:-}/venv/Scripts/python.exe"   # set AIPLAY_RIG to your ComfyUI rig; unset skips these lanes
 if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
+if [ -x "$PY" ] && "$PY" -c "import cv2,numpy,scipy,PIL" >/dev/null 2>&1; then
+  "$PY" server/vector_trace_test.py || exit 1
+  "$PY" server/vector_cleanup_test.py || exit 1
+  "$PY" server/vector_preview_test.py || exit 1
+fi
 # THE UNIRIG ADAPTER, which is STDLIB-ONLY and so does not want the guard above.
 # The imagetools suites need PIL/numpy/scipy and are rightly skipped where the
 # rig is absent; this one needs nothing but an interpreter, and gating it on the
@@ -710,6 +763,8 @@ if [ -x "$PY" ]; then "$PY" server/daw/return_stems_test.py || exit 1; fi
 # automation), the full-graph seam/determinism pin, BS.1770 metering against
 # its own calibration constant, and the per-device CPU budget.
 if [ -x "$PY" ]; then "$PY" server/daw/rack_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/plugin_worker_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/plugin_chain_test.py || exit 1; fi
 # The MASTERING SUITE. Everything here is a claim a wrong device would still
 # make: LP4+HP4 measured against the closed-form allpass, the band tree
 # summing back, the M/S butterfly bit-exact on float32-sourced audio, a
@@ -743,6 +798,18 @@ if [ -x "$PY" ]; then "$PY" server/daw/instruments_test.py || exit 1; fi
 # survives every metadata mode ("none" included) and the Tier-2 toggle strips
 # only the record — the behavioural half of the Tier-1 pin above.
 if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
+# MERT'S ROTARY TABLE, REBUILT AFTER LOADING (server/music/yue_tokenize.py): on a
+# stand-in module, through mert_features with transformers faked (no audio may
+# reach an unchecked model), and on MERT2's own RotaryEmbedding built on the meta
+# device and put through transformers' own meta-to-device step (emulated, with a
+# note, if a venv upgrade moved that private step: a clean tree must not fail),
+# then compared bit for bit with a freshly constructed one. That last part reads
+# only the modeling code from the rig's models folder and skips loudly without
+# it. No weights, no card. The real-weights check (the same file read twice in
+# two processes must give identical codes that agree with a reference reading:
+# on 2026-10-08 the unrepaired reader was identical twice and 93 % wrong) is
+# scripts/yue_tokenize_determinism.py, run by hand.
+if [ -x "$PY" ]; then "$PY" server/music/yue_tokenize_test.py || exit 1; fi
 # THE WELCOME WINDOW's parity gate and its content gate. The first is the usual
 # two-directional census plus a third direction this surface has to hold — every
 # action reachable by an AGENT as well, because "MCP controllable so an agent can
@@ -893,6 +960,14 @@ node --test server/modelsdir_test.js || exit 1
 # FastH3: the third video engine's graph, its attention pair and its download row.
 node --test server/fasth3_test.js || exit 1
 node --test server/taomate_test.js || exit 1
+# The Models screen and the Video screen agree about the video files without a
+# restart: every pick made again when a video row lands or goes, read from
+# every folder the engine loads from, and the gate never offering a 0.0 GB
+# download (setF, from a tester's report). Temp folders, no GPU.
+node --test server/videopicks_test.js || exit 1
+# A Library song rides under a clip whatever its name (brackets, commas,
+# accents, .opus), and one that cannot is refused or said, never dropped.
+node --test server/songstage_test.js || exit 1
 node --test server/video-speed_test.js || exit 1
 node --test server/fresh-engine_test.js || exit 1
 node --test server/blockcache_test.js || exit 1
@@ -1373,6 +1448,7 @@ node --test server/qwen-draft_test.js || exit 1
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/sparsectrl_pairs_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/sparsectrl_lifecycle_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy" >/dev/null 2>&1; then "$ADAPTER_PY" server/yue2_continue_test.py || exit 1; fi
+if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/yue2_score_test.py || exit 1; fi
 if [ -n "$ADAPTER_PY" ] && "$ADAPTER_PY" -c "import numpy, scipy" >/dev/null 2>&1; then "$ADAPTER_PY" server/reactive_rms_test.py || exit 1; fi
 # The minors rule's backstop INSIDE ComfyUI (server/comfy_nodes/aiplay_safety_gate.py):
 # stdlib only, so it runs on whatever python is here. It must never raise, since
@@ -1426,4 +1502,18 @@ node --test server/music/artifacts_test.js server/music/artifacts-ui_test.js ser
 # Native artifact dataclasses only: no model loading or GPU work in this test.
 REPLAY_PY="${AIPLAY_YUE_PYTHON:-${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv-yue/Scripts/python.exe}"
 if [ -x "$REPLAY_PY" ] && "$REPLAY_PY" -c "import importlib.metadata,numpy; importlib.metadata.version('yue2-infer')" >/dev/null 2>&1; then "$REPLAY_PY" server/music/yue_replay_test.py || exit 1; fi
+# Optional H3 build fallback, fused YuE2 styles and explicit adapter selection.
+node --check server/h3-w6a8.js || exit 1
+node --check server/music/yue2-style-adapters.js || exit 1
+node --check web/yue2-style-adapters.js || exit 1
+node --test server/h3-w6a8_test.js server/h3-checkpoint-workflow_test.js server/music/yue2-style-adapters_test.js server/music/yue2-style-adapters-ui_test.js || exit 1
+# H3 optional reference mods: strict graph options and staged local artifacts.
+node --check server/h3-refmod-options.js || exit 1
+node --check server/h3-refmod.js || exit 1
+node --check server/mcp-h3-refmods.js || exit 1
+node --check server/refmod-stage.js || exit 1
+node --check server/refmod-run.js || exit 1
+node --check web/h3-refmods.js || exit 1
+node --test server/h3-refmod_test.js server/refmod-stage_test.js server/refmod-art_test.js || exit 1
+node --test server/collab/reference-packs_test.js || exit 1
 exit 0

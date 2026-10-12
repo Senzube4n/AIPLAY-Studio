@@ -24,6 +24,8 @@ Usage:
 
 Prints one JSON line: { ok, out, [width, height | paths, colors] }.
 """
+import base64
+import io
 import json
 import sys
 
@@ -1537,59 +1539,13 @@ def sheet(job):
 
 
 def vectorize(job):
-    import cv2
+    from vector_trace import trace_image
 
-    colors = max(2, min(16, int(job.get("colors") or 6)))
-    detail = max(0.2, min(4.0, float(job.get("detail") or 1.0)))
-    min_area = int(job.get("minArea") or 16)
-
-    im = Image.open(job["in"]).convert("RGB")
-    # keep vector work at a sane size; SVG scales anyway
-    scale = min(1.0, 1024 / max(im.size))
-    if scale < 1.0:
-        im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
-    w, h = im.size
-
-    # adaptive palette; slight pre-blur so JPEG noise doesn't become 10k paths
-    q = im.filter(ImageFilter.GaussianBlur(0.6)).quantize(colors=colors, method=Image.MEDIANCUT)
-    pal = q.getpalette()
-    idx = np.asarray(q, dtype=np.uint8)
-
-    # layers back-to-front by coverage: the biggest color paints first so
-    # smaller shapes sit on top of it, exactly how a designer would stack
-    counts = [(int((idx == i).sum()), i) for i in range(colors)]
-    counts.sort(reverse=True)
-
-    eps_base = 1.2 / detail
-    paths = []
-    for _, i in counts:
-        mask = (idx == i).astype(np.uint8) * 255
-        if mask.sum() == 0:
-            continue
-        r, g, b = pal[i * 3], pal[i * 3 + 1], pal[i * 3 + 2]
-        contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-        if hierarchy is None:
-            continue
-        # group outer contours with their holes into one even-odd path
-        d_parts = []
-        for c, hinfo in zip(contours, hierarchy[0]):
-            if cv2.contourArea(c) < min_area:
-                continue
-            approx = cv2.approxPolyDP(c, eps_base, True)
-            if len(approx) < 3:
-                continue
-            pts = approx.reshape(-1, 2)
-            d = f"M{pts[0][0]},{pts[0][1]}" + "".join(f"L{x},{y}" for x, y in pts[1:]) + "Z"
-            d_parts.append(d)
-        if d_parts:
-            paths.append(f'<path fill="rgb({r},{g},{b})" fill-rule="evenodd" d="{"".join(d_parts)}"/>')
-
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
-           f'width="{w}" height="{h}">{"".join(paths)}</svg>')
-    with open(job["out"], "w", encoding="utf-8") as f:
-        f.write(svg)
-    print(json.dumps({"ok": True, "out": job["out"], "paths": len(paths), "colors": colors,
-                      "bytes": len(svg)}))
+    try:
+        result = trace_image(job)
+    except ValueError as exc:
+        result = {"ok": False, "error": str(exc), "status": 400}
+    print(json.dumps(result))
 
 
 def describe_selection(job):
@@ -1600,23 +1556,73 @@ def describe_selection(job):
     treats an all-zero mask as a legitimate no-op.
     """
     src = job.get("src")
-    if not src:
+    if not src and not job.get("doc"):
         print(json.dumps({"ok": False, "error": "describe needs a src image"}))
         return
     import imgselect                                    # noqa: PLC0415
-    im = Image.open(src).convert("RGBA")
+    revision = None
+    _notes = []
+    if job.get("doc"):
+        import image_editor                             # noqa: PLC0415
+        im, doc_notes = image_editor.render_doc(job["doc"], job["dir"])
+        _notes.extend(doc_notes)
+        revision = image_editor.revision(job["doc"])
+    else:
+        with Image.open(src) as source:
+            if job.get("preview"):
+                _selection_preview_limit(source.size, job.get("frame") or {})
+            im = source.convert("RGBA")
     # ⚠ IN THE FRAME THE SHAPES WERE WRITTEN IN, NOT THE RAW SOURCE. This used
     # to open the file and resolve against it, so with a crop pending it
     # measured a selection in one picture that the edit would then apply to
     # another — right numbers, wrong frame, and the whole point of this route
     # is that the numbers can be trusted. `frame` carries only stages 1-3; the
     # adjustments cannot move a coordinate and are not run.
-    _notes = []
+    if job.get("preview"):
+        _selection_preview_limit(im.size, job.get("frame") or {})
     im = frame_stages(im, job.get("frame") or {}, _notes)
+    if job.get("preview"):
+        _selection_preview_limit(im.size, {})
     rgba = _to_rgba(im)
-    out = imgselect.describe(job.get("selection") or {}, rgba)
+    selection = job.get("selection") or {}
+    if job.get("preview"):
+        warnings = []
+        mask = imgselect.resolve(selection, rgba, warnings)
+        # Match apply_edit's refusal: a seed in a different frame must not
+        # silently look like an empty selection that successfully refreshed.
+        for warning in warnings:
+            if any(word in str(warning).lower() for word in ("seed", "outside", "bounds")):
+                raise ValueError(str(warning))
+        out = imgselect.mask_stats(mask, warnings)
+        rgba_mask = np.full((*mask.shape, 4), 255, dtype=np.uint8)
+        rgba_mask[..., 3] = (np.clip(mask, 0, 1) * 255 + 0.5).astype(np.uint8)
+        data = io.BytesIO()
+        Image.fromarray(rgba_mask, "RGBA").save(data, format="PNG")
+        out["mask"] = "data:image/png;base64," + base64.b64encode(data.getvalue()).decode("ascii")
+        if revision:
+            out["revision"] = revision
+    else:
+        out = imgselect.describe(selection, rgba)
     print(json.dumps({"ok": True, "width": im.width, "height": im.height,
                       "notes": _notes or None, **out}))
+
+
+def _selection_preview_limit(size, frame):
+    """Bound preview allocations before opening pixels or enlarging the frame.
+
+    Match the existing composed-document preview's 16-megapixel limit. Geometry
+    already caps rotation/perspective allocations; check their final size too.
+    """
+    cap = 16_777_216
+    width, height = size
+    if width * height > cap:
+        raise ValueError("The selection preview supports up to 16 megapixels.")
+    for spec in (frame.get("canvas"), (frame.get("geometry") or {}).get("smartResize")):
+        if isinstance(spec, dict):
+            w = max(1, min(30000, int(float(spec.get("width") or width))))
+            h = max(1, min(30000, int(float(spec.get("height") or height))))
+            if w * h > cap:
+                raise ValueError("The selection preview supports up to 16 megapixels.")
 
 
 def blank(job):
@@ -1654,6 +1660,13 @@ def main():
         analyze(job)
     elif mode == "vectorize":
         vectorize(job)
+    elif mode == "vector_review":
+        from vector_preview import review_svg
+        try:
+            result = review_svg(job)
+        except ValueError as exc:
+            result = {"ok": False, "error": str(exc), "status": 400}
+        print(json.dumps(result))
     elif mode == "describe":
         describe_selection(job)
     elif mode == "blank":

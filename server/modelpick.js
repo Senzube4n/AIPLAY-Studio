@@ -24,7 +24,7 @@
  */
 import path from "node:path";
 import { config as defaultConfig } from "./config.js";
-import { scanBases, extraBases, uniqueDirs } from "./localmodels.js";
+import { scanBases, extraBases, uniqueDirs, modelName, requireModelName, modelLeaf, findShelfModel } from "./localmodels.js";
 import { probeModel, loadableAs, presetFor } from "./detect.js";
 import { readPart, partFits } from "./partfit.js";
 import { ZIMAGE_PRESET, KREA2_PRESET, ANIMA_PRESET } from "./workflow.js";
@@ -121,7 +121,7 @@ export async function modelBases(config = defaultConfig) {
  */
 /** The only thing a .gguf tells us is its name. Used when nothing can be read. */
 export function familyFromName(name) {
-  const n = String(name || "").toLowerCase();
+  const n = modelLeaf(name).toLowerCase();
   /* This labels a GGUF for an explicit refusal below, not permission to load
    * it. The Qwen 2.1 native graph has no verified GGUF path. */
   if (/qwen[-_ ]?image[-_ ]?2[._ -]?1(?:[^0-9]|$)/.test(n)) return "qwen-image-2.1";
@@ -184,7 +184,7 @@ export async function listPickable(config = defaultConfig) {
   const shelf = await scanBases(await modelBases(config));
   const seen = new Set();
   const rows = shelf.filter((f) => PICK_FOLDERS.includes(f.folder) && WEIGHT_RE.test(f.name)
-    && !NOT_IMAGE.test(f.name) && !seen.has(`${f.folder}/${f.name}`) && seen.add(`${f.folder}/${f.name}`));
+    && !NOT_IMAGE.test(modelLeaf(f.name)) && !seen.has(`${f.folder}/${f.name}`) && seen.add(`${f.folder}/${f.name}`));
   const out = [];
   for (const row of rows) {
     /* .ckpt is pickle and .gguf is a container neither probe reads: list them,
@@ -280,9 +280,16 @@ async function printOf(file) {
 
 export async function listVideoParts(config = defaultConfig) {
   const [parts, shelf] = await Promise.all([listParts(config), scanBases(await modelBases(config))]);
-  const byName = new Map(shelf.map((f) => [f.name, f]));
-  const base = (n) => String(n || "").split(/[\\/]/).pop();
   const engines = config.video?.engines || {};
+  const selected = (folder, name, options) => {
+    try { return findShelfModel(shelf, folder, name, options); }
+    catch (err) {
+      // A collision prevents identifying this part, not listing the others.
+      // The render door still requires an unambiguous selection before queueing.
+      if (err.status === 400) return null;
+      throw err;
+    }
+  };
 
   /* Each engine's own file for each slot, as a structural print. A slot whose
    * file is not on disk has no anchor, and with no anchor nothing is judged —
@@ -291,13 +298,13 @@ export async function listVideoParts(config = defaultConfig) {
   for (const [eng, cfg] of Object.entries(engines)) {
     anchors[eng] = {};
     for (const slot of ["textEncoder", "videoVae", "audioVae"]) {
-      const f = byName.get(base(cfg?.[slot]));
+      const f = cfg?.[slot] ? selected(slot === "textEncoder" ? "text_encoders" : "vae", cfg[slot]) : null;
       anchors[eng][slot] = f ? await printOf(f) : null;
     }
   }
 
   const judge = async (row, slot) => {
-    const f = byName.get(row.name);
+    const f = selected(row.folder, row.name, { fallback: false });
     const print = f ? await printOf(f) : null;
     const out = {};
     for (const eng of Object.keys(engines)) out[eng] = partFits(print, anchors[eng][slot], slot);
@@ -318,10 +325,18 @@ export async function listVideoParts(config = defaultConfig) {
  * that is the folder the name came from before this existed.
  */
 export async function resolvePick(name, config = defaultConfig) {
-  const want = path.basename(String(name || ""));
-  if (!want) return null;
+  if (!name) return null;
+  const want = requireModelName(name);
   const all = await listPickable(config);
-  return all.find((r) => r.name === want) || null;
+  const exact = all.find((r) => modelName(r.name) === want);
+  if (exact) return exact;
+  // A saved flat filename can locate one moved file, but a nested selection
+  // must remain exact and two different subfolders must never be guessed.
+  if (modelLeaf(want) !== want) return null;
+  const matches = all.filter((r) => modelLeaf(r.name) === want);
+  const names = new Set(matches.map((r) => r.name));
+  if (names.size > 1) throw Object.assign(new Error(`More than one ${want} is installed. Choose its subfolder in the model list.`), { status: 400 });
+  return matches[0] || null;
 }
 
 export default { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, classify, familyFromName, DIT_ENGINE, VIDEO_DIT_ENGINE, PICK_FOLDERS, isDitFolder, modelBases };

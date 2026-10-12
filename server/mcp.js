@@ -40,6 +40,10 @@ import { musicKitTools } from "./mcp-music-kits.js";
 import { musicReferenceTools } from "./mcp-music-references.js";
 import { musicArtifactTools } from "./mcp-music-artifacts.js";
 import { musicListeningLabTools } from "./mcp-music-listening-lab.js";
+import { musicWorkbenchTools } from "./mcp-music-workbench.js";
+import { dawPassageTools } from "./mcp-daw-passages.js";
+import { takeComparisonTools } from "./mcp-take-comparison.js";
+import { sharedCueTools } from "./mcp-shared-cues.js";
 /* AUDIO FINISHING. Four routes that existed, worked, and that no tool posted
  * to — /api/edit, /api/merge, /api/export and /api/timeline/render. The header
  * of mcp-audio.js carries the audit that found them and the reason an agent
@@ -53,6 +57,7 @@ import { musicAuditionTools } from "./mcp-music-auditions.js";
 import { yueSetupTools } from "./mcp-yue-setup.js";
 /* One-click setups (timed lyrics): server/setup/, the [Set up timed lyrics] button's door. */
 import { setupTools } from "./mcp-setup.js";
+import { h3RefModTools, H3_OPTIONAL_MCP_INPUTS, h3OptionalMcpBody } from "./mcp-h3-refmods.js";
 import { avatarTools } from "./mcp-avatars.js";
 import { avatarWeightTransferTools } from "./mcp-avatar-weight-transfer.js";
 import { avatarPlaybackTools } from "./mcp-avatar-playback.js";
@@ -61,6 +66,7 @@ import { standRigTools } from "./mcp-standrig.js";
 import { avatarWardrobeTools } from "./mcp-avatar-wardrobe.js";
 import { avatarFittingTools } from "./mcp-avatar-fitting.js";
 import { videoLoraInput } from "./video-lora-validation.js";
+import { requireModelName } from "./localmodels.js";
 import { waitForArtJob, emptyResultNote } from "./art-wait.js";
 import { WHISPER_MODELS } from "./config.js";
 
@@ -72,10 +78,12 @@ import { welcomeTools } from "./mcp-welcome.js";
 import { modelTools } from "./mcp-models.js";
 import { cloudTools } from "./mcp-cloud.js";
 import { runpodTools } from "./mcp-runpod.js";
+import { fastCoverTools } from "./mcp-fastcovers.js";
 import { collabTools } from "./mcp-collab.js";
 import { communityTools } from "./mcp-community.js";
 import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { workspaceTools } from "./mcp-workspace.js";
+import { VECTOR_INPUT_SCHEMA, VECTOR_REVIEW_SCHEMA, normalizeVectorOptions } from "./vectorize.js";
 import { excludedTerritoriesText } from "./models.js";
 
 // H3's excluded territories come from the catalogue (models.js excludedTerritoriesText);
@@ -444,6 +452,7 @@ export const TOOLS = [
   ...modelTools(api),
   ...cloudTools(api),
   ...runpodTools(api),
+  ...fastCoverTools(api),
   ...collabTools(api, safeName),
   ...communityTools(api),
   ...standRigPsdTools(api),
@@ -454,6 +463,10 @@ export const TOOLS = [
   ...musicReferenceTools(api),
   ...musicArtifactTools(api),
   ...musicListeningLabTools(api),
+  ...musicWorkbenchTools(api),
+  ...dawPassageTools(api),
+  ...takeComparisonTools(api),
+  ...sharedCueTools(api),
   /* Beside the music family, because that is where they are reached FROM: the
    * take comes out of make_song and these are what happens to it next — trim
    * the silence off the front, merge the continuations, convert it, and render
@@ -471,6 +484,7 @@ export const TOOLS = [
   ...musicAuditionTools(api),
   ...yueSetupTools(api),
   ...setupTools(api),
+  ...h3RefModTools(api),
   ...avatarTools(api),
   ...avatarPlaybackTools(api),
   ...pngtuberTools(api),
@@ -510,11 +524,16 @@ export const TOOLS = [
           models_installed: st.config?.video?.ready !== false,
           engine: st.config?.video?.engine,
           missing: st.config?.video?.missing || [],
-          /* The step counts make_clip's `quality` maps to on THIS disk, and
-           * the turbo builds behind them (config.js resolves both from what
-           * pick() found): standard is 8 only where both 8-step files are on
-           * disk, else 4, and is the default a render with no quality gets. */
+          /* The engine's step defaults on THIS disk and the turbo builds
+           * behind them (config.js resolves both from what pick() found):
+           * standard is the default a render with no quality gets (8 or 4
+           * where that speed-up is on disk, else the bare 20). */
           h3_quality_steps: st.config?.video?.engines?.h3?.stepDefaults ?? null,
+          /* The Video screen's chips, which make_clip's `quality` sends:
+           * {plain, keep} of {fast, standard, best}, each {steps, needsModel}
+           * (server/video-plain.js qualityChips). Null on AMD, Intel and the
+           * CPU, where quality keeps its earlier numbers. */
+          h3_quality_chips: st.config?.video?.engines?.h3?.chips ?? null,
           /* The number behind "keep my character": the reference build's own
            * step count (workflow.js referenceSteps), which a render with
            * references or a persona and no quality runs. */
@@ -545,7 +564,7 @@ export const TOOLS = [
     description:
       "Every finished track, newest first: file name, title, length, and whether it already "
       + "has cover art, stems, timed lyrics or a video clip. Also returns generation warnings when recorded; "
-      + "an empty warning list does not certify lyric coverage or audio quality. Use the `file` value with the other tools. "
+      + "an empty warning list does not certify lyric coverage or audio quality. `score` links the saved sheet; `score_warning` explains a missing capture. Use the `file` value with the other tools. "
       + "`rights` says whether the song may be sold, worked out from the model catalogue as it is now: "
       + "{ class (unrestricted | yours-with-conditions | not-for-sale | unknown), sellable, label, short, capability, "
       + "licence, url, basis (licence | authors-statement | imported), add_ons (catalogue rows the song used that made it "
@@ -570,6 +589,9 @@ export const TOOLS = [
         has_cover: !!t.cover, has_stems: !!(t.stems || []).length,
         has_lyrics: !!t.lrc, clip: t.clip || null,
         warnings: Array.isArray(t.warnings) ? t.warnings : [],
+        has_score: !!(t.scoreSlug && t.scoreVersion),
+        score: t.scoreSlug && t.scoreVersion ? { slug: t.scoreSlug, version: t.scoreVersion } : null,
+        score_warning: t.scoreWarning || null,
         generation_limits: t.generationLimits ?? null,
         rights: t.rights && typeof t.rights === "object" ? {
           class: t.rights.class, sellable: t.rights.sellable ?? null, label: t.rights.label ?? null,
@@ -673,12 +695,12 @@ export const TOOLS = [
         planTopP: Number.isFinite(a.plan_top_p) ? a.plan_top_p : undefined,
         planTemperature: Number.isFinite(a.plan_temperature) ? a.plan_temperature : undefined,
         engine: a.engine,
-        checkpoint: typeof a.checkpoint === "string" ? safeName(a.checkpoint, "checkpoint") : undefined,
+        checkpoint: typeof a.checkpoint === "string" ? requireModelName(a.checkpoint) : undefined,
         postprocess: typeof a.postprocess === "boolean" ? a.postprocess : undefined,
         /* "" is an explicit none; undefined lets the route use the saved choice. */
-        lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
+        lora: typeof a.lora === "string" ? (a.lora ? requireModelName(a.lora) : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
-        loraClip: typeof a.lora_clip === "string" ? (a.lora_clip ? safeName(a.lora_clip, "LoRA") : "") : undefined,
+        loraClip: typeof a.lora_clip === "string" ? (a.lora_clip ? requireModelName(a.lora_clip) : "") : undefined,
         ...(typeof a.cover_of === "string" && a.cover_of
           ? { coverOf: { file: safeName(a.cover_of, "song"),
                          ...(Number.isFinite(a.cover_seconds) ? { seconds: a.cover_seconds } : {}),
@@ -1186,8 +1208,8 @@ export const TOOLS = [
       + "(Models screen: Mothersuperior's head over m-a-p's MERT-v2-FullSong, CC BY-NC 4.0) turns any "
       + "library track into the semantic codes YuE2 continues from — 25 a second; by its author 16 % "
       + "exact on YuE2's own songs and round trips near 95 % by ear, so the codes are the song as YuE2 "
-      + "would have written it, not a copy. The codes are kept by the decoded audio's fingerprint under "
-      + "output/yue2/tok_<id>/, where extend_song looks, so an Extend that follows starts at once. "
+      + "would have written it, not a copy. The codes are kept by the decoded audio's fingerprint and the "
+      + "reader's version under output/yue2/tok_<id>/, where extend_song looks, so an Extend that follows starts at once. "
       + "Runs on the card, or on the CPU while the card has a render in flight (about 30 s of song in 16 s); "
       + "`device` cpu forces the CPU. Answers frames, seconds, device, cached and the timings. Refuses "
       + "with reason tokenizer-missing (and the files) when the tokenizer is not on disk.",
@@ -1391,6 +1413,8 @@ export const TOOLS = [
       "WHAT A SELECTION ACTUALLY CAUGHT, before an edit is spent running through it. Pass the same "
       + "`selection` you would give image_adjust and get back its coverage, how many pixels are fully in, "
       + "how many sit on the soft edge, and a plain sentence reading those numbers.\n\n"
+      + "Set preview:true to also return the exact selection as an in-memory PNG data URL; no matte is saved. "
+      + "For a composed layer document, use document_id instead of name with preview:true.\n\n"
       + "⚠ CALL THIS WHEN TUNING A wand OR colorRange, because an empty selection is SILENT everywhere "
       + "else. A tolerance that catches nothing resolves to a mask of zeros, every op through it becomes a "
       + "no-op, the edit writes a file identical to its input, and the reply still says ok — which is "
@@ -1398,18 +1422,25 @@ export const TOOLS = [
       + "system that will tell you the key caught nothing.",
     inputSchema: {
       type: "object",
-      required: ["name"],
+      anyOf: [{ required: ["name"] }, { required: ["document_id"] }],
       properties: {
         name: { type: "string", description: "An image in the library (from list_images)." },
+        document_id: { type: "string", description: "A layer document from list_documents; use instead of name with preview:true. Samples its current composed canvas and returns its revision." },
         selection: { type: "object", description: "The same shape image_adjust takes: {shapes:[...], mode, feather, expand, invert}. Call image_tools_catalog for the kinds and their ranges." },
+        preview: { type: "boolean", description: "Also return mask as a PNG data URL (white with selection alpha), sampled in the exact edit frame. Nothing is saved." },
         frame: { type: "object", description: "The frame the selection's coordinates are written in — `crop`, `geometry`/`rotate`/`flipH`/`flipV`, `canvas`, exactly as image_adjust takes them. ⚠ PASS THIS WHENEVER THE SAME CALL WOULD CROP OR ROTATE: a selection is resolved AFTER those stages (IMAGE_SPEC §3, \"pixels AFTER any crop/rotate/flip in the same call\"), so without it the shapes are measured against the uncropped picture — right numbers, wrong frame, no error. Omit it when the call has no geometry." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      return await api("POST", "/api/images/describe-selection", {
-        name: safeName(a.name, "image"), selection: a.selection || {}, frame: a.frame || {},
-      });
+      if (a.document_id && !a.preview) throw new Error("Use preview:true to describe a composed document selection.");
+      if (a.document_id && a.name) throw new Error("Pass one image name or document_id.");
+      const body = {
+        ...(a.document_id ? { documentId: String(a.document_id) } : { name: safeName(a.name, "image") }),
+        selection: a.selection || {}, frame: a.frame || {},
+      };
+      if (a.preview) return await api("POST", "/api/images/preview-selection", body);
+      return await api("POST", "/api/images/describe-selection", body);
     },
   },
 
@@ -2253,17 +2284,38 @@ export const TOOLS = [
     },
   },
   {
-    name: "image_vectorize",
-    description: "Convert a library image to SVG — posterize to N colors, trace each layer with simplified contours. Made for LOGOS and flat art (a photograph becomes posterized art). colors 2-16 (default 6; use 2-4 for a clean logo), detail 0.2-4 (higher = more faithful, more path points). The SVG lands in the image library.",
-    inputSchema: {
-      type: "object", required: ["name"],
-      properties: { name: { type: "string" }, colors: { type: "integer" }, detail: { type: "number" } },
-      additionalProperties: false,
-    },
+    name: "image_vector_import",
+    description: "Import an explicitly supplied PNG/JPEG/WebP into Pictures for vectorization. Supply one absolute local path or base64 data_url, optionally a filename hint. Creates a unique library asset and returns its name; keeps the source file. No URL downloads. Then call image_vectorize. Read pipeline_guide topic=vectors for the complete finishing workflow.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      path: { type: "string", description: "Absolute local path to the source raster." },
+      data_url: { type: "string", description: "data:image/png|jpeg|webp;base64,...; use instead of path." },
+      name: { type: "string", description: "Optional filename hint for the imported Pictures asset." },
+    }, oneOf: [{ required: ["path"] }, { required: ["data_url"] }] },
     async run(a) {
-      const r = await api("POST", "/api/images/vectorize", { name: safeName(a.name, "image"), colors: a.colors, detail: a.detail });
+      const r = await api("POST", "/api/images/vector-import", { path: a.path, data_url: a.data_url, name: a.name });
       if (r.error) throw new Error(r.error);
-      return { svg: r.name, paths: r.paths, bytes: r.bytes, url: `/api/image/${r.name}` };
+      return r;
+    },
+  },
+  {
+    name: "image_vector_review",
+    description: "LOOK at the actual saved vector SVG as native PNG image content, with optional source-pixel crop for enlarged curve, letter and hole checks. CPU renderer supports Studio's generated paths, circular arcs, explicit linear gradients and translated shadows; unsupported SVG features are refused. Review the complete badge and critical crops on white and dark backgrounds. Geometric metrics alone do not establish polished lettering or curves.",
+    inputSchema: VECTOR_REVIEW_SCHEMA,
+    async run(a) {
+      const r = await api("POST", "/api/images/vector-review", { name: safeName(a.name, "SVG"), max_edge: a.max_edge, crop: a.crop, background: a.background }, 50000);
+      if (r.error) throw new Error(r.error);
+      const { image, ...rest } = r;
+      return { ...rest, ...(image ? { _images: [image] } : {}) };
+    },
+  },
+  {
+    name: "image_vectorize",
+    description: "Trace and finish a Pictures PNG/JPEG/WebP as a new editable SVG. First call returns shapes (palette color, contour index, source bounds, hole/parent), traceFingerprint, settings and measurements. Reuse the original name/settings and basis=traceFingerprint for selected cleanup (smooth, circle, concentric ring, parallelogram), local gradient fills, inspected artifact omissions and rebuilt offset shadows. Unselected outlines retain the faithful trace. Unsafe geometry/deviation/topology changes fail explicitly. Read pipeline_guide topic=vectors before finishing; use image_vector_review to inspect actual SVG/crops. Logo suits flat art, silhouette traces alpha independently of gradient bands, posterize approximates photos. Gradients are explicit, not inferred. minArea/tolerance/deviation are source pixels; first inventory is capped at 512 outlines. Each run keeps a new SVG and its replayable receipt.",
+    inputSchema: VECTOR_INPUT_SCHEMA,
+    async run(a) {
+      const r = await api("POST", "/api/images/vectorize", { ...normalizeVectorOptions(a), name: safeName(a.name, "image") }, 125000);
+      if (r.error) throw new Error(r.error);
+      return { ...r, svg: r.name, url: r.url || `/api/image/${r.name}` };
     },
   },
   {
@@ -2281,7 +2333,9 @@ export const TOOLS = [
       + "Prompts are TEMPLATES: `{a|b|c}` expands per take, so ten takes of one idea are ten different "
       + "pictures rather than one picture ten times. Seeds are rolled per take and repeats are caught and "
       + "re-rolled, which is what makes a run safe to leave. Use preview_prompt first — a template that "
-      + "reads well and expands badly costs a night to discover otherwise.",
+      + "reads well and expands badly costs a night to discover otherwise. "
+      + "Optional start_at schedules a future ISO UTC start while Studio is running; it does not wake the computer. "
+      + "Future appointments restore after a restart, but missed appointments pause for review. Only one live plan is allowed.",
     inputSchema: {
       type: "object", required: ["items"],
       properties: {
@@ -2289,10 +2343,13 @@ export const TOOLS = [
         name: { type: "string", description: "What to call this run in the history." },
         takes: { type: "integer", description: "How many of each idea. 1-20, default 3." },
         cap: { type: "integer", description: "Stop after this many renders in total." },
+        start_at: { type: "string", format: "date-time", description: "Optional future ISO UTC time, such as 2026-10-02T20:00:00Z. Omit to start now. Studio must be running and the computer awake." },
         items: {
           type: "array", maxItems: 40,
-          description: "The ideas. For music: caption (the style) plus optional title/lyrics/instrumental/"
-            + "maxDuration. For image and video: prompt (a template) plus optional engine/checkpoint/"
+          description: "The ideas. Music preserves the selected engine, its supported advanced controls and exact lyric/ABC whitespace. "
+            + "Each take rolls a fresh seed and uses normal song readiness, model, sampler and reference validation. "
+            + "Omitted music engine captures the Studio's current engine at Start. Unsupported cross-engine fields are refused. "
+            + "For image and video: prompt (a template) plus optional engine/checkpoint/"
             + "negative/width/height/steps/cfg/count, and seconds on video. Images also preserve persona, ordered refImages, "
             + "native model filenames, refSizing/refResolution/transparent, Qwen's Fast draft and sampler/LoRA choices. Omitted image engine uses Qwen Image 2.1; "
             + "each take uses the normal image readiness and reference checks.",
@@ -2302,6 +2359,36 @@ export const TOOLS = [
               caption: { type: "string" }, prompt: { type: "string" }, title: { type: "string" },
               lyrics: { type: "string" }, instrumental: { type: "boolean" },
               maxDuration: { type: "integer" },
+              model: { type: "string", enum: ["int8", "fp16", "fp32"], description: "MiniMax precision only." },
+              arCfg: { type: "number", minimum: 0, maximum: 20 }, flowCfg: { type: "number", minimum: 0, maximum: 20 },
+              audioRef: { type: "string", description: "MiniMax only: an already encoded .latent filename." },
+              audioRefDenoise: { type: "number", minimum: 0.05, maximum: 1 },
+              cot: { type: "string", enum: ["full", "melody", "off"] },
+              narSteps: { type: "integer", minimum: 1, maximum: 256, description: "YuE2 audio steps: Python 16/32, ComfyUI 8-64, GGUF 1-256." },
+              cfgScale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. ComfyUI accepts only its fixed 1." },
+              quantization: { type: "string", enum: ["none", "fp8", "q4_0", "q8_0"], description: "Python none/fp8; native GGUF q4_0/q8_0." },
+              abc: { type: "string", maxLength: 65536, description: "Exact ABC score, at most 64 KiB UTF-8, with Thinking full or melody." },
+              abcOpen: { type: "boolean", description: "Python YuE2 only: let the planner continue the supplied score." },
+              allowSectionLabels: { type: "boolean" },
+              temperature: { type: "number", minimum: 0, maximum: 5 }, topP: { type: "number", minimum: 0.01, maximum: 1 },
+              topK: { type: "integer", minimum: 1, maximum: 32768, description: "Python/ComfyUI YuE2 only." },
+              repetitionPenalty: { type: "number", minimum: 0.01, maximum: 10, description: "Python/ComfyUI YuE2 only." },
+              planTemperature: { type: "number", minimum: 0, maximum: 5 }, planTopP: { type: "number", minimum: 0.01, maximum: 1 },
+              scoreSlug: { type: "string" }, scoreVersion: { type: "string" },
+              key: { type: "string" }, bpm: { type: "integer", minimum: 30, maximum: 300 }, meter: { type: "string" },
+              coverOf: { type: "object", required: ["file"], properties: {
+                file: { type: "string" }, seconds: { type: "number", minimum: 1, maximum: 30 },
+                stem: { type: "string", enum: ["vocals", "drums", "bass", "other", "guitar", "piano"] },
+              }, additionalProperties: false, description: "Python YuE2 only: prime from a library song." },
+              lora: { type: "string", description: "ComfyUI YuE2 or ACE audio LoRA; empty string explicitly disables it." },
+              loraStrength: { type: "number", minimum: -4, maximum: 4 },
+              loraClip: { type: "string", description: "ComfyUI YuE2 planner LoRA; empty string explicitly disables it." },
+              loraClipStrength: { type: "number", minimum: -4, maximum: 4 },
+              keyscale: { type: "string" }, timesignature: { type: "string" }, language: { type: "string" },
+              aceSteps: { type: "integer", minimum: 1, maximum: 100 }, aceCfg: { type: "number", minimum: 0.01, maximum: 20 },
+              aceCodes: { type: "boolean" }, acePlanTemp: { type: "number", minimum: 0, maximum: 2 },
+              aceCover: { type: "object", properties: { upload: { type: "string" }, song: { type: "string" } },
+                additionalProperties: false, description: "ACE only: exactly one uploaded filename or library song." },
               engine: { type: "string" }, checkpoint: { type: "string" }, negative: { type: "string" },
               width: { type: "integer" }, height: { type: "integer" },
               steps: { type: "integer" }, cfg: { type: "number" },
@@ -2341,6 +2428,7 @@ export const TOOLS = [
       const r = await api("POST", "/api/batch", {
         action: "start",
         kind: a.kind, name: a.name, takes: a.takes, cap: a.cap,
+        startAt: a.start_at,
         items: a.items, stages: a.stages,
         confirmSpend: a.confirm_spend === true ? true : undefined,
       });
@@ -2353,7 +2441,8 @@ export const TOOLS = [
     name: "overnight_control",
     description:
       "Pause, resume or stop the run, or clear the history. Pause lets whatever is rendering finish first "
-      + "— killing a nearly-complete render throws away GPU time already spent; stop is there for ending it now.",
+      + "— killing a nearly-complete render throws away GPU time already spent; stop is there for ending it now. "
+      + "Pause cancels a scheduled timer; resume starts a paused or scheduled plan now. Stop and clear cancel scheduled starts.",
     inputSchema: {
       type: "object", required: ["action"],
       properties: { action: { type: "string", enum: ["pause", "resume", "stop", "clear"] } },
@@ -2370,13 +2459,14 @@ export const TOOLS = [
     name: "overnight_status",
     description:
       "What the run is doing: kind, state, how far through the plan, what it has produced, what failed and "
-      + "why, and the finished runs before it. Safe to call while one is going.",
+      + "why, and the finished runs before it. A scheduled run reports startAt and createdAt in epoch milliseconds; "
+      + "startedAt stays null until it actually starts. Safe to call while one is going.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run() {
       /* /api/batch is POST-only; the run's state is merged into /api/status,
        * which is where the page reads it from too. */
       const st = await api("GET", "/api/status");
-      return { run: st.run ?? null, runs: st.runs ?? [], art: st.art ?? null };
+      return { run: st.run ?? null, runs: st.runs ?? [], postStages: st.postStages ?? { waiting: 0, failed: 0 }, art: st.art ?? null };
     },
   },
 
@@ -2531,14 +2621,15 @@ export const TOOLS = [
       + "unknown. `unknown` means the file does not state which SD base it targets — worth trying, not "
       + "worth assuming. `for` may also name a file in models/diffusion_models or unet (a bare DiT such as "
       + "Krea 2). Checkpoint-engine pictures take LoRAs, and so does YuE2 through ComfyUI "
-      + "(make_song with engine yue2-comfy and `lora`): pass the YuE2 checkpoint as `for` to see which fit.",
+      + "(make_song with engine yue2-comfy and `lora`): pass the YuE2 checkpoint as `for` to see which fit. "
+      + "Fused YuE2 files expose tensor-derived loraParts and styleAdapter metadata for the paired picker, including local files outside the download catalogue. Unknown recipes do not infer triggers, licences or a score mode.",
     inputSchema: {
       type: "object",
       properties: { for: { type: "string", description: "Checkpoint filename to judge compatibility against." } },
       additionalProperties: false,
     },
     async run(a) {
-      const q = a.for ? `?for=${encodeURIComponent(safeName(a.for, "checkpoint"))}` : "";
+      const q = a.for ? `?for=${encodeURIComponent(requireModelName(a.for))}` : "";
       return await api("GET", `/api/loras${q}`);
     },
   },
@@ -2944,6 +3035,16 @@ export const TOOLS = [
   },
 
   {
+    name: "set_yue2_style_adapter",
+    description: "Select an installed fused YuE2 adapter for both planner and audio slots. Call list_loras with the YuE2 checkpoint as for; tensor-verified fused files include styleAdapter metadata even when absent from the download catalogue. Known recipes set strengths and Thinking; local files without a recipe preserve Thinking and start both strengths at 1. Use the publisher's trigger and terms. Pass an empty file to clear both slots. Requires the YuE2 ComfyUI engine. Does not download weights or generate music.",
+    inputSchema: { type: "object", required: ["file"], additionalProperties: false,
+      properties: { file: { type: "string", maxLength: 240, description: "Installed fused adapter name from list_loras, including any relative subfolder, or empty to clear." } } },
+    async run(a) {
+      return await api("POST", "/api/music", { action: "style-adapter", value: a.file ? requireModelName(a.file) : "" });
+    },
+  },
+
+  {
     name: "set_image_engine",
     description:
       "Choose a picture engine persistently: for covers (the default), for pictures (the Pictures screen's engine, and make_image or a music video's stills with no engine named), or both, with `use_for`. "
@@ -2973,7 +3074,7 @@ export const TOOLS = [
       const body = {
         ...(use !== "pictures" ? { engine: a.engine, ...(a.engine === "auto" ? {} : { choose: true }) } : {}),
         ...(use !== "covers" ? { imageEngine: a.engine } : {}),
-        ...(a.checkpoint && use !== "pictures" ? { checkpoint: safeName(a.checkpoint, "checkpoint") } : {}),
+        ...(a.checkpoint && use !== "pictures" ? { checkpoint: requireModelName(a.checkpoint) } : {}),
       };
       const r = await api("POST", "/api/artconfig", body);
       if (r.error) throw new Error(r.error);
@@ -2988,6 +3089,8 @@ export const TOOLS = [
       "Render a short video clip. Waits until done or `timeout_seconds`; a timed-out job keeps running. "
       + "H3 time grows with size, frames and references, and long clips can take much longer than the fitted estimate. "
       + "Use `check_only` to inspect the exact request and its evidence warnings first.\n\n"
+      + "The reply keeps clip names in `clips` and returns each saved H3 checkpoint receipt in "
+      + "`checkpoint_receipts`, keyed by clip filename (requestedBuild, ranBuild, file, reference, fallback).\n\n"
       + "TWO ENGINES, AND THEY TAKE DIFFERENT INPUTS. Check the current one with "
       + "studio_status and change it with set_video_engine.\n"
       + "  • LTX 2.5 — fast. Takes EXACT frames: `first_frame`, `last_frame`, `mid_frames` "
@@ -3025,8 +3128,9 @@ export const TOOLS = [
       properties: {
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx", "fasth3"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected. fasth3 always runs its trained 8 steps (quality and steps do not apply) and takes no references." },
-        quality: { type: "string", enum: ["fast", "best"],
-          description: "fast = the quickest matched turbo build on this disk: 3 steps on the TaoMate build where it is installed, else the 4-step build. The TaoMate 3-step was measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. Default: the engine's own default, the Video screen's Standard. With references or a persona and no quality, the reference build's own count runs (studio_status video.h3_reference_steps). All three follow which turbo files are on disk, so studio_status shows them (video.h3_quality_steps, with the builds behind them in video.h3_turbo_builds). Prefer this over `steps`." },
+        h3_model_build: { type: "string", enum: ["auto", "w6a8"], description: "Built-in H3 workflow only: choose the checkpoint build for this render without changing saved settings. Refused while a custom Video workflow is assigned. W6A8 requires compatible loader support and downloaded weights; checkpoint_receipts reports the actual checkpoint and any fallback." },
+        quality: { type: "string", enum: ["fast", "standard", "best"],
+          description: "The Video screen's three chips, with the same numbers (studio_status video.h3_quality_chips). fast = 3 steps on the TaoMate build, measured as coherent and as sharp as the 8-step build at 25–40% less wall time; with sparse attention on (`sparse`, sol-attn by default) fast is " + H3_SOL_ATTN.gain + ", so no longer quite as sharp. standard = the 8-step speed-up (the 4-step build where only it is on disk). best = the bare model at 20 steps on its native schedule, over twice as long; the one A/B of it against the 8-step turbo (docs/H3_REFERENCE_BLEED.md, arm H vs C: one shot, reference path) saw no visible gain. A chip whose speed-up file is not on disk is refused with the download named (needsModel; download_model fetches it), as the page dims that chip. With references, a reference song, a persona or ref_mods the chips are Keep my character's: standard is the reference build's own count (video.h3_reference_steps) and fast that path's own. No quality: the engine's own default (video.h3_quality_steps.standard, the bare 20 where no speed-up is on disk), or with references the reference build's own count. All of it follows which files are on disk (video.h3_turbo_builds). On an AMD or Intel card, or a PC without a graphics card, there are no chips (video.h3_quality_chips is null) and quality keeps its earlier numbers: fast = video.h3_quality_steps.fast, best = 20, standard = the engine's own default. Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Direct clip length, 1–20 s (default 5). H3 is trained for about 4–15 s; longer requests are experimental. More than 20 s is clamped and reported in warnings. Continue a clip for more output." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
@@ -3060,12 +3164,19 @@ export const TOOLS = [
         seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
         attention: { type: "string", enum: ["pytorch", "kitchen"], description: "FastH3 only: the dense attention under its sparse attention; kitchen = Comfy Kitchen int8 where the engine offers it (PyTorch where it does not). H3 decides its own; LTX has none. Default: kitchen, the one the H3 lab timed FastH3 with." },
         sparse: { type: "string", enum: ["sol-attn", "off"], description: "H3 only: sparse attention on the fast setting (the 3-step build, no references), the Video screen's Advanced \"Sparse attention\" switch. " + H3_SOL_ATTN.note + " Default: the saved setting (video_settings sparse_attention), sol-attn unless changed; name it only to differ for this render." },
+        ...H3_OPTIONAL_MCP_INPUTS,
         check_only: { type: "boolean", description: "Render nothing: return what this call WOULD render on this card (engine, size, seconds, steps, sparse attention), what the size needs (\"needs about X GB free; you have Y\"), every warning, or the refusal. The Video screen's Advanced line reads the same answer." },
         timeout_seconds: { type: "integer", description: "Wait limit, default 900 s. Reaching it does not stop the queued or running render; check studio_status/list_clips before attempting another." },
       },
       additionalProperties: false,
     },
     async run(a) {
+      if (a.h3_model_build !== undefined && !["auto", "w6a8"].includes(a.h3_model_build)) {
+        throw new Error("h3_model_build must be auto or w6a8.");
+      }
+      if (a.h3_model_build !== undefined && a.engine && a.engine !== "h3") {
+        throw new Error("h3_model_build is an H3 feature. Pass engine:\"h3\" or omit h3_model_build.");
+      }
       const loras = videoLoraInput(a.loras);
       let st = await api("GET", "/api/status");
       // A check renders nothing, so it answers with video switched off too.
@@ -3091,6 +3202,9 @@ export const TOOLS = [
         throw new Error(`Video models are not installed: ${(st.config.video.missing || []).join(", ")}`);
       }
       const engine = st.config?.video?.engine;
+      if (a.h3_model_build !== undefined && engine !== "h3") {
+        throw new Error("h3_model_build is an H3 feature. Pass engine:\"h3\" or omit h3_model_build.");
+      }
       const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song || !!a.persona;
       /* The refusals name the engine that IS selected: with three engines,
        * "but LTX is selected" was false on FastH3. The reference sentence is
@@ -3128,8 +3242,27 @@ export const TOOLS = [
        * build where it is not (a 4-step LoRA sampled at 3 is the wrong model).
        * References always keep their own builds; the graph decides. LTX has
        * no stepDefaults and ignores steps; the fallbacks are for it. */
-      const qs = engine === "h3" ? st.config?.video?.engines?.h3?.stepDefaults : null;
+      /* THE VIDEO SCREEN'S CHIPS, the same numbers (server/video-plain.js
+       * qualityChips, per engine `chips` in /api/status): `plain`, or `keep`
+       * when references, a reference song, a persona or a RefMod ride. A chip whose
+       * speed-up is not on disk is sent as it is and the route refuses it with
+       * the download named (needsModel), as the page's dimmed chip offers it.
+       * A Studio whose status has no chips falls back to stepDefaults: an
+       * older one, and AMD, Intel and CPU-only PCs, where main's numbers stand
+       * exactly (Bucky's rule). */
+      const h3s = engine === "h3" ? st.config?.video?.engines?.h3 : null;
+      /* A RefMod keeps too: it puts the render on the reference path, as the
+       * page counts it (web/app.js vidPaint `keeping`) and the server does
+       * (video-plain.js refsOn, art.js clipSpeedupNeeded). Without it make_clip
+       * sent the PLAIN chips' numbers for a RefMod render: "fast" sent 3, which
+       * the reference path refused, while the page's Fast rendered (review of
+       * the port, 2026-10-08). Read from the helper that forwards it, the
+       * one the body spreads below (H3 only: no other engine has chips). */
+      const keeps = wantsRefs || (engine === "h3" && h3OptionalMcpBody(a, engine).keeps === true);
+      const chips = h3s?.chips?.[keeps ? "keep" : "plain"] || null;
+      const qs = h3s?.stepDefaults || null;
       const steps = Number.isFinite(a.steps) ? a.steps
+        : a.quality && Number.isFinite(chips?.[a.quality]?.steps) ? chips[a.quality].steps
         : a.quality === "fast" ? (qs?.fast ?? 4)
         : a.quality === "best" ? (qs?.best ?? 20)
         : undefined;
@@ -3150,7 +3283,9 @@ export const TOOLS = [
         attention: a.attention === "kitchen" || a.attention === "pytorch" ? a.attention : undefined,
         // H3's sparse attention on the fast setting; the route keeps only these two.
         sparse: a.sparse === "sol-attn" || a.sparse === "off" ? a.sparse : undefined,
+        h3ModelBuild: a.h3_model_build,
         loras,
+        ...h3OptionalMcpBody(a, engine),
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
        * stages covers AND standalone images). This tool sent `firstFrame` from
@@ -3215,12 +3350,15 @@ export const TOOLS = [
       if (r.error) throw new Error(r.error);
       const settled = await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video", r.job?.id);
       const after = (await api("GET", "/api/clips")).clips || [];
-      const made = after.filter((c) => !before.has(c.name)).map((c) => c.name);
+      const madeRows = after.filter((c) => !before.has(c.name));
+      const made = madeRows.map((c) => c.name);
+      const checkpoint_receipts = Object.fromEntries(madeRows.filter((c) => c.meta?.h3Checkpoint)
+        .map((c) => [c.name, c.meta.h3Checkpoint]));
       /* What the render changed from the request, and the RAM warning: the
        * door's own sentences (video-plain.js), the ones the page shows. */
       const warnings = (r.warnings || []).map((w) => w.text).filter(Boolean);
       // Its own failure has already thrown; see emptyResultNote in art-wait.js.
-      return { clips: made, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
+      return { clips: made, checkpoint_receipts, note: made.length ? undefined : emptyResultNote(settled, r.job?.id, "list_clips"),
         ...(warnings.length ? { warnings } : {}),
         ...(r.character ? { character: r.character.receipt, character_hint: r.character.hint ?? undefined } : {}) };
     },
@@ -3228,7 +3366,7 @@ export const TOOLS = [
 
   {
     name: "list_clips",
-    description: "Every clip and imported media file, newest first, with what made it.",
+    description: "Every clip and imported media file, newest first, with what made it. h3_checkpoint is the saved checkpoint receipt (requestedBuild, ranBuild, file, reference, fallback), or null for clips without one.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "integer" } },
@@ -3239,6 +3377,7 @@ export const TOOLS = [
       return (d.clips || []).slice(0, Math.max(1, Number(a.limit) || 40)).map((c) => ({
         name: c.name, track: c.track, seconds: c.meta?.clipSeconds ?? null,
         source: c.meta?.source ?? "generated", prompt: c.meta?.prompt ?? null,
+        h3_checkpoint: c.meta?.h3Checkpoint ?? null,
       }));
     },
   },

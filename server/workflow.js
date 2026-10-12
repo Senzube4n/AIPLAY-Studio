@@ -24,6 +24,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config, loraStepsOf } from "./config.js";
+import { scanBasesSync, findShelfModel, folderGroup, modelName, modelLeaf, engineBasesSync } from "./localmodels.js";
+import { h3OptionalOptions, REFMOD_NODES, FIZGIG_NODE, refModLoaderInputs, refModApplyInputs } from "./h3-refmod-options.js";
+import { probeH3W6a8, resolveH3Checkpoint, isH3W6A8File } from "./h3-w6a8.js";
+import { validateYue2StyleAdapter } from "./music/yue2-style-adapters.js";
 /* Data only — the catalogue's `gated` flag and the engine->capability map.
  * models.js imports config.js and nothing else from this tree, so there is
  * no cycle here. */
@@ -295,8 +299,9 @@ export function buildYue2ComfyGraph({
    * (temperature, top_p, top_k, repetition_penalty), `planSampling` node 4's
    * (temperature, top_p). server/music/yue2-comfy-input.js validates all three. */
   abc = null, sampling = null, planSampling = null,
-  prefix = "aiplay",
+  prefix = "aiplay", scoreCaptureKey = "", captureScore = true,
 }) {
+  validateYue2StyleAdapter({ engine: "yue2-comfy", lora, loraClip, cot });
   const plan = cot !== "off";
   const score = typeof abc === "string" && abc.trim() !== "" ? abc : null;
   /* The door refuses this with its own sentence; a caller that skipped the
@@ -372,6 +377,11 @@ export function buildYue2ComfyGraph({
     },
     8: { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["1", 2] } },
     9: saveAudioNode(prefix),
+    /* A sibling output branch: music consumes the unchanged ABC wire. Its
+     * exact text reaches history, including when the planner was cached. */
+    ...(plan && captureScore ? { 11: { class_type: "AiplayYuE2Score", inputs: {
+      abc: score ?? ["4", 0], seconds: ["5", 1], capture_key: scoreCaptureKey,
+    } } } : {}),
   };
 }
 
@@ -818,10 +828,31 @@ export function ideogramRefusalMessage(ladderLength, tried) {
     + `FLUX.2 / a checkpoint instead.`;
 }
 
-/* In the models folder or one of the extra ones (config.modelsAlso): the
- * engine loads from all of them. */
-const onDisk = (sub, file) => [config.modelsDir, ...(config.modelsAlso || [])]
-  .some((b) => { try { return fs.statSync(path.join(b, sub, file)).size > 0; } catch { return false; } });
+/* In any folder the engine loads from (localmodels.js engineBasesSync: the
+ * models folder, the extra ones, the extra_model_paths YAML bases and the
+ * install's own ComfyUI/models), the same folders config.js picks from and
+ * the Models screen counts. A Models-screen stand-in counts for the name it
+ * stands in for, on the same shelf, as config.js pick() counts it: the graph
+ * keeps the catalogue name and the engine door renames it (setF on 7b241ea,
+ * from a tester's report). `snapshot` is a shared lazy shelf scan, `bases`
+ * the folders when the caller already has them. */
+const onDisk = (sub, file, snapshot = null, bases = engineBasesSync(config)) => {
+  const here = (n) => {
+    const name = modelName(n);
+    if (!name) return false;
+    if (bases.some((b) => folderGroup(sub).some((folder) => {
+      try { const st = fs.statSync(path.join(b, folder, name)); return st.isFile() && st.size > 0; } catch { return false; }
+    }))) return true;
+    try { return !!findShelfModel(snapshot?.() || scanBasesSync(bases), sub, name); } catch { return false; }
+  };
+  if (here(file)) return true;
+  const standIn = config.modelOverrides?.[String(file)];
+  return typeof standIn === "string" && !!standIn && here(standIn);
+};
+/** A speed-up LoRA by the name a graph would load it under, looked for now:
+ *  the clip runner's "is the file this render loads on disk" (art.js
+ *  clipSpeedupNeeded). */
+export const loraOnDisk = (name) => !!name && onDisk("loras", name);
 
 /* nvfp4 is NVIDIA-only, so an AMD card gets the vendor's fp8 build of the same
  * encoder (models.js downloads it there), and ONLY that: ROCm has no kernel for
@@ -1354,18 +1385,56 @@ const VIDEO_MODEL_DIRS = {
  *
  * Cheap enough to call per song: a handful of `statSync`s, no hashing.
  *
- * @returns {{ready: boolean, missing: string[]}}
+ * "On disk" reads the folders config.js picks the names from, and a
+ * Models-screen stand-in counts for the name it stands in for (onDisk above;
+ * setF, from a tester's report). `files` says, for each missing name, where
+ * it was looked for and why it did not count, so a refusal can name the file
+ * and its path.
+ *
+ * @returns {{ready: boolean, missing: string[], files: {name: string, folder: string, standIn: string|null, path: string, reason: string}[]}}
  */
 export function videoReady(name) {
   const e = videoEngine(name);
   const missing = [];
+  const at = [];
+  let shelf = null;
+  const bases = engineBasesSync(config);
+  const snapshot = () => shelf ||= scanBasesSync(bases);
   for (const [key, sub] of Object.entries(VIDEO_MODEL_DIRS)) {
     const file = e[key];
     if (!file) continue;
-    if (onDisk(sub, file)) continue;
+    if (onDisk(sub, file, snapshot, bases)) continue;
     missing.push(file);
+    at.push([sub, file]);
   }
-  return { ready: missing.length === 0, missing };
+  /* `files` is worked out when it is read (the video gate's refusal), not on
+   * every call: /api/status resolves every engine on every poll. Not
+   * enumerable, so a reply that sends this object whole (the lending doors)
+   * says what it said before. */
+  let files = null;
+  return Object.defineProperty({ ready: missing.length === 0, missing }, "files", {
+    get: () => (files ||= at.map(([sub, file]) => whyNotOnDisk(sub, file))), enumerable: false });
+}
+
+/* Where a file the renderer needs was looked for, and why it did not count:
+ * "missing", "empty" (0 bytes) or "unreadable (<code>)". The path is the
+ * first folder that has something under that name, else the models folder,
+ * where a download would put it. A stand-in is looked for under its own
+ * name, as onDisk() looks for it. */
+function whyNotOnDisk(sub, name) {
+  const standIn = config.modelOverrides?.[name] || null;
+  const file = modelName(standIn || name) || String(standIn || name);
+  for (const base of engineBasesSync(config)) {
+    for (const folder of folderGroup(sub)) {
+      const p = path.join(base, folder, file);
+      try {
+        if (fs.statSync(p).size === 0) return { name, folder, standIn, path: p, reason: "empty" };
+      } catch (err) {
+        if (err?.code && err.code !== "ENOENT" && err.code !== "ENOTDIR") return { name, folder, standIn, path: p, reason: `unreadable (${err.code})` };
+      }
+    }
+  }
+  return { name, folder: sub, standIn, path: path.join(config.modelsDir, sub, file), reason: "missing" };
 }
 
 /**
@@ -1826,6 +1895,7 @@ export function chainVideoLoras(g, from, loras) {
 
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
+  h3OptionalOptions(opts, engine);
   // FastH3 is H3's graph with its own settings (config.video.engines.fasth3).
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3({ ...opts, engine });
 }
@@ -1980,7 +2050,7 @@ export function h3SamplerFor(eng, opts = {}) {
  */
 export function h3SigmaShiftFor(eng, { steps, refs = false } = {}) {
   const { turbo, lora } = h3TurboLoraFor(eng, { steps, refs });
-  const trained = (turbo && lora && eng.turboShiftByLora?.[lora]) || null;
+  const trained = (turbo && lora && (eng.turboShiftByLora?.[lora] || eng.turboShiftByLora?.[modelLeaf(lora)])) || null;
   const choose = (panel, mine, base) => (turbo && panel > 0) ? [panel, "panel"]
     : (trained && mine > 0) ? [mine, "lora"] : [base, "base"];
   const [video, source] = choose(eng.turboShiftVideo, trained?.video, eng.shiftVideo);
@@ -2027,6 +2097,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                models = null,
                                /* Which H3-family engine's settings: "h3" or "fasth3". videoGraph() passes it. */
                                engine = "h3",
+                               /* Explicit optional build; absent uses the saved comparison choice. */
+                               h3ModelBuild = undefined,
                                /* "ck" wraps the model in ModelAttentionBackend (Comfy Kitchen int8), "pytorch"
                                 * in the same node set to PyTorch; anything else leaves it out. NOT defaulted from
                                 * config: art.js videoAttention() decides (H3 through h3Attention(), "ck" or null;
@@ -2041,7 +2113,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                /* H3's block cache for THIS render: true only where the setting is on
                                 * and the engine has the node (art.js videoBlockCache). h3BlockCacheFor
                                 * decides whether this graph can carry it. */
-                               blockCache = false }) {
+                               blockCache = false,
+                               /* Optional community nodes. Absent/zero leaves the shipped graph identical. */
+                               refMods = null, refModOptions = null, h3Tweaks = null }) {
   const v = { ...config.video, ...(config.video.engines[engine] || config.video.engines.h3), ...(models || {}) };
   /* A distillation with a trained schedule runs at that schedule whatever the
    * slider says: FastH3 is 8 steps, and 20 of them is not a better FastH3. */
@@ -2061,10 +2135,17 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const bridgeName = bridge !== undefined && bridge !== null ? String(bridge) : String(v.bridge || "off");
   const bridgeA = Number.isFinite(Number(bridgeAlpha)) ? Number(bridgeAlpha) : (Number(v.bridgeAlpha) || 0);
   const bridgeOn = !!bridgeName && bridgeName !== "off" && bridgeA > 0;
-  const BASE = bridgeOn ? "77" : "5";
+  const optional = h3OptionalOptions({ refMods, refModOptions, h3Tweaks, continueFrom: cont,
+    controlVideo, controlPatch, sparse, blockCache, bridge: bridgeName, bridgeAlpha: bridgeA }, engine);
+  const refModNodes = optional.refMods.length ? {
+    83: { class_type: REFMOD_NODES.loader, inputs: refModLoaderInputs(optional.refMods, optional.refModOptions) },
+    84: { class_type: REFMOD_NODES.apply, inputs: refModApplyInputs(["5", 0], ["83", 0], optional.refModOptions) },
+  } : {};
+  const TEXT = optional.refMods.length ? "84" : "5";
+  const BASE = bridgeOn ? "77" : TEXT;
   const bridgeNodes = bridgeOn ? {
     77: { class_type: "AiplayH3ConditioningBridge", inputs: {
-      conditioning: ["5", 0], adapter: bridgeName, alpha: Math.min(Math.max(bridgeA, 0), 1), magnitude_match: "per_token" } },
+      conditioning: [TEXT, 0], adapter: bridgeName, alpha: Math.min(Math.max(bridgeA, 0), 1), magnitude_match: "per_token" } },
   } : {};
   const length = cont
     ? cont.overlapFrames + cont.extensionFrames
@@ -2192,7 +2273,32 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const refImgs = (Array.isArray(refImages) ? refImages : []).filter(Boolean).slice(0, 9);
   const refAuds = (Array.isArray(refAudios) ? refAudios : [])
     .filter((a) => a && a.name).slice(0, 3);
-  const onRefPath = refImgs.length > 0 || refAuds.length > 0;
+  const onRefPath = refImgs.length > 0 || refAuds.length > 0 || optional.refMods.length > 0;
+  const requestedBuild = h3ModelBuild ?? config.video.h3ModelBuild ?? "auto";
+  const namedCheckpoint = onRefPath ? models?.ditRef ?? models?.dit : models?.dit;
+  const currentCheckpoint = namedCheckpoint ?? (onRefPath ? v.ditRef ?? v.dit : v.dit);
+  if (isH3W6A8File(namedCheckpoint)) {
+    const compatibility = probeH3W6a8(config);
+    if (!compatibility.ready) {
+      const error = new Error(`The named W6A8 checkpoint cannot run in this engine: ${compatibility.reason}`);
+      Object.assign(error, { status: 400, reason: "w6a8-compatibility", compatibility });
+      throw error;
+    }
+  }
+  const checkpointChoice = {
+    ...(engine === "h3" && !namedCheckpoint
+      ? resolveH3Checkpoint({ modelBuild: requestedBuild, current: currentCheckpoint, reference: onRefPath,
+        runtime: requestedBuild === "w6a8" ? probeH3W6a8(config) : {} })
+      : { file: currentCheckpoint, selected: false, requested: false, fallback: null, compatibility: null }),
+    requestedBuild, ranBuild: "auto", reference: onRefPath, overridden: !!namedCheckpoint,
+  };
+  checkpointChoice.ranBuild = isH3W6A8File(checkpointChoice.file) ? "w6a8" : namedCheckpoint ? "custom" : "auto";
+  /* Receipt data is not a ComfyUI node and must not enter the API prompt.
+   * The caller can record this exact choice alongside the clip/job metadata. */
+  const withCheckpointReceipt = (graph) => {
+    Object.defineProperty(graph, "h3CheckpointChoice", { value: checkpointChoice, enumerable: false });
+    return graph;
+  };
   const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const sampler = h3SamplerFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const shiftV = shift.video, shiftA = shift.audio;
@@ -2224,6 +2330,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * run beside BlockSparseAttention. */
   const cacheCfg = h3BlockCacheFor(v, { blockCache, refs: onRefPath, continuation: !!cont,
     control: !!(controlVideo && controlPatch), sparse: sparseCfg });
+  if (optional.h3Tweaks && (sparseCfg || cacheCfg)) throw new Error("Turn sparse attention and block cache off for Fizgig.");
   const cacheNodes = cacheCfg ? {
     82: { class_type: cacheCfg.node, inputs: { model: ["6", 0],
       residual_diff_threshold: cacheCfg.threshold, start_percent: cacheCfg.startPercent,
@@ -2277,11 +2384,17 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * started ComfyUI with. h3Attention() never says "pytorch", so H3's graphs,
    * and the cache keys hashed from them, are unchanged. Anything else: no node. */
   const backend = { ck: "comfy kitchen attention", pytorch: "pytorch attention" }[attention] || null;
+  const tweakNodes = optional.h3Tweaks ? {
+    86: { class_type: FIZGIG_NODE, inputs: { model: BARE_MODEL, high_freq_detail: optional.h3Tweaks.detail,
+      detail_mode: optional.h3Tweaks.detailMode, composition: optional.h3Tweaks.composition,
+      prompt_strength: optional.h3Tweaks.promptStrength, report: false } },
+  } : {};
+  const PATCHED_MODEL = optional.h3Tweaks ? ["86", 0] : useControl ? ["34", 0] : BARE_MODEL;
   const attentionNodes = backend ? {
     85: { class_type: "ModelAttentionBackend",
-          inputs: { model: useControl ? ["34", 0] : BARE_MODEL, attention: backend } },
+          inputs: { model: PATCHED_MODEL, attention: backend } },
   } : {};
-  const MODEL = backend ? ["85", 0] : useControl ? ["34", 0] : BARE_MODEL;
+  const MODEL = backend ? ["85", 0] : PATCHED_MODEL;
   const lora = (name = h3TurboLoraFor(v, { steps: steps ?? v.steps }).lora) => (useTurbo ? {
     18: {
       class_type: "LoraLoaderModelOnly",
@@ -2314,7 +2427,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       ...img(lastFrame, 17),
       // The ref2va checkpoint — built for reference conditioning — and its own
       // turbo distillation on the fast path. Both fall back to the fl2va set.
-      1: unetNode(v.ditRef ?? v.dit),
+      1: unetNode(checkpointChoice.file),
       ...lora(h3TurboLoraFor(v, { steps: steps ?? v.steps, refs: true }).lora),
       ...userLoraNodes,
       2: clipNode(v.textEncoder, "minimax"),
@@ -2353,7 +2466,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // Anchor frames on top of the reference conditioning. Each guide takes the
     // previous positive and returns a new one, so they chain; the latent is
     // node 5's either way.
-    let pos = "5";
+    Object.assign(g, refModNodes, tweakNodes);
+    let pos = TEXT;
     if (bridgeOn) {
       Object.assign(g, bridgeNodes);
       pos = "77";
@@ -2393,16 +2507,17 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       ? { images: OUT_IMAGES, fps: v.fps, audio: OUT_AUDIO }
       : { images: OUT_IMAGES, fps: v.fps } };
     g[15] = { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, ...saveEncode(v) } };
-    return g;
+    return withCheckpointReceipt(g);
   }
 
-  return {
+  return withCheckpointReceipt({
     ...img(firstFrame, 16),
     ...img(lastFrame, 17),
     ...controlNodes,
     ...controlApply,
+    ...tweakNodes,
     ...attentionNodes,
-    1: unetNode(v.dit),
+    1: unetNode(checkpointChoice.file),
     /* THE TURBO LoRA — fast path only (see `useTurbo` above). History: it was
      * named in config from day one and never loaded; then loaded always; now
      * loaded only in its 8-step distillation range, because at 20 steps it
@@ -2427,6 +2542,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // The soundtrack pair — freeze nodes plus the frame-0 anchor on the
     // conditioning. See the block comment above the refs branch.
     ...soundNodes,
+    ...refModNodes,
     ...bridgeNodes,
     ...soundAnchor(BASE, 23),
     ...contNodes(sound ? "23" : BASE),
@@ -2462,7 +2578,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
         : { images: OUT_IMAGES, fps: v.fps },
     },
     15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, ...saveEncode(v) } },
-  };
+  });
 }
 
 

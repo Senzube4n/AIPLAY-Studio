@@ -79,8 +79,8 @@ console.log("\n  -- the catalog mirror is coherent --");
  * (agent/master, registered into the same mirror). The count is asserted
  * rather than the list because a device arriving with no catalog entry --
  * the failure this line exists to catch -- shows up as a count either way. */
-ok("sixteen devices: the rack's nine plus the mastering suite's seven",
-  Object.keys(MIXER_CATALOG).length === 16, Object.keys(MIXER_CATALOG).join(", "));
+ok("seventeen devices: nine built-ins, seven mastering devices and the external VST3 slot",
+  Object.keys(MIXER_CATALOG).length === 17, Object.keys(MIXER_CATALOG).join(", "));
 ok("catalogsAgree agrees with itself", catalogsAgree(
   JSON.parse(JSON.stringify(MIXER_CATALOG))).length === 0);
 ok("...and names a planted drift", catalogsAgree({

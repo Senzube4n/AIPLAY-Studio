@@ -500,5 +500,26 @@ console.log("\n  every relative link resolves");
   ok("each native quickstart offers the same public ZIP", ["README.md", "INSTALL.md", "docs/YUE2_GGUF.md", HTML_TARGET].every((p) => read(p).includes(zip)));
 }
 
+/* NO DOCUMENT TELLS ANYONE TO EDIT A NUMBERED LINE OF A SOURCE FILE
+ * (2026-10-08). INSTALL.md's Linux note said "server/config.js line 47 points at
+ * a Windows path. Change it", from the first public commit on: line 47 was a
+ * comment by then, and config.js's detectPython already found venv/bin/python,
+ * as setup.mjs does. The note now names AIPLAY_RIG and AIPLAY_PYTHON, and the
+ * layouts it says setup finds are the ones setup.mjs looks in. */
+{
+  const docs = ["README.md", "INSTALL.md", ...readdirSync(path.join(ROOT, "docs")).filter((n) => n.endsWith(".md")).map((n) => `docs/${n}`)];
+  const told = docs.filter((p) => /\.(?:m?js|py)`?,? line \d+/i.test(read(p)));
+  ok("no document tells anyone to edit a numbered line of a source file", told.length === 0, told.join(", "));
+  const install = read("INSTALL.md");
+  const other = install.slice(install.indexOf("## Other platforms"), install.indexOf("## Where things live"));
+  ok("INSTALL.md's Other platforms names AIPLAY_RIG and AIPLAY_PYTHON", /AIPLAY_RIG=/.test(other) && /AIPLAY_PYTHON=/.test(other));
+  const setup = read("scripts/setup.mjs");
+  const looks = /async function pythonFor\(rig\) \{[\s\S]*?\n\}/.exec(setup)?.[0] || "";
+  for (const [doc, rel] of [["venv/bin/python", `["venv", "bin", "python"]`], ["ComfyUI/.venv/bin/python", `["ComfyUI", ".venv", "bin", "python"]`]]) {
+    ok(`INSTALL.md says setup finds ${doc}, and setup.mjs looks there`, other.includes(`\`${doc}\``) && looks.includes(rel));
+  }
+  ok("config.js reads AIPLAY_PYTHON first, as the note says", /python: process\.env\.AIPLAY_PYTHON \|\| saved\.python \|\| detectPython\(RIG\),/.test(read("server/config.js")));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

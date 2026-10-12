@@ -1,3 +1,4 @@
+import {createBatchMusicBridge} from './batch-music-context.js';
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
 import { createStandRigRoutes } from './standrig/routes.js';
@@ -14,6 +15,8 @@ import http from "node:http";
 import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile, realpath } from "node:fs/promises";
 import { ImgWorker } from "./imgworker.js";
 import { createImageEditor } from "./image-editor.js";
+import { vectorizeImage, vectorReviewImage } from "./vectorize.js";
+import { importVectorSource, MAX_VECTOR_SOURCE_BYTES } from "./vector-import.js";
 import { requestImageAndWait } from "./image-job.js";
 import { createReadStream, statSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -21,10 +24,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshH3Speedups } from "./config.js";
+import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshVideoPicks } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createScoreRoutes } from "./score/routes.js";
+import { createCommunityRoutes } from "./music/community-tools.js";
 import { createAuditions, createAuditionRoutes, createAuditionSourceInspector, audioHash, exactJobReceipt, finishReplacement } from "./music/auditions.js";
+import { createDawPassages, createDawPassageRoutes } from "./music/daw-passages.js";
+import { createTakeComparisonRoutes } from "./music/take-comparison.js";
+import { createSharedCueRoutes } from "./music/shared-cues.js";
+import { readProject as readDawPassageProject } from "./daw/store.js";
 import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
@@ -50,6 +58,9 @@ import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, QWEN_IMAGE_FILES, qwenIm
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
+import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
+import { stageRefModImage } from "./refmod-stage.js";
+import { validateYue2StyleAdapter, yue2StyleAdapterFor, yue2StyleAdapterFromProbe } from "./music/yue2-style-adapters.js";
 /* RunPod rendering (the launcher's "RunPod GPU" mode): the worker client, the
  * account (Pods and billing) and their routes, contributed by nemesisone-dev. */
 import { createRemoteRoutes } from "./engine/remote-routes.js";
@@ -57,9 +68,9 @@ import { awaitRemoteMusicJob } from "./engine/remote-music.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { isNativeLibraryWav } from "./library-wav.js";
-import { BatchRunner, plannedSongs } from "./batch.js";
+import { BatchRunner, plannedPaidSongs } from "./batch.js";
 import { gpuStatus, ramStatus, cpuStatus, gpuFirstReading, gpuReadOnce } from "./gpu.js";
-import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed } from "./art.js";
+import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor, videoSpeed, clipSpeedupNeeded, extendSteps } from "./art.js";
 import { jobStanding, ownFailure } from "./art-wait.js";
 import { whisperPythonMissing, pythonVerdict } from "./lrc.js";
 import { createWhisperRoutes } from "./whisper.js";
@@ -74,7 +85,8 @@ import { createRouterRoutes, KEY_NAME as ROUTER_KEY } from "./router/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost, LENDER_ROLE_LABEL } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp } from "./models.js";
+import { stageLibrarySong, STAGED_SONG } from "./songstage.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp, isVideoRow } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -100,8 +112,8 @@ async function videoModelPatch(b, engine) {
   const [shelf, parts] = await Promise.all([listVideoPickable(config), listVideoParts(config)]);
   const patch = {};
   if (named.dit && named.dit !== "auto") {
-    const row = shelf.find((r) => r.name === path.basename(named.dit));
-    if (!row) return { error: `No such video model: ${path.basename(named.dit)}. It must be in models/diffusion_models.` };
+    const row = findShelfModel(shelf, "diffusion_models", named.dit);
+    if (!row) return { error: `No such video model: ${requireModelName(named.dit)}. It must be in models/diffusion_models.` };
     if (!row.ok) return { error: `${row.name} cannot drive a video render. ${row.why || ""}`.trim() };
     if (row.engine !== engine) {
       return { error: `${row.name} is a ${row.family} model, which renders on the ${row.engine.toUpperCase()} engine — switch the engine above, or pick a ${engine.toUpperCase()} model.` };
@@ -114,9 +126,9 @@ async function videoModelPatch(b, engine) {
   for (const [key, list, folder, verdict] of [["textEncoder", parts.encoders, "text_encoders", "fit"],
                                               ["videoVae", parts.vaes, "vae", "fitVideo"],
                                               ["audioVae", parts.vaes, "vae", "fitAudio"]]) {
-    const want = named[key] && named[key] !== "auto" ? path.basename(named[key]) : "";
+    const want = named[key] && named[key] !== "auto" ? requireModelName(named[key]) : "";
     if (!want) continue;
-    const row = list.find((x) => x.name === want);
+    const row = findShelfModel(list, folder, want);
     if (!row) return { error: `No such file in models/${folder}: ${want}.` };
     /* ⚠ THE DOOR, NOT ONLY THE DROPDOWN. The screen stopped offering parts that
      * belong to another engine, but this route takes them by name from anything
@@ -132,7 +144,7 @@ async function videoModelPatch(b, engine) {
       return { error: `${want} is not a ${key === "textEncoder" ? "text encoder" : key === "videoVae" ? "video VAE" : "audio VAE"} `
         + `the ${engine.toUpperCase()} engine can load — it is built differently from the one it came with.` };
     }
-    patch[key] = want;
+    patch[key] = row.name;
   }
   return { models: patch };
 }
@@ -207,7 +219,7 @@ let h3VaeCheck = { at: 0, value: false };
 function h3VaeMeasured() {
   if (Date.now() - h3VaeCheck.at < 30_000) return h3VaeCheck.value;
   const name = config.video.engines.h3?.videoVae;
-  const value = name === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
+  const value = modelLeaf(name) === H3_VAE_MEASURED.file && [config.modelsDir, ...(config.modelsAlso || [])].some((base) => {
     try { return statSync(path.join(base, "vae", name)).size === H3_VAE_MEASURED.bytes; } catch { return false; }
   });
   h3VaeCheck = { at: Date.now(), value };
@@ -299,12 +311,12 @@ function missingSupport(cap, ownDit, own = {}) {
     + `already have in the rows under the model file.`;
 }
 import {
-  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath,
+  scanBases, engineBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog, samePath, requireModelName, modelLeaf, findShelfModel,
 } from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES, defaultFor, yue2BuildFor, yue2ComfyFitOn } from "./fit.js";
 import { h3Status, h3StartSize, H3_VAE_MEASURED } from "./h3tier.js";
 /* The Video screen's sentences and the one plan behind a render (UI_PLAN C3/E4, the H3 lab's #5-#7). */
-import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast } from "./video-plain.js";
+import { videoPlan, refsIgnored, h3NotOfferedLine, isH3Family, fastNote, personaUnknown, personaMissing, keepFast, qualityChips, speedupTable } from "./video-plain.js";
 import { createPersonaStore, applyPersona, personaFits, bindPersonaForClip, stagePersonaForClip, CLIP_PERSONA_PICTURES } from "./personas.js";
 import { referenceSteps } from "./workflow.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
@@ -353,14 +365,14 @@ import { cudaCapability } from "./mesh/runner.js";
  * job minutes later: bracketed section labels, and a kit that is not there.
  * YUE_MODEL is the name the door writes as data.model on its own ledger rows
  * — "yue2", the key models.js's rights map is keyed by. */
-import { refuseLyrics, yueStatus, YUE_MODEL } from "./music/yue.js";
+import { refuseLyrics, yueStatus, yueReadinessNote, YUE_MODEL } from "./music/yue.js";
 import { yueGgufStatus } from "./music/yue-gguf.js";
 import { prepareGgufJob } from "./music-gguf-input.js";
 import { yue2ComfyFields } from "./music/yue2-comfy-input.js";
 import { GgufSetup } from "./music/gguf-setup.js";
 /* Where a YuE2 render lands its score: the run folder is adopted by its
  * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
-import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
+import { createScore, adoptVersion, adoptComfyVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { tokenizerStatus, tokenizeTrack, codesDirFor } from "./music/tokenize.js";
@@ -453,6 +465,7 @@ const library = new Library();
  * reads, so a night an agent scheduled is stamped agent:* on every picture,
  * rather than becoming "user" because the request came from localhost.
  */
+const batchMusicBridge = createBatchMusicBridge({submit:submitStudioJson});
 async function renderMediaForBatch(kind, item, take, actor) {
   const base = `http://127.0.0.1:${config.uiPort}`;
   const headers = { "Content-Type": "application/json" };
@@ -557,12 +570,43 @@ async function renderMediaForBatch(kind, item, take, actor) {
 
 
 const batch = new BatchRunner(jobs, {
+  enqueueMusic: spec => batchMusicBridge.enqueue(spec),
   renderMedia: renderMediaForBatch,
   postBusy: () => art.queue.length > 0 || !!art.current,
 });
 // Draws covers only while the music queue is empty — see art.js for why that is
 // a hard requirement rather than politeness.
 const art = new ArtRunner(comfy, jobs);
+/* THE PLAN RUNNERS, the third queue the fresh-engine restart waits for
+ * (art.js otherWorkOnEngine): an overnight run in the middle of a step that is
+ * not a picture or clip it is waiting on (a music step, or between two), or a
+ * music-video plan whose step is not a job in the art queue (its jobs are
+ * named `…:mv_<slug>_…`, mv/generate.js). A plan waiting on the art queue is
+ * waiting on this clip or on one behind it, which the restart does not touch.
+ * On every card: it is part of the wait before Bucky's restart. */
+art.planBusy = () => {
+  const r = batch.run;
+  if (r && r.state === "running" && !batch.pendingMedia) return "an overnight run";
+  const artFiles = [art.current, ...art.queue].map((j) => String(j?.file || ""));
+  const mid = plansRunningNow().find((slug) => !artFiles.some((f) => f.includes(`:mv_${slug}_`)));
+  return mid ? `the music-video plan for ${mid}` : null;
+};
+const h3RefModService = createH3RefModService({
+  config, objectInfo: (name) => engineDoor.objectInfo(name),
+  workflowAssigned: () => assignedTo("video"),
+  stageImage: (name) => stageRefModImage(name, { inputDir: config.inputDir, imageDir: IMAGE_DIR, coverDir: COVER_DIR }),
+  async submit(spec) {
+    const name = spec.graph[2].inputs.name;
+    const job = art.request({ file: `refmod:${name}`, title: spec.label, kind: "refmod", force: true, asked: true,
+      actor: spec.actor, video: { refModGraph: spec.graph, refModName: name } });
+    if (!job) throw new Error(art.lastRefusal || "RefMod creation was not queued.");
+    return { id: job.id, file: job.file, state: "queued" };
+  },
+});
+const h3RefModRoutes = createH3RefModRoutes({ json, readBody, sameOriginLocalJson, service: h3RefModService,
+  actorFrom: prov.actorFrom });
+art.on("refmod-ready", ({ name }) => h3RefModService.complete(name));
+art.on("failed", ({ file, kind }) => { if (kind === "refmod") h3RefModService.complete(String(file).slice(7)); });
 
 // A finished cover is metadata like any other, so it goes through the same
 // sidecar the rest of the library uses.
@@ -1051,6 +1095,13 @@ async function clipCharacters() {
 const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_prompts.json"));
 
 const ckptProbeCache = new Map();
+async function probeShelfLora(file) {
+  const info = await stat(file.full).catch(() => ({}));
+  const key = `lora:${file.full}:${info.size ?? 0}:${info.mtimeMs ?? 0}`;
+  let probe = ckptProbeCache.get(key);
+  if (!probe) { probe = await probeModel(file.full); ckptProbeCache.set(key, probe); }
+  return probe;
+}
 
 /* ⚠ A LineageMap, NOT A PLAIN Map (server/safety/lineage.js). Every row
  * written here gets its wordless minors fingerprint, `safety: {minor,
@@ -1275,10 +1326,41 @@ async function modelsDisk() {
 }
 const ggufSetup = new GgufSetup();
 models.on("update", () => push(jobs.snapshot()));
-/* An H3 speed-up that lands (3, 4 or 8 steps) is used at once, not after a restart. */
+/* EVERY VIDEO FILE IS LOOKED FOR AT START, AND AGAIN WHENEVER A VIDEO ROW
+ * LANDS OR GOES (setF, from a tester's report). config.js picks the file names
+ * each video graph loads (H3's DiT, encoder and VAEs, the reference DiT,
+ * FastH3's, LTX's VAE, the speed-ups) when it loads, and only the speed-ups
+ * were picked again. A Studio started before its H3 download finished kept
+ * the names chosen on an empty disk, so the Models screen said "installed"
+ * and the Video screen refused with "Get MiniMax H3 (0.0 GB)" until a restart.
+ * Now:
+ *   - "ready": a download finished. Any video row (models.js isVideoRow: H3,
+ *     its references row, LTX, FastH3 and the rows on them, the speed-ups
+ *     among them) picks every file again;
+ *   - "changed": a status() found a row's files came or went without a
+ *     download (a copy by hand, a stand-in, a file deleted);
+ *   - and the doors that refuse for missing video files look once more first
+ *     (videoReadyFresh, the video gate).
+ * refreshVideoPicks() is the one function, on every card. /api/status reads
+ * the picks on every poll, so the page has the new state at its next one. */
+refreshVideoPicks();
 models.on("ready", (id) => {
-  if (CATALOG.find((c) => c.id === id)?.addonFor === "video") refreshH3Speedups();
+  if (isVideoRow(id)) refreshVideoPicks();
 });
+models.on("changed", (ids) => {
+  if (ids.some((id) => isVideoRow(id))) refreshVideoPicks();
+});
+/* The first look, which "changed" compares the next ones with. */
+models.status().catch(() => {});
+
+/** videoReady(), looked for again once before a door refuses (setF): a file
+ *  that landed or was copied in while Studio ran is found here too. */
+function videoReadyFresh(engine) {
+  const r = videoReady(engine);
+  if (r.ready) return r;
+  refreshVideoPicks();
+  return videoReady(engine);
+}
 
 /**
  * MAY A CLIP BE RENDERED — and if so, on WHICH engine.
@@ -1298,21 +1380,80 @@ models.on("ready", (id) => {
  * The refusal it does produce carries a capability id that the Models screen
  * has an actual button for, plus the licence acknowledgement that button will
  * demand — a suggestion that bounces at the downloader is not a fix either.
+ *
+ * IT NEVER CONTRADICTS THE MODELS SCREEN (setF, from a tester's report). The
+ * Models screen listed H3 as installed while this refused with "Get MiniMax
+ * H3 (0.0 GB)": config.js still held the file names it picked before the
+ * download finished, and "0.0" is a string, so it was printed.
+ *   1. Before refusing it has config.js look at the disk again
+ *      (refreshVideoPicks) and asks once more. That alone renders the
+ *      tester's case, and a file copied in by hand. Before rendering on
+ *      ANOTHER engine than the chosen one too: an H3 copied in by hand under
+ *      a build name config.js had not picked yet, beside FastH3, read "H3
+ *      missing, FastH3 here", so the clip went to FastH3 until the next look.
+ *   2. If an engine's Models row still reads complete while the renderer
+ *      cannot find its files, the refusal names each file, why it did not
+ *      count and the path it was looked for at, and offers no download:
+ *      `recheck` instead of `needsModel`, so the page's Fix looks again
+ *      rather than opening a window whose row says "Installed".
+ *   3. A download it does offer is never "0.0 GB": what is left is said in MB
+ *      under 0.05 GB (downloadSize), and not at all when nothing is. It is
+ *      the chosen engine's own row where Studio can fetch it (FastH3), not
+ *      always H3's.
  */
+function downloadSize(bytes) {
+  const n = Math.max(0, Number(bytes) || 0);
+  return n >= 5e7 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
+}
 async function videoWeightsGate() {
-  const resolution = resolveVideoEngine();
+  let resolution = resolveVideoEngine();
+  if (resolution.ready && !resolution.substituted) return { engine: resolution.key, resolution };
+  refreshVideoPicks();
+  resolution = resolveVideoEngine();
   if (resolution.ready) return { engine: resolution.key, resolution };
 
   const cat = await models.status();
-  const want = resolution.get;
+  /* status() may have found files that came since (models "changed" picks
+   * again), so ask once more before reading the rows against it. */
+  resolution = resolveVideoEngine();
+  if (resolution.ready) return { engine: resolution.key, resolution };
+  const rowOf = (k) => cat.find((c) => c.id === MODEL_TO_CAPABILITY[k]) || null;
+  const stuck = [resolution.configured, resolution.get?.engine, ...Object.keys(resolution.present || {})]
+    .find((k) => k && rowOf(k)?.ready && !resolution.present?.[k]);
+  if (stuck) {
+    const label = config.video.engines[stuck]?.label || stuck;
+    const files = videoReady(stuck).files || [];
+    const words = { missing: "was not found at", empty: "is empty (0 bytes) at" };
+    const said = files.map((f) => `${f.standIn ? `${f.standIn} (standing in for ${f.name})` : f.name} `
+      + `${words[f.reason] || `could not be read ${String(f.reason).replace(/^unreadable /, "")} at`} ${f.path}`);
+    return {
+      error: {
+        error: `The Models screen lists ${label} as installed, but Studio cannot open `
+          + `${files.length === 1 ? "one of its files" : `${files.length} of its files`}: ${said.join("; ")}. `
+          + `Studio looked at the disk again just now. Put ${files.length === 1 ? "the file" : "them"} back there, then press Fix to look again; nothing needs downloading.`,
+        reason: "weights-unreadable",
+        needsModel: null,
+        recheck: { engine: stuck, label, capabilityId: MODEL_TO_CAPABILITY[stuck] || null, files },
+        alsoGated: resolution.alsoGated || [],
+        configuredEngine: resolution.configured,
+      },
+    };
+  }
+  /* The chosen engine's own row where Studio can fetch it (a FastH3 choice
+   * gets FastH3's row), else the engine resolveVideoEngine names. */
+  const ownRow = rowOf(resolution.configured);
+  const want = ownRow && !ownRow.gated && !ownRow.ready
+    ? { engine: resolution.configured, capabilityId: ownRow.id, label: config.video.engines[resolution.configured]?.label || ownRow.label,
+      region: ownRow.region || null }
+    : resolution.get;
   const cap = want ? cat.find((c) => c.id === want.capabilityId) : null;
-  const missingGb = cap ? ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1) : null;
+  const left = cap ? Math.max(0, cap.totalBytes - cap.haveBytes) : 0;
 
   return {
     error: {
       error: want
         ? `No video weights on this machine yet. Get ${want.label}`
-          + (missingGb ? ` (${missingGb} GB)` : "")
+          + (left > 0 ? ` (${downloadSize(left)})` : "")
           + " from the Models screen — it is the video engine Studio can download for you."
           + (want.region ? ` Its licence grants no rights inside ${want.region.excluded.join(", ")}; the download asks you to confirm first.` : "")
         : `${resolution.label} is not downloaded yet. Open the Models screen.`,
@@ -1467,7 +1608,7 @@ jobs.on("update", async (snap) => {
    * otherwise a score is created under the song's title. Failure here loses
    * the sheet, never the song — the audio is already filed by the runner. */
   let score = null;
-  if (job.engine === "yue2" && job.yue?.dir) {
+  if ((job.engine === "yue2" && job.yue?.dir) || (isYueComfy && job.yueComfyScore?.abc)) {
     try {
       let slug = job.scoreSlug || null;
       /* The parent is kept only when it still exists in the score it was
@@ -1479,7 +1620,16 @@ jobs.on("update", async (snap) => {
       if (!slug) slug = (await createScore(h.title || job.title || "Untitled")).slug;
       const parent = loaded && job.scoreVersion && findVersion(loaded, job.scoreVersion) ? job.scoreVersion : null;
       const by = prov.normalizeActor(job.actor);
-      const adopted = await adoptVersion(slug, {
+      const adopted = isYueComfy ? await adoptComfyVersion(slug, {
+        abc: job.yueComfyScore.abc, file: h.file, promptId: job.promptId,
+        audioSeconds: job.audioSeconds ?? null, checkpoint: job.yue2Checkpoint || null,
+        request: { style: job.caption || "", lyrics: job.lyrics || "", cot: job.cot || "full", seed: job.seed,
+          sampling: yue2ComfySamplingReceipt(job).audio, planSampling: job.planSampling || null,
+          narSteps: job.narSteps || 32,
+          lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
+          loraClip: job.loraClip || null, loraClipStrength: job.loraClip ? (job.loraClipStrength ?? 1) : null },
+        by, parent, note: "Rendered through ComfyUI; notation timing is approximate",
+      }) : await adoptVersion(slug, {
         dir: job.yue.dir, by, parent,
         note: `rendered from Create — ${job.rung?.label || "Standard"} configuration`
           + (job.quantization === "fp8" ? ", 8-bit AR" : "")
@@ -1487,7 +1637,11 @@ jobs.on("update", async (snap) => {
       });
       score = { slug, version: adopted.id };
     } catch (err) {
-      console.error(`  [score] ${h.file}: the run was not adopted — ${err.message}`);
+      const why = String(err?.message || err).slice(0, 300);
+      job.scoreWarning = `Sheet music could not be saved. ${why}`;
+      console.error(`  [score] ${h.file}: the run was not adopted — ${why}`);
+      library.remember(h.file, { scoreWarning: job.scoreWarning });
+      await library.save().catch(saveErr => console.error(`  [score] ${h.file}: warning not saved — ${saveErr.message}`));
     }
   }
   /* The sheet is engraved AFTER the song is filed (see the end of this
@@ -1605,10 +1759,10 @@ jobs.on("update", async (snap) => {
           : isYueComfy
           ? { runtime: "comfy", checkpoint: job.yue2Checkpoint || null, cot: job.cot || "full",
               scoreSupplied: !!job.abc, sampling: job.sampling || null, planSampling: job.planSampling || null,
-              /* The saved score version it was sung from, as written (this
-               * build makes no score of its own to adopt, unlike the Python
-               * kit's `score` below, which is the version its run wrote). */
+              /* Preserve the supplied-score lineage beside the exact score
+               * captured from this completed prompt. */
               scoreFrom: job.scoreSlug ? (job.scoreVersion ? `${job.scoreSlug}/${job.scoreVersion}` : job.scoreSlug) : null,
+              score: score ? `${score.slug}/${score.version}` : null,
               narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null,
               lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null }
           : isYue
@@ -1673,9 +1827,12 @@ jobs.on("update", async (snap) => {
     } : {}),
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
+      scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
+      scoreWarning: job.scoreWarning || null,
+      durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
       /* Sung from a score you supplied (hummed, pasted, transcribed), not
-       * from the model's own plan. The version it came from is in the ledger
-       * (params.scoreFrom); the ♪ badge's scoreSlug stays the Python kit's. */
+       * from the model's own plan. Its source version stays in the ledger
+       * (params.scoreFrom), while the ♪ badge links this prompt's capture. */
       scoreSupplied: !!job.abc,
       /* This explicit comparison receipt lets Training distinguish a matched
        * baseline/adapter pair from older rows whose sampler inputs were never
@@ -1776,7 +1933,11 @@ jobs.on("update", async (snap) => {
         origin: `http://127.0.0.1:${config.uiPort}` });
       await setSheet(score.slug, score.version, sheet);
     } catch (err) {
-      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${err.message}`);
+      const why = String(err?.message || err).slice(0, 300);
+      job.scoreWarning = `Sheet music could not be engraved. ${why}`;
+      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${why}`);
+      library.remember(h.file, { scoreWarning: job.scoreWarning });
+      await library.save().catch(saveErr => console.error(`  [score] ${h.file}: warning not saved — ${saveErr.message}`));
     }
   }
 
@@ -1834,7 +1995,9 @@ jobs.on("update", async (snap) => {
      * — and a stage that cannot run is FAILED rather than left waiting, because
      * a row stuck at "waiting" is indistinguishable from one still queued. */
     if (want("video", config.video.when)) {
-      const vr = videoReady();
+      /* Looked for again once before the stage fails, as the video gate does
+       * (setF): a file copied in while Studio ran is found here too. */
+      const vr = videoReadyFresh();
       if (vr.ready) {
         art.request({ file: h.file, title: h.title, caption: job.caption, seed: h.seed, kind: "video" });
       } else {
@@ -1868,14 +2031,10 @@ jobs.on("update", async (snap) => {
 /* ── Models screen: what is already on disk ────────────────────────────────
  * Every folder the engine loads weights from: the chosen models folder, the
  * base_path of every extra_model_paths YAML the engine is launched with, and
- * the install's own models folder. */
+ * the install's own models folder. One answer with the video picks, the
+ * Models screen and the engine door (localmodels.js engineBases). */
 async function modelBases() {
-  return uniqueDirs([
-    config.modelsDir,
-    ...(config.modelsAlso || []),
-    ...(await extraBases(config.comfy.extraArgs)),
-    path.join(config.comfyDir, "models"),
-  ]);
+  return engineBases(config);
 }
 
 /** Merge keys into settings.json without touching the rest of it. */
@@ -1904,7 +2063,7 @@ async function localModelsPayload(cat) {
     }
     rows.push({
       folder: f.folder, shelf: f.shelf, name: f.name, base: f.base, bytes: f.bytes,
-      family, variant, known: known.has(f.name), standsInFor: standsIn[f.name] || null,
+      family, variant, known: known.has(modelLeaf(f.name)), standsInFor: standsIn[f.name] || null,
     });
   }
   return { modelsDir: config.modelsDir, also: config.modelsAlso || [], bases, files: rows };
@@ -1931,7 +2090,7 @@ let comfyWanted = !config.musicOnly && !config.cloudOnly && !config.remoteOnly;
 async function findYue2Checkpoints() {
   const seen = new Set();
   return (await scanBases(await modelBases()))
-    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name))
     .map((f) => f.name)
     .filter((n) => (seen.has(n) ? false : seen.add(n)));
 }
@@ -1946,17 +2105,21 @@ const minimaxAmdRisk = () => onAmd() && !hasAmdMusicFix(studioLaunchArgs());
  * encoder layer. The encoders and the VAE are ComfyUI's split-file names. */
 const ACE_DIT = /^acestep[_-]?v?1\.?5.*\.(safetensors|sft)$/i;
 const ACE_LMS = ["qwen_4b_ace15.safetensors", "qwen_1.7b_ace15.safetensors"];
-const aceBuildName = (n) => String(n || "").replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
+const aceBuildName = (n) => modelLeaf(n).replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
 async function aceShelf() {
   const shelf = await scanBases(await modelBases());
-  const on = (folders, name) => shelf.some((f) => folders.includes(f.folder) && f.name === name);
+  const on = (folders, name) => {
+    try { return findShelfModel(shelf, folders[0], name); }
+    catch (err) { if (err.status === 400) return null; throw err; }
+  };
   const seen = new Set();
-  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(f.name))
+  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(modelLeaf(f.name)))
     .map((f) => f.name).filter((n) => (seen.has(n) ? false : seen.add(n)));
-  const vae = on(["vae"], "ace_1.5_vae.safetensors");
-  const enc = on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
-  const lms = ACE_LMS.filter((n) => on(["text_encoders", "clip"], n));
-  const lm = lms.includes(config.music.aceLm) ? config.music.aceLm : lms[0] || null;
+  const vae = !!on(["vae"], "ace_1.5_vae.safetensors");
+  const enc = !!on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
+  const lms = ACE_LMS.map((n) => on(["text_encoders", "clip"], n)?.name).filter(Boolean);
+  const selectedLm = config.music.aceLm && on(["text_encoders", "clip"], config.music.aceLm)?.name;
+  const lm = lms.includes(selectedLm) ? selectedLm : lms[0] || null;
   const missing = [!vae && "the ACE 1.5 VAE", !enc && "the 0.6B text encoder", !lm && "a planner (qwen_4b_ace15 or qwen_1.7b_ace15)"].filter(Boolean);
   return { dits, vae, enc, lms, lm, ready: vae && enc && !!lm, missing: missing.length ? `missing ${missing.join(", ")}` : null };
 }
@@ -1968,16 +2131,12 @@ async function musicModelChoices(cat) {
   const out = [];
   const minimax = byId.engine;
   if (config.music.engines["minimax-music3"] && minimax && !config.musicOnly) {
-    const dit = minimax.files.find((f) => f.name === config.models.dit);
+    const dit = minimax.files.find((f) => f.name === modelLeaf(config.models.dit));
     const restReady = minimax.files.filter((f) => f !== dit).every((f) => f.present);
-    const bases = await modelBases();
+    const musicShelf = await scanBases(await modelBases());
     const onDisk = async (name) => {
-      for (const base of bases) {
-        for (const folder of ["diffusion_models", "unet"]) {
-          if ((await stat(path.join(base, folder, name)).catch(() => null))?.size > 0) return true;
-        }
-      }
-      return false;
+      try { return !!findShelfModel(musicShelf, "diffusion_models", name); }
+      catch (err) { if (err.status === 400) return false; throw err; }
     };
     const builds = [
       { precision: "int8", present: !!dit?.present, note: dit?.override ? `using ${bareName(dit.override)}` : null },
@@ -2033,7 +2192,7 @@ async function musicModelChoices(cat) {
   if (config.music.engines["yue2-comfy"] && (!config.musicOnly || comfyWanted)) {
     const seen = new Set();
     const ckpts = (await scanBases(await modelBases()))
-      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name))
       .filter((f) => (seen.has(f.name) ? false : seen.add(f.name)));
     for (const f of ckpts) {
       const build = bareName(f.name).replace(/^yue2?[_-]?3b[_-]?/i, "") || bareName(f.name);
@@ -2065,9 +2224,11 @@ async function musicModelChoices(cat) {
     }
   }
   if (config.music.engines.yue2 && byId.musicYue2 && !config.musicOnly) {
+    const kit = await yueStatus();
     out.push({
       value: "yue2", engine: "yue2", precision: null, label: "YuE2 3B (Python kit)",
-      available: !!byId.musicYue2.ready, note: byId.musicYue2.ready ? null : "not installed",
+      available: kit.installed, note: kit.installed ? null : kit.runtime?.issue || "Python kit setup needed",
+      readinessNote: yueReadinessNote(kit), runtimeReadiness: kit.runtime,
     });
   }
   /* RUNPOD GPU MODE: the ComfyUI engines render on the Pod, so this PC's disk
@@ -2224,7 +2385,7 @@ const mvRoutes = createMvRoutes({
   cardReading: () => ({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
   /* Whether LTX's weights are on disk: "hybrid" sends a scene with no cast
    * there only when they are (server/mv/shot.js). */
-  ltxReady: () => videoReady("ltx").ready,
+  ltxReady: () => videoReadyFresh("ltx").ready,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
    *
    * `provenance` is the same module every other surface writes through, so a
@@ -2849,16 +3010,19 @@ const vfxRoutes = createVfxRoutes({
  * so an unknown /api/daw path still falls through to the app's own 404.
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
+const sharedCueRoutes = createSharedCueRoutes({ json, readBody, renderAccent: dawRoutes.renderCueAccent });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
+const communityRoutes = createCommunityRoutes({ json, readBody, library, jobs, engine: engineDoor, provenance: prov,
+  daw:(body,actor)=>submitStudioJson('/api/daw',body,actor) });
 // Workflow modules submit through the ordinary validated API. Keeping a
 // receipt for the exact id matters when another song is already rendering.
 function jobReceipt(job) { return exactJobReceipt(job, jobs.snapshot()); }
-function submitStudioJson(apiPath, body, actor = "system") {
+function submitStudioJson(apiPath, body, actor = "system", internalHeaders = {}) {
   return new Promise((resolve, reject) => {
     const payload = Buffer.from(JSON.stringify(body));
     const call = http.request({ hostname: "127.0.0.1", port: config.uiPort, path: apiPath, method: "POST",
       headers: { "content-type": "application/json", "content-length": payload.length,
-        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }) }, timeout: 900_000 }, answer => {
+        ...(actor === "user" ? {} : { "x-aiplay-actor": prov.normalizeActor(actor) }), ...internalHeaders }, timeout: 900_000 }, answer => {
       const chunks = []; answer.on("data", chunk => chunks.push(chunk));
       answer.on("error", reject);
       answer.on("end", () => {
@@ -2945,6 +3109,27 @@ art.fastCovers = fastCovers;
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
 const listeningRuntime = createListeningLabRuntime({ config, library,
   shelf: async () => scanBases(await modelBases()), probe: probeModel, engine: engineDoor });
+// Only library members verified by the calling workflow reach this door.
+async function serveReviewedMusic(req, res, name) {
+  if (typeof name !== 'string' || path.basename(name) !== name || /[:\\/]|\.\./.test(name)) throw new Error('Choose a library recording.');
+  const full = path.join(config.outputDir, name), info = await stat(full);
+  return sendFile(req, res, full, { size: info.size, headers: {
+    'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
+  } });
+}
+const dawPassages = createDawPassages({ dir: path.join(config.paths.appData, 'music-daw-passages'),
+  readProject: readDawPassageProject, inspectSource: inspectAuditionSource,
+  inspectAudio: listeningRuntime.inspectSource, listSources: async () => (await auditions.list()).sources, auditions });
+const dawPassageRoutes = createDawPassageRoutes({ store: dawPassages, json, readBody,
+  actorFrom: prov.actorFrom, serveAudio: serveReviewedMusic });
+const takeComparisonRoutes = createTakeComparisonRoutes({ json, readBody, actorFrom: prov.actorFrom,
+  appData: config.paths.appData, listSongs: () => library.list(), inspectSource: listeningRuntime.inspectSource,
+  sourceReceipt: async file => ({ metadata: structuredClone(library.meta.get(file) || {}),
+    provenance: await prov.read('library', { asset: file, limit: 100 }) }),
+  measureSource: (file, actor) => submitStudioJson('/api/daw', { action: 'analyze', file: path.join(config.outputDir, file), goniometer: false }, actor),
+  setFavourite: async (file, value) => { library.setFlag(file, 'starred', value); await library.save(); },
+  recordEvent: event => prov.append('library', event), serveAudio: serveReviewedMusic });
 async function readWorkflowJob(id) {
   const job = [jobs.current, ...jobs.queue, ...jobs.history].find(row => row?.id === id);
   if (!job) return null;
@@ -3221,6 +3406,13 @@ const engineRoutes = createEngineRoutes({
     if (meta) clipMeta.set(name, { ...(clipMeta.get(name) || {}), ...meta });
     saveClipStore();
   },
+  /* A picture adopted with a fingerprint (a RunPod render): its row, so the
+   * minors rule reads what it was made as when it is edited or referenced. */
+  rememberImage: (name, meta) => {
+    if (!name) return;
+    imageMeta.set(name, { ...(imageMeta.get(name) || {}), ...(meta || {}) });
+    saveImageStore();
+  },
 });
 /* The one line that closes the last seam in the door: until this runs, a
  * dispatch with `adopt` on records `adoptedAs: null` because nothing in the
@@ -3234,7 +3426,7 @@ engineDoor.setAdopter(engineRoutes.adopt);
  * are adopted into the same library as a local render; audio goes to the
  * music library under a runpod- name. */
 const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret,
-  append: prov.append, actorFrom: prov.actorFrom,
+  append: prov.append, actorFrom: prov.actorFrom, sameOriginLocalJson,
   adopt: async (details) => {
     if (/\.(wav|flac|mp3|ogg|opus)$/i.test(details.output.file)) {
       /* "aiplay_" first: the library lists only its own prefixes (library.js
@@ -3285,7 +3477,20 @@ function imgWorker() {
   return _imgWorker;
 }
 
+/* ⚠ THIS PC'S STUDIO ANSWERS ONLY ITS OWN ADDRESS, ON EVERY ROUTE (review of
+ * the port, 2026-10-08). Studio listens on 127.0.0.1 alone, but a page on a
+ * DNS name that a rebinding attack points at 127.0.0.1 reaches it with that
+ * name as the Host and, for a GET, no Origin. /api/runpod refused it already
+ * (remote-routes.js), and the doors that choose what runs refuse it through
+ * sameOriginLocalJson; a GET elsewhere did not, so such a page could read
+ * /api/provenance (every non-private render's full prompt), /api/images and
+ * the pictures and clips themselves. The Host is what such a page cannot fake,
+ * so every request is asked first, and so is the live socket (wss below). */
+const foreignHost = (req) => !localUiHost(req, config.uiPort);
 const server = http.createServer(async (req, res) => {
+  if (foreignHost(req)) {
+    return json(res, 403, { error: "Studio answers only on this PC's own address (127.0.0.1, localhost or [::1] on its port)." });
+  }
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
 
@@ -3306,6 +3511,9 @@ const server = http.createServer(async (req, res) => {
      * through to the app's own 404. */
     if (p === "/api/engine" || p.startsWith("/api/engine/")) {
       if (await engineRoutes(req, res, url)) return;
+    }
+    if (p === "/api/h3-refmods") {
+      if (await h3RefModRoutes(req, res, url)) return;
     }
     if (p === "/api/safety/check") {
       if (await safetyRoutes(req, res, url)) return;
@@ -3378,7 +3586,15 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/score" || p.startsWith("/api/score/")) {
       if (await scoreRoutes(req, res, url)) return;
     }
+    if (p.startsWith('/api/music-tools') && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Music tools are available to Studio and local clients.'});
+    if (await communityRoutes(req, res, url)) return;
     if (await auditionRoutes(req, res, url)) return;
+    if (p === '/api/music-daw-passages' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'DAW passage changes are only accepted from Studio\'s own page or a local client.'});
+    if (await dawPassageRoutes(req, res, url)) return;
+    if (p === '/api/music-take-comparison' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Take comparison changes are only accepted from Studio\'s own page or a local client.'});
+    if (await takeComparisonRoutes(req, res, url)) return;
+    if (p === '/api/music-cues' && req.method === 'POST' && !sameOriginLocalJson(req)) return json(res,403,{error:'Shared cue changes are only accepted from Studio\'s own page or a local client.'});
+    if (await sharedCueRoutes(req, res, url)) return;
     if (await musicWorkflowRoutes(req, res, url)) return;
     if (await musicArtifactRoutes(req, res, url)) return;
     if (await listeningLabRoutes(req, res, url)) return;
@@ -3517,6 +3733,9 @@ const server = http.createServer(async (req, res) => {
           tokenizer: await tokenizerStatus(),
           musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
+            ...(k === "yue2" ? await yueStatus().then(s => ({
+              ready: s.installed, readinessNote: yueReadinessNote(s),
+            })) : {}),
             ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => {
               const ready = Object.values(s.variants || {}).some(v => v.ready) || s.ready;
               return {ready, variants:s.variants, readinessNote:ready?null:s.message, experimental:true};
@@ -3630,6 +3849,21 @@ const server = http.createServer(async (req, res) => {
                * (video-plain.js keepFast), H3 only. */
               keepFast: k === "h3" ? keepFast(e) : null,
               turboBuilds: e.turboBuilds ?? null,
+              /* Each path's own files (config.js resolveH3Steps): what a
+               * render is checked by. Null on AMD, Intel and the CPU
+               * (config.js offNvidia), where turboBuilds, main's both-paths
+               * reading, is the check (Bucky's rule). */
+              plainBuilds: e.plainBuilds ?? null,
+              refBuilds: e.refBuilds ?? null,
+              /* The quality chips as the page draws them and make_clip's
+               * `quality` sends them, {plain, keep} of {fast, standard,
+               * best} each {steps, needsModel}, and every count's missing
+               * speed-up by path (video-plain.js qualityChips, speedupTable):
+               * the page keeps no number or rule of its own. No chips on AMD,
+               * Intel and the CPU: the page draws main's there, and make_clip
+               * sends stepDefaults. */
+              chips: k === "h3" ? qualityChips(e) : null,
+              speedupNeeds: k === "h3" ? speedupTable(e) : null,
               /* This PC's measured speed against the cost curve (video-speed.js):
                * the page multiplies its estimate by it. Null before a clip. */
               speedFactor: videoSpeed.factor(k), speedSamples: videoSpeed.samples(k),
@@ -3643,7 +3877,7 @@ const server = http.createServer(async (req, res) => {
                * LoRA picker leaves them out, because stacking one again would
                * apply it twice. */
               ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
-                .filter(Boolean).map((n) => path.basename(String(n))),
+                .filter(Boolean).map((n) => requireModelName(n)),
               /* The base a LoRA must have been made for (config.js), which the
                * Video screen's picker judges against and /api/video checks: null
                * means this engine takes none, and the picker hides. */
@@ -3717,22 +3951,27 @@ const server = http.createServer(async (req, res) => {
          * not be able to claim to be a human. Every picture the run makes is
          * then stamped with it. */
         if (b.action === "start") {
-          /* A music night with the hosted engine on bills every song: asked
+          /* The hosted MiniMax steps of a music night are priced and asked
            * once, with the night's estimate, and carried on each job as
            * paidConfirmed (server/cloud-switch.js). Never assumed. */
-          const paidNight = (b.kind || "music") === "music" && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: null });
-          const night = paidNight ? plannedSongs(b) : null;
+          const night = (b.kind || "music") === "music" && config.api.enabled
+            ? plannedPaidSongs({ ...b, defaultEngine: config.music?.engine || "minimax-music3" }) : { songs: 0 };
+          const paidNight = night.songs > 0 && hostedWouldBill({ apiEnabled: !!config.api.enabled, engine: "minimax-music3" });
           /* No idea with a style: nothing to pay for, and start() says so. */
           if (paidNight && b.confirmSpend !== true && night.songs) {
             const refusal = paidRefusal(await hostedQuote(night.longestSeconds), { songs: night.songs });
             return json(res, refusal.status, refusal.body);
           }
-          return json(res, 200, batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true }));
+          const started = batch.start({ ...b, actor: prov.actorFrom(req), paidConfirmed: paidNight && b.confirmSpend === true });
+          // Confirm a future appointment only after its engine, actor and paid
+          // answer are saved. The timer is not armed if that write fails.
+          if (b.startAt !== undefined) { await batch.persist(); return json(res, 200, batch.status()); }
+          return json(res, 200, started);
         }
-        if (b.action === "pause") return json(res, 200, batch.pause());
-        if (b.action === "resume") return json(res, 200, batch.resume());
-        if (b.action === "stop") return json(res, 200, batch.stop());
-        if (b.action === "clear") return json(res, 200, batch.clear());
+        if (b.action === "pause") { batch.pause(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "resume") { batch.resume(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "stop") { batch.stop(); await batch.persist(); return json(res, 200, batch.status()); }
+        if (b.action === "clear") { batch.clear(); await batch.persist(); return json(res, 200, batch.status()); }
         return json(res, 400, { error: "Unknown action." });
       } catch (err) {
         /* An overnight plan refused under the minors rule (batch.js) says so. */
@@ -3960,20 +4199,22 @@ const server = http.createServer(async (req, res) => {
           if (b.use === null || b.use === undefined || b.use === "") {
             delete next[catName];
           } else {
-            const useName = path.basename(String(b.use));
+            const useName = requireModelName(b.use);
             const folder = path.relative(config.modelsDir, path.dirname(entry.dest)).split(path.sep)[0];
             if (!folder || folder.startsWith("..")) {
               return json(res, 400, { error: `${catName} does not live in the models folder, so it cannot be swapped here.` });
             }
-            const found = (await scanBases(await modelBases()))
-              .find((f) => f.name === useName && f.shelf === shelfOf(folder));
+            const found = findShelfModel(await scanBases(await modelBases()), folder, useName, { fallback: false });
             if (!found) {
               return json(res, 400, { error: `${useName} is not in a configured ${shelfOf(folder)} model folder.` });
             }
-            next[catName] = useName;
+            next[catName] = found.name;
           }
           config.modelOverrides = next;
           musicChoicesCache.at = 0;
+          /* A stand-in counts for the name it stands in for (config.js
+           * localFile), so the video picks follow it at once. */
+          refreshVideoPicks();
           await mergeSettings({ modelOverrides: next });
           return json(res, 200, { ok: true, overrides: next });
         }
@@ -4290,23 +4531,36 @@ const server = http.createServer(async (req, res) => {
            * and the style pictures were made from (server/safety/lineage.js).
            * Paint's frames reach the engine one by one through /api/engine,
            * which sees the words but not this history, so it is judged here. */
-          paint: (po) => {
+          /* ⚠ A HOLD ON THE ENGINE DOOR, from the first frame to the last
+           * (engine/client.js hold()). The frames are hundreds of door runs
+           * with a few hundred ms between them, and the fresh-engine restart
+           * before an H3 clip (art.js) waits for runs in flight: without the
+           * hold it restarted in a gap, the next frame was refused and the
+           * whole render was lost. */
+          paint: async (po) => {
             const lin = lineage([po.clip, ...(Array.isArray(po.styles) ? po.styles : [])]);
             const d = paintDials(po.dials || {});
             assertSafe({ door: "reactive.paint", via: "reactive.paint", actor: who, texts: [d.styleA, d.styleB],
               context: lin.texts, flags: lin.flags });
-            return paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
-              actor: who,
-              onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
-            });
+            const release = engineDoor.hold("a Reactive Paint look");
+            try {
+              return await paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
+                actor: who,
+                onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
+              });
+            } finally { release(); }
           },
           /* The Motion look: AnimateDiff through the engine door, adopted
            * into the clips library like any other render. The door judges
-           * its graph with the source clip's and the pictures' history. */
-          motion: (mo) => {
+           * its graph with the source clip's and the pictures' history. Two
+           * door runs, held together like Paint's frames. */
+          motion: async (mo) => {
             const lin = lineage([mo.clip, ...(Array.isArray(mo.pictures) ? mo.pictures : [])]);
-            return motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
-              { engine: engineDoor, actor: who });
+            const release = engineDoor.hold("a Reactive Motion look");
+            try {
+              return await motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR, safetyContext: lin.texts, safetyFlags: lin.flags },
+                { engine: engineDoor, actor: who });
+            } finally { release(); }
           },
         });
         return json(res, 200, out);
@@ -4482,11 +4736,17 @@ const server = http.createServer(async (req, res) => {
        * fal.ai or MiniMax key: only Studio's page and local clients queue one. */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Songs are only queued from Studio's own page or a local client." });
       const body = await readBody(req);
+      const batchMusicMetadata = batchMusicBridge.metadata(req);
       if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
       if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
       // No engine named: the default follows the disk when nobody chose (machineDefaults).
       if (body.engine === undefined && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const requestedEngine=body.engine || config.music.engine;
+      try {
+        if (requestedEngine !== "yue2-comfy")
+        validateYue2StyleAdapter({ engine: requestedEngine, lora: body.lora, loraClip: body.loraClip,
+          cot: body.cot || "full", explicit: true });
+      } catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
       /* YuE2 sings labelled lyrics (server/music/yue-lyrics.js): lyrics with no
        * [Verse] / [Chorus] at all are given them, for every YuE2 build. The
        * song keeps the labelled text, so what rendered is what is stored. */
@@ -4509,7 +4769,9 @@ const server = http.createServer(async (req, res) => {
           if (!named && kit.quantization) nativeJob.quantization=kit.quantization;
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
           if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
-          const job=jobs.enqueue({ ...nativeJob, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
+          batchMusicBridge.beforeQueue(req);
+          const job=jobs.enqueue({ ...nativeJob, ...batchMusicMetadata, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
+          batchMusicBridge.record(req,job);
           return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf",quantization:job.quantization}});
         } catch(err) {return json(res, 400, {error:err.message,reason:err.refusal||"request",engine:"yue2-gguf"});}
       }
@@ -4780,7 +5042,9 @@ const server = http.createServer(async (req, res) => {
           coverFit = fit((want || 180) + coverSeconds, { capability });
         }
         const cfgRaw = body.cfgScale === "" || body.cfgScale == null ? null : Number(body.cfgScale);
+        batchMusicBridge.beforeQueue(req);
         const job = jobs.enqueue({
+          ...batchMusicMetadata,
           engine: "yue2",
           actor: prov.actorFrom(req),
           ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}),
@@ -4793,7 +5057,7 @@ const server = http.createServer(async (req, res) => {
           caption: body.instrumental
             ? `${body.caption.trim().replace(/[.,;\s]+$/, "")}. Instrumental, no vocals, no singing, no voice.`
             : body.caption.trim(),
-          lyrics: body.instrumental ? "" : (body.lyrics || "").trim(),
+          lyrics: body.instrumental ? "" : (body.lyrics || ""),
           /* protocol.py:95 — an integer in [0, 2^63). The random one stays in
            * MiniMax's 32-bit range so the seed field on the page reads the same. */
           seed: Number.isFinite(body.seed) ? Math.max(0, Math.floor(body.seed)) : Math.floor(Math.random() * 4294967296),
@@ -4843,6 +5107,7 @@ const server = http.createServer(async (req, res) => {
             fitCeiling: coverFit.ceiling,
           } : {}),
         });
+        batchMusicBridge.record(req,job);
         return json(res, 200, {
           job: jobReceipt(job), engine: "yue2",
           rung: coverCodes ? { id: coverFit.rung.id, label: coverFit.rung.label } : rung,
@@ -4871,7 +5136,8 @@ const server = http.createServer(async (req, res) => {
         }
         const shelf = await scanBases(await modelBases());
         const askedLora = body.lora === undefined ? config.music.aceLora : body.lora;
-        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
+        if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, { error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another, or choose none.`, engine: musicEngine, reason: "lora-missing" });
         }
@@ -4882,19 +5148,14 @@ const server = http.createServer(async (req, res) => {
         if (c && typeof c === "object") {
           if (c.upload) {
             const nm = path.basename(String(c.upload));
-            if (!/^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
+            if (!STAGED_SONG.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
             if (!(await stat(path.join(config.inputDir, nm)).catch(() => null))) return json(res, 400, { error: "The uploaded cover source is gone. Add it again.", reason: "cover-missing" });
             cover = nm;
           } else if (c.song) {
-            const base = path.basename(String(c.song));
-            const src = path.join(config.outputDir, base);
-            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a|opus)$/i.test(base) || !(await stat(src).catch(() => null))) {
-              return json(res, 400, { error: "That Library song is not in the output folder any more.", reason: "cover-missing" });
-            }
-            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, nm), await readFile(src));
-            cover = nm;
+            /* songstage.js: any name the Library lists (it refused brackets,
+             * commas and accents with "not in the output folder any more"). */
+            try { cover = await stageLibrarySong(c.song, { outputDir: config.outputDir, inputDir: config.inputDir }); }
+            catch (err) { return json(res, 400, { error: err.message, reason: "cover-missing", song: err.song || null }); }
           }
         }
         const seedNow = Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296);
@@ -4942,17 +5203,19 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return json(res, e.status || 400, { error: e.message, engine: "yue2-comfy", reason: e.reason });
         }
-        if (body.checkpoint !== undefined && (typeof body.checkpoint !== "string" || !body.checkpoint.trim() || /[/\\]|\.\./.test(body.checkpoint))) {
-          return json(res, 400, { error: "Choose an installed YuE2 checkpoint filename.", reason: "checkpoint" });
+        if (body.checkpoint !== undefined) {
+          try { body.checkpoint = requireModelName(body.checkpoint); }
+          catch (err) { return json(res, 400, { error: err.message, reason: "checkpoint" }); }
         }
-        const ckpt = body.checkpoint ?? config.music.yue2Checkpoint ?? (config.remoteOnly ? "yue2_3b_int8_convrot.safetensors" : undefined);
+        let ckpt = body.checkpoint ?? config.music.yue2Checkpoint ?? (config.remoteOnly ? "yue2_3b_int8_convrot.safetensors" : undefined);
         const shelf = await scanBases(await modelBases());
-        const found = ckpt && shelf.find((f) => f.folder === "checkpoints" && f.name === ckpt);
+        const found = ckpt && findShelfModel(shelf, "checkpoints", ckpt);
+        if (found) ckpt = found.name;
         if (!found && !config.remoteOnly) {
           /* NONE AT ALL: a fresh install whose music default is YuE2 through
            * ComfyUI (server/music-default.js). The page opens the download for
            * that row (needsModel), not a list to pick from. */
-          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name));
+          const anyYue = shelf.some((f) => f.folder === "checkpoints" && /yue2?/i.test(modelLeaf(f.name)) && /\.(safetensors|sft)$/i.test(f.name));
           if (!ckpt && !anyYue) {
             /* The size from the catalogue row the Models screen fetches, never typed here. */
             const get = CATALOG.find((c) => c.id === MODEL_TO_CAPABILITY["yue2-comfy"])?.files?.[0]?.bytes;
@@ -4978,7 +5241,8 @@ const server = http.createServer(async (req, res) => {
          * skips keys it cannot match without an error, and a render that
          * silently ignored the LoRA is the failure the picker exists to end. */
         const askedLora = body.lora === undefined ? config.music.yue2Lora : body.lora;
-        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
+        if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
           return json(res, 400, {
             error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
@@ -4996,9 +5260,9 @@ const server = http.createServer(async (req, res) => {
          * a sectioned instrumental and the sheet becomes "[instrumental]",
          * the bare form its card asks for. Without the file, an instrumental
          * stays what it was: a phrasing of the style and empty words. */
-        const onShelf = (n) => /\.safetensors$/i.test(n) && shelf.some((f) => f.folder === "loras" && f.name === n);
+        const onShelf = (n) => /\.safetensors$/i.test(n) && !!findShelfModel(shelf, "loras", n);
         const askedClip = body.loraClip === undefined ? config.music.yue2LoraClip : body.loraClip;
-        let clipName = typeof askedClip === "string" && askedClip.trim() ? path.basename(askedClip.trim()) : null;
+        let clipName = typeof askedClip === "string" && askedClip.trim() ? requireModelName(askedClip) : null;
         /* Not beside a supplied score: the planner does not run then (node 4
          * is left out), so the reason for the pick is gone, and the same
          * language model would sing the score through an adapter nobody has
@@ -5006,6 +5270,7 @@ const server = http.createServer(async (req, res) => {
         if (!clipName && body.loraClip === undefined && body.instrumental && !yueComfy.abc && onShelf(INSTRUMENTAL_PLANNER_LORA)) {
           clipName = INSTRUMENTAL_PLANNER_LORA;
         }
+        if (clipName) clipName = findShelfModel(shelf, "loras", clipName)?.name || clipName;
         if (clipName && !onShelf(clipName)) {
           return json(res, 400, {
             error: `The planner LoRA ${bareName(clipName)} is not in a loras folder. Pick another under Melody & score, or choose none.`,
@@ -5016,9 +5281,15 @@ const server = http.createServer(async (req, res) => {
         yueLoraClipStrength = Number.isFinite(Number(body.loraClipStrength))
           ? Math.min(Math.max(Number(body.loraClipStrength), -4), 4)
           : (Number.isFinite(config.music.yue2LoraClipStrength) ? config.music.yue2LoraClipStrength : 1);
-        if (body.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
+        if (body.instrumental && modelLeaf(yueLoraClip) === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
       }
+      if (musicEngine === "yue2-comfy") {
+        try { validateYue2StyleAdapter({ engine: musicEngine, lora: yueLora, loraClip: yueLoraClip, cot: body.cot || "full" }); }
+        catch (error) { return json(res, 400, { error: error.message, reason: error.reason }); }
+      }
+      batchMusicBridge.beforeQueue(req);
       const job = jobs.enqueue({
+        ...batchMusicMetadata,
         ...(aceJob || {}),
         ...(musicEngine === "yue2-comfy" ? {
           engine: "yue2-comfy",
@@ -5047,7 +5318,7 @@ const server = http.createServer(async (req, res) => {
         title: body.title?.trim()
           || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
         caption: body.caption.trim(),
-        lyrics: yueSheet ?? (body.lyrics || "").trim(),
+        lyrics: yueSheet ?? (["yue2", "yue2-comfy"].includes(musicEngine) ? (body.lyrics || "") : (body.lyrics || "").trim()),
         // The performance. Holding this steady is what lets the AR stage be reused.
         seed: Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296),
         // The mix. A re-roll keeps `seed` and changes only this, so ComfyUI reuses
@@ -5077,6 +5348,7 @@ const server = http.createServer(async (req, res) => {
           ? Math.min(Math.max(Number(body.audioRefDenoise), 0.05), 1)
           : config.audioRef.denoise,
       });
+      batchMusicBridge.record(req,job);
       return json(res, 200, { job: jobReceipt(job), engine: musicEngine });
     }
 
@@ -5190,7 +5462,7 @@ const server = http.createServer(async (req, res) => {
       const busy = await engineDoor.status()
         .then((st) => (st.running || []).length > 0 || Number(st.queue?.running || 0) > 0)
         .catch(() => false);
-      const ckpts = await readdir(path.join(config.rig, "ComfyUI", "models", "checkpoints")).catch(() => []);
+      const ckpts = await findYue2Checkpoints();
 
       if (action === "status") {
         const st = await train.trainStatus({
@@ -5707,7 +5979,7 @@ const server = http.createServer(async (req, res) => {
           const order = readVideoJob(packet, { now: Date.now(), myFp: me.fp });
           if (order.returnTo.fp !== sender.fp) return json(res, 400, { error: "The return address differs from the signer.", reason: "return-address" });
           const model = (await models.status()).find((item) => item.id === MODEL_TO_CAPABILITY.h3);
-          const readiness = videoReady("h3");
+          const readiness = videoReadyFresh("h3");
           const reviewMinutes = b.seen !== true ? await collabLending.budgetCheckVideoJob({ peer: sender, orderDoc: order,
             rows: await book.listOrders({ outDir, side: "in" }), readProject: readMvProject, now: Date.now() }) : null;
           if (b.seen !== true) return json(res, 409, { error: "Review the complete job and this machine's H3 readiness, then accept explicitly. Accepting does not render.", reason: "not-seen",
@@ -5765,7 +6037,7 @@ const server = http.createServer(async (req, res) => {
           const order = readStoredVideoJob(row.videoJob, { now: Date.now(), myFp: me.fp });
           if (order.returnTo.fp !== sender.fp || !config.video.enabled) return json(res, 409, { error: "The accepted order changed or Video is disabled on this machine.", reason: "video-disabled" });
           if (assignedTo("video")) return json(res, 409, { error: "A custom Video workflow is active; this job needs the built-in H3 graph. Unassign it and review again.", reason: "workflow-incompatible" });
-          const readiness = videoReady("h3");
+          const readiness = videoReadyFresh("h3");
           if (!readiness.ready) return json(res, 409, { error: "MiniMax H3 is not ready on this machine.", reason: "model-not-ready", readiness });
           const renderReadings = await readWorkload({
             artStatus: async () => art.status(),
@@ -7072,7 +7344,7 @@ const server = http.createServer(async (req, res) => {
               /* THE MINORS RULE, with the words behind each <Picture n>: the
                * named rows' own descriptions, which stay on this machine. What
                * each picture was made as also travels, wordless, on its row. */
-              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.name)),
+              safetyContext: mvRowWords(docO, (shotO.refs || []).map((r) => r.assetName || r.name)),
               order: {
                 segmentId: shotO.segmentId,
                 /* The defaults are the SCENE's own, so an order with nothing
@@ -7124,7 +7396,7 @@ const server = http.createServer(async (req, res) => {
            * same check an order gets, before anything is sealed or shown. */
           if (kind === "shot") {
             assertSafe({ door: "collab.shot", via: "collab", texts: [String(packet.prompt || "")],
-              context: mvRowWords(doc, (packet.refs || []).map((r) => r.name)), flags: shotFlags(packet) });
+              context: mvRowWords(doc, (packet.refs || []).map((r) => r.assetName || r.name)), flags: shotFlags(packet) });
           }
           if (action === "preview") return previewFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`, {
             slug, document: doc, describes: describePacket(packet),
@@ -8035,16 +8307,31 @@ const server = http.createServer(async (req, res) => {
         const src = path.join(CLIP_DIR, name);
         const st = await stat(src).catch(() => null);
         if (!st?.isFile()) return json(res, 404, { error: `No clip called ${name}.` });
-        const vr = videoReady("h3");
+        /* Looked for again once before refusing, as the video gate does. */
+        const vr = videoReadyFresh("h3");
         if (!vr.ready) return json(res, 400, { error: `Continuing a clip needs MiniMax H3, which is not installed: ${vr.missing.join(", ")}` });
         try { b.loras = await checkedVideoLoras(b.loras, "h3"); }
         catch (err) { return json(res, 400, { error: err.message }); }
+        const prior = clipMeta.get(name);
+        /* The request's count, else the clip's own, unless the clip ran it on
+         * the reference path and the plain path the continuation runs on
+         * cannot: then the engine's own, said in `stepsNote` (art.js
+         * extendSteps). */
+        const { steps, note: stepsNote } = extendSteps(b, prior);
+        /* A speed-up this count loads that is not on disk is refused here, in
+         * the sentence the Video screen says, with the row that brings it,
+         * before anything is staged (art.js clipSpeedupNeeded, which the runner
+         * asks again). It used to queue, and the job failed in ComfyUI. */
+        const missingSpeedup = clipSpeedupNeeded({ engine: "h3", steps });
+        if (missingSpeedup) {
+          return json(res, 400, { error: missingSpeedup.error, reason: missingSpeedup.build === 3 ? "taomate-missing" : "speedup-missing",
+            needsModel: missingSpeedup.row });
+        }
         const probe = await probeClip(src);
         if (probe.error) return json(res, 400, { error: `The clip could not be measured — ${probe.error}`, reason: "probe" });
         const overlap = overlapFor(probe.frames, Number(b.overlapFrames) || 22);
         if (!overlap) return json(res, 400, { error: `${name} has ${probe.frames} frames; a continuation needs at least 5.`, reason: "too-short" });
         const ext = extensionFrames(Math.min(Math.max(Number(b.seconds) || 3, 1), 20), probe.fps || videoEngine("h3").fps);
-        const prior = clipMeta.get(name);
         const prompt = String(b.prompt || prior?.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe what happens next — this clip carries no prompt of its own." });
         /* ⚠ THE MINORS RULE: the continuation's words, with the clip it
@@ -8072,7 +8359,7 @@ const server = http.createServer(async (req, res) => {
             seconds: (overlap + ext) / (probe.fps || 24),
             width: probe.width || videoEngine("h3").width,
             height: probe.height || videoEngine("h3").height,
-            steps: Math.min(Math.max(Number(b.steps) || prior?.steps || videoEngine("h3").steps || 20, 2), 40),
+            steps,
             keepAudio: b.keepAudio === false ? false : probe.hasAudio,
             continueFrom: {
               file: staged, frames: probe.frames, fps: probe.fps || 24, hasAudio: !!probe.hasAudio,
@@ -8080,7 +8367,7 @@ const server = http.createServer(async (req, res) => {
             },
             extendedFrom: name,
             safetyContext: extendLineage.texts, safetyFlags: extendLineage.flags,
-            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridge: typeof b.bridge === "string" && b.bridge ? requireModelName(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
@@ -8089,7 +8376,7 @@ const server = http.createServer(async (req, res) => {
         });
         if (!job && art.lastRefusalBody) return json(res, 422, art.lastRefusalBody);
         return json(res, 200, {
-          ok: true, id, job: job && { id: job.id },
+          ok: true, id, job: job && { id: job.id }, steps, ...(stepsNote ? { stepsNote } : {}),
           overlapFrames: overlap, extensionFrames: ext, windowFrames: overlap + ext,
           extensionSeconds: Number((ext / (probe.fps || 24)).toFixed(2)),
           ...art.status(),
@@ -8103,11 +8390,27 @@ const server = http.createServer(async (req, res) => {
        * check_only read it, so both say what a render does before it is asked
        * for. Reference names are counted, not staged. */
       if (b.action === "check") {
+        if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
+          return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
+        if (b.h3ModelBuild !== undefined && assignedTo("video"))
+          return json(res, 200, { ok: false, refusal: { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" }, warnings: [] });
         const gate = await videoWeightsGate();
         if (gate.error) return json(res, 200, { ok: false, refusal: gate.error, warnings: [] });
+        /* The soundtrack is looked for (not copied), so check_only, the
+         * Advanced line and create agree about a song that cannot be staged. */
+        if (b.audioTrack?.name && !STAGED_SONG.test(String(b.audioTrack.name))) {
+          try { await stageLibrarySong(b.audioTrack.name, { outputDir: config.outputDir, inputDir: config.inputDir, check: true }); }
+          catch (err) {
+            return json(res, 200, { ok: false, engine: gate.engine, refusal: { error: `${err.message} The clip would not be queued: without it there is no song under the clip and no lip-sync.`,
+              reason: "song-missing", song: err.song || String(b.audioTrack.name) }, warnings: [] });
+          }
+        }
+        let optionalH3;
+        try { optionalH3 = await h3RefModService.checkRender(b, { engine: gate.engine }); }
+        catch (error) { return json(res, 200, { ok: false, refusal: { error: error.message, reason: error.reason }, warnings: [] }); }
         /* Frames and a control video are named, not staged: the plan only
          * needs to know they ride. */
-        const plan = videoPlan(b, { engineKey: gate.engine, eng: videoEngine(gate.engine),
+        const plan = videoPlan({ ...b, ...optionalH3 }, { engineKey: gate.engine, eng: videoEngine(gate.engine),
           persona: await clipPersona(b.persona), characters: await clipCharacters(),
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }),
           framed: !!(b.fromCover || b.fromUpload || b.toCover || b.toUpload || b.framed === true),
@@ -8116,6 +8419,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.action === "create") {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
+        if (b.h3ModelBuild !== undefined && !["auto", "w6a8"].includes(b.h3ModelBuild))
+          return json(res, 400, { error: "Choose auto or w6a8 for the H3 build. Nothing was queued." });
+        if (b.h3ModelBuild !== undefined && assignedTo("video"))
+          return json(res, 400, { error: "An H3 checkpoint choice requires the built-in H3 workflow. Unassign the custom Video workflow first.", reason: "workflow-incompatible" });
         /* `eng` is the engine that will really render — the setting when its
          * weights are here, whatever IS here when they are not. Everything
          * below reads it instead of config.video.engine, because a substituted
@@ -8244,6 +8551,10 @@ const server = http.createServer(async (req, res) => {
           control.end = num(b.controlEnd ?? b.control_end, 1, 0, 1);
         }
         let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack, personaStaged = null, personaLost = 0;
+        /* A song that could not be staged (songstage.js): the soundtrack is
+         * refused below, a reference audio is said as a warning. */
+        let songRefusal = null;
+        const refAudioLost = [];
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -8277,45 +8588,48 @@ const server = http.createServer(async (req, res) => {
            * the library. A library file is copied into ComfyUI's input dir the
            * same way a cover is — content of the graph, not a path, so the
            * render route still cannot be talked into reading anywhere else. */
+          /* An upload /api/refaudio named, or a Library song by its file name
+           * (songstage.js: any name the Library lists, brackets, commas,
+           * accents and .opus included; never a path). */
           const stagedAud = (v) => {
             if (!v) return undefined;
-            const nm = path.basename(String(v));
-            return /^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm) ? nm : undefined;
+            const nm = String(v);
+            return STAGED_SONG.test(nm) ? nm : undefined;
           };
-          const stageSong = async (name) => {
-            const base = path.basename(String(name));
-            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a)$/i.test(base)) return undefined;
-            const src = path.join(config.outputDir, base);
-            await stat(src);
-            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, nm), await readFile(src));
-            return nm;
-          };
+          const stageSong = (name) => stageLibrarySong(name, { outputDir: config.outputDir, inputDir: config.inputDir });
           const wantedAuds = Array.isArray(b.refAudios) ? b.refAudios.slice(0, 3) : [];
-          refAudios = (await Promise.all(wantedAuds.map(async (a) => {
+          const audsStaged = await Promise.all(wantedAuds.map(async (a) => {
             if (!a) return undefined;
             const start = Math.min(Math.max(Number(a.start) || 0, 0), 7200);
             try {
               const name = stagedAud(a.name) || await stageSong(a.name);
               return name ? { name, start } : undefined;
-            } catch { return undefined; }
-          }))).filter(Boolean);
+            } catch (err) { return { lost: err.song || String(a.name || "") }; }
+          }));
+          refAudios = audsStaged.filter((a) => a && !a.lost);
+          refAudioLost.push(...audsStaged.filter((a) => a?.lost).map((a) => a.lost));
           /* SONG UNDER THE CLIP, both engines — one audio the clip is generated
            * ON: its latent is frozen during sampling and the output's sound IS
            * this segment; on H3 it is also anchored at frame 0, so the model
            * hears the vocal (frozen + anchored = lip-sync). Staged exactly like
-           * a reference audio. */
+           * a reference audio. NEVER DROPPED UNSAID: a render is minutes and the
+           * song is the lip-sync, so one that cannot be staged refuses the clip
+           * with its name (it used to render without it, the plan still saying
+           * "+ song (lip-sync)"). */
           if (b.audioTrack && b.audioTrack.name) {
             const start = Math.min(Math.max(Number(b.audioTrack.start) || 0, 0), 7200);
             try {
               const name = stagedAud(b.audioTrack.name) || await stageSong(b.audioTrack.name);
               if (name) audioTrack = { name, start };
-            } catch { /* a missing soundtrack drops silently like a bad ref */ }
+            } catch (err) {
+              songRefusal = { error: `${err.message} The clip was not queued: without it there is no song under the clip and no lip-sync.`,
+                reason: "song-missing", song: err.song || String(b.audioTrack.name) };
+            }
           }
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
+        if (songRefusal) return json(res, 400, songRefusal);
         /* THE PLAN (server/video-plain.js videoPlan), on the references that
          * really staged. References are an H3 capability: FastH3 was distilled
          * without them, and every LTX node that takes an image pins it to a
@@ -8326,7 +8640,12 @@ const server = http.createServer(async (req, res) => {
          * plain words; a Fast render with references runs the reference
          * build's own step count; a render naming no size gets this card's
          * size. Each change is a warning in the reply. */
-        const plan = videoPlan({ ...b, refImages, refAudios }, { engineKey: eng, eng: videoEngine(eng),
+        let optionalH3;
+        try { optionalH3 = await h3RefModService.checkRender(b, { engine: eng }); }
+        catch (error) { return json(res, error.status || 400, { error: error.message, reason: error.reason }); }
+        /* The plan reads what really staged: the soundtrack too, so a receipt
+         * never says "+ song (lip-sync)" for a song the render does not carry. */
+        const plan = videoPlan({ ...b, ...optionalH3, refImages, refAudios, audioTrack }, { engineKey: eng, eng: videoEngine(eng),
           persona: personaStaged,
           h3: h3Status({ gpu: gpuStatus(), ram: ramStatus(), cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }), framed: !!(firstFrame || lastFrame),
           control: !!control.video });
@@ -8338,6 +8657,11 @@ const server = http.createServer(async (req, res) => {
         refImages = plan.refImages || refImages;
         if (persona && personaLost > 0) {
           plan.warnings.push({ id: "persona-missing", text: personaMissing(persona.name, personaLost) });
+        }
+        /* A reference audio that could not be staged rides without it, and the
+         * reply says which (it was dropped unsaid). */
+        if (refAudioLost.length) {
+          plan.warnings.push({ id: "ref-audio-missing", text: `${refAudioLost.length === 1 ? "A reference audio was" : `${refAudioLost.length} reference audios were`} left out: ${refAudioLost.map((n) => `"${n}"`).join(", ")} ${refAudioLost.length === 1 ? "is" : "are"} not a song in the Library's folder.` });
         }
         /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
          * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
@@ -8367,6 +8691,8 @@ const server = http.createServer(async (req, res) => {
             // The RESOLVED one: what actually renders, not what the setting
             // says, so the provenance record names the model that made the file.
             engine: eng,
+            h3ModelBuild: b.h3ModelBuild ?? config.video.h3ModelBuild,
+            h3ModelBuildExplicit: b.h3ModelBuild !== undefined,
             /* Undefined unless something was named — see videoModelPatch. */
             models: picked.models || undefined,
             // The plan's: unanswered reference tags taken out (and said).
@@ -8379,6 +8705,9 @@ const server = http.createServer(async (req, res) => {
             // H3 only — refused above for LTX rather than silently dropped.
             refImages,
             refAudios,
+            refMods: optionalH3.refMods,
+            refModOptions: optionalH3.refModOptions,
+            h3Tweaks: optionalH3.h3Tweaks,
             /* Video-to-video. Resolved and refused above: by here either both
              * the clip and the patch are real, or neither is set. */
             controlVideo: control.video,
@@ -8434,7 +8763,7 @@ const server = http.createServer(async (req, res) => {
             loop: !!b.loop,
             /* The conditioning bridge, per render: an adapter file name (or "off")
              * and a strength 0–1. Absent = the Video panel's setting. */
-            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridge: typeof b.bridge === "string" && b.bridge ? requireModelName(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
             // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
@@ -8463,15 +8792,16 @@ const server = http.createServer(async (req, res) => {
          * config.js resolved, stand-ins included). The Models row alone said
          * "not downloaded" for an H3 missing one optional speed-up, and for an
          * LTX holding the template's VAE, and left FastH3 the only choice. */
-        if (cap && !cap.ready && !videoReady(e).ready) {
-          const gb = ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1);
+        if (cap && !cap.ready && !videoReadyFresh(e).ready) {
+          /* Never "0.0 GB" (setF): under 0.05 GB the size is said in MB. */
+          const gb = downloadSize(cap.totalBytes - cap.haveBytes);
           return json(res, 400, {
             /* A gated engine gets the hand-fetch, not "open the Models screen"
              * — there is no button there for it, which is the whole reason this
              * app pointed a fresh install at a dead end for as long as it did. */
             error: cap.gated
-              ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
-              : `${config.video.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
+              ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb}, access-gated repository). ${cap.gated.how}`
+              : `${config.video.engines[e].label} is not downloaded yet (${gb} missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
             capability: capId,
             gated: cap.gated || null,
@@ -8600,10 +8930,11 @@ const server = http.createServer(async (req, res) => {
         if (b.choose === true || b.engine !== config.art.engine || prefChosen("art", "engine")) config.art.engine = b.engine;
       }
       if (b.checkpoint !== undefined) {
-        const nm = b.checkpoint === null ? null : path.basename(String(b.checkpoint));
+        let nm = b.checkpoint === null ? null : requireModelName(b.checkpoint);
         if (nm) {
-          try { await stat(path.join(config.modelsDir, "checkpoints", nm)); }
-          catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
+          const found = findShelfModel(await scanBases(await modelBases()), "checkpoints", nm);
+          if (!found) return json(res, 400, { error: `No such checkpoint: ${nm}` });
+          nm = found.name;
         }
         config.art.checkpoint = nm;
       }
@@ -8705,11 +9036,15 @@ const server = http.createServer(async (req, res) => {
          * the language model, the audio model and the VAE into ComfyUI. The
          * save node becomes PreviewAudio, which writes to ComfyUI's TEMP
          * folder — a warm-up must never become a song or a library row. */
+        /* Fused style adapters require a full score plan. Load their base here;
+         * their saved pair remains available for the next full song. Ordinary
+         * adapters retain the existing warm-up behaviour. */
+        const fusedStyle = yue2StyleAdapterFor(config.music.yue2Lora) || yue2StyleAdapterFor(config.music.yue2LoraClip);
         const graph = buildYue2ComfyGraph({
           caption: "warm-up", lyrics: "", cot: "off", maxDuration: 1, steps: 1,
           checkpoint: config.music.yue2Checkpoint, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
-          lora: config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
-          loraClip: config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
+          lora: fusedStyle ? null : config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
+          loraClip: fusedStyle ? null : config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
         });
         for (const n of Object.values(graph)) {
           if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
@@ -8727,7 +9062,7 @@ const server = http.createServer(async (req, res) => {
        * checked against the shelves now, not saved for a later render to trip on. */
       if (b.action === "aceLm") {
         const ace = await aceShelf();
-        const name = b.value ? path.basename(String(b.value)) : null;
+        const name = b.value ? requireModelName(b.value) : null;
         if (name && !ace.lms.includes(name)) return json(res, 400, { error: `${name} is not in a text_encoders folder.` });
         config.music.aceLm = name;
         musicChoicesCache.at = 0;
@@ -8736,9 +9071,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (b.action === "aceLora") {
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -8748,15 +9084,38 @@ const server = http.createServer(async (req, res) => {
         savePrefs();
         return json(res, 200, { ok: true, music: { aceLora: config.music.aceLora, aceLoraStrength: config.music.aceLoraStrength } });
       }
+      if (b.action === "style-adapter") {
+        if (b.value === "") {
+          config.music.yue2Lora = null; config.music.yue2LoraClip = null;
+          savePrefs();
+          return json(res, 200, { ok: true, music: { yue2Lora: null, yue2LoraClip: null } });
+        }
+        if (config.music.engine !== "yue2-comfy") return json(res, 400, { error: "Choose YuE2 ComfyUI before selecting this adapter." });
+        const shelf = await scanBases(await modelBases());
+        const installed = findShelfModel(shelf, "loras", requireModelName(b.value));
+        if (!installed)
+          return json(res, 400, { error: "This adapter is not installed. Add it to a loras folder, then refresh LoRAs." });
+        const adapter = yue2StyleAdapterFromProbe(installed.name, await probeShelfLora(installed));
+        if (!adapter) return json(res, 400, { error: "Choose a fused YuE2 adapter with planner and audio weights." });
+        config.music.yue2Lora = installed.name;
+        config.music.yue2LoraClip = installed.name;
+        config.music.yue2LoraStrength = adapter.recipe?.audioStrength ?? 1;
+        config.music.yue2LoraClipStrength = adapter.recipe?.plannerStrength ?? 1;
+        savePrefs();
+        return json(res, 200, { ok: true, music: { yue2Lora: installed.name, yue2LoraClip: installed.name,
+          yue2LoraStrength: config.music.yue2LoraStrength, yue2LoraClipStrength: config.music.yue2LoraClipStrength },
+          ...(adapter.recipe?.cot ? { cot: adapter.recipe.cot } : {}), styleAdapter: adapter });
+      }
       if (b.action === "lora") {
         /* The Music tab's LoRA choice for YuE2 through ComfyUI, remembered.
          * null / "" clears it. The file must be on a loras shelf now; a name
          * that is not there is refused rather than saved for a later render to
          * trip over. */
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -8769,9 +9128,10 @@ const server = http.createServer(async (req, res) => {
       if (b.action === "planner-lora") {
         /* The planner's LoRA, remembered the same way as the audio one. */
         const raw = b.value == null ? "" : String(b.value).trim();
-        const name = raw ? path.basename(raw) : null;
+        let name = raw ? requireModelName(raw) : null;
         if (name) {
           const shelf = await scanBases(await modelBases());
+          name = findShelfModel(shelf, "loras", name)?.name || name;
           if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
             return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
           }
@@ -9352,12 +9712,13 @@ const server = http.createServer(async (req, res) => {
         /* The encoder and the VAE, named from the shelves rather than typed. */
         const parts = await listParts(config);
         for (const [key, list, what] of [["encoder", parts.encoders, "text encoder"], ["vae", parts.vaes, "VAE"]]) {
-          const want = path.basename(String(b[key] || "").trim());
+          const want = b[key] && b[key] !== "auto" ? requireModelName(b[key]) : "";
           if (!want || want === "auto") { b[key] = null; continue; }
-          if (!list.some((x) => x.name === want)) {
+          const found = findShelfModel(list, key === "vae" ? "vae" : "text_encoders", want);
+          if (!found) {
             return json(res, 400, { error: `No such ${what}: ${want}. It must be in models/${key === "vae" ? "vae" : "text_encoders"}.` });
           }
-          b[key] = want;
+          b[key] = found.name;
         }
         /* THE PACK THAT READS A .gguf. ComfyUI's own loaders are safetensors
          * loaders; a quantised transformer or encoder goes through
@@ -9433,7 +9794,7 @@ const server = http.createServer(async (req, res) => {
          * models/checkpoints is invisible to it however the engine is picked.
          * Checked here so the answer is a sentence rather than a ComfyUI stack
          * trace three minutes into a queue. */
-        const dn = path.basename(String(b.dit || config.art.animaDit || ""));
+        const dn = b.dit || config.art.animaDit ? requireModelName(b.dit || config.art.animaDit) : "";
         if (!dn) {
           return json(res, 400, { error: "Pick an Anima model file first (models/diffusion_models)." });
         }
@@ -9446,7 +9807,7 @@ const server = http.createServer(async (req, res) => {
             error: `No such Anima model in models/diffusion_models: ${dn}. If it is still in models/checkpoints, move it — a bare transformer is loaded from diffusion_models.`,
           });
         }
-        b.dit = dn;
+        b.dit = found.name;
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Anima has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
         }
@@ -9722,12 +10083,11 @@ const server = http.createServer(async (req, res) => {
           /* LoRAs, stacked. Checkpoint engine only: FLUX.2 klein, Z-Image and
            * Ideogram load as bare DiTs here and LoraLoader takes a
            * CheckpointLoader’s model+clip pair, which they do not produce.
-           * Names are basenamed — a lora_name is a filename inside
-           * models/loras, never a path. */
+           * Names are relative to models/loras, including its subfolders. */
           loras: engine === "checkpoint" && Array.isArray(b.loras)
             ? b.loras.slice(0, 8)
                 .map((l) => ({
-                  name: path.basename(String(l?.name || "")),
+                  name: l?.name ? requireModelName(l.name) : "",
                   strength: Number.isFinite(l?.strength) ? Math.min(Math.max(Number(l.strength), -4), 4) : 1,
                   clipStrength: Number.isFinite(l?.clipStrength)
                     ? Math.min(Math.max(Number(l.clipStrength), -4), 4) : undefined,
@@ -9920,14 +10280,12 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/api/dits" && req.method === "GET") {
       const want = String(url.searchParams.get("family") || "").toLowerCase();
-      const dir = path.join(config.modelsDir, "diffusion_models");
-      let files = [];
-      try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
-      catch { /* no folder yet */ }
+      const seen = new Set();
+      const files = (await scanBases(await modelBases())).filter((f) => isDitFolder(f.folder)
+        && /\.safetensors$/i.test(f.name) && !seen.has(f.name) && seen.add(f.name));
       const rows = [];
-      for (const name of files) {
-        const full = path.join(dir, name);
-        const key = `dit:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
+      for (const { name, full, at } of files) {
+        const key = `dit:${full}:${at}`;
         let probe = ckptProbeCache.get(key);
         if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
         if (want && String(probe.family).toLowerCase() !== want) continue;
@@ -9941,33 +10299,34 @@ const server = http.createServer(async (req, res) => {
       /* Every base the engine loads from (the Models screen's folder, a ComfyUI
        * Desktop install's extra paths), not only config.modelsDir: the music
        * checkpoint list reads the same shelves, and a LoRA beside a checkpoint
-       * ComfyUI can see must be listable here. First base wins a duplicate
-       * name, which is also the order ComfyUI resolves it in. */
+       * ComfyUI can see must be listable here. Relative subfolders remain part
+       * of the selection, and duplicate copies are refused at the render door. */
       const shelf = await scanBases(await modelBases());
       const seen = new Set();
       const files = shelf.filter((f) => f.folder === "loras" && /\.safetensors$/i.test(f.name)
         && !seen.has(f.name) && seen.add(f.name));
 
-      const forName = path.basename(String(url.searchParams.get("for") || ""));
+      const forName = url.searchParams.get("for") ? requireModelName(url.searchParams.get("for")) : "";
       let against = null;
       if (forName) {
         /* A bare DiT (Krea 2, the MiniMax models) lives in diffusion_models or
          * unet, not checkpoints; a LoRA is judged against whichever holds it. */
-        const ck = shelf.find((f) => ["checkpoints", "diffusion_models", "unet"].includes(f.folder) && f.name === forName);
+        const ck = findShelfModel(shelf, ["checkpoints", "diffusion_models", "unet"], forName);
         /* An ACE-Step 1.5 DiT probes as MiniMax Music 3 (the two share a lyric
          * encoder layer), so it is named by its file, as the music list does. */
-        if (ck && ACE_DIT.test(ck.name)) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
+        if (ck && ACE_DIT.test(modelLeaf(ck.name))) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
         else if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
       }
 
       const rows = await Promise.all(files.map(async ({ name, full }) => {
-        const key = `lora:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
-        let probe = ckptProbeCache.get(key);
-        if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
+        const probe = await probeShelfLora({ name, full });
         const base = probe.family === "lora" ? probe.variant : null;
+        const styleAdapter = yue2StyleAdapterFromProbe(name, probe);
         return {
           name, bytes: probe.bytes, at: probe.at,
           base, confidence: probe.confidence ?? null,
+          ...(probe.loraParts ? { loraParts: probe.loraParts } : {}),
+          ...(styleAdapter ? { styleAdapter } : {}),
           /* A file in models/loras that is not a LoRA is worth saying out loud
            * rather than listing as one — the three MiniMax turbo files here are
            * genuinely LoRAs, but a checkpoint dropped in the wrong folder is a
@@ -10521,6 +10880,48 @@ const server = http.createServer(async (req, res) => {
         return imageFailure(res, err, 400, String(err.message || err));
       } finally {
         unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* The exact selection edge, sampled at the same stage as an edit. A seed
+     * marker cannot show a wand's connected region. Keep this in memory: a
+     * selection click must not add a matte, thumbnail or ledger entry. */
+    if (p === "/api/images/preview-selection" && req.method === "POST") {
+      try {
+        const b = await readBody(req, 8 * 1024 * 1024);
+        const name = String(b.name || "");
+        const documentId = String(b.documentId || "").trim();
+        if (!!name === !!documentId) return json(res, 400, { error: "Pass one image name or documentId." });
+        for (const key of ["selection", "frame"]) {
+          if (b[key] != null && (typeof b[key] !== "object" || Array.isArray(b[key]))) {
+            return json(res, 400, { error: `${key} must be an object.` });
+          }
+        }
+        const frame = {};
+        for (const k of ["canvas", "crop", "geometry", "rotate", "flipH", "flipV"]) {
+          if ((b.frame || {})[k] !== undefined && (b.frame || {})[k] !== null) frame[k] = b.frame[k];
+        }
+        const job = { selection: b.selection || {}, frame, preview: true };
+        if (documentId) {
+          job.doc = (await imgdocRun("store", { action: "open", id: documentId })).doc;
+          if (!job.doc) return json(res, 404, { error: "no such document" });
+          job.dir = IMAGE_DIR;
+        } else {
+          if (name !== path.basename(name) || /[\\/]/.test(name) || !/\.(png|jpg|jpeg|webp)$/i.test(name)) {
+            return json(res, 400, { error: "Use an image library filename, not a path." });
+          }
+          job.src = path.join(IMAGE_DIR, name);
+          try { await stat(job.src); } catch { return json(res, 404, { error: "no such image" }); }
+        }
+        const result = await imgWorker().run("describe", job);
+        result.says = result.empty ? "This selection covers no pixels."
+          : result.everything ? "This selection covers the whole picture."
+            : `${((Number(result.coverage) || 0) * 100).toFixed(1)}% of the picture is selected.`;
+        res.setHeader("Cache-Control", "no-store");
+        return json(res, 200, result);
+      } catch (err) {
+        if (err.tooBig) return json(res, 413, { error: err.message });
+        return imageFailure(res, await imageRefusal(err), 400, String(err.message || err));
       }
     }
 
@@ -11513,14 +11914,14 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
       if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      try { await stat(path.join(config.modelsDir, "background_removal", "birefnet.safetensors")); }
-      catch { return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." }); }
+      const cutoutModel = findShelfModel(await scanBases(await modelBases()), "background_removal", "birefnet.safetensors");
+      if (!cutoutModel) return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." });
       let staged;
       try {
         staged = await stageImageForEngine(name);
         const graph = {
           1: { class_type: "LoadImage", inputs: { image: staged } },
-          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: "birefnet.safetensors" } },
+          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: cutoutModel.name } },
           3: { class_type: "RemoveBackground", inputs: { bg_removal_model: ["2", 0], image: ["1", 0] } },
           4: { class_type: "InvertMask", inputs: { mask: ["3", 0] } },
           5: { class_type: "JoinImageWithAlpha", inputs: { image: ["1", 0], alpha: ["4", 0] } },
@@ -12061,40 +12462,51 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, swatches });
     }
 
-    /* Vector conversion — posterize + contour-trace, made for logos and flat
-     * art. Photographs come out as posterized art, which is what an SVG is. */
+    /* Raster tracing owns its bounded worker and strict shared controls.
+     * Each run is a new asset with measured settings kept beside it. */
     if (p === "/api/images/vectorize" && req.method === "POST") {
-      const b = await readBody(req);
-      const name = path.basename(String(b.name || ""));
-      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      const src = path.join(IMAGE_DIR, name);
-      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
-      const outName = `${name.replace(/\.[^.]+$/, "")}_v.svg`;
-      const jobPath = path.join(IMAGE_DIR, `.vec_${Date.now().toString(36)}.json`);
-      await writeFile(jobPath, JSON.stringify({
-        in: src, out: path.join(IMAGE_DIR, outName),
-        colors: Math.max(2, Math.min(16, Number(b.colors) || 6)),
-        detail: Math.max(0.2, Math.min(4, Number(b.detail) || 1)),
-      }));
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Vectorization requires a local JSON request." });
+      const b = await readBody(req, 2 * 1024 * 1024);
       try {
-        const out = await new Promise((resolve, reject) => {
-          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "vectorize", jobPath], { windowsHide: true });
-          let so = "", se = "";
-          proc.stdout.on("data", (d) => { so += d; });
-          proc.stderr.on("data", (d) => { se += d; });
-          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
-        });
-        const r = JSON.parse(out.trim().split("\n").pop());
-        if (!r.ok) throw new Error(r.error || "vectorize failed");
-        const parent = imageMeta.get(name) || {};
-        imageMeta.set(outName, { ...parent, vectorFrom: name, at: Date.now(), durationMs: null });
-        saveImageStore();
-        return json(res, 200, { ok: true, name: outName, paths: r.paths, bytes: r.bytes });
+        const r = await vectorizeImage({ imageDir: IMAGE_DIR, python: config.python,
+          register: async ({ name, source, result }) => {
+            const { settings, palette, stats, warnings, sourceWidth, sourceHeight, width, height, paths, bytes, traceFingerprint, shapes, shapesTruncated, cleanup, replay } = result;
+            await saveImageStore({ strict: true, mutate: () => {
+              const parent = imageMeta.get(source) || {};
+              imageMeta.set(name, { ...parent, vectorFrom: source, at: Date.now(), durationMs: null,
+                vectorization: { settings, palette, stats, warnings, sourceWidth, sourceHeight, width, height, paths, bytes, traceFingerprint, shapes, shapesTruncated, cleanup, replay } });
+              return () => imageMeta.delete(name);
+            } });
+          },
+        }, b);
+        return json(res, 200, r);
       } catch (err) {
-        return json(res, 400, { error: `vectorize failed: ${err.message}` });
-      } finally {
-        unlink(jobPath).catch(() => {});
+        return json(res, err.status || 500, { error: err.message });
       }
+    }
+
+    if (p === "/api/images/vector-review" && req.method === "POST") {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Vector review requires a local JSON request." });
+      const b = await readBody(req, 32768);
+      try {
+        const r = await vectorReviewImage({ imageDir: IMAGE_DIR, python: config.python }, b);
+        return json(res, 200, { ...r, replay: imageMeta.get(r.name)?.vectorization?.replay || null });
+      }
+      catch (err) { return json(res, err.status || 500, { error: err.message }); }
+    }
+
+    if (p === "/api/images/vector-import" && req.method === "POST") {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Image import requires a local JSON request." });
+      const b = await readBody(req, Math.ceil(MAX_VECTOR_SOURCE_BYTES / 3) * 4 + 4096);
+      try {
+        const r = await importVectorSource({ imageDir: IMAGE_DIR, register: async (receipt) => {
+          await saveImageStore({ strict: true, mutate: () => {
+            imageMeta.set(receipt.name, { at: Date.now(), engine: "import", imported: receipt.source });
+            return () => imageMeta.delete(receipt.name);
+          } });
+        } }, b);
+        return json(res, 200, r);
+      } catch (err) { return json(res, err.status || 500, { error: err.message }); }
     }
 
     if (p === "/api/images" && req.method === "POST") {
@@ -12508,7 +12920,7 @@ const server = http.createServer(async (req, res) => {
           context: restyleLineage.texts, flags: restyleLineage.flags });
         if (refused) return json(res, 422, refused);
       }
-      const vr = videoReady("ltx");
+      const vr = videoReadyFresh("ltx");
       if (!vr.ready) return json(res, 400, { error: `LTX is not installed: ${vr.missing.join(", ")}` });
 
       const every = Math.min(Math.max(Number(b.guideEvery) || 16, 4), 48);
@@ -13226,12 +13638,16 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     if (err.code === "ENOENT") return json(res, 404, { error: "not found" });
     console.error(err);
-    return json(res, 500, { error: String(err.message || err) });
+    return json(res, err.status || 500, { error: String(err.message || err) });
   }
 });
 
 // Push job state to the UI so progress is live rather than polled.
-const wss = new WebSocketServer({ server, path: "/live" });
+const wss = new WebSocketServer({ server, path: "/live",
+  /* The same Host rule as every request (foreignHost above), and an Origin, when
+   * a page sends one, that is that same address: the socket carries every job's
+   * state, titles included. */
+  verifyClient: ({ req }) => !foreignHost(req) && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`) });
 function push(snap) {
   /* ⚠ AND THE ART LANE'S OWN STATE. The socket fires on every art progress
    * tick (art.on("update") below) and carried nothing about art, so anything
@@ -13243,6 +13659,10 @@ function push(snap) {
 }
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status(), ...art.status() }));
+});
+art.on("refmod-ready", (result) => {
+  const message = JSON.stringify({ type: "refmod-ready", ...result });
+  for (const client of wss.clients) if (client.readyState === 1) client.send(message);
 });
 
 /* DAWUI: the DAW's live document sync rides this SAME socket — one connection
@@ -13290,7 +13710,7 @@ async function gpuWorkRunning() {
  *  cancelled work is discarded cleanly rather than cut off mid-write. */
 async function stopForBattery(why) {
   const what = [];
-  if (batch.run && ["running", "paused"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
+  if (batch.run && ["running", "paused", "scheduled"].includes(batch.run.state)) { batch.stop(); what.push("the overnight run"); }
   if (jobs.current || jobs.queue.length) {
     what.push(jobs.current?.title ? `"${jobs.current.title}"` : "a song");
     for (const j of [...jobs.queue]) await jobs.cancelById(j.id).catch(() => {});

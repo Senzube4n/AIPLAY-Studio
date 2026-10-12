@@ -1,0 +1,19 @@
+#create .music-batch-entry { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#create .music-batch-entry[hidden] { display: none; }
+#ovPanel .ovb-idea { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--hair); border-radius: 10px; padding: 12px; background: var(--panel); min-width: 0; }
+#ovPanel .ovb-ideahead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#ovPanel .ovb-ideahead button { margin-left: auto; }
+#ovPanel .ovb-idea > label:not(.tog) { display: flex; flex-direction: column; gap: 5px; color: var(--dim); font-size: 12px; }
+#ovPanel .ovb-idea input, #ovPanel .ovb-idea textarea, #ovPanel .ovb-idea select { min-width: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
+#ovPanel .ovb-idea input[type="checkbox"] { width: auto; }
+#ovPanel .ovb-idea textarea { resize: vertical; }
+#ovPanel .ovb-wide, #ovPanel .ovb-toggle { grid-column: 1 / -1; }
+#ovPanel .ovb-wide textarea { display: block; margin-top: 5px; }
+#ovPanel .ovb-settings .pv { min-width: 0; }
+#ovPanel .ovb-settings pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+#ovPanel .ovb-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+#ovPanel .ovb-presets[hidden], #ovPanel #ovScheduleRow[hidden] { display: none; }
+#ovPanel .ovb-summary { margin: 10px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#ovPanel .ovb-timezone { color: var(--dim); }
+#overnight .ovfoot { flex-wrap: wrap; }
+@media (max-width: 700px) { #ovPanel .ovb-settings { grid-template-columns: minmax(0, 1fr); } #ovPanel .ovb-settings label { margin-top: 4px; } }

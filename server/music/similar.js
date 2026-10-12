@@ -20,6 +20,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
+import { isCurrentReading } from "./tokenize.js";
 
 const VOCAB = 32768;
 
@@ -95,7 +96,10 @@ export function cosine(a, b) {
  * Two kinds live side by side under output/yue2: a RUN folder, written by a
  * render, whose codes are the model's own and whose library file is
  * aiplay_yue2_<id>.flac; and a tok_ folder, written by the tokenizer, whose
- * codes are its reading of a recording named in source.json.
+ * codes are its reading of a recording named in source.json. Only the current
+ * reader's tok_ folders count: an older reader's codes (tok_<sha12>, from before
+ * MERT's rotary table was restored) agree with a correct reading on only 7 to
+ * 42 % of frames, and the same recording has a fresh folder once it is read again.
  */
 export async function catalogueOfCodes({ outputDir = config.outputDir } = {}) {
   const root = path.join(outputDir, "yue2");
@@ -103,6 +107,7 @@ export async function catalogueOfCodes({ outputDir = config.outputDir } = {}) {
   try { names = await readdir(root); } catch { return []; }
   const rows = [];
   for (const name of names) {
+    if (name.startsWith("tok_") && !isCurrentReading(name)) continue;
     const dir = path.join(root, name);
     const codesFile = path.join(dir, "semantic.npy");
     const s = await stat(codesFile).catch(() => null);

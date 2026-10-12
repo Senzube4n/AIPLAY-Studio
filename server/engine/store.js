@@ -31,29 +31,18 @@ import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import * as provenance from "../provenance.js";
+import { MODEL_FOLDERS, MODEL_INPUT_FOLDERS, extraBases, findShelfModel, modelName, modelLeaf, scanBases, uniqueDirs } from "../localmodels.js";
 
 /** Media this app can plausibly have written. Anything else in the output
  *  folder (a .json sidecar, a .txt) is not a missing render. */
 const MEDIA_RE = /\.(png|jpe?g|webp|gif|mp4|webm|mov|mkv|flac|wav|mp3|m4a|ogg|opus)$/i;
 
-/** Where a model-bearing input's file most likely lives, by input name. Tried
- *  in order before falling back to the full index — ComfyUI's own layout, and
- *  it means the common case costs one `stat`. */
-const MODEL_DIRS = {
-  unet_name: ["diffusion_models", "unet"],
-  ckpt_name: ["checkpoints"],
-  clip_name: ["text_encoders", "clip"],
-  vae_name: ["vae"],
-  lora_name: ["loras"],
-  style_model_name: ["style_models"],
-  control_net_name: ["controlnet", "controlnets"],
-  model_name: ["upscale_models", "background_removal", "frame_interpolation", "latent_upscale_models"],
-};
-
 export function createStore({
   graphDir = path.join(config.paths.appData, "provenance", "graphs"),
   hashCacheFile = path.join(config.paths.appData, "model-hashes.json"),
-  modelsDir = config.modelsDir,
+  modelsDir,
+  modelsAlso,
+  bases = null,
   inputDir = config.inputDir,
   outputDir = config.outputDir,
   prov = provenance,
@@ -155,43 +144,60 @@ export function createStore({
     return facts;
   }
 
-  /* The models tree, indexed by basename, so a file in a layout nobody
-   * anticipated is still found. Rebuilt at most once a minute: model folders
-   * change when somebody downloads a checkpoint, which is not a per-render
-   * event, and a stale index costs one missed size — never a wrong one, since
-   * every hit is `stat`ed afterwards anyway. */
-  let index = null, indexedAt = 0;
+  /* Standard shelves preserve relative names and configured base precedence.
+   * Unknown custom loaders retain their historical basename lookup through
+   * nonstandard packs. A typed loader never falls back to another shelf. */
+  let index = null, indexedAt = 0, indexedBases = "";
   const INDEX_TTL_MS = 60_000;
 
-  async function modelIndex() {
-    if (index && Date.now() - indexedAt < INDEX_TTL_MS) return index;
-    const found = new Map();
+  async function modelBases() {
+    if (bases) return uniqueDirs(bases);
+    if (modelsDir !== undefined) return uniqueDirs([modelsDir, ...(modelsAlso || [])]);
+    return uniqueDirs([config.modelsDir, ...(modelsAlso ?? config.modelsAlso ?? []),
+      ...(await extraBases(config.comfy.extraArgs)), path.join(config.comfyDir, "models")]);
+  }
+
+  async function modelIndex(modelBases) {
+    const basesKey = JSON.stringify(modelBases);
+    if (index && indexedBases === basesKey && Date.now() - indexedAt < INDEX_TTL_MS) return index;
+    const files = await scanBases(modelBases), generic = new Map();
     const walk = async (dir, depth) => {
       if (depth > 4) return;
       let entries = [];
       try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
       for (const e of entries) {
         if (e.isDirectory()) await walk(path.join(dir, e.name), depth + 1);
-        else if (!found.has(e.name.toLowerCase())) found.set(e.name.toLowerCase(), path.join(dir, e.name));
+        else if (e.isFile() && !generic.has(e.name.toLowerCase())) generic.set(e.name.toLowerCase(), path.join(dir, e.name));
       }
     };
-    await walk(modelsDir, 0);
-    index = found; indexedAt = Date.now();
+    for (const base of modelBases) await walk(base, 0);
+    index = { files, generic }; indexedAt = Date.now(); indexedBases = basesKey;
     return index;
   }
 
-  /** Resolve a graph's model filename to a path on this machine. The name may
-   *  carry a subfolder (`SDXL/foo.safetensors`), which is why the direct join
-   *  is tried before the basename index. */
+  /** Resolve the same shelf-relative selection the native loader receives. */
   async function findModel(name, input) {
-    const rel = String(name || "").split("\\").join("/");
+    const rel = modelName(name);
     if (!rel) return null;
-    for (const sub of MODEL_DIRS[input] || []) {
-      const full = path.join(modelsDir, sub, rel);
-      try { await stat(full); return full; } catch { /* keep looking */ }
+    const folders = MODEL_INPUT_FOLDERS[String(input || "").replace(/\d+$/, "")];
+    const modelDirs = await modelBases();
+    if (folders) {
+      // Exact native selections must see completed downloads immediately,
+      // including those that landed since the basename index was cached.
+      const matches = [];
+      for (const base of modelDirs) for (const folder of MODEL_FOLDERS.filter(f => folders.includes(f))) {
+        const full = path.join(base, folder, rel);
+        const st = await stat(full).catch(() => null);
+        if (st?.isFile() && st.size > 0) matches.push(full);
+      }
+      // The loader sees only this relative name, so no receipt can choose a
+      // physical copy when aliases or configured bases contain duplicates.
+      if (matches.length > 1) return null;
+      if (matches.length === 1) return matches[0];
     }
-    const byName = (await modelIndex()).get(path.basename(rel).toLowerCase());
-    return byName || null;
+    const found = await modelIndex(modelDirs);
+    if (folders) return findShelfModel(found.files, folders, rel)?.full || null;
+    return found.generic.get(modelLeaf(rel).toLowerCase()) || null;
   }
 
   /**
@@ -322,7 +328,7 @@ export function createStore({
     putGraph, getGraph, graphStoreBytes,
     fileFacts, hashFile, findModel, resolveRecordFiles, outputFacts,
     scanUnrecorded, readSettings, writeSettings,
-    paths: { graphDir, hashCacheFile, modelsDir, inputDir, outputDir, settingsFile },
+    paths: { graphDir, hashCacheFile, get modelsDir() { return modelsDir ?? config.modelsDir; }, inputDir, outputDir, settingsFile },
   };
 }
 

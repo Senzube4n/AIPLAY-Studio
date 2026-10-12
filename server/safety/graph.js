@@ -60,6 +60,7 @@ export const NON_VISUAL_CLASSES = new Set([
   "LoadAudio", "VAEEncodeAudio", "VAEDecodeAudio", "VAEDecodeAudioTiled", "TrimAudioDuration",
   "SaveAudio", "SaveAudioMP3", "SaveAudioOpus", "SaveAudioFLAC", "PreviewAudio",
   "YuE2GenerateABC", "YuE2GenerateMusic", "EmptyYuE2LatentAudio", "AiplayYuE2Continue",
+  "AiplayYuE2Score", // captures ABC and timing only; it never decodes or saves a picture
   "MiniMaxMusic3TextEncode", "EmptyMiniMaxMusic3LatentAudio",
   "TextEncodeAceStepAudio", "TextEncodeAceStepAudio1.5", "EmptyAceStepLatentAudio", "EmptyAceStep1.5LatentAudio",
   "ReferenceTimbreAudio", "SheetSage2AudioToABC",

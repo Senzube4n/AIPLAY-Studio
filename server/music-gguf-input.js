@@ -34,7 +34,7 @@ export function prepareGgufJob(body, actor) {
   const dials = Object.fromEntries(Object.entries(DIALS)
     .filter(([k]) => body[k] != null && body[k] !== "").map(([k, option]) => [option, body[k]]));
   const request = validateGgufRequest({
-    style: caption, lyrics: body.instrumental ? "" : (body.lyrics || "").trim(),
+    style: caption, lyrics: body.instrumental ? "" : (body.lyrics || ""),
     cot: body.cot ?? "full", seed: body.seed ?? rollSeed(), quantization: body.quantization,
     narSteps: body.narSteps ?? 32,
     ...(body.cfgScale != null && body.cfgScale !== "" ? { cfg_scale: body.cfgScale } : {}),

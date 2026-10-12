@@ -1,0 +1,18 @@
+body:has(> .music-workbench) { height:auto; padding:24px; }
+.music-workbench .params { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0; }
+.music-workbench label { display:grid; gap:5px; margin:8px 0; font-size:13px; }
+.music-workbench label:has(input[type=checkbox]) { display:block; }
+.music-workbench select[multiple] { min-width:240px; max-width:100%; }
+.music-workbench textarea { width:100%; min-height:100px; box-sizing:border-box; }
+.music-workbench audio { width:min(100%,420px); }
+.music-workbench .mwb-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.music-workbench .mwb-run { border-top:1px solid var(--hair); padding:14px 0; }
+.music-workbench pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto; }
+.music-workbench .chip { margin-right:12px; }
+#musicNativeTools { padding:12px!important; }
+#musicNativeTools .music-workbench { padding-bottom:0; }
+@media(max-width:700px) {
+  body:has(> .music-workbench) { padding:14px; }
+  .music-workbench .params > label { min-width:0; width:100%; }
+  .music-workbench .in2,.music-workbench .sel2 { max-width:100%; }
+}

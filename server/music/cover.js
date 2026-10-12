@@ -16,11 +16,12 @@
  */
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile, readFile, stat, rm } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { config } from "../config.js";
+import { scanBases, findShelfModel } from "../localmodels.js";
 import { stageSource, HumRefusal } from "./hum.js";
 import { readScoreText } from "../score/abc.js";
 
@@ -60,8 +61,9 @@ function run(cmd, argv, { timeoutMs = 120e3 } = {}) {
 }
 
 /** Is the encoder on the shelf ComfyUI loads audio encoders from? */
-export async function encoderPresent(modelsDir = config.modelsDir) {
-  try { return (await stat(path.join(modelsDir, "audio_encoders", SHEETSAGE_FILE))).size > 0; }
+export async function encoderPresent(modelsDir = null) {
+  const bases = modelsDir ? [modelsDir] : [config.modelsDir, ...(config.modelsAlso || [])];
+  try { return !!findShelfModel(await scanBases(bases), "audio_encoders", SHEETSAGE_FILE); }
   catch { return false; }
 }
 

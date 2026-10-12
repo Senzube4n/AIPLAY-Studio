@@ -44,6 +44,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="daw.css">
+<link rel="stylesheet" href="daw-passages.css">
 <!-- THE ⓘ. web/info.js writes no copy of its own — every word in the panel
      comes from /api/welcome's screen_info, which is server/welcome/catalogue.js
      joined against /api/models. It borrows the Models screen's own readiness
@@ -371,11 +372,13 @@
       <div class="d-dockbar">
         <div class="d-tabs">
           <button class="d-tab d-on" id="tabChain">Chain</button>
+          <button class="d-tab" id="tabPlugins" title="Install and manage native VST3 audio effects.">Plugins</button>
           <button class="d-tab" id="tabAnalysis">Analysis</button>
           <button class="d-tab" id="tabEar">The Ear</button>
           <!-- VOICE LAB (web/voicelab.js) — 1 of 3, and the whole of its
                footprint in this file. The module binds this button itself, so
                daw.js's showDock() never has to learn about a fourth tab. -->
+          <button class="d-tab" id="tabPassage" title="Review selected notes as a score and audition AI alternatives.">AI takes</button>
           <button class="d-tab" id="tabVoice"
                   title="one note of the selected track's instrument, rendered on the server and drawn four ways — waveform, spectrum, dB envelope and the reference overlay slot. Every knob the patch declares re-renders it, and nothing reaches the document until you press apply.">Voice</button>
         </div>
@@ -387,6 +390,30 @@
       </div>
       <div class="d-dockpane d-on" id="paneChain">
         <div class="d-chain" id="devChain"></div>
+      </div>
+
+      <div class="d-dockpane" id="panePlugins">
+        <div class="d-pluginbar">
+          <span class="d-target" id="pluginHost" role="status">Checking host…</span>
+          <button class="d-btn" id="pluginSetup" hidden>Set up host</button>
+          <button class="d-btn" id="pluginZip">Install ZIP…</button>
+          <input type="file" id="pluginUpload" accept=".zip" hidden>
+          <button class="d-btn" id="pluginScan">Scan again</button>
+          <span class="d-note" id="pluginTarget"></span>
+        </div>
+        <div class="d-plugincontent">
+          <div class="d-pluginlist" id="pluginList"></div>
+          <details class="d-pluginpaths">
+            <summary>Folders and local files</summary>
+            <div class="d-pluginpathrow"><label for="pluginFolderPath">Plugin folder</label><input class="d-txt" id="pluginFolderPath" placeholder="C:\\Audio\\Plugins"><button class="d-btn" id="pluginFolderAdd">Add folder</button></div>
+            <div class="d-pluginpathrow"><label for="pluginSource">Local ZIP / VST3</label><input class="d-txt" id="pluginSource" placeholder="Path to a plugin ZIP, file or bundle"><button class="d-btn" id="pluginInstall">Install</button></div>
+            <pre class="d-note" id="pluginFolders"></pre>
+            <span class="d-note">Studio plugins: <span id="pluginInstallDir"></span></span>
+          </details>
+          <p class="d-note">VST3 effects use the same chain for playback and export.</p>
+          <details class="d-pluginpaths"><summary>Supported plugins</summary><p class="d-note">64-bit effects matching your operating system. Parameter controls are available in Chain; VST2, MIDI instruments and native editor windows are not hosted here.</p></details>
+          <p class="d-note" id="pluginMessage" role="status" aria-live="polite"></p>
+        </div>
       </div>
 
       <div class="d-dockpane" id="paneAnalysis">
@@ -425,6 +452,7 @@
            element inside it and loads its own web/voicelab.css, exactly as the
            Ear does, so this file carries no copy of the panel's markup. -->
       <div class="d-dockpane" id="paneVoice"></div>
+      <div class="d-dockpane" id="panePassage"></div>
     </section>
   </section>
 

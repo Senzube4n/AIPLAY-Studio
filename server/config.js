@@ -4,12 +4,14 @@
  * data that withdrew it stays in the file beside it.
  */
 import fs from "node:fs";
-import { autoVramFlags } from "./comfyargs.js";
+import { autoVramFlags, vendorOf } from "./comfyargs.js";
 /* The card tiers' sizes join H3's size list (below the engines): pure data. */
 import { H3_TIERS, H3_SOL_ATTN, H3_MORE_MOTION, H3_BLOCK_CACHE } from "./h3tier.js";
+import { LEVELS, IN_USE_KEYS, startLevel } from "./welcome/startlevel.js";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { scanBasesSync, findShelfModel, modelName, engineBasesSync } from "./localmodels.js";
 
 /**
  * Where the settings a user can change actually live.
@@ -77,16 +79,69 @@ const MODELS_ALSO = Array.isArray(saved.modelsAlso) ? saved.modelsAlso.filter((d
  *
  * Order is preference: measured build first, downloadable substitute last.
  */
-const pick = (sub, ...names) => names.find((n) => onDisk(sub, n)) ?? names[names.length - 1];
+/* The Models screen's stand-ins as saved ({ "<catalogue file>": "<local file>" }),
+ * `config.modelOverrides` below. Read here too, so the picks made while this
+ * file loads already count a stand-in (localFile). */
+const SAVED_OVERRIDES = saved.modelOverrides && typeof saved.modelOverrides === "object"
+  ? Object.fromEntries(Object.entries(saved.modelOverrides).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
+  : {};
+/* WHERE THE PICKS LOOK, AND WHAT COUNTS (setF on 7b241ea, from a tester's
+ * report). Every folder the engine loads from (localmodels.js
+ * engineBasesSync: the models folder, the extra ones, the extra_model_paths
+ * YAML bases and the install's own ComfyUI/models), as the Models screen and
+ * the engine door read them. And a Models-screen stand-in counts for the name
+ * it stands in for, on the same shelf (unet with diffusion_models): models.js
+ * counts the row installed then, and the engine door renames the catalogue
+ * name to the stand-in in every graph (localmodels.js applyModelOverrides).
+ * Before, the picks read only the first two folders and no stand-in, so the
+ * Models screen said "installed" while the Video screen refused with "Get
+ * MiniMax H3 (0.0 GB)", after a restart too.
+ *
+ * `live` is `config` once it exists: from then on the folders and the
+ * stand-ins are read from it, where a later change (the override route, a
+ * test pointing the rig elsewhere) is, and where workflow.js videoReady()
+ * reads them. While this file loads they come from the settings, which is the
+ * same. */
+let live = null;
+const shelfBases = () => engineBasesSync(live || { modelsDir: MODELS_DIR, modelsAlso: MODELS_ALSO,
+  comfyDir: path.join(RIG, "ComfyUI"), comfy: { extraArgs: Array.isArray(saved.comfyExtraArgs) ? saved.comfyExtraArgs.map(String) : [] } });
+let modelSnapshot = null;
+const localFile = (sub, name) => {
+  modelSnapshot ||= scanBasesSync(shelfBases());
+  try {
+    const found = findShelfModel(modelSnapshot, sub, name);
+    if (found) return found;
+  } catch { return null; }
+  const standIn = (live ? live.modelOverrides : SAVED_OVERRIDES)?.[String(name)];
+  if (typeof standIn !== "string" || !standIn) return null;
+  /* Found by its stand-in: the graph keeps the catalogue name, which the
+   * engine door renames. */
+  try { return findShelfModel(modelSnapshot, sub, standIn) ? { name: String(name), standIn } : null; } catch { return null; }
+};
+const pick = (sub, ...names) => {
+  for (const name of names) {
+    const found = localFile(sub, name);
+    if (found) return found.name;
+  }
+  return names[names.length - 1];
+};
 
 /* "Is this file on disk, with bytes in it", asked one way for pick() and for
  * the H3 step defaults below `config`, so the two cannot disagree about it.
- * Every folder the engine loads from counts: the models folder and the extra
- * ones (config.modelsAlso). A declaration, so pick() above can use it. */
+ * Every folder the engine loads from counts, and a stand-in counts for the
+ * name it stands in for (localFile above). A declaration, so pick() above can
+ * use it. */
 function onDisk(sub, name) {
-  const bases = [MODELS_DIR, ...MODELS_ALSO];
-  return bases.some((b) => { try { return fs.statSync(path.join(b, sub, String(name))).size > 0; } catch { return false; } });
+  return !!localFile(sub, name);
 }
+
+/* THE VIDEO ENGINES' FILE PICKS and their candidate lists, kept so every one
+ * can be made again when a video row lands or goes, without a restart
+ * (refreshVideoPicks below). videoPick() is pick() that also remembers
+ * [engine, field, folder, names]. The H3 speed-up slots keep their own list
+ * (H3_LORA_SLOTS), and refreshVideoPicks() refreshes them too. */
+const VIDEO_PICKS = [];
+const videoPick = (engine, field, sub, ...names) => { VIDEO_PICKS.push([engine, field, sub, names]); return pick(sub, ...names); };
 
 /* THE H3 SPEED-UP SLOTS and their candidate lists, kept so a speed-up that
  * lands (a Models download) is picked again without a restart
@@ -116,15 +171,62 @@ export const loraStepsOf = (name) => {
 /* The card first-run setup saved. Same test as index.js onAmd() and
  * models.js cardIsAmd(): ROCm has no kernel for NVIDIA's fp4 formats. */
 const AMD_CARD = saved.torchBackend === "rocm" || saved.gpu?.vendor === "amd";
-/* A LIGHT MACHINE for H3: an AMD or Intel card, a card under 16 GB, or under
- * 32 GB of RAM. It downloads and loads H3's lighter builds: the w4a8 DiT and
- * the int8 video VAE (models.js `light` entries; the int4 text encoder is
- * everyone's). MEASURED 2026-09-25 on an RX 9060 XT 16 GB, TaoMate 3-step
- * 1344x768 5 s, same seed, each on a fresh engine: int8 DiT + int8 TE + fp16
- * VAE 357 s; int8 VAE 316 s (frames PSNR 35.8 dB, SSIM 0.975 against fp16);
- * int4 TE 299 s (13.5 GB staged against 25.9); w4a8 DiT 293 s; all three
- * 290 s, every one as good to the eye. 30 GB to fetch instead of 41. */
-export function isLightH3({ gpu, torchBackend } = {}, ramBytes = os.totalmem()) {
+/* THE CARD AS THE SETTINGS NAME IT (what setup and the engine installer
+ * saved in settings.json): comfyargs.js vendorOf (the card they read, else a
+ * "rocm" torch AMD's and a "cuda" one NVIDIA's), then a torch that names no
+ * card's maker: "xpu" Intel's, "cpu" the CPU's (a CPU-only install or a Mac:
+ * install-engine.mjs saves gpu.vendor "cpu" there, setup a "cpu" torch).
+ * null: the settings name no card. art.js cardVendor reads this first. */
+export const savedCardVendor = (s) => vendorOf(s?.gpu, s?.torchBackend)
+  || (s?.torchBackend === "xpu" ? "intel" : s?.torchBackend === "cpu" ? "cpu" : null);
+/* WHOSE RULES THIS PC TAKES. Bucky's rule, relayed by the owner: "Make it
+ * available only for Nvidia. AMD is locked by my tests." So a PC whose
+ * settings name a card that is not NVIDIA keeps main's rules exactly: AMD and
+ * Intel (by the card, or by a rocm or xpu torch), and the CPU (a CPU-only
+ * install, a Mac), which main groups with them too (prefers720p below).
+ * What changed since (the light rule, the per-path readings and checks,
+ * resolveH3Steps, the 8-step file in the H3 row, models.js) is for NVIDIA and
+ * for a PC whose settings name no card: the owner's NVIDIA rig saved none.
+ *
+ * AS THE SETTINGS NAME IT, DECIDED AT IMPORT. What is picked here (the light
+ * builds, the per-path readings, the catalogue) is decided when this module
+ * loads, and gpu.js's live reading does not exist then: gpu.js imports this
+ * file, and its first reading lands about 2.5 s after start (nvidia-smi, the
+ * Windows counters, amdgpu's files). So a PC whose settings name no card is
+ * read here as one nobody could read, even where the live reading later names
+ * AMD or Intel (a Linux AMD PC whose setup saved no gpu and whose torch probe
+ * failed), while the fresh engine and the clip deadline, decided per clip,
+ * read the live card after the settings (art.js cardVendor) and give it
+ * main's answer. Such a PC gets main's rules here too once its
+ * settings.json names the card (gpu.vendor, or the torch it runs).
+ * models.js cardIsOffNvidia() is this test. */
+export function offNvidia(settings = {}) {
+  const s = settings || {};
+  if (s.torchBackend === "rocm" || s.torchBackend === "xpu") return true;
+  const v = savedCardVendor(s);
+  return v != null && v !== "nvidia";
+}
+const OFF_NVIDIA = offNvidia(saved);
+/* A LIGHT MACHINE for H3, as main has it: an AMD or Intel card, a card
+ * under 16 GB, or under 32 GB of RAM. It downloads and loads H3's lighter
+ * builds: the w4a8 DiT and the int8 video VAE (models.js `light` entries; the
+ * int4 text encoder is everyone's). MEASURED 2026-09-25 on an RX 9060 XT
+ * 16 GB, TaoMate 3-step 1344x768 5 s, same seed, each on a fresh engine: int8
+ * DiT + int8 TE + fp16 VAE 357 s; int8 VAE 316 s (frames PSNR 35.8 dB, SSIM
+ * 0.975 against fp16); int4 TE 299 s (13.5 GB staged against 25.9); w4a8 DiT
+ * 293 s; all three 290 s, every one as good to the eye. 30 GB to fetch
+ * instead of 41.
+ * NOT NVIDIA, OF ANY SIZE, AND NOT A CARD NOBODY COULD READ (the owner's
+ * decision, 2026-09-25): the rule also caught NVIDIA cards under 15,000 MB and
+ * PCs under 30 GiB of RAM, which then fetched the third-party w4a8 DiT. It
+ * has never been rendered on NVIDIA, and the measured NVIDIA path is the
+ * official int8 (docs/ENGINE_TRAPS.md). So an NVIDIA card, and a PC whose
+ * settings name no card, keeps the standard files until a same-seed A/B on
+ * NVIDIA says otherwise. Every other PC (offNvidia above: AMD, Intel, the
+ * CPU) keeps that rule, RAM and card size included. */
+export function isLightH3(settings = {}, ramBytes = os.totalmem()) {
+  const { gpu, torchBackend } = settings || {};
+  if (!offNvidia(settings)) return false;
   return torchBackend === "rocm" || gpu?.vendor === "amd" || gpu?.vendor === "intel" || torchBackend === "xpu"
     || (Number(gpu?.totalMb) > 0 && Number(gpu.totalMb) < 15000)
     || ramBytes < 30 * 2 ** 30;
@@ -333,9 +435,7 @@ export const config = {
       ? Object.fromEntries(Object.entries(saved.llm.bases).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
       : {},
   },
-  modelOverrides: saved.modelOverrides && typeof saved.modelOverrides === "object"
-    ? Object.fromEntries(Object.entries(saved.modelOverrides).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
-    : {},
+  modelOverrides: { ...SAVED_OVERRIDES },
   /* The python that runs ComfyUI.
    *
    * Layout differs by install route and there is no way to guess from the rig
@@ -826,7 +926,7 @@ export const config = {
   },
   yue: {
     python: process.env.AIPLAY_YUE_PYTHON || saved.yuePython
-      || path.join(RIG, "venv-yue", "Scripts", "python.exe"),
+      || path.join(RIG, "venv-yue", ...(process.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"])),
     model: process.env.AIPLAY_YUE_MODEL || saved.yueModel
       || path.join(RIG, "yue2-kit", "models", "YuE2-3B"),
     vae: process.env.AIPLAY_YUE_VAE || saved.yueVae
@@ -1194,8 +1294,16 @@ export const config = {
      * --disable-dynamic-vram was far worse (580 s for one step, RAM paging).
      * A restarted engine did: 78 s a step on the render after a TaoMate one.
      * So an engine that has rendered anything is restarted before an H3 or
-     * FastH3 clip: "auto" does it on any card that is not NVIDIA (not seen
-     * there), "always" and "never" force it. art.js clipNeedsCleanCard();
+     * FastH3 clip: "auto" does it on every card that is not NVIDIA, as
+     * main did (AMD and Intel, where it was measured, and the CPU), and
+     * not on NVIDIA (not seen there) or on a card nobody could read (art.js
+     * cardVendor: the settings first, then the live reading); "always" and
+     * "never" force it. On every card the restart first waits until nothing
+     * else is on the engine: a song, ComfyUI's own queue, the engine door's
+     * runs and holds (a Reactive look or a chat turn between two runs), a
+     * plan mid-step (art.js waitForQuietEngine, Bucky's wait with
+     * otherWorkOnEngine read inside it), at most 20 minutes, and the clip
+     * renders unrestarted if it never frees. art.js clipNeedsCleanCard();
      * video_settings free_before_clip. */
     freeBeforeClip: "auto",
 
@@ -1271,6 +1379,10 @@ export const config = {
      * without an explicit acknowledgement. That is a licence someone must
      * accept, not a default that quietly does something; nothing here
      * downloads, and the Video surface names the condition beside the engine. */
+    /* Optional comparison only. "auto" retains the ordinary measured pick;
+     * merely downloading W6A8 never replaces it. workflow.js resolves this
+     * preference against the exact engine Python's compatibility evidence. */
+    h3ModelBuild: "auto",
     engine: "h3",
     engines: {
 
@@ -1295,47 +1407,61 @@ export const config = {
      * builds stay as fallbacks for machines that only have those. */
     /* A light machine (LIGHT_H3) loads the w4a8 build first: measured as good
      * and a little faster on an RX 9060 XT, 8 GB smaller. Repeated last so a
-     * light machine holding none is told to fetch it. */
+     * light machine holding none is told to fetch it.
+     * EVERY LIST ENDS IN THE FILE THIS MACHINE'S MODELS ROW DOWNLOADS (setF,
+     * from a tester's report). pick() returns the last name when none is on
+     * disk, and these are picked again when a row lands (refreshVideoPicks),
+     * so the last name is the one a message names as missing. The other
+     * machines' list ended in the w4a8 while the H3 row fetches the int8
+     * there, and the audio VAE's in the bf16 while every machine fetches the
+     * fp32. server/videopicks_test.js holds every list to the catalogue: each
+     * name the Models row accepts is here, and the last name is its download. */
     dit: LIGHT_H3
-      ? pick("diffusion_models",
+      ? videoPick("h3", "dit", "diffusion_models",
         "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
         "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
         "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors")
-      : pick("diffusion_models",
+      : videoPick("h3", "dit", "diffusion_models",
         "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
-        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
+        "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
     /* References render on the checkpoint BUILT for them — the vendor's r2v
      * template uses ref2va, not fl2va. Falls back to the fl2va builds so refs
-     * keep working (measured working 08-23) where ref2va is not downloaded. */
-    ditRef: pick("diffusion_models",
+     * keep working (measured working 08-23) where ref2va is not downloaded.
+     * Ends in this machine's H3 DiT, the one its H3 row fetches. */
+    ditRef: videoPick("h3", "ditRef", "diffusion_models",
       "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
-      "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
+      "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors",
+      ...(LIGHT_H3 ? [] : ["minimax_h3_fl2va_pruned_int8_convrot.safetensors"])),
     /* The int4 build on every card. AMD used to take the int8 one on the
      * belief that ROCm ran int4 on a slow fallback; measured 2026-09-25 on an
      * RX 9060 XT it was a little FASTER than int8 (299 s against 316 s a
      * clip) and staged 13.5 GB instead of 25.9. The int4 name is repeated
      * last so a machine holding neither is told to fetch the int4. */
-    textEncoder: pick("text_encoders",
+    textEncoder: videoPick("h3", "textEncoder", "text_encoders",
       "qwen3vl_32b_minimax_h3-int4_convrot.safetensors",
       "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
       "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
     /* int8 first where it is on disk; a light machine (LIGHT_H3) is told to
      * fetch it, others the fp16 (the build the H3 lab measured with). */
     videoVae: LIGHT_H3
-      ? pick("vae",
+      ? videoPick("h3", "videoVae", "vae",
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "minimax_h3_video_vae_fp16.safetensors",
         "minimax_h3_video_vae_int8_convrot.safetensors")
-      : pick("vae",
+      : videoPick("h3", "videoVae", "vae",
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "minimax_h3_video_vae_fp16.safetensors"),
-    audioVae: pick("vae",
+    /* The fp32 is what the H3 row fetches on every card, so it is repeated
+     * last; a bf16 already on disk still loads. */
+    audioVae: videoPick("h3", "audioVae", "vae",
       "minimax_h3_audio_vae_fp32.safetensors",
-      "minimax_h3_audio_vae_bf16.safetensors"),
+      "minimax_h3_audio_vae_bf16.safetensors",
+      "minimax_h3_audio_vae_fp32.safetensors"),
     // Full-rank on purpose. The 440 MB resized-rank LoRA saves 1.5 GB and has
     // two independent reports of camera-movement degradation and I2V
     // prompt-following failure.
@@ -1653,7 +1779,9 @@ export const config = {
     /* OPT-IN, EXPERIMENTAL: T8mars's MiniMax H3 Block Cache custom node
      * (h3tier.js H3_BLOCK_CACHE) on the plain path, where no sparse attention
      * runs. video_settings block_cache; art.js videoBlockCache() asks the
-     * engine for the node first. */
+     * engine for the node first. The node reaches ComfyUI's custom_nodes only
+     * at an engine start with this on, and Studio's copy leaves at a start
+     * with it off (comfy_nodes.js, the owner's decision of 2026-09-26). */
     blockCache: false,
     blockCacheRecipe: H3_BLOCK_CACHE,
 
@@ -1731,8 +1859,12 @@ export const config = {
      * The diffusion-decoder VAE (CausalDiffusionVAE) is what ComfyUI's own
      * LTX 2.5 template loads under the plain name; ComfyUI's VAELoader reads it
      * (comfy/sd.py, "lightricks LTX 2.4 diffusion VAE decoder"). Taken when
-     * the conv one is not on disk, so a template install renders here too. */
-    videoVae: pick("vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors"),
+     * the conv one is not on disk, so a template install renders here too.
+     * The conv name is repeated last because it is the file the LTX row
+     * fetches on every card (setF on 7b241ea): a machine holding neither is
+     * told the file it would download, not the template's. */
+    videoVae: videoPick("ltx", "videoVae", "vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors",
+      "ltx-2.5-video-vae-conv-bf16.safetensors"),
     audioVae: "ltx-2.5-audio-vae-bf16.safetensors",
     upscaler: "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
 
@@ -2030,6 +2162,9 @@ export const config = {
 
   paths: { appData: APPDATA },
 };
+/* From here on the picks read the folders and the stand-ins from `config`
+ * (localFile, above). */
+live = config;
 
 /* H3'S DEFAULT STEP COUNT, AND THE THREE QUALITY CHIPS, FOLLOW THE DISK.
  *
@@ -2041,30 +2176,75 @@ export const config = {
  * named no step count, the move the turboLora4 comment calls "a different one
  * used wrongly". So each number is what this disk can run matched:
  *
- *   standard  8 where pick() resolved BOTH turboLora and refTurboLora to an
- *             8-step file, else 4, the matched 4-step setting. Never the
- *             bare model by default: 20 costs 2.4x the time (arm H vs C).
- *   fast      3 where a TaoMate 3-step file resolved, else 4 where both
- *             4-step slots did, else the same as standard (one chip then,
- *             not two that do the same thing).
+ *   standard  8 where pick() resolved turboLora to an 8-step file (on AMD,
+ *             Intel and the CPU, refTurboLora too), else 4, the matched 4-step
+ *             setting, else 20, the bare model (resolveH3Steps below). On
+ *             NVIDIA the H3 row brings the 8-step file (models.js), since 20
+ *             costs 2.4x the time for about the same look (arm H vs C).
+ *   fast      3 where a TaoMate 3-step file resolved, else 4 where the
+ *             4-step slot did (on AMD, Intel and the CPU, both 4-step
+ *             slots), else the
+ *             same as standard (one chip then, not two that do the same thing).
  *   best      20, the bare model, which no LoRA file gates.
  *
- * `steps` is standard. /api/status sends stepDefaults and turboBuilds, and
- * the Video screen's slider and chips and make_clip's `quality` read them
- * there rather than keeping a literal. Resolved once, at import, like pick()
- * itself: a file downloaded later loads after a restart, and so does the
- * default that matches it. A file's step count is read off its name
+ * `steps` is standard. /api/status sends stepDefaults, turboBuilds and
+ * refBuilds, and the Video screen's slider and chips and make_clip's
+ * `quality` read them there rather than keeping a literal. Resolved at
+ * import like pick() itself, and again when a speed-up lands
+ * (refreshH3Speedups below). A file's step count is read off its name
  * (loraStepsOf), and only for a file that is on disk, because pick() returns
  * its last name when none is.
  * server/mcp-steer_test.js builds both disks in a temp folder and pins this. */
 /* With no speed-up on disk at all, Standard is the bare model's 20: every
  * speed-up is optional (models.js, addonFor "video"), and a step count whose
- * file is missing is refused with its download offered (video-plain.js). */
-function resolveH3Steps(h3) {
+ * file is missing is refused with its download offered (video-plain.js).
+ *
+ * EACH PATH READS ITS OWN FILES (2026-09-25). The plain path loads turboLora3,
+ * turboLora4 or turboLora, the reference path refTurboLora4 or refTurboLora
+ * (workflow.js h3TurboLoraFor), so what a render is CHECKED by is per path:
+ *   plainBuilds  {three, four, eight}: the plain path's file for that count
+ *                is on disk and made for it. What video-plain.js
+ *                speedupNeeded and the Video screen check a plain render by.
+ *   refBuilds    {four, eight}: the file the reference path loads in the
+ *                4-step band (up to turbo4MaxSteps) and in the 8-step band is
+ *                on disk AND made for that count, as plainBuilds asks of the
+ *                plain path. What Keep my character is checked by. It asked
+ *                only whether the file was there, and refTurboLora falls back
+ *                to the ref2v 4-step v0.1 and then to the fl2v 4-step, so a
+ *                disk with the 4-step speed-up alone ran Keep my character at
+ *                8 on the fl2v 4-step file, and H3 + "Video references" ran
+ *                the ref2v 4-step at 6 to 12: the "different model used
+ *                wrongly" this file refuses on the plain path (review of the
+ *                port, 2026-10-08). main refused both.
+ * Before, the check read `eight` and `four` as BOTH paths at that count, so a
+ * disk with the 8-step file and the reference row's 4-step file (T1 in the
+ * lab's add-on probe) refused every 8-step render offering the file already
+ * on it, and a character render asked for a file its path never loads.
+ *
+ * NULL, BOTH OF THEM, WHERE THE SETTINGS NAME A CARD THAT IS NOT NVIDIA
+ * (offNvidia above: AMD, Intel, the CPU). Bucky's rule (2026-09-25, relayed by
+ * the owner): "Make it available only for Nvidia. AMD is locked by my tests."
+ * Every rule that reads the per-path readings (video-plain.js speedupNeeded,
+ * keepFast and the refusal every door gets, the Video screen's copy of the
+ * rule) keeps main's behaviour where they are null, so an AMD or Intel
+ * card is checked, offered and refused exactly as his tests left it.
+ *
+ * THE DEFAULTS, and `turboBuilds` behind them (the chips and fit.js read it):
+ * on AMD, Intel and the CPU exactly main's, both paths at the count, as
+ * Bucky's tests left them. Elsewhere, NVIDIA and a card nobody could read, the plain path's own
+ * file decides (turboBuilds is plainBuilds there): Keep my character runs its
+ * own count (workflow.js referenceSteps), so downloading the reference row no
+ * longer drops Standard to the bare 20. */
+function resolveH3Steps(h3, { offNv = OFF_NVIDIA } = {}) {
   const stepsOnDisk = (name) => (onDisk("loras", name) ? loraStepsOf(name) : null);
-  const eight = stepsOnDisk(h3.turboLora) === 8 && stepsOnDisk(h3.refTurboLora) === 8;
-  const four = stepsOnDisk(h3.turboLora4) === 4 && stepsOnDisk(h3.refTurboLora4) === 4;
+  const plain8 = stepsOnDisk(h3.turboLora) === 8;
+  const plain4 = stepsOnDisk(h3.turboLora4) === 4;
   const three = stepsOnDisk(h3.turboLora3) === 3;
+  h3.plainBuilds = offNv ? null : { three, four: plain4, eight: plain8 };
+  h3.refBuilds = offNv ? null : { four: !!h3.refTurboLora4 && stepsOnDisk(h3.refTurboLora4) === 4,
+    eight: !!h3.refTurboLora && stepsOnDisk(h3.refTurboLora) === 8 };
+  const eight = plain8 && (!offNv || stepsOnDisk(h3.refTurboLora) === 8);
+  const four = plain4 && (!offNv || stepsOnDisk(h3.refTurboLora4) === 4);
   const standard = eight ? 8 : four ? 4 : 20;
   h3.turboBuilds = { three, four, eight };
   h3.stepDefaults = { fast: three ? 3 : four ? 4 : standard, standard, best: 20 };
@@ -2083,7 +2263,8 @@ config.video.engines.h3.steps = resolveH3Steps(config.video.engines.h3);
  *  the builds and step defaults follow. The step count in use moves only
  *  while it is still the machine's default (Standard), never a person's.
  *  Returns turboBuilds. */
-export function refreshH3Speedups() {
+export function refreshH3Speedups({ rescan = true } = {}) {
+  if (rescan || !modelSnapshot) modelSnapshot = scanBasesSync(shelfBases());
   const h3 = config.video.engines.h3;
   const before = h3.stepDefaults?.standard;
   for (const [slot, names] of Object.entries(H3_LORA_SLOTS)) h3[slot] = pick("loras", ...names);
@@ -2138,7 +2319,7 @@ export const refreshTaoMate = () => refreshH3Speedups().three;
 config.video.engines.fasth3 = {
   ...config.video.engines.h3,
   label: "FastH3",
-  dit: pick("diffusion_models",
+  dit: videoPick("fasth3", "dit", "diffusion_models",
     "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
     "fastvideo_fasth3_8step_v2_pruned_bf16.safetensors",
     "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors"),
@@ -2152,7 +2333,7 @@ config.video.engines.fasth3 = {
   steps: 8, fixedSteps: 8,
   /* The H3 step-defaults block above ran before this spread, so H3's chips and
    * turbo builds would travel with it. A fixed schedule has neither. */
-  stepDefaults: null, turboBuilds: null,
+  stepDefaults: null, turboBuilds: null, plainBuilds: null, refBuilds: null,
   sampler: "res_multistep", scheduler: "simple",
   shiftVideo: 10, shiftAudio: 3,
   /* The checkpoint was trained with FastVideo's VSA at 10% of video cubes.
@@ -2179,6 +2360,49 @@ config.video.engines.fasth3 = {
    * until the lab: the default a person got was a speed nobody had measured. */
   attention: "kitchen",
 };
+
+/* What FastH3 takes from H3 by the spread above and must take again when
+ * H3's picks change: the same text encoder and VAEs (models.js H3_SHARED_FILES). */
+const FASTH3_FROM_H3 = ["textEncoder", "videoVae", "audioVae"];
+
+/** LOOK FOR EVERY VIDEO FILE AGAIN (setF, from a tester's report).
+ *
+ *  Every file name a video graph loads was picked once, while this file
+ *  loaded: H3's DiT, reference DiT, text encoder and two VAEs, FastH3's DiT
+ *  and its copies of H3's encoder and VAEs, LTX's video VAE, and H3's
+ *  speed-ups. Only the speed-ups were ever picked again. So a Studio started
+ *  before its H3 download finished kept the names pick() had chosen on an
+ *  empty disk, and two of them were not the files the Models screen fetches
+ *  (the audio VAE everywhere, the DiT off the light machines). The Models
+ *  screen then said "installed", videoReady() missed the stale names, and
+ *  the Video screen refused with "Get MiniMax H3 (0.0 GB)" until a restart.
+ *
+ *  This scans the shelf again, picks every one of them again from its own
+ *  list, copies H3's shared files into FastH3 again, and looks for the
+ *  speed-ups and the step defaults again (refreshH3Speedups, whose rule is
+ *  unchanged: a person's own step count never moves). Called when Studio
+ *  starts and whenever a video row lands or goes (server/index.js), and by
+ *  the video gate once before it refuses. A shelf scan and no file is read
+ *  or hashed. On every card: what it picks is what a restart would pick.
+ *  Returns the fields that changed, as "engine.field". */
+export function refreshVideoPicks() {
+  modelSnapshot = scanBasesSync(shelfBases());
+  const engines = config.video.engines;
+  const changed = [];
+  const set = (engine, field, value) => {
+    const e = engines[engine];
+    if (!e || e[field] === value) return;
+    e[field] = value;
+    changed.push(`${engine}.${field}`);
+  };
+  for (const [engine, field, sub, names] of VIDEO_PICKS) set(engine, field, pick(sub, ...names));
+  if (engines.h3 && engines.fasth3) for (const field of FASTH3_FROM_H3) set("fasth3", field, engines.h3[field]);
+  const h3 = engines.h3;
+  const before = Object.fromEntries(Object.keys(H3_LORA_SLOTS).map((slot) => [slot, h3[slot]]));
+  refreshH3Speedups({ rescan: false });
+  for (const slot of Object.keys(H3_LORA_SLOTS)) if (h3[slot] !== before[slot]) changed.push(`h3.${slot}`);
+  return changed;
+}
 
 /**
  * The settings that survive a restart.
@@ -2224,56 +2448,33 @@ config.music.engines["yue2-gguf"] = {
 };
 /* THE LEVEL EVERY MAKE SCREEN OPENS ON (UI_PLAN E1, the owner's decision of
  * 2026-09-24): a NEW install opens Music, Pictures and Video on Simple; an
- * install that was already in use, the owner's included, keeps Advanced.
- *
- * "Already in use" is not "settings.json exists": the launcher and the engine
- * installer write that file (rig, python, gpu) before Studio's first start, so
- * on a fresh install it is always there. What only a Studio that has RUN
- * writes is IN_USE_KEYS below: prefs, the welcome flag, the API mode, the
- * Agent page's keys, a saved workflow, a chosen writing model, a model
- * override, the DAW's latency. (modelsDir, modelsAlso, outputDir and rig are
- * not in it: the launcher writes those too.) Songs already made are the other
- * sign, and level.js reads the library for them before saving Simple.
- * `levelBy` says who chose, so Settings can say "Studio chose Simple for a new
- * install" rather than pretending the person did.
- *
- * A FILE THAT IS THERE AND CANNOT BE READ is not a new install: it is an
- * install whose file has a trailing comma or a byte-order mark. It keeps
- * Advanced, and nothing is written over it (`unreadable`), so fixing the comma
- * brings every setting back as it was.
- * server/welcome/level.js saves the answer on the first start and on every
- * change; server/welcome/level_test.js walks every kind of install. */
-export const LEVELS = ["simple", "advanced"];
-export const IN_USE_KEYS = ["prefs", "welcome", "api", "llm", "customWorkflows",
-  "chatModel", "chatModelMusic", "enhanceModel", "modelOverrides", "dawLatency"];
-export function startLevel(settings, { unreadable = null } = {}) {
-  if (unreadable) return { level: "advanced", levelBy: "studio", saved: false, unreadable: String(unreadable) };
-  const s = settings || {};
-  const want = s.prefs?.ui?.level;
-  if (LEVELS.includes(want)) return { level: want, levelBy: s.prefs.ui.levelBy === "studio" ? "studio" : "you", saved: true };
-  const used = IN_USE_KEYS.some((k) => s[k] !== undefined && s[k] !== null);
-  return { level: used ? "advanced" : "simple", levelBy: "studio", saved: false };
-}
+ * install that was already in use, the owner's included, keeps Advanced. The
+ * rule is server/welcome/startlevel.js, import-free, because the launcher
+ * reads the same answer before Studio starts (the launch modes that are
+ * Advanced only, launcher/checks.mjs). Re-exported here, where the level's
+ * other readers and server/welcome/level_test.js have always found it. */
+export { LEVELS, IN_USE_KEYS, startLevel };
 config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
   ["ui", "level", (v) => LEVELS.includes(v)],
   ["ui", "levelBy", (v) => v === "studio" || v === "you"],
   ["video", "enabled", (v) => typeof v === "boolean"],
   ["video", "engine", (v) => Object.prototype.hasOwnProperty.call(config.video.engines, v)],
+  ["video", "h3ModelBuild", (v) => ["auto", "w6a8"].includes(v)],
   ["video", "when", OK_WHEN],
   /* Validated against the MAP, not a hand-typed list, so a new engine is
    * accepted and a removed engine's saved name is rejected without anyone
    * remembering to edit this line. Same shape as video.engine above. */
   ["music", "engine", (v) => Object.prototype.hasOwnProperty.call(config.music.engines, v)],
   ["music", "precision", (v) => ["int8", "fp16", "fp32"].includes(v)],
-  ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
-  ["music", "yue2Lora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "yue2Checkpoint", (v) => v === null || (!!modelName(v) && /\.(safetensors|sft)$/i.test(v))],
+  ["music", "yue2Lora", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
   ["music", "yue2LoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
-  ["music", "yue2LoraClip", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "yue2LoraClip", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
   ["music", "yue2LoraClipStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
-  ["music", "aceModel", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
-  ["music", "aceLm", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
-  ["music", "aceLora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "aceModel", (v) => v === null || (!!modelName(v) && /\.(safetensors|sft)$/i.test(v))],
+  ["music", "aceLm", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
+  ["music", "aceLora", (v) => v === null || (!!modelName(v) && /\.safetensors$/i.test(v))],
   ["music", "aceLoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
@@ -2297,7 +2498,7 @@ export const PREF_PATHS = [
    * would stamp every render `unknown` and look perfectly fine. Add both, or
    * the hook fails. */
   ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(v)],
-  ["art", "checkpoint", (v) => v === null || (typeof v === "string" && /^[\w .()-]+\.(safetensors|ckpt)$/i.test(v))],
+  ["art", "checkpoint", (v) => v === null || (!!modelName(v) && /\.(safetensors|ckpt)$/i.test(v))],
   /* The Images screen's engine, and a picture with none named (make_image, a
    * music video's stills). The covers' list above, read at call time rather
    * than retyped; minus "checkpoint", which needs a file picked per picture. */
@@ -2333,7 +2534,7 @@ export const PREF_PATHS = [
  * machine's). `keptFromBefore` in settings.json carries "kept" across starts
  * and marks a file as this Studio's.
  */
-const MACHINE_KEYS = [["music", "engine"], ["music", "yue2Checkpoint"], ["art", "engine"], ["image", "engine"]];
+const MACHINE_KEYS = [["music", "engine"], ["music", "yue2Checkpoint"], ["art", "engine"], ["image", "engine"], ["video", "h3ModelBuild"]];
 export const LITERAL_DEFAULTS = Object.fromEntries(["music", "art", "image"].map((g) => [g,
   Object.fromEntries(MACHINE_KEYS.filter(([mg]) => mg === g).map(([, k]) => [k, config[g][k]]))]));
 const origin = new Map();         // id -> "you" | "kept"

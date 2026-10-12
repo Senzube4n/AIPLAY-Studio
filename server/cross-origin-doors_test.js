@@ -96,6 +96,41 @@ for (const [door, open, readLine] of HEADS) {
   });
 }
 
+/* These delegates can save project data or start reviewed passage takes.
+ * Exercise their real mounted guards before handing anything to a handler. */
+for (const [door, handler] of [
+  ['/api/music-daw-passages', 'dawPassageRoutes'],
+  ['/api/music-take-comparison', 'takeComparisonRoutes'],
+  ['/api/music-cues', 'sharedCueRoutes'],
+]) {
+  test(`POST ${door}: only Studio and local JSON clients reach its delegate`, async () => {
+    const open = `if (p === '${door}' && req.method === 'POST'`;
+    const mount = `if (await ${handler}(req, res, url)) return;`;
+    const at = INDEX.indexOf(open), end = INDEX.indexOf(mount, at);
+    assert.ok(at >= 0 && end > at, `${door} is guarded before delegation`);
+    const head = INDEX.slice(at, end + mount.length);
+    const run = new AsyncFunction('req', 'res', 'url', 'p', 'json', 'sameOriginLocalJson', handler, `${head}\nreturn { passed: true };`);
+    for (const [what, request] of FOREIGN) {
+      let calls = 0;
+      const result = await run({ ...request, method: 'POST' }, null, new URL(door, `http://${HOST}`), door,
+        json, sameOriginLocalJson, async () => { calls++; return false; });
+      assert.equal(result?.code, 403, `${what}: refused`);
+      assert.equal(calls, 0, `${what}: no delegated work`);
+    }
+    for (const [what, request] of [["Studio's page", PAGE], ['MCP JSON client', LOCAL]]) {
+      let calls = 0;
+      const result = await run({ ...request, method: 'POST' }, null, new URL(door, `http://${HOST}`), door,
+        json, sameOriginLocalJson, async () => { calls++; return false; });
+      assert.deepEqual(result, { passed: true }, `${what}: admitted`);
+      assert.equal(calls, 1, `${what}: delegate reached`);
+    }
+    let gets = 0;
+    await run({ headers: {}, method: 'GET' }, null, new URL(door, `http://${HOST}`), door,
+      json, sameOriginLocalJson, async () => { gets++; return false; });
+    assert.equal(gets, 1, 'ordinary read-only GET remains available');
+  });
+}
+
 /* THE VIDEO LAB'S DOOR, which lives in server/videolab/routes.js: a comparison
  * switches the engine and queues renders through POST /api/video over loopback
  * (so that door's own guard could be walked around through this one), and

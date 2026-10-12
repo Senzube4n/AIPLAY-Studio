@@ -564,6 +564,11 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   checkAbort(r.signal);
   await mkdir(parent, { recursive: true });
   await mkdir(dir); // Never reuse an existing directory or the native sink's replace behavior.
+  // Private local snapshot retains exact whitespace; the public ledger keeps hashes.
+  await writeFile(path.join(dir, "request.json"), JSON.stringify({schema:1,style:r.style,lyrics:r.lyrics,abc:r.abc??null,
+    seed:r.seed,cot:r.cot,quantization:r.quantization,narSteps:r.narSteps,cfg_scale:r.cfg_scale??null,
+    ...Object.fromEntries(Object.keys(GGUF_DIALS).filter(k=>r[k]!==undefined).map(k=>[k,r[k]])),runtime:record.runtime,weights:record.weights},null,2)+"\n",
+    {encoding:"utf8",flag:"wx",mode:0o600});
   if (abcFile) await writeFile(abcFile, r.abc, { encoding: "utf8", flag: "wx", mode: 0o600 });
   checkAbort(r.signal);
   const started = Date.now();

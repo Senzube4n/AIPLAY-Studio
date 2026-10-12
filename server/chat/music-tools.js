@@ -167,7 +167,7 @@ export function createMusicTools() {
         + "It does NOT render anything.",
       args: {
         length_seconds: { type: "integer", note: "Longest the song may run, 30 up to the model's most (on the screen)." },
-        takes: { type: "integer", note: "How many versions to make per generate, 1 to 4." },
+        takes: { type: "integer", note: "How many versions to queue per generate: 1, 2, 3, 4 or 8." },
         seed: { type: "integer", note: "A fixed seed, to repeat a result." },
         random_seed: { type: "boolean", note: "true = a new seed every time." },
         instrumental: { type: "boolean", note: "true for no vocals, false for a song with vocals." },
@@ -211,7 +211,7 @@ export function createMusicTools() {
           set("lengthSeconds", v, `length ${v} s${v !== Math.round(len) ? ` (${top} s is the most this model makes)` : ""}`);
         }
         const takes = num(a.takes);
-        if (takes !== null) set("takes", Math.max(1, Math.min(4, Math.round(takes))), `${Math.round(takes)} takes`);
+        if (takes !== null) { const count = takes >= 8 ? 8 : Math.max(1, Math.min(4, Math.round(takes))); set("takes", count, `${count} takes`); }
         const seed = num(a.seed);
         if (seed !== null) set("seed", Math.max(0, Math.round(seed)), `seed ${Math.round(seed)}`);
         if (a.random_seed !== undefined) set("randomSeed", bool(a.random_seed), bool(a.random_seed) ? "random seed" : "fixed seed");

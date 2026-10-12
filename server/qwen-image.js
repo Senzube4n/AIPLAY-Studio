@@ -13,6 +13,7 @@
  * requires refSizing: "custom". References are separate autogrow inputs, not
  * an ImageBatch: the encoder consumes only the first image of each input.
  */
+import { requireModelName } from "./localmodels.js";
 export const QWEN_IMAGE_FILES = Object.freeze({
   dit: "qwen_image_2.1_int8_convrot.safetensors",
   encoder: "qwen3vl_8b_int8_convrot.safetensors",
@@ -229,9 +230,9 @@ export function qwenImageGraph({
   const h = dimension(height, QWEN_IMAGE_PRESET.size, "height");
   const refSize = Math.ceil(bounded(refResolution, 1024, 0, 4096, "refResolution") / 32) * 32;
   const thumb = bounded(thumbSize, 256, 32, 1024, "thumbSize");
-  const modelFile = filename(dit, QWEN_IMAGE_FILES.dit, "Diffusion model");
-  const clipFile = filename(encoder, QWEN_IMAGE_FILES.encoder, "Text encoder");
-  const vaeFile = filename(vae, QWEN_IMAGE_FILES.vae, "VAE");
+  const modelFile = requireModelName(filename(dit, QWEN_IMAGE_FILES.dit, "Diffusion model"));
+  const clipFile = requireModelName(filename(encoder, QWEN_IMAGE_FILES.encoder, "Text encoder"));
+  const vaeFile = requireModelName(filename(vae, QWEN_IMAGE_FILES.vae, "VAE"));
   for (const name of [modelFile, clipFile, vaeFile]) {
     if (!/\.safetensors$/i.test(name)) throw new TypeError("Qwen Image 2.1 currently supports native .safetensors files only; GGUF has not been validated.");
   }
@@ -289,10 +290,8 @@ export function qwenImageGraph({
      * Text-to-image and the two-reference edit match the lab graphs exactly. */
     const sized = refs.length && refSizing === "reference";
     const sigmas = qwenDraftSigmas(sized ? refSize : w, sized ? refSize : h);
-    const loraFile = filename(draftLora, QWEN_DRAFT.lora, "Fast draft LoRA");
-    /* A name on the loras shelf (readiness passes a stand-in chosen in
-     * Models), never a path: lora_name is a filename inside models/loras. */
-    if (/[\\/]/.test(loraFile)) throw new TypeError("The Fast draft LoRA must be a filename from models/loras, not a path.");
+    const loraFile = requireModelName(filename(draftLora, QWEN_DRAFT.lora, "Fast draft LoRA"));
+    // Relative to the loras shelf, including an installed subfolder.
     graph[5] = { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: loraFile, strength_model: QWEN_DRAFT.strength } };
     graph[80] = { class_type: "BasicGuider", inputs: { model: ["5", 0], conditioning: ["4", 0] } };
     graph[81] = { class_type: "KSamplerSelect", inputs: { sampler_name: QWEN_DRAFT.sampler } };

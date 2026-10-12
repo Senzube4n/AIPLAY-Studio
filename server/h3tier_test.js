@@ -112,8 +112,9 @@ ok("the measured file is named by name and size, and the size is not Comfy-Org's
 ok("...and an unmeasured size (the preview, a predicted reference-path full size) carries none",
   !h3TierFor({ vramMb: 6144 }).evidence.includes(H3_VAE_CAVEAT)
   && !h3TierFor({ vramMb: 12282, path: "refs" }).evidence.includes(H3_VAE_CAVEAT));
-ok("asking a friend names the rail's Music video screen, not the old Workflow",
-  H3_MV_SCREEN === "Music video" && H3_ASK_A_FRIEND.includes(`on a scene in ${H3_MV_SCREEN}`) && !/Workflow/.test(H3_ASK_A_FRIEND));
+// Production covers video and episode projects as well as music videos.
+ok("asking a friend names the rail's Production screen",
+  H3_MV_SCREEN === "Production" && H3_ASK_A_FRIEND.includes(`on a scene in ${H3_MV_SCREEN}`) && !/Workflow/.test(H3_ASK_A_FRIEND));
 ok("the article helper reads a GB figure aloud: an 8, an 11, an 18, an 80; a 6, a 12, a 16",
   ["an 8 GB", "an 11 GB", "an 18 GB", "an 80 GB", "a 6 GB", "a 12 GB", "a 16 GB"].join("|")
   === [8, 11, 18, 80, 6, 12, 16].map(gbWithArticle).join("|"));

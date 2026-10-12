@@ -43,7 +43,7 @@ const h3tier = await import("./h3tier.js");
 const { generateViaApi } = await import("./apiEngine.js");
 const { secretStatus } = await import("./secrets.js");
 const { JobRunner } = await import("./jobs.js");
-const { plannedSongs } = await import("./batch.js");
+const { plannedPaidSongs } = await import("./batch.js");
 const { createRouterRoutes } = await import("./router/routes.js");
 const { cloudTools } = await import("./mcp-cloud.js");
 const { TOOLS } = await import("./mcp.js");
@@ -81,7 +81,8 @@ test("friend first, then your own key: one list, in that order, the paid one mar
    * honest limits live behind "More". */
   const friend = cloud.NO_STRONG_CARD[0];
   assert.doesNotMatch(friend.how.replace(/\.$/, ""), /[.!?]\s/, `one sentence: ${friend.how}`);
-  assert.match(friend.how, /^Free: .*Ask friend.*Music video → Video clips/);
+  // The broad Production label is shared with the rail and lending routes.
+  assert.match(friend.how, /^Free: .*Ask friend.*Production → Video clips/);
   assert.match(friend.limits, /Collab → Friends/);
   assert.match(friend.limits, /video scenes, not songs/);
   assert.ok(friend.how.includes(`(${cloud.LENDING_UNTRIED})`), "the round trip is not promised, in the step's own sentence");
@@ -281,12 +282,12 @@ test("/api/batch: a music night on the hosted engine is asked for once, with the
   assert.match(head, /if \(!sameOriginLocalJson\(req\)\) return json\(res, 403/, "a night of bills is a same-origin door");
   const start = INDEX.indexOf('        if (b.action === "start") {', at);
   const end = INDEX.indexOf('        if (b.action === "pause")', start);
-  const branch = new AsyncFunction("b", "config", "json", "res", "req", "hostedWouldBill", "paidRefusal", "hostedQuote", "batch", "prov", "plannedSongs",
+  const branch = new AsyncFunction("b", "config", "json", "res", "req", "hostedWouldBill", "paidRefusal", "hostedQuote", "batch", "prov", "plannedPaidSongs",
     `${INDEX.slice(start, end)}\nreturn { fellThrough: true };`);
   const started = [];
   const run = (apiEnabled, b) => branch(b, { api: { enabled: apiEnabled } }, (_r, status, body) => ({ status, body }), null, {},
     cloud.hostedWouldBill, cloud.paidRefusal, async (seconds) => ({ ...QUOTE, seconds }),
-    { start: (x) => { started.push(x); return { ok: true }; } }, { actorFrom: () => "agent:test" }, plannedSongs);
+    { start: (x) => { started.push(x); return { ok: true }; } }, { actorFrom: () => "agent:test" }, plannedPaidSongs);
   const items = [{ caption: "a", maxDuration: 120 }, { caption: "b", maxDuration: 200 }, { caption: "" }];
 
   let r = await run(true, { action: "start", items, takes: 3 });
@@ -309,9 +310,20 @@ test("/api/batch: a music night on the hosted engine is asked for once, with the
   assert.equal(started.pop().paidConfirmed, false, "switch off: never a paid night, whatever the body claims");
   r = await run(true, { action: "start", kind: "image", items: [{ prompt: "p" }] });
   assert.equal(started.pop().paidConfirmed, false, "pictures never bill the hosted engine");
+  r = await run(true, { action: "start", items: [{ caption: "native", engine: "yue2-gguf" }, { caption: "Comfy", engine: "yue2-comfy" }], takes: 8 });
+  assert.equal(r.status, 200, "local engine snapshots never ask for hosted spend when the switch is on");
+  assert.equal(started.pop().paidConfirmed, false);
+  const mixed = [{ caption: "local", engine: "yue2-gguf", maxDuration: 300 }, { caption: "paid", engine: "minimax-music3", maxDuration: 90 }];
+  r = await run(true, { action: "start", items: mixed, takes: 8, cap: 3 });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.paid.runs, 1, "only the paid step reached before the cap is quoted");
+  assert.equal(r.body.paid.seconds, 90, "a longer local song cannot inflate the paid estimate");
+  r = await run(true, { action: "start", items: mixed, takes: 8, cap: 1 });
+  assert.equal(r.status, 200, "a cap reached before the first hosted step starts locally without a spend question");
+  assert.equal(started.pop().paidConfirmed, false);
   const batchSrc = read("server/batch.js");
   assert.match(batchSrc, /paidConfirmed: paidConfirmed === true,/);
-  assert.match(batchSrc, /batchId: r\.id,\n\s+paidConfirmed: r\.paidConfirmed === true,/, "each song of the night carries the night's answer");
+  assert.match(batchSrc, /batchId: r\.id,\n\s+actor: r\.actor,\n\s+paidConfirmed: r\.paidConfirmed === true,/, "each song of the night carries the night's answer");
 });
 
 /* ── the Comfy API run door ─────────────────────────────────────────────── */
@@ -425,7 +437,7 @@ test("POST /api/cloud: another website changes nothing; the page's own JSON swit
   assert.deepEqual(st.body.order, ["friend", "own-key"]);
   assert.equal(st.body.hosted.on, false);
   assert.match(st.body.hosted.keySaid, /^Using the key …abcd saved on 21 Sep 2026 by another copy of Studio on this Windows account/);
-  assert.match(st.body.comfy.note, /outside a music video\. Music videos are made in Full Studio's Music video screen/);
+  assert.match(st.body.comfy.note, /outside a music video\. Music videos are made in Full Studio's Production screen/);
   assert.ok(!JSON.stringify(st.body).includes("value"), "no key value in the status");
   assert.equal((await hit({ host: "rebind.evil.example:4173" })).status, 403, "a rebound page reads nothing");
 
@@ -483,14 +495,14 @@ test("GET /api/cloud in each launch mode: the hosted engine says where it runs; 
   assert.equal(full.hosted.runsHere, true);
   assert.equal(full.hosted.note, null);
   assert.equal(full.friend.available, true);
-  assert.match(full.comfy.note, /^Comfy API clips are made in the launcher's Use Comfy API mode, outside a music video\. Music videos are made in Full Studio's Music video screen; without a strong card, ask a friend on Collab/);
+  assert.match(full.comfy.note, /^Comfy API clips are made in the launcher's Use Comfy API mode, outside a music video\. Music videos are made in Full Studio's Production screen; without a strong card, ask a friend on Collab/);
   const musicOnly = await (mk({ musicOnly: true }))();
   assert.equal(musicOnly.hosted.runsHere, false, "Music only refuses MiniMax, so the hosted engine cannot run there");
   assert.match(musicOnly.hosted.note, /makes songs in Full Studio only/);
   assert.equal(musicOnly.friend.available, false);
   const comfyOnly = await (mk({ cloudOnly: true }))();
   assert.equal(comfyOnly.hosted.runsHere, false);
-  assert.match(comfyOnly.comfy.note, /^Music videos need Full Studio: this mode has no Music, Music video or Collab screen\. Without a strong card, start Full Studio/);
+  assert.match(comfyOnly.comfy.note, /^Music videos need Full Studio: this mode has no Music, Production or Collab screen\. Without a strong card, start Full Studio/);
   /* The page shows those notes and keeps a switch it cannot use from being turned on. */
   const sw = read("web/cloudswitch.js");
   assert.match(sw, /say\("cloudHostedNote", d\.hosted\?\.note\);/);

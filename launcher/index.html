@@ -134,6 +134,8 @@
      button of its own: pressing it selects it and opens the panel under the row;
      pressing it again closes the panel. Its Launch button starts it too. */
   .modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  /* Three cards on Simple, where RunPod GPU (Advanced only) is not shown. */
+  @media (min-width: 1081px) { .modes:has(> .mode[hidden]) { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 1080px) { .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 560px) { .modes { grid-template-columns: 1fr; } }
   .mode { cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, opacity .15s ease; }
@@ -492,8 +494,11 @@
 
     <!-- RunPod GPU: Images and Video on the person's own RunPod Pod through the
          AIPLAY worker (server/engine/remote-*.js, docs/RUNPOD_SETUP.md). Needs no
-         ComfyUI here. Paid by the hour on RunPod, so the card says so first. -->
-    <article class="card mode" id="mode-runpod" data-mode="runpod" tabindex="0" role="listitem">
+         ComfyUI here. Paid by the hour on RunPod, so the card says so first.
+         ADVANCED ONLY (the owner, 2026-09-26): hidden until the system check
+         offers it, which it does only when Studio's level is Advanced
+         (launcher/checks.mjs modesForLevel), or while it is the mode running. -->
+    <article class="card mode" id="mode-runpod" data-mode="runpod" data-level="advanced" tabindex="0" role="listitem" hidden>
       <button class="favstar" type="button" data-fav="runpod" aria-pressed="false" aria-label="Favourite: start with the launcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <div class="mode-head">
         <span class="runbadge" aria-hidden="true"><i></i><span>Running</span></span>
@@ -690,6 +695,9 @@ function paintButtons() {
     const card = $(`mode-${m}`);
     if (!card) continue;
     const mine = busy && studio.mode === m;
+    /* An Advanced-only mode shows only when the check offers it at this
+       level, or while it is the one running (so its Stop stays reachable). */
+    if (card.dataset.level === "advanced") card.hidden = !(check?.modes?.[m] || mine);
     card.classList.toggle("active", mine);
     card.classList.toggle("starting", mine && studio.state === "starting");
     card.classList.toggle("dim", busy && !mine);

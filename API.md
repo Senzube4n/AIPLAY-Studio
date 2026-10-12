@@ -413,7 +413,10 @@ then new, section tags included) and optionally
 once the YuE2 real-audio tokenizer is on this machine (Models screen: the
 Mothersuperior head over m-a-p's MERT-v2-FullSong, CC BY-NC 4.0) and YuE2 3B is
 the music model: the track is read into YuE2's own semantic codes first — once,
-kept under `output/yue2/tok_<sha12>/` by the file's bytes; on the CPU while the
+kept under `output/yue2/tok_r2_<sha12>/` by the decoded audio and the reader's
+version (folders named `tok_<sha12>` hold readings from before 2026-09-25, when
+MERT's rotary table was left uninitialised under transformers 5, and are no
+longer used: such a track is read again); on the CPU while the
 card has a render in flight (about 30 s of song in 16 s), on the card otherwise —
 and the driver replays them with no score (`--extend-codes`), the join keeping
 the original up to the seam. `caption` is **required** (a recording carries no
@@ -518,9 +521,15 @@ default 22) are anchored as a native guide at frame 0 of a window of
 overlap + extension frames; the model carries on; the overlap is dropped in the
 graph; ffmpeg joins source + new frames into a NEW clip under its own id, with
 the new frames alone kept beside it as `<id>_new.mp4`. The source is untouched.
-`seconds` snaps up to a multiple of 17 frames. Returns `overlapFrames`,
-`extensionFrames`, `windowFrames` and the art queue. Refused by `reason`:
-`probe` (no ffprobe — this app ships without ffmpeg by promise), `too-short`.
+`seconds` snaps up to a multiple of 17 frames. `steps` defaults to the clip's
+own count; a continuation runs without references, so where the clip ran its
+count on the reference path and the plain path would need a speed-up that is
+not on this PC, the engine's own count runs instead and `stepsNote` says so (a
+`steps` you name is kept, and refused with `needsModel` when its speed-up is
+missing). Returns `steps`, `overlapFrames`, `extensionFrames`, `windowFrames`
+and the art queue. Refused by `reason`:
+`probe` (no ffprobe — this app ships without ffmpeg by promise), `too-short`,
+`speedup-missing` / `taomate-missing` (with `needsModel`).
 Without ffmpeg the new frames come back as the clip and its record's
 `continuation.joined` is false with the reason. MCP: `extend_clip`.
 
@@ -557,6 +566,24 @@ clip's status row carries the sentence as `error`, the engine's own text as
 The door takes Studio's own page or a local client only, with a 1 MB body, and
 so does `POST /api/videolab`. MCP: `make_clip` `check_only` (with `notes`),
 `sparse`, and its reply's `warnings`.
+
+**When the video files are not there.** `check`, `create` and `run` first ask
+which engine the files on disk can render (workflow.js `resolveVideoEngine`),
+and Studio looks at the disk again once before it refuses, or before it
+renders on another engine than the chosen one. `check` answers a
+refusal as `refusal` with `ok: false` and no `engine`. It is either
+`needsModel` (the Models row to download, the size left in its sentence,
+`needsRegionAck`, `region`, `alsoGated`), or, when that row already reads
+installed and a file still cannot be opened, `reason: "weights-unreadable"`,
+`needsModel: null` and `recheck: { engine, label, capabilityId, files: [{ name,
+folder, standIn, path, reason }] }`, `reason` being `missing`, `empty` or
+`unreadable (<code>)`. Nothing needs downloading then: put the file back at
+`path` and ask again (the page's Fix, then Look again, does a `check`). A size
+is never "0.0 GB": under 0.05 GB it is said in MB. Studio picks every video
+file name again (config.js `refreshVideoPicks`) at start, when a video row's
+download finishes, when a Models-screen look (`GET /api/models`, and the disk
+reading behind `/api/status` once a minute) finds a row's files came, went or
+changed, and when a stand-in is chosen, so none of this needs a restart.
 
 **Keeping a character** (the REWIND A/B, 2026-09-24, DIRECTING.md §2). `create`
 and `check` take `"persona": "<saved character>"`: it is resolved before the
@@ -812,6 +839,24 @@ part of your film). Design and the owner's answers: `docs/COLLAB.md`.
 `resume`, `stop`, `clear`. Same-origin JSON only. With the hosted engine on, a music
 run is refused with the whole night's estimate (`reason: "confirm-spend"`) until `start`
 carries `"confirmSpend": true` (MCP `overnight_start`: `confirm_spend`).
+
+Optional `startAt` is a future ISO UTC timestamp, for example
+`"2026-10-02T20:00:00Z"`. Omit it to start immediately. The scheduled plan is
+saved before the start response returns; its `run.state` is `"scheduled"`,
+`startAt` is epoch milliseconds and `startedAt` remains `null` until kickoff.
+Studio must be running and the computer awake at that time. Scheduling does
+not wake the computer or launch Studio. Future schedules rearm on server boot;
+missed schedules pause for review, as do interrupted running plans. `pause`
+cancels a pending timer; `resume` on a scheduled or paused plan starts it now.
+Only one running, scheduled or paused plan is accepted. MCP uses the existing
+`overnight_start` argument `start_at` and `overnight_status`/`overnight_control`.
+The UI is **Music → Batch & schedule**; its existing `overnight` view ID is stable.
+
+Music items retain their chosen engine, accepted advanced controls and exact
+lyric/ABC whitespace. Seeds are rolled per take and ordinary song readiness,
+model, sampler, reference and hosted spending validation still apply. The
+runner holds at most one owned song submission while awaiting its job receipt
+and completion; it does not enqueue the rest of the plan concurrently.
 
 Round-robin by design: take 1 of every idea, then take 2. A run that only gets
 60% through overnight leaves you covered on every idea rather than twenty takes

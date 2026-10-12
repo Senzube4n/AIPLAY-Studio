@@ -59,8 +59,10 @@ import { EventEmitter, once } from "node:events";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { config, isLightH3 } from "./config.js";
-import { folderGroup } from "./localmodels.js";
+import { config, isLightH3, offNvidia } from "./config.js";
+import { MODEL_FOLDERS, scanBases, findShelfModel, engineBases } from "./localmodels.js";
+import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
+import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
  * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
 import {
@@ -101,14 +103,22 @@ const M = (p) => path.join(config.modelsDir, p);
 export const cardIsAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "amd";
 const noFp4Card = () => cardIsAmd() || config.gpu?.vendor === "intel" || config.torchBackend === "xpu";
 export const fp4Blocked = (f) => noFp4Card() && /fp4/i.test(path.basename(String(f?.dest || f?.url || "")));
-/** A light machine for H3 (config.js h3Light: an AMD or Intel card, under
- *  16 GB of VRAM or under 32 GB of RAM) takes a file's `light` build. */
+/** A card the settings name that is not NVIDIA (config.js offNvidia: AMD,
+ *  Intel, the CPU): the PCs that keep main's H3 set exactly, as Bucky's tests
+ *  left it. */
+export const cardIsOffNvidia = () => offNvidia(config);
+/** A light machine for H3 (config.js isLightH3: main's rule, on AMD, Intel
+ *  and the CPU only) takes a file's `light` build. */
 export const lightMachine = () => isLightH3(config);
 /** A file list with each entry's `light` build swapped in on a light machine
- *  and its `amd` build on an AMD card. */
+ *  and its `amd` build on an AMD card, and without the entries marked
+ *  `nvidiaOnly` where the settings name another card (the H3 row's 8-step
+ *  speed-up, an optional add-on there). */
 const forCard = (files) => {
-  const light = lightMachine(), amd = cardIsAmd();
-  return light || amd ? files.map((f) => (light && f.light) || (amd && f.amd) || f) : files;
+  const light = lightMachine(), amd = cardIsAmd(), offNv = cardIsOffNvidia();
+  if (!light && !amd && !offNv) return files;
+  return files.filter((f) => !(offNv && f.nvidiaOnly))
+    .map((f) => (light && f.light) || (amd && f.amd) || f);
 };
 /**
  * The one shelf that is NOT models/.
@@ -563,6 +573,17 @@ const YUE2_LICENCE_FILE_RIGHTS = Object.freeze({
   note: "The weights are licensed for noncommercial use. Studio conservatively labels results noncommercial / not for sale; this is not a legal determination that every output inherits the checkpoint licence. Native runtime/code licences do not expand the rights granted for the weights. Review the publisher terms for your intended use.",
 });
 
+/* H3'S 8-STEP SPEED-UP (Comfy-Org/MiniMax-H3, revision pinned, LFS sha256
+ * and size as HuggingFace lists them, read 2026-09-24). One entry, two rows:
+ * its own add-on row (videoH3Turbo8) and, on NVIDIA and a card nobody could
+ * read, the H3 row itself (`nvidiaOnly`, see there). */
+const H3_TURBO8_FILE = Object.freeze({
+  url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`,
+  dest: M("loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"),
+  bytes: 1_956_193_000,
+  sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+});
+
 /* H3's text encoder and two VAEs. FastH3 loads the same three, so both rows
  * name the same files and a machine holding one engine fetches only the other
  * engine's DiT. */
@@ -950,13 +971,8 @@ export const CATALOG = [
     required: false,
     addonFor: "video",
     stepsFor: 8,
-    files: [
-      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/bf92c4091e333e69b8ca1998e0a669f15cb0832b/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`,
-        dest: M("loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"),
-        bytes: 1_956_193_000,
-        sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e" },
-    ],
-    note: "1.96 GB, one file in models/loras. Optional: without it, 6 to 12 steps are refused with this download offered, and H3 still renders at 3 (TaoMate), 4 (the 4-step file) or 20 steps.",
+    files: [{ ...H3_TURBO8_FILE }],
+    note: "1.96 GB, one file in models/loras. Comes with H3 on NVIDIA, where 8 steps is Standard; optional on AMD, Intel and PCs without a graphics card. Without it, 6 to 12 steps are refused with this download offered, and H3 still renders at 3 (TaoMate), 4 (the 4-step file) or 20 steps.",
     requires: h3Requires("The same H3 render, 8 steps of it."),
   },
   {
@@ -1739,24 +1755,40 @@ export const CATALOG = [
     files: [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
         dest: M("diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"), bytes: 20970379616,
-        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"],
+        /* Every name here is one config.js's DiT list loads (setF, from a
+         * tester's report). A third, MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot,
+         * was counted as the DiT since the first commit, but no list ever
+         * loaded it and nothing here has rendered it: a PC holding only that
+         * file read "installed" on the Models screen while the Video screen
+         * refused with "Get MiniMax H3 (0.0 GB)", after a restart too. It no
+         * longer counts; server/videopicks_test.js holds the two lists to
+         * each other. */
+        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"],
         /* A light machine (config.js h3Light) fetches the w4a8 build: 12.5 GB
          * instead of 21. Rendered 2026-09-25 on an RX 9060 XT, same seed as
          * the int8: sampling ~7% faster, as good to the eye. */
         light: { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/6387f8cd370fd8b4deaa9aa7e9e1be4d7298e7df/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors`,
           dest: M("diffusion_models/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"), bytes: 12540857840,
           sha256: "8b624de0ab7554bb507c4486093d4c93e0bf2eb2a40c2382f26eb0af7cd97407",
-          alt: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int4_convrot.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] } },
+          alt: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int4_convrot.safetensors"] } },
       ...H3_SHARED_FILES,
-      /* NO SPEED-UP LORA HERE. H3 renders without one (the bare model, Best,
-       * 20 steps), so a missing LoRA must not make the engine "not
-       * downloaded": that refused H3 on a disk holding everything but the
-       * 4-step file. The 3-, 4- and 8-step speed-ups are their own optional
-       * rows (addonFor "video"), and a step count whose file is missing is
-       * refused with its download offered (video-plain.js videoPlan). */
+      /* THE 8-STEP SPEED-UP COMES WITH H3 ON NVIDIA, and on a card nobody
+       * could read. 8 steps is Standard there: the lab's A/B (2026-09-12) had
+       * bare H3 at 20 steps look about the same as the 8-step build at 2.4x
+       * the time, and the owner handed the video tiers over on that finding.
+       * Without this entry a fresh NVIDIA install that fetched H3 alone
+       * rendered Standard bare, at 20.
+       * AMD, INTEL AND THE CPU KEEP BUCKY'S DESIGN (measured on AMD): no
+       * speed-up in this row; the 3-, 4- and 8-step files are their own
+       * optional rows (addonFor "video"), and a step count whose file is
+       * missing is refused with its download offered (video-plain.js
+       * videoPlan). `nvidiaOnly` drops this entry there (forCard). A missing
+       * speed-up never makes H3 unselectable: /api/video's engine switch asks
+       * the renderer (videoReady), and the renderer needs no LoRA. */
+      { ...H3_TURBO8_FILE, nvidiaOnly: true },
     ],
-    note: "41 GB, or 30 GB on AMD, Intel and lower-end PCs, which get lighter builds measured as good and a little faster — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
-      + "The speed-ups (3, 4 and 8 steps) are optional add-ons below; without one, H3 renders at 20 steps. "
+    note: "43 GB on NVIDIA, with the 8-step speed-up Standard renders at; 30 GB on AMD and Intel (and on a PC without a graphics card that has under 32 GB of RAM), which get lighter builds measured as good and a little faster — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step. "
+      + "The other speed-ups (3 and 4 steps) are optional add-ons below, and on AMD, Intel and PCs without a graphics card the 8-step one is too; without one, H3 renders at 20 steps. "
       + H3_AMD_NOTE,
     /* The card decides the size, not a floor (server/h3tier.js, from the H3
      * lab of 2026-09-24): this row used to say 16 GB minimum, which told a
@@ -1807,7 +1839,7 @@ export const CATALOG = [
         alt: ["fastvideo_fasth3_8step_v2_pruned_bf16.safetensors"] },
       ...H3_SHARED_FILES,
     ],
-    note: "22.1 GB on a machine that already has H3; 42 GB without it (40 GB on AMD, Intel and lower-end PCs, which get the lighter int8 video VAE). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
+    note: "22.1 GB on a machine that already has H3; 42 GB without it (40 GB on AMD and Intel, and on a PC without a graphics card that has under 32 GB of RAM, which get the lighter int8 video VAE). Trained with FastVideo's sparse attention (VSA), which ComfyUI runs where its kernel exists and skips elsewhere. "
       + "⚠ Experimental. Measured 2026-09-24 on a 16 GB card against H3's Fast setting (TaoMate 3-step): about 1.4x the wait at 1344x768, 8 s (236 s against 172 s); good on 1 of 3 prompts, "
       + "while the others showed a recurring white blob and a subject changing colour, so check each take. VSA made it about 1.45x faster than dense on the whole clip. "
       + H3_AMD_NOTE,
@@ -3052,15 +3084,63 @@ export const CATALOG = [
   },
 ];
 
-/* Rows with an `amd` or `light` build answer `files` for the machine they
- * run on: status, sizes and the downloader all read the same list, so none of
- * them can offer one build and fetch the other. */
+/* Optional downloads stay separate from each engine's ordinary install. The
+ * files have no alternates: another checkpoint is not the selected experiment. */
+CATALOG.push(...H3_W6A8_FILES.map((build) => ({
+  id: build.id, addonFor: build.addonFor,
+  // These optional checkpoint files identify the same canonical generator.
+  // Its provenance rights still resolve through MODEL_TO_CAPABILITY below.
+  model: "h3",
+  label: `MiniMax H3 ${build.role} W6A8 (experimental)`,
+  why: "An optional official six-bit transformer to compare with the existing H3 build.",
+  licence: "MiniMax H3 Community Licence",
+  get outputRights() { return CATALOG.find((cap) => cap.id === "video")?.outputRights; },
+  get region() { return CATALOG.find((cap) => cap.id === "video")?.region; },
+  required: false, compatibilityKind: "h3-w6a8", experimental: true,
+  files: [{ url: build.url, dest: M(`diffusion_models/${build.file}`), bytes: build.bytes, sha256: build.sha256 }],
+  note: H3_W6A8_CAVEAT + " Downloading this file does not select it. The text encoder and audio/video decoders come from the ordinary H3 install.",
+  requires: { nvidiaOnly: true, experimental: true,
+    experimentalWhy: "Experimental W6A8 build: a minimum hardware floor has not been established; render speed, quality and memory requirements have not been measured here.",
+    note: H3_W6A8_CAVEAT },
+})));
+CATALOG.push(...YUE2_STYLE_ADAPTERS.map((adapter) => ({
+  id: adapter.id, addonFor: "musicYue2Comfy", group: "music-addon",
+  label: `YuE2 style LoRA — ${adapter.label}`,
+  why: `${adapter.description} ${adapter.character}.`,
+  licence: "CC BY-NC 4.0 (adapter weights)", outputRights: adapter.outputRights,
+  required: false, styleAdapter: adapter,
+  files: [{ url: adapter.url, dest: M(`loras/${adapter.file}`), bytes: adapter.bytes, sha256: adapter.sha256 }],
+  note: `Optional fused planner and audio LoRA. Select ${adapter.file} in both YuE2 ComfyUI LoRA slots, start strengths at 1 and Thinking Full, and begin the style with ${adapter.trigger}. Native Python and GGUF do not support these files. Publisher demos use the bf16 checkpoint; int8 quality is not verified here. ${adapter.caution} Noncommercial use only; attribute ${adapter.outputRights.attribution}.`,
+  requires: { vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+    note: "Needs the YuE2 ComfyUI checkpoint. Adapter memory and quality have not been measured separately here." },
+})));
+
+/* Rows with an `amd` or `light` build, or an entry only NVIDIA fetches,
+ * answer `files` for the machine they run on: status, sizes and the
+ * downloader all read the same list, so none of them can offer one build and
+ * fetch the other. */
 for (const cap of CATALOG) {
   const all = cap.files;
-  if (!Array.isArray(all) || !all.some((f) => f.amd || f.light)) continue;
+  if (!Array.isArray(all) || !all.some((f) => f.amd || f.light || f.nvidiaOnly)) continue;
   Object.defineProperty(cap, "files", { get: () => forCard(all), enumerable: true, configurable: true });
   // The published list, the same on every machine: the docs tables read this.
   Object.defineProperty(cap, "defaultFiles", { value: all, enumerable: false });
+}
+
+/**
+ * A ROW WHOSE FILES A VIDEO ENGINE LOADS, so index.js has config.js pick
+ * every video file again when one lands or goes (refreshVideoPicks): each
+ * video engine's own row (config.video.engines, through MODEL_TO_CAPABILITY:
+ * H3, LTX, FastH3), H3's references row and the rows that sit on either
+ * (addonFor "video" or "videoRefs": the speed-ups, the W6A8 builds). On every
+ * card (setF, from a tester's report): a restart picks the same files, this
+ * only stops a running Studio from holding on to the names it chose before.
+ */
+export function isVideoRow(id) {
+  const cap = CATALOG.find((c) => c.id === id);
+  if (!cap) return false;
+  if (cap.id === "videoRefs" || cap.addonFor === "video" || cap.addonFor === "videoRefs") return true;
+  return Object.keys(config.video?.engines || {}).some((k) => MODEL_TO_CAPABILITY[k] === cap.id);
 }
 
 /* ───────────────────────────── what a capability MAKES, said POSITIVELY
@@ -3506,7 +3586,37 @@ function sha256Of(file, cancelled = () => false) {
  * stalled. The .part stays, so pressing Download again resumes it. */
 const DOWNLOAD_STALL_MS = Number(process.env.AIPLAY_DOWNLOAD_STALL_MS) || 90_000;
 
-async function filePresent(f) {
+/* Every folder the engine loads from (localmodels.js engineBases): the same
+ * answer config.js's picks, workflow.js videoReady() and the engine door read. */
+async function catalogShelf() {
+  return scanBases(await engineBases(config));
+}
+
+function catalogModelFile(f, files, override = null) {
+  const rel = path.relative(config.modelsDir, f.dest);
+  const [folder, ...rest] = rel.split(path.sep);
+  if (!MODEL_FOLDERS.includes(folder) || !rest.length) return null;
+  const resolve = (name) => {
+    try { return findShelfModel(files, folder, name); }
+    catch { return null; } // ambiguous names need an explicit subfolder selection
+  };
+  if (override) return resolve(override);
+  const stock = resolve(rest.join(path.sep));
+  if (stock?.bytes === f.bytes) return stock;
+  for (const name of f.alt || []) {
+    const alt = resolve(name);
+    if (alt?.bytes > 0) return alt;
+  }
+  return null;
+}
+
+async function filePresent(f, files = null, override = null) {
+  const rel = path.relative(config.modelsDir, f.dest);
+  // Tokenizer packages also keep JSON/Python companions under model shelves.
+  // Those retain their exact package paths; only weights use recursive lookup.
+  if (MODEL_FOLDERS.includes(rel.split(path.sep)[0]) && /\.(safetensors|sft|gguf|ckpt|pt|pth|bin)$/i.test(f.dest)) {
+    return !!catalogModelFile(f, files || await catalogShelf(), override);
+  }
   try {
     if ((await stat(f.dest)).size === f.bytes) return true;
   } catch { /* fall through to the alternates */ }
@@ -3518,7 +3628,6 @@ async function filePresent(f) {
   /* The same file under an EARLIER models folder (config.modelsAlso): the
    * engine still loads from there, so it is installed, not missing. Without
    * this a change of folder offered every model again, hundreds of GB. */
-  const rel = path.relative(config.modelsDir, f.dest);
   if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
     for (const base of config.modelsAlso || []) {
       try {
@@ -3605,6 +3714,9 @@ export class ModelManager extends EventEmitter {
   /** Catalogue with live presence, for the UI. */
   async status() {
     const out = [];
+    const found = new Map();
+    const shelf = await catalogShelf();
+    const w6a8 = CATALOG.some((cap) => cap.compatibilityKind === "h3-w6a8") ? probeH3W6a8(config) : null;
     for (const cap of CATALOG) {
       const files = await Promise.all(cap.files.map(async (f) => {
         /* A local file the user chose to stand in for this one (Models screen).
@@ -3612,15 +3724,13 @@ export class ModelManager extends EventEmitter {
         const override = config.modelOverrides?.[path.basename(f.dest)] || null;
         const rel = path.relative(config.modelsDir, path.dirname(f.dest)).split(path.sep)[0];
         const folder = rel && !rel.startsWith("..") ? rel : null;
-        /* `alt` names resolve against the file's own folder, so a stand-in in an
-         * alias folder (unet for diffusion_models) is reached as ../unet/<name>. */
-        const checked = override && folder
-          ? { ...f, alt: [...(f.alt || []), ...folderGroup(folder).map((g) => path.join("..", g, override))] }
-          : f;
+        const resolved = catalogModelFile(f, shelf, override);
         return {
         name: path.basename(f.dest),
         folder,
         override,
+        resolvedName: resolved?.name || null,
+        resolvedPath: resolved?.full || null,
         /* ⚠ THE WHOLE PATH, BESIDE THE BASENAME, because "is this the same
          * file" is a question about a PATH and `bytesFor()` was answering it
          * with a name. That proxy held for as long as no two capabilities used
@@ -3632,12 +3742,16 @@ export class ModelManager extends EventEmitter {
          * dest, so the deduplication that matters is unchanged. */
         dest: f.dest,
         bytes: f.bytes,
-        present: await filePresent(checked),
+        present: await filePresent(f, shelf, override),
         have: await fileHave(f),
         };
       }));
+      /* Which file on disk counted for each of the row's files (#noteChanges). */
+      found.set(cap.id, files.map((f) => (f.present ? f.resolvedPath || f.dest : "")).join("|"));
       const totalBytes = cap.files.reduce((s, f) => s + f.bytes, 0) || cap.approxBytes || 0;
       const haveBytes = files.reduce((s, f) => s + (f.present ? f.bytes : f.have), 0);
+      const installed = cap.files.length > 0 && files.every((f) => f.present);
+      const compatibility = cap.compatibilityKind === "h3-w6a8" ? w6a8 : null;
       out.push({
         id: cap.id,
         group: cap.group || null,
@@ -3650,6 +3764,9 @@ export class ModelManager extends EventEmitter {
          * model, like Fast draft on Qwen Image 2.1). Null for every model of
          * its own. */
         addonFor: cap.addonFor || null,
+        styleAdapter: cap.styleAdapter || null,
+        experimental: !!cap.experimental,
+        compatibility,
         label: cap.label,
         why: cap.why,
         licence: cap.licence,
@@ -3698,12 +3815,33 @@ export class ModelManager extends EventEmitter {
         files,
         totalBytes,
         haveBytes,
-        ready: cap.files.length > 0 && files.every((f) => f.present),
+        installed,
+        ready: installed && (!compatibility || compatibility.ready),
         downloading: this.progress.has(cap.id),
         progress: this.progress.get(cap.id) || null,
       });
     }
+    this.#noteChanges(found);
     return markRequired(out);
+  }
+
+  /* WHAT CAME OR WENT SINCE THE LAST LOOK (setF, from a tester's report). A
+   * download that finishes says so ("ready"), but a file copied in by hand, a
+   * stand-in chosen, or a file deleted says nothing, and Studio has no delete
+   * button of its own. So each status() compares, row by row, which file on
+   * disk counted for each of its files with the last look, and emits
+   * "changed" with the ids where one came, went or was swapped for another
+   * build the row accepts; the first look only records. index.js picks the
+   * video files again on it (config.js refreshVideoPicks). /api/status reads
+   * this at least once a minute (modelsDisk), the Models screen and the video
+   * gate at once. */
+  #seen = null;
+  #noteChanges(now) {
+    const before = this.#seen;
+    this.#seen = now;
+    if (!before) return;
+    const changed = [...now].filter(([id, sig]) => before.has(id) && before.get(id) !== sig).map(([id]) => id);
+    if (changed.length) this.emit("changed", changed);
   }
 
   /* The fetch of each running download, so Cancel can stop it mid-wait. */
@@ -3753,6 +3891,14 @@ export class ModelManager extends EventEmitter {
       e.gated = cap.gated;
       throw e;
     }
+    if (cap.compatibilityKind === "h3-w6a8") {
+      const compatibility = probeH3W6a8(config);
+      if (!compatibility.downloadable) {
+        const error = new Error(compatibility.reason);
+        Object.assign(error, { compatibility, reason: "w6a8-hardware" });
+        throw error;
+      }
+    }
     /* A ROW WHOSE FILE FACTS ARE STILL PLACEHOLDERS, refused here rather than
      * three gigabytes later. Without this the download runs, finishes, and dies
      * at `#one`'s size check with "expected 0 bytes, got 4283000000" — which
@@ -3793,8 +3939,9 @@ export class ModelManager extends EventEmitter {
     this.#runs.set(id, run);
     const mine = () => this.#runs.get(id) === run;
     const total = cap.files.reduce((s, f) => s + f.bytes, 0);
+    const shelf = await catalogShelf();
     let doneBytes = 0;
-    for (const f of cap.files) if (await filePresent(f)) doneBytes += f.bytes;
+    for (const f of cap.files) if (await filePresent(f, shelf)) doneBytes += f.bytes;
 
     this.progress.set(id, { received: doneBytes, total, file: null, state: "starting" });
     this.emit("update");
@@ -3802,7 +3949,9 @@ export class ModelManager extends EventEmitter {
     try {
       for (const f of cap.files) {
         if (this.cancelled.has(id)) throw new Error("cancelled");
-        if (await filePresent(f)) continue;
+        // Re-read after each completed download; shared files may have landed
+        // while this request waited for another capability's download.
+        if (await filePresent(f, await catalogShelf())) continue;
         await this.#one(id, f, () => doneBytes, (n) => { doneBytes = n; });
         doneBytes += f.bytes;
       }

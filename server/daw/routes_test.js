@@ -65,7 +65,7 @@ const EXPECTED = [
   // structure
   "add_track", "set_track", "remove_track", "add_clip", "set_clip", "remove_clip",
   // the piano roll as data
-  "add_note", "move_note", "delete_note",
+  "add_note", "move_note", "delete_note", "restore_note",
   // §2 a whole gesture in ONE write — what the velocity lane commits with
   "edit_notes",
   // the dirty-region loop, and §1's look-ahead half

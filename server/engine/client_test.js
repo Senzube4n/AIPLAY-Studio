@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import * as provenance from "../provenance.js";
 import { createEngineClient } from "./client.js";
 import { createStore } from "./store.js";
+import { config } from "../config.js";
 import { buildRecord, RECORD_FIELDS, graphProblems } from "./record.js";
 import {
   LTX_VIDEO_GRAPH, FLUX_IMAGE_GRAPH, TEXT_JUDGE_GRAPH,
@@ -78,6 +79,8 @@ const makeStore = (dir) => createStore({
   hashCacheFile: path.join(dir, "model-hashes.json"),
   outputDir: outDir,
   inputDir: path.join(dir, "input"),
+  modelsDir: path.join(dir, "models"),
+  modelsAlso: [],
   prov: ledger(ledgerDir),
 });
 
@@ -1177,6 +1180,111 @@ async function settled(runId) {
     (await settled(C.runId)).status === "cancelled");
   stub.finishRunning();
   ok("...and the chat turn completes", (await settled(B.runId)).status === "completed");
+}
+
+{
+  const modelsDir = path.join(tmp, "nested-models"), also = path.join(tmp, "extra-models");
+  const weight = (base, folder, name, bytes) => {
+    const full = path.join(base, folder, name);
+    mkdirSync(path.dirname(full), { recursive: true }); writeFileSync(full, bytes);
+    return full;
+  };
+  weight(modelsDir, "diffusion_models", path.join("owners", "shared.safetensors"), "transformer");
+  weight(modelsDir, "loras", "shared.safetensors", "adapter with the same leaf");
+  weight(also, "unet", path.join("owners", "shared.safetensors"), "later transformer");
+  const encoder = weight(also, "clip", path.join("encoders", "gemma.safetensors"), "encoder");
+  weight(modelsDir, "loras", "only-adapter.safetensors", "must not be a VAE");
+  const first = weight(modelsDir, "diffusion_models", path.join("one", "ambiguous.safetensors"), "one");
+  weight(also, "unet", path.join("two", "ambiguous.safetensors"), "two");
+  const custom = weight(also, "custom-pack", path.join("deep", "owner.pt"), "custom weight");
+  const s = createStore({ modelsDir, modelsAlso: [also], graphDir: path.join(tmp, "nested-graphs"),
+    hashCacheFile: path.join(tmp, "nested-hashes.json"), inputDir: path.join(tmp, "nested-input"), outputDir: outDir });
+  ok("identical relative names in distinct bases leave model provenance unresolved",
+    await s.findModel("owners\\shared.safetensors", "unet_name") === null);
+  let copies = null;
+  try { await s.findModel("shared.safetensors", "unet_name"); } catch (error) { copies = error; }
+  ok("a bare name cannot pick one of several physical copies", /More than one/.test(copies?.message || ""));
+  ok("numbered text encoder inputs resolve alias shelves in extra bases",
+    await s.findModel("encoders/gemma.safetensors", "clip_name2") === encoder);
+  ok("a typed VAE input cannot inherit a same-name adapter's provenance",
+    await s.findModel("only-adapter.safetensors", "vae_name") === null);
+  let ambiguity = null;
+  try { await s.findModel("ambiguous.safetensors", "unet_name"); } catch (error) { ambiguity = error; }
+  ok("ambiguous nested basenames cannot acquire the first file's provenance", /More than one/.test(ambiguity?.message || ""));
+  ok("an explicit nested selection resolves despite its duplicate leaf",
+    await s.findModel("one/ambiguous.safetensors", "unet_name") === first);
+  ok("unknown custom loader inputs retain their pack-tail lookup",
+    await s.findModel("owner.pt", "owner_weights") === custom);
+  const invalid = ["../shared.safetensors", "owners/../shared.safetensors", "C:\\shared.safetensors", "/shared.safetensors", "owners\\..\\shared.safetensors", "bad\0.safetensors"];
+  ok("model provenance rejects traversal, absolute and null-byte paths",
+    (await Promise.all(invalid.map(name => s.findModel(name, "unet_name")))).every(full => full === null));
+  const record = { engineFiles: [{ file: "one/ambiguous.safetensors", input: "unet_name" }],
+    loras: [{ file: "shared.safetensors", input: "lora_name" }] };
+  await s.resolveRecordFiles(record, { hashModels: true });
+  ok("model receipts fingerprint the selected shelf files independently",
+    record.engineFiles[0].resolvedPath === first && record.engineFiles[0].bytes === "one".length
+      && record.loras[0].resolvedPath === path.join(modelsDir, "loras", "shared.safetensors")
+      && record.engineFiles[0].sha256 !== record.loras[0].sha256);
+  const fresh = weight(modelsDir, "vae", "fresh.safetensors", "new download");
+  const extraFresh = weight(also, "clip", path.join("new", "text.safetensors"), "new encoder");
+  ok("typed selections see downloads immediately after the basename index was cached",
+    await s.findModel("fresh.safetensors", "vae_name") === fresh
+      && await s.findModel("new/text.safetensors", "clip_name2") === extraFresh);
+  weight(modelsDir, "vae", "empty.safetensors", "");
+  mkdirSync(path.join(modelsDir, "vae", "directory.safetensors"));
+  ok("the immediate typed lookup skips empty files and directories",
+    await s.findModel("empty.safetensors", "vae_name") === null
+      && await s.findModel("directory.safetensors", "vae_name") === null);
+  weight(modelsDir, "unet", "late-alias.safetensors", "new unet download");
+  ok("a new exact alias model resolves without refreshing the cached index",
+    await s.findModel("late-alias.safetensors", "unet_name") === path.join(modelsDir, "unet", "late-alias.safetensors"));
+  weight(modelsDir, "diffusion_models", "late-alias.safetensors", "another physical copy");
+  ok("a duplicate added after index caching cannot inherit the first copy's provenance",
+    await s.findModel("late-alias.safetensors", "unet_name") === null);
+  const unresolved = { engineFiles: [{ file: "owners/shared.safetensors", input: "unet_name" }] };
+  await s.resolveRecordFiles(unresolved, { hashModels: true });
+  ok("ambiguous exact selections leave receipts without a path or fingerprint",
+    unresolved.engineFiles[0].resolvedPath === null && !unresolved.engineFiles[0].sha256);
+}
+
+{
+  const root = path.join(tmp, "dynamic-model-bases"), primary = path.join(root, "primary");
+  const also = path.join(root, "also"), yamlBase = path.join(root, "yaml"), comfyDir = path.join(root, "ComfyUI");
+  const weight = (base, folder, name) => {
+    const full = path.join(base, folder, name);
+    mkdirSync(path.dirname(full), { recursive: true }); writeFileSync(full, "weights"); return full;
+  };
+  const extra = weight(yamlBase, "text_encoders", path.join("owner", "yaml.safetensors"));
+  const own = weight(path.join(comfyDir, "models"), "vae", path.join("owner", "native.safetensors"));
+  weight(also, "loras", "fixture-isolation.safetensors");
+  mkdirSync(root, { recursive: true });
+  const yaml = path.join(root, "extra.yaml");
+  writeFileSync(yaml, `external:\n  base_path: '${yamlBase}'\n`);
+  const before = { modelsDir: Object.getOwnPropertyDescriptor(config, "modelsDir"), modelsAlso: config.modelsAlso,
+    comfyDir: config.comfyDir, extraArgs: config.comfy.extraArgs };
+  const dynamic = createStore({ graphDir: path.join(root, "graphs"), hashCacheFile: path.join(root, "hashes.json") });
+  try {
+    Object.defineProperty(config, "modelsDir", { configurable: true, value: primary });
+    config.modelsAlso = [also]; config.comfyDir = comfyDir;
+    config.comfy.extraArgs = ["--extra-model-paths-config", yaml];
+    ok("the default store sees YAML extra bases and ComfyUI's own models dynamically",
+      await dynamic.findModel("owner/yaml.safetensors", "clip_name") === extra
+        && await dynamic.findModel("owner/native.safetensors", "vae_name") === own);
+    const isolated = createStore({ modelsDir: path.join(root, "isolated") });
+    ok("an explicit fixture modelsDir does not inherit global model bases",
+      await isolated.findModel("fixture-isolation.safetensors", "lora_name") === null
+        && await isolated.findModel("owner/yaml.safetensors", "clip_name") === null);
+    const old = weight(primary, "diffusion_models", path.join("owner", "move.safetensors"));
+    ok("a default store uses the current primary base for basename fallback",
+      await dynamic.findModel("move.safetensors", "unet_name") === old);
+    const nextBase = path.join(root, "next"), next = weight(nextBase, "unet", path.join("owner", "move.safetensors"));
+    Object.defineProperty(config, "modelsDir", { configurable: true, value: nextBase });
+    ok("changing configured bases invalidates the cached basename snapshot",
+      await dynamic.findModel("move.safetensors", "unet_name") === next);
+  } finally {
+    Object.defineProperty(config, "modelsDir", before.modelsDir); config.modelsAlso = before.modelsAlso;
+    config.comfyDir = before.comfyDir; config.comfy.extraArgs = before.extraArgs;
+  }
 }
 
 /* ── done ──────────────────────────────────────────────────────────────── */

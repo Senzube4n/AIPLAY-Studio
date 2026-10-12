@@ -35,6 +35,9 @@ import { ffmpegPath, ffprobePath } from "../server/clipjoin.js";
 /* What the system check SAYS (RAM, ffmpeg, a weak card, Music only, Studio's
  * packages): pure, so server/installer_test.js can call it. */
 import { ramItem, ffmpegItem, cardAdvice, musicOnlyNote, studioPackagesItem, yue2ComfyVerdict } from "./checks.mjs";
+/* The launch modes that are Advanced only (RunPod GPU, the owner's decision of
+ * 2026-09-26), judged by the level Studio itself opens on. */
+import { modeAllowed, modesForLevel, launcherLevel, advancedOnlyLine } from "./checks.mjs";
 /* "Try again" beside Studio's own packages: the engine installer's --studio-packages, the same run MCP's setup_feature makes. */
 import { runStudioPackages } from "../server/setup/engine-packages.js";
 /* Their names, from the one list the installer and the check use. */
@@ -113,6 +116,23 @@ function watchLine(line) {
 
 async function readJson(p) {
   try { return JSON.parse(await readFile(p, "utf-8")); } catch { return null; }
+}
+
+/* The level Studio opens on, "simple" or "advanced", read from settings.json
+ * the way Studio reads it at every start (server/welcome/startlevel.js). A
+ * file that is there and cannot be read keeps Advanced, as in Studio. Read at
+ * every ask, not cached with the system check, so "Show every setting" in
+ * Studio reaches the launcher the next time its page loads the check. */
+async function studioLevel() {
+  let text = null;
+  try { text = await readFile(SETTINGS, "utf-8"); }
+  catch (err) { if (err?.code !== "ENOENT") return "advanced"; }
+  return launcherLevel(text);
+}
+/* The system check as the page gets it: the modes this level is offered. */
+async function checkForPage(c) {
+  const level = await studioLevel();
+  return { ...c, level, modes: modesForLevel(c.modes, level) };
 }
 
 function runNode(args, timeoutMs = 240_000) {
@@ -439,6 +459,8 @@ async function launch(mode) {
   if (child) throw new Error("Studio is already running from this launcher.");
   if (busyInstalling()) throw new Error("Wait for the engine install to finish.");
   if (!["full", "music", "cloud", "runpod"].includes(mode)) throw new Error("Unknown mode.");
+  /* RunPod GPU is Advanced only: a Simple install is not offered it, here either. */
+  if (!modeAllowed(mode, await studioLevel())) throw new Error(advancedOnlyLine(MODE_NAME[mode] || mode));
 
   setState({ mode, state: "starting", stage: "setup", startedAt: Date.now(), readyAt: null, error: null, pid: null, engineExpected: null });
   const running = await probeStudio();
@@ -759,7 +781,7 @@ function makeServer(portRef) {
       if (url.pathname === "/api/state") {
         const saved = (await readJson(SETTINGS)) || {};
         return send(res, 200, { studio, install, pkgRetry, log: logLines.slice(-400), host: HOST,
-          prefs: launcherPrefs(saved) });
+          prefs: launcherPrefs(saved, await studioLevel()) });
       }
       /* Launcher preferences. One so far: whether the window's X also stops
        * Studio. Off by default — closing a window should not end a render
@@ -771,10 +793,11 @@ function makeServer(portRef) {
         if (b.autoLaunch === null) await saveSettings({}, ["launcherAutoLaunch"]);
         else if (b.autoLaunch !== undefined) {
           if (!LAUNCH_MODES.includes(b.autoLaunch)) return send(res, 400, { error: "Unknown mode." });
+          if (!modeAllowed(b.autoLaunch, await studioLevel())) return send(res, 400, { error: advancedOnlyLine(MODE_NAME[b.autoLaunch]) });
           await saveSettings({ launcherAutoLaunch: b.autoLaunch });
         }
         const saved = (await readJson(SETTINGS)) || {};
-        return send(res, 200, { ok: true, prefs: launcherPrefs(saved) });
+        return send(res, 200, { ok: true, prefs: launcherPrefs(saved, await studioLevel()) });
       }
       if (url.pathname === "/api/advanced") {
         if (req.method === "POST") return send(res, 200, await saveAdvanced(await readBody(req)));
@@ -796,7 +819,7 @@ function makeServer(portRef) {
         }
         return send(res, 200, install);
       }
-      if (url.pathname === "/api/check") return send(res, 200, await getCheck(url.searchParams.get("refresh") === "1"));
+      if (url.pathname === "/api/check") return send(res, 200, await checkForPage(await getCheck(url.searchParams.get("refresh") === "1")));
       if (url.pathname === "/api/events") {
         res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
         res.write(`event: state\ndata: ${JSON.stringify(studio)}\n\n`);
@@ -875,17 +898,22 @@ function showWindow() {
  * `autoLaunch` is the favourite: the star on a card, started by main() below
  * every time the launcher starts (settings.json launcherAutoLaunch). */
 const LAUNCH_MODES = ["full", "music", "cloud", "runpod"];
-function launcherPrefs(saved) {
+const MODE_NAME = { full: "Full Studio", music: "Music only", cloud: "Comfy API", runpod: "RunPod GPU" };
+/* A favourite this level is not offered (a RunPod star saved in Advanced, on
+ * an install now on Simple) reads as none: it is not started, the page shows
+ * no star, and the saved value stays for the day the level is Advanced again. */
+function launcherPrefs(saved, level) {
+  const fav = LAUNCH_MODES.includes(saved.launcherAutoLaunch) ? saved.launcherAutoLaunch : null;
   return {
     closeStopsStudio: saved.launcherCloseStopsStudio === true,
-    autoLaunch: LAUNCH_MODES.includes(saved.launcherAutoLaunch) ? saved.launcherAutoLaunch : null,
+    autoLaunch: fav && modeAllowed(fav, level) ? fav : null,
   };
 }
 /** Start the favourite, once, as the launcher opens. Not when Studio already
  *  runs (launch() finds it and opens it instead), not when the system check
  *  says the mode cannot run here: the log says why, and nothing starts. */
 async function autoLaunch() {
-  const mode = launcherPrefs((await readJson(SETTINGS)) || {}).autoLaunch;
+  const mode = launcherPrefs((await readJson(SETTINGS)) || {}, await studioLevel()).autoLaunch;
   if (!mode) return;
   const c = await getCheck(false).catch(() => null);
   if (!c?.modes?.[mode]?.available) {

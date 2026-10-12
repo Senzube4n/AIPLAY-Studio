@@ -10,6 +10,9 @@ import { createListeningLab, listeningPairRequests } from "./listening-lab.js";
 import { createListeningLabRuntime } from "./lab-runtime.js";
 import { buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA } from "../workflow.js";
 import { yue2ComfyFields } from "./yue2-comfy-input.js";
+import { validateYue2StyleAdapter } from "./yue2-style-adapters.js";
+import { requireModelName, modelLeaf, findShelfModel } from "../localmodels.js";
+import { createBatchMusicBridge } from "../batch-music-context.js";
 
 // Git may check these sources out as CRLF on Windows. Normalize only line endings
 // so executable-boundary markers behave identically in a checkout and a worktree.
@@ -85,13 +88,16 @@ test("listening store reconciles shared finalized-audio receipts, then detects c
 });
 
 function createRouteHarness() {
+  const batchMusicBridge = createBatchMusicBridge({ submit: async () => {
+    throw new Error("Ordinary workflow requests must not submit an internal batch.");
+  } });
   const queued = [], shelf = [
     { folder: "checkpoints", name: "reviewed.safetensors", full: "reviewed" },
     { folder: "checkpoints", name: "other.safetensors", full: "other" },
     { folder: "loras", name: "mine.safetensors" },
     { folder: "loras", name: INSTRUMENTAL_PLANNER_LORA },
   ];
-  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields,
+  const scope = { path, INSTRUMENTAL_PLANNER_LORA, yue2ComfyFields, validateYue2StyleAdapter, requireModelName, modelLeaf, findShelfModel, batchMusicBridge,
     config: { music: { yue2Checkpoint: "global-wrong.safetensors", yue2Lora: "saved-wrong.safetensors",
       yue2LoraClip: INSTRUMENTAL_PLANNER_LORA, engines: { "yue2-comfy": { maxDuration: 300 } }, precision: "int8" }, audioRef: { denoise: .5 } },
     scanBases: async () => shelf, modelBases: async () => [], probeModel: async file => ({ family: file === "reviewed" ? "yue2" : "flux" }),
@@ -102,11 +108,31 @@ function createRouteHarness() {
     paidSong: false };
   const body = between(index, "      let yueLora = null", "\n    /**\n     * Extend an existing take.");
   // The slice ends at the enclosing generate-route brace; execute its branch.
-  const route = new AsyncFunction(...Object.keys(scope), "body", `const musicEngine = 'yue2-comfy', aceJob = null, req = {}, res = {}; { ${body}`);
+  // The trusted batch context is read above this slice in /api/generate. Use
+  // the same bridge here: ordinary requests have no context, while forged or
+  // expired bridge headers must fail before the enqueue boundary.
+  const route = new AsyncFunction(...Object.keys(scope), "body", "headers",
+    `const musicEngine = 'yue2-comfy', aceJob = null, req = {headers}, res = {};
+     const batchMusicMetadata = batchMusicBridge.metadata(req); { ${body}`);
   const graphCall = between(runner, "buildYue2ComfyGraph({", ") : buildGraph({") + ")";
   const graph = new Function("buildYue2ComfyGraph", "job", `return ${graphCall};`).bind(null, buildYue2ComfyGraph);
-  return { queued, request: body => route(...Object.values(scope), body), graph };
+  return { queued, shelf, request: (body, headers = {}) => route(...Object.values(scope), body, headers), graph };
 }
+
+test("ordinary workflow requests cannot supply trusted batch metadata through JSON", async () => {
+  const f = createRouteHarness();
+  const body = { caption: "Warm folk", lyrics: "Words", checkpoint: "reviewed.safetensors", lora: "", loraClip: "",
+    batchId: "untrusted-night", stages: { cover: false, stems: false, lrc: false, video: false }, paidConfirmed: true,
+    actor: "user" };
+  assert.equal((await f.request(body)).status, 200);
+  assert.equal(f.queued.length, 1);
+  for (const key of ["batchId", "stages", "paidConfirmed"]) {
+    assert.equal(Object.hasOwn(f.queued[0], key), false, `${key} requires a real server-owned batch context`);
+  }
+  assert.equal(f.queued[0].actor, "agent:lab", "the request JSON cannot replace the stamped actor");
+  await assert.rejects(f.request(body, { "x-aiplay-batch-call": "forged" }), /expired before it could queue/);
+  assert.equal(f.queued.length, 1, "an unowned batch header cannot enqueue a workflow request");
+});
 
 test("reviewed base/adapter requests survive the actual API and queue graph mapping", async () => {
   const f = createRouteHarness();
@@ -125,6 +151,25 @@ test("reviewed base/adapter requests survive the actual API and queue graph mapp
   const refused = await f.request({ ...pair.base, checkpoint: "other.safetensors" });
   assert.equal(refused.status, 400); assert.equal(f.queued.length, 2);
   assert.equal((await f.request({ ...pair.base, checkpoint: "../escape.safetensors" })).status, 400);
+});
+
+test("nested YuE2 checkpoints and adapters survive the actual generate route into loader inputs", async () => {
+  const f = createRouteHarness();
+  f.shelf[0].name = path.join("yue2", f.shelf[0].name);
+  f.shelf[2].name = path.join("voices", f.shelf[2].name);
+  const result = await f.request({ caption: "Warm folk", lyrics: "Words", checkpoint: "yue2/reviewed.safetensors",
+    lora: "voices/mine.safetensors", loraClip: "", seed: 3, cot: "full" });
+  assert.equal(result.status, 200);
+  const graph = f.graph(f.queued[0]);
+  assert.equal(graph[1].inputs.ckpt_name, path.join("yue2", "reviewed.safetensors"));
+  assert.equal(graph[2].inputs.lora_name, path.join("voices", "mine.safetensors"));
+  const moved = await f.request({ caption: "Warm folk", lyrics: "Words", checkpoint: "reviewed.safetensors", lora: "mine.safetensors", loraClip: "" });
+  assert.equal(moved.status, 200, "old flat selections can locate one moved file");
+  assert.equal(f.graph(f.queued[1])[1].inputs.ckpt_name, path.join("yue2", "reviewed.safetensors"));
+  assert.equal((await f.request({ checkpoint: "yue2/../reviewed.safetensors", lyrics: "Words" })).status, 400);
+  f.shelf.push({ ...f.shelf[0], name: path.join("other", "reviewed.safetensors"), full: path.join("other", "reviewed.safetensors") });
+  await assert.rejects(f.request({ checkpoint: "reviewed.safetensors", lyrics: "Words" }), err => err.status === 400 && /subfolder/.test(err.message));
+  assert.equal(f.queued.length, 2, "ambiguous lookup cannot enqueue a render");
 });
 
 test("shared lab submit callback suppresses automatic media jobs through the actual generate route", async () => {

@@ -26,6 +26,27 @@ const TARGET =
 export function rackTools({ daw, get, slugOf }) {
   return [
     {
+      name: "daw_plugins",
+      description: "Manage native VST3 audio effects. list shows host readiness, configured folders and plugins without loading their binaries. scan refreshes discovery; folders replaces extra search folders. install copies a local .zip or .vst3 file/bundle into Studio's user plugin folder. inspect explicitly loads an installed/local plugin in an isolated bounded worker and returns its typed parameters. setup installs the optional CPU Pedalboard host. After inspect, use daw_insert add with type vst3 and plugin=id. Playback and bounce share the insert chain. VST2 DLLs, MIDI instruments and native editor windows are not supported by this DAW path.",
+      inputSchema: {
+        type: "object", required: ["op"], additionalProperties: false,
+        properties: {
+          op: { type: "string", enum: ["list", "scan", "inspect", "install", "setup"] },
+          path: { type: "string", description: "Server-local ZIP/VST3 path for install, or VST3 path for inspect." },
+          plugin: { type: "string", description: "Discovered plugin id for inspect instead of path." },
+          folders: { type: "array", items: { type: "string" }, maxItems: 16, description: "Extra discovery folders for scan; omit to retain saved folders." },
+        },
+      },
+      async run(a) {
+        if (a.op === "list") return get("/api/daw/plugins");
+        if (a.op === "scan") return daw({ action: "plugin_scan", folders: a.folders, refresh: true });
+        if (a.op === "inspect") return daw({ action: "plugin_inspect", path: a.path, plugin: a.plugin });
+        if (a.op === "install") return daw({ action: "plugin_install", path: a.path });
+        if (a.op === "setup") return daw({ action: "plugin_setup" });
+        throw new Error("Choose list, scan, inspect, install or setup.");
+      },
+    },
+    {
       name: "daw_insert",
       description:
         "The insert chains — the rack. op `catalog` lists every device with its "
@@ -52,10 +73,12 @@ export function rackTools({ daw, get, slugOf }) {
             enum: ["eq", "compressor", "limiter", "saturator", "chorus",
                    "delay", "reverb", "gate", "utility",
                    "multibandCompressor", "dynamicEq", "stereoImager",
-                   "tiltEq", "maximizer", "exciter", "dither"],
+                   "tiltEq", "maximizer", "exciter", "dither", "vst3"],
             description: "Device to add (op add).",
           },
           insert: { type: "string", description: "Insert id (ops set/remove)." },
+          plugin: { type: "string", description: "Inspected plugin id from daw_plugins (add type vst3). Native plugin parameters are static values from its inspection schema." },
+          plugin_snapshot: { type: "object", description: "Saved plugin descriptor for restoring a removed bypassed insert only (add type vst3, enabled=false). Contains no executable path; enabling later requires its registered fingerprint." },
           params: {
             type: "object",
             description: "Device params from the catalog, partial on set. "
@@ -75,7 +98,7 @@ export function rackTools({ daw, get, slugOf }) {
         const slug = slugOf(a.slug);
         if (a.op === "add") {
           const r = await daw({ action: "insert_add", slug, target: a.target, type: a.type,
-                                params: a.params, enabled: a.enabled, index: a.index });
+                                plugin: a.plugin, plugin_snapshot: a.plugin_snapshot, params: a.params, enabled: a.enabled, index: a.index });
           return { insert_id: r.insertId, chain: r.chain, dirty: r.dirty, updated_at: r.updatedAt };
         }
         if (a.op === "set") {

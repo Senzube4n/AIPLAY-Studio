@@ -421,6 +421,105 @@ in the app.
                             paragraph (xinntao/Real-ESRGAN LICENSE))
                             https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
 
+    MiniMax H3 fl2va W6A8 (experimental)
+                            MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    MiniMax H3 ref2va W6A8 (experimental)
+                            MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    TRBDR Broadside         CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Lantern           CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Hearth            CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Ferryman          CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    TRBDR Porch             CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-trbdr-folk-troubadour/blob/078b19e52baebaa71463ea94afac5ce13abfe29a/README.md
+
+    GRVL Ember              CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Smoulder           CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Cinder             CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Wildfire           CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Thunder            CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
+    GRVL Tempest            CC BY-NC 4.0 (adapter weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Publisher model card,
+                            License and credits)
+                            https://huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul/blob/314dbcf2779e92b1b04e8539f4c2ceee3516f969/README.md
+
 The four output-rights classes, as the app words them:
 
     unrestricted            This model's licence places no condition on what you
@@ -457,13 +556,20 @@ RUNTIME DEPENDENCIES (separate installations)
                            Preserve the original model/source attribution;
                            the weights and native code have separate terms.
     ComfyUI                GPL-3.0 — a separate program that Studio drives over
-                           its HTTP API. Not linked, not bundled, not modified.
+                           its HTTP API. Not linked, not bundled, and its own
+                           code is not modified. Studio does copy custom nodes
+                           into its custom_nodes folder when the engine starts:
+                           its own (server/comfy_nodes/, the safety gate among
+                           them), and, only while its switch is on, the T8
+                           block cache listed under BUNDLED THIRD-PARTY CODE
+                           below. They run inside ComfyUI.
     ws (npm)               MIT — the WebSocket client Studio uses to follow a
                            ComfyUI job's progress, and the WebSocket server
                            behind the live panels. REQUIRED FOR BOOT.
     abcjs 6.4.4            MIT (Paul Rosen and Gregory Dyke) — the ABC engraver
-                           behind the sheet-music PDF. ⚠ THE ONE EXCEPTION to
-                           "not redistributed here": it is VENDORED at
+                           behind the sheet-music PDF. ⚠ AN EXCEPTION to "not
+                           redistributed here" (the others are listed under
+                           BUNDLED THIRD-PARTY CODE below): it is VENDORED at
                            web/vendor/abcjs/ beside its LICENSE.md and served
                            to the browser from there, never from a CDN, so an
                            offline machine can still print a lead sheet.
@@ -547,9 +653,10 @@ BUNDLED THIRD-PARTY CODE
                            Shipped unmodified at commit 36336dcee1ecb49a5ee98
                            426456aeb353c8535bd (v1.0.4) in
                            server/comfy_nodes/comfyui-minimax-h3-blockcache-T8/
-                           with its LICENSE, and copied into ComfyUI's
-                           custom_nodes when the engine starts. Used only when
-                           video_settings block_cache is switched on.
+                           with its LICENSE. Copied into ComfyUI's
+                           custom_nodes only when the engine starts with
+                           video_settings block_cache switched on, and Studio's
+                           copy is removed again when it starts with it off.
 
     Supra2-IMG model code  Apache-2.0, SupraLabs.
                            Source: https://huggingface.co/SupraLabs/Supra2-IMG

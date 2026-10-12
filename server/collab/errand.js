@@ -32,9 +32,9 @@
  * arrangement that cannot silently renumber the pictures a sentence refers to.
  *
  * ⚠ NO NAME FROM THE WIRE IS EVER USED AS A NAME ON DISK. Every staged picture
- * is renamed `peer_<first twelve of its own sha256><ext>`. A hex digest cannot
- * contain a path separator, so traversal is impossible rather than filtered, and
- * two friends sending the same sheet write one file.
+ * is renamed `peer_<first twelve of its own sha256>[_role]<ext>`. The optional
+ * role comes from a fixed local enum, so traversal is impossible rather than
+ * filtered, and the same bytes retain separate slots when used for two roles.
  *
  * This module writes pictures and returns a document. It does not create the
  * project: the door owns that call, so there is one place that decides a project
@@ -47,6 +47,7 @@ import path from "node:path";
 
 import { briefFor } from "./order.js";
 import { mergeFingerprints } from "../safety/minors.js";
+import { readReferenceRole } from "../mv/references.js";
 
 /** ⚠ THE ERRAND'S ONLY SCENE, AND THE ONE NAME A PLAN ITEM MAY USE. An order
  *  names a scene in somebody else's project; the project built from it has this
@@ -78,10 +79,10 @@ export function pictureKind(buf) {
   return null;
 }
 
-/** The only name this module will write. Content-addressed, so it carries no
- *  information from the wire at all. */
-export function errandName(digest, ext) {
-  return `peer_${String(digest).slice(0, 12)}${ext}`;
+/** The only name this module will write: a digest plus a locally checked role. */
+export function errandName(digest, ext, referenceRole = "identity") {
+  const role = readReferenceRole(referenceRole);
+  return `peer_${String(digest).slice(0, 12)}${role === "identity" ? "" : `_${role}`}${ext}`;
 }
 
 /** A title a person can recognise in their own project list. */
@@ -107,16 +108,24 @@ export async function stageOrderFiles({ orderDoc, assetsDir } = {}) {
     if (!kind) {
       throw refuse("file-type", `${f.file} is not a png, jpeg or webp. Nothing was written.`);
     }
-    const name = errandName(digest, EXT_FOR[kind]);
-    try {
-      await writeFile(path.join(assetsDir, name), buf);
-    } catch (err) {
-      throw refuse("staging-failed", `${name} could not be written into ${assetsDir}: ${err.message}. Nothing was accepted.`);
+    const slots = new Map();
+    for (const ref of (orderDoc.shot?.refs || []).filter((r) => r.file === f.file)) {
+      const referenceRole = ref.referenceRole || "identity";
+      slots.set(`ref:${referenceRole}`, { role: "ref", referenceRole });
     }
-    /* `file` is the packet's join key and `name` is what is on disk. The two are
-     * kept apart deliberately: the first is a label from somebody else and the
-     * second is ours. */
-    staged.push({ file: f.file, name, role: f.role || "ref", sha256: digest, bytes: buf.length });
+    if ((orderDoc.shot?.guides || []).some((g) => g.file === f.file)) slots.set("guide", { role: "guide", referenceRole: "identity" });
+    if (!slots.size) slots.set("legacy", { role: f.role || "ref", referenceRole: "identity" });
+    for (const slot of slots.values()) {
+      const name = errandName(digest, EXT_FOR[kind], slot.referenceRole);
+      try {
+        await writeFile(path.join(assetsDir, name), buf);
+      } catch (err) {
+        throw refuse("staging-failed", `${name} could not be written into ${assetsDir}: ${err.message}. Nothing was accepted.`);
+      }
+      /* The foreign file is only a join key. A shared file can fill several
+       * named Picture slots; roles keep those views distinct on local disk. */
+      staged.push({ file: f.file, name, ...slot, sha256: digest, bytes: buf.length });
+    }
   }
   return staged;
 }
@@ -130,19 +139,34 @@ export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {
   const brief = briefFor(orderDoc);
   const title = errandTitle(orderDoc, from);
 
-  const refNames = new Map();
-  for (const s of staged) {
-    const row = (shot.refs || []).find((r) => r.file === s.file);
-    refNames.set(s.file, row?.name || s.name);
-  }
-  const refs = staged.filter((s) => s.role === "ref");
-  const guides = staged.filter((s) => s.role === "guide");
+  // Picture order belongs to the frozen shot, never the attachment list.
+  const refs = (shot.refs || []).flatMap((metadata) => {
+    const ref = staged.find((s) => s.role === "ref" && s.file === metadata.file
+      && (s.referenceRole || "identity") === (metadata.referenceRole || "identity"));
+    return ref ? [{ ...ref, metadata }] : [];
+  });
+  const guides = (shot.guides || []).flatMap((g) => {
+    const stagedGuide = staged.find((s) => s.role === "guide" && s.file === g.file);
+    return stagedGuide ? [stagedGuide] : [];
+  });
   /* What each picture was made as, two booleans the sender's Studio put on its
    * row (packet.js). Kept on the rows here so this machine's own render door
    * judges the scene with them (mv/generate.js castFlags). */
-  const flagOf = (file) => mergeFingerprints(
-    [...(shot.refs || []), ...(shot.guides || [])].find((r) => r?.file === file)?.safety);
+  const flagOf = (file) => mergeFingerprints(...[...(shot.refs || []), ...(shot.guides || [])]
+    .filter((r) => r?.file === file).map((r) => r.safety));
 
+  const named = new Map();
+  for (const ref of refs) {
+    const metadata = ref.metadata;
+    const name = metadata.assetName || metadata.name || ref.name;
+    const role = metadata?.referenceRole || "identity";
+    const group = named.get(name) || { name, pack: false, images: [], sha256: ref.sha256 };
+    group.pack ||= !!metadata?.assetName;
+    group.images.push({ role, file: ref.name, safety: flagOf(ref.file) });
+    named.set(name, group);
+  }
+  const groups = [...named.values()];
+  const refRoles = Object.fromEntries(groups.filter((g) => g.pack).map((g) => [g.name, g.images.map((r) => r.role)]));
   const boardId = `bd_${randomUUID().slice(0, 8)}`;
   return {
     v: 1,
@@ -198,7 +222,8 @@ export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {
       grade: "",
       shots: [{ action: "" }],
       /* One bucket, packet order — see the header. */
-      characterRefs: refs.map((s) => refNames.get(s.file)),
+      characterRefs: groups.map((g) => g.name),
+      ...(Object.keys(refRoles).length ? { refRoles } : {}),
       backgroundRefs: [],
       propRefs: [],
       refProminence: {},
@@ -215,13 +240,15 @@ export function errandDoc({ orderDoc, from, staged, now = 0, expect = null } = {
       safety: mergeFingerprints(...guides.map((g) => flagOf(g.file))),
       updatedAt: now,
     }],
-    characters: refs.map((s, i) => ({
-      id: `c_${i}_${String(s.sha256).slice(0, 6)}`,
-      name: refNames.get(s.file),
+    characters: groups.map((g, i) => ({
+      id: `c_${i}_${String(g.sha256).slice(0, 6)}`,
+      name: g.name,
       role: "lead",
       description: "",
-      imageFile: s.name,
-      safety: flagOf(s.file),
+      imageFile: g.pack ? (g.images.find((r) => r.role === "identity")?.file || null) : g.images[0].file,
+      ...(g.pack ? { referenceImages: g.images.map(({ file, role }) => ({ file, role })),
+        takes: g.images.map(({ file, safety }) => ({ file, seed: null, safety, at: now })) } : {}),
+      safety: mergeFingerprints(...g.images.map((r) => r.safety)),
     })),
     backgrounds: [],
     props: [],

@@ -144,9 +144,10 @@ test("§2 the settings: tier sizes in H3's list, sol-attn on Fast, FastH3 Advanc
   assert.equal(fast.advanced.note, "A distilled H3 model, 8 steps. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; check the take.");
   assert.equal(fast.advanced.label, tier.H3_MORE_MOTION.label, "one copy, h3tier.js");
   /* The Fast chip's note follows the saved sparse attention: never "as sharp" while sol-attn runs. */
-  assert.match(plain.fastNote(h3), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
-  assert.doesNotMatch(plain.fastNote(h3), /as sharp/);
-  assert.equal(plain.fastNote({ ...h3, sparse: "off" }), "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time.");
+  const fastInstalled = { ...h3, stepDefaults: { fast: 3, standard: 8, best: 20 } };
+  assert.match(plain.fastNote(fastInstalled), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
+  assert.doesNotMatch(plain.fastNote(fastInstalled), /as sharp/);
+  assert.equal(plain.fastNote({ ...fastInstalled, sparse: "off" }), "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time.");
   assert.match(plain.fastNote({ ...h3, stepDefaults: { fast: 4, standard: 8, best: 20 } }), /^Install the Fast setting for H3/);
   assert.equal(plain.fastNote(fast), null, "FastH3 has no quality chips");
   assert.equal(plain.fastNote(config.video.engines.ltx), null);
@@ -390,7 +391,10 @@ test("§5 the plan: steps and sparse attention", () => {
 
 test("§5 the door renders the plan and says it; make_clip carries sparse and check_only", async () => {
   const index = read("./index.js");
-  assert.match(index, /if \(b\.action === "check"\) \{[\s\S]{0,400}const plan = videoPlan\(b, \{ engineKey: gate\.engine, eng: videoEngine\(gate\.engine\),/);
+  const videoDoor = index.indexOf('if (p === "/api/video"');
+  const checkDoor = index.slice(index.indexOf('if (b.action === "check") {', videoDoor), index.indexOf('if (b.action === "create") {', videoDoor));
+  assert.match(checkDoor, /await h3RefModService\.checkRender\(b, \{ engine: gate\.engine \}\)/);
+  assert.match(checkDoor, /const plan = videoPlan\(\{ \.\.\.b, \.\.\.optionalH3 \}, \{ engineKey: gate\.engine, eng: videoEngine\(gate\.engine\),/);
   assert.match(index, /prompt: plan\.prompt,/);
   assert.match(index, /seconds: plan\.seconds,/);
   assert.match(index, /width: plan\.width,\n\s+height: plan\.height,/);
@@ -413,8 +417,9 @@ test("§5 the door renders the plan and says it; make_clip carries sparse and ch
   assert.match(t.inputSchema.properties.attention.description, /Default: kitchen/);
   const { videoLoraInput } = await import("./video-lora-validation.js");
   const { emptyResultNote } = await import("./art-wait.js");
-  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote",
-    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote);
+  const { h3OptionalMcpBody } = await import("./mcp-h3-refmods.js");
+  const run = (api) => new Function("api", "safeName", "waitForArt", "videoLoraInput", "emptyResultNote", "h3OptionalMcpBody",
+    `return (${String(t.run).replace(/^async run\(/, "async function(")});`)(api, (v) => v, async () => {}, videoLoraInput, emptyResultNote, h3OptionalMcpBody);
   const posts = [];
   const api = async (method, p, body) => {
     if (method === "POST") posts.push(body);

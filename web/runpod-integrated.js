@@ -4,6 +4,11 @@
  * never intercepted. In that mode every Images and Video render goes to the Pod
  * (there is no local engine to choose), so the "Render on" chooser stays hidden.
  *
+ * ADVANCED ONLY (the owner's decision of 2026-09-26). Simple never shows these
+ * blocks or their Remote numbers (web/styles.css keeps them out of Simple),
+ * and in this mode the screens open on Advanced and offer no Simple
+ * (server/welcome/level.js advancedOnly, read by web/assist.js and web/app.js).
+ *
  * The local forms remain authoritative for prompts and common render settings.
  * This module only changes where the final button sends them. The worker token
  * goes directly to the local backend secret store and is never returned here. */
@@ -15,6 +20,8 @@ let objectInfo = null;
 let connected = false;
 const active = new Map();
 let runpodAccount = null;
+let setupTimer = null;
+let setupWasActive = false;
 
 function friendlyError(error) {
   const message = String(error?.message || error || "Unknown worker error");
@@ -53,6 +60,55 @@ async function accountApi(route = "", body) {
 }
 
 function money(value) { return `$${Number(value || 0).toFixed(2)}`; }
+function bytes(value) {
+  const size = Number(value || 0);
+  return size >= 1073741824 ? `${(size / 1073741824).toFixed(1)} GB` : `${Math.round(size / 1048576)} MB`;
+}
+
+function renderSetup(data) {
+  const list = $("runpodModelList");
+  list.replaceChildren();
+  for (const bundle of data.bundles || []) {
+    const row = document.createElement("div"); row.className = "runpod-model"; row.dataset.bundle = bundle.id;
+    const name = document.createElement("b"); name.textContent = bundle.label;
+    const button = document.createElement("button"); button.type = "button"; button.className = "btn sm";
+    button.dataset.modelInstall = bundle.id;
+    button.textContent = bundle.state === "ready" ? "Verified" : bundle.state === "downloading" ? "Downloading…" : bundle.state === "paused" ? "Resume" : bundle.state === "failed" ? "Repair" : "Install";
+    button.disabled = ["ready", "downloading"].includes(bundle.state);
+    const detail = document.createElement("p"); detail.className = "hint";
+    detail.textContent = `${bytes(bundle.totalBytes)} · ${bundle.state}`;
+    detail.title = bundle.description;
+    const terms = document.createElement("label");
+    const accept = document.createElement("input"); accept.type = "checkbox"; accept.dataset.modelTerms = bundle.id; accept.disabled = bundle.state === "ready";
+    const link = document.createElement("a"); link.href = bundle.licenseUrl; link.target = "_blank"; link.rel = "noreferrer"; link.textContent = "model repository and terms";
+    terms.append(accept, " I reviewed and accept the ", link, ".");
+    row.append(name, button, detail, terms);
+    if (["downloading", "paused"].includes(bundle.state)) {
+      const progress = document.createElement("progress"); progress.max = bundle.totalBytes; progress.value = bundle.downloadedBytes;
+      progress.title = `${bytes(bundle.downloadedBytes)} of ${bytes(bundle.totalBytes)}`; row.append(progress);
+    }
+    if (bundle.error) { const error = document.createElement("p"); error.className = "warnline"; error.textContent = bundle.error; row.append(error); }
+    list.append(row);
+  }
+  const finished = setupWasActive && !data.active;
+  setupWasActive = !!data.active;
+  $("runpodCancelModel").hidden = !data.active;
+  $("runpodModelState").textContent = data.active ? "Downloading on Pod" : "";
+  clearTimeout(setupTimer);
+  if (data.active) setupTimer = setTimeout(() => refreshSetup(), 1500);
+  else if (finished) api("/models").then((info) => { objectInfo = info; fillModels(); }).catch(() => {});
+}
+
+async function refreshSetup() {
+  if (!connected) return;
+  try { renderSetup(await api("/setup")); }
+  catch (error) {
+    $("runpodModelState").textContent = /404/.test(error.message)
+      ? "This worker predates automatic model setup. Run the bootstrap command again to update it."
+      : friendlyError(error);
+    $("runpodModelState").classList.add("warnline");
+  }
+}
 
 function renderAccount(data) {
   runpodAccount = data;
@@ -176,6 +232,7 @@ async function refreshWorker() {
     objectInfo = await api("/models");
     connected = true; fillModels();
     setState("Worker connected · remote models checked.");
+    refreshSetup();
   } catch (error) {
     connected = false; objectInfo = null; fillModels();
     setState(friendlyError(error), true);
@@ -228,7 +285,7 @@ async function submit(kind) {
   try {
     await ensureWorker();
     const [width, height] = dimensions(kind);
-    let template, options, label;
+    let template, options, label, isPrivate = false;
     if (kind === "img") {
       noRemoteImageInputs();
       const prompt = $("imgPrompt").value.trim();
@@ -241,7 +298,10 @@ async function submit(kind) {
         steps: Number($("imgSteps").value) || 20, seed: raw ? Number(raw) : randomSeed(),
         count: Number($("imgCount").value) || 1, negative: $("imgRunPodNegative").value.trim(),
         cfg: Number($("imgRunPodCfg").value) || 6 });
-      label = `AIPLAY image · ${prompt.slice(0, 100)}`;
+      /* "Don't record the prompt": no words in the label, and the server
+       * records the job the way the local door records a private render. */
+      isPrivate = !!$("imgPrivate")?.checked;
+      label = isPrivate ? "AIPLAY image · prompt not recorded" : `AIPLAY image · ${prompt.slice(0, 100)}`;
     } else {
       noRemoteVideoInputs();
       const prompt = $("vidPrompt").value.trim();
@@ -255,7 +315,7 @@ async function submit(kind) {
     }
     note(kind, "Building and validating the remote workflow…");
     const built = await api("/workflow", { template, options });
-    const job = await api("/jobs", { graph: built.graph, bindings: [], label });
+    const job = await api("/jobs", { graph: built.graph, bindings: [], label, ...(isPrivate ? { private: true } : {}) });
     active.set(kind, job.id);
     note(kind, `RunPod job ${job.id.slice(0, 8)} queued. You can keep using AIPLAY.`);
     watch(kind, job.id);
@@ -322,6 +382,7 @@ async function init() {
       $("runpodWorkerToken").value = "";
       connected = true;
       objectInfo = await api("/models"); fillModels();
+      refreshSetup();
       const hardware = (result.devices || []).map((d) => d.name || d.type).filter(Boolean).join(" / ");
       setState(`Connected${hardware ? ` · ${hardware}` : ""}.`);
     } catch (error) { connected = false; setState(friendlyError(error), true); }
@@ -335,6 +396,19 @@ async function init() {
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
     finally { button.disabled = false; }
   });
+  $("runpodModelList").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-model-install]"); if (!button) return;
+    const row = button.closest("[data-bundle]");
+    const accepted = row?.querySelector("[data-model-terms]")?.checked === true;
+    if (!accepted) { $("runpodModelState").textContent = "Review and accept the model repository terms first."; $("runpodModelState").classList.add("warnline"); return; }
+    button.disabled = true;
+    try { $("runpodModelState").classList.remove("warnline"); renderSetup(await api("/setup/install", { bundle: button.dataset.modelInstall, acceptLicense: true })); }
+    catch (error) { $("runpodModelState").textContent = friendlyError(error); $("runpodModelState").classList.add("warnline"); button.disabled = false; }
+  });
+  $("runpodCancelModel").addEventListener("click", async () => {
+    try { renderSetup(await api("/setup/cancel", {})); }
+    catch (error) { $("runpodModelState").textContent = friendlyError(error); $("runpodModelState").classList.add("warnline"); }
+  });
   $("runpodAccountDisconnect").addEventListener("click", async () => {
     try {
       await accountApi("/disconnect", {}); runpodAccount = null; $("runpodAccountPanel").hidden = true;
@@ -342,6 +416,30 @@ async function init() {
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
   });
   $("runpodReviewPod").addEventListener("click", reviewPod);
+  $("runpodCreateTemplates").addEventListener("click", async () => {
+    const button = $("runpodCreateTemplates"); button.disabled = true; button.textContent = "Creating templates…";
+    try {
+      const result = await accountApi("/templates", {});
+      const count = result.created?.length || 0;
+      $("runpodTemplateState").textContent = count
+        ? `${count} private template${count === 1 ? "" : "s"} created. They are ready in RunPod.`
+        : "All private templates already exist.";
+      $("runpodTemplateState").classList.remove("warnline");
+    } catch (error) {
+      $("runpodTemplateState").textContent = error.message; $("runpodTemplateState").classList.add("warnline");
+    } finally { button.disabled = false; button.textContent = "Create private templates"; }
+  });
+  /* The install command is the Studio's own, pinned to its commit
+   * (server/engine/runpod-bootstrap.js), so it is asked for, not typed in the
+   * page. Where the Studio cannot name its commit there is no command. */
+  api("/bootstrap").then((b) => {
+    $("runpodBootstrapCommand").value = b.command || "";
+    $("runpodCopyBootstrap").disabled = !b.command;
+    $("runpodBootstrapState").textContent = b.command
+      ? `Installs the worker from ${b.repo} at this Studio's commit ${b.commit.slice(0, 7)}, checked before it runs. A commit that is not on GitHub yet cannot be fetched by the Pod.`
+        + (b.note ? ` ${b.note}` : "")
+      : [b.problem, b.note].filter(Boolean).join(" ");
+  }).catch((error) => { $("runpodCopyBootstrap").disabled = true; $("runpodBootstrapState").textContent = error.message; });
   $("runpodCopyBootstrap").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("runpodBootstrapCommand").value); $("runpodBootstrapState").textContent = "Bootstrap command copied."; }
     catch { $("runpodBootstrapCommand").select(); $("runpodBootstrapState").textContent = "Press Ctrl+C to copy the selected command."; }

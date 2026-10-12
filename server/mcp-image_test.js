@@ -7,10 +7,13 @@
  * does nothing. `additionalProperties: false` means a client trusts the
  * schema, so a schema that lies is a feature that appears to work.
  *
- * The check is a heuristic: it reads each tool's run source and asks whether
- * the parameter's name appears in it. That cannot prove the value is used
- * correctly, but it catches "declared and dropped", which is the class that
- * has actually happened. A tool that forwards its whole argument object is
+ * Most checks read each tool's run source and ask whether the parameter's name
+ * appears in it or an explicitly forwarded helper. The native music factory
+ * instead runs valid schema-bound witnesses through its real shared POST
+ * helper and checks the values at the HTTP seam; mutation pins prove that a
+ * helper can still fail this same sweep. The name heuristic cannot prove that
+ * a value is used correctly, but catches "declared and dropped", which is the
+ * class that has actually happened. Older wholesale argument forwarding is
  * listed in IGNORED, with the reason written down.
  *
  * Plus the structural checks for the routes the image panels lean on — the
@@ -23,6 +26,12 @@ import path from "node:path";
 import { TOOLS } from "./mcp.js";
 import { standRigPsdTools } from "./mcp-standrig-psd.js";
 import { ZIMAGE_PRESET } from "./workflow.js";
+import { h3OptionalMcpBody } from "./mcp-h3-refmods.js";
+import { videoLoraInput } from "./video-lora-validation.js";
+import { isDeepStrictEqual } from "node:util";
+import { musicWorkbenchTools } from "./mcp-music-workbench.js";
+import { plannerRequest } from "./music/community-planner.js";
+import { trainingRecipe } from "./music/community-recipes.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,6 +47,9 @@ function ok(label, cond, detail = "") {
 const IGNORED = {
   // Spread wholesale into the request body, so no name appears individually.
   image_sheet: "*",
+  // Shared normalization forwards every vector schema control; vectorize_test
+  // exercises the actual MCP body and strict HTTP normalizer for parity.
+  image_vectorize: "*",
   // Destructures the handful it renames and REST-SPREADS everything else into
   // ops — the spread is the forwarding, so nothing declared can be dropped.
   image_adjust: "*",
@@ -67,23 +79,238 @@ ok("every required parameter is also declared",
 
 console.log("\n  -- nothing is advertised and then dropped --");
 
+// Follow only the helper whose returned body make_clip actually spreads. Its
+// real function source participates in the same declared-and-dropped census.
+const h3BodyCall = /\.\.\.h3OptionalMcpBody\(a,\s*engine\)/;
+function forwardingSource(tool, runSource = String(tool.run)) {
+  return tool.name === "make_clip" && h3BodyCall.test(runSource)
+    ? `${runSource}\n${String(h3OptionalMcpBody)}` : runSource;
+}
+
+/* The native workbench factory validates against each closed schema and then
+ * spreads the request through its local post helper. Reading the entire module
+ * would always find every schema name, including a parameter that helper drops.
+ * Execute the REAL factory instead, using valid schema-bound witnesses, and
+ * compare the exact values arriving at its existing HTTP boundary. No worker,
+ * file write, network request or install occurs: api is the recording seam.
+ * Separate dataset witnesses exercise its mutually exclusive source fields.
+ * A new declaration without a witness remains missing, rather than exempted. */
+const nativeRun = "e".repeat(32);
+const nativeExamples = new Map([
+  ["music_workbench_status", [{}]],
+  ["music_workbench_run", [{ run: nativeRun }]],
+  ["music_workbench_stop", [{}]],
+  ["music_native_install", [{ kind: "midi", size: "medium" }]],
+  ["music_dataset_create", [{ name: "Reviewed recordings", files: ["take.wav", "second.flac"] },
+    { name: "Local recordings", folder: path.resolve("fixtures", "training") }]],
+  ["music_dataset_edit", [{ id: nativeRun, item: "song_0", style: "Gentle acoustic", lyrics: "[Verse]\nHold on  \n", instrumental: false }]],
+  ["music_dataset_prepare", [{ dataset: nativeRun }]],
+  ["music_native_train", [{ dataset: nativeRun, recipe: { preset: "custom", steps: 250, accumulation: 3,
+    optimizer: "adamw", adapter: "lokr", rank: 8, alpha: 64, lokrDim: 32, lokrFactor: 4,
+    learningRate: .001, targetKl: .02, seed: 987, saveEvery: 50 } }]],
+  ["music_native_continue", [{ run: nativeRun, steps: 600 }]],
+  ["music_native_plan", [{ style: "Gentle acoustic", lyrics: "[Verse]\nHold on  \n", stage: "audio", seed: 123,
+    abc: "X:1\nM:4/4\nL:1/4\nK:C\nC D E F |", quantization: "q8_0", narSteps: 16, maxTokens: 800 }]],
+  ["music_native_replay", [{ run: nativeRun, abc: "X:1\nK:C\nC D E F |", useTokens: false, seed: 125 }]],
+  ["music_native_keep", [{ run: nativeRun }]],
+  ["music_audio_transcribe", [{ file: "take.flac", size: "large", device: "cpu" }]],
+  ["music_midi_to_daw", [{ run: nativeRun, bpm: 128 }]],
+  ["music_adapter_export", [{ run: nativeRun }]],
+  ["music_adapter_install", [{ run: nativeRun }]],
+  ["music_process_preview", [{ file: "take.flac", reference: "reference.wav", denoise: true, smoothing: .5,
+    plugins: [{ path: path.resolve("plugins", "Master.vst3"), parameters: { gain: .4, bypass: false, mode: "Clean" } }] }]],
+  ["music_process_keep", [{ run: nativeRun }]],
+]);
+async function nativeForwarding(factory) {
+  let posts = [];
+  const tools = factory(async (method, route, body) => {
+    if (method === "POST" && route === "/api/music-tools") posts.push(structuredClone(body));
+    return { ok: true };
+  });
+  const evidence = new Map(), errors = [];
+  for (const tool of tools) {
+    const forwarded = new Set();
+    for (const witness of nativeExamples.get(tool.name) || []) {
+      posts = [];
+      try { await tool.run(structuredClone(witness)); }
+      catch (error) { errors.push(`${tool.name}: ${error.message}`); }
+      for (const field of Object.keys(tool.inputSchema.properties || {})) {
+        if (Object.hasOwn(witness, field) && posts.some(body => Object.hasOwn(body, field)
+          && isDeepStrictEqual(body[field], witness[field]))) forwarded.add(field);
+      }
+    }
+    evidence.set(tool.name, { runSource: String(tool.run), forwarded });
+  }
+  return { tools, evidence, errors };
+}
+const nativeForwarded = await nativeForwarding(musicWorkbenchTools);
+ok("native factory witnesses execute its real validators and shared POST helper", nativeForwarded.errors.length === 0,
+  nativeForwarded.errors.join(", "));
+ok("every registered native tool uses the factory whose actual forwarding was checked",
+  nativeForwarded.tools.every(tool => OURS.some(registered => registered.name === tool.name
+    && String(registered.run) === String(tool.run))));
+
+function unnamedParameters(tool, runSource = String(tool.run), evidence = nativeForwarded.evidence) {
+  const observed = evidence.get(tool.name);
+  if (observed && observed.runSource === runSource) {
+    return Object.keys(tool.inputSchema.properties || {}).filter(field => !observed.forwarded.has(field));
+  }
+  const src = forwardingSource(tool, runSource);
+  return Object.keys(tool.inputSchema.properties || {}).filter((p) => {
+    const camel = p.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    return !src.includes(p) && !src.includes(camel);
+  });
+}
+
+/* Mutation pins execute changed COPIES of the real module. The assertions use
+ * the same census above, not a separate success-only wire test. Removing the
+ * generic spread, deleting a still-named input, or dropping a value inside post
+ * must each remain visible even though the schemas still declare every name. */
+const nativeModule = readFileSync(new URL("./mcp-music-workbench.js", import.meta.url), "utf8");
+function mutatedNativeFactory(before, after) {
+  if (!nativeModule.includes(before)) throw new Error("Native forwarding mutation no longer matches its real helper.");
+  const source = nativeModule.replace(before, after).replace(/^import[^\r\n]*\r?\n/gm, "").replace(/^export\s+/gm, "");
+  return new Function("path", "plannerRequest", "trainingRecipe", `${source}\nreturn musicWorkbenchTools;`)(path, plannerRequest, trainingRecipe);
+}
+const nativeMissing = result => result.tools.flatMap(tool => unnamedParameters(tool, String(tool.run), result.evidence)
+  .map(field => `${tool.name}.${field}`));
+const withoutNativeSpread = await nativeForwarding(mutatedNativeFactory("return post({ action, ...input });", "return post({ action });"));
+const nativeDeclared = nativeForwarded.tools.flatMap(tool => Object.keys(tool.inputSchema.properties || {})
+  .map(field => `${tool.name}.${field}`));
+ok("the census detects every native parameter when the factory drops its real input spread",
+  nativeDeclared.length > 30 && nativeDeclared.every(field => nativeMissing(withoutNativeSpread).includes(field)));
+const deletedNativeSize = await nativeForwarding(mutatedNativeFactory("return post({ action, ...input });",
+  "delete input.size; return post({ action, ...input });"));
+ok("the census detects a deleted input even when its name remains in run source",
+  nativeMissing(deletedNativeSize).includes("music_native_install.size")
+  && String(deletedNativeSize.tools.find(tool => tool.name === "music_native_install").run).includes("input.size"));
+const withoutNativePlugins = await nativeForwarding(mutatedNativeFactory(
+  "const result = await api('POST', '/api/music-tools', body, 900_000);",
+  "const { plugins, ...forwardedBody } = body; const result = await api('POST', '/api/music-tools', forwardedBody, 900_000);"));
+ok("the census detects a parameter dropped inside the shared POST body helper",
+  isDeepStrictEqual(nativeMissing(withoutNativePlugins), ["music_process_preview.plugins"]));
+const nativeInstall = OURS.find(tool => tool.name === "music_native_install");
+ok("schema names alone cannot hide an unrelated new native declaration",
+  unnamedParameters({ ...nativeInstall, inputSchema: { ...nativeInstall.inputSchema,
+    properties: { ...nativeInstall.inputSchema.properties, missing_forwarding_regression: { type: "string" } } } })
+    .includes("missing_forwarding_regression"));
+const clip = OURS.find((t) => t.name === "make_clip");
+ok("make_clip spreads the real H3 optional body helper with its arguments and selected engine",
+  h3BodyCall.test(String(clip.run)));
+ok("the H3 helper names all three optional MCP inputs",
+  ["ref_mods", "ref_mod_options", "h3_tweaks"].every((field) => String(h3OptionalMcpBody).includes(`args.${field}`)));
+const withoutH3Body = String(clip.run).replace(h3BodyCall, "...{}");
+ok("the census fails all three fields if make_clip drops the helper's result",
+  ["ref_mods", "ref_mod_options", "h3_tweaks"].every((field) => unnamedParameters(clip, withoutH3Body).includes(field)));
+ok("following the helper does not exempt an unrelated dropped declaration",
+  unnamedParameters({ ...clip, inputSchema: { ...clip.inputSchema, properties: { ...clip.inputSchema.properties, missing_forwarding_regression: { type: "string" } } } })
+    .includes("missing_forwarding_regression"));
 const dropped = [];
 for (const t of OURS) {
   if (IGNORED[t.name] === "*") continue;
-  const src = String(t.run);
   const ignored = new Set(IGNORED[t.name] || []);
-  for (const p of Object.keys(t.inputSchema.properties || {})) {
+  for (const p of unnamedParameters(t)) {
     if (ignored.has(p)) continue;
-    // snake_case in the schema becomes camelCase on the wire; either spelling
-    // appearing in run() means the parameter was not forgotten.
-    const camel = p.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-    if (!src.includes(p) && !src.includes(camel)) dropped.push(`${t.name}.${p}`);
+    dropped.push(`${t.name}.${p}`);
   }
 }
-ok("every declared parameter is named in its run()", dropped.length === 0,
+ok("every declared parameter is named in its run/helper or observed in its factory's forwarded HTTP body", dropped.length === 0,
   dropped.length
     ? `${dropped.join(", ")}\n          Either forward it, or add it to IGNORED with a reason.`
     : "");
+
+// Exercise the real make_clip body builder and helper together through its
+// check-only door. RefMod and Fizgig require separate requests by design.
+const clipPosts = [];
+let clipFixtureEngine = "h3";
+const clipApi = async (method, route, body) => {
+  if (route === "/api/status") return { config: { video: { enabled: true, ready: true, engine: clipFixtureEngine, engines: { [clipFixtureEngine]: {} } } } };
+  if (method === "POST" && route === "/api/video") { clipPosts.push(body); return { engine: "h3" }; }
+  throw new Error(`Unexpected CPU fixture request: ${method} ${route}`);
+};
+const runClip = new Function("api", "videoLoraInput", "h3OptionalMcpBody",
+  `return (${String(clip.run).replace(/^async run\(/, "async function(")});`)(clipApi, videoLoraInput, h3OptionalMcpBody);
+await runClip({ prompt: "standing singer", check_only: true,
+  ref_mods: [{ name: "hero", strength: 0.65, copies: 2 }], ref_mod_options: { retention: 0.7, max_tokens: 1024 } });
+await runClip({ prompt: "standing singer", check_only: true,
+  h3_tweaks: { detail: 0.1, composition: 0.2, prompt_strength: 0.3, detail_mode: "per frame" } });
+ok("make_clip forwards ref_mods through the real helper into the HTTP body",
+  JSON.stringify(clipPosts[0]?.refMods) === JSON.stringify([{ name: "hero", strength: 0.65, copies: 2 }]));
+ok("make_clip forwards ref_mod_options including its renamed token budget",
+  JSON.stringify(clipPosts[0]?.refModOptions) === JSON.stringify({ retention: 0.7, maxTokens: 1024 }));
+ok("make_clip forwards h3_tweaks including prompt strength and detail mode",
+  JSON.stringify(clipPosts[1]?.h3Tweaks) === JSON.stringify({ detail: 0.1, composition: 0.2, promptStrength: 0.3, detailMode: "per frame" }));
+
+ok("make_clip declares both per-render H3 checkpoint builds",
+  JSON.stringify(clip.inputSchema.properties.h3_model_build?.enum) === JSON.stringify(["auto", "w6a8"]));
+for (const build of ["auto", "w6a8"]) {
+  await runClip({ prompt: "walking through a garden", check_only: true, h3_model_build: build });
+  ok(`make_clip forwards ${build} to the route's per-render checkpoint field`,
+    clipPosts.at(-1)?.h3ModelBuild === build);
+}
+const buildPosts = clipPosts.length;
+for (const args of [
+  { h3_model_build: "fp8" },
+  { h3_model_build: "w6a8", engine: "ltx" },
+  { h3_model_build: "auto", engine: "fasth3" },
+]) {
+  let refusal = null;
+  try { await runClip({ prompt: "walking through a garden", check_only: true, ...args }); }
+  catch (error) { refusal = error.message; }
+  ok(`make_clip refuses invalid checkpoint request ${JSON.stringify(args)}`,
+    typeof refusal === "string" && refusal.includes("h3_model_build"));
+}
+clipFixtureEngine = "ltx";
+let savedEngineRefusal = null;
+try { await runClip({ prompt: "walking through a garden", check_only: true, h3_model_build: "w6a8" }); }
+catch (error) { savedEngineRefusal = error.message; }
+clipFixtureEngine = "h3";
+ok("a saved non-H3 engine cannot silently ignore the checkpoint choice",
+  savedEngineRefusal?.includes("h3_model_build"));
+ok("checkpoint refusals do not post a render or a saved setting", clipPosts.length === buildPosts);
+ok("per-render checkpoint requests never change the saved build",
+  clipPosts.every((body) => body.action === "check"));
+
+// A render reports the receipt saved with its output, including a fallback.
+// The filename array stays intact for clients that already consume `clips`.
+const checkpointReceipt = { requestedBuild: "w6a8", ranBuild: "w6a8", file: "h3_w6_reference.safetensors", reference: true, fallback: null };
+const fallbackReceipt = { requestedBuild: "w6a8", ranBuild: "auto", file: "h3_int8.safetensors", reference: false, fallback: "The W6A8 weights are not installed." };
+const clipRows = [
+  { name: "older.mp4", meta: { h3Checkpoint: checkpointReceipt } },
+  { name: "reference.mp4", meta: { h3Checkpoint: checkpointReceipt } },
+  { name: "fallback.mp4", meta: { h3Checkpoint: fallbackReceipt } },
+  { name: "legacy.mp4", meta: {} },
+  { name: "imported.webm", meta: { source: "imported" } },
+];
+let receiptReads = 0;
+const receiptApi = async (method, route, body) => {
+  if (route === "/api/status") return { config: { video: { enabled: true, ready: true, engine: "h3", engines: { h3: {} } } } };
+  if (method === "GET" && route === "/api/clips") return { clips: ++receiptReads === 1 ? clipRows.slice(0, 1) : clipRows };
+  if (method === "POST" && route === "/api/video" && body.action === "create") return { job: { id: "receipt-fixture" } };
+  throw new Error(`Unexpected checkpoint fixture request: ${method} ${route}`);
+};
+const runRenderedClip = new Function("api", "videoLoraInput", "h3OptionalMcpBody", "waitForArt", "emptyResultNote",
+  `return (${String(clip.run).replace(/^async run\(/, "async function(")});`)(receiptApi, videoLoraInput, h3OptionalMcpBody,
+    async (_timeout, kind, id) => { if (kind !== "video" || id !== "receipt-fixture") throw new Error("Wrong checkpoint waiter"); return { done: true }; },
+    () => "No new clip was saved.");
+const receiptResult = await runRenderedClip({ prompt: "walking through a garden", h3_model_build: "w6a8" });
+ok("make_clip keeps its filename array while adding saved checkpoint receipts",
+  JSON.stringify(receiptResult.clips) === JSON.stringify(clipRows.slice(1).map((c) => c.name)));
+ok("make_clip reports the actual reference checkpoint and its requested build",
+  JSON.stringify(receiptResult.checkpoint_receipts?.["reference.mp4"]) === JSON.stringify(checkpointReceipt));
+ok("make_clip reports an automatic fallback from the saved receipt",
+  JSON.stringify(receiptResult.checkpoint_receipts?.["fallback.mp4"]) === JSON.stringify(fallbackReceipt));
+ok("make_clip does not invent receipts for old clips, imports or preexisting files",
+  JSON.stringify(Object.keys(receiptResult.checkpoint_receipts || {})) === JSON.stringify(["reference.mp4", "fallback.mp4"]));
+const listClipTool = OURS.find((t) => t.name === "list_clips");
+const runListClips = new Function("api",
+  `return (${String(listClipTool.run).replace(/^async run\(/, "async function(")});`)(receiptApi);
+const listedClips = await runListClips({});
+ok("list_clips includes each saved checkpoint receipt",
+  JSON.stringify(listedClips[1].h3_checkpoint) === JSON.stringify(checkpointReceipt)
+  && JSON.stringify(listedClips[2].h3_checkpoint) === JSON.stringify(fallbackReceipt));
+ok("list_clips uses null for legacy and imported clips without a checkpoint receipt",
+  listedClips[3].h3_checkpoint === null && listedClips[4].h3_checkpoint === null);
 
 console.log("\n  -- the panel routes the tools lean on --");
 
@@ -95,6 +322,35 @@ ok("StandRig PSD export is typed, registered and posts the saved document id",
   byName.has(psd.name) && psd.inputSchema.required.includes("id")
   && JSON.stringify(psdCalls) === JSON.stringify([["POST", "/api/images/standrig-psd", { id: "saved_doc" }]]));
 const idx = readFileSync(path.join(HERE, "index.js"), "utf8").replace(/\r\n/g, "\n");   // CRLF-normalised: a Windows checkout adds a char per line, which overflows the bounded [\s\S]{0,N} spans below and fails assertions about correct code
+
+// Execute the actual check/create guards without starting a server. Reaching
+// the weight gate means the request retained its existing custom behavior.
+const videoRoute = idx.slice(idx.indexOf('p === "/api/video" && req.method === "POST"'));
+for (const action of ["check", "create"]) {
+  const start = videoRoute.indexOf(`if (b.action === "${action}") {`);
+  const end = videoRoute.indexOf("const gate = await videoWeightsGate();", start);
+  const routeGuard = new Function("b", "assignedTo", "config", "json", "res",
+    `${videoRoute.slice(start, end)}\n}\nreturn { reachedGate: true };`);
+  let assignedReads = 0;
+  const assignment = () => { assignedReads++; return "custom-video"; };
+  for (const build of ["auto", "w6a8"]) {
+    const answer = routeGuard({ action, h3ModelBuild: build }, assignment, { video: { enabled: true } },
+      (_res, status, body) => ({ status, body }), {});
+    const refusal = action === "check" ? answer.body?.refusal : answer.body;
+    ok(`the video ${action} route refuses explicit ${build} before weight checks or queueing with a custom workflow`,
+      refusal?.reason === "workflow-incompatible" && /Unassign the custom Video workflow/.test(refusal.error)
+      && (action === "check" ? answer.status === 200 && answer.body.ok === false : answer.status === 400));
+  }
+  const omitted = routeGuard({ action }, assignment, { video: { enabled: true } },
+    (_res, status, body) => ({ status, body }), {});
+  ok(`the video ${action} route preserves custom workflows when the selector is omitted`,
+    omitted.reachedGate === true && assignedReads === 2);
+  const builtIn = routeGuard({ action, h3ModelBuild: "w6a8" }, () => null, { video: { enabled: true } },
+    (_res, status, body) => ({ status, body }), {});
+  ok(`the video ${action} route permits an explicit checkpoint on the built-in workflow`, builtIn.reachedGate === true);
+}
+ok("the queued clip distinguishes explicit requests from filled-in saved checkpoint defaults",
+  /h3ModelBuild: b\.h3ModelBuild \?\? config\.video\.h3ModelBuild,\s*h3ModelBuildExplicit: b\.h3ModelBuild !== undefined/.test(videoRoute));
 
 /* image_tools_catalog promises module=paths; the route's MODULES map is where
  * that promise is kept or broken. It WAS broken — the MCP description said
