@@ -53,7 +53,8 @@ test("unrelated clip or render cannot finish the tracked job", async () => {
 test("only the exact successful job completes", async () => {
   const h = pollHarness([{ id: "other", status: "failed" }, { id: "mine", status: "done", clip: "mine.mp4", frames: 24 }]);
   await h.ctx.pollRender();
-  assert.match(h.notes[0], /Rendered 24 frames — mine.mp4/); assert.equal(h.ctx.V.job, null);
+  // Bucky's UI copy follows the guide's no-em-dash rule; still pin the tracked file and frame count.
+  assert.match(h.notes[0], /Rendered 24 frames: mine\.mp4/); assert.equal(h.ctx.V.job, null);
 });
 
 test("cancelled and interrupted outcomes stay truthful", async () => {

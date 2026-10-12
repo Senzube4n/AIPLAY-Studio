@@ -913,11 +913,17 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
   const app = readFileSync(path.join(WEB, "app.js"), "utf8");
   const connect = bodyOf(app, "function connect()");
   ok("the Studio's real live listener is available to exercise", !!connect);
-  if (connect) {
+  // Bucky added tab progress to this listener. Exercise its real helper too,
+  // so unrelated DAW frames cannot overwrite the title of a running render.
+  const tabTitle = bodyOf(app, "function paintTabTitle(");
+  ok("the live listener's real tab title helper is available to exercise", !!tabTitle);
+  if (connect && tabTitle) {
     let socket, current, queue, polls = 0, outcomes = 0;
     const calls = [], engine = { ready: true };
+    const document = { title: "AIPLAY Studio" };
     const deps = {
       WebSocket: class { constructor(url) { this.url = url; socket = this; } },
+      document,
       location: { host: "localhost:4173" }, state: { lastStatus: { engine } }, setTimeout() {},
       renderNow: (job) => { calls.push("now"); current = job; },
       renderQueue: (snap) => { calls.push("queue"); queue = snap.queue; },
@@ -927,11 +933,12 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
       noticeMusicOutcome: () => { outcomes++; },
     };
     try {
-      new Function(...Object.keys(deps), `${connect}\nconnect();`)(...Object.values(deps));
-      const busy = { type: "state", current: { id: "running" }, queue: [{ id: "next" }], history: [] };
+      new Function(...Object.keys(deps), `${tabTitle}\n${connect}\nconnect();`)(...Object.values(deps));
+      const busy = { type: "state", current: { id: "running", title: "Live song", overall: 0.42 }, queue: [{ id: "next" }], history: [] };
       socket.onmessage({ data: JSON.stringify(busy) });
       ok("job-state frames still update every Studio live surface", calls.length === 6 && current.id === "running" && queue[0].id === "next");
       ok("a valid music state frame reaches the outcome observer once", outcomes === 1);
+      ok("a valid live render gives the tab its title and progress", document.title === "42% · Live song · AIPLAY Studio");
       const before = calls.length;
       for (const frame of [frameFor("song", { updatedAt: 2 }), { type: "engine", ready: false }, null,
         { type: "state", current: null }, { type: "state", queue: [] }, { type: "state", current: null, queue: {} }]) {
@@ -941,10 +948,12 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
       ok("DAW, unrelated and incomplete frames preserve the current job, queued jobs and all live surfaces",
         calls.length === before && current.id === "running" && queue[0].id === "next" && polls === 0);
       ok("DAW, unrelated, incomplete and invalid JSON frames never reach the music outcome observer", outcomes === 1);
+      ok("DAW and invalid state frames also preserve the running render's tab title", document.title === "42% · Live song · AIPLAY Studio");
       const idle = { type: "state", current: null, queue: [], history: [] };
       socket.onmessage({ data: JSON.stringify(idle) });
       ok("the next real idle snapshot still refreshes the completed library exactly once", current === null && queue.length === 0 && polls === 1);
       ok("the real idle music state also reaches the outcome observer once", outcomes === 2);
+      ok("the real idle state restores the Studio tab title", document.title === "AIPLAY Studio");
       socket.onmessage({ data: JSON.stringify(frameFor("song", { updatedAt: 3 })) });
       socket.onmessage({ data: JSON.stringify(idle) });
       ok("unrelated frames do not create a false completion or another library refresh", polls === 1);
