@@ -57,6 +57,30 @@ test("integrated LTX options retain video controls and duration aliases", () => 
   });
 });
 
+/* MINIMAX H3 ON THE POD (2026-09-29): the Video box picks LTX or H3; H3 sends
+ * the server's "h3" template (Studio's own graph) with the chosen steps. */
+test("the Video box offers MiniMax H3 with its own sizes and steps", async () => {
+  const html = read("web", "index.html");
+  assert.match(html, /<select id="vidRunPodModel"[^>]*>\s*<option value="ltx">LTX 2\.5 distilled<\/option>\s*<option value="h3">MiniMax H3<\/option>/);
+  assert.match(html, /id="vidRunPodSteps"[^>]*value="20"/);
+  for (const size of ["832x480", "1280x720", "1344x768"]) assert.match(html, new RegExp(`value="${size}" data-for="h3"`));
+  const { h3WorkflowOptions, paintRemoteModel } = await import("../../web/runpod-integrated.js");
+  assert.deepEqual(h3WorkflowOptions({ prompt: "p", width: 1280, height: 720, seconds: 5, steps: 20, seed: 3, negative: "x" }),
+    { prompt: "p", width: 1280, height: 720, seconds: 5, steps: 20, seed: 3 }, "H3 has no negative prompt or guidance");
+  const el = (id, extra = {}) => ({ id, hidden: false, ...extra });
+  const opts = [{ value: "512x320", dataset: { for: "ltx" } }, { value: "1280x720", dataset: { for: "h3" } }];
+  const size = el("vidRunPodSize", { options: opts, value: "512x320", get selectedOptions() { return opts.filter((o) => o.value === this.value); } });
+  const nodes = { vidRunPodModel: el("vidRunPodModel", { value: "h3" }), vidRunPodSize: size, vidRunPodGuidance: el("g"), vidRunPodSteps: el("s") };
+  const doc = { getElementById: (id) => nodes[id] || null, querySelector: () => null };
+  assert.equal(paintRemoteModel(doc), "h3");
+  assert.equal(size.value, "1280x720", "an LTX size is swapped for an H3 one");
+  assert.equal(nodes.vidRunPodGuidance.hidden, true);
+  assert.equal(nodes.vidRunPodSteps.hidden, false);
+  const js = read("web", "runpod-integrated.js");
+  assert.match(js, /template = \$\("vidRunPodModel"\)\?\.value === "h3" \? "h3" : "ltx";/);
+  assert.match(read("server", "engine", "remote-routes.js"), /h3: opts => videoGraph\(\{ \.\.\.opts, engine: "h3" \}\)/);
+});
+
 test("remote-only launch opens the integrated application", () => {
   const server = read("server", "index.js");
   assert.match(server, /`http:\/\/127\.0\.0\.1:\$\{config\.uiPort\}`/);

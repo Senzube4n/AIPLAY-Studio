@@ -1063,20 +1063,29 @@
         <option value="runpod">RunPod GPU</option>
       </select>
       <div id="vidRunPodOptions" class="runpod-options" hidden>
-        <div class="runpod-summary"><b>LTX 2.5 distilled</b><button class="edtool sm" type="button" data-runpod-settings>Connection…</button></div>
+        <div class="runpod-summary"><select id="vidRunPodModel" class="sel2" aria-label="Model on the Pod">
+            <option value="ltx">LTX 2.5 distilled</option>
+            <option value="h3">MiniMax H3</option>
+          </select><button class="edtool sm" type="button" data-runpod-settings>Connection…</button></div>
         <div class="runpod-fields">
           <label class="flabel" for="vidRunPodSize">Remote size</label>
           <select id="vidRunPodSize" class="sel2">
-            <option value="512x320">512 × 320 · cheapest test</option>
-            <option value="768x448">768 × 448</option>
-            <option value="1024x576">1024 × 576</option>
-            <option value="1280x704">1280 × 704</option>
+            <option value="512x320" data-for="ltx">512 × 320 · cheapest test</option>
+            <option value="768x448" data-for="ltx">768 × 448</option>
+            <option value="1024x576" data-for="ltx">1024 × 576</option>
+            <option value="1280x704" data-for="ltx">1280 × 704</option>
+            <option value="832x480" data-for="h3" hidden>832 × 480 · cheapest test</option>
+            <option value="1280x720" data-for="h3" hidden>1280 × 720</option>
+            <option value="1344x768" data-for="h3" hidden>1344 × 768 · native</option>
           </select>
           <label class="flabel" for="vidRunPodGuidance">Remote guidance</label>
           <input id="vidRunPodGuidance" class="sel2 sm" type="number" min="1" max="8" step="0.5" value="3">
+          <label class="flabel" for="vidRunPodSteps" hidden>Remote steps</label>
+          <input id="vidRunPodSteps" class="sel2 sm" type="number" min="4" max="50" step="1" value="20" hidden
+            title="20 runs H3's full model. 12 or fewer need its turbo files on the Pod.">
         </div>
         <p class="hint" id="vidRunPodState">Checking the saved worker…</p>
-        <p class="hint">Uses the prompt, length, seed and negative prompt below. This first integrated path is text-to-video; frames, references and soundtracks still use the local engine.</p>
+        <p class="hint">Uses the prompt, length and seed below. Text to video only; frames, references and soundtracks use the local engine.</p>
       </div>
     </div>
 

@@ -44,6 +44,31 @@ export function videoWorkflowOptions({ prompt, negative, width, height, seconds,
   return { prompt, negative, width, height, seconds, duration: seconds, maxDuration: seconds, steps, seed, guidance };
 }
 
+/* MiniMax H3 on the Pod: the server's "h3" template is Studio's own H3 graph
+ * (workflow.js videoGraph), so the Pod needs the same four model files this
+ * PC's H3 names. H3 has no negative prompt and no guidance dial; above 12
+ * steps it runs the full model, which needs no turbo file. */
+export function h3WorkflowOptions({ prompt, width, height, seconds, steps, seed }) {
+  return { prompt, width, height, seconds, steps, seed };
+}
+
+/* The model choice decides which sizes and dials the box shows. */
+export function paintRemoteModel(doc = document) {
+  const model = doc.getElementById("vidRunPodModel")?.value || "ltx";
+  const size = doc.getElementById("vidRunPodSize");
+  if (size) {
+    for (const o of size.options) o.hidden = o.dataset.for !== model;
+    if (size.selectedOptions[0]?.hidden) size.value = [...size.options].find((o) => !o.hidden)?.value || size.value;
+  }
+  for (const [id, show] of [["vidRunPodGuidance", model === "ltx"], ["vidRunPodSteps", model === "h3"]]) {
+    const el = doc.getElementById(id);
+    if (el) el.hidden = !show;
+    const label = doc.querySelector(`label[for="${id}"]`);
+    if (label) label.hidden = !show;
+  }
+  return model;
+}
+
 async function api(route = "", body) {
   const response = await fetch(`/api/runpod${route}`, body === undefined ? {} : {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -307,10 +332,13 @@ async function submit(kind) {
       const prompt = $("vidPrompt").value.trim();
       if (!prompt) throw new Error("Describe the video first.");
       const raw = $("vidSeed").value.trim();
-      template = "ltx";
-      options = videoWorkflowOptions({ prompt, negative: $("vidNeg").value.trim(), width, height,
-        seconds: Number($("vidSecs").value) || 5, steps: Number($("vidSteps").value) || 8,
-        seed: raw ? Number(raw) : randomSeed(), guidance: Number($("vidRunPodGuidance").value) || 3 });
+      template = $("vidRunPodModel")?.value === "h3" ? "h3" : "ltx";
+      options = template === "h3"
+        ? h3WorkflowOptions({ prompt, width, height, seconds: Number($("vidSecs").value) || 5,
+          steps: Number($("vidRunPodSteps").value) || 20, seed: raw ? Number(raw) : randomSeed() })
+        : videoWorkflowOptions({ prompt, negative: $("vidNeg").value.trim(), width, height,
+          seconds: Number($("vidSecs").value) || 5, steps: Number($("vidSteps").value) || 8,
+          seed: raw ? Number(raw) : randomSeed(), guidance: Number($("vidRunPodGuidance").value) || 3 });
       label = `AIPLAY video · ${prompt.slice(0, 100)}`;
     }
     note(kind, "Building and validating the remote workflow…");
@@ -371,6 +399,8 @@ async function init() {
     $(`${kind}RenderWhere`).value = "runpod";
     paintTarget(kind);
   }
+  paintRemoteModel();
+  $("vidRunPodModel")?.addEventListener("change", () => paintRemoteModel());
   for (const button of document.querySelectorAll("[data-runpod-settings]")) button.addEventListener("click", openSettings);
   $("runpodConnectionClose").addEventListener("click", closeSettings);
   $("runpodConnection").addEventListener("click", (event) => { if (event.target === $("runpodConnection")) closeSettings(); });
