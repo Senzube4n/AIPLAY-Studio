@@ -8,6 +8,7 @@ import { modelBases } from "./modelpick.js";
 import { scanBases, modelName, requireModelName, modelLeaf, findShelfModel } from "./localmodels.js";
 import { engine as defaultEngine } from "./engine/client.js";
 import { QWEN_IMAGE_FILES, QWEN_DRAFT, qwenImageGraph } from "./qwen-image.js";
+import { QWEN_SETUP_ID } from "./setup/qwen-engine.js";
 
 export const QWEN_IMAGE_ENGINE = "qwen-image-2.1";
 
@@ -92,7 +93,13 @@ export async function qwenImageStatus({ options = {}, config = defaultConfig,
   if (baseMissing.length) problems.push(`Missing or incomplete Qwen Image files: ${baseMissing.join(", ")}. Choose Download in Models when ready.`);
   if (options.draft === true && !out.draft.fileReady) problems.push(`Fast draft needs its LoRA (${loraName}, ${(out.draft.bytes / 1e9).toFixed(2)} GB). Download "Fast draft" in Models, or turn Fast draft off.`);
   if (runtimeResult.status === "rejected") problems.push(`Cannot verify the ComfyUI runtime: ${runtimeResult.reason?.message || "engine unavailable"}.`);
-  else if (!out.runtimeReady) problems.push(`ComfyUI is missing ${out.missingNodes.join(", ")}. Qwen Image 2.1 needs a compatible runtime; this check does not update it.`);
+  else if (!out.runtimeReady) {
+    const canRepair = !config.remoteOnly && !config.cloudOnly
+      && out.missingNodes.some((name) => ["TextEncodeQwenImage21", "QwenImage21Cache"].includes(name));
+    if (canRepair) out.setup = QWEN_SETUP_ID;
+    problems.push(canRepair ? "This engine needs Qwen Image 2.1 support. Choose Fix Qwen."
+      : `ComfyUI is missing ${out.missingNodes.join(", ")}. Qwen Image 2.1 needs a compatible runtime.`);
+  }
   if (shelfResult.status === "rejected") problems.push(`Cannot inspect the model shelf: ${shelfResult.reason?.message || "unavailable"}.`);
   out.error = problems.length ? problems.join(" ") : null;
   return out;

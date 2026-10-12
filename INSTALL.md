@@ -143,6 +143,32 @@ from the Models screen. Skip to step 3 if you use it.
 Or install ComfyUI yourself — Studio then drives the copy you already have and
 never changes it.
 
+### Fix Qwen Image 2.1 inside Studio
+
+When Pictures reports missing Qwen engine support, choose **Fix Qwen**. The
+same action works from Pictures' Simple assistant or Chat: ask **"Fix Qwen for
+me"**, review the download size and answer **"yes"**. The button also works with
+Tab and Enter. No command prompt, hardware selection or folder picker is needed.
+
+Studio builds a separate, private ComfyUI **v0.37.0** engine for the detected
+backend. It reuses the current model, input and output folders, starts the
+candidate and verifies native Qwen nodes before saving the switch. The original
+engine is retained, and failed activation restores it. Progress survives a page
+reload; an interrupted repair offers **Try again**, reusing a finished candidate
+instead of downloading it again. Active or queued renders block switching.
+
+The default fresh-engine pin above remains v0.36.0; Qwen has its own compatible
+pin. Missing model files are still handled in Models. This repair checks engine
+support, not whether a particular Qwen render fits the graphics card. User custom
+nodes are kept in their original engine rather than copied into the clean
+candidate. An explicit launch override (`AIPLAY_RIG` or `AIPLAY_PYTHON`) must be
+removed before Studio can select the replacement.
+
+External MCP clients use `setup_status { id: "qwen-engine" }`, then
+`qwen_engine_repair {}` after agreement. These share the button's guarded setup
+door and progress. The in-app assistant exposes this narrow Qwen action while
+general setup and download tools remain unavailable there.
+
 ### The easy route: the portable Windows build
 
 Go to the [ComfyUI releases page](https://github.com/comfyanonymous/ComfyUI/releases/latest)

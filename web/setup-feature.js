@@ -52,18 +52,19 @@ function torchOf(s) {
   return "auto";
 }
 /** The server's sentence for the build that will be posted. */
-const offerOf = (s) => s.blocked || s.offers?.[torchOf(s)] || s.offer;
+const offerOf = (s) => s.blocked || [s.offers?.[torchOf(s)] || s.offer, s.sizeWords].filter(Boolean).join("\n\n");
 
 /** The line under a button: the job while it runs, its last sentence, else the offer. */
 function noteText(s) {
   if (s.blocked) return s.blocked;
   const j = s.job;
   if (j?.state === "running") {
+    if (s.progressOnly) return `${j.label || "Starting"}…`;
     const tail = j.lines?.length ? ` · ${j.lines[j.lines.length - 1]}` : "";
     return `${j.label || "Starting"}… (step ${j.n || 0} of ${j.of})${tail}`;
   }
   if (j?.message) return j.message;
-  return s.ready ? `${s.readyWords}: ${s.current}.` : offerOf(s);
+  return s.ready ? (s.progressOnly ? s.readyWords : `${s.readyWords}: ${s.current}.`) : offerOf(s);
 }
 
 function paintAll() {
@@ -72,7 +73,7 @@ function paintAll() {
     if (!s) continue;
     const busy = s.job?.state === "running";
     el.disabled = busy || !!s.blocked;
-    el.textContent = busy ? `Setting up… step ${s.job.n || 0} of ${s.job.of}` : s.button;
+    el.textContent = busy ? (s.progressOnly ? "Fixing…" : `Setting up… step ${s.job.n || 0} of ${s.job.of}`) : s.button;
     el.title = offerOf(s);
   }
   for (const el of document.querySelectorAll("[data-setup-torch]")) {
@@ -95,6 +96,7 @@ function paintAll() {
   for (const note of document.querySelectorAll("[data-setup-note]")) {
     const s = setupOf(note.dataset.setupNote);
     if (!s) continue;
+    if (note.dataset.setupJobNote !== undefined) note.hidden = !["running", "failed"].includes(s.job?.state);
     note.textContent = noteText(s);
     note.classList.toggle("warn", s.job?.state === "failed" || !!s.blocked);
   }
@@ -108,8 +110,14 @@ function adopt(job) {
 
 function finished(job) {
   adopt(job);
-  for (const f of refreshers) { try { f(); } catch { /* a screen that is gone */ } }
+  for (const f of refreshers) { try { f(job); } catch { /* a screen that is gone */ } }
   if (job?.message) appAlert(job.message);
+}
+
+/** Screens refresh their own readiness after an engine setup finishes. */
+export function onSetupFinished(refresh) {
+  refreshers.add(refresh);
+  return () => refreshers.delete(refresh);
 }
 
 /** Poll while a job runs; when one finishes, say so once and let the screens repaint. */
@@ -143,7 +151,7 @@ export async function startSetup(id) {
   if (!s) return;
   if (s.job?.state === "running") { paintAll(); poll(); return; }
   if (s.blocked) { appAlert(s.blocked); return; }
-  if (s.ready) { appAlert(`${s.readyWords}: ${s.current}. Nothing needs setting up.`); return; }
+  if (s.ready) { appAlert(s.progressOnly ? s.readyWords : `${s.readyWords}: ${s.current}. Nothing needs setting up.`); return; }
   if (!(await appConfirm(offerOf(s), { title: `${s.button}?`, ok: s.button, cancel: "Not now" }))) return;
   await begin(s);
 }

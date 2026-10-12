@@ -29,12 +29,16 @@ test("readiness requires all native files and the exact generation/edit graph no
   assert.equal(unavailable.ready, false);
   assert.equal(unavailable.filesReady, true);
   assert.deepEqual(unavailable.missingNodes, ["TextEncodeQwenImage21"]);
+  assert.equal(unavailable.setup, "qwen-engine", "missing native support offers the automatic repair");
+  const remote = await qwenImageStatus(deps(options, { config: { remoteOnly: true }, engine: { objectInfo: async () => old } }));
+  assert.equal(remote.setup, undefined, "a hosted engine cannot be repaired by installing a local one");
 });
 
 test("offline runtime fails closed; custom files replace stock requirements without accepting GGUF", async () => {
   const offline = await qwenImageStatus(deps({}, { engine: { objectInfo: async () => { throw new Error("offline"); } } }));
   assert.equal(offline.ready, false); assert.equal(offline.runtimeReady, false);
   assert.deepEqual(offline.missingNodes, [], "offline is not evidence that an update is required");
+  assert.equal(offline.setup, undefined, "offline engines never trigger a compatibility download");
   assert.match(offline.error, /offline/);
   const custom = { dit: "other.safetensors" };
   const usable = await qwenImageStatus(deps(custom, { scan: async () => [{ name: custom.dit, folder: "unet", bytes: 400 }, ...shelf.slice(1)] }));

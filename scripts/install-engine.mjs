@@ -53,6 +53,11 @@
  *                       installed packages' files open. A package that is
  *                       installed but does not import is then left for the
  *                       launcher's Try again, which runs with Studio stopped.
+ *   --qwen-compatible   use the separate Qwen Image 2.1 pin, and import-check
+ *                       its native nodes after ComfyUI's normal quick test.
+ *   --stage-only        build into an explicit AIPLAY_ENGINE_DIR without
+ *                       changing settings. Refuses a finished engine or an
+ *                       unfinished engine that was not itself staged.
  *
  * Output: plain log lines, plus machine lines the launcher reads:
  *   @@step {"id":"torch","label":"Installing PyTorch","n":5,"of":10}
@@ -62,12 +67,12 @@
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, writeFile, rm, rename, readdir, statfs } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm, rename, readdir, statfs, lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { COMFY_TAG, comfyArchiveUrl, keptUvPath, UV_PYTHON_INSTALL_ARGS, UV_PRIVATE_ENV } from "../server/setup/pins.js";
+import { COMFY_TAG, QWEN_COMFY_TAG, comfyArchiveUrl, keptUvPath, UV_PYTHON_INSTALL_ARGS, UV_PRIVATE_ENV } from "../server/setup/pins.js";
 import { ensureUv } from "../server/setup/uv.js";
 import {
   STUDIO_PACKAGES, STUDIO_MODULES, MODULES_PROBE, LEFTOVERS_PROBE, probeLine, missingModules, studioWarning, addStudioPackages,
@@ -78,6 +83,10 @@ const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i > 
 
 const BACKEND = String(arg("backend") || "").toLowerCase();
 const GPU_NAME = arg("gpu-name") || "";
+const QWEN_COMPATIBLE = process.argv.includes("--qwen-compatible");
+const STAGE_ONLY = process.argv.includes("--stage-only");
+const SELECTED_TAG = QWEN_COMPATIBLE ? QWEN_COMFY_TAG : COMFY_TAG;
+const QWEN_NODES = ["TextEncodeQwenImage21", "QwenImage21Cache"];
 const APPDATA = process.env.AIPLAY_APPDATA || path.join(homedir(), ".aiplay-studio");
 const ROOT = path.resolve(process.env.AIPLAY_ENGINE_DIR || path.join(APPDATA, "engine"));
 const CACHE = `${ROOT}-cache`;
@@ -96,10 +105,19 @@ const STEPS = [
   ["studio", "Installing Studio's own packages"],
   ["verify", "Checking PyTorch can see the hardware"],
   ["test", "Test-starting ComfyUI"],
-  ["save", "Saving settings"],
+  ...(QWEN_COMPATIBLE ? [["qwen", "Checking Qwen Image 2.1 support"]] : []),
+  ["save", STAGE_ONLY ? "Finishing the new engine" : "Saving settings"],
 ];
 let current = "start";
-const log = (s) => process.stdout.write(`${s}\n`);
+let madeEngine = false;
+let outputClosed = false;
+/* A Studio restart closes the installer's progress pipes. Keep the installer
+ * alive until pip/uv and verification finish: its persisted PID then protects
+ * the staging folder from a concurrent retry, and its marker remains usable.
+ * Other stream errors still fail loudly. */
+process.stdout.on("error", (error) => { if (error.code === "EPIPE") outputClosed = true; else throw error; });
+process.stderr.on("error", (error) => { if (error.code !== "EPIPE") throw error; });
+const log = (s) => { if (!outputClosed) process.stdout.write(`${s}\n`); };
 function step(id) {
   current = id;
   const n = STEPS.findIndex(([k]) => k === id);
@@ -310,6 +328,21 @@ async function install() {
   if (!["nvidia", "amd", "intel", "cpu"].includes(BACKEND)) {
     throw new Error("Choose what to run on: --backend nvidia, amd, intel or cpu.");
   }
+  if (STAGE_ONLY) {
+    const sameFolder = (left, right) => (WIN ? left.toLowerCase() === right.toLowerCase() : left === right);
+    const cur = await readJson(SETTINGS);
+    if (!process.env.AIPLAY_ENGINE_DIR || sameFolder(ROOT, path.resolve(path.join(APPDATA, "engine")))
+      || (cur?.rig && sameFolder(ROOT, path.resolve(cur.rig)))) {
+      throw new Error("A staged engine needs its own AIPLAY_ENGINE_DIR, separate from Studio's current engine.");
+    }
+    const rootInfo = await lstat(ROOT).catch((e) => { if (e.code === "ENOENT") return null; throw e; });
+    if (rootInfo?.isSymbolicLink()) throw new Error(`${ROOT} is a link to another folder, so it was left alone. Choose a new staging folder.`);
+    const mark = await readJson(MARKER);
+    if (mark?.complete === true) throw new Error(`${ROOT} already holds a finished engine, so it was left alone. Choose a new staging folder.`);
+    if (existsSync(MARKER) && (mark?.stageOnly !== true || mark?.complete !== false)) {
+      throw new Error(`${ROOT} was not made as an unfinished staged engine, so it was left alone. Choose a new staging folder.`);
+    }
+  }
   const CACHE_MARK = path.join(CACHE, ".aiplay-engine-cache");
   if (existsSync(ROOT) && !existsSync(MARKER) && (await readdir(ROOT)).length) {
     throw new Error(`${ROOT} already exists and was not made by this installer, so it was left alone. Move it, or set AIPLAY_ENGINE_DIR to another folder.`);
@@ -321,7 +354,8 @@ async function install() {
     await clean();
   }
   await mkdir(ROOT, { recursive: true });
-  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: false, startedAt: new Date().toISOString() }, null, 2));
+  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: false, ...(STAGE_ONLY ? { stageOnly: true } : {}), startedAt: new Date().toISOString() }, null, 2));
+  madeEngine = true;
   await mkdir(CACHE, { recursive: true });
   await writeFile(CACHE_MARK, "made by scripts/install-engine.mjs; safe to delete");
   log(`Installing a private ComfyUI for Studio (${BACKEND.toUpperCase()}${GPU_NAME ? `, ${GPU_NAME}` : ""})`);
@@ -346,7 +380,7 @@ async function install() {
   const uvEnv = { ...UV_PRIVATE_ENV, UV_PYTHON_INSTALL_DIR: path.join(ROOT, "python"), UV_CACHE_DIR: path.join(CACHE, "uv-cache") };
 
   step("comfy");
-  const tag = COMFY_TAG;
+  const tag = SELECTED_TAG;
   const srcUrl = process.env.AIPLAY_COMFY_ARCHIVE_URL || comfyArchiveUrl(tag);
   log(`ComfyUI ${tag}: the version this Studio is tested with (a newer release is not taken until Studio pins it).`);
   const srcArchive = path.join(CACHE, `comfyui-${tag}.tar.gz`);
@@ -415,32 +449,73 @@ async function install() {
   studio.warning = studioWarning(studio.missing, studioRun.ok ? "" : studioRun.error, studio.ok ? null : await readLeftovers(py));
   log(studio.ok ? `Studio's own packages import: ${STUDIO_MODULES.join(", ")}.` : `(!) ${studio.warning}`);
   for (const [m, why] of Object.entries(studioCheck.reasons || {})) log(`    ${m}: ${why}`);
+  /* The repair switches a running Studio onto this engine. All Studio
+   * features must survive that switch, so an incomplete package check keeps
+   * this stage retryable with its existing download cache. A normal install
+   * still keeps an engine that can render and reports its package warning. */
+  if (STAGE_ONLY && QWEN_COMPATIBLE && !studio.ok) {
+    throw new Error(`The new engine's Studio packages did not import: ${studio.missing.join(", ")}. ${studio.warning || "Try again to finish the installation."}`);
+  }
 
   step("test");
   const flags = BACKEND === "cpu" && !MAC ? ["--cpu"] : [];
   await exec(py, ["-s", "main.py", "--quick-test-for-ci", "--disable-auto-launch", ...flags],
     { cwd: comfyDir, env: pipEnv, timeoutMs: 600_000 });
 
+  if (QWEN_COMPATIBLE) {
+    step("qwen");
+    /* Import the real extension and build both schemas. This proves the
+     * classes and their dependencies load, without loading any model or
+     * invoking a node's execute() method. Enable ComfyUI's normal argument
+     * parsing so a CPU install also imports with --cpu. */
+    const qwenProbe = [
+      "import sys, asyncio, json",
+      `sys.argv = ['qwen-check'] + ${JSON.stringify(flags)}`,
+      "import comfy.options",
+      "comfy.options.enable_args_parsing()",
+      "from comfy_extras.nodes_qwen import comfy_entrypoint",
+      "async def check():",
+      "    extension = await comfy_entrypoint()",
+      "    registered = {node.define_schema().node_id for node in await extension.get_node_list()}",
+      `    wanted = ${JSON.stringify(QWEN_NODES)}`,
+      "    missing = [name for name in wanted if name not in registered]",
+      "    if missing: raise RuntimeError('Missing Qwen Image 2.1 nodes: ' + ', '.join(missing))",
+      "    print('@@qwen ' + json.dumps(wanted))",
+      "asyncio.run(check())",
+    ].join("\n");
+    const checked = await run(py, ["-s", "-c", qwenProbe],
+      { cwd: comfyDir, env: { ...process.env, ...pipEnv }, timeout: 300_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
+      .catch((e) => { throw new Error(`Qwen Image 2.1's native nodes did not load:\n${String(e.stderr || e.message).trim().split("\n").slice(-12).join("\n")}`); });
+    const verified = probeLine(checked.stdout, "qwen");
+    if (!Array.isArray(verified) || QWEN_NODES.some((name) => !verified.includes(name))) throw new Error("Qwen Image 2.1's native nodes did not report a successful check.");
+    log(`Qwen Image 2.1 nodes import: ${QWEN_NODES.join(", ")}.`);
+  }
+
   step("save");
   const cur = (await readJson(SETTINGS)) || {};
   const gpu = cur.gpu && cur.gpu.vendor === BACKEND ? cur.gpu
-    : BACKEND === "cpu" ? null
+    : BACKEND === "cpu" ? { vendor: "cpu", name: "CPU only", totalMb: 0, source: "chosen at install" }
       : { vendor: BACKEND, name: probed.name || GPU_NAME || BACKEND.toUpperCase(), totalMb: cur.gpu?.totalMb || 0, source: "chosen at install" };
-  const next = {
-    ...cur, rig: ROOT, python: py,
+  const installed = {
+    rig: ROOT, python: py, gpu,
     torchBackend: probed.backend, torchVersion: probed.version,
     comfyExtraArgs: flags, launchFrom: `Studio's own ComfyUI (${tag}, ${BACKEND})`,
     engineInstall: { backend: BACKEND, comfy: tag, torch: probed.version, studioPackages: studioRecord(studio), at: new Date().toISOString() },
   };
-  if (gpu) next.gpu = gpu; else if (BACKEND === "cpu") next.gpu = { vendor: "cpu", name: "CPU only", totalMb: 0, source: "chosen at install" };
-  await mkdir(APPDATA, { recursive: true });
-  await writeFile(SETTINGS, JSON.stringify(next, null, 2));
-  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: true, comfy: tag, torch: probed.version, studio: studioRecord(studio), finishedAt: new Date().toISOString() }, null, 2));
+  const done = { ...installed, backend: BACKEND, torch: probed.version, comfy: tag,
+    ...(STAGE_ONLY ? { stageOnly: true } : {}), ...(QWEN_COMPATIBLE ? { qwenNodes: QWEN_NODES } : {}),
+    studio: { ok: studio.ok, missing: studio.missing, warning: studio.warning } };
+  if (!STAGE_ONLY) {
+    await mkdir(APPDATA, { recursive: true });
+    await writeFile(SETTINGS, JSON.stringify({ ...cur, ...installed }, null, 2));
+  }
+  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: true, comfy: tag, torch: probed.version, studio: studioRecord(studio),
+    ...(STAGE_ONLY ? { stageOnly: true, metadata: done } : {}), ...(QWEN_COMPATIBLE ? { qwenNodes: QWEN_NODES } : {}), finishedAt: new Date().toISOString() }, null, 2));
   /* A finished install needs its download cache no more: gigabytes of wheels.
    * (A FAILED one keeps it; see clean().) The kept uv is not in here. */
   await rm(CACHE, { recursive: true, force: true }).catch(() => {});
   log(`\nDone. ComfyUI ${tag} with torch ${probed.version} is ready at ${ROOT}.`);
-  log(`@@done ${JSON.stringify({ rig: ROOT, python: py, backend: BACKEND, torch: probed.version, comfy: tag, studio: { ok: studio.ok, missing: studio.missing, warning: studio.warning } })}`);
+  log(`@@done ${JSON.stringify(done)}`);
 }
 
 /** Remove what this installer made after a failure — only ever the engine
@@ -456,7 +531,8 @@ if (process.argv.includes("--plan")) {
   const readme = await readFile(arg("plan"), "utf-8");
   log(JSON.stringify({
     backend: BACKEND, gpu: GPU_NAME, ...torchCommand(readme), args: pipArgs(torchCommand(readme).cmd),
-    steps: STEPS.map(([id]) => id), comfy: { tag: COMFY_TAG, url: comfyArchiveUrl(COMFY_TAG) },
+    steps: STEPS.map(([id]) => id), comfy: { tag: SELECTED_TAG, url: comfyArchiveUrl(SELECTED_TAG) },
+    stageOnly: STAGE_ONLY, qwenCompatible: QWEN_COMPATIBLE,
     root: ROOT, cache: CACHE, uv: keptUvPath(APPDATA), studio: STUDIO_PACKAGES,
     uvPythonInstall: ["python", "install", ...UV_PYTHON_INSTALL_ARGS, torchCommand(readme).python], uvEnv: UV_PRIVATE_ENV,
   }));
@@ -476,7 +552,7 @@ async function dropPipCache() {
 /* --studio-packages: only Studio's own packages, into a FINISHED engine this
  * installer made. Anything else is refused, and this path deletes nothing of
  * the engine's: the engine it adds to already works. */
-if (process.argv.includes("--studio-packages")) {
+if (process.argv.includes("--studio-packages") && !STAGE_ONLY && !QWEN_COMPATIBLE) {
   const addOnly = process.argv.includes("--add-only");
   let code = 1;
   try {
@@ -515,15 +591,19 @@ if (process.argv.includes("--studio-packages")) {
 }
 
 try {
+  if (process.argv.includes("--studio-packages") && (STAGE_ONLY || QWEN_COMPATIBLE)) throw new Error("A staged or Qwen-compatible engine cannot be combined with --studio-packages.");
   await install();
   process.exit(0);
 } catch (e) {
   const message = String(e?.message || e).trim();
   log(`\nFAILED at "${current}": ${message}`);
-  let cleaned = true;
+  let cleaned = false;
   try {
-    await clean();
-    log(`Removed the partial engine folder. The download cache (${CACHE}) and the kept uv stay, so the next try does not download the same files again.`);
+    if (madeEngine) {
+      await clean();
+      cleaned = true;
+      log(`Removed the partial engine folder. The download cache (${CACHE}) and the kept uv stay, so the next try does not download the same files again.`);
+    }
   } catch (c) { cleaned = false; log(`Could not fully remove the partial install: ${c.message}`); }
   log(`@@error ${JSON.stringify({ message, step: current, cleaned })}`);
   process.exit(1);

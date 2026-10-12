@@ -505,6 +505,7 @@ export function createEngineClient(deps = {}) {
       })),
       /* Work made of several runs, between two of them (hold() below). */
       held: heldBy(),
+      submissionsPaused: submissionPause?.label ?? null,
       hashModels: s.hashModels === true,
       graphStore: g,
     };
@@ -541,6 +542,7 @@ export function createEngineClient(deps = {}) {
   const holds = new Map();
   let holdSeq = 0;
   function hold(label, { idleMs = null } = {}) {
+    if (submissionPause) throw submissionPausedError();
     const id = ++holdSeq;
     holds.set(id, { label: String(label || "work on the engine").slice(0, 120), since: Date.now(),
       idleMs: Number(idleMs) > 0 ? Number(idleMs) : null });
@@ -553,6 +555,27 @@ export function createEngineClient(deps = {}) {
       out.push(h.label);
     }
     return out;
+  }
+
+  // A switch must also see dispatches still preparing their ledger record,
+  // before they become inFlight. Taking this pause is synchronous and atomic
+  // with those counters; unlike a work hold it does not block its own switch.
+  let preparingSubmissions = 0;
+  let submissionPause = null;
+  const submissionPausedError = () => Object.assign(new Error(
+    `The engine is paused for ${submissionPause?.label || "maintenance"}. Try again when it finishes.`),
+  { code: "QWEN_ENGINE_BUSY" });
+  function pauseSubmissions(label = "engine maintenance") {
+    if (submissionPause) throw submissionPausedError();
+    const held = heldBy();
+    if (preparingSubmissions || inFlight.size || held.length) {
+      throw Object.assign(new Error("Studio is working. Try the Qwen repair after it finishes."), {
+        code: "QWEN_ENGINE_BUSY", onlyChatHold: !preparingSubmissions && !inFlight.size && held.length > 0 && held.every((value) => value === "a chat turn"),
+      });
+    }
+    const pause = { label: String(label).slice(0, 120) };
+    submissionPause = pause;
+    return () => { if (submissionPause === pause) submissionPause = null; };
   }
 
   /** Prompt ids this app has asked the engine to drop, held only until their
@@ -587,6 +610,13 @@ export function createEngineClient(deps = {}) {
    * none may be added.
    */
   async function dispatch(spec = {}) {
+    if (submissionPause) throw submissionPausedError();
+    preparingSubmissions++;
+    try { return await dispatchAvailable(spec); }
+    finally { preparingSubmissions--; }
+  }
+
+  async function dispatchAvailable(spec = {}) {
     externalMusicWork.assertFree();
     /* Local stand-ins chosen on the Models screen, applied BEFORE the record is
      * built so the ledger names the file that actually rendered. */
@@ -1223,7 +1253,7 @@ export function createEngineClient(deps = {}) {
     // wire — everyone else
     dispatch, run, submit, socket, cancelRun, interrupt, clearQueue, freeMemory,
     history, queue, objectInfo, systemStats, identity, probePort, refreshFacts,
-    status, activity, runRecord, reveal, hold,
+    status, activity, runRecord, reveal, hold, pauseSubmissions,
     ranSinceStart: () => ranSinceStart,
     // events
     on: (...a) => bus.on(...a), off: (...a) => bus.off(...a), once: (...a) => bus.once(...a),
