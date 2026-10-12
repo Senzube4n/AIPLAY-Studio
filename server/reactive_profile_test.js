@@ -130,10 +130,14 @@ await test("Reactive controls load ahead of slow libraries and a failed clip ref
   for (const id of ["reactSong", "reactStyles", "reactImgs", "reactClips", "reactMotionModel", "reactMotionLora", "reactModelLora", "reactMotionSampler", "reactMotionScheduler"]) elements.set(id, element());
   elements.get("reactClips").innerHTML = "previous clip choices";
   const requests = [], pending = new Map();
+  let polls = 0;
   const ctx = vm.createContext({
     $: (id) => elements.get(id), document: { createElement: element },
     state: { library: [], images: [] }, reactStyles: {}, reactStyle: "cuts", reactMotionProfileDefaults: {},
     esc: String, reactSetStyle() {}, reactPaintPicked() {},
+    // Bucky refreshes an empty song cache before painting the picker. Model
+    // that prerequisite while leaving the independent picture/clip reads slow.
+    poll: async () => { polls++; ctx.state.library = [{ file: "ready.flac", title: "Library song" }]; },
     fetch: (url) => {
       requests.push(url);
       if (url === "/api/reactive/status") return Promise.resolve({ ok: true, json: async () => ({
@@ -146,11 +150,14 @@ await test("Reactive controls load ahead of slow libraries and a failed clip ref
   vm.runInContext(source.slice(source.indexOf("const reactLoaders = new Map();"), source.indexOf("\nfunction reactSetStyle(")), ctx);
   const loading = ctx.loadReactive();
   await new Promise(setImmediate);
+  assert.equal(polls, 1, "opening before the first status poll refreshes the song library");
+  assert.match(elements.get("reactSong").innerHTML, /Library song/);
   assert.match(elements.get("reactStyles").innerHTML, /data-style="motion"/);
   assert.equal(ctx.reactMotionProfileDefaults.motionModel, "LCM");
   assert.equal(pending.size, 2);
   assert.match(elements.get("reactClipsLoadNote").textContent, /Loading clips/);
   const reopened = ctx.loadReactive();
+  assert.equal(polls, 1, "a populated song library is reused on reopening");
   assert.equal(requests.filter((url) => url === "/api/clips").length, 1);
   pending.get("/api/images").resolve({ ok: true, json: async () => ({ images: [] }) });
   pending.get("/api/clips").reject(new Error("temporary disk error"));
