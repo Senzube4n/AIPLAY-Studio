@@ -1086,7 +1086,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
    * only in the question "Yes — take the job" asks, so the sentence says to
    * press that; "waits its turn" is said only when something is running. */
   ok("...naming the press that asks the question, and the wait behind what is running",
-    /press “Yes — take the job” again and answer “Accept anyway”/.test(whileBusy.body.error)
+    /press “Yes, take the job” again and answer “Accept anyway”/.test(whileBusy.body.error)
     && /waits its turn/.test(whileBusy.body.error), whileBusy.body.error);
   /* ⚠ PIN 8 — THE MINUTES ARE READ. Zero minutes a day refuses; busy AND zero
    * minutes lists BOTH, so the one confirmation names everything a yes spends. */
@@ -1101,7 +1101,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     [zeroMinutes.status, zeroMinutes.body.reason, zeroMinutes.body.overridable, /0 minutes of your card/.test(zeroMinutes.body.error)],
     [409, "budget-zero", true, true]);
   ok("...and a refusal for minutes alone does not say the scene waits behind a busy card",
-    !/waits its turn/.test(zeroMinutes.body.error) && /Yes — take the job/.test(zeroMinutes.body.error), zeroMinutes.body.error);
+    !/waits its turn/.test(zeroMinutes.body.error) && /Yes, take the job/.test(zeroMinutes.body.error), zeroMinutes.body.error);
   /* ...and `anyway` walks past the minutes, on a second order so the first can
    * still be accepted the ordinary way below. */
   {

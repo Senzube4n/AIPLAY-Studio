@@ -189,7 +189,7 @@ export function mountEar(opts = {}) {
       S.measure = r.measure; S.score = r.score; S.answered = new Set();
       S.shownAt = new Map(); S.review = null;
       say(`${r.cards.length} card${r.cards.length === 1 ? "" : "s"}`
-        + `${r.over_cap ? ` (+${r.over_cap} held back — the stack is capped so nobody rubber-stamps)` : ""}`
+        + `${r.over_cap ? ` (+${r.over_cap} held back: the stack is capped so nobody rubber-stamps)` : ""}`
         + ` · ${r.notes.length} note${r.notes.length === 1 ? "" : "s"} · ${r.ms} ms`);
     } catch (err) { say(err.message, true); }
     busy(false); render();
@@ -210,8 +210,8 @@ export function mountEar(opts = {}) {
       say(v
         ? (v.reverted
           ? `REVERTED: ${v.reason}`
-          : `${v.verdict} — ${v.reason}`)
-        : "recorded (free direction — nothing applied automatically)");
+          : `${v.verdict}: ${v.reason}`)
+        : "recorded (free direction: nothing applied automatically)");
       onEdited();
     } catch (err) { say(err.message, true); }
     busy(false); render();
@@ -225,7 +225,7 @@ export function mountEar(opts = {}) {
                    decide_ms: Date.now() - (S.shownAt.get(card.id) || Date.now()) });
       S.answered.add(card.id);
       card._result = { rejected: true };
-      say("recorded: every route refused — a rejection is evidence of your control");
+      say("recorded: every route refused, and a rejection is evidence of your control");
     } catch (err) { say(err.message, true); }
     busy(false); render();
   }
@@ -235,7 +235,7 @@ export function mountEar(opts = {}) {
       await post({ action: "answer", slug: getSlug(), run: S.run, card: card.id, choice: "skip" });
       S.answered.add(card.id);
       card._result = { skipped: true };
-      say("skipped — not written to the ledger, because declining to decide is not a decision");
+      say("skipped: not written to the ledger, because declining to decide is not a decision");
     } catch (err) { say(err.message, true); }
     render();
   }
@@ -245,7 +245,7 @@ export function mountEar(opts = {}) {
     if (!left.length) return;
     if (!(await appConfirm(
       `Accept the first route on ${left.length} remaining card${left.length === 1 ? "" : "s"} in one action?\n\n`
-      + "This is recorded as a BULK accept — one action, not "
+      + "This is recorded as a BULK accept: one action, not "
       + `${left.length} individual deliberations. That is what it is, and the `
       + "authorship record will say so."))) return;
     busy(true); say("bulk accepting…");
@@ -264,7 +264,7 @@ export function mountEar(opts = {}) {
     const slug = getSlug();
     if (!slug) return say("open a project first", true);
     const brief = briefBox.value.trim();
-    if (!brief) return say("write what you are going for — it is recorded as your direction, verbatim", true);
+    if (!brief) return say("write what you are going for: it is recorded as your direction, verbatim", true);
     busy(true); say("the Ear is working through its own cards…");
     try {
       const r = await post({ action: "auto", slug, brief, genre: genreSel.value,
@@ -274,7 +274,7 @@ export function mountEar(opts = {}) {
       S.review = rc;
       S.autoResult = r;
       say(`${r.judgements.length} decision${r.judgements.length === 1 ? "" : "s"} made under your brief`
-        + ` — penalty ${fmt(r.before?.penalty_db, " dB", 2)} → ${fmt(r.after?.penalty_db, " dB", 2)}.`
+        + `: penalty ${fmt(r.before?.penalty_db, " dB", 2)} → ${fmt(r.after?.penalty_db, " dB", 2)}.`
         + " Review them below.");
       onEdited();
     } catch (err) { say(err.message, true); }
@@ -290,8 +290,8 @@ export function mountEar(opts = {}) {
                    decide_ms: Date.now() - (S.shownAt.get(`rev:${row.card}`) || Date.now()) });
       row.already_reviewed = true;
       say(verdict === "keep"
-        ? "kept — recorded as YOUR informed selection, alternatives seen"
-        : "overridden — recorded as your own decision");
+        ? "kept: recorded as YOUR informed selection, alternatives seen"
+        : "overridden: recorded as your own decision");
       if (verdict === "override") onEdited();
     } catch (err) { say(err.message, true); }
     busy(false); render();
@@ -316,7 +316,7 @@ export function mountEar(opts = {}) {
     try {
       await post({ action: "approve", slug: getSlug(), run: S.run,
                    listened_seconds: secs, note: approveNote.value || undefined });
-      say(`approved after ${secs}s of listening — recorded as your own act`);
+      say(`approved after ${secs}s of listening: recorded as your own act`);
     } catch (err) { say(err.message, true); }
     busy(false);
   }
@@ -344,8 +344,8 @@ export function mountEar(opts = {}) {
    * nothing. */
   const refSel = EL("select");
   refSel.title = "measure this mix against a reference profile as well as against the pink "
-    + "null. A profile is SHAPE only — band levels, decay times, sidechain depth and "
-    + "recovery, counts — measured off a record you own. It carries no audio and no melody, "
+    + "null. A profile is SHAPE only: band levels, decay times, sidechain depth and "
+    + "recovery, counts: measured off a record you own. It carries no audio and no melody, "
     + "so this is a style target and never a copy.";
   refSel.addEventListener("change", () => { S.profileId = refSel.value; render(); });
   function drawRefSel() {
@@ -404,7 +404,7 @@ export function mountEar(opts = {}) {
     if (S.answered.has(card.id)) {
       const r = card._result;
       const v = r?.applied;
-      const line = r?.skipped ? "skipped — nothing recorded"
+      const line = r?.skipped ? "skipped: nothing recorded"
         : r?.rejected ? "every route refused (recorded)"
           : v ? `${v.reverted ? "reverted" : v.verdict}: ${v.reason}`
             : "recorded";
@@ -415,7 +415,7 @@ export function mountEar(opts = {}) {
     /* Declared before the routes so every handler closes over the same box:
      * the human's reason applies whichever way they answer. */
     const whyBox = EL("input");
-    whyBox.placeholder = "why — optional, recorded verbatim";
+    whyBox.placeholder = "why: optional, recorded verbatim";
     whyBox.style.width = "100%";
 
     for (const route of card.routes) {
@@ -450,7 +450,7 @@ export function mountEar(opts = {}) {
     const no = EL("button", null, "None of these");
     no.addEventListener("click", () => reject(card, whyBox.value.trim()));
     const sk = EL("button", null, "Skip");
-    sk.title = "declining to decide — logged as nothing";
+    sk.title = "declining to decide: logged as nothing";
     sk.addEventListener("click", () => skip(card));
     row.append(send, no, sk);
     el.append(row);
@@ -474,12 +474,12 @@ export function mountEar(opts = {}) {
     }
     body.append(EL("div", "ear-note",
       S.profiles === null
-        ? "No reference library on this machine — the critique measures against the pink "
+        ? "No reference library on this machine: the critique measures against the pink "
           + "null alone, which is what it has always done."
         : !S.profiles.length
           ? "No reference profiles yet. Build one in the Voice Lab's reference bar (or with "
             + "daw_profile_build) and it appears here: shape measurements taken off a record "
-            + "you own — band levels, decay times, sidechain depth and recovery — never its "
+            + "you own (band levels, decay times, sidechain depth and recovery) never its "
             + "audio and never its melody."
           : S.profileId
             ? "This critique is measured against that profile's SHAPE as well as against the "
@@ -501,10 +501,10 @@ export function mountEar(opts = {}) {
     for (const c of S.cards) body.append(cardEl(c));
 
     if (S.notes.length) {
-      body.append(EL("div", "ear-h", "notes — measured, but only one honest move each"));
+      body.append(EL("div", "ear-h", "notes: measured, but only one honest move each"));
       for (const n of S.notes) {
         const d = EL("div", "ear-note");
-        d.append(document.createTextNode(`${n.observation} — ${n.how_much}`));
+        d.append(document.createTextNode(`${n.observation}: ${n.how_much}`));
         d.append(EL("div", null, n.why_not_a_card));
         body.append(d);
       }
@@ -515,7 +515,7 @@ export function mountEar(opts = {}) {
       const bulk = EL("div", "ear-bulk");
       bulk.append(document.createTextNode(
         "Long session? You can take the first route on every remaining card at once. "
-        + "It is recorded as one bulk accept — not as individual deliberation. "));
+        + "It is recorded as one bulk accept: not as individual deliberation. "));
       const b = EL("button", null, `Bulk-accept ${left} remaining`);
       b.addEventListener("click", bulkAccept);
       bulk.append(b);
@@ -537,9 +537,9 @@ export function mountEar(opts = {}) {
   }
 
   function renderAuto() {
-    body.append(EL("div", "ear-h", "auto-progression — the Ear answers its own cards"));
+    body.append(EL("div", "ear-h", "auto-progression: the Ear answers its own cards"));
     body.append(EL("div", "ear-note",
-      "Every decision it makes is recorded as the machine's, delegated by you — never "
+      "Every decision it makes is recorded as the machine's, delegated by you: never "
       + "as your own deliberation. Your brief below is recorded verbatim and is what "
       + "those decisions are delegated BY. Review afterwards is what turns any of them "
       + "into a real, informed selection of yours."));
@@ -563,7 +563,7 @@ export function mountEar(opts = {}) {
         + `${rrow.outcome.verdict}${rrow.outcome.reverted ? " (reverted)" : ""}`));
       if (rrow.already_reviewed) { el.append(EL("div", "ear-verdict kept", "reviewed")); body.append(el); continue; }
       const keep = EL("button", "ear-route");
-      keep.textContent = "Keep this — I've seen the alternatives";
+      keep.textContent = "Keep this: I've seen the alternatives";
       keep.addEventListener("click", () => review(rrow, "keep"));
       el.append(keep);
       for (const alt of rrow.alternatives.filter((o) => o.id !== rrow.the_ear_chose)) {
@@ -606,7 +606,7 @@ export function mountEar(opts = {}) {
     if (S.tab !== mine) return;                 // the human switched tabs mid-fetch
     body.append(EL("div", "ear-note",
       `${t.summary.observations} decision${t.summary.observations === 1 ? "" : "s"} recorded`
-      + `${t.summary.cold_start ? " — still neutral (" + t.summary.prior + ")" : ""}. `
+      + `${t.summary.cold_start ? ": still neutral (" + t.summary.prior + ")" : ""}. `
       + "It changes the ORDER cards appear in and whether a class may be applied "
       + "automatically. It never invents a finding and never hides a measurement."));
     if (t.summary.metrics.length) {
@@ -628,7 +628,7 @@ export function mountEar(opts = {}) {
     const b = EL("button", null, "Reset to neutral");
     b.addEventListener("click", async () => {
       if (!(await appConfirm("Reset the taste profile to neutral?\n\n"
-        + "The provenance ledger is untouched — it stays the record of what you "
+        + "The provenance ledger is untouched: it stays the record of what you "
         + "actually decided. Only the derived preference cache is cleared."))) return;
       try { await post({ action: "taste_reset", slug: getSlug() || "x" }); say("taste profile reset"); }
       catch (err) { say(err.message, true); }
@@ -639,7 +639,7 @@ export function mountEar(opts = {}) {
 
   function renderAbout() {
     const st = S.status;
-    body.append(EL("div", "ear-h", "the objective critic — no model, cannot be fooled"));
+    body.append(EL("div", "ear-h", "the objective critic: no model, cannot be fooled"));
     if (!st) { body.append(EL("div", "ear-note", "loading…")); return; }
     if (st.error || st.objective?.error) {
       body.append(EL("div", "ear-note", st.error || st.objective.error));
@@ -653,7 +653,7 @@ export function mountEar(opts = {}) {
       body.append(tbl);
       body.append(EL("div", "ear-note",
         `bands: ${st.objective.bands.join(", ")} · reference: pink noise + genre tilt · `
-        + `band tables agree: ${st.objective.bands_agree ? "yes" : "NO — report this"}`));
+        + `band tables agree: ${st.objective.bands_agree ? "yes" : "NO: report this"}`));
     }
     body.append(EL("div", "ear-h", "the subjective ear"));
     const sub = st.subjective || {};
@@ -672,7 +672,7 @@ export function mountEar(opts = {}) {
         body.append(EL("div", "ear-note", sub.installer.where));
       }
       for (const [k, v] of Object.entries(sub.judges || {})) {
-        body.append(EL("div", "ear-note", `${k} — ${v.role} (${v.licence})`));
+        body.append(EL("div", "ear-note", `${k}: ${v.role} (${v.licence})`));
       }
     }
     if (sub.refused) {

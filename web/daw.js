@@ -45,6 +45,11 @@ import { audioResultDetails, stemResultDetails } from "./daw-audio-results.js";
 import { initDawPlugins } from "./daw-plugins.js";
 
 const $ = (id) => document.getElementById(id);
+/* Every name here can come from outside Studio: a track named after an
+ * imported file, a pack's licence fields, MCP and the chat agent. Escaped
+ * wherever it lands in HTML (security review, 2026-10-12). */
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const webHref = (u) => (/^https?:\/\//i.test(String(u || "")) ? esc(u) : "");
 const status = (msg) => { $("status").textContent = msg; };
 
 const TPB = 960;                 // ticks per beat (the denominator unit)
@@ -599,7 +604,7 @@ function applyKeymap(name) {
   $("kmSel").value = S.keymap;
   for (const [id, act, base] of TIP_BINDINGS) {
     const el = $("shell").querySelector(`#${id}`);
-    if (el) el.title = `${base} — ${binding(act) || "unbound"}`;
+    if (el) el.title = `${base}: ${binding(act) || "unbound"}`;
   }
   drawKeymapTable();
 }
@@ -689,7 +694,7 @@ function onRemoteChange(m) {
         if (!sessionCurrent(session)) return;
       }
       if (m.by === "agent") {
-        status(`agent edit applied live: ${m.action}${m.detail ? ` — ${m.detail}` : ""}`);
+        status(`agent edit applied live: ${m.action}${m.detail ? `: ${m.detail}` : ""}`);
       }
     } catch (err) { if (sessionCurrent(session)) status(`live sync: ${err.message}`); }
   });
@@ -1080,7 +1085,7 @@ async function refreshWaveLanes(announce = false) {
     /* Nothing has been rendered yet, so there are no regions to take stems
      * from. Said out loud: a lane that opens and stays blank with no message
      * is the exact failure this whole panel is supposed to be the opposite of. */
-    status("waveform lane: nothing is rendered yet — press play, or edit a note, "
+    status("waveform lane: nothing is rendered yet. Press play, or edit a note, "
       + "and the lane fills as the regions land");
     return;
   }
@@ -1126,7 +1131,7 @@ async function refreshWaveLanes(announce = false) {
       .map(([tid, n]) => `${nameOf(tid)} in ${n} of ${rows.length} region(s)`);
     status(`Stems: ${r.rendered} rendered, ${r.cached} cached · ${details.note}. `
       + (details.complete ? "Complete track and return set." : "Partial track set; see Audio for return files and scope.")
-      + (truncated ? ` · showing the first ${WAVE_REGION_CAP} regions — set a shorter loop range for the rest` : "")
+      + (truncated ? ` · showing the first ${WAVE_REGION_CAP} regions: set a shorter loop range for the rest` : "")
       + (silent.length ? ` · silent here: ${silent.join(", ")}` : ""));
     S.sw.push({ ahead: true, regionIdx: null, estMs: null, actualMs: r.ms,
                 audible: performance.now() - t0 });
@@ -1469,7 +1474,7 @@ arrCv.addEventListener("pointerup", async (e) => {
       const bits = [];
       if (r.notesMoved) bits.push(`${r.notesMoved} note(s) rode along`);
       if (r.notesClamped) bits.push(`${r.notesClamped} beat-clamped by a meter change`);
-      if (r.notesOutside) bits.push(`${r.notesOutside} note(s) now SILENT outside the clip — widen it to bring them back`);
+      if (r.notesOutside) bits.push(`${r.notesOutside} note(s) now SILENT outside the clip: widen it to bring them back`);
       if (bits.length) status(`${label} · ${bits.join(" · ")}`);
     }
     return;
@@ -2134,7 +2139,7 @@ async function commitVel(strat, label) {
     await refreshDoc(session);
     if (!sessionCurrent(session)) return;
     renderAndSwap(t0, performance.now(), r.dirty, session);
-    status(`${label} — ${notes.length} note(s), one edit_notes`);
+    status(`${label}: ${notes.length} note(s), one edit_notes`);
   } catch (err) {
     if (!sessionCurrent(session)) return;
     draw();
@@ -2170,7 +2175,7 @@ window.addEventListener("keydown", (e) => {
   const velocity = !!S.velStrategy;
   cancelNoteGesture();
   e.preventDefault();
-  if (velocity) status("velocity gesture cancelled — nothing was sent");
+  if (velocity) status("velocity gesture cancelled: nothing was sent");
 });
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -2528,7 +2533,7 @@ $("audChk").addEventListener("change", () => {
   if (!S.aud.on) auditionStop();
   try { localStorage.setItem("daw.audition", S.aud.on ? "1" : "0"); } catch { /* private mode */ }
   status(S.aud.on
-    ? "note auditioning on — a click, a drawn note or a vertical drag plays through this track's patch (an audition render: a server round trip, tens of ms)"
+    ? "note auditioning on: a click, a drawn note or a vertical drag plays through this track's patch (an audition render: a server round trip, tens of ms)"
     : "note auditioning off");
 });
 $("scaleRoot").addEventListener("change", draw);
@@ -2582,7 +2587,7 @@ async function quantizeSelection() {
   if (noteEditBusy()) return;
   const session = captureSession();
   const g = S.grid;
-  if (!g) { status("grid is off — pick a grid to quantize to"); return; }
+  if (!g) { status("grid is off: pick a grid to quantize to"); return; }
   const amt = Math.max(1, Math.min(100, Number($("quantAmt").value) || 100)) / 100;
   const rows = targetNotes();
   if (!rows.length) { status("nothing to quantize"); return; }
@@ -2885,7 +2890,7 @@ function drawAutoPane() {
     edit.addEventListener("click", () => { S.laneCur = key; drawAutoPane(); });
     const flat = document.createElement("button");
     flat.className = "d-btn d-sm"; flat.textContent = "flatten";
-    flat.title = "drop the keys and keep the value at the playhead — the same action, a plain number";
+    flat.title = "drop the keys and keep the value at the playhead: the same action, a plain number";
     flat.addEventListener("click", () => flattenLane(key));
     const off = document.createElement("button");
     off.className = "d-btn d-sm"; off.textContent = "✕";
@@ -2905,7 +2910,7 @@ function drawAutoCanvas() {
   g.clearRect(0, 0, W, H);
   g.font = "10px monospace";
   if (!ref) {
-    tint(g, C.ghost, 1, () => g.fillText("pick a parameter above — every automatable one is listed", 8, 22));
+    tint(g, C.ghost, 1, () => g.fillText("pick a parameter above: every automatable one is listed", 8, 22));
     return;
   }
   for (const r of S.timeline) {
@@ -2940,7 +2945,7 @@ function drawAutoCanvas() {
   }
   tint(g, C.warn, 1, () => g.fillRect(secondsToQ(projTime()) * S.arrPxq, 0, 1.5, H));
   tint(g, C.ghost, 1, () => g.fillText(
-    `${ref.label} — click to add a breakpoint, drag to move, right-click to delete`, 8, H - 4));
+    `${ref.label}: click to add a breakpoint, drag to move, right-click to delete`, 8, H - 4));
 }
 
 const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2));
@@ -3124,7 +3129,7 @@ async function loadRack() {
     const det = document.createElement("details");
     det.className = "d-catmis";
     const sum = document.createElement("summary");
-    sum.textContent = "⚠ the server is running older code than the engine on disk — restart the studio.";
+    sum.textContent = "⚠ the server is running older code than the engine on disk: restart the studio.";
     const body = document.createElement("div");
     body.className = "d-catdiff";
     body.textContent = RACK.problems.join("; ");
@@ -3159,7 +3164,7 @@ function drawDevices() {
     const empty = document.createElement("div");
     empty.className = "d-note";
     empty.style.padding = "10px";
-    empty.innerHTML = `No inserts on <b>${h.name}</b>. Add one from the picker above — `
+    empty.innerHTML = `No inserts on <b>${esc(h.name)}</b>. Add one from the picker above: `
       + `every device is the engine's own, and its parameters are drawn from the served catalog.`;
     box.appendChild(empty);
     return;
@@ -3355,7 +3360,7 @@ function paramControl(h, ins, pname, pspec) {
   lab.className = "d-plab";
   lab.textContent = pspec.label || pname.replace(/_/g, " ");
   lab.title = `${pspec.desc || pname}${pspec.unit ? ` (${pspec.unit})` : ""}`
-    + (pspec.animatable ? " — automatable" : "");
+    + (pspec.animatable ? ": automatable" : "");
 
   if (pspec.type === "bool") {
     const t = document.createElement(ins.type === 'vst3' ? 'button' : 'div');
@@ -3695,7 +3700,7 @@ function strip(kind, host) {
    * set: this prints the dB to one decimal and accepts a typed one. */
   const val = document.createElement("div");
   val.className = "d-fadval" + (keyed ? " d-auto" : "");
-  val.title = "the fader in dB — click to type an exact value (mixer_set)";
+  val.title = "the fader in dB: click to type an exact value (mixer_set)";
   const paint = (x) => {
     const p = dbToPos(x);
     fad.querySelector(".d-cap").style.top = `${(1 - p) * 100}%`;
@@ -3721,7 +3726,7 @@ function strip(kind, host) {
   const met = document.createElement("canvas");
   met.className = "d-meterc";
   met.title = kind === "master"
-    ? "live peak from the audio this page is playing — 20 dB/s decay, 1.5 s peak hold"
+    ? "live peak from the audio this page is playing: 20 dB/s decay, 1.5 s peak hold"
     : "measured, not live: press ‘measure’ to run the engine's own metering over the visible bars";
   /* The row it will be measured against is stashed on the element: the
    * meters are SIZED AND PAINTED after the strips are in the document
@@ -3743,7 +3748,7 @@ function strip(kind, host) {
     const pan = document.createElement("div");
     pan.className = "d-pan" + (pk ? " d-auto" : "");
     pan.innerHTML = "<i></i>";
-    pan.title = `pan ${pv.toFixed(2)} — equal-power, centre-unity`;
+    pan.title = `pan ${pv.toFixed(2)}: equal-power, centre-unity`;
     const pi = pan.querySelector("i");
     const pval = document.createElement("div");
     pval.className = "d-panval";
@@ -3772,7 +3777,7 @@ function strip(kind, host) {
       const lv = s ? atNow(s.level) : -60;
       const rowEl = document.createElement("div");
       rowEl.className = "d-send";
-      rowEl.innerHTML = `<span class="d-sname" title="${ret.name}">${ret.name.slice(0, 4)}</span>`;
+      rowEl.innerHTML = `<span class="d-sname" title="${esc(ret.name)}">${esc(ret.name.slice(0, 4))}</span>`;
       const bar = document.createElement("div");
       bar.className = "d-pan d-nodetent";
       bar.style.flex = "1 1 auto";
@@ -3794,7 +3799,7 @@ function strip(kind, host) {
         const x = document.createElement("button");
         x.className = "d-btn d-sm d-sx";
         x.textContent = "✕";
-        x.title = `remove ${host.name} → ${ret.name} entirely (send_remove) — not the same as pulling it to −60`;
+        x.title = `remove ${host.name} → ${ret.name} entirely (send_remove): not the same as pulling it to −60`;
         x.addEventListener("click", () => act(
           { action: "send_remove", slug: S.slug, track: host.id, to: ret.id },
           { action: "send_set", slug: S.slug, track: host.id, to: ret.id, level: plainOf(s.level) },
@@ -3841,8 +3846,8 @@ function strip(kind, host) {
   if (kind === "master") {
     const on = host.stereo === true;
     btns.append(mk("ST", "d-stereo", on,
-      on ? "stereo ON: the rack renders each voice's own channels (mixer_set stereo) — off folds every voice to (L+R)/2, the byte-identical past; flipping re-renders every region"
-         : "stereo OFF: every voice folds to (L+R)/2 before the first insert (mixer_set stereo) — on renders each voice's own channels; flipping re-renders every region",
+      on ? "stereo ON: the rack renders each voice's own channels (mixer_set stereo): off folds every voice to (L+R)/2, the byte-identical past; flipping re-renders every region"
+         : "stereo OFF: every voice folds to (L+R)/2 before the first insert (mixer_set stereo): on renders each voice's own channels; flipping re-renders every region",
       () => act({ action: "mixer_set", slug: S.slug, target: "master", stereo: !on },
         { action: "mixer_set", slug: S.slug, target: "master", stereo: on },
         `master stereo ${on ? "off" : "on"}`)));
@@ -3850,7 +3855,7 @@ function strip(kind, host) {
     tl.className = "d-fadval d-lufs";
     const cur = host.target_lufs;
     tl.innerHTML = cur == null ? `<small>LUFS</small> off` : `${Number(cur).toFixed(1)}<small>LUFS</small>`;
-    tl.title = "the loudness the BOUNCE aims at (mixer_set target_lufs): -8 club, -14 streaming, blank = off — the bounce reports reached or short";
+    tl.title = "the loudness the BOUNCE aims at (mixer_set target_lufs): -8 club, -14 streaming, blank = off: the bounce reports reached or short";
     tl.addEventListener("click", async () => {
       const typed = (await appPrompt("bounce target, LUFS (−30 … −6; blank = off)", cur == null ? "" : String(cur)));
       if (typed === null) return;
@@ -4065,7 +4070,7 @@ $("autoWriteBtn").addEventListener("click", () => {
   S.autoWrite = !S.autoWrite;
   $("autoWriteBtn").classList.toggle("d-on", S.autoWrite);
   status(S.autoWrite
-    ? "automation WRITE armed — ride a fader, a pan, a send or a knob while the transport rolls and the gesture becomes keyframes"
+    ? "automation WRITE armed: ride a fader, a pan, a send or a knob while the transport rolls and the gesture becomes keyframes"
     : "automation write off");
 });
 
@@ -4144,7 +4149,7 @@ async function tryDeferred(name, body) {
   return api({ ...body, action: name });
 }
 const deferredNote = (name) =>
-  `not available yet — this display is waiting for POST /api/daw {"action":"${name}"}`;
+  `not available yet: this display is waiting for POST /api/daw {"action":"${name}"}`;
 
 /* ── the dock's three tabs ───────────────────────────────────────────── */
 
@@ -4344,7 +4349,7 @@ function drawSpectrum() {
   if (!haveLive && !measured) {
     emptyPanel(cv, [
       "no spectrum yet.",
-      "press play — the live analyser reads the audio this page plays,",
+      "press play: the live analyser reads the audio this page plays,",
       `or ${deferredNote(DEFERRED.analyze)}.spectrum`,
     ]);
     return;
@@ -4423,7 +4428,7 @@ function drawLoudness() {
   if (!short.length) {
     emptyPanel(cv, [
       "no loudness history yet.",
-      "press measure — the engine's own K-weighted LUFS-S series (3 s / 1 s)",
+      "press measure: the engine's own K-weighted LUFS-S series (3 s / 1 s)",
       `is plotted here; ${deferredNote(DEFERRED.analyze)}.loudness upgrades it`,
       "to momentary + integrated in one call.",
     ]);
@@ -4711,11 +4716,11 @@ function drawHistory() {
   $("undoN").textContent = S.undo.length ? String(S.undo.length) : "";
   $("redoN").textContent = S.redo.length ? String(S.redo.length) : "";
   $("undoBtn").title = S.undo.length
-    ? `undo ${S.undo[S.undo.length - 1].label} — ${binding("undo")}`
-    : `nothing to undo — ${binding("undo")}`;
+    ? `undo ${S.undo[S.undo.length - 1].label}: ${binding("undo")}`
+    : `nothing to undo: ${binding("undo")}`;
   $("redoBtn").title = S.redo.length
-    ? `redo ${S.redo[S.redo.length - 1].label} — ${binding("redo")}`
-    : `nothing to redo — ${binding("redo")}`;
+    ? `redo ${S.redo[S.redo.length - 1].label}: ${binding("redo")}`
+    : `nothing to redo: ${binding("redo")}`;
   if (!S.undo.length && !S.redo.length) {
     box.innerHTML = `<div class="d-note">Nothing yet. Every edit lands here with its inverse; `
       + `undo posts that inverse through the same route an MCP tool posts.</div>`;
@@ -4943,7 +4948,7 @@ function beyondNote(plan, rows) {
   if (!n || !first) {
     return `Nothing after it${of ? ` (${plan.songRegions} regions in all)` : ""} is expected to be late either.`;
   }
-  return `Beyond this window, ${n}${of} region${n === 1 ? " is" : "s are"} expected to arrive late — `
+  return `Beyond this window, ${n}${of} region${n === 1 ? " is" : "s are"} expected to arrive late: `
     + `the first is bars ${first.fromBar}-${first.toBar}. Play or loop there and the badge will say so.`;
 }
 
@@ -4964,7 +4969,7 @@ function paintAhead() {
   const plan = S.ahead.plan;
   if (!plan?.regions?.length) {
     S.ahead.state = "idle"; S.ahead.txt = "ahead —";
-    S.ahead.why = "no plan yet — click to measure (render_plan renders nothing)";
+    S.ahead.why = "no plan yet: click to measure (render_plan renders nothing)";
     return paintBadge();
   }
   const at = projTime();
@@ -4972,7 +4977,7 @@ function paintAhead() {
   const rows = windowRows(plan.regions, w);
   if (!rows.length) {
     S.ahead.state = "idle"; S.ahead.txt = "ahead —";
-    S.ahead.why = `the plan in hand does not cover ${w.scope} — measuring it now `
+    S.ahead.why = `the plan in hand does not cover ${w.scope}: measuring it now `
       + "(render_plan renders nothing)";
     paintBadge();
     /* The playhead has walked out of the stretch the last ask covered. Ask
@@ -4988,14 +4993,14 @@ function paintAhead() {
   const model = plan.model?.ms ? ` · model ${plan.model.ms}` : "";
   const cal = plan.calibration?.calibrated
     ? `fitted from ${plan.calibration.samples} of this project's own renders on this machine`
-    : "the shipped line — this project has not rendered enough regions here to refit it";
+    : "the shipped line: this project has not rendered enough regions here to refit it";
   /* WHICH REGIONS THIS VERDICT IS ABOUT, first line of every tooltip. */
-  const scope = `Judged: ${w.scope} — bars ${rows[0].fromBar}-${rows[rows.length - 1].toBar}, `
+  const scope = `Judged: ${w.scope}: bars ${rows[0].fromBar}-${rows[rows.length - 1].toBar}, `
     + `${rows.length} region${rows.length === 1 ? "" : "s"}.`;
   if (late) {
     const lateSay = lateN === 1
       ? `bars ${late.fromBar}-${late.toBar} are expected to take longer than the audio they cover`
-      : `${lateN} of them are expected to take longer than the audio they cover — the first is `
+      : `${lateN} of them are expected to take longer than the audio they cover: the first is `
         + `bars ${late.fromBar}-${late.toBar}`;
     S.ahead.state = "late";
     S.ahead.txt = `ahead ✗ bars ${late.fromBar}-${late.toBar} · will arrive late`;
@@ -5039,7 +5044,7 @@ function paintBadge() {
 }
 $("aheadBox").addEventListener("click", () => {
   refreshPlan();
-  status("measuring the look-ahead — render_plan renders nothing, it only predicts");
+  status("measuring the look-ahead: render_plan renders nothing, it only predicts");
 });
 
 /**
@@ -5096,7 +5101,7 @@ async function aheadTick() {
       S.ahead.state = "late";
       S.ahead.txt = `ahead ✗ bars ${r.region?.fromBar}-${r.region?.toBar} · arrived late`;
       S.ahead.why = `That region took ${(r.ms / 1000).toFixed(1)} s to render against `
-        + `${(r.deadlineMs / 1000).toFixed(1)} s of audio — measured, not predicted.`;
+        + `${(r.deadlineMs / 1000).toFixed(1)} s of audio: measured, not predicted.`;
       paintBadge();
     } else paintAhead();
   } catch (err) {
@@ -5200,7 +5205,7 @@ function updateHud() {
   const lateN = ah.filter((r) => r.actualMs != null && r.estMs != null && r.actualMs > r.estMs).length;
   $("cpuBox").title = `${HUD_TIP}\n\nlast / med / p95 are EDITS: gesture → audible, n=${xs.length}.`
     + (ah.length ? `\nLook-ahead arrivals: ${ah.length}, ${lateN} of them slower than the estimate.`
-      : "\nNo look-ahead renders yet — the badge beside this says whether they will be needed.");
+      : "\nNo look-ahead renders yet: the badge beside this says whether they will be needed.");
 }
 
 /* ─────────────────────────────────────────────── playback + hot swap */
@@ -5594,10 +5599,10 @@ function patchRow(row) {
   const gen = row.kind === "generate";
   el.className = "d-brow" + (gen ? " d-off" : "") + (row.id === PALETTE.pick ? " d-cur" : "");
   const lic = row.pack?.licence?.spdx || (row.kind === "builtin" ? "built-in" : gen ? "n/a" : "");
-  el.innerHTML = `<span class="d-nm" title="${row.label}">${row.label}</span>`
+  el.innerHTML = `<span class="d-nm" title="${esc(row.label)}">${esc(row.label)}</span>`
     + (lic ? `<span class="d-lic${row.pack?.attribution_required ? " d-req" : ""}" title="${
-      row.pack?.licence?.name || (row.kind === "builtin" ? "ships with the Studio" : "")}${
-      row.pack?.attribution_required ? " — attribution REQUIRED and shown in the credits panel" : ""}">${lic}</span>` : "");
+      esc(row.pack?.licence?.name || (row.kind === "builtin" ? "ships with the Studio" : ""))}${
+      row.pack?.attribution_required ? ": attribution REQUIRED and shown in the credits panel" : ""}">${esc(lic)}</span>` : "");
   if (gen) {
     const note = document.createElement("div");
     note.className = "d-refusal";
@@ -5610,7 +5615,7 @@ function patchRow(row) {
     const b = document.createElement("button");
     b.className = "d-btn d-sm";
     b.textContent = row.pack?.downloading ? "…" : "install";
-    b.title = `${row.pack?.label || row.id} — ${
+    b.title = `${row.pack?.label || row.id}: ${
       row.pack?.bytes ? `${(row.pack.bytes / 1e6).toFixed(0)} MB` : "size unknown"}. `
       + "The licence is shown before a single byte moves.";
     b.addEventListener("click", (e) => { e.stopPropagation(); offerInstall(row); });
@@ -5621,8 +5626,8 @@ function patchRow(row) {
     drawPalette();
     const t = selTrack();
     status(t
-      ? `${row.label} selected — “＋” adds a track with it; “use” re-patches ${t.name}`
-      : `${row.label} selected — press ＋ in the track column to add a track with it`);
+      ? `${row.label} selected: “＋” adds a track with it; “use” re-patches ${t.name}`
+      : `${row.label} selected: press ＋ in the track column to add a track with it`);
   });
   if (row.installed) {
     const use = document.createElement("button");
@@ -5646,7 +5651,7 @@ function patchRow(row) {
       const un = document.createElement("button");
       un.className = "d-btn d-sm";
       un.textContent = "✕";
-      un.title = `uninstall the ${row.pack.label} pack — ${sisters.length} patch(es), `
+      un.title = `uninstall the ${row.pack.label} pack: ${sisters.length} patch(es), `
         + `${row.pack.bytes ? `${(row.pack.bytes / 1e6).toFixed(0)} MB` : "size unknown"} off the disk (uninstall_pack)`;
       un.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -5659,7 +5664,7 @@ function patchRow(row) {
         try {
           await api({ action: "uninstall_pack", pack: row.pack.id });
           await loadPalette();
-          status(`uninstalled ${row.pack.label} — install brings it back, licence gate and all`);
+          status(`uninstalled ${row.pack.label}: install brings it back, licence gate and all`);
         } catch (err) { status(`uninstall failed: ${err.message}`); }
       });
       el.appendChild(un);
@@ -5677,13 +5682,13 @@ async function offerInstall(row) {
   if (r.installed === true || r.ready) { await loadPalette(); status(`${row.label} ready.`); return; }
   if (!r.needsAccept) { await loadPalette(); return; }
   licPending = row;
-  $("licTitle").textContent = `${row.label} — licence`;
+  $("licTitle").textContent = `${row.label}: licence`;
   $("licBody").innerHTML = (r.licences || []).map((g) => `
-    <p><b>${g.label || g.pack}</b><br>
-    ${g.licence?.name || ""} <span class="d-mono">${g.licence?.spdx || ""}</span><br>
-    ${g.attribution ? `<i>Attribution:</i> ${g.attribution}<br>` : ""}
-    ${g.licence?.url ? `<a href="${g.licence.url}" target="_blank" rel="noreferrer">${g.licence.url}</a>` : ""}
-    ${g.attribution_required ? `<br><b>Attribution is required</b> — it will be shown in the Credits panel and written into every bounce.` : ""}
+    <p><b>${esc(g.label || g.pack)}</b><br>
+    ${esc(g.licence?.name || "")} <span class="d-mono">${esc(g.licence?.spdx || "")}</span><br>
+    ${g.attribution ? `<i>Attribution:</i> ${esc(g.attribution)}<br>` : ""}
+    ${webHref(g.licence?.url) ? `<a href="${webHref(g.licence.url)}" target="_blank" rel="noreferrer">${esc(g.licence.url)}</a>` : ""}
+    ${g.attribution_required ? `<br><b>Attribution is required</b>: it will be shown in the Credits panel and written into every bounce.` : ""}
     </p>`).join("");
   $("licSize").textContent = `${(r.bytes / 1e6).toFixed(0)} MB to download. ${r.note || ""}`;
   $("licDlg").showModal();
@@ -5717,7 +5722,7 @@ function drawCredits(credits) {
       + `<div>${c.licence || ""}</div>`
       + (c.attribution ? `<div class="d-att">${c.attribution}</div>` : "")
       + (c.source ? `<a href="${c.source}" target="_blank" rel="noreferrer">${c.source}</a>` : "")
-      + (c.required ? `<div class="d-att"><b>Attribution required</b> — this line must travel with the audio.</div>` : "");
+      + (c.required ? `<div class="d-att"><b>Attribution required</b>: this line must travel with the audio.</div>` : "");
     box.appendChild(d);
   }
 }
@@ -5775,7 +5780,7 @@ function drawPresets() {
   for (const p of PRESETS) {
     const el = document.createElement("div");
     el.className = "d-brow";
-    el.innerHTML = `<span class="d-nm" title="${p.note}">${p.label}</span>`;
+    el.innerHTML = `<span class="d-nm" title="${esc(p.note)}">${esc(p.label)}</span>`;
     el.addEventListener("click", async () => {
       if (!S.slug) return;
       const t0 = performance.now();
@@ -5783,7 +5788,7 @@ function drawPresets() {
         await p.build(S.slug);
         await refreshDoc();
         renderAndSwap(t0, performance.now(), null);
-        status(`${p.label} — ${p.note}`);
+        status(`${p.label}: ${p.note}`);
       } catch (err) { status(err.message); }
     });
     box.appendChild(el);
@@ -5817,7 +5822,7 @@ function drawPresets() {
  * store's own clamps. */
 const TRACK_KNOBS = {
   transpose: { min: -48, max: 48, default: 0, unit: "st",
-               doc: "Whole-track pitch offset in semitones, applied at render — the notes stay where they are." },
+               doc: "Whole-track pitch offset in semitones, applied at render: the notes stay where they are." },
   gain_db: { min: -24, max: 24, default: 0, unit: "dB",
              doc: "Instrument gain inside the note render, before the mixer strip. Part of the region hash." },
 };
@@ -5830,7 +5835,7 @@ function drawKnobs() {
   const row = pid ? PALETTE.rows.find((r) => r.id === pid) : null;
   if (!t) {
     $("knobCnt").textContent = "";
-    $("knobNote").textContent = "Select a track — its patch's declared knobs appear here, read from the served row, "
+    $("knobNote").textContent = "Select a track: its patch's declared knobs appear here, read from the served row, "
       + "and a turn writes set_track params: the same knobs, through the same action, an agent turns with daw_set_track.";
     return;
   }
@@ -5855,7 +5860,7 @@ function drawKnobs() {
   }
   const set = Object.keys(t.instrument?.params || {}).filter((k) => all[k]);
   $("knobNote").innerHTML = `<b>${row?.label ?? pid}</b>${n ? "" : " declares no knobs of its own"}. `
-    + (set.length ? `Set: ${set.join(", ")} — the rest sit at their declared defaults and are not stored. `
+    + (set.length ? `Set: ${set.join(", ")}: the rest sit at their declared defaults and are not stored. `
                   : "Everything at its declared default; nothing stored. ")
     + "Drag a knob vertically (shift = fine), double-click for the default. Each turn is a set_track with params "
     + "and re-renders only the regions this track sounds in.";
@@ -5872,7 +5877,7 @@ function knobControl(t, pname, pspec) {
   lab.className = "d-plab";
   lab.textContent = pname.replace(/_/g, " ");
   lab.title = `${pname} ${pspec.min}..${pspec.max} (default ${pspec.default}${pspec.unit ? ` ${pspec.unit}` : ""})`
-    + ` — ${pspec.doc || ""} Drag vertically; shift = fine; double-click = default. Writes set_track params.`;
+    + `: ${pspec.doc || ""} Drag vertically; shift = fine; double-click = default. Writes set_track params.`;
   const v = Number(t.instrument?.params?.[pname] ?? pspec.default);
   const k = document.createElement("div");
   k.className = "d-knob";
@@ -6007,7 +6012,7 @@ function drawSide() {
     div.style.height = `${LANE_H}px`;
     div.style.setProperty("--d-trk", colourOf(t.id));
     const notes = t.clips.reduce((a, c) => a + c.notes.length, 0);
-    div.innerHTML = `<div class="d-thtop"><span class="d-nm" title="${t.name} — double-click to rename (set_track)">${t.name}</span></div>
+    div.innerHTML = `<div class="d-thtop"><span class="d-nm" title="${esc(t.name)}: double-click to rename (set_track)">${esc(t.name)}</span></div>
       <div class="d-inst">${t.instrument?.patch ?? t.instrument} · ${notes}n${
         (t.audioClips || []).length ? ` · ${t.audioClips.length}a` : ""}</div>`;
     div.querySelector(".d-nm").addEventListener("dblclick", (e) => {
@@ -6016,7 +6021,7 @@ function drawSide() {
     });
     const chip = document.createElement("span");
     chip.className = "d-chip";
-    chip.title = "track colour — click to pick one";
+    chip.title = "track colour: click to pick one";
     chip.addEventListener("click", (e) => { e.stopPropagation(); openColour(t); });
     div.querySelector(".d-thtop").insertBefore(chip, div.querySelector(".d-nm"));
     const btns = document.createElement("div");
@@ -6134,7 +6139,7 @@ function openColour(t) {
     });
     box.appendChild(sw);
   }
-  $("colNote").innerHTML = `<b>${t.name}</b> — derived colour ${colourIx(t.id) + 1}`
+  $("colNote").innerHTML = `<b>${esc(t.name)}</b>: derived colour ${colourIx(t.id) + 1}`
     + (Number.isInteger(S.colours[t.id]) ? `, overridden to ${S.colours[t.id] + 1}.` : ".")
     + ` The override is stored in this browser only: <span class="d-mono">set_track</span> `
     + `has no colour field yet, and this page will not invent a second place to `
@@ -6183,14 +6188,14 @@ function drawTakes() {
   if (!t) return;
   const takes = t.takes || [];
   if (!takes.length) {
-    box.innerHTML = `<div class="d-note">no takes on ${t.name} — arm it and press ●</div>`;
+    box.innerHTML = `<div class="d-note">no takes on ${esc(t.name)}: arm it and press ●</div>`;
     return;
   }
   for (const k of takes) {
     const d = document.createElement("div");
     d.className = "d-brow";
     const secs = (k.samples / (k.sr || 48000)).toFixed(1);
-    d.innerHTML = `<span class="d-nm" title="${k.device || ""} · shift ${k.shiftSamples}">${k.name} · ${secs}s</span>`;
+    d.innerHTML = `<span class="d-nm" title="${esc(k.device || "")} · shift ${esc(k.shiftSamples)}">${esc(k.name)} · ${secs}s</span>`;
     const mk = (txt, title, fn) => {
       const b = document.createElement("button");
       b.className = "d-btn d-sm"; b.textContent = txt; b.title = title;
@@ -6224,14 +6229,14 @@ function drawClips() {
   $("clipCnt").textContent = t ? `${t.clips.length} on ${t.name}` : "";
   if (!t) return;
   if (!t.clips.length) {
-    box.innerHTML = `<div class="d-note">no clips on ${t.name} — press ＋ to add one at the playhead</div>`;
+    box.innerHTML = `<div class="d-note">no clips on ${esc(t.name)}: press ＋ to add one at the playhead</div>`;
     return;
   }
   for (const c of t.clips) {
     const outside = c.notes.filter((n) => n.bar < c.fromBar || n.bar > c.toBar).length;
     const d = document.createElement("div");
     d.className = "d-brow";
-    d.innerHTML = `<span class="d-nm" title="${c.id} — drag its body in the arrangement to move it, its edges to trim it">`
+    d.innerHTML = `<span class="d-nm" title="${c.id}: drag its body in the arrangement to move it, its edges to trim it">`
       + `${c.name || "clip"} · bars ${c.fromBar}–${c.toBar} · ${c.notes.length}n`
       + (outside ? ` · <b>${outside} silent</b>` : "") + `</span>`;
     const mk = (txt, title, fn) => {
@@ -6241,7 +6246,7 @@ function drawClips() {
       return b;
     };
     d.append(
-      mk("↦", "move this clip to the playhead's bar (set_clip from_bar — its notes ride along)", () => {
+      mk("↦", "move this clip to the playhead's bar (set_clip from_bar: its notes ride along)", () => {
         const at = Math.max(1, Math.floor(barFloatNow()));
         act({ action: "set_clip", slug: S.slug, track: t.id, clip: c.id, from_bar: at },
           { action: "set_clip", slug: S.slug, track: t.id, clip: c.id, from_bar: c.fromBar },
@@ -6254,7 +6259,7 @@ function drawClips() {
           { action: "set_clip", slug: S.slug, track: t.id, clip: c.id, name: c.name || "clip" },
           `clip renamed → ${name}`);
       }),
-      mk("✕", `remove this clip AND its ${c.notes.length} note(s) (remove_clip) — this one really deletes`, async () => {
+      mk("✕", `remove this clip AND its ${c.notes.length} note(s) (remove_clip): this one really deletes`, async () => {
         if (!(await appConfirm(`Remove "${c.name || "clip"}" (bars ${c.fromBar}–${c.toBar}) and its ${c.notes.length} note(s)?`
           + `\n\nUnlike shrinking a clip, this deletes the notes.`))) return;
         act({ action: "remove_clip", slug: S.slug, track: t.id, clip: c.id }, null,
@@ -6326,7 +6331,7 @@ async function auditionTake(k) {
   src.connect(S.master);
   src.start();
   auditionNode = src;
-  status(`auditioning ${k.name} (${buf.duration.toFixed(1)}s) — solo, out of context`);
+  status(`auditioning ${k.name} (${buf.duration.toFixed(1)}s): solo, out of context`);
 }
 
 /* ═══════════════════════════════════════════ AUDITIONING A NOTE ═════════
@@ -6621,14 +6626,14 @@ function paintViewNum() {
  */
 async function saveView(patch, label) {
   const session = captureSession();
-  if (!session.slug) { status("no project open — this layout is not saved"); return null; }
+  if (!session.slug) { status("no project open: this layout is not saved"); return null; }
   try {
     const r = await api({ action: "set_view", slug: session.slug, view: patch });
     if (!sessionCurrent(session)) return null;
     S.view = r.view;
     if (S.proj) { S.proj.view = r.view; S.proj.updatedAt = r.updatedAt ?? S.proj.updatedAt; }
     applyView(r.view);
-    if (label) status(`${label} — ${$("viewNum").textContent}`);
+    if (label) status(`${label}: ${$("viewNum").textContent}`);
     return r.view;
   } catch (err) {
     if (sessionCurrent(session)) status(`The layout was not saved: ${err.message}`);
@@ -6767,7 +6772,7 @@ $("splitD").addEventListener("pointerup", (e) => {
 
 $("kmSel").addEventListener("change", () => {
   applyKeymap($("kmSel").value);
-  status(`keymap: ${KEYMAPS[S.keymap].label} — play/stop ${binding("play_stop")}, `
+  status(`keymap: ${KEYMAPS[S.keymap].label}: play/stop ${binding("play_stop")}, `
     + `draw ${binding("draw")}, duplicate ${binding("duplicate")}, quantize ${binding("quantize")}`);
 });
 $("kmHelp").addEventListener("click", () => { drawKeymapTable(); $("kmDlg").showModal(); });
@@ -6893,7 +6898,7 @@ function parseForm(text) {
   if (!parts.length) return undefined;
   return parts.map((part) => {
     const m = part.match(/^([a-z]+)\s+(\d+)$/i);
-    if (!m) throw new Error(`form: "${part}" is not "<section> <bars>" — intro|build|drop|break|outro and a multiple of 4`);
+    if (!m) throw new Error(`form: "${part}" is not "<section> <bars>": intro|build|drop|break|outro and a multiple of 4`);
     return { type: m[1].toLowerCase(), bars: Number(m[2]) };
   });
 }
@@ -6916,16 +6921,16 @@ $("arrRun").addEventListener("click", async () => {
     const o = document.createElement("option");
     o.value = r.slug; o.textContent = `${r.slug} (${r.tracks.length}t/${r.notes}n)`;
     sel.appendChild(o); sel.value = r.slug;
-    $("arrBody").innerHTML = `<p><b>${r.slug}</b> — ${r.bars} bars · ${r.tempo} bpm · ${r.key} minor · seed ${r.seed}`
+    $("arrBody").innerHTML = `<p><b>${esc(r.slug)}</b>: ${r.bars} bars · ${r.tempo} bpm · ${r.key} minor · seed ${r.seed}`
       + ` · ${r.notes} notes on ${r.tracks.length} tracks in ${r.steps} steps (${r.ms} ms)</p>`
       + `<p class="d-mono">${r.structure.map((s) => `${s.type} ${s.bars}`).join(" · ")}</p>`
-      + `<p class="d-mono">${r.tracks.map((t) => `${t.name}: ${t.patch} · ${t.notes} notes · ${t.inserts.map((i) => i.type).join(" + ") || "no inserts"}`).join("\n")}</p>`
-      + `<p>Sidechain release ${r.sidechain_release_ms} ms — one eighth at ${r.tempo}. ${r.note}</p>`;
+      + `<p class="d-mono">${r.tracks.map((t) => `${esc(t.name)}: ${esc(t.patch)} · ${t.notes} notes · ${t.inserts.map((i) => i.type).join(" + ") || "no inserts"}`).join("\n")}</p>`
+      + `<p>Sidechain release ${r.sidechain_release_ms} ms: one eighth at ${r.tempo}. ${esc(r.note)}</p>`;
     await loadProject(r.slug);
     status(`arranged ${r.slug}: ${r.notes} notes in ${Math.round(performance.now() - t0)} ms`);
   } catch (err) {
     status(`arrange failed: ${err.message}`);
-    $("arrBody").innerHTML = `<p>${err.message}</p>`;
+    $("arrBody").innerHTML = `<p>${esc(err.message)}</p>`;
   } finally { $("arrRun").disabled = false; }
 });
 
@@ -6940,8 +6945,8 @@ async function calEstimate(pcmBuffer, sr, how) {
   if (j.error) throw new Error(j.error);
   CAL.last = { ...j, how };
   $("calResult").textContent = j.confident
-    ? `${how}: offset ${j.offset_ms} ms (peak ratio ${j.peak_ratio}) — takes will be placed earlier by this once stored.`
-    : `${how}: NOT confident (peak ratio ${j.peak_ratio}) — the mic likely cannot hear the speakers. Fix levels and rerun.`;
+    ? `${how}: offset ${j.offset_ms} ms (peak ratio ${j.peak_ratio}): takes will be placed earlier by this once stored.`
+    : `${how}: NOT confident (peak ratio ${j.peak_ratio}): the mic likely cannot hear the speakers. Fix levels and rerun.`;
   $("calStore").disabled = !j.confident;
   return j;
 }
@@ -6953,8 +6958,8 @@ async function calShowStored() {
     const txt = rows.length ? rows.map(([d, ms]) => `${d}: ${ms} ms`).join(" · ") : "no offsets stored yet";
     $("calStored").textContent = `stored: ${txt}`;
     $("calNote").textContent = rows.length
-      ? `stored offsets — ${txt}. Recording subtracts the matching offset automatically.`
-      : "No latency offset stored yet — open the wizard from the transport (latency…).";
+      ? `stored offsets: ${txt}. Recording subtracts the matching offset automatically.`
+      : "No latency offset stored yet: open the wizard from the transport (latency…).";
   } catch { /* the browser note keeps its default */ }
 }
 
@@ -6982,7 +6987,7 @@ $("calRunMic").addEventListener("click", async () => {
     rec.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
     srcNode.connect(rec);
     rec.connect(ctx.destination);
-    $("calResult").textContent = "playing the chirp — keep quiet…";
+    $("calResult").textContent = "playing the chirp: keep quiet…";
     const player = ctx.createBufferSource();
     player.buffer = chirp;
     player.connect(ctx.destination);
@@ -6996,7 +7001,7 @@ $("calRunMic").addEventListener("click", async () => {
     for (const c of chunks) { pcm.set(c, off); off += c.length; }
     await calEstimate(pcm.buffer, ctx.sampleRate, "microphone run");
   } catch (err) {
-    $("calResult").textContent = `mic run unavailable here: ${err.message}. Use the synthetic test — `
+    $("calResult").textContent = `mic run unavailable here: ${err.message}. Use the synthetic test: `
       + "it proves the identical pipeline; only your hardware stays unmeasured.";
   }
 });
@@ -7008,7 +7013,7 @@ $("calRunSyn").addEventListener("click", async () => {
     const j = await calEstimate(cap, 48000, "synthetic injection (true offset 87.3 ms)");
     if (j.confident) {
       $("calResult").textContent += Math.abs(j.offset_ms - 87.3) <= 1
-        ? " ✓ recovered within ±1 ms." : " ⚠ recovery is off by more than 1 ms — report this.";
+        ? " ✓ recovered within ±1 ms." : " ⚠ recovery is off by more than 1 ms: report this.";
     }
   } catch (err) { $("calResult").textContent = `synthetic test failed: ${err.message}`; }
 });
@@ -7121,7 +7126,7 @@ async function startRecording() {
       const g = ctx.createGain(); g.gain.value = 0.7;
       clickSrc.connect(g).connect(ctx.destination);
       clickSrc.start(t0);
-    } catch { status("click bed unavailable — recording without it"); }
+    } catch { status("click bed unavailable: recording without it"); }
     play(anchorTime - posSec);
   }
 
@@ -7184,7 +7189,7 @@ async function stopRecording() {
     await Promise.all(rec.posts);
     if (rec.seq === 0) {
       await api({ action: "record_stop", slug: S.slug, rec_id: rec.recId, cancel: true });
-      status("recording canceled — it never reached the count-in's end");
+      status("recording canceled: it never reached the count-in's end");
       return;
     }
     const r = await api({ action: "record_stop", slug: S.slug, rec_id: rec.recId });
@@ -7333,13 +7338,13 @@ $("midiRecBtn").addEventListener("click", async () => {
     MIDI.notes = [];
     MIDI.open.clear();
     $("midiRecBtn").classList.add("d-rec");
-    status("MIDI rec ON — play the transport and perform; toggling off drops the notes onto the selected track. "
+    status("MIDI rec ON: play the transport and perform; toggling off drops the notes onto the selected track. "
       + "Note previews are AUDITION renders (a server round trip), not low-latency monitoring.");
     return;
   }
   MIDI.on = false;
   $("midiRecBtn").classList.remove("d-rec");
-  if (!MIDI.notes.length) { status("MIDI rec off — nothing captured"); return; }
+  if (!MIDI.notes.length) { status("MIDI rec off: nothing captured"); return; }
   const t0 = performance.now();
   const session = captureSession(), track = S.trackId;
   const edit = beginEdit();
@@ -7493,7 +7498,7 @@ async function boot() {
       if (!(await appConfirm(`Delete "${S.proj.name}" (${S.slug})?\n\n`
         + `${S.proj.tracks.length} track(s), ${notes} note(s), ${takes} recorded take(s), `
         + `every rendered region and every bounce beside it.\n\n`
-        + `This is not undoable — there is no inverse action for it.`))) return;
+        + `This is not undoable: there is no inverse action for it.`))) return;
       const gone = S.slug;
       try {
         await api({ action: "delete", slug: gone });
@@ -7502,7 +7507,7 @@ async function boot() {
       stop();
       S.slug = null; S.proj = null;
       if (sel.options.length) { sel.value = sel.options[0].value; await loadProject(sel.value); }
-      else status("deleted — no projects left; press New");
+      else status("deleted: no projects left; press New");
       status(`deleted ${gone}`);
     });
     calShowStored();
@@ -7514,7 +7519,7 @@ async function boot() {
         : projects.some(p => p.slug === remembered) ? remembered : projects[0].slug;
       await loadProject(sel.value);
     } else {
-      status("no projects yet — press New");
+      status("no projects yet: press New");
     }
   } catch (err) {
     status(`Could not load DAW: ${err.message}`);

@@ -1704,6 +1704,15 @@ export class ArtRunner extends EventEmitter {
     return this.queue.findIndex((j) => ownProgram(j));
   }
 
+  /** Pause or resume the runner. Resuming used to only clear the flag: the
+   *  paused drain had not rescheduled itself, so the queue sat still until
+   *  something new was requested. */
+  setPaused(value) {
+    this.paused = !!value;
+    if (!this.paused && this.queue.length) this.#schedule();
+    this.emit("update");
+  }
+
   #schedule() {
     if (this.#timer) return;
     this.#timer = setTimeout(() => {

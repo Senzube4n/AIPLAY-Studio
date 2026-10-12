@@ -156,7 +156,7 @@ export function mountBoard(host, model) {
       return `<button class="bnode${isSel(n.key) ? " bsel" : ""}${bad ? " bbad" : ""}${n.ghost ? " bghost" : ""}"
         data-key="${esc(n.key)}"
         style="left:${n.x}px;top:${n.y}px;border-color:${border};opacity:${dim ? 0.35 : 1}"
-        title="${esc(bad ? `${n.label} — ${(n.flags || []).join(", ")}` : n.label)}">
+        title="${esc(bad ? `${n.label}: ${(n.flags || []).join(", ")}` : n.label)}">
         <span class="bthumb">${media}</span>
         <span class="blabel" title="${esc(n.label)}">${esc(n.label)}</span>
         ${bad ? `<i class="bwarn" aria-hidden="true">!</i>` : ""}
@@ -174,7 +174,7 @@ export function mountBoard(host, model) {
           g.dash
             ? ` class="dash" style="background:repeating-linear-gradient(90deg,${g.color} 0 3px,transparent 3px 6px)"`
             : ` style="background:${g.color}"`}></i>${esc(g.label)}</span>`).join("")
-      : `<span class="hint">each ${esc(model.groupNoun || "clip")} has its own color — click any node to isolate its links</span>`;
+      : `<span class="hint">each ${esc(model.groupNoun || "clip")} has its own color: click any node to isolate its links</span>`;
 
     /* ── THE BREAK BAR ───────────────────────────────────────────────────────
      * The count comes FIRST, before the view toggles and before the legend,
@@ -208,7 +208,7 @@ export function mountBoard(host, model) {
            ${errs ? `<span class="berr">${errs} already wrong</span>` : ""}
            ${noteN ? `<span class="bnotecount">${noteN} note${noteN === 1 ? "" : "s"}</span>` : ""}
            <span class="hint">click one to light up what it is about${
-             noteN ? " — a note is not something to fix, it is what the picture does not say" : ""}</span>
+             noteN ? ": a note is not something to fix, it is what the picture does not say" : ""}</span>
          </div>
          <ul class="bbreaks">${breaks.map((b, i) => `
            <li class="bbreak ${esc(b.level)}" data-break="${i}">
@@ -380,7 +380,7 @@ export function mvBoardModel(board, assetUrl) {
         ? `, so the ${notSentCount} dashed grey edge${one ? "" : "s"} into them `
           + `${one ? "was" : "were"} NAMED and not sent`
         : "")
-    + ". The board image pinned as frame 0 is the only carrier of identity there — which is "
+    + ". The board image pinned as frame 0 is the only carrier of identity there: which is "
     + "why a board drawn before a prop existed loses that prop for good, however green this "
     + "map goes. The cast → board edges are real: that is where the sheets are genuinely used.";
 
@@ -470,6 +470,6 @@ export function abBoardModel(doc, { maxCols = 80 } = {}) {
              { color: TYPE_COLORS.sfx, label: "sfx → file" },
              { color: TYPE_COLORS.chapter, label: "chapter → file" }],
     groupNoun: "file", orderNoun: "book",
-    note: truncated > 0 ? `showing the first ${bundles.length} of ${(doc.bundles || []).length} files — the chapter manager lists everything` : "",
+    note: truncated > 0 ? `showing the first ${bundles.length} of ${(doc.bundles || []).length} files: the chapter manager lists everything` : "",
   };
 }

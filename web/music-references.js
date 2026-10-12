@@ -153,7 +153,7 @@ export function mountMusicReferences({ root, fetch: request = fetch, onLoadReque
       }
     }
   });
-  for (const name of ["style", "lyrics", "notes", "engine", "seed", "useScore", "labels", "instrumental"]) $(name).addEventListener("input", () => { dirty = true; $("request").textContent = "Draft changed — review a new request before loading."; buttons(); });
+  for (const name of ["style", "lyrics", "notes", "engine", "seed", "useScore", "labels", "instrumental"]) $(name).addEventListener("input", () => { dirty = true; $("request").textContent = "Draft changed: review a new request before loading."; buttons(); });
   listen("prepare", async () => { await act("prepare", { kind: $("kind").value === "video" ? "video" : "audio",
     location: $("kind").value === "audio" ? "library" : "clips", file: $("file").value,
     startSeconds: Number($("start").value), seconds: Number($("seconds").value), maxFrames: 6 }); await saved(); });

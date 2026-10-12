@@ -2,6 +2,7 @@ import {createBatchMusicBridge} from './batch-music-context.js';
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
 import { createStandRigRoutes } from './standrig/routes.js';
+import { lanConfig, createLanGate, lanAddresses } from './lan.js';
 import { createStandRigPsdRoutes } from './standrig/psd-export-routes.js';
 import {makeVideoRecipe,readVideoRecipe,describeVideoRecipe,videoRecipeMcpArgs} from "./collab/video-recipe.js";
 /**
@@ -696,9 +697,12 @@ art.on("stems", ({ file, stems }) => {
  * destructive at the one place it matters. */
 /* A restyled clip is a NEW clip, never a replacement — same rule as an
  * enhancement. The original is what the timeline may already point at. */
+/* When a clip was made, kept with its meta: the bin dated clips by the file's
+ * time, so copying or restoring the library reset every date. */
+const madeNow = (meta) => (meta && !meta.madeAt ? { ...meta, madeAt: Date.now() } : meta);
 art.on("restyled", ({ clip, seconds, meta, runId }) => {
   if (clip && seconds) clipTimes.set(clip, seconds);
-  if (clip && meta) clipMeta.set(clip, meta);
+  if (clip && meta) clipMeta.set(clip, madeNow(meta));
   if (clip) {
     saveClipStore();
     // A restyle is a NEW ai-generated clip derived from an existing one.
@@ -716,7 +720,7 @@ art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
   // stage is only done when the file exists.
   if (owner) batch.noteStage(owner, "enhance", clip ? "done" : "failed");
   if (clip && seconds) clipTimes.set(clip, seconds);
-  if (clip && meta) clipMeta.set(clip, meta);
+  if (clip && meta) clipMeta.set(clip, madeNow(meta));
   if (clip) {
     saveClipStore();
     /* Enhancement (interpolate/upscale) is algorithmic processing of an
@@ -847,7 +851,7 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
   if (clip && !file.startsWith("clip:")) library.remember(file, { clip, clipRenderSeconds: seconds, clipMeta: meta });
   if (clip && seconds) clipTimes.set(clip, seconds);
   // Standalone clips have no library row, so their provenance lives here.
-  if (clip && meta) clipMeta.set(clip, meta);
+  if (clip && meta) clipMeta.set(clip, madeNow(meta));
   if (clip && (seconds || meta)) saveClipStore();
   const friendJob = /^clip:collab_(o_[0-9a-f]{12})$/.exec(String(file || ""));
   if (friendJob && clip) void (async () => {
@@ -2253,6 +2257,9 @@ const MODEL_GROUPS = [
   { id: "video", label: "Video" },
   { id: "3d", label: "3D" },
   { id: "chat", label: "Chat & writing" },
+  /* The YuE2 style adapters (models.js, group "music-addon"): they showed up
+   * under their raw id as a section heading. */
+  { id: "music-addon", label: "Music styles (YuE2 add-ons)" },
 ];
 function modelGroupOf(c) {
   /* A row can say where it belongs. The rules below guess from `makes` and the
@@ -2357,7 +2364,7 @@ async function renderTimeline(name, { fade = 0, beatZoom = 0, beatsFile = null }
     proc.stdout.on("data", (d) => (so += d));
     proc.stderr.on("data", (d) => (se += d));
     proc.on("exit", (code) => resolve({ code, so, se }));
-    proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+    proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
   });
   let body;
   try { body = JSON.parse(r.so); }
@@ -2471,7 +2478,7 @@ async function beatsFor(song) {
     proc.stdout.on("data", (d) => (so += d));
     proc.stderr.on("data", (d) => (se += d));
     proc.on("exit", (code) => resolve({ code, so, se }));
-    proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+    proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
   });
   try {
     const d = JSON.parse(r.so);
@@ -2661,6 +2668,18 @@ function normaliseFeed(feed) {
     }
   };
   const mapUrls = (arr) => Array.isArray(arr) ? arr.map((x) => ({ ...x, url: fix(x?.url) })) : arr;
+  /* Every link and picture in the feed is a web address or nothing (security
+   * review, 2026-10-12): a javascript:, file: or Windows protocol link
+   * (ms-msdt:, search-ms:) in a spoofed or broken feed was passed straight to
+   * window.open and <img>. Relative ones are the site's own and stay. */
+  const webOnly = (v, key = "") => {
+    if (Array.isArray(v)) return v.map((x) => webOnly(x));
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, webOnly(x, k)]));
+    if (typeof v === "string" && /(url|art|image|avatar|thumb|logo|icon|href)$/i.test(key)
+      && /^[a-z][a-z0-9+.-]*:/i.test(v.trim()) && !/^https?:\/\//i.test(v.trim())) return null;
+    return v;
+  };
+  feed = webOnly(feed);
   return {
     ...feed,
     sessions: mapUrls(feed.sessions),
@@ -2694,6 +2713,16 @@ const MIME = {
   ".mp4": "video/mp4",
   ".webm": "video/webm",
 };
+
+/* Said instead of "spawn failed" when Studio cannot start its Python: which
+ * program, and whether it is missing. Shown on the Training page and elsewhere. */
+function pythonStartFailed(err) {
+  /* The tail of the path is enough to recognise it, and some routes keep only
+   * the last 200 characters of an error. */
+  const parts = String(config.python || "").split(/[\\/]/);
+  const shown = parts.length > 3 ? `…${path.sep}${parts.slice(-3).join(path.sep)}` : String(config.python);
+  return `Studio could not start its Python (${shown})${err?.code === "ENOENT" ? ": it is not there" : err?.message ? `: ${String(err.message).slice(0, 80)}` : ""}.`;
+}
 
 function json(res, code, body) {
   const s = JSON.stringify(body);
@@ -3487,9 +3516,31 @@ function imgWorker() {
  * the pictures and clips themselves. The Host is what such a page cannot fake,
  * so every request is asked first, and so is the live socket (wss below). */
 const foreignHost = (req) => !localUiHost(req, config.uiPort);
+/* On the local network only when the launcher asked for it, and then only for
+ * a device holding the access key (server/lan.js): it is admitted as this PC's
+ * own page, so every rule below still applies to it. */
+const LAN = lanConfig();
+const lanGate = LAN.on ? createLanGate({ key: LAN.key, port: config.uiPort }) : null;
 const server = http.createServer(async (req, res) => {
+  if (lanGate && lanGate.http(req, res) === "handled") return;
   if (foreignHost(req)) {
     return json(res, 403, { error: "Studio answers only on this PC's own address (127.0.0.1, localhost or [::1] on its port)." });
+  }
+  /* ⚠ NO OTHER WEBSITE MAY CHANGE ANYTHING HERE (security review, 2026-10-12).
+   * The money doors were already same-origin JSON only (sameOriginLocalJson),
+   * but the project, DAW, VFX, library, trash, import and render doors read any
+   * body: a page the person happened to have open could POST
+   * '{"action":"delete","slug":"…"}' with mode 'no-cors' and the route ran.
+   * A browser always names the page a cross-site request comes from (Origin,
+   * Sec-Fetch-Site); Studio's own page names this address, and local clients
+   * (MCP, the launcher, curl) name none. So every request that is not a read
+   * is refused when a browser says it comes from somewhere else. */
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const origin = req.headers.origin;
+    const site = String(req.headers["sec-fetch-site"] || "");
+    if ((origin !== undefined && origin !== `http://${req.headers.host}`) || (site && site !== "same-origin" && site !== "none")) {
+      return json(res, 403, { error: "Refused: this request came from another website. Studio only takes changes from its own page or a program on this PC." });
+    }
   }
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
@@ -3670,6 +3721,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         engine: {
           ready: comfy.ready,
+          /* Why it is not running, when it is not: { message, at, gaveUp }. */
+          failure: comfy.ready ? null : comfy.failure,
           backend: comfy.assertBackend(),
           torch: comfy.backend.torch,
           device: comfy.backend.device,
@@ -6644,7 +6697,7 @@ const server = http.createServer(async (req, res) => {
               ...(minutes.over ? [{ reason: minutes.reason, why: minutes.why }] : [])];
             if (overrides.length && b.anyway !== true) return { refusal: {
               error: overrides.map((item) => item.why).join(" ")
-                + " It can still be taken: on the Collab screen press “Yes — take the job” again and answer “Accept anyway” (a tool sends anyway: true)"
+                + " It can still be taken: on the Collab screen press “Yes, take the job” again and answer “Accept anyway” (a tool sends anyway: true)"
                 + (busyOverride ? ", and your friend's scene waits its turn behind what is running" : "") + ".",
               reason: overrides[0].reason, busy: !!busyOverride, overridable: true, overrides,
             } };
@@ -7857,7 +7910,7 @@ const server = http.createServer(async (req, res) => {
         proc.stdout.on("data", (d) => (so += d));
         proc.stderr.on("data", (d) => (se += d));
         proc.on("exit", (code) => resolve({ code, so, se }));
-        proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+        proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
       });
       if (r.code !== 0) {
         return json(res, 500, { error: r.se.split("\n").filter(Boolean).slice(-2).join(" ").slice(0, 300) });
@@ -8187,7 +8240,7 @@ const server = http.createServer(async (req, res) => {
           }));
         }
         if (b.action === "pause") {
-          art.paused = !!b.value;
+          art.setPaused(b.value);
           return json(res, 200, { ok: true, ...art.status() });
         }
         return json(res, 400, { error: "Unknown action." });
@@ -9407,7 +9460,7 @@ const server = http.createServer(async (req, res) => {
         const owner = [...library.meta.entries()]
           .find(([f]) => f.replace(/\.(flac|mp3|opus|wav)$/i, "") === stem);
         return {
-          name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0,
+          name, bytes: st?.size ?? 0, at: (clipMeta.get(name) ?? null)?.madeAt ?? st?.mtimeMs ?? 0,
           track: owner ? owner[0] : null,
           title: owner ? (owner[1].title || owner[0]) : null,
           // Render time. `clipSeconds` is read too, for sidecars written before
@@ -12552,7 +12605,12 @@ const server = http.createServer(async (req, res) => {
           ".svg": "image/svg+xml", ".avif": "image/avif", ".tif": "image/tiff",
           ".tiff": "image/tiff", ".ico": "image/x-icon",
           ".pdf": "application/pdf" }[path.extname(name).toLowerCase()] || "image/png";
-        res.writeHead(200, { "Content-Type": mime, "Cache-Control": "public, max-age=3600" });
+        /* Sandboxed and never sniffed, like /api/audio/ (security review,
+         * 2026-10-12): an SVG or PDF opened as a PAGE (a link, a chat reply's
+         * link) would otherwise run its scripts in Studio's origin. <img> and
+         * <embed> ignore a subresource's CSP, so pictures show as before. */
+        res.writeHead(200, { "Content-Type": mime, "Cache-Control": "public, max-age=3600",
+          "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox" });
         return res.end(buf);
       } catch { return json(res, 404, { error: "no image" }); }
     }
@@ -13016,7 +13074,7 @@ const server = http.createServer(async (req, res) => {
           proc.stdout.on("data", (d) => (so += d));
           proc.stderr.on("data", (d) => (se += d));
           proc.on("exit", (code) => resolve({ code, so, se }));
-          proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+          proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
         });
         let body;
         try { body = JSON.parse(r.so); }
@@ -13069,7 +13127,7 @@ const server = http.createServer(async (req, res) => {
           proc.stdout.on("data", (d) => (so += d));
           proc.stderr.on("data", (d) => (se += d));
           proc.on("exit", (code) => resolve({ code, so, se }));
-          proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+          proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
         });
         let body;
         try { body = JSON.parse(r.so); }
@@ -13382,7 +13440,7 @@ const server = http.createServer(async (req, res) => {
           proc.stdout.on("data", (d) => (so += d));
           proc.stderr.on("data", (d) => (se += d));
           proc.on("exit", (code) => resolve({ code, so, se }));
-          proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+          proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
         });
         if (r.code !== 0) {
           /* A missing module (OpenCV, most often) is a refusal with its pip line
@@ -13549,7 +13607,7 @@ const server = http.createServer(async (req, res) => {
         proc.stdout.on("data", (d) => (so += d));
         proc.stderr.on("data", (d) => (se += d));
         proc.on("exit", (code) => resolve({ code, so, se }));
-        proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+        proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
       });
       let body;
       try { body = JSON.parse(r.so); } catch { return json(res, 500, { error: r.se.slice(-200) || "beat analysis failed" }); }
@@ -13574,7 +13632,7 @@ const server = http.createServer(async (req, res) => {
         proc.stdout.on("data", (d) => (so += d));
         proc.stderr.on("data", (d) => (se += d));
         proc.on("exit", (code) => resolve({ code, so, se }));
-        proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+        proc.on("error", (e) => resolve({ code: 1, so: "", se: pythonStartFailed(e) }));
       });
       if (r.code !== 0) return json(res, 500, { error: r.se.slice(-200) || "peaks failed" });
       let body;
@@ -13648,6 +13706,9 @@ const wss = new WebSocketServer({ server, path: "/live",
    * a page sends one, that is that same address: the socket carries every job's
    * state, titles included. */
   verifyClient: ({ req }) => !foreignHost(req) && (!req.headers.origin || req.headers.origin === `http://${req.headers.host}`) });
+/* The live socket: a keyed device is admitted before the Host rule above
+ * reads the request (server/lan.js); anything else is refused by it as before. */
+if (lanGate) server.prependListener("upgrade", (req) => lanGate.upgrade(req));
 function push(snap) {
   /* ⚠ AND THE ART LANE'S OWN STATE. The socket fires on every art progress
    * tick (art.on("update") below) and carried nothing about art, so anything
@@ -13743,9 +13804,24 @@ async function powerTick() {
   } finally { powerTicking = false; }
 }
 
-server.listen(config.uiPort, "127.0.0.1", async () => {
+/* A port someone else holds (another Studio, a Vite preview on 4173) used to
+ * be one logged line while the process stayed up serving nothing, and the
+ * launcher waited six minutes before blaming ComfyUI. Say it and stop. */
+server.on("error", (err) => {
+  if (err?.code === "EADDRINUSE" || err?.code === "EACCES") {
+    console.error(`\n  Port ${config.uiPort} is already in use, so Studio cannot start. Close the other program`
+      + ` (or another Studio window) using it, or start Studio with AIPLAY_UI_PORT set to a free port.\n`);
+    process.exit(1);
+  }
+});
+server.listen(config.uiPort, LAN.on ? "0.0.0.0" : "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
   persistStartLevel().catch((err) => console.warn(`  [settings] the starting level was not saved: ${err.message}`));
+  if (LAN.why) console.warn(`  [network] ${LAN.why}`);
+  if (LAN.on) {
+    const ips = lanAddresses().map((a) => `http://${a.ip}:${config.uiPort}`);
+    console.log(`  [network] also on your local network${ips.length ? `: ${ips.join(", ")}` : ""} (the launcher's link carries the access key)`);
+  }
   /* Fast covers switched on and answered, but not all there (a setup or a
    * download a restart cut short): carry on by itself. */
   if (config.art.fastCovers && config.art.fastCoversAsked) {
@@ -13886,6 +13962,7 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
     }
     jobs.emit("update", jobs.snapshot());
   } catch (err) {
+    comfy.noteFailure(err.message);
     console.error(`\n  engine failed to start: ${err.message}\n`);
   }
 });

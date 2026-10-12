@@ -15,7 +15,12 @@
     "NOTICE"
   ],
   "exclude": [
-    "*.md"
+    "*.md",
+    "*_test.js",
+    "*_test.mjs",
+    "*_test.py",
+    "*_test.ps1",
+    "test_*.mjs"
   ],
   "keep": [
     "LICENSE*",

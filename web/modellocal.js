@@ -115,7 +115,7 @@ export function paintLocal(d, root = document) {
        * build of the same model — worth opening the panel for. */
       if (affinity(leaf(cands[0].name), leaf(f.name)) >= 12) likely = true;
       return `<div class="mlrow">
-        <span>Missing <code>${esc(bare(f.name))}</code> — use a file you already have:</span>
+        <span>Missing <code>${esc(bare(f.name))}</code>: use a file you already have:</span>
         <select data-mo-sel="${esc(f.name)}" aria-label="Stand-in for ${esc(f.name)}">
           <option value="">choose from ${esc(f.shelf)}…</option>
           ${cands.map((x) => `<option value="${esc(x.name)}">${esc(bare(x.name))} · ${gb(x.bytes)}${x.family ? ` · ${esc(x.family)}` : ""}</option>`).join("")}
@@ -230,7 +230,7 @@ export function initLocal(refresh, root = document) {
     btn.disabled = true;
     try {
       if (mf?.dataset.mf === "browse") {
-        note("Waiting for the folder dialog — it may open behind this window.");
+        note("Waiting for the folder dialog: it may open behind this window.");
         const r = await post({ action: "pickFolder" });
         if (!r.ok) { note(r.error || "The folder dialog failed.", true); return; }
         if (!r.path) { note("No folder chosen."); return; }

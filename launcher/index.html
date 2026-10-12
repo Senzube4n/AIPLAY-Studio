@@ -138,6 +138,9 @@
   @media (min-width: 1081px) { .modes:has(> .mode[hidden]) { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 1080px) { .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 560px) { .modes { grid-template-columns: 1fr; } }
+  /* Once the cards wrap, the panel sits below more than one row and its notch
+     pointed through other cards at the wrong one. */
+  @media (max-width: 1080px) { .runpanel::before { display: none; } }
   .mode { cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, opacity .15s ease; }
   .mode:hover { border-color: var(--edge); }
   .mode:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -171,7 +174,7 @@
   /* THE FAVOURITE: a star in each card's corner. One at a time: while one is
      starred the others grey out. The launcher starts it on every start. */
   .favstar {
-    position: absolute; top: 9px; left: 10px; width: 28px; height: 28px; display: grid; place-items: center;
+    position: absolute; top: 9px; left: 40px; width: 28px; height: 28px; display: grid; place-items: center;
     border: 0; border-radius: 8px; background: none; color: var(--ghost); cursor: pointer; padding: 0;
   }
   .favstar svg { width: 17px; height: 17px; }
@@ -179,6 +182,39 @@
   .favstar[aria-pressed="true"] { color: var(--secondary); }
   .favstar[aria-pressed="true"] svg { fill: currentColor; }
   .favstar:disabled { opacity: .3; cursor: not-allowed; }
+  /* THE PHONE, left of the star: this app on other devices on the network.
+     Green while it is switched on for this card. */
+  .lanphone {
+    position: absolute; top: 9px; left: 10px; width: 28px; height: 28px; display: grid; place-items: center;
+    border: 0; border-radius: 8px; background: none; color: var(--ghost); cursor: pointer; padding: 0;
+  }
+  .lanphone svg { width: 16px; height: 16px; }
+  .lanphone:hover { color: var(--primary); }
+  .lanphone[aria-pressed="true"] { color: var(--ok); }
+  .lanphone:focus-visible, .favstar:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+  /* The address bar above the log while the running app is on the network. */
+  .lanbar { position: relative; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--dim); }
+  .lanbar .lanlbl { display: inline-flex; align-items: center; gap: 6px; }
+  .lanbar .lanlbl i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .lanaddr {
+    appearance: none; font: 12px var(--mono); padding: 5px 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--ok) 55%, transparent); background: none; color: var(--ink);
+  }
+  .lanaddr:hover { border-color: var(--ok); }
+  .lanaddr.copied { color: var(--ok); }
+  .lanq {
+    appearance: none; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--hair); background: none;
+    color: var(--dim); font: 600 12px var(--disp); cursor: pointer; padding: 0;
+  }
+  .lanq:hover, .lanq[aria-expanded="true"] { color: var(--primary); border-color: var(--primary); }
+  .lanhelp {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: min(440px, 100%);
+    background: var(--panel); border: 1px solid var(--hair); border-radius: 12px; padding: 12px 14px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, .45); font-size: 12.5px; line-height: 1.5; color: var(--dim);
+  }
+  .lanhelp ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+  .lanhelp b { color: var(--ink); }
+  .lanhelp p { margin: 8px 0 0; }
   /* The launcher's own pop-up (askInApp): a question over a dimmed page. */
   .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px;
     background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(3px); }
@@ -444,6 +480,7 @@
 
     <div class="modes" role="list">
     <article class="card mode" id="mode-full" data-mode="full" tabindex="0" role="listitem">
+      <button class="lanphone" type="button" data-lan="full" aria-pressed="false" aria-label="Use from a phone or another device on your network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></button>
       <button class="favstar" type="button" data-fav="full" aria-pressed="false" aria-label="Favourite: start with the launcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <div class="mode-head">
         <span class="runbadge" aria-hidden="true"><i></i><span>Running</span></span>
@@ -459,6 +496,7 @@
     </article>
 
     <article class="card mode" id="mode-music" data-mode="music" tabindex="0" role="listitem">
+      <button class="lanphone" type="button" data-lan="music" aria-pressed="false" aria-label="Use from a phone or another device on your network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></button>
       <button class="favstar" type="button" data-fav="music" aria-pressed="false" aria-label="Favourite: start with the launcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <div class="mode-head">
         <span class="runbadge" aria-hidden="true"><i></i><span>Running</span></span>
@@ -478,6 +516,7 @@
          (server/router/). Needs no ComfyUI. The only mode that spends money,
          so the card says so before anything else. -->
     <article class="card mode" id="mode-cloud" data-mode="cloud" tabindex="0" role="listitem">
+      <button class="lanphone" type="button" data-lan="cloud" aria-pressed="false" aria-label="Use from a phone or another device on your network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></button>
       <button class="favstar" type="button" data-fav="cloud" aria-pressed="false" aria-label="Favourite: start with the launcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <div class="mode-head">
         <span class="runbadge" aria-hidden="true"><i></i><span>Running</span></span>
@@ -499,6 +538,7 @@
          offers it, which it does only when Studio's level is Advanced
          (launcher/checks.mjs modesForLevel), or while it is the mode running. -->
     <article class="card mode" id="mode-runpod" data-mode="runpod" data-level="advanced" tabindex="0" role="listitem" hidden>
+      <button class="lanphone" type="button" data-lan="runpod" aria-pressed="false" aria-label="Use from a phone or another device on your network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></button>
       <button class="favstar" type="button" data-fav="runpod" aria-pressed="false" aria-label="Favourite: start with the launcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
       <div class="mode-head">
         <span class="runbadge" aria-hidden="true"><i></i><span>Running</span></span>
@@ -532,6 +572,23 @@
       <div class="runinfo" id="runInfo"></div>
       <p class="errline" id="err" hidden></p>
       <p class="sub" id="runIdle" hidden></p>
+      <!-- On the network: the address to open on a phone. Pressing it copies the
+           link with its access key; ? says how. -->
+      <div class="lanbar" id="lanBar" hidden>
+        <span class="lanlbl"><i aria-hidden="true"></i>On your network</span>
+        <span id="lanAddrs"></span>
+        <button type="button" class="lanq" id="lanQ" aria-expanded="false" aria-controls="lanHelp" aria-label="How to open it on a phone">?</button>
+        <div class="lanhelp" id="lanHelp" hidden>
+          <ol>
+            <li>Connect the phone to the <b>same Wi-Fi</b> as this PC.</li>
+            <li>Press the address to <b>copy its link</b>, then send it to the phone (a message to yourself works).</li>
+            <li>Open the link in the phone's browser. It remembers the key for 30 days.</li>
+            <li>The first time, Windows may ask whether Node.js can use the network: allow <b>Private networks</b>.</li>
+          </ol>
+          <p>Keep the link private: anyone on your network who has it can use Studio. <b>New link</b> in the phone's pop-up locks out every device that used the old one.</p>
+          <p>Not loading? Guest Wi-Fi often blocks devices from each other; try the other address if there are two.</p>
+        </div>
+      </div>
       <div class="logbox" id="logBox">
         <div class="loghead">Log <span id="logCount">0 lines</span></div>
         <pre id="log" aria-live="polite"></pre>
@@ -552,6 +609,24 @@
     <span class="msg" id="verSays"></span>
   </span>
 </footer>
+
+<!-- The phone's pop-up: network access for one app (paintLan below). -->
+<div class="modal" id="lanModal" hidden role="dialog" aria-modal="true" aria-labelledby="lanTitle">
+  <article class="card">
+    <h3 id="lanTitle">Use it from your phone</h3>
+    <p>Open this app on a phone, tablet or another computer on the same network. It still runs on this PC.</p>
+    <label class="toggle">
+      <input type="checkbox" id="lanOn">
+      <span><b>Allow devices on my network</b>
+        <small>Only a device that opens the link with its access key gets in.</small></span>
+    </label>
+    <p id="lanNote" hidden></p>
+    <div class="actions">
+      <button class="btn ghost" type="button" id="lanReset" title="Make a new access key: devices that used the old link are locked out">New link</button>
+      <button class="btn" type="button" id="lanDone">Done</button>
+    </div>
+  </article>
+</div>
 
 <!-- The launcher's own pop-up for a question (askInApp below). -->
 <div class="modal" id="askModal" hidden role="dialog" aria-modal="true" aria-labelledby="askTitle">
@@ -574,6 +649,8 @@ let studio = { state: "idle" };
 let sel = null;
 /* The favourite mode (the star), from the launcher's prefs. */
 let fav = null;
+/* The phones: which modes also answer on the local network. */
+let lanPrefs = {};
 const MODE_NAME = { full: "Full Studio", music: "Music only", cloud: "Comfy API", runpod: "RunPod GPU" };
 let check = null;
 /* "Try again" beside Studio's own packages: its state, from the launcher. */
@@ -755,6 +832,84 @@ async function setFav(m) {
   fav = r.prefs?.autoLaunch ?? null;
   paintFav();
 }
+/* THE PHONES. Green where that app also answers on the network. */
+function paintLan() {
+  for (const b of document.querySelectorAll("[data-lan]")) {
+    const on = lanPrefs[b.dataset.lan] === true;
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.title = on ? "On your network: phones with the link can use it. Click to change."
+      : "Use this app from a phone or another device on your network";
+  }
+  paintLanBar();
+}
+/* The address bar above the log, for the running app when it is on the network. */
+function paintLanBar() {
+  const addrs = studio.lan?.addresses || [];
+  const show = addrs.length > 0 && studio.mode === sel && ["starting", "ready"].includes(studio.state);
+  $("lanBar").hidden = !show;
+  if (!show) { $("lanHelp").hidden = true; $("lanQ").setAttribute("aria-expanded", "false"); return; }
+  const shown = addrs.map((a) => a.url.replace(/^http:\/\//, "")).join("|");
+  if ($("lanAddrs").dataset.shown === shown) return;
+  $("lanAddrs").dataset.shown = shown;
+  $("lanAddrs").innerHTML = addrs.map((a, i) => `<button type="button" class="lanaddr" data-lanlink="${i}"
+    title="Copy the link for ${esc(a.name)} (it carries the access key)">${esc(a.url.replace(/^http:\/\//, ""))}</button>`).join(" ");
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* fall back below */ }
+  const t = document.createElement("textarea");
+  t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+  document.body.appendChild(t); t.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  t.remove();
+  return ok;
+}
+let lanMode = null;
+function lanNote(text) { $("lanNote").textContent = text; $("lanNote").hidden = !text; }
+function openLan(m) {
+  lanMode = m;
+  const name = MODE_NAME[m] || m;
+  $("lanTitle").textContent = `Use ${name} from your phone`;
+  $("lanOn").checked = lanPrefs[m] === true;
+  lanNote("");
+  $("lanModal").hidden = false;
+  $("lanOn").focus();
+}
+function closeLan() { $("lanModal").hidden = true; lanMode = null; }
+$("lanOn").addEventListener("change", async () => {
+  const m = lanMode, on = $("lanOn").checked;
+  const r = await api("/api/prefs", { lan: { mode: m, on } });
+  if (r.error) { lanNote(r.error); $("lanOn").checked = !on; return; }
+  lanPrefs = r.prefs?.lan || lanPrefs;
+  paintLan();
+  const running = studio.mode === m && ["starting", "ready"].includes(studio.state);
+  lanNote(running ? "Applies the next time it starts. Stop it and launch it again to apply now."
+    : on ? "Launch it as usual; the address to open on your phone shows above the log." : "");
+});
+$("lanReset").addEventListener("click", async () => {
+  const r = await api("/api/prefs", { lanReset: true });
+  if (r.error) { lanNote(r.error); return; }
+  lanNote("New link made. It takes effect the next time the app starts; devices with the old link must open the new one.");
+});
+$("lanDone").addEventListener("click", closeLan);
+$("lanModal").addEventListener("click", (e) => { if (e.target === $("lanModal")) closeLan(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("lanModal").hidden) closeLan(); });
+$("lanQ").addEventListener("click", () => {
+  const open = $("lanHelp").hidden;
+  $("lanHelp").hidden = !open;
+  $("lanQ").setAttribute("aria-expanded", open ? "true" : "false");
+});
+$("lanAddrs").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-lanlink]");
+  if (!b) return;
+  const a = studio.lan?.addresses?.[Number(b.dataset.lanlink)];
+  if (!a) return;
+  const ok = await copyText(a.link);
+  const was = b.textContent;
+  b.classList.add("copied");
+  b.textContent = ok ? "Link copied" : "Copy failed";
+  setTimeout(() => { b.textContent = was; b.classList.remove("copied"); }, 1600);
+});
 /* The panel follows the selected card, and its notch points at it. */
 function paintPanel() {
   const panel = $("run");
@@ -783,6 +938,7 @@ function paintPanel() {
 function toggleSel(m) {
   sel = sel === m ? null : m;
   paintPanel();
+  paintLanBar();
 }
 addEventListener("resize", () => { if (sel) paintPanel(); });
 function paintState() {
@@ -818,6 +974,7 @@ function paintState() {
   $("btnStop").hidden = true;
   $("btnOpen").hidden = $("btnOpen").hidden || studio.mode !== sel;
   paintPanel();
+  paintLanBar();
 }
 
 /* ── log ──────────────────────────────────────────────────────────────── */
@@ -837,6 +994,8 @@ function addLog(e) {
 
 /* ── wiring ───────────────────────────────────────────────────────────── */
 document.addEventListener("click", async (e) => {
+  const phone = e.target.closest("[data-lan]");
+  if (phone) { openLan(phone.dataset.lan); return; }
   const star = e.target.closest("[data-fav]");
   if (star) { if (!star.disabled) await setFav(star.dataset.fav); return; }
   const l = e.target.closest("[data-launch]");
@@ -1020,6 +1179,8 @@ async function checkAlive() {
   $("optCloseStops").checked = !!st.prefs?.closeStopsStudio;
   fav = st.prefs?.autoLaunch ?? null;
   paintFav();
+  lanPrefs = st.prefs?.lan || {};
+  paintLan();
   $("optCloseStops").addEventListener("change", (e) => api("/api/prefs", { closeStopsStudio: e.target.checked }));
   $("footText").textContent = st.host === "exe"
     ? "Studio opens in your browser once ComfyUI reports it is ready. Closing this window keeps Studio running; the AIPLAY tray icon reopens it or stops Studio."

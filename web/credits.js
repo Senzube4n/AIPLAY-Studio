@@ -42,9 +42,12 @@ export const PEOPLE = [
     handle: "@bani4kaskashka",
     url: "https://github.com/bani4kaskashka",
     role: "Compatibility and interface",
-    did: "Made it run on cards it was not written on — AMD, Intel Arc and plain CPU "
-      + "— and wrote the launcher that installs its own ComfyUI on a PC that has none.",
-    areas: ["AMD / Intel / CPU", "Launcher", "Music screen", "Agent & APIs", "Model picker"],
+    did: "Made it run on cards it was not written on (AMD, Intel Arc and plain CPU) "
+      + "and wrote the launcher that installs its own ComfyUI on a PC that has none.",
+    /* As credited in the 26.10.08 release notes. */
+    areas: ["AMD / Intel / CPU", "Launcher", "FastH3", "Fast covers", "Battery Safe", "Use Comfy API",
+      "Whisper", "VRAM room", "Models search", "Pre‑Configure", "Page kit", "Music screen",
+      "Agent & APIs", "Model picker"],
   },
   {
     name: "Nemesis",

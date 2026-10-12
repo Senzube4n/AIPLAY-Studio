@@ -1,7 +1,7 @@
 /* Music Lab: a page (web/ui.css), its five workflows as tabs, and the open
  * tab's panel as one card below them. */
 #musicWorkflows { color: var(--ink); }
-.music-workflows-tabs { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 10px 0 14px; background: linear-gradient(hsla(220,20%,5%,.97) 80%, hsla(220,20%,5%,0)); }
+.music-workflows-tabs { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px 0 14px; background: linear-gradient(hsla(220,20%,5%,.97) 80%, hsla(220,20%,5%,0)); }
 .music-workflows-tabs button { flex: 1; min-width: 0; text-align: left; border: 1px solid var(--hair); border-radius: 10px; padding: 13px 16px; background: var(--panel); color: var(--dim); cursor: pointer; }
 .music-workflows-tabs button[aria-selected="true"] { border-color: var(--primary); background: var(--raise); color: var(--ink); }
 .music-workflows-tabs b, .music-workflows-tabs span { display: block; }
@@ -15,3 +15,6 @@
   .music-workflows-tabs button { padding: 10px 8px; }
   .music-workflows-tabs span { display: none; }
 }
+
+/* Eight tools: four by two. auto-fit made seven across and left one alone on a second row. */
+@media (max-width: 760px) { .music-workflows-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

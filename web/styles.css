@@ -98,12 +98,12 @@ body {
    go. One 18px row at the top of the rail. */
 .poweredby {
   display: flex; align-items: center; gap: 5px; width: 100%; margin: 0 0 8px; padding: 2px 6px;
-  font: inherit; font-family: var(--mono); font-size: 9.5px; letter-spacing: .02em;
-  text-align: left; color: var(--ink); background: none; cursor: pointer;
+  font: inherit; font-family: var(--sans); font-size: 11px; letter-spacing: .01em;
+  text-align: left; color: var(--dim); background: none; cursor: pointer;
   border: 1px solid transparent; border-radius: 6px;
   transition: border-color .12s, background-color .12s;
 }
-.poweredby b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.poweredby b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }
 .poweredby i {
   flex: 0 0 auto; display: grid; place-items: center; width: 12px; height: 12px;
   font-style: normal; font-size: 8.5px; color: var(--ghost);
@@ -262,6 +262,11 @@ details.adv, #settings { position: relative; }
    value cells instead of letting flex-end float it away from its label. */
 #settings .params .pv { justify-content: flex-start; }
 #settings .params .pv .tog { white-space: normal; }
+/* The python rows hold a path field, two buttons and a long PyTorch choice.
+   Without these the choice squeezed the path field down to an empty sliver. */
+#settings .params .pv:has(> input.line) { flex-wrap: wrap; }
+#settings .params .pv > input.line { flex: 1 1 260px; min-width: 200px; }
+#settings .params .pv > select[data-setup-torch] { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
 /* A popover, not a banner.
    It used to stretch `left:8px; right:8px` across the whole panel, so a two-line
    explanation covered half the settings screen and hid the very control it was
@@ -806,6 +811,9 @@ details.adv[open] summary::before { content: "▾"; }
 /* The hero shares the page measure rather than holding its own. */
 :is(#community, #radio, #blog) .commhero { max-width: none; }
 :is(#community, #radio, #blog) .grid2 { grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; }
+/* A text-only post was stretched to the height of the tallest picture post in
+   its row, leaving a card that was mostly empty. */
+#commPosts { align-items: start; }
 :is(#community, #radio, #blog) .bloggrid { gap: 12px; }
 
 /* Actions sit on the baseline of the card, not under the text. Works because a
@@ -1659,6 +1667,11 @@ details.adv[open] summary::before { content: "▾"; }
 .stopts .pv select { flex: 0 1 auto; }
 .stopts .pv input[type=range] { flex: 1 1 auto; min-width: 80px; }
 .stopts .pv b { font-family: var(--mono); font-size: 10px; color: var(--ghost); min-width: 28px; }
+/* A select and a slider share a row (On the beat: effect + amount). In the
+   narrow Look panel they ran 56px past its edge; they wrap instead. */
+.stopts .pv { min-width: 0; }
+.stopts .pv:has(> select) { flex-wrap: wrap; }
+.stopts .pv select { min-width: 0; max-width: 100%; }
 .stopt { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--ghost); }
 .stchecks { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--faint); }
 .stchecks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -2110,6 +2123,10 @@ details.adv[open] summary::before { content: "▾"; }
   white-space: nowrap;
 }
 .sttlbar .btn.sm { padding: 0 14px; }
+/* `.btn.sm` carries margin-left:auto for its usual job (one button at the end
+   of a row). Here there are many, so a wrapped row spread Bounce, Save, Open
+   and Clear evenly across the width. The spacer does the pushing instead. */
+.sttlbar .btn.sm { margin-left: 0; }
 
 /* The track level was a 3px hairline reading as an artifact. Give it a real
    track and thumb, and put a value beside it the way Vegas does. */
@@ -3320,6 +3337,7 @@ details.adv[open] summary::before { content: "▾"; }
 /* The attribution stays on the main window (licence condition), one quiet line. */
 .attrib.slim{font-size:9.5px;letter-spacing:.02em;line-height:1.5;opacity:.75}
 .attrib.slim b{font-weight:600}
+.attrib.slim.err{color:var(--err);opacity:1}
 
 /* ── Project board (mvboard.js) — the MvCrimeBoard port ─────────────────── */
 .bbar{display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;margin:.4rem 0 .5rem}
@@ -4280,8 +4298,8 @@ details.adv[open] summary::before { content: "▾"; }
 .create .chipbar .chips {
   flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; cursor: default; user-select: none; padding: 2px 0;
-  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent);
-          mask-image: linear-gradient(90deg, #000 88%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 72%, transparent);
+          mask-image: linear-gradient(90deg, #000 72%, transparent);
 }
 .create .chipbar .chips::-webkit-scrollbar { display: none; }
 .create .chipbar .chips .chip { flex: none; white-space: nowrap; cursor: pointer; }
@@ -4301,8 +4319,8 @@ details.adv[open] summary::before { content: "▾"; }
 .create .tagrow {
   flex: 1 1 auto; min-width: 0; display: flex; gap: 5px; flex-wrap: nowrap;
   overflow-x: auto; overflow-y: hidden; scrollbar-width: none; user-select: none;
-  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent);
-          mask-image: linear-gradient(90deg, #000 88%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 72%, transparent);
+          mask-image: linear-gradient(90deg, #000 72%, transparent);
 }
 .create .tagrow::-webkit-scrollbar { display: none; }
 .create .tagrow .tag { flex: none; white-space: nowrap; cursor: pointer; }
@@ -4364,6 +4382,9 @@ details.adv[open] summary::before { content: "▾"; }
 /* Full-width views keep the expanded rail at narrow desktop sizes too. */
 .shell.solo:not(.railmini) .nav a .lbl { display: block; }
 .navmain { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; gap: 2px; }
+/* Items cut in half at either edge read as a broken menu, not as more to
+   scroll. Fade both edges, and pad so the first and last items clear them. */
+.navmain { -webkit-mask-image: linear-gradient(transparent, #000 14px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(transparent, #000 14px, #000 calc(100% - 22px), transparent); padding-top: 10px; padding-bottom: 18px; }
 .navgroup { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
 .navhead {
   padding: 4px 11px 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
@@ -6158,3 +6179,24 @@ button, input, select, textarea { font-family: inherit; }
 .vidfail pre { white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; margin: 4px 0 0; font-size: var(--fs-xs); }
 .vlab-mirror { font-size: 12px; color: var(--faint); }
 .vlab-mirror b { color: var(--ink); font-weight: 600; }
+
+/* A card with no picture, or one whose picture would not load: a short band
+   with the AIPLAY mark, not a large empty square (2026-10-12 review). */
+:is(#community, #radio, #blog) .cardart.none { aspect-ratio: 16 / 7; display: grid; place-items: center; }
+:is(#community, #radio, #blog) .cardart.none::after,
+.blognoimg::after {
+  content: ""; width: 44px; height: 44px; opacity: .28;
+  background: url("assets/aiplay-logo.png") center / contain no-repeat;
+}
+.blognoimg { display: grid; place-items: center; }
+
+/* A hint that must not break across lines (the Pictures toolbar). */
+.hint.nowrap { white-space: nowrap; }
+
+
+/* A link dressed as a button is a button: no underline (Training's "Dataset and
+   native tools"). */
+a.btn, a.btn2 { text-decoration: none; }
+/* Training's header: the button sits at the right edge; the count beside it
+   no longer splits the space with it. */
+#training .stagehead .count { margin-left: 10px; }

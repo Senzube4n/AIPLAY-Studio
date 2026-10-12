@@ -61,3 +61,13 @@ server/version.archive.json export-subst
 *.cmd  text=auto eol=crlf
 *.bat  text=auto eol=crlf
 *.ps1  text=auto eol=crlf
+
+# WHAT THE INSTALLER AND UPDATE DOWNLOAD (2026-10-12). Setup.exe and the
+# Update button both fetch GitHub's zip of a commit, which is the whole repo:
+# about 191 MB, of which ~124 MB (demo videos, examples, banners) is never
+# installed or read at runtime. GitHub builds those zips with `git archive`,
+# which leaves export-ignore paths out. The repository, the README images and
+# the GitHub Pages site are unchanged.
+docs/** export-ignore
+examples/** export-ignore
+GitHubAssets/** export-ignore

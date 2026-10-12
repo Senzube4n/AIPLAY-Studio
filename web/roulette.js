@@ -124,7 +124,7 @@ function paintFoot() {
   $("grPopulate").hidden = !spun;
   for (const id of ["grSpin", "grReroll", "grPopulate"]) $(id).disabled = spinning;
   $("grHint").textContent = spinning ? "Spinning…"
-    : spun ? "Click a reel to lock it, then Reroll the rest — or Populate the Styles box."
+    : spun ? "Click a reel to lock it, then Reroll the rest, or Populate the Styles box."
     : "Six reels: genre, vocals, instrument, mood, rhythm and production.";
   $("grResult").textContent = spun && !spinning ? styleLine(result()).caption : "";
 }

@@ -58,6 +58,10 @@ function spy(nav) {
   const sc = scrollerOf(page);
   if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) current = cards[cards.length - 1];
   light(nav, current.id);
+  /* Stuck to the top: cover the scroller's padding strip above the bar (ui.css). */
+  const top = sc === document.scrollingElement || sc === document.documentElement ? 0 : sc.getBoundingClientRect().top;
+  nav.classList.toggle("stuck", sc.scrollTop > 0
+    && nav.getBoundingClientRect().top - top <= (parseFloat(getComputedStyle(sc).paddingTop) || 0) + 1);
 }
 
 function mountNavs() {

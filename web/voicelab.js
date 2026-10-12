@@ -264,7 +264,7 @@ export function mountVoiceLab(opts = {}) {
 
   const bar1 = EL("div", "vl-bar");
   const trackSel = EL("select");
-  trackSel.title = "the track whose instrument this renders — its real patch and its real params";
+  trackSel.title = "the track whose instrument this renders: its real patch and its real params";
   const pitchIn = numField("pitch", 0, 127, 60);
   const velIn = numField("vel", 1, 127, 100);
   const durIn = numField("dur_ticks", 1, 3840, 480);
@@ -272,7 +272,7 @@ export function mountVoiceLab(opts = {}) {
   const pathBtn = {};
   for (const [id, label, tip] of [
     ["mono", "mono", "The P0 path: the same job, the same bytes and the same cached file `preview_note` renders. One channel."],
-    ["stereo", "stereo", "The same note through the rack with a NO-OP chain — the only way to reach the stereo instrument stage, and the only way a width knob (spread, hat_width) moves anything you can see."],
+    ["stereo", "stereo", "The same note through the rack with a NO-OP chain: the only way to reach the stereo instrument stage, and the only way a width knob (spread, hat_width) moves anything you can see."],
     ["chain", "+ chain", "Stereo, plus this track's own inserts, fader and pan. NOT the master chain: a limiter set for the mix would show you the limiter instead of the instrument."],
   ]) {
     const b = EL("button", "vl-btn", label);
@@ -282,7 +282,7 @@ export function mountVoiceLab(opts = {}) {
     paths.appendChild(b);
   }
   const goBtn = EL("button", "vl-btn vl-go", "render");
-  goBtn.title = "render this note again (a cached one answers from disk — the clock says which)";
+  goBtn.title = "render this note again (a cached one answers from disk: the clock says which)";
   goBtn.addEventListener("click", () => bump("render"));
   const reloadBtn = EL("button", "vl-btn", "⟲");
   reloadBtn.title = "re-read the project and the palette";
@@ -294,7 +294,7 @@ export function mountVoiceLab(opts = {}) {
   const bar2 = EL("div", "vl-bar");
   const clock = EL("span", "vl-clock", "no render yet");
   const applyBtn = EL("button", "vl-btn", "apply to track");
-  applyBtn.title = "write these params to the track through set_track — the same action daw_set_track posts";
+  applyBtn.title = "write these params to the track through set_track: the same action daw_set_track posts";
   applyBtn.addEventListener("click", apply);
   const revertBtn = EL("button", "vl-btn", "revert knobs");
   revertBtn.title = "put every slider back to what the document says (renders again; writes nothing)";
@@ -312,7 +312,7 @@ export function mountVoiceLab(opts = {}) {
    * copy beyond the one it is drawing. */
   const bar3 = EL("div", "vl-bar vl-refbar");
   const profSel = EL("select");
-  profSel.title = "the reference profile drawn behind this voice — shape only: dB shares, "
+  profSel.title = "the reference profile drawn behind this voice (shape only): dB shares, "
     + "dB off the pink null, decay times in ms, counts. A profile carries no audio and no "
     + "melody, so it is a style target and never a copy.";
   const stemSel = EL("select");
@@ -329,11 +329,11 @@ export function mountVoiceLab(opts = {}) {
   buildIn.className = "vl-file";
   buildIn.placeholder = "a server-local audio file…";
   buildIn.title = "a path on THIS machine. Building runs demucs over it (four stems) and "
-    + "measures each — a few seconds per 30 s of audio the first time, then it is cached "
+    + "measures each: a few seconds per 30 s of audio the first time, then it is cached "
     + "under the profile's id. The file is never read again afterwards and never leaves "
     + "the machine.";
   const buildBtn = EL("button", "vl-btn", "build");
-  buildBtn.title = "measure that file and keep the SHAPE — profile_build, the same action "
+  buildBtn.title = "measure that file and keep the SHAPE: profile_build, the same action "
     + "daw_profile_build posts";
   buildBtn.addEventListener("click", buildProfile);
   const delBtn = EL("button", "vl-btn", "✕");
@@ -377,10 +377,10 @@ export function mountVoiceLab(opts = {}) {
   overCv.hidden = true;
   const slot = EL("div", "vl-slot");
   const EMPTY_SLOT =
-    "<b>Nothing measured to compare this against — so nothing is drawn.</b><br>"
+    "<b>Nothing measured to compare this against: so nothing is drawn.</b><br>"
     + "Pick a reference profile in the bar above and its matching stem lands behind these "
     + "pictures: its 1/3-octave curve behind the spectrum, its kick envelope behind ours, "
-    + "and the band-by-band distance here — so \"more like that kick\" becomes a number you "
+    + "and the band-by-band distance here: so \"more like that kick\" becomes a number you "
     + "can close.<br><br>"
     + "A <b>profile</b> is shape measurements only, never audio and never a melody: band "
     + "levels, <code>t10/t30/t60</code>, kick <code>f0</code>, sidechain depth and recovery. "
@@ -486,7 +486,7 @@ export function mountVoiceLab(opts = {}) {
     const keep = trackSel.value;
     trackSel.textContent = "";
     for (const t of V.doc?.tracks || []) {
-      const o = EL("option", null, `${t.name} — ${t.instrument?.patch || "?"}`);
+      const o = EL("option", null, `${t.name}: ${t.instrument?.patch || "?"}`);
       o.value = t.id;
       trackSel.appendChild(o);
     }
@@ -544,7 +544,7 @@ export function mountVoiceLab(opts = {}) {
 
     if (!names.length) {
       knobCol.appendChild(EL("div", "vl-empty",
-        "This patch declares no parameters — a sampled instrument is what its samples are. "
+        "This patch declares no parameters: a sampled instrument is what its samples are. "
         + "Pitch, velocity and duration above still change what you hear."));
     }
 
@@ -570,7 +570,7 @@ export function mountVoiceLab(opts = {}) {
       sl.value = String(val);
       /* patches.json's own words, its own range, its own default — never a
        * sentence this page wrote about someone else's parameter. */
-      sl.title = `${pname} — ${spec.doc || "no doc on this row"}\n${lo}..${hi}${spec.unit ? ` ${spec.unit}` : ""}, default ${def}`
+      sl.title = `${pname}: ${spec.doc || "no doc on this row"}\n${lo}..${hi}${spec.unit ? ` ${spec.unit}` : ""}, default ${def}`
         + `\ndouble-click to put it back to ${def}`;
       sl.addEventListener("input", () => {
         const n = Number(sl.value);
@@ -732,7 +732,7 @@ export function mountVoiceLab(opts = {}) {
       await post({ action: "set_track", slug: V.slug, track: V.trackId, params: { ...before, ...ov } });
       V.applied = before;
       undoBtn.hidden = false;
-      say(`written to ${V.trackId}: ${Object.keys(ov).join(", ")} — the page follows over the live channel`, "");
+      say(`written to ${V.trackId}: ${Object.keys(ov).join(", ")}: the page follows over the live channel`, "");
       await sync(true);
       bump("applied");
     } catch (err) { say(err.message, "bad"); }
@@ -769,14 +769,14 @@ export function mountVoiceLab(opts = {}) {
       /* The server's OWN folder, printed as the placeholder — this page never
        * types a path of its own, so a machine that keeps its references
        * somewhere else says so rather than being contradicted. */
-      if (r.dir) buildIn.placeholder = `profiles live in ${r.dir} — give any audio file`;
+      if (r.dir) buildIn.placeholder = `profiles live in ${r.dir}: give any audio file`;
       drawProfiles();
       if (keep && V.profiles.some((p) => p.id === keep)) { profSel.value = keep; }
       drawRefNote();
     } catch (err) {
       V.profiles = null;
       drawProfiles();
-      sayRef(`no reference library on this tree — ${err.message}`, "warn");
+      sayRef(`no reference library on this tree: ${err.message}`, "warn");
     }
   }
 
@@ -790,7 +790,7 @@ export function mountVoiceLab(opts = {}) {
     profSel.appendChild(none);
     for (const p of V.profiles || []) {
       const o = EL("option", null,
-        `${p.name || p.id}${isNum(p.seconds) ? ` — ${Number(p.seconds).toFixed(0)}s` : ""}`);
+        `${p.name || p.id}${isNum(p.seconds) ? `: ${Number(p.seconds).toFixed(0)}s` : ""}`);
       o.value = p.id;
       profSel.appendChild(o);
     }
@@ -830,7 +830,7 @@ export function mountVoiceLab(opts = {}) {
     if (V.profBusy) return;
     V.profBusy = true;
     buildBtn.disabled = true;
-    sayRef("running demucs and measuring — a first build is tens of seconds…");
+    sayRef("running demucs and measuring: a first build is tens of seconds…");
     try {
       const r = await post({ action: "profile_build", file });
       /* SEPARATION IS A QUEUE, NOT A CALL. demucs runs on the same idle-drain
@@ -839,7 +839,7 @@ export function mountVoiceLab(opts = {}) {
        * be a lie with a picker entry attached, so the server's own sentence is
        * shown and the file is left in the box to ask again with. */
       if (r.pending || r.built === false) {
-        sayRef(String(r.note || "the separation is queued — ask again when it has run"), "warn");
+        sayRef(String(r.note || "the separation is queued: ask again when it has run"), "warn");
         return;
       }
       const id = r.id || r.profile?.id || null;
@@ -962,7 +962,7 @@ export function mountVoiceLab(opts = {}) {
     const grid = p.kick?.grid;
     const warn = [
       ...(grid && grid.gated !== true
-        ? ["the beat grid did not gate — the beat, the decay window and the pump are "
+        ? ["the beat grid did not gate: the beat, the decay window and the pump are "
           + "read off raw flux peaks"] : []),
       ...(Array.isArray(p.warnings) ? p.warnings : []),
       ...(s && s.block.loudness && s.block.loudness.lufs_available === false
@@ -1138,7 +1138,7 @@ export function mountVoiceLab(opts = {}) {
     const stereo = !a.mono;
     cap.vlSpec.textContent = stereo
       ? `L/R differ · widest ${sp.widest_band} ${fmt(Math.max(...sp.l_minus_r_db.map(Math.abs)), 2, " dB")}`
-      : "one channel — L, R and mid are the same samples";
+      : "one channel: L, R and mid are the same samples";
 
     /* THE REFERENCE, resolved once for both halves of this picture. `null`
      * everywhere below means "no profile, or none that lines up" — and every
@@ -1280,7 +1280,7 @@ export function mountVoiceLab(opts = {}) {
        * plotted against frequency and cannot be put out of step by an index.
        * Only the bars lose their line. */
       g.fillText(ref
-        ? "the profile's nine bands are not ear.py's — no line on these bars "
+        ? "the profile's nine bands are not ear.py's: no line on these bars "
           + "(the curve above is still theirs, plotted by frequency)"
         : `no ${V.stem === "auto" ? FAMILY_STEM[V.family] || "other" : V.stem} block in this profile`,
       26, splitY + 21);
@@ -1384,11 +1384,11 @@ export function mountVoiceLab(opts = {}) {
     if (rs) {
       g.fillStyle = P.secondary; g.font = `9px ${P.mono}`;
       g.fillText(`dashed: ${V.prof?.name || V.profId} kick, ${rs.hits ?? "?"} hits averaged`
-        + (refPast ? ` — cut at ${span.toFixed(0)} ms, it runs to ${refPast.toFixed(0)}` : ""),
+        + (refPast ? `: cut at ${span.toFixed(0)} ms, it runs to ${refPast.toFixed(0)}` : ""),
       34, 11);
     } else if (V.prof && refStem()) {
       g.fillStyle = P.ghost; g.font = `9px ${P.mono}`;
-      g.fillText("a profile measures one envelope, off its drums stem — nothing to draw here",
+      g.fillText("a profile measures one envelope, off its drums stem: nothing to draw here",
         34, 11);
     }
 
@@ -1409,7 +1409,7 @@ export function mountVoiceLab(opts = {}) {
       g.beginPath(); g.moveTo(x, 8); g.lineTo(x, h - 12); g.stroke();
       g.setLineDash([]);
       g.fillStyle = P.ghost; g.font = `9px ${P.mono}`;
-      g.fillText(`silent from here — ${(span - silentAt).toFixed(0)} ms of reserved tail unused`,
+      g.fillText(`silent from here: ${(span - silentAt).toFixed(0)} ms of reserved tail unused`,
         Math.min(x + 3, w - 250), 18);
     }
     if (e.t60_ms == null) {
@@ -1528,7 +1528,7 @@ export function mountVoiceLab(opts = {}) {
     const st = ref.block.stereo;
     if (st) {
       targets.push(["width", num(st.width, 3, ""),
-        a.mono ? "ours is exactly 0 — this render is one channel (try the stereo path)" : "ours is not measured on one note"]);
+        a.mono ? "ours is exactly 0: this render is one channel (try the stereo path)" : "ours is not measured on one note"]);
       targets.push(["correlation", num(st.correlation, 3, ""), st.mono_compatible ? "mono-compatible" : "not mono-compatible"]);
     }
     if (isNum(ref.block.level_rel_mix_db)) {
@@ -1540,13 +1540,13 @@ export function mountVoiceLab(opts = {}) {
       slot.append(table(rows));
     }
     if (targets.length) {
-      slot.append(EL("b", null, "the reference's own numbers — targets, never subtracted"));
+      slot.append(EL("b", null, "the reference's own numbers: targets, never subtracted"));
       slot.append(table(targets));
     }
     const foot = EL("div", "vl-foot");
     foot.textContent =
       "We render one note; a stem is minutes of a finished record. The two curves above "
-      + "are dB shares and dB off the pink null, which is why they share an axis at all — "
+      + "are dB shares and dB off the pink null, which is why they share an axis at all: "
       + "loudness, level and width are printed as theirs and never differenced. A profile "
       + "is shape only: no audio, no melody, nothing that could be played back.";
     slot.append(foot);
@@ -1596,7 +1596,7 @@ export function mountVoiceLab(opts = {}) {
    * nothing at all. */
   setInterval(() => { if (V.open) sync(); }, 1000);
 
-  say("pick a track and press render — nothing here writes to the document until you press apply");
+  say("pick a track and press render: nothing here writes to the document until you press apply");
   return { show: showVoice, render: () => bump("api"), state: () => V };
 }
 

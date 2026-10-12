@@ -1377,7 +1377,7 @@ function tick(now) {
     if (!S.renderFailed) {
       S.renderFailed = true;
       console.error("[studio] render threw — the timeline keeps running:", err);
-      toast("Something went wrong drawing the preview — see the console.");
+      toast("Something went wrong drawing the preview: see the console.");
     }
   } finally {
     S.raf = requestAnimationFrame(tick);
@@ -1437,7 +1437,7 @@ function readRenderOpts() {
     render();
   }
   $("stRenderNote").textContent = total
-    ? `${w}×${h} at ${S.out.fps} fps — about ${mb.toFixed(0)} MB for ${fmt(total)}, `
+    ? `${w}×${h} at ${S.out.fps} fps: about ${mb.toFixed(0)} MB for ${fmt(total)}, `
       + `and it takes ${fmt(total)} to record because the capture is real time.`
     : "Add something to the timeline to see an estimate.";
 }
@@ -1571,7 +1571,7 @@ async function startExport() {
     if (!S.recording) return;
     if (document.hidden) {
       S.recHidden = true;
-      $("stExportNote").textContent = "⚠ This window went to the background — the browser throttles it, so the export is still recording but at a lower frame rate. Bring it back to the front.";
+      $("stExportNote").textContent = "⚠ This window went to the background: the browser throttles it, so the export is still recording but at a lower frame rate. Bring it back to the front.";
     } else if (S.recHidden) {
       $("stExportNote").textContent = "Recording again at full rate. Some earlier frames were captured slowly.";
     }
@@ -1579,7 +1579,7 @@ async function startExport() {
   document.addEventListener("visibilitychange", S.onVis);
 
   $("stExport").textContent = "Stop recording";
-  $("stExportNote").textContent = "Recording in real time — keep this window in front until it finishes.";
+  $("stExportNote").textContent = "Recording in real time: keep this window in front until it finishes.";
   // visibilitychange only fires on a CHANGE, so starting while already hidden
   // would otherwise record a throttled export and say nothing about it.
   if (document.hidden) S.onVis();
@@ -1627,7 +1627,7 @@ async function saveExport() {
         bigger: { interpolate: false, upscale: true, multiplier: 1, slow: false, scale: 2 },
         both:   { interpolate: true, upscale: true, multiplier: 2, slow: false, scale: 2 },
       }[finish];
-      $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b> — now enhancing it…`;
+      $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b>: now enhancing it…`;
       const q = await (await fetch("/api/clips", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "enhance", name: d.name, ...M }),
@@ -1636,13 +1636,13 @@ async function saveExport() {
         // The recording is SAFE either way — say so, or a refusal here reads as
         // having lost the whole export.
         ? `Saved as <b>${esc(d.name)}</b>, but it could not be enhanced: ${esc(q.error)}`
-        : `Saved as <b>${esc(d.name)}</b> — enhancing it now. `
+        : `Saved as <b>${esc(d.name)}</b>: enhancing it now. `
           + `<span class="sp meta">The finished MP4 appears in your clip library when it is done; the recording is already safe.</span>`;
       return;
     }
     /* The duration caveat, stated once where it matters — and only when it is
      * true, which is when the export was NOT finished. */
-    $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b> — it is in your clip library. `
+    $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b>: it is in your clip library. `
       + `<span class="sp meta">WebM from a live recording, so some players show no duration until it has been played once.</span>`;
   } catch (e) {
     // Fall back to a browser download rather than losing the render: the
@@ -1653,7 +1653,7 @@ async function saveExport() {
     a.download = `${(S.songTitle || "timeline").replace(/[^\w-]+/g, "_")}.webm`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    $("stExportNote").textContent = `Could not save to the library (${e.message}) — downloaded instead.`;
+    $("stExportNote").textContent = `Could not save to the library (${e.message}): downloaded instead.`;
   }
 }
 
@@ -1848,7 +1848,7 @@ async function addSongTo(track, file, at) {
       $("stLrcNote").textContent = "Could not read the lyrics file.";
     }
   } else if (!t.lrc) {
-    $("stLrcNote").textContent = "This song has no timed lyrics — turn them on in Settings and run it again.";
+    $("stLrcNote").textContent = "This song has no timed lyrics: turn them on in Settings and run it again.";
   }
   render();
 }
@@ -2096,7 +2096,7 @@ function paintTimeline() {
              data-item="${it.id}" data-track="${tr.id}"
              style="left:${it.start * S.pps}px;width:${Math.max(it.dur * S.pps, 18)}px">
           <canvas class="start" data-for="${it.id}"></canvas>
-          ${ov > 0 ? `<span class="stxf" style="width:${ov * S.pps}px" title="Crossfade ${ov.toFixed(2)}s — drag to change">
+          ${ov > 0 ? `<span class="stxf" style="width:${ov * S.pps}px" title="Crossfade ${ov.toFixed(2)}s: drag to change">
             <svg viewBox="0 0 100 100" preserveAspectRatio="none">
               <line x1="0" y1="100" x2="100" y2="0"/><line x1="0" y1="0" x2="100" y2="100"/>
             </svg></span>` : ""}
@@ -2155,9 +2155,15 @@ function paintSongs() {
         </span>
         ${t.lrc ? '<span class="stsongtag" title="Has timed lyrics">LRC</span>' : ""}
       </div>`).join("")
-    : `<p class="clipempty">${q ? "Nothing matches that." : "No songs yet — make one on the Create page."}</p>`;
+    : `<p class="clipempty">${q ? "Nothing matches that." : "No songs yet: make one on the Create page."}</p>`;
 }
 
+/* A standalone clip's first prompt words, as the Video page's grid shows them. */
+function binPromptTitle(prompt) {
+  const words = String(prompt || "").replace(/<[^>]{1,40}>/g, " ").replace(/\s+/g, " ").trim().split(" ");
+  if (!words[0]) return "";
+  return words.length > 6 ? `${words.slice(0, 6).join(" ")}…` : words.join(" ");
+}
 function paintPicker() {
   const q = binQuery();
   const clips = (window.__aiplayClips || [])
@@ -2178,14 +2184,27 @@ function paintPicker() {
              * metadata the moment the picker painted -- twenty-one network requests
              * to show the six thumbnails actually on screen. The observer below
              * assigns src when the tile scrolls into view. */
-            : `<video data-src="${url}#t=0.1" muted preload="none"></video>`;
+            /* The Video page's ~25 KB poster, lazily: the <video> with
+             * preload="none" was never asked for a frame, so every tile in the
+             * bin stayed black. A poster that fails falls back to the clip's
+             * own first frame (the error listener below). */
+            : `<img src="/api/clipthumb/${encodeURIComponent(c.name)}" alt="" width="256" height="144" loading="lazy" decoding="async" data-vfallback="${url}#t=0.1">`;
         return `<div class="stpick${kind !== "video" ? ` is${kind}` : ""}" draggable="true" data-clip="${esc(c.name)}">
         ${media}
-        <span>${esc(c.title || c.name.replace(/\.[a-z0-9]+$/i, ""))}</span></div>`;
+        <span title="${esc(c.name)}">${esc(c.title || binPromptTitle(c.meta?.prompt) || c.name.replace(/\.[a-z0-9]+$/i, ""))}</span></div>`;
       }).join("")
     : `<p class="clipempty">${q ? "Nothing matches that." : "Render some clips on the Video page first."}</p>`;
   observeLazy($("stPicker"));
 }
+
+/* A bin poster that will not load becomes the clip's own first frame. */
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.dataset.vfallback || !img.closest("#stPicker")) return;
+  const v = document.createElement("video");
+  v.muted = true; v.preload = "metadata"; v.src = img.dataset.vfallback;
+  img.replaceWith(v);
+}, true);
 
 /* One observer, reused. Re-observing after every repaint is fine -- an element
  * already carrying a src is skipped, and elements removed from the DOM are
@@ -2286,7 +2305,7 @@ function paintBeatInfo() {
   const el = $("stBeatInfo");
   if (!el) return;
   const B = S.beats;
-  if (!B) { el.textContent = "no analysis — drop a song on the timeline"; return; }
+  if (!B) { el.textContent = "no analysis: drop a song on the timeline"; return; }
   const bpm = B.bpm * S.beatMult;
   const conf = Math.round((B.confidence || 0) * 100);
   el.textContent = `${bpm.toFixed(1)} BPM · ${beatGrid().length} beats · ${conf}% confident`;
@@ -2569,7 +2588,7 @@ export function initStudio() {
       // "do something" and "this button is broken".
       toast(S.beats
         ? "Select a video track with clips on it first."
-        : "No beat grid yet — drop the song on the timeline and let it analyse.");
+        : "No beat grid yet: drop the song on the timeline and let it analyse.");
       return;
     }
     toast(r.short
@@ -2986,7 +3005,7 @@ export function initStudio() {
         body: JSON.stringify({ doc: projDoc(), format: $("stBounceFmt").value }),
       })).json();
       if (r.error) throw new Error(r.error);
-      toast(`Bounced ${r.seconds.toFixed(1)}s to “${r.title}” — it is in your music library.`);
+      toast(`Bounced ${r.seconds.toFixed(1)}s to “${r.title}”: it is in your music library.`);
     } catch (e) {
       toast(`Could not bounce it: ${e.message}`);
     } finally {
@@ -3199,7 +3218,7 @@ export function studioRefresh(clips, library) {
         /* The render takes minutes; the item shows it is working and the
          * result swaps in when it lands. The OLD take is never destroyed —
          * it stays in the workflow project's takes list. */
-        toast("Regenerating this scene — the new take swaps in when it lands…");
+        toast("Regenerating this scene: the new take swaps in when it lands…");
         try {
           const r = await (await fetch("/api/mv", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -3222,7 +3241,7 @@ export function studioRefresh(clips, library) {
           const d = await (await fetch(`/api/mv/project/${encodeURIComponent(S.mvProjectId)}`)).json();
           const row = d.project?.clips?.find((c) => c.id === it.mvClipId);
           const takes = row?.takes || [];
-          if (takes.length < 2) { toast("Only one take so far — Regenerate makes more."); return; }
+          if (takes.length < 2) { toast("Only one take so far: Regenerate makes more."); return; }
           const cur = decodeURIComponent(it.src.split("/").pop());
           const at = takes.findIndex((t) => t.clip === cur);
           const next = takes[(at + 1) % takes.length];

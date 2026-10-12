@@ -7,7 +7,7 @@ export function mountMusicPlan({ document: doc = document, fetch: request = fetc
   const message = text => { el("yPlanResult").textContent = text; };
   const invalidate = () => { ticket++; proposal = null; el("yPlanApply").disabled = true; };
   const seconds = n => `${Math.floor(Math.round(n) / 60)}:${String(Math.round(n) % 60).padStart(2, "0")}`;
-  const invalidateEdit = () => { invalidate(); message("Changed — check again before applying a proposed tempo. No song has been generated."); };
+  const invalidateEdit = () => { invalidate(); message("Changed: check again before applying a proposed tempo. No song has been generated."); };
   for (const id of ["yAbc", "yPlanBpm", "yPlanMeter"]) el(id).addEventListener("input", invalidateEdit);
   el("yPlanLength").addEventListener("input", () => {
     el("yPlanLengthValue").textContent = seconds(Number(el("yPlanLength").value)); invalidateEdit();
@@ -28,7 +28,7 @@ export function mountMusicPlan({ document: doc = document, fetch: request = fetc
       ? { bpm: Number(el("yPlanBpm").value), meter: el("yPlanMeter").value, target_seconds: Number(el("yPlanLength").value) }
       : { abc: original, ...(mode === "length" ? { target_seconds: Number(el("yPlanLength").value) }
         : mode === "tempo" ? { bpm: Number(el("yPlanBpm").value) } : {}) };
-    message("Checking notation — no model or GPU is used…");
+    message("Checking notation: no model or GPU is used…");
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
     try {
       const res = await request("/api/music-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal });
@@ -38,7 +38,7 @@ export function mountMusicPlan({ document: doc = document, fetch: request = fetc
         const problems = (result.problems || []).slice(0, 3).map(p => typeof p === "string" ? p : p.says || p.message || p.detail || JSON.stringify(p)).join("; ");
         return message(`Score needs attention: ${problems || "outside the supported two-voice ABC dialect"}. No changes applied.`);
       }
-      message(`${result.bars} bars · ${result.bpm} quarter-note BPM · ${seconds(result.nominal_seconds)} notation time. ${result.mode === "outline" ? "Outline only — write/import a score to steer the model. " : ""}${result.changed ? "Proposed tempo only; review and apply below. " : ""}Actual audio can be shorter or longer; this is not audio extension.`);
+      message(`${result.bars} bars · ${result.bpm} quarter-note BPM · ${seconds(result.nominal_seconds)} notation time. ${result.mode === "outline" ? "Outline only: write/import a score to steer the model. " : ""}${result.changed ? "Proposed tempo only; review and apply below. " : ""}Actual audio can be shorter or longer; this is not audio extension.`);
       if (result.changed && result.abc) { proposal = { abc: result.abc, original }; el("yPlanApply").disabled = false; }
     } catch (error) { if (ticket === mine) message(error.name === "AbortError" ? "Planning timed out. No changes applied." : error.message); }
     finally { clearTimeout(timer); }

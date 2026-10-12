@@ -61,6 +61,17 @@ const BASE = {
   minimax: process.env.AIPLAY_MINIMAX_BASE || "https://api.minimax.io",
 };
 
+/** Throws unless `u` is fal's own (https, *.fal.run / *.fal.ai) or this
+ *  install's configured fal base. */
+function falOwnUrl(u) {
+  let url;
+  try { url = new URL(String(u || "")); } catch { throw new Error("The provider returned an unreadable status address."); }
+  const base = new URL(BASE.fal);
+  const fal = url.protocol === "https:" && /(^|\.)fal\.(run|ai)$/i.test(url.hostname);
+  if (!fal && url.origin !== base.origin) throw new Error(`The provider pointed at ${url.hostname}, which is not fal; the key was not sent.`);
+  return url;
+}
+
 export const PROVIDERS = {
   fal: {
     label: "fal.ai — MiniMax Music 3",
@@ -86,6 +97,11 @@ export const PROVIDERS = {
       return { pollUrl: d.status_url || d.response_url, resultUrl: d.response_url };
     },
     poll: async (key, { pollUrl, resultUrl }) => {
+      /* The poll and result addresses come from fal's own reply, and the key
+       * rides on them: only ever to fal (or the base this install points at,
+       * which is how the mock provider test runs), never to a host a tampered
+       * or mistaken reply names. */
+      falOwnUrl(pollUrl); falOwnUrl(resultUrl);
       const r = await fetch(pollUrl, { headers: { "Authorization": `Key ${key}` } });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(providerError(r.status, d));
