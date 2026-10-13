@@ -195,6 +195,12 @@ export function systemPrompt(tools, intro = null, { autoSpend = false } = {}) {
     "WHEN A TOOL RESULT COMES BACK, THAT TOOL HAS ALREADY ANSWERED. Your next reply must be",
     '{"say": "..."} putting the result into plain words. Never call the same tool twice while',
     "answering one question — the answer will be identical and the person is still waiting.",
+      ...(list.some((tool) => tool.name === "qwen_engine_repair") ? [
+        "QWEN REPAIR EXCEPTION: when they asked to fix Qwen, read setup_status for qwen-engine first.",
+        "After that result, if the repair is offered and not blocked or already ready, call qwen_engine_repair",
+        "in the same turn. Its confirmation already explains the download and asks for yes; do not ask again yourself.",
+        "If blocked or ready, say the status instead. A question about progress calls only setup_status.",
+      ] : []),
     "",
     ...(autoSpend ? [
       "A tool marked [SPENDS GPU TIME] RUNS AS SOON AS YOU CALL IT. The person sees a warning that the",
@@ -936,7 +942,7 @@ async function think(deps, session, model, emit, used, seeded = null) {
      * own Stop (/api/cancel). Only card time goes straight through: a tool
      * that DESTROYS work still waits for the person's word below. */
     const _kind = reply.tool.gate || "gpu";
-    if (reply.tool.spends && deps.autoSpend && (_kind === "gpu" || _kind === "writes")) {
+    if (reply.tool.spends && deps.autoSpend && !reply.tool.alwaysConfirm && (_kind === "gpu" || _kind === "writes")) {
       const cost = reply.tool.cost || "GPU time";
       /* \u26a0 ONLY REAL CARD WORK GETS THE CARD. The `gpu` event renders a
        * warning with a Cancel button wired to /api/cancel \u2014 the app's Stop,

@@ -365,16 +365,14 @@ console.log("\n  -- the plan and the renderer cannot disagree, because there is 
   ok("...and so does the engine, which resolveShot owns",
     /^LTX · /.test(ql.line) && ql.engine === "ltx"
     && ql.width === videoSizeFor("ltx", ...renderSize(asLtx)).width, ql.line);
-  /* The page carries its own copy of this sentence as a FALLBACK (web/mv.js's
-   * QUALITY_TRAPS), used when a trap arrives with a kind and no msg. The two
-   * are therefore allowed to differ in length — the server's carries the line
-   * of code as well — but not in what they SAY, so the page's wording must be
-   * exactly how the server's begins. Two sentences that drift is how a person
-   * reads one thing on the card and another in the tool's answer. */
-  const PAGE_LTX = "references are dropped entirely on LTX — every character sheet "
+  /* The page's QUALITY_TRAPS fallback and the server's message name the same
+   * reference loss. Bucky shortened the UI copy and replaced its em dash;
+   * implementation details stay in plan.js comments, so both paths now show
+   * the same complete sentence. */
+  const PAGE_LTX = "references are dropped entirely on LTX: every character sheet "
     + "you built is not used.";
   ok("...carrying the sentence the page prints for an LTX project, word for word",
-    ql.traps.some((t) => t.kind === "ltx-drops-references" && t.msg.startsWith(PAGE_LTX))
+    ql.traps.some((t) => t.kind === "ltx-drops-references" && t.msg === PAGE_LTX)
     && readFileSync(path.join(ROOT, "web", "mv.js"), "utf8").includes(PAGE_LTX),
     JSON.stringify(ql.traps.map((t) => t.msg)));
   ok("...and every item on an LTX plan says the sheets are not carried",

@@ -30,6 +30,7 @@ import { appVersion, versionLine } from "../server/version.js";
 import { checkUpdates, lastCheck, updateSentence } from "../server/updates.js";
 import { selfUpdate, updateSource } from "../server/selfupdate.js";
 import { musicCards } from "./musiccard.mjs";
+import { lanAddresses, newLanKey } from "../server/lan.js";
 import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf, autoVramFlags } from "../server/comfyargs.js";
 import { ffmpegPath, ffprobePath } from "../server/clipjoin.js";
 /* What the system check SAYS (RAM, ffmpeg, a weak card, Music only, Studio's
@@ -488,6 +489,21 @@ async function launch(mode) {
   const env = { ...process.env, AIPLAY_MUSIC_ONLY: mode === "music" ? "1" : "0", AIPLAY_CLOUD_ONLY: mode === "cloud" ? "1" : "0",
     AIPLAY_REMOTE_ONLY: mode === "runpod" ? "1" : "0" };
   delete env.AIPLAY_OPEN;   // the launcher opens Studio itself, once the engine is ready
+  /* THE PHONE ON THE CARD: this mode also answers on the local network, for a
+   * device holding the access key (server/lan.js). Off unless switched on. */
+  delete env.AIPLAY_LAN; delete env.AIPLAY_LAN_KEY;
+  const lanSaved = (await readJson(SETTINGS)) || {};
+  let lan = null;
+  if (lanSaved.launcherLan?.[mode] === true) {
+    const key = await lanKey(lanSaved);
+    env.AIPLAY_LAN = "1"; env.AIPLAY_LAN_KEY = key;
+    const ips = lanAddresses();
+    lan = { addresses: ips.map((a) => ({ ip: a.ip, name: a.name, url: `http://${a.ip}:${STUDIO_PORT}`,
+      link: `http://${a.ip}:${STUDIO_PORT}/?k=${key}` })) };
+    addLog(ips.length ? `Also on your local network at http://${ips[0].ip}:${STUDIO_PORT} (copy the link above the log; it carries the access key).`
+      : "Network access is on, but this PC has no network address right now.", "sys");
+  }
+  setState({ lan });
   addLog(`Starting ${mode === "music" ? "music-only" : mode === "cloud" ? "Comfy API" : mode === "runpod" ? "RunPod GPU" : "full"} Studio…`, "sys");
   child = spawn(process.execPath, [script], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   const me = child;
@@ -499,6 +515,7 @@ async function launch(mode) {
     child = null;
     const stopping = studio.state === "stopping";
     addLog(`Studio ${stopping ? "stopped" : `exited with code ${code}`}.`, "sys");
+    setState({ lan: null });
     setState({
       state: stopping || studio.state === "ready" ? "stopped" : "failed",
       stage: null, pid: null,
@@ -789,6 +806,13 @@ function makeServer(portRef) {
       if (req.method === "POST" && url.pathname === "/api/prefs") {
         const b = await readBody(req);
         if (typeof b.closeStopsStudio === "boolean") await saveSettings({ launcherCloseStopsStudio: b.closeStopsStudio });
+        /* The phone on a card: { mode, on } switches that mode's network access;
+         * lanReset makes a new access key, so every device must open the new link. */
+        if (b.lan && LAUNCH_MODES.includes(b.lan.mode) && typeof b.lan.on === "boolean") {
+          const now = (await readJson(SETTINGS)) || {};
+          await saveSettings({ launcherLan: { ...(now.launcherLan || {}), [b.lan.mode]: b.lan.on } });
+        }
+        if (b.lanReset === true) await saveSettings({ launcherLanKey: newLanKey() });
         /* The favourite (the star on a card): one mode, or null to clear it. */
         if (b.autoLaunch === null) await saveSettings({}, ["launcherAutoLaunch"]);
         else if (b.autoLaunch !== undefined) {
@@ -902,9 +926,17 @@ const MODE_NAME = { full: "Full Studio", music: "Music only", cloud: "Comfy API"
 /* A favourite this level is not offered (a RunPod star saved in Advanced, on
  * an install now on Simple) reads as none: it is not started, the page shows
  * no star, and the saved value stays for the day the level is Advanced again. */
+/** The network access key, made once and kept, so a phone stays paired. */
+async function lanKey(saved) {
+  if (typeof saved.launcherLanKey === "string" && /^[A-Za-z0-9_-]{24,128}$/.test(saved.launcherLanKey)) return saved.launcherLanKey;
+  const key = newLanKey();
+  await saveSettings({ launcherLanKey: key });
+  return key;
+}
 function launcherPrefs(saved, level) {
   const fav = LAUNCH_MODES.includes(saved.launcherAutoLaunch) ? saved.launcherAutoLaunch : null;
   return {
+    lan: Object.fromEntries(LAUNCH_MODES.map((m) => [m, saved.launcherLan?.[m] === true])),
     closeStopsStudio: saved.launcherCloseStopsStudio === true,
     autoLaunch: fav && modeAllowed(fav, level) ? fav : null,
   };

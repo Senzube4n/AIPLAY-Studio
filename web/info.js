@@ -238,8 +238,11 @@ export function mountInfo(view, selector) {
    * without this: Images and Video both fell into the `infoloose` branch below,
    * with the ⓘ floating above the page instead of sitting in the title — and
    * nothing failed, because "no header" is a case this function handles. */
+  /* The page kit's `header.page-head > h2` (Settings, About, Engine, Music Lab)
+   * is one level down too: without it those pages got a loose ⓘ on a line of
+   * its own above the title. */
   const header = host.querySelector(
-    HEADERS.flatMap((h) => [`:scope > ${h}`, `:scope > .libhead > ${h}`]).join(", "));
+    HEADERS.flatMap((h) => [`:scope > ${h}`, `:scope > .libhead > ${h}`, `:scope > .page-head > ${h}`]).join(", "));
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "infobtn";
@@ -276,7 +279,10 @@ export function mountInfo(view, selector) {
    * bargain than borrowing two fifths of the height and giving it back on
    * close. */
   if (header) {
-    header.appendChild(btn);
+    /* A header block that holds a title and a subtitle (Production's) took the
+     * ⓘ after the subtitle, alone on a line: it belongs beside the title. */
+    const title = /^H[12]$/.test(header.tagName) ? header : header.querySelector(":scope > h1, :scope > h2");
+    (title || header).appendChild(btn);
     /* ⚠ THE PANEL GOES AFTER THE BLOCK, THE BUTTON INSIDE THE HEADING. Where
      * the heading sits in `.libhead`, "after the heading" is INSIDE the sticky
      * wrapper — which would pin up to 1492px of prose to the top of the window
@@ -284,7 +290,10 @@ export function mountInfo(view, selector) {
      * panel a direct child of the host, which is what the `:scope > .infopanel`
      * guard at the top of this function tests for. parentElement, not closest():
      * the only case is one level, and closest() would walk past the host. */
-    const block = header.parentElement?.classList.contains("libhead") ? header.parentElement : header;
+    /* The page kit's .page-head wraps its h2 the same way .libhead wraps a
+     * stagehead: the panel goes after the whole wrapper, not inside it. */
+    const kitHead = header.parentElement?.classList.contains("page-head") ? header.parentElement : null;
+    const block = kitHead || (header.parentElement?.classList.contains("libhead") ? header.parentElement : header);
     block.after(panel);
   } else {
     /* No header to sit in, so it sits above everything — and says so in a class

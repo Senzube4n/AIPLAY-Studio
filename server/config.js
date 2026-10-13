@@ -296,7 +296,14 @@ export function whisperPython(choice = config.lyrics?.whisperPython) {
  * it is only the last resort now.
  */
 export function defaultSystemPython(home = os.homedir()) {
-  return path.join(home, "AppData", "Local", "Programs", "Python", "Python310", "python.exe");
+  /* 3.10 first, as always; a PC with only a newer python.org install used to
+   * be told "No python found at …\Python310" while 3.12 sat beside it. */
+  const base = path.join(home, "AppData", "Local", "Programs", "Python");
+  for (const v of ["Python310", "Python311", "Python312", "Python313"]) {
+    const exe = path.join(base, v, "python.exe");
+    try { if (fs.existsSync(exe)) return exe; } catch { /* keep looking */ }
+  }
+  return path.join(base, "Python310", "python.exe");
 }
 
 /**

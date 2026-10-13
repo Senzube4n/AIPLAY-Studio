@@ -26,14 +26,32 @@ if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ || ! "$REPO" =~ ^https://github\.com/[A-Za-z
   exit 1
 fi
 
-if [[ -d /workspace/runpod-slim/ComfyUI ]]; then
-  COMFY="/workspace/runpod-slim/ComfyUI"
-elif [[ -d /workspace/ComfyUI ]]; then
-  COMFY="/workspace/ComfyUI"
-else
-  echo "ComfyUI was not found under /workspace/runpod-slim/ComfyUI or /workspace/ComfyUI." >&2
+# Which ComfyUI: one named on purpose, else the one actually running (a leftover
+# /workspace/runpod-slim/ComfyUI from an earlier image used to win over the live
+# install), else the usual folders, each only if it really holds a ComfyUI.
+COMFY=""
+if [[ -n "${AIPLAY_COMFY_DIR:-}" && -f "$AIPLAY_COMFY_DIR/main.py" ]]; then
+  COMFY="$AIPLAY_COMFY_DIR"
+fi
+if [[ -z "$COMFY" ]]; then
+  for proc in /proc/[0-9]*; do
+    if tr '\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -q 'main\.py'; then
+      cwd="$(readlink "$proc/cwd" 2>/dev/null || true)"
+      if [[ -n "$cwd" && -f "$cwd/main.py" && -d "$cwd/custom_nodes" ]]; then COMFY="$cwd"; break; fi
+    fi
+  done
+fi
+if [[ -z "$COMFY" ]]; then
+  for dir in /workspace/runpod-slim/ComfyUI /workspace/ComfyUI; do
+    if [[ -f "$dir/main.py" ]]; then COMFY="$dir"; break; fi
+  done
+fi
+if [[ -z "$COMFY" ]]; then
+  echo "ComfyUI was not found: none is running, and neither /workspace/runpod-slim/ComfyUI nor /workspace/ComfyUI holds one." >&2
+  echo "Start ComfyUI first, or set AIPLAY_COMFY_DIR to its folder." >&2
   exit 1
 fi
+echo "Using ComfyUI at $COMFY"
 
 for command in curl git sha256sum tar; do
   command -v "$command" >/dev/null || { echo "$command is required by the bootstrap." >&2; exit 1; }
@@ -130,7 +148,17 @@ fi
 
 echo
 echo "AIPLAY worker installed. The restart hook is in: $HOOK"
-echo "Worker URL: https://${RUNPOD_POD_ID:-YOUR_POD_ID}-8787.proxy.runpod.net"
+# SSH and web-terminal shells often lack the container's environment: read the
+# Pod id from PID 1, then from the hostname (<podid>-<n>), before giving up.
+POD_ID="${RUNPOD_POD_ID:-}"
+if [[ -z "$POD_ID" ]]; then
+  POD_ID="$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^RUNPOD_POD_ID=//p' | head -n 1 || true)"
+fi
+if [[ -z "$POD_ID" ]]; then
+  host="$(hostname 2>/dev/null || true)"
+  [[ "$host" =~ ^([a-z0-9]{10,})-[0-9]+$ ]] && POD_ID="${BASH_REMATCH[1]}"
+fi
+echo "Worker URL: https://${POD_ID:-YOUR_POD_ID}-8787.proxy.runpod.net"
 echo "Worker token: $TOKEN"
 echo
 echo "Copy the URL and token into AIPLAY Studio > RunPod connection. Keep the token private."

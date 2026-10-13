@@ -460,12 +460,17 @@ test("live socket reports a finished failure immediately rather than waiting for
     WebSocket: class { constructor() { socket = this; } }, location: { host: "fixture" },
     state: { lastStatus: {} }, renderNow() {}, renderQueue() {}, renderList() {}, applyBatch() {},
     paintImgProgress() {}, imgSeeFinished() {}, poll() {}, setTimeout() {}, window: { dispatchEvent() {} },
+    document: { title: "Previous render" },
   });
+  // Bucky's live listener also paints tab progress; include the real helper
+  // rather than letting the isolated listener throw after reporting a failure.
+  vm.runInContext(between("function paintTabTitle(", "/* The server stopped answering"), p.ctx);
   vm.runInContext(between("function connect()", '$("plNew").onclick'), p.ctx);
   p.ctx.connect();
   socket.onmessage({ data: JSON.stringify({ type: "state", queue: [], current: null,
     history: [{ id: "live-fail", state: "failed", title: "Song", error: "CUDA allocation failed" }] }) });
   assert.match(p.$("ctaNote").textContent, /CUDA allocation failed/);
+  assert.equal(p.ctx.document.title, "AIPLAY Studio", "a finished failure leaves no render progress in the tab");
 });
 
 test("Jobs retains music failures beside other jobs with an escaped reason and Details action", () => {
@@ -507,7 +512,11 @@ test("Jobs uses Python and Comfy render durations, preserving native elapsed zer
 
 test("rights: the catalogue's own chip, the licence-file line, the reason a label changed, and add-ons that raised it", () => {
   const ctx = vm.createContext({ esc: (s) => String(s ?? "") });
-  vm.runInContext(`${between("const RIGHTS_WORDS = {", "/** A capability's short rights words")}
+  // Server labels now pass through Bucky's no-em-dash helper. Keep the real
+  // formatter in both isolated contexts while checking the same rights facts.
+  const labelHelper = between("const uiDash =", "/* The same for a sentence");
+  vm.runInContext(`${labelHelper}
+    ${between("const RIGHTS_WORDS = {", "/** A capability's short rights words")}
     ${between("function rightsChipHtml(stamp, cap", "/** Chip for an asset, straight from its ledger summary.")}`, ctx);
   const yue = {
     label: "YuE2 3B", outputRights: {
@@ -541,7 +550,7 @@ test("rights: the catalogue's own chip, the licence-file line, the reason a labe
   const h3 = { label: "MiniMax H3", region: { excluded: ["European Union", "United States of America"] },
     outputRights: { class: "yours-with-conditions", conditions: ["a", "b", "c", "d"], url: "https://example.invalid/h3" } };
   const h3chip = ctx.rightsChipHtml({ class: "yours-with-conditions", capability: "video" }, h3);
-  assert.match(h3chip, />Where licensed: yours to sell — 4 conditions<\/button>/);
+  assert.match(h3chip, />Where licensed: yours to sell: 4 conditions<\/button>/);
   assert.match(h3chip, /Not licensed in European Union, United States of America: these words hold only outside them\./);
   // A server label in the other vocabulary gets no page line claiming the licence bans sale.
   const serverWords = ctx.rightsChipHtml({ class: "not-for-sale", capability: "musicYue2Tokenizer" }, { label: "YuE2 real-audio tokenizer", outputRights: { class: "not-for-sale" } },
@@ -558,6 +567,7 @@ test("rights: the catalogue's own chip, the licence-file line, the reason a labe
   const words = vm.createContext({ Date, esc: (s) => String(s ?? "") });
   vm.runInContext(`let rightsCatalogCache = null; let rightsCatalogAsked = 0; let asked = 0;
     async function rightsCatalog() { asked++; return {}; }
+    ${labelHelper}
     ${between("const RIGHTS_WORDS = {", "/* The receipt under Create reads its rights word")}
     this.set = (c) => { rightsCatalogCache = c; }; this.asked = () => asked;`, words);
   assert.equal(words.rightsShortOf("musicMinimax"), null, "not read yet");
@@ -565,7 +575,7 @@ test("rights: the catalogue's own chip, the licence-file line, the reason a labe
   assert.equal(words.asked(), 1, "asked once, not on every poll");
   words.set({ musicMinimax: { outputRights: { class: "yours-with-conditions", conditions: [1, 2, 3, 4] } },
     musicYue2: { outputRights: { class: "yours-with-conditions", short: "sellable by individuals", chip: "Sellable by individuals (…)" } } });
-  assert.equal(words.rightsShortOf("musicMinimax"), "yours to sell — 4 conditions");
+  assert.equal(words.rightsShortOf("musicMinimax"), "yours to sell: 4 conditions");
   assert.equal(words.rightsShortOf("musicYue2"), "sellable by individuals");
   assert.match(APP, /if \(!Array\.isArray\(d\?\.capabilities\)\) return \{\};/, "an error reply is not cached as an empty catalogue");
   assert.match(between("async function rightsCatalog()", "/**\n * WHAT THE VIDEO ENGINE COSTS"), /catch \{ return \{\}; \}/, "nor is a failed read");

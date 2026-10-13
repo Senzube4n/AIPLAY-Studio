@@ -404,7 +404,7 @@ function renderHome() {
           <span class="projdates">
             <i title="when this project was created">started ${esc(ago(p.createdAt))} ago</i>
             <i title="any change at all, including edits that render nothing">touched ${esc(ago(p.updatedAt))} ago</i>
-            <i title="when a take last landed — derived from the takes, so it cannot drift"
+            <i title="when a take last landed: derived from the takes, so it cannot drift"
                class="${p.renderedAt ? "" : "dim"}">${p.renderedAt
                  ? `rendered ${esc(ago(p.renderedAt))} ago` : "never rendered"}</i>
           </span>
@@ -412,7 +412,7 @@ function renderHome() {
   };
   return `<div class="homewrap">
     ${section("mv", "🎬 Video projects", "None yet. Press New video…")}
-    ${section("audiobook", "📖 Audiobooks", "None yet — press New audiobook…")}
+    ${section("audiobook", "📖 Audiobooks", "None yet: press New audiobook…")}
   </div>`;
 }
 function wireHome() {
@@ -444,7 +444,9 @@ function renderHero() {
     const done = d.clips.filter((c) => c.clipFile).length;
     const takes = d.clips.reduce((a, c) => a + (c.takes?.length || 0), 0)
       + d.characters.reduce((a, c) => a + (c.takes?.length || 0), 0);
-    const dur = d.segments.length ? d.segments[d.segments.length - 1].endSec : null;
+    /* The analysed length first: the header said "—" for a song that was
+     * attached and analysed but not cut into scenes yet. */
+    const dur = d.totalDurationSec || (d.segments.length ? d.segments[d.segments.length - 1].endSec : null);
     stats = [
       [scenes.length ? `${done}/${scenes.length}` : "—", "scenes rendered"],
       [dur ? fmt(dur) : "—", "song"],
@@ -530,7 +532,7 @@ function renderRail() {
     const voiceCard = `<div class="wfcard railcard"><h4>Voices</h4>
       <div class="wrow"><span>Narrator</span><b>${esc(d.voice?.persona || "not set")}</b></div>
       ${cast.map((c) => `<div class="wrow"><span>${esc(c.name)}</span><b>${esc(c.voice.persona)}</b></div>`).join("")}
-      ${!cast.length ? `<p class="hint">No cast — the narrator reads everyone. Set voices on the Voice stage.</p>` : ""}
+      ${!cast.length ? `<p class="hint">No cast: the narrator reads everyone. Set voices on the Voice stage.</p>` : ""}
     </div>`;
     const bedsCard = `<div class="wfcard railcard"><h4>Ambient beds</h4>
       ${d.beds.map((x) => `<div class="railbed"><div class="wrow"><b>${esc(x.mood)}</b>
@@ -651,15 +653,15 @@ function renderAbStage(view) {
     case "voice": {
       const v = d.voice || {};
       return `<div class="wfcard"><h3>Voice</h3>
-      <p class="hint"><b>One voice narrates the whole book</b> — that is what keeps
+      <p class="hint"><b>One voice narrates the whole book</b>: that is what keeps
         chapter forty sounding like chapter one, so it is chosen once and recorded on
         the project. Changing it later marks every narrated file stale rather than
         letting the book quietly drift.</p>
       <div class="params">
         <label for="abModel">engine</label>
         <span class="pv"><select id="abModel" class="sel2">
-          <option value="kokoro"${v.model === "kokoro" ? " selected" : ""}>Kokoro — instant, 50+ personas</option>
-          <option value="qwen3"${v.model === "qwen3" ? " selected" : ""}>Qwen3-TTS — richer, needs its models installed</option>
+          <option value="kokoro"${v.model === "kokoro" ? " selected" : ""}>Kokoro (instant, 50+ personas)</option>
+          <option value="qwen3"${v.model === "qwen3" ? " selected" : ""}>Qwen3-TTS (richer, needs its models installed)</option>
         </select></span>
         <label for="abPersona">voice</label>
         <span class="pv"><select id="abPersona" class="sel2">
@@ -667,7 +669,7 @@ function renderAbStage(view) {
         </select></span>
       </div>
       <div class="framepick"><button class="edtool" id="abSetVoice">Use this voice</button>
-        <button class="edtool" id="abAudition" title="Every candidate reads the same line from THIS book — cast by ear">🎧 Audition voices</button></div>
+        <button class="edtool" id="abAudition" title="Every candidate reads the same line from THIS book: cast by ear">🎧 Audition voices</button></div>
       ${auditionOptions()}
       ${v.model ? `<p class="hint">Current: <b>${esc(v.model)} / ${esc(v.persona)}</b></p>` : ""}
       <div id="abAudStrip">${renderAuditionStrip()}</div>
@@ -708,9 +710,9 @@ function renderAbStage(view) {
             </span>
             <span>
               <button class="edtool sm" data-absfxscan="${b.idx}"${b.narration?.length ? "" : " disabled"}
-                title="${b.narration?.length ? "Scan the narration for sound-effect moments" : "Narrate first — cues are placed at the second a phrase is spoken"}">⚡ Find SFX</button>
+                title="${b.narration?.length ? "Scan the narration for sound-effect moments" : "Narrate first: cues are placed at the second a phrase is spoken"}">⚡ Find SFX</button>
               <button class="edtool sm" data-absfxjudge="${b.idx}"${cues.length ? "" : " disabled"}
-                title="${cues.length ? "Grade the cues with the local model — figures of speech get struck out" : "Find cues first"}">⚖ Judge</button>
+                title="${cues.length ? "Grade the cues with the local model: figures of speech get struck out" : "Find cues first"}">⚖ Judge</button>
               <button class="edtool sm" data-absfxrender="${b.idx}"${cues.length ? "" : " disabled"}
                 title="${cues.length ? "Render the cues with Stable Audio and attach them" : "Find (or set) cues first"}">Render SFX</button>
             </span>
@@ -719,13 +721,13 @@ function renderAbStage(view) {
       }).join("");
 
       return `<div class="wfcard"><h3>Narrate &amp; mix</h3>
-      <p class="hint">Each file narrates (seconds — Kokoro runs ~30× realtime), then mixes
+      <p class="hint">Each file narrates (seconds (Kokoro runs ~30× realtime), then mixes
         with an ambient bed that <b>ducks under the voice</b> and loops without a seam.
-        Beds are reusable across the whole book — same mood, same music, coherent album.
+        Beds are reusable across the whole book) same mood, same music, coherent album.
         <b>⚡ Find SFX</b> proposes effect cues from the narration itself; the list shows
         where each would land before any GPU is spent.</p>
       <div class="wgrid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">${bundleCards}</div>
-      ${d.bundles.length > shown.length ? `<p class="hint">${d.bundles.length - shown.length} untouched files not shown — narrate from the plan table or by MCP.</p>` : ""}
+      ${d.bundles.length > shown.length ? `<p class="hint">${d.bundles.length - shown.length} untouched files not shown: narrate from the plan table or by MCP.</p>` : ""}
       <p class="hint">Finished MP3s land in <code>output/ab/${esc(d.slug)}/out/</code> —
         numbered, tagged, ${d.settings.targetMinMinutes}–${d.settings.targetMaxMinutes} minutes each, with a
         read-along .lrc beside each.</p>
@@ -760,13 +762,13 @@ function auditionOptions() {
   const all = Object.entries(VOICES).flatMap(([model, list]) =>
     list.filter((p) => !p.startsWith("design:")).map((p) => ({ model, persona: p })));
   return `<details class="adv audopts">
-    <summary>What they read, and who reads it — both were agent-only until now</summary>
+    <summary>What they read, and who reads it (both were agent-only until now</summary>
     <label class="dfield"><span>audition line</span>
       <textarea class="wprompt" id="abAudText" rows="2" spellcheck="false"
         placeholder="left empty, the first real chapter's opening 220 characters are used"></textarea></label>
     <p class="hint dim">Every candidate reads exactly this, so the only thing that differs
       between the clips is the voice. Leave it empty and the server takes the opening of the
-      first chapter you have not skipped — which is usually the right sentence, and is
+      first chapter you have not skipped) which is usually the right sentence, and is
       never the sentence you are actually worried about. The audio is cached on the text,
       so re-pressing with the same line costs nothing.</p>
     <div class="audvoices">${all.map(({ model, persona }) => `<label class="audvoice">
@@ -807,7 +809,7 @@ function renderCastPanel() {
   </div>`).join("");
   return `<div class="wfcard"><h3>Dialogue casting <span class="hint">(optional)</span></h3>
     <p class="hint">Give named characters their own voices. A quoted line in a paragraph
-      the book attributes to them — <i>"…," said Geralt</i> — is read in their persona;
+      the book attributes to them (<i>"…," said Geralt</i>) is read in their persona;
       the prose and the "said X" tails stay with the narrator, and an unattributed
       back-and-forth alternates between the last two speakers. Aliases catch the book's
       other names for them ("the captain"). Applies on the next narrate.</p>
@@ -845,7 +847,7 @@ function renderChapterManager() {
   }).join("");
   return `<div class="wfcard"><h3>Chapter manager</h3>
     <p class="hint"><b>${done}</b> of ${d.book.chapters.length} chapters are in finished
-      MP3s${skipped ? `, ${skipped} skipped` : ""} — a half-finished book picks up exactly
+      MP3s${skipped ? `, ${skipped} skipped` : ""}: a half-finished book picks up exactly
       where it stopped, and each row shows which voice and bed its file used.</p>
     <input class="line chfilter" id="chFilter" placeholder="filter chapters…" autocomplete="off">
     <div class="chwrap"><table><thead><tr>
@@ -876,7 +878,7 @@ async function loadCrimeBoard(host) {
   if (d.kind === "audiobook") {
     const model = abBoardModel(d);
     if (!model.nodes.length) {
-      host.innerHTML = `<p class="hint">Nothing on the board yet — it fills in as the files exist.</p>`;
+      host.innerHTML = `<p class="hint">Nothing on the board yet: it fills in as the files exist.</p>`;
       return;
     }
     mountBoard(host, model);
@@ -921,7 +923,7 @@ async function loadCrimeBoard(host) {
    * is never shown a solid edge over an empty hand-over. */
   const model = mvBoardModel(payload, (f) => `/api/mv/asset/${encodeURIComponent(wf.slug)}/${encodeURIComponent(f)}`);
   if (!model.nodes.length) {
-    host.innerHTML = `<p class="hint">Nothing on the board yet — it fills in as the cast, props, boards and clips exist.</p>`;
+    host.innerHTML = `<p class="hint">Nothing on the board yet: it fills in as the cast, props, boards and clips exist.</p>`;
     return;
   }
   mountBoard(host, model);
@@ -934,14 +936,14 @@ async function loadCrimeBoard(host) {
  *  markup would be thrown away by the act of using it. Per session, not
  *  persisted: it is a choice about the next render, not a project setting. */
 const singlePanel = new Set();
-const SINGLE_TITLE = "Draws from the shot list and the style bible alone — no sheets attached (DIRECTING §2).";
+const SINGLE_TITLE = "Draws from the shot list and the style bible alone: no sheets attached (DIRECTING §2).";
 const SHEETS_TITLE = "Attaches the referenced cast sheets. Measured 2026-08-28: handed a contact strip, the model draws the strip.";
 
 function renderBoards() {
   const d = wf.doc;
   if (!d.boards.length) {
     return `<div class="wfcard"><h3>Storyboards</h3>
-      <p class="hint warnhint">No boards yet — they arrive with the bible (Script &amp; direction).</p></div>`;
+      <p class="hint warnhint">No boards yet: they arrive with the bible (Script &amp; direction).</p></div>`;
   }
   const cards = d.boards.map((b) => `<figure class="wfasset wide">
     ${b.imageFile ? `<img src="/api/mv/asset/${esc(wf.slug)}/${esc(b.imageFile)}" alt="">`
@@ -961,12 +963,12 @@ function renderBoards() {
     </figcaption>
   </figure>`).join("");
   return `<div class="wfcard"><h3>Storyboards</h3>
-    <p class="hint">The shot list is the payload — it writes the clip prompt. The picture
+    <p class="hint">The shot list is the payload (it writes the clip prompt. The picture
       is optional review material, composed FROM the character and background sheets so it
       carries their identity.</p>
     <p class="hint">⚠ <b>single panel</b> draws the board from the shot list and the style
       bible with <b>no sheets attached</b>. DIRECTING.md §2 asks for it: a reference is meant
-      to be one panel, and these sheets are contact strips — handed a strip, the model
+      to be one panel, and these sheets are contact strips) handed a strip, the model
       reproduces the strip, three panels and all, instead of composing the shot the board
       describes. Measured 2026-08-28, and again across the boards that followed; the identical
       prompt with the sheets off produced the correct single frame with the look carried by
@@ -991,8 +993,8 @@ function renderClips() {
       <td>${clip?.clipFile ? `<a href="/api/clip/${encodeURIComponent(clip.clipFile)}" target="_blank">▶ ${esc(clip.engine || "")}</a>` : "—"}</td>
       <td>${takes ? `${takes} take${takes > 1 ? "s" : ""}` : ""}</td>
       <td>${d.boards.some((b2) => b2.segmentId === s.id)
-        ? (clip?.status === "stale" ? '<span class="wstatus" data-status="stale" title="Rendered from an older board — regenerate">▦ stale</span>' : "▦")
-        : '<span class="wstatus" data-status="skipped" title="No storyboard — falls back to a generic performance shot">no board</span>'}</td>
+        ? (clip?.status === "stale" ? '<span class="wstatus" data-status="stale" title="Rendered from an older board: regenerate">▦ stale</span>' : "▦")
+        : '<span class="wstatus" data-status="skipped" title="No storyboard: falls back to a generic performance shot">no board</span>'}</td>
       ${/* ⚠ ONE RENDER, NOT TWO. This column used to carry its own Regen, and it
           * was a DIFFERENT render from the inspector's: it adopted whatever
           * prompt was stored and rolled a fresh seed, while the inspector held
@@ -1006,13 +1008,13 @@ function renderClips() {
           * so the first render is a different act, not a weaker one. */""}
       <td>${clip?.clipFile
         ? `<button class="edtool sm" data-shotrender="${esc(s.id)}"
-             title="Re-render this shot: hold the seed, choose which prompt, and see what changed. The same control the inspector uses — there is only one.">↻ Render…</button>`
+             title="Re-render this shot: hold the seed, choose which prompt, and see what changed. The same control the inspector uses: there is only one.">↻ Render…</button>`
         : `<button class="edtool sm" data-genclip="${esc(s.id)}">Generate</button>`}
         <button class="edtool sm" data-friendclip="${esc(s.id)}" title="Choose a friend and review this saved scene before preparing its render request. It carries the scene's reference pictures; the song stays here, so a lip-sync scene comes back without lip-sync. For one text-only clip outside a project, use Video → Ask friend.">Ask friend</button>
         <button class="edtool sm" data-shot="${esc(s.id)}"
           title="Open this one shot: the exact prompt it sends, which reference sheets actually resolved, and every take with the evidence for its own render">Inspect…</button>
         <button class="edtool sm" data-planadd="clip|${esc(s.id)}"
-          title="Put this scene in a plan instead of rendering it now — nothing is spent until the plan is approved and started. One test render does not need a plan; a set of them does.">+ Plan</button></td>
+          title="Put this scene in a plan instead of rendering it now: nothing is spent until the plan is approved and started. One test render does not need a plan; a set of them does.">+ Plan</button></td>
     </tr>`;
   }).join("");
   const done = d.clips.filter((c) => c.clipFile).length;
@@ -1021,7 +1023,7 @@ function renderClips() {
     <table class="wftable"><thead><tr><th>#</th><th>Time</th><th>Line</th><th>Clip</th><th>Takes</th><th>Board</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>
     <details class="more"><summary>Shot details</summary><p class="hint"><b>Inspect</b> opens one shot on its own: the exact prompt that will be
-      sent — editable, and what you edit is what renders — which reference sheets resolved
+      sent (editable, and what you edit is what renders), which reference sheets resolved
       and which names reached the render as nothing, and every take with the prompt and
       references that made it. Re-rendering from there keeps every earlier take.</p></details>
     <div id="wfShotEdit"></div>
@@ -1038,7 +1040,7 @@ function renderClips() {
     </div>
     <details class="more"><summary>Plan details</summary><p class="hint">A <b>plan</b> is the list of renders somebody intends to make, with the engine,
       the size and the minutes per item, that you read and approve <b>before</b> the GPU is
-      touched — and it shows, per scene, which references would reach the render as nothing.
+      touched, and it shows, per scene, which references would reach the render as nothing.
       Use it when one intent spends more than one expensive call. A single test render does not
       need one: press Generate, or Inspect and render one shot.</p></details>
     ${done ? `<div class="framepick"><button class="edtool" id="wfToStudio">Move to Studio → (${done} scene${done > 1 ? "s" : ""}, chronological)</button></div>` : ""}
@@ -1070,7 +1072,7 @@ function beatZoomControl() {
   const bpm = Number(b.bpm) || 0;
   const usable = conf >= BEAT_BAR && bpm > 0;
   return `<label class="genopt" for="wfRenderZoom"
-      title="Zoom the picture a little on each beat. The maximum is 8% — above that it stops reading as an edit.">
+      title="Zoom the picture a little on each beat. The maximum is 8%: above that it stops reading as an edit.">
     pulse on the beat
     <select class="sel2 sm" id="wfRenderZoom"${usable ? "" : " disabled"}>
       <option value="0">off</option>
@@ -1087,13 +1089,13 @@ function beatZoomNote() {
   const shown = Number.isFinite(conf) ? conf.toFixed(2) : "not measured";
   if (Number.isFinite(conf) && conf >= BEAT_BAR && bpm > 0) {
     return `<p class="hint dim">The pulse zooms the picture on the beat, off the bass envelope
-      this song's own analysis measured — the tempo is never retyped, so the cut and the pulse
+      this song's own analysis measured: the tempo is never retyped, so the cut and the pulse
       cannot disagree about it. Beat confidence here is <b>${esc(shown)}</b>, above the
       <b>${BEAT_BAR}</b> bar, so it will apply.</p>`;
   }
   return `<p class="hint dim">The pulse is <b>off for this song</b>. Beat confidence is
     <b>${esc(shown)}</b>${bpm ? "" : " and no tempo was found"}, under the <b>${BEAT_BAR}</b> bar
-    the route enforces — the same bar the "edit on the music" rule uses for snapping cuts.
+    the route enforces: the same bar the "edit on the music" rule uses for snapping cuts.
     Pulsing on a grid this weak reads as a fault in the encode rather than as an edit, so the
     server would refuse it and this control says so instead of letting you find out from the
     finished file. Re-analyze after fixing the track's timing if you think the grid is better
@@ -1105,10 +1107,10 @@ function renderRoughCut() {
   return `<div class="wfcard"><h3>Rough cut</h3>
     ${d.timelineProject
       ? `<p class="hint">This project's cut lives in Studio as
-           <b>${esc(d.timelineProject)}</b> — open the Studio tab, load it, and edit like
+           <b>${esc(d.timelineProject)}</b>: open the Studio tab, load it, and edit like
            any project. Right-click any scene there for <b>Regenerate</b> (same shot,
            new seed) and <b>Takes</b> (cycle what you kept).</p>`
-      : `<p class="hint">Not assembled yet — generate clips, then press Move to Studio on
+      : `<p class="hint">Not assembled yet: generate clips, then press Move to Studio on
            the Video clips stage.</p>`}
     <div class="framepick"><button class="edtool" id="wfToStudio">Rebuild the Studio timeline</button></div>
     <p class="hint">Rebuilding replaces the composed project with the scenes' CURRENT
@@ -1135,13 +1137,17 @@ function renderRoughCut() {
 
 function renderSong() {
   const d = wf.doc;
-  const opts = wf.library.map((t) =>
-    `<option value="${esc(t.file)}"${d.song?.file === t.file ? " selected" : ""}>${esc(t.title || t.file)}</option>`).join("");
+  /* The attached song is always in the list: one imported from outside the
+   * library (a .wav) left the picker on "Choose a track…" beside its own name. */
+  const attachedElsewhere = d.song?.file && !wf.library.some((t) => t.file === d.song.file);
+  const opts = (attachedElsewhere ? `<option value="${esc(d.song.file)}" selected>${esc(d.song.title || d.song.file)}</option>` : "")
+    + wf.library.map((t) =>
+      `<option value="${esc(t.file)}"${d.song?.file === t.file ? " selected" : ""}>${esc(t.title || t.file)}</option>`).join("");
   const lines = d.lyricLines?.length || 0;
   return `<div class="wfcard">
     <h3>Upload &amp; analyze</h3>
     <p class="hint">Pick a finished track. Studio reads its timed lyrics and its beat
-      grid — the lyrics decide where scenes begin and end, the beats let the cut snap
+      grid: the lyrics decide where scenes begin and end, the beats let the cut snap
       to bars later.</p>
     <label class="flabel" for="wfSong">Song</label>
     <select id="wfSong" class="sel2"><option value="">Choose a track…</option>${opts}</select>
@@ -1152,7 +1158,7 @@ function renderSong() {
       <span><b>${d.beats?.bpm ? Math.round(d.beats.bpm) : "—"}</b> BPM</span>
     </div>
     ${d.song && !lines ? `<p class="hint warnhint">This track has no timed lyrics yet.
-      Make them on the Music tab (the LRC step) and press Re-analyze — without them
+      Make them on the Music tab (the LRC step) and press Re-analyze. Without them,
       every scene is cut as instrumental.</p>` : ""}
     <div class="framepick">
       <button class="edtool" type="button" id="wfAnalyze"${d.song ? "" : " disabled"}>Re-analyze</button>
@@ -1194,7 +1200,7 @@ function segmentDialog() {
         placeholder="${esc(def)}" spellcheck="false" autocomplete="off"><i>${esc(unit)}</i></span>
       <i class="planhint">${why}</i></label>`;
   return `<details class="adv segopts">
-    <summary>How the cut is made — four numbers, and what each of them costs</summary>
+    <summary>How the cut is made: four numbers, and what each of them costs</summary>
     <div class="segknobs">
       ${knob("wfSegMax", "longest scene", maxSec ? String(maxSec) : "", "s",
         (maxSec
@@ -1211,15 +1217,15 @@ function segmentDialog() {
         + "slivers. Default 4.")}
       ${knob("wfSegLead", "lead-in", "0", "s",
         "How much audio before the first lyric line a scene is allowed to overlap backwards "
-        + "into, so a vocal does not start on the cut. Default 0 — and until this box existed "
+        + "into, so a vocal does not start on the cut. Default 0, and until this box existed "
         + "nothing on either surface could send it, so 0 is the only value it has ever had.")}
       ${knob("wfSegGap", "instrumental gap", "6", "s",
         "How long a stretch with no words has to be before it becomes a scene of its own rather "
         + "than being absorbed by the line beside it. Default 6.")}
     </div>
     <p class="hint dim">Leave a box empty to take the default. <b>Cutting again writes a whole
-      new set of scenes</b> — new ids, every mode back to Generate, every boundary you retimed
-      by hand gone — and every board and clip built on the old cut is marked <b>stale</b> rather
+      new set of scenes</b> (new ids, every mode back to Generate, every boundary you retimed
+      by hand gone) and every board and clip built on the old cut is marked <b>stale</b> rather
       than deleted, so nothing is lost and nothing is silently repointed. Change these before
       the boards exist if you can.</p>
   </details>`;
@@ -1258,7 +1264,7 @@ function renderSegments() {
           * scene somebody touched since the cut, which is exactly what the flag
           * means and no more. */""}
       <br><span class="dim">${Number.isFinite(s.durationSec) ? `${s.durationSec.toFixed(1)}s` : "—"}${
-        s.userAdjusted ? ' · <b class="segedited" title="Changed by hand since the cut — its mode, its boundaries, or both.">edited</b>' : ""}</span></td>
+        s.userAdjusted ? ' · <b class="segedited" title="Changed by hand since the cut: its mode, its boundaries, or both.">edited</b>' : ""}</span></td>
     <td>${s.kind === "lyrical" ? "🎤 lyrical" : "🎵 instrumental"}${s.hardCapped ? ' <span class="dim">hard cap</span>' : ""}</td>
     <td class="wfthesis">${esc(s.thesisLine || s.lyricText || "—")}</td>
     <td>
@@ -1286,14 +1292,14 @@ function renderSegments() {
     <table class="wftable"><thead><tr>
       <th>#</th><th>Time</th><th>Kind</th><th>Anchor line</th><th>Cover with</th><th>Footage</th>
     </tr></thead><tbody>${rows}</tbody></table>
-    <p class="hint">Scenes never split a lyric line — that rule is the website's and it
+    <p class="hint">Scenes never split a lyric line: that rule is the website's and it
       is ported exactly. Change how a scene is covered here; the choice follows through
       to the clip that renders it.</p>
     ${/* WHAT RETIMING IS SAFE, said where the boxes are rather than in a file
         * nobody opens. This is not reassurance: it is the list of things the
         * person does not have to check, which is what makes the two boxes
         * usable at all. */""}
-    <p class="hint dim"><b>Typing a new start or end is safe</b> — the server re-snaps the
+    <p class="hint dim"><b>Typing a new start or end is safe</b>: the server re-snaps the
       pair rather than storing what you typed. It clamps both ends inside the song, swaps
       them if you put the end before the start, never lets the window exceed the
       <b>15-second hard ceiling</b> on one clip, then re-reads which
@@ -1385,14 +1391,14 @@ function renderBrief() {
     <div class="params">
       <label for="wfEngine">engine</label>
       <span class="pv"><select id="wfEngine" class="sel2">
-        ${[["hybrid", fit?.hybridLine || "hybrid — H3 where it matters"], ["ltx", "LTX — fast, everywhere"], ["h3", "H3 — best, ~10x cost"]]
+        ${[["hybrid", fit?.hybridLine || "hybrid: H3 where it matters"], ["ltx", "LTX: fast, everywhere"], ["h3", "H3: best, ~10x cost"]]
           .map(([v, t]) => `<option value="${v}"${(b.videoEngine || "hybrid") === v ? " selected" : ""}>${esc(t)}</option>`).join("")}
       </select></span>
     </div>
     <div class="params">
       <label for="wfBase">base render</label>
       <span class="pv"><select id="wfBase" class="sel2">
-        ${[["auto", "auto — half then upscale (fast)"], ["full", "full — sample at delivery size"]]
+        ${[["auto", "auto (half then upscale (fast)"], ["full", "full) sample at delivery size"]]
           .map(([v, t]) => `<option value="${v}"${(b.baseScale || "auto") === v ? " selected" : ""}>${t}</option>`).join("")}
       </select></span>
     </div>
@@ -1443,7 +1449,7 @@ function renderBible() {
   return `<div class="wfcard">
     <h3>Script &amp; direction</h3>
     <p class="hint">The production bible: the story, the visual style, the reusable
-      characters and backgrounds, and one storyboard per scene — <b>this is what steers
+      characters and backgrounds, and one storyboard per scene: <b>this is what steers
       the clips</b>. Once a bible exists, every part of it is editable here, and
       <b>a scene's shot <i>action</i> is what writes its clip</b>.</p>
     ${has ? "" : `<div class="hint" title="The agent reads the contract with mv_bible_spec and commits the bible with mv_set_bible.">
@@ -1462,7 +1468,7 @@ function renderBible() {
       <div class="params bibleform">
         <label for="wfLogline">logline</label>
         <span class="pv"><input class="line" id="wfLogline" value="${esc(d.story?.logline || "")}"
-          placeholder="one sentence — what this video is"></span>
+          placeholder="one sentence: what this video is"></span>
         <label for="wfSynopsis">synopsis</label>
         <span class="pv"><textarea class="wprompt" id="wfSynopsis"
           placeholder="the shape of the story">${esc(d.story?.synopsis || "")}</textarea></span>
@@ -1474,7 +1480,7 @@ function renderBible() {
       ${d.boards.length ? `<table class="wftable"><thead><tr>
         <th>#</th><th>Time</th><th>Scene</th><th>Shots</th><th>References · prominence</th><th>Img</th><th></th></tr></thead>
         <tbody>${boardRows}</tbody></table>` : `<p class="hint warnhint">Bible has no boards yet.</p>`}`
-      : `<p class="hint warnhint">No bible yet — clips rendered now fall back to a generic
+      : `<p class="hint warnhint">No bible yet: clips rendered now fall back to a generic
         performance shot steered only by the lyric line.</p>`}
     <div id="wfBoardEdit"></div>
   </div>
@@ -1527,7 +1533,7 @@ function boardShotRow(sh, i) {
     ${f("angle", "angle")} ${f("cameraMove", "camera move")}
     ${f("lensFeel", "lens feel")} ${f("lighting", "lighting")}
     <textarea class="wprompt" data-shot="${i}|action"
-      placeholder="what HAPPENS — this is the field that writes the clip">${esc(sh.action || "")}</textarea>
+      placeholder="what HAPPENS: this is the field that writes the clip">${esc(sh.action || "")}</textarea>
     <button class="edtool sm" type="button" data-shotdel="${i}">✕</button>
   </div>`;
 }
@@ -1638,7 +1644,7 @@ async function openBoardEditor(segmentId) {
         <span class="pv"><input class="line" id="beGrade" value="${esc(board.grade || "")}"
           placeholder="colour and mood"></span>
       </div>
-      <p class="hint"><b>Cast &amp; places.</b> Only declared names can be referenced — add them
+      <p class="hint"><b>Cast &amp; places.</b> Only declared names can be referenced; add them
         on the Characters and Backgrounds stages first. The number is prominence: when a
         scene carries more references than the engine takes, the lowest are dropped first.</p>
       <div class="refpicks">
@@ -1655,12 +1661,12 @@ async function openBoardEditor(segmentId) {
         the half that reaches the model: the clip engine takes a prompt and reference pictures,
         never a camera path, so the sentence is the steering.
         <b>Block it</b> also renders a gray-box previz to watch before you spend render time on
-        the real thing. The previz is for your eyes — it is never sent to the model, because a
+        the real thing. The previz is for your eyes. It is never sent to the model, because a
         blocking clip handed to a video engine hands the gray boxes back.</p>
       <div class="framepick previzbar">
         <select class="sel2 sm" id="bePzMove" title="camera move">
           ${(pz.moves || []).filter((m) => !m.alias).map((m) =>
-            `<option value="${esc(m.name)}">${esc(m.label)} — ${esc(m.gist)}</option>`).join("")}
+            `<option value="${esc(m.name)}">${esc(m.label)} (${esc(m.gist)})</option>`).join("")}
         </select>
         <select class="sel2 sm" id="bePzFraming" title="framing">
           ${SHOT_TYPES.map((t) => `<option${t === "medium" ? " selected" : ""}>${t}</option>`).join("")}
@@ -1674,21 +1680,21 @@ async function openBoardEditor(segmentId) {
           ${(pz.scenes || []).map((s) => `<option${s === "corridor" ? " selected" : ""}>${esc(s)}</option>`).join("")}
         </select>
         <input class="line sm" id="bePzMoveArgs" placeholder="move args" style="width:150px"
-          title="the move's own keyword arguments, KEY=VALUE space separated — aim_at=neck rise=6, degrees=75, framing=full. They steer the CLIP, not the words: an orbit with none sweeps the toolkit's default however wide you meant it. Legal keys are the move's own; the toolkit names them if you miss.">
+          title="the move's own keyword arguments, KEY=VALUE space separated: aim_at=neck rise=6, degrees=75, framing=full. They steer the CLIP, not the words: an orbit with none sweeps the toolkit's default however wide you meant it. Legal keys are the move's own; the toolkit names them if you miss.">
         <button class="edtool sm" type="button" id="bePzBlock"${pz.installed ? "" : " disabled"}
-          title="${pz.installed ? "Render a gray-box previz — about 25 seconds" : esc((pz.why || []).join(" "))}">Block it</button>
+          title="${pz.installed ? "Render a gray-box previz: about 25 seconds" : esc((pz.why || []).join(" "))}">Block it</button>
         <button class="edtool sm" type="button" id="bePzBlockout"${pz.installed ? "" : " disabled"}
           title="${pz.installed ? esc(pz.blockout?.why || "") : esc((pz.why || []).join(" "))}">Blockout</button>
       </div>
       <p class="hint dim"><b>Block it</b> renders the clip you watch. <b>Blockout</b> renders
         the same grey boxes at the control contract —
         ${esc(pz.blockout?.frames ?? 0)} frames, marked
-        <b>${esc(pz.blockout?.use || "")}</b> — and files it against this shot so the control
+        <b>${esc(pz.blockout?.use || "")}</b>, and files it against this shot so the control
         card below can steer with it. Two files, two sidecars: neither replaces the other.</p>
       <details class="pzspec">
-        <summary>Staging — who stands where <i class="dim">(${esc(pz.spec?.units || "")})</i></summary>
+        <summary>Staging: who stands where <i class="dim">(${esc(pz.spec?.units || "")})</i></summary>
         <p class="hint dim">Leave every row off and the set stages itself the way it always
-          has. Tick one and it replaces the set's own — the seven sets stay presets, and the
+          has. Tick one and it replaces the set's own; the seven sets stay presets, and the
           camera stays on the move above. ${esc(pz.spec?.walk || "")}</p>
         <div class="specrows">${specFigureRows()}${specPropRows()}</div>
       </details>
@@ -1698,7 +1704,7 @@ async function openBoardEditor(segmentId) {
 
       ${ctl ? `
       <p class="hint"><b>Or steer it with a real video.</b> The previz above is for your eyes
-        only — a grey-box clip handed to a video model hands the grey boxes back. This is the
+        only: a grey-box clip handed to a video model hands the grey boxes back. This is the
         opposite door: a real clip goes on WAN 2.1 VACE's <code>control_video</code> and the
         render <i>follows</i> it. Camera-motion agreement
         <b>${esc(ctl.operatingPoint.CMA.toFixed(3))}</b> against its own
@@ -1724,7 +1730,7 @@ async function openBoardEditor(segmentId) {
         </select>
         <select class="sel2 sm" id="beCtlMode" title="what to do with it">
           ${ctl.modes.filter((m) => m.mode !== "check").map((m) =>
-            `<option value="${esc(m.mode)}" title="${esc(m.what)}">${esc(m.mode)} — ~${esc(m.costMinutes)} min</option>`).join("")}
+            `<option value="${esc(m.mode)}" title="${esc(m.what)}">${esc(m.mode)}: ~${esc(m.costMinutes)} min</option>`).join("")}
         </select>
         <input class="line sm" id="beCtlPrompt" placeholder="what to render" style="min-width:200px">
         <select class="sel2 sm" id="beCtlRef"
@@ -1736,30 +1742,30 @@ async function openBoardEditor(segmentId) {
           style="width:70px" value="${esc(ctl.operatingPoint.strength)}"
           title="${esc(ctl.ladder.map((r) => r.strength.toFixed(2) + " " + r.reads).join(" | "))}">
         <select class="sel2 sm" id="beCtlDepthModel"
-          title="which Depth Anything V2 reads the clip in the depth modes — Small is Apache-2.0 and the default; Large is CC-BY-NC-4.0, non-commercial">
+          title="which Depth Anything V2 reads the clip in the depth modes: Small is Apache-2.0 and the default; Large is CC-BY-NC-4.0, non-commercial">
           ${Object.values(ctl.licence?.depth?.models || {}).map((m) =>
             `<option value="${esc(m.key)}"${m.key === (ctl.licence?.depth?.default || "small") ? " selected" : ""} title="${esc(m.reads)}">depth: ${esc(m.key)} · ${esc(m.licence)}</option>`).join("")}
         </select>
         <input class="line sm num" id="beCtlStart" type="number" min="0" step="0.5" style="width:84px" placeholder="start s"
-          title="conform only: the second of the source the 121-frame (5.04 s) window starts at — the render uses no more than that">
+          title="conform only: the second of the source the 121-frame (5.04 s) window starts at. The render uses no more than that">
         <input class="line sm num" id="beCtlSeed" style="width:92px" placeholder="seed"
-          title="leave it blank and one is minted, returned and recorded — this path exists to be reproducible">
+          title="leave it blank and one is minted, returned and recorded: this path exists to be reproducible">
         <button class="edtool sm" type="button" id="beCtlCheck">Check clip</button>
         <button class="edtool sm" type="button" id="beCtlGo" disabled
-          title="check a source clip first — the three numbers fail silently">Steer it</button>
+          title="check a source clip first: the three numbers fail silently">Steer it</button>
       </div>
-      <p class="hint dim"><b>Strength, measured — every rung is an arm that really rendered:</b>
+      <p class="hint dim"><b>Strength, measured: every rung is an arm that really rendered:</b>
         ${ctl.ladder.map((r) => esc(r.strength.toFixed(2)) + " " + esc(r.reads)
           + (r.strength === ctl.operatingPoint.strength ? " <b>(the default)</b>" : "")).join(" · ")}</p>
-      <p class="hint dim"><b>Licence — two answers, and one must never speak for the other.</b>
+      <p class="hint dim"><b>Licence: two answers, and one must never speak for the other.</b>
         WAN 2.1 VACE is <b>${esc(ctl.licence.vace.class)}</b>${ctl.licence.vace.verified
-          ? ", verified against the licence text itself" : ", unverified"} — a clip rendered here is
+          ? ", verified against the licence text itself" : ", unverified"}: a clip rendered here is
         yours to sell. The DWPose estimator, which draws the skeletons in the
         <b>pose</b> and <b>extract</b> modes only, is <b>${esc(ctl.licence.pose.class)}</b>: its
         redistributor ships no readable licence at all, so that half is not settled.${ctl.licence?.depth ? ` The
         Depth Anything V2 estimator, which draws the depth in the <b>depth</b> and <b>extract_depth</b>
-        modes, is <b>${esc(ctl.licence.depth.class)}</b> as Small — the default, Apache-2.0 by its
-        authors' own statement — and <b>non-commercial</b> as Large (CC-BY-NC-4.0); the select above
+        modes, is <b>${esc(ctl.licence.depth.class)}</b> as Small (the default, Apache-2.0 by its
+        authors' own statement) and <b>non-commercial</b> as Large (CC-BY-NC-4.0); the select above
         says which one a depth video came from, and the record keeps it. ⚠ No depth arm has been
         scored: the pose gate's number does not transfer.` : ""}</p>
       <div id="beCtlOut"></div>` : `
@@ -1822,7 +1828,7 @@ async function openBoardEditor(segmentId) {
       for (const tok of raw.split(/\s+/)) {
         const i = tok.indexOf("=");
         if (i < 1) {
-          throw new Error(`Move args are KEY=VALUE, space separated — "${tok}" is neither. `
+          throw new Error(`Move args are KEY=VALUE, space separated: "${tok}" is neither. `
             + "Example: aim_at=neck rise=6");
         }
         const k = tok.slice(0, i), v = tok.slice(i + 1);
@@ -1979,7 +1985,7 @@ async function openBoardEditor(segmentId) {
           const v = r.validation || {};
           paintCtl(r.ok
             ? `<div class="ctlok"><b>${esc(r.clip)}</b> passes: ${esc(v.width)}x${esc(v.height)}, ${esc(Number(v.fps).toFixed(3))} fps, ${esc(v.frames)} frames. Nothing was rendered.</div>`
-            : `<div class="ctlbad"><pre>${esc(r.why)}</pre><p class="hint dim">Measured, not rendered — this cost nothing.</p></div>`);
+            : `<div class="ctlbad"><pre>${esc(r.why)}</pre><p class="hint dim">Measured, not rendered: this cost nothing.</p></div>`);
           armed();
         } catch (err) {
           ctlVerdict = null; armed();
@@ -2024,7 +2030,7 @@ async function openBoardEditor(segmentId) {
         const c = r.conformed;
         $("beCtlOut").innerHTML = `<div class="ctlplan">
           <video src="/api/clip/${encodeURIComponent(c.file)}" controls loop muted playsinline></video>
-          <p class="hint"><b>${esc(c.file)}</b> — conformed from ${esc(c.from.width)}x${esc(c.from.height)} at
+          <p class="hint"><b>${esc(c.file)}</b>: conformed from ${esc(c.from.width)}x${esc(c.from.height)} at
             ${esc(Number(c.from.fps).toFixed(3))} fps (${esc(c.from.frames)} frames) to ${esc(c.width)}x${esc(c.height)} at
             ${esc(Number(c.fps).toFixed(3))} fps, ${esc(c.frames)} frames from ${esc(c.start || 0)} s in, in ${esc(c.seconds)} s; sound dropped. It is in
             the clip library: pick it as the source clip, <b>Check clip</b>, then steer.</p></div>`;
@@ -2043,19 +2049,19 @@ async function openBoardEditor(segmentId) {
             (${esc(r.blockout.move)} on ${esc(r.blockout.scene)}), staging
             <code>${esc((r.blockout.specSha256 || "the set's own").slice(0, 12))}</code>${
             r.blockout.candidates?.length > 1
-              ? ` — the newest of ${esc(r.blockout.candidates.length)} on this shot` : ""}.</p>`
+              ? `: the newest of ${esc(r.blockout.candidates.length)} on this shot` : ""}.</p>`
         : "";
       const pose = r.pose && r.render
-        ? `<p class="hint dim">Skeleton: <b>${esc(r.pose.file)}</b>, ${esc(Math.round(r.pose.seconds || 0))} s — it is in the clip library and is itself a valid control clip.</p>` : "";
+        ? `<p class="hint dim">Skeleton: <b>${esc(r.pose.file)}</b>, ${esc(Math.round(r.pose.seconds || 0))} s: it is in the clip library and is itself a valid control clip.</p>` : "";
       const cav = (r.mode === "pose" || r.mode === "extract") && ctl && ctl.poseGate
-        ? `<details class="ctlcav"><summary>What the pose gate does <b>not</b> cover — only ${esc(ctl.poseGate.framesScored)} of ${esc(ctl.poseGate.frames)} frames could be scored</summary><ul>${ctl.poseGate.caveats.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></details>` : "";
+        ? `<details class="ctlcav"><summary>What the pose gate does <b>not</b> cover: only ${esc(ctl.poseGate.framesScored)} of ${esc(ctl.poseGate.frames)} frames could be scored</summary><ul>${ctl.poseGate.caveats.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></details>` : "";
       $("beCtlOut").innerHTML = `<div class="ctlplan">
         <video src="/api/clip/${encodeURIComponent(out.file)}" controls loop muted playsinline></video>
-        <p class="hint"><b>${esc(out.file)}</b> — ${esc(Math.round(out.seconds || 0))} s, run
+        <p class="hint"><b>${esc(out.file)}</b>: ${esc(Math.round(out.seconds || 0))} s, run
           <code>${esc(out.runId)}</code>. It is in the clip library with its whole record.</p>
         ${from}
         ${pose}
-        ${r.depth && r.render ? `<p class="hint dim">Depth video: <b>${esc(r.depth.file)}</b> (${esc(r.depth.model?.key || "")}, ${esc(r.depth.model?.licence || "")}), ${esc(Math.round(r.depth.seconds || 0))} s — in the clip library, itself a valid control clip. ⚠ Unscored path: watched, not measured.</p>` : ""}
+        ${r.depth && r.render ? `<p class="hint dim">Depth video: <b>${esc(r.depth.file)}</b> (${esc(r.depth.model?.key || "")}, ${esc(r.depth.model?.licence || "")}), ${esc(Math.round(r.depth.seconds || 0))} s: in the clip library, itself a valid control clip. ⚠ Unscored path: watched, not measured.</p>` : ""}
         ${op ? `<p class="hint dim">strength ${esc(op.strength)} · masks ${esc(op.masks)} · seed <b>${esc(op.seed)}</b> · ${esc(op.width)}x${esc(op.height)} · ${esc(op.frames)} frames ${op.measured ? "— the measured operating point" : "— <b>off</b> the measured point, so the gate's numbers are about a different graph"}</p>` : ""}
         ${cav}
       </div>`;
@@ -2185,7 +2191,7 @@ async function openBoardEditor(segmentId) {
       ${line("placement", p.placement)}${line("lens", p.lens)}
       <p class="hint">${esc(p.note)}</p>
       ${p.board_move_exact ? "" : `<p class="hint dim">The board vocabulary has no word for
-        ${esc(p.label)} — it will be saved as "${esc(p.board_move)}", which is a stand-in. The
+        ${esc(p.label)}: it will be saved as "${esc(p.board_move)}", which is a stand-in. The
         sentence in the action field is the part that carries the real move.</p>`}
       <p class="hint dim">${esc(p.caveat)}</p>
       <div class="framepick"><button class="edtool sm" type="button" id="bePzAdd">+ add as shot</button></div>
@@ -2197,7 +2203,7 @@ async function openBoardEditor(segmentId) {
       ${shot?.blockout ? `<div class="pzclip pzblockout">
         <video src="${assetSrc(shot.blockout.file)}" controls loop muted playsinline></video>
         <p class="hint">${esc(shot.blockout.frames)} frames on the ${esc(shot.blockout.scene)} set,
-          marked <b>${esc(shot.blockout.use)}</b> — this one IS for the model. Pick
+          marked <b>${esc(shot.blockout.use)}</b>: this one IS for the model. Pick
           <b>this shot's blockout</b> as the source below to steer with it.</p>
         <p class="hint dim">staging
           <code>${esc((shot.blockout.specSha256 || "the set's own").slice(0, 12))}</code>
@@ -2277,7 +2283,7 @@ function takeEvidence(t) {
      * overwrites, so an old take captioned with it would be labelled by text
      * that made a different video — worse than a blank, because it looks like
      * an answer. */
-    return `<p class="hint dim">No record of what made this take — it was rendered before the
+    return `<p class="hint dim">No record of what made this take: it was rendered before the
       prompt and the references were kept per take. Re-render to start the record.</p>`;
   }
   const gone = (t.refsMissing || []).map((r) => r.name);
@@ -2350,7 +2356,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
           <img src="${assetSrc(x.file)}" alt="">
           <span class="shotrefn">${esc(x.name)}${x.role && x.role !== "identity" ? ` · ${esc(x.role)}` : ""}</span>
           <span class="dim">${esc(x.kind || "?")} · ${esc(x.file)}</span></div>`).join("")
-      : `<p class="hint dim">No reference pictures — this shot is text only, so the model
+      : `<p class="hint dim">No reference pictures: this shot is text only, so the model
            invents its people and places fresh on every render.</p>`;
 
     /* ⚠ THE RED BLOCK IS THE POINT OF THE WHOLE PANEL. A declared name with no
@@ -2392,7 +2398,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         ? " because the project is set to ltx" : ""}, which has no named-reference input.
       Everything resolved below is the PLAN, not the hand-over.
       ${sh.opensOn
-        ? `The picture pinned as frame 0 — <code>${esc(sh.opensOn)}</code> — is the only carrier
+        ? `The picture pinned as frame 0 (<code>${esc(sh.opensOn)}</code>) is the only carrier
            of identity here, so whatever was in that image when it was drawn is what this shot
            inherits, and whatever was not is gone.`
         : `Nothing is pinned as frame 0 either, so identity is carried by the words alone and
@@ -2414,7 +2420,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
       const prom = sh.refs.find((y) => y.name === x.name)?.prominence
         ?? sh.refsMissing.find((y) => y.name === x.name)?.prominence ?? 0.5;
       return `<label class="refpick${x.file ? "" : " nosheet"}"
-          title="${x.file ? esc(x.file) : "No sheet rendered — ticking this name sends no picture"}">
+          title="${x.file ? esc(x.file) : "No sheet rendered: ticking this name sends no picture"}">
         <input type="checkbox" data-sref="${esc(x.name)}"${on ? " checked" : ""}>
         <span>${esc(x.name)}${x.file ? "" : " ⚠"}</span>
         <input class="line sm num" type="number" min="0" max="1" step="0.05" style="width:56px"
@@ -2456,7 +2462,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
 
       ${staleLine}${ltxLine}${missing}${dropped}${warned}
       <p class="hint"><b>${sh.refsSent ? "What the model is handed" : "What resolved"}</b>, in this
-        order — the numbers are the <code>&lt;Picture N&gt;</code> tags the prompt names.</p>
+        order. The numbers are the <code>&lt;Picture N&gt;</code> tags the prompt names.</p>
       <div class="shotrefs${sh.refsSent ? "" : " notsent"}">${refRows}</div>
 
       <p class="hint"><b>Which names this shot carries.</b> Ticking a name with no sheet
@@ -2470,7 +2476,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
 
       <p class="hint"><b>The prompt, exactly as it will be sent.</b>
         ${sh.promptSource === "computed"
-          ? "Built from the style bible, this scene's shot list and its grade. Edit it and the edit is what renders — the builder stops writing this scene until you revert."
+          ? "Built from the style bible, this scene's shot list and its grade. Edit it and the edit is what renders: the builder stops writing this scene until you revert."
           : "<b>Hand-edited.</b> The builder no longer writes this scene, so a change to the board or the style bible will not reach it until you revert."}
         Keep the <code>&lt;Picture N&gt;</code> sentences: a reference the prompt never names
         barely conditions the render at all, which is how one project rendered its single
@@ -2493,9 +2499,9 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         same seed, one sentence different, and the difference IS the sentence.</p>
       <div class="framepick srcpick">
         <span class="dim">render from</span>
-        <label title="What the builder computes from the style bible, this scene's shot list and its grade — ignoring any saved hand-edit, for this render only."><input
+        <label title="What the builder computes from the style bible, this scene's shot list and its grade, ignoring any saved hand-edit, for this render only."><input
           type="radio" name="shSrc" value="built"> the built prompt</label>
-        <label title="${sh.promptOverride ? "The hand-written prompt saved on this scene." : "Nothing is saved on this scene — the builder still writes it."}"><input
+        <label title="${sh.promptOverride ? "The hand-written prompt saved on this scene." : "Nothing is saved on this scene: the builder still writes it."}"><input
           type="radio" name="shSrc" value="edited"${sh.promptOverride ? "" : " disabled"}> the saved edit</label>
         <label title="Exactly what is in the box above, whether or not you pressed Save prompt."><input
           type="radio" name="shSrc" value="argument" checked> this box</label>
@@ -2503,7 +2509,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
       <div class="framepick">
         <label class="dim" title="${sh.current?.seed != null
           ? "Send the seed the playing take used, so a prompt edit is the only difference between the two files."
-          : "No seed was recorded for the playing take, so there is nothing to hold — this render rolls a fresh one."}">
+          : "No seed was recorded for the playing take, so there is nothing to hold: this render rolls a fresh one."}">
           <input type="checkbox" id="shHold"${sh.current?.seed != null ? " checked" : ""}${sh.current?.seed == null ? " disabled" : ""}> hold the seed</label>
         <input class="line sm num" id="shSeed" style="width:130px"
           placeholder="fresh roll" value="${sh.current?.seed ?? ""}">
@@ -2513,7 +2519,7 @@ async function openShotInspector(segmentId, { focus = null } = {}) {
         <button class="edtool sm" type="button" id="shClose">Close</button>
       </div>
       <p class="hint dim">On <b>this box</b> it sends whatever is in the box above, saved or
-        not — trying a wording is not the same as adopting it. The choice is recorded with the
+        not: trying a wording is not the same as adopting it. The choice is recorded with the
         take, so a hand-edited render is never mistaken later for a followed board.</p>
       </div>
 
@@ -2658,7 +2664,7 @@ function assetUsage(kind, row) {
 
   if (!scenes.length) {
     if (!(wf.doc.boards || []).length) {
-      return `<p class="usage dim">No boards yet — nothing references anything.</p>`;
+      return `<p class="usage dim">No boards yet: nothing references anything.</p>`;
     }
     return `<p class="usage warn">Referenced by no board.${kind === "props"
       ? " Tick it on the scenes it appears in, or it is not cast."
@@ -2670,7 +2676,7 @@ function assetUsage(kind, row) {
    * says so. It is the loudest thing on the card because it is the most
    * expensive thing to discover after the GPU has been spent. */
   if (!referencePack(row).length) {
-    return `<p class="usage bad"><b>Used in ${esc(list)} — with no sheet.</b>
+    return `<p class="usage bad"><b>Used in ${esc(list)}: with no sheet.</b>
       Those renders get nothing for it and re-invent it from the words each time.
       Render it before the clips.</p>`;
   }
@@ -2698,7 +2704,7 @@ function renderAssets(kind) {
      * reading this line — which is the whole argument for the stub-DOM pass. */
     const seeds = [...new Set(takes.map((t) => t.seed).filter((s) => Number.isFinite(s)))];
     const seedRow = `<div class="seedhold">
-      <label title="Redraw this row on a seed it has already used. Everything else about the picture stays where it was, so a changed word in the description is the only thing that moved — which is the only way to find out what that word does. Empty rolls a fresh seed, which is what this button has always done.">seed
+      <label title="Redraw this row on a seed it has already used. Everything else about the picture stays where it was, so a changed word in the description is the only thing that moved: which is the only way to find out what that word does. Empty rolls a fresh seed, which is what this button has always done.">seed
         <input class="line sm num" type="number" step="1"
           data-genseed="${esc(kind)}|${esc(r.id)}" placeholder="rolls"
           spellcheck="false" autocomplete="off"></label>
@@ -2735,11 +2741,11 @@ function renderAssets(kind) {
         placeholder="describe ${target === "character" ? "them" : "it"}…">${esc(r.description || "")}</textarea>
       ${assetUsage(kind, r)}
       <button class="edtool sm" data-genasset="${esc(kind)}|${esc(r.id)}"
-        title="Render 4 variants in different seeds — pick the one you like">${takes.length ? "↻ More takes" : "✦ Generate"}</button>
+        title="Render 4 variants in different seeds: pick the one you like">${takes.length ? "↻ More takes" : "✦ Generate"}</button>
       ${/* `kind`, the plural, since the shim went — the hook carries what the
           * body will carry, so nothing has to translate at the call site. */""}
       <button class="edtool sm" data-blender="${esc(kind)}|${esc(r.id)}"
-        title="Render this sheet from a 3D model instead. Three angles, three takes — the same object every time, which a prompt cannot promise.">⬡ Blender</button>
+        title="Render this sheet from a 3D model instead. Three angles, three takes: the same object every time, which a prompt cannot promise.">⬡ Blender</button>
       ${/* ⬔ MESH — the other direction from Blender. That one renders an object
           * somebody already modelled; this MAKES one out of the panel this row
           * already carries, which is exactly the case Blender has to refuse
@@ -2748,11 +2754,11 @@ function renderAssets(kind) {
           * that comes back — "render a sheet first" — is the sentence that says
           * what to do, and a hidden control says nothing at all. */""}
       <button class="edtool sm" data-mesh="${esc(kind)}|${esc(r.id)}"
-        title="Build a 3D mesh from this row's sheet. A mesh IS the same object on every render — the strongest form of the identity a sheet only approximates. It does not replace the sheet: the clip engine takes pictures.">⬔ Mesh</button>
+        title="Build a 3D mesh from this row's sheet. A mesh IS the same object on every render: the strongest form of the identity a sheet only approximates. It does not replace the sheet: the clip engine takes pictures.">⬔ Mesh</button>
       ${r.meshFile ? `<button class="edtool sm" data-meshrig="${esc(kind)}|${esc(r.id)}"
-        title="Put a skeleton and skinning weights into the mesh this row already has. Refused on a blocky object — a rigger asked to rig a crate invents a skeleton for a crate and reports success.">⬗ Rig</button>` : ""}
+        title="Put a skeleton and skinning weights into the mesh this row already has. Refused on a blocky object: a rigger asked to rig a crate invents a skeleton for a crate and reports success.">⬗ Rig</button>` : ""}
       <button class="edtool sm" data-planadd="asset|${esc(kind)}|${esc(r.id)}"
-        title="Put this sheet in a plan instead of drawing it now. Sheets are seconds, so one on its own rarely needs a plan — a dozen of them beside a night of clips does.">+ Plan</button>
+        title="Put this sheet in a plan instead of drawing it now. Sheets are seconds, so one on its own rarely needs a plan: a dozen of them beside a night of clips does.">+ Plan</button>
       ${/* WHAT THIS ROW HOLDS BESIDE ITS PICTURE, said on the card. A mesh has
           * no thumbnail, so in a grid of pictures it is invisible — without
           * this line the most expensive artefact on the row is the one nothing
@@ -2761,7 +2767,7 @@ function renderAssets(kind) {
           * and that difference is the whole reason they are two fields. */""}
       ${r.meshFile ? `<p class="hint dim">Mesh: <b>${esc(r.meshFile)}</b>${
         r.rigFile ? ` · rigged (<b>${esc(r.rigFile)}</b>)` : " · not rigged"
-      }. A mesh is not a clip reference — the sheet is what reaches the render.</p>` : ""}
+      }. A mesh is not a clip reference: the sheet is what reaches the render.</p>` : ""}
       <div data-meshhost="${esc(kind)}|${esc(r.id)}"></div>
       ${seedRow}
       ${strip}
@@ -2784,7 +2790,7 @@ function renderAssets(kind) {
      * declared in the bible and ticked on a board, and there was no card, no
      * picture and no Generate button anywhere a person could reach. The object
      * that recurs in half the scenes was the one row with no way to pin it. */
-    props: "Objects that recur — a car, a knife, a sign. They are cast exactly as people are: an object with no sheet is re-invented by the model on every render, which is how the same car arrives a different car each time. Blender is the stronger answer here, because a mesh is the same object by construction.",
+    props: "Objects that recur: a car, a knife, a sign. They are cast exactly as people are: an object with no sheet is re-invented by the model on every render, which is how the same car arrives a different car each time. Blender is the stronger answer here, because a mesh is the same object by construction.",
   };
   /* THE UNDECLARED-OBJECT WARNING, ON THE PROPS SECTION ITSELF. The lint has
    * reported this for months on a screen nobody opens mid-flow. It belongs
@@ -2802,7 +2808,7 @@ function renderAssets(kind) {
    * be a control with no effect, which is the exact disease the parameter
    * census exists to catch. The toggle is on the BOARD cards, one stage on,
    * and this line says so instead of pretending. */
-  const PANEL_NOTE = `<p class="hint">⚠ <b>These sheets are contact strips</b> — several panels
+  const PANEL_NOTE = `<p class="hint">⚠ <b>These sheets are contact strips</b>: several panels
     in one picture. DIRECTING.md §2 says a reference is a SINGLE PANEL, because handed the
     whole strip the model reproduces the strip rather than composing the shot (measured
     2026-08-28, and again on the boards that followed). Nothing on this card changes that:
@@ -2821,11 +2827,11 @@ function renderAssets(kind) {
       <button class="edtool" type="button" data-addasset="${kind}">+ Declare a ${esc(target)}</button>
       <button class="edtool" type="button" data-import="${kind}">Import a picture…</button>
       <button class="edtool" type="button" data-planfrom="nosheet"
-        title="Seeds a plan with one sheet render per declared character, background or prop that has none — the rows that reach every clip as nothing until they exist.">Plan the missing sheets</button>
+        title="Seeds a plan with one sheet render per declared character, background or prop that has none: the rows that reach every clip as nothing until they exist.">Plan the missing sheets</button>
     </div>
     <div data-declhost="${kind}"></div>
     <div data-imphost="${kind}"></div>
-    <p class="hint">⚠ <b>Declaring</b> writes the row — a name and a description — and the
+    <p class="hint">⚠ <b>Declaring</b> writes the row (a name and a description) and the
       picture comes after, from <b>Generate</b> or <b>Blender</b>. That order matters: until
       this existed the only ways to create a ${esc(target)} were to have an agent write the
       whole bible or to already own a picture, so noticing a missing ${esc(target)} halfway
@@ -2857,7 +2863,7 @@ function declareForm(kind) {
         placeholder="${target === "prop" ? "the grey Volvo" : target === "background" ? "the motel forecourt" : "Vire"}"></label>
     <p class="hint dim">The name is the binding key: boards, prompt legends and the map all
       resolve through it, and it is the word the prompts will use. It has to be unique across
-      characters, backgrounds and props — a duplicate is refused, naming the row that holds it.</p>
+      characters, backgrounds and props: a duplicate is refused, naming the row that holds it.</p>
 
     <label class="dfield"><span>description</span>
       <textarea class="wprompt" data-ddesc rows="3"
@@ -2868,7 +2874,7 @@ function declareForm(kind) {
       prompt below: it is what the sheet is drawn from, and what the bible tells the model.</p>
 
     <details class="adv">
-      <summary>Advanced — the sheet prompt${kind === "characters" ? " and the role" : ""}</summary>
+      <summary>Advanced: the sheet prompt${kind === "characters" ? " and the role" : ""}</summary>
       <label class="dfield"><span>sheet prompt</span>
         <textarea class="wprompt" data-dprompt rows="3"
           placeholder="left empty, the description draws it"></textarea></label>
@@ -2941,7 +2947,7 @@ function meshForm(kind, id, cat) {
         title="A single image on this computer. Transparent PNGs preserve limb gaps; contact sheets are refused."></label>
     <details class="more"><summary>Preparing the image</summary><p class="hint dim">Use one front-facing subject with space between arms and legs. A transparent PNG works best. A contact sheet is refused; its panels would become one mesh.</p></details>
     <label class="dfield" title="Add a body skeleton and skin weights in the same pass. Use only for an articulated subject, not a static prop."><span><input type="checkbox" data-mrig> Add body rig</span></label>
-    ${cat && cat.installed && cat.canRig === false ? `<p class="hint warnhint">⚠ The rig cannot run on this machine, so ticking this refuses the whole pass <b>before</b> the mesh is built — leave it clear to get the mesh. The checkpoints are present; it is the runtime that is missing:<br>${(cat.rigRuntime?.missing || []).map((m) => esc(m.module + " — " + m.error)).join("<br>")}</p>` : ""}
+    ${cat && cat.installed && cat.canRig === false ? `<p class="hint warnhint">⚠ The rig cannot run on this machine, so ticking this refuses the whole pass <b>before</b> the mesh is built. Leave it clear to get the mesh. The checkpoints are present; it is the runtime that is missing:<br>${(cat.rigRuntime?.missing || []).map((m) => esc(m.module + ": " + m.error)).join("<br>")}</p>` : ""}
     <div class="framepick">
       <label class="dfield" title="Record a seed to reproduce this geometry."><span>Seed</span>
         <input class="line sm num" type="number" step="1" data-mseed placeholder="42"></label>
@@ -2964,7 +2970,7 @@ function importForm(kind) {
     <label class="dfield"><span>path to the picture</span>
       <input class="line" data-ipath spellcheck="false" autocomplete="off"
         placeholder="C:\\...\\output\\images\\something.png"></label>
-    <p class="hint dim">A full path on THIS machine — usually something the Images tab just
+    <p class="hint dim">A full path on THIS machine, usually something the Images tab just
       made. There is no upload because the file is already here. A picture with several panels
       in it is <b>refused</b>, with the reason and the words "crop one panel out of it": handed
       a contact strip the model draws a contact strip.</p>
@@ -2980,7 +2986,7 @@ function importForm(kind) {
       <textarea class="wprompt" data-idesc rows="3"
         placeholder="what the picture shows, in the words the prompts should use…"></textarea></label>
     <p class="hint dim">⚠ Worth filling in now. This is the text every later prompt builder
-      falls back to — an imported row with none describes itself to the model as nothing at all,
+      falls back to: an imported row with none describes itself to the model as nothing at all,
       and the picture alone only reaches the render on an engine that takes references.</p>
 
     ${kind === "characters" ? `<label class="dfield"><span>role</span>
@@ -2989,7 +2995,7 @@ function importForm(kind) {
         <option value="lead">lead</option>
         <option value="support">support</option>
       </select></label>
-    <p class="hint dim">Lead or support, and nothing else is accepted — the row is validated by
+    <p class="hint dim">Lead or support, and nothing else is accepted: the row is validated by
       the same reader Declare and the card's own edit use, so the three doors cannot disagree
       about what a role is. It rides with the row for whoever plans the shots; nothing renders
       differently today.</p>` : ""}
@@ -2999,7 +3005,7 @@ function importForm(kind) {
       <button class="edtool sm" type="button" data-icancel>Cancel</button>
     </div>
     <p class="hint dim">Importing copies the file into the project and marks the row approved,
-      with a take whose seed is null — that null is what says "imported, never drawn".</p>
+      with a take whose seed is null: that null is what says "imported, never drawn".</p>
   </div>`;
 }
 
@@ -3061,7 +3067,7 @@ const LIVE_PLAN_STATES = new Set(["proposed", "approved", "running", "paused"]);
 
 const QUALITY_TRAPS = {
   "ltx-drops-references":
-    "references are dropped entirely on LTX — every character sheet you built is not used.",
+    "references are dropped entirely on LTX: every character sheet you built is not used.",
   "hybrid-routes-on-cast":
     "hybrid sends any scene carrying a named character to H3 and everything else to LTX, so one "
     + "imported character can turn a twenty-minute render into an overnight one.",
@@ -3069,7 +3075,7 @@ const QUALITY_TRAPS = {
     "this step count runs the speed-up file that loads past the count it was made for, so the "
     + "estimate is a floor. Leave steps on default to run the matched count for the files on this PC.",
   "above-native":
-    "above H3's native 1344x768 — untrained territory, and priced accordingly.",
+    "above H3's native 1344x768: untrained territory, and priced accordingly.",
   "h3-oom":
     "H3 at 1920x1088 measured OUT OF MEMORY on a 16 GB card; the two Bone Waffle films rendered "
     + "there at 4 steps.",
@@ -3138,12 +3144,12 @@ const PLAN_FIELDS = {
   mv_regen_clip: [
     { k: "slug", a: 'data-planarg="mv_regen_clip.slug"', t: "text", hint: "the project this item runs in" },
     { k: "segment", a: 'data-planarg="mv_regen_clip.segment"', t: "text", hint: "segment id, or the 0-based scene index" },
-    { k: "clip_id", a: 'data-planarg="mv_regen_clip.clip_id"', t: "text", hint: "instead of a segment — what a Studio timeline item knows about itself" },
+    { k: "clip_id", a: 'data-planarg="mv_regen_clip.clip_id"', t: "text", hint: "instead of a segment: what a Studio timeline item knows about itself" },
     { k: "prompt", a: 'data-planarg="mv_regen_clip.prompt"', t: "textarea", hint: "render this take with this text, storing nothing on the project" },
     { k: "prompt_source", a: 'data-planarg="mv_regen_clip.prompt_source"', t: "select",
       o: ["built", "edited", "argument"], hint: "which of the three prompts this render uses" },
     { k: "seed", a: 'data-planarg="mv_regen_clip.seed"', t: "int", hint: "hold the seed so a prompt change is the only variable" },
-    { k: "loop", a: 'data-planarg="mv_regen_clip.loop"', t: "bool", d: true, hint: "hold the opening frame — off is ~3x the motion, against identity drift" },
+    { k: "loop", a: 'data-planarg="mv_regen_clip.loop"', t: "bool", d: true, hint: "hold the opening frame: off is ~3x the motion, against identity drift" },
   ],
   mv_generate_asset: [
     { k: "slug", a: 'data-planarg="mv_generate_asset.slug"', t: "text", hint: "the project this item runs in" },
@@ -3158,7 +3164,7 @@ const PLAN_FIELDS = {
   mv_blender_sheet: [
     { k: "slug", a: 'data-planarg="mv_blender_sheet.slug"', t: "text", hint: "the project this item runs in" },
     { k: "target", a: 'data-planarg="mv_blender_sheet.target"', t: "select",
-      o: ["character", "background", "prop"], hint: "the row kind. Default prop — the rows this exists for." },
+      o: ["character", "background", "prop"], hint: "the row kind. Default prop: the rows this exists for." },
     { k: "id", a: 'data-planarg="mv_blender_sheet.id"', t: "text", hint: "the row's id or exact name; it must already be declared" },
     { k: "builtin", a: 'data-planarg="mv_blender_sheet.builtin"', t: "text", hint: '"<set>:<mesh>" from the Blender catalogue. Exactly one of builtin or asset.' },
     { k: "asset", a: 'data-planarg="mv_blender_sheet.asset"', t: "text", hint: "full path to a .blend/.obj/.glb/.gltf/.fbx/.stl" },
@@ -3169,7 +3175,7 @@ const PLAN_FIELDS = {
       hint: "alpha instead of the neutral card. The card is what keeps environment out of a reference." },
     { k: "aspect", a: 'data-planarg="mv_blender_sheet.aspect"', t: "select",
       o: ["square", "16:9", "4:3", "3:2", "9:16"], hint: "panel shape. Default square." },
-    { k: "lens", a: 'data-planarg="mv_blender_sheet.lens"', t: "num", hint: "focal length in mm, default 85 — portrait compression, which is what a reference wants" },
+    { k: "lens", a: 'data-planarg="mv_blender_sheet.lens"', t: "num", hint: "focal length in mm, default 85: portrait compression, which is what a reference wants" },
   ],
   mv_previz_shot: [
     { k: "slug", a: 'data-planarg="mv_previz_shot.slug"', t: "text", hint: "the project this item runs in" },
@@ -3181,7 +3187,7 @@ const PLAN_FIELDS = {
      * the same payload the board editor's set picker reads. */
     { k: "scene", a: 'data-planarg="mv_previz_shot.scene"', t: "select",
       o: () => previzSets, hint: "the gray-box set to block in, from the toolkit's own list. Default corridor." },
-    { k: "frames", a: 'data-planarg="mv_previz_shot.frames"', t: "int", hint: "121-480, default 144 — six seconds at 24fps" },
+    { k: "frames", a: 'data-planarg="mv_previz_shot.frames"', t: "int", hint: "121-480, default 144: six seconds at 24fps" },
     { k: "render", a: 'data-planarg="mv_previz_shot.render"', t: "bool", d: true, hint: "off returns only the words, spending nothing" },
     { k: "framing", a: 'data-planarg="mv_previz_shot.framing"', t: "select",
       o: ["wide", "medium", "close", "extreme close", "over-the-shoulder", "insert", "establishing"], hint: "the framing sentence" },
@@ -3190,20 +3196,20 @@ const PLAN_FIELDS = {
     { k: "pronoun", a: 'data-planarg="mv_previz_shot.pronoun"', t: "select", o: ["they", "she", "he", "it"], hint: "how the words refer to the subject" },
     { k: "angle", a: 'data-planarg="mv_previz_shot.angle"', t: "text", hint: "a named angle, folded into the framing sentence" },
     { k: "action", a: 'data-planarg="mv_previz_shot.action"', t: "text", hint: "the shot's action line" },
-    { k: "lens", a: 'data-planarg="mv_previz_shot.lens"', t: "num", hint: "focal length in mm for the PREVIZ render — changes the blocking clip, not the words" },
+    { k: "lens", a: 'data-planarg="mv_previz_shot.lens"', t: "num", hint: "focal length in mm for the PREVIZ render: changes the blocking clip, not the words" },
     { k: "lensFeel", a: 'data-planarg="mv_previz_shot.lensFeel"', t: "text", hint: "prose colour on the lens sentence" },
     { k: "lighting", a: 'data-planarg="mv_previz_shot.lighting"', t: "text", hint: "prose colour on the lens sentence" },
     { k: "reference", a: 'data-planarg="mv_previz_shot.reference"', t: "json",
       hint: 'the reference frame, as JSON: {"builtin":"dig:artifact"} or {"asset":"C:\\\\...\\\\thing.glb"}. Empty for none.' },
     { k: "u", a: 'data-planarg="mv_previz_shot.u"', t: "num", hint: "where in the move the reference viewpoint is taken, 0-1. Default 0.5." },
     { k: "blockout", a: 'data-planarg="mv_previz_shot.blockout"', t: "bool", d: false,
-      hint: "render a CONTROL clip for VACE instead of a previz for a person — flat grey at the clip contract, its own file and its own sidecar" },
+      hint: "render a CONTROL clip for VACE instead of a previz for a person: flat grey at the clip contract, its own file and its own sidecar" },
     { k: "move_args", a: 'data-planarg="mv_previz_shot.move_args"', t: "json",
-      hint: "the move's own keyword arguments — {\"aim_at\":\"neck\",\"rise\":6}. They steer the "
+      hint: "the move's own keyword arguments: {\"aim_at\":\"neck\",\"rise\":6}. They steer the "
         + "clip, not the words; the legal keys are the move's own and the toolkit names them "
         + "in its refusal." },
     { k: "spec", a: 'data-planarg="mv_previz_shot.spec"', t: "json",
-      hint: '{"figures":[{"id":"kaya","at":[0,2,0],"to":[0,9,0]}],"props":[]} — who stands where, in metres, +Z up. `at` is where the thing stands.' },
+      hint: '{"figures":[{"id":"kaya","at":[0,2,0],"to":[0,9,0]}],"props":[]}: who stands where, in metres, +Z up. `at` is where the thing stands.' },
   ],
 };
 
@@ -3259,7 +3265,7 @@ const planClock = (t) => (Number.isFinite(Number(t))
 /** What an item's estimate is BASED on, so a number can be argued with. */
 function estimateTitle(est) {
   if (!est) {
-    return "UNPRICED — there is no cost model for this tool, so it is reported as unpriced and "
+    return "UNPRICED: there is no cost model for this tool, so it is reported as unpriced and "
       + "never folded into the total as a zero.";
   }
   const bits = [`basis: ${est.basis}`];
@@ -3338,7 +3344,7 @@ function renderPlanInner() {
     ${renderPlanSpend(s)}
 
     <div class="planrows">${(v.items || []).map(renderPlanRow).join("")
-      || `<p class="hint">No items yet — add one below, or from a scene's <b>+ Plan</b> button.</p>`}</div>
+      || `<p class="hint">No items yet: add one below, or from a scene's <b>+ Plan</b> button.</p>`}</div>
 
     ${renderPlanFoot(v, t, live, running)}
     ${/* ⚠ THE DOOR STAYS OPEN AFTER A RUN. Found by finishing one: the card goes
@@ -3393,8 +3399,8 @@ function renderPlanEmpty() {
       <div id="planProposeHost"></div>`;
   }
   return `<h3>Plan</h3>
-    <p class="hint">A plan is a list of tool calls somebody intends to make — which scenes, on
-      which engine, at which size, with which references — that you read, edit, approve item by
+    <p class="hint">A plan is a list of tool calls somebody intends to make (which scenes, on
+      which engine, at which size, with which references) that you read, edit, approve item by
       item, and only then start. <b>Nothing renders when a plan is proposed, and nothing renders
       when it is approved.</b> The GPU is spent by Run, and only on the items marked approved.</p>
     ${opener}
@@ -3403,7 +3409,7 @@ function renderPlanEmpty() {
 
 function renderPastPlans() {
   if (!pl.index.length) return "";
-  return `<label class="genopt" title="Read a plan that is finished or cancelled. It is history — the controls are refused on it.">past plans
+  return `<label class="genopt" title="Read a plan that is finished or cancelled. It is history: the controls are refused on it.">past plans
     <select class="sel2 sm" id="planPast">
       <option value="">the live plan</option>
       ${pl.index.map((p) => `<option value="${esc(p.id)}"${pl.planId === p.id ? " selected" : ""}>${
@@ -3446,7 +3452,7 @@ function renderPlanRow(it) {
     : q.error ? `<span class="warnhint">${esc(q.error)}</span>`
     : `${esc(q.engine)} ${q.width}x${q.height}${q.quantised
         ? ' <span class="planq" title="The engine floors the size to its own grid, so this is the'
-          + ' size it will really render at — not the one the brief asks for.">⌗</span>' : ""}`
+          + ' size it will really render at: not the one the brief asks for.">⌗</span>' : ""}`
       + `${q.refsSent ? ` · ${(q.refs || []).length} ref${(q.refs || []).length === 1 ? "" : "s"}` : q.useRefs === false ? " · refs not carried" : ""}`;
 
   const warns = (it.warnings || []).map((w) => (w.level === "error"
@@ -3471,7 +3477,7 @@ function renderPlanRow(it) {
         <button class="edtool sm" type="button" data-planapprove="${esc(it.id)}"
           ${frozen || (acks.length && !ticked) ? " disabled" : ""}
           title="${acks.length && !ticked
-            ? "Tick the acknowledgement below first — this item renders a scene with a reference that reaches it as nothing."
+            ? "Tick the acknowledgement below first: this item renders a scene with a reference that reaches it as nothing."
             : "Approve this item. Approval is of THESE arguments; editing them drops it back to edited."}">✓</button>
         <button class="edtool sm" type="button" data-planskip="${esc(it.id)}"${frozen ? " disabled" : ""}
           title="Take it out of this run without deleting it.">⊘</button>
@@ -3507,12 +3513,12 @@ function renderPlanFoot(v, t, live, running) {
       <button class="edtool sm" type="button" id="planSkipAll"${live && !running ? "" : " disabled"}>Skip all</button>
       <span class="dim">${t.proposed || 0} proposed · ${t.edited || 0} edited</span>
     </div>
-    <details class="planwhy2"><summary>say why — recorded with the decision</summary>
+    <details class="planwhy2"><summary>say why (recorded with the decision)</summary>
       <label class="dfield"><span>reasoning</span>
         <input class="line" id="planReason" placeholder="what made this the right call"></label>
       <label class="dfield"><span>your own words</span>
         <textarea class="wprompt" id="planFree" rows="2"
-          placeholder="direction, in your words — kept verbatim on the record"></textarea></label>
+          placeholder="direction, in your words: kept verbatim on the record"></textarea></label>
       <p class="hint dim">Both ride with the approval into the project's provenance ledger. The
         ledger never records a machine decision as a human one, and this is the half that is
         genuinely yours.</p>
@@ -3529,11 +3535,11 @@ function renderPlanFoot(v, t, live, running) {
           value="${pol.autoApproveUnderMinutes ?? ""}"${brief.trim() ? "" : " disabled"}> min</label>
       <button class="edtool sm" type="button" id="planSavePolicy">Save policy</button>
     </div>
-    <label class="dfield"><span>delegate brief — your goals, in your own words</span>
+    <label class="dfield"><span>delegate brief: your goals, in your own words</span>
       <textarea class="wprompt" id="planBrief" rows="2"
         placeholder="what you want out of this run, so a machine approval can be judged against it">${esc(brief)}</textarea></label>
     <p class="hint dim">⚠ <b>halt</b> stops the run on the first failure and <b>leaves the rest
-      approved</b>, so pressing Run again carries on from there — approve-then-start holds on
+      approved</b>, so pressing Run again carries on from there; approve-then-start holds on
       every resumption, not only the first. <b>continue</b> records the failure and steps over it.
       The auto-approve box stays disabled until the brief has text: a delegation needs the human's
       brief in their own words, because it is the direction-setting the record keeps as their
@@ -3541,7 +3547,7 @@ function renderPlanFoot(v, t, live, running) {
 
     <div class="framepick planrun">
       <button class="edtool" type="button" id="planRun"${(t.approved || 0) && !running ? "" : " disabled"}
-        title="Runs the approved items in order, one at a time, and returns straight away — this card follows along.">
+        title="Runs the approved items in order, one at a time, and returns straight away: this card follows along.">
         ${running ? "running…" : `Run ${t.approved || 0} approved item${(t.approved || 0) === 1 ? "" : "s"}`}</button>
       <button class="edtool sm" type="button" id="planPause"${running ? "" : " disabled"}
         title="Lets the render in flight finish, then stops. Killing a nearly-complete H3 clip throws away twenty minutes for nothing.">Pause</button>
@@ -3565,7 +3571,7 @@ function renderPlanFoot(v, t, live, running) {
         and the refusal lists the legal names.</p>
       <div id="planAddArgsHost">${planArgControls(pl.addTool, { slug: wf.slug }, false)}</div>
       <label class="dfield"><span>why</span>
-        <input class="line" id="planAddWhy" placeholder="one sentence — what this item is for"></label>
+        <input class="line" id="planAddWhy" placeholder="one sentence: what this item is for"></label>
       <label class="dfield"><span>insert at</span>
         <input class="line sm num" id="planAddAt" type="number" min="0" style="width:64px"
           placeholder="end"></label>
@@ -3587,7 +3593,7 @@ function planItemEditor(it) {
     ${known ? `<label class="genopt"><input type="checkbox" id="planRawTog"${pl.raw ? " checked" : ""}>
         edit as raw JSON</label>`
       : `<p class="hint dim">No field editor for this tool yet, so its whole argument object is
-         here as JSON — no argument is reachable by an agent and not by you.</p>`}
+         here as JSON: no argument is reachable by an agent and not by you.</p>`}
     <div id="planArgs">${planArgControls(it.tool, it.args || {}, pl.raw)}</div>
     <label class="dfield"><span>why</span>
       <input class="line" id="planEditWhy" value="${esc(it.why || "")}"></label>
@@ -3613,7 +3619,7 @@ function planArgControls(tool, args, raw) {
   return `<div class="planargs">${fields.map((f) => planField(f, args)).join("")}</div>`;
 }
 
-const planRawEditor = (args) => `<label class="dfield"><span>args — raw JSON</span>
+const planRawEditor = (args) => `<label class="dfield"><span>args: raw JSON</span>
   <textarea class="wprompt tall" data-planraw spellcheck="false">${
     esc(JSON.stringify(args || {}, null, 2))}</textarea></label>`;
 
@@ -3737,7 +3743,7 @@ function readPlanArgs(hostId, tool, current) {
     try { next = text ? JSON.parse(text) : {}; }
     catch (err) { throw new Error(`The arguments are not valid JSON: ${err.message}`); }
     if (!next || typeof next !== "object" || Array.isArray(next)) {
-      throw new Error("The arguments must be a JSON object — the tool's own named arguments.");
+      throw new Error("The arguments must be a JSON object: the tool's own named arguments.");
     }
     return argDiff(current, next);
   }
@@ -3770,19 +3776,19 @@ function renderProposeForm() {
     <label class="dfield"><span>title</span>
       <input class="line" id="planTitle" spellcheck="false"
         placeholder="Render the 14 unrendered scenes at H3 1920x1088"></label>
-    <label class="dfield"><span>intent — why this run</span>
+    <label class="dfield"><span>intent: why this run</span>
       <textarea class="wprompt" id="planIntent" rows="2"
         placeholder="your own sentence about why. It is the field nobody can write for you, and it is what the person approving actually reads."></textarea></label>
     <label class="dfield"><span>seed the items from</span>
       <select class="sel2 sm" id="planFrom">
-        <option value=""${seed ? "" : " selected"}>nothing — start empty${
+        <option value=""${seed ? "" : " selected"}>nothing (start empty)${
           pl.staged.length ? ` (${pl.staged.length} staged)` : ""}</option>
         <option value="unrendered"${seed === "unrendered" ? " selected" : ""}>every generate-mode scene with no take</option>
         <option value="stale"${seed === "stale" ? " selected" : ""}>every clip whose take predates its board or its cast</option>
         <option value="nosheet"${seed === "nosheet" ? " selected" : ""}>every declared row with no rendered sheet</option>
       </select></label>
-    <p class="hint dim">Seeding reuses the project's own scanners — the same ones the stale sweep
-      and the lint report read — so the list is what the project actually knows, not a guess.
+    <p class="hint dim">Seeding reuses the project's own scanners (the same ones the stale sweep
+      and the lint report read) so the list is what the project actually knows, not a guess.
       Seed it, then edit it: that is cheaper and more accurate than writing twenty items by hand.</p>
     ${pl.staged.length ? `<p class="hint">Staged from the page: ${pl.staged.map((i) =>
       `<code>${esc(i.tool)}</code>`).join(", ")}</p>` : ""}
@@ -3854,7 +3860,7 @@ async function pollPlan() {
      * a card that stops updating and says nothing is indistinguishable from a
      * run that has stopped. */
     pl.err = `The plan poll could not read /api/mv/plan/${wf.slug}. `
-      + `${RESTART_REQUIRED} The run itself is unaffected — it is on the server, not on this page.`;
+      + `${RESTART_REQUIRED} The run itself is unaffected: it is on the server, not on this page.`;
     if (pl.poll) { clearInterval(pl.poll); pl.poll = null; }
     paintPlanCard();
     return;
@@ -3886,7 +3892,7 @@ function wirePlan() {
     await planBusy(async () => {
       await postPlanPropose({ title, intent, from, items });
       pl.propose = null; pl.staged = [];
-      pl.say = "Proposed. Nothing has rendered — read it, change what you want, approve the items "
+      pl.say = "Proposed. Nothing has rendered: read it, change what you want, approve the items "
         + "you mean, then press Run.";
     });
   });
@@ -4022,7 +4028,7 @@ function wirePlan() {
     await planBusy(async () => {
       r = await api({ action: "set_brief", slug: wf.slug,
                       brief: { agentBudgetMinutes: want } });
-      pl.say = want == null ? "Budget cleared — the gate is off." : `Budget set to ${want} min.`;
+      pl.say = want == null ? "Budget cleared: the gate is off." : `Budget set to ${want} min.`;
     });
     /* ⚠ READ THE ANSWER BACK. set_brief writes only the keys in its `allowed`
      * list, so a server that has not learned this one answers 200 and stores
@@ -4057,7 +4063,7 @@ function wirePlan() {
     return planBusy(async () => {
       const r = await postPlanDiscard();
       pl.planId = null; pl.open = null; pl.ack.clear();
-      pl.say = r.discarded ? `Discarded "${r.title}" — ${r.items} item(s).` : "Discarded.";
+      pl.say = r.discarded ? `Discarded "${r.title}": ${r.items} item(s).` : "Discarded.";
     });
   });
 
@@ -4122,10 +4128,10 @@ async function decidePlan(items, status, opts = {}) {
     const rejected = (r.rejected || []).length;
     pl.say = `${changed} item${changed === 1 ? "" : "s"} ${status}`
       + (held.length
-        ? ` · ${held.join(", ")} left alone — the warning on that row is not acknowledged yet`
+        ? ` · ${held.join(", ")} left alone: the warning on that row is not acknowledged yet`
         : "")
       + (rejected
-        ? ` · ${rejected} refused: ${r.rejected.map((x) => `${x.id} — ${x.why}`).join(" · ")}`
+        ? ` · ${rejected} refused: ${r.rejected.map((x) => `${x.id}: ${x.why}`).join(" · ")}`
         : "");
   });
 }
@@ -4138,9 +4144,9 @@ async function runPlan(op) {
      * fact, which is how two answers to one question get shipped. */
     const r = await postPlanRun({ op });
     pl.say = r.note || (op === "start"
-      ? "Started. One item at a time, and this card follows along — you can close the tab, it is "
+      ? "Started. One item at a time, and this card follows along: you can close the tab, it is "
         + "running on the server."
-      : op === "pause" ? "Pausing — the render in flight finishes first."
+      : op === "pause" ? "Pausing: the render in flight finishes first."
       : op === "resume" ? "Resumed." : "Stopped.");
   });
 }
@@ -4191,7 +4197,7 @@ function openPropose(from, item) {
      * press still gets an answer, because a control that repaints the same
      * sentence looks broken. */
     pl.say = "That control needs the plan routes, and the server running right now does not have "
-      + "them — the sentence above is the whole of it. Nothing was sent.";
+      + "them: the sentence above is the whole of it. Nothing was sent.";
     paintPlanCard();
     $("planCard")?.scrollIntoView({ behavior: "smooth", block: "center" });
     return undefined;
@@ -4231,7 +4237,7 @@ function planItemFor(spec) {
     const scene = (seg?.index ?? 0) + 1;
     return clip?.clipFile
       ? { tool: "mv_regen_clip", args: { slug: wf.slug, segment: a },
-          why: `scene ${scene} — re-render, every earlier take kept` }
+          why: `scene ${scene}: re-render, every earlier take kept` }
       : { tool: "mv_generate_clip", args: { slug: wf.slug, segment: a },
           why: `scene ${scene} has no take yet` };
   }
@@ -4570,7 +4576,7 @@ function wire(view) {
       const startSec = Number(sel("data-segstart")?.value);
       const endSec = Number(sel("data-segend")?.value);
       if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) {
-        alert("Both ends have to be numbers — clear one and the scene has no window to snap.");
+        alert("Both ends have to be numbers: clear one and the scene has no window to snap.");
         await loadProject();
         return;
       }
@@ -4732,7 +4738,7 @@ function wire(view) {
   on("wfToStudio", "onclick", async () => {
     try {
       const d = await api({ action: "build_timeline", slug: wf.slug });
-      alert(`Saved "${d.project}" with ${d.scenes} scenes. Open the Studio tab and load it — right-click any scene there to regenerate or cycle takes.`);
+      alert(`Saved "${d.project}" with ${d.scenes} scenes. Open the Studio tab and load it: right-click any scene there to regenerate or cycle takes.`);
       await loadProject();
     } catch (e) { alert(e.message); }
   });
@@ -4746,7 +4752,7 @@ function wire(view) {
       const r = await api({ action: "render_video", slug: wf.slug, fade, beatZoom });
       /* Says what it MADE, not that it succeeded — the length and frame rate are
        * the two things that were wrong about every earlier export. */
-      note.innerHTML = `Rendered <b>${esc(r.name)}</b> — ${r.clips} scenes, `
+      note.innerHTML = `Rendered <b>${esc(r.name)}</b>: ${r.clips} scenes, `
         + `${r.total}s at ${r.fps} fps, ${r.w}×${r.h}, `
         + `${(r.bytes / 1e6).toFixed(0)} MB. It is in your clip library.`
         /* ⚠ THE ROUTE'S OWN SENTENCE FOR A PULSE IT DROPPED, printed rather
@@ -4794,7 +4800,7 @@ function wire(view) {
           ? `<ul class="lintlist">${r.issues.map((i, idx) => `<li class="lint-${i.level}">
               ${i.level === "error" ? "✖" : "⚠"} <b>${esc(i.where)}</b> ${esc(i.msg)}${i.fix
                 ? ` <button class="edtool sm" type="button" data-lintfix="${idx}">${esc(i.fix.label)}</button>` : ""}</li>`).join("")}</ul>`
-          : `<p class="hint">✓ Nothing wrong — sheets, boards and references all line up.</p>`;
+          : `<p class="hint">✓ Nothing wrong: sheets, boards and references all line up.</p>`;
         /* A FIX IS ONE CLICK: the server wrote it (bible.js lintProject) as an
          * existing route action, set_shot (tick the name, keeping the board's
          * other references) or set_brief. The page adds no judgement of its own. */
@@ -4894,13 +4900,13 @@ function wire(view) {
       const [kind, id] = inp.dataset.mvrename.split("|");
       const scenes = refScenes(kind, was);
       const where = scenes.length
-        ? `${scenes.length} board${scenes.length === 1 ? "" : "s"} reference it — `
+        ? `${scenes.length} board${scenes.length === 1 ? "" : "s"} reference it: `
           + `scene${scenes.length === 1 ? "" : "s"} ${scenes.join(", ")}.`
         : "No board references it yet, so there is nothing to repoint.";
       if (!(await appConfirm(`Rename "${was}" to "${name}"?\n\n${where}\n\n`
         + "Every board reference, prominence entry and continuity line that names it is "
         + "repointed in the same write. Clips already on disk keep the old name in their "
-        + "evidence — that is the record of what they were actually handed, and it stays true."))) {
+        + "evidence: that is the record of what they were actually handed, and it stays true."))) {
         inp.value = was; return;
       }
       let r = null;
@@ -4912,7 +4918,7 @@ function wire(view) {
       if (stragglers.length) {
         alert(`The row was renamed, but ${stragglers.length} board reference`
           + `${stragglers.length === 1 ? " on scene" : "s on scenes"} ${stragglers.join(", ")} `
-          + `still say "${was}" — the cascade did not run.\n\n${RESTART_REQUIRED}\n\n`
+          + `still say "${was}": the cascade did not run.\n\n${RESTART_REQUIRED}\n\n`
           + "Until then those scenes reference a name nothing declares, and the map will "
           + "draw them as breaks. That is accurate: it is what they are.");
       }

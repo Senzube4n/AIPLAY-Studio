@@ -210,7 +210,9 @@ test("Stop in Simple mode ends the turn; each message has its own screen; Cancel
   assert.match(chat, /if \(SIMPLE_SENDING\) \{ SIMPLE_STREAM\?\.abort\(\); return; \}/, "Send is Stop while a reply runs");
   assert.match(chat, /signal: SIMPLE_STREAM\.signal/);
   assert.match(routes, /res\.on\("close", \(\) => \{ if \(!res\.writableEnded\) gone = true; \}\)/);
-  assert.match(routes, /const musicTurn = scope === "music" \? \(deps\.musicTools \? tools : createMusicTools\(\)\)\s*: panel \? createFormTools\(scope\) : null;/, "a screen per message");
+  // panelTools creates a fresh form before adding the Images-only repair.
+  assert.match(routes, /const musicTurn = scope === "music" \? \(deps\.musicTools \? tools : createMusicTools\(\)\)\s*: panel \? panelTools\(\) : null;/, "a screen per message");
+  assert.match(routes, /withImageRepairTools\(createFormTools\(scope\)/);
   assert.match(index, /startsWith\("art\."\) \|\| r\.via === "music\.cover"/, "the app's Stop reaches song-to-score");
 });
 

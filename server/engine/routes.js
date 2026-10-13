@@ -342,6 +342,7 @@ export function createEngineRoutes(deps) {
             ...s,
             tier: comfy?.tier ?? config.tier ?? null,
             backend: comfy ? comfy.backend : null,
+            failure: s.ready ? null : comfy?.failure ?? null,
             uptimeSec: comfy?.startedAt ? Math.round((Date.now() - comfy.startedAt) / 1000) : null,
             ledgerEntries: (await prov.read("library", { assetPrefix: "engine/" })).events.length,
           });

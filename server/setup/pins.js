@@ -29,6 +29,8 @@ import path from "node:path";
 
 /** The ComfyUI release a fresh engine gets. Tag ee71d5c, 2026-09-15. */
 export const COMFY_TAG = "v0.36.0";
+/** Qwen Image 2.1's native nodes first ship here. Used only by its isolated repair. */
+export const QWEN_COMFY_TAG = "v0.37.0";
 /** Comfy-Org is the repository's current home; comfyanonymous/ComfyUI redirects to it. */
 export const COMFY_REPO = "Comfy-Org/ComfyUI";
 export const comfyArchiveUrl = (tag = COMFY_TAG) =>
@@ -39,12 +41,20 @@ export const comfyArchiveUrl = (tag = COMFY_TAG) =>
  * one installed before the pin, when the installer took the latest release
  * (its marker records that tag, or null for the main branch). Null for an
  * engine on the pin, and for any ComfyUI Studio did not install, which is the
- * person's own and never judged here. `marker` is the .aiplay-engine.json.
+ * person's own and never judged here. A completed, verified Qwen repair uses
+ * its separate pin; an arbitrary engine on that tag still gets the warning.
+ * `marker` is the .aiplay-engine.json.
  */
 export function comfyPinNote(marker, tag = COMFY_TAG) {
   if (!marker || marker.complete !== true) return null;
   const have = marker.comfy || "the main branch";
   if (have === tag) return null;
+  const qwenNodes = ["TextEncodeQwenImage21", "QwenImage21Cache"];
+  if (tag === COMFY_TAG && have === QWEN_COMFY_TAG && marker.stageOnly === true
+    && marker.studio?.ok === true && marker.metadata?.stageOnly === true
+    && marker.metadata?.comfy === QWEN_COMFY_TAG && marker.metadata?.studio?.ok === true
+    && Array.isArray(marker.qwenNodes) && Array.isArray(marker.metadata.qwenNodes)
+    && qwenNodes.every((node) => marker.qwenNodes?.includes(node) && marker.metadata?.qwenNodes?.includes(node))) return null;
   return `Studio's own ComfyUI is ${have}, but this version of Studio is tested with ${tag}. `
     + "It may well work; if the engine misbehaves, that difference is the first thing to suspect.";
 }

@@ -434,7 +434,7 @@ function showConfirm(ev) {
   const box = $("chatConfirm");
   if (!box) return;
   $("chatConfirmText").innerHTML =
-    `<div class="chat-toolname">${esc(ev.tool)} — ${esc(PLAIN[ev.tool] || "spends GPU time")}</div>`
+    `<div class="chat-toolname">${esc(ev.tool)}: ${esc(PLAIN[ev.tool] || "spends GPU time")}</div>`
     + `<div class="chat-cost">${esc(ev.cost || "GPU time")}</div>`
     + argList(ev.args);
   box.hidden = false;
@@ -693,10 +693,10 @@ function greet() {
   d.className = "chat-row chat-empty";
   d.innerHTML =
     `<h3>What do you want to make?</h3>`
-    + `<p>A language model — a local one on this machine, or a cloud API connected on the Agent page — can work the Studio for you. It reads what you already `
+    + `<p>A language model (a local one on this machine, or a cloud API connected on the Agent page) can work the Studio for you. It reads what you already `
     + `have, writes and renders new music, draws pictures into your Images library, and blocks `
-    + `shots for a video. Anything that spends time on the graphics card is proposed first and `
-    + `waits for you to say yes.</p>`
+    + `shots for a video. Graphics card work starts when you ask, with a warning and a Cancel button. `
+    + `Anything that deletes is proposed first and waits for you to say yes.</p>`
     + `<div class="chat-cans">`
     + CANS.map((c) =>
       `<button type="button" class="chat-can" data-ask="${esc(c.ask)}">`
@@ -748,19 +748,19 @@ export function fillModelMenu(sel, d, emptyTitle, opts = {}) {
   const apis = models.filter((m) => m.api);
   const local = models.filter((m) => !m.api);
   if (!models.length) {
-    sel.innerHTML = `<option value="">${d?.offline ? "waiting for the engine…" : d ? "no chat model found" : "unavailable"}</option>`;
+    sel.innerHTML = `<option value="">${d?.offline ? (globalThis.aiplayEngineDown ? "engine not running" : "waiting for the engine…") : d ? "no chat model found" : "unavailable"}</option>`;
     sel.disabled = true;
     sel.title = d && !d.offline ? emptyTitle : "";
     return null;
   }
-  const opt = (m) => `<option value="${esc(m.file)}" title="${esc(m.api ? m.model : m.file)}">${esc(m.label)}${m.why ? ` — ${esc(m.why)}` : ""}</option>`;
+  const opt = (m) => `<option value="${esc(m.file)}" title="${esc(m.api ? m.model : m.file)}">${esc(m.label)}${m.why ? `: ${esc(m.why)}` : ""}</option>`;
   sel.innerHTML = (opts.lead ? `<option value="">${esc(opts.lead)}</option>` : "") + (apis.length ? `<optgroup label="Cloud API">${apis.map(opt).join("")}</optgroup>` : "")
     + (local.length ? `<optgroup label="Local · this machine">${local.map(opt).join("")}</optgroup>`
-      : d.offline ? '<optgroup label="Local · this machine"><option value="" disabled>waiting for the engine…</option></optgroup>' : "");
+      : d.offline ? `<optgroup label="Local · this machine"><option value="" disabled>${globalThis.aiplayEngineDown ? "engine not running" : "waiting for the engine…"}</option></optgroup>` : "");
   const cur = models.find((m) => m.file === d.current) || null;
   if (opts.lead) sel.value = d.own && models.some((m) => m.file === d.own) ? d.own : "";
   else sel.value = cur ? cur.file : models[0].file;
-  sel.title = cur?.api ? `${cur.label} — answers over the internet, billed to your API account` : (d.current || "");
+  sel.title = cur?.api ? `${cur.label}: answers over the internet, billed to your API account` : (d.current || "");
   sel.disabled = false;
   return cur;
 }

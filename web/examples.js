@@ -29,7 +29,7 @@
 export const EXAMPLES = [
   {
     id: "soulrock",
-    label: "Pop rock / soul — “Mirror”",
+    label: "Pop rock / soul: “Mirror”",
     genre: "Pop Rock / Soul",
     title: "Mirror",
     caption:
@@ -72,7 +72,7 @@ export const EXAMPLES = [
   },
   {
     id: "liquiddnb",
-    label: "Liquid drum & bass — “Stay On”",
+    label: "Liquid drum & bass: “Stay On”",
     genre: "Liquid DnB / Afro house",
     title: "Stay On",
     caption:
@@ -87,7 +87,7 @@ export const EXAMPLES = [
       "Arrangement. Primary: rolling two-step break with ghost snares; deep detuned " +
       "Reese sub; melodic log-drum bassline running continuously. Secondary: swung " +
       "shaker and conga under a straight kick and snare; balafon counter-line; warm " +
-      "supersaw lead doubled by balafon. No crashes and no full breakdown — the " +
+      "supersaw lead doubled by balafon. No crashes and no full breakdown: the " +
       "arrangement is continuous by design.",
     lyrics:
       "[Intro]\n(spoken)\nNobody's first\nThen somebody is\n\n" +
@@ -104,7 +104,7 @@ export const EXAMPLES = [
   },
   {
     id: "orchestral",
-    label: "Orchestral — instrumental",
+    label: "Orchestral: instrumental",
     genre: "Orchestral / cinematic",
     instrumental: true,
     structure: "orchestral",
@@ -126,7 +126,7 @@ export const EXAMPLES = [
   },
   {
     id: "lofi",
-    label: "Lo-fi beats — instrumental",
+    label: "Lo-fi beats: instrumental",
     genre: "Lo-fi / instrumental",
     instrumental: true,
     structure: "lofi",
@@ -147,7 +147,7 @@ export const EXAMPLES = [
   },
   {
     id: "country",
-    label: "Country — “Needle North”",
+    label: "Country: “Needle North”",
     genre: "Country",
     title: "Needle North",
     caption:
@@ -172,7 +172,7 @@ export const EXAMPLES = [
   },
   {
     id: "bossa",
-    label: "Bossa nova — “Behind Glass”",
+    label: "Bossa nova: “Behind Glass”",
     genre: "Bossa nova",
     title: "Behind Glass",
     caption:
@@ -188,7 +188,7 @@ export const EXAMPLES = [
       "Arrangement. Primary: nylon-string guitar playing the bossa pattern " +
       "throughout; upright bass on roots and fifths. Secondary: brushes on a snare " +
       "with the hi-hat pedal on two and four; Rhodes comping sparse chords; a single " +
-      "flute line in the middle section. Groove: steady and unvarying — the interest " +
+      "flute line in the middle section. Groove: steady and unvarying, the interest " +
       "is harmonic, not rhythmic.",
     lyrics:
       "[Verse]\nYou order for us both again\nI let you, I always do\n\n" +
@@ -198,7 +198,7 @@ export const EXAMPLES = [
   },
   {
     id: "synthwave",
-    label: "Dark synthwave — instrumental",
+    label: "Dark synthwave: instrumental",
     genre: "Synthwave / electronic",
     instrumental: true,
     structure: "electronic",
@@ -219,7 +219,7 @@ export const EXAMPLES = [
   },
   {
     id: "rnb",
-    label: "R&B — “Relation”",
+    label: "R&B: “Relation”",
     genre: "R&B",
     title: "Relation",
     caption:

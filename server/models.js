@@ -3545,6 +3545,19 @@ export function songRightsStamp(meta = {}, opts = {}) {
  * the answer was available all along.
  */
 export async function diskFree() {
+  /* The models folder's drive, not ComfyUI's: with models pinned to another
+   * drive the screen quoted the wrong free space and allowed or refused
+   * downloads on it. Walk up to a folder that exists. */
+  for (let dir = config.modelsDir || config.comfyDir, i = 0; dir && i < 30; i++) {
+    try {
+      const s = await statfs(dir);
+      return { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize };
+    } catch {
+      const up = path.dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
   try {
     const s = await statfs(config.comfyDir);
     return { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize };
@@ -3645,7 +3658,11 @@ async function filePresent(f, files = null, override = null) {
 
 /** Bytes already fetched, for resume and for progress on a partial file. */
 async function fileHave(f) {
-  try { return (await stat(f.dest)).size; } catch { return 0; }
+  try { return (await stat(f.dest)).size; } catch { /* not in place yet */ }
+  /* An interrupted download lives in `<dest>.part` until it completes, and
+   * pressing Download resumes it. Counting it lets the screen say how much is
+   * left instead of offering the whole file again. */
+  try { return Math.min((await stat(`${f.dest}.part`)).size, f.bytes || Infinity); } catch { return 0; }
 }
 
 /**

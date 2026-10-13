@@ -120,7 +120,7 @@ function paintQuality() {
             ${delivered}
           </span>
           <span class="vlab-size-why">${z.note ? esc(z.note)
-            : `<i>Not in the sweep — offered, but nothing here has measured it.</i>`}</span>
+            : `<i>Not in the sweep: offered, but nothing here has measured it.</i>`}</span>
           <span class="vlab-territory">${esc(z.territory || "")}</span>
           ${z.gridWarning ? `<span class="vlab-warn">⚠ ${esc(z.gridWarning)}</span>` : ""}
         </label>`;
@@ -173,7 +173,7 @@ function paintCommit() {
   el.hidden = false;
   const c = LAB.commit;
   el.innerHTML = `<b>${c.steps} steps at sigma shift ${c.shift}${c.turbo ? " (turbo path)" : " (quality path)"}</b>
-    — ${esc(c.note)}
+   : ${esc(c.note)}
     <span class="vlab-cite">Traced in <code>${esc(c.cite)}</code></span>`;
 }
 
@@ -259,7 +259,7 @@ function paintKnobs() {
       control = `<input class="line" type="text" data-knob="${esc(k.id)}" value="${esc(k.value ?? "")}">`;
     }
     const unset = !mirror && k.unsetAt != null && (k.value == null || k.value === k.unsetAt)
-      ? `<span class="vlab-badge">unset — today's behaviour</span>` : "";
+      ? `<span class="vlab-badge">unset: today's behaviour</span>` : "";
     return `<div class="vlab-knob">
       <div class="vlab-knob-head">
         <label>${esc(k.label)}</label>${control}${unset}${modelBuildBadge(k.buildStatus)}
@@ -329,7 +329,7 @@ async function paintHybrid() {
   const refs = attachedRefs();
   try {
     const r = await post({ action: "resolve_hybrid", refImages: refs.refImages, refAudios: refs.refAudios });
-    el.textContent = `Hybrid would render on ${r.engine.toUpperCase()} — ${r.reason}`;
+    el.textContent = `Hybrid would render on ${r.engine.toUpperCase()}: ${r.reason}`;
     el.hidden = false;
   } catch { el.hidden = true; }
 }
@@ -527,7 +527,7 @@ function renderVerdict(g) {
   if (!g.verdict) return "";
   const arm = g.arms.find((a) => a.id === g.verdict.armId);
   return `<p class="vlab-verdict">
-    <b>${esc(arm ? arm.label : "None of them")}</b> — ${esc(g.verdict.note)}
+    <b>${esc(arm ? arm.label : "None of them")}</b>: ${esc(g.verdict.note)}
     <span class="vlab-cite">${esc(g.verdict.by)} · ${new Date(g.verdict.at).toLocaleString()}</span></p>`;
 }
 
@@ -546,7 +546,7 @@ function renderVerdictForm(g) {
       <option value=""${g.verdict && !g.verdict.armId ? " selected" : ""}>none of them</option>
       ${opts}
     </select>
-    <input class="line" type="text" data-vnote="${esc(g.id)}" placeholder="Why — one sentence you could act on in a month"
+    <input class="line" type="text" data-vnote="${esc(g.id)}" placeholder="Why: one sentence you could act on in a month"
       value="${esc(g.verdict?.note || "")}">
     <button class="edtool" type="button" data-vsave="${esc(g.id)}">Save</button>
     <span class="hint">Saved on the comparison, read back by the tools. Clear the box and save to take it back.</span>
@@ -643,7 +643,7 @@ function zoomStill(img) {
   const row = s?.rows.find((r) => r.armId === img.dataset.zoomarm);
   const st = row?.stills.find((x) => String(x.frame) === img.dataset.zoomframe);
   const asked = row && (row.width !== row.askedWidth || row.height !== row.askedHeight)
-    ? ` — the arm asked for ${row.askedWidth}×${row.askedHeight}` : "";
+    ? `: the arm asked for ${row.askedWidth}×${row.askedHeight}` : "";
   showZoom(img.dataset.zoom,
     `${row?.label || ""} · frame ${img.dataset.zoomframe}${st ? ` at ${st.atSec.toFixed(2)} s` : ""}`
     + ` · the file holds ${st?.w}×${st?.h}${asked} · shown 1:1`);
@@ -658,14 +658,14 @@ function zoomVideoFrame(btn) {
   const group = btn.closest("[data-group]");
   const gid = group?.dataset.group;
   const vid = group?.querySelector(`[data-armvid="${btn.dataset.zoomvid}"]`);
-  if (!vid || !vid.videoWidth) { note("That arm has not decoded a frame yet — press play, or scrub."); return; }
+  if (!vid || !vid.videoWidth) { note("That arm has not decoded a frame yet: press play, or scrub."); return; }
   const g = (LAB.groups || []).find((x) => x.id === gid);
   const arm = g?.arms.find((a) => a.id === btn.dataset.zoomvid);
   const c = document.createElement("canvas");
   c.width = vid.videoWidth; c.height = vid.videoHeight;
   c.getContext("2d").drawImage(vid, 0, 0);
   const asked = arm && (arm.width !== vid.videoWidth || arm.height !== vid.videoHeight)
-    ? ` — the arm asked for ${arm.width}×${arm.height}` : "";
+    ? `: the arm asked for ${arm.width}×${arm.height}` : "";
   showZoom(c.toDataURL("image/png"),
     `${arm?.label || ""} · ${vid.currentTime.toFixed(2)} s`
     + ` · the file holds ${vid.videoWidth}×${vid.videoHeight}${asked} · shown 1:1`);
@@ -780,7 +780,7 @@ function watch(id) {
 
 async function startCompare() {
   const prompt = $("vidPrompt")?.value.trim();
-  if (!prompt) { note("Describe the clip first — every arm renders the same description."); return; }
+  if (!prompt) { note("Describe the clip first: every arm renders the same description."); return; }
   const configs = [...document.querySelectorAll("#vlabConfigs [data-cfg]")]
     .filter((c) => c.checked).map((c) => c.dataset.cfg);
   if (!configs.length) { note("Tick at least one configuration."); return; }
@@ -807,7 +807,7 @@ async function startCompare() {
     LAB.groups = [r.group, ...(LAB.groups || []).filter((g) => g.id !== r.group.id)];
     paintGroups();
     watch(r.group.id);
-    note(`Comparing ${r.group.arms.length} configurations on seed ${r.group.seed}. Each arm is a full render — they run one at a time, and music always goes first.`);
+    note(`Comparing ${r.group.arms.length} configurations on seed ${r.group.seed}. Each arm is a full render: they run one at a time, and music always goes first.`);
   } catch (err) {
     note(err.message);
   } finally {
@@ -862,13 +862,13 @@ function mount() {
     </details>
 
     <details class="field vlab">
-      <summary><b>Engine settings</b> <span class="sp meta">turbo, steps, sigma shift — with reasons</span></summary>
+      <summary><b>Engine settings</b> <span class="sp meta">turbo, steps, sigma shift (with reasons</span></summary>
       <div id="vlabKnobs"></div>
     </details>
 
     <details class="field vlab">
       <summary><b>Compare</b> <span class="sp meta">one shot, several configurations</span></summary>
-      <p class="hint">Same description, same seed, same references — only the configuration
+      <p class="hint">Same description, same seed, same references) only the configuration
         changes. Each arm is a full render and they run one at a time, so keep the length
         short. Results land in the clip library tagged as one group.</p>
       <div id="vlabConfigs"></div>

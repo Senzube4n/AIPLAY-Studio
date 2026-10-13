@@ -96,6 +96,10 @@ export const ROUTABLE = {
   models_for_this_machine: null,
   /* Reads what a one-click setup would build and how its job is going. */
   setup_status: null,
+  /* A narrow, argument-free repair: the assistant cannot choose paths, code,
+   * PyTorch builds or downloads through it. The existing chat gate accepts a
+   * typed/dictated yes, and the backend refuses active rendering. */
+  qwen_engine_repair: "writes",
   fastcovers_status: null,
   h3_refmod_status: null,
   h3_refmod_inspect: null,
@@ -774,6 +778,7 @@ export const COST_TEXT = {
 /** A tool whose gate's sentence would be false for it gets its own. The gate
  *  word still decides whether and how the chat asks; only the words change. */
 export const COST_TEXT_BY_TOOL = {
+  qwen_engine_repair: "downloads a compatible private engine (about 3–5 GB on CPU or 6–15 GB on a graphics card) and restarts it; existing models are reused",
   music_daw_draft: "no graphics card time; saves the reviewed score, exact text and source fingerprints without changing DAW notes",
   music_daw_takes: "graphics card time; queues two or three YuE2 Python passage alternatives through ordinary song auditions, preserving the original recording",
   music_takes_create: "processor time; measures 2, 4 or 8 existing recordings and saves their exact stored receipts and playback gains without generating songs",
@@ -805,6 +810,7 @@ export const COST_TEXT_BY_TOOL = {
  *  would be false for it (server/chat/loop.js gateLabel). video_settings is
  *  "writes" for its confirm, but it saves a setting, not a file. */
 export const GATE_WORDS_BY_TOOL = {
+  qwen_engine_repair: "INSTALLS QWEN SUPPORT",
   music_daw_draft: "SAVES A SCORE DRAFT",
   music_takes_create: "SAVES A COMPARISON",
   music_takes_choose: "SAVES A TAKE CHOICE",
@@ -934,7 +940,10 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     gate: gate || null,
     cost: gate ? (COST_TEXT_BY_TOOL[tool.name] || COST_TEXT[gate]) : undefined,
     gateWords: gate ? GATE_WORDS_BY_TOOL[tool.name] || null : null,
-    endsTurn: WORKBENCH_STARTS.has(tool.name) || tool.name === "music_daw_takes",
+    // Installing an engine keeps the setup door's explicit agreement even
+    // when the person lets ordinary renders start immediately.
+    alwaysConfirm: tool.name === "qwen_engine_repair",
+    endsTurn: WORKBENCH_STARTS.has(tool.name) || tool.name === "music_daw_takes" || tool.name === "qwen_engine_repair",
     cancelScope: WORKBENCH_STARTS.has(tool.name) && gate === "gpu" ? "music-workbench" : undefined,
     routed: true,
     run: (a) => {
@@ -1123,6 +1132,13 @@ export function chooseTools(message, { limit = ROUTE_LIMIT, pinned = [] } = {}) 
     if (seen.has(tool.name)) continue;
     chosen.push(tool);
     seen.add(tool.name);
+  }
+  // A repair without its read-only status makes the assistant ask the person
+  // to collect information. Keep the companion in the same small tool budget.
+  if (seen.has("qwen_engine_repair") && !seen.has("setup_status")) {
+    const companion = index().find((entry) => entry.tool.name === "setup_status")?.tool;
+    const replace = chosen.findLastIndex((tool) => tool.name !== "qwen_engine_repair" && !pinned.includes(tool.name));
+    if (companion && replace >= 0) chosen[replace] = companion;
   }
   return chosen;
 }

@@ -113,7 +113,7 @@ async function snapshot(kind) {
       running: cur ? `"${cur.title || cur.file || "untitled"}" (${cur.kind}, ${Math.round((cur.progress || 0) * (cur.progress <= 1 ? 100 : 1))}%, ${cur.elapsed || 0} s)` : "",
       queued: P.kinds.reduce((n, k) => n + (s.queuedKinds?.[k] || 0), 0),
       recent: (s.recent || []).filter((j) => mine(j.kind)).slice(0, 4)
-        .map((j) => `"${j.title || j.file || "untitled"}" (${j.kind}${j.engine ? `, ${j.engine}` : ""}): ${j.error ? `FAILED — ${j.error}` : "done"}`),
+        .map((j) => `"${j.title || j.file || "untitled"}" (${j.kind}${j.engine ? `, ${j.engine}` : ""}): ${j.error ? `FAILED: ${j.error}` : "done"}`),
       note: $(P.note)?.textContent?.trim() || "",
     };
   } catch { /* the status read is a nicety; the form is what matters */ }
@@ -398,7 +398,7 @@ function mount(kind) {
       if (r.action === "generate") {
         t.started = true;
         const got = await pressMake(kind);
-        row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? ` — ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
+        row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? `: ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
       }
       return;
     }
@@ -460,7 +460,7 @@ function mount(kind) {
       if (t?.make && t.set && !t.started && !t.proposed && !t.failed && !t.stopped) {
         row("note", `You pressed ${esc(P.make)}, so Studio pressed it on the form too.`);
         const got = await pressMake(kind);
-        row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? ` — ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
+        row(got.ok ? "did" : "fail", got.ok ? `✓ Started${got.note ? `: ${esc(got.note)}` : ""}` : `It did not start: ${esc(got.why)}`);
       }
     }
   }

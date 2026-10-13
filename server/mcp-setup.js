@@ -10,12 +10,29 @@
  */
 import { RECIPE_IDS, TORCH_CHOICES } from "./setup/venv.js";
 import { ENGINE_SETUP_ID } from "./setup/engine-packages.js";
+import { QWEN_SETUP_ID } from "./setup/qwen-engine.js";
 
 /** Every setup the door knows: the venv recipes, then Studio's own engine packages. */
-export const SETUP_IDS = [...RECIPE_IDS, ENGINE_SETUP_ID];
+export const SETUP_IDS = [...RECIPE_IDS, ENGINE_SETUP_ID, QWEN_SETUP_ID];
 
 export function setupTools(api) {
   return [
+    {
+      name: "qwen_engine_repair",
+      description: "Fix Qwen Image 2.1 when Studio reports missing native engine support. "
+        + "Read setup_status with id qwen-engine first and tell the person its download and disk sizes. "
+        + "After their agreement, Studio detects the hardware, builds a compatible private engine, reuses the current "
+        + "models and library, restarts the engine and checks native Qwen support. Failed activation restores the old engine. "
+        + "Needs no mouse, folder picker or command prompt. Refuses while renders are running or queued. "
+        + "Returns a job immediately; follow setup_status with id qwen-engine for progress. Engine support alone does "
+        + "not establish that the model files are installed or fit the graphics card.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async run() {
+        const r = await api("POST", "/api/setup", { action: "run", id: QWEN_SETUP_ID });
+        if (r?.error) throw new Error(r.error);
+        return { ...r.job, say: r.job?.message || "Fixing Qwen support. You can ask for progress." };
+      },
+    },
     {
       name: "setup_feature",
       description: "Set up something Studio needs, with no system Python and no command prompt. "
@@ -39,7 +56,7 @@ export function setupTools(api) {
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", enum: SETUP_IDS, description: "Which setup: lyrics, stems, or studio-packages." },
+          id: { type: "string", enum: SETUP_IDS, description: "Which setup: lyrics, stems, studio-packages, or qwen-engine." },
           torch: { type: "string", enum: TORCH_CHOICES, description: "Optional, lyrics and stems only. auto (default) follows the graphics card (and, for stems, the free space on the drive); cu126, cu128 (CUDA 12.8, for an RTX 50) or cpu chooses the PyTorch build, and a python already there with another build is replaced." },
         },
         required: ["id"],
@@ -53,7 +70,8 @@ export function setupTools(api) {
     },
     {
       name: "setup_status",
-      description: "What each one-click setup would do (folder, Python, PyTorch build and the sentence for each choice, "
+      description: "Qwen engine repair readiness, download size and progress, or what another one-click setup would do "
+        + "(folder, Python, PyTorch build and the sentence for each choice, "
         + "packages, download and disk sizes; for stems also freeGb and needGb, the drive's free space and what each "
         + "build needs, and ffmpegFound), whether the feature already works on this machine (ready) and whether it works "
         + "only on the processor while a GPU build is on offer (onProcessor), why a setup would be "
