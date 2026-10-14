@@ -118,3 +118,26 @@ export function validateGraph(graph, info) {
     }
   }
 }
+
+/** The body of a worker answer as JSON, refused while reading once it passes `limit`. */
+export async function readJsonCapped(response, limit = MAX_JSON) {
+  const declared = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > limit) {
+    await response.body?.cancel?.().catch(() => {});
+    throw new Error(`The worker's answer is larger than ${Math.round(limit / 1048576)} MiB; it was not read.`);
+  }
+  if (!response.body) return JSON.parse((await response.text()) || "null");
+  const reader = response.body.getReader();
+  const parts = []; let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.length;
+    if (bytes > limit) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`The worker's answer is larger than ${Math.round(limit / 1048576)} MiB; it was not read.`);
+    }
+    parts.push(value);
+  }
+  return JSON.parse(Buffer.concat(parts.map((p) => Buffer.from(p))).toString("utf8") || "null");
+}

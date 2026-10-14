@@ -1,0 +1,21 @@
+#cloudComputer { margin-top: 16px; }
+#cloudSetup { margin-top: 16px; }
+#cloudSetup .cloud-setup-steps { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; color: var(--dim); font-size: .8rem; }
+#cloudSetup .cloud-setup-steps .active { color: var(--accent); font-weight: 600; }
+#cloudSetup .cloud-setup-steps .done { color: var(--ink); }
+#cloudSetup .cta { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#cloudSetup .line { width: 100%; max-width: 100%; box-sizing: border-box; }
+#cloudSetup form { margin-top: 12px; display: grid; gap: 9px; }
+#cloudSetup .runpod-connect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#cloudSetup .params .pv { min-width: 0; flex-wrap: wrap; }
+#cloudSetup .sel2 { max-width: 100%; }
+#cloudComputer .cta { flex-wrap: wrap; gap: 8px; }
+#cloudComputer .params .pv { min-width: 0; flex-wrap: wrap; }
+#cloudComputer .params .line { max-width: 240px; min-width: 0; }
+#cloudComputer pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); font-size: .75rem; }
+#cloudComputer #cloudComputerCleanupFiles { overflow-wrap: anywhere; color: var(--dim); }
+#cloudComputer .chip { white-space: normal; }
+#cloudComputer .sel2 { max-width: 100%; }
+@media (max-width: 700px) {
+  #cloudComputer .cta > button { max-width: 100%; white-space: normal; }
+}

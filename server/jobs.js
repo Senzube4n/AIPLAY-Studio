@@ -199,6 +199,7 @@ export class JobRunner extends EventEmitter {
   }
 
   enqueue(spec) {
+    if (this.remote && this.cloudStopping) throw new Error("The cloud computer is preparing to stop. Start it again before adding work.");
     const job = {
       id: randomUUID().slice(0, 8),
       ...spec,
@@ -246,7 +247,7 @@ export class JobRunner extends EventEmitter {
   }
 
   async #pump() {
-    if (this.current || this.queue.length === 0) return;
+    if (this.current || this.queue.length === 0 || this.cloudQueuePaused) return;
     if (typeof externalMusicWork !== "undefined" && externalMusicWork.owner) {
       clearTimeout(this.#waitTimer);
       this.#waitTimer = setTimeout(() => this.#pump(), 1000);
@@ -949,6 +950,11 @@ export class JobRunner extends EventEmitter {
    *  hands a function that sends a graph to the Pod and resolves with the
    *  downloaded file, already in the library folder. Null: the local engine. */
   setRemote(fn) { this.remote = typeof fn === "function" ? fn : null; }
+  pauseCloudQueue() { this.cloudQueuePaused = true; }
+  resumeCloudQueue() {
+    this.cloudQueuePaused = false;
+    queueMicrotask(() => { this.#pump().catch(() => {}); });
+  }
 
   /**
    * One song on the Pod. The job looks like a local one throughout (queued,

@@ -24,6 +24,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
+import { readJSON as readCloudJSON, jsonStore as cloudJSONStore } from "./engine/remote-common.js";
 import { WebSocketServer } from "ws";
 import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshVideoPicks } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
@@ -3480,8 +3481,37 @@ engineDoor.setAdopter(engineRoutes.adopt);
  * routes: /api/runpod answers there with a refusal naming the mode. Results
  * are adopted into the same library as a local render; audio goes to the
  * music library under a runpod- name. */
+const cloudQueueFile = path.join(config.dataDir, "runpod", "paused-music-queue.json");
+const cloudQueueSave = cloudJSONStore(cloudQueueFile);
+let cloudQueueSignature = null;
+const savePausedCloudQueue = async () => {
+  const signature = JSON.stringify(jobs.queue);
+  if (signature === cloudQueueSignature) return;
+  await cloudQueueSave({ jobs: JSON.parse(signature) }); cloudQueueSignature = signature;
+};
+jobs.on("update", () => {
+  if (config.remoteOnly && jobs.cloudQueuePaused) savePausedCloudQueue().catch(() => console.warn("  [cloud] The paused queue could not be saved."));
+});
 const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret,
   append: prov.append, actorFrom: prov.actorFrom, sameOriginLocalJson,
+  localActivity: () => ({ active: !!jobs.current, queued: jobs.cloudQueuePaused ? 0 : jobs.queue.length }),
+  pauseQueuedWork: async () => {
+    jobs.pauseCloudQueue();
+    cloudQueueSignature = null; await savePausedCloudQueue();
+  },
+  resumeQueuedWork: async () => {
+    const file = cloudQueueFile;
+    const saved = await readCloudJSON(file, { jobs: [] });
+    const known = new Set([...jobs.queue, ...jobs.history, ...(jobs.current ? [jobs.current] : [])].map(j => j.id));
+    for (const job of saved.jobs || []) if (typeof job.id === "string" && !known.has(job.id)) { jobs.queue.push({ ...job, state: "queued" }); known.add(job.id); }
+    await cloudQueueSave({ jobs: [] }); cloudQueueSignature = null; jobs.resumeCloudQueue();
+  },
+  setSchedulingBlocked: value => { jobs.cloudStopping = !!value; },
+  cancelLocal: async () => {
+    for (const job of [...jobs.queue]) await jobs.cancelById(job.id);
+    if (jobs.current) await jobs.cancel();
+    if (jobs.cloudQueuePaused) { cloudQueueSignature = null; await savePausedCloudQueue(); }
+  },
   adopt: async (details) => {
     if (/\.(wav|flac|mp3|ogg|opus)$/i.test(details.output.file)) {
       /* "aiplay_" first: the library lists only its own prefixes (library.js
@@ -3507,7 +3537,7 @@ if (remoteRoutes) jobs.setRemote(async ({ graph, label, actor, isCancelled, onSt
     error.remoteState = "cancelled";
     throw error;
   }
-  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor });
+  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor, fromQueue: true });
   return await awaitRemoteMusicJob({ client: c, sent, isCancelled, onState });
 });
 

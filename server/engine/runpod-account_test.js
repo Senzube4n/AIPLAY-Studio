@@ -141,3 +141,17 @@ test("start and stop use scoped Pod mutations", async () => {
 test("normalization tolerates empty API fields", () => {
   assert.deepEqual(normalizeAccount({}), { balance: 0, currentSpendPerHr: 0, pods: [], gpus: [] });
 });
+
+test("a lost creation response cannot create another paid Pod, even with a new name", async () => {
+  let creates = 0;
+  const account = createRunpodAccount({ getApiKey: async () => KEY, setApiKey: async () => {}, clearApiKey: async () => {},
+    fetchFn: async (_url, init) => {
+      const q = JSON.parse(init.body).query;
+      if (q.includes("AiplayRunpodOverview")) return Response.json({ data: { myself: { pods: [] }, gpuTypes: [] } });
+      if (q.includes("AiplayCreatePod")) { creates++; throw new Error("Response lost"); }
+      throw new Error("Unexpected request");
+    } });
+  await assert.rejects(account.create({ name: "AIPLAY first", gpuTypeId: "gpu", confirm: "CREATE PAID POD" }));
+  await assert.rejects(account.create({ name: "AIPLAY retry", gpuTypeId: "gpu", confirm: "CREATE PAID POD" }), /previous Pod creation result is uncertain/);
+  assert.equal(creates, 1);
+});

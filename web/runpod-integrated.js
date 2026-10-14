@@ -1,5 +1,6 @@
-/* RunPod inside AIPLAY's Images and Video screens, in the launcher's "RunPod GPU"
- * mode only (config.remoteOnly). In any other mode this file does nothing: the
+/* Shared RunPod setup lives in Settings; rendering uses Images and Video in
+ * the launcher's "RunPod GPU" mode only (config.remoteOnly).
+ * In any other mode this file does nothing: the
  * blocks stay hidden, no request goes to /api/runpod, and Make / Render are
  * never intercepted. In that mode every Images and Video render goes to the Pod
  * (there is no local engine to choose), so the "Render on" chooser stays hidden.
@@ -138,7 +139,10 @@ async function refreshSetup() {
 function renderAccount(data) {
   runpodAccount = data;
   $("runpodAccountPanel").hidden = false;
-  $("runpodBalance").textContent = `Balance ${money(data.balance)} · running spend ${money(data.currentSpendPerHr)}/hour`;
+  const runningPods = (data.pods || []).filter(pod => pod.status === "RUNNING").length;
+  $("runpodBalance").textContent = `Balance ${money(data.balance)} · ${money(data.currentSpendPerHr)}/hour · ${runningPods} running Pods`;
+  $("runpodBalance").className = "chip ok";
+  $("runpodUsageUpdated").textContent = `Updated ${new Date().toLocaleTimeString()}. Storage can cost extra when Pods are stopped.`;
   const list = $("runpodPodList");
   list.replaceChildren();
   if (!data.pods?.length) list.textContent = "No Pods in this RunPod account yet.";
@@ -176,6 +180,9 @@ async function loadAccount() {
     if (!status.configured) {
       $("runpodAccountPanel").hidden = true;
       $("runpodAccountState").textContent = "No RunPod account API key saved.";
+      $("runpodBalance").textContent = "Account not connected";
+      $("runpodBalance").className = "chip";
+      $("runpodUsageUpdated").textContent = "";
       return;
     }
     renderAccount(await accountApi("/overview"));
@@ -183,6 +190,9 @@ async function loadAccount() {
     $("runpodAccountPanel").hidden = true;
     $("runpodAccountState").textContent = error.message;
     $("runpodAccountState").classList.add("warnline");
+    $("runpodBalance").textContent = "Usage unavailable";
+    $("runpodBalance").className = "chip warn";
+    $("runpodUsageUpdated").textContent = "Usage unavailable. Refresh to try again.";
   }
 }
 
@@ -250,7 +260,7 @@ async function refreshWorker() {
   if ($("runpodWorkerUrl") && !$("runpodWorkerUrl").value) $("runpodWorkerUrl").value = status.url || "";
   if (!status.configured) {
     connected = false; objectInfo = null; fillModels();
-    setState("No worker saved. Open Connection to add its HTTPS URL and token.", true);
+    setState("Add a worker URL and token in Settings.", true);
     return status;
   }
   try {
@@ -266,8 +276,13 @@ async function refreshWorker() {
   return status;
 }
 
-function openSettings() { $("runpodConnection").hidden = false; $("runpodWorkerUrl").focus(); }
-function closeSettings() { $("runpodConnection").hidden = true; }
+function openSettings() {
+  document.querySelector('.rail [data-view="settings"]')?.click();
+  $("set-runpod").scrollIntoView({ block: "start" });
+  $("cloudComputerConnection").open = true;
+  document.dispatchEvent?.(new Event("aiplay:cloud-setup-open"));
+  $("runpodWorkerUrl").focus({ preventScroll: true });
+}
 
 function dimensions(kind) {
   if (kind === "vid" && target(kind) === "runpod") {
@@ -300,7 +315,7 @@ function note(kind, text, error = false) {
 
 async function ensureWorker() {
   if (!connected) await refreshWorker();
-  if (!connected) throw new Error("Start the Pod, then open Connection and connect the worker.");
+  if (!connected) throw new Error("Start the Pod, then open Settings and connect the worker.");
 }
 
 async function submit(kind) {
@@ -402,8 +417,14 @@ async function init() {
   paintRemoteModel();
   $("vidRunPodModel")?.addEventListener("change", () => paintRemoteModel());
   for (const button of document.querySelectorAll("[data-runpod-settings]")) button.addEventListener("click", openSettings);
-  $("runpodConnectionClose").addEventListener("click", closeSettings);
-  $("runpodConnection").addEventListener("click", (event) => { if (event.target === $("runpodConnection")) closeSettings(); });
+  $("runpodConnection").hidden = false;
+  $("cloudComputerConnection").hidden = false;
+  $("runpodModeHint").hidden = true;
+  $("runpodRefreshUsage").addEventListener("click", async () => {
+    const button = $("runpodRefreshUsage"); button.disabled = true;
+    try { await loadAccount(); }
+    finally { button.disabled = false; }
+  });
   $("runpodConnectionForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = $("runpodConnect"); button.disabled = true;
@@ -415,14 +436,16 @@ async function init() {
       refreshSetup();
       const hardware = (result.devices || []).map((d) => d.name || d.type).filter(Boolean).join(" / ");
       setState(`Connected${hardware ? ` · ${hardware}` : ""}.`);
+      document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
     } catch (error) { connected = false; setState(friendlyError(error), true); }
     finally { button.disabled = false; }
   });
   $("runpodAccountForm").addEventListener("submit", async (event) => {
     event.preventDefault(); const button = $("runpodAccountConnect"); button.disabled = true;
     try {
-      await accountApi("/connect", { apiKey: $("runpodApiKey").value }); $("runpodApiKey").value = "";
-      renderAccount(await accountApi("/overview"));
+      await api("/computer/credentials", { apiKey: $("runpodApiKey").value }); $("runpodApiKey").value = "";
+      await loadAccount();
+      document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
     finally { button.disabled = false; }
   });
@@ -442,7 +465,11 @@ async function init() {
   $("runpodAccountDisconnect").addEventListener("click", async () => {
     try {
       await accountApi("/disconnect", {}); runpodAccount = null; $("runpodAccountPanel").hidden = true;
-      $("runpodAccountState").textContent = "RunPod account API key removed from this PC.";
+      document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
+      $("runpodAccountState").textContent = "Saved key removed";
+      $("runpodBalance").textContent = "Account not connected";
+      $("runpodBalance").className = "chip";
+      $("runpodUsageUpdated").textContent = "";
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
   });
   $("runpodReviewPod").addEventListener("click", reviewPod);

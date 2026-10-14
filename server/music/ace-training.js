@@ -55,10 +55,25 @@ export async function createAceTraining({ rootDir, lorasDir, aceURL = "http://12
   };
   const publicRow = item => ({ ...item, paths: undefined });
   async function available() {
-    try { await request("/health", { signal: AbortSignal.timeout(3000) }); return true; } catch { return false; }
+    try {
+      await request("/health", { signal: AbortSignal.timeout(3000) });
+      if (!state.aceSeen) { state.aceSeen = true; await save(state); }
+      return true;
+    } catch { return false; }
   }
   async function list() {
     return { available: await available(), models: Object.values(state.models).map(publicRow).sort((a, b) => b.createdAt - a.createdAt) };
+  }
+  async function activity() {
+    if (!await available()) return { known: !state.aceSeen, busy: !!state.aceSeen };
+    try {
+      // Completion/adoption must progress on the worker even after the desktop
+      // has closed. A stale persisted "training" flag is not evidence of work.
+      for (const item of Object.values(state.models)) if (["preparing", "training", "finishing"].includes(item.stage)) await check(item.id);
+      const status = await request("/v1/training/status");
+      if (typeof status.is_training !== "boolean") return { known: false, busy: true };
+      return { known: true, busy: status.is_training || Object.values(state.models).some(m => ["preparing", "training", "finishing"].includes(m.stage)) };
+    } catch { return { known: false, busy: true }; }
   }
   async function create({ name, style = "", instrumental = false } = {}) {
     const stem = cleanName(name);
@@ -170,5 +185,5 @@ export async function createAceTraining({ rootDir, lorasDir, aceURL = "http://12
     await rm(paths(item).dir, { recursive: true, force: true });
     delete state.models[item.id]; await save(state); return { ok: true };
   }
-  return { list, create, upload, addLibrary, prepare, check, start, stop, remove, available };
+  return { list, create, upload, addLibrary, prepare, check, start, stop, remove, available, activity };
 }

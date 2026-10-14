@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createRemoteClient } from "./remote-client.js";
@@ -8,16 +9,22 @@ import { containedFile, readBody, sendJSON } from "./remote-common.js";
 import { bodyOfError } from "../safety/refusal.js";
 import { checkpointGraph, buildAceStep15Graph, buildYue2ComfyGraph, videoGraph } from "../workflow.js";
 import { qwenImageGraph } from "../qwen-image.js";
+import { createRunpodV2 } from "./runpod-v2.js";
+import { createCloudComputer } from "./cloud-computer.js";
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
+  localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork,
   bootstrap = studioBootstrap }) {
   if (typeof sameOriginLocalJson !== "function") throw new Error("createRemoteRoutes needs index.js sameOriginLocalJson: a door that spends a paid GPU without it is open to a rebound page.");
   let clientPromise;
   const client = () => clientPromise ||= createRemoteClient({ dataDir: config.dataDir, outputDir: config.outputDir,
     getToken: () => getSecret("RUNPOD_WORKER_TOKEN"), setToken: token => setSecret("RUNPOD_WORKER_TOKEN", token), append, adopt });
-  const account = createRunpodAccount({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY"),
+  const account = createRunpodAccount({ fetchFn, dataDir: config.dataDir, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY"),
     setApiKey: key => setSecret("RUNPOD_ACCOUNT_API_KEY", key), clearApiKey: () => clearSecret("RUNPOD_ACCOUNT_API_KEY") });
+  const provider = createRunpodV2({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY") });
+  let computerPromise;
+  const computer = () => computerPromise ||= createCloudComputer({ dataDir: config.dataDir, provider, client, localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork });
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
     try {
@@ -44,7 +51,32 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       /* The Pod's install command, pinned to this Studio's commit
        * (runpod-bootstrap.js). Read by the setup window; never a branch. */
-      if (req.method === "GET" && url.pathname === "/api/runpod/bootstrap") sendJSON(res, 200, bootstrap());
+      if (url.pathname.startsWith("/api/runpod/computer")) {
+        const suffix = url.pathname.slice("/api/runpod/computer".length);
+        if (req.method === "GET" && suffix === "") sendJSON(res, 200, (await computer()).snapshot());
+        else if (req.method === "POST") {
+          let b;
+          try { b = JSON.parse((await readBody(req)).toString("utf8")); }
+          catch { throw new Error("The cloud computer request could not be read."); }
+          if (!b || Array.isArray(b) || typeof b !== "object") throw new Error("Send a cloud computer request as a JSON object.");
+          if (suffix === "/credentials") {
+            const key = String(b.apiKey || "").trim();
+            if (key.length < 20 || /[\r\n]/.test(key)) throw new Error("Enter a valid RunPod account key.");
+            await createRunpodV2({ fetchFn, getApiKey: () => key }).listPods();
+            await setSecret("RUNPOD_ACCOUNT_API_KEY", key); account.resetCredentials(); sendJSON(res, 200, { configured: true });
+          } else {
+            const manager = await computer();
+            const operations = { "/discover": () => manager.discover(), "/refresh": () => manager.refresh(),
+              "/select": () => manager.select(b.id), "/review": () => manager.reviewStart(), "/start": () => manager.start(b),
+              "/stop": () => manager.stop(b), "/policy": () => manager.policy(b), "/storage": () => manager.reviewStorage(),
+              "/cleanup": () => manager.clean(b), "/capacity": () => manager.grow(b), "/billing": () => manager.loadBilling(),
+              "/backup": () => manager.backup(), "/alerts": () => manager.alerts(b) };
+            if (!Object.hasOwn(operations, suffix)) sendJSON(res, 404, { error: "Unknown cloud computer operation." });
+            else sendJSON(res, 200, await operations[suffix]());
+          }
+        } else sendJSON(res, 404, { error: "Unknown cloud computer operation." });
+      }
+      else if (req.method === "GET" && url.pathname === "/api/runpod/bootstrap") sendJSON(res, 200, bootstrap());
       else if (req.method === "GET" && url.pathname === "/api/runpod/account") sendJSON(res, 200, await account.status());
       else if (req.method === "GET" && url.pathname === "/api/runpod/account/overview") sendJSON(res, 200, await account.overview());
       else if (req.method === "POST" && url.pathname === "/api/runpod/account/connect") {
@@ -62,7 +94,11 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           if (power[2] === "start") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
             sendJSON(res, 200, await account.start(power[1], b.confirm));
-          } else sendJSON(res, 200, await account.stop(power[1]));
+          } else {
+            const manager = await computer();
+            if (manager.snapshot().podId !== power[1]) await manager.select(power[1]);
+            sendJSON(res, 200, await manager.stop({ mode: "idle", requestId: randomUUID() }));
+          }
         }
         else {
           const c = await client();

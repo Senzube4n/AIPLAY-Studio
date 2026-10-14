@@ -19,10 +19,14 @@ import { checkGraph } from "../server/safety/graph.js";
 import { REFUSAL } from "../server/safety/minors.js";
 /* Dependency-free too: "Don't record the prompt" holds on the Pod's disk. */
 import { stripPngText } from "../server/pngtext.js";
+import { createCloudStorage, persistentPaths } from "./cloud-storage.js";
+import { createCloudWatchdog } from "./cloud-watchdog.js";
 
 export async function createWorker({ token, comfyURL, inputDir, outputDir, stateDir,
   modelsDir = path.join(path.dirname(inputDir), "models"), fetchFn = fetch, pollMs = 2000, modelBundles,
-  aceURL = "http://127.0.0.1:8001", trainingDir = null }) {
+  aceURL = "http://127.0.0.1:8001", trainingDir = null,
+  podId = null, persistentRoot = "/workspace", tempDir = path.join(path.dirname(inputDir), "temp"),
+  verifyPersistence = null, cloudIntervalMs = 10000 }) {
   if (typeof token !== "string" || token.length < 32 || /[\r\n]/.test(token)) throw new Error("AIPLAY_WORKER_TOKEN must contain at least 32 characters.");
   const backend = new URL(comfyURL);
   if (backend.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(backend.hostname)) throw new Error("ComfyUI must be on the worker's loopback interface.");
@@ -57,6 +61,41 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     return response.json();
   };
   const post = (route, body) => request(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let transfers = 0;
+  const persistence = verifyPersistence || (() => persistentPaths(persistentRoot,
+    [inputDir, outputDir, modelsDir, stateDir, trainingDir || path.join(stateDir, "training")]));
+  const storage = createCloudStorage({ root: persistentRoot, inputDir, modelsDir, outputDir, tempDir, stateDir, verifyPersistence: persistence });
+  const secretFile = path.join(stateDir, "cloud-secret", "stop-key.json");
+  const cloud = await createCloudWatchdog({ stateDir, podId, fetchFn, intervalMs: cloudIntervalMs,
+    getSecret: async () => (await readJSON(secretFile, {})).key || null,
+    setSecret: async key => { await mkdir(path.dirname(secretFile), { recursive: true, mode: 0o700 }); await jsonStore(secretFile)({ key }); },
+    activity: async () => {
+      try {
+        const [queue, training, trainingActivity, maintenance] = await Promise.all([request("/queue"), aceTraining.list(), aceTraining.activity(),
+          stat(path.join(stateDir, "maintenance.lock")).then(() => true, e => { if (e.code === "ENOENT") return false; throw e; })]);
+        if (!Array.isArray(queue.queue_running) || !Array.isArray(queue.queue_pending)) throw new Error("Unknown engine queue shape.");
+        const draining = cloud.snapshot().pending === "after-job";
+        const unresolved = Object.values(state.jobs).filter(j => (!TERMINAL.has(j.state) || j.state === "uncertain")
+          && !(draining && j.state === "queued" && !j.finishDuringStop));
+        const trainingBusy = trainingActivity.busy || training.models.some(m => ["preparing", "training", "finishing"].includes(m.stage));
+        const queued = (queue.queue_running || []).length + (queue.queue_pending || []).length;
+        return { known: trainingActivity.known, busy: !!(transfers || busy || queued || unresolved.length || trainingBusy || modelManager.status().active || maintenance),
+          jobs: unresolved.length, queued, transfers, installing: !!modelManager.status().active, training: trainingBusy, maintenance };
+      } catch { return { known: false, busy: true }; }
+    },
+    persist: () => storage.persist(Object.values(state.jobs)),
+    cancelWork: async () => {
+      const queue = await request("/queue");
+      const ours = new Set(Object.values(state.jobs).map(j => j.promptId).filter(Boolean));
+      if ([...(queue.queue_running || []), ...(queue.queue_pending || [])].some(row => !ours.has(row[1])))
+        throw new Error("Other work is using this computer. Stop it in its own application first.");
+      const [training, trainingActivity] = await Promise.all([aceTraining.list(), aceTraining.activity()]);
+      if (!trainingActivity.known || trainingActivity.busy && !training.models.some(m => ["training", "finishing"].includes(m.stage)))
+        throw new Error("Other training may be using this computer. Stop it in its own application first.");
+      for (const job of Object.values(state.jobs)) if (!TERMINAL.has(job.state)) await cancel(job);
+      modelManager.cancel();
+      for (const model of training.models) if (["preparing", "training", "finishing"].includes(model.stage)) await aceTraining.stop(model.id);
+    } });
   const publicJob = job => ({ id: job.id, state: job.state, createdAt: job.createdAt, startedAt: job.startedAt,
     finishedAt: job.finishedAt, error: job.error || null, outputs: job.outputs || [], promptId: job.promptId || null,
     executedGraphHash: job.private === true ? null : digest(job.graph),
@@ -102,14 +141,17 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     if (busy || closed) return;
     busy = true;
     try {
-      const job = Object.values(state.jobs).find(j => !TERMINAL.has(j.state));
+      const job = Object.values(state.jobs).find(j => !TERMINAL.has(j.state)
+        && !(cloud.snapshot().pending === "after-job" && j.state === "queued" && !j.finishDuringStop));
       if (!job) return;
       if (job.state === "queued") {
+        const paused = () => cloud.snapshot().pending === "after-job" && !job.finishDuringStop;
+        if (paused()) return;
         try {
           const info = await request("/object_info");
           validateGraph(job.graph, info);
         } catch (e) { await finish(job, "failed", e.message); return; }
-        if (job.state !== "queued") return;
+        if (job.state !== "queued" || paused()) return;
         // Persist before submission. After an ambiguous response/restart, reconcile only.
         job.state = "submitting"; job.startedAt = Date.now(); await save(state);
         try {
@@ -181,14 +223,51 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     const supplied = createHash("sha256").update(String(req.headers.authorization || "")).digest();
     if (!timingSafeEqual(secretHash, supplied)) return sendJSON(res, 401, { error: "Worker authentication failed." });
     if (req.headers.origin) return sendJSON(res, 403, { error: "Connect through the local AIPLAY backend." });
+    let finishWork = null;
     try {
       const url = new URL(req.url, "http://worker");
+      // Count workload requests and artifact transfers, never navigation/health polls.
+      const workloadRequest = (req.method !== "GET" && !url.pathname.startsWith("/v1/cloud")) || /\/files\/[0-9]+$/.test(url.pathname);
+      if (workloadRequest) {
+        const withdrawing = /\/cancel$/.test(url.pathname);
+        if (!(req.method === "GET" || withdrawing ? cloud.transferring() : cloud.accepting())) return sendJSON(res, 423, { error: "Cloud computer is preparing to stop. Start it again before sending new work." });
+        transfers++; cloud.touch(); let ended = false, handlerDone = false, responseDone = res.destroyed || res.writableFinished;
+        const done = () => { if (!ended && handlerDone && responseDone) { ended = true; transfers--; cloud.touch(); } };
+        finishWork = () => { handlerDone = true; done(); };
+        const responseEnded = () => { responseDone = true; done(); };
+        res.once("finish", responseEnded); res.once("close", responseEnded);
+      }
+      if (url.pathname.startsWith("/v1/cloud")) {
+        if (req.method === "GET" && url.pathname === "/v1/cloud") return sendJSON(res, 200, cloud.snapshot());
+        if (req.method === "GET" && url.pathname === "/v1/cloud/storage") {
+          if (!cloud.transferring()) return sendJSON(res, 423, { error: "Wait for the current stop or cleanup to finish." });
+          transfers++;
+          try { return sendJSON(res, 200, { ...await storage.inventory(), persistence: await persistence() }); }
+          finally { transfers--; }
+        }
+        if (req.method === "POST") {
+          const body = JSON.parse((await readBody(req)).toString("utf8"));
+          if (url.pathname === "/v1/cloud/policy") return sendJSON(res, 200, await cloud.configure(body));
+          if (url.pathname === "/v1/cloud/resume") return sendJSON(res, 200, await cloud.resume(body));
+          if (url.pathname === "/v1/cloud/lease") return sendJSON(res, 200, await cloud.lease(body));
+          if (url.pathname === "/v1/cloud/stop") return sendJSON(res, 200, await cloud.requestStop(body));
+          if (url.pathname === "/v1/cloud/prepare") return sendJSON(res, 200, await cloud.prepare());
+          if (url.pathname === "/v1/cloud/cleanup") {
+            const permit = await cloud.prepare();
+            if (!permit.ready) throw new Error("Wait for work and transfers to finish before cleaning.");
+            try { return sendJSON(res, 200, await storage.cleanup(body)); }
+            finally { await cloud.resume({ podId }); }
+          }
+        }
+        return sendJSON(res, 404, { error: "Unknown cloud computer operation." });
+      }
       if (req.method === "GET" && url.pathname === "/v1/health") {
         const [stats, aceReady] = await Promise.all([request("/system_stats").catch(() => null), aceTraining.available()]);
         if (!stats && !aceReady) throw new Error("Neither ComfyUI nor ACE-Step is ready.");
         return sendJSON(res, 200, { protocol: PROTOCOL, workerId: state.workerId, ready: true,
           version: stats?.system?.comfyui_version || null, devices: stats?.devices || [], maxAssetBytes: MAX_ASSET,
-          modelSetupVersion: 1, capabilities: { comfy: !!stats, aceTraining: aceReady } });
+          modelSetupVersion: 1, cloudManagerVersion: 1, podId,
+          capabilities: { comfy: !!stats, aceTraining: aceReady } });
       }
       if (req.method === "GET" && url.pathname === "/v1/custom-models") return sendJSON(res, 200, await aceTraining.list());
       if (req.method === "GET" && url.pathname === "/v1/loras") {
@@ -271,6 +350,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
           return sendJSON(res, 200, publicJob(state.jobs[id]));
         }
         const job = { id, graph, requestHash, state: "queued", createdAt: Date.now(), outputs: [],
+          ...(body.finishDuringStop === true ? { finishDuringStop: true } : {}),
           ...(body.private === true ? { private: true } : {}) };
         state.jobs[id] = job;
         try { await save(state); } catch (e) { delete state.jobs[id]; throw e; }
@@ -296,10 +376,12 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     } catch (e) {
       if (!res.headersSent && !res.destroyed) sendJSON(res, 400, { error: e.message });
       else res.destroy();
+    } finally {
+      finishWork?.();
     }
   });
   const timer = setInterval(() => { tick(); }, pollMs); timer.unref();
-  return { server, tick, close: async () => { closed = true; clearInterval(timer); await new Promise(r => server.close(r)); }, state };
+  return { server, tick, cloud, close: async () => { closed = true; clearInterval(timer); cloud.close(); await new Promise(r => server.close(r)); }, state };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -312,6 +394,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     stateDir: process.env.AIPLAY_WORKER_STATE || "/workspace/aiplay-worker",
     modelsDir: process.env.AIPLAY_MODELS_DIR || path.join(root, "models"),
     aceURL: process.env.AIPLAY_ACE_URL || "http://127.0.0.1:8001",
-    trainingDir: process.env.AIPLAY_TRAINING_DIR || "/workspace/aiplay-training" });
+    trainingDir: process.env.AIPLAY_TRAINING_DIR || "/workspace/aiplay-training",
+    podId: process.env.RUNPOD_POD_ID || process.env.AIPLAY_CLOUD_POD_ID || null,
+    persistentRoot: process.env.AIPLAY_PERSISTENT_ROOT || "/workspace" });
   worker.server.listen(Number(process.env.AIPLAY_WORKER_PORT || 8787), "0.0.0.0", () => console.log("AIPLAY remote worker listening; authentication required."));
 }

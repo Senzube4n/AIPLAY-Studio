@@ -26,6 +26,11 @@ if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ || ! "$REPO" =~ ^https://github\.com/[A-Za-z
   exit 1
 fi
 
+# An independent cloud watchdog must not stop compute during a worker update.
+mkdir -p "$STATE"
+touch "$STATE/maintenance.lock"
+trap 'rm -f "$STATE/maintenance.lock"' EXIT
+
 # Which ComfyUI: one named on purpose, else the one actually running (a leftover
 # /workspace/runpod-slim/ComfyUI from an earlier image used to win over the live
 # install), else the usual folders, each only if it really holds a ComfyUI.
@@ -135,6 +140,18 @@ if ! grep -q '^AIPLAY_MODELS_DIR=' "$ENV_FILE"; then
   printf '\nAIPLAY_MODELS_DIR=%s/models\n' "$COMFY" >> "$ENV_FILE"
 fi
 
+POD_ID="${RUNPOD_POD_ID:-}"
+if [[ -z "$POD_ID" ]]; then
+  POD_ID="$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^RUNPOD_POD_ID=//p' | head -n 1 || true)"
+fi
+if [[ -z "$POD_ID" ]]; then
+  host="$(hostname 2>/dev/null || true)"
+  [[ "$host" =~ ^([a-z0-9]{10,})-[0-9]+$ ]] && POD_ID="${BASH_REMATCH[1]}"
+fi
+if [[ -n "$POD_ID" ]] && ! grep -q '^AIPLAY_CLOUD_POD_ID=' "$ENV_FILE"; then
+  printf '\nAIPLAY_CLOUD_POD_ID=%s\n' "$POD_ID" >> "$ENV_FILE"
+fi
+
 HOOK="$COMFY/custom_nodes/aiplay_worker_autostart"
 mkdir -p "$HOOK"
 cp "$ROOT/worker/comfyui-autostart/__init__.py" "$HOOK/__init__.py"
@@ -150,14 +167,6 @@ echo
 echo "AIPLAY worker installed. The restart hook is in: $HOOK"
 # SSH and web-terminal shells often lack the container's environment: read the
 # Pod id from PID 1, then from the hostname (<podid>-<n>), before giving up.
-POD_ID="${RUNPOD_POD_ID:-}"
-if [[ -z "$POD_ID" ]]; then
-  POD_ID="$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^RUNPOD_POD_ID=//p' | head -n 1 || true)"
-fi
-if [[ -z "$POD_ID" ]]; then
-  host="$(hostname 2>/dev/null || true)"
-  [[ "$host" =~ ^([a-z0-9]{10,})-[0-9]+$ ]] && POD_ID="${BASH_REMATCH[1]}"
-fi
 echo "Worker URL: https://${POD_ID:-YOUR_POD_ID}-8787.proxy.runpod.net"
 echo "Worker token: $TOKEN"
 echo

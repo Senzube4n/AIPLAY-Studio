@@ -41,6 +41,75 @@ test("ComfyUI legacy and 0.37 COMBO model choices both populate the integrated p
   assert.deepEqual(modelChoices(["COMBO", { options: ["new.safetensors"] }]), ["new.safetensors"]);
 });
 
+test("beginner setup follows verified account, computer, AI and shutdown readiness", () => {
+  const js = read("web", "cloud-computer.js");
+  const source = js.slice(js.indexOf("export function cloudSetupStage"), js.indexOf("function setupSaved")).replace("export ", "");
+  const stage = runInNewContext(source + "\ncloudSetupStage;");
+  assert.equal(stage(null, false), 1);
+  assert.equal(stage({ computers: [] }, true), 2);
+  const s = { podId: "one", pod: { status: "EXITED" }, idleMinutes: 30 };
+  assert.equal(stage(s, true), 3);
+  s.pod.status = "RUNNING"; s.worker = { connectionReady: true, generationReady: false };
+  assert.equal(stage(s, true), 3, "model setup cannot be skipped");
+  s.worker.generationReady = true;
+  assert.equal(stage(s, true), 4, "default 30 minutes is not a verified remote policy");
+  s.worker.authorized = true; s.worker.available = true;
+  assert.equal(stage(s, true), 5);
+  s.worker.authorized = false; s.idleMinutes = 0;
+  assert.equal(stage(s, true), 5, "explicit disabled policy is a supported choice");
+  s.pod.status = "EXITED";
+  assert.equal(stage(s, true, true), 5, "a completed setup survives compute stopping");
+  assert.equal(stage({ ...s, issue: { code: "credentials_invalid" } }, true, true), 1);
+  s.pod.status = "RUNNING"; s.worker.connectionReady = false;
+  assert.equal(stage(s, true, true), 3, "saved setup never overrides a live worker failure");
+});
+
+test("guided setup reuses vault-backed forms without duplicate secret inputs or automatic paid actions", () => {
+  const html = read("web", "index.html"), js = read("web", "cloud-computer.js");
+  for (const id of ["runpodApiKey", "runpodWorkerToken", "cloudComputerStopKey", "runpodAccountForm", "runpodConnectionForm"])
+    assert.equal((html.match(new RegExp(`id="${id}"`, "g")) || []).length, 1, id);
+  assert.match(html, /Easy Cloud Setup/);
+  assert.match(js, /\['cloudSetupAccountFields', \['runpodAccountForm', 'runpodAccountState'\]\]/);
+  assert.match(js, /cloudSetupStart'\)\.addEventListener\('click', \(\) => \$\('cloudComputerStart'\)\.click\(\)\)/);
+  assert.match(html, /initial creation needs advanced setup and a price review/);
+  assert.match(html, /still needs a manual worker installation or update/);
+});
+
+test("the shared RunPod setup belongs to Settings, with usage outside account details", () => {
+  const html = read("web", "index.html");
+  const settings = html.slice(html.indexOf('<div id="settings"'), html.indexOf('<div id="avatars"'));
+  assert.match(settings, /id="set-runpod"[\s\S]*One worker connection for music, pictures and video/);
+  assert.match(settings, /id="runpodConnection" hidden class="runpod-settings"/);
+  assert.match(settings, /id="runpodWorkerUrl"/);
+  assert.match(settings, /id="runpodRefreshUsage"/);
+  assert.ok(settings.indexOf('id="runpodBalance"') < settings.indexOf('id="runpodAccount"'));
+  assert.doesNotMatch(html, /class="overlay" id="runpodConnection"/);
+  const js = read("web", "runpod-integrated.js");
+  const navigate = js.slice(js.indexOf("function openSettings()"), js.indexOf("function dimensions("));
+  const calls = [];
+  runInNewContext(navigate + "\nopenSettings();", {
+    document: { querySelector: () => ({ click: () => calls.push("settings") }) },
+    $: id => ({ scrollIntoView: () => calls.push(`scroll:${id}`), focus: () => calls.push(`focus:${id}`) }),
+  });
+  assert.deepEqual(calls, ["settings", "scroll:set-runpod", "focus:runpodWorkerUrl"]);
+});
+
+test("usage refresh clears old billing numbers when the key is missing or the account fails", async () => {
+  const js = read("web", "runpod-integrated.js");
+  const load = js.slice(js.indexOf("async function loadAccount()"), js.indexOf("function reviewPod()"));
+  for (const failure of [false, true]) {
+    const nodes = Object.fromEntries(["runpodAccountPanel", "runpodAccountState", "runpodBalance", "runpodUsageUpdated"]
+      .map(id => [id, { textContent: "$20.00", hidden: false, className: "chip ok", classList: { add() {} } }]));
+    await runInNewContext(load + "\nloadAccount();", {
+      $: id => nodes[id],
+      accountApi: async () => { if (failure) throw new Error("Account unavailable"); return { configured: false }; },
+    });
+    assert.equal(nodes.runpodAccountPanel.hidden, true);
+    assert.equal(nodes.runpodBalance.textContent, failure ? "Usage unavailable" : "Account not connected");
+    assert.equal(nodes.runpodBalance.className, failure ? "chip warn" : "chip");
+  }
+});
+
 test("integrated image options retain the selected remote checkpoint and common controls", () => {
   assert.deepEqual(imageWorkflowOptions({ prompt: "lake", checkpoint: "sd15.safetensors", width: 512,
     height: 512, steps: 20, seed: 7, count: 2, negative: "blur", cfg: 6.5 }), {
