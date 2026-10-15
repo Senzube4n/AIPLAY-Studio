@@ -24,6 +24,8 @@
  * until a start goes through.
  */
 
+import { revealSetting } from './settings-sections.js';
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -244,6 +246,7 @@ export function highlight(ids) {
     for (let d = el.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true;
   }
   const target = els[0].closest(".pv, .field, label") || els[0];
+  revealSetting(els[0]);
   target.scrollIntoView?.({ block: "center", behavior: "smooth" });
   for (const el of els) {
     const box = el.closest(".pv") || el;

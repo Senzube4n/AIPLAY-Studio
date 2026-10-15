@@ -89,9 +89,10 @@ test("the shared RunPod setup belongs to Settings, with usage outside account de
   const calls = [];
   runInNewContext(navigate + "\nopenSettings();", {
     document: { querySelector: () => ({ click: () => calls.push("settings") }) },
+    revealSetting: () => calls.push("reveal"),
     $: id => ({ scrollIntoView: () => calls.push(`scroll:${id}`), focus: () => calls.push(`focus:${id}`) }),
   });
-  assert.deepEqual(calls, ["settings", "scroll:set-runpod", "focus:runpodWorkerUrl"]);
+  assert.deepEqual(calls, ["settings", "reveal", "scroll:set-runpod", "focus:runpodWorkerUrl"]);
 });
 
 test("usage refresh clears old billing numbers when the key is missing or the account fails", async () => {

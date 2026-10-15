@@ -1,4 +1,5 @@
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
+import { revealSetting } from './settings-sections.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
 import { mountH3RefMods } from './h3-refmods.js';
 import { mountYue2StyleAdapters } from './yue2-style-adapters.js';
@@ -656,7 +657,7 @@ function needModel(kind, o = {}) {
     lead: o.lead || "Download it here, or pick one that fits this machine.",
     focus: o.focus,
     apiLabel: "Pay per song with your own fal.ai key instead",
-    onApi: () => { setView("settings"); $("apiKey")?.scrollIntoView({ block: "center", behavior: "smooth" }); $("apiKey")?.focus?.(); },
+    onApi: () => { setView("settings"); revealSetting($("apiKey")); $("apiKey")?.scrollIntoView({ block: "center", behavior: "smooth" }); $("apiKey")?.focus?.(); },
     onSetup: (id) => {
       if (id !== "musicYue2Gguf") return false;
       state.musicEngine = "yue2-gguf";

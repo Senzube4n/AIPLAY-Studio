@@ -14,6 +14,8 @@
  * This module only changes where the final button sends them. The worker token
  * goes directly to the local backend secret store and is never returned here. */
 
+import { revealSetting } from './settings-sections.js';
+
 const $ = (id) => document.getElementById(id);
 const FINAL = new Set(["completed", "cancelled", "failed", "uncertain"]);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -278,6 +280,7 @@ async function refreshWorker() {
 
 function openSettings() {
   document.querySelector('.rail [data-view="settings"]')?.click();
+  revealSetting($("set-runpod"));
   $("set-runpod").scrollIntoView({ block: "start" });
   $("cloudComputerConnection").open = true;
   document.dispatchEvent?.(new Event("aiplay:cloud-setup-open"));

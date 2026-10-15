@@ -55,6 +55,7 @@
 .pcard > h3 .sp { margin-left: auto; font: 400 11px var(--sans, inherit); color: var(--ghost); }
 .pcard-sub { margin: 4px 0 14px; font-size: 12.5px; color: var(--faint); line-height: 1.5; }
 .pcard > :last-child { margin-bottom: 0; }
+.pcard.section-inactive { display: none !important; }
 .pcard .params, .pcard .setgrid { margin-bottom: 4px; }
 .pcard .hint { margin-top: 6px; }
 .pcard .cta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
@@ -107,6 +108,7 @@ p.hint.open, div.hint.open { cursor: pointer; }
 @media (max-width: 700px) {
   .pcard { padding: 14px; }
   .pnav { flex-wrap: nowrap; overflow-x: auto; }
+  #settings > .pnav { flex-wrap: wrap; overflow-x: visible; }
 }
 
 /* The secondary button and the small text field. Both were used (Engine,

@@ -4,13 +4,16 @@
  *
  *   1. Pill bars. Every `.pnav` is filled with one pill per `.pcard[data-nav]`
  *      in the same page. A click scrolls to the section; the pill of the
- *      section in view is lit. A new section needs no code: give it
+ *      section in view is lit. Settings opens only the chosen section.
+ *      A new section needs no code: give it
  *      `class="pcard" id="…" data-nav="Label"` and the pill appears.
  *   2. Long hints. Any `p.hint` / `div.hint` taller than two lines is cut to
  *      two with a "more" at the end; a click opens it, another closes it.
  *      Warnings (.warnhint), live status (role=status, aria-live) and
  *      anything marked .noclamp stay whole.
  */
+
+import { mountSettingsSections } from './settings-sections.js';
 
 /* ── 1. pill bars ─────────────────────────────────────────────────────────── */
 
@@ -23,6 +26,7 @@ function scrollerOf(el) {
 }
 
 function fillNav(nav) {
+  if (nav.dataset.sections === "single") { mountSettingsSections(nav); return; }
   const page = nav.closest(".page") || nav.parentElement;
   const cards = [...page.querySelectorAll(".pcard[data-nav]")].filter((c) => c.id && !c.hidden);
   const sig = cards.map((c) => c.id).join("|");
@@ -52,12 +56,14 @@ function spy(nav) {
   if (page.hidden || page.offsetParent === null) return;
   const cards = [...page.querySelectorAll(".pcard[data-nav]")].filter((c) => c.id && !c.hidden);
   if (!cards.length) return;
-  const edge = nav.getBoundingClientRect().bottom + 12;
-  let current = cards[0];
-  for (const c of cards) if (c.getBoundingClientRect().top <= edge) current = c;
   const sc = scrollerOf(page);
-  if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) current = cards[cards.length - 1];
-  light(nav, current.id);
+  if (nav.dataset.sections !== "single") {
+    const edge = nav.getBoundingClientRect().bottom + 12;
+    let current = cards[0];
+    for (const c of cards) if (c.getBoundingClientRect().top <= edge) current = c;
+    if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) current = cards[cards.length - 1];
+    light(nav, current.id);
+  }
   /* Stuck to the top: cover the scroller's padding strip above the bar (ui.css). */
   const top = sc === document.scrollingElement || sc === document.documentElement ? 0 : sc.getBoundingClientRect().top;
   nav.classList.toggle("stuck", sc.scrollTop > 0
@@ -105,6 +111,8 @@ function measureAll() {
     }
   });
 }
+
+document.addEventListener("aiplay:section-open", measureAll);
 
 document.addEventListener("click", (e) => {
   const el = e.target.closest?.(CLAMPABLE);
