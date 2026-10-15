@@ -164,6 +164,9 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   async function discover() {
     return run('discover', async () => {
       computers = await provider.listPods();
+      // A successful list validates the account even when there is no unique
+      // computer to select. Do not retain a pre-connection credential error.
+      state.issue = null; state.providerUncertain = false;
       if (!state.podId) {
         const url = (await client()).status().url;
         const connected = computers.find(p => p.workerUrl === url);
@@ -171,6 +174,7 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
         const picked = connected || (owned.length === 1 ? owned[0] : null);
         if (picked) state.podId = picked.id;
       }
+      if (!state.podId) await save(state);
       return refreshInternal();
     });
   }

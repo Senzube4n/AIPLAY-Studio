@@ -11,6 +11,32 @@ const pod = (status = 'EXITED') => ({ id: 'pod_123', name: 'AIPLAY Music', statu
   gpu: { id: 'GPU', count: 1 }, cloud: 'SECURE', dataCenterId: 'EU-1', cost: status === 'EXITED' ? 0 : .5,
   mounts: { persistent: { path: '/workspace', size: 100 } }, disk: 20, locked: false, startedAt: '2026-10-14T12:00:00Z',
   workerUrl: 'https://pod_123-8787.proxy.runpod.net' });
+
+test('saving valid credentials clears the old account error before computer selection', async t => {
+  for (const computers of [[], [pod(), { ...pod(), id: 'second', workerUrl: 'https://second-8787.proxy.runpod.net' }]]) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'aiplay-cloud-account-'));
+    assert.ok(dir.startsWith(path.join(os.tmpdir(), 'aiplay-cloud-account-')));
+    let connected = false, manager;
+    const create = () => createCloudComputer({ dataDir: dir, intervalMs: 0,
+      provider: {
+        listPods: async () => { if (!connected) throw new CloudError('credentials_missing', 'Add your account key.'); return computers; },
+        getPod: async () => { assert.fail('no computer has been selected'); },
+        action: async () => { assert.fail('discovery must not start or stop rental'); },
+      }, client: async () => ({ status: () => ({ url: '', jobs: [] }) }) });
+    manager = await create();
+    t.after(async () => { manager.close(); await rm(dir, { recursive: true, force: true }); });
+    await assert.rejects(manager.discover(), e => e.code === 'credentials_missing');
+    assert.equal(manager.snapshot().issue.code, 'credentials_missing');
+    connected = true;
+    const result = await manager.discover();
+    assert.equal(result.podId, null);
+    assert.equal(result.computers.length, computers.length);
+    assert.equal(result.issue, null, 'valid account discovery clears the obsolete account failure');
+    assert.equal(result.providerUncertain, false);
+    manager.close(); manager = await create();
+    assert.equal(manager.snapshot().issue, null, 'the repaired account state survives a restart');
+  }
+});
 async function fixture(t, status = 'EXITED') {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'aiplay-cloud-'));
   assert.ok(dir.startsWith(path.join(os.tmpdir(), 'aiplay-cloud-')));

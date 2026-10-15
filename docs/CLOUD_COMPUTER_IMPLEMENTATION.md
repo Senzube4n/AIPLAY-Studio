@@ -1,6 +1,6 @@
 # Cloud Computer implementation report
 
-Status: implementation and automated/simulated validation prepared for publication to the Nemesis fork. Final acceptance on real GPU hardware is authorized but awaiting credential entry. No real RunPod resources were created, started, stopped, resized, terminated or deleted during development.
+Status: implementation and automated/simulated validation published to the Nemesis fork. Final acceptance on real GPU hardware awaits a suitable test computer. No real RunPod resources were created, started, stopped, resized, terminated or deleted during development.
 
 ## Integration
 
@@ -41,6 +41,8 @@ Implemented contracts include:
 No terminate, delete, reset, mount replacement or automatic Pod creation surface is provided by the manager. Unknown availability/pricing/state is refused rather than treated as zero or success. See the [official v2 overview](https://docs.runpod.io/api-reference-v2/overview), [storage persistence rules](https://docs.runpod.io/pods/storage/types), and [network storage](https://docs.runpod.io/storage/network-volumes).
 
 ## Acceptance evidence
+
+15 October account-connection repair: successful resource discovery now clears stale credential errors even when an account has no computers or needs manual selection. The Windows vault explicitly loads Windows PowerShell's own security module, so inherited PowerShell 7 module paths cannot hide otherwise valid DPAPI records. Regression tests cover both selection cases, persisted recovery, and an encrypted-key round trip under incompatible module paths. The repaired live UI was verified at Step 2 using read-only provider discovery; no rental action was performed. Focused repair checks: 45 passed (`tmp/cloud-manager/account-repair-tests.log`).
 
 The focused run contains 97 passing tests across the new lifecycle/watchdog/storage suites, existing transport/UI/account/MCP/security suites and ACE-Step training tests. Two additional setup tests verify progression/repair, real shutdown authority versus the default preference, reuse of secret inputs and price approval. GPU-dependent gates may explicitly skip missing hardware/tooling and do not constitute real GPU acceptance.
 

@@ -80,7 +80,11 @@ const STORE_SHOWN = shownPath(STORE);
  *  and leaves stdin for the data. */
 function ps(script, stdin = "") {
   return new Promise((res, rej) => {
-    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    // PowerShell 7 can pass its module paths to Windows PowerShell 5.1. Load
+    // the security module belonging to this process instead of auto-loading
+    // an incompatible copy, which makes intact DPAPI records look missing.
+    const security = "Import-Module -Name (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop; ";
+    const encoded = Buffer.from(security + script, "utf16le").toString("base64");
     const p = spawn("powershell.exe",
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
       /* windowsHide: a server the launcher started hidden flashed a console
