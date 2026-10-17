@@ -160,6 +160,7 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
     if (creating) throw new Error("A Pod creation request is already in progress.");
     if (input.confirm !== "CREATE PAID POD") throw new Error("Review the hourly price and confirm paid Pod creation.");
     const gpuTypeId = cleanText(input.gpuTypeId, "GPU type", 160);
+    if (/\b(?:AMD|Intel|MI\d{3}\w*)\b/i.test(gpuTypeId)) throw new Error("This AI service needs an NVIDIA cloud graphics card.");
     const name = cleanText(input.name || "AIPLAY renderer", "Pod name", 80);
     const cloudType = ["ALL", "SECURE", "COMMUNITY"].includes(input.cloudType) ? input.cloudType : "ALL";
     const volumeInGb = number(input.volumeInGb ?? 100, "Persistent volume", 20, 1000);
@@ -175,6 +176,13 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
         await saveCreation(null);
       }
       if (current.pods.some(pod => pod.name === name)) throw new Error(`A RunPod named "${name}" already exists. Refresh the list before retrying.`);
+      if (input.expectedPricePerHr !== undefined) {
+        const gpu = current.gpus.find(row => row.id === gpuTypeId);
+        if (!gpu || gpu.stock === "None") throw new Error("This graphics card is no longer available. Review another computer.");
+        if (!Number.isFinite(input.expectedPricePerHr) || input.expectedPricePerHr <= 0
+          || Math.abs(gpu.pricePerHr - input.expectedPricePerHr) > .000001)
+          throw new Error("The estimated price changed. Review the current price before creating a computer.");
+      }
       const variables = { input: { cloudType, gpuCount: 1, volumeInGb, containerDiskInGb,
         minVcpuCount: 2, minMemoryInGb: 15, gpuTypeId, name, imageName,
         dockerArgs: "", ports: "8787/http", volumeMountPath: "/workspace" } };

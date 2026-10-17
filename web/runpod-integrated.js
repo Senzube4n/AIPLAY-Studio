@@ -25,6 +25,7 @@ const active = new Map();
 let runpodAccount = null;
 let setupTimer = null;
 let setupWasActive = false;
+let creationReview = null, creationBusy = false;
 
 function friendlyError(error) {
   const message = String(error?.message || error || "Unknown worker error");
@@ -161,17 +162,24 @@ function renderAccount(data) {
     actions.append(power, use); row.append(main, meta, actions); list.append(row);
   }
   const select = $("runpodGpu"), before = select.value;
+  // The deployed image uses CUDA. Local AMD/Intel/CPU PCs can use it, but the rented card must be NVIDIA.
+  const compatible = (data.gpus || []).filter(gpu => /^NVIDIA\b/i.test(gpu.id));
+  const recommended = compatible.find(gpu => gpu.memoryInGb >= 32 && gpu.stock !== "None");
   select.replaceChildren();
-  for (const gpu of data.gpus || []) {
+  for (const gpu of compatible) {
     const stock = gpu.stock === "None" ? "unavailable" : gpu.stock;
     const fit = gpu.memoryInGb >= 32 ? "image + LTX video" : "image; video may not fit";
-    select.add(new Option(`${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock} · ${fit}`, gpu.id));
+    const option = new Option(`${gpu.id === recommended?.id ? "Suggested: " : ""}${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock} · ${fit}`, gpu.id);
+    option.disabled = gpu.stock === "None";
+    select.add(option);
   }
-  if ([...select.options].some(option => option.value === before)) select.value = before;
+  if ([...select.options].some(option => option.value === before && !option.disabled)) select.value = before;
   else {
-    const recommended = (data.gpus || []).find(gpu => gpu.memoryInGb >= 32 && gpu.stock !== "None");
     if (recommended) select.value = recommended.id;
   }
+  $("runpodCreateRecommendation").textContent = recommended
+    ? "The suggested card has at least 32 GB for pictures and video; model requirements vary."
+    : "No 32 GB card is listed as available; smaller cards may not fit video models.";
   $("runpodAccountState").textContent = "RunPod account connected. Prices and availability are live estimates.";
   $("runpodAccountState").classList.remove("warnline");
 }
@@ -198,12 +206,74 @@ async function loadAccount() {
   }
 }
 
-function reviewPod() {
-  const gpu = runpodAccount?.gpus?.find(row => row.id === $("runpodGpu").value);
-  if (!gpu) { $("runpodAccountState").textContent = "No available GPU is selected."; return; }
-  $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)} per running hour`;
-  $("runpodReviewDetails").textContent = `${$("runpodPodName").value.trim() || "AIPLAY renderer"} · ${$("runpodCloud").selectedOptions[0].textContent} · ${$("runpodVolume").value} GB persistent disk. Storage is billed separately and can continue after the Pod is stopped.`;
-  $("runpodCostConfirm").checked = false; $("runpodCreatePod").disabled = true; $("runpodCreateReview").hidden = false;
+function creationInput() {
+  return { name: $("runpodPodName").value.trim() || "AIPLAY renderer", gpuTypeId: $("runpodGpu").value,
+    cloudType: $("runpodCloud").value, volumeInGb: Number($("runpodVolume").value), containerDiskInGb: 20 };
+}
+function invalidateCreationReview() {
+  creationReview = null;
+  $("runpodCostConfirm").checked = false;
+  $("runpodCreatePod").disabled = true;
+  $("runpodCreateReview").hidden = true;
+}
+async function loadCreationChoices() {
+  if (creationBusy) return;
+  invalidateCreationReview();
+  $("runpodCreateState").textContent = "Checking available graphics cards…";
+  $("runpodReviewPod").disabled = true;
+  try {
+    renderAccount(await accountApi("/overview"));
+    $("runpodCreateState").textContent = $("runpodGpu").selectedOptions[0]?.disabled === false
+      ? "Choose your graphics card and storage, then review the price."
+      : "No graphics card is available. Check again later or choose another provider pool.";
+  } catch (error) { $("runpodCreateState").textContent = error.message; }
+  finally { $("runpodReviewPod").disabled = false; }
+}
+async function reviewPod() {
+  if (creationBusy) return;
+  const input = creationInput();
+  invalidateCreationReview();
+  $("runpodReviewPod").disabled = true;
+  $("runpodCreateState").textContent = "Checking current price and availability…";
+  try {
+    const data = await accountApi("/overview");
+    const gpu = data.gpus?.find(row => row.id === input.gpuTypeId);
+    if (JSON.stringify(input) !== JSON.stringify(creationInput())) throw new Error("Choices changed. Review the price again.");
+    if (!gpu || gpu.stock === "None" || !Number.isFinite(gpu.pricePerHr) || gpu.pricePerHr <= 0)
+      throw new Error("This graphics card is unavailable. Choose another and review again.");
+    if (data.pods?.some(pod => pod.name === input.name))
+      throw new Error("A computer with this name already exists. Check your saved computers before creating another.");
+    creationReview = { input, rate: gpu.pricePerHr, at: Date.now() };
+    $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)}/hour for computing`;
+    $("runpodReviewDetails").textContent = `${input.name} · ${input.volumeInGb} GB saved storage · ${$("runpodCloud").selectedOptions[0].textContent}`;
+    // Published volume/container rates, checked 2026-10-17. These are estimates, not billing caps.
+    $("runpodReviewStorage").textContent = `Storage estimate: ${money((input.volumeInGb + 20) * .10)}/month while running, ${money(input.volumeInGb * .20)}/month after stopping.`;
+    $("runpodCreateReview").hidden = false;
+    $("runpodCreateState").textContent = "Review the estimate; AI service installation is still required after creation.";
+  } catch (error) { $("runpodCreateState").textContent = error.message; }
+  finally { $("runpodReviewPod").disabled = false; }
+}
+async function createReviewedComputer() {
+  if (creationBusy) return;
+  const review = creationReview;
+  if (!review || !$("runpodCostConfirm").checked || Date.now() - review.at > 300000
+    || JSON.stringify(review.input) !== JSON.stringify(creationInput())) {
+    invalidateCreationReview();
+    $("runpodCreateState").textContent = "Review the current price and confirm it before creating a computer.";
+    return;
+  }
+  creationBusy = true;
+  invalidateCreationReview();
+  $("runpodReviewPod").disabled = true;
+  $("runpodCreateState").textContent = "Creating your cloud computer. Please wait…";
+  try {
+    const created = await accountApi("/pods", { ...review.input, expectedPricePerHr: review.rate, confirm: "CREATE PAID POD" });
+    $("runpodWorkerUrl").value = created.pod.workerUrl;
+    document.dispatchEvent(new CustomEvent("aiplay:cloud-computer-created", { detail: { id: created.pod.id } }));
+    $("runpodCreateState").textContent = `Created ${created.pod.name}. Continue with AI service setup.`;
+    await loadAccount();
+  } catch (error) { $("runpodCreateState").textContent = `${error.message} Check existing computers before trying again.`; }
+  finally { creationBusy = false; $("runpodReviewPod").disabled = false; }
 }
 
 function setState(text, error = false) {
@@ -476,6 +546,9 @@ async function init() {
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
   });
   $("runpodReviewPod").addEventListener("click", reviewPod);
+  document.addEventListener("aiplay:cloud-create-open", loadCreationChoices);
+  for (const id of ["runpodGpu", "runpodVolume", "runpodCloud", "runpodPodName"])
+    $(id).addEventListener("input", invalidateCreationReview);
   $("runpodCreateTemplates").addEventListener("click", async () => {
     const button = $("runpodCreateTemplates"); button.disabled = true; button.textContent = "Creating templates…";
     try {
@@ -504,19 +577,8 @@ async function init() {
     try { await navigator.clipboard.writeText($("runpodBootstrapCommand").value); $("runpodBootstrapState").textContent = "Bootstrap command copied."; }
     catch { $("runpodBootstrapCommand").select(); $("runpodBootstrapState").textContent = "Press Ctrl+C to copy the selected command."; }
   });
-  $("runpodCostConfirm").addEventListener("change", () => { $("runpodCreatePod").disabled = !$("runpodCostConfirm").checked; });
-  $("runpodCreatePod").addEventListener("click", async () => {
-    const button = $("runpodCreatePod"); button.disabled = true; button.textContent = "Creating Pod…";
-    try {
-      const created = await accountApi("/pods", { confirm: "CREATE PAID POD", name: $("runpodPodName").value,
-        gpuTypeId: $("runpodGpu").value, cloudType: $("runpodCloud").value,
-        volumeInGb: Number($("runpodVolume").value), containerDiskInGb: 20 });
-      $("runpodWorkerUrl").value = created.pod.workerUrl;
-      $("runpodCreateReview").hidden = true; renderAccount(await accountApi("/overview"));
-      $("runpodAccountState").textContent = `Created ${created.pod.name}. ${created.next}`;
-    } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
-    finally { button.textContent = "Create paid Pod"; button.disabled = !$("runpodCostConfirm").checked; }
-  });
+  $("runpodCostConfirm").addEventListener("change", () => { $("runpodCreatePod").disabled = creationBusy || !creationReview || !$("runpodCostConfirm").checked; });
+  $("runpodCreatePod").addEventListener("click", createReviewedComputer);
   $("runpodPodList").addEventListener("click", async (event) => {
     const button = event.target.closest("[data-pod-power]"); if (!button) return;
     const action = button.dataset.podPower;

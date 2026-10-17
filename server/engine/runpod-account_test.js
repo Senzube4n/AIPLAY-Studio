@@ -101,6 +101,17 @@ test("creation refuses an existing Pod name before sending another paid mutation
   assert.equal(r.calls.filter(call => call.query.includes("AiplayCreatePod")).length, 0);
 });
 
+test("guided creation refuses a changed price or unavailable GPU before a paid mutation", async () => {
+  const r = rig(); await r.account.connect(KEY);
+  const input = { confirm: "CREATE PAID POD", gpuTypeId: "cheap", name: "New computer", expectedPricePerHr: .39 };
+  await assert.rejects(r.account.create(input), /estimated price changed/);
+  await assert.rejects(r.account.create({ ...input, gpuTypeId: "missing" }), /no longer available/);
+  await assert.rejects(r.account.create({ ...input, gpuTypeId: "AMD Instinct MI350X" }), /NVIDIA cloud graphics card/);
+  assert.equal(r.calls.filter(call => call.query?.includes("AiplayCreatePod")).length, 0);
+  const out = await r.account.create({ ...input, expectedPricePerHr: .4 });
+  assert.equal(out.pod.id, "created1");
+});
+
 test("private AIPLAY templates are created once with bounded workload presets", async () => {
   const r = rig(); await r.account.connect(KEY);
   const first = await r.account.createTemplates();

@@ -5378,7 +5378,7 @@
             <p class="hint">Connect once for music, pictures and video.</p>
             <div class="cta">
               <button class="edtool sm" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button>
-              <span class="hint">Create a computer or install its AI service manually.</span>
+              <span class="hint">Manual connection and AI service installation.</span>
             </div>
             <ol class="cloud-setup-steps" aria-label="Cloud setup progress">
               <li data-cloud-step="1">1. Account</li><li data-cloud-step="2">2. Computer</li>
@@ -5397,8 +5397,9 @@
             </div>
             <div id="cloudSetupComputer" hidden>
               <div id="cloudSetupComputerFields"></div>
-              <p class="hint" id="cloudSetupNoComputer" hidden>No computer found; initial creation needs advanced setup and a price review.</p>
-              <button class="edtool sm" id="cloudSetupProvision" type="button">Open advanced creation</button>
+              <p class="hint" id="cloudSetupNoComputer" hidden>No cloud computer yet. Create one below to continue.</p>
+              <button class="edtool sm" id="cloudSetupProvision" type="button" aria-controls="cloudSetupCreateFields" aria-expanded="false">Create cloud computer</button>
+              <div id="cloudSetupCreateFields" hidden></div>
             </div>
             <div id="cloudSetupAI" hidden>
               <div class="cta"><button class="btn sm" id="cloudSetupStart" type="button">Review start price</button>
@@ -5563,24 +5564,32 @@
                   <button class="edtool" id="runpodCreateTemplates" type="button">Create private templates</button>
                 </div>
                 <p class="hint" id="runpodTemplateState" role="status"></p>
-                <h4>Create an AIPLAY Pod</h4>
+                <div id="runpodCreateForm">
+                <h4>Create cloud computer</h4>
+                <p class="hint" id="runpodCreateRecommendation">Loading available graphics cards…</p>
                 <div class="runpod-fields">
-                  <label class="flabel" for="runpodPodName">Name</label>
-                  <input class="line" id="runpodPodName" value="AIPLAY renderer" maxlength="80">
-                  <label class="flabel" for="runpodGpu">GPU</label>
+                  <label class="flabel" for="runpodGpu">graphics card</label>
                   <select class="sel2" id="runpodGpu"></select>
-                  <label class="flabel" for="runpodCloud">Cloud</label>
-                  <select class="sel2" id="runpodCloud"><option value="ALL">Any available</option><option value="SECURE">Secure only</option><option value="COMMUNITY">Community only</option></select>
-                  <label class="flabel" for="runpodVolume">Persistent disk</label>
+                  <label class="flabel" for="runpodVolume">saved storage</label>
                   <select class="sel2" id="runpodVolume"><option value="100">100 GB</option><option value="150">150 GB</option><option value="200">200 GB</option><option value="300">300 GB</option></select>
                 </div>
-                <p class="hint">Creates a CUDA 12.8 Pod exposing only the AIPLAY worker on port 8787.</p>
-                <button class="edtool" id="runpodReviewPod" type="button">Review price and configuration</button>
+                <details class="more"><summary>More options</summary><div class="runpod-fields">
+                  <label class="flabel" for="runpodPodName">computer name</label>
+                  <input class="line" id="runpodPodName" value="AIPLAY renderer" maxlength="80">
+                  <label class="flabel" for="runpodCloud">provider pool</label>
+                  <select class="sel2" id="runpodCloud"><option value="ALL">Any available</option><option value="SECURE">Secure only</option><option value="COMMUNITY">Community only</option></select>
+                </div></details>
+                <p class="hint warnhint">AI service installation is still manual after creation; rental runs during setup.</p>
+                <button class="edtool" id="runpodReviewPod" type="button">Review price</button>
+                <p class="hint" id="runpodCreateState" role="status"></p>
                 <div class="runpod-review" id="runpodCreateReview" hidden>
                   <b id="runpodReviewPrice"></b>
                   <p class="hint" id="runpodReviewDetails"></p>
+                  <p class="hint" id="runpodReviewStorage"></p>
+                  <a class="edtool" href="https://docs.runpod.io/pods/pricing" target="_blank" rel="noreferrer">Provider pricing</a>
                   <label><input id="runpodCostConfirm" type="checkbox"> I understand this starts paid GPU billing immediately.</label>
-                  <button class="btn" id="runpodCreatePod" type="button" disabled>Create paid Pod</button>
+                  <button class="btn" id="runpodCreatePod" type="button" disabled>Create and start computer</button>
+                </div>
                 </div>
               </div>
               <details class="runpod-bootstrap">

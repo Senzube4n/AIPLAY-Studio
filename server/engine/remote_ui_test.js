@@ -71,7 +71,8 @@ test("guided setup reuses vault-backed forms without duplicate secret inputs or 
   assert.match(html, /Easy Cloud Setup/);
   assert.match(js, /\['cloudSetupAccountFields', \['runpodAccountForm', 'runpodAccountState'\]\]/);
   assert.match(js, /cloudSetupStart'\)\.addEventListener\('click', \(\) => \$\('cloudComputerStart'\)\.click\(\)\)/);
-  assert.match(html, /initial creation needs advanced setup and a price review/);
+  assert.match(html, /Create cloud computer/);
+  assert.match(js, /\['cloudSetupCreateFields', \['runpodCreateForm'\]\]/);
   assert.match(html, /still needs a manual worker installation or update/);
 });
 
@@ -79,7 +80,7 @@ test("advanced setup stays visible above the steps and opening it preserves guid
   const html = read("web", "index.html"), js = read("web", "cloud-computer.js");
   const guideHeader = html.slice(html.indexOf('id="cloudSetup"'), html.indexOf('id="cloudSetupAccount"'));
   assert.match(guideHeader, /id="cloudSetupAdvanced"[^>]*aria-controls="cloudComputerConnection"/);
-  assert.match(guideHeader, /Create a computer or install its AI service manually/);
+  assert.match(guideHeader, /Manual connection and AI service installation/);
   assert.match(html, /id="cloudSetupBack"/);
   const calls = [], controls = new Map();
   for (const id of ["cloudComputerConnection", "runpodAccount", "cloudSetupAdvanced", "cloudSetup", "runpodApiKey", "runpodWorkerToken"])
@@ -129,7 +130,7 @@ test("the shared RunPod setup belongs to Settings, with usage outside account de
 
 test("usage refresh clears old billing numbers when the key is missing or the account fails", async () => {
   const js = read("web", "runpod-integrated.js");
-  const load = js.slice(js.indexOf("async function loadAccount()"), js.indexOf("function reviewPod()"));
+  const load = js.slice(js.indexOf("async function loadAccount()"), js.indexOf("function creationInput()"));
   for (const failure of [false, true]) {
     const nodes = Object.fromEntries(["runpodAccountPanel", "runpodAccountState", "runpodBalance", "runpodUsageUpdated"]
       .map(id => [id, { textContent: "$20.00", hidden: false, className: "chip ok", classList: { add() {} } }]));
@@ -141,6 +142,74 @@ test("usage refresh clears old billing numbers when the key is missing or the ac
     assert.equal(nodes.runpodBalance.textContent, failure ? "Usage unavailable" : "Account not connected");
     assert.equal(nodes.runpodBalance.className, failure ? "chip warn" : "chip");
   }
+});
+
+function creationRig(post = async () => ({ pod: { id: "new-computer", name: "AIPLAY renderer", workerUrl: "https://new-computer-8787.proxy.runpod.net" } })) {
+  const js = read("web", "runpod-integrated.js");
+  const source = js.slice(js.indexOf("function creationInput()"), js.indexOf("function setState("));
+  const controls = new Map(), calls = [], events = [];
+  for (const id of ["runpodPodName", "runpodGpu", "runpodCloud", "runpodVolume", "runpodCostConfirm", "runpodCreatePod",
+    "runpodCreateReview", "runpodReviewPod", "runpodCreateState", "runpodReviewPrice", "runpodReviewDetails", "runpodReviewStorage", "runpodWorkerUrl"])
+    controls.set(id, { value: "", checked: false, disabled: true, hidden: true, textContent: "", selectedOptions: [{ textContent: "Any available" }] });
+  for (const [id, value] of [["runpodPodName", "AIPLAY renderer"], ["runpodGpu", "gpu"], ["runpodCloud", "ALL"], ["runpodVolume", "100"]]) controls.get(id).value = value;
+  const data = { pods: [], gpus: [{ id: "gpu", name: "Test GPU", stock: "High", pricePerHr: .5 }] };
+  let clock = 1000;
+  const helpers = runInNewContext(source + "\n({ reviewPod, createReviewedComputer, invalidateCreationReview });", {
+    $: id => controls.get(id), creationBusy: false, creationReview: null, Date: { now: () => clock },
+    money: value => `$${value.toFixed(2)}`, loadAccount: async () => {},
+    accountApi: async (route, body) => { calls.push({ route, body }); return route === "/overview" ? data : post(body); },
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
+    document: { dispatchEvent: event => events.push(event) },
+  });
+  return { ...helpers, controls, calls, events, data, advance: ms => { clock += ms; } };
+}
+
+test("computer creation review refreshes prices read-only and includes continuing storage estimates", async () => {
+  const r = creationRig(); await r.reviewPod();
+  assert.deepEqual(r.calls.map(c => c.route), ["/overview"]);
+  assert.equal(r.controls.get("runpodCreatePod").disabled, true);
+  assert.equal(r.controls.get("runpodCreateReview").hidden, false);
+  assert.match(r.controls.get("runpodReviewStorage").textContent, /\$12.00\/month while running, \$20.00\/month after stopping/);
+  await r.createReviewedComputer();
+  assert.equal(r.calls.filter(c => c.route === "/pods").length, 0, "opening/reviewing is never approval to rent");
+  r.data.gpus[0].stock = "None"; await r.reviewPod();
+  assert.equal(r.controls.get("runpodCreateReview").hidden, true);
+  assert.match(r.controls.get("runpodCreateState").textContent, /unavailable/);
+});
+
+test("changed or expired creation reviews cannot spend even when the checkbox remains checked", async () => {
+  for (const change of [r => { r.controls.get("runpodVolume").value = "200"; }, r => r.advance(300001)]) {
+    const r = creationRig(); await r.reviewPod(); r.controls.get("runpodCostConfirm").checked = true; change(r);
+    await r.createReviewedComputer();
+    assert.equal(r.calls.filter(c => c.route === "/pods").length, 0);
+    assert.equal(r.controls.get("runpodCostConfirm").checked, false);
+  }
+});
+
+test("creation sends only the reviewed choices once and hands the returned ID to AI setup", async () => {
+  let release;
+  const r = creationRig(() => new Promise(resolve => { release = resolve; }));
+  await r.reviewPod(); r.controls.get("runpodCostConfirm").checked = true;
+  const pending = r.createReviewedComputer(); await r.createReviewedComputer();
+  const writes = r.calls.filter(c => c.route === "/pods");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].body.volumeInGb, 100); assert.equal(writes[0].body.expectedPricePerHr, .5);
+  assert.equal(writes[0].body.confirm, "CREATE PAID POD");
+  release({ pod: { id: "returned-id", name: "AIPLAY renderer", workerUrl: "https://returned-id-8787.proxy.runpod.net" } });
+  await pending;
+  assert.equal(r.events.length, 1); assert.equal(r.events[0].type, "aiplay:cloud-computer-created");
+  assert.equal(r.events[0].detail.id, "returned-id");
+  assert.equal(r.controls.get("runpodCostConfirm").checked, false);
+});
+
+test("an uncertain creation consumes approval and a repeated click cannot create a duplicate", async () => {
+  const r = creationRig(async () => { throw new Error("Request timed out"); });
+  await r.reviewPod(); r.controls.get("runpodCostConfirm").checked = true;
+  await r.createReviewedComputer();
+  assert.match(r.controls.get("runpodCreateState").textContent, /Check existing computers/);
+  await r.createReviewedComputer();
+  assert.equal(r.calls.filter(c => c.route === "/pods").length, 1);
+  assert.equal(r.events.length, 0);
 });
 
 test("integrated image options retain the selected remote checkpoint and common controls", () => {

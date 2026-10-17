@@ -29,7 +29,8 @@ function paintSetup(s) {
   chip('cloudSetupStatus', labels[step], step === 5 ? 'ok' : '');
   const hints = {
     1: 'Open RunPod, create an account key and paste it below.',
-    2: s?.providerUncertain ? 'Computer discovery failed; check your connection and try again.' : 'Choose an existing computer; AIPLAY checks its storage and rental price.',
+    2: s?.providerUncertain ? 'Computer discovery failed; check your connection and try again.' : s?.computers?.length
+      ? 'Choose a saved computer, or create one below.' : 'Create your first computer, then connect its AI service.',
     3: s?.providerUncertain ? 'Check the computer status before continuing.' : s?.pod?.status === 'EXITED'
       ? 'Review the start price to connect AI; rental begins only after your approval.'
       : s?.operation ? 'The current computer change is being checked.'
@@ -47,7 +48,7 @@ function paintSetup(s) {
   $('cloudSetupEditAI').hidden = !s?.podId || step === 3;
   $('cloudSetupEditProtection').hidden = s?.pod?.status !== 'RUNNING' || !s?.worker?.connectionReady || step === 4 || !!s?.operation;
   $('cloudSetupNoComputer').hidden = !!s?.computers?.length || !s || !!s.providerUncertain;
-  $('cloudSetupProvision').hidden = !!s?.computers?.length || !s || !!s.providerUncertain;
+  $('cloudSetupProvision').hidden = !s || !!s.providerUncertain;
   $('cloudSetupStart').hidden = !['EXITED', 'ERROR'].includes(s?.pod?.status);
   $('cloudSetupStart').disabled = working || !!s?.operation || !!s?.providerUncertain;
   $('cloudSetupWorkerFields').hidden = s?.pod?.status !== 'RUNNING' || !!s?.worker?.connectionReady && setupOverride !== 3;
@@ -92,6 +93,7 @@ function mountSetup() {
   for (const [target, ids] of [
     ['cloudSetupAccountFields', ['runpodAccountForm', 'runpodAccountState']],
     ['cloudSetupComputerFields', ['cloudComputerChoice']],
+    ['cloudSetupCreateFields', ['runpodCreateForm']],
     ['cloudSetupWorkerFields', ['runpodConnectionForm']],
     ['cloudSetupModelFields', ['runpodModels']],
     ['cloudSetupProtectionFields', ['cloudComputerKeyForm']],
@@ -115,7 +117,21 @@ function mountSetup() {
   $('cloudSetupReturn').addEventListener('click', () => { setupOverride = null; paintSetup(current); });
   $('cloudSetupEditAI').addEventListener('click', () => { setupOverride = 3; paintSetup(current); });
   $('cloudSetupEditProtection').addEventListener('click', () => { setupOverride = 4; paintSetup(current); });
-  $('cloudSetupProvision').addEventListener('click', () => reveal('runpodAccount', 'runpodReviewPod'));
+  $('cloudSetupProvision').addEventListener('click', () => {
+    const fields = $('cloudSetupCreateFields');
+    fields.hidden = !fields.hidden;
+    $('cloudSetupProvision').setAttribute('aria-expanded', String(!fields.hidden));
+    if (!fields.hidden) {
+      document.dispatchEvent(new Event('aiplay:cloud-create-open'));
+      scrollSetupTo(fields);
+    }
+  });
+  document.addEventListener('aiplay:cloud-computer-created', async event => {
+    setupOverride = null;
+    $('cloudSetupCreateFields').hidden = true;
+    $('cloudSetupProvision').setAttribute('aria-expanded', 'false');
+    await perform('/select', { id: event.detail.id });
+  });
   $('cloudSetupInstallHelp').addEventListener('click', () => reveal('runpodAccount', 'runpodBootstrapState'));
   $('cloudSetupStart').addEventListener('click', () => $('cloudComputerStart').click());
   $('cloudSetupCheck').addEventListener('click', () => perform('/refresh'));
