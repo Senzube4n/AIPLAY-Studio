@@ -1,10 +1,9 @@
 // AIPLAY Studio Setup.exe — a one-time installer. Run it, press Install, throw it away.
 //
 // It never has to be rebuilt when Studio changes, because it knows nothing about
-// Studio beyond the supported repository names:
+// Studio beyond the Nemesis repository name:
 //
-//   1. asks GitHub which commit `main` is on for each build, and compares
-//      the forks with Senzu's original (ahead / behind);
+//   1. asks GitHub which commit the Nemesis repository's `main` is on;
 //   2. downloads that commit as a zip, straight from GitHub, no account;
 //   3. unpacks only what the zip's own install.json lists (no docs, no notes,
 //      no website banners). A repository without the file gets a built-in list;
@@ -34,7 +33,7 @@
 // has the exact steps.
 //
 // Unattended, for testing:  "AIPLAY Studio Setup.exe" /quiet /dir:"C:\somewhere"
-//   [/repo:nemesis|senzu|bucky] [/noshortcuts] [/privatenode]
+//   [/noshortcuts] [/privatenode]
 // /noshortcuts also skips the Installed apps entry; /privatenode downloads the
 // private Node.js even when the PC has one. A log is always written to
 // %TEMP%\aiplay-setup.log.
@@ -62,8 +61,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installs AIPLAY Studio from GitHub")]
 [assembly: AssemblyProduct("AIPLAY Studio")]
 [assembly: AssemblyCompany("AIPLAY Studio")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 // Without this a hand-compiled exe runs with the .NET 4.0 path rules, which
 // refuse any path over 260 characters. npm's own folders go deeper than that.
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -71,7 +70,7 @@ using Microsoft.Win32;
 static class Program
 {
     public const string Title = "AIPLAY Studio";
-    public const string SetupVersion = "1.3";
+    public const string SetupVersion = "1.4";
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
@@ -84,7 +83,15 @@ static class Program
         try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
         try { AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false); AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false); } catch { }
         Log.Open();
-        var opt = Options.Parse(args);
+        Options opt;
+        try { opt = Options.Parse(args); }
+        catch (InstallException ex)
+        {
+            Log.Say(ex.Message);
+            if (!Array.Exists(args, a => a.Equals("/quiet", StringComparison.OrdinalIgnoreCase) || a.Equals("--quiet", StringComparison.OrdinalIgnoreCase)))
+                MessageBox.Show(ex.Message, "AIPLAY Studio Setup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return 2;
+        }
         if (opt.Quiet)
         {
             try { AttachConsole(-1); } catch { }
@@ -99,9 +106,8 @@ static class Program
 
     static int Quiet(Options opt)
     {
-        var src = Sources.ByKey(opt.Repo);
-        if (src == null) { Log.Say("unknown /repo: " + opt.Repo + " (nemesis, senzu or bucky)"); return 2; }
-        Sources.Check(Sources.All);
+        var src = Sources.Nemesis;
+        Sources.Check(src);
         var job = new Installer(src, opt.Dir ?? Installer.DefaultDir(), !opt.NoShortcuts, !opt.NoShortcuts, opt.PrivateNode);
         // Byte counters would be thousands of lines; the window shows those.
         job.Detail += (text) => { if (text.Length > 0 && !text.Contains(" MB")) Log.Say("      " + text); };
@@ -135,6 +141,8 @@ sealed class Options
             else if (low.StartsWith("/shot:")) o.Shot = a.Substring(6).Trim('"');
             else if (low.StartsWith("/repo:") || low.StartsWith("--repo=")) o.Repo = low.Substring(low.IndexOfAny(new[] { ':', '=' }) + 1);
         }
+        // Accept the old Nemesis argument for compatibility, but never switch builds.
+        if (o.Repo != "nemesis") throw new InstallException("This installer only installs AIPLAY Studio Nemesis.");
         return o;
     }
 }
@@ -160,21 +168,19 @@ static class Log
     }
 }
 
-// ─── the repositories ──────────────────────────────────────────────────────
+// ─── the Nemesis repository ────────────────────────────────────────────────
 
 sealed class Source
 {
     public string Key, Name, Letter, Repo;
     // Filled in by Sources.Check; null when GitHub could not be asked.
-    public string Sha, Date, Newest, Relation, Why;
-    public int RelationLevel; // 0 plain, 1 good, 2 attention
+    public string Sha, Date, Newest, Why;
 
     public Source(string key, string name, string letter, string repo) { Key = key; Name = name; Letter = letter; Repo = repo; }
 
-    public string Owner { get { return Repo.Split('/')[0]; } }
     public string Short { get { return Sha == null ? "" : Sha.Substring(0, Math.Min(7, Sha.Length)); } }
 
-    /// "B 26.09.21 · 7e0159f", the same shape as the app's own build line.
+    /// "N 26.10.17 · 7e0159f", the same shape as the app's own build line.
     public string BuildLine
     {
         get
@@ -193,58 +199,22 @@ sealed class Source
 
 static class Sources
 {
-    // This fork's installer defaults to Nemesis. The comparison base always
-    // remains Senzu, independently of the display order or selected build.
-    public static readonly Source[] All = {
-        new Source("nemesis", "Nemesis", "N", "nemesisone-dev/AIPLAY-Studio"),
-        new Source("senzu", "Senzu", "S", "Senzube4n/AIPLAY-Studio"),
-        new Source("bucky", "Bucky", "B", "bani4kaskashka/AIPLAY-Studio-Bucky-Fork"),
-    };
-    public static Source Original { get { return ByKey("senzu"); } }
+    public static readonly Source Nemesis =
+        new Source("nemesis", "Nemesis", "N", "nemesisone-dev/AIPLAY-Studio");
 
-    public static Source ByKey(string key)
+    /// One request for this repository's latest main. No other builds are queried.
+    public static void Check(Source s)
     {
-        foreach (var s in All) if (s.Key == key) return s;
-        return null;
-    }
-
-    /// Asks GitHub where each main is, and how each fork stands against the
-    /// original. 1 + 2 per fork requests; GitHub allows 60 an hour per address.
-    /// Never throws: whatever could not be asked stays null and says why.
-    public static void Check(Source[] all)
-    {
-        foreach (var s in all)
+        try
         {
-            try
-            {
-                var j = Net.Json(Net.GetString("https://api.github.com/repos/" + s.Repo + "/commits/main"));
-                s.Sha = (string)j["sha"];
-                var c = (Dictionary<string, object>)j["commit"];
-                s.Date = (string)((Dictionary<string, object>)c["committer"])["date"];
-                s.Newest = ((string)c["message"]).Split('\n')[0].Trim();
-            }
-            catch (Exception ex) { s.Why = ex.Message; }
+            var j = Net.Json(Net.GetString("https://api.github.com/repos/" + s.Repo + "/commits/main"));
+            s.Sha = (string)j["sha"];
+            var c = (Dictionary<string, object>)j["commit"];
+            s.Date = (string)((Dictionary<string, object>)c["committer"])["date"];
+            s.Newest = ((string)c["message"]).Split('\n')[0].Trim();
+            s.Why = null;
         }
-        var orig = Original;
-        if (orig.Sha != null) { orig.Relation = "the original, where Studio is made"; orig.RelationLevel = 0; }
-        foreach (var s in all)
-        {
-            if (s == orig || s.Sha == null || orig.Sha == null) continue;
-            try
-            {
-                // Across the fork network: base is the original's main, head the
-                // fork's. ahead = the fork's commits the original lacks.
-                var j = Net.Json(Net.GetString("https://api.github.com/repos/" + orig.Repo + "/compare/" + orig.Sha + "..." + s.Sha));
-                int ahead = Convert.ToInt32(j["ahead_by"]), behind = Convert.ToInt32(j["behind_by"]);
-                if (ahead == 0 && behind == 0) { s.Relation = "same as " + orig.Name + "'s build"; s.RelationLevel = 1; }
-                else
-                {
-                    s.Relation = ahead + " ahead of " + orig.Name + "'s build · " + behind + " behind";
-                    s.RelationLevel = behind > 0 ? 2 : 1;
-                }
-            }
-            catch { s.Relation = null; }
-        }
+        catch (Exception ex) { s.Why = ex.Message; }
     }
 }
 
@@ -381,6 +351,7 @@ sealed class Installer
 
     public Installer(Source src, string dir, bool startMenu, bool desktop, bool forcePrivateNode)
     {
+        if (src.Repo != Sources.Nemesis.Repo) throw new InstallException("This installer only installs AIPLAY Studio Nemesis.");
         this.src = src;
         this.dir = Path.GetFullPath(dir.Trim().TrimEnd('\\'));
         this.startMenu = startMenu;
@@ -442,7 +413,7 @@ sealed class Installer
         {
             // 1. Which commit.
             Say(1, "Asking GitHub for " + src.Name + "'s newest build");
-            if (src.Sha == null) Sources.Check(new[] { src });
+            if (src.Sha == null) Sources.Check(src);
             if (src.Sha == null) throw new InstallException(src.Why ?? "GitHub did not say which commit is newest.");
             Detail(src.BuildLine + "  " + src.Newest);
 
@@ -547,9 +518,13 @@ sealed class Installer
     static string[] Strings(Dictionary<string, object> j, string key)
     {
         object v;
-        if (!j.TryGetValue(key, out v) || !(v is object[])) return null;
+        if (!j.TryGetValue(key, out v)) return null;
+        // Deserialize<Dictionary<string, object>> uses ArrayList for JSON arrays.
+        // IList accepts that representation as well as object[] from DeserializeObject.
+        var values = v as System.Collections.IList;
+        if (values == null) return null;
         var list = new List<string>();
-        foreach (var o in (object[])v) if (o is string) list.Add((string)o);
+        foreach (var o in values) if (o is string) list.Add((string)o);
         return list.ToArray();
     }
 
@@ -578,7 +553,7 @@ sealed class Installer
         var info = new Dictionary<string, object> {
             { "repo", src.Repo }, { "name", src.Name }, { "letter", src.Letter }, { "branch", "main" },
             { "commit", src.Sha }, { "date", src.Date }, { "newest", src.Newest },
-            { "against", src == Sources.Original ? null : Sources.Original.Repo }, { "relation", src.Relation },
+            { "against", null }, { "relation", null },
             { "node", IsPrivate(nodeExe, stage) ? "private" : "system" },
             { "installedAt", DateTime.UtcNow.ToString("o") }, { "installer", Program.SetupVersion },
         };
@@ -1057,52 +1032,6 @@ sealed class Pill : Painted
     }
 }
 
-/// One repository to pick: its name, build line, how it stands, its newest commit.
-sealed class Card : Painted
-{
-    public Source Src;
-    public bool Selected;
-    public event EventHandler Picked = delegate { };
-    bool hover;
-
-    public Card(Source s) { Src = s; Cursor = Cursors.Hand; }
-
-    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
-    protected override void OnClick(EventArgs e) { Picked(this, e); base.OnClick(e); }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-        using (var path = Theme.Round(r, 12))
-        {
-            using (var b = new SolidBrush(Selected ? Color.FromArgb(30, Theme.Primary) : Color.FromArgb(hover ? 16 : 9, 255, 255, 255))) g.FillPath(b, path);
-            using (var pen = new Pen(Selected ? Color.FromArgb(200, Theme.Primary) : Theme.Edge, Selected ? 1.5f : 1f)) g.DrawPath(pen, path);
-        }
-        // The radio dot.
-        var dot = new RectangleF(18, 16, 16, 16);
-        using (var pen = new Pen(Selected ? Theme.Primary : Theme.Ghost, 1.5f)) g.DrawEllipse(pen, dot);
-        if (Selected) using (var b = new SolidBrush(Theme.Primary)) g.FillEllipse(b, 22, 20, 8, 8);
-
-        var flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis;
-        using (var name = new Font(Theme.Display, 12f, FontStyle.Bold))
-            TextRenderer.DrawText(g, Src.Name + "'s build", name, new Rectangle(46, 13, 220, 22), Theme.Ink, flags);
-        using (var mono = new Font(Theme.Mono, 9f))
-            TextRenderer.DrawText(g, Src.BuildLine, mono, new Rectangle(Width - 236, 16, 220, 20), Theme.Faint, flags | TextFormatFlags.Right);
-        using (var body = new Font(Theme.Body, 9f))
-        {
-            string rel = Src.Relation ?? (Src.Sha == null ? (Src.Why != null ? "could not check" : "checking GitHub…") : "");
-            Color rc = Src.RelationLevel == 2 ? Theme.Warn : Src.RelationLevel == 1 ? Theme.Ok : Theme.Faint;
-            TextRenderer.DrawText(g, rel, body, new Rectangle(46, 38, Width - 62, 18), rc, flags);
-        }
-        if (!string.IsNullOrEmpty(Src.Newest))
-            using (var small = new Font(Theme.Body, 8.5f))
-                TextRenderer.DrawText(g, "newest: " + Src.Newest, small, new Rectangle(46, 58, Width - 62, 18), Theme.Ghost, flags);
-    }
-}
-
 /// A thin bar in the Welcome page's two colours. Negative = "busy, no number".
 sealed class Bar : Painted
 {
@@ -1138,8 +1067,7 @@ sealed class SetupForm : Form
 
     readonly Options opt;
     readonly List<Control> choose = new List<Control>(), work = new List<Control>(), done = new List<Control>();
-    readonly List<Card> cards = new List<Card>();
-    Source picked;
+    readonly Source picked = Sources.Nemesis;
     Label net, stepLabel, statusLabel, detailLabel, doneTitle, doneLine, doneNotes;
     TextBox dirBox;
     CheckBox chkDesktop, chkDelete;
@@ -1157,7 +1085,7 @@ sealed class SetupForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
-        ClientSize = new Size(560, 420 + Sources.All.Length * 90);
+        ClientSize = new Size(560, 560);
         BackColor = Theme.Bg;
         ForeColor = Theme.Ink;
         Font = new Font(Theme.Body, 9.5f);
@@ -1221,20 +1149,15 @@ sealed class SetupForm : Form
     void BuildChoose()
     {
         string existing = Installer.ExistingDir();
-        Add(choose, Caps("VERSION", 118));
-        int y = 140;
-        foreach (var s in Sources.All)
-        {
-            var card = new Card(s) { Location = new Point(32, y), Size = new Size(496, 82) };
-            card.Picked += (o, e) => Pick(((Card)o).Src);
-            cards.Add(card);
-            Add(choose, card);
-            y += 90;
-        }
-        net = MakeLabel("Asking GitHub where each version is…", 32, y + 2, 496, 18, new Font(Theme.Body, 8.5f), Theme.Ghost);
+        Add(choose, Caps("NEMESIS", 118));
+        var buildLine = MakeLabel("Checking the latest build…", 32, 144, 496, 24, new Font(Theme.Mono, 10f), Theme.Ink);
+        var newest = MakeLabel("", 32, 174, 496, 20, new Font(Theme.Body, 8.5f), Theme.Faint);
+        Add(choose, buildLine);
+        Add(choose, newest);
+        net = MakeLabel("Downloads the latest AIPLAY Studio Nemesis.", 32, 202, 496, 40, new Font(Theme.Body, 8.5f), Theme.Ghost);
         Add(choose, net);
 
-        int footer = y + 30;
+        int footer = 260;
         Add(choose, Caps("INSTALL TO", footer));
         dirBox = new TextBox { Location = new Point(32, footer + 22), Size = new Size(392, 26), BackColor = Theme.Raise, ForeColor = Theme.Ink, BorderStyle = BorderStyle.FixedSingle,
             Font = new Font(Theme.Body, 10f), Text = opt.Dir ?? existing ?? Installer.DefaultDir() };
@@ -1248,22 +1171,23 @@ sealed class SetupForm : Form
         Add(choose, chkDesktop);
         Add(choose, chkDelete);
 
-        installBtn = new Pill(existing != null ? "Reinstall" : "Install", true) { Location = new Point(32, footer + 172), Size = new Size(496, 46) };
+        installBtn = new Pill(existing != null ? "Reinstall" : "Install", true) { Location = new Point(32, ClientSize.Height - 78), Size = new Size(496, 46) };
         installBtn.Click += (s, e) => StartInstall();
         Add(choose, installBtn);
 
-        Pick(Sources.ByKey(opt.Repo) ?? Sources.All[0]);
         if (existing != null) net.Text = "AIPLAY Studio is already installed there. Reinstalling replaces the app and keeps your songs and settings.";
         var t = new Thread(() =>
         {
-            Sources.Check(Sources.All);
+            Sources.Check(picked);
             BeginInvoke((Action)(() =>
             {
-                foreach (var c in cards) c.Invalidate();
-                bool any = false;
-                foreach (var s in Sources.All) if (s.Sha != null) any = true;
-                if (!any) net.Text = "Could not reach GitHub. " + (Sources.All[0].Why ?? "") + " Install tries again when you press it.";
-                else if (existing == null) net.Text = "All builds are free and open. " + picked.Name + " is selected.";
+                buildLine.Text = picked.Sha == null ? "Build details unavailable" : picked.BuildLine;
+                newest.Text = picked.Newest ?? "";
+                if (picked.Sha == null)
+                {
+                    net.Text = "Could not reach GitHub. Press Install to try again.";
+                    Log.Say(picked.Why ?? "GitHub did not return build details.");
+                }
                 if (opt.Shot != null) Shots();
             }));
         }) { IsBackground = true };
@@ -1295,12 +1219,6 @@ sealed class SetupForm : Form
             DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
             bmp.Save(opt.Shot + "-" + page + ".png", System.Drawing.Imaging.ImageFormat.Png);
         }
-    }
-
-    void Pick(Source s)
-    {
-        picked = s;
-        foreach (var c in cards) { c.Selected = c.Src == s; c.Invalidate(); }
     }
 
     void Browse()

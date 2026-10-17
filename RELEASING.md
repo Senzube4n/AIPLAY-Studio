@@ -7,12 +7,12 @@ every clone live in tracked files like this one. Follow them without being asked
 ## What a release is
 
 **Studio itself is never released.** Everybody installs or updates from `main`:
-`AIPLAY Studio Setup.exe` downloads the newest commit of the chosen repository
+`AIPLAY Studio Setup.exe` downloads the newest commit of the Nemesis repository
 straight from GitHub, and unpacks what `install.json` in that commit lists. An
 app change needs a push and nothing else.
 
 **The only release is the installer**, `AIPLAY Studio Setup.exe`. It knows the
-repository names and nothing else about Studio, so it changes rarely. A GitHub
+Nemesis repository name and nothing else about Studio, so it changes rarely. A GitHub
 Release is simply where people download it from.
 
 ## When to publish a new installer
@@ -51,15 +51,17 @@ that file, publishing the new installer is part of finishing the work:
    is not a pre-release. So keep the file name, and publish anything else (the
    YuE2 runtime packages) as a **pre-release**, or the button stops working.
 
-Each repository publishes its own copy. This fork's installer defaults to
-Nemesis (`nemesisone-dev/AIPLAY-Studio`) and also offers Senzu's original and
-Bucky's fork. Comparisons always use Senzu as the base. The chosen repository's
+This fork's installer installs only Nemesis (`nemesisone-dev/AIPLAY-Studio`).
+There is no build selector and no request to other Studio repositories. Its
 latest `main` is resolved at installation time, so subsequent Studio changes
-need only a push. Unattended installation accepts `/repo:nemesis`, `/repo:senzu`
-or `/repo:bucky`.
+need only a push. Unattended installation uses the same source. Legacy
+`/repo:nemesis` arguments remain compatible; other repositories are refused
+before network or installation work.
 
-Installer 1.3 adds Nemesis and keeps the app's download links on this fork's
-release. Build it with the command above and publish `setup-v1.3` to
+Installer 1.4 removes the build choices, installs Nemesis only, and reads JSON
+manifest arrays correctly so the worker, exclusions and preservation paths are
+honoured. Build it
+with the command above and publish `setup-v1.4` to
 `nemesisone-dev/AIPLAY-Studio`. The installer source and all three
 version fields must agree before building. An unsigned build is usable and
 must be labelled unsigned in the release notes.

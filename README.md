@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  When the installer asks which build, choose <b>Senzu's</b>.
+  Installs <b>AIPLAY Studio Nemesis</b>.
 </p>
 
 <p align="center">
@@ -97,8 +97,8 @@ The Vulkan and CPU builds bring their own.
 
 1. **Download and run [AIPLAY Studio Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Windows may say “Windows protected your PC” because the installer is not
-   signed yet: click **More info**, then **Run anyway**. When it asks which
-   build, leave **Nemesis's** selected; then a folder, where the default is right. No
+   signed yet: click **More info**, then **Run anyway**. It installs **Nemesis**;
+   choose a folder, where the default is right. No
    admin prompt.
    (Developers: the [source ZIP](https://github.com/nemesisone-dev/AIPLAY-Studio/archive/refs/heads/main.zip) works too; open the extracted folder,
    not the ZIP viewer.)

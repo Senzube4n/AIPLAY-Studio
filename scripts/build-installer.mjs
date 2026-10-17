@@ -3,7 +3,7 @@
  *
  *   node scripts/build-installer.mjs
  *
- * REBUILD IT RARELY. The installer knows the supported repository names and nothing else
+ * REBUILD IT RARELY. The installer knows the Nemesis repository name and nothing else
  * about Studio: what it unpacks comes from install.json inside the zip it
  * downloads, so an app change never needs a new installer. Rebuild only when
  * installer/Setup.cs itself changes, and sign it each time you do. Publishing

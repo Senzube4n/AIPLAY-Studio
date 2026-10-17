@@ -18,8 +18,8 @@ MiniMax or any image/video model.
 
 1. Download and run **[AIPLAY Studio Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Windows may say “Windows protected your PC” because the installer is not
-   signed yet: click **More info**, then **Run anyway**. When it asks which
-   build, leave **Nemesis's** selected; then a folder (the default is right). It
+   signed yet: click **More info**, then **Run anyway**. It installs **Nemesis**;
+   choose a folder (the default is right). It
    installs Studio plus, when this PC has no Node.js 20+, a private copy of
    it. No admin prompt. Section 3 says exactly what it does.
    *For developers:* install [Node.js](https://nodejs.org), then download the
@@ -268,9 +268,8 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 
 Download **[AIPLAY Studio Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it (Windows may say
 “Windows protected your PC” because it is not signed yet: click **More info**,
-then **Run anyway**), pick Senzu's build (the original, and the
-default) or Bucky's, and press **Install**. It shows how far apart the two are
-(ahead / behind) before you choose. It then:
+then **Run anyway**), choose a folder and press **Install**. This installer
+installs **AIPLAY Studio Nemesis**. It then:
 
 - downloads that build's newest commit straight from GitHub, with no account;
 - unpacks only what the repository's `install.json` lists, so no docs or notes;

@@ -38,10 +38,12 @@ test("both launchers look in .\\node before the system's Node.js", () => {
   assert.match(src("../installer/Setup.cs"), /Contains\("privateNode"\)/);
 });
 
-test("the installer: Nemesis by default, a stamped build, checked Node.js, nothing half-installed", () => {
+test("the installer: Nemesis only, a stamped build, checked Node.js, nothing half-installed", () => {
   const s = src("../installer/Setup.cs");
   assert.match(s, /new Source\("nemesis", "Nemesis", "N", "nemesisone-dev\/AIPLAY-Studio"\)/);
   assert.match(s, /public string Dir, Repo = "nemesis"/);
+  assert.doesNotMatch(s, /Senzu|Bucky|sealed class Card|Sources\.All|Sources\.ByKey|\/compare\//,
+    "the installer has one source and no build picker or upstream comparison");
   assert.match(s, /codeload\.github\.com\/" \+ src\.Repo \+ "\/zip\/" \+ src\.Sha/, "downloads the exact commit it showed");
   assert.match(s, /server\\version\.gen\.json/, "a zip has no .git; the build line must still name its commit");
   assert.match(s, /SHASUMS256\.txt/, "Node.js is checked against nodejs.org's own list");
@@ -302,24 +304,55 @@ test("the compiled installer selects the right fork, refuses a Git worktree and 
   const base = await mkdtemp(path.join(tmpdir(), "aiplay-installer-fixture-"));
   try {
     const harness = path.join(base, "Fixture.cs"), exe = path.join(base, "Fixture.exe");
-    await writeFile(harness, `using System; using System.IO; using System.Reflection;
+    await writeFile(harness, `using System; using System.IO; using System.IO.Compression; using System.Reflection;
 static class Fixture {
+  static void Entry(ZipArchive zip, string name, string content) {
+    using (var writer = new StreamWriter(zip.CreateEntry("repo/" + name).Open())) writer.Write(content);
+  }
   static int Main(string[] args) {
-    var chosen = Sources.ByKey(Options.Parse(new string[0]).Repo);
+    var chosen = Sources.Nemesis;
     if (chosen == null || chosen.Key != "nemesis" || chosen.Repo != "nemesisone-dev/AIPLAY-Studio" || chosen.Letter != "N")
       throw new Exception("The default installer must download the Nemesis fork");
-    if (Sources.All[0] != chosen || Sources.Original.Key != "senzu" || Sources.Original.Repo != "Senzube4n/AIPLAY-Studio")
-      throw new Exception("The comparison base must remain Senzu when Nemesis is first");
-    foreach (var key in new[] { "nemesis", "senzu", "bucky" })
-      if (Sources.ByKey(Options.Parse(new[] { "/repo:" + key }).Repo).Key != key
-        || Sources.ByKey(Options.Parse(new[] { "--repo=" + key }).Repo).Key != key)
-        throw new Exception("Explicit build selection must remain available");
-    if (Sources.ByKey("unknown") != null) throw new Exception("Unknown repositories must be refused");
+    if (Options.Parse(new string[0]).Repo != "nemesis" || Options.Parse(new[] { "/repo:nemesis" }).Repo != "nemesis")
+      throw new Exception("Default and legacy Nemesis invocations must select only Nemesis");
+    foreach (var key in new[] { "senzu", "bucky", "unknown", "https://example.test/repo" })
+      foreach (var prefix in new[] { "/repo:", "--repo=" }) {
+        bool rejected = false;
+        try { Options.Parse(new[] { prefix + key }); } catch (InstallException) { rejected = true; }
+        if (!rejected) throw new Exception("A different repository must be refused before networking or installation");
+      }
+    bool otherSourceRejected = false;
+    try { new Installer(new Source("other", "Other", "X", "example/other"), args[0], false, false, false); }
+    catch (InstallException) { otherSourceRejected = true; }
+    if (!otherSourceRejected) throw new Exception("The installer must refuse any other source");
     string root = args[0], app = Path.Combine(root, "app"), stage = Path.Combine(root, "stage");
+    string archive = Path.Combine(root, "manifest.zip"), unpack = Path.Combine(root, "unpack");
+    using (var zip = ZipFile.Open(archive, ZipArchiveMode.Create)) {
+      Entry(zip, "install.json", File.ReadAllText(args[1]));
+      Entry(zip, "launcher/launcher.mjs", "launcher");
+      Entry(zip, "worker/runpod-worker.js", "worker");
+      Entry(zip, "scripts/helper.mjs", "helper");
+      Entry(zip, "scripts/skipped_test.ps1", "test-only");
+      Entry(zip, "worker/readme.md", "excluded notes");
+      Entry(zip, "worker/vendor/LICENSE.md", "required licence");
+    }
+    Directory.CreateDirectory(unpack);
+    var unpacker = new Installer(chosen, Path.Combine(root, "manifest-app"), false, false, false);
+    typeof(Installer).GetMethod("Unpack", BindingFlags.Instance | BindingFlags.NonPublic)
+      .Invoke(unpacker, new object[] { archive, unpack });
+    if (!File.Exists(Path.Combine(unpack, "worker", "runpod-worker.js"))
+      || !File.Exists(Path.Combine(unpack, "scripts", "helper.mjs"))
+      || !File.Exists(Path.Combine(unpack, "worker", "vendor", "LICENSE.md"))
+      || File.Exists(Path.Combine(unpack, "scripts", "skipped_test.ps1"))
+      || File.Exists(Path.Combine(unpack, "worker", "readme.md")))
+      throw new Exception("Real install.json arrays must include the worker, exclude tests and notes, and keep licences");
+    var preserved = (string[])typeof(Installer).GetField("preserve", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(unpacker);
+    if (Array.IndexOf(preserved, "vendor/previz-blender") < 0)
+      throw new Exception("Manifest preservation paths must survive JSON deserialization");
     Directory.CreateDirectory(Path.Combine(app, "launcher"));
     File.WriteAllText(Path.Combine(app, "launcher", "launcher.mjs"), "old app");
     File.WriteAllText(Path.Combine(app, ".git"), "gitdir: elsewhere");
-    var installer = new Installer(new Source("senzu", "Senzu", "S", "Senzube4n/AIPLAY-Studio"), app, false, false, false);
+    var installer = new Installer(chosen, app, false, false, false);
     bool refused = false;
     try { installer.Run(); } catch (InstallException e) { refused = e.Message.Contains("git clone"); }
     if (!refused) throw new Exception("A worktree must be refused before any network or install work");
@@ -334,14 +367,15 @@ static class Fixture {
     if (!failed || File.ReadAllText(Path.Combine(app, "launcher", "launcher.mjs")) != "old app"
       || File.ReadAllText(Path.Combine(app, "workflows", "custom", "mine.json")) != "my workflow")
       throw new Exception("A failed preservation copy must restore the whole old install");
-    Console.WriteLine("worktree refused; failed preservation restored old install"); return 0;
+    Console.WriteLine("Nemesis only; manifest honoured; worktree refused; failed preservation restored old install"); return 0;
   }
 }`);
     execFileSync(compiler, ["/nologo", "/target:exe", "/main:Fixture", `/out:${exe}`,
       "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
       ...["System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll", "System.Web.Extensions.dll"].map(d => `/r:${path.join(fw, d)}`),
       fileURLToPath(root("installer/Setup.cs")), harness], { windowsHide: true, stdio: "pipe" });
-    const output = execFileSync(exe, [base], { windowsHide: true, encoding: "utf8" });
+    const output = execFileSync(exe, [base, fileURLToPath(root('install.json'))], { windowsHide: true, encoding: "utf8" });
+    assert.match(output, /Nemesis only; manifest honoured/);
     assert.match(output, /worktree refused; failed preservation restored old install/);
   } finally { await rm(base, { recursive: true, force: true }); }
 });
