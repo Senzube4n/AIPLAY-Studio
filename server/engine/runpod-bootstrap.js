@@ -116,3 +116,23 @@ export function studioBootstrap({ root = ROOT, version = appVersion,
   const scriptSha256 = createHash("sha256").update(script).digest("hex");
   return { command: bootstrapCommand({ repo, commit, scriptSha256 }), repo, commit, scriptSha256, problem: null, note };
 }
+
+/** Automatic deployment follows this installation's explicitly selected build.
+ * Keep the old manual command's official-only policy independent. */
+export function automaticBootstrap({ root = ROOT, version = appVersion,
+  git = (args, opts = {}) => execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'], ...opts }) } = {}) {
+  const info = readInfo(root), repo = String(version()?.repo || info?.repo || '');
+  if (!['nemesisone-dev/aiplay-studio', 'senzube4n/aiplay-studio'].includes(repo.toLowerCase()))
+    return { available: false, problem: 'This build has no approved automatic worker source.' };
+  const script = 'worker/automatic-runpod.py';
+  try {
+    const cloned = existsSync(path.join(root, '.git'));
+    const commit = cloned ? String(git(['rev-parse', 'HEAD'], { encoding: 'utf8' })).trim() : info?.commit;
+    if (!COMMIT_RE.test(commit || '')) throw new Error('Missing commit');
+    const bytes = cloned ? git(['cat-file', 'blob', `${commit}:${script}`]) : readFileSync(path.join(root, script));
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const url = `https://raw.githubusercontent.com/${repo}/${commit}/${script}`;
+    const command = `curl -fsSL --retry 3 ${url} -o /tmp/aiplay-automatic.py && echo '${sha256}  /tmp/aiplay-automatic.py' | sha256sum -c - && exec python -u /tmp/aiplay-automatic.py`;
+    return { available: true, repo, commit, sha256, url, command };
+  } catch { return { available: false, problem: 'Update AIPLAY to a published build with automatic AI installation.' }; }
+}

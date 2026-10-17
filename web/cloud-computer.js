@@ -4,6 +4,37 @@ const money = value => Number.isFinite(value) ? `$${value.toFixed(2)}` : 'Unavai
 const bytes = value => Number.isFinite(value) ? `${(value / 1e9).toFixed(2)} GB` : 'Not checked';
 let current = null, working = false, activeAction = '';
 let accountConfigured = false, setupOverride = null;
+let automaticInstall = null, installationPolling = false;
+async function refreshAutomaticInstall() {
+  if (installationPolling) return;
+  installationPolling = true;
+  try {
+    const response = await fetch('/api/runpod/install');
+    if (response.ok) {
+      const info = await response.json();
+      if (info.podId && !current?.podId && !working) await perform('/select', { id: info.podId });
+      paintAutomaticInstall(info);
+      $('cloudSetupProvision').disabled = ['creating', 'uncertain', 'waiting', 'connecting', 'failed'].includes(info.phase);
+    }
+  } finally { installationPolling = false; }
+}
+function paintAutomaticInstall(info) {
+  const connectedBefore = automaticInstall?.podId === info.podId && automaticInstall?.workerConnected;
+  automaticInstall = info;
+  const managed = info.phase !== 'none' && (!current?.podId || current.podId === info.podId);
+  $('cloudAutomaticInstall').hidden = !managed;
+  if (!managed) return;
+  const names = { source: 'Downloading AIPLAY', runtime: 'Installing runtime', engine: 'Installing AI engine', dependencies: 'Installing dependencies', starting: 'Starting AI service', complete: 'AI service connected', failed: 'Installation needs attention' };
+  chip('cloudAutomaticStatus', names[info.stage] || (info.phase === 'uncertain' ? 'Checking creation result' : info.phase === 'stopped' ? 'Computer stopped' : 'Preparing AI installation'), info.workerConnected ? 'ok' : info.error ? 'warn' : 'busy');
+  $('cloudAutomaticHint').textContent = info.error || (info.workerConnected ? 'Choose the models you need below and review their licences.' : 'Rental is running during setup; installation continues if AIPLAY closes.');
+  if (!info.workerConnected && ['waiting', 'connecting', 'uncertain', 'creating', 'failed'].includes(info.phase)) $('cloudSetupWorkerFields').hidden = true;
+  const done = info.workerConnected ? 3 : info.stage ? 1 : 0;
+  [...$('cloudAutomaticSteps').children].forEach((row, index) => { row.style.color = index < done ? 'var(--ok)' : ''; });
+  if (info.workerConnected) {
+    $('cloudSetupWorkerFields').hidden = true;
+    if (!connectedBefore) document.dispatchEvent(new Event('aiplay:cloud-worker-connected'));
+  }
+}
 export function cloudSetupStage(s, account, completed = false) {
   if (!account || ['credentials_missing', 'credentials_invalid'].includes(s?.issue?.code)) return 1;
   if (!s?.podId) return 2;
@@ -55,6 +86,11 @@ function paintSetup(s) {
   $('cloudSetupModelFields').hidden = !s?.worker?.connectionReady || !!s?.worker?.generationReady && setupOverride !== 3;
   $('cloudSetupProtectionFields').hidden = s?.pod?.status !== 'RUNNING';
   $('cloudComputer').hidden = !s?.podId;
+  if (automaticInstall && automaticInstall.phase !== 'none' && (!s?.podId || s.podId === automaticInstall.podId)) {
+    if (step === 3 && !automaticInstall.workerConnected) $('cloudSetupHint').textContent = 'AIPLAY is installing and connecting the AI service automatically.';
+    if (!automaticInstall.workerConnected && ['waiting', 'connecting', 'uncertain', 'creating', 'failed'].includes(automaticInstall.phase)) $('cloudSetupWorkerFields').hidden = true;
+    $('cloudAutomaticInstall').hidden = false;
+  }
   if (s?.pod?.workerUrl && document.activeElement !== $('runpodWorkerUrl')) $('runpodWorkerUrl').value = s.pod.workerUrl;
 }
 async function checkSetupAccount() {
@@ -131,6 +167,19 @@ function mountSetup() {
     $('cloudSetupCreateFields').hidden = true;
     $('cloudSetupProvision').setAttribute('aria-expanded', 'false');
     await perform('/select', { id: event.detail.id });
+    await refreshAutomaticInstall();
+  });
+  document.addEventListener('aiplay:cloud-install-progress', event => {
+    paintAutomaticInstall(event.detail);
+    if (!event.detail.podId) {
+      $('runpodCreateState').textContent = event.detail.error || 'Checking whether your computer was created.';
+      $('cloudSetupProvision').disabled = true;
+    }
+  });
+  $('cloudAutomaticCheck').addEventListener('click', async () => {
+    const response = await fetch('/api/runpod/install/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (response.ok) paintAutomaticInstall(await response.json());
+    await perform('/discover');
   });
   $('cloudSetupInstallHelp').addEventListener('click', () => reveal('runpodAccount', 'runpodBootstrapState'));
   $('cloudSetupStart').addEventListener('click', () => $('cloudComputerStart').click());
@@ -273,9 +322,11 @@ async function init() {
   });
   document.addEventListener('aiplay:cloud-computer-refresh', () => perform('/discover'));
   await perform('/discover');
+  await refreshAutomaticInstall();
   setInterval(async () => {
     if (document.hidden || $('settings').hidden) return;
     const result = await api().catch(() => null); if (result) paint(result);
+    refreshAutomaticInstall().catch(() => {});
   }, 3000);
 }
 init();

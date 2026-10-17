@@ -103,7 +103,7 @@ export function normalizeAccount(data = {}) {
   return { balance: Number(user.clientBalance || 0), currentSpendPerHr: Number(user.currentSpendPerHr || 0), pods, gpus };
 }
 
-export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn = fetch, dataDir = null }) {
+export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn = fetch, dataDir = null, automaticCreate = null, creationGuard = async () => {} }) {
   let apiKey;
   let creating = false;
   let creatingTemplates = false;
@@ -158,6 +158,11 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
   }
   async function create(input = {}) {
     if (creating) throw new Error("A Pod creation request is already in progress.");
+    if (input.installAI === true) {
+      if (!automaticCreate) throw new Error('Automatic AI installation is unavailable in this build.');
+      creating = true;
+      try { return await automaticCreate(input); } finally { creating = false; }
+    }
     if (input.confirm !== "CREATE PAID POD") throw new Error("Review the hourly price and confirm paid Pod creation.");
     const gpuTypeId = cleanText(input.gpuTypeId, "GPU type", 160);
     if (/\b(?:AMD|Intel|MI\d{3}\w*)\b/i.test(gpuTypeId)) throw new Error("This AI service needs an NVIDIA cloud graphics card.");
@@ -168,6 +173,7 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
     const imageName = cleanText(input.imageName || "runpod/comfyui:cuda12.8", "container image", 240);
     creating = true;
     try {
+      await creationGuard();
       const current = await overview();
       if (journal) unresolvedCreate = (await readJSON(journal, {})).pending || null;
       if (unresolvedCreate) {

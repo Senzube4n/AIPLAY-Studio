@@ -101,6 +101,14 @@ test("creation refuses an existing Pod name before sending another paid mutation
   assert.equal(r.calls.filter(call => call.query.includes("AiplayCreatePod")).length, 0);
 });
 
+test('overlapping manual create requests share the creation guard and send one paid mutation', async () => {
+  const r = rig(); await r.account.connect(KEY);
+  const body = { confirm: 'CREATE PAID POD', gpuTypeId: 'cheap', name: 'First new computer' };
+  const out = await Promise.allSettled([r.account.create(body), r.account.create({ ...body, name: 'Second new computer' })]);
+  assert.equal(out.filter(x => x.status === 'fulfilled').length, 1);
+  assert.equal(r.calls.filter(call => call.query?.includes('AiplayCreatePod')).length, 1);
+});
+
 test("guided creation refuses a changed price or unavailable GPU before a paid mutation", async () => {
   const r = rig(); await r.account.connect(KEY);
   const input = { confirm: "CREATE PAID POD", gpuTypeId: "cheap", name: "New computer", expectedPricePerHr: .39 };

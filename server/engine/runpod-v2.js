@@ -66,6 +66,7 @@ export function createRunpodV2({ getApiKey, fetchFn = fetch, timeoutMs = 30000 }
     return pod;
   };
   return {
+    createPod: async body => safePod(await request('/pods', 'POST', body)),
     listPods: async () => (await list('/pods', 'pods')).map(safePod), getPod,
     async quote(pod) {
       if (!pod.gpu || !['SECURE', 'COMMUNITY'].includes(pod.cloud)) throw new CloudError('unsupported_computer', 'Choose a supported GPU computer.');

@@ -26,7 +26,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   modelsDir = path.join(path.dirname(inputDir), "models"), fetchFn = fetch, pollMs = 2000, modelBundles,
   aceURL = "http://127.0.0.1:8001", trainingDir = null,
   podId = null, persistentRoot = "/workspace", tempDir = path.join(path.dirname(inputDir), "temp"),
-  verifyPersistence = null, cloudIntervalMs = 10000 }) {
+  verifyPersistence = null, cloudIntervalMs = 10000, installCommit = null }) {
   if (typeof token !== "string" || token.length < 32 || /[\r\n]/.test(token)) throw new Error("AIPLAY_WORKER_TOKEN must contain at least 32 characters.");
   const backend = new URL(comfyURL);
   if (backend.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(backend.hostname)) throw new Error("ComfyUI must be on the worker's loopback interface.");
@@ -266,7 +266,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
         if (!stats && !aceReady) throw new Error("Neither ComfyUI nor ACE-Step is ready.");
         return sendJSON(res, 200, { protocol: PROTOCOL, workerId: state.workerId, ready: true,
           version: stats?.system?.comfyui_version || null, devices: stats?.devices || [], maxAssetBytes: MAX_ASSET,
-          modelSetupVersion: 1, cloudManagerVersion: 1, podId,
+          modelSetupVersion: 1, cloudManagerVersion: 1, podId, installCommit,
           capabilities: { comfy: !!stats, aceTraining: aceReady } });
       }
       if (req.method === "GET" && url.pathname === "/v1/custom-models") return sendJSON(res, 200, await aceTraining.list());
@@ -296,10 +296,13 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
         return sendJSON(res, 200, await aceTraining.upload(customUpload[1], url.searchParams.get("name"), req));
       }
       if (req.method === "GET" && url.pathname === "/v1/models") return sendJSON(res, 200, await request("/object_info"));
+      if (req.method === "GET" && url.pathname === "/v1/install/status") return sendJSON(res, 200, {
+        stage: 'complete', commit: installCommit, podId,
+      });
       if (req.method === "GET" && url.pathname === "/v1/setup") return sendJSON(res, 200, modelManager.status());
       if (req.method === "POST" && url.pathname === "/v1/setup/install") {
         const body = JSON.parse((await readBody(req)).toString("utf8"));
-        return sendJSON(res, 202, await modelManager.install(body.bundle, body.acceptLicense));
+        return sendJSON(res, 202, await modelManager.install(body.bundle, body.acceptLicense, body.modelToken));
       }
       if (req.method === "POST" && url.pathname === "/v1/setup/cancel") return sendJSON(res, 200, modelManager.cancel());
       if (req.method === "POST" && url.pathname === "/v1/assets") {
@@ -396,6 +399,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     aceURL: process.env.AIPLAY_ACE_URL || "http://127.0.0.1:8001",
     trainingDir: process.env.AIPLAY_TRAINING_DIR || "/workspace/aiplay-training",
     podId: process.env.RUNPOD_POD_ID || process.env.AIPLAY_CLOUD_POD_ID || null,
-    persistentRoot: process.env.AIPLAY_PERSISTENT_ROOT || "/workspace" });
+    persistentRoot: process.env.AIPLAY_PERSISTENT_ROOT || "/workspace",
+    installCommit: /^[a-f0-9]{40}$/.test(process.env.AIPLAY_INSTALL_COMMIT || '') ? process.env.AIPLAY_INSTALL_COMMIT : null });
   worker.server.listen(Number(process.env.AIPLAY_WORKER_PORT || 8787), "0.0.0.0", () => console.log("AIPLAY remote worker listening; authentication required."));
 }

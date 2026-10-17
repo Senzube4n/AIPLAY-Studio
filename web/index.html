@@ -5402,6 +5402,14 @@
               <div id="cloudSetupCreateFields" hidden></div>
             </div>
             <div id="cloudSetupAI" hidden>
+              <div id="cloudAutomaticInstall" hidden>
+                <h4>Install AI</h4>
+                <span id="cloudAutomaticStatus" class="chip" role="status">Checking installation</span>
+                <ol id="cloudAutomaticSteps"><li>Start computer</li><li>Install AI service</li><li>Connect and verify AI</li><li>Choose models below</li></ol>
+                <p class="hint" id="cloudAutomaticHint" role="status"></p>
+                <button class="edtool sm" id="cloudAutomaticCheck" type="button">Check installation</button>
+                <a class="edtool sm" href="https://console.runpod.io/pods" target="_blank" rel="noreferrer">Open RunPod</a>
+              </div>
               <div class="cta"><button class="btn sm" id="cloudSetupStart" type="button">Review start price</button>
                 <button class="edtool sm" id="cloudSetupCheck" type="button">Check AI again</button></div>
               <div id="cloudSetupWorkerFields"></div>
@@ -5409,7 +5417,7 @@
               <details class="more"><summary>Where do I get the connection code?</summary>
                 <p>The AIPLAY service installed on your cloud computer prints its address and worker token.
                   Paste that worker token as the connection code; it is separate from your RunPod account key.</p>
-                <p>This build still needs a manual worker installation or update by someone who can access the computer.</p>
+                <p>Existing computers may need a manual worker update; new computers can install and connect automatically.</p>
                 <button class="edtool sm" id="cloudSetupInstallHelp" type="button">Open advanced installation</button>
               </details>
             </div>
@@ -5579,7 +5587,9 @@
                   <label class="flabel" for="runpodCloud">provider pool</label>
                   <select class="sel2" id="runpodCloud"><option value="ALL">Any available</option><option value="SECURE">Secure only</option><option value="COMMUNITY">Community only</option></select>
                 </div></details>
-                <p class="hint warnhint">AI service installation is still manual after creation; rental runs during setup.</p>
+                <label><input id="runpodAutoInstall" type="checkbox"> Install AI automatically</label>
+                <p class="hint" id="runpodAutomaticAvailability" role="status">Checking automatic installation support…</p>
+                <p class="hint warnhint">Rental runs during installation and model downloads.</p>
                 <button class="edtool" id="runpodReviewPod" type="button">Review price</button>
                 <p class="hint" id="runpodCreateState" role="status"></p>
                 <div class="runpod-review" id="runpodCreateReview" hidden>

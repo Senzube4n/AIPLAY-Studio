@@ -44,6 +44,9 @@ node --check server/secrets.js || exit 1
 node --test server/secrets_test.js || exit 1
 node --check server/engine/cloud-computer.js || exit 1
 node --check server/engine/runpod-v2.js || exit 1
+node --check server/engine/runpod-install.js || exit 1
+node --test server/engine/runpod-install_test.js || exit 1
+python worker/automatic-runpod_test.py || exit 1
 node --check worker/cloud-watchdog.js || exit 1
 node --check worker/cloud-storage.js || exit 1
 node --check scripts/package-cloud-worker.mjs || exit 1

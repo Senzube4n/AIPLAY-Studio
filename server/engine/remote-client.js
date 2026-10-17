@@ -386,7 +386,10 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
     models: async () => { await verify(); return json("/v1/models", undefined, connection, token, MAX_MODELS_JSON); },
     loras: async () => { await verify(); return json("/v1/loras"); },
     setup: async () => { await verify(); return json("/v1/setup"); },
-    installBundle: async (bundle, acceptLicense) => { await verify(); return post("/v1/setup/install", { bundle, acceptLicense }); },
+    installBundle: async (bundle, acceptLicense, modelToken) => {
+      if (modelToken !== undefined && (typeof modelToken !== 'string' || modelToken.length > 500 || /[\r\n]/.test(modelToken))) throw new Error('Enter a valid model access token.');
+      await verify(); return post("/v1/setup/install", { bundle, acceptLicense, ...(modelToken ? { modelToken } : {}) });
+    },
     cancelInstall: async () => { await verify(); return post("/v1/setup/cancel", {}); },
     status: () => ({ configured: !!connection.url, url: connection.url || "", workerId: connection.workerId || null,
       capabilities: connection.capabilities || null,

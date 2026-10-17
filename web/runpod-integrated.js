@@ -112,6 +112,11 @@ function renderSetup(data) {
     const link = document.createElement("a"); link.href = bundle.licenseUrl; link.target = "_blank"; link.rel = "noreferrer"; link.textContent = "model repository and terms";
     terms.append(accept, " I reviewed and accept the ", link, ".");
     row.append(name, button, detail, terms);
+    if (bundle.requiresToken && bundle.state !== 'ready') {
+      const label = document.createElement('label'); label.textContent = 'Hugging Face read token';
+      const access = document.createElement('input'); access.type = 'password'; access.className = 'line'; access.autocomplete = 'off'; access.dataset.modelToken = bundle.id;
+      access.placeholder = 'Accept access on the model page, then paste a read token'; label.append(access); row.append(label);
+    }
     if (["downloading", "paused"].includes(bundle.state)) {
       const progress = document.createElement("progress"); progress.max = bundle.totalBytes; progress.value = bundle.downloadedBytes;
       progress.title = `${bytes(bundle.downloadedBytes)} of ${bytes(bundle.totalBytes)}`; row.append(progress);
@@ -208,7 +213,8 @@ async function loadAccount() {
 
 function creationInput() {
   return { name: $("runpodPodName").value.trim() || "AIPLAY renderer", gpuTypeId: $("runpodGpu").value,
-    cloudType: $("runpodCloud").value, volumeInGb: Number($("runpodVolume").value), containerDiskInGb: 20 };
+    cloudType: $("runpodCloud").value, volumeInGb: Number($("runpodVolume").value), containerDiskInGb: 20,
+    ...($("runpodAutoInstall")?.checked ? { installAI: true } : {}) };
 }
 function invalidateCreationReview() {
   creationReview = null;
@@ -223,6 +229,11 @@ async function loadCreationChoices() {
   $("runpodReviewPod").disabled = true;
   try {
     renderAccount(await accountApi("/overview"));
+    const support = await api('/install/options');
+    $('runpodAutoInstall').checked = support.available;
+    $('runpodAutoInstall').disabled = !support.available;
+    $('runpodAutomaticAvailability').textContent = support.available
+      ? 'Installs your AIPLAY build and connects securely; model downloads need licence approval.' : support.problem;
     $("runpodCreateState").textContent = $("runpodGpu").selectedOptions[0]?.disabled === false
       ? "Choose your graphics card and storage, then review the price."
       : "No graphics card is available. Check again later or choose another provider pool.";
@@ -243,13 +254,19 @@ async function reviewPod() {
       throw new Error("This graphics card is unavailable. Choose another and review again.");
     if (data.pods?.some(pod => pod.name === input.name))
       throw new Error("A computer with this name already exists. Check your saved computers before creating another.");
+    if (input.installAI) {
+      const quote = await api('/install/quote', { gpuTypeId: input.gpuTypeId, cloudType: input.cloudType });
+      gpu.pricePerHr = quote.rate;
+      if (JSON.stringify(input) !== JSON.stringify(creationInput())) throw new Error('Choices changed. Review the price again.');
+    }
     creationReview = { input, rate: gpu.pricePerHr, at: Date.now() };
     $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)}/hour for computing`;
     $("runpodReviewDetails").textContent = `${input.name} · ${input.volumeInGb} GB saved storage · ${$("runpodCloud").selectedOptions[0].textContent}`;
     // Published volume/container rates, checked 2026-10-17. These are estimates, not billing caps.
     $("runpodReviewStorage").textContent = `Storage estimate: ${money((input.volumeInGb + 20) * .10)}/month while running, ${money(input.volumeInGb * .20)}/month after stopping.`;
     $("runpodCreateReview").hidden = false;
-    $("runpodCreateState").textContent = "Review the estimate; AI service installation is still required after creation.";
+    $("runpodCreateState").textContent = input.installAI ? 'Review the costs, including rental during AI installation.' : 'Manual AI service installation is required after creation.';
+    $('runpodCreatePod').textContent = input.installAI ? 'Create and install AI' : 'Create and start computer';
   } catch (error) { $("runpodCreateState").textContent = error.message; }
   finally { $("runpodReviewPod").disabled = false; }
 }
@@ -267,7 +284,14 @@ async function createReviewedComputer() {
   $("runpodReviewPod").disabled = true;
   $("runpodCreateState").textContent = "Creating your cloud computer. Please wait…";
   try {
-    const created = await accountApi("/pods", { ...review.input, expectedPricePerHr: review.rate, confirm: "CREATE PAID POD" });
+    const created = await accountApi("/pods", { ...review.input, expectedPricePerHr: review.rate, confirm: "CREATE PAID POD",
+      ...(review.input.installAI ? { requestId: crypto.randomUUID() } : {}) });
+    if (review.input.installAI) {
+      document.dispatchEvent(new CustomEvent('aiplay:cloud-install-progress', { detail: created }));
+      if (created.podId) document.dispatchEvent(new CustomEvent('aiplay:cloud-computer-created', { detail: { id: created.podId } }));
+      $('runpodCreateState').textContent = created.error || 'Computer created. AI installation is starting.';
+      return;
+    }
     $("runpodWorkerUrl").value = created.pod.workerUrl;
     document.dispatchEvent(new CustomEvent("aiplay:cloud-computer-created", { detail: { id: created.pod.id } }));
     $("runpodCreateState").textContent = `Created ${created.pod.name}. Continue with AI service setup.`;
@@ -325,6 +349,7 @@ function fillModels() {
   for (const name of choices) select.add(new Option(name, name));
   if ([...select.options].some((o) => o.value === before)) select.value = before;
   else if (choices.length === 1) select.value = choices[0];
+  if (/sd_xl_turbo/.test(select.value)) { $('imgRunPodCfg').value = '1'; $('imgSteps').value = '4'; }
 }
 
 async function refreshWorker() {
@@ -482,12 +507,18 @@ async function init() {
   let status = null;
   try { status = await (await fetch("/api/status")).json(); } catch { return; }
   if (!status?.config?.remoteOnly) return;
+  document.addEventListener('aiplay:cloud-worker-connected', () => {
+    refreshWorker().then(() => document.dispatchEvent(new Event('aiplay:cloud-computer-refresh'))).catch(() => {});
+  });
   for (const kind of ["img", "vid"]) {
     $(`${kind}RunPodBlock`).hidden = false;
     $(`${kind}RenderWhere`).value = "runpod";
     paintTarget(kind);
   }
   paintRemoteModel();
+  $('imgRunPodCheckpoint').addEventListener('change', () => {
+    if (/sd_xl_turbo/.test($('imgRunPodCheckpoint').value)) { $('imgRunPodCfg').value = '1'; $('imgSteps').value = '4'; }
+  });
   $("vidRunPodModel")?.addEventListener("change", () => paintRemoteModel());
   for (const button of document.querySelectorAll("[data-runpod-settings]")) button.addEventListener("click", openSettings);
   $("runpodConnection").hidden = false;
@@ -528,7 +559,8 @@ async function init() {
     const accepted = row?.querySelector("[data-model-terms]")?.checked === true;
     if (!accepted) { $("runpodModelState").textContent = "Review and accept the model repository terms first."; $("runpodModelState").classList.add("warnline"); return; }
     button.disabled = true;
-    try { $("runpodModelState").classList.remove("warnline"); renderSetup(await api("/setup/install", { bundle: button.dataset.modelInstall, acceptLicense: true })); }
+    const modelToken = row?.querySelector('[data-model-token]')?.value.trim();
+    try { $("runpodModelState").classList.remove("warnline"); renderSetup(await api("/setup/install", { bundle: button.dataset.modelInstall, acceptLicense: true, ...(modelToken ? { modelToken } : {}) })); }
     catch (error) { $("runpodModelState").textContent = friendlyError(error); $("runpodModelState").classList.add("warnline"); button.disabled = false; }
   });
   $("runpodCancelModel").addEventListener("click", async () => {
@@ -547,7 +579,7 @@ async function init() {
   });
   $("runpodReviewPod").addEventListener("click", reviewPod);
   document.addEventListener("aiplay:cloud-create-open", loadCreationChoices);
-  for (const id of ["runpodGpu", "runpodVolume", "runpodCloud", "runpodPodName"])
+  for (const id of ["runpodGpu", "runpodVolume", "runpodCloud", "runpodPodName", "runpodAutoInstall"])
     $(id).addEventListener("input", invalidateCreationReview);
   $("runpodCreateTemplates").addEventListener("click", async () => {
     const button = $("runpodCreateTemplates"); button.disabled = true; button.textContent = "Creating templates…";

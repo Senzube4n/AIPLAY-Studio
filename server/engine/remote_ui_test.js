@@ -73,7 +73,7 @@ test("guided setup reuses vault-backed forms without duplicate secret inputs or 
   assert.match(js, /cloudSetupStart'\)\.addEventListener\('click', \(\) => \$\('cloudComputerStart'\)\.click\(\)\)/);
   assert.match(html, /Create cloud computer/);
   assert.match(js, /\['cloudSetupCreateFields', \['runpodCreateForm'\]\]/);
-  assert.match(html, /still needs a manual worker installation or update/);
+  assert.match(html, /new computers can install and connect automatically/);
 });
 
 test("advanced setup stays visible above the steps and opening it preserves guided work", () => {

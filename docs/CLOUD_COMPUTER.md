@@ -15,7 +15,15 @@ The guide reuses the existing vault-backed fields. It verifies account/computer/
 
 Creation reuses the existing account client, vault and persistent creation journal. Review refreshes the GPU catalogue, expires after five minutes, and is invalidated by any changed choice. The server rechecks the estimated rate and availability before provisioning. A successful creation selects its returned resource ID and advances to AI setup. Failed or uncertain creation consumes approval and requires a new review; existing resources must be checked before retrying. Storage figures use RunPod's [published estimates](https://docs.runpod.io/pods/pricing), checked October 17, 2026, including the 20 GB temporary disk while running. They are not provider-enforced spending caps.
 
-Worker installation remains manual. The fork's worker build still needs installation/update by someone with remote access before Cloud Computer readiness can pass. The creation form states that rental runs during this work. See the deployment section below. Key creation follows [RunPod's current Credentials guide](https://docs.runpod.io/get-started/credentials).
+New computers offer **Install AI automatically**. This uses REST v2 creation, a checked, published installer from this installation's approved repository and exact commit, and a separate generated worker connection code. The account key stays on the desktop. Rental runs during setup. Existing computers retain the manual connection/update path; they are never replaced or repurposed automatically. Key creation follows [RunPod's current Credentials guide](https://docs.runpod.io/get-started/credentials).
+
+Automatic installation starts a pinned ComfyUI checkout on loopback inside the provider's versioned PyTorch image, installs dependencies into a persistent environment, then starts the authenticated AIPLAY service on port 8787. The desktop shows authenticated stages and checks Pod identity, worker commit and runtime health before saving the connection in its vault. No raw ComfyUI, SSH or Jupyter port is exposed. No container registry account is required. Host code is in `worker/automatic-runpod.py`; local orchestration is in `server/engine/runpod-install.js`.
+
+The `automatic-install.json` journal contains resource IDs and progress, never tokens. Creation is recorded before its single provider POST. Lost replies and desktop restarts reconcile existing resources by their unique approved name; they never repeat the POST. Pending automatic creation also blocks manual creation. A changed price, unpublished installer, mismatched script checksum, active generation or duplicate name blocks creation. Install status reads are capped; failures stay visible and do not trigger restart, termination, cleanup or new resources. Computing may continue to be billed after a failed installation. Use the existing shutdown controls where storage can be verified, or review the computer in RunPod. Do not assume an absent worker means computing has stopped.
+
+After connection, choose verified **YuE2 music**, **SDXL Turbo pictures**, or **LTX 2.5 video** bundles. Every file has a pinned Hugging Face revision, exact length and SHA-256 checksum; downloads resume on the worker even when the desktop closes. Each bundle requires explicit model-terms approval. LTX additionally requires model-page access approval and a Hugging Face read token entered in the model row; this token is used only for that download, never returned in status or saved in the journal. Automatic stop still requires the separately approved remote stop key in Step 4; an installing computer is not claimed to be protected before that policy is verified.
+
+Validation: offline service tests cover idempotency, restart reconciliation, changed prices, source publication/checksum refusal, active-work refusal, identity mismatch and credential projection; startup tests cover source validation and preservation; model tests cover checksums, resume, gated access and token redaction. Real GPU acceptance of the new automatic path remains pending explicit deployment authorization and a spend/runtime allowance. No billable resources were modified during implementation.
 
 The computer and AI readiness have separate indicators. A running computer can still need a worker connection or model installation. Rental charges can accrue during setup.
 
@@ -71,7 +79,7 @@ Spending alerts notify in AIPLAY while it is open. They do not enforce a provide
 
 ## Deploying the fork's worker build
 
-The existing bootstrap is pinned to the official repository and an exact published commit. It cannot install the Nemesis fork's Cloud Computer changes. Do not use its old command as evidence that this manager's worker has been installed.
+The existing **manual** bootstrap remains pinned to the official repository and an exact published commit. It cannot install fork-only commits. New automatic creation instead uses the approved installed fork's pinned source as described above. Existing Pods can still use the reviewable source archive below with separate installation authorization.
 
 Build the reviewable source-only archive locally:
 

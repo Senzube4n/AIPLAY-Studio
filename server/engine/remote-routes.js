@@ -11,6 +11,7 @@ import { checkpointGraph, buildAceStep15Graph, buildYue2ComfyGraph, videoGraph }
 import { qwenImageGraph } from "../qwen-image.js";
 import { createRunpodV2 } from "./runpod-v2.js";
 import { createCloudComputer } from "./cloud-computer.js";
+import { createAutomaticInstaller } from './runpod-install.js';
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
@@ -21,10 +22,14 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
   const client = () => clientPromise ||= createRemoteClient({ dataDir: config.dataDir, outputDir: config.outputDir,
     getToken: () => getSecret("RUNPOD_WORKER_TOKEN"), setToken: token => setSecret("RUNPOD_WORKER_TOKEN", token), append, adopt });
   const account = createRunpodAccount({ fetchFn, dataDir: config.dataDir, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY"),
-    setApiKey: key => setSecret("RUNPOD_ACCOUNT_API_KEY", key), clearApiKey: () => clearSecret("RUNPOD_ACCOUNT_API_KEY") });
+    setApiKey: key => setSecret("RUNPOD_ACCOUNT_API_KEY", key), clearApiKey: () => clearSecret("RUNPOD_ACCOUNT_API_KEY"),
+    automaticCreate: async input => (await installer()).create(input),
+    creationGuard: async () => { if (['creating', 'uncertain', 'waiting', 'connecting', 'failed'].includes((await installer()).snapshot().phase)) throw new Error('Check the existing AI installation before creating another computer.'); } });
   const provider = createRunpodV2({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY") });
   let computerPromise;
   const computer = () => computerPromise ||= createCloudComputer({ dataDir: config.dataDir, provider, client, localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork });
+  let installerPromise;
+  const installer = () => installerPromise ||= createAutomaticInstaller({ dataDir: config.dataDir, provider, client, getSecret, setSecret, fetchFn });
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
     try {
@@ -51,7 +56,13 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       /* The Pod's install command, pinned to this Studio's commit
        * (runpod-bootstrap.js). Read by the setup window; never a branch. */
-      if (url.pathname.startsWith("/api/runpod/computer")) {
+      if (req.method === 'GET' && url.pathname === '/api/runpod/install') sendJSON(res, 200, (await installer()).snapshot());
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install/options') sendJSON(res, 200, (await installer()).options());
+      else if (req.method === 'POST' && url.pathname === '/api/runpod/install/refresh') sendJSON(res, 200, await (await installer()).refresh());
+      else if (req.method === 'POST' && url.pathname === '/api/runpod/install/quote') {
+        const b = JSON.parse((await readBody(req)).toString('utf8')); sendJSON(res, 200, await (await installer()).review(b));
+      }
+      else if (url.pathname.startsWith("/api/runpod/computer")) {
         const suffix = url.pathname.slice("/api/runpod/computer".length);
         if (req.method === "GET" && suffix === "") sendJSON(res, 200, (await computer()).snapshot());
         else if (req.method === "POST") {
@@ -109,7 +120,7 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           else if (req.method === "GET" && url.pathname === "/api/runpod/setup") sendJSON(res, 200, await c.setup());
           else if (req.method === "POST" && url.pathname === "/api/runpod/setup/install") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
-            sendJSON(res, 202, await c.installBundle(b.bundle, b.acceptLicense));
+            sendJSON(res, 202, await c.installBundle(b.bundle, b.acceptLicense, b.modelToken));
           } else if (req.method === "POST" && url.pathname === "/api/runpod/setup/cancel") {
             sendJSON(res, 200, await c.cancelInstall());
           } else if (req.method === "POST" && url.pathname === "/api/runpod/assets") {
