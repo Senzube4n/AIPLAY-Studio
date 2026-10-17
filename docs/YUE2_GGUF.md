@@ -11,7 +11,7 @@ not installed or required. Use the music-only launcher below, not the full-suite
 ## Quickstart
 
 1. Install **Node.js 20+** and download
-   [AIPLAY Studio ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip), then extract it.
+   [AIPLAY Studio ZIP](https://github.com/nemesisone-dev/AIPLAY-Studio/archive/refs/heads/main.zip), then extract it.
 2. On Windows, open **`AIPLAY Studio.exe`** and choose **Music only**. Alternatively, run
    `npm ci --omit=dev` once in the Studio folder, then `npm run start:music`.
 3. Open **Models**. Read the native runtime and model notices, then explicitly

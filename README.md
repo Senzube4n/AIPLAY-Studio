@@ -13,13 +13,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe"><b>Download for Windows</b></a>
+  <a href="https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe"><b>Download for Windows</b></a>
   &nbsp;·&nbsp; <a href="https://senzube4n.github.io/AIPLAY-Studio/#quick-tour">31-second Studio tour</a>
   &nbsp;·&nbsp; <a href="#yue2-music-only-quickstart">Quickstart</a>
   &nbsp;·&nbsp; <a href="INSTALL.md">Full install</a>
   &nbsp;·&nbsp; <a href="docs/YUE2_GGUF.md">YuE2 guide</a>
   &nbsp;·&nbsp; <a href="docs/DEEP_DIVE.md">How it works</a>
-  &nbsp;·&nbsp; <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip">Source code (for developers)</a>
+  &nbsp;·&nbsp; <a href="https://github.com/nemesisone-dev/AIPLAY-Studio/archive/refs/heads/main.zip">Source code (for developers)</a>
 </p>
 
 <p align="center">
@@ -95,12 +95,12 @@ a CUDA 13.3-compatible driver and, if it is missing, the
 [Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 The Vulkan and CPU builds bring their own.
 
-1. **Download and run [AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
+1. **Download and run [AIPLAY Studio Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Windows may say “Windows protected your PC” because the installer is not
    signed yet: click **More info**, then **Run anyway**. When it asks which
-   build, choose **Senzu's**; then a folder, where the default is right. No
+   build, leave **Nemesis's** selected; then a folder, where the default is right. No
    admin prompt.
-   (Developers: the [source ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip) works too; open the extracted folder,
+   (Developers: the [source ZIP](https://github.com/nemesisone-dev/AIPLAY-Studio/archive/refs/heads/main.zip) works too; open the extracted folder,
    not the ZIP viewer.)
 2. **Start AIPLAY Studio** from the shortcut Setup made (it is `AIPLAY Studio.exe`;
    from the ZIP, double-click that file or `AIPLAY Studio.cmd`) and choose
@@ -242,7 +242,7 @@ Measured AMD results, launch flags and the details of every layout are in
 
 For the whole suite (music, images, video and the rest):
 
-1. Run **[Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
+1. Run **[Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Developers using the source ZIP install **[Node.js 20+](https://nodejs.org)** themselves.
 2. Have a **ComfyUI**, or let the launcher install one for you. See
    [Getting a ComfyUI](docs/DEEP_DIVE.md#getting-a-comfyui).

@@ -11,7 +11,7 @@ every clone live in tracked files like this one. Follow them without being asked
 straight from GitHub, and unpacks what `install.json` in that commit lists. An
 app change needs a push and nothing else.
 
-**The only release is the installer**, `AIPLAY Studio Setup.exe`. It knows two
+**The only release is the installer**, `AIPLAY Studio Setup.exe`. It knows the
 repository names and nothing else about Studio, so it changes rarely. A GitHub
 Release is simply where people download it from.
 
@@ -51,9 +51,18 @@ that file, publishing the new installer is part of finishing the work:
    is not a pre-release. So keep the file name, and publish anything else (the
    YuE2 runtime packages) as a **pre-release**, or the button stops working.
 
-Each repository publishes its own copy. Both copies install either build: the
-installer shows Senzu's build (the original) and Bucky's, with how far apart they
-are, and the person picks.
+Each repository publishes its own copy. This fork's installer defaults to
+Nemesis (`nemesisone-dev/AIPLAY-Studio`) and also offers Senzu's original and
+Bucky's fork. Comparisons always use Senzu as the base. The chosen repository's
+latest `main` is resolved at installation time, so subsequent Studio changes
+need only a push. Unattended installation accepts `/repo:nemesis`, `/repo:senzu`
+or `/repo:bucky`.
+
+Installer 1.3 adds Nemesis and keeps the app's download links on this fork's
+release. Build it with the command above and publish `setup-v1.3` to
+`nemesisone-dev/AIPLAY-Studio`. The installer source and all three
+version fields must agree before building. An unsigned build is usable and
+must be labelled unsigned in the release notes.
 
 **Don't release** for a change to anything else, including `install.json`: the
 installer reads that from the zip it downloads, so a push is enough.

@@ -1,10 +1,10 @@
 // AIPLAY Studio Setup.exe — a one-time installer. Run it, press Install, throw it away.
 //
 // It never has to be rebuilt when Studio changes, because it knows nothing about
-// Studio beyond two repository names:
+// Studio beyond the supported repository names:
 //
-//   1. asks GitHub which commit `main` is on, for Bucky's fork and Senzu's
-//      original, and how far apart the two are (ahead / behind);
+//   1. asks GitHub which commit `main` is on for each build, and compares
+//      the forks with Senzu's original (ahead / behind);
 //   2. downloads that commit as a zip, straight from GitHub, no account;
 //   3. unpacks only what the zip's own install.json lists (no docs, no notes,
 //      no website banners). A repository without the file gets a built-in list;
@@ -34,7 +34,7 @@
 // has the exact steps.
 //
 // Unattended, for testing:  "AIPLAY Studio Setup.exe" /quiet /dir:"C:\somewhere"
-//   [/repo:senzu|bucky] [/noshortcuts] [/privatenode]
+//   [/repo:nemesis|senzu|bucky] [/noshortcuts] [/privatenode]
 // /noshortcuts also skips the Installed apps entry; /privatenode downloads the
 // private Node.js even when the PC has one. A log is always written to
 // %TEMP%\aiplay-setup.log.
@@ -62,8 +62,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installs AIPLAY Studio from GitHub")]
 [assembly: AssemblyProduct("AIPLAY Studio")]
 [assembly: AssemblyCompany("AIPLAY Studio")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 // Without this a hand-compiled exe runs with the .NET 4.0 path rules, which
 // refuse any path over 260 characters. npm's own folders go deeper than that.
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -71,7 +71,7 @@ using Microsoft.Win32;
 static class Program
 {
     public const string Title = "AIPLAY Studio";
-    public const string SetupVersion = "1.2";
+    public const string SetupVersion = "1.3";
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
@@ -100,7 +100,7 @@ static class Program
     static int Quiet(Options opt)
     {
         var src = Sources.ByKey(opt.Repo);
-        if (src == null) { Log.Say("unknown /repo: " + opt.Repo + " (bucky or senzu)"); return 2; }
+        if (src == null) { Log.Say("unknown /repo: " + opt.Repo + " (nemesis, senzu or bucky)"); return 2; }
         Sources.Check(Sources.All);
         var job = new Installer(src, opt.Dir ?? Installer.DefaultDir(), !opt.NoShortcuts, !opt.NoShortcuts, opt.PrivateNode);
         // Byte counters would be thousands of lines; the window shows those.
@@ -119,7 +119,7 @@ static class Program
 sealed class Options
 {
     public bool Quiet, NoShortcuts, PrivateNode;
-    public string Dir, Repo = "senzu", Shot;
+    public string Dir, Repo = "nemesis", Shot;
 
     public static Options Parse(string[] args)
     {
@@ -160,7 +160,7 @@ static class Log
     }
 }
 
-// ─── the two repositories ──────────────────────────────────────────────────
+// ─── the repositories ──────────────────────────────────────────────────────
 
 sealed class Source
 {
@@ -193,13 +193,14 @@ sealed class Source
 
 static class Sources
 {
-    // The original first: it is the default. A fork is one more line here, and
-    // is compared against the original (ahead / behind).
+    // This fork's installer defaults to Nemesis. The comparison base always
+    // remains Senzu, independently of the display order or selected build.
     public static readonly Source[] All = {
+        new Source("nemesis", "Nemesis", "N", "nemesisone-dev/AIPLAY-Studio"),
         new Source("senzu", "Senzu", "S", "Senzube4n/AIPLAY-Studio"),
         new Source("bucky", "Bucky", "B", "bani4kaskashka/AIPLAY-Studio-Bucky-Fork"),
     };
-    public static Source Original { get { return All[0]; } }
+    public static Source Original { get { return ByKey("senzu"); } }
 
     public static Source ByKey(string key)
     {
@@ -1156,7 +1157,7 @@ sealed class SetupForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
-        ClientSize = new Size(560, 600);
+        ClientSize = new Size(560, 420 + Sources.All.Length * 90);
         BackColor = Theme.Bg;
         ForeColor = Theme.Ink;
         Font = new Font(Theme.Body, 9.5f);
@@ -1233,20 +1234,21 @@ sealed class SetupForm : Form
         net = MakeLabel("Asking GitHub where each version is…", 32, y + 2, 496, 18, new Font(Theme.Body, 8.5f), Theme.Ghost);
         Add(choose, net);
 
-        Add(choose, Caps("INSTALL TO", 350));
-        dirBox = new TextBox { Location = new Point(32, 372), Size = new Size(392, 26), BackColor = Theme.Raise, ForeColor = Theme.Ink, BorderStyle = BorderStyle.FixedSingle,
+        int footer = y + 30;
+        Add(choose, Caps("INSTALL TO", footer));
+        dirBox = new TextBox { Location = new Point(32, footer + 22), Size = new Size(392, 26), BackColor = Theme.Raise, ForeColor = Theme.Ink, BorderStyle = BorderStyle.FixedSingle,
             Font = new Font(Theme.Body, 10f), Text = opt.Dir ?? existing ?? Installer.DefaultDir() };
         Add(choose, dirBox);
-        var browse = new Pill("Change…", false) { Location = new Point(436, 369), Size = new Size(92, 32) };
+        var browse = new Pill("Change…", false) { Location = new Point(436, footer + 19), Size = new Size(92, 32) };
         browse.Click += (s, e) => Browse();
         Add(choose, browse);
 
-        chkDesktop = new CheckBox { Text = "Put a shortcut on the desktop", Location = new Point(32, 416), Size = new Size(496, 24), Checked = true, ForeColor = Theme.Dim, BackColor = Color.Transparent };
-        chkDelete = new CheckBox { Text = "Delete this installer when I close it", Location = new Point(32, 442), Size = new Size(496, 24), Checked = true, ForeColor = Theme.Dim, BackColor = Color.Transparent };
+        chkDesktop = new CheckBox { Text = "Put a shortcut on the desktop", Location = new Point(32, footer + 66), Size = new Size(496, 24), Checked = true, ForeColor = Theme.Dim, BackColor = Color.Transparent };
+        chkDelete = new CheckBox { Text = "Delete this installer when I close it", Location = new Point(32, footer + 92), Size = new Size(496, 24), Checked = true, ForeColor = Theme.Dim, BackColor = Color.Transparent };
         Add(choose, chkDesktop);
         Add(choose, chkDelete);
 
-        installBtn = new Pill(existing != null ? "Reinstall" : "Install", true) { Location = new Point(32, 522), Size = new Size(496, 46) };
+        installBtn = new Pill(existing != null ? "Reinstall" : "Install", true) { Location = new Point(32, footer + 172), Size = new Size(496, 46) };
         installBtn.Click += (s, e) => StartInstall();
         Add(choose, installBtn);
 
@@ -1261,7 +1263,7 @@ sealed class SetupForm : Form
                 bool any = false;
                 foreach (var s in Sources.All) if (s.Sha != null) any = true;
                 if (!any) net.Text = "Could not reach GitHub. " + (Sources.All[0].Why ?? "") + " Install tries again when you press it.";
-                else if (existing == null) net.Text = "Both are free and open. " + Sources.All[0].Name + "'s build is the default.";
+                else if (existing == null) net.Text = "All builds are free and open. " + picked.Name + " is selected.";
                 if (opt.Shot != null) Shots();
             }));
         }) { IsBackground = true };
@@ -1323,17 +1325,17 @@ sealed class SetupForm : Form
         Add(work, bar);
         Add(work, detailLabel);
         Add(work, MakeLabel("Nothing here touches ComfyUI, your graphics drivers or any model. Your songs and settings stay where they are.",
-            32, 520, 496, 40, new Font(Theme.Body, 8.5f), Theme.Ghost));
+            32, ClientSize.Height - 80, 496, 40, new Font(Theme.Body, 8.5f), Theme.Ghost));
     }
 
     void BuildDone()
     {
         doneTitle = MakeLabel("", 32, 130, 496, 36, new Font(Theme.Display, 18f, FontStyle.Bold), Theme.Ink);
         doneLine = MakeLabel("", 32, 170, 496, 20, new Font(Theme.Mono, 9f), Theme.Faint);
-        doneNotes = MakeLabel("", 32, 204, 496, 290, new Font(Theme.Body, 9.5f), Theme.Dim);
+        doneNotes = MakeLabel("", 32, 204, 496, ClientSize.Height - 310, new Font(Theme.Body, 9.5f), Theme.Dim);
         doneNotes.AutoEllipsis = false;
-        primaryBtn = new Pill("", true) { Location = new Point(32, 522), Size = new Size(340, 46) };
-        closeBtn = new Pill("Close", false) { Location = new Point(384, 522), Size = new Size(144, 46) };
+        primaryBtn = new Pill("", true) { Location = new Point(32, ClientSize.Height - 78), Size = new Size(340, 46) };
+        closeBtn = new Pill("Close", false) { Location = new Point(384, ClientSize.Height - 78), Size = new Size(144, 46) };
         primaryBtn.Click += (s, e) => { if (failed) StartInstall(); else Launch(); };
         closeBtn.Click += (s, e) => Close();
         Add(done, doneTitle);

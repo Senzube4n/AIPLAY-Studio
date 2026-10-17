@@ -16,15 +16,15 @@ For native lyric-to-song generation, install **Studio** (Setup.exe brings
 Node.js 20+ when this PC has none). You do **not** need ComfyUI, Python,
 MiniMax or any image/video model.
 
-1. Download and run **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
+1. Download and run **[AIPLAY Studio Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**.
    Windows may say “Windows protected your PC” because the installer is not
    signed yet: click **More info**, then **Run anyway**. When it asks which
-   build, choose **Senzu's**; then a folder (the default is right). It
+   build, leave **Nemesis's** selected; then a folder (the default is right). It
    installs Studio plus, when this PC has no Node.js 20+, a private copy of
    it. No admin prompt. Section 3 says exactly what it does.
    *For developers:* install [Node.js](https://nodejs.org), then download the
-   source from [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
-   using **Code → Download ZIP**, or [download the ZIP directly](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
+   source from [nemesisone-dev/AIPLAY-Studio](https://github.com/nemesisone-dev/AIPLAY-Studio)
+   using **Code → Download ZIP**, or [download the ZIP directly](https://github.com/nemesisone-dev/AIPLAY-Studio/archive/refs/heads/main.zip).
    Unblock the ZIP in Windows Properties before extracting if Windows requires it.
 2. Start **AIPLAY Studio** (the shortcut Setup made, or **`AIPLAY Studio.exe`** in the
    folder) and choose **Music only**. Or run these from the extracted source folder:
@@ -266,7 +266,7 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 
 ### The easy way: AIPLAY Studio Setup.exe
 
-Download **[AIPLAY Studio Setup.exe](https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it (Windows may say
+Download **[AIPLAY Studio Setup.exe](https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe)**, run it (Windows may say
 “Windows protected your PC” because it is not signed yet: click **More info**,
 then **Run anyway**), pick Senzu's build (the original, and the
 default) or Bucky's, and press **Install**. It shows how far apart the two are
@@ -301,11 +301,11 @@ app update.
 ### By hand
 
 Download the repository from
-[github.com/Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
+[github.com/nemesisone-dev/AIPLAY-Studio](https://github.com/nemesisone-dev/AIPLAY-Studio)
 — either the zip, or:
 
 ```
-git clone https://github.com/Senzube4n/AIPLAY-Studio.git
+git clone https://github.com/nemesisone-dev/AIPLAY-Studio.git
 ```
 
 If you downloaded a zip, **right-click it → Properties → Unblock** before

@@ -38,10 +38,10 @@ test("both launchers look in .\\node before the system's Node.js", () => {
   assert.match(src("../installer/Setup.cs"), /Contains\("privateNode"\)/);
 });
 
-test("the installer: the original first, a stamped build, checked Node.js, nothing half-installed", () => {
+test("the installer: Nemesis by default, a stamped build, checked Node.js, nothing half-installed", () => {
   const s = src("../installer/Setup.cs");
-  assert.match(s, /new Source\("senzu", "Senzu", "S", "Senzube4n\/AIPLAY-Studio"\),\n\s+new Source\("bucky"/, "Senzu's build is first and the default");
-  assert.match(s, /public string Dir, Repo = "senzu"/);
+  assert.match(s, /new Source\("nemesis", "Nemesis", "N", "nemesisone-dev\/AIPLAY-Studio"\)/);
+  assert.match(s, /public string Dir, Repo = "nemesis"/);
   assert.match(s, /codeload\.github\.com\/" \+ src\.Repo \+ "\/zip\/" \+ src\.Sha/, "downloads the exact commit it showed");
   assert.match(s, /server\\version\.gen\.json/, "a zip has no .git; the build line must still name its commit");
   assert.match(s, /SHASUMS256\.txt/, "Node.js is checked against nodejs.org's own list");
@@ -63,12 +63,10 @@ test("the release rules ship in a tracked file, since CLAUDE.md is git-ignored h
   assert.match(src("../scripts/stamp-lineage.mjs"), /const FORKS = \[/);
 });
 
-/* ── S1 / H1: the first thing a newcomer clicks is the installer ─────────────
- * The asset URL was read from the live release on 2026-09-24 (`gh api
- * repos/Senzube4n/AIPLAY-Studio/releases/latest`: tag setup-v1.2, asset
- * AIPLAY.Studio.Setup.exe, 327,168 bytes) and follows it with a 302. */
-const SETUP_URL = "https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe";
-const ZIP_URL = "https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip";
+/* S1 / H1: downloads and source links must stay on this fork. The installer
+ * asset retains GitHub's normalised name, AIPLAY.Studio.Setup.exe. */
+const SETUP_URL = "https://github.com/nemesisone-dev/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe";
+const ZIP_URL = "https://github.com/nemesisone-dev/AIPLAY-Studio/archive/refs/heads/main.zip";
 
 test("the README's first Download button is Setup.exe, and the zip is Source code for developers", () => {
   const readme = src("../README.md");
@@ -297,7 +295,7 @@ test("canonical origin removes inherited Bucky identity, while a selected fork o
   assert.equal(reconcileLineage({}, "https://example.test/Senzube4n/AIPLAY-Studio.git"), "", "match GitHub repository identity, not a substring");
 });
 
-test("the compiled installer refuses a Git worktree and restores the old app when preserving files fails", async (t) => {
+test("the compiled installer selects the right fork, refuses a Git worktree and restores preserved files", async (t) => {
   const fw = path.join(process.env.WINDIR || "C:\\Windows", "Microsoft.NET", "Framework64", "v4.0.30319");
   const compiler = path.join(fw, "csc.exe");
   if (process.platform !== "win32" || !existsSync(compiler)) return t.skip("requires the Windows .NET Framework compiler");
@@ -307,6 +305,16 @@ test("the compiled installer refuses a Git worktree and restores the old app whe
     await writeFile(harness, `using System; using System.IO; using System.Reflection;
 static class Fixture {
   static int Main(string[] args) {
+    var chosen = Sources.ByKey(Options.Parse(new string[0]).Repo);
+    if (chosen == null || chosen.Key != "nemesis" || chosen.Repo != "nemesisone-dev/AIPLAY-Studio" || chosen.Letter != "N")
+      throw new Exception("The default installer must download the Nemesis fork");
+    if (Sources.All[0] != chosen || Sources.Original.Key != "senzu" || Sources.Original.Repo != "Senzube4n/AIPLAY-Studio")
+      throw new Exception("The comparison base must remain Senzu when Nemesis is first");
+    foreach (var key in new[] { "nemesis", "senzu", "bucky" })
+      if (Sources.ByKey(Options.Parse(new[] { "/repo:" + key }).Repo).Key != key
+        || Sources.ByKey(Options.Parse(new[] { "--repo=" + key }).Repo).Key != key)
+        throw new Exception("Explicit build selection must remain available");
+    if (Sources.ByKey("unknown") != null) throw new Exception("Unknown repositories must be refused");
     string root = args[0], app = Path.Combine(root, "app"), stage = Path.Combine(root, "stage");
     Directory.CreateDirectory(Path.Combine(app, "launcher"));
     File.WriteAllText(Path.Combine(app, "launcher", "launcher.mjs"), "old app");
