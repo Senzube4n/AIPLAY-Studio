@@ -75,6 +75,38 @@ test("guided setup reuses vault-backed forms without duplicate secret inputs or 
   assert.match(html, /still needs a manual worker installation or update/);
 });
 
+test("advanced setup stays visible above the steps and opening it preserves guided work", () => {
+  const html = read("web", "index.html"), js = read("web", "cloud-computer.js");
+  const guideHeader = html.slice(html.indexOf('id="cloudSetup"'), html.indexOf('id="cloudSetupAccount"'));
+  assert.match(guideHeader, /id="cloudSetupAdvanced"[^>]*aria-controls="cloudComputerConnection"/);
+  assert.match(guideHeader, /Create a computer or install its AI service manually/);
+  assert.match(html, /id="cloudSetupBack"/);
+  const calls = [], controls = new Map();
+  for (const id of ["cloudComputerConnection", "runpodAccount", "cloudSetupAdvanced", "cloudSetup", "runpodApiKey", "runpodWorkerToken"])
+    controls.set(id, { id, open: false, style: {}, value: `unsaved:${id}`, attrs: {},
+      setAttribute(name, value) { this.attrs[name] = value; },
+      closest: () => ({ querySelector: () => ({ getBoundingClientRect: () => ({ height: 90 }) }) }),
+      scrollIntoView: () => calls.push(`scroll:${id}`), focus: () => calls.push(`focus:${id}`),
+      querySelector: () => ({ focus: () => calls.push(`summary:${id}`) }) });
+  const context = { $: id => controls.get(id), setupOverride: 3,
+    current: Object.freeze({ phase: "models-needed", podId: "saved" }),
+    api() { assert.fail("navigation must not call the provider"); },
+    perform() { assert.fail("navigation must not perform a cloud action"); } };
+  const helpers = js.slice(js.indexOf("function scrollSetupTo("), js.indexOf("function mountSetup("));
+  runInNewContext(helpers + "\nopenAdvancedSetup();", context);
+  assert.equal(controls.get("cloudComputerConnection").open, true);
+  assert.equal(controls.get("runpodAccount").open, true);
+  assert.equal(controls.get("cloudSetupAdvanced").attrs["aria-expanded"], "true");
+  assert.equal(controls.get("cloudComputerConnection").style.scrollMarginTop, "102px");
+  runInNewContext(helpers + "\nreturnToGuidedSetup();", context);
+  assert.equal(controls.get("cloudComputerConnection").open, false);
+  assert.equal(controls.get("cloudSetupAdvanced").attrs["aria-expanded"], "false");
+  assert.equal(context.setupOverride, 3);
+  assert.equal(context.current.podId, "saved");
+  for (const id of ["runpodApiKey", "runpodWorkerToken"]) assert.equal(controls.get(id).value, `unsaved:${id}`);
+  assert.deepEqual(calls, ["scroll:cloudComputerConnection", "summary:cloudComputerConnection", "scroll:cloudSetup", "focus:cloudSetupAdvanced"]);
+});
+
 test("the shared RunPod setup belongs to Settings, with usage outside account details", () => {
   const html = read("web", "index.html");
   const settings = html.slice(html.indexOf('<div id="settings"'), html.indexOf('<div id="avatars"'));

@@ -9,7 +9,9 @@ Open **RunPod GPU** in the launcher, then **Settings → No strong graphics card
 3. **AI:** review the start price, connect using the installed AIPLAY service's connection code, and select models if needed. The address is filled from the selected computer.
 4. **Automatic stop:** save a separate remote stop key, or explicitly confirm keeping rental running after AIPLAY closes.
 
-The guide reuses the existing vault-backed fields. It verifies account/computer/worker/model readiness before advancing and remembers completed setup for that computer. Stopping compute preserves the completed setup; a subsequent worker failure or invalid account returns to the affected step. The Cloud Computer dashboard appears after selection. Rare provider controls remain under **Advanced details**.
+The guide reuses the existing vault-backed fields. It verifies account/computer/worker/model readiness before advancing and remembers completed setup for that computer. Stopping compute preserves the completed setup; a subsequent worker failure or invalid account returns to the affected step. The Cloud Computer dashboard appears after selection. Manual provider controls remain under **Advanced setup**.
+
+**Advanced setup** is always available above the guided steps. It opens manual computer creation and AI-service installation controls. **Back to guided setup** returns to the same step and keeps entered details. Opening either view performs no rental or provisioning action.
 
 This is guided connection setup, not automatic provisioning or worker installation. The fork's worker build still needs manual installation/update by someone with remote access before Cloud Computer readiness can pass. See the deployment section below. Key creation follows [RunPod's current Credentials guide](https://docs.runpod.io/get-started/credentials).
 

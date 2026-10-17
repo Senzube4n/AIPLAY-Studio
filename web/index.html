@@ -5376,6 +5376,10 @@
           <div id="cloudSetup" hidden>
             <h4>Easy Cloud Setup</h4>
             <p class="hint">Connect once for music, pictures and video.</p>
+            <div class="cta">
+              <button class="edtool sm" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button>
+              <span class="hint">Create a computer or install its AI service manually.</span>
+            </div>
             <ol class="cloud-setup-steps" aria-label="Cloud setup progress">
               <li data-cloud-step="1">1. Account</li><li data-cloud-step="2">2. Computer</li>
               <li data-cloud-step="3">3. AI</li><li data-cloud-step="4">4. Automatic stop</li>
@@ -5510,7 +5514,8 @@
               <pre id="cloudComputerDiagnostics"></pre>
             </details>
           </div>
-          <details class="more" id="cloudComputerConnection" hidden><summary>Advanced details</summary>
+          <details class="more" id="cloudComputerConnection" hidden><summary>Advanced setup</summary>
+          <div class="cta"><button class="edtool sm" id="cloudSetupBack" type="button">Back to guided setup</button></div>
           <div id="runpodConnection" hidden class="runpod-settings">
             <div class="runpod-connect-actions">
               <span class="chip" id="runpodBalance" role="status">Account not connected</span>

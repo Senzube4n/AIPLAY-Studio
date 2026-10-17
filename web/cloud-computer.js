@@ -63,8 +63,32 @@ async function checkSetupAccount() {
   } catch { accountConfigured = false; }
   if (current) paintSetup(current);
 }
+function scrollSetupTo(element) {
+  const nav = element.closest('.page')?.querySelector('.pnav');
+  element.style.scrollMarginTop = `${(nav?.getBoundingClientRect().height || 0) + 12}px`;
+  element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function openAdvancedSetup() {
+  const advanced = $('cloudComputerConnection');
+  advanced.open = true;
+  $('runpodAccount').open = true;
+  $('cloudSetupAdvanced').setAttribute('aria-expanded', 'true');
+  scrollSetupTo(advanced);
+  advanced.querySelector('summary').focus({ preventScroll: true });
+}
+function returnToGuidedSetup() {
+  $('cloudComputerConnection').open = false;
+  $('cloudSetupAdvanced').setAttribute('aria-expanded', 'false');
+  scrollSetupTo($('cloudSetup'));
+  $('cloudSetupAdvanced').focus({ preventScroll: true });
+}
 function mountSetup() {
   $('cloudSetup').hidden = false;
+  $('cloudSetupAdvanced').addEventListener('click', openAdvancedSetup);
+  $('cloudSetupBack').addEventListener('click', returnToGuidedSetup);
+  $('cloudComputerConnection').addEventListener('toggle', () => {
+    $('cloudSetupAdvanced').setAttribute('aria-expanded', String($('cloudComputerConnection').open));
+  });
   for (const [target, ids] of [
     ['cloudSetupAccountFields', ['runpodAccountForm', 'runpodAccountState']],
     ['cloudSetupComputerFields', ['cloudComputerChoice']],
