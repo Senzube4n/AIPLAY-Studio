@@ -118,7 +118,9 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   async function refreshInternal() {
     if (!state.podId) return snapshot();
     const pod = await provider.getPod(state.podId); recordPod(pod); await readStorage(pod);
-    state.issue = null;
+    // Reading a stopped Pod does not establish that its retained GPU is free.
+    // Keep this actionable refusal until a new review/start or selection.
+    if (!(pod.status === 'EXITED' && state.issue?.code === 'gpu_unavailable' && !state.operation)) state.issue = null;
     if (state.operation?.type === 'grow') {
       if (storage.allocatedGB >= state.operation.size) { state.operation = null; state.phase = pod.status === 'EXITED' ? 'stopped' : 'running'; }
     } else if (pod.status === 'EXITED') {
@@ -166,7 +168,8 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
       computers = await provider.listPods();
       // A successful list validates the account even when there is no unique
       // computer to select. Do not retain a pre-connection credential error.
-      state.issue = null; state.providerUncertain = false;
+      if (state.issue?.code !== 'gpu_unavailable') state.issue = null;
+      state.providerUncertain = false;
       if (!state.podId) {
         const url = (await client()).status().url;
         const connected = computers.find(p => p.workerUrl === url);
@@ -183,7 +186,7 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
       if (state.operation) throw new CloudError('operation_pending', 'Finish checking the current change before choosing another computer.');
       const c = await client();
       if (c.status().jobs.some(j => !TERMINAL.has(j.state))) throw new CloudError('work_active', 'Finish the current work before choosing another computer.');
-      state.podId = resourceId(id); state.review = null; state.inventory = null; runtime = null; billing = null;
+      state.podId = resourceId(id); state.review = null; state.inventory = null; state.issue = null; runtime = null; billing = null;
       await save(state); return refreshInternal();
     });
   }

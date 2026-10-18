@@ -34,6 +34,14 @@ export function createRunpodV2({ getApiKey, fetchFn = fetch, timeoutMs = 30000 }
         method === 'GET' ? 'The provider could not be reached. Try checking again.' : 'The response was lost. Checking the existing computer before doing anything else.');
     }
     if (!response.ok) {
+      // Live REST v2 uses HTTP 400 for retained-host capacity rejection, even
+      // when its data-center catalogue still reports available GPUs. Recognize
+      // only this known problem, never display arbitrary provider response text.
+      if (response.status === 400 && method === 'POST' && /^\/pods\/[A-Za-z0-9_-]+\/action$/.test(route) && body?.action === 'start') {
+        const problem = await readJsonCapped(response).catch(() => null);
+        if (problem?.detail === 'There are not enough free GPUs on the host machine to start this pod.')
+          throw new CloudError('gpu_unavailable', 'The GPU is busy; keep this computer and check again later.', response.status);
+      }
       const code = response.status === 401 || response.status === 403 ? 'credentials_invalid'
         : response.status === 404 ? 'resource_missing' : response.status === 409 ? 'state_conflict'
         : response.status === 429 ? 'rate_limited' : method !== 'GET' && response.status >= 500 ? 'operation_uncertain' : 'provider_error';
@@ -75,7 +83,7 @@ export function createRunpodV2({ getApiKey, fetchFn = fetch, timeoutMs = 30000 }
       const rate = gpu.price?.[pod.cloud.toLowerCase()];
       if (!Number.isFinite(rate) || rate < 0) throw new CloudError('price_unknown', 'The current rental price could not be verified.');
       const location = gpu.dataCenters?.find(d => d.id === pod.dataCenterId);
-      // Stock elsewhere does not establish availability on this computer's retained host.
+      // Data-center stock is an estimate; the retained host may still refuse start.
       return { rate: rate * pod.gpu.count, source: 'catalog estimate', availability: location?.availability || 'UNKNOWN',
         overallAvailability: gpu.availability || 'UNKNOWN', gpuName: gpu.name || pod.gpu.id };
     },

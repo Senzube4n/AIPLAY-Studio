@@ -49,6 +49,7 @@ async function fixture(t, status = 'EXITED') {
       f.actions.push(action);
       if (f.fail === 'timeout') throw new CloudError('operation_uncertain', 'Response lost');
       if (f.fail === 'allocation') throw new CloudError('state_conflict', 'Cannot allocate');
+      if (f.fail === 'host_capacity') throw new CloudError('gpu_unavailable', 'The GPU is busy; keep this computer and check again later.', 400);
       f.pod = { ...pod(action === 'start' ? 'RUNNING' : 'EXITED'), mounts: f.pod.mounts };
       return f.pod;
     },
@@ -110,6 +111,19 @@ test('invalid credentials and API timeouts have distinct safe messages', async (
     await assert.rejects(api.getPod('pod_123'), e => e.code === code && !e.message.includes('secret'));
   }
 });
+
+test('REST v2 retained-host capacity rejection is actionable without exposing provider errors', async () => {
+  const detail = 'There are not enough free GPUs on the host machine to start this pod.';
+  for (const [action, message, expected] of [['start', detail, 'gpu_unavailable'], ['stop', detail, 'provider_error'],
+    ['start', 'private provider diagnostics and credential details', 'provider_error']]) {
+    let writes = 0;
+    const api = createRunpodV2({ getApiKey: () => 'private-key', fetchFn: async () => {
+      writes++; return Response.json({ title: 'Bad Request', detail: message }, { status: 400 });
+    } });
+    await assert.rejects(api.action('pod_123', action), e => e.code === expected && e.status === 400 && !e.message.includes(message));
+    assert.equal(writes, 1, 'a rejected action is never retried automatically');
+  }
+});
 test('starting an existing computer requires current approval and validates the AI runtime', async t => {
   const f = await fixture(t);
   await assert.rejects(f.manager.start({ requestId: randomUUID() }), /Review/);
@@ -162,6 +176,24 @@ test('unavailable GPU preserves the existing resource and offers non-destructive
   assert.equal(f.manager.snapshot().issue.alternatives.length, 2); assert.deepEqual(f.actions, []);
   f.availability = 'HIGH'; f.fail = 'allocation'; await assert.rejects(f.approvedStart(), /could not be allocated/);
   assert.equal(f.pod.id, 'pod_123'); assert.equal(f.pod.mounts.persistent.size, 100);
+});
+
+test('host capacity refusal survives read-only refresh and restart without losing storage or retrying', async t => {
+  const f = await fixture(t); f.fail = 'host_capacity';
+  await assert.rejects(f.approvedStart(), e => e.code === 'gpu_unavailable');
+  assert.equal(f.manager.snapshot().operation, null);
+  assert.equal(f.manager.snapshot().phase, 'stopped');
+  await f.manager.refresh();
+  f.manager.close(); f.manager = await f.create();
+  await f.manager.discover(); await f.manager.refresh();
+  const result = f.manager.snapshot();
+  assert.equal(result.issue.code, 'gpu_unavailable');
+  assert.equal(result.issue.alternatives.length, 2);
+  assert.equal(result.pod.id, 'pod_123'); assert.equal(result.pod.mounts.persistent.size, 100);
+  assert.deepEqual(f.actions, ['start']);
+  f.fail = null; await f.approvedStart();
+  assert.equal(f.manager.snapshot().issue, null);
+  assert.equal(f.manager.snapshot().phase, 'ready');
 });
 test('worker failure leaves provider running and AI unready without unsafe shutdown', async t => {
   const f = await fixture(t, 'RUNNING'); f.fail = 'worker'; await f.manager.refresh();

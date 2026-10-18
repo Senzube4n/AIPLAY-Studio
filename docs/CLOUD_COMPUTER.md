@@ -51,6 +51,8 @@ Uncertain start/stop/capacity responses remain attached to the same resource and
 
 If a GPU cannot be allocated, keep the computer and check later. Review backup options before planning a move. Host-local disks are tied to the existing host; an unavailable host may prevent file export until it recovers. Network storage has different portability and backup options. No automatic recovery path terminates a resource.
 
+Catalogue availability describes the data center and does not reserve the original host's GPU. RunPod can reject start with HTTP 400 because that host has no free GPU. AIPLAY recognizes this specific refusal, preserves the stopped computer and its storage, and keeps the explanation visible through read-only refresh and desktop restart. A new price review is required before another start attempt; no replacement or automatic start retry is performed.
+
 ## Automatic stop
 
 Choose 15, 30 (recommended), 60 minutes, or Disabled. A preference saved while stopped applies at the next start. The 30-minute default is a recommendation; shutdown is not armed until its remote credential has been configured.
