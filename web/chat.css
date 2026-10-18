@@ -372,6 +372,31 @@
   font-style: normal; font-family: var(--mono);
   font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--warn);
 }
+/* What the model is thinking and writing, live, under the phase dot. */
+.chat-phase { flex-wrap: wrap; }
+.chat-live { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.chat-live pre {
+  margin: 0; max-height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font: 11.5px/1.5 var(--mono); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--edge); background: var(--panel);
+}
+.chat-live pre[hidden] { display: none; }
+.chat-live-think { color: var(--ghost); font-style: italic; }
+.chat-live-text { color: var(--dim); }
+.chat-empty .chat-subhead { font-size: 14px; margin-top: 6px; }
+.chat-can em.chat-pagetag { color: var(--primary); }
+/* The mic beside Send (web/voice.js): red and pulsing while it records. */
+.chat-mic {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: none; color: var(--dim); border: 1px solid var(--edge); padding: 0;
+}
+.chat-mic:hover { border-color: var(--edge-s); color: var(--ink); }
+.chat-mic:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.chat-mic[data-state="rec"] { color: var(--ink); background: var(--err); border-color: var(--err); animation: chatRec 1.2s ease-in-out infinite; }
+.chat-mic[data-state="busy"] { opacity: .55; cursor: progress; }
+@keyframes chatRec { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--err) 55%, transparent); } 50% { box-shadow: 0 0 0 7px transparent; } }
+@media (prefers-reduced-motion: reduce) { .chat-mic[data-state="rec"] { animation: none; } }
+.chat-mic .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+#chatVoiceNote { margin: 0; }
 
 /* ── narrow: the panel docks, and the rail eats 176px of whatever is left ─── */
 @media (max-width: 760px) {

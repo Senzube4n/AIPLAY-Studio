@@ -457,7 +457,7 @@ const START = [
 /* ── one paragraph per tab ──────────────────────────────────────────────────
  *
  * Order is the rail's order, because that is the order a new user meets them
- * in. `group` is the only editorial judgement here: twenty-six paragraphs in a row
+ * in. `group` is the only editorial judgement here: twenty-seven paragraphs in a row
  * is a wall, and three headings turn it into a shape.
  */
 const TABS = [
@@ -978,6 +978,16 @@ const TABS = [
     needs: [],
     needsNote: "An internet connection to aiplay.live, where the articles live. No account needed, nothing is uploaded.",
     cant: "It only lists the articles; each one opens on the website in your browser, and offline the list is empty.",
+  },
+  {
+    id: "mypages", icon: "◰", name: "My pages", group: "make",
+    lead: "Build your own small page with an AI model you connected on the Agent page, for anything Studio does not do yet. "
+      + "Describe it, the model writes it, and it runs here. Every change is kept as a version.",
+    makes: ["A page of your own inside Studio", "A file you can share (Apache 2.0)"],
+    start: "Press New page and say what it should do.",
+    needs: [],
+    needsNote: "A connected model on the Agent page: a cloud API key, or LM Studio or Ollama as a custom server. Small local chat models rarely write working pages.",
+    cant: "A page runs in a sealed box: it can read your song and picture lists, nothing else, and has no internet. It cannot start renders or change files.",
   },
   {
     id: "games", icon: "⚄", name: "Games", group: "run",

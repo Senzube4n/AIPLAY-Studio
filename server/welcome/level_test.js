@@ -626,7 +626,7 @@ ok("...labelled as a newcomer says them",
   && /data-view="images" title="Pictures"><i>[^<]*<\/i><span class="lbl">Pictures</.test(make)
   && /data-view="workflow" title="Production"><i>[^<]*<\/i><span class="lbl">Production</.test(make));
 ok("More tools folds the remaining screens",
-  views(more).join(",") === "chat,musiclab,vfx,avatars,studio,daw,reactive,training,collab,overnight,radio,blog,games,engine",
+  views(more).join(",") === "chat,musiclab,vfx,avatars,studio,daw,reactive,training,collab,overnight,radio,blog,games,mypages,engine",
   views(more).join(","));
 ok("Models and Settings are pinned in the bottom block, never below the fold",
   views(bottom).includes("models") && views(bottom).includes("settings"), views(bottom).join(","));

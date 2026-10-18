@@ -198,6 +198,82 @@ export function createCloud({ config, secrets, fetch: doFetch = globalThis.fetch
     return body;
   }
 
+  /** A finished (not streamed) reply: its text and token counts. */
+  function readReply(p, out) {
+    if (p.wire === "anthropic") {
+      return { text: (out?.content || []).filter((c) => c.type === "text").map((c) => c.text).join(""),
+        inTok: out?.usage?.input_tokens, outTok: out?.usage?.output_tokens };
+    }
+    const msg = out?.choices?.[0]?.message;
+    return { text: Array.isArray(msg?.content) ? msg.content.map((c) => c?.text || "").join("") : String(msg?.content ?? ""),
+      inTok: out?.usage?.prompt_tokens, outTok: out?.usage?.completion_tokens };
+  }
+
+  /**
+   * The same request with `stream: true`, read as server-sent events. Each
+   * piece goes to onDelta({kind: "thinking"|"text", text}) as it arrives: the
+   * reasoning a model sends (Claude's thinking blocks, `reasoning_content`
+   * from DeepSeek, LM Studio or Ollama, OpenRouter's `reasoning`) and the
+   * answer itself. Only the answer is returned. A server that ignores
+   * `stream` and answers in one piece is read the ordinary way.
+   */
+  async function callStream(p, url, init, timeoutMs, onDelta) {
+    const tell = (kind, text) => { if (text) { try { onDelta({ kind, text }); } catch { /* a watcher never breaks the reply */ } } };
+    let r;
+    try {
+      r = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (e) {
+      const why = e?.name === "TimeoutError" ? `no answer after ${Math.round(timeoutMs / 1000)} s` : (e?.cause?.code || e?.message || String(e));
+      throw new CloudError(`Could not reach ${p.name} (${why}).`, { provider: p.id });
+    }
+    if (!r.ok || !/event-stream/i.test(r.headers?.get?.("content-type") || "")) {
+      const t = await r.text();
+      let body = null;
+      try { body = t ? JSON.parse(t) : null; } catch { body = t; }
+      if (!r.ok) throw new CloudError(explain(p, r.status, body), { status: r.status, provider: p.id, body });
+      const got = readReply(p, body);
+      tell("text", got.text);
+      return got;
+    }
+    let text = "", inTok, outTok, buf = "";
+    const event = (raw) => {
+      const data = raw.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
+      if (!data || data === "[DONE]") return;
+      let d;
+      try { d = JSON.parse(data); } catch { return; }
+      if (d?.error || d?.type === "error") {
+        throw new CloudError(`${p.name} stopped with an error: ${providerMessage(d) || "no reason given"}.`, { provider: p.id, body: d });
+      }
+      if (p.wire === "anthropic") {
+        if (d.type === "message_start") inTok = d.message?.usage?.input_tokens;
+        else if (d.type === "message_delta") outTok = d.usage?.output_tokens ?? outTok;
+        else if (d.type === "content_block_delta") {
+          if (d.delta?.type === "text_delta") { text += d.delta.text || ""; tell("text", d.delta.text); }
+          else if (d.delta?.type === "thinking_delta") tell("thinking", d.delta.thinking);
+        }
+        return;
+      }
+      const delta = d.choices?.[0]?.delta || {};
+      tell("thinking", typeof delta.reasoning_content === "string" ? delta.reasoning_content : typeof delta.reasoning === "string" ? delta.reasoning : "");
+      if (typeof delta.content === "string") { text += delta.content; tell("text", delta.content); }
+      if (d.usage) { inTok = d.usage.prompt_tokens ?? inTok; outTok = d.usage.completion_tokens ?? outTok; }
+    };
+    const dec = new TextDecoder();
+    try {
+      for await (const chunk of r.body) {
+        buf += dec.decode(chunk, { stream: true });
+        let m;
+        while ((m = /\r?\n\r?\n/.exec(buf))) { const one = buf.slice(0, m.index); buf = buf.slice(m.index + m[0].length); event(one); }
+      }
+    } catch (e) {
+      if (e instanceof CloudError) throw e;
+      const why = e?.name === "TimeoutError" ? `it was still writing after ${Math.round(timeoutMs / 1000)} s` : (e?.message || String(e));
+      throw new CloudError(`${p.name} stopped answering (${why}).`, { provider: p.id });
+    }
+    event(buf);
+    return { text, inTok, outTok };
+  }
+
   async function saveSettings() {
     if (!config.settingsFile) return;
     let cur = {};
@@ -371,15 +447,18 @@ export function createCloud({ config, secrets, fetch: doFetch = globalThis.fetch
    * separate system channel through TextGenerate — and splitting it would make
    * the two paths see different conversations.
    */
-  async function complete({ provider, model }, prompt, { maxTokens = MAX_OUTPUT_TOKENS, timeoutMs = 180_000 } = {}) {
+  /* `onDelta` (optional) streams the reply as it is written; `think` also asks
+   * Claude for its thinking, for a watcher to read. A model that refuses
+   * either is remembered and asked the plain way. */
+  async function complete({ provider, model }, prompt, { maxTokens = MAX_OUTPUT_TOKENS, timeoutMs = 180_000, onDelta = null, think = false } = {}) {
     const p = providerById(provider);
     if (!p) throw new CloudError(`No provider called "${provider}".`);
     const key = await keyOf(p);
     if (!key && !p.keyOptional) throw new CloudError(`No ${p.name} key is saved — add one on the Agent page.`, { provider });
     const base = baseOf(p);
     const q = quirks.get(`${provider}|${model}`) || {};
-
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const streaming = typeof onDelta === "function" && !q.noStream;
       let url, body;
       if (p.wire === "anthropic") {
         url = `${base}/messages`;
@@ -389,18 +468,22 @@ export function createCloud({ config, secrets, fetch: doFetch = globalThis.fetch
         body = { model, messages: [{ role: "user", content: String(prompt) }] };
         body[q.completionTokens ? "max_completion_tokens" : "max_tokens"] = maxTokens;
       }
-      if (!q.noTemperature) body.temperature = 0;
+      /* Thinking needs room under max_tokens and no temperature (Anthropic's rule). */
+      const thinking = streaming && think && p.wire === "anthropic" && !q.noThinking && maxTokens > 2048;
+      if (thinking) body.thinking = { type: "enabled", budget_tokens: Math.min(4096, Math.floor(maxTokens / 3)) };
+      if (!q.noTemperature && !thinking) body.temperature = 0;
+      if (streaming) {
+        body.stream = true;
+        if (p.wire === "openai" && !q.noStreamUsage) body.stream_options = { include_usage: true };
+      }
 
       try {
-        const out = await call(p, url, { method: "POST", headers: headers(p, key), body: JSON.stringify(body) }, timeoutMs);
-        let text, inTok, outTok;
-        if (p.wire === "anthropic") {
-          text = (out?.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
-          inTok = out?.usage?.input_tokens; outTok = out?.usage?.output_tokens;
-        } else {
-          const msg = out?.choices?.[0]?.message;
-          text = Array.isArray(msg?.content) ? msg.content.map((c) => c?.text || "").join("") : String(msg?.content ?? "");
-          inTok = out?.usage?.prompt_tokens; outTok = out?.usage?.completion_tokens;
+        const init = { method: "POST", headers: headers(p, key), body: JSON.stringify(body) };
+        const { text, inTok, outTok } = streaming
+          ? await callStream(p, url, init, timeoutMs, onDelta)
+          : readReply(p, await call(p, url, init, timeoutMs));
+        if (!streaming && typeof onDelta === "function" && text) {
+          try { onDelta({ kind: "text", text }); } catch { /* a watcher never breaks the reply */ }
         }
         await addUsage(provider, inTok, outTok);
         if (!text.trim()) throw new CloudError(`${p.name} returned an empty reply from ${model}.`, { provider });
@@ -413,6 +496,15 @@ export function createCloud({ config, secrets, fetch: doFetch = globalThis.fetch
         }
         if (e.status === 400 && !q.completionTokens && p.wire === "openai" && /max_tokens|max_completion_tokens/.test(said)) {
           q.completionTokens = true; quirks.set(`${provider}|${model}`, q); continue;
+        }
+        if (e.status === 400 && body.thinking && /thinking|budget/.test(said)) {
+          q.noThinking = true; quirks.set(`${provider}|${model}`, q); continue;
+        }
+        if (e.status === 400 && body.stream_options && /stream_options|include_usage/.test(said)) {
+          q.noStreamUsage = true; quirks.set(`${provider}|${model}`, q); continue;
+        }
+        if (e.status === 400 && body.stream && /\bstream(?:ing)?\b/.test(said)) {
+          q.noStream = true; quirks.set(`${provider}|${model}`, q); continue;
         }
         throw e;
       }

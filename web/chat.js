@@ -46,6 +46,8 @@
 /* Whether a writing model can answer Make song (UI_PLAN B3), one answer shared
  * with the Pictures and Video boxes (web/assist.js). */
 import { writerFrom, whyNoWriter, notYetLine } from "./writer.js";
+import { wireMic } from "./voice.js";
+import { PAGE_IDEAS } from "./page-ideas.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -428,6 +430,28 @@ function addRaw(ev) {
   if (phaseEl && phaseEl.parentNode === el) el.appendChild(phaseEl);
 }
 
+/** The live text under the phase dot: the last part of what the model is
+ *  thinking and writing right now. Replaced by the next phase. */
+let live = { think: "", text: "" };
+function streamLive(ev) {
+  if (ev.kind === "thinking") live.think += ev.text || "";
+  else if (ev.kind === "text") live.text += ev.text || "";
+  else return;
+  if (!phaseEl) phase(dot("thinking"));
+  let box = phaseEl.querySelector(".chat-live");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "chat-live";
+    box.innerHTML = `<pre class="chat-live-think" hidden></pre><pre class="chat-live-text" hidden></pre>`;
+    phaseEl.appendChild(box);
+  }
+  const [think, text] = box.querySelectorAll("pre");
+  think.hidden = !live.think; think.textContent = live.think.slice(-900);
+  text.hidden = !live.text; text.textContent = live.text.slice(-900);
+  think.scrollTop = think.scrollHeight; text.scrollTop = text.scrollHeight;
+  scroll();
+}
+
 /* ── the decision card ───────────────────────────────────────────────────── */
 
 function showConfirm(ev) {
@@ -460,7 +484,13 @@ function onEvent(ev) {
       SESSION = ev.session;
       break;
     case "thinking":
+      live = { think: "", text: "" };
       phase(dot(`thinking &middot; step ${esc(ev.step)} of ${esc(ev.of)}`));
+      break;
+    /* A cloud model's reply as it is written: its reasoning when it sends any,
+     * then the reply itself, in the phase row until the step is done. */
+    case "stream":
+      streamLive(ev);
       break;
     case "reask":
       phase(dot("that reply did not parse &mdash; asking once more"));
@@ -703,6 +733,15 @@ function greet() {
       + `<b>${esc(c.t)}</b><span>${esc(c.s)}</span>`
       + (c.spends ? `<em>spends GPU time</em>` : "")
       + `</button>`).join("")
+    + `</div>`
+    /* My pages (web/pages.js): the card opens a new page with the idea in its
+     * box, not built, so the person sees what an AI can make and edits first. */
+    + `<h3 class="chat-subhead">Or build your own page</h3>`
+    + `<p>Describe a small tool and an AI model writes it as a page inside Studio.</p>`
+    + `<div class="chat-cans">`
+    + PAGE_IDEAS.map((c) =>
+      `<button type="button" class="chat-can" data-go="mypages" data-page-idea="${esc(c.ask)}">`
+      + `<b>${esc(c.t)}</b><span>${esc(c.s)}</span><em class="chat-pagetag">opens My pages</em></button>`).join("")
     + `</div>`;
   el.appendChild(d);
 }
@@ -844,6 +883,12 @@ function init() {
     }
   });
   $("chatText").addEventListener("input", grow);
+  /* The mic (web/voice.js): what was said lands in the box, never sent by itself. */
+  if ($("chatMic")) {
+    const note = $("chatVoiceNote");
+    wireMic($("chatMic"), { box: $("chatText"), after: grow,
+      say: (text, warn = false) => { note.textContent = text; note.hidden = !text; note.classList.toggle("warnhint", warn); } });
+  }
 
   /* STOP closes this page's ear on the stream. It is not a kill switch for the
    * graphics card and does not claim to be; the note it writes says so. */

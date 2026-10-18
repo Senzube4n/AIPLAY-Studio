@@ -332,6 +332,9 @@ node --check web/receipt.js || exit 1
 node --check web/fastcovers.js || exit 1
 node --check web/dialog.js || exit 1
 node --test server/fastcover_test.js || exit 1
+node --check web/pages.js || exit 1
+node --check web/voice.js || exit 1
+node --test server/pages_test.js server/pages-ui_test.js server/voice_test.js server/voice-ui_test.js || exit 1
 node server/defaults_test.js || exit 1
 # EXTEND AND REPLACE ON THE PAGE, AND THE GGUF CARD: one panel with a mode
 # switch and two handles that never cross, both offered from the row menu and

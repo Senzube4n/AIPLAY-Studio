@@ -164,6 +164,84 @@ await (await fetch(`${BASE}/api/llm`, { method: "POST", headers: H, body: JSON.s
 menu = await chatModels.status();
 ok("removing the key takes it out of the menus and the chat falls back to local", !store.has("llm:anthropic") && !menu.models.some((m) => m.file === "api:anthropic") && (await ask.usesCard()) === true);
 
+/* ── streaming: the reply as it is written (My pages and the Chat tab watch it) ── */
+{
+  const sse = (events, { split = 7, crlf = false } = {}) => {
+    const sep = crlf ? "\r\n\r\n" : "\n\n";
+    const all = events.map((e) => `${e.event ? `event: ${e.event}\n` : ""}data: ${typeof e.data === "string" ? e.data : JSON.stringify(e.data)}`).join(sep) + sep;
+    /* Cut at odd places so an event arrives in pieces, as it does on a real socket. */
+    const parts = [];
+    for (let i = 0; i < all.length; i += split) parts.push(new TextEncoder().encode(all.slice(i, i + split)));
+    return new Response(new ReadableStream({ start(c) { for (const p of parts) c.enqueue(p); c.close(); } }),
+      { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const sent = [];
+  const sstore = new Map([["llm:anthropic", "k-a"], ["llm:deepseek", "k-d"], ["llm:custom", ""]]);
+  const sconfig = { llm: { models: { anthropic: "claude-s", deepseek: "deepseek-r", custom: "plain" }, bases: { custom: "http://127.0.0.1:9/v1" }, names: {} } };
+  const scloud = createCloud({
+    config: sconfig,
+    secrets: { get: async (n) => sstore.get(n) ?? null, set: async () => ({}), has: async (n) => sstore.has(n), clear: async () => {}, status: async () => ({}) },
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      sent.push(body);
+      if (body.model === "no-stream" && body.stream) {
+        return new Response(JSON.stringify({ error: { message: "Streaming is not supported by this model" } }), { status: 400 });
+      }
+      if (String(url).includes("anthropic")) {
+        if (body.thinking && body.model === "claude-nothink") {
+          return new Response(JSON.stringify({ type: "error", error: { message: "thinking is not supported on this model" } }), { status: 400 });
+        }
+        return sse([
+          { event: "message_start", data: { type: "message_start", message: { usage: { input_tokens: 40 } } } },
+          { event: "content_block_delta", data: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "The person wants an equalizer." } } },
+          { event: "content_block_delta", data: { type: "content_block_delta", delta: { type: "text_delta", text: "```html\n<p>eq" } } },
+          { event: "content_block_delta", data: { type: "content_block_delta", delta: { type: "text_delta", text: "</p>\n```" } } },
+          { event: "message_delta", data: { type: "message_delta", usage: { output_tokens: 12 } } },
+          { event: "message_stop", data: { type: "message_stop" } },
+        ]);
+      }
+      if (String(url).includes("deepseek")) {
+        return sse([
+          { data: { choices: [{ delta: { reasoning_content: "Thinking it over." } }] } },
+          { data: { choices: [{ delta: { content: "Hello " } }] } },
+          { data: { choices: [{ delta: { content: "there" } }], usage: { prompt_tokens: 3, completion_tokens: 2 } } },
+          { data: "[DONE]" },
+        ], { crlf: true, split: 5 });
+      }
+      /* A server that ignores `stream` and answers in one piece. */
+      return new Response(JSON.stringify({ choices: [{ message: { content: "all at once" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const seen = [];
+  const plainSeen = [];
+  const plainChoice = { provider: "custom", model: "no-stream" };
+  const firstPlain = await scloud.complete(plainChoice, "hi", { onDelta: (d) => plainSeen.push(d) });
+  ok("a model that rejects streaming still answers and delivers its completed text", firstPlain === "all at once"
+    && sent.length === 2 && sent[0].stream === true && !("stream" in sent[1])
+    && plainSeen.length === 1 && plainSeen[0].text === firstPlain, JSON.stringify({ sent, plainSeen }));
+  sent.length = 0;
+  await scloud.complete(plainChoice, "again", { onDelta: () => {} });
+  ok("a model's streaming refusal is remembered for its next turn", sent.length === 1 && !("stream" in sent[0]));
+  const watch = (d) => seen.push(d);
+  const a = await scloud.complete({ provider: "anthropic", model: "claude-s" }, "eq", { maxTokens: 16000, onDelta: watch, think: true });
+  ok("a streamed Claude reply comes back whole, its thinking and writing shown on the way",
+    a === "```html\n<p>eq</p>\n```" && seen.some((d) => d.kind === "thinking" && /equalizer/.test(d.text)) && seen.filter((d) => d.kind === "text").map((d) => d.text).join("") === a,
+    JSON.stringify({ a, seen }));
+  ok("asking for thinking drops temperature and stays under max_tokens",
+    sent.at(-1).stream === true && sent.at(-1).thinking?.budget_tokens < 16000 && !("temperature" in sent.at(-1)), JSON.stringify(sent.at(-1)));
+  sconfig.llm.models.anthropic = "claude-nothink";
+  sent.length = 0;
+  const b = await scloud.complete({ provider: "anthropic", model: "claude-nothink" }, "eq", { maxTokens: 16000, onDelta: () => {}, think: true });
+  ok("a model that refuses thinking is asked again without it", b.includes("<p>eq</p>") && sent.length === 2 && !sent[1].thinking, JSON.stringify(sent));
+  seen.length = 0;
+  const c = await scloud.complete({ provider: "deepseek", model: "deepseek-r" }, "hi", { onDelta: watch });
+  ok("an OpenAI-style stream (CRLF, split mid-event) shows reasoning_content and returns only the answer",
+    c === "Hello there" && seen[0]?.kind === "thinking" && seen[0].text === "Thinking it over.", JSON.stringify({ c, seen }));
+  seen.length = 0;
+  const d = await scloud.complete({ provider: "custom", model: "plain" }, "hi", { onDelta: watch });
+  ok("a server that ignores stream:true is read as one reply", d === "all at once" && seen.length === 1, JSON.stringify(seen));
+}
+
 server.close();
 await rm(dir, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${failures.length} failed`);

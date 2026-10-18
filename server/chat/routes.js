@@ -344,7 +344,8 @@ export function createChatRoutes(deps = {}) {
     const emit = (ev) => {
       if (form && ev.type === "tool_result" && ev.result?.form) (panel ? applyScreenPatch : applyFormPatch)(form, ev.result.form);
       send(ev);
-      if (ev.type === "raw") return;   // the model's whole reply is in the turns already
+      /* The model's whole reply is in the turns already; its live pieces are for watching only. */
+      if (ev.type === "raw" || ev.type === "stream") return;
       writes.push(append(session.id, { role: "event", ...ev, at: Date.now() }).catch(() => {}));
     };
 

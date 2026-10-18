@@ -543,14 +543,14 @@ export const promiseCorrection = (tools) =>
  * question, the model file that answered it, and how long the 8.7 GB model
  * took. A chat panel is going to run this hundreds of times.
  */
-export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH, resolve = null, cloud = null } = {}) {
-  async function ask(prompt, { label = "chat turn" } = {}) {
+export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH, resolve = null, cloud = null, timeoutMs = 240_000 } = {}) {
+  async function ask(prompt, { label = "chat turn", onDelta = null } = {}) {
     /* Which file answers is the user's choice (server/chat/models.js); with no
      * resolver this is the original qwen_3_4b.safetensors. */
     const m = (resolve && await resolve()) || { file: "qwen_3_4b.safetensors", loader: "CLIPLoader", type: "flux2" };
     /* A cloud model (server/llm/providers.js) answers over HTTPS and never
      * touches the card. */
-    if (m.api && cloud) return cloud.complete(m.api, prompt);
+    if (m.api && cloud) return cloud.complete(m.api, prompt, onDelta ? { onDelta } : undefined);
     const graph = {
       1: { class_type: m.loader || "CLIPLoader", inputs: { clip_name: m.file, type: m.type || "flux2" } },
       2: {
@@ -568,7 +568,7 @@ export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH
     };
     const done = await engine.run({
       graph, actor: CHAT_ACTOR, via: "chat", adopt: false,
-      timeoutMs: 240_000, pollMs: 500, label,
+      timeoutMs, pollMs: 500, label,
     });
     if (done.status !== "completed") {
       const why = String(done.error || "");
@@ -792,7 +792,10 @@ async function think(deps, session, model, emit, used, seeded = null) {
     let raw;
     try {
       const context = typeof deps.context === "function" ? deps.context() : deps.context;
-      raw = await model(buildPrompt(tools, session.turns, correction, { intro: deps.intro, context, autoSpend: !!deps.autoSpend }), { label: `chat step ${step + 1}` });
+      /* A cloud model's reply streams in as it is written ("stream" events),
+       * so the person watches it think rather than a dot. */
+      raw = await model(buildPrompt(tools, session.turns, correction, { intro: deps.intro, context, autoSpend: !!deps.autoSpend }),
+        { label: `chat step ${step + 1}`, onDelta: (d) => emit({ type: "stream", kind: d.kind, text: d.text, step: step + 1 }) });
     } catch (e) {
       const why = e?.message || String(e);
       emit({ type: "error", text: why });
