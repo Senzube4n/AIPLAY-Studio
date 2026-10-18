@@ -46,10 +46,23 @@ export function streamFile(res, file, range = null) {
    * A read error tears the response down. The headers are usually gone by
    * then, so there is no status left to send, and ending the connection is
    * the only honest signal that the body is short. */
-  pipeline(stream, res, (err) => {
-    if (err && !res.destroyed) res.destroy();
-    if (!stream.destroyed) stream.destroy();
-  });
+  /* Node 24 throws ERR_STREAM_UNABLE_TO_PIPE synchronously when the response
+   * was destroyed before pipeline() is called. Earlier releases reached the
+   * callback instead. Release the just-opened file in either case, including
+   * the small race between this check and pipeline attaching its listeners. */
+  if (res.destroyed || res.closed || res.writableEnded) {
+    stream.destroy();
+    return stream;
+  }
+  try {
+    pipeline(stream, res, (err) => {
+      if (err && !res.destroyed) res.destroy();
+      if (!stream.destroyed) stream.destroy();
+    });
+  } catch (err) {
+    stream.destroy();
+    if (!res.destroyed) res.destroy(err);
+  }
   return stream;
 }
 

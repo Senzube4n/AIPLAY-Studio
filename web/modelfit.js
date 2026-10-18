@@ -42,6 +42,8 @@
  * models_for_this_machine also returns.
  */
 
+import { revealSetting } from './settings-sections.js';
+
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 /* Base 1000, matching web/app.js's own `gb` and Windows Explorer, because the
@@ -285,7 +287,11 @@ export function initFit(root = document) {
     const go = e.target.closest?.("[data-fitview]");
     if (go) {
       root.querySelector(`.nav a[data-view="${CSS.escape(go.dataset.fitview)}"]`)?.click();
-      if (go.dataset.fitview === "settings") root.getElementById("set-hosted")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (go.dataset.fitview === "settings") {
+        const setting = root.getElementById("set-hosted");
+        revealSetting(setting);
+        setting?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
       return;
     }
     const b = e.target.closest?.("[data-fitgoto]");

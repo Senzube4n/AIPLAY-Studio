@@ -135,6 +135,21 @@ test("a recording changed during probing is refused and its incomplete cache is 
   assert.equal((await runtime.inspectSource("source.wav")).sha256, sha("changed during inspection"));
 });
 
+test("source identity detects changed bytes even when filesystem metadata is unchanged", async t => {
+  const f = await fixture(t); let recording = "source recording";
+  // A controlled hasher models coarse timestamps without relying on the
+  // host filesystem to give two same-size writes identical timestamps.
+  const runtime = createListeningLabRuntime({ ...f.options, hashFile: async () => sha(recording) });
+  const first = await runtime.inspectSource("source.wav");
+  await runtime.inspectSource("source.wav");
+  assert.equal(f.counts().measureCalls, 1, "stable audio reuses its measured duration");
+  recording = "edited recording";
+  const second = await runtime.inspectSource("source.wav");
+  assert.equal(first.sha256, sha("source recording"));
+  assert.equal(second.sha256, sha("edited recording"));
+  assert.equal(f.counts().measureCalls, 2, "changed audio is measured again");
+});
+
 test("filesystem links cannot escape the library", async t => {
   const f = await fixture(t), outside = path.join(f.directory, "outside"); await mkdir(outside);
   await writeFile(path.join(outside, "private.wav"), "private bytes");

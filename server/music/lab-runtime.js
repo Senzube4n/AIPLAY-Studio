@@ -137,7 +137,14 @@ export function createListeningLabRuntime({ config, library, shelf, engine, prob
   async function inspect(file, type, allowedRoot = null) {
     const before = await fileState(file), key = `${type}:${before.full}`, old = cache.get(key);
     if (allowedRoot && !samePath(path.dirname(before.full), allowedRoot)) fail("The recording must stay inside the song library.", 400);
-    if (old?.signature === before.signature) return old.value;
+    if (old?.signature === before.signature) {
+      if (type !== "source") return old.value;
+      // Same-size audio edits can share filesystem timestamps. Keep the
+      // duration cache, but verify the current bytes before reusing identity.
+      const value = await old.value, currentHash = await hashFile(before.full);
+      await unchanged(file, before);
+      if (currentHash === value.sha256) return value;
+    }
     const pending = (async () => {
       const value = type === "probe" ? { ...await probe(before.full), signature: before.signature } : type === "source"
         ? { seconds: await measure(before.full), sha256: await hashFile(before.full), bytes: before.bytes }

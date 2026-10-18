@@ -149,7 +149,11 @@ use it too.
 
 - **The pills are automatic.** Every `.pcard` with an `id` and a `data-nav`
   gets a pill in the page's `.pnav`, which scrolls to it and lights up while
-  it is in view. Don't hand-write pills.
+  it is in view. Don't hand-write pills. Settings uses
+  `data-sections="single"` on its nav: only the selected topic is visible,
+  and the others keep their controls mounted. Before scrolling or focusing a
+  Settings control from a shortcut, call `revealSetting(control)` from
+  `web/settings-sections.js`. Section links also survive refresh and browser Back.
 - **One card per topic.** Cards are the separation. Don't stack loose
   headings and grids between cards.
 - **Write `hidden` before `class`**: `<div id="engine" hidden class="page">`.

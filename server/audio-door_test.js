@@ -145,17 +145,22 @@ test("a player that hangs up before the door starts reading is let go of too", a
   const file = path.join(config.outputDir, "aiplay_late_probe.flac");
   await writeFile(file, Buffer.alloc(BIG, 7));
   let late = null;
+  let enteredDoor;
+  const entered = new Promise((ok) => { enteredDoor = ok; });
   const srv = await serve(async (req, res) => {
+    enteredDoor();
     /* The door awaits (its stat, a library lookup) and the player leaves meanwhile. */
     await new Promise((ok) => setTimeout(ok, 300));
     late = (await sendFile(req, res, file, { headers: { "Content-Type": "audio/flac" } })).stream;
   });
   try {
-    await new Promise((resolve) => {
-      const req = http.get({ host: "127.0.0.1", port: srv.port, path: "/", headers: { range: "bytes=0-" } });
-      req.on("error", () => {});
-      setTimeout(() => { req.destroy(); resolve(); }, 50);
-    });
+    const req = http.get({ host: "127.0.0.1", port: srv.port, path: "/", headers: { range: "bytes=0-" } });
+    req.on("error", () => {});
+    /* Start the abort clock only after the server has the request. Under a busy
+     * full gate, 50 ms from http.get() was sometimes earlier than accept(). */
+    await entered;
+    await new Promise((ok) => setTimeout(ok, 50));
+    req.destroy();
     for (let i = 0; i < 40 && !late; i++) await new Promise((ok) => setTimeout(ok, 25));
     assert.ok(late, "the door reached sendFile after the player had gone");
     assert.equal(await closedWithin(late, 2000), true, "the handle is released although 'close' fired before the stream existed");

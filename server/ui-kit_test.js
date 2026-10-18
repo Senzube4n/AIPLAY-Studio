@@ -6,11 +6,113 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { mountSettingsSections, revealSetting } from '../web/settings-sections.js';
 
 // Source assertions describe lines, independent of the checkout's EOL setting.
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const HTML = read("web/index.html");
 const APP = read("web/app.js");
+
+// Small DOM fixture for navigation: no controls are reconstructed on selection.
+function settingsFixture(hash = '') {
+  const win = new EventTarget();
+  win.Event = Event;
+  win.location = new URL(`http://localhost/?view=settings${hash}`);
+  win.history = Object.fromEntries(['pushState', 'replaceState'].map(method => [method,
+    (_state, _title, url) => { win.location = new URL(url); }]));
+  const nodes = new Map();
+  const doc = { defaultView: win, getElementById: id => nodes.get(id), createElement: () => element() };
+  function element(id) {
+    const el = new EventTarget();
+    Object.assign(el, { id, ownerDocument: doc, dataset: {}, children: [], hidden: false, attrs: {},
+      setAttribute(key, value) { this.attrs[key] = value; },
+      replaceChildren(...children) { this.children = children; },
+      scrollIntoView() {}, focus() { doc.activeElement = this; },
+      click() { this.dispatchEvent(new Event('click', { cancelable: true })); },
+    });
+    const classes = new Set();
+    el.classList = { toggle: (name, on) => on ? classes.add(name) : classes.delete(name), contains: name => classes.has(name) };
+    if (id) nodes.set(id, el);
+    return el;
+  }
+  const page = element('settings'), nav = element();
+  const cards = ['set-level', 'set-covers', 'set-hosted'].map(id => {
+    const card = element(id);
+    card.dataset.nav = id;
+    card.closest = query => query === '#settings' ? page : card;
+    return card;
+  });
+  page.querySelectorAll = () => cards;
+  page.querySelector = () => nav;
+  nav.closest = () => page;
+  const control = element('runpodWorkerUrl');
+  control.value = 'unsaved local text';
+  control.closest = query => query === '#settings' ? page : cards[2];
+  const selected = () => cards.filter(card => !card.hidden && !card.classList.contains('section-inactive')).map(card => card.id);
+  return { win, doc, page, nav, cards, control, selected };
+}
+
+test('Settings opens one topic and keeps unsaved controls and every topic link', () => {
+  const f = settingsFixture();
+  mountSettingsSections(f.nav);
+  assert.deepEqual(f.selected(), ['set-level']);
+  f.nav.children[2].click();
+  assert.deepEqual(f.selected(), ['set-hosted']);
+  f.nav.children[1].click();
+  assert.deepEqual(f.selected(), ['set-covers']);
+  assert.equal(f.control.value, 'unsaved local text');
+  assert.equal(f.doc.getElementById('runpodWorkerUrl'), f.control);
+  assert.equal(f.nav.children.length, 3);
+  assert.equal(f.nav.children[1].attrs['aria-selected'], 'true');
+  assert.equal(f.nav.children[2].tabIndex, -1);
+  assert.equal(f.win.location.hash, '#set-covers');
+});
+
+test('Settings restores nested links and browser Back to the initial topic', () => {
+  const f = settingsFixture('#runpodWorkerUrl');
+  mountSettingsSections(f.nav);
+  assert.deepEqual(f.selected(), ['set-hosted']);
+  f.win.location.hash = '#set-covers';
+  f.win.dispatchEvent(new Event('hashchange'));
+  assert.deepEqual(f.selected(), ['set-covers']);
+  f.win.location.hash = '';
+  f.win.dispatchEvent(new Event('popstate'));
+  assert.deepEqual(f.selected(), ['set-level']);
+  revealSetting(f.control);
+  assert.deepEqual(f.selected(), ['set-hosted']);
+  assert.equal(f.win.location.hash, '#set-hosted');
+});
+
+test('Settings respects unavailable topics and recovers if the selected topic disappears', () => {
+  const f = settingsFixture('#set-hosted');
+  mountSettingsSections(f.nav);
+  f.cards[2].hidden = true;
+  mountSettingsSections(f.nav);
+  assert.deepEqual(f.selected(), ['set-level']);
+  assert.equal(f.nav.children.length, 2);
+  revealSetting(f.control);
+  assert.deepEqual(f.selected(), ['set-level']);
+  f.cards[2].hidden = false;
+  mountSettingsSections(f.nav);
+  assert.deepEqual(f.selected(), ['set-hosted']);
+  assert.equal(f.nav.children.length, 3);
+});
+
+test('Back from another screen reopens Settings through the existing view controller', () => {
+  const f = settingsFixture('#set-covers');
+  mountSettingsSections(f.nav);
+  f.page.hidden = true;
+  let opened = 0;
+  f.doc.querySelector = () => ({ click() { opened++; f.page.hidden = false; } });
+  f.win.dispatchEvent(new Event('popstate'));
+  assert.equal(opened, 1);
+  assert.equal(f.page.hidden, false);
+  assert.deepEqual(f.selected(), ['set-covers']);
+  f.page.hidden = true;
+  f.win.location.search = '?view=create';
+  f.win.dispatchEvent(new Event('popstate'));
+  assert.equal(opened, 1, 'an unrelated screen is not redirected by an old Settings hash');
+});
 
 test("the index loads the kit's stylesheet and script", () => {
   assert.match(HTML, /href="ui\.css"/);
