@@ -132,7 +132,9 @@ test("the RunPod HTTP start route rejects an empty POST before billing and accep
   let resumes = 0;
   /* /api/runpod answers only this PC's Studio address on the UI port, and its
    * JSON POSTs pass index.js sameOriginLocalJson, lifted here as it is. */
-  const config = { uiPort: 4173 };
+  // Legacy starts now share the durable lifecycle/update gate, using an isolated profile.
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'aiplay-mcp-start-'));
+  const config = { uiPort: 4173, dataDir, outputDir: path.join(dataDir, 'output') };
   const guardSrc = /function sameOriginLocalJson\(req\) \{[\s\S]*?\n\}/.exec(readFileSync(new URL("./index.js", import.meta.url), "utf8"))?.[0] || "";
   const sameOriginLocalJson = new Function("config", `${guardSrc}\nreturn sameOriginLocalJson;`)(config);
   const route = createRemoteRoutes({ config, sameOriginLocalJson,
@@ -144,6 +146,7 @@ test("the RunPod HTTP start route rejects an empty POST before billing and accep
       return Response.json({ data: {} });
     },
   });
+  t.after(async () => { (await route.start()).close(); await rm(dataDir, { recursive: true, force: true }); });
   const server = http.createServer((req, res) => route(req, res, new URL(req.url, "http://local")));
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));

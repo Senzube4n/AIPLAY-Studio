@@ -5430,6 +5430,15 @@
               <progress id="cloudInstallProgress" max="5" value="0" aria-label="Completed setup checks"></progress>
               <ol class="cloud-install-checklist" id="cloudInstallChecklist" aria-label="AI setup progress"><li>Start cloud computer</li><li>Install AI service</li><li>Download selected models</li><li>Check AI connection</li><li>Verify automatic stop</li></ol>
               <div class="cta"><button class="edtool" id="cloudInstallStop" type="button" disabled>Stop setup and computer</button></div><p class="hint" id="cloudInstallStopHint">Rental runs while the computer is running.</p>
+              <details class="more" id="cloudWorkerUpdate"><summary>Update AI service</summary>
+                <span class="chip" id="cloudUpdateStatus" role="status">Check AI build</span>
+                <div class="params"><label>current build</label><span class="pv" id="cloudUpdateCurrent">Not verified</span><label>new build</label><span class="pv" id="cloudUpdateTarget">Not checked</span></div>
+                <ol><li>Stop the computer normally.</li><li>Review and save the update.</li><li>Review the rental price, start and check.</li></ol>
+                <div class="cta" id="cloudUpdateControls"><button class="edtool sm" id="cloudUpdateStop" type="button" disabled>Stop computer</button><button class="btn sm" id="cloudUpdateSave" type="button" disabled>Review AI update</button><button class="edtool sm" id="cloudUpdateStart" type="button" disabled>Review start price</button></div>
+                <p class="hint" id="cloudUpdateManual" hidden>Manually installed services use the worker update guide.</p>
+                <p class="hint" id="cloudUpdateNote" role="status"></p>
+                <div class="cta"><button class="edtool sm" id="cloudUpdateCheck" type="button">Check update</button><a class="edtool sm" id="cloudUpdateGuide" href="https://github.com/nemesisone-dev/AIPLAY-Studio/blob/main/docs/CLOUD_COMPUTER.md#updating-existing-computers" target="_blank" rel="noreferrer">Manual update guide</a></div>
+              </details>
               <details class="more" id="cloudModelBrowser">
                 <summary>Browse more models</summary>
                 <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Download models and LoRAs directly to your RunPod computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
@@ -5439,9 +5448,10 @@
                 </form>
                 <p class="hint" id="catalogStatus" role="status">Choose a provider to browse.</p>
                 <div id="catalogResults" class="catalog-grid"></div>
+                <div class="cta" id="catalogMoreRow" hidden><button class="edtool" id="catalogMore" type="button">Load more</button></div>
                 <section id="catalogDetail" class="catalog-detail" hidden><button class="edtool sm" id="catalogDetailClose" type="button">Close details</button><h3 id="catalogName"></h3><p class="hint" id="catalogPurpose"></p>
                   <div class="params"><label for="catalogVersion">version</label><span class="pv"><select class="sel2" id="catalogVersion"></select></span><label for="catalogFile">file</label><span class="pv"><select class="sel2" id="catalogFile"></select></span><label for="catalogFolder">save as</label><span class="pv"><select class="sel2" id="catalogFolder"><option value="checkpoints">Checkpoint</option><option value="loras">LoRA</option><option value="diffusion_models">Diffusion model</option><option value="vae">VAE</option><option value="text_encoders">Text encoder</option><option value="upscale_models">Upscaler</option></select></span><label>download size</label><span class="pv" id="catalogSize"></span><label>base model</label><span class="pv" id="catalogCompatibility"></span><label>licence</label><span class="pv" id="catalogLicense"></span></div>
-                  <p class="hint">A downloaded file may need additional models or a compatible workflow.</p><a class="edtool sm" id="catalogModelPage" target="_blank" rel="noreferrer">Open model and terms</a><label class="catalog-consent"><input type="checkbox" id="catalogAccept"> I reviewed the model terms and compatibility.</label>
+                  <span class="chip" id="catalogFit" role="status">Compatibility unverified</span><p class="hint" id="catalogFitNote">Review the creator’s workflow and required components.</p><a class="edtool sm" id="catalogModelPage" target="_blank" rel="noreferrer">Open model and terms</a><label class="catalog-consent"><input type="checkbox" id="catalogAccept"> I reviewed the model terms and compatibility.</label>
                   <p class="hint" id="catalogDestination"></p><p class="hint">Your saved provider key is sent to your worker for this transfer only.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to RunPod</button><p class="hint" id="catalogInstallState" role="status"></p>
                 </section>
                 <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Models on RunPod</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Deleting a model may affect workflows that use it.</p><div id="catalogDiskList"></div></section>
@@ -6150,6 +6160,7 @@
 <script type="module" src="runpod-integrated.js"></script>
 <script type="module" src="cloud-computer.js"></script>
 <script type="module" src="model-browser.js"></script>
+<script type="module" src="worker-update.js"></script>
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
 <script type="module" src="receipt.js"></script>

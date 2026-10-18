@@ -1,6 +1,6 @@
 /** Runpod control API v2. No credentials in URLs; no terminate/delete surface.
  * Contracts: https://api.runpod.io/v2/openapi.json (reviewed 2026-10-14). */
-import { readJsonCapped } from './remote-common.js';
+import { readJsonCapped, digest } from './remote-common.js';
 
 export class CloudError extends Error {
   constructor(code, message, status = null) { super(message); this.code = code; this.status = status; }
@@ -75,6 +75,18 @@ export function createRunpodV2({ getApiKey, fetchFn = fetch, timeoutMs = 30000 }
   };
   return {
     createPod: async body => safePod(await request('/pods', 'POST', body)),
+    startup: async id => {
+      const raw = await request(`/pods/${resourceId(id)}`), pod = safePod(raw);
+      if (pod.id !== id) throw new CloudError('invalid_response', 'The provider returned a different computer.');
+      const settings = { image: raw.image, entrypoint: raw.entrypoint, env: raw.env, mounts: raw.mounts, disk: raw.disk, ports: raw.ports, locked: raw.locked };
+      return { pod, image: raw.image, entrypoint: raw.entrypoint, cmd: raw.cmd,
+        repository: raw.env?.AIPLAY_REPOSITORY, hasWorkerToken: /^[a-f0-9]{64}$/.test(raw.env?.AIPLAY_WORKER_TOKEN || ''),
+        fingerprint: digest({ ...settings, cmd: raw.cmd }), settingsFingerprint: digest(settings) };
+    },
+    setStartup: async (id, cmd) => {
+      if (!Array.isArray(cmd) || cmd.length !== 1 || typeof cmd[0] !== 'string' || cmd[0].length > 4000) throw new CloudError('invalid_update', 'Review the AI update command again.');
+      return safePod(await request(`/pods/${resourceId(id)}`, 'PATCH', { cmd }));
+    },
     listPods: async () => (await list('/pods', 'pods')).map(safePod), getPod,
     async quote(pod) {
       if (!pod.gpu || !['SECURE', 'COMMUNITY'].includes(pod.cloud)) throw new CloudError('unsupported_computer', 'Choose a supported GPU computer.');

@@ -79,7 +79,7 @@ async function fixture(t, status = 'EXITED') {
   f.create = () => createCloudComputer({ dataDir: dir, provider, client: async () => c, now: () => f.now, intervalMs: 0,
     localActivity: () => ({ active: f.localActive, queued: f.queuePaused ? 0 : f.localQueued }), setSchedulingBlocked: value => { f.schedulingBlocked = value; },
     pauseQueuedWork: async () => { f.queuePaused = true; f.savedQueued = f.localQueued; },
-    resumeQueuedWork: async () => { f.queuePaused = false; } });
+    resumeQueuedWork: async () => { f.queuePaused = false; }, beforeStart: async () => { if (f.updatePending) throw Error('Pending AI update'); } });
   f.manager = await f.create();
   t.after(async () => { f.manager.close(); await rm(dir, { recursive: true, force: true }); });
   await f.manager.discover();
@@ -90,6 +90,28 @@ async function fixture(t, status = 'EXITED') {
   return f;
 }
 
+test('pending AI updates block guided and legacy starts, and stopped updates share the lifecycle operation lane', async t => {
+  const f = await fixture(t); f.updatePending = true;
+  await assert.rejects(f.approvedStart(), /Pending AI update/);
+  await assert.rejects(f.manager.startExternal('pod_123', async()=>f.actions.push('legacy-start')), /Pending AI update/);
+  assert.deepEqual(f.actions, []);
+  let release, entered;
+  const began = new Promise(r=>entered=r), hold = new Promise(r=>release=r);
+  const update = f.manager.whileStopped('pod_123', async()=>{ entered(); await hold; f.updatePending = false; });
+  await began;
+  let started=false;
+  const start=f.manager.startExternal('pod_123',async()=>{started=true;});
+  await new Promise(r=>setImmediate(r));assert.equal(started,false,'a start cannot pass an update in flight');
+  release();await update;await start;assert.equal(started,true);
+  await assert.rejects(f.manager.whileStopped('other',async()=>assert.fail()),/current computer change/);
+});
+test('REST v2 AI update projects no secrets and patches only the startup command', async () => {
+  const original={...pod(),image:'image',entrypoint:['/bin/bash','-lc'],cmd:['old'],ports:['8787/http'],env:{AIPLAY_WORKER_TOKEN:'a'.repeat(64),OTHER_SECRET:'private',AIPLAY_REPOSITORY:'https://github.com/nemesisone-dev/AIPLAY-Studio.git'}};
+  const calls=[];const api=createRunpodV2({getApiKey:()=> 'account-secret',fetchFn:async(url,init)=>{calls.push({url,method:init.method,body:init.body});return Response.json({...original,cmd:init.body?JSON.parse(init.body).cmd:original.cmd});}});
+  const view=await api.startup('pod_123');assert.equal(view.hasWorkerToken,true);assert.doesNotMatch(JSON.stringify(view),/private|account-secret|aaaaaaaaaaaaaaaa/);
+  await api.setStartup('pod_123',['approved-command']);assert.deepEqual(JSON.parse(calls[1].body),{cmd:['approved-command']});assert.equal(calls[1].method,'PATCH');
+  assert.match(calls[1].url,/\/v2\/pods\/pod_123$/);
+});
 test('confirmed removal drops the ghost selection, survives restart and permits selecting a replacement', async t => {
   const f = await fixture(t); f.localQueued=2; f.missing = true; f.list = [];
   const result = await f.manager.refresh();

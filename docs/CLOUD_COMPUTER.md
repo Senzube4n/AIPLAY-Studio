@@ -85,7 +85,9 @@ For work launched manually outside AIPLAY's monitored services, maintain the wor
 
 ### Model browser and disk management
 
-Open **Install AI → Browse more models** for a live Civitai/Hugging Face gallery. Search by name, choose model/LoRA and task filters, then inspect the version, file, size, base model and licence. Civitai Music/Video filters use its audio/video tags; Hugging Face uses pipeline tags. Provider metadata does not certify compatibility or graphics-memory requirements. Hugging Face cards use provider social thumbnails when no art preview is supplied. Civitai browsing requests safe content and uses only safe-rated previews.
+Open **Install AI → Browse more models** for a live Civitai/Hugging Face gallery. Search by name, choose model/LoRA and task filters, then inspect the version, file, size, base model and licence. **Load more** appends another provider page; changing filters starts a fresh search. Civitai model types use repeated query parameters because its live validator rejects comma-separated types. Civitai Music/Video filters use its audio/video tags; Hugging Face uses pipeline tags. Provider metadata does not certify compatibility or graphics-memory requirements. Hugging Face cards use provider social thumbnails when no art preview is supplied. Civitai browsing requests safe content and uses only safe-rated previews.
+
+File details show **Works with your setup**, **Needs extra components** or **Compatibility unverified**. A positive check currently covers the exact curated SDXL Turbo file, a complete verified bundle and validation of AIPLAY's Pictures graph against the connected worker's actual node definitions and checkpoint choices. Other models and LoRAs remain unverified unless a missing required component is identified. A matching base-model name is not a compatibility guarantee. These checks do not guarantee available GPU memory or a successful generation at arbitrary settings.
 
 Optional read keys live under **Settings → Model connections**, using the existing vault. Browsing works while the Pod is stopped and never starts rental. Install requires a running, connected worker with `catalogVersion: 1`. Existing workers need this published worker update; the desktop does not update or restart a paid computer automatically.
 
@@ -111,6 +113,18 @@ Storage estimates use public rates reviewed on 14 October 2026: persistent disks
 
 Spending alerts notify in AIPLAY while it is open. They do not enforce a provider billing cap. Stopping GPU compute does not stop storage billing.
 
+## Updating existing computers
+
+Open **Install AI → Update AI service**. For computers created by AIPLAY's automatic installer:
+
+1. Stop the computer normally. Active work and unsaved outputs still use the existing safe-stop checks.
+2. Press **Review AI update** and approve the exact published AIPLAY build. The computer must remain stopped with its original recognized startup configuration and persistent `/workspace` mount.
+3. Press **Review start price** to start it, then **Check update**. AIPLAY reports **Update verified** only when the running worker reports the selected computer identity and target commit.
+
+Saving the update changes only the existing Pod's container command through REST v2 `PATCH /pods/{id}`. It does not start rental, change the image, replace environment variables, regenerate connection keys, resize/delete storage, install models or create a replacement Pod. The next separately approved start runs the pinned installer and may install runtime dependencies while GPU rental is running. Existing versioned source checkouts, shared models, outputs and worker state remain on persistent storage. Storage continues billing while stopped; the original host can refuse a later GPU allocation.
+
+Update requests are journalled before PATCH. An uncertain response blocks both guided and legacy app starts for that computer until a provider read verifies the intended command and unchanged remaining settings. Checking or replaying the same request never repeats the PATCH. Custom startup configurations and computers not tied to this app's automatic-install record use the manual deployment procedure below; they are never silently converted. A build whose published installer cannot be verified cannot be staged.
+
 ## Deploying the fork's worker build
 
 The existing **manual** bootstrap remains pinned to the official repository and an exact published commit. It cannot install fork-only commits. New automatic creation instead uses the approved installed fork's pinned source as described above. Existing Pods can still use the reviewable source archive below with separate installation authorization.
@@ -129,7 +143,7 @@ The new worker reports `cloudManagerVersion: 1` and its Pod ID on the authentica
 
 ## Diagnostic files
 
-- Desktop: `<appdata>/runpod/cloud-computer.json`, `paused-music-queue.json`, `creation-journal.json` and `cloud-diagnostics.jsonl`.
+- Desktop: `<appdata>/runpod/cloud-computer.json`, `paused-music-queue.json`, `creation-journal.json`, `worker-update.json` and `cloud-diagnostics.jsonl`.
 - Worker: `<worker-state>/cloud-policy.json`, `cloud-diagnostics.jsonl`, `cloud-secret/stop-key.json`, and the existing job/model state.
 
 Diagnostics record operation, resource, error code and HTTP status. They do not record keys, Authorization headers, prompts or provider response bodies. The lifecycle and remote stop state survive restarts; credentials are held separately.

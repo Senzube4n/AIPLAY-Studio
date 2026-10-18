@@ -11,7 +11,7 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
   let state = await readJSON(file, { phase: 'none' }), busy = false;
   const snapshot = () => ({ phase: state.phase, podId: state.podId || null, name: state.name || null,
     requestId: state.requestId || null, stage: state.stage || null, error: state.error || null,
-    workerConnected: !!state.workerConnected, startedAt: state.startedAt || null });
+    workerConnected: !!state.workerConnected, startedAt: state.startedAt || null, commit: state.commit || null });
   const store = async () => save(state);
   async function review(input) {
     if (!/^NVIDIA\b.{1,150}$/.test(input.gpuTypeId || '') || !['ALL', 'SECURE', 'COMMUNITY'].includes(input.cloudType)) throw new Error('Choose a supported graphics card and provider pool.');
@@ -132,5 +132,11 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
   }
   const timer = intervalMs > 0 ? setInterval(() => refresh().catch(() => {}), intervalMs) : null;
   timer?.unref();
-  return { create, review, refresh, snapshot, options: () => { const p = bootstrap(); return { available: p.available, problem: p.problem || null }; }, close: () => clearInterval(timer) };
+  const stageUpdate = async (podId, commit) => {
+    if (busy) throw Error('Installation is being checked. Check the update again shortly.');
+    if (state.podId !== podId || !/^[a-f0-9]{40}$/.test(commit || '')) throw Error('Check this computer before updating its saved build.');
+    state.commit = commit; state.phase = 'stopped'; state.workerConnected = false; state.stage = null; state.error = null;
+    await store(); return snapshot();
+  };
+  return { create, review, refresh, snapshot, stageUpdate, options: () => { const p = bootstrap(); return { available: p.available, problem: p.problem || null }; }, close: () => clearInterval(timer) };
 }

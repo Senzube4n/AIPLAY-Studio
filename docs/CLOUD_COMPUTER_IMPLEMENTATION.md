@@ -4,6 +4,10 @@ Status: implementation is published to the Nemesis fork; real GPU acceptance is 
 
 ## 18 October update
 
+The follow-up adds a guided **Update AI service** panel for automatically created computers. It verifies a published pinned installer, recognizes the existing startup configuration, requires provider-confirmed stopped compute, and journals a command-only REST v2 PATCH. Models, outputs, environment keys, mounts and source versions remain in place. Starting rental still uses the separate availability/price approval. Lost update responses reconcile read-only and block app starts until verified, including the legacy start route. Manual/custom installations retain their deployment guide. No live provider settings were changed to test this feature.
+
+The model gallery now uses provider cursors for **Load more**, preserves search filters, deduplicates cards and rejects foreign pagination hosts. Live public searches fetched two pages from Hugging Face and Civitai without duplicates. Compatibility claims use the selected file's provider hash plus the actual connected worker's bundle readiness and workflow schema. The positive check currently covers curated SDXL Turbo; other files remain unverified unless a missing component is identified. An isolated provider/worker browser fixture tests update cancellation, separate rental review, compatibility states and appended galleries. Hardware acceptance remains separate.
+
 The subsequent visual/reconciliation repair adds the concept's pill navigation, five-check installation panel, button-style disclosures, sticky provider-balance header and safe pause-before-stop action. The live account returned 404 plus an empty complete Pod inventory for the earlier test computer; its ghost selection and automatic-install journal were retired with read-only provider calls. The UI returned to Costs and enabled a fresh creation flow, displaying the current provider balance. No replacement or paid mutation was performed. Independent storage billing remains a separate provider check.
 
 New regression cases cover confirmed removal, restart persistence, replacement selection, periodic discovery, uncertain/contradictory inventory, storage-only 404, automatic-install replay protection, preservation of local outputs/private-job handling, live progress and stale-credit signalling. Installation progress and setup-stop confirmation were browser-tested with an isolated simulated provider, not a new GPU rental.
@@ -98,10 +102,10 @@ Browser validation uses an isolated app-data/output directory and a provider int
 
 ## Deployment artifact
 
-Current archive: `dist/aiplay-cloud-worker-f4c6f853b66c.tar.gz` (14 source/license files).
+Current archive: `dist/aiplay-cloud-worker-39c259a50401.tar.gz` (16 source/license files).
 
-- Source manifest build: `f4c6f853b66c619a09ac0475d3f0401305e4aef3eef90c6abc730677452162ae`.
-- Archive SHA-256: `dcb11860c2bcff910030d008c705436d25edf4ca4ea701642a3e824bc7891518`.
+- Source manifest build: `39c259a5040160eca8b7c290b45725bd9f329c69d013e1b55e2af9e413c5f71e`.
+- Archive SHA-256: `c59c170729980c792a71d95ccfebf4eb3ebf3390727f97fe6d9ff27d6122b81b`.
 - Archive/file hashes are generated locally; no upload or installation is performed.
 
 The existing official-repository bootstrap cannot fetch the fork's Cloud Computer changes. The source-only package makes the exact worker code reviewable without changing the inherited bootstrap trust policy. See [setup and operation](CLOUD_COMPUTER.md) for deployment requirements and preservation rules.

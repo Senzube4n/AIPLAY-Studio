@@ -8,10 +8,11 @@ const safeImage = s => { try { const u = new URL(s); return u.protocol === 'http
 function provider(p) { if (!Object.hasOwn(MODEL_PROVIDERS, p)) throw Error('Choose Hugging Face or Civitai.'); return p; }
 function repo(s) { if (!/^[\w.-]+\/[\w.-]+$/.test(s || '') || s.includes('..')) throw Error('Choose a valid model repository.'); return s; }
 function numeric(s) { if (!/^\d{1,14}$/.test(String(s))) throw Error('Choose a valid model version.'); return String(s); }
-async function json(url, token, fetchFn) {
+async function json(url, token, fetchFn, received = () => {}) {
   let r; try { r = await fetchFn(url, { headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: 'error', signal: AbortSignal.timeout(20000) }); }
   catch { throw Error('The model provider could not be reached. Try again.'); }
   if (!r.ok) throw Error([401, 403].includes(r.status) ? 'Provider access denied. Check your saved key and model access.' : r.status === 429 ? 'Provider request limit reached. Try again later.' : `Model provider returned HTTP ${r.status}.`);
+  received(r);
   const raw = await r.text(); if (raw.length > 12e6) throw Error('Provider results are too large; narrow your search.');
   try { return JSON.parse(raw); } catch { throw Error('The provider returned an unreadable response.'); }
 }
@@ -23,13 +24,22 @@ function civCard(m) {
 }
 export async function searchCatalog(input, { token, fetchFn = fetch } = {}) {
   const p = provider(input.provider), query = String(input.query || '').trim().slice(0, 120), task = input.task || 'pictures';
+  const cursor = value => typeof value === 'string' && value.length <= 4096 && !/[\x00-\x20\x7f]/.test(value) ? value : null;
+  if (input.cursor && !cursor(input.cursor)) throw Error('Search again to refresh the model results.');
   if (p === 'huggingface') {
     const u = new URL('https://huggingface.co/api/models');
     Object.entries({ limit: '24', search: query, sort: input.sort === 'newest' ? 'lastModified' : 'downloads', direction: '-1', cardData: 'true', full: 'true',
       ...(input.type === 'lora' ? { filter: 'lora' } : input.type === 'checkpoint' ? { filter: 'safetensors' } : {}), ...({ pictures: { pipeline_tag: 'text-to-image' }, video: { pipeline_tag: 'text-to-video' }, music: { pipeline_tag: 'text-to-audio' } }[task] || {}) }).forEach(([k,v]) => u.searchParams.set(k,v));
-    const data = await json(u.href, token, fetchFn);
+    if (input.cursor) u.searchParams.set('cursor', input.cursor);
+    let nextCursor = null;
+    const data = await json(u.href, token, fetchFn, r => {
+      const link = r.headers.get('link') || '';
+      for (const match of link.matchAll(/<([^>]+)>\s*;\s*rel="?next"?/g)) {
+        try { const next = new URL(match[1]); if (next.origin === u.origin && next.pathname === u.pathname && !next.username && !next.password) nextCursor = cursor(next.searchParams.get('cursor')); } catch {}
+      }
+    });
     if (!Array.isArray(data)) throw Error('The provider returned an unreadable model list.');
-    return { items: data.slice(0,24).filter(m => !m.tags?.includes('not-for-all-audiences')).map(m => ({ provider: p, id: repo(m.id), name: text(m.id.split('/').pop()), author: text(m.id.split('/')[0]),
+    return { nextCursor: nextCursor === input.cursor ? null : nextCursor, items: data.slice(0,24).filter(m => !m.tags?.includes('not-for-all-audiences')).map(m => ({ provider: p, id: repo(m.id), name: text(m.id.split('/').pop()), author: text(m.id.split('/')[0]),
       type: m.tags?.includes('lora') ? 'LoRA' : 'Model', purpose: text(m.pipeline_tag || 'Review model card for its intended use'),
       baseModel: text(m.cardData?.base_model || 'Check model card'), downloads: m.downloads || 0, image: safeImage(`https://cdn-thumbnails.huggingface.co/social-thumbnails/models/${m.id}.png`),
       url: `https://huggingface.co/${m.id}`, versions: [] })) };
@@ -40,8 +50,10 @@ export async function searchCatalog(input, { token, fetchFn = fetch } = {}) {
     ...(task === 'video' ? { tag: 'video' } : task === 'music' ? { tag: 'audio' } : {}), ...(input.base ? { baseModels: String(input.base).slice(0,80) } : {}) }).forEach(([k,v]) => u.searchParams.set(k,v));
   // Civitai's live validator requires repeated types for a multi-type search.
   for (const type of input.type === 'lora' ? ['LORA'] : input.type === 'checkpoint' ? ['Checkpoint'] : ['Checkpoint', 'LORA']) u.searchParams.append('types', type);
+  if (input.cursor) u.searchParams.set('cursor', input.cursor);
   const data = await json(u.href, token, fetchFn);
-  return { items: (data.items || []).slice(0,24).filter(m => !m.nsfw && !m.mode).map(civCard) };
+  const nextCursor = cursor(data.metadata?.nextCursor);
+  return { nextCursor: nextCursor === input.cursor ? null : nextCursor, items: (data.items || []).slice(0,24).filter(m => !m.nsfw && !m.mode).map(civCard) };
 }
 export async function catalogFiles(input, { token, fetchFn = fetch } = {}) {
   const p = provider(input.provider);

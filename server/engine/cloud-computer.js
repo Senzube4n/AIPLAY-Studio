@@ -36,7 +36,7 @@ export function sessionEstimate(sessions, now, from = 0) {
 
 export async function createCloudComputer({ dataDir, provider, client, now = Date.now, intervalMs = 5000,
   localActivity = () => ({ active: false, queued: 0 }), setSchedulingBlocked = () => {}, cancelLocal = async () => {},
-  pauseQueuedWork = async () => {}, resumeQueuedWork = async () => {} }) {
+  pauseQueuedWork = async () => {}, resumeQueuedWork = async () => {}, beforeStart = async () => {} }) {
   const dir = path.join(dataDir, 'runpod');
   const state = await readJSON(path.join(dir, 'cloud-computer.json'), { version: 1, podId: null, phase: 'unconfigured',
     pod: null, worker: null, operation: null, review: null, sessions: [], alertUSD: null, minutes: 30 });
@@ -242,6 +242,7 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   }
   async function start(input) {
     return run('start', async () => {
+      await beforeStart(state.podId);
       if (state.operation) {
         if (state.operation.id === input.requestId) return snapshot();
         throw new CloudError('operation_pending', 'A previous change is still being checked.');
@@ -395,5 +396,12 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   };
   const timer = intervalMs ? setInterval(tick, intervalMs) : null; timer?.unref();
   return { snapshot, discover, select, reviewStart, start, stop, policy, reviewStorage, clean, grow, loadBilling, backup, alerts,
+    startExternal: (id, fn) => run('start', async () => { await beforeStart(id); return fn(); }),
+    whileStopped: (id, fn) => run('worker_update', async () => {
+      if (id !== state.podId || state.operation) throw new CloudError('update_conflict', 'Finish the current computer change before updating.');
+      const pod = await provider.getPod(id);
+      if (pod.status !== 'EXITED' || pod.locked || !mounted(pod)) throw new CloudError('stop_before_update', 'Stop the computer normally before updating its AI service.');
+      return fn(pod);
+    }),
     refresh: () => run('refresh', () => { runtime = null; return refreshInternal(); }), tick, close: () => { closed = true; if (timer) clearInterval(timer); } };
 }

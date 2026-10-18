@@ -82,6 +82,7 @@ test("curated model install resumes its own partial with a Range request", async
 
 import { searchCatalog, catalogFiles, resolveCatalogFile, fetchModelFile } from '../server/engine/model-catalog.js';
 import { createModelDisk } from './model-disk.js';
+import { modelCompatibility } from '../server/engine/model-compatibility.js';
 import { symlink, stat } from 'node:fs/promises';
 const sample = Buffer.from('verified-model-file'), sampleHash = createHash('sha256').update(sample).digest('hex');
 const hfInfo = { sha: 'a'.repeat(40), cardData: { license: 'mit' }, siblings: [{ rfilename: 'model.safetensors', lfs: { size: sample.length, sha256: sampleHash } }, { rfilename: 'unsafe.py' }] };
@@ -125,6 +126,38 @@ test('Civitai model and LoRA searches repeat type parameters for every task', as
 test('Civitai file review retains exact file selector and SHA while dropping token query fields', async () => {
   const b = await resolveCatalogFile({provider:'civitai',id:'1',version:'2',file:'3',folder:'checkpoints'}, {fetchFn: async () => Response.json({modelVersions:[{id:2,files:[{id:3,name:'model.safetensors',sizeKB:sample.length/1024,hashes:{SHA256:sampleHash},downloadUrl:'https://civitai.com/api/download/models/2?fileId=3&token=not-saved'}]}]})});
   assert.match(b.files[0].url,/fileId=3/); assert.doesNotMatch(JSON.stringify(b),/not-saved|token=/);
+});
+test('catalog pagination uses provider cursors on fixed hosts and preserves search filters', async () => {
+  for (const provider of ['civitai','huggingface']) {
+    let calls = 0;
+    const options = { fetchFn: async url => {
+      const u = new URL(url); calls++;
+      assert.equal(u.hostname, provider === 'civitai' ? 'civitai.com' : 'huggingface.co');
+      assert.equal(u.searchParams.get(provider === 'civitai' ? 'query' : 'search'), 'test');
+      assert.equal(u.searchParams.get('cursor'), calls === 1 ? null : 'opaque|next');
+      if (provider === 'civitai') { assert.deepEqual(u.searchParams.getAll('types'), ['Checkpoint','LORA']); return Response.json({ items:[], metadata:{nextCursor:'opaque|next',nextPage:'http://127.0.0.1/private'} }); }
+      return Response.json([], { headers:{ link:'<https://huggingface.co/api/models?cursor=opaque%7Cnext>; rel="next"' } });
+    }};
+    const first = await searchCatalog({provider,query:'test'},options); assert.equal(first.nextCursor,'opaque|next');
+    const last = await searchCatalog({provider,query:'test',cursor:first.nextCursor},options); assert.equal(last.nextCursor,null,'repeated cursor stops pagination');
+    await assert.rejects(searchCatalog({provider,cursor:'bad\nvalue'},options),/Search again/);
+  }
+  const unsafe = await searchCatalog({provider:'huggingface'}, {fetchFn:async()=>Response.json([],{headers:{link:'<https://evil.example/api/models?cursor=unsafe>; rel="next"'}})});
+  assert.equal(unsafe.nextCursor,null);
+});
+test('compatibility requires a known exact file, complete bundle and live workflow components', () => {
+  const file = MODEL_BUNDLES['sdxl-turbo'].files[0], setup={bundles:[{id:'sdxl-turbo',state:'ready'}]};
+  const objects=Object.fromEntries(['CheckpointLoaderSimple','CLIPTextEncode','EmptyLatentImage','KSampler','VAEDecode','SaveImage','ImageScale'].map(key=>[key,{input:{required:{}}}]));
+  objects.CheckpointLoaderSimple.input.required.ckpt_name=[[file.relative.split('/').pop()]];
+  const input={file,folder:'checkpoints',setup,objects};
+  assert.equal(modelCompatibility(input).state,'works');
+  assert.equal(modelCompatibility({...input,file:{...file,sha256:'f'.repeat(64)}}).state,'unknown','base names alone never certify compatibility');
+  assert.equal(modelCompatibility({...input,setup:{bundles:[]}}).state,'needs');
+  assert.equal(modelCompatibility({...input,objects:{}}).state,'needs');
+  assert.equal(modelCompatibility({...input,setup:null}).state,'unknown');
+  assert.equal(modelCompatibility({...input,folder:'loras'}).state,'needs');
+  objects.CheckpointLoaderSimple.input.required.ckpt_name=[['other.safetensors']];
+  assert.equal(modelCompatibility(input).state,'needs','the actual worker loader must offer the verified checkpoint');
 });
 test('download redirects drop authentication and refuse arbitrary network hosts', async () => {
   let calls=0;

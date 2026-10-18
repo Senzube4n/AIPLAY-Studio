@@ -13,6 +13,8 @@ import { createRunpodV2 } from "./runpod-v2.js";
 import { createCloudComputer } from "./cloud-computer.js";
 import { createAutomaticInstaller } from './runpod-install.js';
 import { MODEL_PROVIDERS, searchCatalog, catalogFiles } from './model-catalog.js';
+import { createWorkerUpdater } from './runpod-update.js';
+import { modelCompatibility } from './model-compatibility.js';
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
@@ -28,9 +30,13 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
     creationGuard: async () => { if (['creating', 'uncertain', 'waiting', 'connecting', 'failed'].includes((await installer()).snapshot().phase)) throw new Error('Check the existing AI installation before creating another computer.'); } });
   const provider = createRunpodV2({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY") });
   let computerPromise;
-  const computer = () => computerPromise ||= createCloudComputer({ dataDir: config.dataDir, provider, client, localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork });
+  const computer = () => computerPromise ||= createCloudComputer({ dataDir: config.dataDir, provider, client, localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork,
+    beforeStart: async id => (await updater()).assertStartAllowed(id) });
   let installerPromise;
   const installer = () => installerPromise ||= createAutomaticInstaller({ dataDir: config.dataDir, provider, client, getSecret, setSecret, fetchFn });
+  let updaterPromise;
+  const updater = () => updaterPromise ||= Promise.all([computer(), installer(), client()]).then(([computer, installer, client]) =>
+    createWorkerUpdater({ dataDir: config.dataDir, provider, computer, installer, client, fetchFn }));
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
     try {
@@ -80,6 +86,20 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
             await setSecret(MODEL_PROVIDERS[b.provider], key);
           }
           sendJSON(res, 200, { saved: b.remove !== true });
+        } else if (route === 'compatibility' && req.method === 'GET') {
+          const input = Object.fromEntries(url.searchParams);
+          if (!Object.hasOwn(MODEL_PROVIDERS, input.provider)) throw Error('Choose a model provider.');
+          const token = await getSecret(MODEL_PROVIDERS[input.provider]);
+          const details = await catalogFiles(input, { token, fetchFn });
+          const file = details.files.find(f => f.id === input.file);
+          let setup = null, objects = null;
+          const state = (await computer()).snapshot();
+          if (state.pod?.status === 'RUNNING' && !state.providerUncertain && !state.operation) {
+            try { const c = await client(), health = await c.verify();
+              if (health.podId === state.podId) [setup, objects] = await Promise.all([c.setup(), c.models()]);
+            } catch { /* Offline or old workers cannot substantiate a compatibility claim. */ }
+          }
+          sendJSON(res, 200, modelCompatibility({ file, folder: input.folder, setup, objects }));
         } else if (['search','files'].includes(route) && req.method === 'GET') {
           const input = Object.fromEntries(url.searchParams);
           if (!Object.hasOwn(MODEL_PROVIDERS, input.provider)) throw Error('Choose a model provider.');
@@ -102,6 +122,16 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           if (!['music', 'pictures', 'video', 'all'].includes(b.goal)) throw new Error('Choose Music, Pictures, Video or All three.');
           config.cloudSetup = { goal: b.goal }; await savePrefs(); sendJSON(res, 200, { goal: b.goal });
         } else sendJSON(res, 405, { error: 'Use GET or POST for the cloud goal.' });
+      }
+      else if (url.pathname === '/api/runpod/update') {
+        const update = await updater();
+        if (req.method === 'GET') sendJSON(res, 200, await update.inspect());
+        else sendJSON(res, 405, { error: 'Use GET to check AI updates.' });
+      }
+      else if (req.method === 'POST' && ['/api/runpod/update/review','/api/runpod/update/apply'].includes(url.pathname)) {
+        const update = await updater();
+        const b = JSON.parse((await readBody(req)).toString('utf8'));
+        sendJSON(res, 200, await (url.pathname.endsWith('/review') ? update.review() : update.apply(b)));
       }
       else if (req.method === 'GET' && url.pathname === '/api/runpod/install') sendJSON(res, 200, (await installer()).snapshot());
       else if (req.method === 'GET' && url.pathname === '/api/runpod/install/options') sendJSON(res, 200, (await installer()).options());
@@ -151,7 +181,8 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
         if (req.method === "POST" && power) {
           if (power[2] === "start") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
-            sendJSON(res, 200, await account.start(power[1], b.confirm));
+            if (b.confirm !== 'START PAID POD') throw Error('Review the hourly price and confirm paid Pod startup.');
+            sendJSON(res, 200, await (await computer()).startExternal(power[1], () => account.start(power[1], b.confirm)));
           } else {
             const manager = await computer();
             if (manager.snapshot().podId !== power[1]) await manager.select(power[1]);

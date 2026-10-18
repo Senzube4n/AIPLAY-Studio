@@ -105,7 +105,7 @@ test('cloud goal persists locally without credentials or provider calls', async 
 test("§1 a request whose Host is not this PC's Studio is refused, GETs included", async (t) => {
   const call = await routes(t);
   for (const host of ["evil.example:4173", "127.0.0.1.nip.io:4173", "", "127.0.0.1:8080"]) {
-    for (const route of ["/api/runpod", "/api/runpod/account/overview", "/api/runpod/jobs/00000000-0000-4000-8000-000000000000/files/0"]) {
+    for (const route of ["/api/runpod", "/api/runpod/update", "/api/runpod/catalog/compatibility", "/api/runpod/account/overview", "/api/runpod/jobs/00000000-0000-4000-8000-000000000000/files/0"]) {
       const res = await call("GET", route, { headers: { host } });
       assert.equal(res.status, 403, `${host || "no Host"} ${route}`);
     }
