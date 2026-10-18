@@ -15,7 +15,19 @@ The three hosting choices are collapsible: **Ask a friend**, **Paid services**, 
 
 The guide reuses the existing vault-backed fields without duplicating credential inputs. Setup completion is remembered for each computer; live readiness is checked again after reconnecting. Manual provider controls remain under **Advanced setup**.
 
-**Advanced setup** is always available above the guided steps for manual connection and AI-service installation controls. **Back to guided setup** returns to the same step and keeps entered details. Opening either view performs no rental or provisioning action.
+The cloud header stays visible while scrolling the panel and shows the RunPod dollar balance. It refreshes about once a minute while AIPLAY is visible, retains an explicitly labelled last-checked balance on provider failure, and clears it when the account is removed. It is separate from local spending estimates.
+
+**Install AI** shows five live setup checks: start computer, install service, download selected models, check connection and verify automatic stop. The bar counts completed checks, not guessed installation time. Details and model controls remain in button-style disclosures. **Stop setup and computer** asks before pausing model downloads, waits for cancellation, then uses the existing safe idle-stop path. Active generation still blocks that stop. Before worker connection, shutdown is disabled because saved outputs cannot yet be verified; the provider console remains available under Installation details.
+
+**Advanced setup** is a footer button for manual connection and AI-service installation controls. **Back to guided setup** returns to the same step and keeps entered details. Opening either view performs no rental or provisioning action.
+
+### Computers removed outside AIPLAY
+
+Discovery filters terminated computers. A selected computer is retired only after an explicit terminated state, or a Pod GET returning 404 followed by a complete successful inventory that also omits it. A timeout, failed inventory, contradictory list or missing storage resource does not retire the selection. Discovery refreshes about every 30 seconds after the first successful account inventory; Check again refreshes immediately.
+
+Confirmed removal clears stale selection, operation, storage quote and worker readiness, remembers the retired ID across restarts, and returns to Costs without choosing or creating a replacement automatically. Automatic-install journals also retire the missing computer so they cannot select it again or block a fresh explicit creation. Replaying the original creation request never creates another resource. Old unresolved jobs are retained as uncertain, private graphs are cleared, already-downloaded outputs remain, and future local queue work is saved and paused. A replacement can be selected without obsolete jobs blocking it; saved queue recovery remains tied to an explicit reviewed start.
+
+No termination, cleanup or storage deletion is used for reconciliation. Absence from this account does not establish the status of independent storage or charges; review those in RunPod. Historical compute sessions close at the observation time as an estimate, not a provider-confirmed stop time.
 
 Creation reuses the existing account client, vault and persistent creation journal. Review refreshes the GPU catalogue, expires after five minutes, and is invalidated by any changed choice. The server rechecks the estimated rate and availability before provisioning. A successful creation selects its returned resource ID and advances to AI setup. Failed or uncertain creation consumes approval and requires a new review; existing resources must be checked before retrying. Storage figures use RunPod's [published estimates](https://docs.runpod.io/pods/pricing), checked October 17, 2026, including the 20 GB temporary disk while running. They are not provider-enforced spending caps.
 

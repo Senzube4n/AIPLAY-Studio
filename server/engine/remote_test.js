@@ -351,3 +351,17 @@ test("idempotency conflict and hostile filenames are rejected", async t => {
   assert.throws(() => endpoint("https://worker.example?token=secret"));
   assert.throws(() => validateGraph({ nodes: [] }));
 });
+
+test('removed-worker reconciliation retains outputs and unrelated work while releasing obsolete jobs', async t => {
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'aiplay-retire-worker-'));t.after(()=>rm(dataDir,{recursive:true,force:true}));
+  await mkdir(path.join(dataDir,'runpod'));
+  const old='https://removed-8787.proxy.runpod.net';
+  await writeFile(path.join(dataDir,'runpod/jobs.json'),JSON.stringify({
+    old:{id:'old',state:'running',private:true,graph:{private:'text'},connection:{url:old},outputs:[{localFile:'images/kept.png'}]},
+    other:{id:'other',state:'running',connection:{url:'https://other-8787.proxy.runpod.net'},outputs:[]}
+  }));
+  const client=await createRemoteClient({dataDir,outputDir:path.join(dataDir,'out'),getToken:async()=>null,setToken:async()=>{},append:async()=>{},pollMs:999999});t.after(()=>client.close());
+  await client.resourceMissing('removed',old);
+  const jobs=JSON.parse(await readFile(path.join(dataDir,'runpod/jobs.json'),'utf8'));
+  assert.equal(jobs.old.state,'uncertain');assert.equal(jobs.old.graph,null);assert.equal(jobs.old.outputs[0].localFile,'images/kept.png');assert.equal(jobs.other.state,'running');
+});

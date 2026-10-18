@@ -41,10 +41,11 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   const state = await readJSON(path.join(dir, 'cloud-computer.json'), { version: 1, podId: null, phase: 'unconfigured',
     pod: null, worker: null, operation: null, review: null, sessions: [], alertUSD: null, minutes: 30 });
   const save = jsonStore(path.join(dir, 'cloud-computer.json'));
+  if (!state.podId && state.lastRemoved) state.resourceMissing = true;
   await save(state);
-  setSchedulingBlocked(state.operation?.type === 'stop');
-  (await client()).setCloudStopping?.(state.operation?.type === 'stop');
-  let busy = false, closed = false, storage = null, billing = null, computers = [], workerStatus = null, runtime = null;
+  setSchedulingBlocked(state.operation?.type === 'stop' || !!state.resourceMissing);
+  (await client()).setCloudStopping?.(state.operation?.type === 'stop' || !!state.resourceMissing);
+  let busy = false, closed = false, storage = null, billing = null, computers = [], workerStatus = null, runtime = null, lastDiscoveryAt = 0;
   const diagnostics = async (operation, e) => appendFile(path.join(dir, 'cloud-diagnostics.jsonl'), JSON.stringify({
     at: new Date(now()).toISOString(), operation, resource: state.podId, code: e.code || 'worker_failure', status: e.status || null }) + '\n', { mode: 0o600 }).catch(() => {});
   function issue(e) { return { code: e.code || 'worker_failure', message: e instanceof CloudError ? e.message : 'The AI worker could not be verified. Check Connection setup.',
@@ -65,6 +66,7 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
     const computeMonth = state.sessions.length ? sessionEstimate(state.sessions, now(), Date.parse(monthStart(now()))) : null;
     return { version: 1, podId: state.podId, phase: state.phase, pod: state.pod, providerCheckedAt: state.providerCheckedAt || null,
       computers, worker: workerStatus, workerPolicy: state.worker?.podId === state.podId ? state.worker : null,
+      removedPodIds: state.removedPodIds || [],
       providerUncertain: !!state.providerUncertain,
       operation: state.operation ? { id: state.operation.id, type: state.operation.type, stage: state.operation.stage } : null,
       issue: state.issue || null, storage: storage || state.storagePrice || null, inventory: state.inventory || null,
@@ -117,7 +119,17 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   }
   async function refreshInternal() {
     if (!state.podId) return snapshot();
-    const pod = await provider.getPod(state.podId); recordPod(pod); await readStorage(pod);
+    let pod;
+    try { pod = await provider.getPod(state.podId); }
+    catch (e) {
+      if (e.code !== 'resource_missing') throw e;
+      // A 404 alone can be transient. Require a complete, successful inventory too.
+      computers = (await provider.listPods()).filter(p => p.status !== 'TERMINATED');
+      if (computers.some(p => p.id === state.podId)) throw e;
+      return retireSelection();
+    }
+    if (pod.status === 'TERMINATED') return retireSelection();
+    recordPod(pod); await readStorage(pod);
     // Reading a stopped Pod does not establish that its retained GPU is free.
     // Keep this actionable refusal until a new review/start or selection.
     if (!(pod.status === 'EXITED' && state.issue?.code === 'gpu_unavailable' && !state.operation)) state.issue = null;
@@ -154,6 +166,22 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
     } else { workerStatus = null; state.phase = pod.status === 'ERROR' ? 'computer_error' : pod.status === 'TERMINATED' ? 'missing' : 'starting'; }
     await save(state); return snapshot();
   }
+  async function retireSelection() {
+    const id = state.podId, old = state.pod;
+    await pauseQueuedWork();
+    await (await client()).resourceMissing?.(id, old?.workerUrl);
+    state.removedPodIds = [...new Set([...(state.removedPodIds || []), id])].slice(-100);
+    state.lastRemoved = { id, at: now() };
+    const last = state.sessions.at(-1); if (last && !last.end) { last.end = now(); last.endEstimated = true; }
+    computers = computers.filter(p => p.id !== id && p.status !== 'TERMINATED');
+    state.podId = null; state.pod = null; state.worker = null; state.operation = null;
+    state.review = null; state.inventory = null; state.storagePrice = null; state.policyPending = false;
+    state.queueResumePending = false; state.resourceMissing = true; state.phase = 'missing'; state.providerUncertain = false;
+    state.issue = { code: 'computer_removed', message: 'This computer is no longer available in your RunPod account; choose or create another.', alternatives: ['Review any separate storage and charges in RunPod.'] };
+    storage = null; billing = null; workerStatus = null; runtime = null;
+    (await client()).setCloudStopping?.(true); setSchedulingBlocked(true);
+    await save(state); return snapshot();
+  }
   async function sendStop(pod, permit) {
     if (!permit.storageVerified || permit.permit?.podId !== pod.id || permit.permit.expiresAt < now() || !roots(pod).includes(permit.permit.root))
       throw new CloudError('storage_unverified', 'Saved files could not be verified. The computer will stay running.');
@@ -165,12 +193,14 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
   }
   async function discover() {
     return run('discover', async () => {
-      computers = await provider.listPods();
+      lastDiscoveryAt = now();
+      computers = (await provider.listPods()).filter(p => p.status !== 'TERMINATED');
+      state.discoveryCheckedAt = now();
       // A successful list validates the account even when there is no unique
       // computer to select. Do not retain a pre-connection credential error.
-      if (state.issue?.code !== 'gpu_unavailable') state.issue = null;
+      if (!['gpu_unavailable','computer_removed'].includes(state.issue?.code)) state.issue = null;
       state.providerUncertain = false;
-      if (!state.podId) {
+      if (!state.podId && !state.lastRemoved) {
         const url = (await client()).status().url;
         const connected = computers.find(p => p.workerUrl === url);
         const owned = computers.filter(p => /^AIPLAY\b/i.test(p.name));
@@ -186,8 +216,16 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
       if (state.operation) throw new CloudError('operation_pending', 'Finish checking the current change before choosing another computer.');
       const c = await client();
       if (c.status().jobs.some(j => !TERMINAL.has(j.state))) throw new CloudError('work_active', 'Finish the current work before choosing another computer.');
-      state.podId = resourceId(id); state.review = null; state.inventory = null; state.issue = null; runtime = null; billing = null;
-      await save(state); return refreshInternal();
+      const chosen = resourceId(id);
+      if ((state.removedPodIds || []).includes(chosen)) throw new CloudError('resource_missing', 'Choose another computer; this saved computer is no longer available.');
+      state.podId = chosen; state.lastRemoved = null; state.pod = null; state.worker = null; state.storagePrice = null;
+      state.review = null; state.inventory = null; state.issue = null; runtime = null; billing = null; storage = null; workerStatus = null;
+      await save(state);
+      const result = await refreshInternal();
+      if (state.podId && state.resourceMissing) {
+        state.resourceMissing = false; c.setCloudStopping?.(false); setSchedulingBlocked(false); await save(state);
+      }
+      return result;
     });
   }
   async function reviewStart() {
@@ -350,7 +388,10 @@ export async function createCloudComputer({ dataDir, provider, client, now = Dat
     });
   }
   const tick = async () => {
-    if (!closed && !busy && state.podId) await run('reconcile', refreshInternal).catch(() => {});
+    if (!closed && !busy) {
+      if (state.discoveryCheckedAt && now() - lastDiscoveryAt >= 30000) await discover().catch(() => {});
+      else if (state.podId) await run('reconcile', refreshInternal).catch(() => {});
+    }
   };
   const timer = intervalMs ? setInterval(tick, intervalMs) : null; timer?.unref();
   return { snapshot, discover, select, reviewStart, start, stop, policy, reviewStorage, clean, grow, loadBilling, backup, alerts,

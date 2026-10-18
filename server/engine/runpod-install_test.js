@@ -6,10 +6,27 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createAutomaticInstaller } from './runpod-install.js';
 import { automaticBootstrap } from './runpod-bootstrap.js';
+import { CloudError } from './runpod-v2.js';
 
 const COMMIT = 'a'.repeat(40), SCRIPT = 'verified installer';
 const ID = '12345678-1234-4234-8234-123456789abc';
 const input = { requestId: ID, installAI: true, confirm: 'CREATE PAID POD', name: 'AIPLAY first', gpuTypeId: 'NVIDIA test', cloudType: 'ALL', volumeInGb: 100, expectedPricePerHr: .5 };
+
+test('completed automatic installs retire confirmed removed computers and allow a fresh reviewed creation', async t => {
+  const r=await rig(t); await r.manager.create(input); await r.manager.refresh(); assert.equal(r.manager.snapshot().phase,'models');
+  r.args.provider.getPod=async()=>{throw new CloudError('resource_missing','Not found',404);};
+  r.rows.length=0;
+  assert.equal((await r.manager.refresh()).phase,'removed'); assert.equal(r.manager.snapshot().podId,null); assert.equal(r.manager.snapshot().workerConnected,false);
+  const restart=await createAutomaticInstaller(r.args);t.after(()=>restart.close()); assert.equal(restart.snapshot().phase,'removed');
+  assert.equal((await restart.create(input)).phase,'removed','old request cannot create again');
+  await restart.create({...input,requestId:'22345678-1234-4234-8234-123456789abc'});assert.equal(r.writes.length,2,'only an explicit new reviewed creation is allowed');
+});
+test('installer 404 cannot retire a computer when inventory is unavailable', async t => {
+  const r=await rig(t);await r.manager.create(input);await r.manager.refresh();
+  r.args.provider.getPod=async()=>{throw new CloudError('resource_missing','Not found',404);};
+  r.args.provider.listPods=async()=>{throw new CloudError('provider_unreachable','Unavailable');};
+  const result=await r.manager.refresh();assert.equal(result.podId,'new');assert.notEqual(result.phase,'removed');assert.equal(r.writes.length,1);
+});
 async function rig(t, options = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'aiplay-install-'));
   const secrets = new Map(), writes = [], connections = [];

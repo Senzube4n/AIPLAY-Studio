@@ -82,7 +82,7 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
     } finally { busy = false; }
   }
   async function refresh() {
-    if (busy || ['none', 'ready', 'models'].includes(state.phase)) return snapshot();
+    if (busy || ['none', 'removed'].includes(state.phase)) return snapshot();
     busy = true;
     try {
       if (!state.podId) {
@@ -91,8 +91,10 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
         state.podId = matches[0].id;
       }
       const pod = await provider.getPod(state.podId);
+      if (pod.status === 'TERMINATED') return await retire();
       if (pod.status === 'EXITED') { state.phase = 'stopped'; state.error = null; await store(); return snapshot(); }
       if (pod.status !== 'RUNNING') { state.phase = 'waiting'; await store(); return snapshot(); }
+      if (['models','ready'].includes(state.phase)) return snapshot();
       const token = await getSecret('RUNPOD_INSTALL_TOKEN');
       if (!token) throw new Error('The saved installation connection code is unavailable. Use manual connection.');
       const get = async route => {
@@ -114,10 +116,19 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
       await (await client()).connect({ url: pod.workerUrl, token });
       state.phase = 'models'; state.stage = 'complete'; state.workerConnected = true; state.error = null;
       await store(); return snapshot();
-    } catch {
+    } catch (e) {
+      if (e.code === 'resource_missing' && state.podId) {
+        try { if (!(await provider.listPods()).some(p => p.id === state.podId && p.status !== 'TERMINATED')) return await retire(); }
+        catch { /* Uncertain inventory cannot establish removal. */ }
+      }
       state.error = 'Waiting for the AI service. Computing may still be billed; check again or stop this computer.';
       await store(); return snapshot();
     } finally { busy = false; }
+  }
+  async function retire() {
+    state.removedPodId = state.podId; state.podId = null; state.phase = 'removed';
+    state.workerConnected = false; state.stage = null; state.error = 'The previous computer is no longer available; choose or create another.';
+    await store(); return snapshot();
   }
   const timer = intervalMs > 0 ? setInterval(() => refresh().catch(() => {}), intervalMs) : null;
   timer?.unref();

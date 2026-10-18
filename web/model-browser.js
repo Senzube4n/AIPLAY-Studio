@@ -76,6 +76,8 @@ async function refreshTransfers() {
 async function loadDisk() {
   ++request; onDisk = true; tabs(); $('catalogDetail').hidden = true; status('Reading RunPod model storage…');
   try {
+    const computer = await api('computer');
+    if (computer.pod?.status !== 'RUNNING' || computer.providerUncertain || !computer.worker?.connectionReady) throw Error('Start and connect your RunPod computer to view its model files.');
     const data = await api('catalog/disk'); $('catalogDiskList').replaceChildren();
     for (const f of data.files) {
       const row = el('div', null, 'catalog-disk-row'), label = el('div'); label.append(el('strong', f.relative.split('/').pop()), el('span', `${f.relative} · ${size(f.bytes)}`, 'hint'));

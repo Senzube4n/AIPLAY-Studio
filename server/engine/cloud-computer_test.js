@@ -40,10 +40,10 @@ test('saving valid credentials clears the old account error before computer sele
 async function fixture(t, status = 'EXITED') {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'aiplay-cloud-'));
   assert.ok(dir.startsWith(path.join(os.tmpdir(), 'aiplay-cloud-')));
-  const f = { dir, pod: pod(status), actions: [], busy: false, available: true, rate: .5, availability: 'HIGH', fail: null, localActive: false, localQueued: 0, leases: [] };
+  const f = { dir, pod: pod(status), now:Date.parse('2026-10-14T13:00:00Z'), actions: [], busy: false, available: true, rate: .5, availability: 'HIGH', fail: null, localActive: false, localQueued: 0, leases: [] };
   const provider = {
-    listPods: async () => [f.pod],
-    getPod: async () => { if (f.fail === 'read') throw new CloudError('provider_unreachable', 'Unavailable'); return structuredClone(f.pod); },
+    listPods: async () => { if (f.listFail) throw new CloudError('provider_unreachable','Inventory unavailable'); return f.list || [f.pod]; },
+    getPod: async id => { if (f.fail === 'read') throw new CloudError('provider_unreachable', 'Unavailable'); if (f.missing && id === 'pod_123') throw new CloudError('resource_missing','Not available',404); return structuredClone(f.pod); },
     quote: async () => ({ rate: f.rate, availability: f.availability }),
     action: async (id, action) => {
       f.actions.push(action);
@@ -56,9 +56,10 @@ async function fixture(t, status = 'EXITED') {
     grow: async (_, size) => { f.actions.push('grow'); f.pod.mounts.persistent.size = size; },
     billing: async () => ({ metadata: { totals: { totalAmount: 7.25 } } }),
     volumeBilling: async () => ({ metadata: { totals: { totalAmount: 2 } } }),
-    volume: async () => ({ size: 100, type: 'STANDARD' }),
+    volume: async () => { if(f.fail==='volume_missing') throw new CloudError('resource_missing','Storage missing',404); return { size: 100, type: 'STANDARD' }; },
   };
   const c = {
+    resourceMissing: async (id, url) => { f.retired = { id, url }; },
     status: () => ({ url: f.pod.workerUrl, jobs: [] }),
     verify: async () => { if (f.fail === 'worker') throw new Error('Worker down'); return { workerId: 'stable', podId: f.pod.id, cloudManagerVersion: 1, capabilities: { comfy: true } }; },
     models: async () => ({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [f.noModels ? [] : ['image.safetensors']] } } } }),
@@ -75,7 +76,7 @@ async function fixture(t, status = 'EXITED') {
       return { podId: f.pod.id, available: f.available, authorized: true, minutes: body?.minutes ?? 30 };
     },
   };
-  f.create = () => createCloudComputer({ dataDir: dir, provider, client: async () => c, now: () => Date.parse('2026-10-14T13:00:00Z'), intervalMs: 0,
+  f.create = () => createCloudComputer({ dataDir: dir, provider, client: async () => c, now: () => f.now, intervalMs: 0,
     localActivity: () => ({ active: f.localActive, queued: f.queuePaused ? 0 : f.localQueued }), setSchedulingBlocked: value => { f.schedulingBlocked = value; },
     pauseQueuedWork: async () => { f.queuePaused = true; f.savedQueued = f.localQueued; },
     resumeQueuedWork: async () => { f.queuePaused = false; } });
@@ -88,6 +89,36 @@ async function fixture(t, status = 'EXITED') {
   };
   return f;
 }
+
+test('confirmed removal drops the ghost selection, survives restart and permits selecting a replacement', async t => {
+  const f = await fixture(t); f.localQueued=2; f.missing = true; f.list = [];
+  const result = await f.manager.refresh();
+  assert.equal(result.podId,null); assert.equal(result.pod,null); assert.equal(result.storage,null);
+  assert.equal(result.providerUncertain,false); assert.equal(result.issue.code,'computer_removed');
+  assert.deepEqual(result.removedPodIds,['pod_123']); assert.equal(result.computers.length,0);
+  assert.equal(f.retired.id,'pod_123'); assert.deepEqual(f.actions,[],'no provider mutations');
+  assert.equal(f.savedQueued,2); assert.equal(f.schedulingBlocked,true);
+  f.manager.close(); f.manager = await f.create();
+  assert.equal((await f.manager.discover()).podId,null);
+  const replacement = { ...pod(), id:'replacement', name:'New computer', workerUrl:'https://replacement-8787.proxy.runpod.net' };
+  f.pod = replacement; f.list = [replacement];
+  assert.equal((await f.manager.discover()).computers.length,1);
+  const selected = await f.manager.select('replacement'); assert.equal(selected.podId,'replacement'); assert.equal(selected.issue,null);
+  assert.equal(f.schedulingBlocked,false); assert.equal(f.queuePaused,true,'saved work is not silently run on a replacement');
+  assert.deepEqual(f.actions,[]);
+});
+test('404 with incomplete or contradictory discovery keeps the existing selection; timeout never removes it', async t => {
+  const f=await fixture(t); f.missing=true;
+  await assert.rejects(f.manager.refresh(),e=>e.code==='resource_missing'); assert.equal(f.manager.snapshot().podId,'pod_123'); assert.equal(f.retired,undefined);
+  f.listFail=true;
+  await assert.rejects(f.manager.refresh(),e=>e.code==='provider_unreachable'); assert.equal(f.manager.snapshot().podId,'pod_123');
+  f.listFail=false; f.fail='read'; f.list=[];
+  await assert.rejects(f.manager.refresh(),e=>e.code==='provider_unreachable'); assert.equal(f.manager.snapshot().podId,'pod_123');
+});
+test('explicit terminated state is retired without leaving a selectable stale row', async t => {
+  const f=await fixture(t); f.pod.status='TERMINATED';
+  const result=await f.manager.refresh(); assert.equal(result.podId,null); assert.equal(result.computers.length,0); assert.deepEqual(f.actions,[]);
+});
 
 test('v2 contracts: pagination, auth header, action body and secret-free projection', async () => {
   const calls = [];
@@ -241,4 +272,14 @@ test('desktop queue lease and enqueue gate preserve existing scheduled work befo
   await f.manager.stop({ mode: 'after-job', requestId: randomUUID() });
   assert.equal(f.schedulingBlocked, true); assert.equal(f.leases.at(-1), true); assert.equal(f.pod.status, 'RUNNING');
   assert.equal(f.savedQueued, 2, 'future work is saved rather than billed before stopping');
+});
+
+test('periodic inventory sees a new replacement after removal without selecting or starting it',async t=>{
+ const f=await fixture(t);f.missing=true;f.list=[];await f.manager.refresh();
+ f.pod={...pod(),id:'new-pod',workerUrl:'https://new-pod-8787.proxy.runpod.net'};f.list=[f.pod];f.now+=31000;
+ await f.manager.tick();assert.equal(f.manager.snapshot().computers[0].id,'new-pod');assert.equal(f.manager.snapshot().podId,null);assert.deepEqual(f.actions,[]);
+});
+test('missing storage does not retire a still-existing computer',async t=>{
+ const f=await fixture(t);f.pod.mounts={network:[{volumeId:'separate',path:'/workspace'}]};f.fail='volume_missing';
+ await assert.rejects(f.manager.refresh(),e=>e.code==='resource_missing');assert.equal(f.manager.snapshot().podId,'pod_123');assert.equal(f.retired,undefined);
 });

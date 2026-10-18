@@ -4,6 +4,10 @@ Status: implementation is published to the Nemesis fork; real GPU acceptance is 
 
 ## 18 October update
 
+The subsequent visual/reconciliation repair adds the concept's pill navigation, five-check installation panel, button-style disclosures, sticky provider-balance header and safe pause-before-stop action. The live account returned 404 plus an empty complete Pod inventory for the earlier test computer; its ghost selection and automatic-install journal were retired with read-only provider calls. The UI returned to Costs and enabled a fresh creation flow, displaying the current provider balance. No replacement or paid mutation was performed. Independent storage billing remains a separate provider check.
+
+New regression cases cover confirmed removal, restart persistence, replacement selection, periodic discovery, uncertain/contradictory inventory, storage-only 404, automatic-install replay protection, preservation of local outputs/private-job handling, live progress and stale-credit signalling. Installation progress and setup-stop confirmation were browser-tested with an isolated simulated provider, not a new GPU rental.
+
 The live Settings panel now implements the earlier four-tab concept: Your goal, Costs, Install AI and Ready. Goal selection is a local persisted preference behind the existing same-origin JSON guard. Tabs reuse the mounted credential, creation, model and shutdown forms. Three mutually exclusive native disclosures keep Ask a friend, Paid services and RunPod separate. More computer controls retains the detailed manager; Advanced setup remains visible.
 
 Ready requires the running provider state, worker readiness and every curated model bundle for the selected goal. Automatic-stop protection is checked separately. Try a sample fills an existing creation screen without submitting work. Stopped computers do not inherit an old install journal's connected status.

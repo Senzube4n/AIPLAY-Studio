@@ -106,7 +106,7 @@ test("guided setup reuses vault-backed forms without duplicate secret inputs or 
   const html = read("web", "index.html"), js = read("web", "cloud-computer.js");
   for (const id of ["runpodApiKey", "runpodWorkerToken", "cloudComputerStopKey", "runpodAccountForm", "runpodConnectionForm"])
     assert.equal((html.match(new RegExp(`id="${id}"`, "g")) || []).length, 1, id);
-  assert.match(html, /Easy Cloud Setup/);
+  assert.match(html, /RunPod \/ Easy setup/);
   assert.match(js, /\['cloudSetupAccountFields', \['runpodAccountForm', 'runpodAccountState'\]\]/);
   assert.match(js, /cloudSetupStart'\)\.addEventListener\('click', \(\) => \$\('cloudComputerStart'\)\.click\(\)\)/);
   assert.match(html, /Create cloud computer/);
@@ -114,11 +114,10 @@ test("guided setup reuses vault-backed forms without duplicate secret inputs or 
   assert.match(html, /new computers can install and connect automatically/);
 });
 
-test("advanced setup stays visible above the steps and opening it preserves guided work", () => {
+test("advanced setup remains an explicit footer button and opening it preserves guided work", () => {
   const html = read("web", "index.html"), js = read("web", "cloud-computer.js");
-  const guideHeader = html.slice(html.indexOf('id="cloudSetup"'), html.indexOf('id="cloudSetupAccount"'));
-  assert.match(guideHeader, /id="cloudSetupAdvanced"[^>]*aria-controls="cloudComputerConnection"/);
-  assert.match(guideHeader, /Manual connection and AI service installation/);
+  assert.match(html, /id="cloudSetupAdvanced"[^>]*aria-controls="cloudComputerConnection"/);
+  assert.ok(html.indexOf('id="cloudSetupAdvanced"') > html.indexOf('id="cloudFlowReady"'));
   assert.match(html, /id="cloudSetupBack"/);
   const calls = [], controls = new Map();
   for (const id of ["cloudComputerConnection", "runpodAccount", "cloudSetupAdvanced", "cloudSetup", "runpodApiKey", "runpodWorkerToken"])
@@ -175,6 +174,7 @@ test("usage refresh clears old billing numbers when the key is missing or the ac
     await runInNewContext(load + "\nloadAccount();", {
       $: id => nodes[id],
       accountApi: async () => { if (failure) throw new Error("Account unavailable"); return { configured: false }; },
+      publishBalance: (balance, stale = false) => { assert.equal(balance,null); assert.equal(stale,failure); },
     });
     assert.equal(nodes.runpodAccountPanel.hidden, true);
     assert.equal(nodes.runpodBalance.textContent, failure ? "Usage unavailable" : "Account not connected");
@@ -446,4 +446,25 @@ test("Studio's Simple screens show no RunPod box, and RunPod GPU mode offers no 
   assert.match(app, /if \(musicLock\(n\.advancedOnly\)\) return;\s*if \(n\.view && n\.view !== "create"\) return;/, "Music the same");
   assert.match(app, /if \(b\) \{ b\.disabled = locked; b\.title = locked \? only\.why : musicSimpleTip; \}/);
   assert.match(read("web", "level.js"), /\[st\.line, st\.advancedOnly\?\.why\]\.filter\(Boolean\)\.join\(" "\)/, "Settings' line says why");
+});
+
+test('installation checklist uses live provider, chosen models and shutdown verification', () => {
+  const js=read('web','cloud-computer.js');
+  const source=js.slice(js.indexOf('export function cloudGoalReady'),js.indexOf('function paintInstallation')).replaceAll('export ','');
+  const progress=runInNewContext(source+'\ncloudInstallationProgress;');
+  const state={podId:'one',pod:{status:'RUNNING'},idleMinutes:30,worker:{connectionReady:true,generationReady:true,authorized:false,available:false}};
+  const picture=[{id:'sdxl-turbo',state:'ready'}];
+  const p=progress(state,'pictures',picture);assert.equal(p.complete,false);assert.equal(p.steps[4],'current');assert.equal(p.done,4);
+  state.worker.authorized=true;state.worker.available=true;assert.equal(progress(state,'pictures',picture).complete,true);
+  assert.equal(progress(state,'all',picture).steps[2],'current','one ready picture model is not every selected model');
+  state.pod.status='EXITED';assert.equal(progress(state,'pictures',picture).done,0);
+  state.pod.status='RUNNING';state.providerUncertain=true;assert.equal(progress(state,'pictures',picture).done,0);
+});
+test('credit updates retain a labelled stale balance on failure and clear it on account removal', () => {
+  const js=read('web','runpod-integrated.js'), updates=[];
+  const source=js.slice(js.indexOf('function publishBalance'),js.indexOf('function renderBalance'));
+  runInNewContext('let balanceCheck=null;'+source+'\npublishBalance(11.25);publishBalance(null,true);publishBalance(null);',{
+    document:{dispatchEvent:e=>updates.push(e.detail)},CustomEvent:class{constructor(type,opts){this.type=type;this.detail=opts.detail;}}
+  });
+  assert.equal(updates[0].balance,11.25);assert.equal(updates[1].balance,11.25);assert.equal(updates[1].stale,true);assert.equal(updates[2].balance,null);assert.equal(updates[2].stale,false);
 });

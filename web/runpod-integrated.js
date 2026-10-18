@@ -26,6 +26,18 @@ let runpodAccount = null;
 let setupTimer = null;
 let setupWasActive = false;
 let creationReview = null, creationBusy = false;
+let balanceCheck = null, balanceLoading = false;
+function publishBalance(balance, stale = false) {
+  if (!stale) balanceCheck = { balance: Number.isFinite(balance) ? balance : null, checkedAt: Date.now() };
+  document.dispatchEvent(new CustomEvent('aiplay:runpod-balance', { detail: { ...balanceCheck, stale } }));
+}
+function renderBalance(data) {
+  const running = (data.pods || []).filter(p => p.status === 'RUNNING').length;
+  $('runpodBalance').textContent = `Balance ${money(data.balance)} · ${money(data.currentSpendPerHr)}/hour · ${running} running Pods`;
+  $('runpodBalance').className = 'chip ok';
+  $('runpodUsageUpdated').textContent = `Updated ${new Date().toLocaleTimeString()}. Storage can cost extra when Pods are stopped.`;
+  publishBalance(data.balance);
+}
 
 function friendlyError(error) {
   const message = String(error?.message || error || "Unknown worker error");
@@ -148,10 +160,7 @@ async function refreshSetup() {
 function renderAccount(data) {
   runpodAccount = data;
   $("runpodAccountPanel").hidden = false;
-  const runningPods = (data.pods || []).filter(pod => pod.status === "RUNNING").length;
-  $("runpodBalance").textContent = `Balance ${money(data.balance)} · ${money(data.currentSpendPerHr)}/hour · ${runningPods} running Pods`;
-  $("runpodBalance").className = "chip ok";
-  $("runpodUsageUpdated").textContent = `Updated ${new Date().toLocaleTimeString()}. Storage can cost extra when Pods are stopped.`;
+  renderBalance(data);
   const list = $("runpodPodList");
   list.replaceChildren();
   if (!data.pods?.length) list.textContent = "No Pods in this RunPod account yet.";
@@ -194,6 +203,7 @@ async function loadAccount() {
   try {
     const status = await accountApi();
     if (!status.configured) {
+      publishBalance(null);
       $("runpodAccountPanel").hidden = true;
       $("runpodAccountState").textContent = "No RunPod account API key saved.";
       $("runpodBalance").textContent = "Account not connected";
@@ -203,6 +213,7 @@ async function loadAccount() {
     }
     renderAccount(await accountApi("/overview"));
   } catch (error) {
+    publishBalance(null, true);
     $("runpodAccountPanel").hidden = true;
     $("runpodAccountState").textContent = error.message;
     $("runpodAccountState").classList.add("warnline");
@@ -602,6 +613,7 @@ async function init() {
   $("runpodAccountDisconnect").addEventListener("click", async () => {
     try {
       await accountApi("/disconnect", {}); runpodAccount = null; $("runpodAccountPanel").hidden = true;
+      publishBalance(null);
       document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
       $("runpodAccountState").textContent = "Saved key removed";
       $("runpodBalance").textContent = "Account not connected";
@@ -663,6 +675,13 @@ async function init() {
   }, true);
   refreshWorker().catch((error) => setState(error.message, true));
   loadAccount();
+  setInterval(async () => {
+    if (document.hidden || !runpodAccount || balanceLoading) return;
+    balanceLoading = true;
+    try { renderBalance(await accountApi('/overview')); }
+    catch { publishBalance(null,true); }
+    finally { balanceLoading = false; }
+  }, 60000);
 }
 
 if (typeof document !== "undefined") init();

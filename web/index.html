@@ -5374,11 +5374,7 @@
           <p class="hint">One worker connection for music, pictures and video.</p>
           <p class="hint" id="runpodModeHint">Open RunPod GPU from the launcher to configure your worker and account.</p>
           <div id="cloudSetup" hidden>
-            <div class="cloud-flow-head"><h4>Easy Cloud Setup</h4><span class="chip" id="cloudFlowAccount">Checking account</span></div>
-            <div class="cta">
-              <button class="edtool sm" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button>
-              <span class="hint">Manual connection and AI service installation.</span>
-            </div>
+            <div class="cloud-flow-head"><div><h4>Cloud computer</h4><span class="hint">RunPod / Easy setup</span></div><span class="chip" id="cloudFlowAccount">Checking account</span></div>
             <nav class="cloud-setup-steps" role="tablist" aria-label="Cloud setup">
               <button class="edtool sm" id="cloudFlowGoalTab" role="tab" aria-controls="cloudFlowGoal" data-cloud-page="goal" type="button">1. Your goal</button>
               <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">2. Costs</button>
@@ -5428,7 +5424,12 @@
                 <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to AI</button></div>
             </section>
             <section id="cloudFlowInstall" role="tabpanel" aria-labelledby="cloudFlowInstallTab" hidden>
-              <h3>Set up your AI</h3>
+              <h3 id="cloudInstallTitle">Setting up your AI</h3>
+              <p class="hint" id="cloudInstallHint">Choose your models and review their licences below.</p>
+              <div class="cloud-install-states"><span class="chip" id="cloudInstallComputer">Checking computer</span><span class="chip" id="cloudInstallAI">Checking AI</span></div>
+              <progress id="cloudInstallProgress" max="5" value="0" aria-label="Completed setup checks"></progress>
+              <ol class="cloud-install-checklist" id="cloudInstallChecklist" aria-label="AI setup progress"><li>Start cloud computer</li><li>Install AI service</li><li>Download selected models</li><li>Check AI connection</li><li>Verify automatic stop</li></ol>
+              <div class="cta"><button class="edtool" id="cloudInstallStop" type="button" disabled>Stop setup and computer</button></div><p class="hint" id="cloudInstallStopHint">Rental runs while the computer is running.</p>
               <details class="more" id="cloudModelBrowser">
                 <summary>Browse more models</summary>
                 <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Download models and LoRAs directly to your RunPod computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
@@ -5447,6 +5448,7 @@
                 <section id="catalogTransfers" hidden><h4>Downloads on RunPod</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
               </details>
             <div id="cloudSetupAI" hidden>
+              <details class="more"><summary>Installation details</summary>
               <div id="cloudAutomaticInstall" hidden>
                 <h4>Install AI</h4>
                 <span id="cloudAutomaticStatus" class="chip" role="status">Checking installation</span>
@@ -5455,6 +5457,7 @@
                 <button class="edtool sm" id="cloudAutomaticCheck" type="button">Check installation</button>
                 <a class="edtool sm" href="https://console.runpod.io/pods" target="_blank" rel="noreferrer">Open RunPod</a>
               </div>
+              </details>
               <div class="cta"><button class="btn sm" id="cloudSetupStart" type="button">Review start price</button>
                 <button class="edtool sm" id="cloudSetupCheck" type="button">Check AI again</button></div>
               <div id="cloudSetupWorkerFields"></div>
@@ -5496,6 +5499,7 @@
               <p class="hint" id="cloudFlowSampleHint">Review the sample in its creation screen, then press Make.</p>
               <p class="hint">Stopping computing keeps saved storage and its charges.</p>
             </section>
+            <div class="cta cloud-advanced-button"><button class="edtool" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button></div>
             <details class="more" id="cloudSetupEdit" hidden><summary>Change setup</summary>
             <div class="cta"><button class="edtool sm" id="cloudSetupEditAccount" type="button" hidden>Change account</button>
               <button class="edtool sm" id="cloudSetupChoose" type="button" hidden>Choose another computer</button>
@@ -5612,14 +5616,14 @@
                 <button class="btn" id="runpodConnect" type="submit">Connect worker</button>
               </div>
             </form>
-            <details class="runpod-models" id="runpodModels">
+            <details class="runpod-models more" id="runpodModels">
               <summary>Pod models</summary>
               <p class="hint">Verified model downloads run on your Pod and incur its usual charges.</p>
               <div id="runpodModelList" class="runpod-model-list"><p class="hint">Connect the worker to check model readiness.</p></div>
               <button class="edtool sm" id="runpodCancelModel" type="button" hidden>Pause download</button>
               <p class="hint" id="runpodModelState" role="status"></p>
             </details>
-            <details class="runpod-account" id="runpodAccount">
+            <details class="runpod-account more" id="runpodAccount">
               <summary>Account and Pods</summary>
               <p class="hint">Use a restricted key with permission to read GPUs and manage Pods.</p>
               <form id="runpodAccountForm">

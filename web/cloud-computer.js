@@ -6,6 +6,8 @@ let current = null, working = false, activeAction = '';
 let accountConfigured = false, setupOverride = null;
 let automaticInstall = null, installationPolling = false;
 let cloudGoal = 'all', flowPage = null, flowModels = null, modelsPolling = false, modelsCheckedAt = 0;
+let accountBalance = null;
+document.addEventListener('aiplay:runpod-balance', event => { accountBalance = event.detail; paintSetup(current); });
 async function refreshAutomaticInstall() {
   if (installationPolling) return;
   installationPolling = true;
@@ -13,7 +15,7 @@ async function refreshAutomaticInstall() {
     const response = await fetch('/api/runpod/install');
     if (response.ok) {
       const info = await response.json();
-      if (info.podId && !current?.podId && !working) await perform('/select', { id: info.podId });
+      if (info.podId && !current?.podId && !current?.removedPodIds?.includes(info.podId) && info.phase !== 'removed' && !working) await perform('/select', { id: info.podId });
       paintAutomaticInstall(info);
       $('cloudSetupProvision').disabled = ['creating', 'uncertain', 'waiting', 'connecting', 'failed'].includes(info.phase);
     }
@@ -22,7 +24,7 @@ async function refreshAutomaticInstall() {
 function paintAutomaticInstall(info) {
   const connectedBefore = automaticInstall?.podId === info.podId && automaticInstall?.workerConnected;
   automaticInstall = info;
-  const managed = info.phase !== 'none' && (!current?.podId || current.podId === info.podId);
+  const managed = !['none','removed'].includes(info.phase) && !current?.removedPodIds?.includes(info.podId) && (!current?.podId || current.podId === info.podId);
   $('cloudAutomaticInstall').hidden = !managed;
   if (!managed) return;
   const stopped = current?.podId === info.podId && current?.pod?.status === 'EXITED';
@@ -51,8 +53,37 @@ function setupSaved(id) {
 export function cloudGoalReady(s, goal, bundles = []) {
   if (s?.providerUncertain || s?.pod?.status !== 'RUNNING' || !s.worker?.connectionReady || !s.worker?.generationReady
     || s.operation || s.worker?.pending || s.worker?.frozen) return false;
-  const needed = { music: ['yue2-comfy'], pictures: ['sdxl-turbo'], video: ['ltx25'], all: ['yue2-comfy', 'sdxl-turbo', 'ltx25'] }[goal];
+  const needed = goalBundles(goal);
   return !!needed && needed.every(id => bundles.some(b => b.id === id && b.state === 'ready'));
+}
+function goalBundles(goal) { return { music: ['yue2-comfy'], pictures: ['sdxl-turbo'], video: ['ltx25'], all: ['yue2-comfy', 'sdxl-turbo', 'ltx25'] }[goal]; }
+export function cloudInstallationProgress(s, goal, bundles = [], installation) {
+  const running = s?.pod?.status === 'RUNNING' && !s.providerUncertain;
+  const connected = running && !!s.worker?.connectionReady;
+  const models = connected && !!goalBundles(goal)?.every(id => bundles.some(b => b.id === id && b.state === 'ready'));
+  const protectedStop = s?.idleMinutes === 0 || s?.worker?.authorized && s?.worker?.available;
+  const complete = [running, connected, models, models && !!s.worker?.generationReady, models && !!s.worker?.generationReady && !!protectedStop];
+  const first = complete.findIndex(done => !done);
+  const failed = running && installation?.podId === s?.podId && installation?.stage === 'failed' && !connected ? 1
+    : connected && bundles.some(b => goalBundles(goal)?.includes(b.id) && b.state === 'failed') ? 2 : -1;
+  return { complete: complete.every(Boolean), done: complete.filter(Boolean).length,
+    steps: complete.map((done, i) => done ? 'done' : i === failed ? 'failed' : i === first ? 'current' : 'waiting') };
+}
+function paintInstallation(s, bundles) {
+  const state = cloudInstallationProgress(s, cloudGoal, bundles, automaticInstall), running = s?.pod?.status === 'RUNNING' && !s.providerUncertain;
+  const failed = state.steps.includes('failed');
+  const changing = !!s?.operation;
+  $('cloudInstallTitle').textContent = changing ? 'Checking computer change' : s?.providerUncertain ? 'Check computer status' : failed ? 'Setup needs attention' : state.complete ? 'Your AI is ready' : running ? 'Setting up your AI' : 'Start to continue setup';
+  $('cloudInstallHint').textContent = running && (bundles.some(b => b.state === 'downloading') || !s.worker?.connectionReady && automaticInstall?.podId === s?.podId)
+    ? 'You can leave this screen; setup continues on your cloud computer.' : 'Choose your models and review their licences below.';
+  if (failed) $('cloudInstallHint').textContent = state.steps[1] === 'failed' ? 'AI installation failed; open Installation details to review it.' : 'A model download failed; review its access and try again.';
+  chip('cloudInstallComputer', running ? 'Computer: Running' : s?.providerUncertain ? 'Computer: Unavailable' : 'Computer: Stopped', running ? 'ok' : '');
+  const aiReady = cloudGoalReady(s, cloudGoal, bundles), downloading = bundles.some(b => b.state === 'downloading');
+  chip('cloudInstallAI', changing ? 'AI: Waiting' : aiReady ? 'AI: Ready' : downloading && running ? 'AI: Downloading' : running ? s.worker?.connectionReady ? 'AI: Models needed' : 'AI: Installing' : 'AI: Offline', aiReady ? 'ok' : running ? 'busy' : '');
+  $('cloudInstallProgress').value = state.done; $('cloudInstallProgress').setAttribute('aria-valuetext', `${state.done} of 5 setup checks complete`);
+  [...$('cloudInstallChecklist').children].forEach((row, i) => { row.dataset.state = state.steps[i]; if (state.steps[i] === 'current') row.setAttribute('aria-current','step'); else row.removeAttribute('aria-current'); });
+  $('cloudInstallStop').disabled = working || !running || !s.worker?.connectionReady || !!s.operation;
+  $('cloudInstallStopHint').textContent = running && !s.worker?.connectionReady ? 'Rental is running; safe shutdown becomes available when the AI service connects.' : 'Rental runs while the computer is running.';
 }
 export function cloudFlowPage(s, account, ready, override) {
   if (!account) return 'goal';
@@ -72,7 +103,7 @@ function paintFlow(s) {
   const protectedStop = s?.idleMinutes === 0 || s?.worker?.authorized && s?.worker?.available;
   const page = cloudFlowPage(s, account, ready && protectedStop, flowPage);
   const names = { goal: 'Your goal', costs: 'Costs', install: 'Install AI', ready: 'Ready' };
-  const overridePage = { 1: 'goal', 2: 'costs', 3: 'install', 4: 'install' }[setupOverride];
+  const overridePage = { 1: 'goal', 2: 'costs', 3: s?.podId ? 'install' : 'costs', 4: s?.podId ? 'install' : 'costs' }[setupOverride];
   const visible = account ? overridePage || page : 'goal';
   for (const [key, id] of [['goal', 'Goal'], ['costs', 'Costs'], ['install', 'Install'], ['ready', 'Ready']]) {
     $('cloudFlow' + id).hidden = key !== visible;
@@ -86,12 +117,13 @@ function paintFlow(s) {
   $('cloudSetupProtection').hidden = visible !== 'install' || !s?.podId;
   $('cloudSetupModelFields').hidden = !s?.worker?.connectionReady;
   $('cloudFlowDetails').hidden = !s?.podId;
-  chip('cloudFlowAccount', account ? 'Account connected' : 'Connect account', account ? 'ok' : '');
+  chip('cloudFlowAccount', account ? Number.isFinite(accountBalance?.balance) ? `${money(accountBalance.balance)} credits${accountBalance.stale ? ' · Last checked' : ''}` : 'Credits unavailable' : 'Connect account', account && !accountBalance?.stale ? 'ok' : 'warn');
+  $('cloudFlowAccount').title = accountBalance?.checkedAt ? `RunPod account balance checked ${new Date(accountBalance.checkedAt).toLocaleTimeString()}` : 'Connect your RunPod account to see its balance.';
   chip('cloudSetupStatus', names[visible], visible === 'ready' && ready && protectedStop ? 'ok' : '');
   $('cloudSetupHint').textContent = visible === 'goal' ? 'Choose what you want to make, then connect your RunPod account.'
     : visible === 'costs' ? 'Choose a computer and review its price before starting rental.'
     : visible === 'install' ? 'Install your models and choose automatic shutdown.' : '';
-  $('cloudSetupHint').hidden = visible === 'ready';
+  $('cloudSetupHint').hidden = visible !== 'goal';
   const goalNames = { music: 'music', pictures: 'pictures', video: 'video', all: 'music, pictures and video' };
   $('cloudFlowReadyGoal').textContent = `One connection for ${goalNames[cloudGoal]}.`;
   $('cloudFlowGoalNote').textContent = { music: 'Installs the YuE2 music model.', pictures: 'Installs the SDXL Turbo picture model.',
@@ -100,16 +132,16 @@ function paintFlow(s) {
   $('cloudFlowGoalNext').disabled = !account;
   $('cloudFlowCostsNext').disabled = !s?.podId;
   $('cloudFlowInstallNext').disabled = !(ready && protectedStop);
-  const stopped = s?.pod?.status === 'EXITED', pending = working || !!s?.operation || !!s?.providerUncertain;
+  const stopped = s?.pod?.status === 'EXITED' && !s.providerUncertain, pending = working || !!s?.operation || !!s?.providerUncertain;
   const rate = s?.providerUncertain ? `${money(s?.pod?.cost)}/hour (last confirmed)` : stopped ? `${money(s?.pod?.cost)}/hour when running` : `${money(s?.pod?.cost)}/hour`;
   $('cloudFlowCostRate').textContent = s?.podId ? rate : 'Choose a computer below';
   $('cloudFlowCostStorage').textContent = s?.storage ? `${money(s.storage.monthlyRunning)}/month running; ${money(s.storage.monthlyStopped)}/month stopped` : 'Shown before approval';
   $('cloudFlowCostSession').textContent = money(s?.spending?.sessionEstimate);
   $('cloudFlowReadyRate').textContent = stopped ? 'GPU rental stopped' : rate;
   $('cloudFlowReadyStorage').textContent = `${money(s?.storage?.monthlyCurrent)}/month estimated`;
-  $('cloudFlowReadyFiles').textContent = s?.inventory?.persistence?.verified ? 'Verified saved storage' : s?.storage?.allocatedGB ? `${s.storage.allocatedGB} GB saved storage` : 'Needs checking';
+  $('cloudFlowReadyFiles').textContent = s?.providerUncertain ? 'Storage needs checking' : s?.inventory?.persistence?.verified ? 'Verified saved storage' : s?.storage?.allocatedGB ? `${s.storage.allocatedGB} GB saved storage` : 'Needs checking';
   $('cloudFlowReadyStop').textContent = s?.idleMinutes === 0 ? 'Disabled' : `${s?.idleMinutes || 30} minutes · ${protectedStop ? 'Protected' : 'Needs setup'}`;
-  $('cloudFlowReadyTitle').textContent = ready && protectedStop ? "You're ready to create" : stopped ? 'Your computer is stopped' : 'Your cloud computer';
+  $('cloudFlowReadyTitle').textContent = s?.providerUncertain ? 'Check computer status' : ready && protectedStop ? "You're ready to create" : stopped ? 'Your computer is stopped' : 'Your cloud computer';
   chip('cloudFlowProvider', s?.providerUncertain ? 'Status unavailable' : stopped ? 'Computer stopped' : s?.pod?.status === 'RUNNING' ? 'Computer running' : 'Checking computer', s?.pod?.status === 'RUNNING' ? 'ok' : '');
   chip('cloudFlowAI', ready ? 'AI ready' : stopped ? 'AI offline' : s?.worker?.connectionReady ? 'Models need setup' : 'AI not ready', ready ? 'ok' : 'warn');
   $('cloudFlowIssue').hidden = !s?.issue && !s?.providerUncertain;
@@ -119,6 +151,7 @@ function paintFlow(s) {
   $('cloudFlowSample').disabled = !(ready && protectedStop) || pending;
   $('cloudFlowSampleHint').hidden = !(ready && protectedStop);
   $('cloudFlowRepair').hidden = stopped || ready && protectedStop;
+  paintInstallation(s, flowModels && flowModels.podId === s?.podId ? flowModels.bundles : []);
   if (ready && protectedStop) { try { localStorage.setItem(`aiplay:cloud-setup:${s.podId}`, 'complete'); } catch {} }
 }
 async function refreshFlowModels() {
@@ -169,7 +202,7 @@ function paintSetup(s) {
   $('cloudSetupModelFields').hidden = !s?.worker?.connectionReady || !!s?.worker?.generationReady && setupOverride !== 3;
   $('cloudSetupProtectionFields').hidden = s?.pod?.status !== 'RUNNING';
   $('cloudComputer').hidden = !s?.podId;
-  if (automaticInstall && automaticInstall.phase !== 'none' && (!s?.podId || s.podId === automaticInstall.podId)) {
+  if (automaticInstall && !['none','removed'].includes(automaticInstall.phase) && !s?.removedPodIds?.includes(automaticInstall.podId) && (!s?.podId || s.podId === automaticInstall.podId)) {
     if (step === 3 && !automaticInstall.workerConnected) $('cloudSetupHint').textContent = 'AIPLAY is installing and connecting the AI service automatically.';
     if (!automaticInstall.workerConnected && ['waiting', 'connecting', 'uncertain', 'creating', 'failed'].includes(automaticInstall.phase)) $('cloudSetupWorkerFields').hidden = true;
     $('cloudAutomaticInstall').hidden = false;
@@ -186,7 +219,8 @@ async function checkSetupAccount() {
 }
 function scrollSetupTo(element) {
   const nav = element.closest('.page')?.querySelector('.pnav');
-  element.style.scrollMarginTop = `${(nav?.getBoundingClientRect().height || 0) + 12}px`;
+  const header = element !== $('cloudSetup') && element.closest('#cloudSetup') ? $('cloudSetup').querySelector('.cloud-flow-head')?.getBoundingClientRect?.().height || 0 : 0;
+  element.style.scrollMarginTop = `${(nav?.getBoundingClientRect().height || 0) + header + 12}px`;
   element.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function openAdvancedSetup() {
@@ -206,6 +240,17 @@ function returnToGuidedSetup() {
 function mountSetup() {
   $('cloudSetup').hidden = false;
   $('set-runpod').open = true;
+  const nav = $('settings').querySelector('.pnav');
+  if (nav && typeof ResizeObserver !== 'undefined') new ResizeObserver(() => $('cloudSetup').style.setProperty('--cloud-nav-height', `${nav.getBoundingClientRect().height + 8}px`)).observe(nav);
+  $('cloudInstallStop').addEventListener('click', async () => {
+    if (!await appConfirm('Pause model downloads and stop this computer? Completed files and resumable downloads are kept.', { title: 'Stop setup', ok: 'Pause and stop' })) return;
+    try {
+      const response = await fetch('/api/runpod/setup/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!response.ok) throw Error('Downloads could not be paused; check the AI connection.');
+      for (let i = 0; i < 15; i++) { const setup = await (await fetch('/api/runpod/setup')).json(); if (!setup.active) { await perform('/stop', { mode: 'idle', requestId: crypto.randomUUID() }); return; } await new Promise(resolve => setTimeout(resolve,200)); }
+      throw Error('The download is still pausing. Try stopping again shortly.');
+    } catch (e) { $('cloudInstallStopHint').textContent = e.message; }
+  });
   for (const button of document.querySelectorAll('[data-cloud-page]')) button.addEventListener('click', () => chooseFlow(button.dataset.cloudPage));
   $('cloudSetup').querySelector('[role="tablist"]').addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -244,6 +289,7 @@ function mountSetup() {
     ['cloudSetupModelFields', ['runpodModels']],
     ['cloudSetupProtectionFields', ['cloudComputerKeyForm']],
   ]) for (const id of ids) $(target).append($(id));
+  $('cloudSetup').append($('cloudFlowDetails'), $('cloudComputerConnection'));
   const idle = $('cloudComputerIdle');
   $('cloudFlowIdleFields').append(document.querySelector('label[for="cloudComputerIdle"]'), idle.closest('.pv'));
   $('runpodModels').open = true;
@@ -339,7 +385,7 @@ function paint(s) {
   $('cloudComputerAlternatives').textContent = s.issue?.alternatives?.join(' ') || '';
   const select = $('cloudComputerSelect');
   const choices = new Map((s.computers || []).map(p => [p.id, p.name]));
-  if (pod) choices.set(pod.id, pod.name);
+  if (pod && !s.removedPodIds?.includes(pod.id) && pod.status !== 'TERMINATED') choices.set(pod.id, pod.name);
   const signature = JSON.stringify([...choices]);
   if (select.dataset.signature !== signature) {
     select.replaceChildren(new Option(choices.size ? 'Choose your computer' : 'No existing computer found', ''));

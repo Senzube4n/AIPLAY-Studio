@@ -34,6 +34,35 @@
 @media(max-width:550px) { #cloudModelBrowser .catalog-grid, #cloudModelBrowser .catalog-filters { grid-template-columns:1fr; } }
 #cloudSetup .cloud-flow-head, #cloudSetup .cloud-flow-states { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 #cloudSetup .cloud-flow-head h4 { margin: 0; }
+#cloudSetup { padding:22px; border:1px solid var(--edge); border-radius:16px; }
+#cloudSetup .cloud-flow-head { position:sticky; top:var(--cloud-nav-height,100px); z-index:4; background:var(--panel); padding:14px 0; margin-bottom:18px; border-bottom:1px solid var(--edge); }
+#cloudSetup .cloud-flow-head .hint { display:block; margin:4px 0 0; font-size:.7rem; }
+#cloudSetup .cloud-flow-head h4 { font-size:1rem; letter-spacing:.06em; }
+#cloudSetup .cloud-setup-steps { margin:8px 0 22px; gap:8px; }
+#cloudSetup .cloud-setup-steps button { border-radius:999px; padding:11px 15px; min-height:40px; }
+#cloudSetup .cloud-setup-steps button.active { background:var(--primary); color:var(--on); border-color:var(--primary); }
+#cloudSetupStatus { display:none; }
+#cloudSetup .cloud-flow-box .pv { font-family:var(--sans); font-size:.82rem; }
+#cloudSetup [role="tabpanel"] > h3 { font-size:1.25rem; margin-top:24px; }
+#cloudSetup .cloud-advanced-button { padding-top:18px; margin-top:22px; border-top:1px solid var(--edge); }
+#cloudSetup .cloud-install-states { display:flex; justify-content:space-between; gap:12px; margin:22px 0 16px; flex-wrap:wrap; }
+#cloudInstallProgress { width:100%; height:6px; accent-color:var(--primary); display:block; margin:18px 0; }
+#cloudInstallStop, #cloudSetupAdvanced { min-height:42px; padding:10px 16px; }
+#cloudSetup .cloud-install-checklist { list-style:none; padding:0; margin:20px 0 26px; display:grid; gap:16px; font-size:.82rem; }
+#cloudSetup .cloud-install-checklist li { display:flex; gap:12px; align-items:center; color:var(--dim); }
+#cloudSetup .cloud-install-checklist li::before { content:'○'; width:14px; flex-shrink:0; }
+#cloudSetup .cloud-install-checklist [data-state="done"] { color:var(--ok); }
+#cloudSetup .cloud-install-checklist [data-state="done"]::before { content:'✓'; }
+#cloudSetup .cloud-install-checklist [data-state="current"] { color:var(--ink); font-weight:600; }
+#cloudSetup .cloud-install-checklist [data-state="current"]::before { content:'→'; color:var(--primary); }
+#cloudSetup .cloud-install-checklist [data-state="failed"] { color:var(--err); }
+#cloudSetup .cloud-install-checklist [data-state="failed"]::before { content:'!'; }
+#set-runpod details.more > summary { display:flex; align-items:center; gap:8px; padding:11px 14px; border:1px solid var(--edge); border-radius:9px; background:var(--raise); color:var(--ink); width:fit-content; max-width:100%; box-sizing:border-box; min-height:40px; }
+#set-runpod details.more > summary:hover { border-color:var(--primary); }
+#set-runpod details.more > summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+#set-runpod details.more[open] > summary { border-color:var(--primary); margin-bottom:14px; }
+#cloudComputerConnection:not([open]) { display:none; }
+@media(max-width:550px) { #cloudSetup { padding:14px; } #cloudSetup .cloud-setup-steps button { padding:9px 11px; } }
 #cloudSetup .cloud-goals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; padding: 0; margin: 16px 0; }
 #cloudSetup .cloud-goals legend { color: var(--dim); font-size: .8rem; margin-bottom: 10px; }
 #cloudSetup .cloud-goals label { border: 1px solid var(--edge); border-radius: 10px; padding: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }

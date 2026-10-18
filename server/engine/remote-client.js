@@ -365,6 +365,14 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
   }
   const timer = setInterval(() => { tick().catch(() => {}); }, pollMs); timer.unref();
   return { connect, upload, submit, cancel, tick, verify, trainingUpload, trainingList, trainingAction,
+    resourceMissing: async (podId, workerURL) => {
+      if (workerURL !== `https://${podId}-8787.proxy.runpod.net`) return;
+      for (const job of Object.values(jobs)) if (job.connection?.url === workerURL && !TERMINAL.has(job.state)) {
+        job.state = 'uncertain'; job.error = 'The original cloud computer is no longer available. Check recovered files on this PC.';
+        if (job.private) job.graph = null;
+      }
+      await saveJobs(jobs);
+    },
     setCloudStopping: value => { cloudStopping = !!value; },
     cloud: async (route = "", body) => {
       const health = await verify();
