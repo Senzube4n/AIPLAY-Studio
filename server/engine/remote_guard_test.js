@@ -72,6 +72,20 @@ async function routes(t, extra = {}) {
 }
 const HERE = { host: "127.0.0.1:4173" };
 
+test('catalog keys stay in the vault and guarded browsing never invokes provider infrastructure', async t => {
+  const keys = new Map(); let network = 0;
+  const call = await routes(t, { getSecret: async k => keys.get(k), setSecret: async (k,v) => keys.set(k,v), clearSecret: async k => keys.delete(k), fetchFn: async u => { network++; assert.match(String(u),/^https:\/\/huggingface.co\/api\/models/); return Response.json([]); } });
+  const headers = { ...HERE, 'content-type':'application/json', 'x-aiplay-actor':'agent:test' };
+  const key = 'hf_fakeTokenForFixtureOnly';
+  const saved = await call('POST','/api/runpod/catalog/connections',{headers,body:JSON.stringify({provider:'huggingface',key})}); assert.equal(saved.status,200);
+  const status = await call('GET','/api/runpod/catalog/connections',{headers:HERE}); assert.equal(status.body.configured.huggingface,true); assert.doesNotMatch(JSON.stringify(status.body),/fakeToken/);
+  const search = await call('GET','/api/runpod/catalog/search?provider=huggingface',{headers:HERE}); assert.equal(search.status,200); assert.equal(network,1);
+  const rejected = await call('POST','/api/runpod/catalog/connections',{headers:{...headers,origin:'https://evil.example'},body:JSON.stringify({provider:'huggingface',remove:true})}); assert.equal(rejected.status,403);assert.equal(keys.size,1);
+  await call('POST','/api/runpod/catalog/connections',{headers,body:JSON.stringify({provider:'huggingface',remove:true})});assert.equal(keys.size,0);
+  assert.equal((await call('POST','/api/runpod/catalog/install',{headers,body:JSON.stringify({selection:{provider:'huggingface'}})})).status,400,'no licence confirmation, no worker or rental call');
+  assert.equal(network,1);
+});
+
 test('cloud goal persists locally without credentials or provider calls', async t => {
   const config = { uiPort: 4173 }; let saves = 0, providerCalls = 0;
   const call = await routes(t, { config, savePrefs: async () => { saves++; }, fetchFn: async () => { providerCalls++; throw Error('unexpected network'); } });

@@ -11,6 +11,7 @@ import { PROTOCOL, MAX_ASSET, TERMINAL, MEDIA_EXT, jobId, relativeFile, containe
   hashFile, digest, readJSON, jsonStore, readBody, sendJSON, validateGraph } from "../server/engine/remote-common.js";
 import { waitForComfyLoopback } from "./check-comfy-loopback.js";
 import { createModelManager } from "./model-manager.js";
+import { createModelDisk } from './model-disk.js';
 import { createAceTraining } from "../server/music/ace-training.js";
 /* The Studio's minors check, dependency-free, so the Pod refuses too: a
  * Studio of another version, or anything else holding the token, still
@@ -54,7 +55,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   await save(state);
   const modelManager = await createModelManager({ modelsDir, fetchFn, ...(modelBundles ? { bundles: modelBundles } : {}) });
   const aceTraining = await createAceTraining({ rootDir: trainingDir || path.join(stateDir, "training"), lorasDir: path.join(modelsDir, "loras"), aceURL, fetchFn });
-  let busy = false, closed = false;
+  let busy = false, closed = false, modelsChanging = false;
   const request = async (route, init = {}) => {
     const response = await fetchFn(`${base}${route}`, { ...init, redirect: "error", signal: AbortSignal.timeout(30000) });
     if (!response.ok) throw new Error(`ComfyUI returned HTTP ${response.status}.`);
@@ -79,7 +80,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
           && !(draining && j.state === "queued" && !j.finishDuringStop));
         const trainingBusy = trainingActivity.busy || training.models.some(m => ["preparing", "training", "finishing"].includes(m.stage));
         const queued = (queue.queue_running || []).length + (queue.queue_pending || []).length;
-        return { known: trainingActivity.known, busy: !!(transfers || busy || queued || unresolved.length || trainingBusy || modelManager.status().active || maintenance),
+        return { known: trainingActivity.known, busy: !!(modelsChanging || transfers || busy || queued || unresolved.length || trainingBusy || modelManager.status().active || maintenance),
           jobs: unresolved.length, queued, transfers, installing: !!modelManager.status().active, training: trainingBusy, maintenance };
       } catch { return { known: false, busy: true }; }
     },
@@ -101,6 +102,13 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     executedGraphHash: job.private === true ? null : digest(job.graph),
     ...(job.private === true ? { private: true } : {}), ...(job.forgotten ? { forgotten: true } : {}) });
 
+  const modelDisk = createModelDisk({ modelsDir, removed: modelManager.fileRemoved, assertIdle: async () => {
+    const [queue, training] = await Promise.all([request('/queue'), aceTraining.activity()]);
+    if (!Array.isArray(queue.queue_running) || !Array.isArray(queue.queue_pending) || !training.known) throw Error('Workload state could not be verified. Keep the model for now.');
+    if (queue.queue_running.length || queue.queue_pending.length || training.busy || modelManager.status().active || transfers || busy
+      || Object.values(state.jobs).some(j => !TERMINAL.has(j.state) || j.state === 'uncertain') || cloud.snapshot().pending || cloud.snapshot().frozen
+      || await stat(path.join(stateDir,'maintenance.lock')).then(() => true, e => { if (e.code === 'ENOENT') return false; throw e; })) throw Error('Finish generation, training, downloads and transfers before deleting models.');
+  } });
   async function finish(job, stateName, error = null) {
     job.state = stateName; job.error = error; job.finishedAt = Date.now(); dropWords(job); await save(state);
   }
@@ -226,6 +234,15 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     let finishWork = null;
     try {
       const url = new URL(req.url, "http://worker");
+      if (modelsChanging && req.method !== 'GET' && url.pathname !== '/v1/cloud/lease') throw Error('A model file change is being checked. Try again shortly.');
+      if (req.method === 'GET' && url.pathname === '/v1/models/disk') return sendJSON(res,200,await modelDisk.list());
+      if (req.method === 'POST' && ['/v1/models/disk/review','/v1/models/disk/delete'].includes(url.pathname)) {
+        const b = JSON.parse((await readBody(req)).toString('utf8'));
+        if (modelsChanging) throw Error('A model file change is already being checked.');
+        modelsChanging = true;
+        try { return sendJSON(res,200,await (url.pathname.endsWith('/review') ? modelDisk.review(b.relative) : modelDisk.remove(b))); }
+        finally { modelsChanging = false; }
+      }
       // Count workload requests and artifact transfers, never navigation/health polls.
       const workloadRequest = (req.method !== "GET" && !url.pathname.startsWith("/v1/cloud")) || /\/files\/[0-9]+$/.test(url.pathname);
       if (workloadRequest) {
@@ -305,6 +322,11 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
         return sendJSON(res, 202, await modelManager.install(body.bundle, body.acceptLicense, body.modelToken));
       }
       if (req.method === "POST" && url.pathname === "/v1/setup/cancel") return sendJSON(res, 200, modelManager.cancel());
+      if (req.method === 'POST' && url.pathname === '/v1/setup/catalog') {
+        if (cloud.snapshot().pending || cloud.snapshot().frozen) throw Error('Finish the computer shutdown change before downloading.');
+        const b = JSON.parse((await readBody(req)).toString('utf8'));
+        return sendJSON(res, 202, await modelManager.installCatalog(b.selection, b.acceptLicense, b.expected, b.modelToken));
+      }
       if (req.method === "POST" && url.pathname === "/v1/assets") {
         const name = relativeFile(url.searchParams.get("name"));
         if (name.includes("/") || !MEDIA_EXT.test(name)) throw new Error("Unsupported input filename.");

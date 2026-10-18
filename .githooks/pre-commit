@@ -11,6 +11,9 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+node --check server/engine/model-catalog.js || exit 1
+node --check web/model-browser.js || exit 1
+node --check worker/model-disk.js || exit 1
 node --check web/full-player-score.js || exit 1
 node --check web/score-follow.js || exit 1
 node --check web/music-workbench.js || exit 1

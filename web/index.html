@@ -5429,6 +5429,23 @@
             </section>
             <section id="cloudFlowInstall" role="tabpanel" aria-labelledby="cloudFlowInstallTab" hidden>
               <h3>Set up your AI</h3>
+              <details class="more" id="cloudModelBrowser">
+                <summary>Browse more models</summary>
+                <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Download models and LoRAs directly to your RunPod computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
+                <nav class="catalog-tabs" aria-label="Model sources"><button class="edtool" data-catalog-provider="civitai" type="button" aria-pressed="true">Civitai</button><button class="edtool" data-catalog-provider="huggingface" type="button" aria-pressed="false">Hugging Face</button><button class="edtool" id="catalogOnDisk" type="button">On RunPod</button></nav>
+                <form id="catalogSearchForm"><div class="catalog-search"><input class="line" id="catalogQuery" aria-label="Search models" placeholder="Search models or styles"><button class="btn sm" type="submit">Search</button></div>
+                  <div class="catalog-filters"><label>create<select class="sel2" id="catalogTask"><option value="pictures">Pictures</option><option value="video">Video</option><option value="music">Music</option><option value="all">Anything</option></select></label><label>type<select class="sel2" id="catalogType"><option value="all">Models + LoRAs</option><option value="checkpoint">Checkpoints</option><option value="lora">LoRAs</option></select></label><label>sort<select class="sel2" id="catalogSort"><option value="popular">Most downloaded</option><option value="newest">Newest</option></select></label><label>base model<input class="line" id="catalogBase" placeholder="Any (Civitai)"></label></div>
+                </form>
+                <p class="hint" id="catalogStatus" role="status">Choose a provider to browse.</p>
+                <div id="catalogResults" class="catalog-grid"></div>
+                <section id="catalogDetail" class="catalog-detail" hidden><button class="edtool sm" id="catalogDetailClose" type="button">Close details</button><h3 id="catalogName"></h3><p class="hint" id="catalogPurpose"></p>
+                  <div class="params"><label for="catalogVersion">version</label><span class="pv"><select class="sel2" id="catalogVersion"></select></span><label for="catalogFile">file</label><span class="pv"><select class="sel2" id="catalogFile"></select></span><label for="catalogFolder">save as</label><span class="pv"><select class="sel2" id="catalogFolder"><option value="checkpoints">Checkpoint</option><option value="loras">LoRA</option><option value="diffusion_models">Diffusion model</option><option value="vae">VAE</option><option value="text_encoders">Text encoder</option><option value="upscale_models">Upscaler</option></select></span><label>download size</label><span class="pv" id="catalogSize"></span><label>base model</label><span class="pv" id="catalogCompatibility"></span><label>licence</label><span class="pv" id="catalogLicense"></span></div>
+                  <p class="hint">A downloaded file may need additional models or a compatible workflow.</p><a class="edtool sm" id="catalogModelPage" target="_blank" rel="noreferrer">Open model and terms</a><label class="catalog-consent"><input type="checkbox" id="catalogAccept"> I reviewed the model terms and compatibility.</label>
+                  <p class="hint" id="catalogDestination"></p><p class="hint">Your saved provider key is sent to your worker for this transfer only.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to RunPod</button><p class="hint" id="catalogInstallState" role="status"></p>
+                </section>
+                <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Models on RunPod</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Deleting a model may affect workflows that use it.</p><div id="catalogDiskList"></div></section>
+                <section id="catalogTransfers" hidden><h4>Downloads on RunPod</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
+              </details>
             <div id="cloudSetupAI" hidden>
               <div id="cloudAutomaticInstall" hidden>
                 <h4>Install AI</h4>
@@ -5671,6 +5688,12 @@
 
       <!-- Your own ComfyUI graphs. The built-ins are the tuned ones, so this
            sits near the end and stays quiet unless the folder has something. -->
+      <section class="pcard" id="set-model-connections" data-nav="Model connections">
+        <h3>Model connections</h3><p class="pcard-sub">Optional read keys for Hugging Face and Civitai downloads.</p>
+        <form data-model-key="huggingface"><label class="flabel" for="catalogHfKey">Hugging Face read token</label><input class="line" id="catalogHfKey" type="password" autocomplete="new-password" placeholder="hf_…"><div class="cta"><button class="edtool sm" type="submit">Save key</button><button class="edtool sm" data-model-forget="huggingface" type="button">Forget key</button><a class="edtool sm" href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Get a read token</a><span class="chip" data-model-key-status="huggingface">Not saved</span></div></form>
+        <form data-model-key="civitai"><label class="flabel" for="catalogCivitaiKey">Civitai API key</label><input class="line" id="catalogCivitaiKey" type="password" autocomplete="new-password" placeholder="Paste your Civitai key"><div class="cta"><button class="edtool sm" type="submit">Save key</button><button class="edtool sm" data-model-forget="civitai" type="button">Forget key</button><a class="edtool sm" href="https://civitai.com/user/account" target="_blank" rel="noreferrer">Get a key</a><span class="chip" data-model-key-status="civitai">Not saved</span></div></form>
+        <p class="hint" id="catalogKeyState" role="status">Keys are kept in AIPLAY's existing secure store.</p>
+      </section>
       <section class="pcard" id="set-workflows" data-nav="Workflows">
         <h3>Custom ComfyUI workflows <em class="sp" id="wfCount"></em></h3>
         <p class="pcard-sub">Drop <b>API-format</b> graphs into <code id="wfDir"></code> and pick one here. Studio only fills in the placeholders.</p>
@@ -6122,6 +6145,7 @@
      runpod ids and intercepts Make / Render in the capture phase in that mode. -->
 <script type="module" src="runpod-integrated.js"></script>
 <script type="module" src="cloud-computer.js"></script>
+<script type="module" src="model-browser.js"></script>
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
 <script type="module" src="receipt.js"></script>

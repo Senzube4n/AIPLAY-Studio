@@ -12,7 +12,7 @@ Real A40 acceptance created one approved computer, installed the worker, downloa
 
 The original host subsequently refused restart because its GPUs were busy. No replacement, termination or storage deletion was attempted. Compute is stopped; the observed compute estimate was about $0.16, separate from provider-reported billing, with persistent storage estimated at $20/month while stopped. Restart persistence, music, job cancellation, disconnect during active generation, finish-before-stop and remote idle shutdown still require hardware acceptance. Video additionally requires approved gated model access.
 
-A provider model/LoRA browser is a follow-up, not part of this change. The proposed location is Install AI, with provider credentials in Settings connections, compatibility and licence review, storage checks, direct remote downloads and cancellation. Provider API support must be verified before implementation.
+The subsequent model-browser update implements live Hugging Face and Civitai galleries under Install AI, local vault-backed Model connections, exact file/licence review, direct worker downloads with checksums and safe redirects, persisted transfer identity, cancellation and an On RunPod inventory with reviewed single-file deletion. Public search/file metadata was checked live for both providers. Tiny offline fixtures verify actual destination bytes, restart discovery, credential redaction, checksum failure, redirect restrictions, deletion confirmation, active-work refusal, changed-file refusal and traversal. Real paid downloads/deletions were not performed. An existing worker must be updated before these controls are usable; this desktop change does not mutate billable infrastructure.
 
 ## Integration
 

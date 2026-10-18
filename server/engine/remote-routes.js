@@ -12,6 +12,7 @@ import { qwenImageGraph } from "../qwen-image.js";
 import { createRunpodV2 } from "./runpod-v2.js";
 import { createCloudComputer } from "./cloud-computer.js";
 import { createAutomaticInstaller } from './runpod-install.js';
+import { MODEL_PROVIDERS, searchCatalog, catalogFiles } from './model-catalog.js';
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
@@ -56,7 +57,45 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       /* The Pod's install command, pinned to this Studio's commit
        * (runpod-bootstrap.js). Read by the setup window; never a branch. */
-      if (url.pathname === '/api/runpod/goal') {
+      if (url.pathname.startsWith('/api/runpod/catalog/')) {
+        const route = url.pathname.slice('/api/runpod/catalog/'.length);
+        if (route === 'disk' && req.method === 'GET') sendJSON(res,200,await (await client()).modelDisk());
+        else if (['disk/review','disk/delete'].includes(route) && req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          const state = await (await computer()).refresh();
+          if (state.providerUncertain || state.pod?.status !== 'RUNNING' || state.operation) throw Error('Connect an idle running computer before changing model files.');
+          sendJSON(res,200,await (await client()).modelDisk(route.split('/')[1],b));
+        }
+        else if (route === 'connections' && req.method === 'GET') {
+          const configured = {};
+          for (const [p,key] of Object.entries(MODEL_PROVIDERS)) configured[p] = !!await getSecret(key);
+          sendJSON(res, 200, { configured });
+        } else if (route === 'connections' && req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          if (!Object.hasOwn(MODEL_PROVIDERS, b.provider)) throw Error('Choose a model provider.');
+          if (b.remove === true) await clearSecret(MODEL_PROVIDERS[b.provider]);
+          else {
+            const key = String(b.key || '').trim();
+            if (key.length < 10 || key.length > 500 || /[^A-Za-z0-9_.-]/.test(key) || b.provider === 'huggingface' && !key.startsWith('hf_')) throw Error('Enter a valid provider read key.');
+            await setSecret(MODEL_PROVIDERS[b.provider], key);
+          }
+          sendJSON(res, 200, { saved: b.remove !== true });
+        } else if (['search','files'].includes(route) && req.method === 'GET') {
+          const input = Object.fromEntries(url.searchParams);
+          if (!Object.hasOwn(MODEL_PROVIDERS, input.provider)) throw Error('Choose a model provider.');
+          const token = await getSecret(MODEL_PROVIDERS[input.provider]);
+          sendJSON(res, 200, await (route === 'search' ? searchCatalog : catalogFiles)(input, { token, fetchFn }));
+        } else if (route === 'install' && req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          if (b.acceptLicense !== true) throw Error('Review and accept the model terms first.');
+          if (!Object.hasOwn(MODEL_PROVIDERS, b.selection?.provider)) throw Error('Choose a model provider.');
+          const manager = await computer(), state = await manager.refresh();
+          if (state.pod?.status !== 'RUNNING' || state.providerUncertain || !state.worker?.connectionReady || state.operation) throw Error('Start and connect your cloud computer before downloading.');
+          const token = await getSecret(MODEL_PROVIDERS[b.selection.provider]);
+          sendJSON(res, 202, await (await client()).installCatalog(b.selection, true, b.expected, token));
+        } else sendJSON(res, 405, { error: 'Unsupported model browser request.' });
+      }
+      else if (url.pathname === '/api/runpod/goal') {
         if (req.method === 'GET') sendJSON(res, 200, { goal: config.cloudSetup?.goal || 'all' });
         else if (req.method === 'POST') {
           const b = JSON.parse((await readBody(req)).toString('utf8'));

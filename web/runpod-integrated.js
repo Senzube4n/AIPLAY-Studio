@@ -98,6 +98,7 @@ function renderSetup(data) {
   const list = $("runpodModelList");
   list.replaceChildren();
   for (const bundle of data.bundles || []) {
+    if (bundle.external) continue;
     const row = document.createElement("div"); row.className = "runpod-model"; row.dataset.bundle = bundle.id;
     const name = document.createElement("b"); name.textContent = bundle.label;
     const button = document.createElement("button"); button.type = "button"; button.className = "btn sm";

@@ -79,3 +79,74 @@ test("curated model install resumes its own partial with a Range request", async
   assert.equal(range, "bytes=4-");
   assert.deepEqual(await readFile(finalFile), body);
 });
+
+import { searchCatalog, catalogFiles, resolveCatalogFile, fetchModelFile } from '../server/engine/model-catalog.js';
+import { createModelDisk } from './model-disk.js';
+import { symlink, stat } from 'node:fs/promises';
+const sample = Buffer.from('verified-model-file'), sampleHash = createHash('sha256').update(sample).digest('hex');
+const hfInfo = { sha: 'a'.repeat(40), cardData: { license: 'mit' }, siblings: [{ rfilename: 'model.safetensors', lfs: { size: sample.length, sha256: sampleHash } }, { rfilename: 'unsafe.py' }] };
+const chosen = { provider: 'huggingface', id: 'test/model', file: 'model.safetensors', folder: 'loras' };
+const expectedFile = { bytes: sample.length, sha256: sampleHash };
+
+test('catalog accepts pinned SafeTensors metadata and rejects arbitrary providers, URLs and destinations', async () => {
+  const options = { fetchFn: async () => Response.json(hfInfo) };
+  const d = await catalogFiles(chosen,options); assert.equal(d.files.length,1);
+  const b = await resolveCatalogFile(chosen,options); assert.match(b.files[0].relative,/^loras\/aiplay_[a-f0-9]{12}_model.safetensors$/);
+  assert.match(b.files[0].url,/resolve\/[a-f0-9]{40}\//);
+  for (const bad of [{provider:'evil'}, {...chosen,id:'../etc'}, {...chosen,folder:'../output'}, {...chosen,file:'unsafe.py'}]) await assert.rejects(resolveCatalogFile(bad,options));
+});
+test('catalog search keeps descriptions as text and only accepts provider preview hosts', async () => {
+  const data = await searchCatalog({provider:'civitai',type:'lora'}, {fetchFn: async u => {
+    assert.equal(new URL(u).searchParams.get('nsfw'),'false');
+    return Response.json({items:[{id:1,name:'Example',description:'<script>bad()</script><b>Style</b>',modelVersions:[{id:2,images:[{url:'http://127.0.0.1/private',nsfwLevel:1}]}]}]});
+  }});
+  assert.equal(data.items[0].image,null); assert.doesNotMatch(data.items[0].purpose,/<|>/);
+});
+test('Civitai file review retains exact file selector and SHA while dropping token query fields', async () => {
+  const b = await resolveCatalogFile({provider:'civitai',id:'1',version:'2',file:'3',folder:'checkpoints'}, {fetchFn: async () => Response.json({modelVersions:[{id:2,files:[{id:3,name:'model.safetensors',sizeKB:sample.length/1024,hashes:{SHA256:sampleHash},downloadUrl:'https://civitai.com/api/download/models/2?fileId=3&token=not-saved'}]}]})});
+  assert.match(b.files[0].url,/fileId=3/); assert.doesNotMatch(JSON.stringify(b),/not-saved|token=/);
+});
+test('download redirects drop authentication and refuse arbitrary network hosts', async () => {
+  let calls=0;
+  const r = await fetchModelFile('https://huggingface.co/test/model/resolve/a/model.safetensors',{headers:{Authorization:'Bearer only-provider'},signal:AbortSignal.timeout(5000)},async (u,i) => {
+    calls++; if(calls===1){assert.equal(i.headers.Authorization,'Bearer only-provider');return new Response(null,{status:302,headers:{location:'https://us.aws.cdn.hf.co/file'}});}
+    assert.equal(i.headers.Authorization,undefined);return new Response(sample);
+  }); assert.equal(await r.text(),sample.toString());
+  await assert.rejects(fetchModelFile('https://huggingface.co/file',{headers:{}},async()=>new Response(null,{status:302,headers:{location:'http://127.0.0.1/private'}})),/unsupported host/);
+});
+test('catalog download writes only to worker models, persists identity and preserves other assets', async t => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'aiplay-catalog-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const fetchFn=async u=>u.includes('/api/models/')?Response.json(hfInfo):new Response(sample);
+  const manager=await createModelManager({modelsDir:root,bundles:{},fetchFn});
+  await assert.rejects(manager.installCatalog(chosen,false,expectedFile),/terms/);
+  await assert.rejects(manager.installCatalog(chosen,true,{...expectedFile,sha256:'0'.repeat(64)}),/changed/);
+  await writeFile(path.join(root,'user-asset.txt'),'keep');
+  await manager.installCatalog(chosen,true,expectedFile,'hf_testTokenOnlyInMemory');
+  const state=await waitFor(manager);assert.equal(state.bundles[0].state,'ready');
+  const entries=JSON.parse(await readFile(path.join(root,'.aiplay-catalog.json'),'utf8'));
+  const b=Object.values(entries)[0];assert.deepEqual(await readFile(path.join(root,b.files[0].relative)),sample);
+  assert.doesNotMatch(JSON.stringify(entries),/hf_test/);assert.equal(await readFile(path.join(root,'user-asset.txt'),'utf8'),'keep');
+  const restart=await createModelManager({modelsDir:root,bundles:{},fetchFn});assert.equal(restart.status().bundles[0].state,'ready');
+  await assert.rejects(restart.install(b.id,true),/model browser/);
+});
+test('catalog checksum failure never installs an unverified model', async t => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'aiplay-bad-catalog-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const manager=await createModelManager({modelsDir:root,bundles:{},fetchFn:async u=>u.includes('/api/models/')?Response.json(hfInfo):new Response(Buffer.alloc(sample.length))});
+  await manager.installCatalog(chosen,true,expectedFile);const state=await waitFor(manager);assert.equal(state.bundles[0].state,'failed');
+  const b=Object.values(JSON.parse(await readFile(path.join(root,'.aiplay-catalog.json'),'utf8')))[0]; await assert.rejects(stat(path.join(root,b.files[0].relative)),/ENOENT/);
+});
+test('disk deletion requires review and confirmation, refuses active work, changed files and traversal', async t => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'aiplay-model-disk-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  await mkdir(path.join(root,'loras'));const target=path.join(root,'loras/example.safetensors');await writeFile(target,sample);
+  let active=false, removed=null;
+  const disk=createModelDisk({modelsDir:root,assertIdle:async()=>{if(active)throw Error('active work');},removed:r=>removed=r});
+  assert.equal((await disk.list()).files.length,1);
+  await assert.rejects(disk.review('../outside.safetensors'));
+  const p=await disk.review('loras/example.safetensors');await assert.rejects(disk.remove({id:p.id}),/confirm/);
+  active=true;await assert.rejects(disk.remove({id:p.id,confirm:'DELETE MODEL FILE'}),/active work/);active=false;
+  const changed=await disk.review('loras/example.safetensors');await writeFile(target,'changed');
+  await assert.rejects(disk.remove({id:changed.id,confirm:'DELETE MODEL FILE'}),/changed/);assert.equal(await readFile(target,'utf8'),'changed');
+  const approved=await disk.review('loras/example.safetensors');await disk.remove({id:approved.id,confirm:'DELETE MODEL FILE'});
+  assert.equal(removed,'loras/example.safetensors');await assert.rejects(stat(target),/ENOENT/);
+  await assert.rejects(disk.remove({id:approved.id,confirm:'DELETE MODEL FILE'}),/review/i);
+});

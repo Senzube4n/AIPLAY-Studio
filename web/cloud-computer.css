@@ -2,6 +2,36 @@
 #set-hosted > .cloud-option { border: 1px solid var(--edge); border-radius: 12px; padding: 0 16px; margin-top: 12px; }
 #set-hosted > .cloud-option > summary { cursor: pointer; padding: 16px 0; color: var(--ink); font-weight: 600; }
 #set-hosted > .cloud-option[open] { padding-bottom: 16px; }
+#cloudModelBrowser { margin: 18px 0; padding: 16px; border: 1px solid var(--edge); border-radius: 12px; background: var(--panel); }
+#cloudModelBrowser .catalog-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:18px 0; }
+#cloudModelBrowser .catalog-heading h3 { margin:5px 0; font-size:1.4rem; }
+#cloudModelBrowser .catalog-eyebrow { color:var(--primary); letter-spacing:.15em; font-size:.65rem; }
+#cloudModelBrowser .catalog-tabs { display:flex; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--edge); padding-bottom:12px; }
+#cloudModelBrowser .catalog-tabs [aria-pressed="true"] { border-color:var(--primary); color:var(--primary); background:var(--raise); }
+#cloudModelBrowser .catalog-search { display:flex; gap:8px; }
+#cloudModelBrowser .catalog-search input { flex:1; min-width:0; }
+#cloudModelBrowser .catalog-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
+#cloudModelBrowser .catalog-filters label { display:grid; gap:6px; color:var(--dim); font-size:.75rem; }
+#cloudModelBrowser .catalog-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin-top:18px; }
+#cloudModelBrowser .catalog-card { display:block; padding:0; text-align:left; border:1px solid var(--edge); border-radius:12px; overflow:hidden; color:var(--ink); background:var(--raise); cursor:pointer; font:inherit; min-width:0; }
+#cloudModelBrowser .catalog-card:hover, #cloudModelBrowser .catalog-card:focus-visible { border-color:var(--primary); }
+#cloudModelBrowser .catalog-art { aspect-ratio:4/3; position:relative; background:linear-gradient(135deg,var(--raise),color-mix(in srgb,var(--primary) 18%,var(--panel))); }
+#cloudModelBrowser .catalog-art img { width:100%; height:100%; object-fit:cover; display:block; }
+#cloudModelBrowser .catalog-kind { position:absolute; top:10px; left:10px; padding:4px 8px; border-radius:6px; background:var(--panel); font-size:.65rem; }
+#cloudModelBrowser .catalog-copy { display:grid; gap:7px; padding:13px; overflow-wrap:anywhere; }
+#cloudModelBrowser .catalog-author, #cloudModelBrowser .catalog-copy small { color:var(--dim); font-size:.7rem; }
+#cloudModelBrowser .catalog-copy strong { font-size:.9rem; }
+#cloudModelBrowser .catalog-copy .hint { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#cloudModelBrowser .catalog-detail { border:1px solid var(--primary); border-radius:12px; padding:16px; margin-top:18px; overflow-wrap:anywhere; scroll-margin-top:150px; }
+#cloudModelBrowser .catalog-consent { display:flex; gap:8px; margin:16px 0; font-size:.8rem; }
+#cloudModelBrowser .catalog-disk-row, #cloudModelBrowser .catalog-transfer { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 0; border-bottom:1px solid var(--edge); overflow-wrap:anywhere; }
+#cloudModelBrowser .catalog-disk-row > div { min-width:0; display:grid; gap:6px; }
+#cloudModelBrowser .catalog-transfer { display:grid; }
+#cloudModelBrowser progress { width:100%; accent-color:var(--primary); }
+#cloudModelBrowser .params select { max-width:100%; }
+#set-model-connections form { margin:20px 0; display:grid; gap:10px; }
+#set-model-connections .cta { display:flex; gap:8px; flex-wrap:wrap; }
+@media(max-width:550px) { #cloudModelBrowser .catalog-grid, #cloudModelBrowser .catalog-filters { grid-template-columns:1fr; } }
 #cloudSetup .cloud-flow-head, #cloudSetup .cloud-flow-states { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 #cloudSetup .cloud-flow-head h4 { margin: 0; }
 #cloudSetup .cloud-goals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; padding: 0; margin: 16px 0; }
