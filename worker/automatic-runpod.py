@@ -79,6 +79,17 @@ def install_node(base, run):
     return node
 
 
+def install_studio_nodes(source, comfy, node, run):
+    # Reuse the normal engine's node deployment, including its opt-in rules.
+    # This source and ComfyUI checkout are both pinned, dedicated installations.
+    run([str(node), "--input-type=module", "-e",
+         "import {pathToFileURL} from 'node:url'; "
+         "const {deployStudioNodes}=await import(pathToFileURL(process.argv[1]).href); "
+         "const result=deployStudioNodes(process.argv[2]); "
+         "console.log('AIPLAY nodes deployed:', result.copied.length, 'copied,', result.kept.length, 'kept');",
+         str(source / "server" / "comfy_nodes.js"), str(comfy / "custom_nodes")])
+
+
 def main():
     repo, commit, token = checked_environment(os.environ)
     pod_id = os.environ.get("RUNPOD_POD_ID", "")
@@ -143,6 +154,7 @@ def main():
                 run(["python", "-m", "venv", "--system-site-packages", str(venv)])
             python = venv / "bin" / "python"
             run([str(python), "-m", "pip", "install", "-r", str(comfy / "requirements.txt")])
+            install_studio_nodes(source, comfy, node, run)
             models = BASE / "models"
             models.mkdir(exist_ok=True)
             # A separate model root survives code upgrades and container restarts.
