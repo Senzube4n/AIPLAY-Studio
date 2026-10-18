@@ -1,6 +1,18 @@
 # Cloud Computer implementation report
 
-Status: implementation and automated/simulated validation published to the Nemesis fork. Final acceptance on real GPU hardware awaits a suitable test computer. No real RunPod resources were created, started, stopped, resized, terminated or deleted during development.
+Status: implementation is published to the Nemesis fork; real GPU acceptance is partly complete. The 18 October record below supersedes the older acceptance and budget notes later in this report.
+
+## 18 October update
+
+The live Settings panel now implements the earlier four-tab concept: Your goal, Costs, Install AI and Ready. Goal selection is a local persisted preference behind the existing same-origin JSON guard. Tabs reuse the mounted credential, creation, model and shutdown forms. Three mutually exclusive native disclosures keep Ask a friend, Paid services and RunPod separate. More computer controls retains the detailed manager; Advanced setup remains visible.
+
+Ready requires the running provider state, worker readiness and every curated model bundle for the selected goal. Automatic-stop protection is checked separately. Try a sample fills an existing creation screen without submitting work. Stopped computers do not inherit an old install journal's connected status.
+
+Real A40 acceptance created one approved computer, installed the worker, downloaded SDXL Turbo, generated a 512-pixel image and verified its downloaded SHA-256. Idle stop confirmed provider EXITED while preserving storage. Desktop disconnection during installation recovered the same resource without duplicate creation. Invalid dummy credentials and real retained-host GPU unavailability were checked. The live test exposed missing first-party music nodes and a generic capacity error; both fixes were published.
+
+The original host subsequently refused restart because its GPUs were busy. No replacement, termination or storage deletion was attempted. Compute is stopped; the observed compute estimate was about $0.16, separate from provider-reported billing, with persistent storage estimated at $20/month while stopped. Restart persistence, music, job cancellation, disconnect during active generation, finish-before-stop and remote idle shutdown still require hardware acceptance. Video additionally requires approved gated model access.
+
+A provider model/LoRA browser is a follow-up, not part of this change. The proposed location is Install AI, with provider credentials in Settings connections, compatibility and licence review, storage checks, direct remote downloads and cancellation. Provider API support must be verified before implementation.
 
 ## Integration
 

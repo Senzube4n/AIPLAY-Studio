@@ -5298,10 +5298,10 @@
            comes first and is never hidden behind the switch. -->
       <section class="pcard" id="set-hosted" data-nav="No strong graphics card?">
         <h3>No strong graphics card?</h3>
-        <p class="pcard-sub">Two ways to make what this PC can't, in this order. Nothing here is on until you choose it.</p>
+        <p class="pcard-sub">Choose one way to create without a local graphics card.</p>
 
-        <div class="cloudstep" id="cloudFriend">
-          <h4><span class="cloudnum">1</span> Ask a friend with a strong card to render for you</h4>
+        <details class="cloudstep cloud-option" name="cloud-choices" id="cloudFriend">
+          <summary><span class="cloudnum">1</span> Ask a friend</summary>
           <p class="hint" id="cloudFriendHow">Free: a friend with a strong card renders your music video's scenes
             on their PC.</p>
           <p class="hint" id="cloudFriendNote" hidden></p>
@@ -5309,10 +5309,10 @@
           <details class="more" id="cloudFriendMore"><summary>More: setting it up, and what it cannot do yet</summary>
             <p class="hint" id="cloudFriendLimits">Both of you run Full Studio and add each other once on Collab.</p>
           </details>
-        </div>
+        </details>
 
-        <div class="cloudstep" id="cloudPaid">
-          <h4><span class="cloudnum">2</span> Or pay for a service with your own key</h4>
+        <details class="cloudstep cloud-option" name="cloud-choices" id="cloudPaid">
+          <summary><span class="cloudnum">2</span> Paid services</summary>
           <p class="hint" id="cloudPaidHow">Off until you switch it on. Every paid run asks first and says what it
             costs. Studio uses only a key typed into Studio, never one from another program.</p>
 
@@ -5367,25 +5367,37 @@
           <p class="hint" id="cloudComfyNote">It runs in the launcher's own <b>Use Comfy API</b> mode, outside a music video.</p>
           <p class="hint">Get a key and credits at
             <a href="https://platform.comfy.org/profile/api-keys" target="_blank" rel="noopener">platform.comfy.org</a>.</p>
-        </div>
+        </details>
 
-        <div id="set-runpod" class="cloudstep">
-          <h4>RunPod GPU</h4>
+        <details id="set-runpod" class="cloudstep cloud-option" name="cloud-choices">
+          <summary><span class="cloudnum">3</span> RunPod GPU</summary>
           <p class="hint">One worker connection for music, pictures and video.</p>
           <p class="hint" id="runpodModeHint">Open RunPod GPU from the launcher to configure your worker and account.</p>
           <div id="cloudSetup" hidden>
-            <h4>Easy Cloud Setup</h4>
-            <p class="hint">Connect once for music, pictures and video.</p>
+            <div class="cloud-flow-head"><h4>Easy Cloud Setup</h4><span class="chip" id="cloudFlowAccount">Checking account</span></div>
             <div class="cta">
               <button class="edtool sm" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button>
               <span class="hint">Manual connection and AI service installation.</span>
             </div>
-            <ol class="cloud-setup-steps" aria-label="Cloud setup progress">
-              <li data-cloud-step="1">1. Account</li><li data-cloud-step="2">2. Computer</li>
-              <li data-cloud-step="3">3. AI</li><li data-cloud-step="4">4. Automatic stop</li>
-            </ol>
+            <nav class="cloud-setup-steps" role="tablist" aria-label="Cloud setup">
+              <button class="edtool sm" id="cloudFlowGoalTab" role="tab" aria-controls="cloudFlowGoal" data-cloud-page="goal" type="button">1. Your goal</button>
+              <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">2. Costs</button>
+              <button class="edtool sm" id="cloudFlowInstallTab" role="tab" aria-controls="cloudFlowInstall" data-cloud-page="install" type="button">3. Install AI</button>
+              <button class="edtool sm" id="cloudFlowReadyTab" role="tab" aria-controls="cloudFlowReady" data-cloud-page="ready" type="button">4. Ready</button>
+            </nav>
             <span id="cloudSetupStatus" class="chip busy" role="status">Checking setup</span>
             <p class="hint" id="cloudSetupHint"></p>
+            <p class="hint warnhint" id="cloudFlowIssue" role="status" hidden></p>
+            <section id="cloudFlowGoal" role="tabpanel" aria-labelledby="cloudFlowGoalTab">
+              <h3>What will you create?</h3>
+              <fieldset class="cloud-goals"><legend>Choose your goal</legend>
+                <label><input type="radio" name="cloud-goal" value="music"> Music</label>
+                <label><input type="radio" name="cloud-goal" value="pictures"> Pictures</label>
+                <label><input type="radio" name="cloud-goal" value="video"> Video</label>
+                <label><input type="radio" name="cloud-goal" value="all" checked> All three</label>
+              </fieldset>
+              <p class="hint" id="cloudFlowGoalNote">One connection for music, pictures and video.</p>
+              <details class="more" id="cloudFlowAccountDetails" open><summary>Connect account</summary>
             <div id="cloudSetupAccount" hidden>
               <div id="cloudSetupAccountFields"></div>
               <details class="more"><summary>Where do I get the key?</summary>
@@ -5395,12 +5407,28 @@
                 <a class="edtool sm" href="https://docs.runpod.io/get-started/credentials" target="_blank" rel="noreferrer">RunPod key guide</a>
               </details>
             </div>
+              </details>
+              <div class="cta"><button class="btn sm" id="cloudFlowGoalNext" type="button" disabled>Continue to costs</button></div>
+            </section>
+            <section id="cloudFlowCosts" role="tabpanel" aria-labelledby="cloudFlowCostsTab" hidden>
+              <h3>Review your costs</h3>
+              <div class="cloud-flow-box params">
+                <label>computing</label><span class="pv" id="cloudFlowCostRate">Choose a computer below</span>
+                <label>saved storage</label><span class="pv" id="cloudFlowCostStorage">Shown before approval</span>
+                <label>session estimate</label><span class="pv" id="cloudFlowCostSession">Not started</span>
+              </div>
+              <p class="hint">GPU rental runs during setup; saved storage stays billed after stopping.</p>
             <div id="cloudSetupComputer" hidden>
               <div id="cloudSetupComputerFields"></div>
               <p class="hint" id="cloudSetupNoComputer" hidden>No cloud computer yet. Create one below to continue.</p>
               <button class="edtool sm" id="cloudSetupProvision" type="button" aria-controls="cloudSetupCreateFields" aria-expanded="false">Create cloud computer</button>
               <div id="cloudSetupCreateFields" hidden></div>
             </div>
+              <div class="cta"><button class="btn sm" id="cloudFlowCostStart" type="button" hidden>Review start price</button>
+                <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to AI</button></div>
+            </section>
+            <section id="cloudFlowInstall" role="tabpanel" aria-labelledby="cloudFlowInstallTab" hidden>
+              <h3>Set up your AI</h3>
             <div id="cloudSetupAI" hidden>
               <div id="cloudAutomaticInstall" hidden>
                 <h4>Install AI</h4>
@@ -5422,6 +5450,9 @@
               </details>
             </div>
             <div id="cloudSetupProtection" hidden>
+              <h4>Automatic stop</h4>
+              <p class="hint">A separate shutdown key keeps protection working after AIPLAY closes.</p>
+              <div id="cloudFlowIdleFields" class="params"></div>
               <div id="cloudSetupProtectionFields"></div>
               <div class="cta"><button class="edtool sm" id="cloudSetupSkipProtection" type="button">Keep running when closed</button></div>
               <details class="more"><summary>Why another key?</summary>
@@ -5429,6 +5460,25 @@
                   Give it permission to read and stop computers; its provider permissions may cover other computers in your account.</p>
               </details>
             </div>
+              <div class="cta"><button class="btn sm" id="cloudFlowInstallNext" type="button" disabled>Continue to Ready</button></div>
+            </section>
+            <section id="cloudFlowReady" role="tabpanel" aria-labelledby="cloudFlowReadyTab" hidden>
+              <h3 id="cloudFlowReadyTitle">Your cloud computer</h3>
+              <p class="hint" id="cloudFlowReadyGoal"></p>
+              <div class="cloud-flow-states"><span class="chip" id="cloudFlowProvider" role="status">Checking computer</span><span class="chip" id="cloudFlowAI" role="status">Checking AI</span></div>
+              <div class="cloud-flow-box params">
+                <label>computing</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
+                <label>automatic stop</label><span class="pv" id="cloudFlowReadyStop">Needs setup</span>
+                <label>your saved files</label><span class="pv" id="cloudFlowReadyFiles">Not checked</span>
+                <label>storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
+              </div>
+              <div class="cta"><button class="btn sm" id="cloudFlowSample" type="button" disabled>Try a sample</button>
+                <button class="btn sm" id="cloudFlowReadyStart" type="button" hidden>Start computer</button>
+                <button class="edtool sm" id="cloudFlowReadyStopButton" type="button" hidden>Stop computer</button>
+                <button class="edtool sm" id="cloudFlowRepair" type="button">Set up AI</button></div>
+              <p class="hint" id="cloudFlowSampleHint">Review the sample in its creation screen, then press Make.</p>
+              <p class="hint">Stopping computing keeps saved storage and its charges.</p>
+            </section>
             <details class="more" id="cloudSetupEdit" hidden><summary>Change setup</summary>
             <div class="cta"><button class="edtool sm" id="cloudSetupEditAccount" type="button" hidden>Change account</button>
               <button class="edtool sm" id="cloudSetupChoose" type="button" hidden>Choose another computer</button>
@@ -5437,6 +5487,7 @@
               <button class="edtool sm" id="cloudSetupReturn" type="button" hidden>Done editing</button></div>
             </details>
           </div>
+          <details class="more" id="cloudFlowDetails" hidden><summary>More computer controls</summary>
           <div id="cloudComputer" hidden>
             <h4>Cloud Computer</h4>
             <div class="params" id="cloudComputerChoice">
@@ -5523,6 +5574,7 @@
               <pre id="cloudComputerDiagnostics"></pre>
             </details>
           </div>
+          </details>
           <details class="more" id="cloudComputerConnection" hidden><summary>Advanced setup</summary>
           <div class="cta"><button class="edtool sm" id="cloudSetupBack" type="button">Back to guided setup</button></div>
           <div id="runpodConnection" hidden class="runpod-settings">
@@ -5614,7 +5666,7 @@
 
           </div>
           </details>
-        </div>
+        </details>
       </section>
 
       <!-- Your own ComfyUI graphs. The built-ins are the tuned ones, so this

@@ -6,10 +6,48 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
-import { imageWorkflowOptions, modelChoices, videoWorkflowOptions } from "../../web/runpod-integrated.js";
+import { imageWorkflowOptions, modelChoices, videoWorkflowOptions, prepareCloudSample } from "../../web/runpod-integrated.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts) => readFileSync(path.join(ROOT, ...parts), "utf8");
+
+test('beginner readiness requires every selected model and a verified running worker', () => {
+  const js = read('web', 'cloud-computer.js');
+  const source = js.slice(js.indexOf('export function cloudGoalReady'), js.indexOf('function chooseFlow')).replaceAll('export ', '');
+  const { cloudGoalReady: ready, cloudFlowPage: page } = runInNewContext(source + '\n({cloudGoalReady, cloudFlowPage})');
+  const state = { podId: 'one', pod: { status: 'RUNNING' }, worker: { connectionReady: true, generationReady: true } };
+  const image = [{ id: 'sdxl-turbo', state: 'ready' }];
+  assert.equal(ready(state, 'pictures', image), true);
+  assert.equal(ready(state, 'all', image), false);
+  assert.equal(ready(state, 'video', image), false);
+  const all = [...image, { id: 'yue2-comfy', state: 'ready' }, { id: 'ltx25', state: 'ready' }];
+  assert.equal(ready(state, 'all', all), true);
+  for (const s of [{ ...state, providerUncertain: true }, { ...state, operation: { type: 'stop' } },
+    { ...state, pod: { status: 'EXITED' } }, { ...state, worker: { ...state.worker, frozen: true } },
+    { ...state, worker: { ...state.worker, generationReady: false } }]) assert.equal(ready(s, 'all', all), false);
+  assert.equal(page(null, false, false, 'ready'), 'goal');
+  assert.equal(page(state, false, true, 'ready'), 'goal');
+  assert.equal(page({}, true, false, 'install'), 'costs');
+  assert.equal(page(state, true, false, null), 'install');
+  assert.equal(page(state, true, true, null), 'ready');
+  assert.equal(page(state, true, true, 'costs'), 'costs');
+});
+
+test('sample fills existing inputs and navigates without submitting a generation', () => {
+  for (const goal of ['pictures', 'music', 'video', 'all']) {
+    const inputs = new Map(), navigation = [];
+    const doc = { getElementById: id => {
+      if (!inputs.has(id)) inputs.set(id, { value: '', options: [], dispatchEvent() {}, focus() {} });
+      return inputs.get(id);
+    }, querySelector: selector => ({ click: () => navigation.push(selector) }) };
+    const result = prepareCloudSample(goal, doc);
+    assert.equal(navigation.length, 1);
+    assert.match(navigation[0], /\.rail \[data-view=/);
+    assert.equal(result, goal === 'all' ? 'pictures' : goal);
+    assert.equal([...inputs.keys()].some(id => /make|generate|submit/i.test(id)), false);
+    if (result === 'pictures') { assert.equal(inputs.get('imgW').value, '512'); assert.equal(inputs.get('imgCount').value, '1'); }
+  }
+});
 
 test("the Images and Video screens carry the RunPod controls (shown in RunPod GPU mode only)", () => {
   const html = read("web", "index.html");

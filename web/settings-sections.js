@@ -100,6 +100,8 @@ export function mountSettingsSections(nav) {
 
 /** Reveal a control's Settings topic before a shortcut scrolls or focuses it. */
 export function revealSetting(target) {
+  const choice = target?.closest?.('details[name="cloud-choices"]');
+  if (choice) choice.open = true;
   const nav = target?.closest?.('#settings')?.querySelector(selector);
   if (!nav) return;
   mountSettingsSections(nav);

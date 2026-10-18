@@ -5,6 +5,7 @@ const bytes = value => Number.isFinite(value) ? `${(value / 1e9).toFixed(2)} GB`
 let current = null, working = false, activeAction = '';
 let accountConfigured = false, setupOverride = null;
 let automaticInstall = null, installationPolling = false;
+let cloudGoal = 'all', flowPage = null, flowModels = null, modelsPolling = false, modelsCheckedAt = 0;
 async function refreshAutomaticInstall() {
   if (installationPolling) return;
   installationPolling = true;
@@ -24,9 +25,11 @@ function paintAutomaticInstall(info) {
   const managed = info.phase !== 'none' && (!current?.podId || current.podId === info.podId);
   $('cloudAutomaticInstall').hidden = !managed;
   if (!managed) return;
+  const stopped = current?.podId === info.podId && current?.pod?.status === 'EXITED';
+  const online = !stopped && !current?.providerUncertain && info.workerConnected && current?.worker?.connectionReady;
   const names = { source: 'Downloading AIPLAY', runtime: 'Installing runtime', engine: 'Installing AI engine', dependencies: 'Installing dependencies', starting: 'Starting AI service', complete: 'AI service connected', failed: 'Installation needs attention' };
-  chip('cloudAutomaticStatus', names[info.stage] || (info.phase === 'uncertain' ? 'Checking creation result' : info.phase === 'stopped' ? 'Computer stopped' : 'Preparing AI installation'), info.workerConnected ? 'ok' : info.error ? 'warn' : 'busy');
-  $('cloudAutomaticHint').textContent = info.error || (info.workerConnected ? 'Choose the models you need below and review their licences.' : 'Rental is running during setup; installation continues if AIPLAY closes.');
+  chip('cloudAutomaticStatus', stopped ? 'Computer stopped' : info.workerConnected && !online ? 'Checking AI connection' : names[info.stage] || (info.phase === 'uncertain' ? 'Checking creation result' : info.phase === 'stopped' ? 'Computer stopped' : 'Preparing AI installation'), online ? 'ok' : info.error ? 'warn' : stopped ? '' : 'busy');
+  $('cloudAutomaticHint').textContent = stopped ? 'Start your computer to check its saved AI installation.' : info.error || (online ? 'Choose the models you need below and review their licences.' : 'Installation continues on the cloud computer while it is running.');
   if (!info.workerConnected && ['waiting', 'connecting', 'uncertain', 'creating', 'failed'].includes(info.phase)) $('cloudSetupWorkerFields').hidden = true;
   const done = info.workerConnected ? 3 : info.stage ? 1 : 0;
   [...$('cloudAutomaticSteps').children].forEach((row, index) => { row.style.color = index < done ? 'var(--ok)' : ''; });
@@ -45,10 +48,90 @@ export function cloudSetupStage(s, account, completed = false) {
 function setupSaved(id) {
   try { return localStorage.getItem(`aiplay:cloud-setup:${id}`) === 'complete'; } catch { return false; }
 }
+export function cloudGoalReady(s, goal, bundles = []) {
+  if (s?.providerUncertain || s?.pod?.status !== 'RUNNING' || !s.worker?.connectionReady || !s.worker?.generationReady
+    || s.operation || s.worker?.pending || s.worker?.frozen) return false;
+  const needed = { music: ['yue2-comfy'], pictures: ['sdxl-turbo'], video: ['ltx25'], all: ['yue2-comfy', 'sdxl-turbo', 'ltx25'] }[goal];
+  return !!needed && needed.every(id => bundles.some(b => b.id === id && b.state === 'ready'));
+}
+export function cloudFlowPage(s, account, ready, override) {
+  if (!account) return 'goal';
+  if (override === 'goal' || override === 'costs' || ['install', 'ready'].includes(override) && s?.podId) return override;
+  if (!s?.podId) return 'costs';
+  if (s.pod?.status === 'EXITED' || ready) return 'ready';
+  return 'install';
+}
+function chooseFlow(page) {
+  flowPage = page; setupOverride = null;
+  if ($('cloudFlowDetails')) $('cloudFlowDetails').open = false;
+  paintSetup(current);
+}
+function paintFlow(s) {
+  const account = accountConfigured && !['credentials_invalid', 'credentials_missing'].includes(s?.issue?.code);
+  const ready = account && cloudGoalReady(s, cloudGoal, flowModels && flowModels.podId === s?.podId ? flowModels.bundles : []);
+  const protectedStop = s?.idleMinutes === 0 || s?.worker?.authorized && s?.worker?.available;
+  const page = cloudFlowPage(s, account, ready && protectedStop, flowPage);
+  const names = { goal: 'Your goal', costs: 'Costs', install: 'Install AI', ready: 'Ready' };
+  const overridePage = { 1: 'goal', 2: 'costs', 3: 'install', 4: 'install' }[setupOverride];
+  const visible = account ? overridePage || page : 'goal';
+  for (const [key, id] of [['goal', 'Goal'], ['costs', 'Costs'], ['install', 'Install'], ['ready', 'Ready']]) {
+    $('cloudFlow' + id).hidden = key !== visible;
+    const button = $('cloudFlow' + id + 'Tab');
+    button.disabled = key !== 'goal' && !account || ['install', 'ready'].includes(key) && !s?.podId;
+    button.classList.toggle('active', key === visible); button.setAttribute('aria-selected', String(key === visible)); button.tabIndex = key === visible ? 0 : -1;
+  }
+  $('cloudSetupAccount').hidden = visible !== 'goal';
+  $('cloudSetupComputer').hidden = visible !== 'costs';
+  $('cloudSetupAI').hidden = visible !== 'install';
+  $('cloudSetupProtection').hidden = visible !== 'install' || !s?.podId;
+  $('cloudSetupModelFields').hidden = !s?.worker?.connectionReady;
+  $('cloudFlowDetails').hidden = !s?.podId;
+  chip('cloudFlowAccount', account ? 'Account connected' : 'Connect account', account ? 'ok' : '');
+  chip('cloudSetupStatus', names[visible], visible === 'ready' && ready && protectedStop ? 'ok' : '');
+  $('cloudSetupHint').textContent = visible === 'goal' ? 'Choose what you want to make, then connect your RunPod account.'
+    : visible === 'costs' ? 'Choose a computer and review its price before starting rental.'
+    : visible === 'install' ? 'Install your models and choose automatic shutdown.' : '';
+  $('cloudSetupHint').hidden = visible === 'ready';
+  const goalNames = { music: 'music', pictures: 'pictures', video: 'video', all: 'music, pictures and video' };
+  $('cloudFlowReadyGoal').textContent = `One connection for ${goalNames[cloudGoal]}.`;
+  $('cloudFlowGoalNote').textContent = { music: 'Installs the YuE2 music model.', pictures: 'Installs the SDXL Turbo picture model.',
+    video: 'LTX video needs model access approval and a Hugging Face read token.', all: 'Choose models for music, pictures and video; each download needs licence approval.' }[cloudGoal];
+  for (const radio of document.querySelectorAll('[name="cloud-goal"]')) radio.checked = radio.value === cloudGoal;
+  $('cloudFlowGoalNext').disabled = !account;
+  $('cloudFlowCostsNext').disabled = !s?.podId;
+  $('cloudFlowInstallNext').disabled = !(ready && protectedStop);
+  const stopped = s?.pod?.status === 'EXITED', pending = working || !!s?.operation || !!s?.providerUncertain;
+  const rate = s?.providerUncertain ? `${money(s?.pod?.cost)}/hour (last confirmed)` : stopped ? `${money(s?.pod?.cost)}/hour when running` : `${money(s?.pod?.cost)}/hour`;
+  $('cloudFlowCostRate').textContent = s?.podId ? rate : 'Choose a computer below';
+  $('cloudFlowCostStorage').textContent = s?.storage ? `${money(s.storage.monthlyRunning)}/month running; ${money(s.storage.monthlyStopped)}/month stopped` : 'Shown before approval';
+  $('cloudFlowCostSession').textContent = money(s?.spending?.sessionEstimate);
+  $('cloudFlowReadyRate').textContent = stopped ? 'GPU rental stopped' : rate;
+  $('cloudFlowReadyStorage').textContent = `${money(s?.storage?.monthlyCurrent)}/month estimated`;
+  $('cloudFlowReadyFiles').textContent = s?.inventory?.persistence?.verified ? 'Verified saved storage' : s?.storage?.allocatedGB ? `${s.storage.allocatedGB} GB saved storage` : 'Needs checking';
+  $('cloudFlowReadyStop').textContent = s?.idleMinutes === 0 ? 'Disabled' : `${s?.idleMinutes || 30} minutes · ${protectedStop ? 'Protected' : 'Needs setup'}`;
+  $('cloudFlowReadyTitle').textContent = ready && protectedStop ? "You're ready to create" : stopped ? 'Your computer is stopped' : 'Your cloud computer';
+  chip('cloudFlowProvider', s?.providerUncertain ? 'Status unavailable' : stopped ? 'Computer stopped' : s?.pod?.status === 'RUNNING' ? 'Computer running' : 'Checking computer', s?.pod?.status === 'RUNNING' ? 'ok' : '');
+  chip('cloudFlowAI', ready ? 'AI ready' : stopped ? 'AI offline' : s?.worker?.connectionReady ? 'Models need setup' : 'AI not ready', ready ? 'ok' : 'warn');
+  $('cloudFlowIssue').hidden = !s?.issue && !s?.providerUncertain;
+  $('cloudFlowIssue').textContent = s?.issue?.message || (s?.providerUncertain ? 'Check the computer status before making changes.' : '');
+  for (const id of ['cloudFlowCostStart', 'cloudFlowReadyStart']) { $(id).hidden = !stopped; $(id).disabled = pending; }
+  $('cloudFlowReadyStopButton').hidden = s?.pod?.status !== 'RUNNING'; $('cloudFlowReadyStopButton').disabled = pending;
+  $('cloudFlowSample').disabled = !(ready && protectedStop) || pending;
+  $('cloudFlowSampleHint').hidden = !(ready && protectedStop);
+  $('cloudFlowRepair').hidden = stopped || ready && protectedStop;
+  if (ready && protectedStop) { try { localStorage.setItem(`aiplay:cloud-setup:${s.podId}`, 'complete'); } catch {} }
+}
+async function refreshFlowModels() {
+  if (modelsPolling || !current?.worker?.connectionReady || Date.now() - modelsCheckedAt < 10000) return;
+  const podId = current.podId; modelsPolling = true; modelsCheckedAt = Date.now();
+  try {
+    const response = await fetch('/api/runpod/setup');
+    if (response.ok && current?.podId === podId) { flowModels = { podId, ...(await response.json()) }; paintSetup(current); }
+  } finally { modelsPolling = false; }
+}
 function paintSetup(s) {
   if (!$('cloudSetup') || $('cloudSetup').hidden) return;
   const inferred = cloudSetupStage(s, accountConfigured, setupSaved(s?.podId));
-  if (inferred === 5) { try { localStorage.setItem(`aiplay:cloud-setup:${s.podId}`, 'complete'); } catch {} }
   const step = setupOverride || inferred;
   for (const [n, id] of [[1, 'Account'], [2, 'Computer'], [3, 'AI'], [4, 'Protection']]) $('cloudSetup' + id).hidden = step !== n;
   for (const item of document.querySelectorAll('[data-cloud-step]')) {
@@ -92,6 +175,7 @@ function paintSetup(s) {
     $('cloudAutomaticInstall').hidden = false;
   }
   if (s?.pod?.workerUrl && document.activeElement !== $('runpodWorkerUrl')) $('runpodWorkerUrl').value = s.pod.workerUrl;
+  paintFlow(s);
 }
 async function checkSetupAccount() {
   try {
@@ -121,6 +205,32 @@ function returnToGuidedSetup() {
 }
 function mountSetup() {
   $('cloudSetup').hidden = false;
+  $('set-runpod').open = true;
+  for (const button of document.querySelectorAll('[data-cloud-page]')) button.addEventListener('click', () => chooseFlow(button.dataset.cloudPage));
+  $('cloudSetup').querySelector('[role="tablist"]').addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const buttons = [...document.querySelectorAll('[data-cloud-page]')].filter(button => !button.disabled);
+    const at = buttons.indexOf(event.target); if (at < 0) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (at + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].click(); buttons[next].focus();
+  });
+  $('cloudFlowGoalNext').addEventListener('click', () => chooseFlow('costs'));
+  $('cloudFlowCostsNext').addEventListener('click', () => chooseFlow('install'));
+  $('cloudFlowInstallNext').addEventListener('click', () => chooseFlow('ready'));
+  $('cloudFlowRepair').addEventListener('click', () => chooseFlow('install'));
+  for (const id of ['cloudFlowCostStart', 'cloudFlowReadyStart']) $(id).addEventListener('click', () => $('cloudComputerStart').click());
+  $('cloudFlowReadyStopButton').addEventListener('click', () => $('cloudComputerStop').click());
+  $('cloudFlowSample').addEventListener('click', () => { if (!$('cloudFlowSample').disabled) document.dispatchEvent(new CustomEvent('aiplay:cloud-sample', { detail: { goal: cloudGoal } })); });
+  for (const radio of document.querySelectorAll('[name="cloud-goal"]')) radio.addEventListener('change', async () => {
+    const previous = cloudGoal; cloudGoal = radio.value; paintSetup(current);
+    for (const input of document.querySelectorAll('[name="cloud-goal"]')) input.disabled = true;
+    try {
+      const response = await fetch('/api/runpod/goal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal: cloudGoal }) });
+      if (!response.ok) throw new Error('Your goal could not be saved. Try again.');
+    } catch (e) { cloudGoal = previous; paintSetup(current); $('cloudFlowGoalNote').textContent = e.message; }
+    finally { for (const input of document.querySelectorAll('[name="cloud-goal"]')) input.disabled = false; }
+  });
   $('cloudSetupAdvanced').addEventListener('click', openAdvancedSetup);
   $('cloudSetupBack').addEventListener('click', returnToGuidedSetup);
   $('cloudComputerConnection').addEventListener('toggle', () => {
@@ -134,6 +244,8 @@ function mountSetup() {
     ['cloudSetupModelFields', ['runpodModels']],
     ['cloudSetupProtectionFields', ['cloudComputerKeyForm']],
   ]) for (const id of ids) $(target).append($(id));
+  const idle = $('cloudComputerIdle');
+  $('cloudFlowIdleFields').append(document.querySelector('label[for="cloudComputerIdle"]'), idle.closest('.pv'));
   $('runpodModels').open = true;
   $('runpodApiKey').previousElementSibling.textContent = 'account key';
   $('runpodWorkerUrl').previousElementSibling.textContent = 'computer address';
@@ -163,7 +275,7 @@ function mountSetup() {
     }
   });
   document.addEventListener('aiplay:cloud-computer-created', async event => {
-    setupOverride = null;
+    setupOverride = null; flowPage = null;
     $('cloudSetupCreateFields').hidden = true;
     $('cloudSetupProvision').setAttribute('aria-expanded', 'false');
     await perform('/select', { id: event.detail.id });
@@ -190,7 +302,7 @@ function mountSetup() {
   });
   document.addEventListener('aiplay:cloud-computer-refresh', () => { setupOverride = null; checkSetupAccount(); });
   document.addEventListener('aiplay:cloud-setup-open', () => {
-    setupOverride = null; paintSetup(current);
+    setupOverride = null; flowPage = null; $('set-runpod').open = true; paintSetup(current);
     $('cloudSetup').scrollIntoView({ behavior: 'smooth', block: 'start' });
     const step = cloudSetupStage(current, accountConfigured, setupSaved(current?.podId));
     $(step === 1 ? 'runpodApiKey' : step === 2 ? 'cloudComputerSelect' : 'cloudSetupCheck').focus({ preventScroll: true });
@@ -277,6 +389,7 @@ async function init() {
   let config;
   try { config = (await (await fetch('/api/status')).json()).config; } catch { return; }
   if (!config?.remoteOnly) return;
+  try { const response = await fetch('/api/runpod/goal'); if (response.ok) cloudGoal = (await response.json()).goal; } catch {}
   $('cloudComputer').hidden = false;
   mountSetup(); await checkSetupAccount();
   $('cloudComputerCheck').addEventListener('click', () => perform('/discover'));
@@ -323,10 +436,12 @@ async function init() {
   document.addEventListener('aiplay:cloud-computer-refresh', () => perform('/discover'));
   await perform('/discover');
   await refreshAutomaticInstall();
+  await refreshFlowModels();
   setInterval(async () => {
     if (document.hidden || $('settings').hidden) return;
     const result = await api().catch(() => null); if (result) paint(result);
     refreshAutomaticInstall().catch(() => {});
+    refreshFlowModels().catch(() => {});
   }, 3000);
 }
 init();

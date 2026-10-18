@@ -387,6 +387,7 @@ export const config = {
   musicOnly: MUSIC_ONLY,
   cloudOnly: CLOUD_ONLY,
   remoteOnly: REMOTE_ONLY,
+  cloudSetup: { goal: ['music', 'pictures', 'video', 'all'].includes(saved.cloudSetup?.goal) ? saved.cloudSetup.goal : 'all' },
   comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY && !REMOTE_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
@@ -2465,6 +2466,7 @@ config.music.engines["yue2-gguf"] = {
 export { LEVELS, IN_USE_KEYS, startLevel };
 config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
+  ["cloudSetup", "goal", v => ['music', 'pictures', 'video', 'all'].includes(v)],
   ["ui", "level", (v) => LEVELS.includes(v)],
   ["ui", "levelBy", (v) => v === "studio" || v === "you"],
   ["video", "enabled", (v) => typeof v === "boolean"],

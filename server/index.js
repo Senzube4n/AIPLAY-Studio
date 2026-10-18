@@ -3492,7 +3492,7 @@ const savePausedCloudQueue = async () => {
 jobs.on("update", () => {
   if (config.remoteOnly && jobs.cloudQueuePaused) savePausedCloudQueue().catch(() => console.warn("  [cloud] The paused queue could not be saved."));
 });
-const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret,
+const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret, savePrefs,
   append: prov.append, actorFrom: prov.actorFrom, sameOriginLocalJson,
   localActivity: () => ({ active: !!jobs.current, queued: jobs.cloudQueuePaused ? 0 : jobs.queue.length }),
   pauseQueuedWork: async () => {

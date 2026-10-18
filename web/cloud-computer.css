@@ -1,7 +1,20 @@
 #cloudComputer { margin-top: 16px; }
+#set-hosted > .cloud-option { border: 1px solid var(--edge); border-radius: 12px; padding: 0 16px; margin-top: 12px; }
+#set-hosted > .cloud-option > summary { cursor: pointer; padding: 16px 0; color: var(--ink); font-weight: 600; }
+#set-hosted > .cloud-option[open] { padding-bottom: 16px; }
+#cloudSetup .cloud-flow-head, #cloudSetup .cloud-flow-states { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+#cloudSetup .cloud-flow-head h4 { margin: 0; }
+#cloudSetup .cloud-goals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; padding: 0; margin: 16px 0; }
+#cloudSetup .cloud-goals legend { color: var(--dim); font-size: .8rem; margin-bottom: 10px; }
+#cloudSetup .cloud-goals label { border: 1px solid var(--edge); border-radius: 10px; padding: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+#cloudSetup .cloud-goals label:has(input:checked) { border-color: var(--primary); background: var(--raise); }
+#cloudSetup .cloud-flow-box { background: var(--raise); border: 1px solid var(--edge); border-radius: 12px; padding: 16px; margin: 16px 0; }
+#cloudSetup .cloud-flow-box > label { color: var(--dim); }
+#cloudSetup .cloud-flow-box .pv { justify-content: flex-end; text-align: right; }
+#cloudSetup [role="tabpanel"] > h3 { margin-top: 18px; }
 #cloudSetup { margin-top: 16px; }
 #cloudSetup .cloud-setup-steps { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; color: var(--dim); font-size: .8rem; }
-#cloudSetup .cloud-setup-steps .active { color: var(--accent); font-weight: 600; }
+#cloudSetup .cloud-setup-steps .active { color: var(--primary); border-color: var(--primary); font-weight: 600; }
 #cloudSetup .cloud-setup-steps .done { color: var(--ink); }
 #cloudSetup .cta { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 #cloudSetup .line { width: 100%; max-width: 100%; box-sizing: border-box; }
@@ -17,5 +30,7 @@
 #cloudComputer .chip { white-space: normal; }
 #cloudComputer .sel2 { max-width: 100%; }
 @media (max-width: 700px) {
+  #cloudSetup .cloud-setup-steps { gap: 6px; }
+  #cloudSetup .cloud-flow-box .pv { justify-content: flex-start; text-align: left; }
   #cloudComputer .cta > button { max-width: 100%; white-space: normal; }
 }

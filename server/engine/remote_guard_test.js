@@ -55,12 +55,13 @@ const read = (...p) => readFileSync(path.join(ROOT, ...p), "utf8").replace(/\r\n
 const guardSrc = /function sameOriginLocalJson\(req\) \{[\s\S]*?\n\}/.exec(read("server", "index.js"))?.[0] || "";
 const sameOriginLocalJson = new Function("config", `${guardSrc}\nreturn sameOriginLocalJson;`)({ uiPort: 4173 });
 
-async function routes(t) {
+async function routes(t, extra = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aiplay-remote-guard-"));
+  if (extra.config) Object.assign(extra.config, { dataDir: dir, outputDir: path.join(dir, 'out') });
   const r = createRemoteRoutes({ config: { dataDir: dir, outputDir: path.join(dir, "out"), uiPort: 4173 },
     getSecret: async () => null, setSecret: async () => {}, clearSecret: async () => {},
     append: async () => {}, actorFrom: () => "agent:t", adopt: async () => null, sameOriginLocalJson,
-    fetchFn: async () => { throw new Error("no network in this test"); } });
+    fetchFn: async () => { throw new Error("no network in this test"); }, ...extra });
   t.after(async () => { (await r.start()).close(); await rm(dir, { recursive: true, force: true }); });
   return async (method, route, { headers = {}, body = null } = {}) => {
     const req = Object.assign(Readable.from(body == null ? [] : [Buffer.from(body)]), { method, headers });
@@ -70,6 +71,22 @@ async function routes(t) {
   };
 }
 const HERE = { host: "127.0.0.1:4173" };
+
+test('cloud goal persists locally without credentials or provider calls', async t => {
+  const config = { uiPort: 4173 }; let saves = 0, providerCalls = 0;
+  const call = await routes(t, { config, savePrefs: async () => { saves++; }, fetchFn: async () => { providerCalls++; throw Error('unexpected network'); } });
+  const headers = { ...HERE, 'content-type': 'application/json', 'x-aiplay-actor': 'agent:test' };
+  assert.equal((await call('GET', '/api/runpod/goal', { headers: HERE })).body.goal, 'all');
+  for (const goal of ['music', 'pictures', 'video', 'all']) {
+    const res = await call('POST', '/api/runpod/goal', { headers, body: JSON.stringify({ goal }) });
+    assert.equal(res.status, 200); assert.equal(config.cloudSetup.goal, goal);
+    assert.equal((await call('GET', '/api/runpod/goal', { headers: HERE })).body.goal, goal);
+  }
+  for (const goal of [null, 'invalid', {}, []]) assert.equal((await call('POST', '/api/runpod/goal', { headers, body: JSON.stringify({ goal }) })).status, 400);
+  assert.equal(saves, 4); assert.equal(providerCalls, 0);
+  assert.equal((await call('POST', '/api/runpod/goal', { headers: { ...headers, origin: 'https://evil.example' }, body: '{"goal":"music"}' })).status, 403);
+  assert.equal(config.cloudSetup.goal, 'all');
+});
 
 test("§1 a request whose Host is not this PC's Studio is refused, GETs included", async (t) => {
   const call = await routes(t);

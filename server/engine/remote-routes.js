@@ -15,7 +15,7 @@ import { createAutomaticInstaller } from './runpod-install.js';
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
-  localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork,
+  localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork, savePrefs = async () => {},
   bootstrap = studioBootstrap }) {
   if (typeof sameOriginLocalJson !== "function") throw new Error("createRemoteRoutes needs index.js sameOriginLocalJson: a door that spends a paid GPU without it is open to a rebound page.");
   let clientPromise;
@@ -56,7 +56,15 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       /* The Pod's install command, pinned to this Studio's commit
        * (runpod-bootstrap.js). Read by the setup window; never a branch. */
-      if (req.method === 'GET' && url.pathname === '/api/runpod/install') sendJSON(res, 200, (await installer()).snapshot());
+      if (url.pathname === '/api/runpod/goal') {
+        if (req.method === 'GET') sendJSON(res, 200, { goal: config.cloudSetup?.goal || 'all' });
+        else if (req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          if (!['music', 'pictures', 'video', 'all'].includes(b.goal)) throw new Error('Choose Music, Pictures, Video or All three.');
+          config.cloudSetup = { goal: b.goal }; await savePrefs(); sendJSON(res, 200, { goal: b.goal });
+        } else sendJSON(res, 405, { error: 'Use GET or POST for the cloud goal.' });
+      }
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install') sendJSON(res, 200, (await installer()).snapshot());
       else if (req.method === 'GET' && url.pathname === '/api/runpod/install/options') sendJSON(res, 200, (await installer()).options());
       else if (req.method === 'POST' && url.pathname === '/api/runpod/install/refresh') sendJSON(res, 200, await (await installer()).refresh());
       else if (req.method === 'POST' && url.pathname === '/api/runpod/install/quote') {

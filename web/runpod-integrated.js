@@ -502,11 +502,42 @@ function resume(jobs) {
   }
 }
 
+// Preparing a sample only fills the existing creation screen. Make remains the user's action.
+export function prepareCloudSample(goal, doc = document) {
+  const kind = ['music', 'pictures', 'video'].includes(goal) ? goal : 'pictures';
+  const set = (id, value, event = 'input') => {
+    const input = doc.getElementById(id); if (!input) return;
+    input.value = value; input.dispatchEvent(new Event(event, { bubbles: true }));
+  };
+  if (kind === 'pictures') {
+    set('imgPrompt', 'A peaceful mountain lake at sunrise, watercolor illustration');
+    set('imgCount', '1', 'change'); set('imgSize', 'custom', 'change');
+    set('imgW', '512'); set('imgH', '512'); set('imgSteps', '4'); set('imgRunPodCfg', '1');
+    const picker = doc.getElementById('imgRunPodCheckpoint');
+    const model = [...(picker?.options || [])].find(option => /sd_xl_turbo/.test(option.value));
+    if (model) set('imgRunPodCheckpoint', model.value, 'change');
+  } else if (kind === 'music') {
+    set('caption', 'Gentle acoustic guitar and warm piano, calm instrumental music');
+    set('maxDur', '30');
+    const picker = doc.getElementById('musicEngine');
+    const model = [...(picker?.options || [])].find(option => option.value.startsWith('yue2-comfy'));
+    if (model) set('musicEngine', model.value, 'change');
+  } else {
+    set('vidPrompt', 'A paper boat floating gently on a quiet pond, soft morning light');
+    set('vidSecs', '2'); set('vidRunPodModel', 'ltx', 'change');
+    set('vidRunPodSize', '512x320', 'change'); set('vidSteps', '8');
+  }
+  doc.querySelector(`.rail [data-view="${{ music: 'create', pictures: 'images', video: 'video' }[kind]}"]`)?.click();
+  doc.getElementById({ music: 'caption', pictures: 'imgPrompt', video: 'vidPrompt' }[kind])?.focus();
+  return kind;
+}
+
 async function init() {
   if (!$("imgRenderWhere") || !$("vidRenderWhere")) return;
   let status = null;
   try { status = await (await fetch("/api/status")).json(); } catch { return; }
   if (!status?.config?.remoteOnly) return;
+  document.addEventListener('aiplay:cloud-sample', event => prepareCloudSample(event.detail?.goal));
   document.addEventListener('aiplay:cloud-worker-connected', () => {
     refreshWorker().then(() => document.dispatchEvent(new Event('aiplay:cloud-computer-refresh'))).catch(() => {});
   });

@@ -2,14 +2,18 @@
 
 Open **RunPod GPU** in the launcher, then **Settings → No strong graphics card? → RunPod GPU**.
 
-**Easy Cloud Setup** shows one required step at a time:
+The three hosting choices are collapsible: **Ask a friend**, **Paid services**, and **RunPod GPU**. Opening one closes the others while preserving their fields.
 
-1. **Account:** open RunPod Credentials → API Keys, create a restricted account key and connect it in AIPLAY.
-2. **Computer:** select an existing computer or press **Create cloud computer**. Choose a graphics card and saved storage, then **Review price**. Available cards of at least 32 GB are suggested for picture/video workflows; exact model requirements vary. Extra naming/provider options stay collapsed. Creation needs the billing checkbox and **Create and start computer**.
-3. **AI:** review the start price, connect using the installed AIPLAY service's connection code, and select models if needed. The address is filled from the selected computer.
-4. **Automatic stop:** save a separate remote stop key, or explicitly confirm keeping rental running after AIPLAY closes.
+**Easy Cloud Setup** shows four tabs:
 
-The guide reuses the existing vault-backed fields. It verifies account/computer/worker/model readiness before advancing and remembers completed setup for that computer. Stopping compute preserves the completed setup; a subsequent worker failure or invalid account returns to the affected step. The Cloud Computer dashboard appears after selection. Manual provider controls remain under **Advanced setup**.
+1. **Your goal:** choose Music, Pictures, Video or All three; connect the account using a restricted RunPod key. The goal is saved locally and never provisions a resource.
+2. **Costs:** select an existing computer or press **Create cloud computer**. Review compute, storage and session estimates before starting. Creation still requires a fresh price review, billing checkbox and explicit approval. Storage remains billed after compute stops.
+3. **Install AI:** follow automatic installation or connect an existing worker, then approve the selected models' licences and downloads. Choose an idle timeout and save a separate shutdown key, or explicitly choose to keep rental running. Video needs approved model access and a Hugging Face read token.
+4. **Ready:** see provider status separately from AI readiness, storage charges, shutdown protection and start/stop controls. Readiness requires every curated bundle for the selected goal, a verified running worker and a verified policy or explicit disabled policy. A stopped computer is shown as stopped, never AI ready.
+
+**Try a sample** prepares the relevant existing creation screen (Pictures for All three); review it and press Make to submit. It does not generate automatically. Opening tabs does not start rental, install models or generate. **More computer controls** contains storage management, detailed spending and job-aware shutdown controls.
+
+The guide reuses the existing vault-backed fields without duplicating credential inputs. Setup completion is remembered for each computer; live readiness is checked again after reconnecting. Manual provider controls remain under **Advanced setup**.
 
 **Advanced setup** is always available above the guided steps for manual connection and AI-service installation controls. **Back to guided setup** returns to the same step and keeps entered details. Opening either view performs no rental or provisioning action.
 
