@@ -102,6 +102,26 @@ test('catalog search keeps descriptions as text and only accepts provider previe
   }});
   assert.equal(data.items[0].image,null); assert.doesNotMatch(data.items[0].purpose,/<|>/);
 });
+test('Civitai model and LoRA searches repeat type parameters for every task', async () => {
+  for (const task of ['pictures', 'video', 'music']) {
+    for (const [type, types] of [['all', ['Checkpoint', 'LORA']], ['checkpoint', ['Checkpoint']], ['lora', ['LORA']]]) {
+      const data = await searchCatalog({ provider: 'civitai', task, type, query: 'sample', base: 'SDXL 1.0' }, { token: 'test-provider-key', fetchFn: async (url, init) => {
+        const params = new URL(url).searchParams;
+        // The provider rejects types=Checkpoint,LORA with HTTP 400.
+        assert.deepEqual(params.getAll('types'), types);
+        assert.equal(params.get('tag'), task === 'video' ? 'video' : task === 'music' ? 'audio' : null);
+        assert.equal(params.get('query'), 'sample');
+        assert.equal(params.get('baseModels'), 'SDXL 1.0');
+        assert.equal(params.get('nsfw'), 'false');
+        assert.equal(params.get('earlyAccess'), 'false');
+        assert.equal(init.headers.Authorization, 'Bearer test-provider-key');
+        assert.equal(new URL(url).search.includes('test-provider-key'), false);
+        return Response.json({ items: [] });
+      }});
+      assert.deepEqual(data.items, []);
+    }
+  }
+});
 test('Civitai file review retains exact file selector and SHA while dropping token query fields', async () => {
   const b = await resolveCatalogFile({provider:'civitai',id:'1',version:'2',file:'3',folder:'checkpoints'}, {fetchFn: async () => Response.json({modelVersions:[{id:2,files:[{id:3,name:'model.safetensors',sizeKB:sample.length/1024,hashes:{SHA256:sampleHash},downloadUrl:'https://civitai.com/api/download/models/2?fileId=3&token=not-saved'}]}]})});
   assert.match(b.files[0].url,/fileId=3/); assert.doesNotMatch(JSON.stringify(b),/not-saved|token=/);

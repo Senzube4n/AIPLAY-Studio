@@ -36,8 +36,10 @@ export async function searchCatalog(input, { token, fetchFn = fetch } = {}) {
   }
   const u = new URL('https://civitai.com/api/v1/models');
   Object.entries({ limit: '24', nsfw: 'false', earlyAccess: 'false', sort: input.sort === 'newest' ? 'Newest' : 'Most Downloaded', period: 'AllTime',
-    ...(query ? { query } : {}), types: input.type === 'lora' ? 'LORA' : input.type === 'checkpoint' ? 'Checkpoint' : 'Checkpoint,LORA',
+    ...(query ? { query } : {}),
     ...(task === 'video' ? { tag: 'video' } : task === 'music' ? { tag: 'audio' } : {}), ...(input.base ? { baseModels: String(input.base).slice(0,80) } : {}) }).forEach(([k,v]) => u.searchParams.set(k,v));
+  // Civitai's live validator requires repeated types for a multi-type search.
+  for (const type of input.type === 'lora' ? ['LORA'] : input.type === 'checkpoint' ? ['Checkpoint'] : ['Checkpoint', 'LORA']) u.searchParams.append('types', type);
   const data = await json(u.href, token, fetchFn);
   return { items: (data.items || []).slice(0,24).filter(m => !m.nsfw && !m.mode).map(civCard) };
 }
