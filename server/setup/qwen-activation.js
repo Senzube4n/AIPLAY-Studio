@@ -32,7 +32,11 @@ function failure(message, code, props = {}) {
 export function qwenActivationArgs(oldArgs = [], candidateArgs = [], oldComfyDir) {
   const args = oldArgs.map(String).filter((arg) => arg !== "--cpu");
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--extra-model-paths-config") {
+    if (args[i] === "--user-directory" && i + 1 < args.length) {
+      args[++i] = path.resolve(oldComfyDir, args[i]);
+    } else if (args[i].startsWith("--user-directory=")) {
+      args[i] = `--user-directory=${path.resolve(oldComfyDir, args[i].slice("--user-directory=".length))}`;
+    } else if (args[i] === "--extra-model-paths-config") {
       while (i + 1 < args.length && !args[i + 1].startsWith("--")) {
         i++;
         args[i] = path.resolve(oldComfyDir, args[i]);
@@ -45,8 +49,10 @@ export function qwenActivationArgs(oldArgs = [], candidateArgs = [], oldComfyDir
   return args;
 }
 
-export function createQwenActivation({ config, supervisor, engine, readiness, busy = async () => false, fs = fileSystem }) {
+export function createQwenActivation({ config, supervisor, engine, readiness, busy = async () => false, fs = fileSystem,
+  purpose = "Qwen", operation = "repair", codePrefix = "QWEN", journalName = "qwen-activation.json", recordKey = null, keepUserDirectory = false }) {
   if (!config || !supervisor || !engine || typeof readiness !== "function") throw new TypeError("Qwen activation requires config, supervisor, engine and readiness.");
+  const fail = (message, code, props) => failure(message, `${codePrefix}_${code}`, props);
   let switching = false;
 
   async function readSettings() {
@@ -54,12 +60,12 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
     try { text = await fs.readFile(config.settingsFile, "utf8"); }
     catch (cause) {
       if (cause.code === "ENOENT") return {};
-      throw failure("Studio settings could not be read. Try again after restoring access to the settings file.", "QWEN_SETTINGS_UNREADABLE", { cause });
+      throw fail("Studio settings could not be read. Try again after restoring access to the settings file.", "SETTINGS_UNREADABLE", { cause });
     }
     let value;
     try { value = JSON.parse(text); }
-    catch (cause) { throw failure("Studio settings are not valid JSON. Restore the settings file before repairing Qwen.", "QWEN_SETTINGS_UNREADABLE", { cause }); }
-    if (!object(value)) throw failure("Studio settings must contain a JSON object. Restore the settings file before repairing Qwen.", "QWEN_SETTINGS_UNREADABLE");
+    catch (cause) { throw fail(`Studio settings are not valid JSON. Restore the settings file before the ${purpose} ${operation}.`, "SETTINGS_UNREADABLE", { cause }); }
+    if (!object(value)) throw fail(`Studio settings must contain a JSON object. Restore the settings file before the ${purpose} ${operation}.`, "SETTINGS_UNREADABLE");
     return value;
   }
 
@@ -84,14 +90,14 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
   async function assertIdle() {
     const state = await busy();
     if (state && (typeof state !== "object" || state.busy || state.blocked)) {
-      throw failure(typeof state === "string" ? state : state.message || "Studio is working. Try the Qwen repair after it finishes.", "QWEN_ENGINE_BUSY");
+      throw fail(typeof state === "string" ? state : state.message || `Studio is working. Try the ${purpose} ${operation} after it finishes.`, "ENGINE_BUSY");
     }
   }
 
   async function pauseDoor() {
     const until = Date.now() + 5000;
     for (;;) {
-      try { return engine.pauseSubmissions("Qwen engine repair"); }
+      try { return engine.pauseSubmissions(`${purpose} engine ${operation}`); }
       catch (cause) {
         // The assistant's repair tool returns before the turn releases its
         // own chat hold. Wait briefly for precisely that hold, never renders.
@@ -101,23 +107,29 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
     }
   }
 
-  async function activate(metadata) {
-    if (switching) throw failure("A Qwen engine switch is already running.", "QWEN_ENGINE_BUSY");
+  async function switchEngine(metadata, restoreSelection = null) {
+    if (switching) throw fail(`A ${purpose} engine switch is already running.`, "ENGINE_BUSY");
     if (!object(metadata) || metadata.stageOnly !== true || typeof metadata.rig !== "string" || !path.isAbsolute(metadata.rig)
       || typeof metadata.python !== "string" || !path.isAbsolute(metadata.python) || !object(metadata.engineInstall)) {
-      throw failure("The Qwen installer did not return a completed staged engine.", "QWEN_STAGE_INVALID");
+      throw fail(`The ${purpose} installer did not return a completed staged engine.`, "STAGE_INVALID");
     }
-    if (pathKey(metadata.rig) === pathKey(config.rig)) throw failure("Qwen repair requires a separate engine folder.", "QWEN_STAGE_INVALID");
+    if (pathKey(metadata.rig) === pathKey(config.rig)) throw fail(`${purpose} ${operation} requires a separate engine folder.`, "STAGE_INVALID");
     switching = true;
     let release = null, original = null, previousEngine = null, stopped = false, committed = false;
-    const journalFile = path.join(path.dirname(config.settingsFile), "qwen-activation.json");
+    const journalFile = path.join(path.dirname(config.settingsFile), journalName);
     try {
       // This is synchronous: no dispatch can enter between checking and pausing.
       release = await pauseDoor();
       await assertIdle();
       const settings = await readSettings();
+      if (recordKey && ((settings.rig && !same(pathKey(settings.rig), pathKey(config.rig)))
+        || (settings.python && !same(pathKey(settings.python), pathKey(config.python))))) {
+        throw fail("The saved engine selection changed. Restart Studio before updating it.", "STAGE_INVALID");
+      }
+      if (restoreSelection && (!recordKey || !same(settings.previousEngine, restoreSelection)
+        || settings[recordKey]?.rig !== config.rig)) throw fail("The previous engine selection changed. Check again before restoring it.", "STAGE_INVALID");
       if (!(await fs.stat(metadata.python)).isFile() || !(await fs.stat(path.join(metadata.rig, "ComfyUI", "main.py"))).isFile()) {
-        throw failure("The staged engine is missing its interpreter or main.py.", "QWEN_STAGE_INVALID");
+        throw fail("The staged engine is missing its interpreter or main.py.", "STAGE_INVALID");
       }
       const descriptors = Object.fromEntries(CONFIG_KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(config, key)]));
       const comfyDescriptors = Object.fromEntries(["extraArgs", "useInstallFlags"].map((key) => [key, Object.getOwnPropertyDescriptor(config.comfy, key)]));
@@ -129,6 +141,23 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
       // reactivate them. The new managed install always uses its own required
       // flags, especially --cpu on a machine with no supported graphics card.
       const extraArgs = qwenActivationArgs(config.comfy.useInstallFlags === false ? [] : oldArgs, metadata.comfyExtraArgs || [], config.comfyDir);
+      let userCopy = null;
+      if (keepUserDirectory && !restoreSelection) {
+        let userDir = path.join(config.comfyDir, "user"), explicitUserDir = false;
+        for (let i = 0; i < extraArgs.length; i++) {
+          if (extraArgs[i] === "--user-directory") { explicitUserDir = true; userDir = extraArgs[i + 1]; extraArgs.splice(i, 2); i--; }
+          else if (extraArgs[i].startsWith("--user-directory=")) { explicitUserDir = true; userDir = extraArgs[i].slice("--user-directory=".length); extraArgs.splice(i--, 1); }
+        }
+        let userInfo = null;
+        try { userInfo = await fs.stat(userDir); }
+        catch (cause) { if (cause.code !== "ENOENT" || explicitUserDir) throw new Error(`The existing ComfyUI user folder could not be read: ${cause.message}`); }
+        if (userInfo && !userInfo.isDirectory()) throw new Error("The existing ComfyUI user path is not a folder.");
+        if (userInfo) {
+          const to = path.join(metadata.rig, `studio-user-${randomUUID()}`);
+          userCopy = { from: userDir, to };
+          extraArgs.push("--user-directory", to);
+        }
+      }
       previousEngine = {
         ...Object.fromEntries(ENGINE_KEYS.filter((key) => Object.hasOwn(settings, key)).map((key) => [key, clone(settings[key])])),
         rig: config.rig, python: config.python, comfyDir: config.comfyDir,
@@ -137,7 +166,11 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
         modelsDir, modelsAlso: clone(config.modelsAlso || []), outputDir: config.outputDir, inputDir: config.inputDir,
         at: new Date().toISOString(),
       };
-      const candidate = {
+      const candidate = restoreSelection ? {
+        ...Object.fromEntries(ENGINE_KEYS.map((key) => [key, clone(restoreSelection[key])])),
+        modelsDir: restoreSelection.modelsDir, modelsDirPinned: true,
+        modelsAlso: clone(restoreSelection.modelsAlso || []), outputDir: restoreSelection.outputDir, inputDir: restoreSelection.inputDir,
+      } : {
         rig: metadata.rig, python: metadata.python, torchBackend: metadata.torchBackend,
         torchVersion: metadata.torch, gpu: clone(metadata.gpu), comfyExtraArgs: extraArgs,
         comfyUseInstallFlags: true,
@@ -150,25 +183,34 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
       stopped = true;
       await supervisor.stop();
       if (supervisor.proc) throw new Error("The previous engine did not stop.");
+      // Copy only after shutdown so ComfyUI's database is closed. A new
+      // release may migrate that database; the original must remain usable.
+      if (userCopy) await fs.cp(userCopy.from, userCopy.to, { recursive: true, dereference: true, errorOnExist: true, force: false });
       for (const key of CONFIG_KEYS) {
         const value = key === "comfyDir" ? path.join(metadata.rig, "ComfyUI") : candidate[key];
         Object.defineProperty(config, key, { configurable: true, enumerable: true, writable: true, value });
       }
-      config.comfy.extraArgs = extraArgs;
-      config.comfy.useInstallFlags = true;
+      config.comfy.extraArgs = candidate.comfyExtraArgs;
+      config.comfy.useInstallFlags = candidate.comfyUseInstallFlags;
       await supervisor.start();
-      const check = await readiness();
-      if (check?.runtimeReady !== true) throw new Error(check?.error || `The new engine could not load Qwen Image 2.1${check?.missingNodes?.length ? ` (${check.missingNodes.join(", ")})` : ""}.`);
+      const check = await readiness(metadata);
+      if (check?.runtimeReady !== true) throw new Error(check?.error || (purpose === "Qwen"
+        ? `The new engine could not load Qwen Image 2.1${check?.missingNodes?.length ? ` (${check.missingNodes.join(", ")})` : ""}.`
+        : "The new ComfyUI engine did not pass its startup checks."));
       const fresh = await readSettings();
       if (SELECTION_KEYS.some((key) => !same(settings[key], fresh[key]))) throw new Error("The engine settings changed during repair. Try again with the current settings.");
-      await writeAtomic(config.settingsFile, { ...fresh, ...candidate, previousEngine }, async () => {
+      if (restoreSelection && (!same(fresh.previousEngine, restoreSelection) || !same(settings[recordKey], fresh[recordKey]))) {
+        throw new Error("The previous engine selection changed during restoration. Check again before restoring it.");
+      }
+      await writeAtomic(config.settingsFile, { ...fresh, ...candidate, previousEngine,
+        ...(recordKey ? { [recordKey]: restoreSelection ? null : { rig: metadata.rig, tag: metadata.comfy, at: new Date().toISOString() } } : {}) }, async () => {
         const latest = await readSettings();
         if (!same(fresh, latest)) throw new Error("Studio settings changed while saving the engine. Try again.");
       });
       committed = true;
       let warning;
       try { await fs.unlink(journalFile); }
-      catch (cause) { if (cause.code !== "ENOENT") warning = "Qwen is ready. The recovery record could not be removed."; }
+      catch (cause) { if (cause.code !== "ENOENT") warning = `${purpose} is ready. The recovery record could not be removed.`; }
       return { ok: true, activated: true, runtimeReady: true, rig: metadata.rig, python: metadata.python, previousEngine, ...(warning ? { warning } : {}) };
     } catch (cause) {
       if (!stopped || !original || committed) throw cause;
@@ -191,15 +233,27 @@ export function createQwenActivation({ config, supervisor, engine, readiness, bu
       } catch (error) { rollbackCause = rollbackCause || error; }
       if (rollbackCause) {
         await writeAtomic(journalFile, { state: "rollback-failed", at: new Date().toISOString(), previousEngine, error: cause.message, rollbackError: rollbackCause.message }).catch(() => {});
-        throw failure(`Qwen repair failed: ${cause.message} The previous engine could not restart: ${rollbackCause.message}`, "QWEN_ROLLBACK_FAILED", { cause, rollbackCause, rolledBack: false, previousEngine });
+        throw fail(`${purpose} ${operation} failed: ${cause.message} The previous engine could not restart: ${rollbackCause.message}`, "ROLLBACK_FAILED", { cause, rollbackCause, rolledBack: false, previousEngine });
       }
       await fs.unlink(journalFile).catch(() => {});
-      throw failure(`Qwen repair failed: ${cause.message} The previous engine was restored.`, "QWEN_ACTIVATION_FAILED", { cause, rolledBack: true, previousEngine });
+      throw fail(`${purpose} ${operation} failed: ${cause.message} The previous engine was restored.`, "ACTIVATION_FAILED", { cause, rolledBack: true, previousEngine });
     } finally {
       if (release) release();
       switching = false;
     }
   }
 
-  return { activate };
+  return {
+    activate: (metadata) => switchEngine(metadata),
+    // Only the update coordinator exposes this; its eligibility check verifies
+    // the kept managed installation before handing us the saved selection.
+    restore: (selection) => switchEngine({ ...selection, stageOnly: true,
+      engineInstall: selection?.engineInstall || {}, comfy: selection?.engineInstall?.comfy,
+      torch: selection?.torchVersion }, selection),
+  };
+}
+
+export function createComfyActivation(options) {
+  return createQwenActivation({ ...options, purpose: "ComfyUI", operation: "update", codePrefix: "COMFY",
+    journalName: "comfy-activation.json", recordKey: "comfyUpdate", keepUserDirectory: true });
 }

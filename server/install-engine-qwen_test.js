@@ -25,6 +25,41 @@ const record = (output, id) => {
 
 test.after(() => rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }));
 
+test("an explicit ComfyUI update tag stays isolated and keeps the ordinary pins unchanged", () => {
+  const root = path.join(tmp, "tag-plan");
+  for (const backend of ["nvidia", "amd", "intel", "cpu"]) {
+    const result = run(["--backend", backend, "--stage-only", "--comfy-tag", "v0.38.0", "--plan", readme], { AIPLAY_ENGINE_DIR: root });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const plan = JSON.parse(result.stdout);
+    assert.equal(plan.comfy.tag, "v0.38.0"); assert.match(plan.comfy.url, /\/v0\.38\.0\.tar\.gz$/);
+    assert.equal(plan.stageOnly, true); assert.equal(plan.qwenCompatible, false); assert.equal(plan.steps.includes("qwen"), false);
+    assert.equal(plan.root, root); assert.equal(existsSync(root), false, "--plan creates no engine");
+  }
+  assert.equal(JSON.parse(run(["--backend", "cpu", "--plan", readme]).stdout).comfy.tag, COMFY_TAG);
+});
+
+test("invalid update-tag combinations refuse before planning or cleaning any existing engine", () => {
+  const root = path.join(tmp, "protected-update-tag"), appData = path.join(tmp, "protected-update-appdata");
+  mark(root, { complete: true }); writeFileSync(path.join(root, "keep.txt"), "keep");
+  const good = ["--backend", "cpu", "--stage-only", "--comfy-tag", "v0.38.0", "--plan", readme];
+  const invalid = [
+    ["--backend", "cpu", "--comfy-tag", "v0.38.0", "--plan", readme],
+    [...good, "--qwen-compatible"], [...good, "--studio-packages"], [...good, "--comfy-tag", "v0.39.0"], [...good, "--comfy-tag=evil"],
+    ["--backend", "cpu", "--stage-only", "--comfy-tag=v0.38.0", "--plan", readme],
+    ...["main", "v01.2.3", "v0.38.0-rc.1", "v0.38.0/path", "https://example.com/archive.tar.gz", "v0.38.0;echo bad"]
+      .map(tag => ["--backend", "cpu", "--stage-only", "--comfy-tag", tag, "--plan", readme]),
+  ];
+  for (const args of invalid) {
+    const result = run(args, { AIPLAY_APPDATA: appData, AIPLAY_ENGINE_DIR: root });
+    assert.equal(result.status, 1, result.stdout + result.stderr); assert.equal(record(result.stdout, "error").cleaned, false);
+    assert.equal(readFileSync(path.join(root, "keep.txt"), "utf8"), "keep");
+  }
+  assert.equal(run(good, { AIPLAY_ENGINE_DIR: "" }).status, 1, "an explicit folder is required even for a plan");
+  const actual = run(good.slice(0, -2), { AIPLAY_APPDATA: appData, AIPLAY_ENGINE_DIR: root });
+  assert.equal(actual.status, 1); assert.match(record(actual.stdout, "error").message, /finished engine/);
+  assert.equal(readFileSync(path.join(root, "keep.txt"), "utf8"), "keep");
+});
+
 test("Qwen repair selects its own pin and adds verification on every supported backend", () => {
   for (const backend of ["nvidia", "amd", "intel", "cpu"]) {
     const result = run(["--backend", backend, "--qwen-compatible", "--stage-only", "--plan", readme]);

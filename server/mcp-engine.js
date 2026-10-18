@@ -56,6 +56,24 @@ export function engineTools(api) {
 
   return [
     {
+      name: "engine_updates",
+      description: "Read installed, latest stable and Studio baseline ComfyUI versions, update progress and blockers. force checks the public GitHub release endpoint (cached for at least a minute); ordinary status reads never contact GitHub. Studio also checks on startup unless disabled in Engine.",
+      inputSchema: { type: "object", properties: { force: { type: "boolean", description: "Check GitHub again. Default false." } }, additionalProperties: false },
+      run: (a = {}) => door({ action: "updates", force: a.force }),
+    },
+    {
+      name: "engine_update_comfyui",
+      description: "Install the latest stable ComfyUI alongside a Studio-managed engine, with a separate Python and hardware-specific PyTorch environment (several GB). Requires idle queues and no third-party custom nodes. Switches only after startup/node/version checks and restores the old engine on failure. Keeps original model, input, output and user folders. Latest stable may differ from Studio's tested baseline; use engine_updates to inspect blockers/progress first. Only run when the person requests updating ComfyUI.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      run: () => door({ action: "update_comfy" }),
+    },
+    {
+      name: "engine_restore_comfyui",
+      description: "Restore the previous Studio-managed engine retained by a successful ComfyUI update, while idle. Verifies startup before saving and restores the current selection if restoration fails. Check engine_updates.canRestore first. Only run when the person requests restoration.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      run: () => door({ action: "restore_comfy" }),
+    },
+    {
       name: "engine_run_graph",
       description:
         "Run a ComfyUI graph on this machine's engine, through the app's door. THIS IS THE ONLY "

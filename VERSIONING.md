@@ -117,8 +117,7 @@ a caption, never a gate.
 ## Where it shows
 
 - **Welcome**, small, under the ways in.
-- **About**, as a block, with the only button in the app that asks GitHub
-  anything (`Check for updates`).
+- **About**, as a block, with the Studio app's `Check for updates` button.
 - **The launcher's footer**, from the same two modules, so the two can never
   disagree.
 - `GET /api/version` for anything else, including an agent.
@@ -138,9 +137,12 @@ is told. The answer is cached for an hour; GitHub allows 60 anonymous requests
 an hour per address. A refusal, a rate limit or no connection come back as one
 sentence and change nothing else.
 
-This is the fourth place Studio touches the internet (Community's feed, the
-model catalogue, the engine installer, and this), and like the others it is a
-person's press.
+The Studio app check requires a person's press. ComfyUI has a separate stable
+release check (`server/comfy-updates.js`), enabled at startup when a local
+engine exists and switchable in Engine. It caches results for six hours,
+survives restarts, and runs without delaying startup. Its public GitHub request
+carries no account token or machine details. Installing that release requires
+the separate Engine update button; the tested fresh-install pin does not move.
 
 **It is never on Collab's path.** Whether a friend's file opens is answered from
 the packet's own number, offline, and no failure to reach GitHub can change that

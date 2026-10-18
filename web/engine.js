@@ -152,6 +152,167 @@ function paintStatus() {
   }
 }
 
+/* Release polling only reads the server's cached answer. Only Check again
+ * sends force:true; startup never waits for GitHub or begins an update. */
+let UPDATES = null, updatesRequest = null, updatesTimer = null;
+let updatesAction = false, updatesForced = false, updatesSaving = false, updatesError = "", updatesErrorSource = "status";
+let startupDone = false, startupUntil = 0;
+const dismissedUpdates = new Set();
+try { for (const key of JSON.parse(sessionStorage.getItem("aiplayComfyUpdateDismissed") || "[]")) if (typeof key === "string") dismissedUpdates.add(key); } catch { /* session-only memory still works */ }
+const engineVisible = () => !document.hidden && $("engine") && !$("engine").hidden;
+const updateJob = () => UPDATES?.job || UPDATES?.setup?.job || null;
+const updateBusy = () => updatesAction || UPDATES?.restoring || ["running", "waiting"].includes(updateJob()?.state);
+
+async function updatePost(body, timeoutMs = 30000) {
+  const response = await fetch("/api/engine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+  const result = await response.json();
+  // A release check can fail while the status itself is a successful reply.
+  if (!response.ok || result.ok === false) throw new Error(result.error || "Could not read the engine update status.");
+  return result;
+}
+
+function updateNotice() {
+  const home = $("home")?.querySelector(".homein");
+  if (!home) return;
+  let notice = $("engUpdateNotice");
+  if (!notice) {
+    notice = document.createElement("div"); notice.id = "engUpdateNotice"; notice.className = "homestrip"; notice.hidden = true;
+    notice.setAttribute("role", "status"); notice.setAttribute("aria-label", "ComfyUI update");
+    notice.innerHTML = '<p class="homestriplines" id="engUpdateNoticeText"></p><div class="eng-notice-actions"><button type="button" class="btn2" data-go="engine" id="engUpdateReview">Review update</button><button type="button" class="homestriphide" id="engUpdateDismiss" aria-label="Hide ComfyUI update notice">Hide</button></div>';
+    const strip = $("homeStrip"); if (strip?.parentElement === home) strip.after(notice); else home.prepend(notice);
+    $("engUpdateReview").addEventListener("click", () => setTimeout(() => $("eng-updates")?.scrollIntoView({ block: "start", behavior: "smooth" }), 0));
+    $("engUpdateDismiss").addEventListener("click", () => {
+      dismissedUpdates.add(notice.dataset.release);
+      try { sessionStorage.setItem("aiplayComfyUpdateDismissed", JSON.stringify([...dismissedUpdates].slice(-30))); } catch { /* private mode */ }
+      notice.hidden = true;
+    });
+  }
+  const key = `${UPDATES?.installed || "unknown"}:${UPDATES?.latest?.tag || "unknown"}`;
+  notice.dataset.release = key;
+  notice.hidden = !UPDATES?.updateAvailable || !UPDATES.latest?.tag || updateBusy() || dismissedUpdates.has(key);
+  $("engUpdateNoticeText").textContent = UPDATES?.latest?.tag ? `ComfyUI ${UPDATES.latest.tag} is available.` : "";
+}
+
+function paintUpdates() {
+  if (!$("engUpdateState")) return;
+  const state = UPDATES, job = updateJob(), busy = updateBusy();
+  let label = "Not checked", tone = "";
+  if (UPDATES?.restoring || updatesAction === "restore") { label = "Restoring engine"; tone = "busy"; }
+  else if (busy) { label = "Updating engine"; tone = "busy"; }
+  else if (job?.state === "failed") { label = "Update failed"; tone = "err"; }
+  else if (updatesForced || state?.checking) { label = "Checking releases"; tone = "busy"; }
+  else if (updatesError) { label = updatesErrorSource === "restore" ? "Restore failed" : updatesErrorSource === "update" ? "Update failed" : updatesErrorSource === "preference" ? "Could not save" : "Could not check"; tone = "err"; }
+  else if (state?.checkOk === false && state?.error) { label = "Could not check"; tone = "warn"; }
+  else if (state && !state.installed) { label = "Not installed"; tone = "warn"; }
+  else if (state?.updateAvailable) { label = "Update available"; tone = "warn"; }
+  else if (state?.checkOk && state.latest) { label = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(state.installed || "") ? "Up to date" : "Version unknown"; tone = label === "Up to date" ? "ok" : "warn"; }
+  if ($("engUpdateState").textContent !== label) $("engUpdateState").textContent = label;
+  $("engUpdateState").className = `chip ${tone}`;
+  $("engInstalled").textContent = state ? state.installed || "Not installed" : "Checking";
+  $("engTested").textContent = state?.tested || "Unknown";
+  const latest = $("engLatest"), latestKey = `${state?.latest?.tag || ""}:${state?.latest?.url || ""}`;
+  // Cached polling must not replace a release link somebody has focused.
+  if (latest.dataset.release !== latestKey) {
+    latest.dataset.release = latestKey; latest.replaceChildren();
+    if (state?.latest?.tag) {
+      const link = document.createElement("a"); link.textContent = state.latest.tag;
+      if (/^https:\/\/github\.com\/Comfy-Org\/ComfyUI\/releases\/tag\/v\d+\.\d+\.\d+$/.test(state.latest.url || "")) {
+        link.href = state.latest.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+      }
+      latest.append(link);
+    } else latest.textContent = "Not checked";
+  }
+  $("engCheckedAt").textContent = Number.isFinite(state?.checkedAt) ? new Date(state.checkedAt).toLocaleString() : "Not checked";
+  const auto = $("engCheckOnStart"); auto.disabled = !state || updatesSaving;
+  if (!updatesSaving) auto.checked = state?.checkUpdatesOnStart === true;
+  $("engCheckUpdates").disabled = busy || updatesForced || !!state?.checking;
+  const update = $("engUpdateComfy"); update.hidden = !state?.managed || !state?.updateAvailable;
+  update.disabled = busy || !!state?.blocked || !state?.latest;
+  update.textContent = state?.latest?.tag ? `Update to ${state.latest.tag}` : "Update ComfyUI";
+  update.title = state?.blocked || "Build a separate engine and switch after Studio is idle.";
+  const restore = $("engRestoreComfy"); restore.hidden = !state?.canRestore;
+  restore.disabled = busy || !!state?.restoreBlocked; restore.title = state?.restoreBlocked || "Switch back to the retained engine.";
+  $("engManualUpdate").hidden = !state || state.managed || !state.installed;
+  $("engUpdateCost").hidden = update.hidden;
+  $("engUpdateCost").textContent = state?.setup?.sizeWords
+    ? `${state.setup.sizeWords}. Separate Python + PyTorch; the idle engine restarts.`
+    : "Downloads several GB into a separate Python + PyTorch environment, then restarts the idle engine.";
+  const problem = updatesError || (job?.state === "failed" ? job.error || job.message : "") || state?.error
+    || (state?.updateAvailable || !state?.installed || !state?.checkOk || !state?.managed || label === "Version unknown" ? state?.blocked : "")
+    || (state?.canRestore ? state?.restoreBlocked : "") || "";
+  if ($("engUpdateNote").textContent !== problem) $("engUpdateNote").textContent = problem;
+  $("engUpdateNote").hidden = !problem;
+  const progress = job?.state === "running" || job?.state === "waiting"
+    ? [job.label || "Preparing engine", job.of ? `step ${job.n || 0} of ${job.of}` : ""].filter(Boolean).join(" · ")
+    : job?.message || "";
+  if ($("engUpdateProgress").textContent !== progress) $("engUpdateProgress").textContent = progress;
+  $("engUpdateProgress").hidden = !progress || progress === problem || ["failed", "blocked"].includes(job?.state);
+  const lines = Array.isArray(job?.lines) ? job.lines.slice(-60).join("\n") : "";
+  $("engUpdateLines").textContent = lines; $("engUpdateLog").hidden = !lines;
+  updateNotice();
+}
+
+async function loadUpdates(force = false) {
+  if (updatesRequest) { if (!force) return updatesRequest; await updatesRequest; }
+  if (force) { updatesForced = true; updatesError = ""; paintUpdates(); }
+  updatesRequest = (async () => {
+    try { UPDATES = await updatePost({ action: "updates", force }); if (updatesErrorSource === "status") updatesError = ""; return UPDATES; }
+    catch (error) { updatesError = error.message || "Could not check ComfyUI releases."; updatesErrorSource = "status"; return null; }
+    finally { updatesForced = false; updatesRequest = null; paintUpdates(); }
+  })();
+  return updatesRequest;
+}
+
+function scheduleUpdates(delay) {
+  clearTimeout(updatesTimer);
+  updatesTimer = setTimeout(pollUpdates, delay);
+}
+async function pollUpdates() {
+  clearTimeout(updatesTimer);
+  const state = await loadUpdates();
+  if (state && !state.checking && (state.checkedAt !== null && state.checkedAt !== undefined || state.error || state.checkOk || !state.installed || state.checkUpdatesOnStart === false)) startupDone = true;
+  if (engineVisible()) scheduleUpdates(updateBusy() ? 1500 : 6000);
+  else if (!startupDone && Date.now() < startupUntil && !document.hidden) scheduleUpdates(1500);
+}
+
+async function beginUpdate(send, operation) {
+  if (updateBusy()) return;
+  updatesAction = operation; updatesError = ""; paintUpdates();
+  try {
+    const result = await send();
+    if (result.job) UPDATES = { ...UPDATES, job: result.job };
+  } catch (error) { updatesError = error.message || "The engine update could not start."; updatesErrorSource = operation; }
+  finally { updatesAction = false; paintUpdates(); scheduleUpdates(250); }
+}
+
+function wireUpdates() {
+  if (!$("eng-updates")) return;
+  $("engCheckUpdates").addEventListener("click", async () => { await loadUpdates(true); if (engineVisible()) scheduleUpdates(6000); });
+  $("engUpdateComfy").addEventListener("click", () => beginUpdate(() => updatePost({ action: "update_comfy" }), "update"));
+  $("engRestoreComfy").addEventListener("click", () => beginUpdate(() => updatePost({ action: "restore_comfy" }, 240000), "restore"));
+  $("engCheckOnStart").addEventListener("change", async () => {
+    const value = $("engCheckOnStart").checked; updatesSaving = true; updatesError = ""; paintUpdates();
+    try {
+      const response = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comfyCheckUpdatesOnStart: value }) });
+      const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || "Could not save the startup check.");
+      UPDATES = { ...UPDATES, checkUpdatesOnStart: result.checkUpdatesOnStart ?? value };
+      if (value) { startupDone = false; startupUntil = Date.now() + 30000; scheduleUpdates(250); }
+    } catch (error) { updatesError = error.message; updatesErrorSource = "preference"; }
+    finally { updatesSaving = false; paintUpdates(); }
+  });
+  const page = $("engine");
+  new MutationObserver(() => {
+    if (engineVisible()) pollUpdates();
+    else { clearTimeout(updatesTimer); if (!startupDone && Date.now() < startupUntil) scheduleUpdates(1500); }
+  }).observe(page, { attributes: true, attributeFilter: ["hidden"] });
+  document.addEventListener("visibilitychange", () => {
+    clearTimeout(updatesTimer);
+    if (!document.hidden && (engineVisible() || !startupDone && Date.now() < startupUntil)) pollUpdates();
+  });
+  startupUntil = Date.now() + 30000;
+  pollUpdates();
+}
+
 /* ── activity ─────────────────────────────────────────────────────────────── */
 
 const activityFilters = () => ({
@@ -346,6 +507,7 @@ async function adoptUnrecorded(dry) {
 
 function wire() {
   if (!$("engRuns")) return;   // not this page (the DAW loads its own modules)
+  wireUpdates();
 
   $("engRefresh").addEventListener("click", () => { loadStatus().catch(() => {}); loadRuns().catch(() => {}); });
 

@@ -4,7 +4,7 @@
  * Two public GET requests to api.github.com, no account and no token, nothing
  * about this machine or anything on it sent. It is the same kind of request
  * scripts/install-engine.mjs already makes to find a ComfyUI release, and it is
- * the fourth and last place Studio touches the internet at all.
+ * separate from the optional startup ComfyUI check in comfy-updates.js.
  *
  * ⚠ THIS IS NOT WHAT COLLAB ASKS. Two friends' Studios agree or disagree on the
  * protocol number in their packets (server/collab/packet.js PACKET_V), which is

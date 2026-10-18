@@ -62,7 +62,8 @@ export async function validatedQwenStage(metadata, { root, appData, backend }) {
 /** Run the existing installer, with independent, bounded stdout/stderr buffers.
  * Resolves on every spawn/exit/protocol failure; callers never leak a rejection. */
 export function runQwenInstaller({ root, appData, backend, gpuName = "", onLine = () => {},
-  onStep = () => {}, onChild = () => {}, spawnImpl = spawn, script = INSTALL_ENGINE_SCRIPT } = {}) {
+  onStep = () => {}, onChild = () => {}, spawnImpl = spawn, script = INSTALL_ENGINE_SCRIPT,
+  installerArgs = ["--qwen-compatible", "--stage-only"] } = {}) {
   return new Promise((resolve) => {
     let settled = false, metadata = null, error = null;
     const finish = (out) => { if (!settled) { settled = true; resolve(out); } };
@@ -79,7 +80,7 @@ export function runQwenInstaller({ root, appData, backend, gpuName = "", onLine 
     let child;
     try {
       child = spawnImpl(process.execPath, [script, "--backend", backend, ...(gpuName ? ["--gpu-name", gpuName] : []),
-        "--qwen-compatible", "--stage-only"], {
+        ...installerArgs], {
         cwd: path.resolve(path.dirname(script), ".."), windowsHide: true,
         env: { ...process.env, AIPLAY_APPDATA: appData, AIPLAY_ENGINE_DIR: root },
       });
@@ -128,6 +129,9 @@ async function writeJobRecord(file, record) {
   await writeFile(temp, JSON.stringify(record, null, 2));
   await rename(temp, file);
 }
+
+// Shared by other isolated engine setups; Qwen keeps its own public workflow.
+export { availableBytes as availableEngineBytes, processAlive as engineProcessAlive, writeJobRecord as writeEngineJobRecord };
 
 /**
  * activate(metadata) must switch settings, restart, verify runtimeReady and

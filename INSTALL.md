@@ -287,11 +287,39 @@ and replaces the app files (a git clone pulls instead). Studio has to be
 stopped; songs, settings, models, your custom workflows and the private Node.js
 are kept.
 
+**ComfyUI updates** are separate, under **More tools > Engine > Updates**.
+Studio checks the public [stable release](https://github.com/Comfy-Org/ComfyUI/releases/latest)
+after startup when a local engine exists; **Check on startup** turns this off.
+The result is cached for six hours, survives restarts, and an unavailable
+GitHub connection never prevents Studio from starting. **Check again** refreshes
+it (at most once a minute). Checking never installs anything.
+
+**Update ComfyUI** installs the latest stable release beside a completed
+Studio-managed engine, with a new Python and the selected hardware's PyTorch
+environment. Expect roughly 3–5 GB of downloads on CPU or 6–15 GB on a GPU,
+plus at least 6 or 16 GB of free disk space respectively. The default fresh
+install remains on Studio's tested baseline; latest stable is an explicit
+choice and has not been validated with every Studio model. Renders must be
+idle at the start and before switching. Startup, version and core nodes are
+verified before settings change; a failed switch restarts the previous engine.
+
+Models, extra model folders, input and output keep their original locations.
+ComfyUI's user data (including saved workflows) is copied after shutdown so
+a new release cannot migrate the old engine's database. The previous engine
+and its code changes stay on disk; **Restore previous** selects it again while
+idle. Workflows edited after updating remain in the new engine's user folder.
+Interrupted installations can be retried without deleting the working engine.
+
+Desktop, portable and source installations still receive version checks, but
+use their [own update tools](https://docs.comfy.org/installation/update_comfyui).
+Studio also refuses its update button for custom nodes, linked installations,
+custom base folders or a launch override, preserving those environments.
+
 It installs to `%LOCALAPPDATA%\Programs\AIPLAY Studio` by default and can delete
 itself when you close it. Running it again reinstalls in place and keeps your
 data, which lives in `%USERPROFILE%\.aiplay-studio`, never in the app folder.
-It never touches ComfyUI, drivers or models: engine setup is the launcher's
-system check, below.
+The app installer never touches ComfyUI, drivers or models: initial engine
+setup is the launcher's system check, below.
 
 The installer is built from `installer/Setup.cs` by
 `node scripts/build-installer.mjs`. It knows two repository names and nothing

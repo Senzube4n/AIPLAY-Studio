@@ -5033,6 +5033,35 @@
 
       <div id="engPinned" class="eng-warn" hidden></div>
 
+      <section class="pcard" id="eng-updates" data-nav="Updates">
+        <h3>ComfyUI updates <span class="chip" id="engUpdateState" role="status">Not checked</span></h3>
+        <p class="pcard-sub">Check stable releases and update the engine when Studio is idle.</p>
+        <div class="eng-grid">
+          <div class="eng-fact"><span class="k">installed</span><span class="v" id="engInstalled">Checking</span></div>
+          <div class="eng-fact"><span class="k">latest stable</span><span class="v" id="engLatest">Not checked</span></div>
+          <div class="eng-fact"><span class="k">Studio baseline</span><span class="v" id="engTested">Checking</span></div>
+          <div class="eng-fact"><span class="k">last checked</span><span class="v" id="engCheckedAt">Not checked</span></div>
+        </div>
+        <div class="eng-row"><label class="eng-check"><input type="checkbox" id="engCheckOnStart" disabled> Check releases on startup</label></div>
+        <div class="cta eng-actions">
+          <button type="button" class="btn2" id="engCheckUpdates">Check again</button>
+          <button type="button" class="btn" id="engUpdateComfy" hidden>Update ComfyUI</button>
+          <button type="button" class="btn2" id="engRestoreComfy" hidden>Restore previous engine</button>
+          <a class="btn2" id="engManualUpdate" href="https://docs.comfy.org/installation/update_comfyui" target="_blank" rel="noopener noreferrer" hidden>Update your install ↗</a>
+        </div>
+        <p class="hint" id="engUpdateCost" hidden>Downloads several GB into a separate environment, then restarts the idle engine.</p>
+        <p class="hint warnhint" id="engUpdateNote" role="status" hidden></p>
+        <p class="hint" id="engUpdateProgress" role="status" hidden></p>
+        <details class="more" id="engUpdateLog" hidden><summary>Update log</summary><pre class="eng-update-log" id="engUpdateLines"></pre></details>
+        <details class="more"><summary>Update details</summary>
+          <p>The latest release may not be validated with every Studio model; the Studio baseline names the default for new installs.</p>
+          <p>Studio builds a separate Python and PyTorch environment, keeps the previous engine for recovery, and reuses model, input and output folders.</p>
+          <p>User workflows are copied to the new environment; changes to the original engine stay with the retained copy.</p>
+          <p>ComfyUI Desktop, portable and other user-managed installs use their own updater.</p>
+          <a href="https://docs.comfy.org/installation/update_comfyui" target="_blank" rel="noopener noreferrer">Official update guide ↗</a>
+        </details>
+      </section>
+
       <section class="pcard" id="eng-status" data-nav="Status">
         <h3>Status
           <span class="eng-actions">

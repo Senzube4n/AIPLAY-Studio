@@ -349,6 +349,28 @@ export function createEngineRoutes(deps) {
           return true;
         }
 
+        case "updates": {
+          if (!deps.maintenance) { json(res, 503, { error: "ComfyUI updates are unavailable." }); return true; }
+          json(res, 200, await deps.maintenance.status({ force: b.force === true }));
+          return true;
+        }
+
+        case "update_comfy": {
+          if (!deps.sameOriginLocalJson?.(req)) { json(res, 403, { error: "Updating ComfyUI requires a same-origin local JSON request." }); return true; }
+          if (!deps.maintenance) { json(res, 503, { error: "ComfyUI updates are unavailable." }); return true; }
+          const job = await deps.maintenance.update();
+          json(res, job?.state === "blocked" ? 409 : 200, { ok: job?.state !== "blocked", job,
+            ...(job?.state === "blocked" ? { error: job.message } : {}) });
+          return true;
+        }
+
+        case "restore_comfy": {
+          if (!deps.sameOriginLocalJson?.(req)) { json(res, 403, { error: "Restoring ComfyUI requires a same-origin local JSON request." }); return true; }
+          if (!deps.maintenance) { json(res, 503, { error: "ComfyUI updates are unavailable." }); return true; }
+          json(res, 200, await deps.maintenance.restore());
+          return true;
+        }
+
         /* A PORT IS NOT AN IDENTITY. Which ComfyUI this is, from its own argv —
          * the check that stops renders landing in another install's library,
          * and the answer on screen to two repos sharing one machine. */

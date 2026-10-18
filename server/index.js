@@ -358,6 +358,7 @@ import { labelYueLyrics } from "./music/yue-lyrics.js";
 import { createEnginePackagesRunner } from "./setup/engine-packages.js";
 import { createQwenEngineRunner } from "./setup/qwen-engine.js";
 import { createQwenActivation } from "./setup/qwen-activation.js";
+import { createComfyMaintenance } from "./setup/comfy-maintenance.js";
 /* Read through the namespace, not by name: engineModuleRefusal (lane D) is
  * called only when the module carries it, so this file loads either way. */
 import * as enginePackages from "./setup/engine-packages.js";
@@ -2325,8 +2326,10 @@ async function savePrefs() {
     await mkdir(path.dirname(config.settingsFile), { recursive: true });
     await writeFile(config.settingsFile,
       JSON.stringify({ ...cur, prefs: prefsSnapshot() }, null, 2), "utf-8");
+    return true;
   } catch (err) {
     console.warn(`  [settings] could not be saved: ${err.message}`);
+    return false;
   }
 }
 
@@ -3112,6 +3115,12 @@ async function qwenRepairBusy() {
 }
 const qwenActivation = createQwenActivation({ config, supervisor: comfy, engine: engineDoor,
   readiness: () => qwenImageStatus(), busy: qwenRepairBusy });
+const comfyMaintenance = createComfyMaintenance({ config, engine: engineDoor, supervisor: comfy,
+  busy: qwenRepairBusy,
+  vendor: () => config.torchBackend === "cpu" ? "cpu"
+    : vendorOf(config.gpu, config.torchBackend) || gpuStatus()?.vendor || "cpu",
+  gpuName: () => gpuStatus()?.name || config.gpu?.name || "",
+});
 const setupRunner = oneRunner(createSetupRunner({
   appData: config.dataDir,
   vendor: () => gpuStatus()?.vendor || vendorOf(config.gpu, config.torchBackend),
@@ -3156,7 +3165,7 @@ const setupRunner = oneRunner(createSetupRunner({
       ? "This engine is selected by a launch override. Remove that override to let Studio fix Qwen."
       : null,
   activate: (metadata) => qwenActivation.activate(metadata),
-}));
+}), comfyMaintenance.runner);
 const setupRoutes = createSetupRoutes({ json, readBody, sameOriginLocalJson, runner: setupRunner });
 /* Fast covers (server/fastcover.js): song covers on the processor. The art
  * queue asks use() for every song cover it queues. */
@@ -3490,6 +3499,7 @@ const whisperRoutes = createWhisperRoutes({
  * responses by server/engine/client_test.js. */
 const engineRoutes = createEngineRoutes({
   json, readBody, config, provenance: prov, engine: engineDoor, comfy,
+  maintenance: comfyMaintenance, sameOriginLocalJson,
   IMAGE_DIR, CLIP_DIR,
   rememberClip: (name, renderSeconds, meta) => {
     if (!name) return;
@@ -9373,6 +9383,23 @@ const server = http.createServer(async (req, res) => {
        * another origin must not choose either. Refused before the body is read. */
       if (!sameOriginLocalJson(req)) return json(res, 403, { error: "Changing the rig or output folder is only accepted from Studio's own page or a local client." });
       const b = await readBody(req);
+      if (Object.hasOwn(b, "comfyCheckUpdatesOnStart")) {
+        if (typeof b.comfyCheckUpdatesOnStart !== "boolean") return json(res, 400, { error: "The startup update check must be on or off." });
+        try {
+          const savedSettings = JSON.parse(await readFile(config.settingsFile, "utf8"));
+          if (!savedSettings || typeof savedSettings !== "object" || Array.isArray(savedSettings)) throw new Error("Invalid settings");
+        } catch (error) {
+          if (error.code !== "ENOENT") return json(res, 409, { error: "Restore access to valid Studio settings before saving this preference." });
+        }
+        const before = config.comfy.checkUpdatesOnStart;
+        config.comfy.checkUpdatesOnStart = b.comfyCheckUpdatesOnStart;
+        if (!await savePrefs()) {
+          config.comfy.checkUpdatesOnStart = before;
+          return json(res, 500, { error: "The startup update check preference could not be saved." });
+        }
+        if (b.comfyCheckUpdatesOnStart) void comfyMaintenance.start().catch(() => {});
+        return json(res, 200, { ok: true, checkUpdatesOnStart: config.comfy.checkUpdatesOnStart, needsRestart: false });
+      }
       /* A folder on this computer's own disk. \\server\share is absolute to
        * path.win32, so a UNC or device path (\\?\, \\.\) would pass the stat
        * below and make Studio run, or write to, another machine; it is refused
@@ -13883,6 +13910,8 @@ server.on("error", (err) => {
 server.listen(config.uiPort, LAN.on ? "0.0.0.0" : "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
   persistStartLevel().catch((err) => console.warn(`  [settings] the starting level was not saved: ${err.message}`));
+  // This lookup cannot delay startup or stop offline use; installs require a press.
+  void comfyMaintenance.start().catch((error) => console.warn(`  [ComfyUI updates] ${error.message}`));
   if (LAN.why) console.warn(`  [network] ${LAN.why}`);
   if (LAN.on) {
     const ips = lanAddresses().map((a) => `http://${a.ip}:${config.uiPort}`);

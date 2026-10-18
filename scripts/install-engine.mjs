@@ -58,6 +58,9 @@
  *   --stage-only        build into an explicit AIPLAY_ENGINE_DIR without
  *                       changing settings. Refuses a finished engine or an
  *                       unfinished engine that was not itself staged.
+ *   --comfy-tag vX.Y.Z  verified stable update target, only with --stage-only
+ *                       and an explicit engine folder. Fresh-install pins stay
+ *                       unchanged; cannot be combined with --qwen-compatible.
  *
  * Output: plain log lines, plus machine lines the launcher reads:
  *   @@step {"id":"torch","label":"Installing PyTorch","n":5,"of":10}
@@ -85,7 +88,9 @@ const BACKEND = String(arg("backend") || "").toLowerCase();
 const GPU_NAME = arg("gpu-name") || "";
 const QWEN_COMPATIBLE = process.argv.includes("--qwen-compatible");
 const STAGE_ONLY = process.argv.includes("--stage-only");
-const SELECTED_TAG = QWEN_COMPATIBLE ? QWEN_COMFY_TAG : COMFY_TAG;
+const HAS_COMFY_TAG = process.argv.some(arg => arg === "--comfy-tag" || arg.startsWith("--comfy-tag="));
+const UPDATE_TAG = HAS_COMFY_TAG ? arg("comfy-tag") : null;
+const SELECTED_TAG = HAS_COMFY_TAG ? UPDATE_TAG : QWEN_COMPATIBLE ? QWEN_COMFY_TAG : COMFY_TAG;
 const QWEN_NODES = ["TextEncodeQwenImage21", "QwenImage21Cache"];
 const APPDATA = process.env.AIPLAY_APPDATA || path.join(homedir(), ".aiplay-studio");
 const ROOT = path.resolve(process.env.AIPLAY_ENGINE_DIR || path.join(APPDATA, "engine"));
@@ -354,7 +359,7 @@ async function install() {
     await clean();
   }
   await mkdir(ROOT, { recursive: true });
-  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: false, ...(STAGE_ONLY ? { stageOnly: true } : {}), startedAt: new Date().toISOString() }, null, 2));
+  await writeFile(MARKER, JSON.stringify({ backend: BACKEND, complete: false, comfy: SELECTED_TAG, ...(STAGE_ONLY ? { stageOnly: true } : {}), startedAt: new Date().toISOString() }, null, 2));
   madeEngine = true;
   await mkdir(CACHE, { recursive: true });
   await writeFile(CACHE_MARK, "made by scripts/install-engine.mjs; safe to delete");
@@ -382,7 +387,8 @@ async function install() {
   step("comfy");
   const tag = SELECTED_TAG;
   const srcUrl = process.env.AIPLAY_COMFY_ARCHIVE_URL || comfyArchiveUrl(tag);
-  log(`ComfyUI ${tag}: the version this Studio is tested with (a newer release is not taken until Studio pins it).`);
+  log(HAS_COMFY_TAG ? `ComfyUI ${tag}: preparing the selected update beside the current engine.`
+    : `ComfyUI ${tag}: the version this Studio is tested with (a newer release is not taken until Studio pins it).`);
   const srcArchive = path.join(CACHE, `comfyui-${tag}.tar.gz`);
   await rm(srcArchive, { force: true });   // a kept cache may hold a cut-off one
   await download(srcUrl, srcArchive, "ComfyUI");
@@ -453,7 +459,7 @@ async function install() {
    * features must survive that switch, so an incomplete package check keeps
    * this stage retryable with its existing download cache. A normal install
    * still keeps an engine that can render and reports its package warning. */
-  if (STAGE_ONLY && QWEN_COMPATIBLE && !studio.ok) {
+  if (STAGE_ONLY && (QWEN_COMPATIBLE || HAS_COMFY_TAG) && !studio.ok) {
     throw new Error(`The new engine's Studio packages did not import: ${studio.missing.join(", ")}. ${studio.warning || "Try again to finish the installation."}`);
   }
 
@@ -527,6 +533,13 @@ async function clean() {
 
 /* --plan <README.md>: print which PyTorch command this backend and card would
  * get from that README, and where everything would go; install nothing. */
+if (HAS_COMFY_TAG && (!/^v(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})$/.test(UPDATE_TAG || "")
+  || process.argv.filter((arg) => arg === "--comfy-tag" || arg.startsWith("--comfy-tag=")).length !== 1
+  || !STAGE_ONLY || !process.env.AIPLAY_ENGINE_DIR || QWEN_COMPATIBLE || process.argv.includes("--studio-packages"))) {
+  const message = "--comfy-tag requires one stable vX.Y.Z tag, --stage-only and an explicit AIPLAY_ENGINE_DIR; it cannot be combined with Qwen or package repair.";
+  log(`@@error ${JSON.stringify({ message, step: "start", cleaned: false })}`);
+  process.exit(1);
+}
 if (process.argv.includes("--plan")) {
   const readme = await readFile(arg("plan"), "utf-8");
   log(JSON.stringify({

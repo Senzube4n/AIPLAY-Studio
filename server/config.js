@@ -475,6 +475,8 @@ export const config = {
   // restarting per job discards the AR-stage cache, and with it the ~40% saving
   // that makes re-rolling a mix faster than realtime.
   comfy: {
+    // A public stable-release lookup after Studio starts; never an automatic install.
+    checkUpdatesOnStart: true,
     /**
      * ⚠ THERE IS NO `port` HERE ANY MORE, AND NO `host` EITHER.
      *
@@ -2463,6 +2465,7 @@ config.music.engines["yue2-gguf"] = {
 export { LEVELS, IN_USE_KEYS, startLevel };
 config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
+  ["comfy", "checkUpdatesOnStart", (v) => typeof v === "boolean"],
   ["ui", "level", (v) => LEVELS.includes(v)],
   ["ui", "levelBy", (v) => v === "studio" || v === "you"],
   ["video", "enabled", (v) => typeof v === "boolean"],
