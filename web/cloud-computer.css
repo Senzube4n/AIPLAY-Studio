@@ -36,6 +36,8 @@
 #cloudSetup .cloud-flow-head h4 { margin: 0; }
 #cloudSetup { padding:22px; border:1px solid var(--edge); border-radius:16px; }
 #cloudSetup .cloud-flow-head { position:sticky; top:var(--cloud-nav-height,100px); z-index:4; background:var(--panel); padding:14px 0; margin-bottom:18px; border-bottom:1px solid var(--edge); }
+#cloudSetup .cloud-flow-head { background:var(--bg); background:rgb(from var(--panel) r g b / 1); }
+#cloudSetup .cloud-flow-head::before { content:''; position:absolute; left:0; right:0; bottom:100%; height:12px; background:inherit; }
 #cloudSetup .cloud-flow-head .hint { display:block; margin:4px 0 0; font-size:.7rem; }
 #cloudSetup .cloud-flow-head h4 { font-size:1rem; letter-spacing:.06em; }
 #cloudSetup .cloud-setup-steps { margin:8px 0 22px; gap:8px; }
