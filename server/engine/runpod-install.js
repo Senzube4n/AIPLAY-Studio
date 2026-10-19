@@ -8,10 +8,10 @@ import { automaticBootstrap } from './runpod-bootstrap.js';
 export const XL_ACCEPTANCE = 'ace15-xl-sft-v1';
 function acceptancePlan(input) {
   if (input.acceptance === undefined) return null;
-  if (input.acceptance !== XL_ACCEPTANCE || input.gpuTypeId !== 'NVIDIA A40' || input.cloudType !== 'SECURE'
-    || Number(input.volumeInGb) !== 100 || !(input.expectedPricePerHr > 0 && input.expectedPricePerHr <= .59))
-    throw Error('Review the approved A40 Secure, 100 GB, at most $0.59/hour acceptance configuration.');
-  return { id: XL_ACCEPTANCE, minRamPerGpu: 64, minVcpuCountPerGpu: 8, workMinutes: 90, totalMinutes: 120, budgetUSD: 2 };
+  if (input.acceptance !== XL_ACCEPTANCE || input.gpuTypeId !== 'NVIDIA A100-SXM4-80GB' || input.cloudType !== 'SECURE'
+    || Number(input.volumeInGb) !== 100 || !(input.expectedPricePerHr > 0 && input.expectedPricePerHr <= 1.79))
+    throw Error('Review the approved A100 SXM Secure, 100 GB, at most $1.79/hour acceptance configuration.');
+  return { id: XL_ACCEPTANCE, minRamPerGpu: 64, minVcpuCountPerGpu: 8, workMinutes: 90, totalMinutes: 120, budgetUSD: 5 };
 }
 
 export async function createAutomaticInstaller({ dataDir, provider, client, getSecret, setSecret,
@@ -35,7 +35,7 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
     }
     quotes.sort((a, b) => a.rate - b.rate);
     if (!quotes.length) throw new Error('This graphics card is unavailable. Review another computer.');
-    if (acceptance && quotes[0].rate > .59) throw Error('The approved acceptance price is no longer available. Review again.');
+    if (acceptance && quotes[0].rate > 1.79) throw Error('The approved acceptance price is no longer available. Review again.');
     return { ...quotes[0], ...(acceptance ? { acceptance } : {}) };
   }
   async function create(input) {
@@ -68,7 +68,7 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
         if (input.acceptanceConfirm !== 'CREATE BOUNDED XL-SFT TEST') throw Error('Explicitly approve the bounded hardware test before creating it.');
         stopKey = await getSecret('RUNPOD_ACCEPTANCE_STOP_KEY');
         if (!stopKey || stopKey === await getSecret('RUNPOD_ACCOUNT_API_KEY')) throw Error('Save a separate acceptance stop key in AIPLAY first. The account key stays on this PC.');
-        if (!pin.acceptanceCommand || pin.acceptanceProtocol !== 1) throw Error('This published build has no startup deadline supervisor.');
+        if (!pin.acceptanceCommand || pin.acceptanceProtocol !== 2) throw Error('This published build has no approved A100 startup deadline supervisor.');
       }
       // Publication is verified before spending, including source-integrity mismatch.
       const published = await fetchFn(pin.url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
@@ -190,6 +190,6 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
   return { create, review, refresh, snapshot, stageUpdate, saveAcceptanceKey, acceptanceDiagnostics,
     assertStartAllowed: id => { if (state.podId === id && state.acceptance) throw Error('This bounded acceptance session cannot be restarted. Review a new test authorization first.'); },
     acceptanceStatus: async () => ({ stopKeySaved: !!await getSecret('RUNPOD_ACCEPTANCE_STOP_KEY'), policy: XL_ACCEPTANCE,
-      pinnedSupervisorAvailable: bootstrap().acceptanceProtocol === 1 }),
+      pinnedSupervisorAvailable: bootstrap().acceptanceProtocol === 2 }),
     options: () => { const p = bootstrap(); return { available: p.available, problem: p.problem || null }; }, close: () => clearInterval(timer) };
 }

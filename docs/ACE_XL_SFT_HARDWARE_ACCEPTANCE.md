@@ -1,6 +1,6 @@
 # ACE-Step 1.5 XL-SFT hardware acceptance
 
-Status: **prerequisite safeguards implemented and tested offline; final paid creation approval pending**. Prepared 2026-10-19 against implementation baseline `444d0070352bb313016858ad07d411867ab64425`; the safeguard commit is named in delivery.
+Status: **creation approved conditionally; pre-creation check failed availability; hardware testing not started**. Prepared 2026-10-19 against implementation baseline `444d0070352bb313016858ad07d411867ab64425`; safeguards published in `e23e1c1f369d666dc928f6e6f3c4407b70f0e21a`.
 
 No computer has been created, started, stopped, updated or deleted for this phase. No model weights have been downloaded. No compatibility requirements have been changed. This is a cost proposal and acceptance procedure, not a successful inference report.
 
@@ -123,6 +123,25 @@ One A40 run can establish a **tested compatible configuration**, not the mathema
 
 The initial wizard may recommend the tested configuration or an explicitly qualified equivalent only to the extent the evidence and existing compatibility fields justify it. Smaller cards, other precisions, other planners, longer songs, batch sizes, LoRAs, reference audio, native backends, XL-Turbo and XL-Base remain unverified. Add focused regressions for that scope, changed workload, missing companions, old worker build and insufficient host RAM; run the mandatory gate before publishing source changes.
 
-## Requested decision
+## 8. Approved attempt and availability outcome
 
-Approve one new A40 Secure Cloud test computer at **no more than $0.59/hour**, at least **64 GB host RAM / 8 vCPUs**, **100 GB persistent + 20 GB temporary storage**, up to **2 hours / $2 additional session charges**, with installation, the specified sample, budget-deadline cancellation of test work if needed, and safe stop afterward. Retained persistent storage is separately **$20/month while stopped**. Price/resource changes or unavailable capacity require another review. Termination, deletion and storage resizing are excluded.
+The user explicitly approved one A40 Secure Cloud test computer at **no more than $0.59/hour**, at least **64 GB host RAM / 8 vCPUs**, **100 GB persistent + 20 GB temporary storage**, up to **2 hours / $2 additional session charges**, with the specified installation, inference, evidence collection and safe stop. Retained persistent storage was separately approved at approximately **$20/month while stopped**. The approval expressly requires stopping and requesting renewed approval if the approved configuration is unavailable or materially changes. Termination, deletion, resizing, alternative GPUs and replacement computers remain excluded.
+
+The read-only pre-creation check at **2026-10-19 17:14:13 UTC (19:14:13 Europe/Berlin)** returned **overallAvailability: NONE** for NVIDIA A40 Secure Cloud with the required CUDA runtime compatibility (minimum 12.8). The catalog rate remained **$0.59/hour**, but a price listing does not establish available capacity. Since this GPU/runtime check failed, actual placement meeting the 64 GB RAM / 8 vCPU floors could not be attempted or validated.
+
+The check discovered **zero Pods**, confirmed the separate stop credential was usable and encrypted locally, and verified the published pinned installer. It performed three provider read requests and **zero billable mutations**. No creation request was sent, no Pod or storage was created, no weights were downloaded and no inference ran. This attempt incurred no test resource charges. There is no test computer requiring shutdown and no provider-confirmed shutdown result to report.
+
+Sanitized evidence: `tmp/cloud-manager/xl-sft-final-preflight-inventory.json`. The evidence ledger above remains pending; no measured compatibility result has been added to the planner. The test is awaiting available approved capacity and renewed user approval before another attempt. No automatic retry or alternative provisioning is scheduled.
+
+### One additional approved attempt
+
+The user subsequently authorized **one additional reviewed attempt**, with all hardware, storage, price, time and spending limits unchanged, and explicitly required stopping again if A40 Secure capacity remained unavailable.
+
+- **2026-10-19 17:18:18 UTC (19:18:18 Berlin):** the fresh read-only preflight reported A40 Secure **LOW** stock at **$0.59/hour**, zero existing Pods, a usable encrypted separate stop credential and a verified published supervisor.
+- **17:18:27 UTC:** the existing installer review returned HTTP 200 with the same price, pool and acceptance policy, including the 64 GB RAM / 8 vCPU floors and 90/120-minute workload/shutdown windows.
+- **17:18:40 UTC:** the single authorized local creation submission was rejected with HTTP 400, **"This graphics card is unavailable. Review another computer."** The installer's mandatory final quote failed before the creation journal or provider create POST. The historical installer state remained `removed`, with no new acceptance request or Pod recorded. The generic suggestion to review another computer was not acted on.
+- **17:18:54 UTC:** one read-only provider reconciliation confirmed **zero Pods** and no acceptance computer. No further availability query, create retry, alternative GPU or replacement was attempted.
+
+No billable resource was created, no new retained storage exists from this attempt and no test resource charges were incurred. No installation, inference, telemetry measurement, output generation or shutdown was possible. Provider-confirmed shutdown is **not applicable because no test Pod exists**, rather than a successful shutdown result. Actual VRAM/RAM, load/generation timings and audio acceptance remain unmeasured; the planner retains its unverified profile status.
+
+Sanitized evidence is retained in `tmp/cloud-manager/xl-sft-approved-retry-preflight.json`, `xl-sft-approved-retry-installer-review.json`, `xl-sft-approved-retry-create-result.json` and `xl-sft-approved-retry-reconciliation.json`. This single additional attempt is finished. Further provisioning requires renewed authorization; no automatic retry is scheduled.

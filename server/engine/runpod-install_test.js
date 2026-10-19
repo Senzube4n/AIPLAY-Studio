@@ -14,31 +14,32 @@ const COMMIT = 'a'.repeat(40), SCRIPT = 'verified installer';
 const ID = '12345678-1234-4234-8234-123456789abc';
 const input = { requestId: ID, installAI: true, confirm: 'CREATE PAID POD', name: 'AIPLAY first', gpuTypeId: 'NVIDIA test', cloudType: 'ALL', volumeInGb: 100, expectedPricePerHr: .5 };
 
-const acceptanceInput = { ...input, acceptance: 'ace15-xl-sft-v1', acceptanceConfirm: 'CREATE BOUNDED XL-SFT TEST', gpuTypeId: 'NVIDIA A40', cloudType: 'SECURE' };
+const acceptanceInput = { ...input, acceptance: 'ace15-xl-sft-v1', acceptanceConfirm: 'CREATE BOUNDED XL-SFT TEST', gpuTypeId: 'NVIDIA A100-SXM4-80GB', cloudType: 'SECURE', expectedPricePerHr: 1.79 };
 async function acceptanceRig(t, options = {}) {
   const r = await rig(t, options);
+  r.setRate(1.79);
   r.secrets.set('RUNPOD_ACCEPTANCE_STOP_KEY', 'separate-stop-key-fixture-only');
   const original = r.args.bootstrap;
-  r.args.bootstrap = () => ({ ...original(), acceptanceCommand: 'inline-supervised-bootstrap', acceptanceProtocol: 1 });
+  r.args.bootstrap = () => ({ ...original(), acceptanceCommand: 'inline-supervised-bootstrap', acceptanceProtocol: 2 });
   r.manager.close(); r.manager = await createAutomaticInstaller(r.args); t.after(() => r.manager.close());
   return r;
 }
 
 test('bounded XL-SFT approval enforces fixed placement, storage and deadlines without changing normal creation', async t => {
   const r = await acceptanceRig(t); const result = await r.manager.create(acceptanceInput), body = r.writes[0];
-  assert.deepEqual(body.gpu, { id: 'NVIDIA A40', count: 1, minCudaVersion: '12.8', minRamPerGpu: 64, minVcpuCountPerGpu: 8 });
+  assert.deepEqual(body.gpu, { id: 'NVIDIA A100-SXM4-80GB', count: 1, minCudaVersion: '12.8', minRamPerGpu: 64, minVcpuCountPerGpu: 8 });
   assert.equal(body.cloud, 'SECURE'); assert.equal(body.disk, 20); assert.equal(body.mounts.persistent.size, 100);
   assert.deepEqual(body.cmd, ['inline-supervised-bootstrap']);
   assert.equal(Number(body.env.AIPLAY_ACCEPTANCE_WORK_UNTIL) - Number(body.env.AIPLAY_ACCEPTANCE_ISSUED_AT), 90 * 60000);
   assert.equal(Number(body.env.AIPLAY_ACCEPTANCE_STOP_BY) - Number(body.env.AIPLAY_ACCEPTANCE_WORK_UNTIL), 30 * 60000);
-  assert.equal(result.acceptance.budgetUSD, 2); assert.equal(body.env.AIPLAY_ACCEPTANCE_STOP_KEY, r.secrets.get('RUNPOD_ACCEPTANCE_STOP_KEY'));
+  assert.equal(result.acceptance.budgetUSD, 5); assert.equal(body.env.AIPLAY_ACCEPTANCE_STOP_KEY, r.secrets.get('RUNPOD_ACCEPTANCE_STOP_KEY'));
   assert.ok(!(await readFile(path.join(r.dataDir, 'runpod/automatic-install.json'), 'utf8')).includes(body.env.AIPLAY_ACCEPTANCE_STOP_KEY));
   assert.throws(() => r.manager.assertStartAllowed('new'), /cannot be restarted/);
   await r.manager.create(acceptanceInput); assert.equal(r.writes.length, 1);
 });
 
 test('acceptance refuses substitutions, higher prices, storage changes, missing approval/key and old bootstrap before spending', async t => {
-  for (const change of [{gpuTypeId:'NVIDIA L40S'}, {cloudType:'ALL'}, {volumeInGb:150}, {expectedPricePerHr:.60}, {acceptance:'unknown'}, {acceptanceConfirm:''}]) {
+  for (const change of [{gpuTypeId:'NVIDIA L40S'}, {gpuTypeId:'NVIDIA A40'}, {gpuTypeId:'NVIDIA A100 80GB PCIe'}, {cloudType:'ALL'}, {cloudType:'COMMUNITY'}, {volumeInGb:150}, {expectedPricePerHr:1.80}, {acceptance:'unknown'}, {acceptanceConfirm:''}]) {
     const r = await acceptanceRig(t); await assert.rejects(r.manager.create({...acceptanceInput,...change})); assert.equal(r.writes.length, 0);
   }
   const r = await acceptanceRig(t); r.secrets.delete('RUNPOD_ACCEPTANCE_STOP_KEY');
@@ -60,6 +61,19 @@ test('acceptance rechecks current CUDA-filtered Secure price and reconciles unce
   await assert.rejects(changed.manager.create(acceptanceInput),/price/); assert.equal(changed.writes.length,0);
 });
 
+test('A100 acceptance refuses unavailable stock, an above-ceiling quote and an old A40 supervisor before any create', async t => {
+  for (const quote of [{rate:1.80,overallAvailability:'LOW'}, {rate:1.79,overallAvailability:'NONE'}]) {
+    const r=await acceptanceRig(t); r.args.provider.quote=async()=>quote;
+    await assert.rejects(r.manager.create(acceptanceInput),/price|unavailable/);
+    assert.equal(r.writes.length,0);
+  }
+  const r=await acceptanceRig(t);
+  r.args.bootstrap=()=>({available:true,acceptanceCommand:'old-a40-supervisor',acceptanceProtocol:1});
+  const old=await createAutomaticInstaller(r.args);t.after(()=>old.close());
+  await assert.rejects(old.create(acceptanceInput),/A100.*supervisor/);
+  assert.equal(r.writes.length,0);
+});
+
 test('acceptance key enrollment uses the existing vault and read-only credential validation without echoing secrets', async t => {
   const calls=[]; const r=await rig(t,{fetchFn:async(url,opts)=>{calls.push({url,method:opts.method});return Response.json({pods:[],pagination:{hasNextPage:false}})}});
   const secret='separate-shutdown-key-fixture-only';
@@ -72,10 +86,12 @@ test('acceptance key enrollment uses the existing vault and read-only credential
 test('only a pinned bootstrap with the acceptance protocol may embed a supervisor before networking', async () => {
   const bytes=await readFile('worker/automatic-runpod.py');
   const p=automaticBootstrap({root:path.resolve('.'),version:()=>({repo:'nemesisone-dev/AIPLAY-Studio'}),git:args=>args[0]==='rev-parse'?COMMIT:bytes});
-  assert.equal(p.acceptanceProtocol,1); assert.match(p.acceptanceCommand,/^exec python/); assert.ok(!p.acceptanceCommand.includes('curl'));
+  assert.equal(p.acceptanceProtocol,2); assert.match(p.acceptanceCommand,/^exec python/); assert.ok(!p.acceptanceCommand.includes('curl'));
   const encoded=p.acceptanceCommand.match(/b64decode\("([A-Za-z0-9+/=]+)"\)/)[1]; assert.deepEqual(Buffer.from(encoded,'base64'),bytes);
   const old=automaticBootstrap({root:path.resolve('.'),version:()=>({repo:'nemesisone-dev/AIPLAY-Studio'}),git:args=>args[0]==='rev-parse'?COMMIT:Buffer.from(SCRIPT)});
   assert.equal(old.acceptanceCommand,null);
+  const a40=automaticBootstrap({root:path.resolve('.'),version:()=>({repo:'nemesisone-dev/AIPLAY-Studio'}),git:args=>args[0]==='rev-parse'?COMMIT:Buffer.from('ACCEPTANCE_PROTOCOL = 1\n')});
+  assert.equal(a40.acceptanceCommand,null,'an old A40 supervisor cannot run the A100 approval');
 });
 
 test('acceptance diagnostics use authenticated fixed routes and reject a mismatched computer/session',async t=>{
@@ -120,7 +136,7 @@ async function rig(t, options = {}) {
   const manager = await createAutomaticInstaller(args);
   t.after(async () => { manager.close(); await rm(dataDir, { recursive: true, force: true }); });
   return { manager, args, dataDir, rows, pod, secrets, writes, connections,
-    lose: () => { loseResponse = true; }, wrongIdentity: () => { liveCommit = 'b'.repeat(40); }, changeRate: () => { rate = 1; }, active: () => { active = true; } };
+    lose: () => { loseResponse = true; }, wrongIdentity: () => { liveCommit = 'b'.repeat(40); }, changeRate: () => { rate = 1; }, setRate: value => { rate = value; }, active: () => { active = true; } };
 }
 
 test('creation sends one bounded REST v2 configuration, exposes only worker port and never the account key', async t => {

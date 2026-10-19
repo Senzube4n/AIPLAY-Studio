@@ -142,7 +142,7 @@ export function automaticBootstrap({ root = ROOT, version = appVersion,
     // The acceptance supervisor must exist before the first network fetch.
     // Embed this same published, pinned bootstrap rather than fetching a guard
     // after compute is already running. No credential appears in the command.
-    const acceptanceProtocol = /^ACCEPTANCE_PROTOCOL = 1\r?$/m.test(Buffer.from(bytes).toString('utf8')) ? 1 : null;
+    const acceptanceProtocol = /^ACCEPTANCE_PROTOCOL = 2\r?$/m.test(Buffer.from(bytes).toString('utf8')) ? 2 : null;
     const acceptanceCommand = acceptanceProtocol ? `exec python -u -c 'import base64; exec(compile(base64.b64decode("${Buffer.from(bytes).toString('base64')}"), "aiplay-pinned-bootstrap", "exec"))'` : null;
     return { available: true, repo, commit, sha256, url, command, acceptanceCommand, acceptanceProtocol };
   } catch { return { available: false, problem: 'Update AIPLAY to a published build with automatic AI installation.' }; }

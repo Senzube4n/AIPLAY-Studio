@@ -13,6 +13,15 @@ process.env.AIPLAY_OUTPUT = path.join(fixture, "output");
 process.env.AIPLAY_APPDATA = path.join(fixture, "appdata");
 process.env.AIPLAY_DAW_NO_SERVE = "1";
 const { config } = await import("../config.js");
+// Keep the actual CPU export mandatory, but diagnose its environment before
+// opening the fixture server. Never fall back silently or install into the rig.
+try {
+  execFileSync(config.python, ['-c', 'import numpy,scipy,av,soundfile'], { windowsHide: true, stdio: 'pipe' });
+  for (const executable of ['ffmpeg', 'ffprobe']) execFileSync(executable, ['-version'], { windowsHide: true, stdio: 'pipe' });
+} catch (error) {
+  throw new Error('DAW export test requires a runnable AIPLAY_PYTHON with numpy, scipy, av and soundfile, plus FFmpeg/ffprobe on PATH. '
+    + 'Use scripts/setup-gate-python.mjs and docs/GATE_PYTHON.md; no assertions were skipped.', { cause: error });
+}
 const { createDawRoutes } = await import("./routes.js");
 const { dawTools } = await import("../mcp-daw.js");
 const store = await import("./store.js");

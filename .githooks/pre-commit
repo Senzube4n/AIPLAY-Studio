@@ -407,6 +407,7 @@ node server/score/sheet_test.js || exit 1
 node server/score/routes_test.js || exit 1
 node server/mcp-music-score_test.js || exit 1
 node server/daw/mcp-production_test.js || exit 1
+node --check scripts/setup-gate-python.mjs || exit 1
 # production_export_test also DECODES both paths and compares FRAMES: the
 # editor's region cache as the browser streams it, the bounce, and the same
 # song rendered in one window. Its format checks pass a bounce whose samples

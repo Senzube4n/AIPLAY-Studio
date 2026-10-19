@@ -33,8 +33,8 @@ class StartupTests(unittest.TestCase):
                 if f.lost:
                     raise OSError('ambiguous reply')
                 f.status = 'EXITED'
-            return {'id': 'testpod', 'status': f.status, 'actions': ['stop'], 'cloud': 'SECURE', 'cost': .59, '_providerClockMS': f.at,
-                    'gpu': {'id': 'NVIDIA A40', 'count': 1, 'memory': 64, 'vcpuCount': 8}, 'disk': 20,
+            return {'id': 'testpod', 'status': f.status, 'actions': ['stop'], 'cloud': 'SECURE', 'cost': 1.79, '_providerClockMS': f.at,
+                    'gpu': {'id': 'NVIDIA A100-SXM4-80GB', 'count': 1, 'memory': 64, 'vcpuCount': 8}, 'disk': 20,
                     'mounts': {'persistent': {'size': 100, 'path': '/workspace'}}}
         def worker(route, body):
             self.assertEqual(route, '/v1/cloud/stop')
@@ -134,9 +134,17 @@ class StartupTests(unittest.TestCase):
     def test_incorrect_actual_hardware_and_changed_deadline_are_refused(self):
         with tempfile.TemporaryDirectory() as root:
             f = self.acceptance_fixture(root)
-            for key, value in [('memory', 32), ('vcpuCount', 4), ('id', 'NVIDIA L40S')]:
+            f.guard.validate_resource(f.pod())
+            for key, value in [('memory', 63), ('vcpuCount', 7), ('id', 'NVIDIA L40S'),
+                               ('id', 'NVIDIA A40'), ('id', 'NVIDIA A100 80GB PCIe'), ('count', 2)]:
                 pod = f.pod()
                 pod['gpu'][key] = value
+                with self.assertRaises(ValueError):
+                    f.guard.validate_resource(pod)
+            for key, value in [('cloud', 'COMMUNITY'), ('cost', 1.80), ('disk', 21),
+                               ('mounts', {'persistent': {'size': 150, 'path': '/workspace'}})]:
+                pod = f.pod()
+                pod[key] = value
                 with self.assertRaises(ValueError):
                     f.guard.validate_resource(pod)
             pod = f.pod()

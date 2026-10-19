@@ -22,7 +22,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 COMFY_COMMIT = "ce1e922d8623bb507180e32a0c01a7d0e29edef7"
-ACCEPTANCE_PROTOCOL = 1
+ACCEPTANCE_PROTOCOL = 2
 BASE = Path("/workspace/aiplay-managed")
 STAGES = {"source", "runtime", "engine", "dependencies", "starting", "complete", "failed"}
 
@@ -84,9 +84,9 @@ class AcceptanceSupervisor:
 
     def validate_resource(self, pod):
         if pod.get('id') != self.state['podId'] or pod.get('cloud') != 'SECURE' \
-                or pod.get('gpu', {}).get('id') != 'NVIDIA A40' or pod['gpu'].get('count') != 1 \
+                or pod.get('gpu', {}).get('id') != 'NVIDIA A100-SXM4-80GB' or pod['gpu'].get('count') != 1 \
                 or pod['gpu'].get('memory', 0) < 64 or pod['gpu'].get('vcpuCount', 0) < 8 \
-                or not isinstance(pod.get('cost'), (int, float)) or not 0 < pod['cost'] <= .59 \
+                or not isinstance(pod.get('cost'), (int, float)) or not 0 < pod['cost'] <= 1.79 \
                 or pod.get('disk') != 20 \
                 or pod.get('mounts', {}).get('persistent') != {'size': 100, 'path': '/workspace'}:
             raise ValueError('Actual computer differs from the approved test resources')
