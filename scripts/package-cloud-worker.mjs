@@ -22,6 +22,8 @@ export async function cloudWorkerFiles(root = ROOT) {
   await visit('worker/runpod-worker.js');
   files.set('LICENSE', await readFile(path.join(root, 'LICENSE')));
   files.set('worker/comfyui-autostart/__init__.py', await readFile(path.join(root, 'worker/comfyui-autostart/__init__.py')));
+  for (const name of ['automatic-runpod.py', 'acceptance-telemetry.py'])
+    files.set('worker/' + name, await readFile(path.join(root, 'worker', name)));
   files.set('package.json', Buffer.from(JSON.stringify({ name: 'aiplay-cloud-worker', private: true, type: 'module' }, null, 2)));
   return files;
 }

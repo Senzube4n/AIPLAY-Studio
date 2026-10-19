@@ -33,7 +33,7 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
   const provider = createRunpodV2({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY") });
   let computerPromise;
   const computer = () => computerPromise ||= createCloudComputer({ dataDir: config.dataDir, provider, client, localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork,
-    beforeStart: async id => (await updater()).assertStartAllowed(id) });
+    beforeStart: async id => { (await installer()).assertStartAllowed(id); await (await updater()).assertStartAllowed(id); } });
   let installerPromise;
   const installer = () => installerPromise ||= createAutomaticInstaller({ dataDir: config.dataDir, provider, client, getSecret, setSecret, fetchFn });
   let updaterPromise;
@@ -137,6 +137,10 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       else if (req.method === 'GET' && url.pathname === '/api/runpod/install') sendJSON(res, 200, (await installer()).snapshot());
       else if (req.method === 'GET' && url.pathname === '/api/runpod/install/options') sendJSON(res, 200, (await installer()).options());
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install/acceptance') sendJSON(res, 200, await (await installer()).acceptanceStatus());
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install/acceptance/diagnostics') sendJSON(res, 200, await (await installer()).acceptanceDiagnostics());
+      else if (req.method === 'POST' && url.pathname === '/api/runpod/install/acceptance-key')
+        sendJSON(res, 200, await (await installer()).saveAcceptanceKey(JSON.parse((await readBody(req)).toString('utf8'))));
       else if (req.method === 'POST' && url.pathname === '/api/runpod/install/refresh') sendJSON(res, 200, await (await installer()).refresh());
       else if (req.method === 'POST' && url.pathname === '/api/runpod/install/quote') {
         const b = JSON.parse((await readBody(req)).toString('utf8')); sendJSON(res, 200, await (await installer()).review(b));

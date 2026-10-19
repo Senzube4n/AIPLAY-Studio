@@ -8,6 +8,7 @@ let accountConfigured = false, setupOverride = null;
 let automaticInstall = null, installationPolling = false;
 let cloudGoal = 'all', flowPage = null, flowModels = null, modelsPolling = false, modelsCheckedAt = 0;
 let accountBalance = null;
+let acceptanceKeySaved = false;
 document.addEventListener('aiplay:runpod-balance', event => { accountBalance = event.detail; paintSetup(current); });
 document.addEventListener('aiplay:model-plan', event => {
   const plan = event.detail; if (plan?.target !== 'runpod') return;
@@ -224,6 +225,15 @@ function paintSetup(s) {
   $('cloudSetupModelFields').hidden = !s?.worker?.connectionReady || !!s?.worker?.generationReady && setupOverride !== 3;
   $('cloudSetupProtectionFields').hidden = s?.pod?.status !== 'RUNNING';
   $('cloudComputer').hidden = !s?.podId;
+  const keyForm = $('cloudComputerKeyForm'), keySlot = $('cloudAcceptanceKey');
+  if (keySlot) {
+    const target = s?.podId ? $('cloudSetupProtectionFields') : $('cloudAcceptanceKeyFields');
+    if (keyForm.parentElement !== target) target.append(keyForm);
+    keySlot.hidden = !!s?.podId;
+    keyForm.querySelector('button[type="submit"]').textContent = s?.podId ? 'Enable automatic stop' : 'Save test stop key';
+    $('cloudAcceptanceKeyNote').textContent = acceptanceKeySaved ? 'Test stop key saved on this PC. Creation still needs approval.' : 'Saved on this PC until a bounded hardware test is approved.';
+  }
+  $('cloudComputerRemoveKey').hidden = !s?.podId;
   if (automaticInstall && !['none','removed'].includes(automaticInstall.phase) && !s?.removedPodIds?.includes(automaticInstall.podId) && (!s?.podId || s.podId === automaticInstall.podId)) {
     if (step === 3 && !automaticInstall.workerConnected) $('cloudSetupHint').textContent = 'AIPLAY is installing and connecting the AI service automatically.';
     if (!automaticInstall.workerConnected && ['waiting', 'connecting', 'uncertain', 'creating', 'failed'].includes(automaticInstall.phase)) $('cloudSetupWorkerFields').hidden = true;
@@ -312,6 +322,9 @@ function mountSetup() {
     ['cloudSetupProtectionFields', ['cloudComputerKeyForm']],
   ]) for (const id of ids) $(target).append($(id));
   $('cloudSetup').append($('cloudFlowDetails'), $('cloudComputerConnection'));
+  const keySlot = document.createElement('details'); keySlot.id = 'cloudAcceptanceKey'; keySlot.className = 'more';
+  keySlot.innerHTML = '<summary>Hardware test stop key</summary><p class="hint">Use a separate RunPod management key for the two-hour test deadline.</p><div id="cloudAcceptanceKeyFields"></div><p class="hint" role="status" id="cloudAcceptanceKeyNote"></p>';
+  $('cloudComputerConnection').append(keySlot);
   const idle = $('cloudComputerIdle');
   $('cloudFlowIdleFields').append(document.querySelector('label[for="cloudComputerIdle"]'), idle.closest('.pv'));
   $('runpodModels').open = true;
@@ -457,6 +470,7 @@ async function init() {
   let config;
   try { config = (await (await fetch('/api/status')).json()).config; } catch { return; }
   if (!config?.remoteOnly) return;
+  try { const r = await fetch('/api/runpod/install/acceptance'); if (r.ok) acceptanceKeySaved = (await r.json()).stopKeySaved === true; } catch { /* Existing workers and older backends keep their current setup. */ }
   try { const response = await fetch('/api/runpod/goal'); if (response.ok) cloudGoal = (await response.json()).goal; } catch {}
   $('cloudComputer').hidden = false;
   mountSetup();
@@ -495,6 +509,17 @@ async function init() {
   });
   $('cloudComputerKeyForm').addEventListener('submit', async event => {
     event.preventDefault();
+    if (!current?.podId) {
+      if (!await appConfirm('Save this separate key in AIPLAY’s vault for the bounded hardware test? It will reach the test computer only after creation approval.', { title: 'Prepare Test Stop Key', ok: 'Save on this PC' })) return;
+      try {
+        const r = await fetch('/api/runpod/install/acceptance-key', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: $('cloudComputerStopKey').value, confirm: 'SAVE ACCEPTANCE STOP KEY' }) });
+        const b = await r.json(); if (!r.ok) throw Error(b.error || 'The stop key could not be saved.');
+        acceptanceKeySaved = true; paintSetup(current);
+      } catch (e) { $('cloudAcceptanceKeyNote').textContent = e.message; }
+      finally { $('cloudComputerStopKey').value = ''; }
+      return;
+    }
     if (!await appConfirm('Save this separate key on the selected cloud computer for automatic shutdown? Its RunPod permissions remain available to that computer.', { title: 'Enable Automatic Stop', ok: 'Save stop key' })) return;
     try { await perform('/policy', { minutes: Number($('cloudComputerIdle').value), apiKey: $('cloudComputerStopKey').value, confirm: 'SAVE REMOTE STOP KEY' }); }
     finally { $('cloudComputerStopKey').value = ''; }

@@ -27,7 +27,7 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   modelsDir = path.join(path.dirname(inputDir), "models"), fetchFn = fetch, pollMs = 2000, modelBundles,
   aceURL = "http://127.0.0.1:8001", trainingDir = null,
   podId = null, persistentRoot = "/workspace", tempDir = path.join(path.dirname(inputDir), "temp"),
-  verifyPersistence = null, cloudIntervalMs = 10000, installCommit = null }) {
+  verifyPersistence = null, cloudIntervalMs = 10000, installCommit = null, acceptanceDeadline = null }) {
   if (typeof token !== "string" || token.length < 32 || /[\r\n]/.test(token)) throw new Error("AIPLAY_WORKER_TOKEN must contain at least 32 characters.");
   const backend = new URL(comfyURL);
   if (backend.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(backend.hostname)) throw new Error("ComfyUI must be on the worker's loopback interface.");
@@ -50,6 +50,9 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
   const assetsDir = path.join(inputDir, "aiplay_remote");
   await mkdir(assetsDir, { recursive: true });
   const stateFile = path.join(stateDir, "jobs.json");
+  if (acceptanceDeadline && (!Number.isSafeInteger(acceptanceDeadline.workUntil) || !Number.isSafeInteger(acceptanceDeadline.stopBy)
+    || acceptanceDeadline.stopBy - acceptanceDeadline.workUntil !== 30 * 60000)) throw Error('Invalid acceptance shutdown window.');
+  const acceptanceState = () => readJSON(path.join(stateDir, 'acceptance-deadline.json'), null);
   const state = await readJSON(stateFile, { workerId: randomUUID(), jobs: {} });
   const save = jsonStore(stateFile);
   await save(state);
@@ -149,7 +152,8 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     if (busy || closed) return;
     busy = true;
     try {
-      const job = Object.values(state.jobs).find(j => !TERMINAL.has(j.state)
+      const acceptanceOpen = !acceptanceDeadline || Date.now() < acceptanceDeadline.workUntil && (await acceptanceState())?.phase === 'watching';
+      const job = Object.values(state.jobs).find(j => !TERMINAL.has(j.state) && (acceptanceOpen || j.state !== 'queued')
         && !(cloud.snapshot().pending === "after-job" && j.state === "queued" && !j.finishDuringStop));
       if (!job) return;
       if (job.state === "queued") {
@@ -234,6 +238,17 @@ export async function createWorker({ token, comfyURL, inputDir, outputDir, state
     let finishWork = null;
     try {
       const url = new URL(req.url, "http://worker");
+      if (acceptanceDeadline) {
+        const deadline = await acceptanceState();
+        const closed = !deadline || deadline.phase !== 'watching' || Date.now() >= acceptanceDeadline.workUntil;
+        if (req.method === 'GET' && url.pathname === '/v1/acceptance/deadline') return sendJSON(res, 200, deadline || { phase: 'unverified' });
+        if (req.method === 'GET' && url.pathname === '/v1/acceptance/telemetry')
+          return sendJSON(res, 200, await readJSON(path.join(stateDir, 'acceptance-telemetry.json'), { available: false }));
+        if (req.method !== 'GET' && !url.pathname.startsWith('/v1/cloud') && !url.pathname.endsWith('/cancel') && closed)
+          return sendJSON(res, 423, { error: 'The acceptance workload window has closed. Outputs are being preserved before shutdown.' });
+        if (req.method === 'POST' && url.pathname === '/v1/cloud/policy')
+          throw Error('This acceptance computer uses its fixed startup deadline. Its stop key stays in the supervisor.');
+      }
       if (modelsChanging && req.method !== 'GET' && url.pathname !== '/v1/cloud/lease') throw Error('A model file change is being checked. Try again shortly.');
       if (req.method === 'GET' && url.pathname === '/v1/models/disk') return sendJSON(res,200,await modelDisk.list());
       if (req.method === 'POST' && ['/v1/models/disk/review','/v1/models/disk/delete'].includes(url.pathname)) {
@@ -422,6 +437,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     trainingDir: process.env.AIPLAY_TRAINING_DIR || "/workspace/aiplay-training",
     podId: process.env.RUNPOD_POD_ID || process.env.AIPLAY_CLOUD_POD_ID || null,
     persistentRoot: process.env.AIPLAY_PERSISTENT_ROOT || "/workspace",
-    installCommit: /^[a-f0-9]{40}$/.test(process.env.AIPLAY_INSTALL_COMMIT || '') ? process.env.AIPLAY_INSTALL_COMMIT : null });
+    installCommit: /^[a-f0-9]{40}$/.test(process.env.AIPLAY_INSTALL_COMMIT || '') ? process.env.AIPLAY_INSTALL_COMMIT : null,
+    acceptanceDeadline: process.env.AIPLAY_ACCEPTANCE_ID ? { workUntil: Number(process.env.AIPLAY_ACCEPTANCE_WORK_UNTIL),
+      stopBy: Number(process.env.AIPLAY_ACCEPTANCE_STOP_BY) } : null });
   worker.server.listen(Number(process.env.AIPLAY_WORKER_PORT || 8787), "0.0.0.0", () => console.log("AIPLAY remote worker listening; authentication required."));
 }

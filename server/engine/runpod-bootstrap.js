@@ -139,6 +139,11 @@ export function automaticBootstrap({ root = ROOT, version = appVersion,
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const url = `https://raw.githubusercontent.com/${repo}/${commit}/${script}`;
     const command = automaticWorkerCommand({ repo, commit, sha256 });
-    return { available: true, repo, commit, sha256, url, command };
+    // The acceptance supervisor must exist before the first network fetch.
+    // Embed this same published, pinned bootstrap rather than fetching a guard
+    // after compute is already running. No credential appears in the command.
+    const acceptanceProtocol = /^ACCEPTANCE_PROTOCOL = 1\r?$/m.test(Buffer.from(bytes).toString('utf8')) ? 1 : null;
+    const acceptanceCommand = acceptanceProtocol ? `exec python -u -c 'import base64; exec(compile(base64.b64decode("${Buffer.from(bytes).toString('base64')}"), "aiplay-pinned-bootstrap", "exec"))'` : null;
+    return { available: true, repo, commit, sha256, url, command, acceptanceCommand, acceptanceProtocol };
   } catch { return { available: false, problem: 'Update AIPLAY to a published build with automatic AI installation.' }; }
 }

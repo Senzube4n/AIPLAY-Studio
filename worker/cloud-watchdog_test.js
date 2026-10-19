@@ -156,3 +156,41 @@ test('definitely rejected stop waits for credential repair; uncertain outcomes r
   assert.equal(f.status, 'RUNNING'); f.rejectWrite = false; await f.enable(15);
   await f.watchdog.tick(); assert.equal(f.status, 'EXITED'); assert.equal(f.calls.filter(c => c.method === 'POST').length, 2);
 });
+
+test('acceptance worker keeps authenticated diagnostics readable but rejects new work and policy replacement after cutoff', async t => {
+  const dir=await mkdtemp(path.join(os.tmpdir(),'aiplay-acceptance-worker-')), stateDir=path.join(dir,'state');
+  await mkdir(stateDir,{recursive:true});
+  const deadline={workUntil:Date.now()+60000,stopBy:Date.now()+60000+30*60000};
+  // Use one timestamp; even a millisecond difference is an invalid reserve.
+  deadline.stopBy=deadline.workUntil+30*60000;
+  const file=path.join(stateDir,'acceptance-deadline.json');
+  await writeFile(file,JSON.stringify({phase:'draining',podId:'testpod',...deadline}));
+  await writeFile(path.join(stateDir,'acceptance-telemetry.json'),JSON.stringify({version:1,samples:3,observedPeaks:{gpu0UsedBytes:100}}));
+  const token='acceptance-worker-token-fixture-only';
+  const worker=await createWorker({token,comfyURL:'http://127.0.0.1:1234',stateDir,inputDir:path.join(dir,'input'),outputDir:path.join(dir,'output'),
+    modelsDir:path.join(dir,'models'),persistentRoot:dir,podId:'testpod',acceptanceDeadline:deadline,cloudIntervalMs:0,pollMs:1000000,
+    verifyPersistence:async()=>({verified:true,root:dir}),fetchFn:async()=>Response.json({queue_running:[],queue_pending:[]})});
+  await new Promise(resolve=>worker.server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{await worker.close();await rm(dir,{recursive:true,force:true})});
+  const base='http://127.0.0.1:'+worker.server.address().port;
+  const call=(route,body,headers={})=>fetch(base+route,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  assert.equal((await fetch(base+'/v1/acceptance/telemetry')).status,401);
+  assert.equal((await call('/v1/acceptance/telemetry',undefined,{Origin:'https://foreign.invalid'})).status,403);
+  assert.equal((await (await call('/v1/acceptance/telemetry')).json()).samples,3);
+  assert.equal((await call('/v1/jobs',{id:randomUUID(),graph:{}})).status,423);
+  assert.equal((await call('/v1/setup/install',{bundle:'ace15-xl-sft',acceptLicense:true})).status,423);
+  assert.equal((await call('/v1/models/disk/delete',{})).status,423);
+  const queuedId=randomUUID(),runningId=randomUUID();
+  worker.state.jobs[queuedId]={id:queuedId,state:'queued',graph:{}};
+  worker.state.jobs[runningId]={id:runningId,state:'running',promptId:'completed-or-lost',graph:{}};
+  await worker.tick(); await worker.tick(); await worker.tick();
+  assert.equal(worker.state.jobs[queuedId].state,'queued','a queued recipe cannot start after cutoff');
+  assert.equal(worker.state.jobs[runningId].state,'uncertain','existing submissions still reconcile after cutoff');
+  assert.equal((await call('/v1/cloud/policy',{apiKey:'never-accepted-key-fixture',minutes:15})).status,400);
+  await call('/v1/cloud/resume',{podId:'testpod'});
+  assert.equal((await call('/v1/jobs',{id:randomUUID(),graph:{}})).status,423,'resume cannot extend the supervisor deadline');
+  await writeFile(file,JSON.stringify({phase:'watching'}));
+  assert.notEqual((await call('/v1/jobs',{})).status,423,'ordinary validation still owns the open workload window');
+  await rm(file);
+  assert.equal((await call('/v1/jobs',{})).status,423,'a lost deadline journal fails closed');
+});

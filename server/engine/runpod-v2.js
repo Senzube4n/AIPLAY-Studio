@@ -91,6 +91,7 @@ export function createRunpodV2({ getApiKey, fetchFn = fetch, timeoutMs = 30000 }
     async quote(pod) {
       if (!pod.gpu || !['SECURE', 'COMMUNITY'].includes(pod.cloud)) throw new CloudError('unsupported_computer', 'Choose a supported GPU computer.');
       const q = new URLSearchParams({ include: 'AVAILABILITY', product: 'POD', count: String(pod.gpu.count), cloud: pod.cloud });
+      if (pod.gpu.minCudaVersion) q.set('minCudaVersion', pod.gpu.minCudaVersion);
       const gpu = await request(`/catalog/gpus/${encodeURIComponent(pod.gpu.id)}?${q}`);
       const rate = gpu.price?.[pod.cloud.toLowerCase()];
       if (!Number.isFinite(rate) || rate < 0) throw new CloudError('price_unknown', 'The current rental price could not be verified.');

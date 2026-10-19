@@ -5,26 +5,38 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readJSON, jsonStore, digest, jobId, readJsonCapped, TERMINAL } from './remote-common.js';
 import { automaticBootstrap } from './runpod-bootstrap.js';
 
+export const XL_ACCEPTANCE = 'ace15-xl-sft-v1';
+function acceptancePlan(input) {
+  if (input.acceptance === undefined) return null;
+  if (input.acceptance !== XL_ACCEPTANCE || input.gpuTypeId !== 'NVIDIA A40' || input.cloudType !== 'SECURE'
+    || Number(input.volumeInGb) !== 100 || !(input.expectedPricePerHr > 0 && input.expectedPricePerHr <= .59))
+    throw Error('Review the approved A40 Secure, 100 GB, at most $0.59/hour acceptance configuration.');
+  return { id: XL_ACCEPTANCE, minRamPerGpu: 64, minVcpuCountPerGpu: 8, workMinutes: 90, totalMinutes: 120, budgetUSD: 2 };
+}
+
 export async function createAutomaticInstaller({ dataDir, provider, client, getSecret, setSecret,
   bootstrap = automaticBootstrap, fetchFn = fetch, intervalMs = 5000, now = Date.now }) {
   const file = path.join(dataDir, 'runpod', 'automatic-install.json'), save = jsonStore(file);
   let state = await readJSON(file, { phase: 'none' }), busy = false;
   const snapshot = () => ({ phase: state.phase, podId: state.podId || null, name: state.name || null,
     requestId: state.requestId || null, stage: state.stage || null, error: state.error || null,
-    workerConnected: !!state.workerConnected, startedAt: state.startedAt || null, commit: state.commit || null });
+    workerConnected: !!state.workerConnected, startedAt: state.startedAt || null, commit: state.commit || null,
+    ...(state.acceptance ? { acceptance: state.acceptance } : {}) });
   const store = async () => save(state);
   async function review(input) {
+    const acceptance = acceptancePlan(input);
     if (!/^NVIDIA\b.{1,150}$/.test(input.gpuTypeId || '') || !['ALL', 'SECURE', 'COMMUNITY'].includes(input.cloudType)) throw new Error('Choose a supported graphics card and provider pool.');
     const pools = input.cloudType === 'ALL' ? ['COMMUNITY', 'SECURE'] : [input.cloudType], quotes = [];
     for (const cloud of pools) {
       try {
-        const quote = await provider.quote({ gpu: { id: input.gpuTypeId, count: 1 }, cloud });
+        const quote = await provider.quote({ gpu: { id: input.gpuTypeId, count: 1, ...(acceptance ? { minCudaVersion: '12.8' } : {}) }, cloud });
         if (['LOW', 'MEDIUM', 'HIGH'].includes(quote.overallAvailability)) quotes.push({ cloud, ...quote });
       } catch (e) { if (e.code !== 'price_unknown') throw e; }
     }
     quotes.sort((a, b) => a.rate - b.rate);
     if (!quotes.length) throw new Error('This graphics card is unavailable. Review another computer.');
-    return quotes[0];
+    if (acceptance && quotes[0].rate > .59) throw Error('The approved acceptance price is no longer available. Review again.');
+    return { ...quotes[0], ...(acceptance ? { acceptance } : {}) };
   }
   async function create(input) {
     if (busy) throw new Error('An installation request is already being checked.');
@@ -34,6 +46,8 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
       if (input.confirm !== 'CREATE PAID POD' || input.installAI !== true) throw new Error('Review and approve creation and AI installation first.');
       const choices = { name: String(input.name || '').trim(), gpuTypeId: input.gpuTypeId, cloudType: input.cloudType,
         size: Number(input.volumeInGb), rate: input.expectedPricePerHr };
+      const acceptance = acceptancePlan(input);
+      if (acceptance) choices.acceptance = acceptance;
       if (!choices.name || choices.name.length > 80 || /[\x00-\x1f]/.test(choices.name)
         || !/^NVIDIA\b.{1,150}$/.test(choices.gpuTypeId || '') || !['ALL', 'SECURE', 'COMMUNITY'].includes(choices.cloudType)
         || ![100, 150, 200, 300].includes(choices.size) || !Number.isFinite(choices.rate) || choices.rate <= 0)
@@ -49,6 +63,13 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
       if (c.status().jobs.some(j => !TERMINAL.has(j.state))) throw new Error('Finish current work before creating another computer.');
       const pin = bootstrap();
       if (!pin.available) throw new Error(pin.problem);
+      let stopKey = null;
+      if (acceptance) {
+        if (input.acceptanceConfirm !== 'CREATE BOUNDED XL-SFT TEST') throw Error('Explicitly approve the bounded hardware test before creating it.');
+        stopKey = await getSecret('RUNPOD_ACCEPTANCE_STOP_KEY');
+        if (!stopKey || stopKey === await getSecret('RUNPOD_ACCOUNT_API_KEY')) throw Error('Save a separate acceptance stop key in AIPLAY first. The account key stays on this PC.');
+        if (!pin.acceptanceCommand || pin.acceptanceProtocol !== 1) throw Error('This published build has no startup deadline supervisor.');
+      }
       // Publication is verified before spending, including source-integrity mismatch.
       const published = await fetchFn(pin.url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
       if (!published.ok) throw new Error('This worker build is not published yet. Update AIPLAY before creating a computer.');
@@ -60,20 +81,24 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
       const pods = await provider.listPods();
       if (pods.some(p => p.name === choices.name)) throw new Error('A computer with this name already exists. Choose it instead.');
       // Verify a concrete pool; ALL chooses the cheapest available pool, never an unreviewed fallback.
-      const quote = await review(choices);
+      const quote = await review({ ...input, ...choices, acceptance: input.acceptance });
       if (!quote || Math.abs(quote.rate - choices.rate) > .000001)
         throw new Error('Availability or the estimated price changed. Review the computer price again.');
       const token = randomBytes(32).toString('hex');
       await setSecret('RUNPOD_INSTALL_TOKEN', token);
-      state = { phase: 'creating', name: choices.name, requestId, signature, commit: pin.commit, startedAt: now() };
+      const issuedAt = now(), workUntil = issuedAt + 90 * 60000, stopBy = issuedAt + 120 * 60000;
+      state = { phase: 'creating', name: choices.name, requestId, signature, commit: pin.commit, startedAt: issuedAt,
+        ...(acceptance ? { acceptance: { ...acceptance, workUntil, stopBy } } : {}) };
       await store(); // The next action may create a resource even if its response is lost.
       let pod;
       try {
         pod = await provider.createPod({ name: choices.name, image: 'runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404',
-          gpu: { id: choices.gpuTypeId, count: 1, minCudaVersion: '12.8' }, cloud: quote.cloud, disk: 20,
+          gpu: { id: choices.gpuTypeId, count: 1, minCudaVersion: '12.8', ...(acceptance ? { minRamPerGpu: 64, minVcpuCountPerGpu: 8 } : {}) }, cloud: quote.cloud, disk: 20,
           mounts: { persistent: { size: choices.size, path: '/workspace' } }, ports: ['8787/http'],
-          entrypoint: ['/bin/bash', '-lc'], cmd: [pin.command], startSsh: false, startJupyter: false,
-          env: { AIPLAY_WORKER_TOKEN: token, AIPLAY_REPOSITORY: `https://github.com/${pin.repo}.git`, AIPLAY_COMMIT: pin.commit } });
+          entrypoint: ['/bin/bash', '-lc'], cmd: [acceptance ? pin.acceptanceCommand : pin.command], startSsh: false, startJupyter: false,
+          env: { AIPLAY_WORKER_TOKEN: token, AIPLAY_REPOSITORY: `https://github.com/${pin.repo}.git`, AIPLAY_COMMIT: pin.commit,
+            ...(acceptance ? { AIPLAY_ACCEPTANCE_ID: requestId, AIPLAY_ACCEPTANCE_ISSUED_AT: String(issuedAt),
+              AIPLAY_ACCEPTANCE_WORK_UNTIL: String(workUntil), AIPLAY_ACCEPTANCE_STOP_BY: String(stopBy), AIPLAY_ACCEPTANCE_STOP_KEY: stopKey } : {}) } });
       } catch {
         state.phase = 'uncertain'; state.error = 'Creation could not be confirmed. Check the existing installation; no duplicate request will be sent.';
         await store(); return snapshot();
@@ -138,5 +163,33 @@ export async function createAutomaticInstaller({ dataDir, provider, client, getS
     state.commit = commit; state.phase = 'stopped'; state.workerConnected = false; state.stage = null; state.error = null;
     await store(); return snapshot();
   };
-  return { create, review, refresh, snapshot, stageUpdate, options: () => { const p = bootstrap(); return { available: p.available, problem: p.problem || null }; }, close: () => clearInterval(timer) };
+  async function saveAcceptanceKey(input) {
+    const key = String(input.apiKey || '').trim();
+    if (input.confirm !== 'SAVE ACCEPTANCE STOP KEY' || key.length < 20 || key.length > 500 || /[\r\n]/.test(key)
+      || key === await getSecret('RUNPOD_ACCOUNT_API_KEY')) throw Error('Use a separate restricted stop key and confirm saving it.');
+    const { createRunpodV2 } = await import('./runpod-v2.js');
+    await createRunpodV2({ getApiKey: () => key, fetchFn }).listPods();
+    await setSecret('RUNPOD_ACCEPTANCE_STOP_KEY', key);
+    return { saved: true }; // Never echo a key or suggest that GET proves write permission.
+  }
+  async function acceptanceDiagnostics() {
+    if (!state.acceptance || !state.podId) throw Error('No bounded acceptance computer is configured.');
+    const pod = await provider.getPod(state.podId), token = await getSecret('RUNPOD_INSTALL_TOKEN');
+    if (!token || pod.id !== state.podId) throw Error('The acceptance connection could not be verified.');
+    const get = async route => {
+      const response = await fetchFn(`https://${pod.id}-8787.proxy.runpod.net${route}`, { headers: { Authorization: `Bearer ${token}` },
+        redirect: 'error', signal: AbortSignal.timeout(10000) });
+      if (response.status === 503) return { available: false };
+      if (!response.ok) throw Error('Acceptance diagnostics could not be read.');
+      return readJsonCapped(response);
+    };
+    const deadline = await get('/v1/acceptance/deadline');
+    if (deadline.podId !== state.podId || deadline.requestId !== state.requestId) throw Error('Acceptance diagnostic identity did not match.');
+    return { deadline, telemetry: await get('/v1/acceptance/telemetry') };
+  }
+  return { create, review, refresh, snapshot, stageUpdate, saveAcceptanceKey, acceptanceDiagnostics,
+    assertStartAllowed: id => { if (state.podId === id && state.acceptance) throw Error('This bounded acceptance session cannot be restarted. Review a new test authorization first.'); },
+    acceptanceStatus: async () => ({ stopKeySaved: !!await getSecret('RUNPOD_ACCEPTANCE_STOP_KEY'), policy: XL_ACCEPTANCE,
+      pinnedSupervisorAvailable: bootstrap().acceptanceProtocol === 1 }),
+    options: () => { const p = bootstrap(); return { available: p.available, problem: p.problem || null }; }, close: () => clearInterval(timer) };
 }

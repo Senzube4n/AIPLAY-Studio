@@ -14,6 +14,15 @@ import { MODEL_BUNDLES } from '../../shared/model-bundles.js';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts) => readFileSync(path.join(ROOT, ...parts), "utf8");
 
+test('preflight moves only the existing stop-key form into its own advanced slot and keeps creation separately approved',()=>{
+  const js=read('web','cloud-computer.js');
+  assert.match(js,/target\.append\(keyForm\)/);
+  assert.ok(!js.includes("$('cloudComputerKeyForm').closest('details')"),'mountSetup already moves this form out of its original details');
+  assert.match(js,/Save test stop key/); assert.match(js,/Creation still needs approval/);
+  assert.match(js,/\/api\/runpod\/install\/acceptance-key/);
+  assert.ok(!js.includes('acceptanceConfirm:'),'saving a key must never create or authorize a paid test');
+});
+
 test('remote ACE/LM inventory is the worker schema, including COMBO descriptors; absent companions stay unavailable', () => {
   const info={UNETLoader:{input:{required:{unet_name:['COMBO',{options:['acestep_v1.5_xl_sft_bf16.safetensors','minimax.safetensors']}]}}},
     DualCLIPLoader:{input:{required:{clip_name1:[['qwen_0.6b_ace15.safetensors']],clip_name2:[['qwen_4b_ace15.safetensors','qwen_1.7b_ace15.safetensors']]}}},

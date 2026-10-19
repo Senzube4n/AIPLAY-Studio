@@ -14,6 +14,80 @@ const COMMIT = 'a'.repeat(40), SCRIPT = 'verified installer';
 const ID = '12345678-1234-4234-8234-123456789abc';
 const input = { requestId: ID, installAI: true, confirm: 'CREATE PAID POD', name: 'AIPLAY first', gpuTypeId: 'NVIDIA test', cloudType: 'ALL', volumeInGb: 100, expectedPricePerHr: .5 };
 
+const acceptanceInput = { ...input, acceptance: 'ace15-xl-sft-v1', acceptanceConfirm: 'CREATE BOUNDED XL-SFT TEST', gpuTypeId: 'NVIDIA A40', cloudType: 'SECURE' };
+async function acceptanceRig(t, options = {}) {
+  const r = await rig(t, options);
+  r.secrets.set('RUNPOD_ACCEPTANCE_STOP_KEY', 'separate-stop-key-fixture-only');
+  const original = r.args.bootstrap;
+  r.args.bootstrap = () => ({ ...original(), acceptanceCommand: 'inline-supervised-bootstrap', acceptanceProtocol: 1 });
+  r.manager.close(); r.manager = await createAutomaticInstaller(r.args); t.after(() => r.manager.close());
+  return r;
+}
+
+test('bounded XL-SFT approval enforces fixed placement, storage and deadlines without changing normal creation', async t => {
+  const r = await acceptanceRig(t); const result = await r.manager.create(acceptanceInput), body = r.writes[0];
+  assert.deepEqual(body.gpu, { id: 'NVIDIA A40', count: 1, minCudaVersion: '12.8', minRamPerGpu: 64, minVcpuCountPerGpu: 8 });
+  assert.equal(body.cloud, 'SECURE'); assert.equal(body.disk, 20); assert.equal(body.mounts.persistent.size, 100);
+  assert.deepEqual(body.cmd, ['inline-supervised-bootstrap']);
+  assert.equal(Number(body.env.AIPLAY_ACCEPTANCE_WORK_UNTIL) - Number(body.env.AIPLAY_ACCEPTANCE_ISSUED_AT), 90 * 60000);
+  assert.equal(Number(body.env.AIPLAY_ACCEPTANCE_STOP_BY) - Number(body.env.AIPLAY_ACCEPTANCE_WORK_UNTIL), 30 * 60000);
+  assert.equal(result.acceptance.budgetUSD, 2); assert.equal(body.env.AIPLAY_ACCEPTANCE_STOP_KEY, r.secrets.get('RUNPOD_ACCEPTANCE_STOP_KEY'));
+  assert.ok(!(await readFile(path.join(r.dataDir, 'runpod/automatic-install.json'), 'utf8')).includes(body.env.AIPLAY_ACCEPTANCE_STOP_KEY));
+  assert.throws(() => r.manager.assertStartAllowed('new'), /cannot be restarted/);
+  await r.manager.create(acceptanceInput); assert.equal(r.writes.length, 1);
+});
+
+test('acceptance refuses substitutions, higher prices, storage changes, missing approval/key and old bootstrap before spending', async t => {
+  for (const change of [{gpuTypeId:'NVIDIA L40S'}, {cloudType:'ALL'}, {volumeInGb:150}, {expectedPricePerHr:.60}, {acceptance:'unknown'}, {acceptanceConfirm:''}]) {
+    const r = await acceptanceRig(t); await assert.rejects(r.manager.create({...acceptanceInput,...change})); assert.equal(r.writes.length, 0);
+  }
+  const r = await acceptanceRig(t); r.secrets.delete('RUNPOD_ACCEPTANCE_STOP_KEY');
+  await assert.rejects(r.manager.create(acceptanceInput), /separate/); assert.equal(r.writes.length, 0);
+  r.secrets.set('RUNPOD_ACCEPTANCE_STOP_KEY', 'same-key-fixture'); r.secrets.set('RUNPOD_ACCOUNT_API_KEY', 'same-key-fixture');
+  await assert.rejects(r.manager.create(acceptanceInput), /account key/); assert.equal(r.writes.length, 0);
+  r.secrets.set('RUNPOD_ACCOUNT_API_KEY', 'different-main-key'); r.args.bootstrap=()=>({available:true});
+  const old = await createAutomaticInstaller(r.args); t.after(()=>old.close());
+  await assert.rejects(old.create(acceptanceInput), /supervisor/); assert.equal(r.writes.length, 0);
+});
+
+test('acceptance rechecks current CUDA-filtered Secure price and reconciles uncertain creation without replacements', async t => {
+  const r=await acceptanceRig(t); const original=r.args.provider.quote, calls=[];
+  r.args.provider.quote=async p=>{calls.push(p);return original(p)};
+  r.lose(); await r.manager.create(acceptanceInput); await r.manager.create(acceptanceInput);
+  assert.equal(r.writes.length,1); assert.equal(r.manager.snapshot().phase,'uncertain');
+  assert.deepEqual(calls.map(p=>p.cloud),['SECURE']); assert.equal(calls[0].gpu.minCudaVersion,'12.8');
+  const changed=await acceptanceRig(t); changed.changeRate();
+  await assert.rejects(changed.manager.create(acceptanceInput),/price/); assert.equal(changed.writes.length,0);
+});
+
+test('acceptance key enrollment uses the existing vault and read-only credential validation without echoing secrets', async t => {
+  const calls=[]; const r=await rig(t,{fetchFn:async(url,opts)=>{calls.push({url,method:opts.method});return Response.json({pods:[],pagination:{hasNextPage:false}})}});
+  const secret='separate-shutdown-key-fixture-only';
+  await assert.rejects(r.manager.saveAcceptanceKey({apiKey:secret}));
+  assert.deepEqual(await r.manager.saveAcceptanceKey({apiKey:secret,confirm:'SAVE ACCEPTANCE STOP KEY'}),{saved:true});
+  assert.equal(r.secrets.get('RUNPOD_ACCEPTANCE_STOP_KEY'),secret); assert.equal(calls.length,1); assert.equal(calls[0].method,'GET');
+  assert.equal(JSON.stringify(await r.manager.acceptanceStatus()).includes(secret),false); assert.equal(r.writes.length,0);
+});
+
+test('only a pinned bootstrap with the acceptance protocol may embed a supervisor before networking', async () => {
+  const bytes=await readFile('worker/automatic-runpod.py');
+  const p=automaticBootstrap({root:path.resolve('.'),version:()=>({repo:'nemesisone-dev/AIPLAY-Studio'}),git:args=>args[0]==='rev-parse'?COMMIT:bytes});
+  assert.equal(p.acceptanceProtocol,1); assert.match(p.acceptanceCommand,/^exec python/); assert.ok(!p.acceptanceCommand.includes('curl'));
+  const encoded=p.acceptanceCommand.match(/b64decode\("([A-Za-z0-9+/=]+)"\)/)[1]; assert.deepEqual(Buffer.from(encoded,'base64'),bytes);
+  const old=automaticBootstrap({root:path.resolve('.'),version:()=>({repo:'nemesisone-dev/AIPLAY-Studio'}),git:args=>args[0]==='rev-parse'?COMMIT:Buffer.from(SCRIPT)});
+  assert.equal(old.acceptanceCommand,null);
+});
+
+test('acceptance diagnostics use authenticated fixed routes and reject a mismatched computer/session',async t=>{
+  const r=await acceptanceRig(t); await r.manager.create(acceptanceInput); let mismatch=false;const calls=[];
+  const manager=await createAutomaticInstaller({...r.args,fetchFn:async(url,opts)=>{calls.push({url,opts});return Response.json(String(url).endsWith('/deadline')
+    ?{podId:'new',requestId:mismatch?'another-session':ID,phase:'watching'}:{samples:1})}});t.after(()=>manager.close());
+  assert.equal((await manager.acceptanceDiagnostics()).telemetry.samples,1);
+  assert.equal(calls[0].opts.redirect,'error');assert.equal(calls[0].opts.headers.Authorization,'Bearer '+r.secrets.get('RUNPOD_INSTALL_TOKEN'));
+  assert.ok(calls.every(c=>/^https:\/\/new-8787\.proxy\.runpod\.net\/v1\/acceptance\/(deadline|telemetry)$/.test(c.url)));
+  mismatch=true;await assert.rejects(manager.acceptanceDiagnostics(),/identity/);
+});
+
 test('completed automatic installs retire confirmed removed computers and allow a fresh reviewed creation', async t => {
   const r=await rig(t); await r.manager.create(input); await r.manager.refresh(); assert.equal(r.manager.snapshot().phase,'models');
   r.args.provider.getPod=async()=>{throw new CloudError('resource_missing','Not found',404);};
