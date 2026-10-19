@@ -18,6 +18,27 @@ test('every production bundle has pinned source URLs, sizes and checksums', () =
   }
 });
 
+test('selected XL installs reuse verified companion files across variants and survive restart', async t => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'aiplay-xl-bundle-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const bodies=new Map(),calls=[];
+  const bundles=Object.fromEntries(['ace15-xl-sft','ace15-xl-turbo'].map(id=>{
+    const original=MODEL_BUNDLES[id],files=original.files.map(f=>{
+      const body=Buffer.from('synthetic test file: '+f.relative);bodies.set(f.url,body);
+      return {...f,bytes:body.length,sha256:createHash('sha256').update(body).digest('hex')};
+    });
+    return [id,{...original,files,totalBytes:files.reduce((n,f)=>n+f.bytes,0)}];
+  }));
+  const fetchFn=async url=>{assert.ok(bodies.has(url));calls.push(url);return new Response(bodies.get(url));};
+  const manager=await createModelManager({modelsDir:root,bundles,fetchFn});
+  await assert.rejects(manager.install('ace15-xl-sft',false),/terms|licen/i);
+  await manager.install('ace15-xl-sft',true);await waitFor(manager);
+  assert.equal(manager.status().bundles.find(b=>b.id==='ace15-xl-sft').state,'ready');assert.equal(calls.length,4);
+  await manager.install('ace15-xl-turbo',true);await waitFor(manager);assert.equal(calls.length,5,'only the other exact DiT is fetched');
+  const restarted=await createModelManager({modelsDir:root,bundles,fetchFn});assert.equal(restarted.status().bundles.every(b=>b.state==='ready'),true);
+  assert.equal(calls.length,5);
+});
+
 test('gated models require accepted terms and a read token, which never appears in status', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'aiplay-gated-')); t.after(() => rm(root, { recursive: true, force: true }));
   const body = Buffer.from('model'), token = 'hf_testReadToken123456789'; let auth;

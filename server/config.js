@@ -3,6 +3,7 @@
  * Where a number is an estimate it says so; where a claim was withdrawn, the
  * data that withdrew it stays in the file beside it.
  */
+import { validModelSelection } from '../shared/model-profiles.js';
 import fs from "node:fs";
 import { autoVramFlags, vendorOf } from "./comfyargs.js";
 /* The card tiers' sizes join H3's size list (below the engines): pure data. */
@@ -387,7 +388,8 @@ export const config = {
   musicOnly: MUSIC_ONLY,
   cloudOnly: CLOUD_ONLY,
   remoteOnly: REMOTE_ONLY,
-  cloudSetup: { goal: ['music', 'pictures', 'video', 'all'].includes(saved.cloudSetup?.goal) ? saved.cloudSetup.goal : 'all' },
+  cloudSetup: { goal: ['music', 'pictures', 'video', 'all'].includes(saved.cloudSetup?.goal) ? saved.cloudSetup.goal : 'all', plan: null },
+  modelSetup: { local: null },
   comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY && !REMOTE_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
@@ -2466,6 +2468,8 @@ config.music.engines["yue2-gguf"] = {
 export { LEVELS, IN_USE_KEYS, startLevel };
 config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
+  ['cloudSetup', 'plan', v => v === null || validModelSelection(v)],
+  ['modelSetup', 'local', v => v === null || validModelSelection(v)],
   ["cloudSetup", "goal", v => ['music', 'pictures', 'video', 'all'].includes(v)],
   ["ui", "level", (v) => LEVELS.includes(v)],
   ["ui", "levelBy", (v) => v === "studio" || v === "you"],

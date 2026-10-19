@@ -18,7 +18,27 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const graph = () => ({ "1": { class_type: "TestSave", inputs: { model: "demo.safetensors", text: "hello", filename_prefix: "test" } } });
 const listen = server => new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${server.address().port}`)));
 
-async function rig(t, { dropSubmit = false, targetedCancel = true, clientFetch = fetch, appendOverride, adoptOutput = false } = {}) {
+test('inference evidence requires completed checked outputs on the same worker build and workload; private jobs leave none', async t => {
+  const r=await rig(t,{installCommit:'a'.repeat(40),clientFetch:async(url,init)=>String(url).endsWith('/v1/setup') ? Response.json({bundles:[{id:'sdxl-turbo',state:'ready'}]}) : fetch(url,init)}),health=await r.client.verify(),g=graph();
+  g['1'].inputs.model='sd_xl_turbo_1.0_fp16.safetensors';
+  assert.equal(r.client.inferenceEvidence(g,health),null);
+  await r.client.submit({graph:g});await r.client.tick();await r.worker.tick();
+  assert.equal(r.client.inferenceEvidence(g,health),null,'a queued prompt is not inference acceptance');
+  await r.complete();await r.worker.tick();await r.client.tick();
+  assert.ok(r.client.inferenceEvidence(g,health)?.at);
+  assert.equal(r.client.inferenceEvidence(g,{...health,installCommit:'b'.repeat(40)}),null);
+  assert.equal(r.client.inferenceEvidence(g,{...health,workerId:'another'}),null);
+  assert.equal(r.client.inferenceEvidence(g,{...health,version:'new-runtime'}),null);
+  const changed=graph();changed['1'].inputs.model='other.safetensors';assert.equal(r.client.inferenceEvidence(changed,health),null);
+  await r.restartClient();assert.ok(r.client.inferenceEvidence(g,health),'acceptance survives desktop restart');
+  const priv=structuredClone(g);priv['1'].inputs.testMarker='private-variant';
+  await r.client.submit({graph:priv,private:true});await r.client.tick();await r.worker.tick();await r.complete();await r.worker.tick();await r.client.tick();
+  assert.equal(r.client.inferenceEvidence(priv,health),null);
+  const saved=JSON.parse(await readFile(path.join(r.root,'desktop/runpod/jobs.json'),'utf8'));
+  assert.equal(Object.values(saved).find(j=>j.private).workflowEvidence,undefined);
+});
+
+async function rig(t, { dropSubmit = false, targetedCancel = true, clientFetch = fetch, appendOverride, adoptOutput = false, installCommit = null } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "aiplay-remote-test-"));
   const inputDir = path.join(root, "input"), outputDir = path.join(root, "output"), stateDir = path.join(root, "worker-state");
   await Promise.all([inputDir, outputDir].map(d => mkdir(d, { recursive: true })));
@@ -31,7 +51,7 @@ async function rig(t, { dropSubmit = false, targetedCancel = true, clientFetch =
     if (url.pathname === "/object_info") {
       const assets = await readdir(path.join(inputDir, "aiplay_remote")).catch(() => []);
       return sendJSON(res, 200, {
-        TestSave: { input: { required: { model: [["demo.safetensors"]], text: ["STRING"], filename_prefix: ["STRING"] } } },
+        TestSave: { input: { required: { model: [["demo.safetensors", "sd_xl_turbo_1.0_fp16.safetensors"]], text: ["STRING"], filename_prefix: ["STRING"] } } },
         LoadImage: { input: { required: { image: [assets.map(n => `aiplay_remote/${n}`)] } } },
       });
     }
@@ -62,7 +82,7 @@ async function rig(t, { dropSubmit = false, targetedCancel = true, clientFetch =
     sendJSON(res, 404, {});
   });
   const comfyURL = await listen(fake);
-  let worker = await createWorker({ token: TOKEN, comfyURL, aceURL: comfyURL, inputDir, outputDir, stateDir, pollMs: 3600000 });
+  let worker = await createWorker({ token: TOKEN, comfyURL, aceURL: comfyURL, inputDir, outputDir, stateDir, pollMs: 3600000, installCommit });
   let workerURL = await listen(worker.server);
   let savedToken;
   const clientOptions = { dataDir: path.join(root, "desktop"), outputDir: path.join(root, "local-output"),
@@ -91,7 +111,7 @@ async function rig(t, { dropSubmit = false, targetedCancel = true, clientFetch =
     async restartClient() { client.close(); client = await createRemoteClient(clientOptions); },
     async restartWorker() {
       const port = worker.server.address().port; await worker.close();
-      worker = await createWorker({ token: TOKEN, comfyURL, aceURL: comfyURL, inputDir, outputDir, stateDir, pollMs: 3600000 });
+      worker = await createWorker({ token: TOKEN, comfyURL, aceURL: comfyURL, inputDir, outputDir, stateDir, pollMs: 3600000, installCommit });
       await new Promise(r => worker.server.listen(port, "127.0.0.1", r));
     },
     async complete() {

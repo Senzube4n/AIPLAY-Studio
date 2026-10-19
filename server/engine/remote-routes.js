@@ -15,6 +15,8 @@ import { createAutomaticInstaller } from './runpod-install.js';
 import { MODEL_PROVIDERS, searchCatalog, catalogFiles } from './model-catalog.js';
 import { createWorkerUpdater } from './runpod-update.js';
 import { modelCompatibility } from './model-compatibility.js';
+import { setupPlan, selectionFor, rankSetupGpus, selectedModelReadiness } from '../setup-plan.js';
+import { defaultModelSelection } from '../../shared/model-profiles.js';
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
@@ -120,7 +122,7 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
         else if (req.method === 'POST') {
           const b = JSON.parse((await readBody(req)).toString('utf8'));
           if (!['music', 'pictures', 'video', 'all'].includes(b.goal)) throw new Error('Choose Music, Pictures, Video or All three.');
-          config.cloudSetup = { goal: b.goal }; await savePrefs(); sendJSON(res, 200, { goal: b.goal });
+          config.cloudSetup = { ...config.cloudSetup, goal: b.goal, plan: defaultModelSelection(b.goal, config.music) }; await savePrefs(); sendJSON(res, 200, { goal: b.goal });
         } else sendJSON(res, 405, { error: 'Use GET or POST for the cloud goal.' });
       }
       else if (url.pathname === '/api/runpod/update') {
@@ -166,7 +168,11 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       else if (req.method === "GET" && url.pathname === "/api/runpod/bootstrap") sendJSON(res, 200, bootstrap());
       else if (req.method === "GET" && url.pathname === "/api/runpod/account") sendJSON(res, 200, await account.status());
-      else if (req.method === "GET" && url.pathname === "/api/runpod/account/overview") sendJSON(res, 200, await account.overview());
+      else if (req.method === "GET" && url.pathname === "/api/runpod/account/overview") {
+        const data = await account.overview();
+        const plan = setupPlan({ selection: selectionFor(config, 'runpod'), target: 'runpod' });
+        sendJSON(res, 200, { ...data, recommendations: rankSetupGpus(plan, data.gpus), planStorage: plan.storage });
+      }
       else if (req.method === "POST" && url.pathname === "/api/runpod/account/connect") {
         const b = JSON.parse((await readBody(req)).toString("utf8")); sendJSON(res, 200, await account.connect(b.apiKey));
       } else if (req.method === "POST" && url.pathname === "/api/runpod/account/disconnect") sendJSON(res, 200, await account.disconnect());
@@ -195,7 +201,16 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           else if (req.method === "POST" && url.pathname === "/api/runpod/connect") {
             sendJSON(res, 200, await c.connect(JSON.parse((await readBody(req)).toString("utf8"))));
           } else if (req.method === "GET" && url.pathname === "/api/runpod/models") sendJSON(res, 200, await c.models());
-          else if (req.method === "GET" && url.pathname === "/api/runpod/setup") sendJSON(res, 200, await c.setup());
+          else if (req.method === "GET" && url.pathname === "/api/runpod/setup") {
+            const state = computerPromise ? (await computerPromise).snapshot() : null;
+            const health = await c.verify();
+            let bound = !!state?.podId && health.podId === state.podId && state.pod?.status === 'RUNNING' && !state.providerUncertain;
+            const data = await c.setup(), objects = bound ? await c.models() : null;
+            bound = bound && c.status().workerId === health.workerId && (await computerPromise).snapshot().podId === state.podId;
+            const plan = setupPlan({ selection: selectionFor(config, 'runpod'), target: 'runpod' });
+            sendJSON(res, 200, { ...data, podId: bound ? state.podId : null, selection: plan.selection,
+              readiness: selectedModelReadiness(plan, { connected: bound, bundles: data.bundles, objects, evidenceFor: graph => c.inferenceEvidence(graph, health) }) });
+          }
           else if (req.method === "POST" && url.pathname === "/api/runpod/setup/install") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
             sendJSON(res, 202, await c.installBundle(b.bundle, b.acceptLicense, b.modelToken));

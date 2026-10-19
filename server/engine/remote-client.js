@@ -1,5 +1,6 @@
 /** Local side of remote rendering: durable IDs, provenance and verified downloads. */
 import path from "node:path";
+import { workflowEvidenceKey, curatedArtifactKey } from './workflow-evidence.js';
 import { randomUUID, createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
@@ -182,7 +183,7 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
       announceRefusal({ door: "runpod.submit", via: "runpod", actor, code: safety.code });
       throw safetyError({ door: "runpod.submit", hint: safety.hint, code: safety.code, reason: safety.reason, found: safety.found });
     }
-    await verify();
+    const runtime = await verify();
     if (connecting) throw new Error("Connection is changing; try again.");
     if (cloudStopping && !fromQueue) throw new Error("The cloud computer is preparing to stop. Start it again before adding work.");
     const id = randomUUID();
@@ -192,6 +193,18 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
      * does (record.js), the label keeps only its kind, and the graph leaves
      * jobs.json as soon as the worker has it (tick, complete). */
     const priv = isPrivate === true;
+    let artifactEvidence = null;
+    if (!priv && runtime.installCommit && runtime.modelSetupVersion === 1) {
+      const known = curatedArtifactKey(graph);
+      if (known) {
+        // An older worker may not implement setup; it keeps its working render
+        // path, but contributes no artifact acceptance evidence.
+        const setup = await json('/v1/setup').catch(() => null);
+        if (setup?.bundles?.some(b => b.id === known.id && b.state === 'ready')) artifactEvidence = known.key;
+      }
+    }
+    if (connecting || connection.workerId !== runtime.workerId) throw Error('Connection changed while checking model files. Try again.');
+    if (cloudStopping && !fromQueue) throw Error('The cloud computer is preparing to stop. Start it again before adding work.');
     const record = buildRecord(graph, { runId, via: "runpod", actor, label, private: priv, enginePort: "remote", appVersion: "AIPLAY RunPod protocol 1" });
     record.remote = { workerId: connection.workerId, protocol: PROTOCOL };
     record.inputBindings = bindings;
@@ -206,6 +219,7 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
       ...(fromQueue ? { finishDuringStop: true } : {}),
       safety: print,
       ...(priv ? { private: true } : {}),
+      ...(artifactEvidence ? { workflowEvidence: { key: workflowEvidenceKey(graph), artifacts: artifactEvidence, installCommit: runtime.installCommit, version: runtime.version || null } } : {}),
       connection: { ...connection }, state: "recording", createdAt: Date.now(), outputs: [] };
     jobs[id] = job; await saveJobs(jobs);
     await append("library", { actor, type: "delegate", asset: `engine/${runId}`, data: record });
@@ -403,6 +417,17 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
       await verify(); return post("/v1/setup/install", { bundle, acceptLicense, ...(modelToken ? { modelToken } : {}) });
     },
     cancelInstall: async () => { await verify(); return post("/v1/setup/cancel", {}); },
+    inferenceEvidence: (graph, health) => {
+      if (!health?.installCommit) return null;
+      const key = workflowEvidenceKey(graph);
+      const artifacts = curatedArtifactKey(graph)?.key;
+      if (!artifacts) return null;
+      const job = Object.values(jobs).filter(j => !j.private && j.state === 'completed' && j.outputs?.length
+        && j.connection.workerId === health.workerId && j.connection.url === connection.url
+        && j.workflowEvidence?.artifacts === artifacts && j.workflowEvidence.installCommit === health.installCommit && j.workflowEvidence.version === (health.version || null) && j.workflowEvidence.key === key)
+        .sort((a, b) => b.finishedAt - a.finishedAt)[0];
+      return job ? { at: job.finishedAt, workerId: health.workerId, installCommit: health.installCommit } : null;
+    },
     status: () => ({ configured: !!connection.url, url: connection.url || "", workerId: connection.workerId || null,
       capabilities: connection.capabilities || null,
       hasToken: !!token, lastError, jobs: Object.values(jobs).map(snapshot).sort((a, b) => b.createdAt - a.createdAt) }),

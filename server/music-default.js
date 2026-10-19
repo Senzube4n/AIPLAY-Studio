@@ -130,7 +130,8 @@ export function musicDefault({ saved = null, session = null, choices = [], machi
       isReady = !!row?.available;
       label = row?.label || "MiniMax Music 3 · API";
     } else {
-      const mine = choices.filter((c) => c.engine === saved.engine && !c.api);
+      const mine = choices.filter((c) => c.engine === saved.engine && !c.api
+        && (saved.engine !== 'ace-step15' || !saved.dit || c.dit === saved.dit));
       isReady = saved.engine === "yue2-comfy"
         ? mine.some((c) => c.available && (!saved.checkpoint || c.checkpoint === saved.checkpoint))
         : mine.some((c) => c.available);

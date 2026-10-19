@@ -13,7 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -49,6 +49,30 @@ async function row(dir, url) {
   return id;
 }
 const drop = (id) => { const i = CATALOG.findIndex((c) => c.id === id); if (i >= 0) CATALOG.splice(i, 1); };
+
+test('exact profile installation downloads the intended build while legacy alternatives remain accepted normally', async () => {
+  const dir=await mkdtemp(path.join(tmpdir(),'aiplay-exact-model-')),s=await server({cut:SIZE});s.release=true;
+  const id=await row(dir,s.url),m=new ModelManager();
+  CATALOG.find(c=>c.id===id).files[0].alt=['legacy.bin'];await writeFile(path.join(dir,'legacy.bin'),Buffer.from('legacy'));
+  try {
+    assert.deepEqual(await m.download(id),{ok:true});assert.equal(s.requests.length,0,'normal existing download behavior is preserved');
+    assert.deepEqual(await m.download(id,{exact:true}),{ok:true});assert.equal(s.requests.length,1);assert.deepEqual(await readFile(path.join(dir,'f.bin')),BODY);
+    assert.equal((await readFile(path.join(dir,'legacy.bin'))).toString(),'legacy');
+  } finally {drop(id);s.http.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('different capability installs cannot write the same shared companion partial', async () => {
+  const dir=await mkdtemp(path.join(tmpdir(),'aiplay-dl-shared-'));
+  const s=await server({cut:SIZE});s.release=true;
+  const first=await row(dir,s.url),second=await row(dir,s.url),m=new ModelManager();
+  try {
+    const running=m.download(first);
+    await assert.rejects(m.download(second),/shared model file/);
+    assert.deepEqual(await running,{ok:true});
+    assert.deepEqual(await m.download(second),{ok:true});
+    assert.deepEqual(s.requests,[0]); assert.deepEqual(await readFile(path.join(dir,'f.bin')),BODY);
+  } finally {drop(first);drop(second);s.http.close();await rm(dir,{recursive:true,force:true});}
+});
 
 test("Cancel on a connection that stopped sending ends it at once and clears the row", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "aiplay-dl-"));

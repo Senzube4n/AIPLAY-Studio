@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from 'node:child_process';
 import { modelLeaf, findShelfModel } from "./localmodels.js";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "aiplay-ace-test-"));
@@ -17,6 +18,7 @@ const { CATALOG, MODEL_TO_CAPABILITY } = await import("./models.js");
 const { config } = await import("./config.js");
 const { buildAceStep15Graph, aceMeta, ACE_DEFAULTS } = await import("./workflow.js");
 const { loraTarget, loraFits } = await import("./detect.js");
+const { buildRecord } = await import('./engine/record.js');
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
@@ -28,7 +30,7 @@ test("the catalogue row: ComfyUI's split files at a pinned revision, MIT, output
   const names = row.files.map((f) => path.basename(f.dest));
   assert.deepEqual(names, ["acestep_v1.5_turbo.safetensors", "ace_1.5_vae.safetensors", "qwen_0.6b_ace15.safetensors", "qwen_4b_ace15.safetensors"]);
   for (const f of row.files) {
-    assert.match(f.url, /Comfy-Org\/ace_step_1\.5_ComfyUI_files\/resolve\/694a9723ff772285c73f0700caacf944d3f02f8d\//, "a pinned revision, not main");
+    assert.match(f.url, /Comfy-Org\/ace_step_1\.5_ComfyUI_files\/resolve\/6707deb277e9e0907fd9c14ce6b6f1d695c6a3fc\//, "reviewed manifest revision, not main");
     assert.match(f.sha256, /^[0-9a-f]{64}$/);
     assert.ok(f.bytes > 1e8);
   }
@@ -124,7 +126,7 @@ test("the runner, the route and the API switch", () => {
   assert.match(jobs, /if \(config\.api\?\.enabled && \(!job\.engine \|\| job\.engine === "minimax-music3"\)\) return this\.#runApi\(job\);/,
     "only MiniMax has a hosted twin; ACE-Step and YuE2-through-ComfyUI render locally with API mode on");
   assert.match(index, /const ACE_DIT = \/\^acestep/);
-  assert.match(index, /reason: "weights-missing", needsModel: "musicAceStep15"/);
+  assert.match(index, /reason: "weights-missing", needsModel: musicCapabilityFor\("ace-step15", config\.music\.aceModel\)/);
   assert.match(index, /const codes = cover \? false : body\.aceCodes === undefined \? !loraName : !!body\.aceCodes;/,
     "a LoRA turns the planner off unless asked, a cover always");
   assert.match(index, /if \(body\.instrumental \|\| !String\(body\.lyrics \|\| ""\)\.trim\(\)\) body\.lyrics = "\[Instrumental\]";/);
@@ -142,4 +144,143 @@ test("the Music tab panel and MCP", () => {
   assert.match(app, /\.\.\.\(state\.musicEngine === "ace-step15" \? aceSpec\(\) : \{\}\)/);
   assert.match(mcp, /"yue2-gguf", "ace-step15"\]/);
   for (const k of ["language", "ace_steps", "ace_cfg", "planner", "cover_song"]) assert.match(mcp, new RegExp(`${k}: \\{ type:`), k);
+});
+
+const { ACE_VARIANTS, MODEL_BUNDLES, ACE_TEMPLATE_REVISION } = await import('../shared/model-bundles.js');
+const { validModelSelection, defaultModelSelection, selectedAceDit } = await import('../shared/model-profiles.js');
+const { setupPlan, selectionFor, rankSetupGpus, profileGraph, selectedModelReadiness, localModelReadiness } = await import('./setup-plan.js');
+const { PREF_PATHS, prefsSnapshot } = await import('./config.js');
+
+test('saved XL selection drives the existing music default and compatibility row instead of standard Turbo', async () => {
+  const { musicDefault } = await import('./music-default.js');
+  const { musicCapabilityFor } = await import('./models.js');
+  const { recommendFor } = await import('./fit.js');
+  const dit='acestep_v1.5_xl_sft_bf16.safetensors';
+  const choices=[{engine:'ace-step15',dit:'acestep_v1.5_turbo.safetensors',available:true,label:'Turbo'}, {engine:'ace-step15',dit,available:false,label:'XL-SFT'}];
+  let result=musicDefault({saved:{engine:'ace-step15',dit},choices});assert.equal(result.ready,false);assert.equal(result.label,'XL-SFT');
+  choices[1].available=true;result=musicDefault({saved:{engine:'ace-step15',dit},choices});assert.equal(result.ready,true);assert.equal(result.label,'XL-SFT');
+  assert.equal(musicCapabilityFor('ace-step15',dit),'musicAceStep15XlSft');
+  const previous=config.music.aceModel;config.music.aceModel=dit;
+  try {
+    const capabilities=CATALOG.map(c=>({...c,totalBytes:c.files.reduce((n,f)=>n+f.bytes,0),files:c.files.map(f=>({...f,present:false})),ready:false}));
+    const rec=recommendFor({capabilities,machine:{gpu:{name:'Fixture',vendor:'nvidia',vramGb:8},ram:{totalGb:32}},disk:{freeBytes:1e12},music:{value:'ace-step15',chosenBy:'you'}});
+    const pick=rec.picks.find(p=>p.slot==='music');assert.equal(pick.id,'musicAceStep15XlSft');assert.equal(pick.fit.state,'unknown');
+  } finally {config.music.aceModel=previous;}
+});
+
+test('the existing gated local LTX helper pins the shared revision and verifies bytes before replacing a model', () => {
+  const program = `import runpy, sys, types, hashlib, os
+from pathlib import Path
+n=runpy.run_path('scripts/fetch_ltx25.py',run_name='fixture')
+assert n['REVISION']=='49b093a39c19169a8a81721dcc541e07e945232f'
+root=Path(os.environ['AIPLAY_COMFY']); root.mkdir(parents=True,exist_ok=True)
+p=root/'synthetic.bin'; p.write_bytes(b'fixture')
+assert n['checked_file'](p,7,hashlib.sha256(b'fixture').hexdigest())
+assert not n['checked_file'](p,7,'0'*64)
+assert not n['checked_file'](p,8,hashlib.sha256(b'fixture').hexdigest())
+fn=n['main']; g=fn.__globals__; rel='vae/fixture.safetensors'; g['FILES']=[(rel,'vae',7)]
+def info(repo,revision,files_metadata):
+ assert revision==n['REVISION'] and files_metadata
+ return types.SimpleNamespace(siblings=[types.SimpleNamespace(rfilename=rel,lfs=types.SimpleNamespace(sha256=hashlib.sha256(b'fixture').hexdigest()))])
+def download(repo,path,revision,local_dir):
+ assert path==rel and revision==n['REVISION']
+ return str(p)
+sys.modules['huggingface_hub']=types.SimpleNamespace(get_token=lambda:'fixture-only',HfApi=lambda:types.SimpleNamespace(model_info=info),hf_hub_download=download)
+assert fn()==0
+assert (root/'models/vae/fixture.safetensors').read_bytes()==b'fixture'
+`;
+  execFileSync(process.env.AIPLAY_PYTHON || 'python', ['-c',program], {cwd:path.resolve(import.meta.dirname,'..'), env:{...process.env,AIPLAY_COMFY:path.join(tmp,'ltx-fixture')},encoding:'utf8'});
+});
+
+test('each XL profile is an independent pinned DiT and the official ComfyUI companion/settings combination', () => {
+  assert.match(ACE_TEMPLATE_REVISION, /^[a-f0-9]{40}$/);
+  const expected = {
+    'ace15-xl-sft': [9974719930, '3c05ae268353b3540fb1fd7db4fd77ffbda9802ec641b624e15648e030ecf3ce', 50, 7],
+    'ace15-xl-turbo': [9974719892, '86a1afb0a1f711f0e3304ff65d874df3ae6783db683dcf982513fb9b6d14ae71', 8, 1],
+    'ace15-xl-base': [9974719930, '56bf816fc9a69a5f45635e867b2ad742e1e648eb51fadb7d124cb8332d2e0940', 50, 6],
+  };
+  for (const [id, [bytes, sha, steps, cfg]] of Object.entries(expected)) {
+    const v = ACE_VARIANTS.find(v => v.id === id), bundle = MODEL_BUNDLES[id];
+    assert.equal(bundle.files[0].bytes, bytes); assert.equal(bundle.files[0].sha256, sha);
+    assert.match(v.dit, /_xl_.*_bf16\.safetensors$/);
+    assert.equal(bundle.files.length, 4); assert.equal(bundle.totalBytes, bundle.files.reduce((n, f) => n + f.bytes, 0));
+    assert.deepEqual(bundle.files.slice(1).map(f => f.sha256), MODEL_BUNDLES['ace15-turbo'].files.slice(1).map(f => f.sha256));
+    const row = CATALOG.find(c => c.id === v.capability);
+    assert.deepEqual(row.files.map(f => f.sha256), bundle.files.map(f => f.sha256));
+    assert.equal(row.requires.experimental, true, 'native-backend minima never masquerade as ComfyUI BF16 acceptance');
+    const p = setupPlan({ selection: { music: id }, target: 'local' }).profiles[0];
+    const graph = profileGraph(p), sampler = Object.values(graph).find(n => n.class_type === 'KSampler');
+    assert.deepEqual(buildRecord(graph, { actor: 'system', via: 'setup.check' }).engineFiles.map(f => f.file).sort(), bundle.files.map(f => f.relative.split('/').pop()).sort(), 'receipts capture both DualCLIP encoders and every selected artifact');
+    assert.deepEqual([sampler.inputs.steps, sampler.inputs.cfg], [steps, cfg]);
+    assert.equal(Object.values(graph).find(n => n.class_type === 'ModelSamplingAuraFlow').inputs.shift, 3);
+    assert.equal(Object.values(graph).find(n => n.class_type === 'DualCLIPLoader').inputs.clip_name2, 'qwen_4b_ace15.safetensors');
+    assert.equal(p.experimental, true);
+  }
+  assert.notEqual(MODEL_BUNDLES['ace15-turbo'].files[0].sha256, MODEL_BUNDLES['ace15-xl-turbo'].files[0].sha256);
+});
+
+test('category combinations and independent targets persist without rewriting generation defaults', () => {
+  assert.equal(selectedAceDit(['acestep_v1.5_turbo.safetensors'],'acestep_v1.5_xl_sft_bf16.safetensors'),null,'an unavailable selected XL never silently becomes standard Turbo');
+  assert.equal(selectedAceDit(['acestep_v1.5_xl_sft_bf16.safetensors'],null),'acestep_v1.5_xl_sft_bf16.safetensors');
+  for (const v of [{music:'ace15-xl-sft'}, {pictures:'sdxl-turbo',video:'ltx25'}, {music:'yue2-comfy',pictures:'sdxl-turbo',video:'ltx25'}]) assert.equal(validModelSelection(v), true);
+  for (const v of [null, {}, [], {music:'ltx25'}, {unknown:'sdxl-turbo'}, {music:'unverified-url'}, {music:['ace15-turbo']}]) assert.equal(validModelSelection(v), false);
+  assert.deepEqual(defaultModelSelection('music', {engine:'ace-step15',aceModel:'acestep_v1.5_xl_sft_bf16.safetensors'}), {music:'ace15-xl-sft'});
+  assert.deepEqual(selectionFor({cloudSetup:{goal:'pictures'}},'runpod'), {pictures:'sdxl-turbo'});
+  const old = {cloud:config.cloudSetup.plan,local:config.modelSetup.local,music:config.music.engine};
+  try {
+    config.cloudSetup.plan={music:'ace15-xl-sft',pictures:'sdxl-turbo'}; config.modelSetup.local={video:'ltx25'};
+    for (const [group,key] of [['cloudSetup','plan'],['modelSetup','local']]) assert.equal(PREF_PATHS.find(([g,k])=>g===group&&k===key)[2](config[group][key]),true);
+    const saved = prefsSnapshot(); assert.deepEqual(saved.cloudSetup.plan,config.cloudSetup.plan); assert.deepEqual(saved.modelSetup.local,config.modelSetup.local);
+    assert.equal(config.music.engine,old.music); assert.deepEqual(selectionFor(config,'local'),{video:'ltx25'});
+  } finally {config.cloudSetup.plan=old.cloud;config.modelSetup.local=old.local;}
+});
+
+test('planning reuses fitFor and maximum sequential requirements; unknown XL never gets an invented GPU guarantee', () => {
+  const plan = setupPlan({selection:{music:'yue2-comfy',pictures:'sdxl-turbo',video:'ltx25'},target:'runpod'});
+  assert.equal(plan.hardware.vramMinGb,16); assert.equal(plan.hardware.vramRecGb,16);
+  assert.equal(plan.storage.modelBytes,3960938800+6938081905+39689918812);
+  assert.equal(plan.storage.minimumGB,Math.ceil(plan.storage.modelBytes/1e9+20));
+  assert.equal(new Set(plan.files.map(f=>f.relative)).size,plan.files.length);
+  const gpu=(id,memoryInGb,pricePerHr,stock='High')=>({id:'NVIDIA '+id,name:id,memoryInGb,pricePerHr,stock});
+  const inventory=[gpu('8',8,.1),gpu('16',16,.3),gpu('24',24,.4),gpu('48',48,.6),gpu('80',80,2,'None'),gpu('bad',undefined,.01),{id:'AMD',memoryInGb:128,pricePerHr:.01,stock:'High'}];
+  const ranks=rankSetupGpus(plan,inventory); assert.equal(ranks.budget,'NVIDIA 16');assert.equal(ranks.recommended,'NVIDIA 16');assert.equal(ranks.performance,'NVIDIA 48');assert.equal(ranks.provisional,true);
+  const xl=setupPlan({selection:{music:'ace15-xl-sft'},target:'runpod'});
+  assert.equal(xl.hardware.unknown,true); assert.equal(xl.hardware.vramMinGb,null); assert.equal(rankSetupGpus(xl,inventory).recommended,null);
+  const cpu=setupPlan({selection:{music:'ace15-xl-sft'},target:'local',machine:{gpu:null,ram:{totalGb:32}}}); assert.equal(cpu.profiles[0].fit.state,'unknown');
+  const spec=MODEL_BUNDLES['yue2-comfy'].files[0];
+  assert.equal(setupPlan({selection:{music:'yue2-comfy'},target:'local',localFiles:[{folder:'checkpoints',name:'yue2_3b_bf16.safetensors',bytes:spec.bytes}]}).profiles[0].localFilesPresent,false,'a legacy alternative does not claim the selected int8 variant');
+  assert.equal(setupPlan({selection:{music:'yue2-comfy'},target:'local',localFiles:[{folder:'checkpoints',name:'yue2_3b_int8_convrot.safetensors',bytes:spec.bytes}]}).profiles[0].localFilesPresent,true);
+});
+
+test('selected readiness separates artifacts, runtime nodes, schema checks, previous inference and stopped state', () => {
+  const plan=setupPlan({selection:{music:'ace15-xl-sft'},target:'runpod'}), p=plan.profiles[0], graph=profileGraph(p);
+  const objects=Object.fromEntries(Object.values(graph).map(n=>[n.class_type,{input:{required:{}}}]));
+  const bundle={id:p.id,state:'ready'}, input={connected:true,bundles:[bundle],objects};
+  let r=selectedModelReadiness(plan,input)[0]; assert.equal(r.workflowValidated,true);assert.equal(r.filesVerified,true);assert.equal(r.inferenceValidated,false);
+  assert.equal(selectedModelReadiness(plan,{...input,bundles:[]})[0].workflowValidated,false);
+  assert.equal(selectedModelReadiness(plan,{...input,objects:{}})[0].dependenciesAvailable,false);
+  const missingChoice=structuredClone(objects); missingChoice.UNETLoader.input.required.unet_name=[['another.safetensors']];
+  assert.equal(selectedModelReadiness(plan,{...input,objects:missingChoice})[0].workflowValidated,false);
+  r=selectedModelReadiness(plan,{...input,evidenceFor:()=>({at:123})})[0];assert.equal(r.inferenceValidated,true);
+  r=selectedModelReadiness(plan,{...input,stopped:true,evidenceFor:()=>({at:123})})[0];assert.equal(r.workerConnected,false);assert.equal(r.workflowValidated,false);assert.equal(r.inferenceValidated,false);
+  assert.equal(selectedModelReadiness(plan,{...input,verifiedFiles:false})[0].filesVerified,false,'local size presence never claims a checksum');
+});
+
+test('local inference acceptance reuses hashed engine receipts, current file facts and the exact runtime/workload', async () => {
+  const bundle=MODEL_BUNDLES['ace15-xl-sft'];
+  const localFiles=bundle.files.map(f=>({folder:f.relative.split('/')[0],name:f.relative.split('/')[1],bytes:f.bytes}));
+  const plan=setupPlan({selection:{music:'ace15-xl-sft'},target:'local',localFiles}),graph=profileGraph(plan.profiles[0]);
+  const objects=Object.fromEntries(Object.values(graph).map(n=>[n.class_type,{input:{required:{}}}]));
+  const facts=bundle.files.map(f=>({file:f.relative.split('/').pop(),bytes:f.bytes,sha256:'sha256:'+f.sha256,mtimeMs:1,resolvedPath:'/fixture/'+f.relative}));
+  let receipt={graph,request:{graphHash:'fixture',enginePort:'auto',engineVersion:'fixture-runtime',engineFiles:structuredClone(facts)},result:{status:'completed',outputs:[{sha256:'a'.repeat(64),bytes:1}]}};
+  let changed=false,hashRequests=0;
+  const engine={status:async()=>({version:'fixture-runtime'}),activity:async()=>({runs:[{runId:'fixture',t:'2026-10-18T00:00:00Z'}]}),runRecord:async()=>receipt,
+    store:{resolveRecordFiles:async(record,{hashModels})=>{if(hashModels)hashRequests++;record.engineFiles=facts.map(f=>({...f,mtimeMs:changed?2:1,sha256:hashModels?f.sha256:null}));}}};
+  const read=verify=>localModelReadiness(plan,{engine,connected:true,objects,verify});
+  let result=(await read(false))[0];assert.equal(result.inferenceValidated,true);assert.equal(result.filesVerified,true);assert.equal(hashRequests,0,'opening the planner never starts a multi-GB checksum pass');
+  changed=true;assert.equal((await read(false))[0].inferenceValidated,false);changed=false;
+  const original=structuredClone(receipt);receipt.request.engineVersion='other';assert.equal((await read(false))[0].inferenceValidated,false);receipt=structuredClone(original);
+  receipt.request.enginePort='remote';assert.equal((await read(false))[0].inferenceValidated,false);receipt=structuredClone(original);
+  receipt.graph=null;assert.equal((await read(false))[0].inferenceValidated,false);receipt=structuredClone(original);
+  receipt.request.engineFiles.forEach(f=>f.sha256=null);result=(await read(true))[0];assert.equal(result.filesVerified,true);assert.equal(result.inferenceValidated,false,'a current checksum never manufactures an old inference receipt');assert.equal(hashRequests,1);
 });

@@ -4821,6 +4821,7 @@
       <div class="stagehead"><h2>Models</h2><span class="hint" id="modelsTotal"></span></div>
       <p class="hint">Only the music engine is required. Everything else is optional
         and downloads when you ask for it (never on its own).</p>
+      <details class="more"><summary>Choose models and computer</summary><div id="localModelPlan"></div></details>
       <div id="modelList" class="modellist"></div>
       <p class="hint" id="modelsNote"></p>
     </div>
@@ -5386,12 +5387,13 @@
             <p class="hint warnhint" id="cloudFlowIssue" role="status" hidden></p>
             <section id="cloudFlowGoal" role="tabpanel" aria-labelledby="cloudFlowGoalTab">
               <h3>What will you create?</h3>
-              <fieldset class="cloud-goals"><legend>Choose your goal</legend>
+              <fieldset class="cloud-goals" hidden aria-hidden="true"><legend>Choose your goal</legend>
                 <label><input type="radio" name="cloud-goal" value="music"> Music</label>
                 <label><input type="radio" name="cloud-goal" value="pictures"> Pictures</label>
                 <label><input type="radio" name="cloud-goal" value="video"> Video</label>
                 <label><input type="radio" name="cloud-goal" value="all" checked> All three</label>
               </fieldset>
+              <div id="cloudModelPlan"></div>
               <p class="hint" id="cloudFlowGoalNote">One connection for music, pictures and video.</p>
               <details class="more" id="cloudFlowAccountDetails" open><summary>Connect account</summary>
             <div id="cloudSetupAccount" hidden>
@@ -5472,6 +5474,7 @@
                 <button class="edtool sm" id="cloudSetupCheck" type="button">Check AI again</button></div>
               <div id="cloudSetupWorkerFields"></div>
               <div id="cloudSetupModelFields"></div>
+              <div id="cloudSelectedReadiness" aria-live="polite"></div>
               <details class="more"><summary>Where do I get the connection code?</summary>
                 <p>The AIPLAY service installed on your cloud computer prints its address and worker token.
                   Paste that worker token as the connection code; it is separate from your RunPod account key.</p>

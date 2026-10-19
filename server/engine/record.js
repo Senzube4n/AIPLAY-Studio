@@ -106,7 +106,7 @@ const SAMPLER_KNOBS = [
 
 /** Model-bearing inputs. `sampler_name` deliberately does not match — it ends
  *  `r_name`, and none of the alternatives below completes that word. */
-const MODEL_INPUT_RE = /(ckpt|unet|clip|vae|lora|model|style_model|control_net)_name$/;
+const MODEL_INPUT_RE = /(ckpt|unet|clip|vae|lora|model|style_model|control_net)_name(?:[12])?$/;
 
 /** A loader that reads a file the USER staged (a reference image, a source
  *  clip). `(^|_)Load[A-Z]` so `VHS_LoadVideo` counts and

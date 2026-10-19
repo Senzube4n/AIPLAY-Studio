@@ -1,3 +1,4 @@
+import { getSetupPlan } from './setup-plan.js';
 /* Shared RunPod setup lives in Settings; rendering uses Images and Video in
  * the launcher's "RunPod GPU" mode only (config.remoteOnly).
  * In any other mode this file does nothing: the
@@ -103,14 +104,18 @@ async function accountApi(route = "", body) {
 function money(value) { return `$${Number(value || 0).toFixed(2)}`; }
 function bytes(value) {
   const size = Number(value || 0);
-  return size >= 1073741824 ? `${(size / 1073741824).toFixed(1)} GB` : `${Math.round(size / 1048576)} MB`;
+  return size >= 1e9 ? `${(size / 1e9).toFixed(1)} GB` : `${Math.round(size / 1e6)} MB`;
 }
 
 function renderSetup(data) {
   const list = $("runpodModelList");
   list.replaceChildren();
+  const selection = getSetupPlan('runpod')?.selection;
+  const unsupported = selection && Object.values(selection).some(id => !data.bundles?.some(b => b.id === id));
   for (const bundle of data.bundles || []) {
     if (bundle.external) continue;
+    const selected = getSetupPlan('runpod')?.selection;
+    if (selected && !Object.values(selected).includes(bundle.id)) continue;
     const row = document.createElement("div"); row.className = "runpod-model"; row.dataset.bundle = bundle.id;
     const name = document.createElement("b"); name.textContent = bundle.label;
     const button = document.createElement("button"); button.type = "button"; button.className = "btn sm";
@@ -140,7 +145,7 @@ function renderSetup(data) {
   const finished = setupWasActive && !data.active;
   setupWasActive = !!data.active;
   $("runpodCancelModel").hidden = !data.active;
-  $("runpodModelState").textContent = data.active ? "Downloading on Pod" : "";
+  $("runpodModelState").textContent = data.active ? "Downloading on Pod" : unsupported ? 'Update AI service to install the selected models.' : '';
   clearTimeout(setupTimer);
   if (data.active) setupTimer = setTimeout(() => refreshSetup(), 1500);
   else if (finished) api("/models").then((info) => { objectInfo = info; fillModels(); }).catch(() => {});
@@ -179,22 +184,18 @@ function renderAccount(data) {
   const select = $("runpodGpu"), before = select.value;
   // The deployed image uses CUDA. Local AMD/Intel/CPU PCs can use it, but the rented card must be NVIDIA.
   const compatible = (data.gpus || []).filter(gpu => /^NVIDIA\b/i.test(gpu.id));
-  const recommended = compatible.find(gpu => gpu.memoryInGb >= 32 && gpu.stock !== "None");
+  const ranking = data.recommendations || {};
+  const recommended = compatible.find(gpu => gpu.id === ranking.recommended);
   select.replaceChildren();
   for (const gpu of compatible) {
-    const stock = gpu.stock === "None" ? "unavailable" : gpu.stock;
-    const fit = gpu.memoryInGb >= 32 ? "image + LTX video" : "image; video may not fit";
-    const option = new Option(`${gpu.id === recommended?.id ? "Suggested: " : ""}${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock} · ${fit}`, gpu.id);
-    option.disabled = gpu.stock === "None";
-    select.add(option);
+    const stock = gpu.stock === 'None' ? 'unavailable' : gpu.stock;
+    const badges = [['Budget', ranking.budget], ['Recommended', ranking.recommended], ['Performance', ranking.performance]].filter(([,id]) => id === gpu.id).map(([name]) => name).join('/');
+    const option = new Option(`${badges ? badges + ' (estimate): ' : ''}${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock}`, gpu.id);
+    option.disabled = gpu.stock === 'None'; select.add(option);
   }
   if ([...select.options].some(option => option.value === before && !option.disabled)) select.value = before;
-  else {
-    if (recommended) select.value = recommended.id;
-  }
-  $("runpodCreateRecommendation").textContent = recommended
-    ? "The suggested card has at least 32 GB for pictures and video; model requirements vary."
-    : "No 32 GB card is listed as available; smaller cards may not fit video models.";
+  else if (recommended) select.value = recommended.id;
+  $('runpodCreateRecommendation').textContent = ranking.note || 'Choose a model plan to compare available graphics cards.';
   $("runpodAccountState").textContent = "RunPod account connected. Prices and availability are live estimates.";
   $("runpodAccountState").classList.remove("warnline");
 }
@@ -262,6 +263,7 @@ async function reviewPod() {
     const data = await accountApi("/overview");
     const gpu = data.gpus?.find(row => row.id === input.gpuTypeId);
     if (JSON.stringify(input) !== JSON.stringify(creationInput())) throw new Error("Choices changed. Review the price again.");
+    if (data.planStorage && input.volumeInGb < data.planStorage.minimumGB) throw Error(`Choose at least ${data.planStorage.minimumGB} GB of saved storage for your models and working files.`);
     if (!gpu || gpu.stock === "None" || !Number.isFinite(gpu.pricePerHr) || gpu.pricePerHr <= 0)
       throw new Error("This graphics card is unavailable. Choose another and review again.");
     if (data.pods?.some(pod => pod.name === input.name))
@@ -515,7 +517,7 @@ function resume(jobs) {
 }
 
 // Preparing a sample only fills the existing creation screen. Make remains the user's action.
-export function prepareCloudSample(goal, doc = document) {
+export function prepareCloudSample(goal, doc = document, profile) {
   const kind = ['music', 'pictures', 'video'].includes(goal) ? goal : 'pictures';
   const set = (id, value, event = 'input') => {
     const input = doc.getElementById(id); if (!input) return;
@@ -532,16 +534,35 @@ export function prepareCloudSample(goal, doc = document) {
     set('caption', 'Gentle acoustic guitar and warm piano, calm instrumental music');
     set('maxDur', '30');
     const picker = doc.getElementById('musicEngine');
-    const model = [...(picker?.options || [])].find(option => option.value.startsWith('yue2-comfy'));
+    const wanted = profile?.template === 'ace-step15' ? `ace-step15:${profile.settings.dit}` : profile?.settings?.checkpoint ? `yue2-comfy:${profile.settings.checkpoint}` : null;
+    const model = [...(picker?.options || [])].find(option => wanted ? option.value === wanted : option.value.startsWith('yue2-comfy'));
+    if (wanted && !model) throw Error('Refresh the Music model list to select this installed model.');
     if (model) set('musicEngine', model.value, 'change');
+    if (profile?.template === 'ace-step15') {
+      set('aLm', profile.settings.lm, 'change'); set('aSteps', String(profile.settings.steps)); set('aCfg', String(profile.settings.cfg));
+    }
   } else {
     set('vidPrompt', 'A paper boat floating gently on a quiet pond, soft morning light');
     set('vidSecs', '2'); set('vidRunPodModel', 'ltx', 'change');
     set('vidRunPodSize', '512x320', 'change'); set('vidSteps', '8');
+    if (profile?.template === 'ltx') {
+      set('vidSecs', String(profile.settings.seconds)); set('vidRunPodSize', `${profile.settings.width}x${profile.settings.height}`, 'change');
+    }
   }
   doc.querySelector(`.rail [data-view="${{ music: 'create', pictures: 'images', video: 'video' }[kind]}"]`)?.click();
   doc.getElementById({ music: 'caption', pictures: 'imgPrompt', video: 'vidPrompt' }[kind])?.focus();
   return kind;
+}
+
+function prepareSelectedSample(detail) {
+  const plan = getSetupPlan('runpod'), kind = detail?.goal || 'pictures';
+  const profile = plan?.profiles.find(p => p.category === kind);
+  if (kind === 'music' && profile) {
+    document.dispatchEvent(new CustomEvent('aiplay:setup-model', { detail: { target: 'runpod', profile } }));
+    return kind;
+  }
+  try { return prepareCloudSample(kind, document, profile); }
+  catch (e) { setState(e.message, true); }
 }
 
 async function init() {
@@ -549,7 +570,13 @@ async function init() {
   let status = null;
   try { status = await (await fetch("/api/status")).json(); } catch { return; }
   if (!status?.config?.remoteOnly) return;
-  document.addEventListener('aiplay:cloud-sample', event => prepareCloudSample(event.detail?.goal));
+  document.addEventListener('aiplay:cloud-sample', event => prepareSelectedSample(event.detail));
+  document.addEventListener('aiplay:model-plan', event => {
+    if (event.detail?.target !== 'runpod') return;
+    invalidateCreationReview();
+    if (runpodAccount) loadAccount().catch(() => {});
+    refreshSetup().catch(() => {});
+  });
   document.addEventListener('aiplay:cloud-worker-connected', () => {
     refreshWorker().then(() => document.dispatchEvent(new Event('aiplay:cloud-computer-refresh'))).catch(() => {});
   });

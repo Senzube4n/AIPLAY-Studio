@@ -421,6 +421,30 @@ in the app.
                             paragraph (xinntao/Real-ESRGAN LICENSE))
                             https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
 
+    Music engine · ACE-Step 1.5 XL-SFT (experimental)
+                            MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)
+                            Output rights: yours (MIT License, grant paragraph
+                            (ACE-Step-1.5 LICENSE, Copyright (c) 2026 ACEStep))
+                            https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE
+
+    Music engine · ACE-Step 1.5 XL-Turbo (experimental)
+                            MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)
+                            Output rights: yours (MIT License, grant paragraph
+                            (ACE-Step-1.5 LICENSE, Copyright (c) 2026 ACEStep))
+                            https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE
+
+    Music engine · ACE-Step 1.5 XL-Base (experimental)
+                            MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)
+                            Output rights: yours (MIT License, grant paragraph
+                            (ACE-Step-1.5 LICENSE, Copyright (c) 2026 ACEStep))
+                            https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE
+
+    Pictures · SDXL Turbo (fp16)
+                            Stability AI model terms (review repository)
+                            Output rights: UNVERIFIED — the licence text has not
+                            been read
+                            https://huggingface.co/stabilityai/sdxl-turbo
+
     MiniMax H3 fl2va W6A8 (experimental)
                             MiniMax H3 Community Licence
                             Output rights: yours, with conditions (MiniMax H3

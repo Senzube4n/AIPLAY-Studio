@@ -32,7 +32,7 @@
  * that struggles.
  */
 import path from "node:path";
-import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, rightsRank } from "./models.js";
+import { CATALOG, MODEL_TO_CAPABILITY, musicCapabilityFor, isPictureModel, rightsRank } from "./models.js";
 import { config, prefChosen, prefOrigin } from "./config.js";
 import { SETTING_WORDS } from "./lrc.js";
 import {
@@ -569,7 +569,7 @@ function musicFromCaps(capabilities, machine) {
   }
   const byId = new Map((capabilities || []).map((c) => [c.id, c]));
   const choices = Object.keys(config.music.engines || {}).map((engine) => {
-    const cap = byId.get(MODEL_TO_CAPABILITY[engine]);
+    const cap = byId.get(musicCapabilityFor(engine));
     if (!cap) return null;
     return {
       engine, available: !!cap.ready, label: String(cap.label || engine).split("—").pop().trim(),
@@ -648,7 +648,7 @@ export function recommendFor({ capabilities, machine, disk, music = null } = {})
    * selected music engine". */
   const musicPick = music || musicFromCaps(capabilities, machine);
   const mine = musicPick.chosenBy === "you";
-  for (const id of [MODEL_TO_CAPABILITY[musicPick.value] || MUSIC_IDS[0]]) {
+  for (const id of [musicCapabilityFor(musicPick.value) || MUSIC_IDS[0]]) {
     const e = withFit(id);
     if (!e) continue;
     picks.push({

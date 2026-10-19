@@ -25,9 +25,10 @@ resolution, upscaling the LATENT, then re-sampling only a few steps at full size
 Without it there is no second pass and no speed advantage.
 """
 from __future__ import annotations
-import os, sys
+import os, sys, hashlib
 
 REPO = "Lightricks/LTX-2.5"
+REVISION = "49b093a39c19169a8a81721dcc541e07e945232f"
 
 
 def find_comfy() -> str:
@@ -80,8 +81,18 @@ FILES = [
 ]
 
 
+def checked_file(file, size, sha256):
+    if not os.path.isfile(file) or os.path.getsize(file) != size:
+        return False
+    h = hashlib.sha256()
+    with open(file, 'rb') as stream:
+        for block in iter(lambda: stream.read(4 * 1024 * 1024), b''):
+            h.update(block)
+    return h.hexdigest() == sha256
+
+
 def main() -> int:
-    from huggingface_hub import get_token, hf_hub_download
+    from huggingface_hub import get_token, hf_hub_download, HfApi
 
     if not get_token():
         print("No HuggingFace token found.\n")
@@ -90,6 +101,17 @@ def main() -> int:
         print("  3. Run this script again.\n")
         return 1
 
+    # The same immutable revision as the worker bundle. Keep credentials in
+    # huggingface_hub's existing store, and obtain LFS hashes at that revision.
+    try:
+        info = HfApi().model_info(REPO, revision=REVISION, files_metadata=True)
+    except Exception:
+        print('Cannot check the pinned model metadata. Check access and connection, then retry.')
+        return 1
+    hashes = {f.rfilename: getattr(f.lfs, 'sha256', None) for f in info.siblings if f.lfs}
+    if any(not hashes.get(rel) for rel, _, _ in FILES):
+        print('Pinned model checksums are unavailable; retry the metadata check.')
+        return 1
     total = sum(f[2] for f in FILES)
     print(f"{len(FILES)} files, {total/1e9:.2f} GB total\n")
 
@@ -97,13 +119,13 @@ def main() -> int:
         dest_dir = os.path.join(COMFY, "models", sub)
         os.makedirs(dest_dir, exist_ok=True)
         dest = os.path.join(dest_dir, os.path.basename(rel))
-        if os.path.exists(dest) and os.path.getsize(dest) == size:
+        if checked_file(dest, size, hashes[rel]):
             print(f"  have  {os.path.basename(rel)[:58]}")
             continue
         print(f"  get   {os.path.basename(rel)[:58]}  ({size/1e9:.2f} GB)")
         try:
             # Resumes automatically, and verifies against the hub's own hash.
-            p = hf_hub_download(REPO, rel, local_dir=os.path.join(COMFY, "models", "_ltx_tmp"))
+            p = hf_hub_download(REPO, rel, revision=REVISION, local_dir=os.path.join(COMFY, "models", "_ltx_tmp"))
         except Exception as exc:
             msg = str(exc)
             if "401" in msg or "gated" in msg.lower() or "restricted" in msg.lower():
@@ -111,6 +133,9 @@ def main() -> int:
                 print(f"    https://huggingface.co/{REPO}  then run  hf auth login  again.\n")
                 return 1
             print(f"\n  ✗ {type(exc).__name__}: {msg[:200]}\n")
+            return 1
+        if not checked_file(p, size, hashes[rel]):
+            print('Pinned model verification failed; the existing model was kept.')
             return 1
         os.replace(p, dest)
         got = os.path.getsize(dest)

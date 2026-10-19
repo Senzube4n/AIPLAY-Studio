@@ -8731,8 +8731,9 @@ async function loadModels() {
         </div>
         <p class="mwhy">${esc(uiProse(c.why))}</p>
         ${c.requires ? `<div class="mreq">
+          ${c.requires.experimental ? '<span>Hardware unverified</span>' : `
           <span title="Graphics memory">VRAM ${c.requires.vramMinGb}+ GB<b> · ${c.requires.vramRecGb} recommended</b></span>
-          <span title="System memory">RAM ${c.requires.ramMinGb}+ GB<b> · ${c.requires.ramRecGb} recommended</b></span>
+          <span title="System memory">RAM ${c.requires.ramMinGb}+ GB<b> · ${c.requires.ramRecGb} recommended</b></span>`}
           <span>Disk ${gb(c.totalBytes)}</span>
         </div>` : ""}
         ${/* The measurements and the reasoning behind a row, behind "Details"
@@ -8855,6 +8856,42 @@ $("modelList").addEventListener("toggle", (e) => {
 // Delegated once, at load, so the "show me this row" buttons survive repaints.
 initFit();
 initLocal(() => loadModels());
+// Explicit use of a saved setup plan fills existing forms and uses their
+// existing selection handlers. It neither starts inference nor changes modes.
+document.addEventListener('aiplay:setup-model', async event => {
+  const { target, profile } = event.detail || {};
+  if (!profile || (target === 'runpod') !== !!state.remoteOnly || state.musicOnly || state.cloudOnly) return;
+  const set = (id, value) => { const n = $(id); if (n && value !== undefined) { n.value = String(value); n.dispatchEvent(new Event('input', { bubbles: true })); } };
+  try {
+    if (profile.category === 'music') {
+      await loadModels();
+      const value = profile.template === 'ace-step15' ? `ace-step15:${profile.settings.dit}` : `yue2-comfy:${profile.settings.checkpoint}`;
+      if (!state.musicModels?.some(c => c.value === value && c.available)) throw Error('Install this model on the selected computer, then check its connection.');
+      await chooseMusicModel(value);
+      set('caption', 'Gentle acoustic guitar and warm piano, calm instrumental music');
+      set('maxDur', profile.settings.duration || profile.settings.maxDuration || 30);
+      if (profile.template === 'ace-step15') {
+        set('aLm', profile.settings.lm); $('aLm')?.dispatchEvent(new Event('change'));
+        set('aSteps', profile.settings.steps); set('aCfg', profile.settings.cfg);
+      }
+      setView('create');
+    } else if (target === 'local' && profile.category === 'pictures') {
+      $('imgEngine').value = 'checkpoint'; await $('imgEngine').onchange();
+      const option = [...$('imgCkpt').options].find(o => o.value.endsWith(profile.settings.checkpoint));
+      if (!option) throw Error('Open Models and refresh the installed checkpoint list.');
+      $('imgCkpt').value = option.value; $('imgCkpt').dispatchEvent(new Event('change'));
+      set('imgPrompt', 'A peaceful mountain lake at sunrise, watercolor illustration');
+      $('imgSize').value = 'custom'; $('imgSize').dispatchEvent(new Event('change'));
+      set('imgW', 512); set('imgH', 512); set('imgSteps', 4); set('imgCfg', 1); set('imgCount', 1);
+      setView('images');
+    } else if (target === 'local' && profile.category === 'video') {
+      if (!await setVideoEngine('ltx')) throw Error('Install LTX and check its runtime in Models.');
+      set('vidPrompt', 'A paper boat floating gently on a quiet pond, soft morning light');
+      set('vidSecs', profile.settings.seconds); set('vidSize', `${profile.settings.width}x${profile.settings.height}`);
+      setView('video');
+    }
+  } catch (e) { await appAlert(e.message, { title: 'Selected model needs setup' }); }
+});
 /* Advanced → Precision is the same choice as the music model picker. */
 $("qModel")?.addEventListener("change", () => chooseMusicModel(`minimax-music3:${$("qModel").value}`));
 /* The acknowledgement toggles its own card's button. Handled on `change` rather

@@ -22,7 +22,7 @@ const root = (rel) => new URL(`../${rel}`, import.meta.url);
 test("install.json names only things that exist, and everything the app needs to start", () => {
   const m = JSON.parse(src("../install.json"));
   for (const entry of m.include) assert.ok(existsSync(root(entry)), `install.json lists "${entry}", which is not in the repository`);
-  for (const need of ["server", "web", "launcher", "package.json", "package-lock.json", "AIPLAY Studio.exe"])
+  for (const need of ["server", "web", "launcher", "shared", "package.json", "package-lock.json", "AIPLAY Studio.exe"])
     assert.ok(m.include.includes(need), `an install without "${need}" cannot start`);
   assert.ok(m.exclude.includes("*.md"), "notes and docs stay in the repository");
   assert.ok(m.keep.some((k) => /^LICENSE/.test(k)), "a vendored library's LICENSE.md still ships");

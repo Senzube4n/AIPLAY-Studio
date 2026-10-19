@@ -7,9 +7,56 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { imageWorkflowOptions, modelChoices, videoWorkflowOptions, prepareCloudSample } from "../../web/runpod-integrated.js";
+import { remoteAceShelf, remoteYueCheckpoints } from './remote-models.js';
+import { workflowEvidenceKey, curatedArtifactKey } from './workflow-evidence.js';
+import { MODEL_BUNDLES } from '../../shared/model-bundles.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts) => readFileSync(path.join(ROOT, ...parts), "utf8");
+
+test('remote ACE/LM inventory is the worker schema, including COMBO descriptors; absent companions stay unavailable', () => {
+  const info={UNETLoader:{input:{required:{unet_name:['COMBO',{options:['acestep_v1.5_xl_sft_bf16.safetensors','minimax.safetensors']}]}}},
+    DualCLIPLoader:{input:{required:{clip_name1:[['qwen_0.6b_ace15.safetensors']],clip_name2:[['qwen_4b_ace15.safetensors','qwen_1.7b_ace15.safetensors']]}}},
+    VAELoader:{input:{required:{vae_name:[['ace_1.5_vae.safetensors']]}}},
+    CheckpointLoaderSimple:{input:{required:{ckpt_name:[['yue2_3b_int8_convrot.safetensors','image.safetensors']]}}}};
+  const shelf=remoteAceShelf(info,'qwen_1.7b_ace15.safetensors');assert.deepEqual(shelf.dits,['acestep_v1.5_xl_sft_bf16.safetensors']);assert.equal(shelf.ready,true);assert.equal(shelf.lm,'qwen_1.7b_ace15.safetensors');
+  assert.deepEqual(remoteYueCheckpoints(info),['yue2_3b_int8_convrot.safetensors']);
+  assert.equal(remoteAceShelf({...info,VAELoader:null}).ready,false);
+  assert.equal(remoteAceShelf(null).ready,false);assert.deepEqual(remoteAceShelf(null).dits,[]);
+  assert.equal(remoteAceShelf({...info,DualCLIPLoader:{input:{required:{clip_name1:[['qwen_4b_ace15.safetensors']],clip_name2:[['qwen_0.6b_ace15.safetensors']]}}}}).ready,false);
+});
+
+test('inference evidence identifies model, companions, sampler and workload without retaining prompts', () => {
+  const graph={'1':{class_type:'UNETLoader',inputs:{unet_name:'acestep_v1.5_xl_sft_bf16.safetensors'}},'2':{class_type:'KSampler',inputs:{model:['1',0],steps:50,cfg:7,seed:123,text:'private prompt'}}};
+  const key=workflowEvidenceKey(graph);assert.match(key,/^[a-f0-9]{64}$/);
+  const different=structuredClone(graph);different['2'].inputs.text='other prompt';different['2'].inputs.seed=99;assert.equal(workflowEvidenceKey(different),key);
+  different['2'].inputs.cfg=1;assert.notEqual(workflowEvidenceKey(different),key);
+  different['1'].inputs.unet_name='acestep_v1.5_turbo.safetensors';assert.notEqual(workflowEvidenceKey(different),key);
+  const bundle=MODEL_BUNDLES['ace15-xl-sft'];
+  const files=Object.fromEntries(bundle.files.map((f,i)=>[i,{class_type:'Loader',inputs:{file:f.relative.split('/').pop()}}]));
+  assert.equal(curatedArtifactKey(files).id,'ace15-xl-sft');assert.match(curatedArtifactKey(files).key,/^[a-f0-9]{64}$/);
+  files.extra={class_type:'LoraLoader',inputs:{lora_name:'unverified.safetensors'}};assert.equal(curatedArtifactKey(files),null,'unknown companions or add-ons do not inherit curated acceptance');
+});
+
+test('a changed selection cannot inherit another model’s ready flags', () => {
+  const js=read('web','cloud-computer.js'),source=js.slice(js.indexOf('export function cloudGoalReady'),js.indexOf('function chooseFlow')).replaceAll('export ','');
+  const ready=runInNewContext(source+'\ncloudGoalReady;');
+  const s={pod:{status:'RUNNING'},worker:{connectionReady:true,generationReady:true}};
+  const bundles=[{id:'ace15-xl-sft',state:'ready'},{id:'ace15-turbo',state:'ready'}];
+  assert.equal(ready(s,{music:'ace15-xl-sft'},bundles,[{id:'ace15-turbo',workflowValidated:true}]),false);
+  assert.equal(ready(s,{music:'ace15-xl-sft'},bundles,[{id:'ace15-xl-sft',workflowValidated:true,inferenceValidated:false}]),true,'workflow readiness enables a test, not an inference acceptance claim');
+  assert.equal(ready(s,{},bundles,[]),false);
+  const planner=read('web','setup-plan.js');assert.match(planner,/\/api\/setup-plan/);assert.doesNotMatch(planner,/\/api\/runpod\/account\/pods|AIPLAY_REMOTE_ONLY/);
+});
+
+test('installation paints before the first provider response without dereferencing an empty model snapshot', () => {
+  const js=read('web','cloud-computer.js');
+  const source=js.slice(js.indexOf('export function cloudGoalReady'),js.indexOf('export function cloudFlowPage')).replaceAll('export ','');
+  const nodes=new Map(),element=()=>({children:Array.from({length:5},()=>({dataset:{},setAttribute(){},removeAttribute(){}})),setAttribute(){}});
+  const context={flowModels:null,automaticInstall:null,cloudGoal:'all',working:false,chip(){},$:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);}};
+  runInNewContext(source+'\npaintInstallation(null, []);',context);
+  assert.equal(nodes.get('cloudInstallProgress').value,0);assert.equal(nodes.get('cloudInstallStop').disabled,true);
+});
 
 test('beginner readiness requires every selected model and a verified running worker', () => {
   const js = read('web', 'cloud-computer.js');
@@ -354,7 +401,8 @@ test("RunPod GPU mode renders music on the Pod too", () => {
   assert.match(server, /if \(remoteRoutes\) jobs\.setRemote\(async \(\{ graph, label, actor, isCancelled, onState \}\) => \{/);
   assert.match(server, /const name = `aiplay_runpod_\$\{details\.runId\}_\$\{path\.basename\(details\.output\.file\)\}`;/, "a name the library lists");
   assert.match(server, /if \(cap && !cap\.ready && !config\.remoteOnly\) \{/, "the Pod, not this disk, decides");
-  assert.match(server, /c\.note = "on your RunPod";/);
+  assert.match(server, /remoteAceShelf\(info, config\.music\.aceLm\)/, 'ACE variants come from this worker');
+  assert.match(server, /remoteYueCheckpoints\(info\)/, 'YuE checkpoints come from this worker');
   const app = read("web", "app.js");
   /* The Python kit now answers for its own runtime. Run the actual button
    * condition so adding that branch cannot break remote ComfyUI readiness. */

@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { CATALOG, markRequired } from "./models.js";
 import { config } from "./config.js";
+import { ACE_VARIANTS } from '../shared/model-bundles.js';
 import { scanBasesSync, modelLeaf, findShelfModel, applyModelOverrides } from "./localmodels.js";
 import { paintLocal } from "../web/modellocal.js";
 
@@ -219,7 +220,7 @@ test("Render is never greyed out for video being off: it asks in a drawer and sw
  * Until the selected engine is ready no single row is required, and every
  * music row carries the group. The rows are the engine map's own, so a new
  * engine is in these tests the day it is in config.js. */
-const MUSIC_CAPS = [...new Set(Object.values(config.music.engines).map((e) => e.capability))];
+const MUSIC_CAPS = [...new Set([...Object.values(config.music.engines).map((e) => e.capability), ...ACE_VARIANTS.map(v => v.capability)])];
 /* Status rows the way the screen gets them: every music row, plus one that is
  * not a music row and must come through untouched. */
 const rows = (ready = []) => [...MUSIC_CAPS, "coverArt"].map((id) => ({
@@ -229,6 +230,12 @@ const selecting = (engine) => ({ ...config.music, engine });
 const local = { enabled: false }, hosted = { enabled: true, provider: "fal" };
 const badges = (list) => list.filter((r) => r.required).map((r) => r.id);
 const groups = (list) => list.filter((r) => r.requiredGroup).map((r) => `${r.id}:${r.requiredGroup}`);
+
+test('the selected XL variant owns the required badge, even with standard Turbo installed', () => {
+  const v=ACE_VARIANTS.find(v=>v.id==='ace15-xl-sft');
+  const marked=markRequired(rows([v.capability,'musicAceStep15']),{music:{...selecting('ace-step15'),aceModel:v.dit},api:local});
+  assert.deepEqual(badges(marked),[v.capability]);assert.deepEqual(groups(marked),[]);
+});
 
 test("a fresh install badges no single music engine: every music row says one is required", () => {
   /* The real status() on the real default config, with nothing on disk: a

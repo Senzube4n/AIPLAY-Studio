@@ -45,6 +45,8 @@ import { mkdir } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as bootstrapModule from "./runpod-bootstrap.js";
+import { setupPlan, selectionFor, selectedModelReadiness, localModelReadiness, profileGraph } from '../setup-plan.js';
+import { validModelSelection } from '../../shared/model-profiles.js';
 const { bootstrapCommand, studioBootstrap, BOOTSTRAP_SCRIPT } = bootstrapModule;
 /* The one repository a Pod installs from (the owner, 2026-09-26). */
 const OFFICIAL_REPO = "Senzube4n/AIPLAY-Studio";
@@ -71,6 +73,28 @@ async function routes(t, extra = {}) {
   };
 }
 const HERE = { host: "127.0.0.1:4173" };
+
+test('setup planning is guarded, persists category combinations independently, and cannot invoke cloud infrastructure', async () => {
+  const source=read('server','index.js'),start=source.indexOf("    if (p === '/api/setup-plan')"),end=source.indexOf('    if (p === "/api/models"',start);
+  assert.ok(start>0&&end>start);
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  const handler=new AsyncFunction('req','res','url','p','config','sameOriginLocalJson','readBody','json','savePrefs','models','readMachine','gpuStatus','ramStatus','cpuOnlyEngine','h3VaeMeasured','engineDoor','setupPlan','selectionFor','selectedModelReadiness','profileGraph','validModelSelection','scanBases','modelBases','localModelReadiness',source.slice(start,end));
+  const config={uiPort:4173,remoteOnly:true,music:{engine:'yue2-comfy'},cloudSetup:{goal:'pictures',plan:null},modelSetup:{local:null}};
+  let saves=0;
+  const call=(method,query='',body,headers=HERE,failSave=false)=>handler({method,headers,body},{},new URL('http://127.0.0.1:4173/api/setup-plan'+query),'/api/setup-plan',config,
+    sameOriginLocalJson,async req=>req.body,(_res,status,body)=>({status,body}),async()=>{if(failSave)throw Error('disk unavailable');saves++;},
+    {status:async()=>[]},()=>({gpu:null,ram:{totalGb:32}}),()=>null,()=>null,()=>false,()=>false,{objectInfo:async()=>({})},setupPlan,selectionFor,selectedModelReadiness,profileGraph,validModelSelection,async()=>[],async()=>[],localModelReadiness);
+  const postHeaders={...HERE,'content-type':'application/json','x-aiplay-actor':'agent:test'};
+  let r=await call('GET','?target=runpod');assert.equal(r.status,200);assert.deepEqual(r.body.selection,{pictures:'sdxl-turbo'});assert.equal(saves,0);
+  r=await call('POST','',{target:'runpod',selection:{music:'ace15-xl-sft',video:'ltx25'}},postHeaders);assert.equal(r.status,200);assert.equal(saves,1);
+  assert.equal(config.music.engine,'yue2-comfy');assert.equal(config.cloudSetup.goal,'pictures');assert.equal(config.modelSetup.local,null);
+  r=await call('POST','',{target:'local',selection:{pictures:'sdxl-turbo'}},postHeaders);assert.equal(r.status,200);assert.deepEqual(config.modelSetup.local,{pictures:'sdxl-turbo'});assert.equal(r.body.activeMode,'runpod');
+  for(const selection of [{},{music:'ltx25'},{music:'https://arbitrary.test/model'}]) assert.equal((await call('POST','',{target:'runpod',selection},postHeaders)).status,400);
+  assert.equal((await call('GET','?target=runpod',null,{host:'rebound.example:4173'})).status,403);
+  assert.equal((await call('POST','',{target:'runpod',selection:{music:'yue2-comfy'}},{...postHeaders,origin:'https://evil.example'})).status,403);
+  const before=JSON.stringify(config.cloudSetup.plan);
+  assert.equal((await call('POST','',{target:'runpod',selection:{music:'yue2-comfy'}},postHeaders,true)).status,400);assert.equal(JSON.stringify(config.cloudSetup.plan),before,'failed disk save restores the current plan');
+});
 
 test('catalog keys stay in the vault and guarded browsing never invokes provider infrastructure', async t => {
   const keys = new Map(); let network = 0;

@@ -6,10 +6,14 @@ The three hosting choices are collapsible: **Ask a friend**, **Paid services**, 
 
 **Easy Cloud Setup** shows four tabs:
 
-1. **Your goal:** choose Music, Pictures, Video or All three; connect the account using a restricted RunPod key. The goal is saved locally and never provisions a resource.
+1. **Your goal:** select Music/Audio, Pictures and/or Video, then choose a specific model for each category; connect the account using a restricted RunPod key. The plan is saved locally and never provisions a resource. Existing saved goals and generation defaults are preserved.
 2. **Costs:** select an existing computer or press **Create cloud computer**. Review compute, storage and session estimates before starting. Creation still requires a fresh price review, billing checkbox and explicit approval. Storage remains billed after compute stops.
 3. **Install AI:** follow automatic installation or connect an existing worker, then approve the selected models' licences and downloads. Choose an idle timeout and save a separate shutdown key, or explicitly choose to keep rental running. Video needs approved model access and a Hugging Face read token.
-4. **Ready:** see provider status separately from AI readiness, storage charges, shutdown protection and start/stop controls. Readiness requires every curated bundle for the selected goal, a verified running worker and a verified policy or explicit disabled policy. A stopped computer is shown as stopped, never AI ready.
+4. **Ready:** see provider status separately from AI readiness, storage charges, shutdown protection and start/stop controls. **Workflow checked** requires the selected artifacts and runtime schema, a verified running worker and a verified policy or explicit disabled policy. A previous successful inference is shown separately and scoped to the worker build/model/workload. A stopped computer is shown as stopped, never AI ready.
+
+In **Models → Choose models and computer**, plan Local or RunPod without switching the running launch mode. The planner shows model storage, sequential memory requirements, evidence and licence links. **Use in Music/Pictures/Video** fills the existing creation form; generation remains a separate user action. Gated local LTX uses the existing Models access setup.
+
+GPU suggestions use selected-model VRAM floors and current inventory/prices. Host RAM and larger workloads still need checking. ACE XL-SFT, XL-Turbo and XL-Base have separate pinned installation manifests and remain experimental with no invented hardware recommendation. See [the implementation report](MODEL_FIRST_IMPLEMENTATION_REPORT.md) for verified upstream sources, tests and pending hardware acceptance.
 
 **Try a sample** prepares the relevant existing creation screen (Pictures for All three); review it and press Make to submit. It does not generate automatically. Opening tabs does not start rental, install models or generate. **More computer controls** contains storage management, detailed spending and job-aware shutdown controls.
 
