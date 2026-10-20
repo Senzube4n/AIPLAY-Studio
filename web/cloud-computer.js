@@ -168,8 +168,13 @@ function paintSelectedReadiness(rows) {
     const details = document.createElement('details'); details.className = 'more';
     const title = document.createElement('summary'); title.textContent = r.label + ': ' + (r.workflowValidated ? 'Workflow checked' : r.filesDownloaded ? 'Runtime needs checking' : 'Model files needed');
     details.append(title);
-    for (const [label, done] of [['Worker connected', r.workerConnected], ['Files downloaded', r.filesDownloaded], ['Files checksum verified', r.filesVerified], ['Dependencies available', r.dependenciesAvailable], ['Workflow validated', r.workflowValidated], ['Inference validated', r.inferenceValidated]]) {
+    for (const [label, done] of [['Worker connected', r.workerConnected], ['Files downloaded', r.filesDownloaded], ['Files checksum verified', r.filesVerified], ['Dependencies available', r.dependenciesAvailable], ['Workflow validated', r.workflowValidated], ['This runtime inference', r.inferenceValidated]]) {
       const row = document.createElement('p'); row.className = 'hint'; row.textContent = label + ': ' + (done ? 'Yes' : 'Not verified'); details.append(row);
+    }
+    if (r.historicalHardwareValidated) {
+      const history = document.createElement('p'); history.className = 'hint';
+      history.textContent = 'Hardware history: A100 SXM workflow tested.';
+      history.title = 'Historical hardware evidence does not install files or validate inference on this computer.'; details.append(history);
     }
     if (r.error) { const error = document.createElement('p'); error.className = 'hint warnhint'; error.textContent = r.error; details.append(error); }
     root.append(details);

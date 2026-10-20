@@ -1,6 +1,8 @@
 # ACE-Step 1.5 XL-SFT A100 SXM hardware acceptance
 
-Status: **A100 safeguard build and CPU gate-environment repair**. Publishing this build requires the complete mandatory gate without bypass. Hardware acceptance and provisioning are not performed in this repair phase. Exact publication and read-only provider results are recorded separately in the final preflight evidence.
+Current result: **live A100 inference passed and provider-confirmed EXITED** on 20 October 2026. See the [complete hardware acceptance result](ACE_XL_SFT_A100_HARDWARE_ACCEPTANCE_RESULT.md). The following sections preserve the historical preflight and repair record; their pending states describe those earlier phases.
+
+Historical status: **A100 safeguard build and CPU gate-environment repair**. Publishing this build requires the complete mandatory gate without bypass. Hardware acceptance and provisioning are not performed in this repair phase. Exact publication and read-only provider results are recorded separately in the final preflight evidence.
 
 ## Approved scope
 

@@ -54,6 +54,7 @@
  * and Studio never touches the bytes.
  */
 import { MODEL_BUNDLES, ACE_VARIANTS } from '../shared/model-bundles.js';
+import { MODEL_PROFILES } from '../shared/model-profiles.js';
 import { createWriteStream } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
 import { EventEmitter, once } from "node:events";
@@ -3058,8 +3059,8 @@ CATALOG.push(...ACE_VARIANTS.filter(v => v.id !== 'ace15-turbo').map(v => ({
   label: 'Music engine · ACE-Step 1.5 ' + v.variant + ' (experimental)', required: false,
   files: v.files.map(f => ({ url: f.url, dest: M(f.relative), bytes: f.bytes, sha256: f.sha256 })),
   why: 'The publisher’s XL variant using the existing ACE ComfyUI workflow.',
-  note: 'Pinned publisher manifest and official ComfyUI workflow. Live inference unverified; covers, LoRAs and advanced tasks are not accepted for XL.',
-  requires: { experimental: true, experimentalWhy: 'ComfyUI BF16 XL with the 4B planner: a minimum hardware floor has not been established. Native-backend minima do not establish this configuration’s fit.' },
+  note: MODEL_PROFILES.find(p => p.id === v.id).evidence,
+  requires: { hardwareAcceptance: MODEL_PROFILES.find(p => p.id === v.id).hardwareAcceptance, experimental: true, experimentalWhy: 'ComfyUI BF16 XL with the 4B planner: a minimum hardware floor has not been established. Native-backend minima do not establish this configuration’s fit.' },
 })));
 CATALOG.push({ id: 'imageSdxlTurbo', makes: 'picture', label: 'Pictures · SDXL Turbo (fp16)', required: false,
   home: MODEL_BUNDLES['sdxl-turbo'].licenseUrl, licence: 'Stability AI model terms (review repository)',

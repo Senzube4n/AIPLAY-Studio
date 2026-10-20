@@ -284,3 +284,133 @@ test('local inference acceptance reuses hashed engine receipts, current file fac
   receipt.graph=null;assert.equal((await read(false))[0].inferenceValidated,false);receipt=structuredClone(original);
   receipt.request.engineFiles.forEach(f=>f.sha256=null);result=(await read(true))[0];assert.equal(result.filesVerified,true);assert.equal(result.inferenceValidated,false,'a current checksum never manufactures an old inference receipt');assert.equal(hashRequests,1);
 });
+
+
+// Hardware evidence stays in the existing profile/fit/readiness paths. This
+// fixture is an immutable selection from the accepted archive, not a GPU mock
+// pretending to measure inference.
+const { createHash } = await import('node:crypto');
+const { MODEL_PROFILES } = await import('../shared/model-profiles.js');
+const { fitFor } = await import('./fit.js');
+const { workflowEvidenceKey, curatedArtifactKey } = await import('./engine/workflow-evidence.js');
+const acceptedSource = JSON.parse(readFileSync(new URL('../docs/evidence/ace15-xl-sft-a100-2026-10-20.json', import.meta.url), 'utf8'));
+const acceptedProfile = MODEL_PROFILES.find(p => p.id === 'ace15-xl-sft');
+const accepted = acceptedProfile.hardwareAcceptance;
+const acceptedMachine = () => ({ gpu: { id: accepted.tested.gpuId, name: 'A100 SXM4', vendor: 'nvidia', count: 1, vramGb: 80 },
+  ram: { totalGb: 117 }, vcpuCount: 24, cloud: 'SECURE', image: accepted.tested.image, runtime: { ...accepted.runtime } });
+const acceptedContext = () => ({ target: 'runpod', graph: profileGraph(acceptedProfile) });
+
+test('hardware acceptance binds the archived artifact, prepared/executed workflow and audio identities', () => {
+  assert.equal(accepted.archiveSha256, acceptedSource.archive.sha256);
+  assert.equal(acceptedSource.archive.manifest.files.length, 26);
+  assert.equal(accepted.preparedGraphSha256, createHash('sha256').update(JSON.stringify(acceptedSource.workflow.graph)).digest('hex'));
+  assert.equal(acceptedSource.workflow.sha256, accepted.preparedGraphSha256);
+  const executed = structuredClone(acceptedSource.workflow.graph);
+  for (const n of Object.values(executed)) if (typeof n.inputs.filename_prefix === 'string')
+    n.inputs.filename_prefix = `aiplay_remote/${acceptedSource.completion.id}/${n.inputs.filename_prefix}`;
+  assert.equal(createHash('sha256').update(JSON.stringify(executed)).digest('hex'), accepted.executedGraphSha256);
+  assert.equal(acceptedSource.completion.executedGraphHash, accepted.executedGraphSha256);
+  assert.equal(workflowEvidenceKey(acceptedSource.workflow.graph), accepted.workflowKey);
+  assert.equal(workflowEvidenceKey(profileGraph(acceptedProfile)), accepted.workflowKey);
+  assert.equal(curatedArtifactKey(acceptedSource.workflow.graph).key, accepted.artifactKey);
+  assert.equal(curatedArtifactKey(profileGraph(acceptedProfile)).key, accepted.artifactKey);
+  assert.deepEqual(acceptedSource.artifacts.files.map(({relative,bytes,sha256})=>({relative,bytes,sha256})),
+    MODEL_BUNDLES['ace15-xl-sft'].files.map(({relative,bytes,sha256})=>({relative,bytes,sha256})));
+  assert.ok(acceptedSource.artifacts.files.every(f=>f.verifiedEqual));
+  assert.equal(accepted.output.sha256, acceptedSource.completion.outputs[0].sha256);
+  assert.equal(accepted.output.sha256, acceptedSource.audio.sha256);
+  assert.equal(accepted.output.humanReview, acceptedSource.audio.fullPlaybackListening.response);
+  assert.equal(acceptedSource.finalProviderCheck.status, 'EXITED');
+});
+
+test('hardware measurements retain their scope and never become resource minima', () => {
+  const m = acceptedSource.measurements, plan = setupPlan({ selection: { music: 'ace15-xl-sft' }, target: 'runpod' });
+  assert.equal(accepted.observed.gpuUsedBytes, m.observedPeaks.gpu0UsedBytes);
+  assert.equal(accepted.observed.comfyProcessRssBytes, m.observedPeaks.processRssBytes);
+  assert.equal(accepted.observed.generationSeconds, m.remoteJobSeconds);
+  assert.equal(accepted.observed.samplerNodeSeconds, m.groups['node:KSampler'].sumSeconds);
+  assert.ok(Math.abs(accepted.observed.loaderNodeSeconds - ['node:VAELoader','node:DualCLIPLoader','node:UNETLoader'].reduce((n,k)=>n+m.groups[k].sumSeconds,0))<1e-9);
+  assert.equal(accepted.observed.samples,m.samples); assert.equal(accepted.observed.sampleIntervalSeconds,m.sampleIntervalSeconds);
+  assert.equal(accepted.runtime.workerCommit,acceptedSource.runtime.installCommit);
+  assert.equal(accepted.runtime.comfyVersion,acceptedSource.runtime.version);
+  assert.deepEqual({python:accepted.runtime.python,torch:accepted.runtime.torch,cudaRuntime:accepted.runtime.cudaRuntime},m.runtime);
+  assert.equal(accepted.tested.allocatedRamGB,acceptedSource.allocation.gpu.memory);
+  assert.equal(accepted.tested.vcpus,acceptedSource.allocation.gpu.vcpuCount);
+  assert.equal(accepted.minimumRequirementsEstablished,false);
+  assert.equal(accepted.observed.containerMemoryMeasured,false);assert.equal(accepted.observed.coldLoadingMeasured,false);
+  for(const key of ['vramMinGb','vramRecGb','ramMinGb','ramRecGb'])assert.equal(plan.hardware[key],null);
+  assert.equal(plan.profiles[0].requires.experimental,true);
+});
+
+test('existing fit validates only the exact RunPod A100 allocation, runtime and accepted workflow', () => {
+  const req=CATALOG.find(c=>c.id==='musicAceStep15XlSft').requires;
+  const check=(machine=acceptedMachine(),context=acceptedContext())=>fitFor(req,machine,context);
+  assert.equal(check().state,'fits');assert.equal(check().hardwareValidation.state,'validated');
+  assert.equal(check().needVramGb,null);assert.equal(check().needRamGb,null);
+  assert.equal(check(acceptedMachine(),{}).state,'unknown','generic catalogue fit is not workload-scoped');
+  for(const gpu of [
+    {id:'NVIDIA RTX 4090',vramGb:24}, {id:'NVIDIA RTX 5090',vramGb:32}, {id:'NVIDIA A40',vramGb:48},
+    {id:'NVIDIA A100 80GB PCIe',vramGb:80}, {id:'NVIDIA H100 80GB HBM3',vramGb:80},
+    {id:accepted.tested.gpuId,vramGb:40}, {id:accepted.tested.gpuId,vramGb:80,count:2},
+  ]) {
+    const machine=acceptedMachine();Object.assign(machine.gpu,gpu);
+    assert.equal(check(machine).state,'unknown');assert.equal(check(machine).hardwareValidation,undefined);
+  }
+  for(const vendor of ['amd','intel']){const machine=acceptedMachine();machine.gpu={name:vendor,vendor,vramGb:80};assert.equal(check(machine).state,'unknown');}
+  const cpu=acceptedMachine();cpu.gpu=null;assert.equal(check(cpu).state,'unknown');
+  assert.equal(check(acceptedMachine(),{...acceptedContext(),target:'local'}).state,'unknown');
+  const community=acceptedMachine();community.cloud='COMMUNITY';assert.equal(check(community).state,'unknown');
+  for(const change of [m=>m.ram.totalGb=64,m=>m.vcpuCount=8,m=>m.runtime.torch='other',m=>m.runtime.workerCommit='other',m=>m.runtime.comfyVersion='other',m=>m.image='other']){
+    const machine=acceptedMachine();change(machine);assert.equal(check(machine).state,'unknown');assert.equal(check(machine).hardwareValidation.state,'candidate');
+  }
+});
+
+test('changed workflow, duration, sampler, planner, lyrics or artifacts cannot inherit A100 acceptance', () => {
+  const req=CATALOG.find(c=>c.id==='musicAceStep15XlSft').requires;
+  for(const change of [g=>g['7'].inputs.steps=8,g=>g['7'].inputs.cfg=1,g=>g['7'].inputs.sampler_name='heun',
+    g=>g['10'].inputs.seconds=60,g=>g['10'].inputs.batch_size=2,g=>g['4'].inputs.generate_audio_codes=false,
+    g=>g['4'].inputs.lyrics='Untested vocal lyrics',g=>g['4'].inputs.temperature=1,g=>g['4'].inputs.tags='Untested different style',
+    g=>g['3'].inputs.clip_name2='qwen_1.7b_ace15.safetensors',g=>g['1'].inputs.unet_name='other.safetensors',
+    g=>g['12'].inputs.vae_name='other.safetensors',g=>g.extra={class_type:'LoraLoaderModelOnly',inputs:{lora_name:'other.safetensors'}},
+    g=>g['9'].class_type='SaveAudioMP3']){
+    const context=acceptedContext();change(context.graph);const result=fitFor(req,acceptedMachine(),context);
+    assert.equal(result.state,'unknown');assert.equal(result.hardwareValidation,undefined);
+  }
+  for(const id of ['ace15-xl-turbo','ace15-xl-base','ace15-turbo']){
+    const p=MODEL_PROFILES.find(p=>p.id===id);assert.equal(p.hardwareAcceptance,null);
+    const plan=setupPlan({selection:{music:id},target:'runpod'});assert.equal(plan.profiles[0].hardwareAcceptance,null);
+  }
+});
+
+test('existing ranking recommends only the available exact Secure-capable A100 reference for XL-SFT', () => {
+  const plan=setupPlan({selection:{music:'ace15-xl-sft'},target:'runpod'});
+  const gpu=(id,memoryInGb,pricePerHr,extra={})=>({id,name:id,memoryInGb,pricePerHr,secureCloud:true,stock:'High',...extra});
+  const a100=gpu(accepted.tested.gpuId,80,1.79), others=[gpu('NVIDIA A40',48,.59),gpu('NVIDIA RTX 4090',24,.1),gpu('NVIDIA H100',80,1.5)];
+  let ranks=rankSetupGpus(plan,[...others,a100]);assert.equal(ranks.recommended,a100.id);assert.equal(ranks.provisional,true);
+  const row=ranks.gpus.find(g=>g.id===a100.id);assert.equal(row.gpuFit,'unknown');assert.equal(row.hardwareEvidenceCandidate,true);
+  assert.equal(ranks.gpus.find(g=>g.id==='NVIDIA A40').hardwareEvidenceCandidate,false);
+  for(const extra of [{stock:'None'},{stock:'Unknown'},{secureCloud:false},{pricePerHr:0},{pricePerHr:NaN}])
+    assert.equal(rankSetupGpus(plan,[...others,{...a100,...extra}]).recommended,null);
+  const mixed=setupPlan({selection:{music:'ace15-xl-sft',pictures:'sdxl-turbo'},target:'runpod'});
+  assert.equal(rankSetupGpus(mixed,[a100]).recommended,a100.id);
+  const untested=setupPlan({selection:{music:'ace15-xl-base',pictures:'sdxl-turbo'},target:'runpod'});
+  assert.equal(rankSetupGpus(untested,[a100]).recommended,null);
+});
+
+test('historical A100 evidence cannot make a fresh, stopped or differently selected model ready', () => {
+  const plan=setupPlan({selection:{music:'ace15-xl-sft'},target:'runpod'}),graph=profileGraph(plan.profiles[0]);
+  const objects=Object.fromEntries(Object.values(graph).map(n=>[n.class_type,{input:{required:{}}}]));
+  let queries=0;const evidenceFor=()=>{queries++;return {at:123};};
+  for(const input of [{}, {connected:true,objects,bundles:[]}, {connected:true,objects,bundles:[{id:'ace15-xl-base',state:'ready'}]},
+    {connected:true,objects:{},bundles:[{id:'ace15-xl-sft',state:'ready'}]},
+    {connected:true,stopped:true,objects,bundles:[{id:'ace15-xl-sft',state:'ready'}]}]) {
+    const row=selectedModelReadiness(plan,{...input,evidenceFor})[0];assert.equal(row.historicalHardwareValidated,true);
+    assert.equal(row.workflowValidated,false);assert.equal(row.inferenceValidated,false);
+  }
+  assert.equal(queries,0,'historical evidence never bypasses current-file/runtime checks');
+  const current={connected:true,objects,bundles:[{id:'ace15-xl-sft',state:'ready'}]};
+  let row=selectedModelReadiness(plan,current)[0];assert.equal(row.filesVerified,true);assert.equal(row.workflowValidated,true);assert.equal(row.inferenceValidated,false);
+  row=selectedModelReadiness(plan,{...current,evidenceFor})[0];assert.equal(row.inferenceValidated,true);assert.equal(queries,1);
+  const base=setupPlan({selection:{music:'ace15-xl-base'},target:'runpod'});
+  assert.equal(selectedModelReadiness(base,current)[0].historicalHardwareValidated,false);
+});

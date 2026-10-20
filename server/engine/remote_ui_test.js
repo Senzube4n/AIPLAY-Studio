@@ -525,3 +525,19 @@ test('credit updates retain a labelled stale balance on failure and clear it on 
   });
   assert.equal(updates[0].balance,11.25);assert.equal(updates[1].balance,11.25);assert.equal(updates[1].stale,true);assert.equal(updates[2].balance,null);assert.equal(updates[2].stale,false);
 });
+
+
+test('readiness UI separates historical hardware from current model installation and inference', () => {
+  const js=read('web','cloud-computer.js');
+  const source=js.slice(js.indexOf('function paintSelectedReadiness'),js.indexOf('async function refreshFlowModels'));
+  const element=()=>({children:[],className:'',textContent:'',append(...nodes){this.children.push(...nodes);},replaceChildren(){this.children=[];}});
+  const root=element();const paint=runInNewContext(source+'\npaintSelectedReadiness;',{$:()=>root,document:{createElement:element}});
+  paint([{label:'XL-SFT',historicalHardwareValidated:true}]);
+  const flatten=n=>[n.textContent,...n.children.flatMap(flatten)].join('\n');
+  let text=flatten(root);assert.match(text,/Model files needed/);assert.match(text,/Files checksum verified: Not verified/);
+  assert.match(text,/This runtime inference: Not verified/);assert.match(text,/Hardware history: A100 SXM workflow tested/);
+  assert.doesNotMatch(text,/: Yes/);
+  paint([{label:'XL-Base'}]);text=flatten(root);assert.doesNotMatch(text,/Hardware history/);
+  const planner=read('web','setup-plan.js');assert.match(planner,/observed GPU peak/);assert.match(planner,/observed process RAM/);
+  assert.match(planner,/minimum requirements', 'Not established'/);
+});

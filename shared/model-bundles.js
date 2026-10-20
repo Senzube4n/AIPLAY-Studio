@@ -19,7 +19,7 @@ export const ACE_VARIANTS = Object.freeze([
   files: Object.freeze([aceFile(`diffusion_models/${dit}`, bytes, sha), ...companions]),
 })));
 const aceBundles = Object.fromEntries(ACE_VARIANTS.map(v => [v.id, Object.freeze({
-  label: `ACE-Step 1.5 ${v.variant}`, description: 'ComfyUI split DiT, VAE, lyric encoder and 4B planner. Live inference unverified.',
+  label: `ACE-Step 1.5 ${v.variant}`, description: v.id === 'ace15-xl-sft' ? 'A100 SXM 80 GB workflow tested; this computer needs its own checks.' : 'ComfyUI split DiT, VAE, lyric encoder and 4B planner. Live inference unverified.',
   licenseUrl: 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files',
   files: v.files, totalBytes: v.files.reduce((n, f) => n + f.bytes, 0),
 })]));

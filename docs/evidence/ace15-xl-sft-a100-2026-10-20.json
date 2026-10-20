@@ -1,0 +1,644 @@
+{
+  "schemaVersion": 1,
+  "archive": {
+    "file": "ACE-XL-SFT-A100-acceptance-2026-10-20.zip",
+    "sha256": "e5e90296d67e9139a58614ac69e3811784c994e34085cffeee3fd0d4fe51e1ee",
+    "manifest": {
+      "algorithm": "SHA-256",
+      "files": [
+        {
+          "file": "ace-step-1.5-xl-sft-a100-30s.flac",
+          "bytes": 2549013,
+          "sha256": "15a832bd96a2ddc92541093e3217b0696729ef90aec172877af9ce721e0c051d"
+        },
+        {
+          "file": "audio-loudness.log",
+          "bytes": 54142,
+          "sha256": "117ccc1aca1be315b76832a3b584efa2df72f30d809bca06693c2070cf9720a3"
+        },
+        {
+          "file": "audio-validation.json",
+          "bytes": 2075,
+          "sha256": "5647c40e024525a2d98cfadeccefe84cf97050196f25717567ec693820799aba"
+        },
+        {
+          "file": "compatibility-observation.json",
+          "bytes": 725,
+          "sha256": "8ddf6cc4fdb857b21346ce9f52dd69a1e4e263782ba722faee6f67b5f3e13d5f"
+        },
+        {
+          "file": "export-receipt.json",
+          "bytes": 300,
+          "sha256": "6f330563e39dab0610c0f9e5e251c7075b48f7acec0159dfbff1cda4781af38d"
+        },
+        {
+          "file": "HARDWARE_ACCEPTANCE_REPORT.md",
+          "bytes": 14277,
+          "sha256": "c1ecf6aff70d3cc9579756a81e208d025eaa74624d49117b33c7082c40d58173"
+        },
+        {
+          "file": "local-output-receipt.json",
+          "bytes": 991,
+          "sha256": "8659023ab84746ce228c67117162f9246fba9c7a335222bab13ea4a0cf2c23d1"
+        },
+        {
+          "file": "mandatory-gate.log",
+          "bytes": 1046641,
+          "sha256": "10862bc96bc0b38ef325651de86eb41b3c2862794fa0fd86630b98cfe505a2ab"
+        },
+        {
+          "file": "measurements.json",
+          "bytes": 3060,
+          "sha256": "4e82b0f200043b2fb0c465f0346e53218971755648e6f37d63d4215ffed52cab"
+        },
+        {
+          "file": "model-artifact-verification.json",
+          "bytes": 1797,
+          "sha256": "90ce9a1752c43f28756066da2510231e3ddd5c9c6daf9f73ef181e7185ce4cde"
+        },
+        {
+          "file": "output-sha256.txt",
+          "bytes": 100,
+          "sha256": "bd36403d92030a7d99c0346d546bb44b4dfd9d56297e6642aa65b2026d15f0d0"
+        },
+        {
+          "file": "provider-allocation.json",
+          "bytes": 641,
+          "sha256": "609afee0f9ab1fe4032310122e41b7cd1b345745e0e4a00cf2b40bb57929cbc5"
+        },
+        {
+          "file": "provider-billing-final.json",
+          "bytes": 364,
+          "sha256": "ef8afb49e19feb0ee50a487ace9f8ba2e61455bb1481bbead4d0a72eb9cac746"
+        },
+        {
+          "file": "provider-billing-latest.json",
+          "bytes": 407,
+          "sha256": "4efc67339ee006e1021368dc816fd0ff3d9ae5f33d84c44557cbc7d852223483"
+        },
+        {
+          "file": "provider-billing.json",
+          "bytes": 407,
+          "sha256": "12238afdf17460cff458611f0d61ba52947b2efa4d47c4d61abe3a08c8280c82"
+        },
+        {
+          "file": "provider-confirmed-shutdown.json",
+          "bytes": 303,
+          "sha256": "0b22786c31fdf485853f8291245dfd8211e458687a085a790a723331977ef3fe"
+        },
+        {
+          "file": "provider-final-check.json",
+          "bytes": 214,
+          "sha256": "98ac4d50b1b070d2ea92924ca21c5371c783662ef43c69baa78a97ef022b561f"
+        },
+        {
+          "file": "publication-verification.json",
+          "bytes": 768,
+          "sha256": "7bc00cb5be6a9b20f76e31c9df4170a82ea541e89db02545dd7fb35e5fcbd58a"
+        },
+        {
+          "file": "remote-completion-receipt.json",
+          "bytes": 6290,
+          "sha256": "f4e166202f6b7abf8c367ab089c080ef93188f63a0b9e15733665765b2539ddb"
+        },
+        {
+          "file": "runtime-health.json",
+          "bytes": 658,
+          "sha256": "68b52d38098d63a5477dd28b1ab4b9a478ddefb4ca0e007c105e52fa66d297a8"
+        },
+        {
+          "file": "runtime-node-schema.json",
+          "bytes": 19016,
+          "sha256": "6a8443465adb2aedb1eb70a2f766f7d9dca1ad5176fbba95fdfc3cb64ec72134"
+        },
+        {
+          "file": "runtime-telemetry-and-deadline.json",
+          "bytes": 5208,
+          "sha256": "ba9b23ad56efe366300b3f3d8b3c2781b19990431e5892d710400d66efc6d6d1"
+        },
+        {
+          "file": "safe-stop-receipt.json",
+          "bytes": 753,
+          "sha256": "3c3c5cd38d270471e037908eecec158f1837f0511c1e4f2373813d3b8abdcdae"
+        },
+        {
+          "file": "sampled-progress.jsonl",
+          "bytes": 7807,
+          "sha256": "2997612280d26367b995d47ccf05a2862fd020b886e5b28944f5375b665d2b08"
+        },
+        {
+          "file": "session-and-spending.json",
+          "bytes": 618,
+          "sha256": "b670c827f29a0de1cb7f801d00e7fee41d55f10702fe64363b1131ec5a738038"
+        },
+        {
+          "file": "submitted-workflow.json",
+          "bytes": 3154,
+          "sha256": "d6f346b2cb3c2ee6f8e2258ef7b968b8345cf42bb20673a7c6586935689df2df"
+        }
+      ]
+    }
+  },
+  "artifacts": {
+    "verifiedAt": "2026-10-20T15:31:24.474Z",
+    "bundle": "ace15-xl-sft",
+    "revision": "6707deb277e9e0907fd9c14ce6b6f1d695c6a3fc",
+    "templateRevision": "59a3b48bf369c5a15f29a1308bae3e279fa15505",
+    "verification": "Existing worker install(id,true) completed inspect(id): rehashes every on-disk file against the pinned SHA-256; returned ready with no active download. Disk inventory independently confirms all four sizes/paths.",
+    "files": [
+      {
+        "relative": "diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors",
+        "bytes": 9974719930,
+        "sha256": "3c05ae268353b3540fb1fd7db4fd77ffbda9802ec641b624e15648e030ecf3ce",
+        "verifiedEqual": true
+      },
+      {
+        "relative": "vae/ace_1.5_vae.safetensors",
+        "bytes": 337431732,
+        "sha256": "6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb",
+        "verifiedEqual": true
+      },
+      {
+        "relative": "text_encoders/qwen_0.6b_ace15.safetensors",
+        "bytes": 1191588248,
+        "sha256": "fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7",
+        "verifiedEqual": true
+      },
+      {
+        "relative": "text_encoders/qwen_4b_ace15.safetensors",
+        "bytes": 8379154232,
+        "sha256": "ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873",
+        "verifiedEqual": true
+      }
+    ],
+    "disk": {
+      "files": [
+        {
+          "relative": "diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors",
+          "bytes": 9974719930
+        },
+        {
+          "relative": "text_encoders/qwen_0.6b_ace15.safetensors",
+          "bytes": 1191588248
+        },
+        {
+          "relative": "text_encoders/qwen_4b_ace15.safetensors",
+          "bytes": 8379154232
+        },
+        {
+          "relative": "vae/ace_1.5_vae.safetensors",
+          "bytes": 337431732
+        }
+      ],
+      "partial": false
+    }
+  },
+  "workflow": {
+    "preparedAt": "2026-10-20T15:29:29.971Z",
+    "template": "ace-step15",
+    "options": {
+      "caption": "Instrumental electronic music, 120 BPM, warm synthesizer chords, clear drum groove, evolving bass line, no vocals.",
+      "lyrics": "",
+      "seed": 20261019,
+      "duration": 30,
+      "bpm": 120,
+      "keyscale": "C major",
+      "timesignature": "4",
+      "language": "en",
+      "dit": "acestep_v1.5_xl_sft_bf16.safetensors",
+      "lm": "qwen_4b_ace15.safetensors",
+      "steps": 50,
+      "cfg": 7,
+      "codes": true,
+      "planTemperature": 0.85
+    },
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "acestep_v1.5_xl_sft_bf16.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "3": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+          "clip_name1": "qwen_0.6b_ace15.safetensors",
+          "clip_name2": "qwen_4b_ace15.safetensors",
+          "type": "ace",
+          "device": "default"
+        }
+      },
+      "4": {
+        "class_type": "TextEncodeAceStepAudio1.5",
+        "inputs": {
+          "clip": [
+            "3",
+            0
+          ],
+          "tags": "Instrumental electronic music, 120 BPM, warm synthesizer chords, clear drum groove, evolving bass line, no vocals.",
+          "lyrics": "",
+          "seed": 20261019,
+          "bpm": 120,
+          "duration": 30,
+          "timesignature": "4",
+          "language": "en",
+          "keyscale": "C major",
+          "generate_audio_codes": true,
+          "cfg_scale": 2,
+          "temperature": 0.85,
+          "top_p": 0.9,
+          "top_k": 0,
+          "min_p": 0
+        }
+      },
+      "6": {
+        "class_type": "ConditioningZeroOut",
+        "inputs": {
+          "conditioning": [
+            "4",
+            0
+          ]
+        }
+      },
+      "7": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "11",
+            0
+          ],
+          "positive": [
+            "4",
+            0
+          ],
+          "negative": [
+            "6",
+            0
+          ],
+          "latent_image": [
+            "10",
+            0
+          ],
+          "seed": 20261019,
+          "steps": 50,
+          "cfg": 7,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "denoise": 1
+        }
+      },
+      "8": {
+        "class_type": "VAEDecodeAudio",
+        "inputs": {
+          "samples": [
+            "7",
+            0
+          ],
+          "vae": [
+            "12",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "SaveAudio",
+        "inputs": {
+          "audio": [
+            "8",
+            0
+          ],
+          "filename_prefix": "runpod"
+        }
+      },
+      "10": {
+        "class_type": "EmptyAceStep1.5LatentAudio",
+        "inputs": {
+          "seconds": 30,
+          "batch_size": 1
+        }
+      },
+      "11": {
+        "class_type": "ModelSamplingAuraFlow",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "shift": 3
+        }
+      },
+      "12": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ace_1.5_vae.safetensors"
+        }
+      }
+    },
+    "sha256": "89969dd074b61bc40f31504e57ed3e3841ef6a7a4e826cac77766d82fe67f2df",
+    "saveFormat": "FLAC via existing SaveAudio; no preference changes"
+  },
+  "measurements": {
+    "runtime": {
+      "python": "3.12.3",
+      "torch": "2.8.0+cu128",
+      "cudaRuntime": "12.8"
+    },
+    "sampleIntervalSeconds": 1,
+    "samples": 375,
+    "gaps": 0,
+    "timingRecordsDropped": 0,
+    "diagnosticWriteErrors": 0,
+    "baseline": {
+      "at": 1792510288.382662,
+      "elapsedSeconds": 254.29720828100108,
+      "memory": {
+        "processRssBytes": 1211084800,
+        "processRssLifetimePeakBytes": 1211084800,
+        "processSwapBytes": 0,
+        "hostTotalBytes": 1014483017728,
+        "hostAvailableBytes": 964109131776,
+        "containerCurrentBytes": null,
+        "containerLimitBytes": null,
+        "containerLifetimePeakBytes": null
+      },
+      "gpus": [
+        {
+          "index": 0,
+          "totalBytes": 85899345920,
+          "usedBytes": 445644800,
+          "freeBytes": 84649443328
+        }
+      ]
+    },
+    "observedPeaks": {
+      "processRssBytes": 22331850752,
+      "gpu0UsedBytes": 23080206336
+    },
+    "latestMemory": {
+      "processRssBytes": 22301429760,
+      "processRssLifetimePeakBytes": 22301429760,
+      "processSwapBytes": 0,
+      "hostTotalBytes": 1014483017728,
+      "hostAvailableBytes": 949947088896,
+      "containerCurrentBytes": null,
+      "containerLimitBytes": null,
+      "containerLifetimePeakBytes": null
+    },
+    "groups": {
+      "checkpoint_deserialization": {
+        "count": 4,
+        "sumSeconds": 0.02226767299725907,
+        "maxSeconds": 0.00927293200220447,
+        "failures": 0
+      },
+      "node:VAELoader": {
+        "count": 1,
+        "sumSeconds": 1.3116469680026057,
+        "maxSeconds": 1.3116469680026057,
+        "failures": 0
+      },
+      "node:DualCLIPLoader": {
+        "count": 1,
+        "sumSeconds": 0.3177780879996135,
+        "maxSeconds": 0.3177780879996135,
+        "failures": 0
+      },
+      "gpu_load_or_offload_inclusive": {
+        "count": 3,
+        "sumSeconds": 0.3897154549995321,
+        "maxSeconds": 0.1946494919975521,
+        "failures": 0
+      },
+      "node:TextEncodeAceStepAudio1.5": {
+        "count": 1,
+        "sumSeconds": 12.780495865998091,
+        "maxSeconds": 12.780495865998091,
+        "failures": 0
+      },
+      "diffusion_loader_inclusive": {
+        "count": 1,
+        "sumSeconds": 0.2081098540002131,
+        "maxSeconds": 0.2081098540002131,
+        "failures": 0
+      },
+      "node:UNETLoader": {
+        "count": 1,
+        "sumSeconds": 0.20860667500528507,
+        "maxSeconds": 0.20860667500528507,
+        "failures": 0
+      },
+      "node:KSampler": {
+        "count": 1,
+        "sumSeconds": 13.153547956004331,
+        "maxSeconds": 13.153547956004331,
+        "failures": 0
+      },
+      "node:VAEDecodeAudio": {
+        "count": 1,
+        "sumSeconds": 0.47686681900086114,
+        "maxSeconds": 0.47686681900086114,
+        "failures": 0
+      },
+      "node:SaveAudio": {
+        "count": 1,
+        "sumSeconds": 0.0823225359999924,
+        "maxSeconds": 0.0823225359999924,
+        "failures": 0
+      }
+    },
+    "firstNodeToLastNodeSeconds": 28.443220663997636,
+    "remoteJobSeconds": 29.841,
+    "remoteQueueSeconds": 0.709,
+    "clockDomains": "Worker wall timestamps used only within worker; node timings use remote monotonic elapsed; do not subtract local from remote clock."
+  },
+  "runtime": {
+    "checkedAt": "2026-10-20T15:28:43.316Z",
+    "protocol": 1,
+    "workerId": "9ba9b90b-074f-4ca4-b089-8abe3bda357b",
+    "ready": true,
+    "version": "0.41.0",
+    "devices": [
+      {
+        "name": "cuda:0 NVIDIA A100-SXM4-80GB : cudaMallocAsync",
+        "type": "cuda",
+        "index": 0,
+        "vram_total": 85094825984,
+        "vram_free": 84649377792,
+        "torch_vram_total": 0,
+        "torch_vram_free": 0
+      }
+    ],
+    "maxAssetBytes": 536870912,
+    "modelSetupVersion": 1,
+    "cloudManagerVersion": 1,
+    "podId": "5sqxne8ojerewm",
+    "installCommit": "7447b9b5f322aa9312e8227d348980338b9ac69e",
+    "capabilities": {
+      "comfy": true,
+      "aceTraining": false
+    }
+  },
+  "allocation": {
+    "checkedAt": "2026-10-20T15:26:29.427Z",
+    "id": "5sqxne8ojerewm",
+    "status": "RUNNING",
+    "cloud": "SECURE",
+    "cost": 1.79,
+    "gpu": {
+      "count": 1,
+      "id": "NVIDIA A100-SXM4-80GB",
+      "memory": 117,
+      "vcpuCount": 24
+    },
+    "disk": 20,
+    "mounts": {
+      "persistent": {
+        "path": "/workspace",
+        "size": 100
+      }
+    },
+    "image": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+    "actions": [
+      "stop",
+      "restart",
+      "terminate"
+    ],
+    "createdAt": "2026-10-20T15:26:13.792Z",
+    "startedAt": "2026-10-20T15:26:13.787Z",
+    "providerClock": "Tue, 20 Oct 2026 15:26:34 GMT",
+    "exactAllocationConfirmed": true
+  },
+  "completion": {
+    "id": "60864629-be3d-44ae-8d97-816a1032dcd3",
+    "state": "completed",
+    "createdAt": 1792510291685,
+    "startedAt": 1792510292394,
+    "finishedAt": 1792510322235,
+    "error": null,
+    "outputs": [
+      {
+        "id": "0",
+        "filename": "runpod_00001.flac",
+        "kind": "audio",
+        "node": "9",
+        "bytes": 2549013,
+        "sha256": "15a832bd96a2ddc92541093e3217b0696729ef90aec172877af9ce721e0c051d",
+        "relative": "aiplay_remote/60864629-be3d-44ae-8d97-816a1032dcd3/runpod_00001.flac"
+      }
+    ],
+    "promptId": "810a12d1-2353-4ae4-8476-d94856d1b8b6",
+    "executedGraphHash": "7e961fad7cf91debfbe9235ddd6b1022d9d36b210f209276476653f9c8a65640"
+  },
+  "audio": {
+    "verifiedAt": "2026-10-20T15:35:54.920353+00:00",
+    "file": "D:\\CODEX PROJECTS\\AIPLAY-Studio-main\\tmp\\cloud-manager\\xl-sft-a100-results\\ace-step-1.5-xl-sft-a100-30s.flac",
+    "sha256": "15a832bd96a2ddc92541093e3217b0696729ef90aec172877af9ce721e0c051d",
+    "frames": 1440000,
+    "sampleRate": 48000,
+    "channels": 2,
+    "durationSeconds": 30,
+    "encoding": "PCM_16",
+    "finiteSamples": true,
+    "peakPerChannel": [
+      0.8123779296875,
+      0.84844970703125
+    ],
+    "peakDbFSPerChannel": [
+      -1.8048376764212324,
+      -1.4274779191629785
+    ],
+    "rmsDbFSPerChannel": [
+      -14.212802190537062,
+      -13.757907846307356
+    ],
+    "nearFullScaleSamplesAbsGe0_9999": 0,
+    "allChannelZeroFrames": 0,
+    "quietWindowThresholdDbFS": -60,
+    "quietWindowSeconds": 0.1,
+    "quietWindows": 42,
+    "longestQuietRunSeconds": 4.2,
+    "channelCorrelation": 0.6193024421635492,
+    "maximumAdjacentSampleDifference": 0.27142333984375,
+    "ffprobe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "flac",
+          "sample_rate": "48000",
+          "channels": 2,
+          "bits_per_raw_sample": "16"
+        }
+      ],
+      "format": {
+        "duration": "30.000000",
+        "size": "2549013",
+        "bit_rate": "679736"
+      }
+    },
+    "structuralAndSignalChecksPassed": true,
+    "fullPlaybackListening": {
+      "status": "passed by human review",
+      "evaluator": "user",
+      "response": "sounds good",
+      "promptRequestedFull30SecondSample": true,
+      "recordedAt": "2026-10-20T15:38:34.959Z",
+      "notes": "User accepted the sample in response to full-playback quality review. Automated quiet-tail observation is retained independently."
+    },
+    "quietSegmentsBelowMinus60DbFS": [
+      {
+        "fromSeconds": 25.8,
+        "toSeconds": 30,
+        "durationSeconds": 4.2
+      }
+    ],
+    "ffmpegEbur128Summary": "Summary:\n\n  Integrated loudness:\n    I:         -11.6 LUFS\n    Threshold: -21.7 LUFS\n\n  Loudness range:\n    LRA:         3.1 LU\n    Threshold: -31.8 LUFS\n    LRA low:   -13.6 LUFS\n    LRA high:  -10.5 LUFS\n\n  True peak:\n    Peak:       -1.3 dBFS"
+  },
+  "shutdown": {
+    "intent": {
+      "requestedAt": "2026-10-20T15:33:25.605Z",
+      "requestId": "4f73731e-de3d-4eaf-b1e5-272e4bf2f502",
+      "mode": "idle",
+      "outputExportVerified": true
+    },
+    "replyAt": "2026-10-20T15:33:30.100Z",
+    "httpStatus": 200,
+    "phase": "stopping",
+    "operation": {
+      "id": "4f73731e-de3d-4eaf-b1e5-272e4bf2f502",
+      "type": "stop",
+      "stage": "sent"
+    },
+    "issue": null,
+    "providerConfirmation": {
+      "checkedAt": "2026-10-20T15:33:54.610Z",
+      "id": "5sqxne8ojerewm",
+      "status": "EXITED",
+      "mounts": {
+        "persistent": {
+          "path": "/workspace",
+          "size": 100
+        }
+      },
+      "disk": 20,
+      "cost": 1.79,
+      "providerConfirmed": true,
+      "terminated": false,
+      "persistentStorageRetained": true
+    }
+  },
+  "finalProviderCheck": {
+    "checkedAt": "2026-10-20T15:40:38.612Z",
+    "id": "5sqxne8ojerewm",
+    "status": "EXITED",
+    "disk": 20,
+    "mounts": {
+      "persistent": {
+        "path": "/workspace",
+        "size": 100
+      }
+    },
+    "cost": 1.79
+  }
+}

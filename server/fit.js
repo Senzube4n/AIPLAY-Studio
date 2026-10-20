@@ -32,6 +32,7 @@
  * that struggles.
  */
 import path from "node:path";
+import { workflowEvidenceKey, curatedArtifactKey } from './engine/workflow-evidence.js';
 import { CATALOG, MODEL_TO_CAPABILITY, musicCapabilityFor, isPictureModel, rightsRank } from "./models.js";
 import { config, prefChosen, prefOrigin } from "./config.js";
 import { SETTING_WORDS } from "./lrc.js";
@@ -328,7 +329,7 @@ function h3Fit(req, machine) {
  * measured this at its most extreme — the same 25-step picture took 41 s with
  * 16 GB of RAM free and was still going after 13 minutes with 3.8 GB free.
  */
-export function fitFor(requires, machine) {
+export function fitFor(requires, machine, context = {}) {
   const req = requires || {};
   if (req.nvidiaOnly && (machine.gpu?.vendor && machine.gpu.vendor !== "nvidia")) return {
     state: "wont-run", why: "This optional build requires NVIDIA CUDA; use the ordinary H3 build on this card.",
@@ -337,6 +338,29 @@ export function fitFor(requires, machine) {
     yourVramGb: machine.gpu?.vramGb ?? null, yourRamGb: machine.ram.totalGb,
   };
   if (req.h3Tiers) return h3Fit(req, machine);
+  // This is an exact historical reference, not a VRAM/RAM floor. Generic
+  // catalogue fit calls have no workload identity and cannot inherit it.
+  const accepted = req.hardwareAcceptance, tested = accepted?.tested;
+  const referenceMatches = accepted && context.target === tested.target
+    && context.graph && curatedArtifactKey(context.graph)?.key === accepted.artifactKey
+    && workflowEvidenceKey(context.graph) === accepted.workflowKey
+    && Object.values(context.graph).some(n => n.class_type === 'TextEncodeAceStepAudio1.5' && n.inputs.lyrics === '')
+    && machine.gpu?.id === tested.gpuId && machine.gpu?.count === tested.gpuCount
+    && machine.gpu?.vramGb === tested.vramGiB
+    && (machine.cloud === tested.cloud || machine.secureCloud === true);
+  if (referenceMatches) {
+    const allocationMatches = machine.cloud === tested.cloud
+      && machine.ram?.totalGb === tested.allocatedRamGB && machine.vcpuCount === tested.vcpus;
+    const runtimeMatches = machine.image === tested.image && Object.entries(accepted.runtime)
+      .every(([key, value]) => machine.runtime?.[key] === value);
+    const verified = allocationMatches && runtimeMatches;
+    return { state: verified ? 'fits' : 'unknown', recommendable: !!verified,
+      why: verified ? 'Matches the hardware-tested A100 configuration and workload.' : 'A100 workflow tested; verify the Secure allocation and runtime before use.',
+      hardwareValidation: { state: verified ? 'validated' : 'candidate', evidenceId: accepted.id,
+        historicalHardwareValidated: true, allocationMatches, runtimeMatches, minimumRequirementsEstablished: false },
+      needVramGb: null, recVramGb: null, needRamGb: null, recRamGb: null,
+      yourVramGb: machine.gpu.vramGb, yourRamGb: machine.ram?.totalGb ?? null };
+  }
   if (req.experimental) return {state:"unknown",why:req.experimentalWhy || "Experimental native build: a minimum hardware floor has not been established.",
     note:req.note||null,needVramGb:null,recVramGb:null,needRamGb:null,recRamGb:null,
     yourVramGb:machine.gpu?.vramGb??null,yourRamGb:machine.ram.totalGb};

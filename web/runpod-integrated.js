@@ -190,7 +190,8 @@ function renderAccount(data) {
   for (const gpu of compatible) {
     const stock = gpu.stock === 'None' ? 'unavailable' : gpu.stock;
     const badges = [['Budget', ranking.budget], ['Recommended', ranking.recommended], ['Performance', ranking.performance]].filter(([,id]) => id === gpu.id).map(([name]) => name).join('/');
-    const option = new Option(`${badges ? badges + ' (estimate): ' : ''}${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock}`, gpu.id);
+    const tested = ranking.gpus?.find(g => g.id === gpu.id)?.hardwareEvidenceCandidate;
+    const option = new Option(`${badges ? badges + (tested ? ' (A100 workflow tested): ' : ' (estimate): ') : ''}${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock}`, gpu.id);
     option.disabled = gpu.stock === 'None'; select.add(option);
   }
   if ([...select.options].some(option => option.value === before && !option.disabled)) select.value = before;

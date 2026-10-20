@@ -36,10 +36,27 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
       const selected = data.profiles.find(p => p.category === category);
       if (selected) {
         const details = el('details', null, 'more'); details.append(el('summary', 'Requirements and terms'));
-        const fit = selected.fit?.state || (selected.experimental ? 'Hardware unverified' : 'Hardware estimate');
+        const fit = selected.fit?.state || (selected.hardwareAcceptance ? 'Minimums unverified' : selected.experimental ? 'Hardware unverified' : 'Hardware estimate');
         details.append(el('p', `${gb(selected.totalBytes)} · ${fit} · ${selected.workload}`, 'hint'));
-        details.append(el('p', selected.fit?.why || selected.requires.note || selected.evidence, 'hint'));
+        const note = selected.fit?.why || selected.requires.note;
+        if (note && note !== selected.evidence) details.append(el('p', note, 'hint'));
         details.append(el('p', selected.evidence, 'hint'));
+        const accepted = selected.hardwareAcceptance;
+        if (accepted) {
+          const chip = el('span', 'A100 SXM workflow tested', 'chip ok');
+          chip.title = 'Historical RunPod test; installation and inference on this computer need separate checks.';
+          details.append(chip);
+          const measured = el('div', null, 'params');
+          for (const [label, value] of [
+            ['observed GPU peak', `${(accepted.observed.gpuUsedBytes / 2 ** 30).toFixed(2)} GiB`],
+            ['observed process RAM', `${(accepted.observed.comfyProcessRssBytes / 2 ** 30).toFixed(2)} GiB`],
+            ['generation time', `${accepted.observed.generationSeconds.toFixed(2)} s`],
+            ['tested allocation', `${accepted.tested.vramGiB} GiB GPU · ${accepted.tested.allocatedRamGB} GB RAM · ${accepted.tested.vcpus} vCPUs`],
+            ['minimum requirements', 'Not established'],
+          ]) measured.append(el('label', label), el('span', value, 'pv'));
+          details.append(measured);
+        }
+
         const link = el('a', selected.licence || 'Review model terms', 'edtool sm'); link.href = selected.licenseUrl; link.target = '_blank'; link.rel = 'noreferrer'; details.append(link); rows.append(details);
       }
       const change = () => {
@@ -49,11 +66,11 @@ export async function mountSetupPlanner(root, { target = 'local', chooseTarget =
       };
       check.addEventListener('change', change); select.addEventListener('change', change);
     }
-    const hw = data.hardware;
+    const hw = data.hardware, unknownMemory = data.profiles.some(p => p.hardwareAcceptance) ? 'Minimum not established' : 'Unverified for selected models';
     summary.append(el('label', 'model storage'), el('span', gb(data.storage.modelBytes), 'pv'),
       el('label', 'space to plan'), el('span', `${data.storage.minimumGB} GB including working space`, 'pv'),
-      el('label', 'graphics memory'), el('span', hw.unknown ? 'Unverified for selected models' : `${hw.vramMinGb} GB minimum · ${hw.vramRecGb} GB recommended`, 'pv'),
-      el('label', 'system memory'), el('span', hw.unknown ? 'Unverified for selected models' : `${hw.ramMinGb} GB minimum · ${hw.ramRecGb} GB recommended`, 'pv'));
+      el('label', 'graphics memory'), el('span', hw.unknown ? unknownMemory : `${hw.vramMinGb} GB minimum · ${hw.vramRecGb} GB recommended`, 'pv'),
+      el('label', 'system memory'), el('span', hw.unknown ? unknownMemory : `${hw.ramMinGb} GB minimum · ${hw.ramRecGb} GB recommended`, 'pv'));
     const more = el('details', null, 'more'); more.append(el('summary', 'Plan details'), el('p', data.storage.note, 'hint'), el('p', hw.note, 'hint')); summary.append(more);
     const modeMatches = data.activeMode === target;
     status.textContent = !modeMatches ? `Open ${data.modeRequired} in the launcher to use this plan.`
