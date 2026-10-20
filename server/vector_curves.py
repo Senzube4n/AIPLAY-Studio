@@ -431,4 +431,3 @@ def trace_mask(mask, error=0.8, detail=1.0, min_area=1.0, analytic=True,
         for item, parent in zip(info["contours"], parent_indices(contours)):
             item["parent"] = parent
     return (output, info) if return_info else output
-

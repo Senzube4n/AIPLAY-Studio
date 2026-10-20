@@ -34,7 +34,9 @@ test("all public entry points describe the standalone launcher and explicit Mode
   assert.match(guide, /No ComfyUI, Python, PyTorch or unrelated model/);
   assert.match(guide, /Microsoft Visual C\+\+ v14 x64 Redistributable/);
   assert.match(guide, /CUDA 13\.3/);
-  assert.match(page, /https:\/\/github\.com\/Senzube4n\/AIPLAY-Studio\/blob\/main\/docs\/YUE2_GGUF\.md/);
+  const repository = JSON.parse(read('package.json')).repository.url.replace(/\.git$/, '');
+  assert.ok(page.includes(`${repository}/blob/main/docs/YUE2_GGUF.md`),
+    'the native guide link follows this checkout’s repository metadata');
 });
 test("model byte total is the six pinned members, not runtime or VRAM", () => {
   const bytes = [2665632320, 265218656, 959, 466, 2561218, 1378];

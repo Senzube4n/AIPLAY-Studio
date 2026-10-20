@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createRemoteClient } from "./remote-client.js";
@@ -8,16 +9,36 @@ import { containedFile, readBody, sendJSON } from "./remote-common.js";
 import { bodyOfError } from "../safety/refusal.js";
 import { checkpointGraph, buildAceStep15Graph, buildYue2ComfyGraph, videoGraph } from "../workflow.js";
 import { qwenImageGraph } from "../qwen-image.js";
+import { createRunpodV2 } from "./runpod-v2.js";
+import { createCloudComputer } from "./cloud-computer.js";
+import { createAutomaticInstaller } from './runpod-install.js';
+import { MODEL_PROVIDERS, searchCatalog, catalogFiles } from './model-catalog.js';
+import { createWorkerUpdater } from './runpod-update.js';
+import { modelCompatibility } from './model-compatibility.js';
+import { setupPlan, selectionFor, rankSetupGpus, selectedModelReadiness } from '../setup-plan.js';
+import { defaultModelSelection } from '../../shared/model-profiles.js';
 
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
+  localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork, savePrefs = async () => {},
   bootstrap = studioBootstrap }) {
   if (typeof sameOriginLocalJson !== "function") throw new Error("createRemoteRoutes needs index.js sameOriginLocalJson: a door that spends a paid GPU without it is open to a rebound page.");
   let clientPromise;
   const client = () => clientPromise ||= createRemoteClient({ dataDir: config.dataDir, outputDir: config.outputDir,
     getToken: () => getSecret("RUNPOD_WORKER_TOKEN"), setToken: token => setSecret("RUNPOD_WORKER_TOKEN", token), append, adopt });
-  const account = createRunpodAccount({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY"),
-    setApiKey: key => setSecret("RUNPOD_ACCOUNT_API_KEY", key), clearApiKey: () => clearSecret("RUNPOD_ACCOUNT_API_KEY") });
+  const account = createRunpodAccount({ fetchFn, dataDir: config.dataDir, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY"),
+    setApiKey: key => setSecret("RUNPOD_ACCOUNT_API_KEY", key), clearApiKey: () => clearSecret("RUNPOD_ACCOUNT_API_KEY"),
+    automaticCreate: async input => (await installer()).create(input),
+    creationGuard: async () => { if (['creating', 'uncertain', 'waiting', 'connecting', 'failed'].includes((await installer()).snapshot().phase)) throw new Error('Check the existing AI installation before creating another computer.'); } });
+  const provider = createRunpodV2({ fetchFn, getApiKey: () => getSecret("RUNPOD_ACCOUNT_API_KEY") });
+  let computerPromise;
+  const computer = () => computerPromise ||= createCloudComputer({ dataDir: config.dataDir, provider, client, localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork,
+    beforeStart: async id => { (await installer()).assertStartAllowed(id); await (await updater()).assertStartAllowed(id); } });
+  let installerPromise;
+  const installer = () => installerPromise ||= createAutomaticInstaller({ dataDir: config.dataDir, provider, client, getSecret, setSecret, fetchFn });
+  let updaterPromise;
+  const updater = () => updaterPromise ||= Promise.all([computer(), installer(), client()]).then(([computer, installer, client]) =>
+    createWorkerUpdater({ dataDir: config.dataDir, provider, computer, installer, client, fetchFn }));
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
     try {
@@ -44,9 +65,118 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
       }
       /* The Pod's install command, pinned to this Studio's commit
        * (runpod-bootstrap.js). Read by the setup window; never a branch. */
-      if (req.method === "GET" && url.pathname === "/api/runpod/bootstrap") sendJSON(res, 200, bootstrap());
+      if (url.pathname.startsWith('/api/runpod/catalog/')) {
+        const route = url.pathname.slice('/api/runpod/catalog/'.length);
+        if (route === 'disk' && req.method === 'GET') sendJSON(res,200,await (await client()).modelDisk());
+        else if (['disk/review','disk/delete'].includes(route) && req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          const state = await (await computer()).refresh();
+          if (state.providerUncertain || state.pod?.status !== 'RUNNING' || state.operation) throw Error('Connect an idle running computer before changing model files.');
+          sendJSON(res,200,await (await client()).modelDisk(route.split('/')[1],b));
+        }
+        else if (route === 'connections' && req.method === 'GET') {
+          const configured = {};
+          for (const [p,key] of Object.entries(MODEL_PROVIDERS)) configured[p] = !!await getSecret(key);
+          sendJSON(res, 200, { configured });
+        } else if (route === 'connections' && req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          if (!Object.hasOwn(MODEL_PROVIDERS, b.provider)) throw Error('Choose a model provider.');
+          if (b.remove === true) await clearSecret(MODEL_PROVIDERS[b.provider]);
+          else {
+            const key = String(b.key || '').trim();
+            if (key.length < 10 || key.length > 500 || /[^A-Za-z0-9_.-]/.test(key) || b.provider === 'huggingface' && !key.startsWith('hf_')) throw Error('Enter a valid provider read key.');
+            await setSecret(MODEL_PROVIDERS[b.provider], key);
+          }
+          sendJSON(res, 200, { saved: b.remove !== true });
+        } else if (route === 'compatibility' && req.method === 'GET') {
+          const input = Object.fromEntries(url.searchParams);
+          if (!Object.hasOwn(MODEL_PROVIDERS, input.provider)) throw Error('Choose a model provider.');
+          const token = await getSecret(MODEL_PROVIDERS[input.provider]);
+          const details = await catalogFiles(input, { token, fetchFn });
+          const file = details.files.find(f => f.id === input.file);
+          let setup = null, objects = null;
+          const state = (await computer()).snapshot();
+          if (state.pod?.status === 'RUNNING' && !state.providerUncertain && !state.operation) {
+            try { const c = await client(), health = await c.verify();
+              if (health.podId === state.podId) [setup, objects] = await Promise.all([c.setup(), c.models()]);
+            } catch { /* Offline or old workers cannot substantiate a compatibility claim. */ }
+          }
+          sendJSON(res, 200, modelCompatibility({ file, folder: input.folder, setup, objects }));
+        } else if (['search','files'].includes(route) && req.method === 'GET') {
+          const input = Object.fromEntries(url.searchParams);
+          if (!Object.hasOwn(MODEL_PROVIDERS, input.provider)) throw Error('Choose a model provider.');
+          const token = await getSecret(MODEL_PROVIDERS[input.provider]);
+          sendJSON(res, 200, await (route === 'search' ? searchCatalog : catalogFiles)(input, { token, fetchFn }));
+        } else if (route === 'install' && req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          if (b.acceptLicense !== true) throw Error('Review and accept the model terms first.');
+          if (!Object.hasOwn(MODEL_PROVIDERS, b.selection?.provider)) throw Error('Choose a model provider.');
+          const manager = await computer(), state = await manager.refresh();
+          if (state.pod?.status !== 'RUNNING' || state.providerUncertain || !state.worker?.connectionReady || state.operation) throw Error('Start and connect your cloud computer before downloading.');
+          const token = await getSecret(MODEL_PROVIDERS[b.selection.provider]);
+          sendJSON(res, 202, await (await client()).installCatalog(b.selection, true, b.expected, token));
+        } else sendJSON(res, 405, { error: 'Unsupported model browser request.' });
+      }
+      else if (url.pathname === '/api/runpod/goal') {
+        if (req.method === 'GET') sendJSON(res, 200, { goal: config.cloudSetup?.goal || 'all' });
+        else if (req.method === 'POST') {
+          const b = JSON.parse((await readBody(req)).toString('utf8'));
+          if (!['music', 'pictures', 'video', 'all'].includes(b.goal)) throw new Error('Choose Music, Pictures, Video or All three.');
+          config.cloudSetup = { ...config.cloudSetup, goal: b.goal, plan: defaultModelSelection(b.goal, config.music) }; await savePrefs(); sendJSON(res, 200, { goal: b.goal });
+        } else sendJSON(res, 405, { error: 'Use GET or POST for the cloud goal.' });
+      }
+      else if (url.pathname === '/api/runpod/update') {
+        const update = await updater();
+        if (req.method === 'GET') sendJSON(res, 200, await update.inspect());
+        else sendJSON(res, 405, { error: 'Use GET to check AI updates.' });
+      }
+      else if (req.method === 'POST' && ['/api/runpod/update/review','/api/runpod/update/apply'].includes(url.pathname)) {
+        const update = await updater();
+        const b = JSON.parse((await readBody(req)).toString('utf8'));
+        sendJSON(res, 200, await (url.pathname.endsWith('/review') ? update.review() : update.apply(b)));
+      }
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install') sendJSON(res, 200, (await installer()).snapshot());
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install/options') sendJSON(res, 200, (await installer()).options());
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install/acceptance') sendJSON(res, 200, await (await installer()).acceptanceStatus());
+      else if (req.method === 'GET' && url.pathname === '/api/runpod/install/acceptance/diagnostics') sendJSON(res, 200, await (await installer()).acceptanceDiagnostics());
+      else if (req.method === 'POST' && url.pathname === '/api/runpod/install/acceptance-key')
+        sendJSON(res, 200, await (await installer()).saveAcceptanceKey(JSON.parse((await readBody(req)).toString('utf8'))));
+      else if (req.method === 'POST' && url.pathname === '/api/runpod/install/refresh') sendJSON(res, 200, await (await installer()).refresh());
+      else if (req.method === 'POST' && url.pathname === '/api/runpod/install/quote') {
+        const b = JSON.parse((await readBody(req)).toString('utf8')); sendJSON(res, 200, await (await installer()).review(b));
+      }
+      else if (url.pathname.startsWith("/api/runpod/computer")) {
+        const suffix = url.pathname.slice("/api/runpod/computer".length);
+        if (req.method === "GET" && suffix === "") sendJSON(res, 200, (await computer()).snapshot());
+        else if (req.method === "POST") {
+          let b;
+          try { b = JSON.parse((await readBody(req)).toString("utf8")); }
+          catch { throw new Error("The cloud computer request could not be read."); }
+          if (!b || Array.isArray(b) || typeof b !== "object") throw new Error("Send a cloud computer request as a JSON object.");
+          if (suffix === "/credentials") {
+            const key = String(b.apiKey || "").trim();
+            if (key.length < 20 || /[\r\n]/.test(key)) throw new Error("Enter a valid RunPod account key.");
+            await createRunpodV2({ fetchFn, getApiKey: () => key }).listPods();
+            await setSecret("RUNPOD_ACCOUNT_API_KEY", key); account.resetCredentials(); sendJSON(res, 200, { configured: true });
+          } else {
+            const manager = await computer();
+            const operations = { "/discover": () => manager.discover(), "/refresh": () => manager.refresh(),
+              "/select": () => manager.select(b.id), "/review": () => manager.reviewStart(), "/start": () => manager.start(b),
+              "/stop": () => manager.stop(b), "/policy": () => manager.policy(b), "/storage": () => manager.reviewStorage(),
+              "/cleanup": () => manager.clean(b), "/capacity": () => manager.grow(b), "/billing": () => manager.loadBilling(),
+              "/backup": () => manager.backup(), "/alerts": () => manager.alerts(b) };
+            if (!Object.hasOwn(operations, suffix)) sendJSON(res, 404, { error: "Unknown cloud computer operation." });
+            else sendJSON(res, 200, await operations[suffix]());
+          }
+        } else sendJSON(res, 404, { error: "Unknown cloud computer operation." });
+      }
+      else if (req.method === "GET" && url.pathname === "/api/runpod/bootstrap") sendJSON(res, 200, bootstrap());
       else if (req.method === "GET" && url.pathname === "/api/runpod/account") sendJSON(res, 200, await account.status());
-      else if (req.method === "GET" && url.pathname === "/api/runpod/account/overview") sendJSON(res, 200, await account.overview());
+      else if (req.method === "GET" && url.pathname === "/api/runpod/account/overview") {
+        const data = await account.overview();
+        const plan = setupPlan({ selection: selectionFor(config, 'runpod'), target: 'runpod' });
+        sendJSON(res, 200, { ...data, recommendations: rankSetupGpus(plan, data.gpus), planStorage: plan.storage });
+      }
       else if (req.method === "POST" && url.pathname === "/api/runpod/account/connect") {
         const b = JSON.parse((await readBody(req)).toString("utf8")); sendJSON(res, 200, await account.connect(b.apiKey));
       } else if (req.method === "POST" && url.pathname === "/api/runpod/account/disconnect") sendJSON(res, 200, await account.disconnect());
@@ -61,8 +191,13 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
         if (req.method === "POST" && power) {
           if (power[2] === "start") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
-            sendJSON(res, 200, await account.start(power[1], b.confirm));
-          } else sendJSON(res, 200, await account.stop(power[1]));
+            if (b.confirm !== 'START PAID POD') throw Error('Review the hourly price and confirm paid Pod startup.');
+            sendJSON(res, 200, await (await computer()).startExternal(power[1], () => account.start(power[1], b.confirm)));
+          } else {
+            const manager = await computer();
+            if (manager.snapshot().podId !== power[1]) await manager.select(power[1]);
+            sendJSON(res, 200, await manager.stop({ mode: "idle", requestId: randomUUID() }));
+          }
         }
         else {
           const c = await client();
@@ -70,10 +205,19 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
           else if (req.method === "POST" && url.pathname === "/api/runpod/connect") {
             sendJSON(res, 200, await c.connect(JSON.parse((await readBody(req)).toString("utf8"))));
           } else if (req.method === "GET" && url.pathname === "/api/runpod/models") sendJSON(res, 200, await c.models());
-          else if (req.method === "GET" && url.pathname === "/api/runpod/setup") sendJSON(res, 200, await c.setup());
+          else if (req.method === "GET" && url.pathname === "/api/runpod/setup") {
+            const state = computerPromise ? (await computerPromise).snapshot() : null;
+            const health = await c.verify();
+            let bound = !!state?.podId && health.podId === state.podId && state.pod?.status === 'RUNNING' && !state.providerUncertain;
+            const data = await c.setup(), objects = bound ? await c.models() : null;
+            bound = bound && c.status().workerId === health.workerId && (await computerPromise).snapshot().podId === state.podId;
+            const plan = setupPlan({ selection: selectionFor(config, 'runpod'), target: 'runpod' });
+            sendJSON(res, 200, { ...data, podId: bound ? state.podId : null, selection: plan.selection,
+              readiness: selectedModelReadiness(plan, { connected: bound, bundles: data.bundles, objects, evidenceFor: graph => c.inferenceEvidence(graph, health) }) });
+          }
           else if (req.method === "POST" && url.pathname === "/api/runpod/setup/install") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
-            sendJSON(res, 202, await c.installBundle(b.bundle, b.acceptLicense));
+            sendJSON(res, 202, await c.installBundle(b.bundle, b.acceptLicense, b.modelToken));
           } else if (req.method === "POST" && url.pathname === "/api/runpod/setup/cancel") {
             sendJSON(res, 200, await c.cancelInstall());
           } else if (req.method === "POST" && url.pathname === "/api/runpod/assets") {

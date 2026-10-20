@@ -578,12 +578,14 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   const h3Real = realCfg.video.engines.h3;
   const F4 = Object.keys(h3Real.turboShiftByLora).find((n) => /fl2v.*4step/.test(n));
   const R4 = Object.keys(h3Real.turboShiftByLora).find((n) => /ref2v.*4step/.test(n));
-  /* Every turbo slot resolved to a 4-step file, which is what pick() does on a
-   * PC whose loras folder holds only what the Models screen fetched. */
+  /* Pin the shared file-fallback rule (AMD, Intel and CPU), independent of
+   * the host's NVIDIA per-path disk readings. lending_test.js separately
+   * checks the per-path refusal before an order is accepted. */
   const FOUR_STEP_ONLY = {
     cfg: { ...realCfg, modelsDir: "/nowhere", modelsAlso: [],
       video: { ...realCfg.video, engines: { ...realCfg.video.engines,
-        h3: { ...h3Real, turboLora: F4, turboLora4: F4, turboLora3: F4, refTurboLora: R4, refTurboLora4: R4 } } } },
+        h3: { ...h3Real, plainBuilds: null, refBuilds: null,
+          turboLora: F4, turboLora4: F4, turboLora3: F4, refTurboLora: R4, refTurboLora4: R4 } } } },
     onDisk: (n) => /4step/.test(String(n)),
   };
   const lendingDoor = { ...lendingM,

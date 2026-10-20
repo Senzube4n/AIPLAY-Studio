@@ -116,3 +116,34 @@ export function studioBootstrap({ root = ROOT, version = appVersion,
   const scriptSha256 = createHash("sha256").update(script).digest("hex");
   return { command: bootstrapCommand({ repo, commit, scriptSha256 }), repo, commit, scriptSha256, problem: null, note };
 }
+
+/** Automatic deployment follows this installation's explicitly selected build.
+ * Keep the old manual command's official-only policy independent. */
+export function automaticWorkerCommand({ repo, commit, sha256, update = false }) {
+  if (!['nemesisone-dev/aiplay-studio','senzube4n/aiplay-studio'].includes(String(repo).toLowerCase()) || !COMMIT_RE.test(commit || '') || !SHA256_RE.test(sha256 || '')) throw Error('Choose an approved pinned worker build.');
+  const url = `https://raw.githubusercontent.com/${repo}/${commit}/worker/automatic-runpod.py`;
+  return `curl -fsSL --retry 3 ${url} -o /tmp/aiplay-automatic.py && echo '${sha256}  /tmp/aiplay-automatic.py' | sha256sum -c - && `
+    + (update ? `AIPLAY_REPOSITORY=https://github.com/${repo}.git AIPLAY_COMMIT=${commit} ` : '') + 'exec python -u /tmp/aiplay-automatic.py';
+}
+export function automaticBootstrap({ root = ROOT, version = appVersion,
+  git = (args, opts = {}) => execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'], ...opts }) } = {}) {
+  const info = readInfo(root), repo = String(version()?.repo || info?.repo || '');
+  if (!['nemesisone-dev/aiplay-studio', 'senzube4n/aiplay-studio'].includes(repo.toLowerCase()))
+    return { available: false, problem: 'This build has no approved automatic worker source.' };
+  const script = 'worker/automatic-runpod.py';
+  try {
+    const cloned = existsSync(path.join(root, '.git'));
+    const commit = cloned ? String(git(['rev-parse', 'HEAD'], { encoding: 'utf8' })).trim() : info?.commit;
+    if (!COMMIT_RE.test(commit || '')) throw new Error('Missing commit');
+    const bytes = cloned ? git(['cat-file', 'blob', `${commit}:${script}`]) : readFileSync(path.join(root, script));
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const url = `https://raw.githubusercontent.com/${repo}/${commit}/${script}`;
+    const command = automaticWorkerCommand({ repo, commit, sha256 });
+    // The acceptance supervisor must exist before the first network fetch.
+    // Embed this same published, pinned bootstrap rather than fetching a guard
+    // after compute is already running. No credential appears in the command.
+    const acceptanceProtocol = /^ACCEPTANCE_PROTOCOL = 2\r?$/m.test(Buffer.from(bytes).toString('utf8')) ? 2 : null;
+    const acceptanceCommand = acceptanceProtocol ? `exec python -u -c 'import base64; exec(compile(base64.b64decode("${Buffer.from(bytes).toString('base64')}"), "aiplay-pinned-bootstrap", "exec"))'` : null;
+    return { available: true, repo, commit, sha256, url, command, acceptanceCommand, acceptanceProtocol };
+  } catch { return { available: false, problem: 'Update AIPLAY to a published build with automatic AI installation.' }; }
+}

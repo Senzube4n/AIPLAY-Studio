@@ -1,8 +1,10 @@
 # RunPod rendering preview
 
+**New to RunPod?** Follow the shorter [beginner quick start for Windows](RUNPOD_QUICKSTART.md) first. This page contains the technical details and limitations.
+
 AIPLAY runs on your Windows PC. A small authenticated worker beside ComfyUI on a dedicated RunPod Pod executes workflows. Results are downloaded, SHA-256 checked, and placed in your local library. Your PC needs Node.js for AIPLAY's backend; it does not need CUDA or local model weights for this remote panel.
 
-This is a source-level preview, not a signed Windows installer. RunPod is available as a render target in the normal Images and Video screens, and the advanced workflow panel remains available for inspecting or importing graphs. The integration has automated coverage. The complete image path was validated on 24 September 2026 with a RunPod RTX PRO 4500 Blackwell, ComfyUI 0.30.0 and the SD 1.5 checkpoint. The complete video path was validated on 25 September 2026 with ComfyUI 0.37.0 and the official LTX 2.5 distilled model bundle. Connect, inventory, render, hash-checked download and local-library adoption passed in both cases. Music still requires its exact model bundle and compatible ComfyUI nodes to be installed and tested on the Pod.
+This is a source-level preview, not a signed Windows installer. RunPod is available as a render target in the normal Images and Video screens and for supported ComfyUI engines on the Music screen. The advanced workflow panel remains available for inspecting or importing graphs. The integration has automated coverage. The complete image path was validated on 24 September 2026 with a RunPod RTX PRO 4500 Blackwell, ComfyUI 0.30.0 and the SD 1.5 checkpoint. The complete video path was validated on 25 September 2026 with ComfyUI 0.37.0 and the official LTX 2.5 distilled model bundle. Connect, inventory, render, hash-checked download and local-library adoption passed in both cases. Music routing and local-library adoption have automated coverage; each music engine still requires its exact model bundle and compatible ComfyUI nodes to be installed and live-tested on the Pod.
 
 ## Start on Windows
 
@@ -15,7 +17,7 @@ npm ci --omit=dev
 npm run start:remote
 ```
 
-In this mode the Images and Video screens render on the Pod: each shows a RunPod box (model on the Pod, remote size, **Connection…**) above the prompt. Full Studio, Music only and Comfy API show none of it, and /api/runpod answers only in this mode, because a Pod bills by the hour. The Images path renders standard ComfyUI checkpoints installed on the Pod. The Video path uses the installed LTX 2.5 distilled bundle for text-to-video. **Advanced workflow panel** in the connection window opens the graph panel (`/runpod.html`). Native GGUF music, image references, video frames/references/soundtracks, mesh tools, compositor processing and final timeline export have not been connected to the integrated presets. Local editing/export tools can still have their own CPU, media-tool or Python requirements.
+In this mode the Images and Video screens render on the Pod: each shows a RunPod box (model on the Pod, remote size, **Connection…**) above the prompt. After that connection is configured, the normal Music queue also renders the ComfyUI-based MiniMax Music 3, ACE-Step 1.5 and YuE2 3B engines through the worker. Full Studio, Music only and Comfy API show none of the RunPod connection controls, and /api/runpod answers only in RunPod mode, because a Pod bills by the hour. The Images path renders standard ComfyUI checkpoints installed on the Pod. The Video path uses the installed LTX 2.5 distilled bundle for text-to-video. **Advanced workflow panel** in the connection window opens the graph panel (`/runpod.html`). Native YuE2 GGUF music, image references, video frames/references/soundtracks, mesh tools, compositor processing and final timeline export have not been connected to the integrated RunPod presets. Local editing/export tools can still have their own CPU, media-tool or Python requirements.
 
 ## Prepare one dedicated Pod
 
@@ -81,7 +83,7 @@ On Images or Video, choose **RunPod GPU**, open **Connection…**, and enter the
 
 The same window has **Create or manage a RunPod Pod**. Add a restricted RunPod API key with permission to read GPU inventory and manage Pods. AIPLAY stores that key in the same local secret store and never returns it to the page after saving. It can then show the account balance, current hourly spend, existing Pods, live GPU stock/price estimates, and start/stop controls. See RunPod's [API-key guidance](https://docs.runpod.io/get-started/api-keys) and [Pod GraphQL operations](https://docs.runpod.io/sdks/graphql/manage-pods).
 
-Press **Create private templates** to add four reusable Pod templates to that RunPod account. The operation is idempotent and does not start a GPU. Existing templates with the same names are left unchanged.
+Press **Create private templates** to add five reusable Pod templates to that RunPod account. The operation is idempotent and does not start a GPU. Existing templates with the same names are left unchanged.
 
 | Template | Persistent disk | Suggested GPU | Intended workload |
 | --- | ---: | --- | --- |

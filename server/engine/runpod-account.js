@@ -1,3 +1,5 @@
+import path from "node:path";
+import { readJSON, jsonStore } from "./remote-common.js";
 const API = "https://api.runpod.io/graphql";
 const REST_API = "https://rest.runpod.io/v1";
 const POD_FIELDS = `id name desiredStatus costPerHr imageName gpuCount volumeInGb containerDiskInGb ports
@@ -78,10 +80,13 @@ export function normalizeAccount(data = {}) {
   return { balance: Number(user.clientBalance || 0), currentSpendPerHr: Number(user.currentSpendPerHr || 0), pods, gpus };
 }
 
-export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn = fetch }) {
+export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn = fetch, dataDir = null, automaticCreate = null, creationGuard = async () => {} }) {
   let apiKey;
   let creating = false;
   let creatingTemplates = false;
+  let unresolvedCreate = null;
+  const journal = dataDir ? path.join(dataDir, "runpod", "creation-journal.json") : null;
+  const saveCreation = async pending => { unresolvedCreate = pending; if (journal) await jsonStore(journal)({ pending }); };
   async function key() { return apiKey ||= await getApiKey(); }
   async function graphql(query, variables = {}, override) {
     const auth = override || await key();
@@ -130,8 +135,14 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
   }
   async function create(input = {}) {
     if (creating) throw new Error("A Pod creation request is already in progress.");
+    if (input.installAI === true) {
+      if (!automaticCreate) throw new Error('Automatic AI installation is unavailable in this build.');
+      creating = true;
+      try { return await automaticCreate(input); } finally { creating = false; }
+    }
     if (input.confirm !== "CREATE PAID POD") throw new Error("Review the hourly price and confirm paid Pod creation.");
     const gpuTypeId = cleanText(input.gpuTypeId, "GPU type", 160);
+    if (/\b(?:AMD|Intel|MI\d{3}\w*)\b/i.test(gpuTypeId)) throw new Error("This AI service needs an NVIDIA cloud graphics card.");
     const name = cleanText(input.name || "AIPLAY renderer", "Pod name", 80);
     const cloudType = ["ALL", "SECURE", "COMMUNITY"].includes(input.cloudType) ? input.cloudType : "ALL";
     const volumeInGb = number(input.volumeInGb ?? 100, "Persistent volume", 20, 1000);
@@ -139,16 +150,32 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
     const imageName = cleanText(input.imageName || "runpod/comfyui:cuda12.8", "container image", 240);
     creating = true;
     try {
+      await creationGuard();
       const current = await overview();
+      if (journal) unresolvedCreate = (await readJSON(journal, {})).pending || null;
+      if (unresolvedCreate) {
+        const matches = current.pods.filter(p => p.name === unresolvedCreate.name);
+        if (matches.length !== 1) throw new Error("A previous Pod creation result is uncertain. Check the existing resources before creating another Pod.");
+        await saveCreation(null);
+      }
       if (current.pods.some(pod => pod.name === name)) throw new Error(`A RunPod named "${name}" already exists. Refresh the list before retrying.`);
+      if (input.expectedPricePerHr !== undefined) {
+        const gpu = current.gpus.find(row => row.id === gpuTypeId);
+        if (!gpu || gpu.stock === "None") throw new Error("This graphics card is no longer available. Review another computer.");
+        if (!Number.isFinite(input.expectedPricePerHr) || input.expectedPricePerHr <= 0
+          || Math.abs(gpu.pricePerHr - input.expectedPricePerHr) > .000001)
+          throw new Error("The estimated price changed. Review the current price before creating a computer.");
+      }
       const variables = { input: { cloudType, gpuCount: 1, volumeInGb, containerDiskInGb,
         minVcpuCount: 2, minMemoryInGb: 15, gpuTypeId, name, imageName,
         dockerArgs: "", ports: "8787/http", volumeMountPath: "/workspace" } };
+      await saveCreation({ name, requestedAt: Date.now() });
       const data = await graphql(`mutation AiplayCreatePod($input: PodFindAndDeployOnDemandInput) {
         podFindAndDeployOnDemand(input: $input) { ${POD_FIELDS} }
       }`, variables);
       const pod = data.podFindAndDeployOnDemand;
       if (!pod?.id) throw new Error("RunPod did not return the created Pod. Refresh the account before retrying.");
+      await saveCreation(null);
       return { pod: normalizeAccount({ myself: { pods: [pod] } }).pods[0],
         next: "Open a Pod terminal or SSH session once it is ready, then install the AIPLAY worker and models." };
     } finally { creating = false; }
@@ -196,6 +223,7 @@ export function createRunpodAccount({ getApiKey, setApiKey, clearApiKey, fetchFn
   return {
     status: async () => ({ configured: !!(await key()) }), connect, disconnect, overview, create,
     templates, createTemplates,
+    resetCredentials: () => { apiKey = null; },
     start: (id, confirm) => {
       if (confirm !== "START PAID POD") throw new Error("Review the hourly price and confirm paid Pod startup.");
       return setRunning(id, true);

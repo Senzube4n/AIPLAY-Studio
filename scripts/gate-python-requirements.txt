@@ -1,0 +1,8 @@
+# CPU DAW export and VFX preview integration; no inference or model packages.
+# Existing dependencies of server/daw, tag_audio.py and server/vfx/engine.py.
+numpy>=1.25.0
+scipy
+av
+soundfile
+Pillow
+opencv-python-headless

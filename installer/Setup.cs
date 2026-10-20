@@ -62,8 +62,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installs AIPLAY Studio from GitHub")]
 [assembly: AssemblyProduct("AIPLAY Studio")]
 [assembly: AssemblyCompany("AIPLAY Studio")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 // Without this a hand-compiled exe runs with the .NET 4.0 path rules, which
 // refuse any path over 260 characters. npm's own folders go deeper than that.
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -71,7 +71,7 @@ using Microsoft.Win32;
 static class Program
 {
     public const string Title = "AIPLAY Studio";
-    public const string SetupVersion = "1.2";
+    public const string SetupVersion = "1.3";
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
@@ -546,9 +546,9 @@ sealed class Installer
     static string[] Strings(Dictionary<string, object> j, string key)
     {
         object v;
-        if (!j.TryGetValue(key, out v) || !(v is object[])) return null;
+        if (!j.TryGetValue(key, out v) || !(v is System.Collections.IList)) return null;
         var list = new List<string>();
-        foreach (var o in (object[])v) if (o is string) list.Add((string)o);
+        foreach (var o in (System.Collections.IList)v) if (o is string) list.Add((string)o);
         return list.ToArray();
     }
 

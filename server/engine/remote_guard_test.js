@@ -45,6 +45,8 @@ import { mkdir } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as bootstrapModule from "./runpod-bootstrap.js";
+import { setupPlan, selectionFor, selectedModelReadiness, localModelReadiness, profileGraph } from '../setup-plan.js';
+import { validModelSelection } from '../../shared/model-profiles.js';
 const { bootstrapCommand, studioBootstrap, BOOTSTRAP_SCRIPT } = bootstrapModule;
 /* The one repository a Pod installs from (the owner, 2026-09-26). */
 const OFFICIAL_REPO = "Senzube4n/AIPLAY-Studio";
@@ -55,12 +57,13 @@ const read = (...p) => readFileSync(path.join(ROOT, ...p), "utf8").replace(/\r\n
 const guardSrc = /function sameOriginLocalJson\(req\) \{[\s\S]*?\n\}/.exec(read("server", "index.js"))?.[0] || "";
 const sameOriginLocalJson = new Function("config", `${guardSrc}\nreturn sameOriginLocalJson;`)({ uiPort: 4173 });
 
-async function routes(t) {
+async function routes(t, extra = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aiplay-remote-guard-"));
+  if (extra.config) Object.assign(extra.config, { dataDir: dir, outputDir: path.join(dir, 'out') });
   const r = createRemoteRoutes({ config: { dataDir: dir, outputDir: path.join(dir, "out"), uiPort: 4173 },
     getSecret: async () => null, setSecret: async () => {}, clearSecret: async () => {},
     append: async () => {}, actorFrom: () => "agent:t", adopt: async () => null, sameOriginLocalJson,
-    fetchFn: async () => { throw new Error("no network in this test"); } });
+    fetchFn: async () => { throw new Error("no network in this test"); }, ...extra });
   t.after(async () => { (await r.start()).close(); await rm(dir, { recursive: true, force: true }); });
   return async (method, route, { headers = {}, body = null } = {}) => {
     const req = Object.assign(Readable.from(body == null ? [] : [Buffer.from(body)]), { method, headers });
@@ -71,10 +74,62 @@ async function routes(t) {
 }
 const HERE = { host: "127.0.0.1:4173" };
 
+test('setup planning is guarded, persists category combinations independently, and cannot invoke cloud infrastructure', async () => {
+  const source=read('server','index.js'),start=source.indexOf("    if (p === '/api/setup-plan')"),end=source.indexOf('    if (p === "/api/models"',start);
+  assert.ok(start>0&&end>start);
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  const handler=new AsyncFunction('req','res','url','p','config','sameOriginLocalJson','readBody','json','savePrefs','models','readMachine','gpuStatus','ramStatus','cpuOnlyEngine','h3VaeMeasured','engineDoor','setupPlan','selectionFor','selectedModelReadiness','profileGraph','validModelSelection','scanBases','modelBases','localModelReadiness',source.slice(start,end));
+  const config={uiPort:4173,remoteOnly:true,music:{engine:'yue2-comfy'},cloudSetup:{goal:'pictures',plan:null},modelSetup:{local:null}};
+  let saves=0;
+  const call=(method,query='',body,headers=HERE,failSave=false)=>handler({method,headers,body},{},new URL('http://127.0.0.1:4173/api/setup-plan'+query),'/api/setup-plan',config,
+    sameOriginLocalJson,async req=>req.body,(_res,status,body)=>({status,body}),async()=>{if(failSave)throw Error('disk unavailable');saves++;},
+    {status:async()=>[]},()=>({gpu:null,ram:{totalGb:32}}),()=>null,()=>null,()=>false,()=>false,{objectInfo:async()=>({})},setupPlan,selectionFor,selectedModelReadiness,profileGraph,validModelSelection,async()=>[],async()=>[],localModelReadiness);
+  const postHeaders={...HERE,'content-type':'application/json','x-aiplay-actor':'agent:test'};
+  let r=await call('GET','?target=runpod');assert.equal(r.status,200);assert.deepEqual(r.body.selection,{pictures:'sdxl-turbo'});assert.equal(saves,0);
+  r=await call('POST','',{target:'runpod',selection:{music:'ace15-xl-sft',video:'ltx25'}},postHeaders);assert.equal(r.status,200);assert.equal(saves,1);
+  assert.equal(config.music.engine,'yue2-comfy');assert.equal(config.cloudSetup.goal,'pictures');assert.equal(config.modelSetup.local,null);
+  r=await call('POST','',{target:'local',selection:{pictures:'sdxl-turbo'}},postHeaders);assert.equal(r.status,200);assert.deepEqual(config.modelSetup.local,{pictures:'sdxl-turbo'});assert.equal(r.body.activeMode,'runpod');
+  for(const selection of [{},{music:'ltx25'},{music:'https://arbitrary.test/model'}]) assert.equal((await call('POST','',{target:'runpod',selection},postHeaders)).status,400);
+  assert.equal((await call('GET','?target=runpod',null,{host:'rebound.example:4173'})).status,403);
+  assert.equal((await call('POST','',{target:'runpod',selection:{music:'yue2-comfy'}},{...postHeaders,origin:'https://evil.example'})).status,403);
+  const before=JSON.stringify(config.cloudSetup.plan);
+  assert.equal((await call('POST','',{target:'runpod',selection:{music:'yue2-comfy'}},postHeaders,true)).status,400);assert.equal(JSON.stringify(config.cloudSetup.plan),before,'failed disk save restores the current plan');
+});
+
+test('catalog keys stay in the vault and guarded browsing never invokes provider infrastructure', async t => {
+  const keys = new Map(); let network = 0;
+  const call = await routes(t, { getSecret: async k => keys.get(k), setSecret: async (k,v) => keys.set(k,v), clearSecret: async k => keys.delete(k), fetchFn: async u => { network++; assert.match(String(u),/^https:\/\/huggingface.co\/api\/models/); return Response.json([]); } });
+  const headers = { ...HERE, 'content-type':'application/json', 'x-aiplay-actor':'agent:test' };
+  const key = 'hf_fakeTokenForFixtureOnly';
+  const saved = await call('POST','/api/runpod/catalog/connections',{headers,body:JSON.stringify({provider:'huggingface',key})}); assert.equal(saved.status,200);
+  const status = await call('GET','/api/runpod/catalog/connections',{headers:HERE}); assert.equal(status.body.configured.huggingface,true); assert.doesNotMatch(JSON.stringify(status.body),/fakeToken/);
+  const search = await call('GET','/api/runpod/catalog/search?provider=huggingface',{headers:HERE}); assert.equal(search.status,200); assert.equal(network,1);
+  const rejected = await call('POST','/api/runpod/catalog/connections',{headers:{...headers,origin:'https://evil.example'},body:JSON.stringify({provider:'huggingface',remove:true})}); assert.equal(rejected.status,403);assert.equal(keys.size,1);
+  await call('POST','/api/runpod/catalog/connections',{headers,body:JSON.stringify({provider:'huggingface',remove:true})});assert.equal(keys.size,0);
+  assert.equal((await call('POST','/api/runpod/catalog/install',{headers,body:JSON.stringify({selection:{provider:'huggingface'}})})).status,400,'no licence confirmation, no worker or rental call');
+  assert.equal(network,1);
+});
+
+test('cloud goal persists locally without credentials or provider calls', async t => {
+  const config = { uiPort: 4173 }; let saves = 0, providerCalls = 0;
+  const call = await routes(t, { config, savePrefs: async () => { saves++; }, fetchFn: async () => { providerCalls++; throw Error('unexpected network'); } });
+  const headers = { ...HERE, 'content-type': 'application/json', 'x-aiplay-actor': 'agent:test' };
+  assert.equal((await call('GET', '/api/runpod/goal', { headers: HERE })).body.goal, 'all');
+  for (const goal of ['music', 'pictures', 'video', 'all']) {
+    const res = await call('POST', '/api/runpod/goal', { headers, body: JSON.stringify({ goal }) });
+    assert.equal(res.status, 200); assert.equal(config.cloudSetup.goal, goal);
+    assert.equal((await call('GET', '/api/runpod/goal', { headers: HERE })).body.goal, goal);
+  }
+  for (const goal of [null, 'invalid', {}, []]) assert.equal((await call('POST', '/api/runpod/goal', { headers, body: JSON.stringify({ goal }) })).status, 400);
+  assert.equal(saves, 4); assert.equal(providerCalls, 0);
+  assert.equal((await call('POST', '/api/runpod/goal', { headers: { ...headers, origin: 'https://evil.example' }, body: '{"goal":"music"}' })).status, 403);
+  assert.equal(config.cloudSetup.goal, 'all');
+});
+
 test("§1 a request whose Host is not this PC's Studio is refused, GETs included", async (t) => {
   const call = await routes(t);
   for (const host of ["evil.example:4173", "127.0.0.1.nip.io:4173", "", "127.0.0.1:8080"]) {
-    for (const route of ["/api/runpod", "/api/runpod/account/overview", "/api/runpod/jobs/00000000-0000-4000-8000-000000000000/files/0"]) {
+    for (const route of ["/api/runpod", "/api/runpod/update", "/api/runpod/catalog/compatibility", "/api/runpod/account/overview", "/api/runpod/jobs/00000000-0000-4000-8000-000000000000/files/0"]) {
       const res = await call("GET", route, { headers: { host } });
       assert.equal(res.status, 403, `${host || "no Host"} ${route}`);
     }

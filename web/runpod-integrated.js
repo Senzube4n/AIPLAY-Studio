@@ -1,5 +1,7 @@
-/* RunPod inside AIPLAY's Images and Video screens, in the launcher's "RunPod GPU"
- * mode only (config.remoteOnly). In any other mode this file does nothing: the
+import { getSetupPlan } from './setup-plan.js';
+/* Shared RunPod setup lives in Settings; rendering uses Images and Video in
+ * the launcher's "RunPod GPU" mode only (config.remoteOnly).
+ * In any other mode this file does nothing: the
  * blocks stay hidden, no request goes to /api/runpod, and Make / Render are
  * never intercepted. In that mode every Images and Video render goes to the Pod
  * (there is no local engine to choose), so the "Render on" chooser stays hidden.
@@ -13,6 +15,8 @@
  * This module only changes where the final button sends them. The worker token
  * goes directly to the local backend secret store and is never returned here. */
 
+import { revealSetting } from './settings-sections.js';
+
 const $ = (id) => document.getElementById(id);
 const FINAL = new Set(["completed", "cancelled", "failed", "uncertain"]);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,6 +26,19 @@ const active = new Map();
 let runpodAccount = null;
 let setupTimer = null;
 let setupWasActive = false;
+let creationReview = null, creationBusy = false;
+let balanceCheck = null, balanceLoading = false;
+function publishBalance(balance, stale = false) {
+  if (!stale) balanceCheck = { balance: Number.isFinite(balance) ? balance : null, checkedAt: Date.now() };
+  document.dispatchEvent(new CustomEvent('aiplay:runpod-balance', { detail: { ...balanceCheck, stale } }));
+}
+function renderBalance(data) {
+  const running = (data.pods || []).filter(p => p.status === 'RUNNING').length;
+  $('runpodBalance').textContent = `Balance ${money(data.balance)} · ${money(data.currentSpendPerHr)}/hour · ${running} running Pods`;
+  $('runpodBalance').className = 'chip ok';
+  $('runpodUsageUpdated').textContent = `Updated ${new Date().toLocaleTimeString()}. Storage can cost extra when Pods are stopped.`;
+  publishBalance(data.balance);
+}
 
 function friendlyError(error) {
   const message = String(error?.message || error || "Unknown worker error");
@@ -87,13 +104,18 @@ async function accountApi(route = "", body) {
 function money(value) { return `$${Number(value || 0).toFixed(2)}`; }
 function bytes(value) {
   const size = Number(value || 0);
-  return size >= 1073741824 ? `${(size / 1073741824).toFixed(1)} GB` : `${Math.round(size / 1048576)} MB`;
+  return size >= 1e9 ? `${(size / 1e9).toFixed(1)} GB` : `${Math.round(size / 1e6)} MB`;
 }
 
 function renderSetup(data) {
   const list = $("runpodModelList");
   list.replaceChildren();
+  const selection = getSetupPlan('runpod')?.selection;
+  const unsupported = selection && Object.values(selection).some(id => !data.bundles?.some(b => b.id === id));
   for (const bundle of data.bundles || []) {
+    if (bundle.external) continue;
+    const selected = getSetupPlan('runpod')?.selection;
+    if (selected && !Object.values(selected).includes(bundle.id)) continue;
     const row = document.createElement("div"); row.className = "runpod-model"; row.dataset.bundle = bundle.id;
     const name = document.createElement("b"); name.textContent = bundle.label;
     const button = document.createElement("button"); button.type = "button"; button.className = "btn sm";
@@ -108,6 +130,11 @@ function renderSetup(data) {
     const link = document.createElement("a"); link.href = bundle.licenseUrl; link.target = "_blank"; link.rel = "noreferrer"; link.textContent = "model repository and terms";
     terms.append(accept, " I reviewed and accept the ", link, ".");
     row.append(name, button, detail, terms);
+    if (bundle.requiresToken && bundle.state !== 'ready') {
+      const label = document.createElement('label'); label.textContent = 'Hugging Face read token';
+      const access = document.createElement('input'); access.type = 'password'; access.className = 'line'; access.autocomplete = 'off'; access.dataset.modelToken = bundle.id;
+      access.placeholder = 'Accept access on the model page, then paste a read token'; label.append(access); row.append(label);
+    }
     if (["downloading", "paused"].includes(bundle.state)) {
       const progress = document.createElement("progress"); progress.max = bundle.totalBytes; progress.value = bundle.downloadedBytes;
       progress.title = `${bytes(bundle.downloadedBytes)} of ${bytes(bundle.totalBytes)}`; row.append(progress);
@@ -118,7 +145,7 @@ function renderSetup(data) {
   const finished = setupWasActive && !data.active;
   setupWasActive = !!data.active;
   $("runpodCancelModel").hidden = !data.active;
-  $("runpodModelState").textContent = data.active ? "Downloading on Pod" : "";
+  $("runpodModelState").textContent = data.active ? "Downloading on Pod" : unsupported ? 'Update AI service to install the selected models.' : '';
   clearTimeout(setupTimer);
   if (data.active) setupTimer = setTimeout(() => refreshSetup(), 1500);
   else if (finished) api("/models").then((info) => { objectInfo = info; fillModels(); }).catch(() => {});
@@ -138,7 +165,7 @@ async function refreshSetup() {
 function renderAccount(data) {
   runpodAccount = data;
   $("runpodAccountPanel").hidden = false;
-  $("runpodBalance").textContent = `Balance ${money(data.balance)} · running spend ${money(data.currentSpendPerHr)}/hour`;
+  renderBalance(data);
   const list = $("runpodPodList");
   list.replaceChildren();
   if (!data.pods?.length) list.textContent = "No Pods in this RunPod account yet.";
@@ -155,17 +182,21 @@ function renderAccount(data) {
     actions.append(power, use); row.append(main, meta, actions); list.append(row);
   }
   const select = $("runpodGpu"), before = select.value;
+  // The deployed image uses CUDA. Local AMD/Intel/CPU PCs can use it, but the rented card must be NVIDIA.
+  const compatible = (data.gpus || []).filter(gpu => /^NVIDIA\b/i.test(gpu.id));
+  const ranking = data.recommendations || {};
+  const recommended = compatible.find(gpu => gpu.id === ranking.recommended);
   select.replaceChildren();
-  for (const gpu of data.gpus || []) {
-    const stock = gpu.stock === "None" ? "unavailable" : gpu.stock;
-    const fit = gpu.memoryInGb >= 32 ? "image + LTX video" : "image; video may not fit";
-    select.add(new Option(`${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock} · ${fit}`, gpu.id));
+  for (const gpu of compatible) {
+    const stock = gpu.stock === 'None' ? 'unavailable' : gpu.stock;
+    const badges = [['Budget', ranking.budget], ['Recommended', ranking.recommended], ['Performance', ranking.performance]].filter(([,id]) => id === gpu.id).map(([name]) => name).join('/');
+    const tested = ranking.gpus?.find(g => g.id === gpu.id)?.hardwareEvidenceCandidate;
+    const option = new Option(`${badges ? badges + (tested ? ' (A100 workflow tested): ' : ' (estimate): ') : ''}${gpu.name} · ${gpu.memoryInGb} GB · ${money(gpu.pricePerHr)}/hr · ${stock}`, gpu.id);
+    option.disabled = gpu.stock === 'None'; select.add(option);
   }
-  if ([...select.options].some(option => option.value === before)) select.value = before;
-  else {
-    const recommended = (data.gpus || []).find(gpu => gpu.memoryInGb >= 32 && gpu.stock !== "None");
-    if (recommended) select.value = recommended.id;
-  }
+  if ([...select.options].some(option => option.value === before && !option.disabled)) select.value = before;
+  else if (recommended) select.value = recommended.id;
+  $('runpodCreateRecommendation').textContent = ranking.note || 'Choose a model plan to compare available graphics cards.';
   $("runpodAccountState").textContent = "RunPod account connected. Prices and availability are live estimates.";
   $("runpodAccountState").classList.remove("warnline");
 }
@@ -174,24 +205,114 @@ async function loadAccount() {
   try {
     const status = await accountApi();
     if (!status.configured) {
+      publishBalance(null);
       $("runpodAccountPanel").hidden = true;
       $("runpodAccountState").textContent = "No RunPod account API key saved.";
+      $("runpodBalance").textContent = "Account not connected";
+      $("runpodBalance").className = "chip";
+      $("runpodUsageUpdated").textContent = "";
       return;
     }
     renderAccount(await accountApi("/overview"));
   } catch (error) {
+    publishBalance(null, true);
     $("runpodAccountPanel").hidden = true;
     $("runpodAccountState").textContent = error.message;
     $("runpodAccountState").classList.add("warnline");
+    $("runpodBalance").textContent = "Usage unavailable";
+    $("runpodBalance").className = "chip warn";
+    $("runpodUsageUpdated").textContent = "Usage unavailable. Refresh to try again.";
   }
 }
 
-function reviewPod() {
-  const gpu = runpodAccount?.gpus?.find(row => row.id === $("runpodGpu").value);
-  if (!gpu) { $("runpodAccountState").textContent = "No available GPU is selected."; return; }
-  $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)} per running hour`;
-  $("runpodReviewDetails").textContent = `${$("runpodPodName").value.trim() || "AIPLAY renderer"} · ${$("runpodCloud").selectedOptions[0].textContent} · ${$("runpodVolume").value} GB persistent disk. Storage is billed separately and can continue after the Pod is stopped.`;
-  $("runpodCostConfirm").checked = false; $("runpodCreatePod").disabled = true; $("runpodCreateReview").hidden = false;
+function creationInput() {
+  return { name: $("runpodPodName").value.trim() || "AIPLAY renderer", gpuTypeId: $("runpodGpu").value,
+    cloudType: $("runpodCloud").value, volumeInGb: Number($("runpodVolume").value), containerDiskInGb: 20,
+    ...($("runpodAutoInstall")?.checked ? { installAI: true } : {}) };
+}
+function invalidateCreationReview() {
+  creationReview = null;
+  $("runpodCostConfirm").checked = false;
+  $("runpodCreatePod").disabled = true;
+  $("runpodCreateReview").hidden = true;
+}
+async function loadCreationChoices() {
+  if (creationBusy) return;
+  invalidateCreationReview();
+  $("runpodCreateState").textContent = "Checking available graphics cards…";
+  $("runpodReviewPod").disabled = true;
+  try {
+    renderAccount(await accountApi("/overview"));
+    const support = await api('/install/options');
+    $('runpodAutoInstall').checked = support.available;
+    $('runpodAutoInstall').disabled = !support.available;
+    $('runpodAutomaticAvailability').textContent = support.available
+      ? 'Installs your AIPLAY build and connects securely; model downloads need licence approval.' : support.problem;
+    $("runpodCreateState").textContent = $("runpodGpu").selectedOptions[0]?.disabled === false
+      ? "Choose your graphics card and storage, then review the price."
+      : "No graphics card is available. Check again later or choose another provider pool.";
+  } catch (error) { $("runpodCreateState").textContent = error.message; }
+  finally { $("runpodReviewPod").disabled = false; }
+}
+async function reviewPod() {
+  if (creationBusy) return;
+  const input = creationInput();
+  invalidateCreationReview();
+  $("runpodReviewPod").disabled = true;
+  $("runpodCreateState").textContent = "Checking current price and availability…";
+  try {
+    const data = await accountApi("/overview");
+    const gpu = data.gpus?.find(row => row.id === input.gpuTypeId);
+    if (JSON.stringify(input) !== JSON.stringify(creationInput())) throw new Error("Choices changed. Review the price again.");
+    if (data.planStorage && input.volumeInGb < data.planStorage.minimumGB) throw Error(`Choose at least ${data.planStorage.minimumGB} GB of saved storage for your models and working files.`);
+    if (!gpu || gpu.stock === "None" || !Number.isFinite(gpu.pricePerHr) || gpu.pricePerHr <= 0)
+      throw new Error("This graphics card is unavailable. Choose another and review again.");
+    if (data.pods?.some(pod => pod.name === input.name))
+      throw new Error("A computer with this name already exists. Check your saved computers before creating another.");
+    if (input.installAI) {
+      const quote = await api('/install/quote', { gpuTypeId: input.gpuTypeId, cloudType: input.cloudType });
+      gpu.pricePerHr = quote.rate;
+      if (JSON.stringify(input) !== JSON.stringify(creationInput())) throw new Error('Choices changed. Review the price again.');
+    }
+    creationReview = { input, rate: gpu.pricePerHr, at: Date.now() };
+    $("runpodReviewPrice").textContent = `${gpu.name}: estimated ${money(gpu.pricePerHr)}/hour for computing`;
+    $("runpodReviewDetails").textContent = `${input.name} · ${input.volumeInGb} GB saved storage · ${$("runpodCloud").selectedOptions[0].textContent}`;
+    // Published volume/container rates, checked 2026-10-17. These are estimates, not billing caps.
+    $("runpodReviewStorage").textContent = `Storage estimate: ${money((input.volumeInGb + 20) * .10)}/month while running, ${money(input.volumeInGb * .20)}/month after stopping.`;
+    $("runpodCreateReview").hidden = false;
+    $("runpodCreateState").textContent = input.installAI ? 'Review the costs, including rental during AI installation.' : 'Manual AI service installation is required after creation.';
+    $('runpodCreatePod').textContent = input.installAI ? 'Create and install AI' : 'Create and start computer';
+  } catch (error) { $("runpodCreateState").textContent = error.message; }
+  finally { $("runpodReviewPod").disabled = false; }
+}
+async function createReviewedComputer() {
+  if (creationBusy) return;
+  const review = creationReview;
+  if (!review || !$("runpodCostConfirm").checked || Date.now() - review.at > 300000
+    || JSON.stringify(review.input) !== JSON.stringify(creationInput())) {
+    invalidateCreationReview();
+    $("runpodCreateState").textContent = "Review the current price and confirm it before creating a computer.";
+    return;
+  }
+  creationBusy = true;
+  invalidateCreationReview();
+  $("runpodReviewPod").disabled = true;
+  $("runpodCreateState").textContent = "Creating your cloud computer. Please wait…";
+  try {
+    const created = await accountApi("/pods", { ...review.input, expectedPricePerHr: review.rate, confirm: "CREATE PAID POD",
+      ...(review.input.installAI ? { requestId: crypto.randomUUID() } : {}) });
+    if (review.input.installAI) {
+      document.dispatchEvent(new CustomEvent('aiplay:cloud-install-progress', { detail: created }));
+      if (created.podId) document.dispatchEvent(new CustomEvent('aiplay:cloud-computer-created', { detail: { id: created.podId } }));
+      $('runpodCreateState').textContent = created.error || 'Computer created. AI installation is starting.';
+      return;
+    }
+    $("runpodWorkerUrl").value = created.pod.workerUrl;
+    document.dispatchEvent(new CustomEvent("aiplay:cloud-computer-created", { detail: { id: created.pod.id } }));
+    $("runpodCreateState").textContent = `Created ${created.pod.name}. Continue with AI service setup.`;
+    await loadAccount();
+  } catch (error) { $("runpodCreateState").textContent = `${error.message} Check existing computers before trying again.`; }
+  finally { creationBusy = false; $("runpodReviewPod").disabled = false; }
 }
 
 function setState(text, error = false) {
@@ -243,6 +364,7 @@ function fillModels() {
   for (const name of choices) select.add(new Option(name, name));
   if ([...select.options].some((o) => o.value === before)) select.value = before;
   else if (choices.length === 1) select.value = choices[0];
+  if (/sd_xl_turbo/.test(select.value)) { $('imgRunPodCfg').value = '1'; $('imgSteps').value = '4'; }
 }
 
 async function refreshWorker() {
@@ -250,7 +372,7 @@ async function refreshWorker() {
   if ($("runpodWorkerUrl") && !$("runpodWorkerUrl").value) $("runpodWorkerUrl").value = status.url || "";
   if (!status.configured) {
     connected = false; objectInfo = null; fillModels();
-    setState("No worker saved. Open Connection to add its HTTPS URL and token.", true);
+    setState("Add a worker URL and token in Settings.", true);
     return status;
   }
   try {
@@ -266,8 +388,14 @@ async function refreshWorker() {
   return status;
 }
 
-function openSettings() { $("runpodConnection").hidden = false; $("runpodWorkerUrl").focus(); }
-function closeSettings() { $("runpodConnection").hidden = true; }
+function openSettings() {
+  document.querySelector('.rail [data-view="settings"]')?.click();
+  revealSetting($("set-runpod"));
+  $("set-runpod").scrollIntoView({ block: "start" });
+  $("cloudComputerConnection").open = true;
+  document.dispatchEvent?.(new Event("aiplay:cloud-setup-open"));
+  $("runpodWorkerUrl").focus({ preventScroll: true });
+}
 
 function dimensions(kind) {
   if (kind === "vid" && target(kind) === "runpod") {
@@ -300,7 +428,7 @@ function note(kind, text, error = false) {
 
 async function ensureWorker() {
   if (!connected) await refreshWorker();
-  if (!connected) throw new Error("Start the Pod, then open Connection and connect the worker.");
+  if (!connected) throw new Error("Start the Pod, then open Settings and connect the worker.");
 }
 
 async function submit(kind) {
@@ -389,21 +517,89 @@ function resume(jobs) {
   }
 }
 
+// Preparing a sample only fills the existing creation screen. Make remains the user's action.
+export function prepareCloudSample(goal, doc = document, profile) {
+  const kind = ['music', 'pictures', 'video'].includes(goal) ? goal : 'pictures';
+  const set = (id, value, event = 'input') => {
+    const input = doc.getElementById(id); if (!input) return;
+    input.value = value; input.dispatchEvent(new Event(event, { bubbles: true }));
+  };
+  if (kind === 'pictures') {
+    set('imgPrompt', 'A peaceful mountain lake at sunrise, watercolor illustration');
+    set('imgCount', '1', 'change'); set('imgSize', 'custom', 'change');
+    set('imgW', '512'); set('imgH', '512'); set('imgSteps', '4'); set('imgRunPodCfg', '1');
+    const picker = doc.getElementById('imgRunPodCheckpoint');
+    const model = [...(picker?.options || [])].find(option => /sd_xl_turbo/.test(option.value));
+    if (model) set('imgRunPodCheckpoint', model.value, 'change');
+  } else if (kind === 'music') {
+    set('caption', 'Gentle acoustic guitar and warm piano, calm instrumental music');
+    set('maxDur', '30');
+    const picker = doc.getElementById('musicEngine');
+    const wanted = profile?.template === 'ace-step15' ? `ace-step15:${profile.settings.dit}` : profile?.settings?.checkpoint ? `yue2-comfy:${profile.settings.checkpoint}` : null;
+    const model = [...(picker?.options || [])].find(option => wanted ? option.value === wanted : option.value.startsWith('yue2-comfy'));
+    if (wanted && !model) throw Error('Refresh the Music model list to select this installed model.');
+    if (model) set('musicEngine', model.value, 'change');
+    if (profile?.template === 'ace-step15') {
+      set('aLm', profile.settings.lm, 'change'); set('aSteps', String(profile.settings.steps)); set('aCfg', String(profile.settings.cfg));
+    }
+  } else {
+    set('vidPrompt', 'A paper boat floating gently on a quiet pond, soft morning light');
+    set('vidSecs', '2'); set('vidRunPodModel', 'ltx', 'change');
+    set('vidRunPodSize', '512x320', 'change'); set('vidSteps', '8');
+    if (profile?.template === 'ltx') {
+      set('vidSecs', String(profile.settings.seconds)); set('vidRunPodSize', `${profile.settings.width}x${profile.settings.height}`, 'change');
+    }
+  }
+  doc.querySelector(`.rail [data-view="${{ music: 'create', pictures: 'images', video: 'video' }[kind]}"]`)?.click();
+  doc.getElementById({ music: 'caption', pictures: 'imgPrompt', video: 'vidPrompt' }[kind])?.focus();
+  return kind;
+}
+
+function prepareSelectedSample(detail) {
+  const plan = getSetupPlan('runpod'), kind = detail?.goal || 'pictures';
+  const profile = plan?.profiles.find(p => p.category === kind);
+  if (kind === 'music' && profile) {
+    document.dispatchEvent(new CustomEvent('aiplay:setup-model', { detail: { target: 'runpod', profile } }));
+    return kind;
+  }
+  try { return prepareCloudSample(kind, document, profile); }
+  catch (e) { setState(e.message, true); }
+}
+
 async function init() {
   if (!$("imgRenderWhere") || !$("vidRenderWhere")) return;
   let status = null;
   try { status = await (await fetch("/api/status")).json(); } catch { return; }
   if (!status?.config?.remoteOnly) return;
+  document.addEventListener('aiplay:cloud-sample', event => prepareSelectedSample(event.detail));
+  document.addEventListener('aiplay:model-plan', event => {
+    if (event.detail?.target !== 'runpod') return;
+    invalidateCreationReview();
+    if (runpodAccount) loadAccount().catch(() => {});
+    refreshSetup().catch(() => {});
+  });
+  document.addEventListener('aiplay:cloud-worker-connected', () => {
+    refreshWorker().then(() => document.dispatchEvent(new Event('aiplay:cloud-computer-refresh'))).catch(() => {});
+  });
   for (const kind of ["img", "vid"]) {
     $(`${kind}RunPodBlock`).hidden = false;
     $(`${kind}RenderWhere`).value = "runpod";
     paintTarget(kind);
   }
   paintRemoteModel();
+  $('imgRunPodCheckpoint').addEventListener('change', () => {
+    if (/sd_xl_turbo/.test($('imgRunPodCheckpoint').value)) { $('imgRunPodCfg').value = '1'; $('imgSteps').value = '4'; }
+  });
   $("vidRunPodModel")?.addEventListener("change", () => paintRemoteModel());
   for (const button of document.querySelectorAll("[data-runpod-settings]")) button.addEventListener("click", openSettings);
-  $("runpodConnectionClose").addEventListener("click", closeSettings);
-  $("runpodConnection").addEventListener("click", (event) => { if (event.target === $("runpodConnection")) closeSettings(); });
+  $("runpodConnection").hidden = false;
+  $("cloudComputerConnection").hidden = false;
+  $("runpodModeHint").hidden = true;
+  $("runpodRefreshUsage").addEventListener("click", async () => {
+    const button = $("runpodRefreshUsage"); button.disabled = true;
+    try { await loadAccount(); }
+    finally { button.disabled = false; }
+  });
   $("runpodConnectionForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = $("runpodConnect"); button.disabled = true;
@@ -415,14 +611,16 @@ async function init() {
       refreshSetup();
       const hardware = (result.devices || []).map((d) => d.name || d.type).filter(Boolean).join(" / ");
       setState(`Connected${hardware ? ` · ${hardware}` : ""}.`);
+      document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
     } catch (error) { connected = false; setState(friendlyError(error), true); }
     finally { button.disabled = false; }
   });
   $("runpodAccountForm").addEventListener("submit", async (event) => {
     event.preventDefault(); const button = $("runpodAccountConnect"); button.disabled = true;
     try {
-      await accountApi("/connect", { apiKey: $("runpodApiKey").value }); $("runpodApiKey").value = "";
-      renderAccount(await accountApi("/overview"));
+      await api("/computer/credentials", { apiKey: $("runpodApiKey").value }); $("runpodApiKey").value = "";
+      await loadAccount();
+      document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
     finally { button.disabled = false; }
   });
@@ -432,7 +630,8 @@ async function init() {
     const accepted = row?.querySelector("[data-model-terms]")?.checked === true;
     if (!accepted) { $("runpodModelState").textContent = "Review and accept the model repository terms first."; $("runpodModelState").classList.add("warnline"); return; }
     button.disabled = true;
-    try { $("runpodModelState").classList.remove("warnline"); renderSetup(await api("/setup/install", { bundle: button.dataset.modelInstall, acceptLicense: true })); }
+    const modelToken = row?.querySelector('[data-model-token]')?.value.trim();
+    try { $("runpodModelState").classList.remove("warnline"); renderSetup(await api("/setup/install", { bundle: button.dataset.modelInstall, acceptLicense: true, ...(modelToken ? { modelToken } : {}) })); }
     catch (error) { $("runpodModelState").textContent = friendlyError(error); $("runpodModelState").classList.add("warnline"); button.disabled = false; }
   });
   $("runpodCancelModel").addEventListener("click", async () => {
@@ -442,10 +641,18 @@ async function init() {
   $("runpodAccountDisconnect").addEventListener("click", async () => {
     try {
       await accountApi("/disconnect", {}); runpodAccount = null; $("runpodAccountPanel").hidden = true;
-      $("runpodAccountState").textContent = "RunPod account API key removed from this PC.";
+      publishBalance(null);
+      document.dispatchEvent(new Event("aiplay:cloud-computer-refresh"));
+      $("runpodAccountState").textContent = "Saved key removed";
+      $("runpodBalance").textContent = "Account not connected";
+      $("runpodBalance").className = "chip";
+      $("runpodUsageUpdated").textContent = "";
     } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
   });
   $("runpodReviewPod").addEventListener("click", reviewPod);
+  document.addEventListener("aiplay:cloud-create-open", loadCreationChoices);
+  for (const id of ["runpodGpu", "runpodVolume", "runpodCloud", "runpodPodName", "runpodAutoInstall"])
+    $(id).addEventListener("input", invalidateCreationReview);
   $("runpodCreateTemplates").addEventListener("click", async () => {
     const button = $("runpodCreateTemplates"); button.disabled = true; button.textContent = "Creating templates…";
     try {
@@ -474,19 +681,8 @@ async function init() {
     try { await navigator.clipboard.writeText($("runpodBootstrapCommand").value); $("runpodBootstrapState").textContent = "Bootstrap command copied."; }
     catch { $("runpodBootstrapCommand").select(); $("runpodBootstrapState").textContent = "Press Ctrl+C to copy the selected command."; }
   });
-  $("runpodCostConfirm").addEventListener("change", () => { $("runpodCreatePod").disabled = !$("runpodCostConfirm").checked; });
-  $("runpodCreatePod").addEventListener("click", async () => {
-    const button = $("runpodCreatePod"); button.disabled = true; button.textContent = "Creating Pod…";
-    try {
-      const created = await accountApi("/pods", { confirm: "CREATE PAID POD", name: $("runpodPodName").value,
-        gpuTypeId: $("runpodGpu").value, cloudType: $("runpodCloud").value,
-        volumeInGb: Number($("runpodVolume").value), containerDiskInGb: 20 });
-      $("runpodWorkerUrl").value = created.pod.workerUrl;
-      $("runpodCreateReview").hidden = true; renderAccount(await accountApi("/overview"));
-      $("runpodAccountState").textContent = `Created ${created.pod.name}. ${created.next}`;
-    } catch (error) { $("runpodAccountState").textContent = error.message; $("runpodAccountState").classList.add("warnline"); }
-    finally { button.textContent = "Create paid Pod"; button.disabled = !$("runpodCostConfirm").checked; }
-  });
+  $("runpodCostConfirm").addEventListener("change", () => { $("runpodCreatePod").disabled = creationBusy || !creationReview || !$("runpodCostConfirm").checked; });
+  $("runpodCreatePod").addEventListener("click", createReviewedComputer);
   $("runpodPodList").addEventListener("click", async (event) => {
     const button = event.target.closest("[data-pod-power]"); if (!button) return;
     const action = button.dataset.podPower;
@@ -507,6 +703,13 @@ async function init() {
   }, true);
   refreshWorker().catch((error) => setState(error.message, true));
   loadAccount();
+  setInterval(async () => {
+    if (document.hidden || !runpodAccount || balanceLoading) return;
+    balanceLoading = true;
+    try { renderBalance(await accountApi('/overview')); }
+    catch { publishBalance(null,true); }
+    finally { balanceLoading = false; }
+  }, 60000);
 }
 
 if (typeof document !== "undefined") init();

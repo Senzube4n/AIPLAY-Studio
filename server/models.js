@@ -53,6 +53,8 @@
  * hardship: `homeFor()` links to the publisher, `download()` fetches from them,
  * and Studio never touches the bytes.
  */
+import { MODEL_BUNDLES, ACE_VARIANTS } from '../shared/model-bundles.js';
+import { MODEL_PROFILES } from '../shared/model-profiles.js';
 import { createWriteStream } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
 import { EventEmitter, once } from "node:events";
@@ -1249,27 +1251,7 @@ export const CATALOG = [
       note: PERMISSIVE_NOTE + " ACE-Step's model card adds, of the music: \"You can strictly use the generated music for commercial purposes.\" A LoRA you add is licensed by its own author, and some forbid commercial use.",
     },
     required: false,
-    files: [
-      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/diffusion_models/acestep_v1.5_turbo.safetensors`,
-        dest: M("diffusion_models/acestep_v1.5_turbo.safetensors"),
-        bytes: 4_787_825_604,
-        sha256: "3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7" },
-      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/vae/ace_1.5_vae.safetensors`,
-        dest: M("vae/ace_1.5_vae.safetensors"),
-        bytes: 337_431_732,
-        sha256: "6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb" },
-      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/text_encoders/qwen_0.6b_ace15.safetensors`,
-        dest: M("text_encoders/qwen_0.6b_ace15.safetensors"),
-        bytes: 1_191_588_248,
-        sha256: "fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7" },
-      /* The planner. `alt` makes the 1.7B count (ComfyUI's plain "split"
-       * template uses it): 3.7 GB against 8.4, for a smaller card. */
-      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/text_encoders/qwen_4b_ace15.safetensors`,
-        dest: M("text_encoders/qwen_4b_ace15.safetensors"),
-        alt: ["qwen_1.7b_ace15.safetensors"],
-        bytes: 8_379_154_232,
-        sha256: "ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873" },
-    ],
+    files: MODEL_BUNDLES['ace15-turbo'].files.map(f => ({ url: f.url, dest: M(f.relative), bytes: f.bytes, sha256: f.sha256, ...(f.relative.endsWith('qwen_4b_ace15.safetensors') ? { alt: ['qwen_1.7b_ace15.safetensors'] } : {}) })),
     note: "14.7 GB in four files (diffusion_models, vae, text_encoders). Turbo renders in 8 steps; ACE-Step documents 10 seconds to 10 minutes and 50+ languages. Covers and LoRAs work on turbo; Extract, Lego and Complete need ACE-Step's base model, which Studio does not drive. Not yet timed on this machine. Model card and docs: https://huggingface.co/ACE-Step/Ace-Step1.5",
     requires: {
       vramMinGb: 8, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32,
@@ -2302,24 +2284,8 @@ export const CATALOG = [
      * shape and belong in `note`: a paid agreement at $10M annual revenue OR
      * MORE (§2.1 — exactly $10M is above the line), and Attachment A §20 forbids
      * use in a product that competes with Lightricks' own offerings. */
-    files: [
-      { url: `${HF}/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors`,
-        dest: M("diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"), bytes: 21504034224 },
-      { url: `${HF}/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors`,
-        dest: M("text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"), bytes: 15372969374 },
-      { url: `${HF}/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-conv-bf16.safetensors`,
-        dest: M("vae/ltx-2.5-video-vae-conv-bf16.safetensors"), bytes: 1452269922,
-        /* The DIFFUSION-decoder VAE (CausalDiffusionVAE, 1.47 GB) is what the
-         * ComfyUI LTX 2.5 template names. ComfyUI's VAELoader reads either,
-         * and config.js loads it when the conv one is absent. */
-        alt: ["ltx-2.5-video-vae-bf16.safetensors"] },
-      { url: `${HF}/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors`,
-        dest: M("vae/ltx-2.5-audio-vae-bf16.safetensors"), bytes: 364866540 },
-      // Not optional. The whole speed advantage is sampling at half size and
-      // upscaling the LATENT — without this there is no second pass.
-      { url: `${HF}/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors`,
-        dest: M("latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"), bytes: 995778752 },
-    ],
+    files: MODEL_BUNDLES.ltx25.files.map(f => ({ url: f.url, dest: M(f.relative), bytes: f.bytes, sha256: f.sha256,
+      ...(f.relative.endsWith('ltx-2.5-video-vae-conv-bf16.safetensors') ? { alt: ['ltx-2.5-video-vae-bf16.safetensors'] } : {}) })),
     note: "39.69 GB. Measured here at 121 s for a 5-second 1280x704 clip with audio — against 308 s for MiniMax H3 at 8 steps and 660 s at 20, and better by eye. The speed is the schedule, not the model: 8 steps at half resolution, a latent upscale, then 3 steps at full size. ⚠ Free below $10M annual revenue; at or above that Lightricks require a paid agreement, and their licence forbids use in a product competing with their own.",
     requires: {
       vramMinGb: 16, vramRecGb: 16, ramMinGb: 32, ramRecGb: 32,
@@ -3086,6 +3052,25 @@ export const CATALOG = [
 
 /* Optional downloads stay separate from each engine's ordinary install. The
  * files have no alternates: another checkpoint is not the selected experiment. */
+// Exact XL manifests use the existing catalogue/downloader. Native ACE minima
+// do not establish a ComfyUI BF16 + 4B-planner floor, so fit stays unknown.
+CATALOG.push(...ACE_VARIANTS.filter(v => v.id !== 'ace15-turbo').map(v => ({
+  ...CATALOG.find(c => c.id === 'musicAceStep15'), id: v.capability,
+  label: 'Music engine · ACE-Step 1.5 ' + v.variant + ' (experimental)', required: false,
+  files: v.files.map(f => ({ url: f.url, dest: M(f.relative), bytes: f.bytes, sha256: f.sha256 })),
+  why: 'The publisher’s XL variant using the existing ACE ComfyUI workflow.',
+  note: MODEL_PROFILES.find(p => p.id === v.id).evidence,
+  requires: { hardwareAcceptance: MODEL_PROFILES.find(p => p.id === v.id).hardwareAcceptance, experimental: true, experimentalWhy: 'ComfyUI BF16 XL with the 4B planner: a minimum hardware floor has not been established. Native-backend minima do not establish this configuration’s fit.' },
+})));
+CATALOG.push({ id: 'imageSdxlTurbo', makes: 'picture', label: 'Pictures · SDXL Turbo (fp16)', required: false,
+  home: MODEL_BUNDLES['sdxl-turbo'].licenseUrl, licence: 'Stability AI model terms (review repository)',
+  why: 'A compact checkpoint using the existing picture workflow.',
+  outputRights: { class: 'unknown', sellable: null, url: MODEL_BUNDLES['sdxl-turbo'].licenseUrl, note: 'Review the publisher’s current model terms before use.' },
+  files: MODEL_BUNDLES['sdxl-turbo'].files.map(f => ({ url: f.url, dest: M(f.relative), bytes: f.bytes, sha256: f.sha256 })),
+  note: 'A40 image acceptance documented. Other hardware is estimated. 512 × 512, 4 steps, CFG 1.',
+  requires: { vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32, note: 'Conservative planning estimate for 512 × 512, batch 1; not a measured minimum.' },
+});
+
 CATALOG.push(...H3_W6A8_FILES.map((build) => ({
   id: build.id, addonFor: build.addonFor,
   // These optional checkpoint files identify the same canonical generator.
@@ -3707,10 +3692,14 @@ export function modulesOf(cap) {
   return cap?.needsModules || (cap?.needsPackage ? [cap.needsPackage] : []);
 }
 
+export function musicCapabilityFor(engine, dit = config.music.aceModel) {
+  return engine === 'ace-step15' ? ACE_VARIANTS.find(v => v.dit === dit)?.capability || MODEL_TO_CAPABILITY[engine] : MODEL_TO_CAPABILITY[engine];
+}
 export function markRequired(rows, { music = config.music, api = config.api } = {}) {
   const engines = music?.engines || {};
   const musicRows = new Set(Object.values(engines).map((e) => e?.capability).filter(Boolean));
-  const selected = engines[music?.engine]?.capability || null;
+  for (const v of ACE_VARIANTS) musicRows.add(v.capability);
+  const selected = music?.engine === 'ace-step15' ? musicCapabilityFor(music.engine, music.aceModel) : engines[music?.engine]?.capability || null;
   const hosted = !!api?.enabled && music?.engine === "minimax-music3";
   const chosen = !hosted && !!selected && rows.some((r) => r.id === selected && r.ready);
   return rows.map((r) => (!musicRows.has(r.id) ? r : {
@@ -3888,9 +3877,10 @@ export class ModelManager extends EventEmitter {
    * `.part` and only moved into place once the size matches exactly, so an
    * interrupted run can never leave a truncated file that looks complete.
    */
-  async download(id, { acceptRegion = false } = {}) {
-    const cap = CATALOG.find((c) => c.id === id);
+  async download(id, { acceptRegion = false, exact = false } = {}) {
+    let cap = CATALOG.find((c) => c.id === id);
     if (!cap) throw new Error(`unknown capability: ${id}`);
+    if (exact) cap = { ...cap, files: cap.files.map(f => ({ ...f, alt: [] })) };
     /* Enforced at the downloader, not at the button. A region-locked capability
      * cannot be fetched by a client that skipped the warning, by a stale page,
      * or by curl — which is the only version of this that means anything. */
@@ -3936,7 +3926,15 @@ export class ModelManager extends EventEmitter {
     if (previous) {
       if (!this.cancelled.has(id)) return { alreadyRunning: true };
       await previous;
-      return this.download(id, { acceptRegion });
+      return this.download(id, { acceptRegion, exact });
+    }
+    // Split profiles share VAE/encoders and therefore the same resumable .part
+    // files. Reserve synchronously before filesystem awaits to prevent two
+    // capabilities writing the same partial. Other independent downloads work.
+    const destinations = new Set(cap.files.map(f => path.resolve(f.dest)));
+    for (const pending of this.#pending.keys()) {
+      if (CATALOG.find(c => c.id === pending)?.files.some(f => destinations.has(path.resolve(f.dest))))
+        throw Error('A shared model file is downloading. Let it finish before installing this model.');
     }
     let release;
     this.#pending.set(id, new Promise((resolve) => { release = resolve; }));

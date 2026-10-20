@@ -1,0 +1,97 @@
+#cloudComputer { margin-top: 16px; }
+#set-hosted > .cloud-option { border: 1px solid var(--edge); border-radius: 12px; padding: 0 16px; margin-top: 12px; }
+#set-hosted > .cloud-option > summary { cursor: pointer; padding: 16px 0; color: var(--ink); font-weight: 600; }
+#set-hosted > .cloud-option[open] { padding-bottom: 16px; }
+#cloudModelBrowser { margin: 18px 0; padding: 16px; border: 1px solid var(--edge); border-radius: 12px; background: var(--panel); }
+#cloudModelBrowser .catalog-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:18px 0; }
+#cloudModelBrowser .catalog-heading h3 { margin:5px 0; font-size:1.4rem; }
+#cloudModelBrowser .catalog-eyebrow { color:var(--primary); letter-spacing:.15em; font-size:.65rem; }
+#cloudModelBrowser .catalog-tabs { display:flex; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--edge); padding-bottom:12px; }
+#cloudModelBrowser .catalog-tabs [aria-pressed="true"] { border-color:var(--primary); color:var(--primary); background:var(--raise); }
+#cloudModelBrowser .catalog-search { display:flex; gap:8px; }
+#cloudModelBrowser .catalog-search input { flex:1; min-width:0; }
+#cloudModelBrowser .catalog-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
+#cloudModelBrowser .catalog-filters label { display:grid; gap:6px; color:var(--dim); font-size:.75rem; }
+#cloudModelBrowser .catalog-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin-top:18px; }
+#cloudModelBrowser .catalog-card { display:block; padding:0; text-align:left; border:1px solid var(--edge); border-radius:12px; overflow:hidden; color:var(--ink); background:var(--raise); cursor:pointer; font:inherit; min-width:0; }
+#cloudModelBrowser .catalog-card:hover, #cloudModelBrowser .catalog-card:focus-visible { border-color:var(--primary); }
+#cloudModelBrowser .catalog-art { aspect-ratio:4/3; position:relative; background:linear-gradient(135deg,var(--raise),color-mix(in srgb,var(--primary) 18%,var(--panel))); }
+#cloudModelBrowser .catalog-art img { width:100%; height:100%; object-fit:cover; display:block; }
+#cloudModelBrowser .catalog-kind { position:absolute; top:10px; left:10px; padding:4px 8px; border-radius:6px; background:var(--panel); font-size:.65rem; }
+#cloudModelBrowser .catalog-copy { display:grid; gap:7px; padding:13px; overflow-wrap:anywhere; }
+#cloudModelBrowser .catalog-author, #cloudModelBrowser .catalog-copy small { color:var(--dim); font-size:.7rem; }
+#cloudModelBrowser .catalog-copy strong { font-size:.9rem; }
+#cloudModelBrowser .catalog-copy .hint { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#cloudModelBrowser .catalog-detail { border:1px solid var(--primary); border-radius:12px; padding:16px; margin-top:18px; overflow-wrap:anywhere; scroll-margin-top:150px; }
+#cloudModelBrowser .catalog-consent { display:flex; gap:8px; margin:16px 0; font-size:.8rem; }
+#cloudModelBrowser .catalog-disk-row, #cloudModelBrowser .catalog-transfer { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 0; border-bottom:1px solid var(--edge); overflow-wrap:anywhere; }
+#cloudModelBrowser .catalog-disk-row > div { min-width:0; display:grid; gap:6px; }
+#cloudModelBrowser .catalog-transfer { display:grid; }
+#cloudModelBrowser progress { width:100%; accent-color:var(--primary); }
+#cloudModelBrowser .params select { max-width:100%; }
+#set-model-connections form { margin:20px 0; display:grid; gap:10px; }
+#set-model-connections .cta { display:flex; gap:8px; flex-wrap:wrap; }
+@media(max-width:550px) { #cloudModelBrowser .catalog-grid, #cloudModelBrowser .catalog-filters { grid-template-columns:1fr; } }
+#cloudSetup .cloud-flow-head, #cloudSetup .cloud-flow-states { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+#cloudSetup .cloud-flow-head h4 { margin: 0; }
+#cloudSetup { padding:22px; border:1px solid var(--edge); border-radius:16px; }
+#cloudSetup .cloud-flow-head { position:sticky; top:var(--cloud-nav-height,100px); z-index:4; background:var(--panel); padding:14px 0; margin-bottom:18px; border-bottom:1px solid var(--edge); }
+#cloudSetup .cloud-flow-head { background:var(--bg); background:rgb(from var(--panel) r g b / 1); }
+#cloudSetup .cloud-flow-head::before { content:''; position:absolute; left:0; right:0; bottom:100%; height:12px; background:inherit; }
+#cloudSetup .cloud-flow-head .hint { display:block; margin:4px 0 0; font-size:.7rem; }
+#cloudSetup .cloud-flow-head h4 { font-size:1rem; letter-spacing:.06em; }
+#cloudSetup .cloud-setup-steps { margin:8px 0 22px; gap:8px; }
+#cloudSetup .cloud-setup-steps button { border-radius:999px; padding:11px 15px; min-height:40px; }
+#cloudSetup .cloud-setup-steps button.active { background:var(--primary); color:var(--on); border-color:var(--primary); }
+#cloudSetupStatus { display:none; }
+#cloudSetup .cloud-flow-box .pv { font-family:var(--sans); font-size:.82rem; }
+#cloudSetup [role="tabpanel"] > h3 { font-size:1.25rem; margin-top:24px; }
+#cloudSetup .cloud-advanced-button { padding-top:18px; margin-top:22px; border-top:1px solid var(--edge); }
+#cloudSetup .cloud-install-states { display:flex; justify-content:space-between; gap:12px; margin:22px 0 16px; flex-wrap:wrap; }
+#cloudInstallProgress { width:100%; height:6px; accent-color:var(--primary); display:block; margin:18px 0; }
+#cloudInstallStop, #cloudSetupAdvanced { min-height:42px; padding:10px 16px; }
+#cloudSetup .cloud-install-checklist { list-style:none; padding:0; margin:20px 0 26px; display:grid; gap:16px; font-size:.82rem; }
+#cloudSetup .cloud-install-checklist li { display:flex; gap:12px; align-items:center; color:var(--dim); }
+#cloudSetup .cloud-install-checklist li::before { content:'○'; width:14px; flex-shrink:0; }
+#cloudSetup .cloud-install-checklist [data-state="done"] { color:var(--ok); }
+#cloudSetup .cloud-install-checklist [data-state="done"]::before { content:'✓'; }
+#cloudSetup .cloud-install-checklist [data-state="current"] { color:var(--ink); font-weight:600; }
+#cloudSetup .cloud-install-checklist [data-state="current"]::before { content:'→'; color:var(--primary); }
+#cloudSetup .cloud-install-checklist [data-state="failed"] { color:var(--err); }
+#cloudSetup .cloud-install-checklist [data-state="failed"]::before { content:'!'; }
+#set-runpod details.more > summary { display:flex; align-items:center; gap:8px; padding:11px 14px; border:1px solid var(--edge); border-radius:9px; background:var(--raise); color:var(--ink); width:fit-content; max-width:100%; box-sizing:border-box; min-height:40px; }
+#set-runpod details.more > summary:hover { border-color:var(--primary); }
+#set-runpod details.more > summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+#set-runpod details.more[open] > summary { border-color:var(--primary); margin-bottom:14px; }
+#cloudComputerConnection:not([open]) { display:none; }
+@media(max-width:550px) { #cloudSetup { padding:14px; } #cloudSetup .cloud-setup-steps button { padding:9px 11px; } }
+#cloudSetup .cloud-goals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; padding: 0; margin: 16px 0; }
+#cloudSetup .cloud-goals legend { color: var(--dim); font-size: .8rem; margin-bottom: 10px; }
+#cloudSetup .cloud-goals label { border: 1px solid var(--edge); border-radius: 10px; padding: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+#cloudSetup .cloud-goals label:has(input:checked) { border-color: var(--primary); background: var(--raise); }
+#cloudSetup .cloud-flow-box { background: var(--raise); border: 1px solid var(--edge); border-radius: 12px; padding: 16px; margin: 16px 0; }
+#cloudSetup .cloud-flow-box > label { color: var(--dim); }
+#cloudSetup .cloud-flow-box .pv { justify-content: flex-end; text-align: right; }
+#cloudSetup [role="tabpanel"] > h3 { margin-top: 18px; }
+#cloudSetup { margin-top: 16px; }
+#cloudSetup .cloud-setup-steps { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; color: var(--dim); font-size: .8rem; }
+#cloudSetup .cloud-setup-steps .active { color: var(--primary); border-color: var(--primary); font-weight: 600; }
+#cloudSetup .cloud-setup-steps .done { color: var(--ink); }
+#cloudSetup .cta { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#cloudSetup .line { width: 100%; max-width: 100%; box-sizing: border-box; }
+#cloudSetup form { margin-top: 12px; display: grid; gap: 9px; }
+#cloudSetup .runpod-connect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#cloudSetup .params .pv { min-width: 0; flex-wrap: wrap; }
+#cloudSetup .sel2 { max-width: 100%; }
+#cloudComputer .cta { flex-wrap: wrap; gap: 8px; }
+#cloudComputer .params .pv { min-width: 0; flex-wrap: wrap; }
+#cloudComputer .params .line { max-width: 240px; min-width: 0; }
+#cloudComputer pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); font-size: .75rem; }
+#cloudComputer #cloudComputerCleanupFiles { overflow-wrap: anywhere; color: var(--dim); }
+#cloudComputer .chip { white-space: normal; }
+#cloudComputer .sel2 { max-width: 100%; }
+@media (max-width: 700px) {
+  #cloudSetup .cloud-setup-steps { gap: 6px; }
+  #cloudSetup .cloud-flow-box .pv { justify-content: flex-start; text-align: left; }
+  #cloudComputer .cta > button { max-width: 100%; white-space: normal; }
+}

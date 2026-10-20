@@ -1,12 +1,13 @@
 /** Local side of remote rendering: durable IDs, provenance and verified downloads. */
 import path from "node:path";
+import { workflowEvidenceKey, curatedArtifactKey } from './workflow-evidence.js';
 import { randomUUID, createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { PROTOCOL, MAX_ASSET, MAX_JSON, TERMINAL, MEDIA_EXT, endpoint, jobId, hashFile,
-  readJSON, jsonStore, relativeFile, validateGraph } from "./remote-common.js";
+  readJSON, jsonStore, relativeFile, validateGraph, readJsonCapped } from "./remote-common.js";
 import { buildRecord } from "./record.js";
 import { checkGraph, graphTexts } from "../safety/graph.js";
 import { fingerprintOf } from "../safety/minors.js";
@@ -32,28 +33,7 @@ export const MAX_JOB_BYTES = 4 * MAX_ASSET;
 export const MAX_MODELS_JSON = 64 * 1024 * 1024;
 export const OUTPUT_KINDS = new Set(["images", "videos", "audio", "gifs", "3d"]);
 
-/** The body of a worker answer as JSON, refused while reading once it passes `limit`. */
-export async function readJsonCapped(response, limit = MAX_JSON) {
-  const declared = Number(response.headers?.get?.("content-length"));
-  if (Number.isFinite(declared) && declared > limit) {
-    await response.body?.cancel?.().catch(() => {});
-    throw new Error(`The worker's answer is larger than ${Math.round(limit / 1048576)} MiB; it was not read.`);
-  }
-  if (!response.body) return JSON.parse((await response.text()) || "null");
-  const reader = response.body.getReader();
-  const parts = []; let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.length;
-    if (bytes > limit) {
-      await reader.cancel().catch(() => {});
-      throw new Error(`The worker's answer is larger than ${Math.round(limit / 1048576)} MiB; it was not read.`);
-    }
-    parts.push(value);
-  }
-  return JSON.parse(Buffer.concat(parts.map((p) => Buffer.from(p))).toString("utf8") || "null");
-}
+export { readJsonCapped } from "./remote-common.js";
 
 const safeOutputName = (name) => {
   try { relativeFile(name); } catch { return false; }
@@ -88,6 +68,7 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
   const saveConnection = jsonStore(path.join(dir, "connection.json"));
   let token = await getToken();
   let polling = false, closed = false, connecting = false;
+  let cloudStopping = false;
   let lastError = null;
   const active = () => Object.values(jobs).some(j => !TERMINAL.has(j.state) && j.state !== "recording");
   const request = async (route, init = {}, target = connection, auth = token) => {
@@ -130,6 +111,7 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
       if (!auth || auth.length < 32 || /[\r\n]/.test(auth)) throw new Error("Enter the worker's token (at least 32 characters). This is not your RunPod account API key.");
       const health = await verify(target, auth);
       target.workerId = health.workerId;
+      target.capabilities = health.capabilities || { comfy: true, aceTraining: false };
       if (active() && (target.url !== connection.url || target.workerId !== connection.workerId)) throw new Error("A job started while connecting. Wait for it before changing workers.");
       await setToken(auth); await saveConnection(target);
       connection = target; token = auth; lastError = null;
@@ -152,7 +134,37 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
     return json(`/v1/assets?name=${encodeURIComponent(name)}`, { method: "POST", body, duplex: "half",
       signal: AbortSignal.timeout(300000), headers: { "Content-Type": "application/octet-stream" } });
   }
-  async function submit({ graph, bindings = [], label = "Remote render", actor = "system", private: isPrivate = false }) {
+  async function trainingUpload(id, name, stream) {
+    if (connecting) throw new Error("Connection is changing; try again.");
+    relativeFile(name);
+    if (name.includes("/") || !/\.(mp3|wav|flac|ogg|opus)$/i.test(name)) throw new Error("Unsupported training audio file.");
+    const health = await verify();
+    if (!health.capabilities?.aceTraining) throw new Error("This worker does not offer ACE-Step training.");
+    let bytes = 0;
+    const body = Readable.from((async function* () {
+      for await (const chunk of stream) {
+        bytes += chunk.length;
+        if (bytes > MAX_ASSET) throw new Error("Training audio exceeds 512 MiB.");
+        yield chunk;
+      }
+    })());
+    return json(`/v1/custom-models/${encodeURIComponent(id)}/files?name=${encodeURIComponent(name)}`, {
+      method: "POST", body, duplex: "half", signal: AbortSignal.timeout(300000),
+      headers: { "Content-Type": "application/octet-stream" },
+    });
+  }
+  async function trainingList() {
+    const health = await verify();
+    if (!health.capabilities?.aceTraining) return { available: false, models: [], why: "This worker does not offer ACE-Step training." };
+    return json("/v1/custom-models");
+  }
+  async function trainingAction(body) {
+    const health = await verify();
+    if (!health.capabilities?.aceTraining) throw new Error("This worker does not offer ACE-Step training.");
+    return post("/v1/custom-models", body);
+  }
+  async function submit({ graph, bindings = [], label = "Remote render", actor = "system", private: isPrivate = false, fromQueue = false }) {
+    if (cloudStopping && !fromQueue) throw new Error("The cloud computer is preparing to stop. Start it again before adding work.");
     if (connecting) throw new Error("Connection is changing; try again.");
     validateGraph(graph);
     /* ⚠ SEXUAL CONTENT INVOLVING MINORS IS NEVER SENT TO THE POD, AND NEVER
@@ -171,8 +183,9 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
       announceRefusal({ door: "runpod.submit", via: "runpod", actor, code: safety.code });
       throw safetyError({ door: "runpod.submit", hint: safety.hint, code: safety.code, reason: safety.reason, found: safety.found });
     }
-    await verify();
+    const runtime = await verify();
     if (connecting) throw new Error("Connection is changing; try again.");
+    if (cloudStopping && !fromQueue) throw new Error("The cloud computer is preparing to stop. Start it again before adding work.");
     const id = randomUUID();
     const runId = `remote-${id}`;
     /* "Don't record the prompt" (the Images screen's private switch): the
@@ -180,6 +193,18 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
      * does (record.js), the label keeps only its kind, and the graph leaves
      * jobs.json as soon as the worker has it (tick, complete). */
     const priv = isPrivate === true;
+    let artifactEvidence = null;
+    if (!priv && runtime.installCommit && runtime.modelSetupVersion === 1) {
+      const known = curatedArtifactKey(graph);
+      if (known) {
+        // An older worker may not implement setup; it keeps its working render
+        // path, but contributes no artifact acceptance evidence.
+        const setup = await json('/v1/setup').catch(() => null);
+        if (setup?.bundles?.some(b => b.id === known.id && b.state === 'ready')) artifactEvidence = known.key;
+      }
+    }
+    if (connecting || connection.workerId !== runtime.workerId) throw Error('Connection changed while checking model files. Try again.');
+    if (cloudStopping && !fromQueue) throw Error('The cloud computer is preparing to stop. Start it again before adding work.');
     const record = buildRecord(graph, { runId, via: "runpod", actor, label, private: priv, enginePort: "remote", appVersion: "AIPLAY RunPod protocol 1" });
     record.remote = { workerId: connection.workerId, protocol: PROTOCOL };
     record.inputBindings = bindings;
@@ -191,8 +216,10 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
      * in full mode is judged with what it was made as. */
     const print = fingerprintOf(graphTexts(graph).positive);
     const job = { id, runId, graph, bindings, label: priv ? wordlessLabel(label) : String(label).slice(0, 160), actor, record,
+      ...(fromQueue ? { finishDuringStop: true } : {}),
       safety: print,
       ...(priv ? { private: true } : {}),
+      ...(artifactEvidence ? { workflowEvidence: { key: workflowEvidenceKey(graph), artifacts: artifactEvidence, installCommit: runtime.installCommit, version: runtime.version || null } } : {}),
       connection: { ...connection }, state: "recording", createdAt: Date.now(), outputs: [] };
     jobs[id] = job; await saveJobs(jobs);
     await append("library", { actor, type: "delegate", asset: `engine/${runId}`, data: record });
@@ -320,7 +347,8 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
           if (job.state === "submitting") {
             /* `private` tells the worker too (runpod-worker.js: no graph kept
              * after ComfyUI accepts it, stripped PNGs, no executedGraphHash). */
-            remote = await post("/v1/jobs", { id: job.id, graph: job.graph, bindings: job.bindings, ...(job.private ? { private: true } : {}) });
+            remote = await post("/v1/jobs", { id: job.id, graph: job.graph, bindings: job.bindings, ...(job.private ? { private: true } : {}),
+              ...(job.finishDuringStop ? { finishDuringStop: true } : {}) });
           } else remote = await json(`/v1/jobs/${job.id}`);
           if (remote.id !== job.id || !["queued", "submitting", "running", ...TERMINAL].includes(remote.state)) throw new Error("Worker returned an invalid job status.");
           job.remoteState = remote.state; job.error = null; lastError = null;
@@ -350,13 +378,58 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
     return { ...snapshot(job), remoteState: remote.state };
   }
   const timer = setInterval(() => { tick().catch(() => {}); }, pollMs); timer.unref();
-  return { connect, upload, submit, cancel, tick, verify,
+  return { connect, upload, submit, cancel, tick, verify, trainingUpload, trainingList, trainingAction,
+    resourceMissing: async (podId, workerURL) => {
+      if (workerURL !== `https://${podId}-8787.proxy.runpod.net`) return;
+      for (const job of Object.values(jobs)) if (job.connection?.url === workerURL && !TERMINAL.has(job.state)) {
+        job.state = 'uncertain'; job.error = 'The original cloud computer is no longer available. Check recovered files on this PC.';
+        if (job.private) job.graph = null;
+      }
+      await saveJobs(jobs);
+    },
+    setCloudStopping: value => { cloudStopping = !!value; },
+    cloud: async (route = "", body) => {
+      const health = await verify();
+      if (health.cloudManagerVersion !== 1) throw new Error("Update this worker to use Cloud Computer controls.");
+      if (!['', '/storage', '/policy', '/resume', '/lease', '/stop', '/prepare', '/cleanup'].includes(route)) throw new Error("Unknown cloud computer operation.");
+      const data = await (body === undefined ? json(`/v1/cloud${route}`) : post(`/v1/cloud${route}`, body));
+      if (route === '/storage') return data;
+      if (route === '/cleanup') return { freedBytes: data.freedBytes };
+      // Closed projection: a reply must never echo the submitted stop key or arbitrary worker fields.
+      const result = {};
+      for (const key of ['version', 'podId', 'minutes', 'authorized', 'available', 'lastActivity', 'pending', 'pendingRequestId', 'leaseUntil', 'frozen', 'errorCode', 'computeStopped', 'ready', 'storageVerified']) result[key] = data[key];
+      result.error = data.error ? 'Cloud worker needs attention' : null;
+      if (data.permit) result.permit = { id: data.permit.id, podId: data.permit.podId, issuedAt: data.permit.issuedAt, expiresAt: data.permit.expiresAt, root: data.permit.root };
+      if (data.workload) result.workload = { known: data.workload.known, busy: data.workload.busy, queued: data.workload.queued,
+        jobs: data.workload.jobs, transfers: data.workload.transfers, installing: data.workload.installing, training: data.workload.training, maintenance: data.workload.maintenance };
+      return result;
+    },
     /* The Pod ComfyUI's /object_info, which grows with every custom node it has. */
     models: async () => { await verify(); return json("/v1/models", undefined, connection, token, MAX_MODELS_JSON); },
+    loras: async () => { await verify(); return json("/v1/loras"); },
     setup: async () => { await verify(); return json("/v1/setup"); },
-    installBundle: async (bundle, acceptLicense) => { await verify(); return post("/v1/setup/install", { bundle, acceptLicense }); },
+    modelDisk: async (action = '', body) => { await verify(); return body === undefined ? json('/v1/models/disk') : post('/v1/models/disk/' + action,body); },
+    installCatalog: async (selection, acceptLicense, expected, modelToken) => {
+      await verify(); return post('/v1/setup/catalog', { selection, acceptLicense, expected, ...(modelToken ? { modelToken } : {}) });
+    },
+    installBundle: async (bundle, acceptLicense, modelToken) => {
+      if (modelToken !== undefined && (typeof modelToken !== 'string' || modelToken.length > 500 || /[\r\n]/.test(modelToken))) throw new Error('Enter a valid model access token.');
+      await verify(); return post("/v1/setup/install", { bundle, acceptLicense, ...(modelToken ? { modelToken } : {}) });
+    },
     cancelInstall: async () => { await verify(); return post("/v1/setup/cancel", {}); },
+    inferenceEvidence: (graph, health) => {
+      if (!health?.installCommit) return null;
+      const key = workflowEvidenceKey(graph);
+      const artifacts = curatedArtifactKey(graph)?.key;
+      if (!artifacts) return null;
+      const job = Object.values(jobs).filter(j => !j.private && j.state === 'completed' && j.outputs?.length
+        && j.connection.workerId === health.workerId && j.connection.url === connection.url
+        && j.workflowEvidence?.artifacts === artifacts && j.workflowEvidence.installCommit === health.installCommit && j.workflowEvidence.version === (health.version || null) && j.workflowEvidence.key === key)
+        .sort((a, b) => b.finishedAt - a.finishedAt)[0];
+      return job ? { at: job.finishedAt, workerId: health.workerId, installCommit: health.installCommit } : null;
+    },
     status: () => ({ configured: !!connection.url, url: connection.url || "", workerId: connection.workerId || null,
+      capabilities: connection.capabilities || null,
       hasToken: !!token, lastError, jobs: Object.values(jobs).map(snapshot).sort((a, b) => b.createdAt - a.createdAt) }),
     file: (id, fileId) => jobs[id]?.outputs.find(f => f.id === fileId)?.localFile || null,
     close: () => { closed = true; clearInterval(timer); } };

@@ -143,6 +143,9 @@ test("§2 the settings: tier sizes in H3's list, sol-attn on Fast, FastH3 Advanc
   assert.equal(fast.advanced.label, "FastH3 (experimental)");
   assert.equal(fast.advanced.note, "A distilled H3 model, 8 steps. About 1.4x the wait of Fast. Can change the subject's colour or add a white blob; check the take.");
   assert.equal(fast.advanced.label, tier.H3_MORE_MOTION.label, "one copy, h3tier.js");
+  /* Pin a disk with TaoMate here. The developer's real models folder may not
+   * have it, and fastNote must be checked against both disk states. */
+  const h3Fast = { ...h3, stepDefaults: { ...h3.stepDefaults, fast: 3 } };
   /* The Fast chip's note follows the saved sparse attention: never "as sharp" while sol-attn runs. */
   const fastInstalled = { ...h3, stepDefaults: { fast: 3, standard: 8, best: 20 } };
   assert.match(plain.fastNote(fastInstalled), /with sparse attention on: about 1\.15x faster per clip, slightly softer picture/);
@@ -326,10 +329,21 @@ test("§5 the plan: the card's size when none is named, each change said", () =>
 });
 
 test("§5 the plan: steps and sparse attention", () => {
-  /* A disk with every speed-up, named rather than read: without the Fast
-   * setting's file 3 steps is refused (taomate_test.js), and with references
-   * a missing 4-step file refuses too, so a PC without one failed here. */
-  const eng = { ...config.video.engines.h3, turboBuilds: { three: true, four: true, eight: true } };
+  /* A disk with the Fast setting's file: without it 3 steps is refused
+   * (taomate_test.js), and this section is about what Fast does. */
+  const eng = {
+    ...config.video.engines.h3,
+    steps: 8,
+    stepDefaults: { fast: 3, standard: 8, best: 20 },
+    turboBuilds: { three: true, four: true, eight: true },
+    plainBuilds: { three: true, four: true, eight: true },
+    refBuilds: { four: true, eight: true },
+    turboLora3: "taomate_h3_3step_comfy.safetensors",
+    turboLora4: "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+    refTurboLora4: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+    refTurboLora: "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+    refTurboSteps: 8,
+  };
   const refs = plain.videoPlan({ prompt: "<Picture 1> walks", steps: 3, refImages: ["a.png"] }, { engineKey: "h3", eng, h3: null });
   assert.equal(refs.steps, 4);
   assert.equal(refs.warnings.find((w) => w.id === "steps").text,

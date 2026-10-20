@@ -61,7 +61,7 @@ for (const [name, row] of [["meshFromImage", mesh], ["meshRig", rig]]) {
 }
 ok("the picture set includes Qwen and remains separate from mesh capabilities",
   CATALOG.filter(isPictureModel).map((c) => c.id).join(",")
-    === "coverArt,imageIdeogram,imageZImage,qwen-image-2.1,imageKrea2,imageZImageBase,imageAnima"
+    === "coverArt,imageIdeogram,imageZImage,qwen-image-2.1,imageKrea2,imageZImageBase,imageAnima,imageSdxlTurbo"
     && !CATALOG.filter(isPictureModel).some((c) => [MESH_CAP, RIG_CAP].includes(c.id)),
   CATALOG.filter(isPictureModel).map((c) => c.id).join(", "));
 

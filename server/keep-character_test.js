@@ -147,8 +147,11 @@ test("3: with references and no count named, the reference build's own count run
   const text = plan({ steps: 8 });
   assert.equal(text.character.keeps, false);
   assert.equal(text.notes.find((n) => n.id === "steps-measured"), undefined, "no character, nothing measured to fall short of");
-  /* The live config reads the same way (whatever this PC holds). */
-  assert.equal(videoPlan({ prompt: "a", refImages: ["a.png"] }, { engineKey: "h3", eng: H3 }).steps, referenceSteps(H3));
+  /* The live config either runs its reference file's own count or names the
+   * missing speed-up before rendering; a clean checkout has no model files. */
+  const live = videoPlan({ prompt: "a", refImages: ["a.png"] }, { engineKey: "h3", eng: H3 });
+  if (live.refusal) assert.equal(live.refusal.reason, "speedup-missing");
+  else assert.equal(live.steps, referenceSteps(H3));
 });
 
 test("3: the named disks plan the same on NVIDIA's per-path rule and on main's (AMD, Intel, the CPU)", () => {

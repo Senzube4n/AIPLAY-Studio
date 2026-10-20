@@ -219,7 +219,7 @@ test("the speed-ups are optional add-on rows of H3; its own row brings the 8-ste
   assert.deepEqual(ltxVae.alt, ["ltx-2.5-video-vae-bf16.safetensors"], "LTX's template VAE counts as present");
   /* videoPick() since setF, and the conv name repeated last: it is the file the
    * LTX row fetches, so a machine holding neither is told that one. */
-  assert.match(read("./config.js"), /videoVae: videoPick\("ltx", "videoVae", "vae", "ltx-2\.5-video-vae-conv-bf16\.safetensors", "ltx-2\.5-video-vae-bf16\.safetensors",\s*"ltx-2\.5-video-vae-conv-bf16\.safetensors"\),/,
+  assert.match(read("./config.js"), /videoVae: REMOTE_ONLY\s*\? "ltx-2\.5-video-vae-conv-bf16\.safetensors"\s*:\s*videoPick\("ltx", "videoVae", "vae", "ltx-2\.5-video-vae-conv-bf16\.safetensors", "ltx-2\.5-video-vae-bf16\.safetensors",\s*"ltx-2\.5-video-vae-conv-bf16\.safetensors"\),/,
     "and it is the one loaded when the conv one is absent");
 });
 

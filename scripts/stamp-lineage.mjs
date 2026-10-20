@@ -30,6 +30,7 @@ const git = (...a) => execFileSync("git", a, { cwd: ROOT, encoding: "utf8" }).tr
 
 const FORKS = [
   { letter: "B", name: "Bucky", repo: "bani4kaskashka/AIPLAY-Studio-Bucky-Fork", upstream: "Senzube4n/AIPLAY-Studio" },
+  { letter: "N", name: "Nemesis", repo: "nemesisone-dev/AIPLAY-Studio", upstream: "Senzube4n/AIPLAY-Studio" },
 ];
 
 /** Reconcile an inherited stamp with an explicitly configured origin. A ZIP

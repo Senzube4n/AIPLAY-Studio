@@ -41,6 +41,7 @@
   <link rel="stylesheet" href="modelfit.css">
   <!-- RunPod GPU mode (web/runpod-integrated.js). -->
   <link rel="stylesheet" href="runpod-integrated.css">
+  <link rel="stylesheet" href="cloud-computer.css">
   <!-- The ⓘ in every screen's header and the panel it opens. AFTER modelfit.css,
        because the verdict chips inside that panel ARE modelfit's `.fitbadge` —
        one badge, one palette, so the Models screen and this panel cannot show
@@ -1068,7 +1069,7 @@
         <div class="runpod-summary"><select id="vidRunPodModel" class="sel2" aria-label="Model on the Pod">
             <option value="ltx">LTX 2.5 distilled</option>
             <option value="h3">MiniMax H3</option>
-          </select><button class="edtool sm" type="button" data-runpod-settings>Connection…</button></div>
+          </select><button class="edtool sm" type="button" data-runpod-settings>Settings…</button></div>
         <div class="runpod-fields">
           <label class="flabel" for="vidRunPodSize">Remote size</label>
           <select id="vidRunPodSize" class="sel2">
@@ -1472,7 +1473,7 @@
           <option value="runpod">RunPod GPU</option>
         </select>
         <div id="imgRunPodOptions" class="runpod-options" hidden>
-          <div class="runpod-summary"><b>Checkpoint image</b><button class="edtool sm" type="button" data-runpod-settings>Connection…</button></div>
+          <div class="runpod-summary"><b>Checkpoint image</b><button class="edtool sm" type="button" data-runpod-settings>Settings…</button></div>
           <label class="flabel" for="imgRunPodCheckpoint">Model on the Pod</label>
           <select id="imgRunPodCheckpoint" class="sel2"><option value="">Connect to load remote models</option></select>
           <label class="flabel" for="imgRunPodCfg">Remote CFG</label>
@@ -4908,6 +4909,7 @@
       <div class="stagehead"><h2>Models</h2><span class="hint" id="modelsTotal"></span></div>
       <p class="hint">Only the music engine is required. Everything else is optional
         and downloads when you ask for it (never on its own).</p>
+      <details class="more"><summary>Choose models and computer</summary><div id="localModelPlan"></div></details>
       <div id="modelList" class="modellist"></div>
       <p class="hint" id="modelsNote"></p>
     </div>
@@ -5419,10 +5421,10 @@
            comes first and is never hidden behind the switch. -->
       <section class="pcard" id="set-hosted" data-nav="No strong graphics card?">
         <h3>No strong graphics card?</h3>
-        <p class="pcard-sub">Two ways to make what this PC can't, in this order. Nothing here is on until you choose it.</p>
+        <p class="pcard-sub">Choose one way to create without a local graphics card.</p>
 
-        <div class="cloudstep" id="cloudFriend">
-          <h4><span class="cloudnum">1</span> Ask a friend with a strong card to render for you</h4>
+        <details class="cloudstep cloud-option" name="cloud-choices" id="cloudFriend">
+          <summary><span class="cloudnum">1</span> Ask a friend</summary>
           <p class="hint" id="cloudFriendHow">Free: a friend with a strong card renders your music video's scenes
             on their PC.</p>
           <p class="hint" id="cloudFriendNote" hidden></p>
@@ -5430,10 +5432,10 @@
           <details class="more" id="cloudFriendMore"><summary>More: setting it up, and what it cannot do yet</summary>
             <p class="hint" id="cloudFriendLimits">Both of you run Full Studio and add each other once on Collab.</p>
           </details>
-        </div>
+        </details>
 
-        <div class="cloudstep" id="cloudPaid">
-          <h4><span class="cloudnum">2</span> Or pay for a service with your own key</h4>
+        <details class="cloudstep cloud-option" name="cloud-choices" id="cloudPaid">
+          <summary><span class="cloudnum">2</span> Paid services</summary>
           <p class="hint" id="cloudPaidHow">Off until you switch it on. Every paid run asks first and says what it
             costs. Studio uses only a key typed into Studio, never one from another program.</p>
 
@@ -5488,11 +5490,349 @@
           <p class="hint" id="cloudComfyNote">It runs in the launcher's own <b>Use Comfy API</b> mode, outside a music video.</p>
           <p class="hint">Get a key and credits at
             <a href="https://platform.comfy.org/profile/api-keys" target="_blank" rel="noopener">platform.comfy.org</a>.</p>
-        </div>
+        </details>
+
+        <details id="set-runpod" class="cloudstep cloud-option" name="cloud-choices">
+          <summary><span class="cloudnum">3</span> RunPod GPU</summary>
+          <p class="hint">One worker connection for music, pictures and video.</p>
+          <p class="hint" id="runpodModeHint">Open RunPod GPU from the launcher to configure your worker and account.</p>
+          <div id="cloudSetup" hidden>
+            <div class="cloud-flow-head"><div><h4>Cloud computer</h4><span class="hint">RunPod / Easy setup</span></div><span class="chip" id="cloudFlowAccount">Checking account</span></div>
+            <nav class="cloud-setup-steps" role="tablist" aria-label="Cloud setup">
+              <button class="edtool sm" id="cloudFlowGoalTab" role="tab" aria-controls="cloudFlowGoal" data-cloud-page="goal" type="button">1. Your goal</button>
+              <button class="edtool sm" id="cloudFlowCostsTab" role="tab" aria-controls="cloudFlowCosts" data-cloud-page="costs" type="button">2. Costs</button>
+              <button class="edtool sm" id="cloudFlowInstallTab" role="tab" aria-controls="cloudFlowInstall" data-cloud-page="install" type="button">3. Install AI</button>
+              <button class="edtool sm" id="cloudFlowReadyTab" role="tab" aria-controls="cloudFlowReady" data-cloud-page="ready" type="button">4. Ready</button>
+            </nav>
+            <span id="cloudSetupStatus" class="chip busy" role="status">Checking setup</span>
+            <p class="hint" id="cloudSetupHint"></p>
+            <p class="hint warnhint" id="cloudFlowIssue" role="status" hidden></p>
+            <section id="cloudFlowGoal" role="tabpanel" aria-labelledby="cloudFlowGoalTab">
+              <h3>What will you create?</h3>
+              <fieldset class="cloud-goals" hidden aria-hidden="true"><legend>Choose your goal</legend>
+                <label><input type="radio" name="cloud-goal" value="music"> Music</label>
+                <label><input type="radio" name="cloud-goal" value="pictures"> Pictures</label>
+                <label><input type="radio" name="cloud-goal" value="video"> Video</label>
+                <label><input type="radio" name="cloud-goal" value="all" checked> All three</label>
+              </fieldset>
+              <div id="cloudModelPlan"></div>
+              <p class="hint" id="cloudFlowGoalNote">One connection for music, pictures and video.</p>
+              <details class="more" id="cloudFlowAccountDetails" open><summary>Connect account</summary>
+            <div id="cloudSetupAccount" hidden>
+              <div id="cloudSetupAccountFields"></div>
+              <details class="more"><summary>Where do I get the key?</summary>
+                <p>Sign in to RunPod, open Credentials, then API Keys and create a restricted key for AIPLAY.
+                  Copy it into the account key field and keep it private.</p>
+                <p>Allow computer reads and start/stop actions, GPU catalogue reads, and billing reads if you want reported charges.</p>
+                <a class="edtool sm" href="https://docs.runpod.io/get-started/credentials" target="_blank" rel="noreferrer">RunPod key guide</a>
+              </details>
+            </div>
+              </details>
+              <div class="cta"><button class="btn sm" id="cloudFlowGoalNext" type="button" disabled>Continue to costs</button></div>
+            </section>
+            <section id="cloudFlowCosts" role="tabpanel" aria-labelledby="cloudFlowCostsTab" hidden>
+              <h3>Review your costs</h3>
+              <div class="cloud-flow-box params">
+                <label>computing</label><span class="pv" id="cloudFlowCostRate">Choose a computer below</span>
+                <label>saved storage</label><span class="pv" id="cloudFlowCostStorage">Shown before approval</span>
+                <label>session estimate</label><span class="pv" id="cloudFlowCostSession">Not started</span>
+              </div>
+              <p class="hint">GPU rental runs during setup; saved storage stays billed after stopping.</p>
+            <div id="cloudSetupComputer" hidden>
+              <div id="cloudSetupComputerFields"></div>
+              <p class="hint" id="cloudSetupNoComputer" hidden>No cloud computer yet. Create one below to continue.</p>
+              <button class="edtool sm" id="cloudSetupProvision" type="button" aria-controls="cloudSetupCreateFields" aria-expanded="false">Create cloud computer</button>
+              <div id="cloudSetupCreateFields" hidden></div>
+            </div>
+              <div class="cta"><button class="btn sm" id="cloudFlowCostStart" type="button" hidden>Review start price</button>
+                <button class="edtool sm" id="cloudFlowCostsNext" type="button" disabled>Continue to AI</button></div>
+            </section>
+            <section id="cloudFlowInstall" role="tabpanel" aria-labelledby="cloudFlowInstallTab" hidden>
+              <h3 id="cloudInstallTitle">Setting up your AI</h3>
+              <p class="hint" id="cloudInstallHint">Choose your models and review their licences below.</p>
+              <div class="cloud-install-states"><span class="chip" id="cloudInstallComputer">Checking computer</span><span class="chip" id="cloudInstallAI">Checking AI</span></div>
+              <progress id="cloudInstallProgress" max="5" value="0" aria-label="Completed setup checks"></progress>
+              <ol class="cloud-install-checklist" id="cloudInstallChecklist" aria-label="AI setup progress"><li>Start cloud computer</li><li>Install AI service</li><li>Download selected models</li><li>Check AI connection</li><li>Verify automatic stop</li></ol>
+              <div class="cta"><button class="edtool" id="cloudInstallStop" type="button" disabled>Stop setup and computer</button></div><p class="hint" id="cloudInstallStopHint">Rental runs while the computer is running.</p>
+              <details class="more" id="cloudWorkerUpdate"><summary>Update AI service</summary>
+                <span class="chip" id="cloudUpdateStatus" role="status">Check AI build</span>
+                <div class="params"><label>current build</label><span class="pv" id="cloudUpdateCurrent">Not verified</span><label>new build</label><span class="pv" id="cloudUpdateTarget">Not checked</span></div>
+                <ol><li>Stop the computer normally.</li><li>Review and save the update.</li><li>Review the rental price, start and check.</li></ol>
+                <div class="cta" id="cloudUpdateControls"><button class="edtool sm" id="cloudUpdateStop" type="button" disabled>Stop computer</button><button class="btn sm" id="cloudUpdateSave" type="button" disabled>Review AI update</button><button class="edtool sm" id="cloudUpdateStart" type="button" disabled>Review start price</button></div>
+                <p class="hint" id="cloudUpdateManual" hidden>Manually installed services use the worker update guide.</p>
+                <p class="hint" id="cloudUpdateNote" role="status"></p>
+                <div class="cta"><button class="edtool sm" id="cloudUpdateCheck" type="button">Check update</button><a class="edtool sm" id="cloudUpdateGuide" href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/CLOUD_COMPUTER.md#updating-existing-computers" target="_blank" rel="noreferrer">Manual update guide</a></div>
+              </details>
+              <details class="more" id="cloudModelBrowser">
+                <summary>Browse more models</summary>
+                <div class="catalog-heading"><div><span class="catalog-eyebrow">MODEL LIBRARY</span><h3>Find your next model</h3><p class="hint">Download models and LoRAs directly to your RunPod computer.</p></div><button class="edtool sm" id="catalogConnections" type="button">Provider keys</button></div>
+                <nav class="catalog-tabs" aria-label="Model sources"><button class="edtool" data-catalog-provider="civitai" type="button" aria-pressed="true">Civitai</button><button class="edtool" data-catalog-provider="huggingface" type="button" aria-pressed="false">Hugging Face</button><button class="edtool" id="catalogOnDisk" type="button">On RunPod</button></nav>
+                <form id="catalogSearchForm"><div class="catalog-search"><input class="line" id="catalogQuery" aria-label="Search models" placeholder="Search models or styles"><button class="btn sm" type="submit">Search</button></div>
+                  <div class="catalog-filters"><label>create<select class="sel2" id="catalogTask"><option value="pictures">Pictures</option><option value="video">Video</option><option value="music">Music</option><option value="all">Anything</option></select></label><label>type<select class="sel2" id="catalogType"><option value="all">Models + LoRAs</option><option value="checkpoint">Checkpoints</option><option value="lora">LoRAs</option></select></label><label>sort<select class="sel2" id="catalogSort"><option value="popular">Most downloaded</option><option value="newest">Newest</option></select></label><label>base model<input class="line" id="catalogBase" placeholder="Any (Civitai)"></label></div>
+                </form>
+                <p class="hint" id="catalogStatus" role="status">Choose a provider to browse.</p>
+                <div id="catalogResults" class="catalog-grid"></div>
+                <div class="cta" id="catalogMoreRow" hidden><button class="edtool" id="catalogMore" type="button">Load more</button></div>
+                <section id="catalogDetail" class="catalog-detail" hidden><button class="edtool sm" id="catalogDetailClose" type="button">Close details</button><h3 id="catalogName"></h3><p class="hint" id="catalogPurpose"></p>
+                  <div class="params"><label for="catalogVersion">version</label><span class="pv"><select class="sel2" id="catalogVersion"></select></span><label for="catalogFile">file</label><span class="pv"><select class="sel2" id="catalogFile"></select></span><label for="catalogFolder">save as</label><span class="pv"><select class="sel2" id="catalogFolder"><option value="checkpoints">Checkpoint</option><option value="loras">LoRA</option><option value="diffusion_models">Diffusion model</option><option value="vae">VAE</option><option value="text_encoders">Text encoder</option><option value="upscale_models">Upscaler</option></select></span><label>download size</label><span class="pv" id="catalogSize"></span><label>base model</label><span class="pv" id="catalogCompatibility"></span><label>licence</label><span class="pv" id="catalogLicense"></span></div>
+                  <span class="chip" id="catalogFit" role="status">Compatibility unverified</span><p class="hint" id="catalogFitNote">Review the creator’s workflow and required components.</p><a class="edtool sm" id="catalogModelPage" target="_blank" rel="noreferrer">Open model and terms</a><label class="catalog-consent"><input type="checkbox" id="catalogAccept"> I reviewed the model terms and compatibility.</label>
+                  <p class="hint" id="catalogDestination"></p><p class="hint">Your saved provider key is sent to your worker for this transfer only.</p><button class="btn sm" id="catalogInstall" type="button" disabled>Download to RunPod</button><p class="hint" id="catalogInstallState" role="status"></p>
+                </section>
+                <section id="catalogDisk" hidden><div class="catalog-heading"><h4>Models on RunPod</h4><button class="edtool sm" id="catalogDiskRefresh" type="button">Refresh</button></div><p class="hint">Deleting a model may affect workflows that use it.</p><div id="catalogDiskList"></div></section>
+                <section id="catalogTransfers" hidden><h4>Downloads on RunPod</h4><div id="catalogTransferList"></div><button class="edtool sm" id="catalogPause" type="button">Pause download</button></section>
+              </details>
+            <div id="cloudSetupAI" hidden>
+              <details class="more"><summary>Installation details</summary>
+              <div id="cloudAutomaticInstall" hidden>
+                <h4>Install AI</h4>
+                <span id="cloudAutomaticStatus" class="chip" role="status">Checking installation</span>
+                <ol id="cloudAutomaticSteps"><li>Start computer</li><li>Install AI service</li><li>Connect and verify AI</li><li>Choose models below</li></ol>
+                <p class="hint" id="cloudAutomaticHint" role="status"></p>
+                <button class="edtool sm" id="cloudAutomaticCheck" type="button">Check installation</button>
+                <a class="edtool sm" href="https://console.runpod.io/pods" target="_blank" rel="noreferrer">Open RunPod</a>
+              </div>
+              </details>
+              <div class="cta"><button class="btn sm" id="cloudSetupStart" type="button">Review start price</button>
+                <button class="edtool sm" id="cloudSetupCheck" type="button">Check AI again</button></div>
+              <div id="cloudSetupWorkerFields"></div>
+              <div id="cloudSetupModelFields"></div>
+              <div id="cloudSelectedReadiness" aria-live="polite"></div>
+              <details class="more"><summary>Where do I get the connection code?</summary>
+                <p>The AIPLAY service installed on your cloud computer prints its address and worker token.
+                  Paste that worker token as the connection code; it is separate from your RunPod account key.</p>
+                <p>Existing computers may need a manual worker update; new computers can install and connect automatically.</p>
+                <button class="edtool sm" id="cloudSetupInstallHelp" type="button">Open advanced installation</button>
+              </details>
+            </div>
+            <div id="cloudSetupProtection" hidden>
+              <h4>Automatic stop</h4>
+              <p class="hint">A separate shutdown key keeps protection working after AIPLAY closes.</p>
+              <div id="cloudFlowIdleFields" class="params"></div>
+              <div id="cloudSetupProtectionFields"></div>
+              <div class="cta"><button class="edtool sm" id="cloudSetupSkipProtection" type="button">Keep running when closed</button></div>
+              <details class="more"><summary>Why another key?</summary>
+                <p>A separate RunPod key is saved on this computer so it can stop safely after AIPLAY closes.
+                  Give it permission to read and stop computers; its provider permissions may cover other computers in your account.</p>
+              </details>
+            </div>
+              <div class="cta"><button class="btn sm" id="cloudFlowInstallNext" type="button" disabled>Continue to Ready</button></div>
+            </section>
+            <section id="cloudFlowReady" role="tabpanel" aria-labelledby="cloudFlowReadyTab" hidden>
+              <h3 id="cloudFlowReadyTitle">Your cloud computer</h3>
+              <p class="hint" id="cloudFlowReadyGoal"></p>
+              <div class="cloud-flow-states"><span class="chip" id="cloudFlowProvider" role="status">Checking computer</span><span class="chip" id="cloudFlowAI" role="status">Checking AI</span></div>
+              <div class="cloud-flow-box params">
+                <label>computing</label><span class="pv" id="cloudFlowReadyRate">Unavailable</span>
+                <label>automatic stop</label><span class="pv" id="cloudFlowReadyStop">Needs setup</span>
+                <label>your saved files</label><span class="pv" id="cloudFlowReadyFiles">Not checked</span>
+                <label>storage estimate</label><span class="pv" id="cloudFlowReadyStorage">Unavailable</span>
+              </div>
+              <div class="cta"><button class="btn sm" id="cloudFlowSample" type="button" disabled>Try a sample</button>
+                <button class="btn sm" id="cloudFlowReadyStart" type="button" hidden>Start computer</button>
+                <button class="edtool sm" id="cloudFlowReadyStopButton" type="button" hidden>Stop computer</button>
+                <button class="edtool sm" id="cloudFlowRepair" type="button">Set up AI</button></div>
+              <p class="hint" id="cloudFlowSampleHint">Review the sample in its creation screen, then press Make.</p>
+              <p class="hint">Stopping computing keeps saved storage and its charges.</p>
+            </section>
+            <div class="cta cloud-advanced-button"><button class="edtool" id="cloudSetupAdvanced" type="button" aria-controls="cloudComputerConnection" aria-expanded="false">Advanced setup</button></div>
+            <details class="more" id="cloudSetupEdit" hidden><summary>Change setup</summary>
+            <div class="cta"><button class="edtool sm" id="cloudSetupEditAccount" type="button" hidden>Change account</button>
+              <button class="edtool sm" id="cloudSetupChoose" type="button" hidden>Choose another computer</button>
+              <button class="edtool sm" id="cloudSetupEditAI" type="button" hidden>AI connection and models</button>
+              <button class="edtool sm" id="cloudSetupEditProtection" type="button" hidden>Change automatic stop</button>
+              <button class="edtool sm" id="cloudSetupReturn" type="button" hidden>Done editing</button></div>
+            </details>
+          </div>
+          <details class="more" id="cloudFlowDetails" hidden><summary>More computer controls</summary>
+          <div id="cloudComputer" hidden>
+            <h4>Cloud Computer</h4>
+            <div class="params" id="cloudComputerChoice">
+              <label for="cloudComputerSelect">computer</label>
+              <span class="pv"><select id="cloudComputerSelect" class="sel2"><option value="">Check existing computers</option></select>
+                <button class="edtool sm" id="cloudComputerCheck" type="button">Check again</button></span>
+            </div>
+            <div class="params">
+              <label>computer status</label><span class="pv"><span id="cloudComputerStatus" class="chip" role="status">Checking</span></span>
+              <label>AI generation</label><span class="pv"><span id="cloudComputerReady" class="chip" role="status">Checking worker</span></span>
+              <label>GPU rental</label><span class="pv" id="cloudComputerRate">Unavailable</span>
+              <label>storage estimate</label><span class="pv" id="cloudComputerStorageCost">Unavailable</span>
+              <label>session estimate</label><span class="pv" id="cloudComputerSession">Unavailable</span>
+              <label>monthly compute estimate</label><span class="pv" id="cloudComputerMonth">Unavailable</span>
+              <label>provider reported</label><span class="pv"><span id="cloudComputerBilled">Not checked</span>
+                <button class="edtool sm" id="cloudComputerBilling" type="button">Check billing</button></span>
+            </div>
+            <p class="hint">Stopping GPU rental keeps your files; storage charges continue.</p>
+            <p class="hint warnhint" id="cloudComputerIssue" role="status" hidden></p>
+            <p class="hint" id="cloudComputerAlternatives" hidden></p>
+            <div class="cta">
+              <button class="btn sm" id="cloudComputerStart" type="button">Start Cloud Computer</button>
+              <button class="btn sm ghost" id="cloudComputerStop" type="button">Stop Cloud Computer</button>
+              <button class="edtool sm" id="cloudComputerFinish" type="button">Stop After Current Job</button>
+              <button class="edtool sm" id="cloudComputerNow" type="button">Stop Now</button>
+            </div>
+            <p class="hint">Stop After Current Job saves queued work for your next start.</p>
+            <hr class="sub-rule"><h4>Automatic stop</h4>
+            <div class="params">
+              <label for="cloudComputerIdle">when idle</label>
+              <span class="pv"><select id="cloudComputerIdle" class="sel2">
+                <option value="15">15 minutes</option><option value="30" selected>30 minutes (recommended)</option>
+                <option value="60">60 minutes</option><option value="0">Disabled</option>
+              </select><button class="edtool sm" id="cloudComputerIdleSave" type="button">Apply</button></span>
+              <label>shutdown protection</label><span class="pv"><span class="chip" id="cloudComputerWatchdog" role="status">Needs setup</span></span>
+              <label for="cloudComputerAlert">session alert (USD)</label>
+              <span class="pv"><input class="line sm" id="cloudComputerAlert" type="number" min="0.01" step="0.01" placeholder="Optional">
+                <button class="edtool sm" id="cloudComputerAlertSave" type="button">Save alert</button></span>
+            </div>
+            <p class="hint">Active jobs, queued work, downloads and transfers keep the computer awake.</p>
+            <p class="hint">Idle changes made while stopped apply at the next start.</p>
+            <p class="hint warnhint" id="cloudComputerAlertNote" role="status" hidden>Session estimate reached your alert.</p>
+            <details class="more"><summary>Spending estimates</summary>
+              <p>Session and monthly compute figures are local estimates, excluding storage, taxes and unobserved rate changes.
+                Provider-reported billing is shown separately for this computer and its attached network storage.
+                Spending alerts notify you in AIPLAY; they are not provider-enforced billing caps.</p>
+            </details>
+            <hr class="sub-rule"><h4>Storage</h4>
+            <div class="params">
+              <label>allocated</label><span class="pv" id="cloudComputerAllocated">Not checked</span>
+              <label>used</label><span class="pv" id="cloudComputerUsed">Not checked</span>
+              <label>models</label><span class="pv" id="cloudComputerModels">Not checked</span>
+              <label>generated content</label><span class="pv" id="cloudComputerGenerated">Not checked</span>
+              <label>temporary files</label><span class="pv" id="cloudComputerTemporary">Not checked</span>
+              <label>other saved files</label><span class="pv" id="cloudComputerOther">Not checked</span>
+            </div>
+            <div class="cta">
+              <button class="edtool sm" id="cloudComputerReviewStorage" type="button">Review Storage</button>
+              <button class="edtool sm" id="cloudComputerCleanup" type="button" disabled>Safe Cleanup</button>
+              <button class="edtool sm" id="cloudComputerBackup" type="button">Back up outputs</button>
+            </div>
+            <p class="hint" id="cloudComputerStorageNote" role="status"></p>
+            <details class="more" id="cloudComputerCleanupReview" hidden><summary>Cleanup preview</summary>
+              <ul id="cloudComputerCleanupFiles"></ul>
+            </details>
+            <details class="more"><summary>Manage Capacity</summary>
+              <div class="params"><label for="cloudComputerCapacity">storage (GB)</label>
+                <span class="pv"><input class="line sm" id="cloudComputerCapacity" type="number" min="10" max="4096" step="1">
+                  <button class="edtool sm" id="cloudComputerCapacityReview" type="button">Review increase</button></span></div>
+              <p class="hint">Stop first; capacity can only increase.</p>
+              <a class="edtool sm" href="https://console.runpod.io" target="_blank" rel="noreferrer">Other storage and backups</a>
+            </details>
+            <details class="more"><summary>Automatic stop setup</summary>
+              <p class="hint">Use a separate RunPod management key for automatic shutdown.</p>
+              <form id="cloudComputerKeyForm">
+                <div class="params"><label for="cloudComputerStopKey">automatic stop key</label>
+                  <span class="pv"><input class="line sm" id="cloudComputerStopKey" type="password" autocomplete="new-password" required>
+                    <button class="edtool sm" type="submit">Enable automatic stop</button></span></div>
+              </form>
+              <button class="edtool sm" id="cloudComputerRemoveKey" type="button">Remove stop key</button>
+              <p class="hint">The worker keeps this key in a protected file so shutdown works after AIPLAY closes.</p>
+            </details>
+            <details class="more"><summary>Technical diagnostics</summary>
+              <pre id="cloudComputerDiagnostics"></pre>
+            </details>
+          </div>
+          </details>
+          <details class="more" id="cloudComputerConnection" hidden><summary>Advanced setup</summary>
+          <div class="cta"><button class="edtool sm" id="cloudSetupBack" type="button">Back to guided setup</button></div>
+          <div id="runpodConnection" hidden class="runpod-settings">
+            <div class="runpod-connect-actions">
+              <span class="chip" id="runpodBalance" role="status">Account not connected</span>
+              <button class="edtool sm" id="runpodRefreshUsage" type="button">Refresh usage</button>
+            </div>
+            <p class="hint" id="runpodUsageUpdated" role="status"></p>
+            <form id="runpodConnectionForm">
+              <label class="flabel" for="runpodWorkerUrl">Worker URL</label>
+              <input class="line" id="runpodWorkerUrl" type="url" placeholder="https://your-pod-8787.proxy.runpod.net" required>
+              <label class="flabel" for="runpodWorkerToken">Worker token</label>
+              <input class="line" id="runpodWorkerToken" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved token">
+              <p class="hint">The token is stored in AIPLAY's local secret store and is not your RunPod account API key.</p>
+              <p class="hint" id="runpodConnectionState" role="status"></p>
+              <div class="runpod-connect-actions">
+                <a class="edtool" href="/runpod.html">Advanced workflow panel</a>
+                <button class="btn" id="runpodConnect" type="submit">Connect worker</button>
+              </div>
+            </form>
+            <details class="runpod-models more" id="runpodModels">
+              <summary>Pod models</summary>
+              <p class="hint">Verified model downloads run on your Pod and incur its usual charges.</p>
+              <div id="runpodModelList" class="runpod-model-list"><p class="hint">Connect the worker to check model readiness.</p></div>
+              <button class="edtool sm" id="runpodCancelModel" type="button" hidden>Pause download</button>
+              <p class="hint" id="runpodModelState" role="status"></p>
+            </details>
+            <details class="runpod-account more" id="runpodAccount">
+              <summary>Account and Pods</summary>
+              <p class="hint">Use a restricted key with permission to read GPUs and manage Pods.</p>
+              <form id="runpodAccountForm">
+                <label class="flabel" for="runpodApiKey">RunPod API key</label>
+                <input class="line" id="runpodApiKey" type="password" autocomplete="new-password" placeholder="Paste a restricted RunPod API key">
+                <div class="runpod-connect-actions">
+                  <a class="edtool" href="https://console.runpod.io/user/credentials" target="_blank" rel="noreferrer">Open RunPod</a>
+                  <button class="edtool" id="runpodAccountDisconnect" type="button">Remove saved key</button>
+                  <button class="btn" id="runpodAccountConnect" type="submit">Save and load account</button>
+                </div>
+              </form>
+              <p class="hint" id="runpodAccountState" role="status">Checking account configuration…</p>
+              <div id="runpodAccountPanel" hidden>
+                <div id="runpodPodList" class="runpod-pods"></div>
+                <h4>Save deployment presets</h4>
+                <p class="hint">Adds private image, video, audio and music LoRA training templates to your RunPod account.</p>
+                <div class="runpod-connect-actions">
+                  <a class="edtool" href="https://console.runpod.io/user/templates" target="_blank" rel="noreferrer">Open RunPod templates</a>
+                  <button class="edtool" id="runpodCreateTemplates" type="button">Create private templates</button>
+                </div>
+                <p class="hint" id="runpodTemplateState" role="status"></p>
+                <div id="runpodCreateForm">
+                <h4>Create cloud computer</h4>
+                <p class="hint" id="runpodCreateRecommendation">Loading available graphics cards…</p>
+                <div class="runpod-fields">
+                  <label class="flabel" for="runpodGpu">graphics card</label>
+                  <select class="sel2" id="runpodGpu"></select>
+                  <label class="flabel" for="runpodVolume">saved storage</label>
+                  <select class="sel2" id="runpodVolume"><option value="100">100 GB</option><option value="150">150 GB</option><option value="200">200 GB</option><option value="300">300 GB</option></select>
+                </div>
+                <details class="more"><summary>More options</summary><div class="runpod-fields">
+                  <label class="flabel" for="runpodPodName">computer name</label>
+                  <input class="line" id="runpodPodName" value="AIPLAY renderer" maxlength="80">
+                  <label class="flabel" for="runpodCloud">provider pool</label>
+                  <select class="sel2" id="runpodCloud"><option value="ALL">Any available</option><option value="SECURE">Secure only</option><option value="COMMUNITY">Community only</option></select>
+                </div></details>
+                <label><input id="runpodAutoInstall" type="checkbox"> Install AI automatically</label>
+                <p class="hint" id="runpodAutomaticAvailability" role="status">Checking automatic installation support…</p>
+                <p class="hint warnhint">Rental runs during installation and model downloads.</p>
+                <button class="edtool" id="runpodReviewPod" type="button">Review price</button>
+                <p class="hint" id="runpodCreateState" role="status"></p>
+                <div class="runpod-review" id="runpodCreateReview" hidden>
+                  <b id="runpodReviewPrice"></b>
+                  <p class="hint" id="runpodReviewDetails"></p>
+                  <p class="hint" id="runpodReviewStorage"></p>
+                  <a class="edtool" href="https://docs.runpod.io/pods/pricing" target="_blank" rel="noreferrer">Provider pricing</a>
+                  <label><input id="runpodCostConfirm" type="checkbox"> I understand this starts paid GPU billing immediately.</label>
+                  <button class="btn" id="runpodCreatePod" type="button" disabled>Create and start computer</button>
+                </div>
+                </div>
+              </div>
+              <details class="runpod-bootstrap">
+                <summary>Install the AIPLAY worker after the Pod starts</summary>
+                <p class="hint warnhint">Cloud Computer controls need the fork's worker update; the official installer alone is insufficient.</p>
+                <p class="hint">Open a Pod terminal or SSH session, paste this command, then copy the printed worker URL and token into the connection fields above. The bootstrap checks that ComfyUI listens only on loopback.</p>
+                <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly placeholder="The command pinned to this Studio's commit appears here."></textarea>
+                <button class="edtool" id="runpodCopyBootstrap" type="button" disabled>Copy bootstrap command</button>
+                <p class="hint" id="runpodBootstrapState"></p>
+              </details>
+            </details>
+
+          </div>
+          </details>
+        </details>
       </section>
 
       <!-- Your own ComfyUI graphs. The built-ins are the tuned ones, so this
            sits near the end and stays quiet unless the folder has something. -->
+      <section id="set-model-connections" hidden class="pcard" data-nav="Model connections">
+        <h3>Model connections</h3><p class="pcard-sub">Optional read keys for Hugging Face and Civitai downloads.</p>
+        <form data-model-key="huggingface"><label class="flabel" for="catalogHfKey">Hugging Face read token</label><input class="line" id="catalogHfKey" type="password" autocomplete="new-password" placeholder="hf_…"><div class="cta"><button class="edtool sm" type="submit">Save key</button><button class="edtool sm" data-model-forget="huggingface" type="button">Forget key</button><a class="edtool sm" href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Get a read token</a><span class="chip" data-model-key-status="huggingface">Not saved</span></div></form>
+        <form data-model-key="civitai"><label class="flabel" for="catalogCivitaiKey">Civitai API key</label><input class="line" id="catalogCivitaiKey" type="password" autocomplete="new-password" placeholder="Paste your Civitai key"><div class="cta"><button class="edtool sm" type="submit">Save key</button><button class="edtool sm" data-model-forget="civitai" type="button">Forget key</button><a class="edtool sm" href="https://civitai.com/user/account" target="_blank" rel="noreferrer">Get a key</a><span class="chip" data-model-key-status="civitai">Not saved</span></div></form>
+        <p class="hint" id="catalogKeyState" role="status">Keys are kept in AIPLAY's existing secure store.</p>
+      </section>
       <section class="pcard" id="set-workflows" data-nav="Workflows">
         <h3>Custom ComfyUI workflows <em class="sp" id="wfCount"></em></h3>
         <p class="pcard-sub">Drop <b>API-format</b> graphs into <code id="wfDir"></code> and pick one here. Studio only fills in the placeholders.</p>
@@ -5905,84 +6245,7 @@
      re-render mid-click. -->
 <div class="rowmenu" id="rowMenu" role="menu" hidden></div>
 
-<!-- Shared by the Images and Video screens. The worker token is sent once to
-     the local backend's secret store and is never read back into the page. -->
-<div class="overlay" id="runpodConnection" hidden><div class="sheet runpod-sheet">
-  <div class="sheethead">
-    <div><h3>RunPod connection</h3><p class="hint">AIPLAY stays on this PC; this worker runs ComfyUI on your Pod.</p></div>
-    <button class="btn sm" type="button" id="runpodConnectionClose">Close</button>
-  </div>
-  <form id="runpodConnectionForm">
-    <label class="flabel" for="runpodWorkerUrl">Worker URL</label>
-    <input class="line" id="runpodWorkerUrl" type="url" placeholder="https://your-pod-8787.proxy.runpod.net" required>
-    <label class="flabel" for="runpodWorkerToken">Worker token</label>
-    <input class="line" id="runpodWorkerToken" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved token">
-    <p class="hint">The token is stored in AIPLAY's local secret store and is not your RunPod account API key.</p>
-    <p class="hint" id="runpodConnectionState" role="status"></p>
-    <div class="runpod-connect-actions">
-      <a class="edtool" href="/runpod.html">Advanced workflow panel</a>
-      <button class="btn" id="runpodConnect" type="submit">Connect and check models</button>
-    </div>
-  </form>
-  <details class="runpod-models" id="runpodModels">
-    <summary>Install or repair models on this Pod</summary>
-    <p class="hint">AIPLAY downloads only pinned model files from its curated list, verifies their size and SHA-256 checksum, and resumes interrupted downloads. Running Pods continue to incur charges while downloading.</p>
-    <div id="runpodModelList" class="runpod-model-list"><p class="hint">Connect the worker to check model readiness.</p></div>
-    <button class="edtool sm" id="runpodCancelModel" type="button" hidden>Pause download</button>
-    <p class="hint" id="runpodModelState" role="status"></p>
-  </details>
-  <details class="runpod-account" id="runpodAccount">
-    <summary>Create or manage a RunPod Pod</summary>
-    <p class="hint">Optional account access. Use a restricted RunPod API key with permission to read GPUs and manage Pods. The key stays in AIPLAY's local secret store.</p>
-    <form id="runpodAccountForm">
-      <label class="flabel" for="runpodApiKey">RunPod API key</label>
-      <input class="line" id="runpodApiKey" type="password" autocomplete="new-password" placeholder="Paste a restricted RunPod API key">
-      <div class="runpod-connect-actions">
-        <a class="edtool" href="https://console.runpod.io/user/settings" target="_blank" rel="noreferrer">Create API key</a>
-        <button class="edtool" id="runpodAccountDisconnect" type="button">Remove saved key</button>
-        <button class="btn" id="runpodAccountConnect" type="submit">Save and load account</button>
-      </div>
-    </form>
-    <p class="hint" id="runpodAccountState" role="status">Checking account configuration…</p>
-    <div id="runpodAccountPanel" hidden>
-      <div class="runpod-balance" id="runpodBalance"></div>
-      <div id="runpodPodList" class="runpod-pods"></div>
-      <h4>Save deployment presets</h4>
-      <p class="hint">Adds private image, video, audio and music LoRA training templates to your RunPod account.</p>
-      <div class="runpod-connect-actions">
-        <a class="edtool" href="https://console.runpod.io/user/templates" target="_blank" rel="noreferrer">Open RunPod templates</a>
-        <button class="edtool" id="runpodCreateTemplates" type="button">Create private templates</button>
-      </div>
-      <p class="hint" id="runpodTemplateState" role="status"></p>
-      <h4>Create an AIPLAY Pod</h4>
-      <div class="runpod-fields">
-        <label class="flabel" for="runpodPodName">Name</label>
-        <input class="line" id="runpodPodName" value="AIPLAY renderer" maxlength="80">
-        <label class="flabel" for="runpodGpu">GPU</label>
-        <select class="sel2" id="runpodGpu"></select>
-        <label class="flabel" for="runpodCloud">Cloud</label>
-        <select class="sel2" id="runpodCloud"><option value="ALL">Any available</option><option value="SECURE">Secure only</option><option value="COMMUNITY">Community only</option></select>
-        <label class="flabel" for="runpodVolume">Persistent disk</label>
-        <select class="sel2" id="runpodVolume"><option value="100">100 GB</option><option value="150">150 GB</option><option value="200">200 GB</option><option value="300">300 GB</option></select>
-      </div>
-      <p class="hint">Creates the standard CUDA 12.8 ComfyUI Pod with only AIPLAY worker port 8787 exposed. Keep ComfyUI on loopback; worker and model installation is the next step.</p>
-      <button class="edtool" id="runpodReviewPod" type="button">Review price and configuration</button>
-      <div class="runpod-review" id="runpodCreateReview" hidden>
-        <b id="runpodReviewPrice"></b>
-        <p class="hint" id="runpodReviewDetails"></p>
-        <label><input id="runpodCostConfirm" type="checkbox"> I understand this starts paid GPU billing immediately.</label>
-        <button class="btn" id="runpodCreatePod" type="button" disabled>Create paid Pod</button>
-      </div>
-    </div>
-    <details class="runpod-bootstrap">
-      <summary>Install the AIPLAY worker after the Pod starts</summary>
-      <p class="hint">Open a Pod terminal or SSH session, paste this command, then copy the printed worker URL and token into the connection fields above. The bootstrap checks that ComfyUI listens only on loopback.</p>
-      <textarea class="line" id="runpodBootstrapCommand" rows="3" readonly placeholder="The command pinned to this Studio's commit appears here."></textarea>
-      <button class="edtool" id="runpodCopyBootstrap" type="button" disabled>Copy bootstrap command</button>
-      <p class="hint" id="runpodBootstrapState"></p>
-    </details>
-  </details>
-</div></div>
+
 
 
 <!-- Before app.js on purpose: its fetch wrapper must be in place before any
@@ -6020,6 +6283,9 @@
 <!-- RunPod: the launcher's RunPod GPU mode only. It owns only the controls carrying
      runpod ids and intercepts Make / Render in the capture phase in that mode. -->
 <script type="module" src="runpod-integrated.js"></script>
+<script type="module" src="cloud-computer.js"></script>
+<script type="module" src="model-browser.js"></script>
+<script type="module" src="worker-update.js"></script>
 <!-- The receipt under Create, Make image and Render clip, and Settings' "Picked
      for this PC" (web/receipt.js; the defaults are the server's, fit.js). -->
 <script type="module" src="receipt.js"></script>

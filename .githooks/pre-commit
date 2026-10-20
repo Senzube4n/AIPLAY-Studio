@@ -11,6 +11,18 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+node --check shared/model-bundles.js || exit 1
+node --check shared/model-profiles.js || exit 1
+node --check server/setup-plan.js || exit 1
+node --check server/engine/remote-models.js || exit 1
+node --check server/engine/workflow-evidence.js || exit 1
+node --check web/setup-plan.js || exit 1
+node --check server/engine/model-catalog.js || exit 1
+node --check server/engine/runpod-update.js || exit 1
+node --check server/engine/model-compatibility.js || exit 1
+node --check web/model-browser.js || exit 1
+node --check web/worker-update.js || exit 1
+node --check worker/model-disk.js || exit 1
 node --check web/full-player-score.js || exit 1
 node --check web/score-follow.js || exit 1
 node --check web/music-workbench.js || exit 1
@@ -39,6 +51,18 @@ node --test server/music/community-tools_test.js server/music/score-follow_test.
 node --check server/mcp-music-workbench.js || exit 1
 node --test server/mcp-music-workbench_test.js || exit 1
 # RunPod transport and its UI: mock HTTP services only; no GPU or paid cloud resources.
+node --check web/cloud-computer.js || exit 1
+node --check server/secrets.js || exit 1
+node --test server/secrets_test.js || exit 1
+node --check server/engine/cloud-computer.js || exit 1
+node --check server/engine/runpod-v2.js || exit 1
+node --check server/engine/runpod-install.js || exit 1
+node --test server/engine/runpod-install_test.js || exit 1
+python worker/automatic-runpod_test.py || exit 1
+node --check worker/cloud-watchdog.js || exit 1
+node --check worker/cloud-storage.js || exit 1
+node --check scripts/package-cloud-worker.mjs || exit 1
+node --test server/engine/cloud-computer_test.js worker/cloud-watchdog_test.js worker/cloud-storage_test.js || exit 1
 node --test server/engine/remote_test.js server/engine/remote_ui_test.js server/engine/runpod-account_test.js server/mcp-runpod_test.js server/engine/remote_guard_test.js || exit 1
 node --test server/secrets_test.js || exit 1
 node --test server/mcp-fastcovers_test.js worker/model-manager_test.js || exit 1
@@ -387,6 +411,7 @@ node server/score/sheet_test.js || exit 1
 node server/score/routes_test.js || exit 1
 node server/mcp-music-score_test.js || exit 1
 node server/daw/mcp-production_test.js || exit 1
+node --check scripts/setup-gate-python.mjs || exit 1
 # production_export_test also DECODES both paths and compares FRAMES: the
 # editor's region cache as the browser streams it, the bounce, and the same
 # song rendered in one window. Its format checks pass a bounce whose samples

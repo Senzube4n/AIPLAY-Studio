@@ -3,6 +3,7 @@
  * Where a number is an estimate it says so; where a claim was withdrawn, the
  * data that withdrew it stays in the file beside it.
  */
+import { validModelSelection } from '../shared/model-profiles.js';
 import fs from "node:fs";
 import { autoVramFlags, vendorOf } from "./comfyargs.js";
 /* The card tiers' sizes join H3's size list (below the engines): pure data. */
@@ -387,6 +388,8 @@ export const config = {
   musicOnly: MUSIC_ONLY,
   cloudOnly: CLOUD_ONLY,
   remoteOnly: REMOTE_ONLY,
+  cloudSetup: { goal: ['music', 'pictures', 'video', 'all'].includes(saved.cloudSetup?.goal) ? saved.cloudSetup.goal : 'all', plan: null },
+  modelSetup: { local: null },
   comfyAutoStart: !MUSIC_ONLY && !CLOUD_ONLY && !REMOTE_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
@@ -1872,7 +1875,9 @@ export const config = {
      * The conv name is repeated last because it is the file the LTX row
      * fetches on every card (setF on 7b241ea): a machine holding neither is
      * told the file it would download, not the template's. */
-    videoVae: videoPick("ltx", "videoVae", "vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors",
+    videoVae: REMOTE_ONLY
+      ? "ltx-2.5-video-vae-conv-bf16.safetensors"
+      : videoPick("ltx", "videoVae", "vae", "ltx-2.5-video-vae-conv-bf16.safetensors", "ltx-2.5-video-vae-bf16.safetensors",
       "ltx-2.5-video-vae-conv-bf16.safetensors"),
     audioVae: "ltx-2.5-audio-vae-bf16.safetensors",
     upscaler: "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
@@ -2466,6 +2471,9 @@ export { LEVELS, IN_USE_KEYS, startLevel };
 config.ui = startLevel(saved, { unreadable: settingsUnreadable });
 export const PREF_PATHS = [
   ["comfy", "checkUpdatesOnStart", (v) => typeof v === "boolean"],
+  ['cloudSetup', 'plan', v => v === null || validModelSelection(v)],
+  ['modelSetup', 'local', v => v === null || validModelSelection(v)],
+  ["cloudSetup", "goal", v => ['music', 'pictures', 'video', 'all'].includes(v)],
   ["ui", "level", (v) => LEVELS.includes(v)],
   ["ui", "levelBy", (v) => v === "studio" || v === "you"],
   ["video", "enabled", (v) => typeof v === "boolean"],

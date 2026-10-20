@@ -4,7 +4,7 @@
  * installer/Setup.cs is built rarely and never for an app change, so the
  * repository has to keep the promises it reads: install.json names folders that
  * exist, and both launchers find the private Node.js it may put in .\node.
- * No network, no build: these read files.
+ * No network: most checks read files; one local C# fixture exercises unpacking.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +22,7 @@ const root = (rel) => new URL(`../${rel}`, import.meta.url);
 test("install.json names only things that exist, and everything the app needs to start", () => {
   const m = JSON.parse(src("../install.json"));
   for (const entry of m.include) assert.ok(existsSync(root(entry)), `install.json lists "${entry}", which is not in the repository`);
-  for (const need of ["server", "web", "launcher", "package.json", "package-lock.json", "AIPLAY Studio.exe"])
+  for (const need of ["server", "web", "launcher", "worker", "shared", "package.json", "package-lock.json", "AIPLAY Studio.exe"])
     assert.ok(m.include.includes(need), `an install without "${need}" cannot start`);
   assert.ok(m.exclude.includes("*.md"), "notes and docs stay in the repository");
   assert.ok(m.keep.some((k) => /^LICENSE/.test(k)), "a vendored library's LICENSE.md still ships");
@@ -63,10 +63,8 @@ test("the release rules ship in a tracked file, since CLAUDE.md is git-ignored h
   assert.match(src("../scripts/stamp-lineage.mjs"), /const FORKS = \[/);
 });
 
-/* ── S1 / H1: the first thing a newcomer clicks is the installer ─────────────
- * The asset URL was read from the live release on 2026-09-24 (`gh api
- * repos/Senzube4n/AIPLAY-Studio/releases/latest`: tag setup-v1.2, asset
- * AIPLAY.Studio.Setup.exe, 327,168 bytes) and follows it with a 302. */
+/* S1 / H1: the original's download button stays on its own installer channel.
+ * The asset retains GitHub's normalised name, AIPLAY.Studio.Setup.exe. */
 const SETUP_URL = "https://github.com/Senzube4n/AIPLAY-Studio/releases/latest/download/AIPLAY.Studio.Setup.exe";
 const ZIP_URL = "https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip";
 
@@ -288,27 +286,77 @@ test("canonical origin removes inherited Bucky identity, while a selected fork o
   const chosen = {};
   assert.match(reconcileLineage(chosen, "git@github.com:bani4kaskashka/AIPLAY-Studio-Bucky-Fork.git"), /restored B/);
   assert.equal(chosen.aiplay.lineage.repo, "bani4kaskashka/AIPLAY-Studio-Bucky-Fork");
+  const nemesis = {};
+  assert.match(reconcileLineage(nemesis, "https://github.com/nemesisone-dev/AIPLAY-Studio.git"), /restored N/);
+  assert.equal(nemesis.aiplay.lineage.repo, "nemesisone-dev/AIPLAY-Studio");
   const saved = structuredClone(chosen);
   reconcileLineage(chosen, "");
   assert.deepEqual(chosen, saved, "a ZIP has no origin; do not rewrite the fork chosen at install time");
   assert.equal(reconcileLineage({}, "https://example.test/Senzube4n/AIPLAY-Studio.git"), "", "match GitHub repository identity, not a substring");
 });
 
-test("the compiled installer refuses a Git worktree and restores the old app when preserving files fails", async (t) => {
+test("the compiled installer selects the right fork, refuses a Git worktree and restores preserved files", async (t) => {
   const fw = path.join(process.env.WINDIR || "C:\\Windows", "Microsoft.NET", "Framework64", "v4.0.30319");
   const compiler = path.join(fw, "csc.exe");
   if (process.platform !== "win32" || !existsSync(compiler)) return t.skip("requires the Windows .NET Framework compiler");
   const base = await mkdtemp(path.join(tmpdir(), "aiplay-installer-fixture-"));
   try {
     const harness = path.join(base, "Fixture.cs"), exe = path.join(base, "Fixture.exe");
-    await writeFile(harness, `using System; using System.IO; using System.Reflection;
+    await writeFile(harness, `using System; using System.IO; using System.IO.Compression; using System.Reflection;
 static class Fixture {
+  static void Entry(ZipArchive zip, string name, string content) {
+    using (var writer = new StreamWriter(zip.CreateEntry("repo/" + name).Open())) writer.Write(content);
+  }
   static int Main(string[] args) {
+    var chosen = Sources.Original;
+    if (chosen != Sources.All[0] || chosen.Key != "senzu" || chosen.Repo != "Senzube4n/AIPLAY-Studio" || chosen.Letter != "S")
+      throw new Exception("The original must be first and selected by default");
+    if (Options.Parse(new string[0]).Repo != "senzu") throw new Exception("The original must be the command-line default");
+    foreach (var key in new[] { "senzu", "bucky" })
+      foreach (var prefix in new[] { "/repo:", "--repo=" }) {
+        var selected = Sources.ByKey(Options.Parse(new[] { prefix + key }).Repo);
+        if (selected == null || selected.Key != key) throw new Exception("Both known builds must remain selectable");
+      }
+    if (Sources.ByKey("unknown") != null) throw new Exception("An unknown source must not select a build");
     string root = args[0], app = Path.Combine(root, "app"), stage = Path.Combine(root, "stage");
+    string archive = Path.Combine(root, "manifest.zip"), unpack = Path.Combine(root, "unpack");
+    var manifest = Net.Json(File.ReadAllText(args[1]));
+    Console.WriteLine("manifest array runtime type: " + manifest["include"].GetType().FullName);
+    using (var zip = ZipFile.Open(archive, ZipArchiveMode.Create)) {
+      Entry(zip, "install.json", File.ReadAllText(args[1]));
+      Entry(zip, "launcher/launcher.mjs", "launcher");
+      Entry(zip, "worker/runpod-worker.js", "worker");
+      Entry(zip, "shared/model-bundles.js", "shared models");
+      Entry(zip, "scripts/helper.mjs", "helper");
+      Entry(zip, "scripts/skipped_test.ps1", "test-only");
+      Entry(zip, "worker/readme.md", "excluded notes");
+      Entry(zip, "worker/vendor/LICENSE.md", "required licence");
+    }
+    Directory.CreateDirectory(unpack);
+    var unpacker = new Installer(chosen, Path.Combine(root, "manifest-app"), false, false, false);
+    typeof(Installer).GetMethod("Unpack", BindingFlags.Instance | BindingFlags.NonPublic)
+      .Invoke(unpacker, new object[] { archive, unpack });
+    var preserved = (string[])typeof(Installer).GetField("preserve", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(unpacker);
+    Console.Error.WriteLine("manifest " + manifest["include"].GetType().FullName
+      + "; worker=" + File.Exists(Path.Combine(unpack, "worker", "runpod-worker.js"))
+      + "; shared=" + File.Exists(Path.Combine(unpack, "shared", "model-bundles.js"))
+      + "; test=" + File.Exists(Path.Combine(unpack, "scripts", "skipped_test.ps1"))
+      + "; notes=" + File.Exists(Path.Combine(unpack, "worker", "readme.md"))
+      + "; licence=" + File.Exists(Path.Combine(unpack, "worker", "vendor", "LICENSE.md"))
+      + "; extraPreserve=" + (Array.IndexOf(preserved, "vendor/previz-blender") >= 0));
+    if (!File.Exists(Path.Combine(unpack, "worker", "runpod-worker.js"))
+      || !File.Exists(Path.Combine(unpack, "shared", "model-bundles.js"))
+      || !File.Exists(Path.Combine(unpack, "scripts", "helper.mjs"))
+      || !File.Exists(Path.Combine(unpack, "worker", "vendor", "LICENSE.md"))
+      || File.Exists(Path.Combine(unpack, "scripts", "skipped_test.ps1"))
+      || File.Exists(Path.Combine(unpack, "worker", "readme.md")))
+      throw new Exception("Real install.json arrays must include worker/shared, exclude tests and notes, and keep licences");
+    if (Array.IndexOf(preserved, "vendor/previz-blender") < 0)
+      throw new Exception("Manifest preservation paths must survive JSON deserialization");
     Directory.CreateDirectory(Path.Combine(app, "launcher"));
     File.WriteAllText(Path.Combine(app, "launcher", "launcher.mjs"), "old app");
     File.WriteAllText(Path.Combine(app, ".git"), "gitdir: elsewhere");
-    var installer = new Installer(new Source("senzu", "Senzu", "S", "Senzube4n/AIPLAY-Studio"), app, false, false, false);
+    var installer = new Installer(chosen, app, false, false, false);
     bool refused = false;
     try { installer.Run(); } catch (InstallException e) { refused = e.Message.Contains("git clone"); }
     if (!refused) throw new Exception("A worktree must be refused before any network or install work");
@@ -323,14 +371,15 @@ static class Fixture {
     if (!failed || File.ReadAllText(Path.Combine(app, "launcher", "launcher.mjs")) != "old app"
       || File.ReadAllText(Path.Combine(app, "workflows", "custom", "mine.json")) != "my workflow")
       throw new Exception("A failed preservation copy must restore the whole old install");
-    Console.WriteLine("worktree refused; failed preservation restored old install"); return 0;
+    Console.WriteLine("original first; both builds selectable; manifest honoured; worktree refused; failed preservation restored old install"); return 0;
   }
 }`);
     execFileSync(compiler, ["/nologo", "/target:exe", "/main:Fixture", `/out:${exe}`,
       "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
       ...["System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll", "System.Web.Extensions.dll"].map(d => `/r:${path.join(fw, d)}`),
       fileURLToPath(root("installer/Setup.cs")), harness], { windowsHide: true, stdio: "pipe" });
-    const output = execFileSync(exe, [base], { windowsHide: true, encoding: "utf8" });
+    const output = execFileSync(exe, [base, fileURLToPath(root('install.json'))], { windowsHide: true, encoding: "utf8" });
+    assert.match(output, /original first; both builds selectable; manifest honoured/);
     assert.match(output, /worktree refused; failed preservation restored old install/);
   } finally { await rm(base, { recursive: true, force: true }); }
 });

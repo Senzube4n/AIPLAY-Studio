@@ -1,3 +1,6 @@
+import { remoteAceShelf, remoteYueCheckpoints } from './engine/remote-models.js';
+import { setupPlan, selectionFor, localModelReadiness, profileGraph } from './setup-plan.js';
+import { validModelSelection, selectedAceDit } from '../shared/model-profiles.js';
 import {createBatchMusicBridge} from './batch-music-context.js';
 import { createWeightTransferRoutes } from './mesh/avatar-weight-transfer.js';
 import { createAvatarFittingRoutes } from './mesh/avatar-fitting.js';
@@ -26,6 +29,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
+import { readJSON as readCloudJSON, jsonStore as cloudJSONStore } from "./engine/remote-common.js";
 import { WebSocketServer } from "ws";
 import { config, PREF_PATHS, prefsSnapshot, loraStepsOf, whisperPython, defaultWhisperPython, prefChosen, prefOrigin, applyMachineDefault, forgetPref, overrideForSession, sessionOverride, LITERAL_DEFAULTS, refreshVideoPicks } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
@@ -89,7 +93,7 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { createCloudRoutes, hostedWouldBill, paidRefusal, HOSTED_KEY_PLACE, CLOUD_CARD_PLACE, localUiHost, LENDER_ROLE_LABEL } from "./cloud-switch.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { stageLibrarySong, STAGED_SONG } from "./songstage.js";
-import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp, isVideoRow } from "./models.js";
+import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile, markRequired, modulesOf, songRights, songRightsStamp, isVideoRow, musicCapabilityFor } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
 
@@ -245,6 +249,7 @@ async function machineDefaults() {
   const music = defaultFor("music", {
     saved: prefChosen("music", "engine")
       ? { engine: swap ? swap.saved : config.music.engine,
+        dit: config.music.aceModel || null,
         checkpoint: prefChosen("music", "yue2Checkpoint") ? (ckptSwap ? ckptSwap.saved : config.music.yue2Checkpoint) : null,
         kept: prefOrigin("music", "engine") === "kept" }
       : null,
@@ -2116,6 +2121,10 @@ const ACE_DIT = /^acestep[_-]?v?1\.?5.*\.(safetensors|sft)$/i;
 const ACE_LMS = ["qwen_4b_ace15.safetensors", "qwen_1.7b_ace15.safetensors"];
 const aceBuildName = (n) => modelLeaf(n).replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
 async function aceShelf() {
+  if (config.remoteOnly) {
+    try { return remoteAceShelf(await (await remoteRoutes.start()).models(), config.music.aceLm); }
+    catch { return { dits: [], vae: false, enc: false, lms: [], lm: null, ready: false, missing: 'Connect your RunPod AI service to discover its ACE models' }; }
+  }
   const shelf = await scanBases(await modelBases());
   const on = (folders, name) => {
     try { return findShelfModel(shelf, folders[0], name); }
@@ -2217,7 +2226,7 @@ async function musicModelChoices(cat) {
       });
     }
   }
-  if (config.music.engines["ace-step15"] && !config.musicOnly) {
+  if (config.music.engines["ace-step15"] && !config.musicOnly && !config.remoteOnly) {
     const ace = await aceShelf();
     for (const dit of ace.dits) {
       out.push({
@@ -2245,12 +2254,25 @@ async function musicModelChoices(cat) {
    * against its own files and names any that are missing. Native GGUF and the
    * Python kit still run here and keep their own answer. */
   if (config.remoteOnly) {
+    for (let i = out.length - 1; i >= 0; i--) if (['ace-step15', 'yue2-comfy'].includes(out[i].engine)) out.splice(i, 1);
+    let info = null;
+    try { info = await (await remoteRoutes.start()).models(); } catch {}
+    const ace = config.music.engines["ace-step15"] ? remoteAceShelf(info, config.music.aceLm) : { dits: [] };
+    for (const dit of ace.dits) out.push({ value: 'ace-step15:' + dit, engine: 'ace-step15', precision: null, dit,
+      label: 'ACE-Step 1.5 · ' + aceBuildName(dit) + ' · RunPod', available: ace.ready,
+      note: ace.ready ? 'RunPod files available; inference unverified' : ace.missing, lms: ace.lms, lm: ace.lm });
+    if (config.music.engines["ace-step15"] && !ace.dits.length) out.push({ value: 'ace-step15', engine: 'ace-step15', label: 'ACE-Step 1.5 · RunPod', available: false, note: 'Connect and install ACE on your RunPod' });
+    const checkpoints = config.music.engines["yue2-comfy"] ? remoteYueCheckpoints(info) : [];
+    for (const checkpoint of checkpoints) out.push({ value: 'yue2-comfy:' + checkpoint, engine: 'yue2-comfy', checkpoint,
+      label: 'YuE2 · ' + bareName(checkpoint) + ' · RunPod', available: true, note: 'Runs on RunPod; runtime validated when submitted' });
+    if (config.music.engines["yue2-comfy"] && !checkpoints.length) out.push({ value: 'yue2-comfy', engine: 'yue2-comfy', label: 'YuE2 · RunPod', available: false, note: 'Connect and install YuE2 on your RunPod' });
     for (const c of out) {
-      if (c.api || !["minimax-music3", "ace-step15", "yue2-comfy"].includes(c.engine)) continue;
-      c.available = true;
-      c.note = "on your RunPod";
+      if (c.api || c.engine !== 'minimax-music3') continue;
+      // Preserve the existing remote MiniMax path; submission validates its graph.
+      c.available = true; c.note = 'Runs on RunPod; checked when submitted';
     }
-  }
+    for (const c of out) if (['yue2', 'yue2-gguf'].includes(c.engine)) c.label += ' · Local';
+  } else for (const c of out) if (!c.api) c.note = [c.note, 'Runs on this PC'].filter(Boolean).join(' · ');
   musicChoicesCache = { at: Date.now(), value: out };
   return out;
 }
@@ -3526,8 +3548,37 @@ engineDoor.setAdopter(engineRoutes.adopt);
  * routes: /api/runpod answers there with a refusal naming the mode. Results
  * are adopted into the same library as a local render; audio goes to the
  * music library under a runpod- name. */
-const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret,
+const cloudQueueFile = path.join(config.dataDir, "runpod", "paused-music-queue.json");
+const cloudQueueSave = cloudJSONStore(cloudQueueFile);
+let cloudQueueSignature = null;
+const savePausedCloudQueue = async () => {
+  const signature = JSON.stringify(jobs.queue);
+  if (signature === cloudQueueSignature) return;
+  await cloudQueueSave({ jobs: JSON.parse(signature) }); cloudQueueSignature = signature;
+};
+jobs.on("update", () => {
+  if (config.remoteOnly && jobs.cloudQueuePaused) savePausedCloudQueue().catch(() => console.warn("  [cloud] The paused queue could not be saved."));
+});
+const remoteRoutes = config.remoteOnly ? createRemoteRoutes({ config, getSecret, setSecret, clearSecret, savePrefs,
   append: prov.append, actorFrom: prov.actorFrom, sameOriginLocalJson,
+  localActivity: () => ({ active: !!jobs.current, queued: jobs.cloudQueuePaused ? 0 : jobs.queue.length }),
+  pauseQueuedWork: async () => {
+    jobs.pauseCloudQueue();
+    cloudQueueSignature = null; await savePausedCloudQueue();
+  },
+  resumeQueuedWork: async () => {
+    const file = cloudQueueFile;
+    const saved = await readCloudJSON(file, { jobs: [] });
+    const known = new Set([...jobs.queue, ...jobs.history, ...(jobs.current ? [jobs.current] : [])].map(j => j.id));
+    for (const job of saved.jobs || []) if (typeof job.id === "string" && !known.has(job.id)) { jobs.queue.push({ ...job, state: "queued" }); known.add(job.id); }
+    await cloudQueueSave({ jobs: [] }); cloudQueueSignature = null; jobs.resumeCloudQueue();
+  },
+  setSchedulingBlocked: value => { jobs.cloudStopping = !!value; },
+  cancelLocal: async () => {
+    for (const job of [...jobs.queue]) await jobs.cancelById(job.id);
+    if (jobs.current) await jobs.cancel();
+    if (jobs.cloudQueuePaused) { cloudQueueSignature = null; await savePausedCloudQueue(); }
+  },
   adopt: async (details) => {
     if (/\.(wav|flac|mp3|ogg|opus)$/i.test(details.output.file)) {
       /* "aiplay_" first: the library lists only its own prefixes (library.js
@@ -3552,7 +3603,7 @@ if (remoteRoutes) jobs.setRemote(async ({ graph, label, actor, isCancelled, onSt
     error.remoteState = "cancelled";
     throw error;
   }
-  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor });
+  const sent = await c.submit({ graph, bindings: [], label: `AIPLAY music · ${label || "song"}`, actor, fromQueue: true });
   return await awaitRemoteMusicJob({ client: c, sent, isCancelled, onState });
 });
 
@@ -4139,6 +4190,38 @@ const server = http.createServer(async (req, res) => {
         return json(res, 202, {...started,...await ggufSetup.status({quantization:b.quantization})});
       } catch(err) {return json(res,400,{error:err.message});}
     }
+    // Planning has no provider calls and never switches launch modes or generation preferences.
+    if (p === '/api/setup-plan') {
+      const hosts = ['127.0.0.1:' + config.uiPort, 'localhost:' + config.uiPort, '[::1]:' + config.uiPort];
+      if (!hosts.includes(String(req.headers.host || '')) || req.headers.origin && !['http://127.0.0.1:' + config.uiPort, 'http://localhost:' + config.uiPort].includes(req.headers.origin))
+        return json(res, 403, { error: 'Open setup on this PC’s Studio address.' });
+      try {
+        const b = req.method === 'POST' ? (sameOriginLocalJson(req) ? await readBody(req) : null) : {};
+        if (!b) return json(res, 403, { error: 'Save setup from Studio’s own page using JSON.' });
+        if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { error: 'Use GET or POST for setup planning.' });
+        const target = b.target || url.searchParams.get('target') || (config.remoteOnly ? 'runpod' : 'local');
+        if (!['local','runpod'].includes(target)) throw Error('Choose Local or RunPod.');
+        if (req.method === 'POST' && b.verify !== true) {
+          if (!validModelSelection(b.selection)) throw Error('Select at least one category and a supported model for each.');
+          const group = target === 'runpod' ? 'cloudSetup' : 'modelSetup', key = target === 'runpod' ? 'plan' : 'local';
+          const previous = config[group][key]; config[group][key] = { ...b.selection };
+          try { await savePrefs(); } catch (e) { config[group][key] = previous; throw e; }
+        }
+        const machine = target === 'local' ? readMachine(gpuStatus(), ramStatus(), { cpuOnly: cpuOnlyEngine(), vaeMeasured: h3VaeMeasured() }) : undefined;
+        const plan = setupPlan({ selection: selectionFor(config, target), target, machine, localFiles: target === 'local' ? await scanBases(await modelBases()) : [] });
+        const activeMode = config.remoteOnly ? 'runpod' : !config.musicOnly && !config.cloudOnly ? 'local' : 'other';
+        let readiness;
+        if (target === 'local') {
+          let objects = null;
+          if (activeMode === 'local') {
+            const nodes = [...new Set(plan.profiles.flatMap(p => Object.values(profileGraph(p)).map(n => n.class_type)))];
+            objects = Object.assign({}, ...await Promise.all(nodes.map(n => engineDoor.objectInfo(n).catch(() => ({})))));
+          }
+          readiness = await localModelReadiness(plan, { engine: engineDoor, connected: !!objects && Object.keys(objects).length > 0, objects, verify: b.verify === true });
+        }
+        return json(res, 200, { ...plan, activeMode, readiness, machine });
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
     if (p === "/api/models" && req.method !== "POST") {
       // The selected engine (REQUIRED badge, the recommendation's music slot) follows the disk when unchosen.
       if (typeof machineDefaults === "function") await machineDefaults().catch(() => null);
@@ -4365,7 +4448,7 @@ const server = http.createServer(async (req, res) => {
           }
           // Deliberately not awaited: these are multi-gigabyte fetches and the
           // UI follows them over the websocket.
-          models.download(String(b.id), { acceptRegion: !!b.acceptRegion }).catch(() => {});
+          models.download(String(b.id), { acceptRegion: !!b.acceptRegion, exact: b.exact === true }).catch(() => {});
           return json(res, 200, { ok: true, started: b.id });
         }
         if (b.action === "cancel") {
@@ -5254,13 +5337,11 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "ACE-Step has no preview pass; turbo is already 8 steps. Press Create instead.", engine: musicEngine, reason: "no-preview" });
         }
         const ace = await aceShelf();
-        const dit = ace.dits.includes(config.music.aceModel) ? config.music.aceModel
-          : ace.dits[0] || (config.remoteOnly ? (config.music.aceModel || "acestep_v1.5_turbo.safetensors") : undefined);
-        if (config.remoteOnly && !ace.lm) ace.lm = config.music.aceLm || "qwen_4b_ace15.safetensors";
-        if (!config.remoteOnly && (!dit || !ace.ready)) {
+        const dit = selectedAceDit(ace.dits, config.music.aceModel);
+        if (!dit || !ace.ready) {
           return json(res, 400, {
-            error: `ACE-Step 1.5 is not ready: ${ace.missing || "no ACE-Step 1.5 DiT in a diffusion_models folder"}. Open the Models screen.`,
-            engine: musicEngine, reason: "weights-missing", needsModel: "musicAceStep15",
+            error: `ACE-Step 1.5 is not ready: ${ace.missing || (config.music.aceModel ? 'the selected DiT is missing' : 'no ACE-Step 1.5 DiT is installed')}. Open Models or Cloud Setup.`,
+            engine: musicEngine, reason: "weights-missing", needsModel: musicCapabilityFor("ace-step15", config.music.aceModel),
           });
         }
         const shelf = await scanBases(await modelBases());
@@ -10442,6 +10523,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/loras" && req.method === "GET") {
+      if (remoteRoutes) {
+        const remote = await remoteRoutes.start();
+        if (!remote.status().configured) return json(res, 200, { loras: [], remote: true });
+        try { return json(res, 200, { ...await remote.loras(), remote: true }); }
+        catch (error) { return json(res, 200, { loras: [], remote: true, warning: error.message }); }
+      }
       /* Every base the engine loads from (the Models screen's folder, a ComfyUI
        * Desktop install's extra paths), not only config.modelsDir: the music
        * checkpoint list reads the same shelves, and a LoRA beside a checkpoint

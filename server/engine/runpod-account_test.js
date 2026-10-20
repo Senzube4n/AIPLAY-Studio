@@ -101,6 +101,25 @@ test("creation refuses an existing Pod name before sending another paid mutation
   assert.equal(r.calls.filter(call => call.query.includes("AiplayCreatePod")).length, 0);
 });
 
+test('overlapping manual create requests share the creation guard and send one paid mutation', async () => {
+  const r = rig(); await r.account.connect(KEY);
+  const body = { confirm: 'CREATE PAID POD', gpuTypeId: 'cheap', name: 'First new computer' };
+  const out = await Promise.allSettled([r.account.create(body), r.account.create({ ...body, name: 'Second new computer' })]);
+  assert.equal(out.filter(x => x.status === 'fulfilled').length, 1);
+  assert.equal(r.calls.filter(call => call.query?.includes('AiplayCreatePod')).length, 1);
+});
+
+test("guided creation refuses a changed price or unavailable GPU before a paid mutation", async () => {
+  const r = rig(); await r.account.connect(KEY);
+  const input = { confirm: "CREATE PAID POD", gpuTypeId: "cheap", name: "New computer", expectedPricePerHr: .39 };
+  await assert.rejects(r.account.create(input), /estimated price changed/);
+  await assert.rejects(r.account.create({ ...input, gpuTypeId: "missing" }), /no longer available/);
+  await assert.rejects(r.account.create({ ...input, gpuTypeId: "AMD Instinct MI350X" }), /NVIDIA cloud graphics card/);
+  assert.equal(r.calls.filter(call => call.query?.includes("AiplayCreatePod")).length, 0);
+  const out = await r.account.create({ ...input, expectedPricePerHr: .4 });
+  assert.equal(out.pod.id, "created1");
+});
+
 test("private AIPLAY templates are created once with bounded workload presets", async () => {
   const r = rig(); await r.account.connect(KEY);
   const first = await r.account.createTemplates();
@@ -114,6 +133,9 @@ test("private AIPLAY templates are created once with bounded workload presets", 
   assert.equal(trainer.imageName, "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04");
   assert.deepEqual(trainer.ports, ["8888/http", "7860/http", "6006/http"]);
   assert.equal(r.restTemplates.every(template => template.volumeMountPath === "/workspace"), true);
+  assert.match(trainer.readme, /uv run acestep/);
+  assert.match(trainer.readme, /Open port 7860 and use the LoRA Training tab/);
+  assert.ok(!AIPLAY_POD_TEMPLATES.some(template => template.id === 'custom-music'));
   assert.deepEqual(r.restTemplates.map(template => template.volumeInGb), [60, 120, 100, 120]);
   assert.equal(r.calls.filter(call => call.url && call.method === "POST").every(call => call.auth === `Bearer ${KEY}`), true);
 
@@ -135,4 +157,18 @@ test("start and stop use scoped Pod mutations", async () => {
 
 test("normalization tolerates empty API fields", () => {
   assert.deepEqual(normalizeAccount({}), { balance: 0, currentSpendPerHr: 0, pods: [], gpus: [] });
+});
+
+test("a lost creation response cannot create another paid Pod, even with a new name", async () => {
+  let creates = 0;
+  const account = createRunpodAccount({ getApiKey: async () => KEY, setApiKey: async () => {}, clearApiKey: async () => {},
+    fetchFn: async (_url, init) => {
+      const q = JSON.parse(init.body).query;
+      if (q.includes("AiplayRunpodOverview")) return Response.json({ data: { myself: { pods: [] }, gpuTypes: [] } });
+      if (q.includes("AiplayCreatePod")) { creates++; throw new Error("Response lost"); }
+      throw new Error("Unexpected request");
+    } });
+  await assert.rejects(account.create({ name: "AIPLAY first", gpuTypeId: "gpu", confirm: "CREATE PAID POD" }));
+  await assert.rejects(account.create({ name: "AIPLAY retry", gpuTypeId: "gpu", confirm: "CREATE PAID POD" }), /previous Pod creation result is uncertain/);
+  assert.equal(creates, 1);
 });

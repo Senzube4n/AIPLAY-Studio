@@ -1,8 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import { dawTools } from "../mcp-daw.js";
 import { bounceOptions, loudnessOptions } from "./bounce-options.js";
 import { handleMixerAction } from "./mixer.js";
+
+test('real export fixture fails clearly on an explicitly missing Python without skipping the mandatory lane', () => {
+  const missing = path.join(os.tmpdir(), `aiplay-no-python-${randomUUID()}`, 'python');
+  const result = spawnSync(process.execPath, ['server/daw/production_export_test.js'], {
+    env: { ...process.env, AIPLAY_PYTHON: missing }, encoding: 'utf8', windowsHide: true, timeout: 30000,
+  });
+  assert.equal(result.error, undefined);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /DAW export test requires a runnable AIPLAY_PYTHON/);
+  assert.match(result.stderr, /docs\/GATE_PYTHON\.md/);
+  assert.match(result.stderr, /ENOENT/);
+});
 
 test("export defaults, inheritance and explicit off share one validated contract", () => {
   assert.deepEqual(bounceOptions({}), { format: "flac", bit_depth: 24, target_lufs: null, ceiling_db: -1, max_limit_db: 3 });

@@ -17,8 +17,8 @@
  *   C (4196)  tiny caps via the env knobs, so eviction actually happens rather
  *             than being argued about.
  *
- * NOT in .githooks/pre-commit, for the reason smoke_api is not: it needs the
- * rig's python and it renders a couple of hundred frames. Minutes, not seconds.
+ * Mandatory in .githooks/pre-commit. Needs the CPU renderer dependencies and
+ * renders a couple of hundred frames. Minutes, not seconds; no models or GPU.
  *
  *   node server/vfx/routes_ram_test.js
  *
@@ -37,6 +37,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
 const SCRATCH = path.join(os.tmpdir(), `vfx_ram_${process.pid}`);
 const RIG_PYTHON = process.env.AIPLAY_RIG_PYTHON
+  || process.env.AIPLAY_PYTHON
   || path.join(process.env.AIPLAY_RIG || "D:/AI/aiplay-studio-bench", "venv", "Scripts", "python.exe");
 
 let pass = 0;
