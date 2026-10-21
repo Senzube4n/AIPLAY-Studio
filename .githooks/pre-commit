@@ -29,6 +29,8 @@ node --test server/daw/assistant_test.js server/daw/assistant-providers_test.js 
 # Held WebMIDI previews: fake audio nodes and requests only, no synth/CLI/GPU.
 node --check web/daw.js || exit 1
 node --test server/daw/audition-ui_test.js || exit 1
+# Native toolbar popups: dismissal, focus, viewport bounds and cleanup.
+node --test server/daw/toolbar_test.js || exit 1
 node --check shared/model-bundles.js || exit 1
 node --check shared/model-profiles.js || exit 1
 node --check server/setup-plan.js || exit 1

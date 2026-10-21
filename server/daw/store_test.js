@@ -555,6 +555,25 @@ console.log("\n  -- clip bounds round-trip through a save and load --");
  * nonsense, and the first symptom is a layout somebody cannot get back out of,
  * because every control for changing it lives inside it. */
 {
+  const fresh = blankProject("new layout");
+  const other = blankProject("another layout");
+  ok("new projects explicitly open the bottom mixer with browser and device dock folded",
+    fresh.view.preset === "deck" && fresh.view.mixer.mode === "deck"
+      && fresh.view.mixer.height === 300 && !fresh.view.mixer.folded && fresh.view.mixer.compact
+      && fresh.view.browser.folded && fresh.view.dock.folded && fresh.view.faderH === 132,
+    JSON.stringify(fresh.view));
+  ok("a saved new project keeps that view on reload",
+    JSON.stringify(migrate(JSON.parse(JSON.stringify(fresh))).view) === JSON.stringify(fresh.view));
+  fresh.view.mixer.height = 420;
+  fresh.view.browser.folded = false;
+  fresh.view.dock.folded = false;
+  ok("editing one new view cannot mutate another project or the shared deck preset",
+    fresh.view !== other.view && fresh.view.mixer !== other.view.mixer
+      && fresh.view.browser !== other.view.browser && fresh.view.dock !== other.view.dock
+      && other.view.mixer.height === 300 && other.view.browser.folded && other.view.dock.folded
+      && VIEW_PRESET_VALUES.deck.mixer.height === 300
+      && VIEW_PRESET_VALUES.deck.browser.folded && VIEW_PRESET_VALUES.deck.dock.folded);
+
   const v = normalizeView(undefined);
   ok("a project with no view gets a whole one, not an empty object",
     v.preset === "default" && v.mixer.mode === "side" && v.faderH === 180,
@@ -619,6 +638,31 @@ console.log("\n  -- clip bounds round-trip through a save and load --");
   const doc = migrate({ name: "view probe", view: { mixer: { width: 9999 } } });
   ok("migrate() normalises the view rather than passing it through",
     doc.view && doc.view.mixer.width === 640, JSON.stringify(doc.view && doc.view.mixer));
+
+  // Compare actual sounding events/cache identities, rather than inferring
+  // that a visual field cannot affect them. Missing legacy views stay Side.
+  const song = makeDoc();
+  addNote(song, { bar: 2, beat: 2, durTicks: 1440 });
+  addNote(song, { bar: 10, pitch: 67 });
+  delete song.view;
+  const audioHashes = regionHashes(song), events = JSON.stringify(noteEvents(song));
+  const legacy = migrate(JSON.parse(JSON.stringify(song)));
+  ok("loading a legacy document without a view keeps the Side layout",
+    legacy.view.preset === "default" && legacy.view.mixer.mode === "side"
+      && !legacy.view.browser.folded && !legacy.view.mixer.folded && !legacy.view.dock.folded);
+  const savedView = { preset: "default",
+    mixer: { mode: "side", width: 341, height: 422, folded: false, compact: true },
+    browser: { width: 271, folded: false }, dock: { folded: true }, faderH: 211 };
+  const restored = migrate(JSON.parse(JSON.stringify({ ...song, view: savedView })));
+  ok("a saved custom Side view survives field-for-field instead of adopting the new default",
+    JSON.stringify(restored.view) === JSON.stringify(savedView), JSON.stringify(restored.view));
+  const variants = [legacy, restored,
+    ...VIEW_PRESETS.map(preset => migrate(JSON.parse(JSON.stringify({ ...song,
+      view: { ...VIEW_PRESET_VALUES[preset], preset } }))))];
+  ok("new, legacy and saved layouts leave sounding notes and every audio region hash identical",
+    variants.every(d => JSON.stringify(noteEvents(d)) === events
+      && JSON.stringify(regionHashes(d)) === JSON.stringify(audioHashes)
+      && dirtyBetween(audioHashes, regionHashes(d), regionsOf(d)).length === 0));
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

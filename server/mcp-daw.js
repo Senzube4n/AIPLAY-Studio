@@ -296,7 +296,7 @@ export function dawTools(api, safeName) {
           mixer_mode: { type: "string", enum: ["side", "deck"],
             description: "side = a column on the right; deck = across the bottom, which is what fits a whole song's strips." },
           mixer_width: { type: "integer", description: "180-640 px, the side column. Below 180 the gutter and two compact strips no longer fit; above 640 the mixer is wider than the arrangement." },
-          mixer_height: { type: "integer", description: "260-520 px, the deck. 260 is the shortest deck in which a strip does not overflow its own box \u2014 at 200 the solo/mute/arm row lands where it cannot be clicked." },
+          mixer_height: { type: "integer", description: "280-520 px for the bottom mixer deck." },
           mixer_folded: { type: "boolean" },
           mixer_compact: { type: "boolean", description: "Narrow strips: the fader and the meter, without the patch line, the sends and the pan readout. Roughly twice the channels in the same width." },
           browser_width: { type: "integer", description: "160-480 px." },

@@ -247,6 +247,9 @@ export function blankProject(name, opts = {}) {
      * Missing mode in a saved document keeps the original soft clip.
      * `target_lufs` is absent: a bounce aims at a loudness only when asked. */
     master: { inserts: [], fader: 0, stereo: true, outputMode: "transparent" },
+    /* New songs open on the bottom mixer with the browser/device dock folded.
+     * Normalize into fresh nested objects; legacy migration keeps its old view. */
+    view: normalizeView({ ...VIEW_PRESET_VALUES.deck, preset: "deck" }),
     /* Every mutation appends here with its author — `by: "agent" | "user"` —
      * the dual-control ledger §13a asks for. Stored, shown nowhere yet. */
     ledger: [],

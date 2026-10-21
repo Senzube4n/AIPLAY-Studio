@@ -155,11 +155,25 @@ body.d-body {
 
 .d-bar {
   grid-area: bar;
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  display: flex; flex-direction: column; align-items: stretch; gap: 5px;
   padding: 6px 10px;
   background: var(--rail);
   border-bottom: 1px solid var(--edge);
 }
+.d-bar-main, .d-project-tools, .d-transport-tools, .d-bar-tools {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.d-bar-main { flex-wrap: wrap; }
+.d-project-tools { flex: 1 1 280px; }
+.d-project-tools #projSel { flex: 1 1 160px; width: 160px; min-width: 80px; max-width: 440px; }
+.d-transport-tools { flex: 0 1 auto; }
+.d-transport-tools .d-group { padding-left: 0; margin-left: 0; border: 0; }
+.d-transport-tools .d-loopl { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.d-bar-tools { flex-wrap: wrap; gap: 5px; }
+.d-bar-tools #bounceBtn { margin-left: auto; }
+.d-bar .d-morebody { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: max-content; max-width: calc(100vw - 32px); }
+.d-view-options { min-width: 240px; }
+.d-tools-menu .d-morebody { left: auto; right: 0; }
 /* the way back to the studio: the DAW's only navigation, so it reads as a
  * control, not as a footnote */
 .d-home {
@@ -401,8 +415,8 @@ body.d-body {
   grid-area: centre;
   display: grid;
   grid-template-rows:
-    minmax(0, var(--d-arr-fr, 1fr)) auto
-    minmax(0, var(--d-ed-fr, 1.7fr)) auto
+    minmax(0, var(--d-arr-fr, 1.25fr)) auto
+    minmax(0, var(--d-ed-fr, 1fr)) auto
     var(--d-dock-h, 140px);
   min-width: 0; min-height: 0;
   background: var(--bg);
@@ -1047,6 +1061,20 @@ dialog .d-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; 
   .d-shell.d-nobrowser { --d-browser-w: 0px; }
   .d-edinfo { display: none; }
   .d-more .d-morebody { max-width: calc(100vw - 32px); flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  .d-project-tools .d-logo { display: none; }
+  .d-project-tools { flex-basis: 100%; }
+  .d-transport-tools { flex-wrap: wrap; }
+  .d-transport-tools .d-loopl { max-width: 100px; }
+  .d-bar-tools { gap: 4px; }
+  .d-bar-tools > .d-btn, .d-bar-tools > .d-more > summary { padding: 3px 6px; }
+}
+/* A short host pane must scroll to its mixer instead of crushing both editors. */
+@media (max-height: 700px) {
+  .d-shell { overflow-y: auto; grid-template-rows: auto minmax(280px, 1fr) auto; }
+  .d-shell.d-deck { grid-template-rows: auto minmax(280px, 1fr) var(--d-deck-h, 300px) auto; }
+  .d-shell.d-deck.d-nomixer { --d-deck-h: 0px; }
 }
 
 .d-notesettings .d-noteoptions { display: flex; flex-direction: column; align-items: stretch; gap: 12px; width: 430px; max-width: calc(100vw - 40px); left: auto; right: 0; }

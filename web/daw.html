@@ -60,6 +60,8 @@
 
   <!-- ══════════════════════════ TRANSPORT ══════════════════════════ -->
   <header class="d-bar">
+    <div class="d-bar-main">
+    <div class="d-project-tools">
     <!-- THE WAY HOME. The studio's rail can reach this page; without this
          link the only exit is the browser's back button. Same weight the
          rail gives its own entries, same tokens as everything else. -->
@@ -75,16 +77,21 @@
     <span id="dawInfoHost" class="d-infohost"></span>
     <select id="projSel" class="d-sel" aria-label="Project" title="open a project"><option>Loading projects…</option></select>
     <button id="retryProjects" class="d-btn" hidden>Retry loading</button>
-    <button id="newProj" class="d-btn" disabled>New</button>
-    <button id="delProj" class="d-btn d-sm" title="delete this project and everything under it (delete) — an agent could already do this; the window could not">✕</button>
+    <details class="d-more d-project-menu">
+      <summary aria-label="Project actions">⋯</summary>
+      <div class="d-morebody">
+        <button id="newProj" class="d-btn" disabled>New</button>
+        <button id="delProj" class="d-btn d-sm" title="Delete this project and its files.">Delete project</button>
+      </div>
+    </details>
+    </div>
 
+    <div class="d-transport-tools">
     <span class="d-group">
       <button id="playBtn" class="d-btn d-play" title="play / stop">▶</button>
       <button id="stopBtn" class="d-btn" title="stop and return to the start">■</button>
       <button id="recBtn" class="d-btn" title="record onto the armed track from the current position">●</button>
       <button id="loopBtn" class="d-btn d-on" title="loop the project">⟲</button>
-      <label title="the click bed is rendered by the engine from the meter map — never a second clock">
-        <input type="checkbox" id="clickChk"> click</label>
       <label class="d-sr"><input type="checkbox" id="loopChk" checked> loop</label>
     </span>
 
@@ -97,10 +104,14 @@
       <button id="undoBtn" class="d-btn d-sm" title="undo">↶<b id="undoN"></b></button>
       <button id="redoBtn" class="d-btn d-sm" title="redo">↷<b id="redoN"></b></button>
     </span>
+    </div>
+    </div>
+    <div class="d-bar-tools">
 
     <details class="d-more d-songsettings">
       <summary>Song settings</summary>
       <div class="d-morebody d-settingsbody">
+      <label class="d-group"><input type="checkbox" id="clickChk"> click</label>
     <span class="d-group">
       <label>bpm <input type="number" id="tBpm" class="d-num d-w3" value="120" min="20" max="400"></label>
       <label>@bar <input type="number" id="tBar" class="d-num d-w3" value="1" min="1"></label>
@@ -125,7 +136,7 @@
          you touch when you are recording and never when you are writing,
          and a transport bar that wraps onto a third row is a transport bar
          nobody can read at a glance. -->
-    <details class="d-more">
+    <details class="d-more d-capture-menu">
     <summary title="the capture cluster: count-in, input device, audio import, latency calibration and MIDI">● capture</summary>
     <span class="d-group d-morebody">
       <select id="cntIn" class="d-sel" title="count-in (meter-aware — 7/8 counts in 7)">
@@ -146,7 +157,9 @@
     </span>
     </details>
 
-    <span class="d-group">
+    <details class="d-more d-view-menu">
+    <summary>View</summary>
+    <div class="d-morebody d-view-options">
       <select id="kmSel" class="d-sel" title="keymap profile — the core gestures in the idiom you already have in your fingers">
         <!-- The VALUES are the contract (server/daw/ui_test.js pins them and a
              saved project carries them); the text is what a person reads, and
@@ -166,17 +179,24 @@
            bar is the one region no preset can fold — which is what makes
            clicking the chip you are already on meaningful too: it re-applies
            the preset's own numbers, so there is always a way back. -->
-      <button id="vpDefault" class="d-btn d-sm" title="Side mixer — the mixer as a column on the right, browser and dock open. Everything reachable; with more than about four tracks the column shows a few strips and scrolls for the rest.">Side</button>
-      <button id="vpDeck" class="d-btn d-sm" title="Mixer deck — the mixer moves to a deck across the bottom and the browser and dock fold. The shape that fits a whole song's channels at once. Costs: the instrument browser and the chain / analysis / Ear dock are a click away rather than on screen, and the deck takes its height off the arrangement.">Deck</button>
-      <button id="vpWide" class="d-btn d-sm" title="Wide — both side panels, the mixer and the dock folded. Nothing but the arrangement and the piano roll. Costs everything else, and it is meant to.">Wide</button>
-      <button id="browserBtn" class="d-btn d-sm d-on" title="fold the browser">◧</button>
-      <button id="mixerBtn" class="d-btn d-sm d-on" title="fold the mixer">◨</button>
-      <button id="dockBtn" class="d-btn d-sm d-on" title="fold the bottom dock (chain / analysis / the Ear)">▤</button>
+      <button id="vpDefault" class="d-btn d-sm" title="Browser, side mixer and editor open.">Side</button>
+      <button id="vpDeck" class="d-btn d-sm" title="Compact mixer across the bottom.">Deck</button>
+      <button id="vpWide" class="d-btn d-sm" title="Arrangement and piano roll only.">Wide</button>
+    </div>
+    </details>
+      <button id="browserBtn" class="d-btn d-sm d-on" title="Show or hide instruments.">Instruments</button>
+      <button id="mixerBtn" class="d-btn d-sm d-on" title="Show or hide the mixer.">Mixer</button>
+      <button id="dockBtn" class="d-btn d-sm d-on" title="Show or hide effects and analysis.">Editor</button>
       <button id="assistantBtn" class="d-btn d-sm" aria-controls="dawAssistant" aria-expanded="false">Assistant</button>
       <button id="bounceBtn" class="d-btn d-sm" title="Export FLAC or WAV with loudness, peak and credit controls">export…</button>
-      <button id="musicInputBtn" class="d-btn d-sm" title="Prepare audio for experimental Music3 continuation and bring the result back to the DAW">Music3 input…</button>
-      <button id="arrBtn" class="d-btn d-sm" title="arrange a whole big-room song into a NEW project — tracks, clips, notes, sidechain, limiter — deterministic from a seed">arrange…</button>
-    </span>
+      <details class="d-more d-tools-menu">
+        <summary>Tools</summary>
+        <div class="d-morebody">
+          <button id="musicInputBtn" class="d-btn d-sm" title="Prepare audio for Music3 continuation.">Music3 input…</button>
+          <button id="arrBtn" class="d-btn d-sm" title="Arrange a new big-room project.">arrange…</button>
+        </div>
+      </details>
+    </div>
 
   </header>
 
@@ -494,7 +514,7 @@
        edge in side mode, along the deck's top edge in deck mode, because it is
        the same gesture — "give the mixer more room" — either way. -->
   <div class="d-hsplit d-hsplit-b" id="splitB" title="drag to set how wide the instrument browser is (160–480 px) — written to the project when you let go"></div>
-  <div class="d-hsplit d-hsplit-m" id="splitM" title="drag to set the mixer's size — the column's width (180–640 px), or the deck's height (260–520 px) when the mixer is a deck. Written to the project when you let go."></div>
+  <div class="d-hsplit d-hsplit-m" id="splitM" title="Resize the mixer: side width 180–640 px or deck height 280–520 px."></div>
 
   <!-- ══════════════════════════ STATUS ════════════════════════════ -->
   <footer class="d-status">

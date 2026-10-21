@@ -43,8 +43,10 @@ import { resizeNoteDurations } from "./daw-editing.js";
 import { EXPORT_PRESETS, exportSettings, exportFacts, exportDownloadUrl } from "./daw-export.js";
 import { audioResultDetails, stemResultDetails } from "./daw-audio-results.js";
 import { initDawPlugins } from "./daw-plugins.js";
+import { mountToolbarMenus } from "./daw-toolbar.js";
 
 const $ = (id) => document.getElementById(id);
+mountToolbarMenus(document.querySelector(".d-bar"));
 /* Every name here can come from outside Studio: a track named after an
  * imported file, a pack's licence fields, MCP and the chat agent. Escaped
  * wherever it lands in HTML (security review, 2026-10-12). */
@@ -6636,7 +6638,7 @@ const VIEW_CHIPS = [["vpDefault", "default"], ["vpDeck", "deck"], ["vpWide", "wi
  * of the server's answer and never the answer itself: every commit applies the
  * view that comes BACK, so if these ever drift from the store's the release
  * snaps to the true value in front of you instead of leaving a lie on screen. */
-const VIEW_BOUNDS = { browserW: [160, 480], mixerW: [180, 640], deckH: [260, 520] };
+const VIEW_BOUNDS = { browserW: [160, 480], mixerW: [180, 640], deckH: [280, 520] };
 const clampTo = ([lo, hi], n) => Math.max(lo, Math.min(hi, Math.round(n)));
 
 /** The view this page is showing — the document's, once one is open. */
