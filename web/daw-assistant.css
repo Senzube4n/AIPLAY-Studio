@@ -1,0 +1,65 @@
+/* This dock's size/open state is a browser UI preference, not project content. */
+.d-shell.d-assistant-open {
+  grid-template-columns: minmax(0, var(--d-browser-w)) minmax(360px, 1fr) minmax(0, var(--d-mixer-w)) minmax(300px, var(--d-assistant-pref, 360px));
+  grid-template-areas: "bar bar bar bar" "browser centre mixer assistant" "status status status status";
+}
+.d-shell.d-deck.d-assistant-open {
+  grid-template-areas: "bar bar bar bar" "browser centre centre assistant" "mixer mixer mixer assistant" "status status status status";
+}
+.d-assistant[hidden] { display: none; }
+.d-assistant {
+  grid-area: assistant; position: relative; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; overflow: hidden;
+  border-left: 1px solid var(--edge); background: var(--bg); color: var(--ink);
+}
+.d-assistant > :not(.d-assistant-log) { flex-shrink: 0; }
+.d-assistant-head, .d-assistant-tools, .d-assistant-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.d-assistant-head strong { margin-right: auto; }
+.d-assistant-state { color: var(--dim); font-size: 11px; }
+.d-assistant-state.d-assistant-busy { color: var(--warn); }
+.d-assistant-tools .d-sel { flex: 1; min-width: 90px; }
+.d-assistant-scope, .d-assistant-note { margin: 0; overflow-wrap: anywhere; }
+.d-assistant-note:empty { display: none; }
+.d-assistant-log { flex: 1 1 auto; min-height: 30px; overflow: auto; overscroll-behavior: contain; }
+.d-assistant-message { white-space: pre-wrap; overflow-wrap: anywhere; padding: 7px 8px; margin: 0 0 6px; border-left: 2px solid var(--hair); }
+.d-assistant-user { background: var(--raise); }
+.d-assistant-assistant { border-color: var(--primary); }
+.d-assistant-tool { color: var(--dim); font-size: 11px; }
+.d-assistant-error { color: var(--err); }
+.d-assistant-form { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.d-assistant-form textarea { width: 100%; min-height: 52px; max-height: 160px; resize: vertical; box-sizing: border-box; }
+.d-assistant-actions { justify-content: flex-end; }
+.d-assistant-actions [hidden] { display: none; }
+.d-assistant-details { color: var(--dim); font-size: 11px; }
+.d-assistant-details p { margin: 6px 0; }
+.d-assistant-approval { padding: 8px; margin-bottom: 8px; border: 1px solid var(--warn); }
+.d-assistant-approval pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.d-assistant-approval button { margin-right: 6px; }
+.d-assistant-grip { position: absolute; z-index: 7; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; }
+.d-assistant-grip:hover, .d-assistant-grip:focus-visible { background: var(--primary); }
+@media (max-width: 1100px) {
+  .d-shell.d-assistant-open {
+    grid-template-columns: minmax(0, var(--d-browser-w)) minmax(360px, 1fr) minmax(0, var(--d-mixer-w));
+    grid-template-rows: auto minmax(0, 1fr) minmax(240px, var(--d-assistant-height, 300px)) auto;
+    grid-template-areas: "bar bar bar" "browser centre mixer" "assistant assistant assistant" "status status status";
+  }
+  /* One bottom panel fits at this width; closing Assistant restores the deck. */
+  .d-shell.d-deck.d-assistant-open { grid-template-areas: "bar bar bar" "browser centre centre" "assistant assistant assistant" "status status status"; }
+  .d-shell.d-deck.d-assistant-open .d-mixer, .d-shell.d-deck.d-assistant-open .d-hsplit-m { display: none; }
+  .d-assistant { border-left: 0; border-top: 1px solid var(--edge); gap: 5px; }
+  .d-assistant-grip { top: -4px; bottom: auto; left: 0; right: 0; width: auto; height: 8px; cursor: row-resize; }
+  .d-assistant-form textarea { min-height: 36px; height: 36px; }
+  .d-assistant-details { max-height: 80px; overflow: auto; }
+}
+/* A wrapped transport can consume most of a short viewport. Keep both the
+ * arrangement and the full composer reachable through the shell's scroller. */
+@media (max-height: 600px) {
+  .d-shell.d-assistant-open { overflow: auto; grid-template-rows: auto minmax(240px, 1fr) auto; }
+  .d-shell.d-deck.d-assistant-open { grid-template-rows: auto minmax(240px, 1fr) var(--d-deck-h, 300px) auto; }
+  .d-assistant { overflow: auto; }
+}
+@media (max-height: 600px) and (max-width: 1100px) {
+  .d-shell.d-assistant-open, .d-shell.d-deck.d-assistant-open {
+    grid-template-rows: auto minmax(240px, 1fr) minmax(240px, var(--d-assistant-height, 300px)) auto;
+  }
+}

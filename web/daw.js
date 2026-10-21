@@ -4154,6 +4154,7 @@ const deferredNote = (name) =>
 /* ── the dock's three tabs ───────────────────────────────────────────── */
 
 let passageDock = null;
+let assistantDock = null;
 let passageDockSized = false;
 function showDock(tab) {
   S.ana.tab = tab;
@@ -5996,6 +5997,7 @@ async function refreshDoc(session = captureSession()) {
   paintSelInfo();
   if (S.rollFit) fitRoll();
   passageDock?.contextChanged();
+  assistantDock?.refresh();
   return true;
 }
 /** Set the loop without restarting the transport (used while re-reading). */
@@ -7377,6 +7379,7 @@ async function loadProject(slug) {
   liveChain = Promise.resolve();
   ++S.docRead; ++S.renderRequest;
   S.proj = null; S.timeline = []; S.totalSeconds = 0;
+  assistantDock?.refresh();
   S.view = null;                 // the outgoing project's layout is not the incoming one's
   S.trackId = null; S.devTarget = null; S.devInsert = null;
   S.drag = null; S.dragging = false; S.velStrategy = null;
@@ -7599,6 +7602,7 @@ mountInfo("daw", "#dawInfoHost");
 
 import { mountEar } from "./dawear.js";
 import { mountDawPassages } from './daw-passages.js';
+import { mountDawAssistant } from './daw-assistant.js';
 import { appConfirm, appPrompt } from "./dialog.js";
 mountEar({
   getSlug: () => S.slug,
@@ -7609,6 +7613,12 @@ passageDock = mountDawPassages($('panePassage'), {
     fromBar: Math.max(1, Math.floor(S.loopA ?? 1)),
     toBar: Math.min(S.proj?.lengthBars || 1, Math.ceil(S.loopB ?? ((S.proj?.lengthBars || 1) + 1)) - 1) }),
   onOpen: () => showDock('passage'), onRefresh: () => refreshDoc(),
+});
+assistantDock = mountDawAssistant({
+  getContext: () => ({ slug: S.proj ? S.slug : null, projectEpoch: S.projectEpoch,
+    revision: S.proj?.updatedAt ?? null, trackId: S.trackId, noteIds: [...S.sel],
+    loopA: S.loopA, loopB: S.loopB, playheadSeconds: projTime() }),
+  onLayout: refitAll,
 });
 
 /* THE EAR GETS A HOME. mountEar appends a floating pill bottom-right and a

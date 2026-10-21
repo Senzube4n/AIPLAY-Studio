@@ -42,6 +42,7 @@ import { createSharedCueRoutes } from "./music/shared-cues.js";
 import { readProject as readDawPassageProject } from "./daw/store.js";
 import { compareArchivedTrainingPair } from "./music/train-archive.js";
 import { createDawRoutes } from "./daw/routes.js";
+import { createDawAssistantRoutes } from "./daw/assistant.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
  * self-explaining quality selector, and the turbo toggles. Additive — it owns
  * /api/videolab and nothing else. */
@@ -3068,6 +3069,7 @@ const vfxRoutes = createVfxRoutes({
  * so an unknown /api/daw path still falls through to the app's own 404.
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
+const dawAssistantRoutes = createDawAssistantRoutes({ config });
 const sharedCueRoutes = createSharedCueRoutes({ json, readBody, renderAccent: dawRoutes.renderCueAccent });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
 const communityRoutes = createCommunityRoutes({ json, readBody, library, jobs, engine: engineDoor, provenance: prov,
@@ -3774,6 +3776,10 @@ const server = http.createServer(async (req, res) => {
     if (await listeningLabRoutes(req, res, url)) return;
     if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
       if (await vfxRoutes(req, res, url)) return;
+    }
+
+    if (p.startsWith("/api/daw-assistant/")) {
+      if (await dawAssistantRoutes(req, res, url)) return;
     }
 
     if (p === "/api/daw/ear" || p.startsWith("/api/daw/ear/")) {

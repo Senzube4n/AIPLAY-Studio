@@ -44,6 +44,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="daw.css">
+<link rel="stylesheet" href="daw-assistant.css">
 <link rel="stylesheet" href="daw-passages.css">
 <!-- THE ⓘ. web/info.js writes no copy of its own — every word in the panel
      comes from /api/welcome's screen_info, which is server/welcome/catalogue.js
@@ -171,6 +172,7 @@
       <button id="browserBtn" class="d-btn d-sm d-on" title="fold the browser">◧</button>
       <button id="mixerBtn" class="d-btn d-sm d-on" title="fold the mixer">◨</button>
       <button id="dockBtn" class="d-btn d-sm d-on" title="fold the bottom dock (chain / analysis / the Ear)">▤</button>
+      <button id="assistantBtn" class="d-btn d-sm" aria-controls="dawAssistant" aria-expanded="false">Assistant</button>
       <button id="bounceBtn" class="d-btn d-sm" title="Export FLAC or WAV with loudness, peak and credit controls">export…</button>
       <button id="musicInputBtn" class="d-btn d-sm" title="Prepare audio for experimental Music3 continuation and bring the result back to the DAW">Music3 input…</button>
       <button id="arrBtn" class="d-btn d-sm" title="arrange a whole big-room song into a NEW project — tracks, clips, notes, sidechain, limiter — deterministic from a seed">arrange…</button>
@@ -478,6 +480,8 @@
     </div>
     <div class="d-note" id="meterNote" style="padding:5px 8px"></div>
   </aside>
+
+  <aside id="dawAssistant" hidden class="d-assistant" aria-label="DAW assistant"></aside>
 
   <!-- ══════════════════════ RESIZE HANDLES ════════════════
        Siblings of the three panels rather than children of any of them: the

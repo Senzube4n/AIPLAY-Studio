@@ -31,7 +31,7 @@ function make(names,overrides={}){
     undo:[],redo:[],aud:{seq:0},ana:{curves:new Map()},at:0};
   const nodes=new Map();
   const $=(id)=>{if(!nodes.has(id))nodes.set(id,{textContent:'',value:'100',selectedOptions:[{textContent:'1/8'}],classList:{add(){},remove(){},contains(){return false;}}});return nodes.get(id);};
-  const ctx={S,console,Map,Set,Float32Array,Promise,performance:{now:()=>10},encodeURIComponent,TPB:960,audioImportRequest:0,passageDock:null,
+  const ctx={S,console,Map,Set,Float32Array,Promise,performance:{now:()=>10},encodeURIComponent,TPB:960,audioImportRequest:0,passageDock:null,assistantDock:null,
     WAVE_BUCKETS:200,WAVE_REGION_CAP:16,AHEAD_REGIONS:4,DEFER_OK:new Set(),$,
     localStorage:{setItem:(key,value)=>calls.storage.push([key,value])},canvas:{},releasePointer(){},
     status:m=>calls.status.push(m),pushUndo:e=>calls.undo.push(e),
