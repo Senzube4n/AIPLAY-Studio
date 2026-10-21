@@ -964,7 +964,7 @@ ok("its declared tail is honest: the buffer past dur + 2.45 s is exactly 0 befor
 
 print("\n  -- WIRE IT OR IT DOES NOT EXIST: every declared synth knob changes a render --")
 
-SYN_KEYS = {"bigroom_lead": [53, 65], "sub_bass": [33, 45],
+SYN_KEYS = {"fm_pluck": [48, 72], "bigroom_lead": [53, 65], "sub_bass": [33, 45],
             "riser": [53], "impact": [36, 48]}
 for name in SYNTHS:
     spec = MAN["patches"][name]["params"]

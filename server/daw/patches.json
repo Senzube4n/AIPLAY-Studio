@@ -1479,7 +1479,19 @@
    "file": "packs/avl_drums/Black_Pearl_5pc.sfz",
    "oneshot": true,
    "tail": 8,
-   "quality": "70-75% vs Superior/BFD-class: real kit, 5 velocity layers, GM-ish keys, no bleed control."
+   "quality": "70-75% vs Superior/BFD-class: real kit, 5 velocity layers, GM-ish keys, no bleed control.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "avl_red_zeppelin": {
    "kind": "sfz",
@@ -1489,7 +1501,19 @@
    "file": "packs/avl_drums/Red_Zeppelin_5pc.sfz",
    "oneshot": true,
    "tail": 8,
-   "quality": "70-75% — the vintage-voiced sibling of Black Pearl."
+   "quality": "70-75% — the vintage-voiced sibling of Black Pearl.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "meatbass_pizz": {
    "kind": "sfz",
@@ -1498,7 +1522,19 @@
    "pack": "meatbass",
    "file": "packs/meatbass/Programs/04_pizz.sfz",
    "tail": 2.5,
-   "quality": "65-70% — solid fingered double bass, 4 round-robins; no slap articulations."
+   "quality": "65-70% — solid fingered double bass, 4 round-robins; no slap articulations.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "meatbass_arco": {
    "kind": "sfz",
@@ -1507,7 +1543,19 @@
    "pack": "meatbass",
    "file": "packs/meatbass/Programs/02_arco_3vel.sfz",
    "tail": 2,
-   "quality": "Bowed double bass, 3 velocity layers, looped sustains."
+   "quality": "Bowed double bass, 3 velocity layers, looped sustains.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "vsco2_strings": {
    "kind": "sfz",
@@ -1516,7 +1564,19 @@
    "pack": "vsco2_strings",
    "file": "packs/vsco2_strings/vsco2_strings.sfz",
    "tail": 1.5,
-   "quality": "60-75% — a usable bed under vocals/video; no true legato or divisi."
+   "quality": "60-75% — a usable bed under vocals/video; no true legato or divisi.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "vsco2_strings_pizz": {
    "kind": "sfz",
@@ -1526,7 +1586,19 @@
    "file": "packs/vsco2_strings/vsco2_strings_pizz.sfz",
    "oneshot": true,
    "tail": 3,
-   "quality": "Section pizz with 2 round-robins per note."
+   "quality": "Section pizz with 2 round-robins per note.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "vsco2_flute": {
    "kind": "sfz",
@@ -1535,7 +1607,19 @@
    "pack": "vsco2_flute",
    "file": "packs/vsco2_flute/vsco2_flute.sfz",
    "tail": 1.2,
-   "quality": "~65% — usable lines, thin on articulations."
+   "quality": "~65% — usable lines, thin on articulations.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "vsco2_marimba": {
    "kind": "sfz",
@@ -1545,7 +1629,19 @@
    "file": "packs/vsco2_marimba/vsco2_marimba.sfz",
    "oneshot": true,
    "tail": 4,
-   "quality": "75-85% — mallets are the strongest free family."
+   "quality": "75-85% — mallets are the strongest free family.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "vsco2_glock": {
    "kind": "sfz",
@@ -1555,7 +1651,19 @@
    "file": "packs/vsco2_glock/vsco2_glock.sfz",
    "oneshot": true,
    "tail": 6,
-   "quality": "Bright and clean; long natural ring."
+   "quality": "Bright and clean; long natural ring.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "eguitar_clean": {
    "kind": "sfz",
@@ -1564,7 +1672,19 @@
    "pack": "eguitar_clean",
    "file": "packs/eguitar_clean/EGuitarFSBS-clean bridge 20260807.sfz",
    "tail": 1.5,
-   "quality": "55-60% vs a commercial electric-guitar library. What it has: 29 key zones over E1-D6, 24-bit/48 kHz stereo FLAC, 4 random round robins. What it does not: only 2 velocity layers, so it plays flat under dynamics, and no slides, bends, harmonics or palm mutes. For a driven tone put a saturator insert after it — that is a better answer than a 300 MB distortion pack."
+   "quality": "55-60% vs a commercial electric-guitar library. What it has: 29 key zones over E1-D6, 24-bit/48 kHz stereo FLAC, 4 random round robins. What it does not: only 2 velocity layers, so it plays flat under dynamics, and no slides, bends, harmonics or palm mutes. For a driven tone put a saturator insert after it — that is a better answer than a 300 MB distortion pack.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "eguitar_jazz": {
    "kind": "sfz",
@@ -1573,7 +1693,19 @@
    "pack": "eguitar_jazz",
    "file": "packs/eguitar_jazz/EGuitarFSBS-jazz bridge 20260807.sfz",
    "tail": 1.5,
-   "quality": "55-60% — the same instrument and mapping with a warmer, rolled-off tone. Same two-velocity-layer ceiling."
+   "quality": "55-60% — the same instrument and mapping with a warmer, rolled-off tone. Same two-velocity-layer ceiling.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "growlybass": {
    "kind": "sfz",
@@ -1582,7 +1714,19 @@
    "pack": "growlybass",
    "file": "packs/growlybass/growlybass_clean.sfz",
    "tail": 0.8,
-   "quality": "65-70% and the strongest free electric bass there is: Squier Jazz Bass recorded DI, 4 velocity layers x 4 round robins. MEASURED range A1-G#5 (MIDI 33-80), in tune to the cent at A2/E3/A3; keys 81-84 are pick scrapes, not notes. TWO honest limits: the bottom five semitones of a 4-string bass (E1-G#1) are NOT sampled, so put those on meatbass_pizz or transpose them up; and on the lowest notes the second harmonic is louder than the fundamental, which is true of every DI bass and is what a bass amp's low shelf exists to fix. No slides or legato, which this engine cannot voice anyway. Roundwounds about six months old, so it is bright: a tilt EQ insert takes it to Motown. NOT SHIPPED from this pack: the 'vicious' staccato mapping. Its own SFZ has pitch_keycenter=0 on the 59-61 zone and the articulation did not key-track under measurement."
+   "quality": "65-70% and the strongest free electric bass there is: Squier Jazz Bass recorded DI, 4 velocity layers x 4 round robins. MEASURED range A1-G#5 (MIDI 33-80), in tune to the cent at A2/E3/A3; keys 81-84 are pick scrapes, not notes. TWO honest limits: the bottom five semitones of a 4-string bass (E1-G#1) are NOT sampled, so put those on meatbass_pizz or transpose them up; and on the lowest notes the second harmonic is louder than the fundamental, which is true of every DI bass and is what a bass amp's low shelf exists to fix. No slides or legato, which this engine cannot voice anyway. Roundwounds about six months old, so it is bright: a tilt EQ insert takes it to Motown. NOT SHIPPED from this pack: the 'vicious' staccato mapping. Its own SFZ has pitch_keycenter=0 on the 59-61 zone and the articulation did not key-track under measurement.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "epiano_wurlitzer": {
    "kind": "sfz",
@@ -1591,7 +1735,19 @@
    "pack": "epianos",
    "file": "packs/epianos/Wurlitzer EP200/Wurlitzer EP200.sfz",
    "tail": 0.8,
-   "quality": "50-55%. 48 key zones over A1-C7 with 4 velocity layers on most of the range. HONEST GAP: a real Wurlitzer barks when you hit it hard and this sampling is too sparse to bark — push a saturator for that. CC-BY: using it adds a credit line to every render and bounce."
+   "quality": "50-55%. 48 key zones over A1-C7 with 4 velocity layers on most of the range. HONEST GAP: a real Wurlitzer barks when you hit it hard and this sampling is too sparse to bark — push a saturator for that. CC-BY: using it adds a credit line to every render and bounce.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "epiano_pianet": {
    "kind": "sfz",
@@ -1600,7 +1756,19 @@
    "pack": "epianos",
    "file": "packs/epianos/Pianet T/Pianet T.sfz",
    "tail": 0.8,
-   "quality": "~50%. 49 key zones, 3 velocity layers. The Pianet is a one-dynamic instrument by nature, so the thin layering costs less here than it does on the Wurlitzer. CC-BY: credit line on every render."
+   "quality": "~50%. 49 key zones, 3 velocity layers. The Pianet is a one-dynamic instrument by nature, so the thin layering costs less here than it does on the Wurlitzer. CC-BY: credit line on every render.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "epiano_cp80": {
    "kind": "sfz",
@@ -1609,7 +1777,19 @@
    "pack": "epianos",
    "file": "packs/epianos/CP80/CP80.sfz",
    "tail": 0.8,
-   "quality": "~55%. Full 88 keys (A0-C8), 4 velocity layers — the widest-ranged of the three. Real strings through a pickup, so it sits between a piano and an electric piano. CC-BY: credit line on every render."
+   "quality": "~55%. Full 88 keys (A0-C8), 4 velocity layers — the widest-ranged of the three. Real strings through a pickup, so it sits between a piano and an electric piano. CC-BY: credit line on every render.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "organ_drawbar": {
    "kind": "sfz",
@@ -1618,7 +1798,19 @@
    "pack": "organ_drawbar",
    "file": "packs/organ_drawbar/DrawbarOrganEmulation-20190712.sfz",
    "tail": 1.0,
-   "quality": "~45%, and honest about why: this is SAMPLED FROM setBfree, a free tonewheel emulator, at ONE frozen drawbar registration. No drawbar control, no Leslie, no key-click variation. It is a usable organ bed for 7 MB; it is not a Hammond you can play."
+   "quality": "~45%, and honest about why: this is SAMPLED FROM setBfree, a free tonewheel emulator, at ONE frozen drawbar registration. No drawbar control, no Leslie, no key-click variation. It is a usable organ bed for 7 MB; it is not a Hammond you can play.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "organ_percussive": {
    "kind": "sfz",
@@ -1627,7 +1819,19 @@
    "pack": "organ_percussive",
    "file": "packs/organ_percussive/PercussiveOrganEmulation-20190715.sfz",
    "tail": 1.0,
-   "quality": "~45%. The same setBfree source with the percussion tab engaged — the attack click that makes an organ line articulate. Same frozen-registration limits as the drawbar patch."
+   "quality": "~45%. The same setBfree source with the percussion tab engaged — the attack click that makes an organ line articulate. Same frozen-registration limits as the drawbar patch.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "organ_rock": {
    "kind": "sfz",
@@ -1636,7 +1840,19 @@
    "pack": "organ_rock",
    "file": "packs/organ_rock/RockOrganEmulation-20190715.sfz",
    "tail": 1.0,
-   "quality": "~45%. A driven registration, and the only one of the three in real stereo (each key is a hard-panned sample pair). Same frozen-registration limits."
+   "quality": "~45%. A driven registration, and the only one of the three in real stereo (each key is a hard-panned sample pair). Same frozen-registration limits.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "muldjord": {
    "kind": "sfz",
@@ -1670,7 +1886,19 @@
     "55": 60
    },
    "tail": 8.0,
-   "quality": "70-75% and a genuinely different voicing from the two AVL kits: Tama Superstar, recorded for a metal band, 2 kicks / snare / 4 toms / hats / 2 crashes / 2 rides / china. Deep velocity layering with 4 RANDOM round robins per layer, stereo 24-bit FLAC. The pack's own layout is keys 48-66; this row carries a key_map so a GM beat plays it unchanged. CC-BY: credit line on every render."
+   "quality": "70-75% and a genuinely different voicing from the two AVL kits: Tama Superstar, recorded for a metal band, 2 kicks / snare / 4 toms / hats / 2 crashes / 2 rides / china. Deep velocity layering with 4 RANDOM round robins per layer, stereo 24-bit FLAC. The pack's own layout is keys 48-66; this row carries a key_map so a GM beat plays it unchanged. CC-BY: credit line on every render.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "harp": {
    "kind": "sfz",
@@ -1679,7 +1907,19 @@
    "pack": "harp",
    "file": "packs/harp/ConcertHarp-20200702.sfz",
    "tail": 5.5,
-   "quality": "~60%. 36 zones over E1-F#7, 3 velocity layers, edited from the VCSL recordings. No glissando articulation and no pedal changes, but a harp played as arpeggios is forgiving and this is 6 MB."
+   "quality": "~60%. 36 zones over E1-F#7, 3 velocity layers, edited from the VCSL recordings. No glissando articulation and no pedal changes, but a harp played as arpeggios is forgiving and this is 6 MB.",
+   "params": {
+    "resample_quality": {
+     "min": 0,
+     "max": 1,
+     "default": 0,
+     "step": 1,
+     "label": "Playback quality",
+     "choices": { "0": "Legacy", "1": "Bandlimited" },
+     "unit": "",
+     "doc": "0 keeps legacy linear playback; 1 uses bandlimited resampling with more CPU."
+    }
+   }
   },
   "sax": {
    "kind": "generate",
@@ -1725,6 +1965,93 @@
    "tail": 0,
    "refusal": "Acoustic guitar is the one family where the free ceiling is genuinely too low to ship, and this row exists so the gap has a name instead of a disappointment. Everything licence-clean measured 30-45%: FreePats FSS Steel-String is a subset of an old GigaSampler set AND is GPL-3 on the audio (a different legal posture from every other pack here, needing an owner decision, not an agent's); FreePats Spanish Classical is CC0 but its own page says the recording conditions were far from ideal; the Discord GM Martin HD28 has a single velocity layer. Electric guitar is a different story and IS installed (eguitar_clean / eguitar_jazz). For acoustic: generate the part with Music 3.0, or use GeneralUser GS program 25 for a sketch that is honestly a sketch.",
    "quality": "GAP named on purpose — free acoustic guitar tops out at 45% and the best of that is GPL-3 audio. Electric guitar is covered."
+  },
+  "fm_pluck": {
+   "kind": "builtin",
+   "builtin": "fm_pluck",
+   "family": "synth",
+   "label": "FM pluck (woody, percussive)",
+   "tail": 0.34,
+   "pack": null,
+   "quality": "Deterministic sine/FM hook voice with a decaying bright transient and a separate sine body. Four-times oversampling, lowpass decimation and a pitch-aware modulation limit reduce aliasing; high notes become less bright. A general sound-design instrument, not an exact recreation of a recorded track. Fundamentals at or above 0.4 times the sample rate are silent.",
+   "params": {
+    "ratio": {
+     "min": 1,
+     "max": 6,
+     "default": 2,
+     "unit": "x",
+     "doc": "Modulator frequency divided by the note frequency. Integers give harmonic colour; fractions can sound metallic."
+    },
+    "index": {
+     "min": 0,
+     "max": 8,
+     "default": 3.8,
+     "unit": "radians",
+     "doc": "FM brightness at the strike. The effective index is limited at high pitches to reduce out-of-band sidebands."
+    },
+    "tone_decay": {
+     "min": 5,
+     "max": 400,
+     "default": 180,
+     "unit": "ms",
+     "doc": "Time for the modulation index to fall by 60 dB, independently of the body amplitude."
+    },
+    "transient": {
+     "min": 0,
+     "max": 1,
+     "default": 0.85,
+     "unit": "",
+     "doc": "Weight of the modulated carrier. Zero leaves only the independently weighted sine body."
+    },
+    "body": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "Weight of the unmodulated fundamental under the transient. Sum is trimmed to retain headroom."
+    },
+    "decay": {
+     "min": 30,
+     "max": 2000,
+     "default": 700,
+     "unit": "ms",
+     "doc": "Amplitude time to fall by 60 dB while a note is held. Longer notes still decay naturally."
+    },
+    "attack": {
+     "min": 0.2,
+     "max": 20,
+     "default": 1.5,
+     "unit": "ms",
+     "doc": "Raised-cosine attack time. A short nonzero attack keeps the transient from starting with a hard step."
+    },
+    "release": {
+     "min": 5,
+     "max": 300,
+     "default": 80,
+     "unit": "ms",
+     "doc": "Additional time to fall by 60 dB after note-off. The declared tail contains the longest release."
+    },
+    "velocity_sensitivity": {
+     "min": 0,
+     "max": 1,
+     "default": 0.65,
+     "unit": "",
+     "doc": "How strongly velocity changes the FM index. Velocity always controls output level as well."
+    },
+    "spread": {
+     "min": 0,
+     "max": 1,
+     "default": 0.2,
+     "unit": "",
+     "doc": "Stereo difference in the transient's modulator phase, without detuning. Zero gives identical channels."
+    }
+   },
+   "presets": {
+    "woody_hook": {
+     "doc": "A starting point for a short percussive EDM hook. Tune against the arrangement; this is not a recording match.",
+     "params": { "ratio": 2, "index": 3.8, "tone_decay": 180, "transient": 0.85, "body": 0.45, "decay": 700, "attack": 1.5, "release": 80, "velocity_sensitivity": 0.65, "spread": 0.2 }
+    }
+   }
   },
   "bigroom_lead": {
    "kind": "builtin",

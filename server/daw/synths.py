@@ -23,6 +23,14 @@
 
 WHAT IS MODELLED (and what is honestly approximated)
 
+  fm_pluck  A sine carrier with a decaying FM modulator and a separate sine
+          body, for short woody or bell-like hooks. Tone decay and amplitude
+          decay are independent; velocity changes both level and brightness.
+          Four-times oversampling plus lowpass decimation, with a pitch-aware
+          modulation bound, reduce sideband aliasing. Stereo phase spread
+          affects the transient without detuning the fundamental. This is a
+          general instrument, not an exact match to a named recording.
+
   bigroom_lead  The Animals pluck. Up to seven PolyBLEP saws (band-limited by
           construction — a naive saw at 48 kHz folds its upper harmonics back
           as inharmonic grit, which a resonant filter then amplifies) spread
@@ -144,7 +152,7 @@ import math
 import os
 
 import numpy as np
-from scipy.signal import sosfilt
+from scipy.signal import resample_poly, sosfilt
 
 import drums
 from drums import (_t, _filt, _noise, _drive, _norm, _fade_tail,   # noqa: F401
@@ -295,6 +303,53 @@ _UNISON_PHASE = tuple(((i + 1) * 0.6180339887498949) % 1.0 for i in range(7))
 
 # ═══════════════════════════════════════════════════════════════ the voices
 
+def _fm_pluck(P, sr, v, midi, dur):
+    """A percussive FM carrier plus an independently weighted sine body.
+
+    Brightness falls independently of the amplitude envelope. Fixed phases
+    make a repeated note repeat; spread offsets only the modulator, so the
+    decaying body returns to the centre without detuning the note. This is a
+    general woody/bell-like hook voice, not a reconstruction of a recording.
+
+    FM has infinitely many sidebands: four-times oversampling and a Kaiser
+    polyphase lowpass remove out-of-band energy before decimation. A pitch-
+    aware index cap also keeps the main Carson band below 0.4 * output sr;
+    high notes therefore become less bright rather than folding harshly.
+    Fundamentals above that guard band are silent, not transposed/aliased.
+    """
+    rel = float(P["release"]) / 1000.0
+    n = dur + int(sr * (rel + 0.02))
+    f0 = _midi_hz(midi)
+    if f0 >= 0.4 * sr:
+        return np.zeros((2, n), dtype=np.float64)
+    oversample = 4
+    hi_sr = sr * oversample
+    t = _t(n * oversample, hi_sr)
+    phase = 2.0 * np.pi * f0 * t
+    ratio = float(P["ratio"])
+    cap = max(0.0, (0.4 * sr / f0 - 1.0) / ratio - 1.0)
+    sensitivity = float(P["velocity_sensitivity"])
+    index = min(float(P["index"]) * (1.0 - sensitivity + sensitivity * v), cap)
+    tone = index * np.exp(-t * math.log(1000.0) / (float(P["tone_decay"]) / 1000.0))
+    env = np.exp(-t * math.log(1000.0) / (float(P["decay"]) / 1000.0))
+    attack = max(2, int(hi_sr * float(P["attack"]) / 1000.0))
+    attack = min(attack, len(env))
+    env[:attack] *= 0.5 - 0.5 * np.cos(np.linspace(0.0, np.pi, attack))
+    env = _release(env, dur * oversample, len(env), hi_sr, rel)
+    body = float(P["body"])
+    transient = float(P["transient"])
+    trim = 0.65 / max(1.0, body + transient)
+    pure = body * np.sin(phase)
+    offset = float(P["spread"]) * np.pi / 3.0
+    left = (pure + transient * np.sin(phase + tone * np.sin(ratio * phase - offset))) * env * trim
+    if offset == 0.0:
+        mono = resample_poly(left, 1, oversample, window=("kaiser", 8.6))[:n]
+        return np.vstack([mono, mono])
+    right = (pure + transient * np.sin(phase + tone * np.sin(ratio * phase + offset))) * env * trim
+    return np.vstack([resample_poly(x, 1, oversample, window=("kaiser", 8.6))[:n]
+                      for x in (left, right)])
+
+
 def _lead(P, sr, v, midi, dur):
     """bigroom_lead — see the module header for the design. Returns STEREO:
     the unison voices are panned individually, so the width is in the
@@ -435,6 +490,7 @@ def _impact(P, sr, v, midi):
 # ═══════════════════════════════════════════════════════════ the machines
 
 MACHINES = {
+    "fm_pluck": {"pitched": True, "hit": False, "tail": 0.34},
     "bigroom_lead": {"pitched": True, "hit": False, "tail": 0.5},
     "sub_bass": {"pitched": True, "hit": False, "tail": 1.6},
     "riser": {"pitched": True, "hit": False, "tail": 0.3},
@@ -482,7 +538,9 @@ def voice(name, midi, dur_samples, vel127, sr, params=None):
     P = resolve_params(name, params)
     v = min(max(int(vel127), 1), 127) / 127.0
     dur = max(1, int(dur_samples))
-    if name == "bigroom_lead":
+    if name == "fm_pluck":
+        st = _fm_pluck(P, sr, v, int(midi), dur)
+    elif name == "bigroom_lead":
         st = _lead(P, sr, v, int(midi), dur)
     else:
         if name == "sub_bass":

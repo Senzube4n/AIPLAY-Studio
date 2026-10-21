@@ -231,11 +231,21 @@ def _seed_matters(row, instruments_dir):
 
 def _cache_key(pid, midi, vel, dur, sr, seed, params, instruments_dir):
     row = patch_row(pid) or {}
-    blob = json.dumps([manifest().get("rev", 0), row.get("rev", 0), pid,
+    cache_params = params or {}
+    bandlimited = row.get("kind") == "sfz" and _bandlimited_sampler(cache_params)
+    if row.get("kind") == "sfz" and not bandlimited and "resample_quality" in cache_params:
+        cache_params = {k: v for k, v in cache_params.items() if k != "resample_quality"}
+    identity = [manifest().get("rev", 0), row.get("rev", 0), pid,
                        _pack_fingerprint(row, instruments_dir),
                        int(midi), int(vel), int(dur), int(sr),
                        int(seed) & 0xFFFFFFFF if _seed_matters(row, instruments_dir) else 0,
-                       sorted((params or {}).items())], separators=(",", ":"))
+                       sorted(cache_params.items())]
+    # Version only the opt-in renderer: old sampled notes retain their exact
+    # historical keys, while a future quality implementation can retire its
+    # own cached notes without invalidating the owner's existing mix.
+    if bandlimited:
+        identity.append("sfz-bandlimited-v1")
+    blob = json.dumps(identity, separators=(",", ":"))
     return hashlib.sha1(blob.encode()).hexdigest()
 
 
@@ -851,6 +861,96 @@ def _resample_ratio(y, ratio, n_out):
     return y[:, idx] * (1 - frac) + y[:, nxt] * frac
 
 
+def _bandlimited_sampler(params):
+    """The declared 0/1 SFZ knob; missing/zero retains linear playback."""
+    value = float((params or {}).get("resample_quality", 0))
+    if not math.isfinite(value):
+        raise ValueError("resample_quality must be finite")
+    return value >= 0.5
+
+
+def _polyphase(y, up, down, n_out):
+    """Zero-phase polyphase conversion, exact requested frame count.
+
+    A Kaiser FIR removes frequencies which would fold on downsampling.
+    No peak normalization, added delay, loop blending or envelope change.
+    """
+    if n_out <= 0:
+        return np.zeros((2, 0), dtype=np.float64)
+    if up == down:
+        z = y
+    elif not y.shape[1]:
+        z = np.zeros((2, 0), dtype=np.float64)
+    else:
+        from scipy.signal import resample_poly
+        z = resample_poly(y, up, down, axis=1, window=("kaiser", 8.6))
+    if z.shape[1] >= n_out:
+        return z[:, :n_out]
+    return np.pad(z, ((0, 0), (0, n_out - z.shape[1])))
+
+
+def _load_bandlimited_sample(path, sr):
+    """Quality-only sample cache entry, plus original rate for SFZ indexes.
+
+    Legacy _load_sample and its cache keys remain unchanged. Both formats
+    share the existing bounded LRU, so selecting quality adds no second
+    unbounded sample cache.
+    """
+    stat = os.stat(path)
+    key = (path, sr, stat.st_mtime_ns, stat.st_size, "bandlimited-v1")
+    hit = _sample_cache.get(key)
+    if hit is not None:
+        return hit
+    import soundfile as sf
+    data, source_sr = sf.read(path, dtype="float64", always_2d=True)
+    y = data.T
+    if y.shape[0] == 1:
+        y = np.vstack([y, y])
+    elif y.shape[0] > 2:
+        y = y[:2]
+    if source_sr != sr:
+        common = math.gcd(int(sr), int(source_sr))
+        y = _polyphase(y, int(sr) // common, int(source_sr) // common,
+                       int(round(y.shape[1] * sr / source_sr)))
+    result = (y, source_sr)
+    if len(_sample_cache) >= _SAMPLE_CACHE_MAX:
+        _sample_cache.pop(next(iter(_sample_cache)))
+    _sample_cache[key] = result
+    return result
+
+
+def _pitch_resample_factors(ratio):
+    """Bound BOTH polyphase factors, hence the FIR size, to at most 4096.
+
+    Approximating the smaller direction before inversion bounds numerator
+    as well as denominator. Extreme transpositions trade a little pitch
+    precision for bounded work; duration still uses the musical ratio.
+    """
+    if not math.isfinite(ratio) or ratio <= 0:
+        raise ValueError("sample pitch ratio must be finite and positive")
+    from fractions import Fraction
+    rate = Fraction(ratio if ratio < 1.0 else 1.0 / ratio).limit_denominator(4096)
+    if not rate.numerator:
+        raise ValueError("sample pitch ratio exceeds bandlimited playback range")
+    return ((rate.denominator, rate.numerator) if ratio < 1.0
+            else (rate.numerator, rate.denominator))
+
+
+def _resample_ratio_bandlimited(y, ratio, n_out):
+    """Pitch read with anti-alias filtering; ratio=1 is a sample-exact pass.
+
+    Both rational factors are bounded at 4096. Playback length still comes
+    from the exact musical ratio, not its approximation. Read only the
+    required prefix plus FIR context, rather than expanding an entire long
+    sample for a short note.
+    """
+    up, down = _pitch_resample_factors(ratio)
+    if ratio == 1.0:
+        return _polyphase(y, 1, 1, n_out)
+    need = min(y.shape[1], int(math.ceil(n_out * ratio)) + int(math.ceil(24 * max(1.0, ratio))))
+    return _polyphase(y[:, :need], up, down, n_out)
+
+
 def _loop_extend(y, loop_start, loop_end, need):
     """Repeat [loop_start, loop_end) until at least `need` frames exist."""
     if loop_end <= loop_start or loop_end > y.shape[1]:
@@ -899,6 +999,7 @@ def _sfz_voice(row, midi, vel, dur, sr, params, instruments_dir, rng):
     its snare on 50, so without this a GM beat written on 36/38 renders
     SILENCE. A key the map does not name passes through untouched, so the
     pack's native layout still reaches anything the map leaves alone."""
+    bandlimited = _bandlimited_sampler(params)
     km = row.get("key_map")
     if km:
         midi = int(km.get(str(int(midi)), midi))
@@ -951,7 +1052,10 @@ def _sfz_voice(row, midi, vel, dur, sr, params, instruments_dir, rng):
         rel = (default_path + r["sample"]).replace("\\", os.sep)
         spath = os.path.normpath(os.path.join(os.path.dirname(sfz_path), rel))
         try:
-            y = _load_sample(spath, sr)
+            if bandlimited:
+                y, source_sr = _load_bandlimited_sample(spath, sr)
+            else:
+                y = _load_sample(spath, sr)
         except Exception as exc:
             # LOUD, not mute: a region that cannot load is a broken install,
             # and a silently-thinner mix is the worst way to learn that.
@@ -972,6 +1076,8 @@ def _sfz_voice(row, midi, vel, dur, sr, params, instruments_dir, rng):
         semis = (midi - keycenter) + float(r.get("transpose", 0)) + float(r.get("tune", 0)) / 100.0
         ratio = 2.0 ** (semis / 12.0)
         offset = int(float(r.get("offset", 0)))
+        if bandlimited:
+            offset = int(round(offset * sr / source_sr))
         if offset:
             y = y[:, offset:]
         loop_mode = r.get("loop_mode", "no_loop")
@@ -984,9 +1090,18 @@ def _sfz_voice(row, midi, vel, dur, sr, params, instruments_dir, rng):
             if loop_mode in ("loop_continuous", "loop_sustain"):
                 ls = int(float(r.get("loop_start", 0)))
                 le = int(float(r.get("loop_end", y.shape[1] - 1))) + 1
+                if bandlimited:
+                    # SFZ indexes describe the ORIGINAL sample, before the
+                    # rate conversion and offset. Preserve loop time/period.
+                    ls = max(0, int(round(ls * sr / source_sr)) - offset)
+                    if "loop_end" in r:
+                        le = int(round(le * sr / source_sr)) - offset
+                    else:
+                        le = y.shape[1]
                 y = _loop_extend(y, ls, le, int(want * ratio) + 2)
                 n_need = min(total, want)
-        v = _resample_ratio(y, ratio, n_need)
+        v = (_resample_ratio_bandlimited(y, ratio, n_need) if bandlimited
+             else _resample_ratio(y, ratio, n_need))
 
         env = np.ones(n_need)
         atk = int(float(r.get("ampeg_attack", 0.0)) * sr)

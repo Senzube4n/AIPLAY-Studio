@@ -186,15 +186,18 @@ console.log("\n  -- every knob a patch declares is a knob this panel draws, and 
    * anywhere here means a knob that was drawn because someone typed it, and a
    * knob synths.py grows would not appear.
    *
-   * Exactly one declared knob is also a word the DOM owns, and pretending
+   * Some declared knobs are also words the DOM/fetch API owns, and pretending
    * otherwise would mean either a false failure for ever or a weaker guard.
    * So it is written down, with its reason, and the exception is CHECKED: every
    * occurrence of it in the module must be a listener registration and nothing
    * else. If a line ever reads that knob by name, this fails. */
   const DOM_WORDS = {
-    click: "the DOM event name. hybrid_kick declares a `click` knob too, so the "
+    click: { why: "the DOM event name. hybrid_kick declares a `click` knob too, so the "
       + "collision is real — but every occurrence of the word in this module is "
       + "addEventListener(\"click\", …), and the check below is exactly that.",
+      allowed: /addEventListener\("click"/ },
+    body: { why: "Fetch's JSON request body is not the FM instrument's body parameter.",
+      allowed: /^\s*body:\s*JSON\.stringify\(\{ by: "user", \.\.\.body \}\),?\s*$/ },
   };
   const leaked = [...knobNames].filter((n) =>
     !DOM_WORDS[n]
@@ -202,7 +205,7 @@ console.log("\n  -- every knob a patch declares is a knob this panel draws, and 
   ok(`none of the ${knobNames.size} declared knobs is hard-coded in voicelab.js`,
     leaked.length === 0, leaked.join(", "));
 
-  for (const [word, why] of Object.entries(DOM_WORDS)) {
+  for (const [word, { why, allowed }] of Object.entries(DOM_WORDS)) {
     ok(`...and the one written-down exception (\`${word}\`) is a real declared knob`,
       knobNames.has(word), why);
     /* The same two shapes the leak scan looks for — a quoted whole token, or a
@@ -212,8 +215,8 @@ console.log("\n  -- every knob a patch declares is a knob this panel draws, and 
     const asToken = new RegExp(`["'\`]${word}["'\`]`);
     const asKey = new RegExp(`\\b${word}\\s*:`);
     const lines = CODE.split("\n").filter((l) => asToken.test(l) || asKey.test(l));
-    const notListeners = lines.filter((l) => !new RegExp(`addEventListener\\("${word}"`).test(l));
-    ok(`...and every one of its ${lines.length} occurrences is a listener, never a parameter read`,
+    const notListeners = lines.filter((l) => !allowed.test(l));
+    ok(`...and every one of its ${lines.length} occurrences is an API field or listener, never a parameter read`,
       lines.length > 0 && notListeners.length === 0,
       notListeners.map((l) => l.trim().slice(0, 80)).join(" | "));
   }
@@ -223,8 +226,8 @@ console.log("\n  -- every knob a patch declares is a knob this panel draws, and 
     /Object\.keys\(V\.schema\)/.test(draw) && /V\.schema\[pname\]/.test(draw));
   ok("a knob's range, default, unit and doc come from that row, not from this file",
     ["spec.min", "spec.max", "spec.default", "spec.unit", "spec.doc"].every((s) => draw.includes(s)));
-  ok("a knob is LABELLED with the parameter's own key — the string set_track will carry",
-    /EL\("span", "vl-kname", pname\)/.test(draw));
+  ok("a knob is labelled from its served caption, falling back to the parameter key",
+    /EL\("span", "vl-kname", spec\.label \|\| pname\)/.test(draw));
   ok("a knob reads the track's own value, falling back to the declared default "
      + "(defaults are not stored)",
     /V\.knob\[pname\] \?\? def/.test(draw));

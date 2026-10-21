@@ -5889,13 +5889,35 @@ function drawKnobs() {
 function knobControl(t, pname, pspec) {
   const wrap = document.createElement("div");
   wrap.className = "d-param";
+  const choices = Object.entries(pspec.choices || {}).filter(([value]) => Number.isFinite(Number(value)));
+  if (choices.length) {
+    wrap.classList.add("d-wide");
+    const label = document.createElement("label");
+    label.className = "d-plab";
+    label.textContent = pspec.label || pname.replace(/_/g, " ");
+    const select = document.createElement("select");
+    select.className = "d-sel";
+    select.id = `patch-choice-${t.id}-${pname}`;
+    label.htmlFor = select.id;
+    select.setAttribute("aria-label", label.textContent);
+    select.title = pspec.doc || "";
+    for (const [value, caption] of choices) select.add(new Option(caption, value));
+    select.value = String(t.instrument?.params?.[pname] ?? pspec.default);
+    select.addEventListener("change", () => setTrackParams(t, { [pname]: Number(select.value) }, `${t.name} ${pname}`));
+    wrap.append(label, select);
+    return wrap;
+  }
   /* One integer-valued knob exists (the lead's unison count); an integer
    * range under two dozen wide with a unit of nothing is stepped whole. */
-  const whole = pspec.unit === "" && pspec.max - pspec.min > 1 && pspec.max - pspec.min < 24
-    && [pspec.min, pspec.max, pspec.default].every(Number.isInteger);
+  const declaredStep = Number(pspec.step);
+  const whole = declaredStep > 0 ? Number.isInteger(declaredStep) : (pspec.unit === "" && pspec.max - pspec.min > 1 && pspec.max - pspec.min < 24
+    && [pspec.min, pspec.max, pspec.default].every(Number.isInteger));
+  const snap = (x) => declaredStep > 0
+    ? Math.max(pspec.min, Math.min(pspec.max, pspec.min + Math.round((x - pspec.min) / declaredStep) * declaredStep))
+    : whole ? Math.round(x) : x;
   const lab = document.createElement("div");
   lab.className = "d-plab";
-  lab.textContent = pname.replace(/_/g, " ");
+  lab.textContent = pspec.label || pname.replace(/_/g, " ");
   lab.title = `${pname} ${pspec.min}..${pspec.max} (default ${pspec.default}${pspec.unit ? ` ${pspec.unit}` : ""})`
     + `: ${pspec.doc || ""} Drag vertically; shift = fine; double-click = default. Writes set_track params.`;
   const v = Number(t.instrument?.params?.[pname] ?? pspec.default);
@@ -5922,14 +5944,14 @@ function knobControl(t, pname, pspec) {
     const step = (pspec.max - pspec.min) / (e.shiftKey ? 900 : 180);
     drag.cur = Math.max(pspec.min, Math.min(pspec.max, drag.cur - (e.clientY - drag.y) * step));
     drag.y = e.clientY;
-    paint(whole ? Math.round(drag.cur) : drag.cur);
+    paint(snap(drag.cur));
   });
   k.addEventListener("pointerup", async (e) => {
     const d = drag; drag = null;
     S.dragging = false;
     if (!d) return;
     releasePointer(k, e.pointerId);
-    const nv = whole ? Math.round(d.cur) : d.cur;
+    const nv = snap(d.cur);
     if (nv === v) { paint(v); return; }
     await setTrackParams(t, { [pname]: nv }, `${t.name} ${pname} → ${show(nv)}`);
   });

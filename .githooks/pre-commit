@@ -14,6 +14,11 @@ node --check server/index.js || exit 1
 # Sound output contracts: old cache bytes, transparent unity, PCM headroom.
 node --test server/daw/output-mode_test.js || exit 1
 python server/daw/output_mode_test.py || exit 1
+# Deterministic FM hook voice: pitch, envelopes, spectral behaviour and seam.
+python server/daw/fm_pluck_test.py || exit 1
+# Opt-in sampled playback: alias rejection, legacy bytes/cache and loop time.
+python server/daw/sampler_quality_test.py || exit 1
+node --test server/daw/sampler_quality_routes_test.js || exit 1
 # Project-bound CLI assistants: no inference, login mutation or GPU in fixtures.
 node --check server/daw/assistant.js || exit 1
 node --check server/daw/assistant-providers.js || exit 1

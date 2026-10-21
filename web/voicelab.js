@@ -556,12 +556,32 @@ export function mountVoiceLab(opts = {}) {
       const span = hi - lo;
       /* A whole-number range (semitones, cents) steps by one; everything else
        * gets 200 steps of its own span, which is finer than a hand is. */
-      const whole = Number.isInteger(lo) && Number.isInteger(hi) && Number.isInteger(def) && span >= 4;
-      const step = whole ? 1 : span / 200;
+      const declaredStep = Number(spec.step);
+      const whole = declaredStep > 0 ? Number.isInteger(declaredStep) : (Number.isInteger(lo) && Number.isInteger(hi) && Number.isInteger(def) && span >= 4);
+      const step = declaredStep > 0 ? declaredStep : whole ? 1 : span / 200;
+      const choices = Object.entries(spec.choices || {}).filter(([value]) => Number.isFinite(Number(value)));
+      if (choices.length) {
+        const box = EL("div", `vl-knob${near(val, V.base[pname] ?? def) ? "" : " vl-dirty"}`);
+        box.appendChild(EL("span", "vl-kname", spec.label || pname.replace(/_/g, " ")));
+        const select = EL("select", "d-sel");
+        select.setAttribute("aria-label", spec.label || pname.replace(/_/g, " "));
+        select.title = spec.doc || "";
+        for (const [value, caption] of choices) select.add(new Option(caption, value));
+        select.value = String(val);
+        select.addEventListener("change", () => {
+          V.knob[pname] = Number(select.value);
+          box.classList.toggle("vl-dirty", !near(V.knob[pname], V.base[pname] ?? def));
+          V.view = null;
+          bump(pname);
+        });
+        box.appendChild(select);
+        knobCol.appendChild(box);
+        continue;
+      }
 
       const box = EL("div", `vl-knob${near(val, V.base[pname] ?? def) ? "" : " vl-dirty"}`);
       const row = EL("div", "vl-krow");
-      const nm = EL("span", "vl-kname", pname);
+      const nm = EL("span", "vl-kname", spec.label || pname);
       const vv = EL("span", "vl-kval", whole ? String(Math.round(val)) : val.toFixed(3));
       row.append(nm, vv, EL("span", "vl-kunit", spec.unit || ""));
       const sl = EL("input");
