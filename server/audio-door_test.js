@@ -51,7 +51,7 @@ function slice(open, endMarker) {
   return INDEX.slice(at + open.length, end);
 }
 const BODY = slice('if (p.startsWith("/api/audio/")) {', "\n    }\n\n    // ---- static");
-const route = new AsyncFunction("p", "req", "res", "json", "path", "config", "stat", "MIME", "createReadStream", "sendFile",
+const route = new AsyncFunction("url", "p", "req", "res", "json", "path", "config", "stat", "MIME", "createReadStream", "sendFile",
   `${BODY}\nreturn { fellThrough: true };`);
 
 /* Every stream the door opens, so the test can watch it close. */
@@ -99,7 +99,7 @@ test("the door serves through sendFile and no longer pipes a bare read stream", 
 
 test("aborting a range request closes the read stream (any OS)", async () => {
   opened.length = 0;
-  const srv = await serve((req, res) => route(`/api/audio/${song}`, req, res, json, path, config, stat, MIME, createReadStream, watchingSendFile));
+  const srv = await serve((req, res) => route(new URL(req.url, 'http://127.0.0.1'), `/api/audio/${song}`, req, res, json, path, config, stat, MIME, createReadStream, watchingSendFile));
   try {
     const status = await abortAfterFirstChunk(srv.port, `/api/audio/${song}`);
     assert.equal(status, 206);
@@ -112,7 +112,7 @@ test("once it is released, the song can be renamed over (the EPERM in the report
   const file = path.join(config.outputDir, "aiplay_rename_probe.flac");
   await writeFile(file, Buffer.alloc(BIG, 5));
   opened.length = 0;
-  const srv = await serve((req, res) => route("/api/audio/aiplay_rename_probe.flac", req, res, json, path, config, stat, MIME, createReadStream, watchingSendFile));
+  const srv = await serve((req, res) => route(new URL(req.url, 'http://127.0.0.1'), "/api/audio/aiplay_rename_probe.flac", req, res, json, path, config, stat, MIME, createReadStream, watchingSendFile));
   try {
     await abortAfterFirstChunk(srv.port, "/api/audio/aiplay_rename_probe.flac");
     await closedWithin(opened[0], 2000);
@@ -177,7 +177,7 @@ test("ranges answer the way a player needs them", async () => {
   const small = "aiplay_small.mp3";
   const bytes = Buffer.from(Array.from({ length: 64 }, (_, i) => i));
   await writeFile(path.join(config.outputDir, small), bytes);
-  const srv = await serve((req, res) => route(`/api/audio/${small}`, req, res, json, path, config, stat, MIME, createReadStream, sendFile));
+  const srv = await serve((req, res) => route(new URL(req.url, 'http://127.0.0.1'), `/api/audio/${small}`, req, res, json, path, config, stat, MIME, createReadStream, sendFile));
   const get = (headers = {}, method = "GET") => new Promise((resolve, reject) => {
     const req = http.request({ host: "127.0.0.1", port: srv.port, path: `/api/audio/${small}`, method, headers }, (res) => {
       const chunks = [];

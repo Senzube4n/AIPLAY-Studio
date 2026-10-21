@@ -14,6 +14,9 @@ node --check server/index.js || exit 1
 node --check shared/model-bundles.js || exit 1
 node --check shared/model-profiles.js || exit 1
 node --check server/setup-plan.js || exit 1
+node --check server/music/ace-comfy-input.js || exit 1
+node --check web/ace-music.js || exit 1
+node --test server/ace-music_test.js || exit 1
 node --check server/engine/remote-models.js || exit 1
 node --check server/engine/workflow-evidence.js || exit 1
 node --check web/setup-plan.js || exit 1

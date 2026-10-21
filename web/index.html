@@ -526,6 +526,19 @@
     </div>
     </details>
 
+    <div id="aceMusicPanel" hidden>
+      <div id="aceDuration" class="params"></div>
+      <div class="cta"><span id="aceMusicChip" class="chip" role="status">Check model setup</span>
+        <button id="aceMusicPreset" type="button" class="edtool" hidden>30s A100 test preset</button></div>
+      <details class="more"><summary>Model setup</summary>
+        <p id="aceMusicMessage" class="hint"></p>
+        <div id="aceMusicReadiness" class="params"></div>
+        <span id="aceMusicHistory" class="chip" hidden></span>
+        <button id="aceMusicCheck" class="edtool" type="button">Check setup</button>
+        <button id="aceMusicSetup" class="edtool" type="button">Open setup</button>
+      </details>
+    </div>
+
     <details class="adv sbox">
       <summary>More Options</summary>
 
@@ -710,6 +723,7 @@
         <label for="aPlanTemp">Planner temperature</label><span class="pv"><input id="aPlanTemp" class="sv" type="number" min="0" max="2" step="0.05" placeholder="0.85"></span>
         <label for="aLm">Planner model</label><span class="pv"><select id="aLm" class="sel2"></select></span>
       </div>
+      <div id="aceLocalInputs">
       <b class="subhead">LoRA</b>
       <div class="params">
         <label for="aLora">LoRA</label><span class="pv"><select id="aLora" class="sel2"><option value="">none</option></select></span>
@@ -727,6 +741,7 @@
         <span class="sp meta" id="aCoverState"></span>
       </div>
       <p class="hint" id="aCoverHint">The song you give becomes a timbre and style reference (experimental: ComfyUI's "Set Reference Audio"), rendered in your style and lyrics; how closely it keeps the melody has not been measured here. The planner is off for a cover. A LoRA carries its own licence; some forbid commercial use.</p>
+      </div>
     </details>
 
     <!-- MELODY & SCORE (renamed 2026-09-24 from a second "Advanced"). The Music screen's words are

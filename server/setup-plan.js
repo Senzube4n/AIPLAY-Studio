@@ -7,7 +7,7 @@ import { MODEL_PROFILES, defaultModelSelection, validModelSelection } from '../s
 import { checkpointGraph, buildAceStep15Graph, buildYue2ComfyGraph, videoGraph } from './workflow.js';
 import { validateGraph } from './engine/remote-common.js';
 import { buildRecord } from './engine/record.js';
-import { workflowEvidenceKey, curatedArtifactKey } from './engine/workflow-evidence.js';
+import { workflowEvidenceKey, curatedArtifactKey, hardwareWorkflowMatches } from './engine/workflow-evidence.js';
 
 export function selectionFor(config, target) {
   const saved = target === 'runpod' ? config.cloudSetup?.plan : config.modelSetup?.local;
@@ -80,13 +80,13 @@ export function profileGraph(profile) {
   throw Error('This model needs a supported workflow.');
 }
 
-export function selectedModelReadiness(plan, { connected = false, stopped = false, bundles = [], objects, verifiedFiles = true, evidenceFor = () => null } = {}) {
+export function selectedModelReadiness(plan, { connected = false, stopped = false, bundles = [], objects, verifiedFiles = true, evidenceFor = () => null, graphFor = profileGraph } = {}) {
   return plan.profiles.map(p => {
     const files = connected && (verifiedFiles ? bundles.some(b => b.id === p.bundle && b.state === 'ready') : p.localFilesPresent);
     let graph, error = null, dependencies = false, workflow = false;
-    if (connected && objects) {
+    try { graph = graphFor(p); } catch (e) { error = e.message; }
+    if (connected && objects && graph) {
       try {
-        graph = profileGraph(p);
         dependencies = Object.values(graph).every(n => !!objects[n.class_type]);
         if (files && dependencies) { validateGraph(graph, objects); workflow = true; }
       } catch (e) { error = e.message; }
@@ -96,21 +96,21 @@ export function selectedModelReadiness(plan, { connected = false, stopped = fals
       filesDownloaded: !!files && !stopped, filesVerified: !!files && verifiedFiles && !stopped,
       dependenciesAvailable: dependencies && !stopped, workflowValidated: workflow && !stopped,
       inferenceValidated: !!evidence, inference: evidence ? 'Previous test succeeded on this worker build and workload' : 'Not validated on this runtime',
-      inferenceEvidence: evidence, historicalHardwareValidated: !!p.hardwareAcceptance, hardwareAcceptance: p.hardwareAcceptance, experimental: !!p.experimental, error };
+      inferenceEvidence: evidence, historicalHardwareValidated: hardwareWorkflowMatches(p.hardwareAcceptance, graph), hardwareAcceptance: hardwareWorkflowMatches(p.hardwareAcceptance, graph) ? p.hardwareAcceptance : null, experimental: !!p.experimental, error };
   });
 }
 
 /** Reuse local engine receipts and its existing file/hash cache. Old unhashed
  * receipts remain unverified; no inference or preference changes happen here. */
-export async function localModelReadiness(plan, { engine, connected, objects, verify = false }) {
-  const rows = selectedModelReadiness(plan, { connected, objects, verifiedFiles: false });
+export async function localModelReadiness(plan, { engine, connected, objects, verify = false, graphFor = profileGraph }) {
+  const rows = selectedModelReadiness(plan, { connected, objects, verifiedFiles: false, graphFor });
   if (!rows.some(r => r.workflowValidated)) return rows;
   const status = await engine.status().catch(() => null);
   const history = await engine.activity({ limit: 50, statusOf: 'completed' }).catch(() => ({ runs: [] }));
   const records = new Map();
   for (const row of rows) {
     if (!row.workflowValidated) continue;
-    const profile = plan.profiles.find(p => p.id === row.id), graph = profileGraph(profile);
+    const profile = plan.profiles.find(p => p.id === row.id), graph = graphFor(profile);
     const current = buildRecord(graph, { actor: 'system', via: 'setup.check' });
     await engine.store.resolveRecordFiles(current, { hashModels: verify });
     const exact = files => profile.files.every(f => files.some(on => on.file === f.relative.split('/').pop()

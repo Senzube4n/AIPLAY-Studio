@@ -39,6 +39,16 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
   let updaterPromise;
   const updater = () => updaterPromise ||= Promise.all([computer(), installer(), client()]).then(([computer, installer, client]) =>
     createWorkerUpdater({ dataDir: config.dataDir, provider, computer, installer, client, fetchFn }));
+  async function modelReadiness(plan, options = {}) {
+    const manager = await computer(), state = manager.snapshot(), c = await client();
+    const health = await c.verify();
+    let bound = !!state.podId && health.podId === state.podId && state.pod?.status === 'RUNNING' && !state.providerUncertain;
+    const data = await c.setup(), objects = bound ? await c.models() : null;
+    bound = bound && c.status().workerId === health.workerId && manager.snapshot().podId === state.podId;
+    return { ...data, podId: bound ? state.podId : null, selection: plan.selection,
+      readiness: selectedModelReadiness(plan, { ...options, connected: bound, bundles: data.bundles, objects,
+        evidenceFor: graph => c.inferenceEvidence(graph, health) }) };
+  }
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
     try {
@@ -206,14 +216,8 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
             sendJSON(res, 200, await c.connect(JSON.parse((await readBody(req)).toString("utf8"))));
           } else if (req.method === "GET" && url.pathname === "/api/runpod/models") sendJSON(res, 200, await c.models());
           else if (req.method === "GET" && url.pathname === "/api/runpod/setup") {
-            const state = computerPromise ? (await computerPromise).snapshot() : null;
-            const health = await c.verify();
-            let bound = !!state?.podId && health.podId === state.podId && state.pod?.status === 'RUNNING' && !state.providerUncertain;
-            const data = await c.setup(), objects = bound ? await c.models() : null;
-            bound = bound && c.status().workerId === health.workerId && (await computerPromise).snapshot().podId === state.podId;
             const plan = setupPlan({ selection: selectionFor(config, 'runpod'), target: 'runpod' });
-            sendJSON(res, 200, { ...data, podId: bound ? state.podId : null, selection: plan.selection,
-              readiness: selectedModelReadiness(plan, { connected: bound, bundles: data.bundles, objects, evidenceFor: graph => c.inferenceEvidence(graph, health) }) });
+            sendJSON(res, 200, await modelReadiness(plan));
           }
           else if (req.method === "POST" && url.pathname === "/api/runpod/setup/install") {
             const b = JSON.parse((await readBody(req)).toString("utf8"));
@@ -277,5 +281,6 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
     return true;
   };
   route.start = client;
+  route.modelReadiness = modelReadiness;
   return route;
 }

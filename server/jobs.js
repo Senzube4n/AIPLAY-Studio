@@ -1307,6 +1307,7 @@ export class JobRunner extends EventEmitter {
       etaSeconds: j.etaSeconds, preview: !!j.preview,
       seed: j.seed, mixSeed: j.mixSeed, reroll: !!j.reusesConditioning,
       instrumental: !!j.instrumental, steps: j.steps, cfg: j.cfg,
+      ...(j.engine === 'ace-step15' ? { aceDit: j.aceDit, aceSteps: j.aceSteps, aceCfg: j.aceCfg } : {}),
       /* Whether this take HAS words, not the words themselves.
        *
        * The overnight panel needs it to decide whether a song is owed timed

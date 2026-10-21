@@ -1,4 +1,6 @@
-import { remoteAceShelf, remoteYueCheckpoints } from './engine/remote-models.js';
+import { prepareAceMusicInput, selectAceMusicModels, checkAceMusic } from './music/ace-comfy-input.js';
+import { MODEL_PROFILES } from '../shared/model-profiles.js';
+import { remoteAceShelf, remoteYueCheckpoints, preserveSelectedAce } from './engine/remote-models.js';
 import { setupPlan, selectionFor, localModelReadiness, profileGraph } from './setup-plan.js';
 import { validModelSelection, selectedAceDit } from '../shared/model-profiles.js';
 import {createBatchMusicBridge} from './batch-music-context.js';
@@ -1762,6 +1764,7 @@ jobs.on("update", async (snap) => {
           ? { runtime: "comfy", dit: job.aceDit, lm: job.aceLm, bpm: job.bpm, keyscale: job.keyscale,
               timesignature: job.timesignature, metaFrom: job.aceMetaFrom || null, language: job.language,
               steps: job.aceSteps ?? null, cfg: job.aceCfg ?? null, planner: !!job.aceCodes,
+              plannerTemperature: job.acePlanTemp ?? null, hardwareReference: job.aceHardwareEvidenceId || null,
               lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
               cover: job.aceCover || null, seconds: job.maxDuration ?? null }
           : isGguf
@@ -1808,14 +1811,15 @@ jobs.on("update", async (snap) => {
      * MiniMax value is a precision (int8/fp16/fp32) because that engine has
      * one weight file per precision. YuE2's 32 is the NAR's ODE step count,
      * the number the vendor's own protocol fixes. */
-    steps: (isYue || isYueComfy) ? (job.narSteps || 32) : h.steps,
-    cfg: isYue ? (job.cfgScale ?? null) : isYueComfy ? 1 : job.cfg,
+    steps: isAce ? job.aceSteps : (isYue || isYueComfy) ? (job.narSteps || 32) : h.steps,
+    cfg: isAce ? job.aceCfg : isYue ? (job.cfgScale ?? null) : isYueComfy ? 1 : job.cfg,
     model: isGguf ? (job.quantization === "q8_0" ? "YuE2 GGUF Q8" : "YuE2 GGUF Q4")
       : isYueComfy ? "YuE2 3B (ComfyUI)" : isYue ? "YuE2 3B"
       : isAce ? `ACE-Step 1.5 ${aceBuildName(job.aceDit)}`
       : job.viaApi ? "MiniMax Music 3 (API)" : job.model,
     ...(job.viaApi ? { viaApi: true, costUsd: job.costUsd ?? null } : {}),
     engine: job.engine || "minimax-music3",
+    executionTarget: job.remote ? 'runpod' : job.viaApi ? 'api' : 'local',
     ...(isGguf ? {
       warnings: job.warnings || [], generationLimits: job.generationLimits ?? null,
     } : {}),
@@ -1834,6 +1838,8 @@ jobs.on("update", async (snap) => {
     } : {}),
     ...(isAce ? {
       aceDit: job.aceDit || null, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature,
+      aceLm: job.aceLm, aceCodes: job.aceCodes, acePlanTemp: job.acePlanTemp, maxDuration: job.maxDuration,
+      aceHardwareEvidenceId: job.aceHardwareEvidenceId || null,
       language: job.language, lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
       coverOf: job.aceCover || null,
     } : {}),
@@ -2271,6 +2277,12 @@ async function musicModelChoices(cat) {
     }
     for (const c of out) if (['yue2', 'yue2-gguf'].includes(c.engine)) c.label += ' · Local';
   } else for (const c of out) if (!c.api) c.note = [c.note, 'Runs on this PC'].filter(Boolean).join(' · ');
+  if (!config.musicOnly && !config.cloudOnly && config.music.engines['ace-step15']) preserveSelectedAce(out, config.music.aceModel);
+  for (const c of out) if (c.engine === 'ace-step15') {
+    const profile = MODEL_PROFILES.find(p => p.settings?.dit === c.dit);
+    c.hardwareAcceptance = profile?.hardwareAcceptance || null; c.capability = profile?.capability;
+    c.shortLabel = profile?.label.split(' (')[0];
+  }
   musicChoicesCache = { at: Date.now(), value: out };
   return out;
 }
@@ -4443,6 +4455,7 @@ const server = http.createServer(async (req, res) => {
      * these formats, rather than shelling out to ffmpeg -- see exportAudio.js
      * for why WAV is not among them. */
     if (p === "/api/export" && req.method === "POST") {
+      if (config.remoteOnly) return json(res, 400, { error: 'Save the original audio from the song menu. Format conversion needs the local Engine.' });
       const b = await readBody(req);
       try {
         /* The supervisor is no longer a parameter: a conversion is a graph, and
@@ -4897,6 +4910,16 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { playlists: library.playlists });
     }
 
+    if (p === '/api/music/ace-check' && req.method === 'POST') {
+      if (!sameOriginLocalJson(req)) return json(res, 403, { error: 'Use this PC’s Studio to check Music setup.' });
+      try {
+        const body = await readBody(req);
+        return json(res, 200, await checkAceMusic(body, { config, getShelf: aceShelf,
+          localFiles: async () => scanBases(await modelBases()), engine: engineDoor,
+          remoteReadiness: (plan, options) => remoteRoutes.modelReadiness(plan, options) }));
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
+
     if (p === "/api/generate" && req.method === "POST") {
       /* A song costs GPU time, and with API mode on it bills the person's own
        * fal.ai or MiniMax key: only Studio's page and local clients queue one. */
@@ -5291,15 +5314,18 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "ACE-Step has no preview pass; turbo is already 8 steps. Press Create instead.", engine: musicEngine, reason: "no-preview" });
         }
         const ace = await aceShelf();
-        const dit = selectedAceDit(ace.dits, config.music.aceModel);
+        const dit = selectedAceDit(ace.dits, body.aceDit ?? config.music.aceModel);
         if (!dit || !ace.ready) {
           return json(res, 400, {
             error: `ACE-Step 1.5 is not ready: ${ace.missing || (config.music.aceModel ? 'the selected DiT is missing' : 'no ACE-Step 1.5 DiT is installed')}. Open Models or Cloud Setup.`,
             engine: musicEngine, reason: "weights-missing", needsModel: musicCapabilityFor("ace-step15", config.music.aceModel),
           });
         }
-        const shelf = await scanBases(await modelBases());
-        const askedLora = body.lora === undefined ? config.music.aceLora : body.lora;
+        try { selectAceMusicModels(ace, { dit, lm: body.aceLm ?? config.music.aceLm }); }
+        catch (e) { return json(res, 400, { error: e.message, reason: 'planner-missing' }); }
+        if (config.remoteOnly && (body.lora || body.aceCover)) return json(res, 400, { error: 'Remote ACE LoRAs and cover inputs need a supported upload workflow. Use the local workflow for these controls.', reason: 'unsupported-remote-input' });
+        const shelf = config.remoteOnly ? [] : await scanBases(await modelBases());
+        const askedLora = config.remoteOnly ? '' : body.lora === undefined ? config.music.aceLora : body.lora;
         let loraName = typeof askedLora === "string" && askedLora.trim() ? requireModelName(askedLora) : null;
         if (loraName) loraName = findShelfModel(shelf, "loras", loraName)?.name || loraName;
         if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
@@ -5324,31 +5350,17 @@ const server = http.createServer(async (req, res) => {
         }
         const seedNow = Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296);
         body.seed = seedNow;
-        /* MCP's key / meter are YuE2's notation (Em, F#, 3/4): translated here. */
-        const abcKey = typeof body.key === "string" ? body.key.trim().match(/^([A-Ga-g])([#b]?)(m?)$/) : null;
-        const keyscale = body.keyscale || (abcKey ? `${abcKey[1].toUpperCase()}${abcKey[2]} ${abcKey[3] ? "minor" : "major"}` : undefined);
-        const timesignature = body.timesignature || (typeof body.meter === "string" ? body.meter.split("/")[0] : undefined);
-        const meta = aceMeta({ caption: body.caption, bpm: body.bpm, keyscale, timesignature, seed: seedNow });
-        /* The planner: on unless asked off. A LoRA turns it off by default,
-         * because ACE-Step's own LoRA card says to render with the DiT only
-         * (not the "Think" model); a cover turns it off, as ComfyUI's node says. */
-        const codes = cover ? false : body.aceCodes === undefined ? !loraName : !!body.aceCodes;
-        aceJob = {
-          engine: "ace-step15", aceDit: dit, aceLm: ace.lm,
-          lora: loraName,
-          loraStrength: Number.isFinite(Number(body.loraStrength))
-            ? Math.min(Math.max(Number(body.loraStrength), -4), 4)
-            : (Number.isFinite(config.music.aceLoraStrength) ? config.music.aceLoraStrength : 1),
-          bpm: meta.bpm, keyscale: meta.keyscale, timesignature: meta.timesignature, aceMetaFrom: meta.from,
-          language: ACE_LANGUAGES.includes(body.language) ? body.language : "en",
-          aceSteps: Number(body.aceSteps) > 0 ? Math.min(Math.round(Number(body.aceSteps)), 100) : undefined,
-          aceCfg: Number(body.aceCfg) > 0 ? Math.min(Number(body.aceCfg), 20) : undefined,
-          aceCodes: codes,
-          acePlanTemp: Number.isFinite(Number(body.acePlanTemp)) && body.acePlanTemp !== "" && body.acePlanTemp !== null ? Math.min(Math.max(Number(body.acePlanTemp), 0), 2) : undefined,
-          aceCover: cover,
-        };
-        /* ACE-Step's own instrumental: "[Instrumental]" in the lyrics. */
-        if (body.instrumental || !String(body.lyrics || "").trim()) body.lyrics = "[Instrumental]";
+        const prepared = prepareAceMusicInput(body, { shelf: ace, savedDit: config.music.aceModel,
+          savedLm: config.music.aceLm, lora: loraName, cover, defaultLoraStrength: config.music.aceLoraStrength ?? 1,
+          maxDuration: config.music.engines['ace-step15'].maxDuration || 300 });
+        aceJob = prepared.job;
+        body.lyrics = prepared.lyrics;
+        if (prepared.profile?.id === 'ace15-xl-sft') {
+          const checked = await checkAceMusic({ ...body, verify: true }, { config, prepared, getShelf: async () => ace,
+            localFiles: async () => scanBases(await modelBases()), engine: engineDoor,
+            remoteReadiness: (plan, options) => remoteRoutes.modelReadiness(plan, options) });
+          if (!checked.ready) return json(res, 400, { error: checked.error || 'Check the selected model files, AI connection and workflow before creating.', reason: 'ace-not-ready', readiness: checked });
+        }
       }
 
       /* YuE2 through ComfyUI: the refusals that cost nothing. */
@@ -13792,6 +13804,7 @@ const server = http.createServer(async (req, res) => {
        * unchanged (the app uses this door only for media and covers). */
       const base = { "Content-Type": type, "Accept-Ranges": "bytes",
         "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox" };
+      if (url.searchParams.has('download')) base['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(name))}`;
 
       /* ⚠ THROUGH sendFile, WHICH LETS GO OF THE FILE WHEN THE PLAYER DOES.
        * This door used to `.pipe(res)` a bare read stream, and a player that

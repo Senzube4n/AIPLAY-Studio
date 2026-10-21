@@ -127,9 +127,12 @@ test("the runner, the route and the API switch", () => {
     "only MiniMax has a hosted twin; ACE-Step and YuE2-through-ComfyUI render locally with API mode on");
   assert.match(index, /const ACE_DIT = \/\^acestep/);
   assert.match(index, /reason: "weights-missing", needsModel: musicCapabilityFor\("ace-step15", config\.music\.aceModel\)/);
-  assert.match(index, /const codes = cover \? false : body\.aceCodes === undefined \? !loraName : !!body\.aceCodes;/,
-    "a LoRA turns the planner off unless asked, a cover always");
-  assert.match(index, /if \(body\.instrumental \|\| !String\(body\.lyrics \|\| ""\)\.trim\(\)\) body\.lyrics = "\[Instrumental\]";/);
+  const input = src('./music/ace-comfy-input.js');
+  assert.match(index, /aceJob = prepared.job/);
+  assert.match(input, /aceCodes: cover \? false : body\.aceCodes === undefined \? !lora : !!body\.aceCodes/,
+    'the shared request adapter preserves LoRA/cover planner semantics');
+  assert.match(input, /profile\?\.id === 'ace15-xl-sft' \? '' : '\[Instrumental\]'/,
+    'only XL-SFT adopts its accepted empty instrumental lyrics; standard ACE keeps its convention');
   assert.match(index, /if \(ck && ACE_DIT\.test\(modelLeaf\(ck\.name\)\)\) against = \{ variant: "ACE-Step 1\.5"/);
   assert.match(index, /const modelName = isAce \? "ace-step15"/, "filed under the name the rights map knows");
 });
@@ -140,7 +143,7 @@ test("the Music tab panel and MCP", () => {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   assert.match(html, /<details class="adv sbox" data-engine="ace" hidden id="aceOpts">/);
-  assert.match(app, /lyrics: instrumental \? \(aceEngine\(\) \? "\[Instrumental\]"/);
+  assert.match(app, /lyrics: instrumental \? \(aceEngine\(\) \? \(state\.musicAceModel\?\.includes\("xl_sft"\)/);
   assert.match(app, /\.\.\.\(state\.musicEngine === "ace-step15" \? aceSpec\(\) : \{\}\)/);
   assert.match(mcp, /"yue2-gguf", "ace-step15"\]/);
   for (const k of ["language", "ace_steps", "ace_cfg", "planner", "cover_song"]) assert.match(mcp, new RegExp(`${k}: \\{ type:`), k);

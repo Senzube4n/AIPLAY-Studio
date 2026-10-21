@@ -1,3 +1,4 @@
+import { mountAceMusic } from './ace-music.js';
 import { showAvatarWorkshop, initialStudioView } from './avatar-shell.js';
 import { revealSetting } from './settings-sections.js';
 import { reactiveSourceWindow } from './reactive-source-window.js';
@@ -957,7 +958,7 @@ async function chooseMusicModel(value) {
     }
     needModel("music", c.api
       ? { title: `${c.label} needs your own key`, lead: `Paste your own key in ${c.keyPlace || "Settings"} (every song asks before it is billed), or pick a model that runs on this machine.`, focus: null }
-      : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
+      : { title: `${c.label} isn't installed`, focus: c.capability || MUSIC_CAP[c.engine] });
     return;
   }
   const was = { engine: state.musicEngine, precision: $("qModel")?.value };
@@ -1003,6 +1004,7 @@ function paintMusicPill() {
   const e = state.musicEngine || sel.value || "";
   const text = sel.selectedOptions?.[0]?.textContent || e;
   pill.textContent = /yue/i.test(e) ? "YuE2" : /minimax/i.test(e) ? (state.apiMode?.enabled ? "MiniMax · API" : "MiniMax")
+    : e === 'ace-step15' ? (() => { const c = (state.musicModels || []).find(c => c.engine === e && c.dit === state.musicAceModel); return c?.shortLabel || c?.label?.split(' (')[0] || 'ACE-Step 1.5'; })()
     : (text.split(/\s[—·(]/)[0] || "Model");
   if (sel.dataset && !sel.dataset.pill && $("musicInfoBtn")) {
     sel.dataset.pill = "1";
@@ -1016,6 +1018,7 @@ function paintMusicPill() {
 }
 
 function musicEnginePaint() {
+  if (typeof aceMusicUi !== 'undefined') aceMusicUi?.paint();
   const engines = state.musicEngines || {};
   const keys = Object.keys(engines).filter(k => !state.musicOnly || k === "yue2-gguf" || (k === "yue2-comfy" && state.engineExpected));
   if (!keys.length) return;                       // status not in yet; leave it hidden
@@ -2392,6 +2395,10 @@ async function reusePrompt(file) {
   }
 
   const nativeRow = t.engine === "yue2-gguf" || /yue2.*gguf/i.test(String(t.model || ""));
+  if (t.engine === 'ace-step15' && t.aceDit) {
+    await chooseMusicModel(`ace-step15:${t.aceDit}`);
+    if (state.musicEngine !== 'ace-step15' || state.musicAceModel !== t.aceDit) return;
+  }
   if (nativeRow) {
     state.musicEngine = "yue2-gguf";
     const precision = ["q4_0", "q8_0"].includes(t.quantization) ? t.quantization
@@ -2417,6 +2424,12 @@ async function reusePrompt(file) {
     if ($("yCot") && t.cot) $("yCot").value = t.cot;
     if ($("ySteps") && (t.steps === 16 || t.steps === 32)) $("ySteps").value = String(t.steps);
     if (!nativeRow && $("yPrecision")) $("yPrecision").value = t.quantization === "fp8" ? "fp8" : "none";
+  } else if (t.engine === 'ace-step15') {
+    const fields = { aLm: t.aceLm, aSteps: t.steps, aCfg: t.cfg, aBpm: t.bpm, aKey: t.keyscale,
+      aMeter: t.timesignature, aLang: t.language, aPlanTemp: t.acePlanTemp, maxDur: t.maxDuration };
+    for (const [id,value] of Object.entries(fields)) if (value != null && $(id)) $(id).value = String(value);
+    if (t.aceCodes != null) $('aCodes').checked = t.aceCodes;
+    $('maxDur').oninput(); aceMusicUi?.invalidate();
   } else {
     if (t.steps) $("qSteps").value = t.steps;
     if (t.arCfg) $("qArCfg").value = t.arCfg;
@@ -2701,7 +2714,7 @@ function currentSpec(preview, mixSeed) {
     // Instrumental sends the section scaffold on MiniMax, not an empty string
     // (see above) — and an empty string on YuE2, which sings brackets; the
     // server phrases "no vocals" into the style there.
-    lyrics: instrumental ? (aceEngine() ? "[Instrumental]" : yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
+    lyrics: instrumental ? (aceEngine() ? (state.musicAceModel?.includes("xl_sft") ? "" : "[Instrumental]") : yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
     instrumental,
     /* YuE2 through ComfyUI reads its OWN controls. This spec is the MiniMax
      * shape, and without these three the Music tab's "chain of thought" and
@@ -3227,14 +3240,15 @@ function acePaintOptions() {
   if (key && key.options.length < 2) key.innerHTML += ACE_KEYS.map((k) => `<option>${esc(k)}</option>`).join("");
   if (lang && !lang.options.length) lang.innerHTML = ACE_LANGS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
   const choice = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)
-    || (state.musicModels || []).find((c) => c.engine === "ace-step15");
+    || (!state.musicAceModel ? (state.musicModels || []).find((c) => c.engine === "ace-step15") : null);
   const lm = $("aLm"), lms = choice?.lms || [];
   const sig = lms.join("|") + "#" + (choice?.lm || "");
   if (lm && lm.dataset.sig !== sig) {
     lm.innerHTML = lms.length
       ? lms.map((n) => `<option value="${esc(n)}">${esc(/4b/i.test(n) ? "4B (best, most memory)" : /1\.7b/i.test(n) ? "1.7B (lighter)" : n)}</option>`).join("")
       : '<option value="">none on a shelf</option>';
-    lm.value = choice?.lm || lms[0] || "";
+    if (state.musicAceLm && !lms.includes(state.musicAceLm)) lm.innerHTML += `<option value="${esc(state.musicAceLm)}">Selected planner missing</option>`;
+    lm.value = state.musicAceLm || choice?.lm || lms[0] || "";
     lm.dataset.sig = sig;
   }
   const song = $("aCoverSong");
@@ -3335,6 +3349,7 @@ function aceSpec() {
   const num = (id) => { const v = ($(id)?.value ?? "").trim(); return v === "" ? undefined : Number(v); };
   return {
     engine: "ace-step15",
+    aceDit: state.musicAceModel, aceLm: $("aLm")?.value || state.musicAceLm,
     bpm: num("aBpm"),
     keyscale: $("aKey")?.value || undefined,
     timesignature: $("aMeter")?.value || undefined,
@@ -3344,9 +3359,9 @@ function aceSpec() {
     aceCodes: !!$("aCodes")?.checked,
     acePlanTemp: num("aPlanTemp"),
     /* "" is an explicit none; the server would otherwise use the saved choice. */
-    lora: $("aLora")?.value || "",
+    lora: state.remoteOnly ? "" : $("aLora")?.value || "",
     loraStrength: Number($("aLoraStrength")?.value ?? 100) / 100,
-    aceCover: aceCover ? (aceCover.upload ? { upload: aceCover.upload } : { song: aceCover.song }) : undefined,
+    aceCover: !state.remoteOnly && aceCover ? (aceCover.upload ? { upload: aceCover.upload } : { song: aceCover.song }) : undefined,
   };
 }
 
@@ -4035,6 +4050,7 @@ function renderNow(cur, queued = 0) {
     ? `YuE2 3B (ComfyUI) · ${cur.scoreSupplied ? `singing your score (${cur.cot || "full"})` : cur.cot === "off" ? "no score plan" : `${cur.cot || "full"} score plan`} · dpm_2 · ${cur.narSteps || 32} steps · seed ${cur.seed}`
     : yue
     ? `${cur.stageLabel || "YuE2"} · ${cur.rung?.label || "Standard"}${cur.quantization === "fp8" ? " · 8-bit AR" : ""} · seed ${cur.seed}`
+    : cur.engine === 'ace-step15' ? `ACE-Step 1.5 · ${cur.aceSteps} steps · CFG ${cur.aceCfg} · seed ${cur.seed}`
     : cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
 }
 
@@ -4536,7 +4552,7 @@ function rowMenuHtml(t) {
      * then fails at execution with the argument dropped, while the same node
      * takes "flac" happily -- so the option does not exist and a button for it
      * would spin and produce nothing. */
-    ...(["mp3", "opus", "flac"]
+    ...((state.remoteOnly ? [] : ["mp3", "opus", "flac"])
       .filter((x) => !new RegExp(`\.${x}$`, "i").test(t.file))
       .map((x) => ["data-export", x, `Save as ${x.toUpperCase()}`, "",
         x === "flac"
@@ -4565,7 +4581,8 @@ function rowMenuHtml(t) {
       + `<a class="rmitem" href="/api/score/sheet/${esc(t.scoreSlug)}/${esc(t.scoreVersion)}.pdf" target="_blank" rel="noopener"
          title="The same sheet as a PDF, if this machine could print it"><span>Sheet as PDF</span></a>`
     : "";
-  return sheet + items
+  const original = `<a class="rmitem" href="/api/audio/${f}?download=1" download="${esc(t.file)}"><span>Save original audio</span></a>`;
+  return original + sheet + items
     .filter(([attr]) => attr !== "data-addpl" || state.playlists?.length)
     .map(([attr, val, label, meta, title, extraF]) =>
       `<button class="rmitem${attr === "data-trash" ? " warn sep" : ""}" ${attr}="${val}"${
@@ -5466,6 +5483,7 @@ function openSong(file) {
   const rows = [
     ["seed", t.seed], ["mix seed", t.mixSeed], ["steps", t.steps],
     ["style strength", t.cfg], ["precision", t.model],
+    ...(t.engine === 'ace-step15' ? [["planner", t.aceLm], ["planner temperature", t.acePlanTemp], ["requested duration", t.maxDuration ? `${t.maxDuration}s` : null]] : []),
     ["render time", t.renderSeconds ? fmt(t.renderSeconds) : null],
     ["file", t.file],
   ].filter(([, v]) => v !== undefined && v !== null && v !== "");
@@ -21712,11 +21730,12 @@ function play(file, title, seed) {
   audio.src = `/api/audio/${file}`;
   audio.play().catch(() => {});
   $("pTitle").textContent = title || "—";
-  $("pSub").textContent = `generated locally · seed ${seed}`;
+  $("pSub").textContent = `seed ${seed}`;
   // Look the track up rather than taking a seed alone, so the mini player shows
   // the same cover as the row it was launched from.
   const decoded = decodeURIComponent(file);
   const track = (state.library || []).find((x) => x.file === decoded);
+  if (track?.executionTarget) $("pSub").textContent = `${track.executionTarget === 'runpod' ? 'RunPod' : track.executionTarget === 'api' ? 'Music API' : 'This PC'} · seed ${seed}`;
   $("pArt").style.background = artBg(track || { seed: Number(seed) || 0 });
   $("pPlay").textContent = "❚❚";
   // Remembered rather than applied as a class, because the list re-renders on
@@ -23132,3 +23151,17 @@ if (linkedDawPassage) {
     await loadReviewedMusicRequest(prepared);
   }).catch(error => appAlert(error.message, 'DAW draft was kept'));
 }
+
+var aceMusicUi = mountAceMusic({ getState: () => state, readSpec: () => currentSpec(false),
+  openSetup: () => { setView(state.remoteOnly ? "settings" : "models"); if (state.remoteOnly) revealSetting($("set-runpod")); },
+  applyPreset: reference => {
+    const p = reference.workload;
+    setGuided(false); setMode('instrumental'); state.takes = 1;
+    for (const button of document.querySelectorAll('[data-n]')) button.classList.toggle('on', Number(button.dataset.n) === 1);
+    const fields = { caption: p.caption, lyrics: '', maxDur: p.duration, seed: p.seed, aLm: p.lm,
+      aSteps: p.steps, aCfg: p.cfg, aBpm: p.bpm, aKey: p.keyscale, aMeter: p.timesignature,
+      aLang: p.language, aPlanTemp: p.planTemperature, aLora: '' };
+    aceCover = null; aceCoverPaint(); $('aCodes').checked = true;
+    for (const [id,value] of Object.entries(fields)) if ($(id)) { $(id).value = String(value); $(id).dispatchEvent(new Event('input', { bubbles: true })); }
+    state.seedLocked = true; paintSeed(); $('maxDur').oninput();
+  } });

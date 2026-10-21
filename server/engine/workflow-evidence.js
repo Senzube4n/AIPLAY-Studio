@@ -19,3 +19,14 @@ export function workflowEvidenceKey(graph) {
   rows.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
+
+/** Exact historical workload match; lyrics are excluded from ordinary private
+ * receipt keys, so require the accepted empty instrumental input separately. */
+export function hardwareWorkflowMatches(acceptance, graph) {
+  if (!acceptance || !graph) return false;
+  try { return curatedArtifactKey(graph)?.key === acceptance.artifactKey
+    && workflowEvidenceKey(graph) === acceptance.workflowKey
+    && Object.values(graph).some(n => n.class_type === 'TextEncodeAceStepAudio1.5' && n.inputs.lyrics === '' && n.inputs.seed === acceptance.workload.seed)
+    && Object.values(graph).some(n => n.class_type === 'KSampler' && n.inputs.seed === acceptance.workload.seed); }
+  catch { return false; }
+}

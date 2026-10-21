@@ -14,3 +14,13 @@ export function remoteAceShelf(info, selectedLm) {
 export function remoteYueCheckpoints(info) {
   return names(info, 'CheckpointLoaderSimple', 'ckpt_name').filter(n => /yue2?/i.test(n) && /\.(safetensors|sft)$/i.test(n));
 }
+
+/** A saved missing DiT remains visible instead of making the select show Turbo. */
+export function preserveSelectedAce(choices, dit) {
+  if (dit && !choices.some(c => c.engine === 'ace-step15' && c.dit === dit))
+    { const placeholder = choices.findIndex(c => c.engine === 'ace-step15' && !c.dit);
+      const missing = { value: `ace-step15:${dit}`, engine: 'ace-step15', dit, available: false,
+      label: `ACE-Step 1.5 · ${dit}`, note: 'Selected model missing on this computer', lms: [], lm: null };
+      if (placeholder >= 0) choices[placeholder] = missing; else choices.push(missing); }
+  return choices;
+}

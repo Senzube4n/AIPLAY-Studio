@@ -455,6 +455,10 @@ export class Library {
         cfg: m.cfg,
         model: m.model,
         engine: m.engine,
+        executionTarget: m.executionTarget,
+        ...(m.engine === 'ace-step15' ? { aceDit: m.aceDit, aceLm: m.aceLm, aceCodes: m.aceCodes,
+          acePlanTemp: m.acePlanTemp, maxDuration: m.maxDuration, bpm: m.bpm, keyscale: m.keyscale,
+          timesignature: m.timesignature, language: m.language, aceHardwareEvidenceId: m.aceHardwareEvidenceId } : {}),
         // Native generation notices survive a restart alongside the take.
         // Old tracks carry no inferred warning simply because they are long.
         warnings: Array.isArray(m.warnings) ? m.warnings : [],

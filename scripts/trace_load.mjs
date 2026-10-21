@@ -38,6 +38,7 @@ globalThis.document = {
   addEventListener: () => {},
   createElement: () => el(),
   createTextNode: () => el(),
+  createComment: () => el(),
   hidden: false,
   body: el(),
 };
