@@ -97,8 +97,11 @@ function fixture() {
     assert.equal(Number(res.headers["Content-Length"]), Buffer.concat(chunks).length);
     return Buffer.concat(chunks);
   };
-  return { post, getPreview, jobs, async make() {
+  return { post, getPreview, jobs, async make({ transparent = false } = {}) {
     const { slug } = await post({ action: "create", name: "cache fixture", bpm: 120, length_bars: 2 });
+    // Preserve the original P0/legacy cache fixtures; transparent output
+    // and the actual new-project default are exercised separately below.
+    if (!transparent) await post({ action: "mixer_set", slug, target: "master", output_mode: "legacySoftClip" });
     const { trackId } = await post({ action: "add_track", slug, name: "pluck", instrument: "pluck" });
     return { slug, track: trackId, pitch: 60, vel: 100, dur_ticks: 480 };
   } };
@@ -239,6 +242,25 @@ test("Voice Lab stereo/own chain inputs re-key; unused chain does not invalidate
   assert.equal((await f.post({ action: "preview_note", ...args })).url, dry.url);
   assert.equal((await f.post({ action: "voice_lab", ...args, stereo: true })).url, stereo.url);
 });
+test("new transparent previews share both route caches, preserve stereo and re-key mode changes", async () => {
+  const f = fixture(), args = await f.make({ transparent: true });
+  assert.equal((await store.readProject(args.slug)).master.outputMode, "transparent");
+  const clean = await f.post({ action: "preview_note", ...args });
+  assert.equal(clean.output_mode, "transparent");
+  assert.equal(clean.stereo, true);
+  assert.equal(f.jobs[0].mixer.outputMode, "transparent");
+  assert.equal(f.jobs[0].mixer.stereo, true);
+  const same = await f.post({ action: "voice_lab", ...args });
+  assert.equal(same.url, clean.url); assert.equal(same.cached, true);
+  await f.post({ action: "mixer_set", slug: args.slug, target: "master", output_mode: "legacySoftClip" });
+  const legacy = await f.post({ action: "preview_note", ...args });
+  assert.notEqual(legacy.url, clean.url); assert.equal(legacy.output_mode, "legacySoftClip");
+  assert.equal(f.jobs[1].mixer, undefined);
+  await f.post({ action: "mixer_set", slug: args.slug, target: "master", output_mode: "transparent" });
+  assert.equal((await f.post({ action: "preview_note", ...args })).url, clean.url);
+  assert.equal(f.jobs.length, 2);
+});
+
 test("legacy cache is left untouched and client fields cannot choose output/cache paths", async () => {
   const f = fixture(), args = await f.make(), dir = owned(path.join(store.DAW_DIR(), "_previews"));
   await mkdir(dir, { recursive: true });

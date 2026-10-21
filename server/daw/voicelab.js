@@ -64,7 +64,7 @@ import {
   regionsOf, regionHashes, noteEvents, audioEvents, audioJobClips, noteSeed, normParams,
   TICKS_PER_BEAT, TAILS, PATCHES, LIMITS, clampInt,
 } from "./store.js";
-import { isDefaultMixer, mixerJobPayload, mixerAudible } from "./mixer.js";
+import { isDefaultMixer, mixerJobPayload, mixerAudible, auditionMixerPayload, masterOutputMode } from "./mixer.js";
 import { instrumentsDir } from "./patches.js";
 import { regionWavReady } from "./cache.js";
 import { previewAudioKey } from "./preview-key.js";
@@ -218,32 +218,15 @@ async function voiceLab(b, ctx, safe) {
    * So: mono by default, byte-identical to `preview_note`; `stereo: true`
    * renders the same note through the rack with a NO-OP chain, which is the
    * only way to reach synth_note_stereo; `through_chain: true` adds the
-   * track's own inserts, fader and pan on top of that. The tanh master curve
-   * is applied on both paths (engine.render and rack.chain_graph each end
-   * with np.tanh(0.7 * mix)), so the difference between them is the fold and
-   * nothing else.
+   * track's own inserts, fader and pan on top of that. Transparent projects
+   * use the rack even for a dry mono voice, and inherit their output mode.
    *
    * The effective chain payload rides the shared cache key whenever it is
    * used, so mono and stereo caches cannot collide and a knob
    * moved on an insert cannot answer from a stale file. */
   const wantChain = b.through_chain === true;
-  const wantStereo = wantChain || b.stereo === true;
-  let mixerPayload = null;
-  if (wantStereo) {
-    const rows = buildTimeline(doc, 1);
-    const full = wantChain ? mixerJobPayload(doc, buildTimeline(doc)) : null;
-    const cfg = wantChain
-      ? { ...(full.tracks[t.id] || {}), sends: [] }      // no returns are rendered
-      : { inserts: [], fader: 0, pan: 0, sends: [] };
-    mixerPayload = {
-      tracks: { [t.id]: cfg }, returns: [],
-      /* THE MASTER CHAIN IS DELIBERATELY LEFT OUT. It belongs to the mix, not
-       * to the voice: auditioning one note through the project's limiter
-       * would show the limiter, not the instrument. */
-      master: { inserts: [], fader: 0 },
-      stereo: true, spq: [[0, 60 / rows[0].bpm]],
-    };
-  }
+  const mixerPayload = auditionMixerPayload(doc, t.id, { stereo: b.stereo, throughChain: wantChain });
+  const wantStereo = mixerPayload?.stereo === true;
   // The default job is identical to preview_note's. Hash calculated sample
   // lengths and the exact renderer inputs, never a second approximation.
   const job = {
@@ -285,15 +268,15 @@ async function voiceLab(b, ctx, safe) {
     pitch, vel, dur_ticks: durTicks,
     seconds: Number((nSamples / doc.sr).toFixed(3)),
     cached: have, render_ms: renderMs, lane,
-    path: wantChain ? "rack, this track's own chain" : (wantStereo ? "rack, no-op chain" : "P0 mono"),
-    stereo: wantStereo, through_chain: wantChain,
-    path_note: wantStereo
+    path: wantChain ? "rack, this track's own chain" : (mixerPayload ? "rack, no-op chain" : "P0 mono"),
+    stereo: wantStereo, through_chain: wantChain, output_mode: masterOutputMode(doc),
+    path_note: mixerPayload
       ? (wantChain
         ? "Through the track's own inserts, fader and pan — but NOT the master "
           + "chain and not the sends, because a limiter set for the mix would "
           + "show you the limiter instead of the instrument."
         : "Through the rack with a no-op chain, which is the only way to reach "
-          + "the stereo instrument stage. The audio is otherwise the voice alone.")
+          + "the instrument stage. The project's output mode is preserved.")
       : "The P0 mono path — the same job and the same bytes `preview_note` "
         + "renders. It folds to one channel, so a width knob (spread, "
         + "hat_width) cannot show here: ask for stereo: true to see it move.",
@@ -600,8 +583,10 @@ async function renderStems(b, ctx, safe) {
     sums_to: "All track stems PLUS the separate `returns` files reconstruct the PRE-MASTER mix "
       + "up to float32 rounding. Shared return files include sends from the entire mix, even "
       + "when requesting only some tracks. Every lane is post-fader and pre-master-chain; "
-      + "the master chain, the master fader and the tanh curve sit on top, so the "
-      + "lanes do not add up to what you hear at the limiter.",
+      + "the master chain and master fader are applied after this sum. "
+      + (masterOutputMode(doc) === "transparent"
+        ? "A neutral transparent master matches the sum; master effects or gain can change it."
+        : "The legacy tanh curve also changes the sum, so the lanes do not add up to what you hear at the limiter."),
     cost_note: "A stem render is a full second graph pass, so SPEC §0.1 applies: "
       + "it costs what a region render of the same bars costs, again. Lanes are "
       + "lazy for that reason — nothing here ran until you opened one.",

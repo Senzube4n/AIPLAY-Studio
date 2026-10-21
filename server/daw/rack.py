@@ -5,8 +5,9 @@
 Per-track render = INSTRUMENT STAGE (theirs: notes -> dry track buffer,
 float32 stereo (2,N) @48k, P0 conventions) then CHAIN STAGE (this module):
 per-track insert chain -> per-track fader/pan -> sends -> return tracks with
-their own chains -> master chain -> master fader -> the tanh master stays
-last. engine.py routes here when a job carries `mixer`; without one the P0
+their own chains -> master chain -> master fader -> selected output stage.
+Missing outputMode retains the legacy tanh curve. engine.py routes here when
+a job carries `mixer`; without one the P0
 path runs untouched, byte for byte.
 ──────────────────────────────────────────────────────────────────────────────
 
@@ -145,6 +146,27 @@ RACK_VERSION = 1
 
 AUTO_BLOCK = 1024          # automated insert params re-evaluate every ~21 ms
 CTRL = 16                  # envelope followers run every 16 samples (~0.33 ms)
+OUTPUT_MODES = ("legacySoftClip", "transparent")
+DEFAULT_OUTPUT_MODE = "legacySoftClip"
+
+
+def resolve_output_mode(mixer=None):
+    """Missing means the old sound; invalid explicit modes never fall back."""
+    mode = (mixer or {}).get("outputMode", DEFAULT_OUTPUT_MODE)
+    if mode not in OUTPUT_MODES:
+        raise ValueError("outputMode must be legacySoftClip or transparent")
+    return mode
+
+
+def master_output(mix, mode):
+    """The final output stage, after every master insert and the master fader.
+
+    Transparent preserves float headroom; it is not a limiter. Device playback
+    and integer PCM delivery still require peaks within their available range.
+    """
+    if mode == "transparent":
+        return mix
+    return np.tanh(0.7 * mix)
 
 # ---------------------------------------------------------------- catalog
 #
@@ -344,7 +366,8 @@ def catalog_json():
     return {"version": RACK_VERSION, "devices": CATALOG,
             "sync_quarters": SYNC_QUARTERS,
             "pan_law": "equal-power, centre-unity (+3 dB at the edges)",
-            "auto_block": AUTO_BLOCK, "ctrl_rate": CTRL}
+            "auto_block": AUTO_BLOCK, "ctrl_rate": CTRL,
+            "output_modes": list(OUTPUT_MODES), "output_mode_default": DEFAULT_OUTPUT_MODE}
 
 
 # ---------------------------------------------------------- param plumbing
@@ -979,7 +1002,7 @@ def graph_future_seconds(mixer, sr=48000):
 
 def chain_graph(job, synths, capture=False):
     """The whole graph, absolute sample 0 to the end of the window:
-    dry -> inserts -> fader/pan -> sends -> returns -> master -> tanh.
+    dry -> inserts -> fader/pan -> sends -> returns -> master -> output stage.
     Returns (mastered (2, total) float64, buses) where buses holds the
     post-fader per-track / per-return stereo buffers when capture is on."""
     sr = int(job.get("sr") or 48000)
@@ -988,6 +1011,7 @@ def chain_graph(job, synths, capture=False):
     if n <= 0 or n > sr * 600:
         raise ValueError(f"n_samples out of range: {n}")
     mixer = job.get("mixer") or {}
+    output_mode = resolve_output_mode(mixer)
     requested_total = w0 + n
     # A region must see the same following transient as a whole-song render.
     # Compute beyond its end, then crop every returned bus to the contract.
@@ -1051,9 +1075,9 @@ def chain_graph(job, synths, capture=False):
     mix = run_chain(mix, master.get("inserts"), ctx)
     g = db_to_lin(value_env(master.get("fader", 0.0), 0.0, -60.0, 12.0, total, sr))
     mix = mix * g
-    # THE TANH MASTER STAYS LAST -- the P0 master curve, per channel,
-    # memoryless, exactly as the mono path applies it.
-    mastered = np.tanh(0.7 * mix)
+    # Missing mode retains the exact legacy curve. Explicit transparent mode
+    # performs no extra gain, limiting or nonlinear processing after the fader.
+    mastered = master_output(mix, output_mode)
     if future:
         mastered = mastered[:, :requested_total]
         if capture:
@@ -1110,6 +1134,7 @@ def render_with_chain(job, synths, tails):
             # content was a clip reported "ok" over a silent file.
             "clips": len(job.get("audio") or []), "chained": True,
             "stereo": stereo_on(job.get("mixer")),
+            "outputMode": resolve_output_mode(job.get("mixer")),
             "ms": round((time.perf_counter() - t_start) * 1000, 1)}
 
 
@@ -1247,6 +1272,7 @@ def render_stems(job, synths, tails=None):
     return {
         "ok": True, "sr": sr, "start_sample": w0, "n_samples": n,
         "channels": 2, "stereo": stereo_on(job.get("mixer")),
+        "outputMode": resolve_output_mode(job.get("mixer")),
         "prefix": prefix, "out_dir": out_dir,
         "stems": rows,
         "returns": return_rows,
@@ -1262,9 +1288,11 @@ def render_stems(job, synths, tails=None):
         "sums_to": "Tracks PLUS the separate shared-return files reconstruct the PRE-MASTER mix "
                    "up to float32 export rounding when all tracks are included. Return files "
                    "contain the whole mix's sends even when selecting only some tracks. "
-                   "The master chain, the master fader and "
-                   "the tanh curve sit on top of this sum, so the lanes do not "
-                   "add up to what you hear at the limiter.",
+                   + ("The master chain, the master fader and the tanh curve sit on top of this sum, "
+                      "so the lanes do not add up to what you hear at the limiter."
+                      if resolve_output_mode(job.get("mixer")) == "legacySoftClip" else
+                      "The master chain and master fader still apply after this sum; transparent "
+                      "output adds no further gain or soft clipping."),
         "ms": round((time.perf_counter() - t_start) * 1000, 1),
     }
 
@@ -1386,6 +1414,7 @@ def meters(job, synths):
     out = {
         "ok": True, "sr": sr, "start_sample": w0, "n_samples": n,
         "stereo": stereo_on(job.get("mixer")),
+        "outputMode": resolve_output_mode(job.get("mixer")),
         "master": _bus_meters(mastered[:, sl], sr, with_tp=True),
         "tracks": {tid: _bus_meters(b[:, sl], sr) for tid, b in buses["tracks"].items()},
         "returns": {rid: _bus_meters(b[:, sl], sr) for rid, b in buses["returns"].items()},

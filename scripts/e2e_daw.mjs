@@ -413,6 +413,8 @@ try {
   {
     const c = await api({ action: "create", name: `e2e-rec-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 8 });
     recSlug = c.slug; made.push(recSlug);
+    // This historical capture gate pins the mono tanh transfer, not new defaults.
+    await api({ action: "mixer_set", slug: recSlug, target: "master", stereo: false, output_mode: "legacySoftClip" });
     const tr = await api({ action: "add_track", slug: recSlug, instrument: "pluck", name: "mic" });
     recTrack = tr.trackId;
 
@@ -759,6 +761,7 @@ try {
       await wf(tonePath, Buffer.concat([header, Buffer.from(tone.buffer)]));
 
       const proj = await call("daw_create_project", { name: `e2e-imp-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 4 });
+      await api({ action: "mixer_set", slug: proj.slug, target: "master", stereo: false, output_mode: "legacySoftClip" });
       made.push(proj.slug);
       const tr = await call("daw_add_track", { slug: proj.slug, instrument: "pluck", name: "keys" });
       await call("daw_add_note", { slug: proj.slug, track: tr.track_id, bar: 1, beat: 1, pitch: 60, vel: 110 });
@@ -800,6 +803,7 @@ try {
 
     const c3 = await api({ action: "create", name: `e2e-rack-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 8 });
     const slug3 = c3.slug; made.push(slug3);
+    await api({ action: "mixer_set", slug: slug3, target: "master", stereo: false, output_mode: "legacySoftClip" });
     const tA = await api({ action: "add_track", slug: slug3, instrument: "pluck", name: "keys" });
     const tB = await api({ action: "add_track", slug: slug3, instrument: "drums", name: "kit" });
     for (let bb = 1; bb <= 8; bb++) {

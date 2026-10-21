@@ -108,7 +108,7 @@ async function editor(label) {
   const context = vm.createContext({ S, console, Set, Map, performance, $, resizeNoteDurations,
     status: (value) => statuses.push(value), drawHistory() {}, renderAndSwap() {},
     draw() {}, drawSide() {}, drawArr() {}, drawMixer() {}, drawDevices() {}, drawAutoPane() {}, drawKnobs() {}, fitRoll() {}, paintSelInfo() {},
-    auditionNote() {}, auditionDrag() {}, previewPitch() {}, bandSelect() {},
+    auditionNote() {}, auditionDrag() {}, previewPitch() {}, stopHeldAuditions() {}, bandSelect() {},
     canvas: { getBoundingClientRect: () => ({ left: 0, top: 0 }),
       setPointerCapture: (id) => ui.captures.add(id),
       releasePointerCapture: (id) => { ui.captures.delete(id); ui.released.push(id); } },

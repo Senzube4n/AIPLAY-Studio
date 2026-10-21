@@ -1222,6 +1222,10 @@ def _cli_encode(job):
     """
     import soundfile as sf
     from pathlib import Path
+    # The encoder has no mixer object. This explicit top-level field carries
+    # the selected graph mode, with the same missing-field legacy default.
+    from rack import resolve_output_mode
+    output_mode = resolve_output_mode(job)
     output_format = str(job.get("format") or Path(job["out"]).suffix.lstrip(".")).lower()
     if output_format not in ("flac", "wav"):
         raise ValueError("format must be flac or wav")
@@ -1261,10 +1265,19 @@ def _cli_encode(job):
                                 noise_shape=str(job.get("noise_shape") or "shaped"),
                                 seed=int(job.get("dither_seed") or 1)).T
         dithered = True
+    sample_peak = float(np.max(np.abs(y))) if y.size else 0.0
+    if output_mode == "transparent":
+        if not np.isfinite(y).all():
+            raise ValueError("Transparent PCM export contains non-finite audio; check the master chain.")
+        if sample_peak > 1.0:
+            peak_db = 20.0 * math.log10(sample_peak)
+            raise ValueError(f"Transparent PCM export would clip: sample peak {sample_peak:.6f} "
+                             f"({peak_db:+.2f} dBFS). Reduce master gain or add a limiter, then export again.")
     sf.write(job["out"], y, sr, subtype=f"PCM_{bits}", format=output_format.upper())
     return {"ok": True, "out": job["out"], "seconds": round(y.shape[0] / sr, 3),
             "channels": int(y.shape[1]), "sr": sr, "format": output_format,
             "bit_depth": bits, "dithered": dithered,
+             "outputMode": output_mode, "peak": round(sample_peak, 6),
             **({"loudness": loud} if loud is not None else {})}
 
 

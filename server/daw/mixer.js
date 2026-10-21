@@ -474,6 +474,10 @@ export function migrateDocMixer(doc) {
      * switch existed keeps the fold and its bytes. blankProject sets it for
      * new projects; see the reason there. */
     ...(m.stereo === true ? { stereo: true } : {}),
+    /* Missing mode is the historical soft clip, including its old hashes.
+     * Only new projects opt into unity output; opening a saved mix never
+     * changes its gain or saturation behind the owner's back. */
+    ...(m.outputMode === "transparent" ? { outputMode: "transparent" } : {}),
     /* THE LOUDNESS TARGET (master.py: loudness_stage), a bounce-time
      * setting: absent = the bytes exactly as rendered. It is NOT part of
      * the master signature below, because it changes no region. */
@@ -492,6 +496,9 @@ export const clampLufs = (v) =>
 /** The switch, read in ONE place on the JS side (rack.stereo_on is the other). */
 export const stereoOn = (doc) => doc?.master?.stereo === true;
 
+export const masterOutputMode = (doc) => doc?.master?.outputMode === "transparent"
+  ? "transparent" : "legacySoftClip";
+
 /* ─────────────────────────── audibility, reach, and the hash signatures */
 
 export function mixerAudible(doc, track) {
@@ -507,6 +514,7 @@ export function isDefaultMixer(doc) {
   /* The stereo switch is a rack setting: with it on, even an otherwise empty
    * mixer must render through rack.py (the P0 path folds every voice). */
   if (stereoOn(doc)) return false;
+  if (masterOutputMode(doc) === "transparent") return false;
   if (doc.master && ((doc.master.inserts || []).length || !defAuto(doc.master.fader))) return false;
   for (const t of doc.tracks || []) {
     if ((t.inserts || []).length || (t.sends || []).length) return false;
@@ -582,9 +590,10 @@ export const returnMixSig = (r) => JSON.stringify({
 });
 
 export const masterMixSig = (m) => (
-  !(m?.inserts || []).length && defAuto(m?.fader) && m?.stereo !== true ? ""
+  !(m?.inserts || []).length && defAuto(m?.fader) && m?.stereo !== true && m?.outputMode !== "transparent" ? ""
     : JSON.stringify({ i: m.inserts || [], f: sigAuto(m.fader),
-                       ...(m.stereo === true ? { s: 1 } : {}) })
+                       ...(m.stereo === true ? { s: 1 } : {}),
+                       ...(m.outputMode === "transparent" ? { outputMode: "transparent" } : {}) })
 );
 
 /** Everything regionHashes folds in, precomputed once per hash pass.
@@ -655,7 +664,31 @@ export function mixerJobPayload(doc, rows = null) {
     },
     /* rack.stereo_on reads exactly this key, and only a literal true. */
     stereo: stereoOn(doc),
+    ...(masterOutputMode(doc) === "transparent" ? { outputMode: "transparent" } : {}),
     spq: doc.tempoMap.map((e) => [barToSec(rows, e.atBar), 60 / e.bpm]),
+  };
+}
+
+/** A dry audition uses the project's output mode but leaves the mix's
+ * master effects out. Both preview doors consume this exact payload so
+ * neither a stale soft-clipped cache nor an unwanted master limiter can
+ * answer a transparent voice audition. Legacy dry previews keep P0 bytes. */
+export function auditionMixerPayload(doc, trackId, { stereo, throughChain = false } = {}) {
+  const transparent = masterOutputMode(doc) === "transparent";
+  const wantStereo = throughChain || stereo === true
+    || (transparent && stereo !== false && stereoOn(doc));
+  if (!wantStereo && !transparent && !throughChain) return null;
+  const rows = buildTimeline(doc);
+  const full = throughChain ? mixerJobPayload(doc, rows) : null;
+  const cfg = throughChain ? { ...(full.tracks[trackId] || {}), sends: [] }
+    : { inserts: [], fader: 0, pan: 0, sends: [] };
+  return {
+    tracks: { [trackId]: cfg }, returns: [], master: { inserts: [], fader: 0 },
+    stereo: wantStereo,
+    // With no tempo-synced effects, only the already-calculated sample
+    // lengths affect a dry transparent note. Keep legacy keys unchanged.
+    ...(!transparent || throughChain ? { spq: [[0, 60 / rows[0].bpm]] } : {}),
+    ...(transparent ? { outputMode: "transparent" } : {}),
   };
 }
 
@@ -844,6 +877,13 @@ export async function handleMixerAction(action, b, ctx) {
           if (b.stereo === true || b.stereo === "true") host.stereo = true;
           else delete host.stereo;
         }
+        if (b.output_mode !== undefined) {
+          if (kind !== "master") throw new Error("output_mode belongs to the master output.");
+          if (!["transparent", "legacySoftClip"].includes(b.output_mode))
+            throw new Error("output_mode must be transparent or legacySoftClip.");
+          if (b.output_mode === "transparent") host.outputMode = b.output_mode;
+          else delete host.outputMode;
+        }
         if (b.target_lufs !== undefined) {
           if (kind !== "master") throw new Error("`target_lufs` is the master's setting: target \"master\".");
           if (b.target_lufs === null || b.target_lufs === "" || b.target_lufs === false) delete host.target_lufs;
@@ -852,10 +892,11 @@ export async function handleMixerAction(action, b, ctx) {
         }
         return { target: id, kind,
                  fader: host.fader, pan: host.pan ?? null, solo: host.solo ?? null,
-                 ...(kind === "master" ? { stereo: host.stereo === true, target_lufs: host.target_lufs ?? null } : {}),
-                 ...(b.stereo !== undefined || b.target_lufs !== undefined
+                 ...(kind === "master" ? { stereo: host.stereo === true, output_mode: masterOutputMode(d), target_lufs: host.target_lufs ?? null } : {}),
+                 ...(b.stereo !== undefined || b.target_lufs !== undefined || b.output_mode !== undefined
                    ? { ledger: { detail: `master ${b.stereo !== undefined ? `stereo ${host.stereo === true ? "on" : "off"}` : ""}`
-                       + `${b.target_lufs !== undefined ? ` target ${host.target_lufs ?? "off"} LUFS` : ""}`.trim() } } : {}) };
+                       + `${b.target_lufs !== undefined ? ` target ${host.target_lufs ?? "off"} LUFS` : ""}`
+                       + `${b.output_mode !== undefined ? ` output ${masterOutputMode(d)}` : ""}`.trim() } } : {}) };
       });
       return { ok: true, updatedAt: m.doc.updatedAt, dirty: m.dirty, ...stripLedger(m.extra) };
     }

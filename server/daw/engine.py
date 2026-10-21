@@ -323,6 +323,7 @@ def render(job):
     sha = __import__("hashlib").sha1(mastered.tobytes()).hexdigest()
     peak = float(np.max(np.abs(mastered))) if n else 0.0
     return {"ok": True, "sr": sr, "n_samples": n, "peak": round(peak, 6),
+            "outputMode": "legacySoftClip",
             "sha1": sha, "notes": len(job.get("notes") or []),
             # [DAWREC] the same key rack.render_with_chain answers with, and
             # the same count: how many clips THIS job carried. For as long as
@@ -585,6 +586,8 @@ def calibrate(job):
 
 def probe(job):
     return {"ok": True, "engine": "daw", "sr_default": DEFAULT_SR,
+            "output_modes": list(_rack.OUTPUT_MODES),
+            "output_mode_default": _rack.DEFAULT_OUTPUT_MODE,
             "instruments": sorted(SYNTHS), "tails": TAILS,
             "chirp": {"seconds": CHIRP_SECONDS, "f0": CHIRP_F0, "f1": CHIRP_F1},
             "pid": os.getpid(),

@@ -68,7 +68,7 @@ import {
  * parity live in mixer.js; this file only dispatches to them and switches a
  * render onto the chain path when the mixer is not default. */
 import {
-  handleMixerAction, mixerJobPayload, isDefaultMixer, catalogsAgree,
+  handleMixerAction, mixerJobPayload, auditionMixerPayload, masterOutputMode, isDefaultMixer, catalogsAgree,
   MIXER_CATALOG, MIXER_ACTIONS,
 } from "./mixer.js";
 /* DAWINST SEAM: the palette — install/uninstall behind the licence gate,
@@ -2759,6 +2759,7 @@ export function createDawRoutes(deps) {
           const durSec = durTicks / TICKS_PER_BEAT * (4 / row.den) * 60 / row.bpm;
           const durSamples = Math.max(1, Math.round(durSec * doc.sr));
           const nSamples = durSamples + Math.round((TAILS[patch] ?? 1.5) * doc.sr);
+          const mixer = auditionMixerPayload(doc, t.id);
           // Key and renderer consume the SAME effective job: tempo/meter change
           // its sample lengths, while params, exact gain and seed affect its sound.
           const job = {
@@ -2768,7 +2769,9 @@ export function createDawRoutes(deps) {
               inst: patch, params, midi: pitch, vel,
               start_sample: 0, dur_samples: durSamples,
               gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
+              ...(mixer ? { track_id: t.id } : {}),
             }],
+            ...(mixer ? { mixer } : {}),
           };
           const name = `pv_${patch}_${previewAudioKey(job)}.wav`;
           const dir = path.join(DAW_DIR(), "_previews");
@@ -2789,6 +2792,7 @@ export function createDawRoutes(deps) {
           return json(res, 200, {
             ok: true, url: `/api/daw/preview/${name}`,
             track: t.id, patch, params, pitch, vel, dur_ticks: durTicks,
+            output_mode: masterOutputMode(doc), stereo: mixer?.stereo === true,
             seconds: Number((nSamples / doc.sr).toFixed(3)),
             cached: have,
             lane: rr?.lane ?? null, queueMs: rr?.queue_ms ?? 0, ms: rr?.ms ?? 0,
@@ -2884,6 +2888,7 @@ export function createDawRoutes(deps) {
           const enc = await runInstruments("encode", {
             sr: doc.sr, wav_parts: parts, out,
             bit_depth: options.bit_depth, format: options.format,
+            ...(masterOutputMode(doc) === "transparent" ? { outputMode: "transparent" } : {}),
             ...(aimed ? { target_lufs: Number(targetLufs) } : {}),
             ...(aimed ? { ceiling_db: options.ceiling_db, max_limit_db: options.max_limit_db } : {}),
           }, 300_000);
@@ -2896,6 +2901,7 @@ export function createDawRoutes(deps) {
             bit_depth: enc.bit_depth ?? (b.bit_depth ?? 24),
             dithered: enc.dithered === true,
             stereo: doc.master?.stereo === true,
+            output_mode: masterOutputMode(doc),
             target_lufs: aimed ? Number(targetLufs) : null,
             ceiling_db: options.ceiling_db, max_limit_db: options.max_limit_db,
             ...(enc.loudness ? { loudness: enc.loudness } : {}),
@@ -3000,7 +3006,7 @@ export function createDawRoutes(deps) {
               inserts: (t.inserts || []).map((i) => ({ id: i.id, type: i.type })),
             })),
             master: { inserts: (doc.master?.inserts || []).map((i) => ({ id: i.id, type: i.type })),
-                      stereo: doc.master?.stereo === true, target_lufs: doc.master?.target_lufs ?? null,
+                      stereo: doc.master?.stereo === true, output_mode: masterOutputMode(doc), target_lufs: doc.master?.target_lufs ?? null,
                       ceiling_db: plan.meta.master.ceiling_db },
             hook: plan.meta.hook, kick_tune: plan.meta.kick_tune, kick_hz: plan.meta.kick_hz,
             roles,

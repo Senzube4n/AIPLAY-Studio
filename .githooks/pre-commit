@@ -11,6 +11,9 @@
 # declaration there passed every check and was only caught by trying to boot
 # the app by hand. One syntax check closes that hole for the price of nothing.
 node --check server/index.js || exit 1
+# Sound output contracts: old cache bytes, transparent unity, PCM headroom.
+node --test server/daw/output-mode_test.js || exit 1
+python server/daw/output_mode_test.py || exit 1
 # Project-bound CLI assistants: no inference, login mutation or GPU in fixtures.
 node --check server/daw/assistant.js || exit 1
 node --check server/daw/assistant-providers.js || exit 1
@@ -18,6 +21,9 @@ node --check server/daw/assistant-tools.js || exit 1
 node --check server/daw/assistant-mcp.mjs || exit 1
 node --check web/daw-assistant.js || exit 1
 node --test server/daw/assistant_test.js server/daw/assistant-providers_test.js server/daw/assistant-tools_test.js server/daw/assistant-mcp_test.js server/daw/assistant-ui_test.js || exit 1
+# Held WebMIDI previews: fake audio nodes and requests only, no synth/CLI/GPU.
+node --check web/daw.js || exit 1
+node --test server/daw/audition-ui_test.js || exit 1
 node --check shared/model-bundles.js || exit 1
 node --check shared/model-profiles.js || exit 1
 node --check server/setup-plan.js || exit 1

@@ -609,6 +609,7 @@ body.d-body {
 .d-fadrow { flex: 1 1 var(--d-fader-h, 180px); display: flex; gap: 3px;
             min-height: 108px; align-items: stretch; justify-content: center; }
 .d-sbtns { display: flex; gap: 2px; justify-content: center; }
+.d-output-mode { width: 100%; min-width: 0; box-sizing: border-box; font-size: 9px; padding: 2px 1px; }
 .d-sends { display: flex; flex-direction: column; gap: 2px; }
 .d-send { display: flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 8.5px; color: var(--ghost); }
 .d-send .d-sname { flex: 0 0 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

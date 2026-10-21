@@ -119,7 +119,7 @@ export function rackTools({ daw, get, slugOf }) {
       description:
         "The mixer: faders, pans, solo, sends and return tracks. op `set` writes "
         + "fader (dB, -60..+12), pan (-1..1) and solo on a target (" + TARGET + " — "
-        + "the master takes fader only; solo is tracks only, and any solo means ONLY "
+        + "the master takes fader and output settings; solo is tracks only, and any solo means ONLY "
         + "solo tracks sound). op `send_set` routes a track to a return (level dB, "
         + "`pre` taps before the fader) and creates the send if absent; `send_remove` "
         + "cuts it. `return_add`/`return_remove` manage up to 4 return tracks — put "
@@ -136,6 +136,8 @@ export function rackTools({ daw, get, slugOf }) {
           fader: { description: "dB, -60..+12. Number or keys." },
           pan: { description: "-1..1. Number or keys." },
           solo: { type: "boolean" },
+          output_mode: { type: "string", enum: ["transparent", "legacySoftClip"],
+            description: "op set, target master only. transparent leaves the post-master signal at unity; legacySoftClip applies the historical tanh curve. New projects use transparent; saved projects keep their previous sound. A change re-renders sounding regions. Transparent PCM export refuses overload; reduce master gain or add a limiter." },
           stereo: { type: "boolean", description: "op set, target \"master\" only: the rack's "
             + "stereo switch. true renders each voice's own channels (a unison lead's spread, a "
             + "sampled piano's image) through the inserts; false/absent folds every voice to "
@@ -160,10 +162,10 @@ export function rackTools({ daw, get, slugOf }) {
         if (a.op === "set") {
           const r = await daw({ action: "mixer_set", slug, target: a.target,
                                 fader: a.fader, pan: a.pan, solo: a.solo,
-                                stereo: a.stereo, target_lufs: a.target_lufs });
+                                stereo: a.stereo, output_mode: a.output_mode, target_lufs: a.target_lufs });
           return { target: r.target, kind: r.kind, fader: r.fader, pan: r.pan,
                    solo: r.solo, dirty: r.dirty, updated_at: r.updatedAt,
-                   ...(r.kind === "master" ? { stereo: r.stereo, target_lufs: r.target_lufs } : {}) };
+                   ...(r.kind === "master" ? { stereo: r.stereo, output_mode: r.output_mode, target_lufs: r.target_lufs } : {}) };
         }
         if (a.op === "send_set") {
           const r = await daw({ action: "send_set", slug, track: a.track, to: a.to,

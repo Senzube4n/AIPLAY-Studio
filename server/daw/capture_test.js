@@ -324,6 +324,7 @@ console.log("\n  -- a clip's region identity covers the chain its sound crosses 
    * against the code that produced it. */
   const p0 = makeDoc();
   p0.master.stereo = false;                     // the pre-switch document
+  delete p0.master.outputMode;                  // also predates transparent output
   p0.tracks[0].audioClips.push(blankAudioClip("imp_4.flac", {
     bar: 1, beat: 1, tick: 0, durSamples: SR, gainDb: -6,
   }));

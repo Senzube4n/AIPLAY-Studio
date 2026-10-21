@@ -130,7 +130,7 @@ try {
     assert.deepEqual(await readFile(file), complete);
   });
   await check("legacy mono projects still render and reuse their cache", async () => {
-    const mono = await store.updateProject(slug, (d) => { d.master.stereo = false; return d; });
+    const mono = await store.updateProject(slug, (d) => { d.master.stereo = false; delete d.master.outputMode; return d; });
     const monoFile = path.join(dir, `reg0_${store.regionHashes(mono)[0]}.wav`);
     const before = calls;
     assert.equal((await render()).code, 200);

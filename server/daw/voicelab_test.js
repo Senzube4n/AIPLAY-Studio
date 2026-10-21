@@ -206,6 +206,10 @@ if (!havePy) {
 
     const P = await post({ action: "create", name: "voicelab suite", bpm: 128, bars: 8 });
     const slug = P.slug;
+    // This original fixture pins the P0 mono preview and historical tanh
+    // master. New transparent-project behaviour has its own real-audio
+    // null/stem/cache proof below; do not weaken the old branch's checks.
+    await post({ action: "mixer_set", slug, target: "master", output_mode: "legacySoftClip" });
     await post({ action: "add_track", slug, name: "lead", instrument: "bigroom_lead" });
     await post({ action: "add_track", slug, name: "hats", instrument: "tr909" });
     for (let i = 0; i < 4; i++) {
@@ -383,6 +387,56 @@ if (!havePy) {
     const s2 = await act("render_stems", { slug, from_bar: 1, to_bar: 4 });
     ok("a second call renders nothing: the stems are cached by that same hash",
       s2.rendered === 0 && s2.regions[0].cached === true && s2.ms < reg.ms);
+    {
+      console.log("\n  -- transparent: unity imported audio, pre-master stems and mode caches --");
+      const made = await post({ action: "create", name: "transparent transfer", bpm: 120, length_bars: 1 });
+      const cleanSlug = made.slug;
+      await post({ action: "add_track", slug: cleanSlug, name: "source", instrument: "pluck", with_clip: false });
+      const cleanDoc = await store.readProject(cleanSlug);
+      ok("an actual newly created project opts into transparent output with no master processing",
+        cleanDoc.master.outputMode === "transparent" && cleanDoc.master.fader === 0
+        && cleanDoc.master.inserts.length === 0);
+      const samples = Array.from({ length: 4800 }, (_, i) => 0.25 * Math.sin(2 * Math.PI * 997 * i / 48000));
+      const source = path.join(OUT, "transparent-source.wav");
+      writeFileSync(source, wavF32(samples, 48000));
+      await post({ action: "import_audio", slug: cleanSlug, track: "source", path: source });
+      const clean = await act("render_stems", { slug: cleanSlug, from_bar: 1, to_bar: 1 });
+      const row = clean.regions[0];
+      ok("a neutral transparent master has zero internal difference from its pre-master sum",
+        row.sums_to_mix === true && row.residual_db === null && row.master_delta_db === null);
+      ok("the transparent stem reply describes a neutral matching sum without claiming a tanh or limiter",
+        /neutral transparent master matches the sum/i.test(clean.sums_to) && !/tanh|limiter/i.test(clean.sums_to));
+      ok("the written transparent stem reconstructs that sum within float32 export rounding",
+        row.exported_complete === true && row.stems.length === 1
+        && (row.exported_residual_db === null || row.exported_residual_db < -140),
+        JSON.stringify({ complete: row.exported_complete, residual: row.exported_residual_db, stems: row.stems.length }));
+      const cleanRender = await post({ action: "render", slug: cleanSlug, from_bar: 1, to_bar: 1 });
+      const regionFile = cleanRender.regions[0].url.split("/").pop();
+      const regionBytes = await readFile(path.join(store.cacheDir(cleanSlug), regionFile));
+      const stemBytes = await readFile(path.join(store.cacheDir(cleanSlug), row.stems[0].file));
+      ok("the exported neutral track stem and actual transparent region contain identical float32 samples",
+        regionBytes.subarray(44).equals(stemBytes.subarray(44)));
+      let error = 0;
+      for (let i = 0; i < samples.length; i++) {
+        error = Math.max(error, Math.abs(regionBytes.readFloatLE(44 + i * 8) - samples[i]),
+          Math.abs(regionBytes.readFloatLE(48 + i * 8) - samples[i]));
+      }
+      ok("transparent import/render preserves the source at unity within the measured 24-bit import floor",
+        error < 2e-7, `maximum absolute residual ${error}`);
+      const warm = await act("render_stems", { slug: cleanSlug, from_bar: 1, to_bar: 1 });
+      ok("transparent stems reuse their content cache on the next open",
+        warm.rendered === 0 && warm.regions[0].cached === true && warm.regions[0].hash === row.hash);
+      await post({ action: "mixer_set", slug: cleanSlug, target: "master", output_mode: "legacySoftClip" });
+      const old = await act("render_stems", { slug: cleanSlug, from_bar: 1, to_bar: 1 });
+      ok("changing only output mode cannot reuse the transparent master cache and restores the actual legacy curve",
+        old.rendered === 1 && old.regions[0].hash !== row.hash
+        && typeof old.regions[0].master_delta_db === "number" && old.regions[0].master_delta_db > -60);
+      await post({ action: "mixer_set", slug: cleanSlug, target: "master", output_mode: "transparent" });
+      const restored = await act("render_stems", { slug: cleanSlug, from_bar: 1, to_bar: 1 });
+      ok("returning to transparent finds the original uncontaminated stem cache",
+        restored.rendered === 0 && restored.regions[0].hash === row.hash
+        && restored.regions[0].stems[0].file === row.stems[0].file);
+    }
     {
       /* ── THE HIT TEST ASKS FOR WHAT THE ENGINE WRITES ──────────────────
        * The two tracks above both sound in bars 1-4, which is the one shape
@@ -707,9 +761,9 @@ if (!havePy) {
         && /second full graph pass|SECOND full graph pass/.test(d("daw_render_stems")));
       ok("...and that the stems sum to the PRE-MASTER mix, not to what you hear",
         /PRE-MASTER/.test(d("daw_render_stems")));
-      ok("daw_voice_lab's description states that the default path is MONO and a "
-        + "width knob cannot be seen in it",
-        /mono/i.test(d("daw_voice_lab")) && /width/i.test(d("daw_voice_lab"))
+      ok("daw_voice_lab's description distinguishes new transparent stereo from the legacy mono width limitation",
+        /Transparent projects inherit their stereo setting/.test(d("daw_voice_lab"))
+        && /legacy projects default to the P0 mono/.test(d("daw_voice_lab")) && /width/i.test(d("daw_voice_lab"))
         && /stereo: true/.test(d("daw_voice_lab")));
       ok("...and that params_override is not written to the document",
         /NOT\s+written/.test(d("daw_voice_lab")) && /undo/.test(d("daw_voice_lab")));

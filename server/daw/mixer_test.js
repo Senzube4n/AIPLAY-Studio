@@ -50,6 +50,7 @@ function makeDoc() {
    * `stereo` key and renders through the fold. blankProject turns the switch
    * on for NEW projects — the block at the end covers that. */
   delete doc.master.stereo;
+  delete doc.master.outputMode; // This fixture represents a pre-mode document.
   for (const [name, inst] of [["A", "pluck"], ["B", "drums"]]) {
     const t = blankTrack(name, inst, { id: `trk_${name}` });
     t.clips.push(blankClip(1, 16, {}));
@@ -333,7 +334,7 @@ console.log("\n  -- THE STEREO SWITCH and the LOUDNESS TARGET on the master stri
 {
   const fresh = blankProject("new one", { bpm: 128, num: 4, den: 4, lengthBars: 16 });
   ok("a NEW project starts with master.stereo true (the voices' own channels)",
-    fresh.master.stereo === true && fresh.master.target_lufs === undefined);
+    fresh.master.stereo === true && fresh.master.outputMode === "transparent" && fresh.master.target_lufs === undefined);
   const doc = makeDoc();                       // an existing document: no key
   note(doc, "trk_A", 1);
   note(doc, "trk_B", 14);

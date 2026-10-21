@@ -318,14 +318,15 @@ CATALOG = {
                "ceiling argument carries over unchanged. For the honest "
                "gain-reduction readout, daw_analyze with this device as the "
                "`device` probe answers a measured GR series in dB. "
-               "READ THIS BEFORE TRUSTING THE NUMBER ON A MASTER BUS: the "
-               "ceiling is the ceiling at THIS DEVICE's output. rack.py's P0 "
+               "The ceiling is measured at THIS DEVICE's output. Transparent "
+               "output with unity master gain preserves it. In legacySoftClip "
+               "mode, rack.py's P0 "
                "master curve, tanh(0.7*mix), runs after every insert on the "
                "master chain, so a -1 dBTP setting reaches the FILE at about "
                "-5.1 dBFS with ~3.2 dB of curve compression at the peak. The "
                "ceiling is never breached -- the error is entirely in the "
                "safe direction -- but a true-peak-exact delivery cannot be "
-               "made through the master bus as the rack stands. Set the "
+               "made through that legacy output curve. Set the "
                "ceiling for the sound you want and read the FILE's number "
                "from daw_analyze or daw_check_delivery, never from the knob.",
         "stateful": True,

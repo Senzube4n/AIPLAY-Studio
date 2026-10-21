@@ -320,8 +320,8 @@ ok("ceiling_db / max_limit_db ride along per call, range-checked",
   && /const options = bounceOptions\(b,/.test(src));
 ok("the reply carries the stage's report, the bit depth and the stereo switch",
   /\{ loudness: enc\.loudness \}/.test(src) && /stereo: doc\.master\?\.stereo === true/.test(src) && /bit_depth: enc\.bit_depth/.test(src));
-ok("the arranger's reply exposes master.stereo and master.target_lufs",
-  /stereo: doc\.master\?\.stereo === true, target_lufs: doc\.master\?\.target_lufs \?\? null/.test(src));
+ok("the arranger's reply exposes stereo, effective output mode and loudness target",
+  /stereo: doc\.master\?\.stereo === true, output_mode: masterOutputMode\(doc\), target_lufs: doc\.master\?\.target_lufs \?\? null/.test(src));
 
 /* ══════════ §3.4 THE FAST SERVE LANE: two children, one ceiling ═════════
  * The measurement that forced this: one FIFO queue meant a 5 ms knob turn

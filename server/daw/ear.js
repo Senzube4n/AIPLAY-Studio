@@ -63,7 +63,7 @@ import { randomUUID } from "node:crypto";
 import {
   readProject, projectDir, buildTimeline, noteEvents, audioEvents, audioJobClips, PATCHES,
 } from "./store.js";
-import { mixerJobPayload } from "./mixer.js";
+import { mixerJobPayload, masterOutputMode } from "./mixer.js";
 import { rackTools } from "./mcp-rack.js";
 /* The whole daw_* family, read for its SCHEMAS: two of the Ear's routes lead
  * to doors outside the rack (the project's stereo switch, the master stage),
@@ -504,9 +504,9 @@ export function mapFinding(finding, ctx) {
       if (f.direction === "too_compressed") {
         const lim = chainOf(doc, "master").find((i) => i.type === "limiter" || i.type === "compressor");
         const routes = [
-          R("master_down", `Stop driving the master so hard — pull it ${Math.abs(f.target_value - f.observed).toFixed(1)} dB`,
+          ...(masterOutputMode(doc) === "legacySoftClip" ? [R("master_down", `Stop driving the master so hard — pull it ${Math.abs(f.target_value - f.observed).toFixed(1)} dB`,
             faderOp(slug, "master", faderOf(doc, "master") - Math.abs(f.target_value - f.observed)),
-            "the squash is the master curve being fed too much; feed it less"),
+            "the squash is the master curve being fed too much; feed it less")] : []),
           lim
             ? R("relax_device", `Relax the ${lim.type} already on the master`,
               { tool: "daw_insert",
@@ -561,7 +561,7 @@ export function mapFinding(finding, ctx) {
           insertAdd(slug, "master", "maximizer",
             { gain_db: r2(clamp(d, 0, 24)), ceiling_db: -1, release_ms: 120, lookahead_ms: 5 }),
           "loudness by control: the body comes up, the peaks meet the ceiling and stop there — denser, and legal"));
-        routes.push(R("master_fader",
+        if (masterOutputMode(doc) === "legacySoftClip") routes.push(R("master_fader",
           `Raise the master fader ${Math.min(12, d).toFixed(1)} dB and let the tanh curve catch the peaks`,
           faderOp(slug, "master", faderOf(doc, "master") + d),
           "no new device: the whole mix comes up together and the master curve rounds whatever crosses it — blunt, and honest about being blunt"));

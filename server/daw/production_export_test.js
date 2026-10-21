@@ -104,6 +104,7 @@ try {
   const flac = await tool("daw_bounce", { slug, target_lufs: null });
   check(flac.format === "flac" && flac.bit_depth === 24 && flac.channels === 2 && !flac.dithered && flac.tagged.ok,
     "default native FLAC remains tagged 24-bit stereo");
+  check(flac.output_mode === "transparent", "MCP reports the new project's actual clean output mode");
   const wavOut = await tool("daw_bounce", { slug, format: "wav", bit_depth: 16, target_lufs: -17,
     ceiling_db: -1.2, max_limit_db: .98 });
   check(wavOut.format === "wav" && wavOut.bit_depth === 16 && wavOut.dithered && wavOut.tagged.ok,
@@ -365,6 +366,22 @@ try {
     `the export's return tail is the editor's, not a re-render: rms differs by `
     + `${Math.abs(tail24 - tailEditor).toExponential(3)}`);
   const sampleMs = Date.now() - tSamples;
+
+  // The UI/MCP -> encoder boundary must not silently saturate a clean mix.
+  // A new disposable project uses the same synthetic source at +24 dB total.
+  const hot = await post({ action: "create", name: "Clean export headroom", length_bars: 1, bpm: 120 });
+  const hotTrack = await post({ action: "add_track", slug: hot.slug, name: "source", instrument: "pad", with_clip: false });
+  await tool("daw_import_audio", { slug: hot.slug, track: hotTrack.trackId, path: source });
+  await post({ action: "mixer_set", slug: hot.slug, target: hotTrack.trackId, fader: 12 });
+  await post({ action: "mixer_set", slug: hot.slug, target: "master", fader: 12 });
+  await assert.rejects(tool("daw_bounce", { slug: hot.slug, target_lufs: null }), /would clip.*Reduce master gain or add a limiter/s);
+  checks++;
+  check((await readdir(path.join(store.projectDir(hot.slug), "bounces"))).length === 0,
+    "a refused clean export creates no clipped or partial delivery file");
+  await post({ action: "mixer_set", slug: hot.slug, target: "master", fader: -12 });
+  const recovered = await tool("daw_bounce", { slug: hot.slug, target_lufs: null });
+  check(recovered.output_mode === "transparent" && recovered.tagged.ok,
+    "reducing master gain recovers clean export through the real MCP/HTTP/encoder path");
 
   console.log(JSON.stringify({ ok: true, checks, fixture, sampleMs,
     samples: { frames, seam, d24, d16, dRef, dSeam, tailEditor, tail24,

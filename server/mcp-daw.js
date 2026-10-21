@@ -1042,7 +1042,7 @@ export function dawTools(api, safeName) {
         const r = await daw({ action: "bounce", slug: slugOf(a.slug), format: a.format, bit_depth: a.bit_depth,
                               target_lufs: a.target_lufs, ceiling_db: a.ceiling_db, max_limit_db: a.max_limit_db });
         return { file: r.file, name: r.name, url: r.url, format: r.format, seconds: r.seconds,
-                 sr: r.sr, channels: r.channels, bit_depth: r.bit_depth, dithered: r.dithered, stereo: r.stereo,
+                 sr: r.sr, channels: r.channels, bit_depth: r.bit_depth, dithered: r.dithered, stereo: r.stereo, output_mode: r.output_mode,
                  target_lufs: r.target_lufs, loudness: r.loudness ?? null, credits: r.credits,
                  ceiling_db: r.ceiling_db, max_limit_db: r.max_limit_db,
                  attribution: r.attribution, tagged: r.tagged, origin: r.origin, ms: r.ms };
@@ -1145,7 +1145,7 @@ export function dawTools(api, safeName) {
             clips: t.clips.length, notes: t.notes, inserts: t.inserts.map((i) => i.type),
           })),
           master_inserts: r.master.inserts.map((i) => i.type),
-          master: { stereo: r.master.stereo, target_lufs: r.master.target_lufs, ceiling_db: r.master.ceiling_db },
+          master: { stereo: r.master.stereo, output_mode: r.master.output_mode, target_lufs: r.master.target_lufs, ceiling_db: r.master.ceiling_db },
           roles: r.roles, notes: r.notes, steps: r.steps, ms: r.ms, note: r.note,
         };
       },

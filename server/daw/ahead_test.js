@@ -317,7 +317,7 @@ if (!store.DAW_DIR().startsWith(OUT)) {
      * what a project gets by turning that switch off. Both are planned. */
     ok("a brand-new project is already on the chained path (the master ships stereo on)",
       (await post({ action: "render_plan", slug, by: "user" })).chained === true);
-    await post({ action: "mixer_set", slug, target: "master", stereo: false, by: "user" });
+    await post({ action: "mixer_set", slug, target: "master", stereo: false, output_mode: "legacySoftClip", by: "user" });
     const planMono = await post({ action: "render_plan", slug, by: "user" });
     ok("with the master's stereo off it is the default mixer: four regions, every one ready",
       planMono.regions.length === 4 && planMono.counts.ready === 4

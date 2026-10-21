@@ -728,6 +728,14 @@ console.log("\n  -- loudness target: the shortfall to the project's / genre's nu
   ok("an under-target master offers the maximizer (gain INTO a ceiling), the fader, and the loudest part",
      ids.includes("maximize") && ids.includes("master_fader") && ids.includes("loudest_part"), ids.join(","));
   const mx = m.routes.find((r) => r.id === "maximize");
+  const cleanCtx = { ...CTX(), doc: mkDoc({ master: { inserts: [], fader: 0, outputMode: "transparent" } }) };
+  const cleanAdvice = mapFinding(f, cleanCtx);
+  ok("clean output never recommends relying on a nonexistent soft clipper",
+     cleanAdvice.routes.some(r => r.id === "maximize")
+     && !cleanAdvice.routes.some(r => r.id === "master_fader"));
+  const compressed = FINDINGS.find(x => x.metric === "dynamics" && x.direction === "too_compressed");
+  ok("post-master attenuation is not proposed as a clean-output compression repair",
+     !mapFinding(compressed, cleanCtx).routes.some(r => r.id === "master_down"));
   ok("the maximizer route drives the SHORTFALL in (13.3 dB) at a -1 dBTP ceiling",
      mx.op.args.type === "maximizer" && Math.abs(mx.op.args.params.gain_db - 13.3) < 0.01
      && mx.op.args.params.ceiling_db === -1, JSON.stringify(mx.op.args));

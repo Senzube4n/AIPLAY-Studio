@@ -23,7 +23,7 @@ const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
 const documentReply=(name)=>({project:{name,tracks:[],lengthBars:8,updatedAt:name},timeline:[],totalSeconds:8});
 const regionReply=()=>({regions:[],totalSeconds:8,credits:[],rendered:1,cachedHits:0,ms:5});
 function make(names,overrides={}){
-  const calls={status:[],get:[],api:[],decode:[],undo:[],storage:[],draw:0};
+  const calls={status:[],get:[],api:[],decode:[],undo:[],storage:[],draw:0,auditionStops:0};
   const S={slug:'A',projectEpoch:1,docRead:0,renderRequest:0,proj:{tracks:[],lengthBars:8},timeline:[],
     totalSeconds:8,trackId:'t',devTarget:null,lanes:[],loopB:null,rollFit:false,grid:480,sel:new Set(),
     buffers:new Map(),regions:[],sw:[],pending:[],rendering:false,playing:false,peaks:new Map(),
@@ -35,6 +35,7 @@ function make(names,overrides={}){
     WAVE_BUCKETS:200,WAVE_REGION_CAP:16,AHEAD_REGIONS:4,DEFER_OK:new Set(),$,
     localStorage:{setItem:(key,value)=>calls.storage.push([key,value])},canvas:{},releasePointer(){},
     status:m=>calls.status.push(m),pushUndo:e=>calls.undo.push(e),
+    stopHeldAuditions:()=>{calls.auditionStops++;},
     api:async body=>{calls.api.push(body);throw new Error('Unexpected API '+body.action);},
     get:async url=>{calls.get.push(url);return documentReply(url);},
     fetch:async()=>{throw new Error('Unexpected fetch');},
@@ -62,12 +63,21 @@ function make(names,overrides={}){
     'applyViewFromDoc','cancelNoteGesture'])if(!ctx[name])ctx[name]=()=>name==='automatables'?[]:undefined;
   const context=vm.createContext(ctx);
   vm.runInContext('var renderChain=Promise.resolve();var liveChain=Promise.resolve();var peakJobs=new Set();\n'
-    +['captureSession','sessionCurrent','noteEditBusy','beginEdit','finishEdit','replayHistory',...names].map(extract).join('\n'),context);
+    +['captureSession','sessionCurrent','noteEditBusy','beginEdit','finishEdit','replayHistory','heldAuditionScope',...names].map(extract).join('\n'),context);
   const jump=(slug='B')=>{S.projectEpoch++;S.slug=slug;};
   return {ctx:context,S,calls,jump};
 }
 let count=0;
 async function test(name,run){await run();count++;console.log('ok '+name);}
+
+await test('refreshing a changed output mode stops the old audition scope',async()=>{
+  const h=make(['refreshDoc'],{get:async()=>({project:{tracks:[],lengthBars:8,master:{outputMode:'transparent'}} ,timeline:[],totalSeconds:8})});
+  h.S.trackId=null;
+  assert.equal(await h.ctx.refreshDoc(),true);
+  assert.equal(h.calls.auditionStops,1);
+  await h.ctx.refreshDoc();
+  assert.equal(h.calls.auditionStops,1,'unchanged scope preserves current voices');
+});
 
 await test('old document cannot replace another project',async()=>{
   const d=deferred(),h=make(['refreshDoc'],{get:()=>d.promise});const p=h.ctx.refreshDoc();h.jump();d.resolve(documentReply('old'));assert.equal(await p,false);assert.equal(h.S.proj.name,undefined);

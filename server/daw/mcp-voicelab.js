@@ -45,8 +45,8 @@ const STEM_TRUTH =
   + "within float32 rounding. Each region includes `returns`, `exported_complete` and "
   + "`exported_residual_db` when freshly rendered; residual_db describes exact internal buses. "
   + "Shared returns include the whole mix's sends even for a track subset. master_delta_db says how far "
-  + "the mastered output sits above it — so the lanes do NOT add up to what "
-  + "you hear at the limiter.";
+    + "the mastered output differs from it. A neutral transparent master can match; "
+    + "master inserts, gain or legacy soft clipping can change that sum.";
 
 export function voicelabTools({ daw, api, slugOf }) {
   /* THE RENDER LANE'S TIMEOUT for the one tool that renders a window rather
@@ -81,11 +81,11 @@ export function voicelabTools({ daw, api, slugOf }) {
         + "unmoved. They ride the cache key, so a knob you come back to answers "
         + "from disk. Sweep a filter across ten values and the document has not "
         + "changed once; when one of them is right, daw_set_track writes it.\n"
-        + "THE PATH MATTERS, and the default is mono. With neither flag this is "
-        + "byte-for-byte the same file daw_preview_note renders (the P0 mono job), "
-        + "so a WIDTH knob — bigroom_lead.spread, tr808.spread, tr909.spread, "
-        + "tr909.hat_width — cannot be seen in it at all: L, R and mid are one "
-        + "signal. Pass stereo: true for those. `through_chain: true` adds the "
+        + "THE PATH MATTERS. With neither flag this is byte-for-byte the same "
+        + "file daw_preview_note renders. Transparent projects inherit their "
+        + "stereo setting and unity output; legacy projects default to the P0 "
+        + "mono audition, where width cannot be heard. Pass stereo: true for "
+        + "stereo width. `through_chain: true` adds the "
         + "track's own inserts, fader and pan, but never the master chain or the "
         + "sends — a limiter set for the mix would show you the limiter instead of "
         + "the instrument.\n"
@@ -150,7 +150,7 @@ export function voicelabTools({ daw, api, slugOf }) {
           params_overridden: r.params_overridden,
           document_untouched: r.document_untouched,
           param_schema: r.param_schema,
-          path: r.path, stereo: r.stereo, through_chain: r.through_chain,
+          path: r.path, stereo: r.stereo, through_chain: r.through_chain, output_mode: r.output_mode,
           path_note: r.path_note,
           cached: r.cached, render_ms: r.render_ms, ms: r.ms,
           lane: r.lane, lane_note: r.lane_note,

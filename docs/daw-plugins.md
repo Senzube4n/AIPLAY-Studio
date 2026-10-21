@@ -48,3 +48,25 @@ The host uses the optional processing environment or `AIPLAY_VST_PYTHON`; it
 does not replace the DAW's NumPy/SciPy environment. No GPU is required.
 [Pedalboard documentation](https://spotify.github.io/pedalboard/reference/pedalboard.html)
 describes format support and plugin parameter access.
+
+## Master output and audition
+
+The master strip's **Clean / Soft clip** selector controls the final output
+stage. New projects use Clean (unity after the master effects and fader).
+Saved projects with no output-mode field keep the historical soft clip.
+Changing it invalidates the sounding regions and supports Undo. Agents use
+`daw_mixer {op:"set", target:"master", output_mode:"transparent"}` or
+`output_mode:"legacySoftClip"`. The document stores `master.outputMode`.
+Older Studio builds do not understand this field; use an updated build when
+sharing a project that depends on Clean output.
+
+Clean retains floating-point headroom, so a master can exceed 0 dBFS.
+Reduce its gain or add a limiter before listening or exporting. A Clean
+16/24-bit WAV or FLAC export refuses sample overload instead of silently
+clipping it. An explicitly requested LUFS pass still runs before that check.
+Soft clip retains its earlier export behavior. Bounces report `output_mode`.
+
+Held MIDI keyboard notes now audition concurrently with their performed
+velocities and individual note-off releases. This remains a bounded,
+server-rendered preview, not low-latency monitoring: a held note can end after
+its finite preview window. Pedal, pitch bend and aftertouch are not captured.
