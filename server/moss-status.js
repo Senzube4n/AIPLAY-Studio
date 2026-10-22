@@ -5,16 +5,39 @@ import { modelBases } from "./modelpick.js";
 import { scanBases, modelLeaf, findShelfModel, modelName } from "./localmodels.js";
 import { engine as defaultEngine } from "./engine/client.js";
 import { MOSS_IMAGE_ENGINE, MOSS_IMAGE_FILES, mossImageGraph } from "./moss-image.js";
+import { mossPreset, mossRecipeIdentity } from "./moss-presets.js";
+import { mossSpectrumPin } from "./moss-spectrum.js";
+import { mossAdapterPin } from "./moss-adapter.js";
+
+function recipeNodeProblem(node, info) {
+  const schema = info?.[node.class_type]?.input?.required;
+  if (!schema) return "Missing native input schema for " + node.class_type;
+  for (const [key, value] of Object.entries(node.inputs)) {
+    const spec = schema[key], type = spec?.[0], limits = spec?.[1];
+    if (!spec) return "Missing " + node.class_type + "." + key;
+    if (key === "model") { if (type !== "MODEL") return "Invalid MODEL input on " + node.class_type; continue; }
+    if (Array.isArray(type) ? !type.includes(value)
+      : type === "INT" ? !Number.isSafeInteger(value) : type === "FLOAT" ? typeof value !== "number"
+      : type === "BOOLEAN" ? typeof value !== "boolean" : type === "STRING" ? typeof value !== "string" : true) return "Incompatible " + node.class_type + "." + key;
+    if (typeof value === "number" && (value < (limits?.min ?? -Infinity) || value > (limits?.max ?? Infinity))) return "Unsupported range for " + node.class_type + "." + key;
+  }
+  return null;
+}
 
 export async function mossImageStatus({ options = {}, config = defaultConfig,
-  engine = defaultEngine, scan = scanBases, bases = modelBases, catalog = CATALOG } = {}) {
+  engine = defaultEngine, scan = scanBases, bases = modelBases, catalog = CATALOG, spectrumPin = mossSpectrumPin, adapterPin = mossAdapterPin } = {}) {
   const out = { ready: false, filesReady: false, runtimeReady: false, missingFiles: [], missingNodes: [], error: null };
   const cap = catalog.find(row => row.id === MOSS_IMAGE_ENGINE);
   out.totalBytes = (cap?.files || []).reduce((n, f) => n + f.bytes, 0);
-  let graph;
+  let graph, recipe;
   try {
     const selected = Object.fromEntries(Object.entries(MOSS_IMAGE_FILES).map(([key, file]) => [key, options[key] || config.modelOverrides?.[file] || file]));
     graph = mossImageGraph({ prompt: "readiness check", ...options, ...selected });
+    out.mossPreset = options.mossPreset ?? "standard";
+    recipe = mossPreset(out.mossPreset);
+    out.mossRecipe = mossRecipeIdentity(out.mossPreset);
+    if (recipe.adapter && config.modelOverrides?.[recipe.adapter.filename] && config.modelOverrides[recipe.adapter.filename] !== recipe.adapter.filename) throw new Error("The pinned MOSS adapter cannot be replaced through model overrides.");
+    if (recipe.adapter) out.totalBytes += recipe.adapter.bytes;
   } catch (err) { out.error = err.message; return out; }
   const results = await Promise.allSettled([bases(config).then(dirs => scan(dirs)), engine.objectInfo()]);
   const shelf = results[0].status === "fulfilled" ? results[0].value : [];
@@ -25,23 +48,45 @@ export async function mossImageStatus({ options = {}, config = defaultConfig,
   const clipTypes = info?.CLIPLoader?.input?.required?.type?.[0];
   out.mossClipType = Array.isArray(clipTypes) && clipTypes.includes("moss_image");
   out.runtimeReady = !!info && !out.missingNodes.length && out.mossClipType;
+  const errors = [];
+  if (graph[6] && info && !out.missingNodes.length) {
+    const problem = recipeNodeProblem(graph[6], info);
+    const samplers = info.KSampler?.input?.required?.sampler_name?.[0];
+    const schedulers = info.KSampler?.input?.required?.scheduler?.[0];
+    if (problem || !Array.isArray(samplers) || !samplers.includes(recipe.sampler) || !Array.isArray(schedulers) || !schedulers.includes(recipe.scheduler)) {
+      out.runtimeReady = false; errors.push(problem || "The runtime does not expose this MOSS sampler and schedule.");
+    }
+  }
+  if (recipe.policy) {
+    out.spectrum = await spectrumPin(config);
+    if (!out.spectrum.ready) { out.runtimeReady = false; errors.push(out.spectrum.error); }
+  }
   const files = [
     { name: graph[1].inputs.unet_name, folder: "diffusion_models", node: "UNETLoader", input: "unet_name" },
     { name: graph[2].inputs.clip_name, folder: "text_encoders", node: "CLIPLoader", input: "clip_name" },
     { name: graph[3].inputs.vae_name, folder: "vae", node: "VAELoader", input: "vae_name" },
+    ...(recipe.adapter ? [{ name: recipe.adapter.filename, folder: "loras", node: "LoraLoaderModelOnly", input: "lora_name", bytes: recipe.adapter.bytes }] : []),
   ];
-  const errors = [];
   for (const file of files) {
-    const expected = cap?.files.find(f => modelLeaf(f.dest) === modelLeaf(file.name))?.bytes;
+    const expected = file.bytes || cap?.files.find(f => modelLeaf(f.dest) === modelLeaf(file.name))?.bytes;
     let found;
     try { found = findShelfModel(shelf, file.folder, file.name); } catch (err) { errors.push(err.message); }
     const available = info?.[file.node]?.input?.required?.[file.input]?.[0];
     if (!expected || !found || found.bytes !== expected
       || (Array.isArray(available) && !available.some(n => typeof n === "string" && modelName(n) === modelName(found.name)))) out.missingFiles.push(file.name);
+    else if (file.folder === "loras") {
+      out.adapter = await adapterPin(found, recipe.adapter);
+      if (!out.adapter.ready) { out.missingFiles.push(file.name); errors.push(out.adapter.error); }
+    }
   }
-  out.filesReady = !out.missingFiles.length && !errors.length;
+  out.filesReady = !out.missingFiles.length && results[0].status === "fulfilled";
   out.ready = out.filesReady && out.runtimeReady;
-  if (out.missingFiles.length) errors.push("Missing or incomplete MOSS-Image files: " + out.missingFiles.join(", ") + ". Open Models.");
+  const missingBase = out.missingFiles.filter(name => name !== recipe.adapter?.filename);
+  if (missingBase.length) { out.needsModel = MOSS_IMAGE_ENGINE; errors.push("Missing or incomplete MOSS-Image files: " + missingBase.join(", ") + ". Open Models."); }
+  if (recipe.adapter && out.missingFiles.includes(recipe.adapter.filename)) {
+    if (!out.needsModel) out.needsModel = MOSS_IMAGE_ENGINE + "-" + out.mossPreset;
+    errors.push("Missing or incomplete pinned experimental MOSS adapter: " + recipe.adapter.filename + ". Download its addon in Models.");
+  }
   if (results[0].status === "rejected") errors.push("Cannot inspect the model shelf: " + results[0].reason.message + ".");
   if (results[1].status === "rejected") errors.push("Cannot verify the ComfyUI runtime: " + results[1].reason.message + ".");
   else if (!out.runtimeReady) errors.push("This engine needs native MOSS-Image support (including CLIPLoader moss_image). Use a compatible separate engine; the current engine was not changed.");

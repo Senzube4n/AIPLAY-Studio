@@ -18039,14 +18039,73 @@ function imgEffectiveEngine() {
   return ck?.engine || "checkpoint";
 }
 
+const IMG_MOSS_PRESETS = {
+  standard: { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
+  "spectrum-manual-h1": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
+  "spectrum-adaptive-h2": { steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple" },
+  "turbo-4": { steps: 4, cfg: 1, sampler: "euler", scheduler: "simple" },
+  "dmd-8": { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple" },
+};
+let imgMossKey = "", imgMossRequest = 0, imgMossReady = false;
+function imgMossRecipe() {
+  return IMG_MOSS_PRESETS[$("imgMossPreset")?.value || "standard"] || IMG_MOSS_PRESETS.standard;
+}
+function imgMossQuery() {
+  const q = new URLSearchParams({ mossPreset: $("imgMossPreset")?.value || "standard" });
+  if ($("imgEngine").value === "checkpoint") {
+    if ($("imgCkpt").value) q.set("dit", $("imgCkpt").value);
+    for (const key of ["encoder", "vae"]) { const v = $(key === "encoder" ? "imgEncoder" : "imgVae").value; if (v && v !== "auto") q.set(key, v); }
+  }
+  return q;
+}
+async function imgMossCheck(force = false) {
+  if (imgEffectiveEngine() !== "moss-image") return;
+  const key = imgMossQuery().toString();
+  if (!force && key === imgMossKey) return;
+  imgMossKey = key; const request = ++imgMossRequest; imgMossReady = false;
+  $("imgMossState").textContent = "checking"; $("imgMossGet").hidden = $("imgMossSetup").hidden = true; imgQueueGate();
+  try {
+    const result = await (await fetch("/api/images/moss-status?" + key)).json();
+    if (request !== imgMossRequest || imgEffectiveEngine() !== "moss-image") return;
+    imgMossReady = result.ready === true;
+    $("imgMossState").textContent = imgMossReady ? "ready" : "unavailable";
+    $("imgMossState").title = result.error || "Native recipe ready";
+    $("imgMossGet").hidden = !result.needsModel;
+    $("imgMossGet").onclick = () => offerModel({ needsModel: result.needsModel, error: result.error });
+    $("imgMossSetup").hidden = !result.spectrum || result.spectrum.ready === true;
+  } catch (err) {
+    if (request !== imgMossRequest) return;
+    $("imgMossState").textContent = "unavailable"; $("imgMossState").title = err.message;
+  }
+  imgQueueGate();
+}
+function imgMossShape(reset = false) {
+  const moss = imgEffectiveEngine() === "moss-image", recipe = imgMossRecipe();
+  $("imgMossLabel").hidden = $("imgMossRow").hidden = !moss;
+  const fixed = moss && ($("imgMossPreset").value || "standard") !== "standard";
+  $("imgSteps").disabled = $("imgCfg").disabled = fixed;
+  if (moss) {
+    $("imgSteps").max = fixed ? recipe.steps : 50;
+    if (fixed || reset) {
+      $("imgSteps").value = recipe.steps; $("imgStepsV").textContent = recipe.steps;
+      $("imgCfg").value = recipe.cfg; $("imgCfgV").textContent = recipe.cfg;
+    }
+    imgMossCheck();
+  } else if (imgMossKey) { imgMossKey = ""; imgMossRequest++; imgMossReady = false; }
+}
+$("imgMossPreset").onchange = () => { imgMossShape(true); imgSampling(); imgQwenShape(); };
+$("imgMossCheck").onclick = () => imgMossCheck(true);
+
 let imgQwenStatus = null, imgQwenChecking = false, imgQwenRequest = 0, imgMakePending = false;
 let imgQwenRequestedKey = "", imgQwenStatusKey = "";
 function imgQueueGate() {
   const remote = $("imgRenderWhere")?.value === "runpod";
   $("imgGo").disabled = $("imgGo").dataset.runpodBusy === "1" || imgMakePending || (!remote && imgEffectiveEngine() === "qwen-image-2.1"
-    && (imgQwenChecking || imgQwenStatus?.ready !== true || imgQwenStatusKey !== imgQwenQuery().toString()));
+    && (imgQwenChecking || imgQwenStatus?.ready !== true || imgQwenStatusKey !== imgQwenQuery().toString()))
+    || (!remote && imgEffectiveEngine() === "moss-image" && (!imgMossReady || imgMossKey !== imgMossQuery().toString()));
 }
 function imgQwenShape() {
+  imgMossShape();
   const effective = imgEffectiveEngine();
   const qwen = effective === "qwen-image-2.1";
   const moss = effective === "moss-image";
@@ -18075,6 +18134,7 @@ function imgQwenShape() {
   $("imgAdvToggle").parentElement.previousElementSibling.hidden = !advanced;
   if (!advanced) $("imgAdv").hidden = true;
   imgDraftPaint();                               // Fast draft follows the same choices
+  if (moss) imgMossShape();                       // A leaving draft must not unlock a fixed MOSS recipe.
   imgQueueGate();
 }
 /* ⚠ `refs` IS A BUCKET, NOT A COUNT, and that is what stops this screen from
@@ -18882,8 +18942,8 @@ export function ckptSampling(ck, fallbackName = "") {
 async function imgSampling() {
   const eng = $("imgEngine").value;
   const effective = imgEffectiveEngine();
-  const spec = IMG_ENGINES[effective]?.sampling;
-  const want = effective === "qwen-image-2.1" ? spec : eng === "checkpoint" ? ckptSampling(imgCkptShelf.find((c) => c.name === $("imgCkpt").value), $("imgCkpt").value) : spec;
+  const spec = effective === "moss-image" ? { ...imgMossRecipe(), fixed: true } : IMG_ENGINES[effective]?.sampling;
+  const want = ["qwen-image-2.1", "moss-image"].includes(effective) ? spec : eng === "checkpoint" ? ckptSampling(imgCkptShelf.find((c) => c.name === $("imgCkpt").value), $("imgCkpt").value) : spec;
   if (!want) return;
   await imgLoadSampling();
   /* The engine may be down (no list yet): show the pair anyway. */
@@ -19153,6 +19213,7 @@ $("imgEngine").onchange = async () => {
    * showing. */
   if (spec && !spec.negative) $("imgNeg").value = "";
   $("imgModelNote").textContent = spec?.note || "";
+  imgMossShape(true);
   imgSampling();                                 // this engine's sampler and schedule
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
@@ -19329,7 +19390,7 @@ $("imgGo").onclick = async () => {
           ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
           ...(!["qwen-image-2.1", "moss-image"].includes(effective) && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
         } : {}),
-        ...(effective === "moss-image" ? { cfg: Number($("imgCfg").value) || 2.5, negative: $("imgNeg").value.trim(), sampler: "er_sde", scheduler: "simple" } : {}),
+        ...(effective === "moss-image" ? { mossPreset: $("imgMossPreset").value || "standard", cfg: Number($("imgCfg").value) || 2.5, negative: $("imgNeg").value.trim(), sampler: imgMossRecipe().sampler, scheduler: imgMossRecipe().scheduler } : {}),
         ...(effective === "qwen-image-2.1" ? {
           refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
           cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",
@@ -21241,7 +21302,7 @@ function ovImageIdea(prompt) {
       ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
       ...(!["qwen-image-2.1", "moss-image"].includes(effective) && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
     } : {}),
-    ...(effective === "moss-image" ? { cfg: Number($("imgCfg").value) || 2.5, negative: $("imgNeg").value.trim(), sampler: "er_sde", scheduler: "simple" } : {}),
+    ...(effective === "moss-image" ? { mossPreset: $("imgMossPreset").value || "standard", cfg: Number($("imgCfg").value) || 2.5, negative: $("imgNeg").value.trim(), sampler: imgMossRecipe().sampler, scheduler: imgMossRecipe().scheduler } : {}),
     ...(effective === "qwen-image-2.1" ? {
       refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
       cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",

@@ -1576,4 +1576,12 @@ node --test server/collab/reference-packs_test.js || exit 1
 node --check server/moss-image.js || exit 1
 node --check server/moss-status.js || exit 1
 node --test server/moss-image_test.js server/moss-status_test.js server/moss-api_test.js || exit 1
+# Explicit MOSS accelerator policies, source pins and cache identity.
+node --check server/moss-presets.js || exit 1
+node --check server/moss-spectrum.js || exit 1
+node --check server/moss-adapter.js || exit 1
+node --test server/moss-presets_test.js || exit 1
+# Reproducible optional Spectrum source setup, including exclusive-write and pin fixtures.
+node --check scripts/setup-moss-spectrum.mjs || exit 1
+node --test scripts/setup-moss-spectrum_test.mjs || exit 1
 exit 0

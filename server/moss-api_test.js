@@ -23,7 +23,7 @@ async function request(body, ready = true, custom = false) {
     json: (_, status, result) => ({ status, body: result }), path,
     config: { image: { engine: QWEN_IMAGE_ENGINE }, art: { size: 1024, steps: 4 }, inputDir: "input" },
     mossImageOptions, MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, QWEN_IMAGE_ENGINE, QWEN_DRAFT, assignedTo: () => custom ? "custom-cover" : null,
-    mossImageStatus: async ({ options } = {}) => { checked.push(options); return { ready, missingFiles: [], missingNodes: [], runtimeReady: ready, filesReady: true, error: ready ? null : "Native MOSS runtime unavailable" }; },
+    mossImageStatus: async ({ options } = {}) => { checked.push(options); return { mossRecipe: "fixture-recipe", ready, missingFiles: [], missingNodes: [], runtimeReady: ready, filesReady: true, error: ready ? null : "Native MOSS runtime unavailable" }; },
     hasWildcards: () => false, expand: prompt => ({ prompt, choices: [] }), personas: { get: async () => null }, personaFits, applyPersona,
     pendingImagePrompt: new Map(), pendingImagePrivate: new Map(), pendingImageActor: new Map(), pendingImageWild: new Map(), randomUUID,
     prov: { actorFrom: () => "agent:test" }, resolveRepeat: () => ({}), imageDupGuard: { remember() {} },
@@ -57,4 +57,19 @@ test("old runtime and unsupported MOSS requests never enqueue anything", async (
     const r = await request({ prompt: "A lighthouse", ...extra });
     assert.equal(r.status, 400, JSON.stringify(extra)); assert.equal(r.queued.length, 0);
   }
+});
+
+test("all explicit acceleration recipes survive validation, queueing and the API receipt", async () => {
+  for (const [mossPreset, steps, cfg, sampler] of [["standard",25,2.5,"er_sde"],["spectrum-manual-h1",25,2.5,"er_sde"],["spectrum-adaptive-h2",25,2.5,"er_sde"],["turbo-4",4,1,"euler"],["dmd-8",8,1,"euler"]]) {
+    const r = await request({ prompt: "A lighthouse", mossPreset });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.queued[0].video.mossPreset, mossPreset); assert.equal(r.checked[0].mossPreset, mossPreset);
+    assert.equal(r.queued[0].video.steps, steps); assert.equal(r.queued[0].video.cfg, cfg); assert.equal(r.queued[0].video.sampler, sampler);
+    assert.equal(r.body.mossPreset, mossPreset); assert.equal(r.body.mossRecipe, "fixture-recipe");
+  }
+  for (const extra of [{mossPreset:"unknown"},{mossPreset:"turbo-4",steps:25},{mossPreset:"dmd-8",cfg:2.5},{mossPreset:"turbo-4",width:1536,height:1024},{mossPreset:"turbo-4",negative:"blur"},{engine:"flux2",mossPreset:"standard"}]) {
+    const r = await request({prompt:"A lighthouse",...extra}); assert.equal(r.status,400); assert.equal(r.queued.length,0);
+  }
+  const notReady = await request({prompt:"A lighthouse",mossPreset:"spectrum-manual-h1"},false);
+  assert.equal(notReady.queued.length,0);
 });

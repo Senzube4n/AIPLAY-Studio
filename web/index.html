@@ -1593,6 +1593,15 @@
         <label for="imgSteps">steps</label>
         <span class="pv"><input id="imgSteps" type="range" min="1" max="50" value="25"><b id="imgStepsV">25</b></span>
 
+        <label id="imgMossLabel" for="imgMossPreset" hidden>preset</label>
+        <span id="imgMossRow" class="pv" hidden><select id="imgMossPreset" class="sel2 sm" title="Experimental recipes. Standard remains the default.">
+          <option value="standard" selected>Standard</option>
+          <option value="spectrum-manual-h1">Spectrum H1</option>
+          <option value="spectrum-adaptive-h2">Spectrum H2</option>
+          <option value="turbo-4">Turbo 4</option>
+          <option value="dmd-8">DMD 8</option>
+        </select><span id="imgMossState" class="chip" role="status">unchecked</span><button id="imgMossCheck" type="button" class="btn sm">check</button><button id="imgMossGet" type="button" class="btn sm" hidden>get files</button><a id="imgMossSetup" class="btn sm" href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/MOSS_SPECTRUM_SETUP.md" target="_blank" rel="noopener" hidden>setup</a></span>
+
         <label for="imgSeed">seed</label>
         <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
 

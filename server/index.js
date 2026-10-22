@@ -552,7 +552,7 @@ async function renderMediaForBatch(kind, item, take, actor) {
         engine: item.engine, checkpoint: item.checkpoint, negative: item.negative,
         width: item.width, height: item.height, steps: item.steps,
         cfg: item.cfg, count: item.count,
-        dit: item.dit, ditEngine: item.ditEngine, encoder: item.encoder, vae: item.vae,
+        dit: item.dit, ditEngine: item.ditEngine, encoder: item.encoder, vae: item.vae, mossPreset: item.mossPreset,
         quality: item.quality, persona: item.persona, refImages: item.refImages,
         refSizing: item.refSizing, refResolution: item.refResolution, transparent: item.transparent,
         draft: item.draft,
@@ -9896,6 +9896,7 @@ const server = http.createServer(async (req, res) => {
         const value = url.searchParams.get(key);
         if (value && value !== "auto") options[key] = value;
       }
+      if (url.searchParams.has("mossPreset")) options.mossPreset = url.searchParams.get("mossPreset");
       return json(res, 200, await mossImageStatus({ options }));
     }
     if (p === "/api/images/qwen-status" && req.method === "GET") {
@@ -10007,6 +10008,8 @@ const server = http.createServer(async (req, res) => {
        * refused by the graph builder below with its own sentences. */
       if (b.draft !== undefined && typeof b.draft !== "boolean") return json(res, 400, { error: QWEN_DRAFT.refusals.type });
       if (b.draft === true && engine !== QWEN_IMAGE_ENGINE) return json(res, 400, { error: QWEN_DRAFT.refusals.engine, draftRefused: "engine" });
+      if (b.mossPreset !== undefined && engine !== MOSS_IMAGE_ENGINE) return json(res, 400, { error: "mossPreset is only supported by the MOSS-Image engine." });
+      let mossRecipe;
       if (engine === MOSS_IMAGE_ENGINE) {
         if (assignedTo("cover")) return json(res, 400, { error: "MOSS-Image needs its native workflow. Unassign the custom Cover workflow in Settings first." });
         try {
@@ -10014,7 +10017,8 @@ const server = http.createServer(async (req, res) => {
           const { seed: ignoredSeed, prompt: ignoredPrompt, prefix: ignoredPrefix, thumbSize: ignoredThumbSize, ...normalized } = selected;
           Object.assign(b, normalized);
           const readiness = await mossImageStatus({ options: selected });
-          if (!readiness.ready) return json(res, 400, { ...readiness, ...(readiness.missingFiles.length ? { needsModel: MOSS_IMAGE_ENGINE } : {}) });
+          if (!readiness.ready) return json(res, 400, readiness);
+          mossRecipe = readiness.mossRecipe;
         } catch (err) { return json(res, 400, { error: err.message }); }
       }
       if (engine === QWEN_IMAGE_ENGINE) {
@@ -10307,6 +10311,7 @@ const server = http.createServer(async (req, res) => {
            * provenance (draft: true and the LoRA). Absent unless asked for, so
            * every other render's job is unchanged. */
           ...(engine === QWEN_IMAGE_ENGINE && b.draft === true ? { draft: true } : {}),
+          ...(engine === MOSS_IMAGE_ENGINE ? { mossPreset: b.mossPreset } : {}),
           /* An explicitly accepted peer job is pinned to the built-in Qwen base
            * graph. A custom cover assignment must not silently replace it. */
           ...(collabImageBase ? { collabImageBase: true, collabRefHashes } : {}),
@@ -10374,6 +10379,7 @@ const server = http.createServer(async (req, res) => {
         negative: shot.video.negative || "", seed: shot.seed,
         width: shot.video.width, height: shot.video.height,
         steps: shot.video.steps, cfg: shot.video.cfg, refImages,
+        ...(engine === MOSS_IMAGE_ENGINE ? { mossPreset: b.mossPreset } : {}),
         ...(engine === QWEN_IMAGE_ENGINE ? { refSizing: b.refSizing, refResolution: b.refResolution, transparent: b.transparent, dit: b.dit, encoder: b.encoder, vae: b.vae, draft: b.draft === true } : {}),
       };
       let dupNote = null;
@@ -10406,6 +10412,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         ok: true, id, job: job && { id: job.id }, seed: shot.seed,
         ...(shot.video.draft ? { draft: true } : {}),
+        ...(engine === MOSS_IMAGE_ENGINE ? { mossPreset: b.mossPreset, mossRecipe } : {}),
         /* The expansion travels back so the screen and an MCP caller both see
          * WHAT WAS ACTUALLY ASKED, not the template. `promptChoices` fed back
          * into a later call reproduces this exact prompt. */

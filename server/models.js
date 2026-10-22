@@ -65,6 +65,7 @@ import { config, isLightH3, offNvidia } from "./config.js";
 import { MODEL_FOLDERS, scanBases, findShelfModel, engineBases } from "./localmodels.js";
 import { H3_W6A8_FILES, H3_W6A8_CAVEAT, probeH3W6a8 } from "./h3-w6a8.js";
 import { YUE2_STYLE_ADAPTERS } from "./music/yue2-style-adapters.js";
+import { MOSS_PRESETS } from "./moss-presets.js";
 /* H3's card tiers: the requirement numbers on every H3-family row, and the
  * flag that makes fit.js judge them by tier (server/h3tier.js, no second copy). */
 import {
@@ -2065,6 +2066,25 @@ export const CATALOG = [
     note: "13.01 GB in three native files. Requires ComfyUI's MOSS-Image architecture and moss_image text encoder type. Preset: 25 steps, CFG 2.5, er_sde/simple; prompt upsampling and skip-layer guidance off. Text-to-image only. Local quality, speed and memory limits are still being evaluated.",
     requires: { experimental: true, note: "No measured minimum memory requirement. Native runtime support is checked before queueing; older engines are not updated automatically." },
   },
+  ...["turbo-4", "dmd-8"].map(preset => {
+    const { adapter, steps } = MOSS_PRESETS[preset];
+    return {
+      id: "moss-image-" + preset, addonFor: "moss-image", group: "images", required: false,
+      label: "MOSS-Image " + (steps === 4 ? "Turbo 4" : "DMD 8") + " (experimental)",
+      why: steps + "-step text-to-image adapter for the native MOSS SFT engine. Choose its explicit Preset in Pictures.",
+      licence: "Apache-2.0", home: HF + "/" + adapter.repo,
+      outputRights: { class: "unrestricted", sellable: true, quote: APACHE_GRANT,
+        clause: "Apache-2.0 §2 (Grant of Copyright License); adapter model card declares Apache-2.0",
+        url: HF + "/" + adapter.repo + "/blob/" + adapter.revision + "/README.md", note: PERMISSIVE_NOTE },
+      files: [{ url: adapter.url, dest: M("loras/" + adapter.filename), bytes: adapter.bytes, sha256: adapter.sha256 }],
+      note: "1.19 GB, one model-only LoRA at strength 1. Requires the three MOSS-Image base files. "
+        + steps + " steps, CFG 1, Euler/simple; at most 1024 squared pixels and a 1536-pixel side. "
+        + "Tested on the INT8 base using native LoRA requantization, not publisher BF16-equivalent precision. "
+        + (steps === 4 ? "Fastest tested option; the portrait was softer and composition changed." : "Slightly slower than Turbo 4; more mug/grip detail in the tested portrait.")
+        + " See docs/MOSS_IMAGE.md for the three-prompt comparison and limits.",
+      requires: { experimental: true, note: "Shares the native MOSS base and runtime. No measured minimum memory requirement; exact adapter SHA is checked before queueing." },
+    };
+  }),
   {
     // Official ComfyUI repack, checked against Hugging Face's LFS metadata on
     // 2026-09-21. These are Qwen Image 2.1 components; the older Qwen image VAE

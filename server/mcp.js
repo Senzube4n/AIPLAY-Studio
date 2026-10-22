@@ -2394,6 +2394,7 @@ export const TOOLS = [
               steps: { type: "integer" }, cfg: { type: "number" },
               count: { type: "integer" }, seconds: { type: "number" },
               dit: { type: "string" }, ditEngine: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" },
+              mossPreset: { type: "string", enum: ["standard", "spectrum-manual-h1", "spectrum-adaptive-h2", "turbo-4", "dmd-8"] },
               quality: { type: "string", enum: ["default", "quality", "turbo"] }, persona: { type: "string" },
               refImages: { type: "array", maxItems: 10, items: { type: "string" }, description: "Ordered image filenames, plus any saved persona references (10 combined maximum)." },
               refSizing: { type: "string", enum: ["reference", "custom"] },
@@ -2803,6 +2804,7 @@ export const TOOLS = [
             + "composition. ideogram4: the open Ideogram release — typography/posters; NON-COMMERCIAL licence "
             + "whose text is gated and unread; preset via quality. checkpoint: any .safetensors in "
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
+        moss_preset: { type: "string", enum: ["standard", "spectrum-manual-h1", "spectrum-adaptive-h2", "turbo-4", "dmd-8"], description: "MOSS only. Standard keeps the native 25-step defaults; experimental Spectrum presets fix 25/CFG2.5/er_sde/simple and require the pinned standalone node. Turbo4 and DMD8 fix 4 or 8 steps/CFG1/euler/simple with a pinned model-only LoRA. Existing INT8 base uses native requantization, not publisher-validated BF16 equivalence. Check moss_image_status with the same preset. No custom stacks." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename, from models/checkpoints OR models/diffusion_models (list_checkpoints shows both shelves and says which loader each needs). A bare transformer — Z-Image, Anima, FLUX.2, Krea 2 — renders on its own family's recipe with this file in place of the catalogue's." },
         dit_engine: { type: "string", enum: ["auto", "qwen-image-2.1", "moss-image", "zimage", "anima", "flux2", "krea2", "checkpoint"],
@@ -2860,7 +2862,7 @@ export const TOOLS = [
          * image.engine). Posting Qwen here aimed a FLUX-only install at files
          * it never downloaded. */
         ...(a.engine ? { engine: a.engine } : {}), quality: a.quality, checkpoint: a.checkpoint,
-        negative: a.negative, cfg: a.cfg,
+        negative: a.negative, cfg: a.cfg, mossPreset: a.moss_preset,
         refSizing: a.ref_sizing, refResolution: a.ref_resolution, transparent: a.transparent, refAlpha: a.ref_alpha,
         /* Fast draft. Sent only when given, so the route's own default (off)
          * decides otherwise; the route refuses it off Qwen with a sentence. */
@@ -2926,6 +2928,7 @@ export const TOOLS = [
         ...(r.prompt ? { prompt: r.prompt, prompt_choices: r.promptChoices, combinations: r.combinations } : {}),
         seed: r.seed,
         ...(r.draft ? { draft: true } : {}),
+        ...(r.mossPreset ? { moss_preset: r.mossPreset, moss_recipe: r.mossRecipe } : {}),
         ...(r.note ? { note: r.note } : {}),
         /* Reached with its OWN failure already thrown by the wait, so never "the
          * last error": that is the queue's, a stranger's. art-wait.js says why. */

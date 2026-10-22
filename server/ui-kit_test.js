@@ -614,7 +614,8 @@ function imageControlsFixture() {
     { name: "ordinary.safetensors", engine: "checkpoint", folder: "checkpoints" },
     { name: "moss_image_sft_int8_convrot.safetensors", engine: "moss-image", family: "moss-image", folder: "diffusion_models" },
   ], imgRefs: refs, IMG_REF_MAX: 10, picDrops: {}, esc: String, URLSearchParams,
-    imgQwenRequestedKey: "", imgQwenCheckSoon() {},
+    imgQwenRequestedKey: "", imgQwenCheckSoon() {}, imgMossKey: "", imgMossReady: false, imgMossRequest: 0,
+    fetch: async () => ({json: async () => ({ready:true})}),
     imgRefCandidates: () => [], imgRefHoverHide() {}, imgRefTagNote() {},
     iedStatus() {}, iedPreviewSchedule() {}, imgQwenPaint() {}, imgDraftPaint() {}, imgQueueGate() {},
     imgQwenCheck() { context.imgQwenShape(); }, imgLoadSampling: async () => {},
@@ -630,7 +631,9 @@ function imageControlsFixture() {
   const changeEnd = APP.indexOf("\n};", changeStart) + 3;
   const input = /^\$\("imgCfg"\)\.oninput = .*$/m.exec(APP)?.[0];
   assert.ok(enginesStart > 0 && enginesEnd > enginesStart && changeStart > 0 && changeEnd > changeStart && input);
-  vm.runInContext([APP.slice(enginesStart, enginesEnd), fn("imgEffectiveEngine"), fn("ckptSampling"),
+  const mossStart = APP.indexOf("const IMG_MOSS_PRESETS = {");
+  const mossEnd = APP.indexOf("\n};", mossStart) + 3;
+  vm.runInContext([APP.slice(enginesStart, enginesEnd), APP.slice(mossStart, mossEnd), fn("imgMossRecipe"), fn("imgMossQuery"), fn("imgMossCheck"), fn("imgMossShape"), fn("imgEffectiveEngine"), fn("ckptSampling"),
     fn("imgQwenShape"), fn("imgQwenQuery"), fn("imgRefsPaint"), fn("imgSampling"), APP.slice(changeStart, changeEnd), input].join("\n"), context);
   return { $, labels, context, refs,
     async engine(value) { $("imgEngine").value = value; await $("imgEngine").onchange(); },
@@ -682,4 +685,39 @@ test("Pictures uses effective MOSS controls when its canonical transformer is pi
   assert.equal(Number($("imgCfg").max), 10); assert.equal(form.negativeVisible(), true);
   form.cfg(1); context.imgRefsPaint();
   assert.equal(Number($("imgCfg").max), 10); assert.equal(form.negativeVisible(), false);
+});
+
+test("Pictures fixed MOSS recipes lock their actual schedule and restore Standard and Qwen", async () => {
+  const form = imageControlsFixture(), { $, context } = form;
+  await form.engine("moss-image");
+  for (const [preset,steps,cfg,sampler] of [["spectrum-manual-h1",25,2.5,"er_sde"],["spectrum-adaptive-h2",25,2.5,"er_sde"],["turbo-4",4,1,"euler"],["dmd-8",8,1,"euler"]]) {
+    $("imgMossPreset").value = preset; $("imgNeg").value = "blur";
+    context.imgMossShape(true); await context.imgSampling(); context.imgQwenShape();
+    assert.equal(Number($("imgSteps").value),steps); assert.equal(Number($("imgCfg").value),cfg);
+    assert.equal($("imgSteps").disabled,true); assert.equal($("imgCfg").disabled,true);
+    assert.equal($("imgSampler").value,sampler); assert.equal($("imgSampler").disabled,true);
+    assert.equal(form.negativeVisible(),cfg>1); if(cfg===1) assert.equal($("imgNeg").value,"");
+    assert.equal(new URLSearchParams(context.imgMossKey).get("mossPreset"),preset);
+  }
+  $("imgMossPreset").value="standard"; context.imgMossShape(true); await context.imgSampling(); context.imgQwenShape();
+  assert.equal($("imgSteps").disabled,false); assert.equal($("imgCfg").disabled,false);
+  assert.equal(Number($("imgSteps").value),25); assert.equal(Number($("imgCfg").value),2.5);
+  await form.engine("qwen-image-2.1"); assert.equal($("imgMossRow").hidden,true); assert.equal($("imgSteps").disabled,false);
+  $("imgCkpt").value="moss_image_sft_int8_convrot.safetensors"; await form.engine("checkpoint");
+  $("imgMossPreset").value="turbo-4"; context.imgMossShape(true); await context.imgSampling(); context.imgQwenShape();
+  assert.equal($("imgMossRow").hidden,false); assert.equal($("imgSampler").value,"euler"); assert.equal($("imgSampler").disabled,true);
+  assert.equal(Number($("imgSteps").value),4); assert.equal(form.negativeVisible(),false);
+});
+
+
+test("Pictures readiness offers the selected Models addon or the exact Spectrum setup guide",async()=>{
+  const form=imageControlsFixture(),{$,context}=form,offered=[];
+  context.offerModel=value=>offered.push(value);await form.engine("moss-image");
+  context.fetch=async()=>({json:async()=>({ready:false,needsModel:"moss-image-turbo-4",error:"missing adapter"})});
+  $("imgMossPreset").value="turbo-4";await context.imgMossCheck(true);
+  assert.equal($("imgMossGet").hidden,false);$("imgMossGet").onclick();assert.equal(offered[0].needsModel,"moss-image-turbo-4");
+  context.fetch=async()=>({json:async()=>({ready:false,spectrum:{ready:false},error:"missing source"})});
+  $("imgMossPreset").value="spectrum-manual-h1";await context.imgMossCheck(true);
+  assert.equal($("imgMossGet").hidden,true);assert.equal($("imgMossSetup").hidden,false);
+  assert.match(HTML,/id="imgMossSetup"[^>]*MOSS_SPECTRUM_SETUP\.md/);
 });

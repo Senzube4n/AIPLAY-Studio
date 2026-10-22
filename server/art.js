@@ -2171,6 +2171,7 @@ export class ArtRunner extends EventEmitter {
       graph = mossImageGraph(options);
       job._paintedWith = graph[1].inputs.unet_name;
       job._imageOptions = { ...mossImageSettings(graph), count: graph[7].inputs.batch_size,
+        ...(readiness.adapter ? { adapterVerifiedSha256: readiness.adapter.sha256 } : {}),
         dit: graph[1].inputs.unet_name, encoder: graph[2].inputs.clip_name, vae: graph[3].inputs.vae_name,
         requestedWidth: graph[7].inputs.width, requestedHeight: graph[7].inputs.height,
         refImages: [], transparent: false, sizeSource: "requested" };

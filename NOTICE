@@ -295,6 +295,20 @@ in the app.
                             Copyright License))
                             https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT/blob/main/LICENSE
 
+    MOSS-Image Turbo 4 (experimental)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License); adapter model card declares
+                            Apache-2.0)
+                            https://huggingface.co/akhaliq/MOSS-Image-SFT-4-steps/blob/2ded95c37a029360245926fe72e475e30039bbfb/README.md
+
+    MOSS-Image DMD 8 (experimental)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License); adapter model card declares
+                            Apache-2.0)
+                            https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd/blob/f95df83b5e90ae91ea412434b3f9b7f1c8c6314f/README.md
+
     Qwen Image 2.1 (research licence)
                             Qwen Research License Agreement
                             Output rights: NOT FOR SALE — conservative Studio

@@ -24,5 +24,5 @@ run(uv, ['pip', 'install', '--python', target, '-r', path.join(root, 'scripts', 
 // The mandatory RoPE derivative check needs torch, but no model or CUDA build.
 run(uv, ['pip', 'install', '--python', target, 'torch', 'torchaudio', ...(process.platform === 'darwin' ? [] : ['--index-url', 'https://download.pytorch.org/whl/cpu'])], { env });
 run(target, ['-c', 'import torch,torchaudio; assert torch.version.cuda is None, "Gate requires CPU-only torch"; print("torch="+torch.__version__,"torchaudio="+torchaudio.__version__)']);
-run(target, ['-c', 'import sys,numpy,scipy,av,soundfile,PIL,cv2;print(sys.executable);print("numpy="+numpy.__version__,"scipy="+scipy.__version__,"av="+av.__version__,"soundfile="+soundfile.__version__,"Pillow="+PIL.__version__,"opencv="+cv2.__version__)']);
+run(target, ['-c', 'import sys,numpy,scipy,av,soundfile,PIL,cv2,safetensors;print(sys.executable);print("numpy="+numpy.__version__,"scipy="+scipy.__version__,"av="+av.__version__,"soundfile="+soundfile.__version__,"Pillow="+PIL.__version__,"opencv="+cv2.__version__,"safetensors="+safetensors.__version__)']);
 console.log('Set AIPLAY_PYTHON to this executable for the test/gate process only. FFmpeg and ffprobe must also be on PATH.');

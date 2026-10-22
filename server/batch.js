@@ -93,7 +93,7 @@ export function cleanMediaItem(it, kind) {
     }
   }
   if (kind !== "image") return item;
-  for (const key of ["dit", "ditEngine", "encoder", "vae", "persona", "quality", "sampler", "scheduler", "refSizing"]) {
+  for (const key of ["dit", "ditEngine", "encoder", "vae", "mossPreset", "persona", "quality", "sampler", "scheduler", "refSizing"]) {
     if (it[key] !== undefined) {
       if (typeof it[key] !== "string" || it[key].length > 200) throw new Error(`Image ${key} must be text of at most 200 characters.`);
       item[key] = it[key];
