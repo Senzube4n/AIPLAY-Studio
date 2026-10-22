@@ -16,6 +16,7 @@ import { readdir, stat, copyFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
+import { aceArtifactPrecision } from './music/ace-comfy-input.js';
 import { externalMusicWork } from "./music/exclusive.js";
 import { buildGraph, buildYue2ComfyGraph, buildAceStep15Graph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
 /* The second kind of work: a subprocess with a receipt, not a graph. The door
@@ -390,6 +391,12 @@ export class JobRunner extends EventEmitter {
         preview: job.preview,
         prefix: job.preview ? "preview" : "aiplay",
       });
+      if (job.engine === 'ace-step15') {
+        const sample = Object.values(graph).find(n => n.class_type === 'KSampler').inputs;
+        const dit = Object.values(graph).find(n => n.class_type === 'UNETLoader').inputs.unet_name;
+        job.steps = job.aceSteps = sample.steps; job.cfg = job.aceCfg = sample.cfg;
+        job.acePrecision = aceArtifactPrecision(dit);
+      }
       /* RUNPOD GPU MODE: the same graph, rendered on the Pod (#runRemote). */
       if (this.remote) return await this.#runRemote(job, graph);
       /* THROUGH THE DOOR, not straight at the engine.
@@ -1306,8 +1313,9 @@ export class JobRunner extends EventEmitter {
       stageProgress: j.stageProgress, overall: j.overall,
       etaSeconds: j.etaSeconds, preview: !!j.preview,
       seed: j.seed, mixSeed: j.mixSeed, reroll: !!j.reusesConditioning,
-      instrumental: !!j.instrumental, steps: j.steps, cfg: j.cfg,
-      ...(j.engine === 'ace-step15' ? { aceDit: j.aceDit, aceSteps: j.aceSteps, aceCfg: j.aceCfg } : {}),
+      instrumental: !!j.instrumental, steps: j.engine === 'ace-step15' ? j.aceSteps ?? null : j.steps,
+      cfg: j.engine === 'ace-step15' ? j.aceCfg ?? null : j.cfg,
+      ...(j.engine === 'ace-step15' ? { aceDit: j.aceDit, aceSteps: j.aceSteps, aceCfg: j.aceCfg, acePrecision: j.acePrecision ?? null } : {}),
       /* Whether this take HAS words, not the words themselves.
        *
        * The overnight panel needs it to decide whether a song is owed timed

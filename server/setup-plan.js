@@ -80,7 +80,7 @@ export function profileGraph(profile) {
   throw Error('This model needs a supported workflow.');
 }
 
-export function selectedModelReadiness(plan, { connected = false, stopped = false, bundles = [], objects, verifiedFiles = true, evidenceFor = () => null, graphFor = profileGraph } = {}) {
+export function selectedModelReadiness(plan, { connected = false, stopped = false, bundles = [], objects, verifiedFiles = true, evidenceFor = () => null, historyFor = () => null, graphFor = profileGraph } = {}) {
   return plan.profiles.map(p => {
     const files = connected && (verifiedFiles ? bundles.some(b => b.id === p.bundle && b.state === 'ready') : p.localFilesPresent);
     let graph, error = null, dependencies = false, workflow = false;
@@ -96,7 +96,8 @@ export function selectedModelReadiness(plan, { connected = false, stopped = fals
       filesDownloaded: !!files && !stopped, filesVerified: !!files && verifiedFiles && !stopped,
       dependenciesAvailable: dependencies && !stopped, workflowValidated: workflow && !stopped,
       inferenceValidated: !!evidence, inference: evidence ? 'Previous test succeeded on this worker build and workload' : 'Not validated on this runtime',
-      inferenceEvidence: evidence, historicalHardwareValidated: hardwareWorkflowMatches(p.hardwareAcceptance, graph), hardwareAcceptance: hardwareWorkflowMatches(p.hardwareAcceptance, graph) ? p.hardwareAcceptance : null, experimental: !!p.experimental, error };
+      inferenceEvidence: evidence, historicalInferenceEvidence: graph ? historyFor(graph) : null,
+      historicalHardwareValidated: hardwareWorkflowMatches(p.hardwareAcceptance, graph), hardwareAcceptance: hardwareWorkflowMatches(p.hardwareAcceptance, graph) ? p.hardwareAcceptance : null, experimental: !!p.experimental, error };
   });
 }
 

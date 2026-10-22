@@ -682,6 +682,8 @@ async function embedCover(file, coverName) {
     seed: m.seed, mixSeed: m.mixSeed, steps: m.steps,
     cfg: m.cfg, shift: config.sampling.shift,
     model: m.model || "int8",
+    ...(m.engine === 'ace-step15' ? { precision: m.acePrecision ?? null, dit: m.aceDit, lm: m.aceLm,
+      trackChecksums: true, executionTarget: m.executionTarget } : {}),
     date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
     // The re-tag must not drop the marker or the record the first pass wrote.
     ...(await songProvMeta(file)),
@@ -1753,7 +1755,7 @@ jobs.on("update", async (snap) => {
     provNote("library", {
       actor, type: "generate", asset: h.file,
       data: {
-        model: modelName, modelVersion: (isYue || isYueComfy) ? "3B" : (job.model || "int8"),
+        model: modelName, modelVersion: isAce ? job.acePrecision ?? null : (isYue || isYueComfy) ? "3B" : (job.model || "int8"),
         promptHash: `sha256:${prov.sha256hex(`${job.caption || ""}\n${job.lyrics || ""}`)}`,
         seed: h.seed, mixSeed: h.mixSeed ?? null,
         /* The parameters that changed WHICH ARITHMETIC made the song: for
@@ -1761,7 +1763,7 @@ jobs.on("update", async (snap) => {
          * precision, all of which the door's own ledger row (song/<runId>)
          * carries in full — this is the join to it. */
         params: isAce
-          ? { runtime: "comfy", dit: job.aceDit, lm: job.aceLm, bpm: job.bpm, keyscale: job.keyscale,
+          ? { runtime: "comfy", dit: job.aceDit, lm: job.aceLm, precision: job.acePrecision ?? null, bpm: job.bpm, keyscale: job.keyscale,
               timesignature: job.timesignature, metaFrom: job.aceMetaFrom || null, language: job.language,
               steps: job.aceSteps ?? null, cfg: job.aceCfg ?? null, planner: !!job.aceCodes,
               plannerTemperature: job.acePlanTemp ?? null, hardwareReference: job.aceHardwareEvidenceId || null,
@@ -1837,7 +1839,7 @@ jobs.on("update", async (snap) => {
       rights: songRights({ engine: job.engine, tokenized: job.tokenized || null }).label,
     } : {}),
     ...(isAce ? {
-      aceDit: job.aceDit || null, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature,
+      aceDit: job.aceDit || null, acePrecision: job.acePrecision ?? null, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature,
       aceLm: job.aceLm, aceCodes: job.aceCodes, acePlanTemp: job.acePlanTemp, maxDuration: job.maxDuration,
       aceHardwareEvidenceId: job.aceHardwareEvidenceId || null,
       language: job.language, lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
@@ -1892,6 +1894,8 @@ jobs.on("update", async (snap) => {
     const meta = isAce
       ? {
         title: h.title, caption: job.caption, lyrics: job.lyrics, seed: h.seed, mixSeed: h.mixSeed,
+        steps: job.aceSteps, cfg: job.aceCfg, precision: job.acePrecision ?? null,
+        dit: job.aceDit, lm: job.aceLm, trackChecksums: true, executionTarget: job.remote ? 'runpod' : 'local',
         bpm: job.bpm, key: job.keyscale, timesignature: job.timesignature, language: job.language,
         ...(job.lora ? { lora: `${job.lora} @ ${job.loraStrength ?? 1}` } : {}),
         model: modelName, date: new Date().toISOString().slice(0, 10),
@@ -3857,6 +3861,7 @@ const server = http.createServer(async (req, res) => {
           musicYue2LoraStrength: config.music.yue2LoraStrength,
           musicYue2LoraClip: config.music.yue2LoraClip,
           musicYue2LoraClipStrength: config.music.yue2LoraClipStrength,
+          musicComputer: config.remoteOnly ? await remoteRoutes.musicState() : null,
           musicAceModel: config.music.aceModel,
           musicAceLm: config.music.aceLm,
           musicAceLora: config.music.aceLora,
@@ -4477,6 +4482,8 @@ const server = http.createServer(async (req, res) => {
             title: m.title, caption: m.caption, lyrics: m.lyrics,
             seed: m.seed, mixSeed: m.mixSeed, steps: m.steps,
             cfg: m.cfg, shift: config.sampling.shift, model: m.model || "int8",
+            ...(m.engine === 'ace-step15' ? { precision: m.acePrecision ?? null, dit: m.aceDit, lm: m.aceLm,
+              trackChecksums: true, executionTarget: m.executionTarget } : {}),
             date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
             ...(await songProvMeta(src)),
             /* ⚠ THE CREDIT TRAVELS WITH THE EXPORT. The conversion writes a
@@ -5504,13 +5511,13 @@ const server = http.createServer(async (req, res) => {
           config.music.engines[musicEngine]?.maxDuration || 300),
         // Both map to real model parameters. No cosmetic dials — the
         // ComfyUI-literate half of the audience will check.
-        steps: body.steps ? Math.min(Math.max(Number(body.steps), 6), 40) : undefined,
-        cfg: body.cfg ? Math.min(Math.max(Number(body.cfg), 1), 5) : undefined,
+        steps: aceJob ? aceJob.aceSteps : body.steps ? Math.min(Math.max(Number(body.steps), 6), 40) : undefined,
+        cfg: aceJob ? aceJob.aceCfg : body.cfg ? Math.min(Math.max(Number(body.cfg), 1), 5) : undefined,
         // Separated so the two guidance scales can be swept independently; the
         // UI still sends one `cfg` and both follow it.
         arCfg: body.arCfg ? Math.min(Math.max(Number(body.arCfg), 0), 5) : undefined,
         flowCfg: body.flowCfg ? Math.min(Math.max(Number(body.flowCfg), 0), 5) : undefined,
-        model: ["int8", "fp16", "fp32"].includes(body.model) ? body.model : config.music.precision,
+        model: aceJob ? aceJob.acePrecision : ["int8", "fp16", "fp32"].includes(body.model) ? body.model : config.music.precision,
         instrumental: !!body.instrumental,
         preview: !!body.preview,
         reusesConditioning: !!body.reusesConditioning,

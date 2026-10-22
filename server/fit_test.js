@@ -38,11 +38,16 @@
  */
 import path from "node:path";
 import os from "node:os";
-import { readFileSync } from "node:fs";
-import { readMachine, fitFor, recommendFor, bytesFor, FIT_STATES } from "./fit.js";
-import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
-import { config } from "./config.js";
-import { resolveVideoEngine } from "./workflow.js";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+// These are fresh-install fixtures. Read no saved music/model selection from
+// the developer's installation (an XL-SFT selection changes download totals).
+const testData = mkdtempSync(path.join(os.tmpdir(), "aiplay-fit-"));
+process.env.AIPLAY_APPDATA = testData;
+process.on("exit", () => rmSync(testData, { recursive: true, force: true }));
+const { readMachine, fitFor, recommendFor, bytesFor, FIT_STATES } = await import("./fit.js");
+const { CATALOG, MODEL_TO_CAPABILITY, isPictureModel, modelLabel, modelPageUrl, engineFromModelFile } = await import("./models.js");
+const { config } = await import("./config.js");
+const { resolveVideoEngine } = await import("./workflow.js");
 
 let pass = 0;
 const failures = [];

@@ -4,6 +4,13 @@ import { MODEL_PROFILES } from '../../shared/model-profiles.js';
 import { selectedAceDit } from '../../shared/model-profiles.js';
 import { hardwareWorkflowMatches } from '../engine/workflow-evidence.js';
 
+// Exact curated artifact metadata only; a filename suffix or a MiniMax
+// preference cannot establish the precision of a custom or historical output.
+export function aceArtifactPrecision(dit) {
+  const precision = MODEL_PROFILES.find(p => p.settings?.dit === dit)?.settings.precision;
+  return precision && precision !== 'default' ? precision : null;
+}
+
 export function selectAceMusicModels(shelf, { dit, lm } = {}) {
   if (dit != null && (typeof dit !== 'string' || !dit.trim())) throw Error('Choose an installed ACE model.');
   const selected = selectedAceDit(shelf.dits || [], dit);
@@ -27,6 +34,7 @@ export function prepareAceMusicInput(body, { shelf, savedDit, savedLm, lora = nu
   const instrumental = body.instrumental || !String(body.lyrics || '').trim();
   const lyrics = instrumental ? (profile?.id === 'ace15-xl-sft' ? '' : '[Instrumental]') : String(body.lyrics).trim();
   const job = { engine: 'ace-step15', aceDit: dit, aceLm: lm, lora, aceCover: cover,
+    acePrecision: aceArtifactPrecision(dit),
     loraStrength: Number.isFinite(Number(body.loraStrength)) ? Math.min(Math.max(Number(body.loraStrength), -4), 4) : defaultLoraStrength,
     bpm: meta.bpm, keyscale: meta.keyscale, timesignature: meta.timesignature, aceMetaFrom: meta.from,
     language: ACE_LANGUAGES.includes(body.language) ? body.language : 'en',
@@ -35,6 +43,7 @@ export function prepareAceMusicInput(body, { shelf, savedDit, savedLm, lora = nu
     aceCodes: cover ? false : body.aceCodes === undefined ? !lora : !!body.aceCodes,
     acePlanTemp: Number.isFinite(Number(body.acePlanTemp)) && body.acePlanTemp !== '' && body.acePlanTemp != null ? Math.min(Math.max(Number(body.acePlanTemp), 0), 2) : 0.85,
     maxDuration: duration };
+  job.steps = job.aceSteps; job.cfg = job.aceCfg;
   const graph = buildAceStep15Graph({ caption: String(body.caption || '').trim(), lyrics, seed, mixSeed: body.mixSeed,
     duration, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature, language: job.language,
     steps: job.aceSteps, cfg: job.aceCfg, dit, lm, lora, loraStrength: job.loraStrength,
@@ -56,9 +65,9 @@ export async function checkAceMusic(body, { config, getShelf, localFiles, engine
   const plan = setupPlan({ selection: { music: prepared.profile.id }, target,
     localFiles: target === 'local' ? await localFiles() : [] });
   const graphFor = () => prepared.graph;
-  let row;
+  let row, computer, podId;
   if (config.remoteOnly) {
-    try { row = (await remoteReadiness(plan, { graphFor })).readiness[0]; }
+    try { const checked = await remoteReadiness(plan, { graphFor }); row = checked.readiness[0]; computer = checked.computer; podId = checked.podId; }
     catch (e) { row = selectedModelReadiness(plan, { graphFor })[0]; row.error = 'Connect the selected RunPod computer and check its AI service.'; }
   } else {
     const names = [...new Set(Object.values(prepared.graph).map(n => n.class_type))];
@@ -72,6 +81,6 @@ export async function checkAceMusic(body, { config, getShelf, localFiles, engine
     row.filesVerified = false; row.inferenceValidated = false;
     row.error = 'XL-SFT verification requires its 4B planner. Select 4B or return to Model setup.';
   }
-  return { ...row, target, reference: prepared.profile.hardwareAcceptance || null,
+  return { ...row, target, computer, podId, reference: prepared.profile.hardwareAcceptance || null,
     ready: row.workerConnected && row.filesVerified && row.workflowValidated, effective: prepared.job };
 }

@@ -18,6 +18,38 @@ import { modelCompatibility } from './model-compatibility.js';
 import { setupPlan, selectionFor, rankSetupGpus, selectedModelReadiness } from '../setup-plan.js';
 import { defaultModelSelection } from '../../shared/model-profiles.js';
 
+// Shared lifecycle state, projected without credentials or unrelated jobs.
+export function musicComputerState(state, connection) {
+  return { podId: state.podId || null, status: state.pod?.status || null, phase: state.phase,
+    providerUncertain: !!state.providerUncertain, changing: !!state.operation,
+    connectionReady: !!state.worker?.connectionReady && !state.worker?.pending && !state.worker?.frozen,
+    workerId: connection.workerId || null, url: connection.url || null };
+}
+
+export async function readMusicReadiness(plan, options, { manager, c, provider }) {
+    const state = manager.snapshot();
+    const identity = JSON.stringify(musicComputerState(state, c.status()));
+    let health, data = {}, objects, bound = false, stopped = false, error = null;
+    try {
+      if (!state.podId || state.operation || state.providerUncertain) throw Error('Check the selected computer.');
+      const pod = await provider.getPod(state.podId);
+      stopped = pod.status === 'EXITED';
+      if (pod.status !== 'RUNNING') throw Error(stopped ? 'Start the selected computer to check its AI service.' : 'The selected computer is unavailable.');
+      health = await c.verify();
+      if (health.podId !== pod.id || c.status().url !== pod.workerUrl) throw Error('Connect the selected computer’s AI service.');
+      data = await c.setup(); objects = await c.models();
+      const current = await provider.getPod(pod.id);
+      stopped = current.status === 'EXITED';
+      bound = current.status === 'RUNNING' && c.status().workerId === health.workerId
+        && identity === JSON.stringify(musicComputerState(manager.snapshot(), c.status()));
+      if (!bound) throw Error(stopped ? 'Start the selected computer to check its AI service.' : 'The computer connection changed. Check again.');
+    } catch (e) { bound = false; error = e.message; }
+    return { ...data, podId: state.podId, computer: musicComputerState(manager.snapshot(), c.status()), selection: plan.selection,
+      readiness: selectedModelReadiness(plan, { ...options, connected: bound, stopped, bundles: data.bundles, objects,
+        evidenceFor: graph => c.inferenceEvidence(graph, health), historyFor: graph => c.historicalInferenceEvidence(graph) })
+        .map(row => ({ ...row, error: error || row.error })) };
+  }
+
 /** Additive HTTP surface; local generation continues to use its existing engine. */
 export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, append, actorFrom, adopt, sameOriginLocalJson, fetchFn = fetch,
   localActivity, setSchedulingBlocked, cancelLocal, pauseQueuedWork, resumeQueuedWork, savePrefs = async () => {},
@@ -40,14 +72,7 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
   const updater = () => updaterPromise ||= Promise.all([computer(), installer(), client()]).then(([computer, installer, client]) =>
     createWorkerUpdater({ dataDir: config.dataDir, provider, computer, installer, client, fetchFn }));
   async function modelReadiness(plan, options = {}) {
-    const manager = await computer(), state = manager.snapshot(), c = await client();
-    const health = await c.verify();
-    let bound = !!state.podId && health.podId === state.podId && state.pod?.status === 'RUNNING' && !state.providerUncertain;
-    const data = await c.setup(), objects = bound ? await c.models() : null;
-    bound = bound && c.status().workerId === health.workerId && manager.snapshot().podId === state.podId;
-    return { ...data, podId: bound ? state.podId : null, selection: plan.selection,
-      readiness: selectedModelReadiness(plan, { ...options, connected: bound, bundles: data.bundles, objects,
-        evidenceFor: graph => c.inferenceEvidence(graph, health) }) };
+    return readMusicReadiness(plan, options, { manager: await computer(), c: await client(), provider });
   }
   const route = async (req, res, url) => {
     if (!url.pathname.startsWith("/api/runpod")) return false;
@@ -282,5 +307,6 @@ export function createRemoteRoutes({ config, getSecret, setSecret, clearSecret, 
   };
   route.start = client;
   route.modelReadiness = modelReadiness;
+  route.musicState = async () => musicComputerState((await computer()).snapshot(), (await client()).status());
   return route;
 }

@@ -122,6 +122,8 @@ def read_tags(path: str) -> dict:
         "seed": up.get("SEED", ""),
         "steps": up.get("STEPS", ""),
         "model": up.get("PRECISION", ""),
+        "artifact": up.get("MODEL_ARTIFACT", ""),
+        "planner": up.get("PLANNER_ARTIFACT", ""),
         # The Tier-1 marker, read back — how the embed round-trip is proven.
         "digitalSourceType": up.get("DIGITALSOURCETYPE", ""),
         "aiDisclosure": up.get("AI_DISCLOSURE", ""),
@@ -178,7 +180,7 @@ def picture_block(image_path: str) -> str:
     return base64.b64encode(block).decode("ascii")
 
 
-def tag(path: str, meta: dict) -> float:
+def tag(path: str, meta: dict, remove_keys=()) -> float:
     """Rewrite the file with its provenance, preserving the audio exactly.
 
     ⚠ This used to hardcode FLAC — `mkstemp(suffix=".flac")` plus
@@ -201,6 +203,8 @@ def tag(path: str, meta: dict) -> float:
 
     src = av.open(path)
     in_s = src.streams.audio[0]
+    existing = {str(k).upper(): str(v) for k, v in
+                {**dict(in_s.metadata or {}), **dict(src.metadata or {})}.items()}
     wav_comment = None
     if ext == ".wav":
         # RIFF INFO ignores arbitrary Vorbis/ID3 keys. Put the origin and
@@ -219,6 +223,14 @@ def tag(path: str, meta: dict) -> float:
             parts.append(marker)
         wav_comment = "\n".join(parts)
         meta = {**existing, **incoming, "COMMENT": wav_comment}
+    # Keep unrelated comments/credits. Managed provenance is replaced as a set,
+    # so disabled Tier 2 and cleared lyrics cannot leak older detail back in.
+    merged = {k: v for k, v in existing.items() if k not in remove_keys}
+    merged.update({str(k).upper(): str(v) for k, v in meta.items()})
+    if merged == existing:
+        src.close()
+        return probe(path)
+    meta = merged
     fd, tmp = tempfile.mkstemp(suffix=ext, dir=os.path.dirname(path))
     os.close(fd)
 
@@ -281,6 +293,12 @@ def tag(path: str, meta: dict) -> float:
 
 def main() -> int:
     path = sys.argv[1]
+    if len(sys.argv) > 2 and sys.argv[2] == "--probe":
+        try:
+            print(json.dumps({"ok": True, "seconds": probe(path)}))
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"ok": False, "error": str(exc)[:200]}))
+        return 0
     if len(sys.argv) > 2 and sys.argv[2] == "--read":
         try:
             print(json.dumps(read_tags(path)))
@@ -320,7 +338,8 @@ def main() -> int:
         # already stamped by earlier builds.
         "GENERATED_BY": generator,
         "AI_GENERATED": "true",
-        "COMMENT": f"Generated locally with {generator}.",
+        "COMMENT": (f"Generated on RunPod with {generator}." if raw.get("executionTarget") == "runpod"
+                    else f"Generated locally with {generator}."),
         # Display basics — identity, not provenance detail.
         "TITLE": str(raw.get("title") or "Untitled"),
         # The model is the performer. We are not.
@@ -355,11 +374,13 @@ def main() -> int:
             "LYRICS": str(raw.get("lyrics") or "")[:4000],
             "SEED": str(raw.get("seed", "")),
             "MIX_SEED": str(raw.get("mixSeed", "")),
-            "STEPS": str(raw.get("steps", "")),
+            "STEPS": str(raw["steps"]) if raw.get("steps") is not None else "",
             "CFG_SCALE": str(raw.get("cfg", "")),
             "SIGMA_SCHEDULE": f"shift {raw.get('shift', '')}" if raw.get("shift", "") != "" else "",
             "SAMPLER": str(raw.get("sampler", "euler")),
-            "PRECISION": str(raw.get("model", "int8")),
+            "PRECISION": str(raw.get("precision") or "") if "precision" in raw else str(raw.get("model", "int8")),
+            "MODEL_ARTIFACT": str(raw.get("dit") or ""),
+            "PLANNER_ARTIFACT": str(raw.get("lm") or ""),
             # The ledger summary: compact per-part origin map + chain head.
             "PROVENANCE": json.dumps(prov.get("originMap"), separators=(",", ":"))[:2000]
                           if prov.get("originMap") else "",
@@ -385,7 +406,11 @@ def main() -> int:
                 pass
 
     try:
-        seconds = tag(path, meta)
+        seconds = tag(path, meta, remove_keys={
+            "PROMPT", "WORKFLOW", "STYLE_PROMPT", "LYRICS", "SEED", "MIX_SEED", "STEPS",
+            "CFG_SCALE", "SIGMA_SCHEDULE", "SAMPLER", "PRECISION", "MODEL_ARTIFACT",
+            "PLANNER_ARTIFACT", "PROVENANCE", "PROVENANCE_CHAIN",
+        })
     except Exception as exc:  # noqa: BLE001 — never lose the audio over a tag
         print(json.dumps({"ok": False, "error": str(exc)[:200], "seconds": probe(path)}))
         return 0

@@ -22182,6 +22182,7 @@ function applyStatus(s) {
   $("engineLineWrap").style.cursor = engFail ? "pointer" : "";
   /* RunPod GPU mode: no local engine to wait for; the queue renders on the Pod. */
   state.remoteOnly = !!s.config?.remoteOnly;
+  state.musicComputer = s.config?.musicComputer || null;
   $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready && !state.remoteOnly;
 
   const b = s.engine.backend;

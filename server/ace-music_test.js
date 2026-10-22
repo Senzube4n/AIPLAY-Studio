@@ -15,7 +15,8 @@ process.env.AIPLAY_APPDATA = path.join(temp,'appdata');process.env.AIPLAY_RIG=pa
 process.env.AIPLAY_OUTPUT = path.join(temp,'library');
 const {config} = await import('./config.js');
 const {MODEL_PROFILES} = await import('../shared/model-profiles.js');
-const {prepareAceMusicInput, selectAceMusicModels, checkAceMusic} = await import('./music/ace-comfy-input.js');
+const {prepareAceMusicInput, selectAceMusicModels, checkAceMusic, aceArtifactPrecision} = await import('./music/ace-comfy-input.js');
+const {readMusicReadiness} = await import('./engine/remote-routes.js');
 const {preserveSelectedAce} = await import('./engine/remote-models.js');
 const {setupPlan,selectedModelReadiness} = await import('./setup-plan.js');
 const {workflowEvidenceKey} = await import('./engine/workflow-evidence.js');
@@ -139,9 +140,12 @@ test('real Music queue → authenticated synthetic worker → checksum adoption 
  runner.enqueue({...prepared.job,caption:form().caption,lyrics:prepared.lyrics,seed:20261019,instrumental:true,postprocess:false,stages:{cover:false,video:false,lrc:false,stems:false}});
  const result=await done;assert.equal(result.state,'done');assert.match(result.file,/^aiplay_runpod_/);assert.ok(runner.history[0].runId);
  assert.equal(result.aceSteps,50);assert.equal(result.aceCfg,7);assert.equal(result.aceDit,dit);
+ assert.equal(result.steps,50);assert.equal(result.cfg,7);assert.equal(result.acePrecision,'bf16');
  const bytes=await fs.readFile(path.join(r.local,result.file));assert.equal(hash(bytes),hash(FLAC));assert.equal(bytes.subarray(0,4).toString(),'fLaC');
  const saved=r.client.status().jobs[0];assert.equal(saved.outputs[0].sha256,hash(FLAC));assert.equal(r.adoptions,1);assert.equal(r.submissions,1);
  assert.ok(r.events.some(e=>e.type==='generate'));assert.ok(notes.includes('completed'));
+ assert.ok(r.client.historicalInferenceEvidence(prepared.graph));
+ assert.equal(r.client.inferenceEvidence(prepared.graph,{workerId:'another-worker',installCommit:'a'.repeat(40),version:'SYNTHETIC'}),null);
 });
 
 test('Music form pins models, hides unsupported remote inputs and applies the exact preset',async()=>{
@@ -241,4 +245,111 @@ test('Music check endpoint guards before reading input and delegates the actual 
  const branch=source.slice(source.indexOf('let aceJob = null;'),source.indexOf('/* YuE2 through ComfyUI: the refusals'));
  assert.match(branch,/body\.aceDit \?\? config\.music\.aceModel/);assert.match(branch,/body\.aceLm \?\? config\.music\.aceLm/);
  assert.match(branch,/if \(!checked.ready\)/);assert.match(branch,/aceJob = prepared.job/);
+});
+
+test('ACE precision uses exact curated artifact metadata; older/custom outputs receive no guess',async()=>{
+ assert.equal(aceArtifactPrecision(dit),'bf16');
+ assert.equal(prepare(form()).job.acePrecision,'bf16');assert.equal(prepare(form()).job.steps,50);
+ assert.equal(aceArtifactPrecision('custom_bf16.safetensors'),null);
+ assert.equal(aceArtifactPrecision('yue2_3b_int8_convrot.safetensors'),null);
+ const {Library}=await import('./library.js');const lib=new Library({saveMetadata:async()=>{}});
+ const file='aiplay_older_precision.flac';await fs.writeFile(path.join(config.outputDir,file),FLAC);
+ lib.remember(file,{engine:'ace-step15',aceDit:dit});
+ assert.equal((await lib.list()).find(r=>r.file===file).acePrecision,null);
+ const source=await fs.readFile(new URL('./index.js',import.meta.url),'utf8');
+ const expression=source.replaceAll('\r\n','\n').match(/modelVersion: (isAce \?[^\n]+),\n        promptHash/)[1];
+ const version=job=>runInNewContext(expression,{isAce:true,job});
+ assert.equal(version({acePrecision:'bf16',model:'fp16'}),'bf16');
+ assert.equal(version({aceDit:dit,model:'fp16'}),null);
+ assert.equal(runInNewContext(expression,{isAce:false,isYue:false,isYueComfy:false,job:{model:'int8'}}),'int8');
+ assert.equal(runInNewContext(expression,{isAce:false,isYue:true,job:{model:'fp16'}}),'3B');
+});
+
+function readinessDom(){
+ const nodes=new Map();const el=id=>{if(!nodes.has(id))nodes.set(id,{id,hidden:false,children:[],addEventListener(){},replaceChildren(){this.children=[];},append(...items){for(const n of items)n.parentNode=this;this.children.push(...items);}});return nodes.get(id);};
+ const home=el('home'),label=el('label'),value=el('value'),anchor={parentNode:home,after(...nodes){for(const n of nodes)n.parentNode=home;}};
+ label.parentNode=home;label.before=()=>{};value.parentNode=home;el('maxDur').closest=()=>value;
+ return {el,doc:{getElementById:el,createComment:()=>anchor,querySelector:()=>label,createElement:()=>({}),addEventListener(){}}};
+}
+const computer=(patch={})=>({podId:'pod-a',status:'RUNNING',phase:'ready',workerId:'worker-a',url:'https://pod-a-8787.proxy.runpod.net',connectionReady:true,providerUncertain:false,changing:false,...patch});
+const readyRow=(patch={})=>({ready:true,podId:'pod-a',workerConnected:true,filesDownloaded:true,filesVerified:true,workflowValidated:true,inferenceValidated:true,inferenceEvidence:{at:1,workerId:'worker-a'},...patch});
+
+test('readiness clears stopped/disconnected values, retains history and rejects late replies for any computer identity',async()=>{
+ for(const change of [{status:'EXITED',phase:'stopped'},{connectionReady:false},{providerUncertain:true},{changing:true},{podId:'pod-b',workerId:'worker-b'},{workerId:'worker-new'}]){
+  const {el,doc}=readinessDom(),state={musicEngine:'ace-step15',musicAceModel:dit,remoteOnly:true,musicComputer:computer(),musicModels:[{engine:'ace-step15',dit,lms:[lm],available:true}]};
+  const pending=[];const ui=mountAceMusic({doc,getState:()=>state,readSpec:()=>form(),fetchFn:()=>new Promise(resolve=>pending.push(resolve))});ui.dispose();
+  const first=ui.check();pending.shift()({ok:true,json:async()=>readyRow()});await first;
+  assert.equal(el('aceMusicChip').textContent,'This worker tested');
+  const old=ui.check(),resolve=pending.shift();state.musicComputer=computer(change);ui.paint();
+  assert.equal(el('aceMusicReadiness').children.filter(n=>n.textContent==='Yes').length,0,JSON.stringify(change));
+  resolve({ok:true,json:async()=>readyRow()});await old;
+  assert.equal(el('aceMusicReadiness').children.filter(n=>n.textContent==='Yes').length,0,'late response cannot restore current readiness');
+  assert.notEqual(el('aceMusicChip').textContent,'This worker tested');assert.equal(el('aceMusicHistory').hidden,false,'earlier inference remains historical');
+  if(change.status==='EXITED'){
+   assert.equal(el('aceMusicChip').textContent,'Computer stopped');
+   ui.dispose();
+   const clock=Date.now;try{Date.now=()=>clock()+31000;ui.paint();
+    assert.equal(el('aceMusicHistory').hidden,false,'periodic stopped checks must retain historical evidence');
+   }finally{Date.now=clock;}
+  }
+  ui.dispose();
+ }
+});
+
+test('readiness failures and switching away clear all old verification values',async()=>{
+ const {el,doc}=readinessDom(),state={musicEngine:'ace-step15',musicAceModel:dit,remoteOnly:true,musicComputer:computer(),musicModels:[]};let fail=false;
+ const ui=mountAceMusic({doc,getState:()=>state,readSpec:()=>form(),fetchFn:async()=>{if(fail)throw Error('Worker unavailable');return {ok:true,json:async()=>readyRow()};}});ui.dispose();
+ await ui.check();fail=true;await ui.check();assert.equal(el('aceMusicReadiness').children.filter(n=>n.textContent==='Yes').length,0);
+ assert.match(el('aceMusicMessage').textContent,/unavailable/);
+ state.musicEngine='yue2-comfy';ui.paint();assert.equal(el('aceMusicPanel').hidden,true);ui.dispose();
+});
+
+test('live readiness binds provider RUNNING, selected Pod, worker, connection and async completion',async()=>{
+ const plan=setupPlan({selection:{music:'ace15-xl-sft'},target:'runpod'}),graphFor=()=>prepare(form()).graph;
+ const objects=Object.fromEntries(Object.values(graphFor()).map(n=>[n.class_type,{input:{required:{}}}]));
+ for(const mode of ['ready','EXITED','STARTING','missing','unreachable','stopping','uncertain','wrong-pod','wrong-url','changed-selection','changed-worker','changed-provider']){
+  let state={podId:'pod-a',pod:{status:'RUNNING'},phase:'ready',worker:{connectionReady:true}},connection={workerId:'worker-a',url:'https://pod-a-8787.proxy.runpod.net'},reads=0,verifications=0;
+  if(mode==='stopping')state.operation={type:'stop'};if(mode==='uncertain')state.providerUncertain=true;
+  const evidence={at:1,workerId:'worker-a',installCommit:'accepted-build'};
+  const deps={manager:{snapshot:()=>state},provider:{getPod:async()=>{reads++;if(['missing','unreachable'].includes(mode))throw Error(mode);return {id:'pod-a',status:mode==='EXITED'||mode==='STARTING'?mode:mode==='changed-provider'&&reads>1?'EXITED':'RUNNING',workerUrl:'https://pod-a-8787.proxy.runpod.net'};}},c:{
+   status:()=>connection,verify:async()=>{verifications++;return {podId:mode==='wrong-pod'?'pod-b':'pod-a',workerId:'worker-a',version:'runtime'};},
+   setup:async()=>{if(mode==='changed-selection')state={...state,podId:'pod-b'};if(mode==='changed-worker')connection={...connection,workerId:'worker-b'};return {bundles:[{id:'ace15-xl-sft',state:'ready'}]};},
+   models:async()=>objects,inferenceEvidence:()=>evidence,historicalInferenceEvidence:()=>evidence,
+  }};
+  if(mode==='wrong-url')connection.url='https://pod-b-8787.proxy.runpod.net';
+  const result=await readMusicReadiness(plan,{graphFor},deps),row=result.readiness[0];
+  assert.equal(row.workerConnected,mode==='ready',mode);assert.equal(row.filesVerified,mode==='ready',mode);assert.equal(row.workflowValidated,mode==='ready',mode);assert.equal(row.inferenceValidated,mode==='ready',mode);
+  assert.equal(row.historicalInferenceEvidence,evidence,mode);
+  if(mode==='EXITED'){assert.equal(row.stopped,true);assert.equal(verifications,0,'a reachable old worker must not override EXITED');}
+ }
+});
+
+test('real ACE tagging records 50 steps and BF16, preserves original/tagged checksums and skips identical retags',async()=>{
+ await fs.mkdir(config.paths.appData,{recursive:true});
+ const {Library}=await import('./library.js');const lib=new Library({saveMetadata:async()=>{}}),file='aiplay_metadata_followup.flac';await fs.writeFile(path.join(config.outputDir,file),FLAC);
+ const job={...prepare(form()).job,caption:form().caption,lyrics:'',remote:true,model:'fp16'},h={file,title:'Offline metadata test',seed:20261019};
+ const source=(await fs.readFile(new URL('./index.js',import.meta.url),'utf8')).replaceAll('\r\n','\n');
+ const a=source.indexOf('  try {\n    const meta = isAce'),b=source.indexOf('\n  filedMusicJobs.add',a);assert.ok(a>0&&b>a);
+ const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+ const run=new AsyncFunction('job','h','library','songProvMeta','songCredit','modelName','isAce','config',source.slice(a,b));
+ await run(job,h,lib,async()=>({generator:'ace-step15'}),()=>({}),'ace-step15',true,config);
+ const saved=lib.meta.get(file);assert.equal(saved.tagPending,null);assert.equal(saved.originalSha256,hash(FLAC));assert.match(saved.taggedSha256,/^[a-f0-9]{64}$/);assert.notEqual(saved.originalSha256,saved.taggedSha256);
+ const tags=await lib.readTags(file);assert.equal(tags.steps,'50');assert.equal(tags.model,'bf16');assert.equal(tags.artifact,dit);assert.equal(tags.planner,lm);
+ const tagged=await fs.readFile(path.join(config.outputDir,file));await run(job,h,lib,async()=>({generator:'ace-step15'}),()=>({}),'ace-step15',true,config);
+ assert.equal(hash(await fs.readFile(path.join(config.outputDir,file))),hash(tagged),'identical tagging must not rewrite audio');assert.equal(lib.meta.get(file).originalSha256,hash(FLAC));
+ const recorded={...lib.meta.get(file)};
+ delete lib.meta.get(file).durationSeconds;
+ assert.equal(await lib.durationOf(file),1);
+ assert.equal(hash(await fs.readFile(path.join(config.outputDir,file))),hash(tagged),'duration probing must preserve tagged bytes');
+ assert.deepEqual(await lib.readTags(file),tags,'duration probing must preserve all ACE metadata');
+ assert.equal(lib.meta.get(file).originalSha256,recorded.originalSha256);
+ assert.equal(lib.meta.get(file).taggedSha256,recorded.taggedSha256);
+});
+
+test('duration probing an untagged track is read-only and cannot race the ACE tag pass',async()=>{
+ const {Library}=await import('./library.js');const lib=new Library({saveMetadata:async()=>{}}),file='aiplay_duration_probe.flac';
+ await fs.writeFile(path.join(config.outputDir,file),FLAC);
+ assert.equal(await lib.durationOf(file),1);
+ assert.equal(hash(await fs.readFile(path.join(config.outputDir,file))),hash(FLAC));
+ const tags=await lib.readTags(file);assert.equal(tags.model,'');assert.equal(tags.generator,'');
 });

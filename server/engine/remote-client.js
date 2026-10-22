@@ -428,6 +428,15 @@ export async function createRemoteClient({ dataDir, outputDir, getToken, setToke
         .sort((a, b) => b.finishedAt - a.finishedAt)[0];
       return job ? { at: job.finishedAt, workerId: health.workerId, installCommit: health.installCommit } : null;
     },
+    historicalInferenceEvidence: graph => {
+      const key = workflowEvidenceKey(graph), artifacts = curatedArtifactKey(graph)?.key;
+      if (!artifacts) return null;
+      const job = Object.values(jobs).filter(j => !j.private && j.state === 'completed' && j.outputs?.length
+        && j.workflowEvidence?.artifacts === artifacts && j.workflowEvidence.key === key)
+        .sort((a, b) => b.finishedAt - a.finishedAt)[0];
+      return job ? { at: job.finishedAt, workerId: job.connection.workerId,
+        installCommit: job.workflowEvidence.installCommit, version: job.workflowEvidence.version } : null;
+    },
     status: () => ({ configured: !!connection.url, url: connection.url || "", workerId: connection.workerId || null,
       capabilities: connection.capabilities || null,
       hasToken: !!token, lastError, jobs: Object.values(jobs).map(snapshot).sort((a, b) => b.createdAt - a.createdAt) }),

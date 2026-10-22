@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { isNativeLibraryWav, readNativeWavTags, tagNativeWav } from "./library-wav.js";
 import { songRights } from "./models.js";
+import { hashFile } from './engine/remote-common.js';
 
 const SIDECAR = path.join(config.paths.appData, "library.json");
 // "api_" lists hosted renders made before they were named aiplay_api_…
@@ -115,6 +116,7 @@ export class Library {
     if (isNativeLibraryWav(file)) return tagNativeWav(path.join(config.outputDir, file), meta);
     const metaPath = path.join(config.paths.appData, `tag_${Date.now()}.json`);
     const target = path.join(config.outputDir, file);
+    const originalSha256 = meta.trackChecksums ? this.meta.get(file)?.originalSha256 || await hashFile(target) : null;
     await writeFile(metaPath, JSON.stringify(meta), "utf8");
     try {
       const out = await new Promise((resolve) => {
@@ -134,7 +136,12 @@ export class Library {
         proc.on("exit", () => resolve(so));
         proc.on("error", () => resolve(""));
       });
-      return JSON.parse(out || "{}");
+      const result = JSON.parse(out || "{}");
+      if (meta.trackChecksums && result.ok === true) {
+        result.originalSha256 = originalSha256; result.taggedSha256 = await hashFile(target);
+        this.remember(file, { originalSha256, taggedSha256: result.taggedSha256 });
+      }
+      return result;
     } finally {
       unlink(metaPath).catch(() => {});
     }
@@ -154,6 +161,7 @@ export class Library {
       const proc = spawn(config.python, [
         path.join(path.dirname(fileURLToPath(import.meta.url)), "tag_audio.py"),
         path.join(config.outputDir, file),
+        "--probe",
       ]);
       let so = "";
       proc.stdout.on("data", (d) => (so += d));
@@ -448,6 +456,8 @@ export class Library {
         seed: m.seed ?? 0,
         mixSeed: m.mixSeed,
         steps: m.steps,
+        acePrecision: m.acePrecision ?? null,
+        originalSha256: m.originalSha256 ?? null, taggedSha256: m.taggedSha256 ?? null,
         // What actually produced the track. Stored all along but never surfaced
         // until the song panel existed to show it.
         caption: m.caption,
