@@ -1572,4 +1572,8 @@ node --check server/refmod-run.js || exit 1
 node --check web/h3-refmods.js || exit 1
 node --test server/h3-refmod_test.js server/refmod-stage_test.js server/refmod-art_test.js || exit 1
 node --test server/collab/reference-packs_test.js || exit 1
+# Optional native MOSS-Image: graph contracts, old-runtime refusals and actual API queue forwarding.
+node --check server/moss-image.js || exit 1
+node --check server/moss-status.js || exit 1
+node --test server/moss-image_test.js server/moss-status_test.js server/moss-api_test.js || exit 1
 exit 0

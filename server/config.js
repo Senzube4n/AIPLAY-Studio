@@ -2515,7 +2515,7 @@ export const PREF_PATHS = [
    * MODEL_TO_CAPABILITY — an engine added here without a line in models.js
    * would stamp every render `unknown` and look perfectly fine. Add both, or
    * the hook fails. */
-  ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(v)],
+  ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "moss-image", "checkpoint"].includes(v)],
   ["art", "checkpoint", (v) => v === null || (!!modelName(v) && /\.(safetensors|ckpt)$/i.test(v))],
   /* The Images screen's engine, and a picture with none named (make_image, a
    * music video's stills). The covers' list above, read at call time rather

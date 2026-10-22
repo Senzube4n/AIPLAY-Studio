@@ -97,6 +97,16 @@ test("picked native Qwen companions survive, while ordinary checkpoint LoRAs kee
   assert.equal(cleaned.clipSkip, 2);
 });
 
+test("MOSS form CFG and negative reach the persisted Overnight job and actual dispatcher", async () => {
+  const idea = imageForm("moss-image").idea;
+  assert.equal(idea.cfg, 2); assert.equal(idea.negative, "blur");
+  assert.equal(idea.sampler, "er_sde"); assert.equal(idea.scheduler, "simple");
+  const { request } = await dispatch(cleanMediaItem(idea, "image"));
+  assert.equal(request.body.engine, "moss-image"); assert.equal(request.body.cfg, 2);
+  assert.equal(request.body.negative, "blur"); assert.equal(request.body.sampler, "er_sde");
+  assert.equal(request.body.draft, undefined);
+});
+
 test("Qwen's Fast draft chip reaches every take; off, or on another engine, nothing is sent", async () => {
   const on = cleanMediaItem(imageForm("qwen-image-2.1", "qwen-image-2.1", { draft: true }).idea, "image");
   assert.equal(on.draft, true);

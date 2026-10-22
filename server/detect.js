@@ -233,6 +233,8 @@ export function detect(keys, shapes) {
   if (has(k("head.modulation"))) return { family: "wan2.x", confidence: "certain", companions };
   if (has(k("caption_projection.0.linear.weight"))) return { family: "hidream", confidence: "certain", companions };
   if (has(k("embed_image_indicator.weight"))) return { family: "ideogram4", confidence: "certain", companions };
+  if (has(k("shared_block_modulation.weight")) && has(k("layers.0.proj.ffn_up_gate.weight")))
+    return { family: "moss-image", variant: "MOSS-Image", confidence: "certain", companions };
   if (has(k("txtfusion.projector.weight"))) return { family: "krea2", variant: "Krea 2", confidence: "certain", companions };
   if (has(k("core.pixel_embedder.proj.weight"))) return { family: "pixeldit-t2i", confidence: "certain", companions };
 
@@ -464,7 +466,7 @@ export function loadableAs(probe) {
    * a DiT sitting in models/checkpoints is invisible to it no matter which
    * engine is picked. */
   const ENGINE_FOR = { anima: "Anima", zimage: "Z-Image", "zimage-pixel": "Z-Image",
-                       flux1: "FLUX.1", flux2: "FLUX.2", ideogram4: "Ideogram 4", "qwen-image-2.1": "Qwen Image 2.1" };
+                       flux1: "FLUX.1", flux2: "FLUX.2", ideogram4: "Ideogram 4", "qwen-image-2.1": "Qwen Image 2.1", "moss-image": "MOSS-Image" };
   const engine = ENGINE_FOR[f];
   return {
     engine: engine ? f : null, ok: false,

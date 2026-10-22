@@ -1515,6 +1515,7 @@
              does not (server/ui-kit_test.js holds that). -->
         <span class="pv qwenpv"><span class="qdot" id="imgQwenDot" hidden><i></i></span><select id="imgEngine" class="sel2">
           <option value="qwen-image-2.1" selected data-cover="Qwen Image 2.1">Qwen Image 2.1: generation &amp; editing</option>
+          <option value="moss-image" data-cover="MOSS-Image SFT">MOSS-Image SFT (experimental, text only)</option>
           <option value="flux2" data-cover="FLUX.2 klein: fast, Apache-2.0">FLUX.2 klein: fast, takes refs</option>
           <option value="zimage">Z-Image Turbo: 8 steps, Apache-2.0</option>
           <option value="zimage-base" data-cover="Z-Image base: 25 steps, Apache-2.0">Z-Image base: 25 steps, real negatives</option>
@@ -1601,21 +1602,21 @@
              checkpoint and Z-Image base. Z-Image TURBO is deliberately
              absent — it samples at cfg 1.0, where ComfyUI never evaluates
              the negative branch, so a box here would be a lie. -->
-        <label for="imgCfg" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden>cfg</label>
-        <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden><input id="imgCfg" type="range" min="1" max="15" value="1"><b id="imgCfgV">1</b></span>
+        <label for="imgCfg" data-engineonly="checkpoint zimage-base qwen-image-2.1 moss-image" hidden>cfg</label>
+        <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1 moss-image" hidden><input id="imgCfg" type="range" min="1" max="15" step="0.5" value="1"><b id="imgCfgV">1</b></span>
 
         <!-- SAMPLER AND SCHEDULE, for every engine that samples, set from the
              engine (or, for your own file, from what kind of model it is) each
              time it changes: web/app.js imgSampling. Engines whose graph always
              uses one pair show it locked, so the screen says what renders. -->
-        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden>sampler</label>
-        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden><select id="imgSampler" class="sel2 sm"></select></span>
+        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden>sampler</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden><select id="imgSampler" class="sel2 sm"></select></span>
 
-        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden>schedule</label>
-        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden><select id="imgSched" class="sel2 sm"></select></span>
+        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden>schedule</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1 moss-image" hidden><select id="imgSched" class="sel2 sm"></select></span>
 
-        <label for="imgNeg" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden>avoid</label>
-        <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden><input id="imgNeg" class="sel2"
+        <label for="imgNeg" data-engineonly="checkpoint zimage-base qwen-image-2.1 moss-image" hidden>avoid</label>
+        <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1 moss-image" hidden><input id="imgNeg" class="sel2"
           placeholder="negative prompt: what the picture must not contain"></span>
 
         <!-- ─── The SD-family dials ───

@@ -7,8 +7,11 @@ import base64
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -115,6 +118,111 @@ class PluginBoundary(unittest.TestCase):
     def test_worker_timeout_is_bounded(self):
         with self.assertRaisesRegex(ValueError, "Fake Delay.*timed out"):
             self.render("timeout", timeout=.1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows venv redirector lifetime")
+    def test_timeout_reaps_real_worker_tree_before_removing_log_files(self):
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle.restype = wintypes.BOOL
+        parent_pid, child_pid = self.root / "parent.pid", self.root / "child.pid"
+        child = ("import os,time;from pathlib import Path;"
+                 f"Path({str(child_pid)!r}).write_text(str(os.getpid()));time.sleep(30)")
+        self.worker.write_text("import os,subprocess,sys,time;from pathlib import Path\n"
+                               f"Path({str(parent_pid)!r}).write_text(str(os.getpid()))\n"
+                               f"subprocess.Popen([sys.executable,'-c',{child!r}])\n"
+                               "time.sleep(30)\n", encoding="utf-8")
+        handles, directories = [], []
+        ready, stopping = threading.Event(), threading.Event()
+
+        def observe():
+            # Hold handles while both real interpreters are alive. Checking
+            # their signaled state later cannot mistake PID reuse for exit.
+            for file in (parent_pid, child_pid):
+                while not stopping.is_set():
+                    try:
+                        pid = int(file.read_text())
+                        handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+                        if handle and kernel.WaitForSingleObject(handle, 0) == 258:
+                            handles.append((pid, handle))
+                            break
+                        if handle:
+                            kernel.CloseHandle(handle)
+                    except (OSError, ValueError):
+                        pass
+                    stopping.wait(.005)
+                else:
+                    return
+            ready.set()
+
+        original = tempfile.TemporaryDirectory
+        def temporary(*args, **kwargs):
+            directory = original(*args, **kwargs)
+            directories.append(Path(directory.name))
+            return directory
+        watcher = threading.Thread(target=observe, daemon=True)
+        watcher.start()
+        started = time.monotonic()
+        try:
+            with patch.object(plugin_chain.tempfile, "TemporaryDirectory", temporary):
+                with self.assertRaisesRegex(ValueError, "Fake Delay.*timed out"):
+                    self.render(timeout=1)
+            self.assertTrue(ready.wait(.5), "both real interpreters must be observed before timeout")
+            self.assertEqual(len(handles), 2)
+            for pid, handle in handles:
+                self.assertEqual(kernel.WaitForSingleObject(handle, 0), 0,
+                                 f"owned interpreter {pid} still holds the worker's log handles")
+            self.assertTrue(directories and all(not file.exists() for file in directories))
+            self.assertLess(time.monotonic() - started, 6)
+        finally:
+            stopping.set(); watcher.join(1)
+            # A regression must not leave the fixture's sleepers behind.
+            # These handles belong only to interpreters this test observed.
+            for pid, handle in handles:
+                if kernel.WaitForSingleObject(handle, 0) == 258:
+                    subprocess.run([os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "taskkill.exe"),
+                                    "/PID", str(pid), "/T", "/F"], shell=False,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                    kernel.WaitForSingleObject(handle, 5000)
+                kernel.CloseHandle(handle)
+            for directory in directories:
+                if directory.exists():
+                    import shutil
+                    shutil.rmtree(directory)
+
+    @unittest.skipUnless(os.name == "nt", "Windows tree-stop contract")
+    def test_failed_tree_stop_is_not_reported_as_success(self):
+        from unittest.mock import Mock
+        worker = Mock(pid=12345)
+        worker.poll.return_value = None
+        failed = subprocess.CalledProcessError(1, "taskkill")
+        with patch.object(plugin_chain.subprocess, "run", side_effect=failed) as stop:
+            with self.assertRaisesRegex(OSError, "process tree could not be stopped"):
+                plugin_chain._stop_worker(worker)
+        args, options = stop.call_args
+        self.assertEqual(args[0], [os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "taskkill.exe"),
+                                   "/PID", "12345", "/T", "/F"])
+        self.assertIs(options["shell"], False)
+        self.assertIs(options["check"], True)
+        self.assertEqual(options["timeout"], 5)
+        worker.kill.assert_called_once_with()
+        worker.wait.assert_called_once_with(timeout=5)
+
+    def test_timeout_keeps_named_error_when_teardown_fails(self):
+        from unittest.mock import Mock
+        worker = Mock()
+        worker.wait.side_effect = subprocess.TimeoutExpired("fake-worker", .1)
+        for failure in (OSError("tree stop failed"), subprocess.TimeoutExpired("worker-reap", 5)):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch.object(plugin_chain.subprocess, "Popen", return_value=worker), \
+                    patch.object(plugin_chain, "_stop_worker", side_effect=failure):
+                with self.assertRaisesRegex(ValueError, "Fake Delay.*timed out.*could not be stopped"):
+                    self.render(timeout=.1)
 
     def test_rejects_wrong_shape_type_nonfinite_and_oversized_output(self):
         for case in ("shape", "dtype", "nan", "oversize", "frames", "badfile"):

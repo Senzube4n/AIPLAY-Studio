@@ -22,6 +22,7 @@ WORKER = Path(__file__).with_name("plugin_worker.py")
 MAX_STATE_CHARS = ((4 * 1024 * 1024 + 2) // 3) * 4
 MAX_LOG_BYTES = 64 * 1024
 MAX_FRAMES = 48000 * 60 * 60
+STOP_TIMEOUT = 5
 
 
 def _log_tail(file):
@@ -30,6 +31,30 @@ def _log_tail(file):
         size = handle.tell()
         handle.seek(max(0, size - MAX_LOG_BYTES))
         return handle.read(MAX_LOG_BYTES).decode("utf-8", errors="replace")
+
+
+def _stop_worker(worker):
+    """Stop this invocation's tree before releasing its inherited log handles."""
+    failure = None
+    try:
+        if os.name == "nt":
+            # A Windows venv python.exe can be a redirector with a real Python
+            # child. Keep it alive while taskkill identifies its owned tree.
+            killer = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"),
+                                  "System32", "taskkill.exe")
+            subprocess.run([killer, "/PID", str(worker.pid), "/T", "/F"],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, shell=False, check=True,
+                           timeout=STOP_TIMEOUT,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError) as exc:
+        failure = exc
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+        worker.wait(timeout=STOP_TIMEOUT)
+    if failure is not None:
+        raise OSError("worker process tree could not be stopped") from failure
 
 
 def run_vst3(audio, insert, ctx, *, timeout=None):
@@ -78,10 +103,20 @@ def run_vst3(audio, insert, ctx, *, timeout=None):
         stdout_file, stderr_file = root / "stdout.txt", root / "stderr.txt"
         try:
             with open(stdout_file, "wb") as stdout, open(stderr_file, "wb") as stderr:
-                result = subprocess.run([python, str(WORKER), "--request", str(request_file)],
-                                        stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                                        shell=False, timeout=limit,
-                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                result = subprocess.Popen([python, str(WORKER), "--request", str(request_file)],
+                                          stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                          shell=False,
+                                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    result.wait(timeout=limit)
+                except BaseException as failure:
+                    try:
+                        _stop_worker(result)
+                    except (OSError, subprocess.SubprocessError) as exc:
+                        reason = (f"worker timed out after {limit:g} seconds"
+                                  if isinstance(failure, subprocess.TimeoutExpired) else "worker failed")
+                        raise ValueError(prefix + ": " + reason + "; worker could not be stopped: " + str(exc)) from exc
+                    raise
         except subprocess.TimeoutExpired as exc:
             raise ValueError(prefix + f": worker timed out after {limit:g} seconds") from exc
         except OSError as exc:

@@ -833,7 +833,8 @@ export function recommendFor({ capabilities, machine, disk, music = null } = {})
   }
 
   /* ── images: fit first, then the least restrictive licence ───────────── */
-  const images = IMAGE_IDS.map(withFit).filter(Boolean);
+  // Optional MOSS remains an explicit experiment, including recommendation cards.
+  const images = IMAGE_IDS.filter(id => id !== "moss-image").map(withFit).filter(Boolean);
   const usableImages = images.filter((i) => i.fit.state !== "wont-run").sort(rank);
   if (usableImages.length) {
     const best = usableImages[0];
@@ -981,7 +982,8 @@ function pictureDefault({ saved = null, kept = false, capabilities = [], machine
     return { key, value: saved, chosenBy: "you", kept: !!kept, ready, label,
       why: `${saidBy(kept)} ${label} for pictures${ready ? "." : ", and it is not on this PC. The Models screen has it; Studio does not switch for you."}` };
   }
-  const rows = pictureRows(capabilities, machine);
+  // MOSS is an explicit experimental choice until a local comparison is complete.
+  const rows = pictureRows(capabilities, machine).filter(r => r.engine !== "moss-image");
   /* Qwen is Studio's main image model when its files are present. The generic
    * recommendation ranking prefers Apache-2.0 FLUX.2 even beside a ready Qwen,
    * which silently changed the Pictures/MCP default despite the selected Qwen

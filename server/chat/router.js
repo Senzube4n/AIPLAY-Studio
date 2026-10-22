@@ -173,6 +173,7 @@ export const ROUTABLE = {
   collab_drop: "destroys",
   collab_plan: null,
   qwen_image_status: null,
+  moss_image_status: null,
   image_capabilities: null,
   image_document_preview: null,
   image_ai_edit_create: "gpu",

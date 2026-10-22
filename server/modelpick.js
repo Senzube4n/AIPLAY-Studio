@@ -29,6 +29,7 @@ import { probeModel, loadableAs, presetFor } from "./detect.js";
 import { readPart, partFits } from "./partfit.js";
 import { ZIMAGE_PRESET, KREA2_PRESET, ANIMA_PRESET } from "./workflow.js";
 import { QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { MOSS_IMAGE_PRESET, MOSS_IMAGE_FILES } from "./moss-image.js";
 
 /**
  * What each family wants when a file of it is picked, so the screen sets its
@@ -40,6 +41,7 @@ import { QWEN_IMAGE_PRESET } from "./qwen-image.js";
  */
 const SIDES = (n) => [[n, n], [Math.round(n * 1.25 / 16) * 16, Math.round(n * 0.8 / 16) * 16], [Math.round(n * 0.8 / 16) * 16, Math.round(n * 1.25 / 16) * 16]];
 const FAMILY_PRESET = {
+  "moss-image": { steps: MOSS_IMAGE_PRESET.steps, cfg: MOSS_IMAGE_PRESET.cfg, native: MOSS_IMAGE_PRESET.size, clipSkip: false, sizes: SIDES(MOSS_IMAGE_PRESET.size) },
   zimage: { steps: ZIMAGE_PRESET.turbo.steps, cfg: ZIMAGE_PRESET.turbo.cfg, native: 1024, clipSkip: false, sizes: SIDES(1024) },
   krea2: { steps: KREA2_PRESET.steps, cfg: KREA2_PRESET.cfg, native: 1024, clipSkip: false, sizes: SIDES(1024) },
   anima: { steps: ANIMA_PRESET.steps, cfg: ANIMA_PRESET.cfg, native: ANIMA_PRESET.size, clipSkip: false, sizes: SIDES(ANIMA_PRESET.size) },
@@ -60,6 +62,7 @@ export const PICK_FOLDERS = ["checkpoints", "diffusion_models", "unet"];
  * for it. Anything not here is listed and refused BY NAME rather than hidden.
  */
 export const DIT_ENGINE = {
+  "moss-image": "moss-image",
   anima: "anima",
   zimage: "zimage",
   flux2: "flux2",
@@ -124,6 +127,7 @@ export function familyFromName(name) {
   const n = modelLeaf(name).toLowerCase();
   /* This labels a GGUF for an explicit refusal below, not permission to load
    * it. The Qwen 2.1 native graph has no verified GGUF path. */
+  if (/moss[-_ ]?image/.test(n)) return "moss-image";
   if (/qwen[-_ ]?image[-_ ]?2[._ -]?1(?:[^0-9]|$)/.test(n)) return "qwen-image-2.1";
   if (/qwen[-_ ]?image/.test(n)) return "qwen-image";
   if (/z[-_ ]?image/.test(n)) return "zimage";
@@ -146,11 +150,17 @@ export function classify(row, probe) {
      * when a model is picked instead of handing it another engine's defaults. */
     defaults: presetFor(probe) || FAMILY_PRESET[family] || null,
   };
+  if ((probe?.gguf || GGUF_RE.test(row.name)) && family === "moss-image") {
+    return { ...base, engine: null, dit: null, ok: false, loadable: false, gguf: true, why: "MOSS-Image currently needs its native safetensors files; GGUF has not been validated." };
+  }
   if ((probe?.gguf || GGUF_RE.test(row.name)) && /^qwen-image(?:-2\.1)?$/.test(family || "")) {
     return { ...base, engine: null, dit: null, ok: false, loadable: false, gguf: true,
       why: "Qwen GGUF loading is not supported by this Studio's Qwen Image 2.1 graph. Use the native INT8 safetensors release with its matching encoder and VAE; a GGUF filename does not establish compatibility." };
   }
   if (isDitFolder(row.folder)) {
+    if (family === "moss-image" && modelLeaf(row.name) !== MOSS_IMAGE_FILES.dit) {
+      return { ...base, engine: null, dit: null, ok: false, loadable: false, why: "This experimental MOSS preset supports only the verified SFT INT8 bundle; this variant has not been validated." };
+    }
     const engine = DIT_ENGINE[family];
     if (engine) {
       return { ...base, engine, dit: row.name, ok: true, loadable: true, gguf: !!probe?.gguf,

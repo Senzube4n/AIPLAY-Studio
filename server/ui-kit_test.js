@@ -579,3 +579,107 @@ test("the rail has its own width and a grip to set it", () => {
   assert.match(APP, /\$\("diskText"\)\.textContent = `\$\{size\(d\.modelBytes\)\} models`;/);
   assert.match(APP, /\$\("cpuText"\)\.textContent = pct == null \? `\$\{c\.cores\} cores` : `\$\{pct\}% CPU`;/);
 });
+
+/* Exercise the real engine-change -> reference-paint -> shape sequence. A
+ * correct preset alone did not protect the visible form: the last painter
+ * used to overwrite MOSS's CFG ceiling and hide its negative prompt. */
+function imageControlsFixture() {
+  const nodes = new Map();
+  const $ = id => {
+    if (!nodes.has(id)) nodes.set(id, { value: "", hidden: false, disabled: false, dataset: {}, options: [],
+      parentElement: { hidden: false, previousElementSibling: { hidden: false } },
+      insertAdjacentHTML(_where, html) { this.options.push({ value: /<option>(.*?)<\/option>/.exec(html)[1] }); },
+    });
+    return nodes.get(id);
+  };
+  const rows = [];
+  const labels = new Map();
+  for (const id of ["imgCfg", "imgNeg"]) {
+    const label = new RegExp(`<label\\b([^>]*for="${id}"[^>]*)>`).exec(HTML);
+    const field = new RegExp(`<span\\b([^>]*data-engineonly="[^"]+"[^>]*)><input id="${id}"`).exec(HTML);
+    assert.ok(label && field, `${id} controls use the real Pictures markup`);
+    const makeRow = attrs => ({ hidden: /\bhidden\b/.test(attrs), dataset: { engineonly: /data-engineonly="([^"]+)"/.exec(attrs)[1] } });
+    const labelNode = makeRow(label[1]), fieldNode = makeRow(field[1]);
+    labels.set(id, labelNode); $(id).parentElement = fieldNode;
+    fieldNode.previousElementSibling = labelNode; rows.push(labelNode, fieldNode);
+  }
+  $("imgCkpt").value = "ordinary.safetensors";
+  $("imgCkpt").options = [{ value: "ordinary.safetensors" }, { value: "moss_image_sft_int8_convrot.safetensors" }];
+  $("imgDitKind").value = "auto";
+  const refs = [];
+  const context = vm.createContext({ $, document: {
+    querySelectorAll: selector => { assert.equal(selector, "[data-engineonly]"); return rows; },
+    querySelector: selector => labels.get(/label\[for="([^"]+)"\]/.exec(selector)[1]),
+  }, imgCkptShelf: [
+    { name: "ordinary.safetensors", engine: "checkpoint", folder: "checkpoints" },
+    { name: "moss_image_sft_int8_convrot.safetensors", engine: "moss-image", family: "moss-image", folder: "diffusion_models" },
+  ], imgRefs: refs, IMG_REF_MAX: 10, picDrops: {}, esc: String, URLSearchParams,
+    imgQwenRequestedKey: "", imgQwenCheckSoon() {},
+    imgRefCandidates: () => [], imgRefHoverHide() {}, imgRefTagNote() {},
+    iedStatus() {}, iedPreviewSchedule() {}, imgQwenPaint() {}, imgDraftPaint() {}, imgQueueGate() {},
+    imgQwenCheck() { context.imgQwenShape(); }, imgLoadSampling: async () => {},
+    imgLoadPersonas() {}, imgLoadTemplates() {},
+  });
+  const fn = name => {
+    const match = new RegExp(`^(?:export )?(?:async )?function ${name}\\([^]*?^}`, "m").exec(APP);
+    assert.ok(match, `exercise the real ${name}`); return match[0].replace(/^export /, "");
+  };
+  const enginesStart = APP.indexOf("const IMG_ENGINES = {");
+  const enginesEnd = APP.indexOf("\n};", enginesStart) + 3;
+  const changeStart = APP.indexOf('$("imgEngine").onchange = async () => {');
+  const changeEnd = APP.indexOf("\n};", changeStart) + 3;
+  const input = /^\$\("imgCfg"\)\.oninput = .*$/m.exec(APP)?.[0];
+  assert.ok(enginesStart > 0 && enginesEnd > enginesStart && changeStart > 0 && changeEnd > changeStart && input);
+  vm.runInContext([APP.slice(enginesStart, enginesEnd), fn("imgEffectiveEngine"), fn("ckptSampling"),
+    fn("imgQwenShape"), fn("imgQwenQuery"), fn("imgRefsPaint"), fn("imgSampling"), APP.slice(changeStart, changeEnd), input].join("\n"), context);
+  return { $, labels, context, refs,
+    async engine(value) { $("imgEngine").value = value; await $("imgEngine").onchange(); },
+    cfg(value) { $("imgCfg").value = String(value); $("imgCfg").oninput(); },
+    negativeVisible() { return !$("imgNeg").parentElement.hidden && !labels.get("imgNeg").hidden; },
+  };
+}
+
+test("Pictures engine switches and repeated reference paints retain MOSS's real controls", async () => {
+  const form = imageControlsFixture(), { $, context } = form;
+  await form.engine("moss-image");
+  assert.equal(Number($("imgCfg").max), 10);
+  assert.equal(Number($("imgCfg").value), 2.5); assert.equal(Number($("imgSteps").value), 25);
+  assert.equal(form.negativeVisible(), true, "MOSS evaluates a negative above CFG 1");
+  assert.equal($("imgSampler").value, "er_sde"); assert.equal($("imgSched").value, "simple");
+  assert.equal($("imgSampler").disabled, true); assert.equal($("imgRefWrap").hidden, true);
+  assert.equal($("imgAdvToggle").parentElement.hidden, true);
+  $("imgNeg").value = "blur";
+  form.cfg(1);
+  assert.equal(form.negativeVisible(), false); assert.equal($("imgNeg").value, "", "no invisible negative reaches a CFG-1 request");
+  form.cfg(2.5);
+  assert.equal(form.negativeVisible(), true); assert.equal(Number($("imgCfg").max), 10);
+  context.imgRefsPaint(); context.imgRefsPaint();
+  assert.equal(form.negativeVisible(), true); assert.equal(Number($("imgCfg").max), 10, "later paints must not undo the engine choice");
+
+  await form.engine("qwen-image-2.1");
+  assert.equal(Number($("imgCfg").max), 10); assert.equal(form.negativeVisible(), false);
+  form.cfg(2); assert.equal(form.negativeVisible(), true);
+  await form.engine("checkpoint");
+  assert.equal(Number($("imgCfg").max), 15); assert.equal(form.negativeVisible(), true);
+  assert.equal($("imgAdvToggle").parentElement.hidden, false);
+  assert.equal($("imgSampler").disabled, false); assert.equal($("imgSched").disabled, false);
+  $("imgNeg").value = "blur";
+  await form.engine("flux2");
+  assert.equal(Number($("imgCfg").max), 15); assert.equal(form.negativeVisible(), false);
+  assert.equal($("imgNeg").value, "");
+  await form.engine("moss-image");
+  assert.equal(Number($("imgCfg").max), 10); assert.equal(form.negativeVisible(), true);
+});
+
+test("Pictures uses effective MOSS controls when its canonical transformer is picked", async () => {
+  const form = imageControlsFixture(), { $, context } = form;
+  $("imgCkpt").value = "moss_image_sft_int8_convrot.safetensors";
+  await form.engine("checkpoint");
+  form.cfg(2.5); context.imgRefsPaint();
+  assert.equal($("imgAdvToggle").parentElement.hidden, true); assert.equal($("imgAdv").hidden, true);
+  assert.equal($("imgSampler").value, "er_sde"); assert.equal($("imgSched").value, "simple");
+  assert.equal($("imgSampler").disabled, true); assert.equal($("imgSched").disabled, true);
+  assert.equal(Number($("imgCfg").max), 10); assert.equal(form.negativeVisible(), true);
+  form.cfg(1); context.imgRefsPaint();
+  assert.equal(Number($("imgCfg").max), 10); assert.equal(form.negativeVisible(), false);
+});

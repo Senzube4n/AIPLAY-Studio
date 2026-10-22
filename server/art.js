@@ -29,6 +29,8 @@ import path from "node:path";
 import { config, savedCardVendor } from "./config.js";
 import { qwenImageGraph, qwenImageSettings, QWEN_IMAGE_PRESET, QWEN_IMAGE_FILES } from "./qwen-image.js";
 import { qwenImageStatus } from "./qwen-status.js";
+import { mossImageGraph, mossImageSettings, MOSS_IMAGE_PRESET } from "./moss-image.js";
+import { mossImageStatus } from "./moss-status.js";
 import { resolvePick } from "./modelpick.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph, h3SparseFor, h3BlockCacheFor } from "./workflow.js";
 /* An engine failure as a sentence, the raw text behind Details (the Video screen's). */
@@ -589,7 +591,7 @@ const IDEO_MAX_TRIES = 3;
  * Exported so scripts/test_workflow.mjs can pin the property that matters: the
  * deadline must cover the largest job the route accepts.
  */
-const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, checkpoint: 28, "qwen-image-2.1": QWEN_IMAGE_PRESET.steps };
+const IMAGE_DEFAULT_STEPS = { "moss-image": MOSS_IMAGE_PRESET.steps, flux2: 4, zimage: 8, "zimage-base": 25, checkpoint: 28, "qwen-image-2.1": QWEN_IMAGE_PRESET.steps };
 /* ⚠ IDEOGRAM'S STEP COUNT IS NOT `steps` — it comes from its PRESET.
  *
  * ideogramGraph reads `quality` and puts 20, 48 or 12 into its own scheduler;
@@ -637,6 +639,11 @@ export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, he
     return S.perMegapixel * mp * Math.max(1, count) + refImages.length * S.perReference
       + (warmSame ? 0 : previous ? S.notWarm : S.cold);
   }
+  if (engine === "moss-image") {
+    // Scheduling allowance only, not a measured speed comparison.
+    const mp = ((width || 1024) * (height || 1024)) / 1048576;
+    return 120 + 4 * (steps || MOSS_IMAGE_PRESET.steps) * Math.max(1, count) * mp;
+  }
   if (engine === "qwen-image-2.1") {
     // A provisional scheduling estimate, not a measured performance claim.
     // References add vision/latent processing, and cfg > 1 adds a second pass.
@@ -667,7 +674,7 @@ export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, he
   return LOAD + PER_PASS_MP * n * slots * cfgPasses * mp;
 }
 export function imageDeadlineMs(job = {}, context = {}) {
-  if (job.engine === "qwen-image-2.1") return Math.max(1_800_000, (imageCostSeconds(job, context) * 6 + 120) * 1000);
+  if (job.engine === "qwen-image-2.1" || job.engine === "moss-image") return Math.max(1_800_000, (imageCostSeconds(job, context) * 6 + 120) * 1000);
   return Math.max(180_000, (imageCostSeconds(job, context) * 6 + 120) * 1000);
 }
 
@@ -818,11 +825,12 @@ export class ArtRunner extends EventEmitter {
    * timed-lyrics interpreters when given. Tests pass a fake python (a Node
    * script) through it; nothing else does.
    */
-  constructor(comfy, jobs, { qwenStatus = qwenImageStatus, spawnPython = null } = {}) {
+  constructor(comfy, jobs, { qwenStatus = qwenImageStatus, mossStatus = mossImageStatus, spawnPython = null } = {}) {
     super();
     this.comfy = comfy;
     this.jobs = jobs;
     this.qwenStatus = qwenStatus;
+    this.mossStatus = mossStatus;
     this.spawnPython = typeof spawnPython === "function" ? spawnPython : null;
     this.queue = [];
     this.current = null;
@@ -2104,7 +2112,9 @@ export class ArtRunner extends EventEmitter {
      * an entire batch's art to one bad JSON file would be a poor trade. The
      * reason is logged where it will be read. */
     let graph = null;
+    const pickedEngine = job.engine || (standalone ? config.image.engine : config.art.engine);
     const customCover = job.collabImageBase ? null : assignedTo("cover");
+    if (pickedEngine === "moss-image" && customCover) throw new Error("MOSS-Image needs its native workflow. Unassign the custom Cover workflow in Settings first.");
     if (customCover) {
       try {
         graph = await buildCustom(customCover, {
@@ -2153,7 +2163,18 @@ export class ArtRunner extends EventEmitter {
      * the user's own transformer standing in for the catalogue's. The ledger
      * reads this, so "my own model" must not be filed as the stock one. */
     job._paintedWith = engine === "checkpoint" ? (ckpt || null) : (ownDit || null);
-    if (!graph && engine === "qwen-image-2.1") {
+    if (!graph && engine === "moss-image") {
+      const options = { ...job, prompt, seed: job.seed, prefix: PREFIX, thumbSize: config.art.thumbSize,
+        dit: ownDit || undefined, encoder: ownEncoder || undefined, vae: ownVae || undefined };
+      const readiness = await this.mossStatus({ options });
+      if (!readiness.ready) { job.preflightFailed = true; throw new Error("MOSS-Image is unavailable: " + readiness.error); }
+      graph = mossImageGraph(options);
+      job._paintedWith = graph[1].inputs.unet_name;
+      job._imageOptions = { ...mossImageSettings(graph), count: graph[7].inputs.batch_size,
+        dit: graph[1].inputs.unet_name, encoder: graph[2].inputs.clip_name, vae: graph[3].inputs.vae_name,
+        requestedWidth: graph[7].inputs.width, requestedHeight: graph[7].inputs.height,
+        refImages: [], transparent: false, sizeSource: "requested" };
+    } else if (!graph && engine === "qwen-image-2.1") {
       if (job.collabImageBase) {
         if (!Array.isArray(job.collabRefHashes) || job.collabRefHashes.length !== (job.refImages || []).length) {
           throw new Error("A peer image job has no complete staged reference fingerprint.");

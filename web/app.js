@@ -754,7 +754,7 @@ function paintMusicModelSelect(sel) {
  * screen. A current pick whose files went missing shows "Find" beside it.
  *
  * `var`, not `const`: musicEnginePaint() calls the painter from early in boot. */
-var PRESET_IMAGE_CAP = { "qwen-image-2.1": "qwen-image-2.1", flux2: "coverArt", zimage: "imageZImage", "zimage-base": "imageZImageBase",
+var PRESET_IMAGE_CAP = { "moss-image": "moss-image", "qwen-image-2.1": "qwen-image-2.1", flux2: "coverArt", zimage: "imageZImage", "zimage-base": "imageZImageBase",
   anima: "imageAnima", krea2: "imageKrea2", ideogram4: "imageIdeogram" };
 var PRESET_VIDEO_CAP = { ltx: "videoLtx", h3: "video", fasth3: "videoFastH3" };
 /* What the rows read that /api/models does not carry: the covers pick, the
@@ -18047,7 +18047,9 @@ function imgQueueGate() {
     && (imgQwenChecking || imgQwenStatus?.ready !== true || imgQwenStatusKey !== imgQwenQuery().toString()));
 }
 function imgQwenShape() {
-  const qwen = imgEffectiveEngine() === "qwen-image-2.1";
+  const effective = imgEffectiveEngine();
+  const qwen = effective === "qwen-image-2.1";
+  const moss = effective === "moss-image";
   $("imgQwenOptions").hidden = !qwen;
   if (!qwen) imgQwenPaint("off");
   if (qwen) {
@@ -18062,12 +18064,13 @@ function imgQwenShape() {
     if (!negative) $("imgNeg").value = "";
   } else {
     for (const id of ["imgSize", "imgW", "imgH"]) $(id).disabled = false;
-    $("imgCfg").max = 15;
-    const negative = ["checkpoint", "zimage-base"].includes($("imgEngine").value);
+    $("imgCfg").max = moss ? 10 : 15;
+    const negative = moss ? Number($("imgCfg").value) > 1 : ["checkpoint", "zimage-base"].includes($("imgEngine").value);
     $("imgNeg").parentElement.hidden = !negative;
     document.querySelector('label[for="imgNeg"]').hidden = !negative;
+    if (moss && !negative) $("imgNeg").value = "";
   }
-  const advanced = $("imgEngine").value === "checkpoint" && !qwen;
+  const advanced = $("imgEngine").value === "checkpoint" && !qwen && !moss;
   $("imgAdvToggle").parentElement.hidden = !advanced;
   $("imgAdvToggle").parentElement.previousElementSibling.hidden = !advanced;
   if (!advanced) $("imgAdv").hidden = true;
@@ -18699,6 +18702,8 @@ $("imgRefWrap").addEventListener("click", (e) => {
  * this flag against ZIMAGE_PRESET.cfgs in workflow.js — the browser cannot
  * import a server module, so this copy is the one that could drift. */
 const IMG_ENGINES = {
+  "moss-image": { steps: 25, cfg: 2.5, negative: true, maxSteps: 50, sampling: { sampler: "er_sde", scheduler: "simple", fixed: true },
+    note: "MOSS-Image SFT (experimental): text only, 25 steps at CFG 2.5; use Qwen for reference edits." },
   "qwen-image-2.1": {
     steps: 25, cfg: 1, negative: true, maxSteps: 50, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
     note: "Qwen Image 2.1 · native INT8 · generation and editing with up to 10 references. Default: 25 steps, CFG 1, Euler / simple. Optional transparent PNG output. A negative prompt is available above CFG 1.",
@@ -18768,7 +18773,8 @@ function imgApplyArch() {
   $("imgStepsV").textContent = d.steps;
   $("imgCfg").value = d.cfg;
   $("imgCfgV").textContent = d.cfg;
-  if (ck?.engine === "qwen-image-2.1") $("imgSteps").max = IMG_ENGINES["qwen-image-2.1"].maxSteps;
+  if (["qwen-image-2.1", "moss-image"].includes(ck?.engine)) $("imgSteps").max = IMG_ENGINES[ck.engine].maxSteps;
+  $("imgCfg").max = ck?.engine === "moss-image" ? 10 : 15;
   const cur = $("imgSize").value;
   $("imgSize").innerHTML = d.sizes.map(([w, h]) =>
     `<option value="${w}x${h}"${w === d.native && h === d.native ? " selected" : ""}>${w} × ${h}${w === h ? " · square" : w > h ? " · landscape" : " · portrait"}</option>`).join("")
@@ -18793,6 +18799,7 @@ $("imgCkpt").addEventListener("change", imgApplyArch);
 let imgParts = null;           // { encoders, vaes } from /api/modelparts
 
 const DIT_KINDS = [
+  ["moss-image", "MOSS-Image"],
   ["qwen-image-2.1", "Qwen Image 2.1"],
   ["zimage", "Z-Image"], ["anima", "Anima"], ["flux2", "FLUX.2"], ["krea2", "Krea 2"],
 ];
@@ -18839,7 +18846,8 @@ $("imgCkpt").addEventListener("change", imgPartsShape);
 $("imgCkpt").addEventListener("change", imgRefsPaint);
 $("imgDitKind").addEventListener("change", () => {
   const spec = IMG_ENGINES[imgEffectiveEngine()];
-  if (imgEffectiveEngine() === "qwen-image-2.1") {
+  $("imgCfg").max = imgEffectiveEngine() === "moss-image" ? 10 : 15;
+  if (["qwen-image-2.1", "moss-image"].includes(imgEffectiveEngine())) {
     $("imgSteps").value = spec.steps; $("imgStepsV").textContent = spec.steps;
     $("imgCfg").value = spec.cfg; $("imgCfgV").textContent = spec.cfg;
   }
@@ -18861,6 +18869,7 @@ let imgLoraShelf = [];      // what the folder holds, judged against the checkpo
 export function ckptSampling(ck, fallbackName = "") {
   const name = String(ck?.name || fallbackName || "").toLowerCase();
   const kind = `${ck?.family || ""} ${ck?.variant || ""}`.toLowerCase();
+  if (/moss[- ]image/.test(kind)) return { sampler: "er_sde", scheduler: "simple", why: "MOSS-Image model" };
   if (/qwen[- ]image[ -]2\.1/.test(kind)) return { sampler: "euler", scheduler: "simple", why: "Qwen Image 2.1 model" };
   if (/\banima\b/.test(kind) || /anima(?!gine|l|te|tion|ted)/.test(name)) return { sampler: "er_sde", scheduler: "simple", why: "Anima model" };
   if (/z-image|lumina|zimage/.test(`${kind} ${name}`)) return { sampler: "res_multistep", scheduler: "simple", why: "Z-Image model" };
@@ -18882,7 +18891,7 @@ async function imgSampling() {
     const sel = $(id);
     if (![...sel.options].some((o) => o.value === v)) sel.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
     sel.value = v;
-    sel.disabled = !!spec?.fixed && (eng !== "checkpoint" || effective === "qwen-image-2.1");
+    sel.disabled = !!spec?.fixed && (eng !== "checkpoint" || ["qwen-image-2.1", "moss-image"].includes(effective));
     sel.title = sel.disabled ? `${IMG_ENGINES[eng] ? eng : "This engine"} always renders with ${want.sampler} / ${want.scheduler}` : (want.why ? `Set for this ${want.why}; pick another if you like` : "");
   }
 }
@@ -19099,7 +19108,7 @@ $("imgSize").onchange = () => {
  * handler below also runs once at load, and a window on page load for a model
  * nobody chose would be noise. Anima and checkpoints run on files the person
  * names, so they are left to the Create check. */
-const IMG_CAP = { flux2: "coverArt", ideogram4: "imageIdeogram", zimage: "imageZImage", "zimage-base": "imageZImageBase", krea2: "imageKrea2" };
+const IMG_CAP = { "moss-image": "moss-image", flux2: "coverArt", ideogram4: "imageIdeogram", zimage: "imageZImage", "zimage-base": "imageZImageBase", krea2: "imageKrea2" };
 $("imgEngine").addEventListener("change", async (e) => {
   if (!e.isTrusted) return;
   const id = IMG_CAP[$("imgEngine").value];
@@ -19132,6 +19141,7 @@ $("imgEngine").onchange = async () => {
    * either refused a legal ask or offered one the server would silently clamp.
    * Kept in step with the clamp in /api/image; mcp-image_test.js diffs them. */
   $("imgSteps").max = spec?.maxSteps || 30;
+  $("imgCfg").max = eng === "moss-image" ? 10 : 15;
   if (spec?.steps) {
     $("imgSteps").value = spec.steps;
     $("imgStepsV").textContent = spec.steps;
@@ -19317,8 +19327,9 @@ $("imgGo").onclick = async () => {
           ...(effective === "checkpoint" && Number($("imgClipSkip").value) > 1 ? { clipSkip: Number($("imgClipSkip").value) } : {}),
           ...($("imgSampler").value ? { sampler: $("imgSampler").value } : {}),
           ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
-          ...(effective !== "qwen-image-2.1" && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
+          ...(!["qwen-image-2.1", "moss-image"].includes(effective) && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
         } : {}),
+        ...(effective === "moss-image" ? { cfg: Number($("imgCfg").value) || 2.5, negative: $("imgNeg").value.trim(), sampler: "er_sde", scheduler: "simple" } : {}),
         ...(effective === "qwen-image-2.1" ? {
           refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
           cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",
@@ -21228,8 +21239,9 @@ function ovImageIdea(prompt) {
       ...(effective === "checkpoint" && Number($("imgClipSkip").value) > 1 ? { clipSkip: Number($("imgClipSkip").value) } : {}),
       ...($("imgSampler").value ? { sampler: $("imgSampler").value } : {}),
       ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
-      ...(effective !== "qwen-image-2.1" && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
+      ...(!["qwen-image-2.1", "moss-image"].includes(effective) && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
     } : {}),
+    ...(effective === "moss-image" ? { cfg: Number($("imgCfg").value) || 2.5, negative: $("imgNeg").value.trim(), sampler: "er_sde", scheduler: "simple" } : {}),
     ...(effective === "qwen-image-2.1" ? {
       refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
       cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",

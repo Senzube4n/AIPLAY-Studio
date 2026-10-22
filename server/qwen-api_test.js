@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings } from "./qwen-image.js";
 import { QWEN_IMAGE_ENGINE } from "./qwen-status.js";
+import { MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions } from "./moss-image.js";
+import { mossImageStatus } from "./moss-status.js";
 import { applyPersona, personaFits } from "./personas.js";
 import { jobIdentity } from "./wildcards.js";
 import { safetyRefusal } from "./safety/refusal.js";
@@ -15,7 +17,7 @@ const start = source.indexOf('if (p === "/api/image" && req.method === "POST")')
 const end = source.indexOf('if (p === "/api/', start + 20);
 assert.ok(start > 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_DRAFT,qwenImageSettings,QWEN_IMAGE_ENGINE,qwenImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImagePrivate,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor,safetyRefusal,lineage,randomUUID }=deps; ${source.slice(start, end)}`);
+const run = new AsyncFunction("deps", `const { p,req,res,readBody,json,config,path,qwenImageGraph,QWEN_IMAGE_PRESET,QWEN_DRAFT,qwenImageSettings,QWEN_IMAGE_ENGINE,qwenImageStatus,MOSS_IMAGE_ENGINE,MOSS_IMAGE_PRESET,mossImageOptions,mossImageStatus,hasWildcards,expand,personas,personaFits,stageQwenReferences,COVER_DIR,IMAGE_DIR,applyPersona,pendingImagePrompt,pendingImagePrivate,pendingImageActor,pendingImageWild,prov,resolveRepeat,imageDupGuard,art,combinations,imageEditor,safetyRefusal,lineage,randomUUID }=deps; ${source.slice(start, end)}`);
 
 const flattenReferences = async (references) => references.map((row) => row.name);
 
@@ -26,6 +28,7 @@ async function request(body, { ready = true, persona = null, stageError = null, 
     json: (_, status, result) => ({ status, body: result }), path,
     config: { image: { engine: QWEN_IMAGE_ENGINE }, art: { size: 1024, steps: 4 }, inputDir: "input" },
     qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, qwenImageSettings, QWEN_IMAGE_ENGINE,
+    MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET, mossImageOptions, mossImageStatus,
     qwenImageStatus: async ({ options } = {}) => { preflights.push(options); if (readiness) return readiness(options); return { ready, filesReady: ready, runtimeReady: ready, missingFiles: [], missingNodes: ready ? [] : ["TextEncodeQwenImage21"], error: ready ? null : "Missing runtime" }; },
     hasWildcards: () => false, expand: (prompt) => ({ prompt, choices: [] }),
     personas: { get: async () => persona }, personaFits, applyPersona,

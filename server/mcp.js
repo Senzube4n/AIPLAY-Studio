@@ -2738,7 +2738,7 @@ export const TOOLS = [
   {
     name: "make_image",
     description:
-      "Draw a picture. With no `engine` it uses the saved picture engine, or when nobody chose one the recommended picture model on this PC (studio_status `defaults`, key image.engine, says which and why; set_image_engine with use_for \"pictures\" saves one). Qwen Image 2.1's runtime and weights must be ready; check qwen_image_status. It runs only while "
+      "Draw a picture. With no `engine` it uses the saved picture engine, or when nobody chose one the recommended picture model on this PC (studio_status `defaults`, key image.engine, says which and why; set_image_engine with use_for \"pictures\" saves one). MOSS-Image is an optional text-only engine; check moss_image_status. Qwen Image 2.1's runtime and weights must be ready; check qwen_image_status. It runs only while "
       + "nothing else is generating — music always takes priority. Blocks until it is done.\n\n"
       + "Pass `ref_images` for Qwen Image 2.1 or FLUX.2 editing: the prompt refers to them as "
       + "\"image 1\", \"image 2\" in order — \"put the character from image 1 into the scene "
@@ -2792,8 +2792,8 @@ export const TOOLS = [
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
-        engine: { type: "string", enum: ["qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
-          description: "qwen-image-2.1: native INT8 Qwen Image 2.1, generation/editing, up to 10 refs, 25 steps at CFG 1, noncommercial research license. "
+        engine: { type: "string", enum: ["qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
+          description: "moss-image: experimental native MOSS-Image SFT text-to-image, Apache-2.0, 25 steps, CFG 2.5, er_sde/simple; no refs, personas, editing, transparency or Fast draft. Check moss_image_status. qwen-image-2.1: native INT8 Qwen Image 2.1, generation/editing, up to 10 refs, 25 steps at CFG 1, noncommercial research license. "
             + "flux2: FLUX.2 klein 4B, Apache-2.0, 4 steps, also takes ref_images. "
             + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
             + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
@@ -2805,7 +2805,7 @@ export const TOOLS = [
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename, from models/checkpoints OR models/diffusion_models (list_checkpoints shows both shelves and says which loader each needs). A bare transformer — Z-Image, Anima, FLUX.2, Krea 2 — renders on its own family's recipe with this file in place of the catalogue's." },
-        dit_engine: { type: "string", enum: ["auto", "qwen-image-2.1", "zimage", "anima", "flux2", "krea2", "checkpoint"],
+        dit_engine: { type: "string", enum: ["auto", "qwen-image-2.1", "moss-image", "zimage", "anima", "flux2", "krea2", "checkpoint"],
           description: "checkpoint engine only, default auto: what the picked file IS. Detection reads the architecture from the tensors and is right for every file measured here; name one of these only to overrule it." },
         encoder: { type: "string", description: "Optional compatible text-encoder filename from models/text_encoders for a native Qwen or other bare-transformer image engine, including checkpoint picks resolved to that family. Defaults to the family's own; Qwen requires its 2.1 encoder architecture." },
         vae: { type: "string", description: "Optional compatible VAE filename from models/vae for native Qwen or another bare-transformer image engine. Defaults to the family's own; Qwen requires its 2.1 VAE architecture." },
@@ -2838,7 +2838,7 @@ export const TOOLS = [
           description: "SD checkpoint schedule, default karras (also normal, simple, sgm_uniform, exponential, beta, ddim_uniform). Qwen 2.1 accepts only simple (its default)." },
         steps: { type: "integer",
           description: "Optional, and worth setting on a checkpoint. Omit and you get that engine's own "
-            + "default: 25 qwen-image-2.1 (max 50), 4 flux2, 8 zimage, 25 zimage-base, 28 checkpoint (ideogram4 takes its steps from "
+            + "default: 25 moss-image or qwen-image-2.1 (max 50), 4 flux2, 8 zimage, 25 zimage-base, 28 checkpoint (ideogram4 takes its steps from "
             + "`quality` instead and ignores this). 4 is right for DISTILLED FLUX.2 klein and roughly six "
             + "times too few for an SDXL checkpoint, which wants about 20-30 — that mismatch is the reason "
             + "this parameter exists. Clamped by the route: 60 max on checkpoint, 50 on the two Z-Image "
@@ -3050,6 +3050,7 @@ export const TOOLS = [
       "Choose a picture engine persistently: for covers (the default), for pictures (the Pictures screen's engine, and make_image or a music video's stills with no engine named), or both, with `use_for`. "
       + "\"auto\" forgets the choice, so Studio picks from what is on this PC again. make_image still takes its own `engine` per picture. "
       + "qwen-image-2.1 supports references, 25 steps at CFG 1, and requires a compatible runtime and native files. "
+      + "moss-image: experimental MOSS-Image SFT, text only; no references or editing. Check moss_image_status. "
       + "With no saved choice, covers use the recommended picture model on this PC, and none are queued while no picture model is there (studio_status `defaults`, key art.engine); a saved choice always wins. flux2: FLUX.2 klein, Apache-2.0, also takes references. "
       + "zimage / zimage-base: Z-Image, Apache-2.0, photographic; base honours a negative prompt. "
       + "anima: anime and illustration. "
@@ -3061,7 +3062,7 @@ export const TOOLS = [
       type: "object",
       required: ["engine"],
       properties: {
-        engine: { type: "string", enum: ["auto", "qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
+        engine: { type: "string", enum: ["auto", "qwen-image-2.1", "moss-image", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
         checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with (covers only; a picture's own file is picked per picture)." },
         use_for: { type: "string", enum: ["covers", "pictures", "both"],
           description: "covers (default): the engine that paints song covers. pictures: the Pictures screen's engine, used by make_image and music-video stills when they name none; kept even when its files are missing (make_image then says what to download). both." },

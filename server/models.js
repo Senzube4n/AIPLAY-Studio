@@ -2042,6 +2042,30 @@ export const CATALOG = [
     ],
   },
   {
+    id: "moss-image", makes: "picture", group: "images",
+    label: "MOSS-Image SFT (experimental)",
+    why: "Text-to-image with the native MOSS-Image SFT preset. Reference editing stays on Qwen Image 2.1.",
+    licence: "Apache-2.0", home: "https://huggingface.co/Comfy-Org/MOSS-Image",
+    outputRights: { class: "unrestricted", sellable: true, quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/MOSS-Image/resolve/24147db865fcdc207270f844777587223fed8d6e/diffusion_models/moss_image_sft_int8_convrot.safetensors`,
+        dest: M("diffusion_models/moss_image_sft_int8_convrot.safetensors"), bytes: 5_413_698_958,
+        sha256: "b4d1475bc7eeffd7b809e82ea13a1fba1fb85c4e18365af3813722faa5c0fe4f" },
+      { url: `${HF}/Comfy-Org/MOSS-Image/resolve/24147db865fcdc207270f844777587223fed8d6e/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors`,
+        dest: M("text_encoders/qwen3.5_9b_w4a8_gptq.safetensors"), bytes: 7_343_591_088,
+        sha256: "4cc6a1543ad2061806da46f35f90cadb4801dcba246c44782cf42ec0feb6407c" },
+      { url: `${HF}/Comfy-Org/MOSS-Image/resolve/24147db865fcdc207270f844777587223fed8d6e/vae/flux2-vae_small.safetensors`,
+        dest: M("vae/flux2-vae_small.safetensors"), bytes: 249_521_340,
+        sha256: "d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b" },
+    ],
+    note: "13.01 GB in three native files. Requires ComfyUI's MOSS-Image architecture and moss_image text encoder type. Preset: 25 steps, CFG 2.5, er_sde/simple; prompt upsampling and skip-layer guidance off. Text-to-image only. Local quality, speed and memory limits are still being evaluated.",
+    requires: { experimental: true, note: "No measured minimum memory requirement. Native runtime support is checked before queueing; older engines are not updated automatically." },
+  },
+  {
     // Official ComfyUI repack, checked against Hugging Face's LFS metadata on
     // 2026-09-21. These are Qwen Image 2.1 components; the older Qwen image VAE
     // used by Anima/Krea is not interchangeable with this model's VAE.
@@ -3210,6 +3234,7 @@ export const MODEL_TO_CAPABILITY = {
   "zimage-base": "imageZImageBase",
   "krea2": "imageKrea2",
   "qwen-image-2.1": "qwen-image-2.1",
+  "moss-image": "moss-image",
   // The engine name /api/image accepts is "anima"; the two files it needs are
   // the imageAnima entry. Missing here, every Anima render stamped its rights
   // `unknown` while ANIMA_RIGHTS sat in the catalogue two hundred lines up —

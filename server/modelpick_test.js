@@ -16,6 +16,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { classify, listPickable, listVideoPickable, listParts, listVideoParts, resolvePick, DIT_ENGINE, VIDEO_DIT_ENGINE, isDitFolder } from "./modelpick.js";
 import { zImageGraph, krea2Graph, coverGraph, animaGraph, ZIMAGE_DITS, KREA2_FILES } from "./workflow.js";
+import { MOSS_IMAGE_FILES } from "./moss-image.js";
 
 let pass = 0;
 const failures = [];
@@ -34,9 +35,15 @@ const ck = classify(row("novaAnimeXL.safetensors", "checkpoints"), { family: "un
 ok("a real checkpoint loads as one", ck.engine === "checkpoint" && ck.ok && ck.dit === null, JSON.stringify(ck.engine));
 
 for (const [family, engine] of Object.entries(DIT_ENGINE)) {
-  const r = classify(row(`mine_${family}.safetensors`, "diffusion_models"), { family, bytes: 1e9, at: 1 });
+  const name = family === "moss-image" ? MOSS_IMAGE_FILES.dit : `mine_${family}.safetensors`;
+  const r = classify(row(name, "diffusion_models"), { family, bytes: 1e9, at: 1 });
   ok(`a ${family} file in diffusion_models renders on the ${engine} engine, with itself as the model`,
-    r.engine === engine && r.ok === true && r.dit === `mine_${family}.safetensors`, JSON.stringify(r.engine));
+    r.engine === engine && r.ok === true && r.dit === name, JSON.stringify(r.engine));
+}
+for (const name of ["mine_moss-image.safetensors", "moss_image_base_int8_convrot.safetensors"]) {
+  const unverified = classify(row(name, "diffusion_models"), { family: "moss-image", bytes: 1e9, at: 1 });
+  ok(`an unvalidated MOSS variant is listed with an explicit refusal: ${name}`,
+    !unverified.ok && !unverified.loadable && unverified.dit === null && /only the verified SFT INT8 bundle/.test(unverified.why || ""), unverified.why);
 }
 
 const stray = classify(row("someSDXL.safetensors", "diffusion_models"), { family: "unet", variant: "SDXL", bytes: 1e9, at: 1 });

@@ -65,6 +65,8 @@ import { engine as engineDoor } from "./engine/client.js";
 import { qwenImageGraph, QWEN_IMAGE_PRESET, QWEN_DRAFT, QWEN_IMAGE_FILES, qwenImageSettings } from "./qwen-image.js";
 import { validateVideoLoras } from "./video-lora-validation.js";
 import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
+import { mossImageOptions, MOSS_IMAGE_ENGINE, MOSS_IMAGE_PRESET } from "./moss-image.js";
+import { mossImageStatus } from "./moss-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
 import { createH3RefModService, createH3RefModRoutes } from "./h3-refmod.js";
 import { stageRefModImage } from "./refmod-stage.js";
@@ -9115,12 +9117,16 @@ const server = http.createServer(async (req, res) => {
       if (b.imageEngine !== undefined) {
         /* config.js's own check for the saved value (the covers' list minus "checkpoint"). */
         if (!PREF_PATHS.find(([g, k]) => g === "image" && k === "engine")[2](b.imageEngine)) {
-          return json(res, 400, { error: "imageEngine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 (your own model file is picked per picture)" });
+          return json(res, 400, { error: "imageEngine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | moss-image (your own model file is picked per picture)" });
         }
       }
       if (b.engine !== undefined) {
-        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(b.engine)) {
-          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | checkpoint" });
+        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "moss-image", "checkpoint"].includes(b.engine)) {
+          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | moss-image | checkpoint" });
+        }
+        if (b.engine === MOSS_IMAGE_ENGINE) {
+          const readiness = await mossImageStatus();
+          if (!readiness.ready) return json(res, 400, readiness);
         }
         if (b.engine === QWEN_IMAGE_ENGINE) {
           const readiness = await qwenImageStatus();
@@ -9884,6 +9890,14 @@ const server = http.createServer(async (req, res) => {
      * graph in localStorage is how you lose a week's work to a cleared cache.
      */
     /** The Images screen: make one, list them, throw one away. */
+    if (p === "/api/images/moss-status" && req.method === "GET") {
+      const options = {};
+      for (const key of ["dit", "encoder", "vae"]) {
+        const value = url.searchParams.get(key);
+        if (value && value !== "auto") options[key] = value;
+      }
+      return json(res, 200, await mossImageStatus({ options }));
+    }
     if (p === "/api/images/qwen-status" && req.method === "GET") {
       const options = {};
       for (const key of ["dit", "encoder", "vae"]) {
@@ -9984,7 +9998,7 @@ const server = http.createServer(async (req, res) => {
        * the machine's pick from the disk when nobody chose (machineDefaults). */
       if (!b.engine && typeof machineDefaults === "function") await machineDefaults().catch(() => null);
       const engine = b.engine || config.image.engine;
-      if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
+      if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "moss-image", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
       /* FAST DRAFT (QWEN_DRAFT in qwen-image.js): Viggle's 5-step turbo LoRA on
        * Qwen Image 2.1, about 3x quicker and worse at small text. Refused, never
        * ignored, on any other engine; the base-only cases (transparent, more
@@ -9993,6 +10007,16 @@ const server = http.createServer(async (req, res) => {
        * refused by the graph builder below with its own sentences. */
       if (b.draft !== undefined && typeof b.draft !== "boolean") return json(res, 400, { error: QWEN_DRAFT.refusals.type });
       if (b.draft === true && engine !== QWEN_IMAGE_ENGINE) return json(res, 400, { error: QWEN_DRAFT.refusals.engine, draftRefused: "engine" });
+      if (engine === MOSS_IMAGE_ENGINE) {
+        if (assignedTo("cover")) return json(res, 400, { error: "MOSS-Image needs its native workflow. Unassign the custom Cover workflow in Settings first." });
+        try {
+          const selected = mossImageOptions({ ...b, prompt: b.prompt || "readiness check", seed: b.seed ?? 0 });
+          const { seed: ignoredSeed, prompt: ignoredPrompt, prefix: ignoredPrefix, thumbSize: ignoredThumbSize, ...normalized } = selected;
+          Object.assign(b, normalized);
+          const readiness = await mossImageStatus({ options: selected });
+          if (!readiness.ready) return json(res, 400, { ...readiness, ...(readiness.missingFiles.length ? { needsModel: MOSS_IMAGE_ENGINE } : {}) });
+        } catch (err) { return json(res, 400, { error: err.message }); }
+      }
       if (engine === QWEN_IMAGE_ENGINE) {
         try {
           const graph = qwenImageGraph({ ...b, prompt: b.prompt || "readiness check", seed: b.seed ?? 0 });
@@ -10303,6 +10327,7 @@ const server = http.createServer(async (req, res) => {
            * The ceiling differs too: base's own README suggests up to 50, so
            * the 30 that suits FLUX and Ideogram would clip a legitimate ask. */
           steps: (() => {
+            if (engine === MOSS_IMAGE_ENGINE) return b.steps ?? MOSS_IMAGE_PRESET.steps;
             if (engine === QWEN_IMAGE_ENGINE) return b.steps ?? QWEN_IMAGE_PRESET.steps;
             const zimage = engine === "zimage" || engine === "zimage-base";
             const asked = Number(b.steps);
@@ -10331,8 +10356,8 @@ const server = http.createServer(async (req, res) => {
             ? Math.min(Math.round(Number(b.clipSkip)), 12) : undefined,
           /* The checkpoint and Anima take a sampler and schedule (animaGraph reads
            * them); the other engines' graphs fix their own. */
-          sampler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE) && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
-          scheduler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE) && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
+          sampler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE || engine === MOSS_IMAGE_ENGINE) && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
+          scheduler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE || engine === MOSS_IMAGE_ENGINE) && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
           refImages,
         },
       };
